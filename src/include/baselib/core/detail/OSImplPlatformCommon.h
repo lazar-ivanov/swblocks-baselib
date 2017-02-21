@@ -578,6 +578,7 @@ namespace bl
                     isWindows = true,
                     isUNIX = false,
                     isDarwin = false,
+                    isLinux = false,
                 };
 
                 #else // defined( _WIN32 )
