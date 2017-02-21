@@ -281,9 +281,9 @@ namespace bl
                            );
                     }
 
-                    const long newPos = std::ftell( m_fileptr );
+                    const auto newPos = std::ftell( m_fileptr );
 
-                    if( newPos < 0L )
+                    if( newPos < 0 )
                     {
                         checkStream();
 
