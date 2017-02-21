@@ -281,9 +281,9 @@ namespace bl
                            );
                     }
 
-                    std::fpos_t newPos;
+                    const long newPos = std::ftell( m_fileptr );
 
-                    if( std::fgetpos( m_fileptr, &newPos ) )
+                    if( newPos < 0L )
                     {
                         checkStream();
 
@@ -301,7 +301,7 @@ namespace bl
                            );
                     }
 
-                    return static_cast< std::streampos >( newPos );
+                    return std::streampos( newPos );
                 }
             };
 
