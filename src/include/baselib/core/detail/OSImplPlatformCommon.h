@@ -586,10 +586,17 @@ namespace bl
                 {
                     isWindows = false,
                     isUNIX = true,
+
 #ifdef __APPLE__
                     isDarwin = true,
 #else
                     isDarwin = false,
+#endif
+
+#ifdef __linux__
+                    isLinux = true,
+#else
+                    isLinux = false,
 #endif
                 };
 
@@ -785,6 +792,7 @@ namespace bl
             isWindows   = detail::OSImplBase::isWindows,
             isUNIX      = detail::OSImplBase::isUNIX,
             isDarwin    = detail::OSImplBase::isDarwin,
+            isLinux     = detail::OSImplBase::isLinux,
         };
 
         inline bool onWindows() NOEXCEPT
@@ -799,7 +807,12 @@ namespace bl
 
         inline bool onDarwin() NOEXCEPT
         {
-            return isUNIX;
+            return isDarwin;
+        }
+
+        inline bool onLinux() NOEXCEPT
+        {
+            return isLinux;
         }
 
         inline void sleep( SAA_in const time::time_duration& duration )

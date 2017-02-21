@@ -90,13 +90,15 @@ SETTINGSDIR := $(TOPDIR)settings
 CERTSDIR    := $(TOPDIR)certs
 PYTHONDIR   := $(SRCDIR)/python
 BLDDIR	    := $(TOPDIR)bld/$(PLAT)
-TMPDIR	    := $(TOPDIR)bld/$(PLAT)/tmp
+LOCALTMPDIR := $(TOPDIR)bld/$(PLAT)/tmp
 DESTDIR     := $(TOPDIR)bld/install/$(PLAT)
 
-# do not export temp directory paths when running from a virtual machine
+# do not export temp directory paths when running from a virtual machine shared folder
+# note that the temp dir environment variables must be pointing to an absolute path
 ifeq (, $(findstring /media/sf_, $(realpath $(MKDIR))))
-export TMP := $(realpath $(TMPDIR))
-export TEMP := $(realpath $(TMPDIR))
+export TMP := $(realpath $(LOCALTMPDIR))
+export TEMP := $(realpath $(LOCALTMPDIR))
+export TMPDIR := $(realpath $(LOCALTMPDIR))
 endif
 
 # misc variables
@@ -274,8 +276,8 @@ clean:
 	@$(RMPATH) $(abspath $(DESTDIR)$(PREFIX))
 
 mktmppath:
-	$(info Creating temporary path $(TMPDIR))
-	@mkdir -p $(TMPDIR)
+	$(info Creating temporary path $(LOCALTMPDIR))
+	@mkdir -p $(LOCALTMPDIR)
 
 mkbuildpath:
 	$(info Creating build path $(BLDDIR))
