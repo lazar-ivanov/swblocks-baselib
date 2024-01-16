@@ -34,6 +34,21 @@
             }
         },
         {
+            "label": "build utf_baselib_tasks (debug)",
+            "type": "shell",
+            "command": "make -k -j1 utf_baselib_tasks BL_CLANG_USE_GCC_LIBS=1",
+            "options": {
+                "cwd": "${env:HOME}/dev/github/swblocks-baselib"
+            },
+            "runOptions": {
+            },
+            "problemMatcher": [ "$gcc" ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
             "label": "build bl-tool (debug)",
             "type": "shell",
             "command": "make -k -j1 bl-tool BL_CLANG_USE_GCC_LIBS=1",

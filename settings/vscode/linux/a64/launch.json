@@ -32,6 +32,14 @@
             "cwd": "${workspaceFolder}"
         },
         {
+            "name": "(lldb) Launch utf-baselib-tasks (debug)",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${env:HOME}/dev/github/swblocks-baselib/bld/ub20-a64-clang1201-debug/utests/utf_baselib_tasks/utf-baselib-tasks",
+            "args": [ "--log_level=message", "--run_test=Tasks_PingerAutoAddInvalidHostTests", "--", "--bl-logging-level=6"],
+            "cwd": "${workspaceFolder}"
+        },
+        {
             "name": "(lldb) Launch utf-baselib-jni (debug)",
             "type": "lldb",
             "request": "launch",
