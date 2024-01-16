@@ -36,6 +36,11 @@ cfg = {
   }
 }
 
+# make this work on Python 3.3 or higher
+# Prior to Python 3.3, the value for any Linux version is always linux2; after, it is linux.
+# https://stackoverflow.com/questions/446209/possible-values-from-sys-platform
+cfg['linux'] = cfg['linux2']
+
 def handle_failure(proc):
   # setup parameters
   testdir = dirname(argv[1])
@@ -46,7 +51,7 @@ def handle_failure(proc):
 
   # locate dumpfile
   if exists(dumpfile):
-    print '!' * 5, 'crash dump file', dumpfile, 'found'
+    print('!' * 5, 'crash dump file', dumpfile, 'found')
 
     # replace formatting strings in debugger command line
     debugger = [a % params for a in cfg[platform]['debugger']]
@@ -55,18 +60,18 @@ def handle_failure(proc):
     call(debugger)
 
     newfile = join(testdir, basename(dumpfile))
-    print '!' * 5, 'crash dump file upload path is', newfile
+    print('!' * 5, 'crash dump file upload path is', newfile)
 
     # move dump file to build directory for upload
     rename(dumpfile, newfile)
 
 def process_output(proc):
   for line in proc.stdout:
-    line = line.rstrip()
+    line = line.rstrip().decode()
     if search(': (fatal|error|warn)', line) and not line.startswith('DEBUG:'):
-      print >>stderr, str('\n######### Failure in %s #########\n %s \n' %(basename(argv[1]), line))
-      print >>stderr, 'Please see full error details in the log file (search for the test name)\n'
-    print line
+      print(str('\n######### Failure in %s #########\n %s \n' %(basename(argv[1]), line)), file=stderr)
+      print('Please see full error details in the log file (search for the test name)\n', file=stderr)
+    print(line)
   proc.wait()
 
 # run command and deal with failures
