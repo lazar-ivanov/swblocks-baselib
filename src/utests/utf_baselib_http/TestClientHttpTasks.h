@@ -93,19 +93,35 @@ UTF_AUTO_TEST_CASE( Client_SimpleHttpTests )
                     }
 
                     /*
-                     * Success test case with user agent string provided
+                     * Success test cases with user agent string provided. We have 4 cases:
+                     *
+                     * 1. User agent string is provided locally
+                     * 2. User agent string is provided globally
+                     * 3. User agent string is not provided at all
+                     * 4. User agent string is provided locally and globally (local overrides global)
                      */
 
+                    const auto fnUserAgentTest = [ & ](
+                        SAA_in      const bool          useGlobal,
+                        SAA_in      const bool          useLocal
+                        )
+                        -> void
                     {
-                        UTF_REQUIRE( str::icontains( http::HttpHeader::g_userAgentBotDefault, "bot" ) );
+                        if( useGlobal )
+                        {
+                            UTF_REQUIRE( str::icontains( http::HttpHeader::g_userAgentBotDefault, "bot" ) );
 
-                        UTF_REQUIRE_EQUAL( http::Parameters::userAgentDefault(), str::empty() );
-                        http::Parameters::userAgentDefault( cpp::copy( http::HttpHeader::g_userAgentBotDefault ) );
+                            UTF_REQUIRE_EQUAL( http::Parameters::userAgentDefault(), str::empty() );
+                            http::Parameters::userAgentDefault( cpp::copy( http::HttpHeader::g_userAgentBotDefault ) );
+                        }
 
                         {
                             BL_SCOPE_EXIT(
                                 {
-                                    http::Parameters::userAgentDefault( std::string() );
+                                    if( useGlobal )
+                                    {
+                                        http::Parameters::userAgentDefault( std::string() );
+                                    }
                                 }
                                 );
 
@@ -113,12 +129,19 @@ UTF_AUTO_TEST_CASE( Client_SimpleHttpTests )
 
                             headers[ "MyHeader" ] = "MyValue";
 
+                            const std::string userAgentLocalValue = "swblocks-baselib-client-bot/MyUserAgent";
+
                             const auto taskImpl = SimpleHttpGetTaskImpl::createInstance(
                                 cpp::copy( test::UtfArgsParser::host() ),
                                 cpp::copy( test::UtfArgsParser::port() ),
                                 utest::http::g_requestUri,
                                 std::move( headers )
                                 );
+
+                            if( useLocal )
+                            {
+                                taskImpl -> userAgent( cpp::copy( userAgentLocalValue ) );
+                            }
 
                             const auto task = om::qi< Task >( taskImpl );
                             UTF_REQUIRE_EQUAL( Task::Created, task -> getState() );
@@ -148,17 +171,37 @@ UTF_AUTO_TEST_CASE( Client_SimpleHttpTests )
 
                             const auto userAgentValue = taskImpl -> tryGetResponseHeader( "request-user-agent-id" );
 
-                            UTF_REQUIRE( userAgentValue );
-                            UTF_REQUIRE_EQUAL( http::HttpHeader::g_userAgentBotDefault, *userAgentValue );
+                            if( useLocal )
+                            {
+                                UTF_REQUIRE( userAgentValue );
+                                UTF_REQUIRE_EQUAL( userAgentLocalValue, *userAgentValue );
+                            }
+                            else if( useGlobal )
+                            {
+                                UTF_REQUIRE( userAgentValue );
+                                UTF_REQUIRE_EQUAL( http::HttpHeader::g_userAgentBotDefault, *userAgentValue );
+                            }
+                            else
+                            {
+                                UTF_REQUIRE( ! userAgentValue );
+                            }
 
-                            BL_LOG_MULTILINE(
-                                Logging::debug(),
-                                BL_MSG()
-                                    << "\n******* user agent value: "
-                                    << *userAgentValue
-                                    );
+                            if( userAgentValue )
+                            {
+                                BL_LOG_MULTILINE(
+                                    Logging::debug(),
+                                    BL_MSG()
+                                        << "\n******* user agent value: "
+                                        << *userAgentValue
+                                        );
+                            }
                         }
-                    }
+                    };
+
+                    fnUserAgentTest( false /* useGlobal */, false /* useLocal */ );
+                    fnUserAgentTest( true /* useGlobal */, false /* useLocal */ );
+                    fnUserAgentTest( false /* useGlobal */, true /* useLocal */ );
+                    fnUserAgentTest( true /* useGlobal */, true /* useLocal */ );
 
                     /*
                      * Failure test case

@@ -91,6 +91,7 @@ namespace bl
             time::time_duration                                                     m_timeout;
             cpp::ScalarTypeIniter< bool >                                           m_isSecureMode;
             cpp::ScalarTypeIniter< bool >                                           m_isExpectUtf8Content;
+            std::string                                                             m_userAgent;
 
             SimpleHttpTaskT(
                 SAA_in          std::string&&               host,
@@ -415,6 +416,19 @@ namespace bl
 
             virtual auto userAgent() const NOEXCEPT -> const std::string&
             {
+                if( ! m_userAgent.empty() )
+                {
+                    /*
+                     * User agent value is locally overridden in the task
+                     */
+
+                    return m_userAgent;
+                }
+
+                /*
+                 * Use the global default user agent value
+                 */
+
                 return http::Parameters::userAgentDefault();
             }
 
@@ -502,6 +516,11 @@ namespace bl
             void isExpectUtf8Content( SAA_in const bool isExpectUtf8Content ) NOEXCEPT
             {
                 m_isExpectUtf8Content = isExpectUtf8Content;
+            }
+
+            void userAgent( SAA_in std::string&& userAgent ) NOEXCEPT
+            {
+                m_userAgent = BL_PARAM_FWD( userAgent );
             }
 
             void addExpectedHttpStatuses( SAA_in const http::StatusesList& expectedHttpStatuses )
