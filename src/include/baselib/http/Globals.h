@@ -170,6 +170,7 @@ namespace bl
                 HTTP_CLIENT_ERROR_FORBIDDEN             = 403U,
                 HTTP_CLIENT_ERROR_NOT_FOUND             = 404U,
                 HTTP_CLIENT_ERROR_CONFLICT              = 409U,
+                HTTP_CLIENT_ERROR_TOO_MANY_REQUESTS     = 429U,
                 HTTP_SERVER_ERROR_INTERNAL              = 500U,
                 HTTP_SERVER_ERROR_NOT_IMPLEMENTED       = 501U,
                 HTTP_SERVER_ERROR_BAD_GATEWAY           = 502U,

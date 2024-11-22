@@ -916,10 +916,13 @@ namespace bl
                             str::empty()
                             );
 
-                        fs::copy(
-                            sourcePath,
-                            targetDir / fs::path( sourcePathStr ).relative_path()
-                            );
+                        if( fs::is_regular_file( sourcePath ) || fs::is_directory( sourcePath ) )
+                        {
+                            fs::copy(
+                                sourcePath,
+                                targetDir / fs::path( sourcePathStr ).relative_path()
+                                );
+                        }
                     }
 
                     g.dismiss();

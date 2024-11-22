@@ -38,3 +38,4 @@ java/.gradle/
 .gradle/
 java/init.gradle
 .vscode/
+.DS_Store

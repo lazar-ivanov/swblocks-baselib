@@ -89,10 +89,15 @@ include $(MKDIR)/3rd/jdk/common.mk
 endif
 
 # for python script wrappers (windows compiler, debug harness)
+ifeq ($(DEVENV_VERSION_TAG),devenv6)
+# python3 is the default in devenv6
+PYTHON = python3
+else
 ifeq ($(DEVENV_VERSION_TAG),devenv3)
 include $(MKDIR)/3rd/python/2.7-latest.mk
 else
 include $(MKDIR)/3rd/python/2.7.5.mk
+endif
 endif
 
 # add git to the path for systems where it's external
@@ -152,7 +157,8 @@ BUILD_RELEASE_DATE = $(shell awk '/^\#define *BL_PLUGINS_RELEASE_DATE/ \
 VERSION         = $(BUILD_RELEASE_DATE)-build-$(BUILD_ID)
 
 # -u (unbuffered stdout/err) would help investigating hanging tests
-DEBUG_HARNESS   = $(PYTHON) -u $(TOPDIR)scripts/debug_harness.py
+# on macOS the default max open files limit is 256, which is not enough
+DEBUG_HARNESS   = ulimit -n 4096 ; $(PYTHON) -u $(TOPDIR)scripts/debug_harness.py
 ASAN_SYMBOLIZE  = $(TOPDIR)scripts/addr2line_symbolizer.sh
 UTF_FLAGS        += --log_level=test_suite
 UTF_FLAGS        += --catch_system_errors=no

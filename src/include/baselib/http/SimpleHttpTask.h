@@ -893,7 +893,7 @@ namespace bl
 
                         if( ! m_isExpectUtf8Content )
                         {
-                            return str::from_utf( content, HttpHeader::g_iso8859_1, str::method_type::stop );
+                            return str::utf8ToIso88591Simple( content );
                         }
                     }
                     else

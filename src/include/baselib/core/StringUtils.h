@@ -19,7 +19,13 @@
 
 #include <baselib/core/detail/BoostIncludeGuardPush.h>
 #include <boost/algorithm/string.hpp>
+#if defined( BL_DEVENV_VERSION ) && BL_DEVENV_VERSION < 6
+// TODO: Re-enable the dependency on Boost.Locale when it is fixed
+/*
+ * The dependency on Boost.Locale is removed fror devenv 5 and above
+ */
 #include <boost/locale/encoding.hpp>
+#endif
 #include <boost/range/iterator_range.hpp>
 #include <boost/regex.hpp>
 #include <boost/tokenizer.hpp>
@@ -100,11 +106,17 @@ namespace bl
         using boost::algorithm::trim_right_copy_if;
         using boost::algorithm::trim_right_if;
 
+        #if defined( BL_DEVENV_VERSION ) && BL_DEVENV_VERSION < 6
+        // TODO: Re-enable the dependency on Boost.Locale when it is fixed
+        /*
+         * The dependency on Boost.Locale is removed fror devenv 5 and above
+         */
         using boost::locale::conv::between;
         using boost::locale::conv::from_utf;
         using boost::locale::conv::to_utf;
         using boost::locale::conv::utf_to_utf;
         using boost::locale::conv::method_type;
+        #endif
 
         namespace regex_constants = boost::regex_constants;
 
@@ -278,6 +290,84 @@ namespace bl
                     }
 
                     return std::string( pStart.get(), pEnd );
+                }               
+
+                static std::string utf8ToIso88591Simple( SAA_in const std::string& inputUtf8 )
+                {
+                    /*
+                     * This is a simple implementation of converting UTF8 to ISO-8859-1 to avoid
+                     * using the Boost.Locale library which has issues and not building correctly
+                     * on Darwin
+                     */
+
+                    std::string result;
+                    result.reserve( inputUtf8.size() );
+                    const char* invalidMessage = nullptr;
+
+                    auto pos = inputUtf8.begin();
+                    const auto end = inputUtf8.end();
+
+                    while( pos != end )
+                    {
+                        const unsigned char ch = *pos;
+
+                        if( ch <= 0x7F )
+                        {
+                            /*
+                             * Directly map characters in the ASCII range
+                             */
+
+                            result.push_back( ch );
+                            ++pos;
+                            continue;
+                        }
+
+                        if( ch >= 0xC2 && ch <= 0xC3 )
+                        {
+                            /*
+                             * Convert two-byte characters from UTF-8 to single-byte in ISO-8859-1
+                             */
+
+                            ++pos;
+
+                            if( pos != inputUtf8.end() )
+                            {
+                                const unsigned char nextChar = *pos;
+
+                                if( nextChar >= 0x80 && nextChar <= 0xBF )
+                                {
+                                    result.push_back( ( ( ch & 0x03 ) << 6 ) | ( nextChar & 0x3F ) );
+                                    ++pos;
+                                    continue;
+                                }
+                            }
+
+                            /*
+                             * Invalid UTF-8 sequence
+                             */
+
+                            invalidMessage = "Input cannot be converted to ISO-8859-1. Invalid UTF-8 sequence.";
+                            break;
+                        }
+
+                        /*
+                         * Characters outside of ISO-8859-1 range
+                         */
+                        
+                        invalidMessage = "Input cannot be converted to ISO-8859-1. Characters outside of ISO-8859-1 range.";
+                        break;
+                    }
+
+                    if( nullptr != invalidMessage )
+                    {
+                        BL_THROW(
+                            ArgumentException(),
+                            BL_MSG()
+                                << invalidMessage
+                            );
+                    }
+
+                    return result;                    
                 }
 
                 template
@@ -684,6 +774,11 @@ namespace bl
         inline std::string uriDecode( SAA_in const std::string& uri )
         {
             return detail::StringUtils::uriDecode( uri );
+        }
+
+        inline std::string utf8ToIso88591Simple( SAA_in const std::string& inputUtf8 )
+        {
+            return detail::StringUtils::utf8ToIso88591Simple( inputUtf8 );
         }
 
         inline bool toBool( SAA_in const std::string& input )

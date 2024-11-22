@@ -62,6 +62,8 @@ else ifeq ($(OS),d17)
   TOOLCHAIN                 ?= clang1000
 else ifeq ($(OS),d20)
   TOOLCHAIN                 ?= clang1205
+else ifeq ($(OS),d22)
+  TOOLCHAIN                 ?= clang1500
 else
   TOOLCHAIN                 ?= gcc492
 endif
@@ -138,6 +140,10 @@ ifeq ($(TOOLCHAIN),clang1205)
 DEVENV_VERSION_TAG := devenv5
 endif
 
+ifeq ($(TOOLCHAIN),clang1500)
+DEVENV_VERSION_TAG := devenv6
+endif
+
 ifeq ($(TOOLCHAIN),vc141)
 DEVENV_VERSION_TAG := devenv4
 endif
@@ -175,6 +181,11 @@ BL_DEVENV_BOOST_VERSION=1.75.0
 BL_DEVENV_OPENSSL_VERSION=1.1.1k
 endif
 
+ifeq ($(DEVENV_VERSION_TAG),devenv6)
+BL_DEVENV_BOOST_VERSION=1.84.0
+BL_DEVENV_OPENSSL_VERSION=1.1.1w
+endif
+
 ifeq ($(DEVENV_VERSION_TAG),devenv3)
 CPPFLAGS += -DBL_DEVENV_VERSION=3
 endif
@@ -185,6 +196,10 @@ endif
 
 ifeq ($(DEVENV_VERSION_TAG),devenv5)
 CPPFLAGS += -DBL_DEVENV_VERSION=5
+endif
+
+ifeq ($(DEVENV_VERSION_TAG),devenv6)
+CPPFLAGS += -DBL_DEVENV_VERSION=6
 endif
 
 BL_EXPECTED_BOOSTDIR = $(DIST_ROOT_DEPS3)/boost/$(BL_DEVENV_BOOST_VERSION)/$(PLAT:%-$(VARIANT)=%)

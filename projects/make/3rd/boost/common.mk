@@ -25,15 +25,20 @@ else
 ARCHTAG   := -$(ARCH)
 endif
 endif
+
 LDLIBS   += boost_date_time$(LIBTAG)$(ARCHTAG)
 LDLIBS   += boost_system$(LIBTAG)$(ARCHTAG)
 LDLIBS   += boost_thread$(LIBTAG)$(ARCHTAG)
 LDLIBS   += boost_filesystem$(LIBTAG)$(ARCHTAG)
-LDLIBS   += boost_locale$(LIBTAG)$(ARCHTAG)
 LDLIBS   += boost_program_options$(LIBTAG)$(ARCHTAG)
 LDLIBS   += boost_regex$(LIBTAG)$(ARCHTAG)
 LDLIBS   += boost_random$(LIBTAG)$(ARCHTAG)
 LDLIBS   += boost_unit_test_framework$(LIBTAG)$(ARCHTAG)
+ifneq ($(BL_PLAT_IS_DARWIN),1)
+ifneq ($(DEVENV_VERSION_TAG),devenv6)
+LDLIBS   += boost_locale$(LIBTAG)$(ARCHTAG)
+endif
+endif
 
 ifeq ($(BL_PLAT_IS_DARWIN),1)
 # It looks like this is not automatically included in Darwin

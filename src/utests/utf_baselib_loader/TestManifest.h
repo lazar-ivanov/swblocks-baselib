@@ -74,11 +74,11 @@ UTF_FIXTURE_TEST_CASE( TestManifestWrite, ManifestFixture )
     using namespace bl::loader;
     using namespace utest;
 
-    auto output = ( m_dir.path() / "plugin.mf" ).string();
-    auto platform = Platform::get( "linux", "x64", "gcc48" );
-    auto manifest = ManifestFactory::create( m_plugin.path(), std::move( platform ) );
+    const auto output = ( m_dir.path() / "plugin.mf" ).string();
+    const auto platform = Platform::get( "linux", "x64", "gcc48" );
+    const auto manifest = ManifestFactory::create( m_plugin.path(), bl::om::copy( platform ) );
 
-    ManifestFactory::write( std::move( manifest ), std::move( output ) );
+    ManifestFactory::write( bl::om::copy( manifest ), cpp::copy( output ) );
 
     json::Value value;
 

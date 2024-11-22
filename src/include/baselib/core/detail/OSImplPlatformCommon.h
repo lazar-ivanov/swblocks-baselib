@@ -1932,6 +1932,20 @@ namespace bl
             SAA_in          const path&                 targetPath
             )
         {
+            #if ( defined( BL_DEVENV_VERSION ) && BL_DEVENV_VERSION > 5 ) || ( ( BOOST_VERSION / 100 ) >= 1084 )
+            /*
+             * The behavior of the copy function has changed for directories now it attempts
+             * to copy the directory content to the target directory instead of copying the
+             * directory itself
+             */
+
+            if( is_directory( sourcePath ) )
+            {
+                detail::bfs::create_directory( targetPath, sourcePath );
+                return;
+            }
+            #endif
+
             detail::bfs::copy( sourcePath, targetPath );
         }
 
@@ -1941,6 +1955,20 @@ namespace bl
             SAA_out         eh::error_code&             ec
             )
         {
+            #if ( defined( BL_DEVENV_VERSION ) && BL_DEVENV_VERSION > 5 ) || ( ( BOOST_VERSION / 100 ) >= 1084 )
+            /*
+             * The behavior of the copy function has changed for directories now it attempts
+             * to copy the directory content to the target directory instead of copying the
+             * directory itself
+             */
+
+            if( is_directory( sourcePath ) )
+            {
+                detail::bfs::create_directory( targetPath, sourcePath, ec );
+                return;
+            }
+            #endif
+
             detail::bfs::copy( sourcePath, targetPath, ec );
         }
 
@@ -1995,7 +2023,16 @@ namespace bl
             SAA_in          const path&                 targetPath
             )
         {
+            /*
+             * copy_directory is deprecated in the new boost versions and create_directory
+             * should be used instead
+             */
+
+            #if ( defined( BL_DEVENV_VERSION ) && BL_DEVENV_VERSION > 5 ) || ( ( BOOST_VERSION / 100 ) >= 1084 )
+            detail::bfs::create_directory( targetPath, sourcePath );
+            #else
             detail::bfs::copy_directory( sourcePath, targetPath );
+            #endif
         }
 
         inline void copy_directory(
@@ -2004,7 +2041,16 @@ namespace bl
             SAA_out         eh::error_code&             ec
             )
         {
+            /*
+             * copy_directory is deprecated in the new boost versions and create_directory
+             * should be used instead
+             */
+
+            #if ( defined( BL_DEVENV_VERSION ) && BL_DEVENV_VERSION > 5 ) || ( ( BOOST_VERSION / 100 ) >= 1084 )
+            detail::bfs::create_directory( targetPath, sourcePath, ec );
+            #else
             detail::bfs::copy_directory( sourcePath, targetPath, ec );
+            #endif
         }
 
         /*

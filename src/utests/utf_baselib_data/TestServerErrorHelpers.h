@@ -180,7 +180,10 @@ UTF_AUTO_TEST_CASE( ErrorToJsonTests )
     catch( SystemException& e )
     {
         UTF_REQUIRE_EQUAL( e.fullTypeName(), "bl::SystemException" );
-        UTF_REQUIRE_EQUAL( e.what(), "It's a what() prefix: Permission denied" );
+        UTF_REQUIRE(
+            std::string( e.what() ) == "It's a what() prefix: Permission denied" ||
+            std::string( e.what() ) == "It's a what() prefix: Permission denied [generic:13]"
+            );
 
         UTEST_PROPERTY_REQUIRE_EQUAL( errinfo_message, "It's a message" )
         UTEST_PROPERTY_REQUIRE_EQUAL( errinfo_category_name, "generic" )

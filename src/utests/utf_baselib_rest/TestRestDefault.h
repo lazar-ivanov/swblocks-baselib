@@ -360,9 +360,13 @@ UTF_AUTO_TEST_CASE( RestServiceSslBackendAssortedTests )
 
                         const auto ecExpected = eh::errc::make_error_code( eh::errc::bad_file_descriptor );
 
+                        const auto expectedPrefix = std::string( "System error has occurred: " ) + ecExpected.message();
+
+                        UTF_REQUIRE( errorJson -> result() -> exceptionMessage().size() >= expectedPrefix.size() );
+
                         UTF_REQUIRE_EQUAL(
-                            errorJson -> result() -> exceptionMessage(),
-                            std::string( "System error has occurred: " ) + ecExpected.message()
+                            errorJson -> result() -> exceptionMessage().substr( 0, expectedPrefix.size() ),
+                            expectedPrefix
                             );
 
                         UTF_REQUIRE_EQUAL(

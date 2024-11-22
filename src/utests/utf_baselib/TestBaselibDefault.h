@@ -534,7 +534,10 @@ UTF_AUTO_TEST_CASE( BaseLib_TestErrorHandling )
 
             const auto msg = e.what();
             UTF_MESSAGE( msg );
-            UTF_CHECK_EQUAL( "This is test exception 42 ; 1.2: Permission denied", msg );
+            UTF_CHECK(
+                std::string( msg ) == "This is test exception 42 ; 1.2: Permission denied" ||
+                std::string( msg ) == "This is test exception 42 ; 1.2: Permission denied [generic:13]"
+                );
 
             const auto details = e.details();
             UTF_MESSAGE( details );
@@ -594,7 +597,10 @@ UTF_AUTO_TEST_CASE( BaseLib_TestErrorHandling )
         {
             const auto msg = e.what();
             UTF_MESSAGE( msg );
-            UTF_CHECK_EQUAL( "This one should throw: 42: Permission denied", msg );
+            UTF_CHECK(
+                std::string( msg ) == "This one should throw: 42: Permission denied" ||
+                std::string( msg ) == "This one should throw: 42: Permission denied [generic:13]"
+                );
 
             const auto details = e.details();
             UTF_MESSAGE( details );
@@ -1533,7 +1539,10 @@ UTF_AUTO_TEST_CASE( BaseLib_OSSharedLibTests )
 
             if( bl::os::onDarwin() )
             {
-                UTF_REQUIRE( str -> find( "image not found" ) != std::string::npos );
+                UTF_REQUIRE(
+                    str -> find( "image not found" ) != std::string::npos ||
+                    str -> find( "Shared library 'libunknown.so' cannot be loaded" ) != std::string::npos
+                    );
             }
             else
             {
@@ -2387,6 +2396,15 @@ UTF_AUTO_TEST_CASE( BaseLib_OSLongFileNamesWindowsTests )
     bl::fs::TmpDir tmpDir;
     const auto& tmpPath = tmpDir.path();
 
+    #if defined( BL_DEVENV_VERSION ) && BL_DEVENV_VERSION > 5
+    /*
+     * The function path::is_complete was depreciated in boost 1.84 when c++17 is enabled
+     * When c++17 is enabled path::is_absolute() should be used instead
+     */
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    #endif
+
     {
         bl::fs::path path( "c:\\" );
 
@@ -2485,6 +2503,9 @@ UTF_AUTO_TEST_CASE( BaseLib_OSLongFileNamesWindowsTests )
                 << path.root_directory()
             );
     }
+    #if defined( BL_DEVENV_VERSION ) && BL_DEVENV_VERSION > 5
+    #pragma GCC diagnostic pop
+    #endif
 
     {
         bl::fs::path path( tmpPath );
@@ -6083,6 +6104,62 @@ UTF_AUTO_TEST_CASE( BaseLib_Base64UrlTests )
         }
     }
 }
+
+/************************************************************************
+ * str::utf8ToIso88591Simple tests
+ */
+
+UTF_AUTO_TEST_CASE( BaseLib_Utf8ToIso88591SimpleTests )
+{
+    using namespace bl::str;
+    /*
+     * Test utf8ToIso88591Simple:
+     *
+     * 1. ASCII only string
+     * 2. UTF-8 string with ASCII only characters
+     * 3. Invalid UTF-8 character sequence
+     * 4. UTF-8 string with non-ASCII characters
+     */
+
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "Hello, world!" ) ), std::string( "Hello, world!" ) );
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC2\xA2" ) ), std::string( "\xA2" ) );
+
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC2\x70" ) ), bl::ArgumentException );
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC2\xA2\xC2" ) ), bl::ArgumentException );
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xF0\x9F\x98\x81" ) ), bl::ArgumentException );
+}
+
+#if defined( BL_DEVENV_VERSION ) && BL_DEVENV_VERSION < 6
+// TODO: Re-enable the dependency on Boost.Locale when it is fixed
+/*
+ * The dependency on Boost.Locale is removed fror devenv 5 and above
+ */
+
+/************************************************************************
+ * bl::str::from_utf tests
+ */
+
+UTF_AUTO_TEST_CASE( BaseLib_StringUtilsFromUtfTests )
+{
+    /*
+     * Test bl::str::from_utf:
+     *
+     * 1. ASCII only string
+     * 2. UTF-8 string with ASCII only characters
+     * 3. Invalid UTF-8 character sequence
+     * 4. UTF-8 string with non-ASCII characters
+     */
+
+    UTF_CHECK_EQUAL( bl::str::from_utf( std::string( "Hello, world!" ), "ISO-8859-1", bl::str::method_type::stop ), std::string( "Hello, world!" ) );
+    UTF_CHECK_EQUAL( bl::str::from_utf( std::string( "\xC2\xA2" ), "ISO-8859-1", bl::str::method_type::stop ), std::string( "\xA2" ) );
+
+    /*
+    UTF_REQUIRE_THROW( bl::str::from_utf( std::string( "\xC2\x70" ), "ISO-8859-1", str::method_type::stop ), bl::ArgumentException );
+    UTF_REQUIRE_THROW( bl::str::from_utf( std::string( "\xC2\xA2\xC2" ), "ISO-8859-1", str::method_type::stop ), bl::ArgumentException );
+    UTF_REQUIRE_THROW( bl::str::from_utf( std::string( "\xF0\x9F\x98\x81" ), "ISO-8859-1", str::method_type::stop ), bl::ArgumentException );
+    */
+}
+#endif /* #if defined( BL_DEVENV_VERSION ) && BL_DEVENV_VERSION < 6 */
 
 /************************************************************************
  * URI encoding / decoding tests
