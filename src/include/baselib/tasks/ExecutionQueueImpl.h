@@ -367,110 +367,118 @@ namespace bl
                 cpp::void_callback_noexcept_t onNotify;
                 cpp::void_callback_noexcept_t onNotifyAllCompleted;
 
-                BL_MUTEX_GUARD( m_lockEvents );
-
                 {
-                    BL_MUTEX_GUARD( m_lock );
+                    BL_MUTEX_GUARD( m_lockEvents );
 
-                    if( ! m_observerThis )
                     {
-                        /*
-                         * The object has already been disposed -
-                         * don't try to do anything
-                         */
+                        BL_MUTEX_GUARD( m_lock );
 
-                        return;
-                    }
-
-                    std::exception_ptr continuationException;
-
-                    bool continuationIsSelf = false;
-                    auto taskInfo = getTaskInfoPtrFromTask( task.get() );
-
-                    try
-                    {
-                        const auto continuationTask = task -> continuationTask();
-
-                        if( continuationTask )
+                        if( ! m_observerThis )
                         {
                             /*
-                             * Push the continuation task to the front of the execution queue and attempt
-                             * to schedule it immediately
+                             * The object has already been disposed -
+                             * don't try to do anything
                              */
 
-                            if( om::areEqual( continuationTask, task ) )
-                            {
-                                moveExecutingTaskToPendingQueue( taskInfo );
-                                padExecutingQueueNothrow();
+                            return;
+                        }
 
-                                continuationIsSelf = true;
+                        std::exception_ptr continuationException;
+
+                        bool continuationIsSelf = false;
+                        auto taskInfo = getTaskInfoPtrFromTask( task.get() );
+
+                        try
+                        {
+                            const auto continuationTask = task -> continuationTask();
+
+                            if( continuationTask )
+                            {
+                                /*
+                                 * Push the continuation task to the front of the execution queue and attempt
+                                 * to schedule it immediately
+                                 */
+
+                                if( om::areEqual( continuationTask, task ) )
+                                {
+                                    moveExecutingTaskToPendingQueue( taskInfo );
+                                    padExecutingQueueNothrow();
+
+                                    continuationIsSelf = true;
+                                }
+                                else
+                                {
+                                    pushInternalNoLock< false /* isBack */ >( continuationTask, false /* dontSchedule */ );
+                                }
+                            }
+                        }
+                        catch( std::exception& )
+                        {
+                            continuationException = std::current_exception();
+                        }
+
+                        if( continuationException )
+                        {
+                            /*
+                             * Something with creating and scheduling the continuation task has
+                             * failed
+                             *
+                             * We treat this as a regular task failure as creating and scheduling
+                             * the continuation is considered as part of the task itself
+                             */
+
+                            task -> exception( continuationException );
+                        }
+
+                        if( ! continuationIsSelf )
+                        {
+                            --m_executingCount;
+
+                            task -> setCompletedState();
+
+                            if( keepTask( task ) )
+                            {
+                                moveTaskToReadyQueue( taskInfo );
+
+                                onNotify = getEventNotifyCB( ExecutionQueueNotify::TaskReady, task );
                             }
                             else
                             {
-                                pushInternalNoLock< false /* isBack */ >( continuationTask, false /* dontSchedule */ );
+                                unlinkAndDestroy( taskInfo );
+
+                                onNotify = getEventNotifyCB( ExecutionQueueNotify::TaskDiscarded, task );
                             }
+
+                            padExecutingQueueNothrow();
+
+                            m_cvReady.notify_all();
                         }
                     }
-                    catch( std::exception& )
+
                     {
-                        continuationException = std::current_exception();
-                    }
+                        BL_MUTEX_GUARD( m_lock );
 
-                    if( continuationException )
-                    {
-                        /*
-                         * Something with creating and scheduling the continuation task has
-                         * failed
-                         *
-                         * We treat this as a regular task failure as creating and scheduling
-                         * the continuation is considered as part of the task itself
-                         */
-
-                        task -> exception( continuationException );
-                    }
-
-                    if( ! continuationIsSelf )
-                    {
-                        --m_executingCount;
-
-                        task -> setCompletedState();
-
-                        if( keepTask( task ) )
+                        if( m_pending.empty() && m_executing.empty() )
                         {
-                            moveTaskToReadyQueue( taskInfo );
+                            BL_ASSERT( 0U == m_executingCount );
 
-                            onNotify = getEventNotifyCB( ExecutionQueueNotify::TaskReady, task );
+                            onNotifyAllCompleted = getEventNotifyCB(
+                                ExecutionQueueNotify::AllTasksCompleted,
+                                om::ObjPtrCopyable< Task >::acquireRef( nullptr )
+                                );
                         }
-                        else
-                        {
-                            unlinkAndDestroy( taskInfo );
-
-                            onNotify = getEventNotifyCB( ExecutionQueueNotify::TaskDiscarded, task );
-                        }
-
-                        padExecutingQueueNothrow();
-
-                        m_cvReady.notify_all();
                     }
                 }
+                /*
+                 * IMPORTANT: Callbacks are invoked outside of m_lockEvents to prevent deadlock
+                 * if the callbacks attempt to call back into the ExecutionQueue (e.g., push_back,
+                 * flush, wait, etc.). This means callbacks may execute concurrently with other
+                 * queue operations, so they must be thread-safe.
+                 */
 
                 if( onNotify )
                 {
                     onNotify();
-                }
-
-                {
-                    BL_MUTEX_GUARD( m_lock );
-
-                    if( m_pending.empty() && m_executing.empty() )
-                    {
-                        BL_ASSERT( 0U == m_executingCount );
-
-                        onNotifyAllCompleted = getEventNotifyCB(
-                            ExecutionQueueNotify::AllTasksCompleted,
-                            om::ObjPtrCopyable< Task >::acquireRef( nullptr )
-                            );
-                    }
                 }
 
                 if( onNotifyAllCompleted )
