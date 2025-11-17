@@ -366,6 +366,8 @@ namespace bl
             {
                 cpp::void_callback_noexcept_t onNotify;
                 cpp::void_callback_noexcept_t onNotifyAllCompleted;
+                std::exception_ptr continuationException;
+                bool shouldSetCompletedState = false;
 
                 {
                     BL_MUTEX_GUARD( m_lockEvents );
@@ -382,8 +384,6 @@ namespace bl
 
                             return;
                         }
-
-                        std::exception_ptr continuationException;
 
                         bool continuationIsSelf = false;
                         auto taskInfo = getTaskInfoPtrFromTask( task.get() );
@@ -417,24 +417,23 @@ namespace bl
                             continuationException = std::current_exception();
                         }
 
-                        if( continuationException )
-                        {
-                            /*
-                             * Something with creating and scheduling the continuation task has
-                             * failed
-                             *
-                             * We treat this as a regular task failure as creating and scheduling
-                             * the continuation is considered as part of the task itself
-                             */
-
-                            task -> exception( continuationException );
-                        }
+                        /*
+                         * Note: We do NOT call task->exception() here while holding m_lock,
+                         * as task->exception() acquires the task lock, which would violate
+                         * the lock ordering invariant (queue lock before task lock).
+                         * Instead, we capture the exception and set it after releasing m_lock.
+                         */
 
                         if( ! continuationIsSelf )
                         {
                             --m_executingCount;
 
-                            task -> setCompletedState();
+                            /*
+                             * Mark that we need to set completed state on the task.
+                             * We'll do this after releasing m_lock to avoid holding
+                             * queue lock while calling task methods.
+                             */
+                            shouldSetCompletedState = true;
 
                             if( keepTask( task ) )
                             {
@@ -453,6 +452,34 @@ namespace bl
 
                             m_cvReady.notify_all();
                         }
+                    }
+
+                    /*
+                     * Set task exception and completed state OUTSIDE of m_lock to avoid
+                     * lock ordering issues (these methods may acquire task->m_lock).
+                     *
+                     * This is safe because:
+                     * 1. The task has been moved to ready queue or destroyed
+                     * 2. We still hold m_lockEvents to serialize onReady() calls
+                     * 3. The task state is only modified by the owning execution queue
+                     */
+
+                    if( continuationException )
+                    {
+                        /*
+                         * Something with creating and scheduling the continuation task has
+                         * failed
+                         *
+                         * We treat this as a regular task failure as creating and scheduling
+                         * the continuation is considered as part of the task itself
+                         */
+
+                        task -> exception( continuationException );
+                    }
+
+                    if( shouldSetCompletedState )
+                    {
+                        task -> setCompletedState();
                     }
 
                     {
