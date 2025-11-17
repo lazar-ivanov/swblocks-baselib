@@ -197,6 +197,14 @@ else
                 # TODO: temporary to make devenv4 work on Ubuntu 22.04
                 OS := ub18
             endif
+        else ifeq (24.04,$(findstring 24.04,$(LSB_RELEASE_VERSION)))
+            ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/toolchain-gcc/11.1.0)","")
+                # This is devenv5; use ubuntu 22.04 binaries for now
+                OS := ub20
+            else
+                # TODO: temporary to make devenv4 work on Ubuntu 22.04
+                OS := ub18
+            endif
         else
             $(error Unsupported Ubuntu Version)
         endif
