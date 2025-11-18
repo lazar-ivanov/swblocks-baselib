@@ -134,6 +134,14 @@ else
       BL_PLAT_IS_DARWIN := 1
       $(info Detected OS is $(UNAME_MERGED) - i.e. mscOS Ventura; devenv5)
     endif
+  else ifeq (Darwin-24.,$(findstring Darwin-24.,$(UNAME_MERGED)))
+    ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/boost/1.84.0)","")
+      # for macOS Sequoia and devenv5 ; we will use the binaries for Big Sur
+      OS := d22
+      BL_PROP_PLAT := darwin-d22
+      BL_PLAT_IS_DARWIN := 1
+      $(info Detected OS is $(UNAME_MERGED) - i.e. mscOS Sequoia; devenv5)
+    endif
   else ifeq (el5,$(findstring el5,$(UNAME_R)))
     OS := rhel5
     BL_PROP_PLAT := linux-rhel5
