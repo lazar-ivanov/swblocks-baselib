@@ -516,6 +516,25 @@ namespace bl
 
             void padExecutingQueueNothrow() NOEXCEPT
             {
+                /*
+                 * LOCK ORDERING & DEADLOCK PREVENTION:
+                 *
+                 * This function is called while holding m_lock and calls task->scheduleNothrow()
+                 * which acquires task->m_lock, creating the lock order: queue->m_lock → task->m_lock.
+                 * This is PERMITTED per the documented lock ordering (TaskBase.h:52-59).
+                 *
+                 * CRITICAL: To prevent deadlock, task implementations MUST NEVER call back into
+                 * this execution queue (e.g., push_back, wait, flush) while holding task->m_lock.
+                 * This requirement is documented in TaskBase.h:65-71.
+                 *
+                 * Violating this creates a circular wait deadlock:
+                 *   Thread A: task->m_lock → queue->m_lock [BLOCKED waiting for queue lock]
+                 *   Thread B: queue->m_lock → task->m_lock [BLOCKED waiting for task lock]
+                 *
+                 * Task developers: Always release your task lock before calling queue methods.
+                 * Use the notifyReady() helper which handles lock release correctly.
+                 */
+
                 BL_NOEXCEPT_BEGIN()
 
                 while( ! m_pending.empty() )
