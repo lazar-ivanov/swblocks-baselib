@@ -334,7 +334,7 @@ namespace bl
             {
                 SerializationContextBase context( std::move( jsonObject ) );
 
-                auto dataObject = T::template createInstance();
+                auto dataObject = T::template createInstance<>();
 
                 dataObject -> serializeProperties( context );
 

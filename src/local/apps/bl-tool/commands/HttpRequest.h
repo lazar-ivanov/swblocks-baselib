@@ -162,7 +162,7 @@ namespace bltool
                             }
                             );
 
-                        const auto taskImpl = IMPL::template createInstance(
+                        const auto taskImpl = IMPL::template createInstance<>(
                             cpp::copy( m_host.getValue() ),
                             port,
                             str::uriEncodeUnsafeOnly( m_path.getValue(), false /* escapePercent */ ),

@@ -828,7 +828,7 @@ namespace bl
                 SAA_in_opt              const std::shared_ptr< tasks::ExecutionQueue >&     externalTasksQueue = nullptr
                 )
                 :
-                m_operationsPool( pool_operations_t::template createInstance() ),
+                m_operationsPool( pool_operations_t::template createInstance<>() ),
                 m_outstandingCalls( 0U ),
                 m_externalTasksQueue( externalTasksQueue )
             {
@@ -1016,7 +1016,7 @@ namespace bl
                 }
                 else
                 {
-                    task = ExecutorTaskImpl::template createInstance( *this );
+                    task = ExecutorTaskImpl::template createInstance<>( *this );
                     topTask = om::qi< tasks::Task >( task );
                 }
 
@@ -1140,7 +1140,7 @@ namespace bl
 
                 if( ! operation )
                 {
-                    operation = ExecutorAsyncOperationImpl::template createInstance( *this );
+                    operation = ExecutorAsyncOperationImpl::template createInstance<>( *this );
                 }
 
                 BL_ASSERT( ! operation -> operationState() );

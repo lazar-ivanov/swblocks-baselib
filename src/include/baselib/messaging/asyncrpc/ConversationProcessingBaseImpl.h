@@ -198,11 +198,11 @@ namespace bl
             static auto createErrorPayloadMessage( SAA_in const std::exception_ptr& eptr )
                 -> om::ObjPtr< payload_t >
             {
-                auto response = response_t::template createInstance();
+                auto response = response_t::template createInstance<>();
 
                 response -> serverErrorJson( ASYNCRPCPOLICY::exceptionToServerErrorJson( eptr ) );
 
-                auto payload = payload_t::template createInstance();
+                auto payload = payload_t::template createInstance<>();
                 payload -> asyncRpcResponse( std::move( response ) );
 
                 return payload;
@@ -233,7 +233,7 @@ namespace bl
 
             void defaultProcessRequest( SAA_in const std::string& processorName )
             {
-                auto asyncRpcResponse = response_t::template createInstance();
+                auto asyncRpcResponse = response_t::template createInstance<>();
 
                 utils::tryCatchLog(
                     [ & ]() -> std::string
@@ -267,7 +267,7 @@ namespace bl
                     } /* cbOnError */
                     );
 
-                const auto responsePayload = payload_t::template createInstance();
+                const auto responsePayload = payload_t::template createInstance<>();
 
                 responsePayload -> asyncRpcResponse( std::move( asyncRpcResponse ) );
 

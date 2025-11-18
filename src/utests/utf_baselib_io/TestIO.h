@@ -101,7 +101,7 @@ namespace
             const auto backendImpl = BackendImplTestImpl::createInstance();
 
             const auto asyncWrapper = om::lockDisposable(
-                async_wrapper_t::template createInstance(
+                async_wrapper_t::template createInstance<>(
                     om::qi< backend_interface_t >( backendImpl ) /* writeBackend */,
                     om::qi< backend_interface_t >( backendImpl ) /* readBackend */,
                     test::UtfArgsParser::threadsCount(),
@@ -112,7 +112,7 @@ namespace
                 );
 
             {
-                const auto acceptor = Acceptor::template createInstance(
+                const auto acceptor = Acceptor::template createInstance<>(
                     controlToken,
                     dataBlocksPool,
                     "localhost",
@@ -163,7 +163,7 @@ namespace
                 const auto backendImpl = BackendImplTestImpl::createInstance();
 
                 const auto backend = om::lockDisposable(
-                    async_wrapper_t::template createInstance(
+                    async_wrapper_t::template createInstance<>(
                         om::qi< backend_interface_t >( backendImpl ) /* writeBackend */,
                         om::qi< backend_interface_t >( backendImpl ) /* readBackend */,
                         test::UtfArgsParser::threadsCount(),
@@ -1378,7 +1378,7 @@ namespace
                     );
 
                 {
-                    const auto acceptor = Acceptor::template createInstance(
+                    const auto acceptor = Acceptor::template createInstance<>(
                         controlToken,
                         dataBlocksPool,
                         "localhost",
@@ -1516,7 +1516,7 @@ namespace
                 const auto backendImpl = BackendImplTestImpl::createInstance();
 
                 const auto backend = om::lockDisposable(
-                    AsyncWrapper::template createInstance(
+                    AsyncWrapper::template createInstance<>(
                         om::qi< backend_interface_t >( backendImpl ) /* writeBackend */,
                         om::qi< backend_interface_t >( backendImpl ) /* readBackend */,
                         test::UtfArgsParser::threadsCount(),
@@ -1678,7 +1678,7 @@ namespace
                                     for( std::size_t i = 0U; i < maxConnections; ++i )
                                     {
                                         const auto connector =
-                                            Connector::template createInstance( "localhost", 28100 );
+                                            Connector::template createInstance<>( "localhost", 28100 );
 
                                         const auto taskConnector = om::qi< tasks::Task >( connector );
                                         eqLocal -> push_back( taskConnector );

@@ -166,7 +166,7 @@ namespace bl
                 )
                 :
                 m_acceptor(
-                    ACCEPTOR::template createInstance(
+                    ACCEPTOR::template createInstance<>(
                         controlToken,
                         dataBlocksPool,
                         BL_PARAM_FWD( host ),

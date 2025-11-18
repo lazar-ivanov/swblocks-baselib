@@ -209,7 +209,7 @@ namespace utest
                 request
                     << content;
 
-                const auto taskImpl = TASKIMPL::template createInstance(
+                const auto taskImpl = TASKIMPL::template createInstance<>(
                     cpp::copy( test::UtfArgsParser::host() ),
                     test::UtfArgsParser::port(),
                     uri, /* URI */
@@ -350,7 +350,7 @@ namespace utest
                         backend = ServerBackendProcessingImplTest::createInstance< httpserver::ServerBackendProcessing >();
                     }
 
-                    const auto acceptor = SERVERIMPL::template createInstance(
+                    const auto acceptor = SERVERIMPL::template createInstance<>(
                         BL_PARAM_FWD( backend ),
                         controlToken,
                         "0.0.0.0"                                           /* host */,

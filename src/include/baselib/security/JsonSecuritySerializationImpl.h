@@ -50,7 +50,7 @@ namespace bl
                 -> om::ObjPtr< RsaPublicKey >
             {
                 const auto& rsaKeyImpl = rsaKey -> get();
-                auto rsaPublicKey = RsaPublicKey::template createInstance();
+                auto rsaPublicKey = RsaPublicKey::template createInstance<>();
 
                 rsaPublicKey -> exponent( BignumBase64Url::bignumToBase64Url( rsaKeyImpl.e ) );
                 rsaPublicKey -> modulus( BignumBase64Url::bignumToBase64Url( rsaKeyImpl.n ) );
@@ -72,7 +72,7 @@ namespace bl
                 -> om::ObjPtr< RsaPrivateKey >
             {
                 const auto& rsaKeyImpl = rsaKey -> get();
-                auto rsaPrivateKey = RsaPrivateKey::template createInstance();
+                auto rsaPrivateKey = RsaPrivateKey::template createInstance<>();
 
                 rsaPrivateKey -> exponent( BignumBase64Url::bignumToBase64Url( rsaKeyImpl.e ) );
                 rsaPrivateKey -> modulus( BignumBase64Url::bignumToBase64Url( rsaKeyImpl.n ) );
