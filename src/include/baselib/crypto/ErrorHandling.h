@@ -107,7 +107,18 @@ namespace bl
 
                 static void loadErrorStrings()
                 {
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+                    /*
+                     * OpenSSL 3.x+: SSL_load_error_strings() is deprecated
+                     * Error strings are loaded automatically
+                     */
+                    ( void ) ::OPENSSL_init_ssl( OPENSSL_INIT_LOAD_SSL_STRINGS | OPENSSL_INIT_LOAD_CRYPTO_STRINGS, nullptr );
+#else
+                    /*
+                     * OpenSSL 1.1.x: Use SSL_load_error_strings()
+                     */
                     ( void ) ::SSL_load_error_strings();
+#endif
                 }
             };
 

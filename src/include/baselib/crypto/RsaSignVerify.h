@@ -25,6 +25,23 @@
 #include <openssl/rsa.h>
 #include <openssl/sha.h>
 
+/*
+ * OpenSSL 3.x has deprecated the legacy RSA APIs in favor of provider-based APIs.
+ * We suppress these warnings as we continue to use the legacy (but still supported) APIs.
+ */
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+    #if defined(__clang__)
+        #pragma clang diagnostic push
+        #pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    #elif defined(__GNUC__)
+        #pragma GCC diagnostic push
+        #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    #elif defined(_MSC_VER)
+        #pragma warning(push)
+        #pragma warning(disable: 4996)
+    #endif
+#endif
+
 namespace bl
 {
     namespace crypto
@@ -155,5 +172,18 @@ namespace bl
     } // crypto
 
 } // bl
+
+/*
+ * Restore warning settings after OpenSSL 3.x deprecation suppression
+ */
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+    #if defined(__clang__)
+        #pragma clang diagnostic pop
+    #elif defined(__GNUC__)
+        #pragma GCC diagnostic pop
+    #elif defined(_MSC_VER)
+        #pragma warning(pop)
+    #endif
+#endif
 
 #endif /* __BL_CRYPTO_RSASIGNVERIFY_H_ */

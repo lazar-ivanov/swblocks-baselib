@@ -22,6 +22,23 @@
 #include <baselib/core/StringUtils.h>
 #include <baselib/core/BaseIncludes.h>
 
+/*
+ * OpenSSL 3.x has deprecated the legacy RSA APIs in favor of provider-based APIs.
+ * We suppress these warnings as we continue to use the legacy (but still supported) APIs.
+ */
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+    #if defined(__clang__)
+        #pragma clang diagnostic push
+        #pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    #elif defined(__GNUC__)
+        #pragma GCC diagnostic push
+        #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    #elif defined(_MSC_VER)
+        #pragma warning(push)
+        #pragma warning(disable: 4996)
+    #endif
+#endif
+
 namespace bl
 {
     namespace security
@@ -52,8 +69,23 @@ namespace bl
                 const auto& rsaKeyImpl = rsaKey -> get();
                 auto rsaPublicKey = RsaPublicKey::template createInstance<>();
 
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+                /*
+                 * OpenSSL 3.x+: Use RSA_get0_key() to access components
+                 */
+                const BIGNUM* n = nullptr;
+                const BIGNUM* e = nullptr;
+                const BIGNUM* d = nullptr;
+                ( void ) ::RSA_get0_key( &rsaKeyImpl, &n, &e, &d );
+
+                BL_CHK_CRYPTO_API_NM( n && e );
+
+                rsaPublicKey -> exponent( BignumBase64Url::bignumToBase64Url( e ) );
+                rsaPublicKey -> modulus( BignumBase64Url::bignumToBase64Url( n ) );
+#else
                 rsaPublicKey -> exponent( BignumBase64Url::bignumToBase64Url( rsaKeyImpl.e ) );
                 rsaPublicKey -> modulus( BignumBase64Url::bignumToBase64Url( rsaKeyImpl.n ) );
+#endif
 
                 rsaPublicKey -> keyType( KeyType::toString( KeyType::RSA ) );
                 rsaPublicKey -> algorithm( SigningAlgorithm::toString( SigningAlgorithm::RS512 ) );
@@ -74,6 +106,55 @@ namespace bl
                 const auto& rsaKeyImpl = rsaKey -> get();
                 auto rsaPrivateKey = RsaPrivateKey::template createInstance<>();
 
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+                /*
+                 * OpenSSL 3.x+: Use RSA_get0_* functions to access components
+                 */
+                const BIGNUM* n = nullptr;
+                const BIGNUM* e = nullptr;
+                const BIGNUM* d = nullptr;
+                ( void ) ::RSA_get0_key( &rsaKeyImpl, &n, &e, &d );
+
+                BL_CHK_CRYPTO_API_NM( n && e && d );
+
+                rsaPrivateKey -> exponent( BignumBase64Url::bignumToBase64Url( e ) );
+                rsaPrivateKey -> modulus( BignumBase64Url::bignumToBase64Url( n ) );
+                rsaPrivateKey -> privateExponent( BignumBase64Url::bignumToBase64Url( d ) );
+
+                const BIGNUM* p = nullptr;
+                const BIGNUM* q = nullptr;
+                ( void ) ::RSA_get0_factors( &rsaKeyImpl, &p, &q );
+
+                if( p )
+                {
+                    rsaPrivateKey -> firstPrimeFactor( BignumBase64Url::bignumToBase64Url( p ) );
+                }
+
+                if( q )
+                {
+                    rsaPrivateKey -> secondPrimeFactor( BignumBase64Url::bignumToBase64Url( q ) );
+                }
+
+                const BIGNUM* dmp1 = nullptr;
+                const BIGNUM* dmq1 = nullptr;
+                const BIGNUM* iqmp = nullptr;
+                ( void ) ::RSA_get0_crt_params( &rsaKeyImpl, &dmp1, &dmq1, &iqmp );
+
+                if( dmp1 )
+                {
+                    rsaPrivateKey -> firstFactorCrtExponent( BignumBase64Url::bignumToBase64Url( dmp1 ) );
+                }
+
+                if( dmq1 )
+                {
+                    rsaPrivateKey -> secondFactorCrtExponent( BignumBase64Url::bignumToBase64Url( dmq1 ) );
+                }
+
+                if( iqmp )
+                {
+                    rsaPrivateKey -> firstCrtCoefficient( BignumBase64Url::bignumToBase64Url( iqmp ) );
+                }
+#else
                 rsaPrivateKey -> exponent( BignumBase64Url::bignumToBase64Url( rsaKeyImpl.e ) );
                 rsaPrivateKey -> modulus( BignumBase64Url::bignumToBase64Url( rsaKeyImpl.n ) );
                 rsaPrivateKey -> privateExponent( BignumBase64Url::bignumToBase64Url( rsaKeyImpl.d ) );
@@ -102,6 +183,7 @@ namespace bl
                 {
                     rsaPrivateKey -> firstCrtCoefficient( BignumBase64Url::bignumToBase64Url( rsaKeyImpl.iqmp ) );
                 }
+#endif
 
                 rsaPrivateKey -> keyType( KeyType::toString( KeyType::RSA ) );
                 rsaPrivateKey -> algorithm( SigningAlgorithm::toString( SigningAlgorithm::RS512 ) );
@@ -124,6 +206,27 @@ namespace bl
                 const auto buffer = crypto::bio_ptr_t::attach( ::BIO_new( ::BIO_s_mem() ) );
                 BL_CHK_CRYPTO_API_NM( buffer );
 
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+                /*
+                 * OpenSSL 3.x+: Use EVP_PKEY-based PEM write functions
+                 * First convert RSA to EVP_PKEY
+                 */
+                auto pkey = crypto::evppkey_ptr_t::attach( ::EVP_PKEY_new() );
+                BL_CHK_CRYPTO_API_NM( pkey );
+                BL_CHK_CRYPTO_API_NM( ::EVP_PKEY_set1_RSA( pkey.get(), &rsaKey -> get() ) );
+
+                BL_CHK_CRYPTO_API_NM(
+                    ::PEM_write_bio_PrivateKey(
+                        buffer.get(),
+                        pkey.get(),
+                        password.empty() ? nullptr : ::EVP_des_ede3_cbc()       /* Triple DES encryption */,
+                        nullptr                                                 /* Key data */,
+                        0                                                       /* Key length */,
+                        nullptr                                                 /* Password callback */,
+                        password.empty() ? nullptr : const_cast< char* >( password.c_str() )
+                        )
+                    );
+#else
                 BL_CHK_CRYPTO_API_NM(
                     ::PEM_write_bio_RSAPrivateKey(
                         buffer.get(),
@@ -135,6 +238,7 @@ namespace bl
                         password.empty() ? nullptr : const_cast< char* >( password.c_str() )
                         )
                     );
+#endif
 
                 return getBufferAsString( buffer );
             }
@@ -145,12 +249,28 @@ namespace bl
                 const auto buffer = crypto::bio_ptr_t::attach( ::BIO_new( ::BIO_s_mem() ) );
                 BL_CHK_CRYPTO_API_NM( buffer );
 
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+                /*
+                 * OpenSSL 3.x+: Use EVP_PKEY-based PEM write functions
+                 */
+                auto pkey = crypto::evppkey_ptr_t::attach( ::EVP_PKEY_new() );
+                BL_CHK_CRYPTO_API_NM( pkey );
+                BL_CHK_CRYPTO_API_NM( ::EVP_PKEY_set1_RSA( pkey.get(), &rsaKey -> get() ) );
+
+                BL_CHK_CRYPTO_API_NM(
+                    ::PEM_write_bio_PUBKEY(
+                        buffer.get(),
+                        pkey.get()
+                        )
+                    );
+#else
                 BL_CHK_CRYPTO_API_NM(
                     ::PEM_write_bio_RSAPublicKey(
                         buffer.get(),
                         &rsaKey -> get()
                         )
                     );
+#endif
 
                 return getBufferAsString( buffer );
             }
@@ -161,8 +281,21 @@ namespace bl
                 auto result = crypto::RsaKey::template createInstance< crypto::RsaKey >();
                 auto& rsa = result -> get();
 
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+                /*
+                 * OpenSSL 3.x+: Use RSA_set0_key() to set components
+                 * RSA_set0_key takes ownership on success, so release from smart pointers
+                 */
+                auto n = BignumBase64Url::base64UrlToBignum( dataObject -> modulus() );
+                auto e = BignumBase64Url::base64UrlToBignum( dataObject -> exponent() );
+
+                BL_CHK_CRYPTO_API_NM( ::RSA_set0_key( &rsa, n.get(), e.get(), nullptr ) );
+                ( void ) n.release();
+                ( void ) e.release();
+#else
                 loadRequiredProperty( dataObject -> exponent(), rsa, &RSA::e );
                 loadRequiredProperty( dataObject -> modulus(), rsa, &RSA::n );
+#endif
 
                 return result;
             }
@@ -183,6 +316,44 @@ namespace bl
 
                 dataObject -> keyType( KeyType::toString( KeyType::RSA ) );
 
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+                /*
+                 * OpenSSL 3.x+: Use RSA_set0_* functions to set components
+                 * RSA_set0_key takes ownership on success, so release from smart pointers
+                 */
+                auto n = BignumBase64Url::base64UrlToBignum( dataObject -> modulus() );
+                auto e = BignumBase64Url::base64UrlToBignum( dataObject -> exponent() );
+                auto d = BignumBase64Url::base64UrlToBignum( dataObject -> privateExponent() );
+
+                BL_CHK_CRYPTO_API_NM( ::RSA_set0_key( &rsa, n.get(), e.get(), d.get() ) );
+                ( void ) n.release();
+                ( void ) e.release();
+                ( void ) d.release();
+
+                if( ! dataObject -> firstPrimeFactor().empty() && ! dataObject -> secondPrimeFactor().empty() )
+                {
+                    auto p = BignumBase64Url::base64UrlToBignum( dataObject -> firstPrimeFactor() );
+                    auto q = BignumBase64Url::base64UrlToBignum( dataObject -> secondPrimeFactor() );
+
+                    BL_CHK_CRYPTO_API_NM( ::RSA_set0_factors( &rsa, p.get(), q.get() ) );
+                    ( void ) p.release();
+                    ( void ) q.release();
+                }
+
+                if( ! dataObject -> firstFactorCrtExponent().empty() &&
+                    ! dataObject -> secondFactorCrtExponent().empty() &&
+                    ! dataObject -> firstCrtCoefficient().empty() )
+                {
+                    auto dmp1 = BignumBase64Url::base64UrlToBignum( dataObject -> firstFactorCrtExponent() );
+                    auto dmq1 = BignumBase64Url::base64UrlToBignum( dataObject -> secondFactorCrtExponent() );
+                    auto iqmp = BignumBase64Url::base64UrlToBignum( dataObject -> firstCrtCoefficient() );
+
+                    BL_CHK_CRYPTO_API_NM( ::RSA_set0_crt_params( &rsa, dmp1.get(), dmq1.get(), iqmp.get() ) );
+                    ( void ) dmp1.release();
+                    ( void ) dmq1.release();
+                    ( void ) iqmp.release();
+                }
+#else
                 loadRequiredProperty( dataObject -> exponent(), rsa, &::RSA::e );
                 loadRequiredProperty( dataObject -> modulus(), rsa, &::RSA::n );
                 loadRequiredProperty( dataObject -> privateExponent(), rsa, &::RSA::d );
@@ -192,6 +363,7 @@ namespace bl
                 loadOptionalProperty( dataObject -> firstFactorCrtExponent(), rsa, &::RSA::dmp1 );
                 loadOptionalProperty( dataObject -> secondFactorCrtExponent(), rsa, &::RSA::dmq1 );
                 loadOptionalProperty( dataObject -> firstCrtCoefficient(), rsa, &::RSA::iqmp );
+#endif
 
                 return result;
             }
@@ -238,6 +410,24 @@ namespace bl
                     passwordBytes = const_cast< char* >( randomPassword.c_str() );
                 }
 
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+                /*
+                 * OpenSSL 3.x+: Use EVP_PKEY-based PEM read, then extract RSA
+                 */
+                auto pkeyPtr = crypto::evppkey_ptr_t::attach(
+                    ::PEM_read_bio_PrivateKey(
+                        buffer.get(),
+                        nullptr                 /* EVP_PKEY */,
+                        nullptr                 /* Password callback */,
+                        passwordBytes
+                        )
+                    );
+
+                BL_CHK_CRYPTO_API_NM( pkeyPtr );
+
+                auto rsa = crypto::rsakey_ptr_t::attach( ::EVP_PKEY_get1_RSA( pkeyPtr.get() ) );
+                BL_CHK_CRYPTO_API_NM( rsa );
+#else
                 auto rsa = crypto::rsakey_ptr_t::attach(
                     ::PEM_read_bio_RSAPrivateKey(
                         buffer.get(),
@@ -248,6 +438,7 @@ namespace bl
                     );
 
                 BL_CHK_CRYPTO_API_NM( rsa );
+#endif
 
                 return crypto::RsaKey::template createInstance< crypto::RsaKey >( std::move( rsa ) );
             }
@@ -286,6 +477,24 @@ namespace bl
                     passwordBytes = const_cast< char* >( randomPassword.c_str() );
                 }
 
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+                /*
+                 * OpenSSL 3.x+: Use EVP_PKEY-based PEM read, then extract RSA
+                 */
+                auto pkeyPtr = crypto::evppkey_ptr_t::attach(
+                    ::PEM_read_bio_PUBKEY(
+                        buffer.get(),
+                        nullptr                 /* EVP_PKEY */,
+                        nullptr                 /* Password callback */,
+                        passwordBytes
+                        )
+                    );
+
+                BL_CHK_CRYPTO_API_NM( pkeyPtr );
+
+                auto rsa = crypto::rsakey_ptr_t::attach( ::EVP_PKEY_get1_RSA( pkeyPtr.get() ) );
+                BL_CHK_CRYPTO_API_NM( rsa );
+#else
                 auto rsa = crypto::rsakey_ptr_t::attach(
                     ::PEM_read_bio_RSAPublicKey(
                         buffer.get(),
@@ -296,6 +505,7 @@ namespace bl
                     );
 
                 BL_CHK_CRYPTO_API_NM( rsa );
+#endif
 
                 return crypto::RsaKey::template createInstance< crypto::RsaKey >( std::move( rsa ) );
             }
@@ -321,6 +531,7 @@ namespace bl
                 )
             {
                 const auto bignum = BignumBase64Url::base64UrlToBignum( property );
+
                 rsa.*member = ::BN_dup( bignum.get() );
 
                 BL_CHK_CRYPTO_API_NM( rsa.*member );
@@ -342,5 +553,18 @@ namespace bl
     } // security
 
 } // bl
+
+/*
+ * Restore warning settings after OpenSSL 3.x deprecation suppression
+ */
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+    #if defined(__clang__)
+        #pragma clang diagnostic pop
+    #elif defined(__GNUC__)
+        #pragma GCC diagnostic pop
+    #elif defined(_MSC_VER)
+        #pragma warning(pop)
+    #endif
+#endif
 
 #endif /* __BL_SECURITY_JSONSECURITYSERIALIZATIONIMPL_H_ */

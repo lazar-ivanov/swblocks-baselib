@@ -60,10 +60,34 @@ namespace
 }
 #endif
 
-#if OPENSSL_VERSION_NUMBER >= 0x101010bfL
-#include <crypto/rsa/rsa_local.h>
+/*
+ * OpenSSL 3.x+ has made RSA structure completely opaque and internal headers
+ * are not available. The code should use only public accessor functions like
+ * RSA_get0_key(), RSA_get0_factors(), etc.
+ *
+ * For OpenSSL 1.1.x, we include the internal headers to access RSA internals.
+ *
+ * OpenSSL 3.x has deprecated the legacy RSA APIs in favor of provider-based APIs.
+ * We suppress these warnings as we continue to use the legacy (but still supported) APIs.
+ * This allows for a gradual migration to the new provider-based architecture.
+ */
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+    /* OpenSSL 3.x+: RSA is fully opaque, no internal headers available */
+    /* Suppress deprecation warnings for legacy RSA APIs used in this file */
+    #if defined(__clang__)
+        #pragma clang diagnostic push
+        #pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    #elif defined(__GNUC__)
+        #pragma GCC diagnostic push
+        #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    #elif defined(_MSC_VER)
+        #pragma warning(push)
+        #pragma warning(disable: 4996)
+    #endif
+#elif OPENSSL_VERSION_NUMBER >= 0x101010bfL
+    #include <crypto/rsa/rsa_local.h>
 #elif OPENSSL_VERSION_NUMBER >= 0x1010004fL
-#include <crypto/rsa/rsa_locl.h>
+    #include <crypto/rsa/rsa_locl.h>
 #endif
 
 namespace bl
@@ -145,5 +169,18 @@ namespace bl
     } // crypto
 
 } // bl
+
+/*
+ * Restore warning settings after OpenSSL 3.x deprecation suppression
+ */
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+    #if defined(__clang__)
+        #pragma clang diagnostic pop
+    #elif defined(__GNUC__)
+        #pragma GCC diagnostic pop
+    #elif defined(_MSC_VER)
+        #pragma warning(pop)
+    #endif
+#endif
 
 #endif /* __BL_CRYPTO_OPENSSLTYPES_H_ */

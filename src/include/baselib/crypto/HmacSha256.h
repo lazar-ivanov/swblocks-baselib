@@ -53,6 +53,48 @@ namespace bl
                     unsigned char messageDigest[ SHA256_DIGEST_LENGTH ];
                     unsigned int digestLength = sizeof( messageDigest );
 
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+                    /*
+                     * OpenSSL 3.x+: HMAC_CTX is opaque and must be heap-allocated
+                     */
+                    ::HMAC_CTX* ctx = ::HMAC_CTX_new();
+                    BL_CHK_CRYPTO_API_NM( ctx );
+
+                    BL_SCOPE_EXIT(
+                        {
+                            ::HMAC_CTX_free( ctx );
+                        }
+                        );
+
+                    BL_CHK_CRYPTO_API_NM(
+                        ::HMAC_Init_ex(
+                            ctx,
+                            key.c_str(),
+                            static_cast< int >( key.length() ),
+                            EVP_sha256(),
+                            nullptr
+                            )
+                        );
+
+                    BL_CHK_CRYPTO_API_NM(
+                        ::HMAC_Update(
+                            ctx,
+                            reinterpret_cast< const unsigned char* >( message.c_str() ),
+                            message.length()
+                            )
+                        );
+
+                    BL_CHK_CRYPTO_API_NM(
+                        ::HMAC_Final(
+                            ctx,
+                            messageDigest,
+                            &digestLength
+                            )
+                        );
+#else
+                    /*
+                     * OpenSSL 1.1.x: HMAC_CTX can be stack-allocated
+                     */
                     ::HMAC_CTX ctx;
 
                     ( void ) ::HMAC_CTX_init( &ctx );
@@ -88,6 +130,7 @@ namespace bl
                             &digestLength
                             )
                         );
+#endif
 
                     cpp::SafeOutputStringStream stream;
 

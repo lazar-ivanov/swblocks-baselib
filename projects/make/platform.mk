@@ -128,7 +128,15 @@ else
     endif
   else ifeq (Darwin-22.,$(findstring Darwin-22.,$(UNAME_MERGED)))
     ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/boost/1.84.0)","")
-      # for macOS Ventura and devenv5 ; we will use the binaries for Big Sur
+      # for macOS Ventura and devenv6
+      OS := d22
+      BL_PROP_PLAT := darwin-d22
+      BL_PLAT_IS_DARWIN := 1
+      $(info Detected OS is $(UNAME_MERGED) - i.e. mscOS Ventura; devenv5)
+    endif
+  else ifeq (Darwin-23.,$(findstring Darwin-23.,$(UNAME_MERGED)))
+    ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/boost/1.84.0)","")
+      # for macOS Sonoma and devenv6
       OS := d22
       BL_PROP_PLAT := darwin-d22
       BL_PLAT_IS_DARWIN := 1
@@ -136,7 +144,7 @@ else
     endif
   else ifeq (Darwin-24.,$(findstring Darwin-24.,$(UNAME_MERGED)))
     ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/boost/1.84.0)","")
-      # for macOS Sequoia and devenv5 ; we will use the binaries for Big Sur
+      # for macOS Sequoia and devenv6
       OS := d22
       BL_PROP_PLAT := darwin-d22
       BL_PLAT_IS_DARWIN := 1

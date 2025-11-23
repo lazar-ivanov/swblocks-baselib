@@ -23,6 +23,23 @@
 
 #include <baselib/core/BaseIncludes.h>
 
+/*
+ * OpenSSL 3.x has deprecated the legacy RSA APIs in favor of provider-based APIs.
+ * We suppress these warnings as we continue to use the legacy (but still supported) APIs.
+ */
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+    #if defined(__clang__)
+        #pragma clang diagnostic push
+        #pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    #elif defined(__GNUC__)
+        #pragma GCC diagnostic push
+        #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    #elif defined(_MSC_VER)
+        #pragma warning(push)
+        #pragma warning(disable: 4996)
+    #endif
+#endif
+
 namespace bl
 {
     namespace crypto
@@ -54,16 +71,25 @@ namespace bl
                     const auto rsaKey = RsaKey::createInstance();
                     rsaKey -> generate();
 
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+                    /*
+                     * EVP_PKEY_set1_RSA increments the reference count.
+                     * Both evpPkey and rsaKey will manage their own references.
+                     */
+                    BL_CHK_CRYPTO_API_NM(
+                        ::EVP_PKEY_set1_RSA( evpPkey.get(), &rsaKey -> get() )
+                        );
+#else
+                    /*
+                     * EVP_PKEY_assign_RSA transfers ownership to evpPkey.
+                     * Release from rsaKey to prevent double-free.
+                     */
                     BL_CHK_CRYPTO_API_NM(
                         ::EVP_PKEY_assign_RSA( evpPkey.get(), &rsaKey -> get() )
                         );
 
-                    /*
-                     * ::EVP_PKEY_assign_RSA() above succeeded, so evpPkey will be cleaning up
-                     * the memory of the ::RSA* pointer, and we are releasing it from the rsaKey
-                     */
-
                     ( void ) rsaKey -> releaseRsa();
+#endif
 
                     return evpPkey;
                 }
@@ -99,6 +125,19 @@ namespace bl
                             serial )
                             );
 
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+                    /*
+                     * OpenSSL 3.x+: Use X509_getm_*() to get mutable pointers for modification.
+                     * The old X509_get_*() functions now return const pointers and are deprecated.
+                     */
+                    BL_CHK_CRYPTO_API_NM(
+                        ::X509_gmtime_adj( ::X509_getm_notBefore( x509cert.get() ), 0 )
+                        );
+
+                    BL_CHK_CRYPTO_API_NM(
+                        ::X509_gmtime_adj( ::X509_getm_notAfter( x509cert.get() ), 60 * 60 * 24 * daysValid )
+                        );
+#else
                     BL_CHK_CRYPTO_API_NM(
                         ::X509_gmtime_adj( X509_get_notBefore( x509cert.get() ), 0 )
                         );
@@ -106,6 +145,7 @@ namespace bl
                     BL_CHK_CRYPTO_API_NM(
                         ::X509_gmtime_adj( X509_get_notAfter( x509cert.get() ), 60 * 60 * 24 * daysValid )
                         );
+#endif
 
                     ::X509_NAME* x509name = nullptr;
 
@@ -238,5 +278,18 @@ namespace bl
     } // crypto
 
 } // bl
+
+/*
+ * Restore warning settings after OpenSSL 3.x deprecation suppression
+ */
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+    #if defined(__clang__)
+        #pragma clang diagnostic pop
+    #elif defined(__GNUC__)
+        #pragma GCC diagnostic pop
+    #elif defined(_MSC_VER)
+        #pragma warning(pop)
+    #endif
+#endif
 
 #endif /* __BL_CRYPTO_X509CERT_H_ */

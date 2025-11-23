@@ -26,6 +26,25 @@
 
 #include <baselib/core/BaseIncludes.h>
 
+#include <openssl/evp.h>
+
+/*
+ * OpenSSL 3.x has deprecated the legacy RSA APIs in favor of provider-based APIs.
+ * We suppress these warnings as we continue to use the legacy (but still supported) APIs.
+ */
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+    #if defined(__clang__)
+        #pragma clang diagnostic push
+        #pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    #elif defined(__GNUC__)
+        #pragma GCC diagnostic push
+        #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    #elif defined(_MSC_VER)
+        #pragma warning(push)
+        #pragma warning(disable: 4996)
+    #endif
+#endif
+
 namespace bl
 {
     namespace crypto
@@ -68,6 +87,11 @@ namespace bl
 
             RsaKeyT()
             {
+                /*
+                 * Both OpenSSL 1.x and 3.x+ need to initialize m_rsaKey with RSA_new()
+                 * For OpenSSL 3.x+, the key will be populated later via generate() or
+                 * by the second constructor that takes an rsakey_ptr_t
+                 */
                 BL_CHK_CRYPTO_API_NM(
                     m_rsaKey = rsakey_ptr_t::attach( ::RSA_new() )
                     );
@@ -82,6 +106,32 @@ namespace bl
 
             void generate()
             {
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+                /*
+                 * OpenSSL 3.x+: Use EVP_PKEY_keygen APIs
+                 */
+                EVP_PKEY_CTX* ctx = ::EVP_PKEY_CTX_new_id( EVP_PKEY_RSA, nullptr );
+                BL_CHK_CRYPTO_API_NM( ctx );
+
+                BL_SCOPE_EXIT(
+                    {
+                        ::EVP_PKEY_CTX_free( ctx );
+                    }
+                    );
+
+                BL_CHK_CRYPTO_API_NM( ::EVP_PKEY_keygen_init( ctx ) > 0 );
+                BL_CHK_CRYPTO_API_NM( ::EVP_PKEY_CTX_set_rsa_keygen_bits( ctx, RSA_KEY_SIZE_DEFAULT ) > 0 );
+
+                EVP_PKEY* pkeyRaw = nullptr;
+                BL_CHK_CRYPTO_API_NM( ::EVP_PKEY_keygen( ctx, &pkeyRaw ) > 0 );
+                auto pkey = evppkey_ptr_t::attach( pkeyRaw );
+
+                /*
+                 * Extract the RSA key from the EVP_PKEY
+                 */
+                m_rsaKey = rsakey_ptr_t::attach( ::EVP_PKEY_get1_RSA( pkey.get() ) );
+                BL_CHK_CRYPTO_API_NM( m_rsaKey );
+#else
                 bignum_ptr_t exponent = nullptr;
 
                 BL_CHK_CRYPTO_API_NM(
@@ -103,6 +153,7 @@ namespace bl
                         nullptr /* cb_arg */
                         ) == 1
                     );
+#endif
             }
 
             ::RSA& get() NOEXCEPT
@@ -126,5 +177,18 @@ namespace bl
     } // crypto
 
 } // bl
+
+/*
+ * Restore warning settings after OpenSSL 3.x deprecation suppression
+ */
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+    #if defined(__clang__)
+        #pragma clang diagnostic pop
+    #elif defined(__GNUC__)
+        #pragma GCC diagnostic pop
+    #elif defined(_MSC_VER)
+        #pragma warning(pop)
+    #endif
+#endif
 
 #endif /* __BL_CRYPTO_RSAKEY_H_ */

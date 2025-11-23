@@ -79,6 +79,11 @@ namespace bl
                     BL_CHK_CRYPTO_API_NM( ::RAND_status() );
                 }
 
+#if OPENSSL_VERSION_NUMBER < 0x30000000L
+                /*
+                 * Locking callback is only needed for OpenSSL < 3.x
+                 * OpenSSL 3.x+ handles threading internally
+                 */
                 static void callbackLocking(
                     SAA_in              int                                     mode,
                     SAA_in              int                                     lockId,
@@ -121,6 +126,7 @@ namespace bl
 
                     BL_NOEXCEPT_END()
                 }
+#endif
 
             public:
 
@@ -235,8 +241,19 @@ namespace bl
 
                 static void initSsl()
                 {
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
                     /*
-                     * According to the OpenSSL docs (https://www.openssl.org/docs/ssl/SSL_library_init.html)
+                     * OpenSSL 3.x+: SSL_library_init() is deprecated and becomes a no-op.
+                     * Threading is handled automatically; no manual locking callbacks needed.
+                     * Use OPENSSL_init_ssl() if explicit initialization is required.
+                     */
+
+                    ( void ) ::OPENSSL_init_ssl( 0, nullptr );
+
+                    initRandomEngine();
+#else
+                    /*
+                     * OpenSSL 1.1.x: According to the OpenSSL docs (https://www.openssl.org/docs/ssl/SSL_library_init.html)
                      * ::SSL_library_init() always returns 1, so the return value should not be checked
                      */
 
@@ -256,6 +273,7 @@ namespace bl
                     CRYPTO_set_locking_callback( &callbackLocking );
 
                     initRandomEngine();
+#endif
 
                     /*
                      * TODO: we need to load the root certificates here
