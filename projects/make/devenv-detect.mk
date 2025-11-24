@@ -189,6 +189,8 @@ $(info Building with BL_USE_OPENSSL_1X = $(BL_USE_OPENSSL_1X))
 $(info Building with OpenSSL 1.1.1+; BL_DEVENV_OPENSSL_VERSION = $(BL_DEVENV_OPENSSL_VERSION))
 else
 BL_DEVENV_OPENSSL_VERSION=3.5.4
+# make sure OpenSSL doesn't declare old APIs depreciated
+CPPFLAGS += -DOPENSSL_API_COMPAT=0x10100000L
 $(info Building with OpenSSL 3.x+; BL_DEVENV_OPENSSL_VERSION = $(BL_DEVENV_OPENSSL_VERSION))
 endif
 endif
