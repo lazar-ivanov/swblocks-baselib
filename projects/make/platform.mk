@@ -140,7 +140,7 @@ else
       OS := d22
       BL_PROP_PLAT := darwin-d22
       BL_PLAT_IS_DARWIN := 1
-      $(info Detected OS is $(UNAME_MERGED) - i.e. mscOS Ventura; devenv6)
+      $(info Detected OS is $(UNAME_MERGED) - i.e. mscOS Sonoma; devenv6)
     endif
   else ifeq (Darwin-24.,$(findstring Darwin-24.,$(UNAME_MERGED)))
     ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/boost/1.89.0)","")
@@ -255,4 +255,11 @@ else
   endif
 
   TRUNCATE_COMMAND := echo -n >
+endif
+
+#
+# Verify that platform was successfully detected
+#
+ifeq ($(OS),)
+  $(error Platform detection failed: Unable to detect a supported OS. Please ensure you are running on a supported platform and that the required development environment is installed in DIST_ROOT_DEPS3 ($(DIST_ROOT_DEPS3)))
 endif
