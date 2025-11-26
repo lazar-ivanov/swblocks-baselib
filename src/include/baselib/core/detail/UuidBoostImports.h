@@ -19,11 +19,20 @@
 
 #include <baselib/core/detail/BoostIncludeGuardPush.h>
 #define BOOST_UUID_RANDOM_GENERATOR_COMPAT
+/*
+ * Boost 1.89+ added 8-byte alignment to boost::uuids::uuid which breaks
+ * binary protocol compatibility. Disable alignment to maintain compatibility.
+ */
+#define BOOST_UUID_DISABLE_ALIGNMENT
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/random_generator.hpp>
 #include <boost/uuid/nil_generator.hpp>
 #include <boost/uuid/uuid_io.hpp>
 #include <boost/functional/hash.hpp>
+/* Include mt19937 for Boost 1.89+ random_generator compatibility */
+#if BOOST_VERSION >= 108900
+#include <boost/random/mersenne_twister.hpp>
+#endif
 #include <baselib/core/detail/BoostIncludeGuardPop.h>
 
 #if defined(_WIN32)
@@ -44,7 +53,21 @@ namespace bl
     namespace uuids
     {
         using boost::uuids::uuid;
+
+        /*
+         * Boost 1.89+ changed random_generator API
+         * In older versions, random_generator( urng ) accepted a custom URNG
+         * In 1.89+, random_generator uses ChaCha20 and doesn't accept URNG
+         * For 1.89+, we need to use basic_random_generator with boost::mt19937
+         * (not std::mt19937) since the codebase uses boost::mt19937
+         */
+#if BOOST_VERSION >= 108900
+        /* Use boost::mt19937 (not std::mt19937) to match existing code */
+        using random_generator = boost::uuids::basic_random_generator<boost::mt19937>;
+#else
         using boost::uuids::random_generator;
+#endif
+
         using boost::uuids::nil_uuid;
 
     } // uuids
@@ -52,6 +75,12 @@ namespace bl
     typedef uuids::uuid uuid_t;
 
 } // bl
+
+/*
+ * Boost 1.81+ provides std::hash<boost::uuids::uuid> natively
+ * Only define our own for older versions
+ */
+#if BOOST_VERSION < 108100
 
 namespace std
 {
@@ -74,5 +103,7 @@ namespace std
     };
 
 } // std
+
+#endif // BOOST_VERSION < 108100
 
 #endif /* __BL_UUIDBOOSTIMPORTS_H_ */

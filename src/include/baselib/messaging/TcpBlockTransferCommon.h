@@ -176,6 +176,13 @@ namespace bl
                 union DataHeader
                 {
                     /*
+                     * Boost 1.89+ changed boost::uuids::uuid to have non-trivial constructor
+                     * Provide constructor that initializes raw member
+                     * Note: We use BOOST_UUID_DISABLE_ALIGNMENT to maintain 28-byte size
+                     */
+                    DataHeader() NOEXCEPT : raw() {}
+
+                    /*
                      * Note that for numbers the reserved fields types and their count
                      * should match the actual real fields below and if a new real
                      * field is added then new reserved fields must be added, etc

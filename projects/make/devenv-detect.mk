@@ -64,6 +64,8 @@ else ifeq ($(OS),d20)
   TOOLCHAIN                 ?= clang1205
 else ifeq ($(OS),d22)
   TOOLCHAIN                 ?= clang1500
+else ifeq ($(OS),d25)
+  TOOLCHAIN                 ?= clang1700
 else
   TOOLCHAIN                 ?= gcc492
 endif
@@ -144,6 +146,10 @@ ifeq ($(TOOLCHAIN),clang1500)
 DEVENV_VERSION_TAG := devenv6
 endif
 
+ifeq ($(TOOLCHAIN),clang1700)
+DEVENV_VERSION_TAG := devenv7
+endif
+
 ifeq ($(TOOLCHAIN),vc141)
 DEVENV_VERSION_TAG := devenv4
 endif
@@ -159,7 +165,7 @@ endif
 ifneq (devenv, $(findstring devenv, $(DEVENV_VERSION_TAG)))
 $(error The value '$(TOOLCHAIN)' of the TOOLCHAIN parameter is either invalid or the toolchain specified is no \
 longer supported; the supported toolchains are: vc12, gcc492, gcc630, gcc830, gcc1110, \
-clang35, clang391, clang380, clang801, clang730, clang1000, clang1201, clang1205)
+clang35, clang391, clang380, clang801, clang730, clang1000, clang1201, clang1205, clang1500, clang1700)
 endif
 
 BL_DEVENV_JSON_SPIRIT_VERSION=4.08
@@ -188,10 +194,24 @@ BL_DEVENV_OPENSSL_VERSION=1.1.1w
 $(info Building with BL_USE_OPENSSL_1X = $(BL_USE_OPENSSL_1X))
 $(info Building with OpenSSL 1.1.1+; BL_DEVENV_OPENSSL_VERSION = $(BL_DEVENV_OPENSSL_VERSION))
 else
+BL_DEVENV_OPENSSL_VERSION=3.0.12
+# make sure OpenSSL doesn't declare old APIs depreciated
+CPPFLAGS += -DOPENSSL_API_COMPAT=0x10100000L
+$(info Building with OpenSSL 3.0+; BL_DEVENV_OPENSSL_VERSION = $(BL_DEVENV_OPENSSL_VERSION))
+endif
+endif
+
+ifeq ($(DEVENV_VERSION_TAG),devenv7)
+BL_DEVENV_BOOST_VERSION=1.89.0
+ifneq (, $(BL_USE_OPENSSL_1X))
+BL_DEVENV_OPENSSL_VERSION=1.1.1w
+$(info Building with BL_USE_OPENSSL_1X = $(BL_USE_OPENSSL_1X))
+$(info Building with OpenSSL 1.1.1+; BL_DEVENV_OPENSSL_VERSION = $(BL_DEVENV_OPENSSL_VERSION))
+else
 BL_DEVENV_OPENSSL_VERSION=3.5.4
 # make sure OpenSSL doesn't declare old APIs depreciated
 CPPFLAGS += -DOPENSSL_API_COMPAT=0x10100000L
-$(info Building with OpenSSL 3.x+; BL_DEVENV_OPENSSL_VERSION = $(BL_DEVENV_OPENSSL_VERSION))
+$(info Building with OpenSSL 3.5+; BL_DEVENV_OPENSSL_VERSION = $(BL_DEVENV_OPENSSL_VERSION))
 endif
 endif
 
@@ -211,5 +231,14 @@ ifeq ($(DEVENV_VERSION_TAG),devenv6)
 CPPFLAGS += -DBL_DEVENV_VERSION=6
 endif
 
+ifeq ($(DEVENV_VERSION_TAG),devenv7)
+CPPFLAGS += -DBL_DEVENV_VERSION=7
+endif
+
+# For devenv7, Boost directories include the variant suffix (e.g., -debug, -release) like OpenSSL and others
+ifeq ($(DEVENV_VERSION_TAG),devenv7)
+BL_EXPECTED_BOOSTDIR = $(DIST_ROOT_DEPS3)/boost/$(BL_DEVENV_BOOST_VERSION)/$(PLAT)
+else
 BL_EXPECTED_BOOSTDIR = $(DIST_ROOT_DEPS3)/boost/$(BL_DEVENV_BOOST_VERSION)/$(PLAT:%-$(VARIANT)=%)
+endif
 BL_EXPECTED_OPENSSLDIR = $(DIST_ROOT_DEPS3)/openssl/$(BL_DEVENV_OPENSSL_VERSION)/$(PLAT)

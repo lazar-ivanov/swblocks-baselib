@@ -508,6 +508,7 @@ namespace bl
         private:
 
             typedef asio::ip::icmp                              icmp;
+            typedef asio::ip::icmp_resolver                     icmp_resolver_type;
             typedef PingerTask                                  base_type;
             typedef IcmpPingerTaskT                             this_type;
 
@@ -515,7 +516,7 @@ namespace bl
             const std::uint16_t                                 m_sequenceNumber;
 
             cpp::SafeUniquePtr< icmp::socket >                  m_socket;
-            cpp::SafeUniquePtr< icmp::resolver >                m_resolver;
+            cpp::SafeUniquePtr< icmp_resolver_type >            m_resolver;
             icmp::endpoint                                      m_destination;
             cpp::SafeUniquePtr< asio::deadline_timer >          m_timer;
 
@@ -574,9 +575,9 @@ namespace bl
                  * Resolve the host address asynchronously
                  */
 
-                m_resolver.reset( new icmp::resolver( aioService ) );
+                m_resolver.reset( new icmp_resolver_type( aioService ) );
 
-                icmp::resolver::query query( icmp::v4(), m_host, str::empty() /* service */ );
+                icmp_resolver_type::query query( icmp::v4(), m_host, str::empty() /* service */ );
 
                 m_resolver -> async_resolve(
                     query,
@@ -593,7 +594,7 @@ namespace bl
 
             void onResolved(
                 SAA_in                  const eh::error_code&                           ec,
-                SAA_in                  const icmp::resolver::iterator                  endpoints
+                SAA_in                  typename icmp_resolver_type::iterator           endpoints
                 ) NOEXCEPT
             {
                 BL_TASKS_HANDLER_BEGIN()

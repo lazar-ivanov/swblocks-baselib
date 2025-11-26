@@ -168,10 +168,10 @@ namespace bl
                     using namespace asio::ip;
 
                     asio::io_service ioService;
-                    tcp::resolver resolver( ioService );
+                    asio::ip::tcp_resolver resolver( ioService );
                     eh::error_code ec;
 
-                    tcp::resolver::query query(
+                    asio::ip::tcp_resolver::query query(
                         hostName                            /* host_name */,
                         str::empty()                        /* service_name */,
                         resolver_query_base::canonical_name /* flags */
@@ -197,14 +197,14 @@ namespace bl
 
                     BL_CHK_USER_FRIENDLY(
                         true,
-                        endpoints == end || endpoints -> host_name().empty(),
+                        endpoints == end || endpoints.begin() -> host_name().empty(),
                         BL_MSG()
                             << "Host '"
                             << hostName
                             << "' has no canonical name"
                         );
 
-                    return endpoints -> host_name();
+                    return endpoints.begin() -> host_name();
                 }
             };
 

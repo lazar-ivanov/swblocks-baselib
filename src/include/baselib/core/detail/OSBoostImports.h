@@ -26,9 +26,11 @@
 
 #include <baselib/core/detail/BoostIncludeGuardPush.h>
 
+#define BOOST_ASIO_DISABLE_STD_CHRONO
 #include <boost/thread.hpp>
 #include <boost/asio.hpp>
 #include <boost/asio/detail/socket_ops.hpp>
+#include <boost/asio/deadline_timer.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/filesystem/detail/utf8_codecvt_facet.hpp>
 #include <boost/interprocess/sync/scoped_lock.hpp>
@@ -41,6 +43,12 @@
 #include <boost/iostreams/concepts.hpp>
 
 #include <baselib/core/detail/BoostIncludeGuardPop.h>
+
+/*
+ * Include Boost.Asio compatibility layer
+ * This must come after Boost headers are included
+ */
+#include <baselib/core/detail/BoostAsioCompat.h>
 
 #include <iosfwd>
 #include <mutex>

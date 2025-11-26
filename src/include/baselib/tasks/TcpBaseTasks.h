@@ -690,10 +690,11 @@ namespace bl
 
             typedef STREAM                                                              base_type;
             typedef TcpConnectionEstablisherBase< STREAM >                              this_type;
+            typedef asio::ip::tcp_resolver                                              tcp_resolver_type;
 
-            tcp::resolver::query                                                        m_query;
-            cpp::SafeUniquePtr< tcp::resolver >                                         m_resolver;
-            tcp::resolver::endpoint_type                                                m_endpoint;
+            tcp_resolver_type::query                                                    m_query;
+            cpp::SafeUniquePtr< tcp_resolver_type >                                     m_resolver;
+            tcp_resolver_type::endpoint_type                                            m_endpoint;
 
             TcpConnectionEstablisherBase(
                 SAA_in                              std::string&&                       host,
@@ -728,7 +729,7 @@ namespace bl
                 base_type::cancelTask();
             }
 
-            static auto getEndpoint( SAA_in tcp::resolver::iterator endpoints ) -> decltype( endpoints -> endpoint() )
+            static auto getEndpoint( SAA_in tcp_resolver_type::iterator endpoints ) -> decltype( endpoints -> endpoint() )
             {
                 const decltype( endpoints ) end;
                 BL_ASSERT( end != endpoints );
@@ -738,7 +739,7 @@ namespace bl
 
             void onResolved(
                 SAA_in                  const eh::error_code&                           ec,
-                SAA_in                  tcp::resolver::iterator                         endpoints
+                SAA_in                  tcp_resolver_type::iterator                     endpoints
                 ) NOEXCEPT
             {
                 BL_TASKS_HANDLER_BEGIN_CHK_EC()
@@ -809,7 +810,7 @@ namespace bl
                 const auto threadPool = ThreadPoolDefault::getDefault( base_type::getThreadPoolId() );
                 BL_ASSERT( threadPool );
 
-                m_resolver.reset( new tcp::resolver( threadPool -> aioService() ) );
+                m_resolver.reset( new tcp_resolver_type( threadPool -> aioService() ) );
 
                 m_resolver -> async_resolve(
                     m_query,
@@ -835,7 +836,7 @@ namespace bl
              * either via async_connect or via async_accept call
              */
 
-            virtual bool continueAfterResolved( SAA_in tcp::resolver::iterator /* endpoints */ )
+            virtual bool continueAfterResolved( SAA_in tcp_resolver_type::iterator /* endpoints */ )
             {
                 return false;
             }
@@ -863,6 +864,7 @@ namespace bl
             typedef TcpConnectionEstablisherBase< STREAM >                              base_type;
             typedef TcpConnectionEstablisherAcceptor< STREAM >                          this_type;
             typedef typename STREAM::stream_ref                                         stream_ref;
+            typedef typename base_type::tcp_resolver_type                               tcp_resolver_type;
 
             cpp::SafeUniquePtr< tcp::acceptor >                                         m_acceptor;
             tcp::endpoint                                                               m_localEndpoint;
@@ -1078,7 +1080,7 @@ namespace bl
                 base_type::scheduleTask( eq );
             }
 
-            virtual bool continueAfterResolved( SAA_in tcp::resolver::iterator endpoints ) OVERRIDE
+            virtual bool continueAfterResolved( SAA_in typename tcp_resolver_type::iterator endpoints ) OVERRIDE
             {
                 BL_ASSERT( ! m_acceptor );
 
@@ -1175,6 +1177,7 @@ namespace bl
 
             typedef TcpConnectionEstablisherBase< STREAM >                              base_type;
             typedef TcpConnectionEstablisherConnector< STREAM >                         this_type;
+            typedef typename base_type::tcp_resolver_type                               tcp_resolver_type;
 
             cpp::ScalarTypeIniter< std::size_t >                                        m_maxRetryCount;
             cpp::ScalarTypeIniter< std::size_t >                                        m_retries;
@@ -1210,7 +1213,7 @@ namespace bl
 
             void onConnectionEstablished(
                 SAA_in                              const eh::error_code&               ec,
-                SAA_in                              tcp::resolver::iterator             endpoints
+                SAA_in                              typename tcp_resolver_type::iterator endpoints
                 ) NOEXCEPT
             {
                 BL_TASKS_HANDLER_BEGIN_CHK_EC()
@@ -1251,7 +1254,7 @@ namespace bl
                 BL_TASKS_HANDLER_END()
             }
 
-            virtual bool continueAfterResolved( SAA_in tcp::resolver::iterator endpoints ) OVERRIDE
+            virtual bool continueAfterResolved( SAA_in typename tcp_resolver_type::iterator endpoints ) OVERRIDE
             {
                 /*
                  * We're ready to start connecting now

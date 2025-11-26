@@ -2,7 +2,12 @@ ifndef BOOST_COMMON_INCLUDED
 BOOST_COMMON_INCLUDED = 1
 
 ifeq (, $(BOOSTDIR))
+# For devenv7, the directory structure includes the variant suffix (e.g., d25-a64-clang1700-debug)
+ifeq ($(DEVENV_VERSION_TAG),devenv7)
+BOOSTDIR := $(DIST_ROOT_DEPS3)/boost/$(BL_DEVENV_BOOST_VERSION)/$(EXTPLAT)
+else
 BOOSTDIR := $(DIST_ROOT_DEPS3)/boost/$(BL_DEVENV_BOOST_VERSION)/$(EXTPLAT:%-$(VARIANT)=%)
+endif
 endif
 
 CPPFLAGS += -DBOOST_ALL_NO_LIB
@@ -10,6 +15,14 @@ INCLUDE  += $(BOOSTDIR)/include
 LIBPATH  += $(BOOSTDIR)/lib
 
 ifeq ($(DEVENV_VERSION_TAG),devenv5)
+CPPFLAGS += -DBOOST_BIND_GLOBAL_PLACEHOLDERS
+endif
+
+ifeq ($(DEVENV_VERSION_TAG),devenv6)
+CPPFLAGS += -DBOOST_BIND_GLOBAL_PLACEHOLDERS
+endif
+
+ifeq ($(DEVENV_VERSION_TAG),devenv7)
 CPPFLAGS += -DBOOST_BIND_GLOBAL_PLACEHOLDERS
 endif
 
@@ -27,7 +40,10 @@ endif
 endif
 
 LDLIBS   += boost_date_time$(LIBTAG)$(ARCHTAG)
+# Boost 1.89+ made boost_system header-only, so skip it for devenv7
+ifneq ($(DEVENV_VERSION_TAG),devenv7)
 LDLIBS   += boost_system$(LIBTAG)$(ARCHTAG)
+endif
 LDLIBS   += boost_thread$(LIBTAG)$(ARCHTAG)
 LDLIBS   += boost_filesystem$(LIBTAG)$(ARCHTAG)
 LDLIBS   += boost_program_options$(LIBTAG)$(ARCHTAG)
@@ -36,7 +52,9 @@ LDLIBS   += boost_random$(LIBTAG)$(ARCHTAG)
 LDLIBS   += boost_unit_test_framework$(LIBTAG)$(ARCHTAG)
 ifneq ($(BL_PLAT_IS_DARWIN),1)
 ifneq ($(DEVENV_VERSION_TAG),devenv6)
+ifneq ($(DEVENV_VERSION_TAG),devenv7)
 LDLIBS   += boost_locale$(LIBTAG)$(ARCHTAG)
+endif
 endif
 endif
 

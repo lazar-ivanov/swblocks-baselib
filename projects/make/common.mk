@@ -93,10 +93,15 @@ ifeq ($(DEVENV_VERSION_TAG),devenv6)
 # python3 is the default in devenv6
 PYTHON = python3
 else
+ifeq ($(DEVENV_VERSION_TAG),devenv7)
+# python3 is the default in devenv7
+PYTHON = python3
+else
 ifeq ($(DEVENV_VERSION_TAG),devenv3)
 include $(MKDIR)/3rd/python/2.7-latest.mk
 else
 include $(MKDIR)/3rd/python/2.7.5.mk
+endif
 endif
 endif
 

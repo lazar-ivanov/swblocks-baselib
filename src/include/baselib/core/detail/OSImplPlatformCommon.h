@@ -1027,7 +1027,9 @@ namespace bl
                 using boost::filesystem::copy;
                 using boost::filesystem::copy_file;
                 using boost::filesystem::copy_symlink;
+                #if BOOST_VERSION < 107400
                 using boost::filesystem::copy_directory;
+                #endif
                 using boost::filesystem::space;
                 using boost::filesystem::status;
                 using boost::filesystem::symlink_status;
@@ -1314,6 +1316,17 @@ namespace bl
             }
 
             #endif // defined( _WIN32 )
+
+            /*
+             * Boost 1.89+ removed is_complete() method
+             * Provide compatibility wrapper using is_absolute()
+             */
+#if BOOST_VERSION >= 108900
+            bool is_complete() const
+            {
+                return this->is_absolute();
+            }
+#endif
         };
 
         template
@@ -1407,6 +1420,17 @@ namespace bl
                 base_type( std::forward< Source >( src ) ).swap( *this );
                 return *this;
             }
+
+            /*
+             * Boost 1.89+ removed is_complete() method
+             * Provide compatibility wrapper using is_absolute()
+             */
+#if BOOST_VERSION >= 108900
+            bool is_complete() const
+            {
+                return this->is_absolute();
+            }
+#endif
         };
 
         typedef PathImplT< os::isWindows > PathType;
