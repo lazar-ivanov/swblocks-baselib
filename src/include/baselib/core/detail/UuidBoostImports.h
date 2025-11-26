@@ -23,12 +23,21 @@
  * Boost 1.89+ added 8-byte alignment to boost::uuids::uuid which breaks
  * binary protocol compatibility. Disable alignment to maintain compatibility.
  */
+#if BOOST_VERSION >= 108900
 #define BOOST_UUID_DISABLE_ALIGNMENT
+#endif
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/random_generator.hpp>
 #include <boost/uuid/nil_generator.hpp>
 #include <boost/uuid/uuid_io.hpp>
 #include <boost/functional/hash.hpp>
+/*
+ * Boost 1.81+ moved std::hash<uuid> to a separate header (uuid_hash.hpp)
+ * Include it for versions 1.81 through 1.88
+ */
+#if BOOST_VERSION >= 108100 && BOOST_VERSION < 108900
+#include <boost/uuid/uuid_hash.hpp>
+#endif
 /* Include mt19937 for Boost 1.89+ random_generator compatibility */
 #if BOOST_VERSION >= 108900
 #include <boost/random/mersenne_twister.hpp>
