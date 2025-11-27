@@ -2052,7 +2052,7 @@ namespace bl
              * should be used instead
              */
 
-            #if ( defined( BL_DEVENV_VERSION ) && BL_DEVENV_VERSION > 5 ) || ( ( BOOST_VERSION / 100 ) >= 1084 )
+            #if BOOST_VERSION >= 107400
             detail::bfs::create_directory( targetPath, sourcePath );
             #else
             detail::bfs::copy_directory( sourcePath, targetPath );
@@ -2070,7 +2070,7 @@ namespace bl
              * should be used instead
              */
 
-            #if ( defined( BL_DEVENV_VERSION ) && BL_DEVENV_VERSION > 5 ) || ( ( BOOST_VERSION / 100 ) >= 1084 )
+            #if BOOST_VERSION >= 107400
             detail::bfs::create_directory( targetPath, sourcePath, ec );
             #else
             detail::bfs::copy_directory( sourcePath, targetPath, ec );
