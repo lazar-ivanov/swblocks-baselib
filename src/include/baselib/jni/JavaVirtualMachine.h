@@ -166,38 +166,78 @@ namespace bl
                         << "'"
                     );
 
-                fs::path jvmPath( *javaHome );
+                /*
+                 * JDK 9+ uses lib/server structure
+                 * JDK 8 and earlier use jre/lib/<arch>/server structure
+                 * On macOS, JDK 9+ uses .dylib extension instead of .so
+                 */
+                std::vector< fs::path > jvmPathCandidates;
+                const fs::path javaHomeBase( *javaHome );
 
                 if( os::onWindows() )
                 {
-                    jvmPath += "/jre/bin/server/jvm.dll";
+                    jvmPathCandidates.push_back( javaHomeBase / "bin" / "server" / "jvm.dll" );
+                    jvmPathCandidates.push_back( javaHomeBase / "jre" / "bin" / "server" / "jvm.dll" );
                 }
-                else
+                else if( os::onDarwin() )
                 {
+                    /* macOS JDK 9+ structure */
+                    jvmPathCandidates.push_back( javaHomeBase / "lib" / "server" / "libjvm.dylib" );
+                    /* macOS JDK 8 structure */
                     if( os::on32BitPlatform() )
                     {
-                        jvmPath += "/jre/lib/i386/server/libjvm.so";
+                        jvmPathCandidates.push_back( javaHomeBase / "jre" / "lib" / "i386" / "server" / "libjvm.dylib" );
                     }
                     else
                     {
-                        jvmPath +=
-                            BuildInfo::arch == "a64" ?
-                                "/jre/lib/aarch64/server/libjvm.so"
-                                :
-                                "/jre/lib/amd64/server/libjvm.so";
+                        const auto archDir = BuildInfo::arch == "a64" ? "aarch64" : "amd64";
+                        jvmPathCandidates.push_back( javaHomeBase / "jre" / "lib" / archDir / "server" / "libjvm.dylib" );
+                    }
+                }
+                else
+                {
+                    /* Linux JDK 9+ structure */
+                    if( os::on32BitPlatform() )
+                    {
+                        jvmPathCandidates.push_back( javaHomeBase / "lib" / "i386" / "server" / "libjvm.so" );
+                    }
+                    else
+                    {
+                        const auto archDir = BuildInfo::arch == "a64" ? "aarch64" : "amd64";
+                        jvmPathCandidates.push_back( javaHomeBase / "lib" / archDir / "server" / "libjvm.so" );
+                    }
+                    /* Linux JDK 8 structure */
+                    if( os::on32BitPlatform() )
+                    {
+                        jvmPathCandidates.push_back( javaHomeBase / "jre" / "lib" / "i386" / "server" / "libjvm.so" );
+                    }
+                    else
+                    {
+                        const auto archDir = BuildInfo::arch == "a64" ? "aarch64" : "amd64";
+                        jvmPathCandidates.push_back( javaHomeBase / "jre" / "lib" / archDir / "server" / "libjvm.so" );
                     }
                 }
 
-                jvmPath = fs::normalize( jvmPath );
+                fs::path jvmPath;
+                for( const auto& candidate : jvmPathCandidates )
+                {
+                    if( fs::exists( candidate ) )
+                    {
+                        jvmPath = candidate;
+                        break;
+                    }
+                }
 
                 BL_CHK_T_USER_FRIENDLY(
                     false,
-                    fs::exists( jvmPath ),
+                    ! jvmPath.empty(),
                     JavaException(),
                     BL_MSG()
-                        << "Path doesn't exist "
-                        << fs::normalizePathParameterForPrint( jvmPath )
+                        << "Could not find JVM library in JAVA_HOME: "
+                        << *javaHome
                     );
+
+                jvmPath = fs::normalize( jvmPath );
 
                 if( os::onWindows() )
                 {

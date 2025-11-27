@@ -11,20 +11,49 @@ include $(MKDIR)/3rd/gradle/latest.mk
 endif
 
 ifneq (win, $(findstring win, $(OS)))
-ifeq (x86, $(ARCH))
-  $(utf_baselib_jni_ARTIFACT): LDADD += $(JAVA_HOME)/jre/lib/i386/server/libjsig.so
-endif
-ifeq (x64, $(ARCH))
-  $(utf_baselib_jni_ARTIFACT): LDADD += $(JAVA_HOME)/jre/lib/amd64/server/libjsig.so
-endif
-ifeq (a64, $(ARCH))
-  $(utf_baselib_jni_ARTIFACT): LDADD += $(JAVA_HOME)/jre/lib/aarch64/server/libjsig.so
+# JDK 8 and earlier use jre/lib/<arch>/server structure with .so
+# JDK 9+ use lib/server structure with .dylib on macOS
+ifeq ($(DEVENV_VERSION_TAG),devenv7)
+  # JDK 25: Modern structure with lib/server and .dylib on macOS
+  ifeq (darwin, $(findstring darwin, $(BL_PROP_PLAT)))
+    $(utf_baselib_jni_ARTIFACT): LDADD += $(JAVA_HOME)/lib/server/libjsig.dylib
+    $(utf_baselib_jni_ARTIFACT): LDADD += -Wl,-rpath,$(JAVA_HOME)/lib/server
+  else ifeq (linux, $(findstring linux, $(BL_PROP_PLAT)))
+    ifeq (x86, $(ARCH))
+      $(utf_baselib_jni_ARTIFACT): LDADD += $(JAVA_HOME)/lib/i386/server/libjsig.so
+      $(utf_baselib_jni_ARTIFACT): LDADD += -Wl,-rpath,$(JAVA_HOME)/lib/i386/server
+    endif
+    ifeq (x64, $(ARCH))
+      $(utf_baselib_jni_ARTIFACT): LDADD += $(JAVA_HOME)/lib/amd64/server/libjsig.so
+      $(utf_baselib_jni_ARTIFACT): LDADD += -Wl,-rpath,$(JAVA_HOME)/lib/amd64/server
+    endif
+    ifeq (a64, $(ARCH))
+      $(utf_baselib_jni_ARTIFACT): LDADD += $(JAVA_HOME)/lib/aarch64/server/libjsig.so
+      $(utf_baselib_jni_ARTIFACT): LDADD += -Wl,-rpath,$(JAVA_HOME)/lib/aarch64/server
+    endif
+  endif
+else
+  # JDK 8: Old structure with jre/lib/<arch>/server and .so
+  ifeq (x86, $(ARCH))
+    $(utf_baselib_jni_ARTIFACT): LDADD += $(JAVA_HOME)/jre/lib/i386/server/libjsig.so
+  endif
+  ifeq (x64, $(ARCH))
+    $(utf_baselib_jni_ARTIFACT): LDADD += $(JAVA_HOME)/jre/lib/amd64/server/libjsig.so
+  endif
+  ifeq (a64, $(ARCH))
+    $(utf_baselib_jni_ARTIFACT): LDADD += $(JAVA_HOME)/jre/lib/aarch64/server/libjsig.so
+  endif
 endif
 endif
 
 $(info Building with Gradle = $(GRADLE))
 
+# Gradle 9+ uses -p (project directory) instead of --build-file
+ifeq ($(DEVENV_VERSION_TAG),devenv7)
+GRADLE_ARGS := -p $(JAVADIR)
+else
 GRADLE_ARGS := --build-file $(JAVADIR)/build.gradle
+endif
 BASELIB_JAR_SRC_FILE := $(BLDDIR)/../../java/utf_baselib_jni/build/libs/utf_baselib_jni.jar
 BASELIB_JAR_DEST_DIR := $(BLDDIR)/utests/utf_baselib_jni/utf-baselib-jni-lib
 
