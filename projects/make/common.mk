@@ -88,6 +88,11 @@ else
 include $(MKDIR)/3rd/jdk/common.mk
 endif
 
+# Exclude boost_locale library for devenv6 (use simple UTF-8 to ISO-8859-1 converter)
+ifeq ($(DEVENV_VERSION_TAG),devenv6)
+NO_BOOST_LOCALE_LIB = 1
+endif
+
 # for python script wrappers (windows compiler, debug harness)
 ifeq ($(DEVENV_VERSION_TAG),devenv6)
 # python3 is the default in devenv6

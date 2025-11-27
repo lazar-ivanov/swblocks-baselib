@@ -6127,6 +6127,137 @@ UTF_AUTO_TEST_CASE( BaseLib_Utf8ToIso88591SimpleTests )
     UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC2\x70" ) ), bl::ArgumentException );
     UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC2\xA2\xC2" ) ), bl::ArgumentException );
     UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xF0\x9F\x98\x81" ) ), bl::ArgumentException );
+
+    /*
+     * Additional comprehensive tests
+     */
+
+    /* Test empty string */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "" ) ), std::string( "" ) );
+
+    /* Test boundary characters */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\x7F" ) ), std::string( "\x7F" ) ); /* Highest ASCII */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC2\x80" ) ), std::string( "\x80" ) ); /* Lowest extended */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC2\xBF" ) ), std::string( "\xBF" ) ); /* End of 0xC2 range */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC3\x80" ) ), std::string( "\xC0" ) ); /* Start of 0xC3 range */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC3\xBF" ) ), std::string( "\xFF" ) ); /* Highest ISO-8859-1 */
+
+    /* Test common ISO-8859-1 extended characters */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC2\xA0" ) ), std::string( "\xA0" ) ); /* Non-breaking space */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC2\xA3" ) ), std::string( "\xA3" ) ); /* Pound sign £ */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC2\xA9" ) ), std::string( "\xA9" ) ); /* Copyright © */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC2\xAE" ) ), std::string( "\xAE" ) ); /* Registered ® */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC2\xB0" ) ), std::string( "\xB0" ) ); /* Degree ° */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC3\x80" ) ), std::string( "\xC0" ) ); /* À */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC3\xA9" ) ), std::string( "\xE9" ) ); /* é */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC3\xB1" ) ), std::string( "\xF1" ) ); /* ñ */
+
+    /* Test mixed ASCII and extended characters */
+    {
+        const std::string utf8Input = std::string( "Hello " ) + std::string( "\xC2\xA9" ) + std::string( " 2025" );
+        const std::string iso88591Expected = std::string( "Hello " ) + std::string( "\xA9" ) + std::string( " 2025" );
+        UTF_CHECK_EQUAL( utf8ToIso88591Simple( utf8Input ), iso88591Expected );
+    }
+    {
+        const std::string utf8Input = std::string( "\xC3\xA9" ) + std::string( "cole" );
+        const std::string iso88591Expected = std::string( "\xE9" ) + std::string( "cole" );
+        UTF_CHECK_EQUAL( utf8ToIso88591Simple( utf8Input ), iso88591Expected );
+    }
+
+    /* Test invalid UTF-8 start bytes (0x80-0xBF are continuation bytes, invalid as start) */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\x80" ) ), bl::ArgumentException );
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xBF" ) ), bl::ArgumentException );
+
+    /* Test invalid UTF-8 overlong encodings (0xC0-0xC1 can encode ASCII as 2 bytes, which is invalid) */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC0\x80" ) ), bl::ArgumentException );
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC1\xBF" ) ), bl::ArgumentException );
+
+    /* Test invalid continuation bytes */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC2\x00" ) ), bl::ArgumentException ); /* NULL as continuation */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC2\x7F" ) ), bl::ArgumentException ); /* ASCII as continuation */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC2\xC0" ) ), bl::ArgumentException ); /* Start byte as continuation */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC3\xFF" ) ), bl::ArgumentException ); /* Invalid continuation */
+
+    /* Test incomplete UTF-8 sequences at end of string */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "Hello\xC2" ) ), bl::ArgumentException );
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "Hello\xC3" ) ), bl::ArgumentException );
+
+    /* Test 3-byte UTF-8 sequences (outside ISO-8859-1 range) */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xE2\x82\xAC" ) ), bl::ArgumentException ); /* Euro sign € */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xE4\xB8\xAD" ) ), bl::ArgumentException ); /* Chinese character */
+
+    /* Test 4-byte UTF-8 sequences (outside ISO-8859-1 range) */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xF0\x9F\x98\x80" ) ), bl::ArgumentException ); /* Emoji 😀 */
+
+    /* Test characters just outside ISO-8859-1 range */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC4\x80" ) ), bl::ArgumentException ); /* Ā (0x100) */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC5\x93" ) ), bl::ArgumentException ); /* œ (0x153) */
+
+    /* Test mixed valid and invalid sequences */
+    {
+        const std::string invalidInput = std::string( "Hello " ) + std::string( "\xC2\xA9" ) +
+                                         std::string( " World " ) + std::string( "\xF0\x9F\x98\x81" );
+        UTF_REQUIRE_THROW( utf8ToIso88591Simple( invalidInput ), bl::ArgumentException );
+    }
+
+    /*
+     * Compare utf8ToIso88591Simple against Boost.Locale to verify compatibility
+     * The simple implementation should produce identical results to:
+     * bl::str::from_utf( content, "ISO-8859-1", str::method_type::stop )
+     */
+
+    /* Test ASCII string matches Boost.Locale */
+    {
+        const std::string input = "Hello, world!";
+        const std::string simpleResult = utf8ToIso88591Simple( input );
+        const std::string localeResult = str::from_utf( input, "ISO-8859-1", str::method_type::stop );
+        UTF_CHECK_EQUAL( simpleResult, localeResult );
+    }
+
+    /* Test all valid ISO-8859-1 extended characters match Boost.Locale */
+    {
+        /* Test range 0x80-0xBF (UTF-8: 0xC2 0x80 to 0xC2 0xBF) */
+        for( unsigned char ch = 0x80; ch <= 0xBF; ++ch )
+        {
+            const std::string utf8Input = std::string( "\xC2" ) + std::string( 1, static_cast< char >( ch ) );
+            const std::string simpleResult = utf8ToIso88591Simple( utf8Input );
+            const std::string localeResult = str::from_utf( utf8Input, "ISO-8859-1", str::method_type::stop );
+            UTF_CHECK_EQUAL( simpleResult, localeResult );
+        }
+
+        /* Test range 0xC0-0xFF (UTF-8: 0xC3 0x80 to 0xC3 0xBF) */
+        for( unsigned char ch = 0x80; ch <= 0xBF; ++ch )
+        {
+            const std::string utf8Input = std::string( "\xC3" ) + std::string( 1, static_cast< char >( ch ) );
+            const std::string simpleResult = utf8ToIso88591Simple( utf8Input );
+            const std::string localeResult = str::from_utf( utf8Input, "ISO-8859-1", str::method_type::stop );
+            UTF_CHECK_EQUAL( simpleResult, localeResult );
+        }
+    }
+
+    /* Test mixed content matches Boost.Locale */
+    {
+        const std::string input = std::string( "Hello " ) + std::string( "\xC2\xA9" ) +
+                                  std::string( " 2025 " ) + std::string( "\xC3\xA9" ) +
+                                  std::string( "cole" );
+        const std::string simpleResult = utf8ToIso88591Simple( input );
+        const std::string localeResult = str::from_utf( input, "ISO-8859-1", str::method_type::stop );
+        UTF_CHECK_EQUAL( simpleResult, localeResult );
+    }
+
+    /* Test that both implementations throw on invalid UTF-8 */
+    {
+        const std::string invalidUtf8 = std::string( "\xC2\x70" ); /* Invalid continuation byte */
+        UTF_REQUIRE_THROW( utf8ToIso88591Simple( invalidUtf8 ), bl::ArgumentException );
+        UTF_REQUIRE_THROW( str::from_utf( invalidUtf8, "ISO-8859-1", str::method_type::stop ), std::exception );
+    }
+
+    /* Test that both implementations throw on out-of-range characters */
+    {
+        const std::string outOfRange = std::string( "\xE2\x82\xAC" ); /* Euro sign € (U+20AC) */
+        UTF_REQUIRE_THROW( utf8ToIso88591Simple( outOfRange ), bl::ArgumentException );
+        UTF_REQUIRE_THROW( str::from_utf( outOfRange, "ISO-8859-1", str::method_type::stop ), std::exception );
+    }
 }
 
 #if defined( BL_DEVENV_VERSION ) && BL_DEVENV_VERSION < 6
