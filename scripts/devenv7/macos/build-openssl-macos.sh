@@ -200,9 +200,9 @@ build_variant() {
     echo "Building OpenSSL for ${VARIANT}..."
     make -j${JOBS}
 
-    # Run tests (optional - comment out if tests fail or take too long)
-    # echo "Running tests for ${VARIANT}..."
-    # make test
+    # Run tests before installing
+    echo "Running tests for ${VARIANT}..."
+    make test
 
     # Install OpenSSL
     echo "Installing OpenSSL for ${VARIANT}..."
