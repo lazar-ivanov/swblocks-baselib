@@ -28,8 +28,22 @@
 
 #define BOOST_SPIRIT_THREADSAFE
 
+/*
+ * GCC 15+ produces false positive -Wrestrict warnings in optimized builds
+ * when analyzing json_spirit template code. Suppress this warning only
+ * when including json_spirit headers.
+ */
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wrestrict"
+#endif
+
 #include <json_spirit/json_spirit_reader_template.h>
 #include <json_spirit/json_spirit_writer_template.h>
+
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
+#pragma GCC diagnostic pop
+#endif
 
 namespace bl
 {

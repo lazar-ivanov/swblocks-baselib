@@ -84,23 +84,11 @@ namespace bl
             {
             }
 
-            ManifestT& operator =( SAA_in ManifestT&& other )
-            {
-                m_serverId = other.m_serverId;
-                m_versionMajor = other.m_versionMajor;
-                m_versionMinor = other.m_versionMinor;
-                m_versionPatch = other.m_versionPatch;
-                m_classIds = std::move( other.m_classIds );
-                m_pluginClassId = other.m_pluginClassId;
-                m_pluginName = std::move( other.m_pluginName );
-                m_pluginDescription = std::move( other.m_pluginDescription );
-                m_isClientPlugin = other.m_isClientPlugin;
-                m_isServerPlugin = other.m_isServerPlugin;
-                m_platform = std::move( other.m_platform );
-                m_cppCompatibilityId = other.m_cppCompatibilityId;
-
-                return *this;
-            }
+            /*
+             * Move assignment operator is deleted because this class has const members.
+             * GCC 15+ enforces that you cannot assign to const members in template bodies.
+             */
+            ManifestT& operator =( SAA_in ManifestT&& other ) = delete;
 
             ManifestT(
                 SAA_in      const om::serverid_t&                                   serverId,

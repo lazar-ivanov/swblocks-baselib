@@ -19,6 +19,7 @@
 
 #include <baselib/core/Annotations.h>
 #include <baselib/core/BaseDefs.h>
+#include <baselib/core/Compiler.h>
 #include <baselib/core/detail/UuidImpl.h>
 #include <baselib/core/StringUtils.h>
 #include <baselib/core/TlsState.h>
@@ -96,7 +97,7 @@ namespace bl
 
                 is.exceptions( std::ios::failbit | std::ios::badbit );
                 uuid_t uuid;
-                std::memset( &uuid, 0, sizeof( uuid ) );
+                BL_SAFE_MEMSET( &uuid, 0, sizeof( uuid ) );
                 is >> uuid;
                 BL_CHK_ARG( ! is.fail(), value );
                 return uuid;

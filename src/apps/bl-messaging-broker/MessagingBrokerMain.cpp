@@ -17,9 +17,10 @@
 #include <apps/bl-messaging-broker/MessagingBrokerApp.h>
 
 #include <baselib/core/Logging.h>
+#include <baselib/core/Compiler.h>
 #include <baselib/core/BaseIncludes.h>
 
-extern "C" int main(
+BL_MAIN_LINKAGE_DECL int main(
     SAA_in                      int                         argc,
     SAA_in_ecount( argc )       const char* const*          argv
     )

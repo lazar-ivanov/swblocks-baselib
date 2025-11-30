@@ -196,7 +196,10 @@ namespace bl
                 }
                 else
                 {
-                    /* Linux JDK 9+ structure */
+                    /* Linux JDK 25+ structure - no arch subdirectory */
+                    jvmPathCandidates.push_back( javaHomeBase / "lib" / "server" / "libjvm.so" );
+
+                    /* Linux JDK 9-24 structure - with arch subdirectory */
                     if( os::on32BitPlatform() )
                     {
                         jvmPathCandidates.push_back( javaHomeBase / "lib" / "i386" / "server" / "libjvm.so" );

@@ -14,23 +14,14 @@ ifneq (win, $(findstring win, $(OS)))
 # JDK 8 and earlier use jre/lib/<arch>/server structure with .so
 # JDK 9+ use lib/server structure with .dylib on macOS
 ifeq ($(DEVENV_VERSION_TAG),devenv7)
-  # JDK 25: Modern structure with lib/server and .dylib on macOS
+  # JDK 25: Modern structure with lib/server (no arch subdirectory)
   ifeq (darwin, $(findstring darwin, $(BL_PROP_PLAT)))
     $(utf_baselib_jni_ARTIFACT): LDADD += $(JAVA_HOME)/lib/server/libjsig.dylib
     $(utf_baselib_jni_ARTIFACT): LDADD += -Wl,-rpath,$(JAVA_HOME)/lib/server
   else ifeq (linux, $(findstring linux, $(BL_PROP_PLAT)))
-    ifeq (x86, $(ARCH))
-      $(utf_baselib_jni_ARTIFACT): LDADD += $(JAVA_HOME)/lib/i386/server/libjsig.so
-      $(utf_baselib_jni_ARTIFACT): LDADD += -Wl,-rpath,$(JAVA_HOME)/lib/i386/server
-    endif
-    ifeq (x64, $(ARCH))
-      $(utf_baselib_jni_ARTIFACT): LDADD += $(JAVA_HOME)/lib/amd64/server/libjsig.so
-      $(utf_baselib_jni_ARTIFACT): LDADD += -Wl,-rpath,$(JAVA_HOME)/lib/amd64/server
-    endif
-    ifeq (a64, $(ARCH))
-      $(utf_baselib_jni_ARTIFACT): LDADD += $(JAVA_HOME)/lib/aarch64/server/libjsig.so
-      $(utf_baselib_jni_ARTIFACT): LDADD += -Wl,-rpath,$(JAVA_HOME)/lib/aarch64/server
-    endif
+    # JDK 25 on Linux uses lib/server for all architectures
+    $(utf_baselib_jni_ARTIFACT): LDADD += $(JAVA_HOME)/lib/server/libjsig.so
+    $(utf_baselib_jni_ARTIFACT): LDADD += -Wl,-rpath,$(JAVA_HOME)/lib/server
   endif
 else
   # JDK 8: Old structure with jre/lib/<arch>/server and .so

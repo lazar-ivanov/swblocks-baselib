@@ -68,14 +68,11 @@ namespace bl
             {
             }
 
-            PlatformIdentityT& operator= ( SAA_in PlatformIdentityT&& other )
-            {
-                m_os = std::move( other.m_os );
-                m_architecture = std::move( other.m_architecture );
-                m_toolchain = std::move( other.m_toolchain );
-
-                return *this;
-            }
+            /*
+             * Move assignment operator is deleted because this class has const members.
+             * GCC 15+ enforces that you cannot assign to const members in template bodies.
+             */
+            PlatformIdentityT& operator= ( SAA_in PlatformIdentityT&& other ) = delete;
 
             PlatformIdentityT(
                 SAA_in      std::string&&                       os,

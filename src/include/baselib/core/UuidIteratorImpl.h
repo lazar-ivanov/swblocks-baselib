@@ -68,9 +68,9 @@ namespace bl
             SAA_in              const om::ObjPtr< om::Object >&                     impl = nullptr
             )
             :
-            m_begin( &data.front() ),
-            m_end( m_begin + data.size() ),
-            m_pos( m_begin ),
+            m_begin( data.empty() ? nullptr : &data.front() ),
+            m_end( data.empty() ? nullptr : ( &data.front() + data.size() ) ),
+            m_pos( data.empty() ? nullptr : &data.front() ),
             m_impl( om::copy( impl ) )
         {
             BL_ASSERT( m_begin <= m_end );
