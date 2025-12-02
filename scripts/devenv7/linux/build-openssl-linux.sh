@@ -35,6 +35,31 @@
 set -e  # Exit on error
 set -u  # Exit on undefined variable
 
+# Check for required Perl modules and provide a single installation command
+# We check for a few common modules and if any are missing, we recommend installing a bundle of packages
+# to avoid having to install them one by one.
+REQUIRED_PERL_MODULES="FindBin IPC::Cmd Text::Template Pod::Man Time::Piece Test::More"
+for module in ${REQUIRED_PERL_MODULES}; do
+    if ! perl -M${module} -e 1 &> /dev/null; then
+        echo "ERROR: At least one required Perl module ('${module}') is not installed." >&2
+        echo "The OpenSSL build process requires several Perl modules." >&2
+        echo "To avoid resolving them one-by-one, it's recommended to install a comprehensive set of Perl packages for development." >&2
+        echo >&2
+        if command -v dnf &> /dev/null; then
+            echo "On RHEL-based systems like yours, please run the following command to install them:" >&2
+            echo "    sudo dnf install perl-devel perl-core perl-FindBin perl-IPC-Cmd perl-Text-Template perl-podlators perl-Time-Piece perl-Test-Simple perl-Test-Harness" >&2
+        elif command -v apt-get &> /dev/null; then
+            echo "On Debian-based systems, please run the following command to install them:" >&2
+            echo "    sudo apt-get install perl-base perl-modules libfindbin-perl libipc-cmd-perl libtext-template-perl podlators libtime-piece-perl libtest-simple-perl libtest-harness-perl" >&2
+        else
+            echo "Please use your system's package manager to install the required Perl modules, including:" >&2
+            echo "FindBin, IPC::Cmd, Text::Template, Pod::Man, Time::Piece, Test::More" >&2
+        fi
+        echo >&2
+        exit 1
+    fi
+done
+
 # Parse command line arguments
 OPENSSL_VERSION="${1:-3.5.4}"
 DEVENV_TAG="${2:-devenv7}"
@@ -64,6 +89,9 @@ if [ -f /etc/os-release ]; then
     if [ "$ID" = "ubuntu" ]; then
         UBUNTU_VERSION=$(echo "$VERSION_ID" | cut -d. -f1)
         OS_TAG="ub${UBUNTU_VERSION}"
+    elif [ "$ID" = "rhel" ]; then
+        RHEL_VERSION=$(echo "$VERSION_ID" | cut -d. -f1)
+        OS_TAG="rhel${RHEL_VERSION}"
     else
         echo "Unsupported OS: $ID"
         exit 1

@@ -46,10 +46,36 @@ GCC_MAJOR=$(echo "$GCC_VERSION" | cut -d. -f1)
 GCC_MINOR=$(echo "$GCC_VERSION" | cut -d. -f2)
 GCC_TAG="gcc${GCC_MAJOR}$(printf "%02d" $GCC_MINOR)"
 
-# Platform configuration
-OS_TAG="ub24"     # Linux (Ubuntu 24.04)
-ARCH_TAG="a64"    # ARM64
-ARCH_TRIPLET="aarch64-unknown-linux-gnu"
+# Detect architecture
+ARCH=$(uname -m)
+if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+    ARCH_TAG="a64"
+    ARCH_TRIPLET="aarch64-unknown-linux-gnu"
+elif [ "$ARCH" = "x86_64" ]; then
+    ARCH_TAG="x64"
+    ARCH_TRIPLET="x86_64-unknown-linux-gnu"
+else
+    echo "Unsupported architecture: $ARCH"
+    exit 1
+fi
+
+# Detect OS version
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    if [ "$ID" = "ubuntu" ]; then
+        UBUNTU_VERSION=$(echo "$VERSION_ID" | cut -d. -f1)
+        OS_TAG="ub${UBUNTU_VERSION}"
+    elif [ "$ID" = "rhel" ]; then
+        RHEL_VERSION=$(echo "$VERSION_ID" | cut -d. -f1)
+        OS_TAG="rhel${RHEL_VERSION}"
+    else
+        echo "Unsupported OS: $ID"
+        exit 1
+    fi
+else
+    echo "Cannot detect OS version"
+    exit 1
+fi
 
 # Build configuration
 BUILD_TAG="${OS_TAG}-${ARCH_TAG}-${GCC_TAG}"

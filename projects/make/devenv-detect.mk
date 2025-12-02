@@ -1,5 +1,8 @@
 ifeq ($(BL_PLAT_IS_RHEL),1)
 # clang or gcc may or may not be available on platform, so check first
+ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/toolchain-gcc/15.2.0)","")
+  TOOLCHAIN                 ?= gcc1502
+endif
 ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/toolchain-clang/8.0.1)","")
   TOOLCHAIN                 ?= clang801
 endif
@@ -60,6 +63,10 @@ else ifeq ($(OS),ub18)
 else ifeq ($(OS),ub20)
   TOOLCHAIN                 ?= clang1201
 else ifeq ($(OS),ub24)
+  TOOLCHAIN                 ?= gcc1502
+else ifeq ($(OS),rhel9)
+  TOOLCHAIN                 ?= gcc1502
+else ifeq ($(OS),rhel10)
   TOOLCHAIN                 ?= gcc1502
 else ifeq ($(OS),d156)
   TOOLCHAIN                 ?= clang730

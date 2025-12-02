@@ -75,6 +75,9 @@ if [ -f /etc/os-release ]; then
     if [ "$ID" = "ubuntu" ]; then
         UBUNTU_VERSION=$(echo "$VERSION_ID" | cut -d. -f1)
         OS_TAG="ub${UBUNTU_VERSION}"
+    elif [ "$ID" = "rhel" ]; then
+        RHEL_VERSION=$(echo "$VERSION_ID" | cut -d. -f1)
+        OS_TAG="rhel${RHEL_VERSION}"
     else
         echo "Unsupported OS: $ID"
         exit 1

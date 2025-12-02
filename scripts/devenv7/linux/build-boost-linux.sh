@@ -63,6 +63,9 @@ if [ -f /etc/os-release ]; then
     if [ "$ID" = "ubuntu" ]; then
         UBUNTU_VERSION=$(echo "$VERSION_ID" | cut -d. -f1)
         OS_TAG="ub${UBUNTU_VERSION}"
+    elif [ "$ID" = "rhel" ]; then
+        RHEL_VERSION=$(echo "$VERSION_ID" | cut -d. -f1)
+        OS_TAG="rhel${RHEL_VERSION}"
     else
         echo "Unsupported OS: $ID"
         exit 1
@@ -173,6 +176,29 @@ if [ ! -f "./b2" ]; then
         --with-toolset=gcc
 else
     echo "Boost.Build already bootstrapped."
+fi
+
+# RHEL-specific: Patch Boost.Locale Jamfile to fix iconv detection
+# The iconv detection fails with static runtime linking on RHEL 9, so we bypass it
+if [[ "$OS_TAG" == rhel* ]]; then
+    echo
+    echo "Applying RHEL-specific patch to Boost.Locale Jamfile..."
+
+    JAMFILE="libs/locale/build/Jamfile.v2"
+    if [ ! -f "${JAMFILE}.orig" ]; then
+        cp "${JAMFILE}" "${JAMFILE}.orig"
+    fi
+
+    # Modify the configure-full function to force found-iconv = true
+    # This replaces the iconv detection logic (lines 254-267) that fails on RHEL
+    sed -i '/local found-iconv ;/,/^    }$/c\
+    local found-iconv ;\
+\
+    # RHEL patch: Force iconv to be found (bypasses broken static link detection)\
+    found-iconv = true ;\
+    flags-result += <define>BOOST_LOCALE_WITH_ICONV=1 ;' "${JAMFILE}"
+
+    echo "  ✓ Jamfile patched to force iconv support"
 fi
 
 # Function to build a specific variant

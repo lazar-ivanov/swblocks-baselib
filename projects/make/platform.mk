@@ -182,6 +182,14 @@ else
        # devenv3 or below; remap to rhel6
        EXTPLAT = rhel6-$(ARCH)-$(TOOLCHAIN)-$(VARIANT)
     endif
+  else ifeq (el9,$(findstring el9,$(UNAME_R)))
+    OS := rhel9
+    BL_PROP_PLAT := linux-rhel9
+    BL_PLAT_IS_RHEL := 1
+  else ifeq (el10,$(findstring el10,$(UNAME_R)))
+    OS := rhel10
+    BL_PROP_PLAT := linux-rhel10
+    BL_PLAT_IS_RHEL := 1
   else
     #
     # assume Ubuntu, but generally any other flavor which
