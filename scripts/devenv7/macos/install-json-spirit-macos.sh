@@ -17,62 +17,52 @@
 ###############################################################################
 
 ###############################################################################
-# JSON Spirit Installation Script for Linux
+# JSON Spirit Installation Script for macOS
 # This script downloads and installs JSON Spirit source code for use with swblocks-baselib
 #
-# Usage: ./install-json-spirit-linux.sh TOOLCHAIN_TAG [DEVENV_TAG]
-#   TOOLCHAIN_TAG:  Compiler toolchain tag (required, e.g., gcc1502)
+# Usage: ./install-json-spirit-macos.sh [DEVENV_TAG]
 #   DEVENV_TAG:     devenv tag (default: devenv7)
 #
 # Examples:
-#   ./install-json-spirit-linux.sh gcc1502              # Install devenv7 with gcc1502
-#   ./install-json-spirit-linux.sh gcc1502 devenv6      # Install devenv6 with gcc1502
+#   ./install-json-spirit-macos.sh              # Install devenv7
+#   ./install-json-spirit-macos.sh devenv6      # Install devenv6
 ###############################################################################
 
 set -e  # Exit on error
 set -u  # Exit on undefined variable
 
-# Check if toolchain tag is provided
-if [ $# -lt 1 ]; then
-    echo "ERROR: Compiler toolchain tag is required"
-    echo
-    echo "Usage: $0 TOOLCHAIN_TAG [DEVENV_TAG]"
-    echo
-    echo "Examples:"
-    echo "  $0 gcc1502              # Install JSON Spirit devenv7 with gcc1502"
-    echo "  $0 gcc1502 devenv6      # Install JSON Spirit devenv6 with gcc1502"
-    echo
-    exit 1
-fi
-
 # Parse command line arguments
-TOOLCHAIN_TAG="$1"
-DEVENV_TAG="${2:-devenv7}"
+DEVENV_TAG="${1:-devenv7}"
 
 # JSON Spirit download configuration
 JSON_SPIRIT_ARCHIVE="json-spirit.tar.gz"
 JSON_SPIRIT_URL="https://storage.googleapis.com/swblocks-dist/devenv/deps/${JSON_SPIRIT_ARCHIVE}"
 
-# Detect OS version
-if [ -f /etc/os-release ]; then
-    . /etc/os-release
-    if [ "$ID" = "ubuntu" ]; then
-        UBUNTU_VERSION=$(echo "$VERSION_ID" | cut -d. -f1)
-        OS_TAG="ub${UBUNTU_VERSION}"
-    elif [ "$ID" = "rhel" ]; then
-        RHEL_VERSION=$(echo "$VERSION_ID" | cut -d. -f1)
-        OS_TAG="rhel${RHEL_VERSION}"
-    else
-        echo "Unsupported OS: $ID"
-        exit 1
-    fi
+# Detect macOS version
+MACOS_VERSION=$(sw_vers -productVersion | cut -d. -f1)
+if [ "$MACOS_VERSION" -ge 15 ]; then
+    OS_TAG="25"  # macOS 15 (Sequoia) and above
+elif [ "$MACOS_VERSION" -ge 14 ]; then
+    OS_TAG="24"  # macOS 14 (Sonoma)
+elif [ "$MACOS_VERSION" -ge 13 ]; then
+    OS_TAG="23"  # macOS 13 (Ventura)
 else
-    echo "Cannot detect OS version"
+    OS_TAG="22"  # macOS 12 (Monterey) and below
+fi
+
+# Detect architecture
+ARCH=$(uname -m)
+if [ "$ARCH" = "arm64" ]; then
+    ARCH_TAG="arm"
+elif [ "$ARCH" = "x86_64" ]; then
+    ARCH_TAG="x64"
+else
+    echo "Unsupported architecture: $ARCH"
     exit 1
 fi
 
 # Create distribution directory if it doesn't exist
-DIST_ROOT_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${TOOLCHAIN_TAG}-arm"
+DIST_ROOT_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-darwin-${OS_TAG}-${ARCH_TAG}"
 if [ ! -d "$DIST_ROOT_DIR" ]; then
     echo "Distribution directory not found. Creating: $DIST_ROOT_DIR"
     mkdir -p "$DIST_ROOT_DIR"
@@ -83,8 +73,8 @@ fi
 echo "==========================================================================="
 echo "JSON Spirit Installation Configuration"
 echo "==========================================================================="
-echo "OS Version:       $(lsb_release -ds) (${OS_TAG})"
-echo "Toolchain Tag:    ${TOOLCHAIN_TAG}"
+echo "macOS Version:    $(sw_vers -productVersion) (OS tag: ${OS_TAG})"
+echo "Architecture:     ${ARCH} (${ARCH_TAG})"
 echo "DevEnv Tag:       ${DEVENV_TAG}"
 echo "Installation Dir: ${DIST_ROOT_DIR}"
 echo "==========================================================================="
@@ -103,7 +93,7 @@ trap "rm -rf ${TEMP_DIR}" EXIT
 
 # Download JSON Spirit
 echo "Downloading JSON Spirit..."
-wget "${JSON_SPIRIT_URL}" -O "${TEMP_DIR}/${JSON_SPIRIT_ARCHIVE}"
+curl -L "${JSON_SPIRIT_URL}" -o "${TEMP_DIR}/${JSON_SPIRIT_ARCHIVE}"
 echo "Download complete."
 
 # Extract JSON Spirit directly to dist directory
