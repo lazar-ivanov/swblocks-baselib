@@ -233,6 +233,9 @@ else
             ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/toolchain-gcc/15.2.0)","")
                 # This is devenv7; use ubuntu 24.04 binaries
                 OS := ub24
+            else ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/toolchain-clang/20.1.0)","")
+                # This is devenv7 with clang2010; use ubuntu 24.04 binaries
+                OS := ub24
             else ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/toolchain-gcc/11.1.0)","")
                 # This is devenv5; use ubuntu 22.04 binaries for now
                 OS := ub20

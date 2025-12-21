@@ -1,5 +1,9 @@
 ifeq ($(BL_PLAT_IS_RHEL),1)
 # clang or gcc may or may not be available on platform, so check first
+# Prefer clang2010 (standalone with libc++) for devenv7, fallback to gcc1502
+ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/toolchain-clang/20.1.0)","")
+  TOOLCHAIN                 ?= clang2010
+endif
 ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/toolchain-gcc/15.2.0)","")
   TOOLCHAIN                 ?= gcc1502
 endif
@@ -18,6 +22,10 @@ endif
 
 ifeq ($(BL_PLAT_IS_UBUNTU),1)
 # clang or gcc may or may not be available on platform, so check first
+# Prefer clang2010 (standalone with libc++) for devenv7, fallback to gcc1502
+ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/toolchain-clang/20.1.0)","")
+  TOOLCHAIN                 ?= clang2010
+endif
 ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/toolchain-gcc/15.2.0)","")
   TOOLCHAIN                 ?= gcc1502
 endif
@@ -63,11 +71,11 @@ else ifeq ($(OS),ub18)
 else ifeq ($(OS),ub20)
   TOOLCHAIN                 ?= clang1201
 else ifeq ($(OS),ub24)
-  TOOLCHAIN                 ?= gcc1502
+  TOOLCHAIN                 ?= clang2010
 else ifeq ($(OS),rhel9)
-  TOOLCHAIN                 ?= gcc1502
+  TOOLCHAIN                 ?= clang2010
 else ifeq ($(OS),rhel10)
-  TOOLCHAIN                 ?= gcc1502
+  TOOLCHAIN                 ?= clang2010
 else ifeq ($(OS),d156)
   TOOLCHAIN                 ?= clang730
 else ifeq ($(OS),d17)
@@ -166,6 +174,10 @@ ifeq ($(TOOLCHAIN),clang1700)
 DEVENV_VERSION_TAG := devenv7
 endif
 
+ifeq ($(TOOLCHAIN),clang2010)
+DEVENV_VERSION_TAG := devenv7
+endif
+
 ifeq ($(TOOLCHAIN),vc141)
 DEVENV_VERSION_TAG := devenv4
 endif
@@ -181,7 +193,7 @@ endif
 ifneq (devenv, $(findstring devenv, $(DEVENV_VERSION_TAG)))
 $(error The value '$(TOOLCHAIN)' of the TOOLCHAIN parameter is either invalid or the toolchain specified is no \
 longer supported; the supported toolchains are: vc12, gcc492, gcc630, gcc830, gcc1110, gcc1502, \
-clang35, clang391, clang380, clang801, clang730, clang1000, clang1201, clang1205, clang1500, clang1700)
+clang35, clang391, clang380, clang801, clang730, clang1000, clang1201, clang1205, clang1500, clang1700, clang2010)
 endif
 
 BL_DEVENV_JSON_SPIRIT_VERSION=4.08

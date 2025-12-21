@@ -21,24 +21,45 @@
 # This script builds Boost with static libraries for use with swblocks-baselib
 # Both debug and release variants are built automatically
 #
-# Usage: ./build-boost-linux.sh [BOOST_VERSION] [DEVENV_TAG] [GCC_VERSION]
-#   BOOST_VERSION: Boost version to build (default: 1.89.0)
-#   DEVENV_TAG:    devenv tag (default: devenv7)
-#   GCC_VERSION:   GCC version to use (default: 15.2.0)
+# Usage: ./build-boost-linux.sh [TOOLCHAIN] [BOOST_VERSION] [DEVENV_TAG] [COMPILER_VERSION]
+#   TOOLCHAIN:        Toolchain to use: gcc or clang (default: gcc)
+#   BOOST_VERSION:    Boost version to build (default: 1.89.0)
+#   DEVENV_TAG:       devenv tag (default: devenv7)
+#   COMPILER_VERSION: GCC/Clang version to use (default: 15.2.0 for gcc, 20.1.0 for clang)
 #
 # Examples:
-#   ./build-boost-linux.sh                         # Build 1.89.0 debug+release devenv7 with GCC 15.2.0
-#   ./build-boost-linux.sh 1.89.0                  # Build 1.89.0 debug+release devenv7 with GCC 15.2.0
-#   ./build-boost-linux.sh 1.84.0 devenv7 14.2.0   # Build 1.84.0 debug+release devenv7 with GCC 14.2.0
+#   ./build-boost-linux.sh                              # Build with GCC 15.2.0
+#   ./build-boost-linux.sh gcc                          # Build with GCC 15.2.0
+#   ./build-boost-linux.sh clang                        # Build with Clang 20.1.0
+#   ./build-boost-linux.sh gcc 1.89.0                   # Build 1.89.0 with GCC 15.2.0
+#   ./build-boost-linux.sh clang 1.89.0 devenv7 19.1.0  # Build with Clang 19.1.0
 ###############################################################################
 
 set -e  # Exit on error
 set -u  # Exit on undefined variable
 
-# Parse command line arguments
+# Parse toolchain argument
+TOOLCHAIN="${1:-gcc}"
+if [ "$TOOLCHAIN" != "gcc" ] && [ "$TOOLCHAIN" != "clang" ]; then
+    echo "ERROR: Invalid toolchain '$TOOLCHAIN'. Must be 'gcc' or 'clang'"
+    exit 1
+fi
+
+# Shift arguments if toolchain was provided
+if [ "$TOOLCHAIN" = "gcc" ] || [ "$TOOLCHAIN" = "clang" ]; then
+    shift
+fi
+
+# Parse remaining command line arguments
 BOOST_VERSION="${1:-1.89.0}"
 DEVENV_TAG="${2:-devenv7}"
-GCC_VERSION="${3:-15.2.0}"
+
+# Set default compiler version based on toolchain
+if [ "$TOOLCHAIN" = "gcc" ]; then
+    COMPILER_VERSION="${3:-15.2.0}"
+else
+    COMPILER_VERSION="${3:-20.1.0}"
+fi
 
 # Convert version to underscore format (e.g., 1.89.0 -> 1_89_0)
 BOOST_VERSION_UNDERSCORE=$(echo "$BOOST_VERSION" | tr '.' '_')
@@ -50,8 +71,10 @@ BOOST_DIR="boost_${BOOST_VERSION_UNDERSCORE}"
 ARCH=$(uname -m)
 if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     ARCH_TAG="a64"
+    ARCH_TRIPLET="aarch64-unknown-linux-gnu"
 elif [ "$ARCH" = "x86_64" ]; then
     ARCH_TAG="x64"
+    ARCH_TRIPLET="x86_64-unknown-linux-gnu"
 else
     echo "Unsupported architecture: $ARCH"
     exit 1
@@ -75,27 +98,36 @@ else
     exit 1
 fi
 
-# Extract GCC major/minor version for tag (e.g., 15.2.0 -> gcc1502)
-GCC_MAJOR=$(echo "$GCC_VERSION" | cut -d. -f1)
-GCC_MINOR=$(echo "$GCC_VERSION" | cut -d. -f2)
-GCC_TAG="gcc${GCC_MAJOR}$(printf "%02d" $GCC_MINOR)"
+# Generate toolchain tag based on selected toolchain
+if [ "$TOOLCHAIN" = "gcc" ]; then
+    # Extract GCC major/minor version for tag (e.g., 15.2.0 -> gcc1502)
+    COMPILER_MAJOR=$(echo "$COMPILER_VERSION" | cut -d. -f1)
+    COMPILER_MINOR=$(echo "$COMPILER_VERSION" | cut -d. -f2)
+    COMPILER_TAG="gcc${COMPILER_MAJOR}$(printf "%02d" $COMPILER_MINOR)"
+else
+    # Extract Clang version for tag (e.g., 20.1.0 -> clang2010)
+    COMPILER_VERSION_NO_DOTS=$(echo "$COMPILER_VERSION" | tr -d '.')
+    COMPILER_TAG="clang${COMPILER_VERSION_NO_DOTS}"
+    COMPILER_MAJOR=$(echo "$COMPILER_VERSION" | cut -d. -f1)
+    COMPILER_MINOR=$(echo "$COMPILER_VERSION" | cut -d. -f2)
+fi
 
 # Build configuration
-BUILD_TAG="${OS_TAG}-${ARCH_TAG}-${GCC_TAG}"
+BUILD_TAG="${OS_TAG}-${ARCH_TAG}-${COMPILER_TAG}"
 
-# GCC toolchain path
-GCC_BASE_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${GCC_TAG}-arm/toolchain-gcc/${GCC_VERSION}"
-GCC_INSTALL_DIR="${GCC_BASE_DIR}/${BUILD_TAG}-release"
+# Toolchain path
+TOOLCHAIN_BASE_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${COMPILER_TAG}-arm/toolchain-${TOOLCHAIN}/${COMPILER_VERSION}"
+TOOLCHAIN_INSTALL_DIR="${TOOLCHAIN_BASE_DIR}/${BUILD_TAG}-release"
 
-# Verify GCC installation exists
-if [ ! -d "$GCC_INSTALL_DIR" ]; then
-    echo "ERROR: GCC installation not found at: $GCC_INSTALL_DIR"
-    echo "Please build GCC first using build-gcc-linux.sh"
+# Verify toolchain installation exists
+if [ ! -d "$TOOLCHAIN_INSTALL_DIR" ]; then
+    echo "ERROR: ${TOOLCHAIN} installation not found at: $TOOLCHAIN_INSTALL_DIR"
+    echo "Please build ${TOOLCHAIN} first using build-${TOOLCHAIN}-linux.sh"
     exit 1
 fi
 
 # Installation paths
-VERSION_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${GCC_TAG}-arm/boost/${BOOST_VERSION}"
+VERSION_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${COMPILER_TAG}-arm/boost/${BOOST_VERSION}"
 ARCHIVE_DIR="${VERSION_DIR}/tar"
 SOURCE_DIR="${VERSION_DIR}/source-linux"
 
@@ -105,10 +137,11 @@ JOBS=$(nproc)
 echo "==========================================================================="
 echo "Boost ${BOOST_VERSION} Build Configuration"
 echo "==========================================================================="
+echo "Toolchain:        ${TOOLCHAIN}"
 echo "Architecture:     ${ARCH} (${ARCH_TAG})"
 echo "OS Version:       $(lsb_release -ds) (${OS_TAG})"
-echo "GCC Version:      ${GCC_VERSION} (${GCC_TAG})"
-echo "GCC Install Dir:  ${GCC_INSTALL_DIR}"
+echo "Compiler Version: ${COMPILER_VERSION} (${COMPILER_TAG})"
+echo "Compiler Dir:     ${TOOLCHAIN_INSTALL_DIR}"
 echo "Build Tag:        ${BUILD_TAG}"
 echo "DevEnv Tag:       ${DEVENV_TAG}"
 echo "Archive Dir:      ${ARCHIVE_DIR}"
@@ -153,36 +186,72 @@ fi
 
 cd "${SOURCE_DIR}"
 
-# Create user-config.jam for GCC toolchain
+# Create user-config.jam based on toolchain
 echo "Creating user-config.jam..."
-cat > user-config.jam << EOF
-using gcc : ${GCC_MAJOR}.${GCC_MINOR}
-    : ${GCC_INSTALL_DIR}/bin/g++
+if [ "$TOOLCHAIN" = "gcc" ]; then
+    cat > user-config.jam << EOF
+using gcc : ${COMPILER_MAJOR}.${COMPILER_MINOR}
+    : ${TOOLCHAIN_INSTALL_DIR}/bin/g++
     : <cxxflags>"-std=c++11 -fPIC"
-      <linkflags>"-L${GCC_INSTALL_DIR}/lib64 -Wl,-rpath,${GCC_INSTALL_DIR}/lib64"
+      <linkflags>"-L${TOOLCHAIN_INSTALL_DIR}/lib64 -Wl,-rpath,${TOOLCHAIN_INSTALL_DIR}/lib64"
     ;
 EOF
-
-# Bootstrap b2 if not already done
-if [ ! -f "./b2" ]; then
-    echo "Bootstrapping Boost.Build..."
-    # Use the custom GCC for bootstrapping
-    export CC="${GCC_INSTALL_DIR}/bin/gcc"
-    export CXX="${GCC_INSTALL_DIR}/bin/g++"
-    export PATH="${GCC_INSTALL_DIR}/bin:${PATH}"
-    export LD_LIBRARY_PATH="${GCC_INSTALL_DIR}/lib64:${LD_LIBRARY_PATH:-}"
-
-    ./bootstrap.sh \
-        --with-toolset=gcc
 else
-    echo "Boost.Build already bootstrapped."
+    # Clang configuration with libc++, compiler-rt, libunwind, and lld
+    cat > user-config.jam << EOF
+using clang : ${COMPILER_MAJOR}.${COMPILER_MINOR}
+    : ${TOOLCHAIN_INSTALL_DIR}/bin/clang++
+    : <cxxflags>"-std=c++11 -fPIC -stdlib=libc++ -isystem ${TOOLCHAIN_INSTALL_DIR}/include/${ARCH_TRIPLET}/c++/v1"
+      <linkflags>"-L${TOOLCHAIN_INSTALL_DIR}/lib/${ARCH_TRIPLET} -L${TOOLCHAIN_INSTALL_DIR}/lib -stdlib=libc++ -lc++abi -fuse-ld=lld -rtlib=compiler-rt --unwindlib=libunwind -Wl,-rpath,${TOOLCHAIN_INSTALL_DIR}/lib/${ARCH_TRIPLET}"
+      <archiver>${TOOLCHAIN_INSTALL_DIR}/bin/llvm-ar
+      <ranlib>${TOOLCHAIN_INSTALL_DIR}/bin/llvm-ranlib
+    ;
+EOF
 fi
 
-# RHEL-specific: Patch Boost.Locale Jamfile to fix iconv detection
-# The iconv detection fails with static runtime linking on RHEL 9, so we bypass it
-if [[ "$OS_TAG" == rhel* ]]; then
+# Set up toolchain environment variables (needed for bootstrap and builds)
+if [ "$TOOLCHAIN" = "gcc" ]; then
+    export CC="${TOOLCHAIN_INSTALL_DIR}/bin/gcc"
+    export CXX="${TOOLCHAIN_INSTALL_DIR}/bin/g++"
+    export PATH="${TOOLCHAIN_INSTALL_DIR}/bin:${PATH}"
+    export LD_LIBRARY_PATH="${TOOLCHAIN_INSTALL_DIR}/lib64:${LD_LIBRARY_PATH:-}"
+    BOOTSTRAP_TOOLSET="gcc"
+else
+    export CC="${TOOLCHAIN_INSTALL_DIR}/bin/clang"
+    export CXX="${TOOLCHAIN_INSTALL_DIR}/bin/clang++"
+    export PATH="${TOOLCHAIN_INSTALL_DIR}/bin:${PATH}"
+    # Clang libraries are in lib/arch-triplet subdirectory
+    export LD_LIBRARY_PATH="${TOOLCHAIN_INSTALL_DIR}/lib/${ARCH_TRIPLET}:${TOOLCHAIN_INSTALL_DIR}/lib:${LD_LIBRARY_PATH:-}"
+    BOOTSTRAP_TOOLSET="clang"
+fi
+
+# Bootstrap b2 if not already done, or if toolchain changed
+# Create a marker file to track which toolchain was used for bootstrap
+BOOTSTRAP_MARKER=".bootstrap_${TOOLCHAIN}"
+if [ ! -f "./b2" ] || [ ! -f "$BOOTSTRAP_MARKER" ]; then
+    echo "Bootstrapping Boost.Build with ${TOOLCHAIN}..."
+    # Clean up any previous bootstrap artifacts
+    rm -f ./b2 ./bjam .bootstrap_* 2>/dev/null || true
+
+    ./bootstrap.sh \
+        --with-toolset=${BOOTSTRAP_TOOLSET}
+
+    # Create marker file to track this bootstrap
+    touch "$BOOTSTRAP_MARKER"
+else
+    echo "Boost.Build already bootstrapped with ${TOOLCHAIN}."
+fi
+
+# Patch Boost.Locale Jamfile to fix iconv detection
+# The iconv detection fails with static runtime linking on RHEL 9 and when using
+# Clang with libc++, so we bypass it by forcing iconv to be found
+if [[ "$OS_TAG" == rhel* ]] || [ "$TOOLCHAIN" = "clang" ]; then
     echo
-    echo "Applying RHEL-specific patch to Boost.Locale Jamfile..."
+    if [ "$TOOLCHAIN" = "clang" ]; then
+        echo "Applying Clang-specific patch to Boost.Locale Jamfile..."
+    else
+        echo "Applying RHEL-specific patch to Boost.Locale Jamfile..."
+    fi
 
     JAMFILE="libs/locale/build/Jamfile.v2"
     if [ ! -f "${JAMFILE}.orig" ]; then
@@ -190,11 +259,11 @@ if [[ "$OS_TAG" == rhel* ]]; then
     fi
 
     # Modify the configure-full function to force found-iconv = true
-    # This replaces the iconv detection logic (lines 254-267) that fails on RHEL
+    # This replaces the iconv detection logic (lines 254-267) that fails with static linking
     sed -i '/local found-iconv ;/,/^    }$/c\
     local found-iconv ;\
 \
-    # RHEL patch: Force iconv to be found (bypasses broken static link detection)\
+    # Patch: Force iconv to be found (bypasses broken static link detection)\
     found-iconv = true ;\
     flags-result += <define>BOOST_LOCALE_WITH_ICONV=1 ;' "${JAMFILE}"
 
@@ -226,9 +295,16 @@ build_variant() {
         CXX_FLAGS="-O3"
     fi
 
-    # Set up environment for GCC toolchain
-    export PATH="${GCC_INSTALL_DIR}/bin:${PATH}"
-    export LD_LIBRARY_PATH="${GCC_INSTALL_DIR}/lib64:${LD_LIBRARY_PATH:-}"
+    # Set toolset name and flags based on toolchain (environment already set globally)
+    if [ "$TOOLCHAIN" = "gcc" ]; then
+        TOOLSET_NAME="gcc-${COMPILER_MAJOR}.${COMPILER_MINOR}"
+        EXTRA_CXX_FLAGS="-std=c++11 -fPIC -fvisibility=hidden"
+        EXTRA_LINK_FLAGS="-L${TOOLCHAIN_INSTALL_DIR}/lib64 -Wl,-rpath,${TOOLCHAIN_INSTALL_DIR}/lib64"
+    else
+        TOOLSET_NAME="clang-${COMPILER_MAJOR}.${COMPILER_MINOR}"
+        EXTRA_CXX_FLAGS="-std=c++11 -fPIC -fvisibility=hidden -stdlib=libc++ -isystem ${TOOLCHAIN_INSTALL_DIR}/include/${ARCH_TRIPLET}/c++/v1"
+        EXTRA_LINK_FLAGS="-L${TOOLCHAIN_INSTALL_DIR}/lib/${ARCH_TRIPLET} -L${TOOLCHAIN_INSTALL_DIR}/lib -stdlib=libc++ -lc++abi -fuse-ld=lld -rtlib=compiler-rt --unwindlib=libunwind -Wl,-rpath,${TOOLCHAIN_INSTALL_DIR}/lib/${ARCH_TRIPLET}"
+    fi
 
     # Build Boost libraries
     echo "Building Boost libraries for ${VARIANT}..."
@@ -236,14 +312,14 @@ build_variant() {
         --user-config=user-config.jam \
         --prefix="${BUILD_DIR}" \
         --build-dir="${TEMP_BUILD_DIR}" \
-        toolset=gcc-${GCC_MAJOR}.${GCC_MINOR} \
+        toolset=${TOOLSET_NAME} \
         address-model=64 \
         variant=${VARIANT_FLAG} \
         link=static \
         runtime-link=static \
         threading=multi \
-        cxxflags="${CXX_FLAGS} -std=c++11 -fPIC -fvisibility=hidden" \
-        linkflags="-L${GCC_INSTALL_DIR}/lib64 -Wl,-rpath,${GCC_INSTALL_DIR}/lib64" \
+        cxxflags="${CXX_FLAGS} ${EXTRA_CXX_FLAGS}" \
+        linkflags="${EXTRA_LINK_FLAGS}" \
         -j${JOBS} \
         --layout=tagged \
         --build-type=complete \
@@ -284,6 +360,7 @@ echo
 echo "==========================================================================="
 echo "All Builds Complete!"
 echo "==========================================================================="
+echo "Toolchain:   ${TOOLCHAIN} ${COMPILER_VERSION}"
 echo "Version Dir: ${VERSION_DIR}"
 echo
 echo "Debug variant:"

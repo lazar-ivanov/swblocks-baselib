@@ -87,18 +87,42 @@ else ifeq ($(TOOLCHAIN),clang801)
 TOOLCHAIN_ROOT := $(DIST_ROOT_DEPS3)/toolchain-clang/8.0.1/$(OS)-$(ARCH)-clang801-release
 else ifeq ($(TOOLCHAIN),clang1201)
 TOOLCHAIN_ROOT := $(DIST_ROOT_DEPS3)/toolchain-clang/12.0.1/$(OS)-$(ARCH)-clang1201-release
+else ifeq ($(TOOLCHAIN),clang2010)
+TOOLCHAIN_ROOT := $(DIST_ROOT_DEPS3)/toolchain-clang/20.1.0/$(OS)-$(ARCH)-clang2010-release
 else
 TOOLCHAIN_ROOT := $(TOOLCHAIN_ROOT_GCC)
 endif
 
 TOOLCHAIN_STD_INCLUDES :=
 
+# Set compiler and library paths based on toolchain
+ifeq ($(TOOLCHAIN),clang2010)
+# clang2010 uses standalone clang with libc++, compiler-rt, libunwind, lld
+CXX             := $(TOOLCHAIN_ROOT)/bin/clang++
+# Clang libraries are in lib/arch-triplet subdirectory
+LD_LIBRARY_PATH := $(TOOLCHAIN_ROOT)/lib/$(TOOLCHAIN_GCC_ARCH_TAG2)-unknown-linux-gnu:$(TOOLCHAIN_ROOT)/lib:$(LD_LIBRARY_PATH)
+else
 CXX             := $(TOOLCHAIN_ROOT_GCC)/bin/g++
 LD_LIBRARY_PATH := $(TOOLCHAIN_ROOT_GCC)/$(TOOLCHAIN_GCC_LIB_TAG):$(LD_LIBRARY_PATH)
 LD_LIBRARY_PATH := $(TOOLCHAIN_ROOT_GCC)/libexec/gcc/$(TOOLCHAIN_GCC_ARCH_TAG2)-$(TOOLCHAIN_GCC_TARGET_PLATFORM)-linux-gnu/$(TOOLCHAIN_GCC_VERSION):$(LD_LIBRARY_PATH)
+endif
 
 ifeq (clang, $(findstring clang, $(TOOLCHAIN)))
 
+# clang2010 always uses standalone libc++ (no GCC dependencies)
+ifeq ($(TOOLCHAIN),clang2010)
+BL_CLANG_USE_CLANG_LIBCXX := 1
+BL_CLANG_STANDALONE := 1
+$(info Building with clang2010 standalone (libc++, compiler-rt, libunwind, lld))
+CXXFLAGS += -stdlib=libc++
+CXXFLAGS += -static
+# Suppress unused argument warning for clang2010
+CXXFLAGS += -Wno-unused-command-line-argument
+
+BOOSTDIR = $(BL_EXPECTED_BOOSTDIR)
+OPENSSLDIR = $(BL_EXPECTED_OPENSSLDIR)
+else
+# For older clang versions, check if clang-built libs exist
 ifneq ("$(wildcard $(BL_EXPECTED_BOOSTDIR))","")
 ifneq ("$(wildcard $(BL_EXPECTED_OPENSSLDIR))","")
 BL_CLANG_LIBS_EXISTS := 1
@@ -119,6 +143,7 @@ OPENSSLDIR = $(BL_EXPECTED_OPENSSLDIR)
 endif
 else
 $(info Building with BL_CLANG_USE_GCC_LIBS = $(BL_CLANG_USE_GCC_LIBS))
+endif
 endif
 
 endif
@@ -153,10 +178,25 @@ endif
 TOOLCHAIN_STD_INCLUDES += $(TOOLCHAIN_ROOT)/lib/clang/12.0.1/include
 endif
 
+ifeq ($(TOOLCHAIN),clang2010)
+# clang2010 uses standalone libc++ (no GCC dependencies)
+# Include architecture-specific libc++ headers first
+TOOLCHAIN_STD_INCLUDES += $(TOOLCHAIN_ROOT)/include/$(TOOLCHAIN_GCC_ARCH_TAG2)-unknown-linux-gnu/c++/v1
+TOOLCHAIN_STD_INCLUDES += $(TOOLCHAIN_ROOT)/include/c++/v1
+TOOLCHAIN_STD_INCLUDES += $(TOOLCHAIN_ROOT)/lib/clang/20/include
+endif
+
 ifeq (clang, $(findstring clang, $(TOOLCHAIN)))
+ifneq ($(TOOLCHAIN),clang2010)
 # clang is linking against GCC stdc++ library, so the GCC default lib locations have to be added explicitly
+# (but not for clang2010 which uses standalone libc++)
 LIBPATH += $(TOOLCHAIN_ROOT_GCC)/$(TOOLCHAIN_GCC_LIB_TAG)
 LIBPATH += $(TOOLCHAIN_ROOT_GCC)/libexec/gcc/$(TOOLCHAIN_GCC_ARCH_TAG2)-$(TOOLCHAIN_GCC_TARGET_PLATFORM)-linux-gnu/$(TOOLCHAIN_GCC_VERSION)
+else
+# clang2010 uses standalone runtime libraries (no GCC dependencies)
+LIBPATH += $(TOOLCHAIN_ROOT)/lib/$(TOOLCHAIN_GCC_ARCH_TAG2)-unknown-linux-gnu
+LIBPATH += $(TOOLCHAIN_ROOT)/lib
+endif
 endif
 
 ifeq (, $(BL_CLANG_USE_CLANG_LIBCXX))
@@ -242,14 +282,26 @@ export LD # needed by utf_loader
 
 ifneq ($(BL_PLAT_IS_DARWIN),1)
 LDFLAGS  += -pthread
+
+# clang2010 uses lld linker and doesn't need -static-libgcc/-static-libstdc++
+ifeq ($(TOOLCHAIN),clang2010)
+LDFLAGS  += -fuse-ld=lld
+LDFLAGS  += -stdlib=libc++
+LDFLAGS  += -rtlib=compiler-rt
+LDFLAGS  += --unwindlib=libunwind
+else
 LDFLAGS  += -static-libgcc
 LDFLAGS  += -static-libstdc++
+endif
 ifneq (, $(BL_CLANG_USE_CLANG_LIBCXX))
 # when clang libcxx is linked statically with stdc++ as ABI it has some duplicate symbols
 # https://libcxx.llvm.org/docs/BuildingLibcxx.html#libc-abi-feature-options
 LDFLAGS  += -Wl,--allow-multiple-definition
 endif
+# lld (clang2010) is stricter about version scripts - only use for other toolchains
+ifneq ($(TOOLCHAIN),clang2010)
 LDFLAGS  += -Wl,-version-script=$(MKDIR)/versionscript.ld  # mark non-exported symbols as 'local'
+endif
 LDFLAGS  += -Wl,-Bstatic
 ifneq (, $(BL_CLANG_USE_CLANG_LIBCXX))
 # to link statically against libc++ it must be mentioned explicitly after -Wl,-Bstatic 
@@ -265,11 +317,17 @@ endif
 
 LDFLAGS  += $(LIBPATH:%=-L%)
 
+# clang2010 uses llvm archiver and ranlib
+ifeq ($(TOOLCHAIN),clang2010)
+AR        = $(TOOLCHAIN_ROOT)/bin/llvm-ar
+RANLIB    = $(TOOLCHAIN_ROOT)/bin/llvm-ranlib
+else
 AR        = ar
+RANLIB    = ranlib
+endif
 OBJCOPY   = objcopy
 KEEPSYMS := registerPlugin
 KEEPSYMS += registerResolver
-RANLIB    = ranlib
 
 TOUCH	  = touch
 

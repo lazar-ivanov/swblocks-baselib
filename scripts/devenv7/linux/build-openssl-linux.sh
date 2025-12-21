@@ -21,19 +21,45 @@
 # This script builds OpenSSL with static libraries for use with swblocks-baselib
 # Both debug and release variants are built automatically
 #
-# Usage: ./build-openssl-linux.sh [OPENSSL_VERSION] [DEVENV_TAG] [GCC_VERSION]
-#   OPENSSL_VERSION: OpenSSL version to build (default: 3.5.4 - latest LTS)
-#   DEVENV_TAG:      devenv tag (default: devenv7)
-#   GCC_VERSION:     GCC version to use (default: 15.2.0)
+# Usage: ./build-openssl-linux.sh [TOOLCHAIN] [OPENSSL_VERSION] [DEVENV_TAG] [COMPILER_VERSION]
+#   TOOLCHAIN:        Toolchain to use: gcc or clang (default: gcc)
+#   OPENSSL_VERSION:  OpenSSL version to build (default: 3.5.4 - latest LTS)
+#   DEVENV_TAG:       devenv tag (default: devenv7)
+#   COMPILER_VERSION: GCC/Clang version to use (default: 15.2.0 for gcc, 20.1.0 for clang)
 #
 # Examples:
-#   ./build-openssl-linux.sh                       # Build 3.5.4 debug+release devenv7 with GCC 15.2.0
-#   ./build-openssl-linux.sh 3.5.4                 # Build 3.5.4 debug+release devenv7 with GCC 15.2.0
-#   ./build-openssl-linux.sh 3.0.12 devenv7 14.2.0 # Build 3.0.12 debug+release devenv7 with GCC 14.2.0
+#   ./build-openssl-linux.sh                              # Build with GCC 15.2.0
+#   ./build-openssl-linux.sh gcc                          # Build with GCC 15.2.0
+#   ./build-openssl-linux.sh clang                        # Build with Clang 20.1.0
+#   ./build-openssl-linux.sh gcc 3.5.4                    # Build 3.5.4 with GCC 15.2.0
+#   ./build-openssl-linux.sh clang 3.5.4 devenv7 19.1.0   # Build with Clang 19.1.0
 ###############################################################################
 
 set -e  # Exit on error
 set -u  # Exit on undefined variable
+
+# Parse toolchain argument
+TOOLCHAIN="${1:-gcc}"
+if [ "$TOOLCHAIN" != "gcc" ] && [ "$TOOLCHAIN" != "clang" ]; then
+    echo "ERROR: Invalid toolchain '$TOOLCHAIN'. Must be 'gcc' or 'clang'"
+    exit 1
+fi
+
+# Shift arguments if toolchain was provided
+if [ "$TOOLCHAIN" = "gcc" ] || [ "$TOOLCHAIN" = "clang" ]; then
+    shift
+fi
+
+# Parse remaining command line arguments
+OPENSSL_VERSION="${1:-3.5.4}"
+DEVENV_TAG="${2:-devenv7}"
+
+# Set default compiler version based on toolchain
+if [ "$TOOLCHAIN" = "gcc" ]; then
+    COMPILER_VERSION="${3:-15.2.0}"
+else
+    COMPILER_VERSION="${3:-20.1.0}"
+fi
 
 # Check for required Perl modules and provide a single installation command
 # We check for a few common modules and if any are missing, we recommend installing a bundle of packages
@@ -49,8 +75,8 @@ for module in ${REQUIRED_PERL_MODULES}; do
             echo "On RHEL-based systems like yours, please run the following command to install them:" >&2
             echo "    sudo dnf install perl-devel perl-core perl-FindBin perl-IPC-Cmd perl-Text-Template perl-podlators perl-Time-Piece perl-Test-Simple perl-Test-Harness" >&2
         elif command -v apt-get &> /dev/null; then
-            echo "On Debian-based systems, please run the following command to install them:" >&2
-            echo "    sudo apt-get install perl-base perl-modules libfindbin-perl libipc-cmd-perl libtext-template-perl podlators libtime-piece-perl libtest-simple-perl libtest-harness-perl" >&2
+            echo "On Debian/Ubuntu-based systems, please run the following command to install them:" >&2
+            echo "    sudo apt-get install perl libtext-template-perl" >&2
         else
             echo "Please use your system's package manager to install the required Perl modules, including:" >&2
             echo "FindBin, IPC::Cmd, Text::Template, Pod::Man, Time::Piece, Test::More" >&2
@@ -59,11 +85,6 @@ for module in ${REQUIRED_PERL_MODULES}; do
         exit 1
     fi
 done
-
-# Parse command line arguments
-OPENSSL_VERSION="${1:-3.5.4}"
-DEVENV_TAG="${2:-devenv7}"
-GCC_VERSION="${3:-15.2.0}"
 
 # Convert version to OpenSSL archive format (e.g., 3.5.4 -> openssl-3.5.4)
 OPENSSL_ARCHIVE="openssl-${OPENSSL_VERSION}.tar.gz"
@@ -74,9 +95,11 @@ OPENSSL_DIR="openssl-${OPENSSL_VERSION}"
 ARCH=$(uname -m)
 if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     ARCH_TAG="a64"
+    ARCH_TRIPLET="aarch64-unknown-linux-gnu"
     OPENSSL_ARCH="linux-aarch64"
 elif [ "$ARCH" = "x86_64" ]; then
     ARCH_TAG="x64"
+    ARCH_TRIPLET="x86_64-unknown-linux-gnu"
     OPENSSL_ARCH="linux-x86_64"
 else
     echo "Unsupported architecture: $ARCH"
@@ -101,27 +124,36 @@ else
     exit 1
 fi
 
-# Extract GCC major/minor version for tag (e.g., 15.2.0 -> gcc1502)
-GCC_MAJOR=$(echo "$GCC_VERSION" | cut -d. -f1)
-GCC_MINOR=$(echo "$GCC_VERSION" | cut -d. -f2)
-GCC_TAG="gcc${GCC_MAJOR}$(printf "%02d" $GCC_MINOR)"
+# Generate toolchain tag based on selected toolchain
+if [ "$TOOLCHAIN" = "gcc" ]; then
+    # Extract GCC major/minor version for tag (e.g., 15.2.0 -> gcc1502)
+    COMPILER_MAJOR=$(echo "$COMPILER_VERSION" | cut -d. -f1)
+    COMPILER_MINOR=$(echo "$COMPILER_VERSION" | cut -d. -f2)
+    COMPILER_TAG="gcc${COMPILER_MAJOR}$(printf "%02d" $COMPILER_MINOR)"
+else
+    # Extract Clang version for tag (e.g., 20.1.0 -> clang2010)
+    COMPILER_VERSION_NO_DOTS=$(echo "$COMPILER_VERSION" | tr -d '.')
+    COMPILER_TAG="clang${COMPILER_VERSION_NO_DOTS}"
+    COMPILER_MAJOR=$(echo "$COMPILER_VERSION" | cut -d. -f1)
+    COMPILER_MINOR=$(echo "$COMPILER_VERSION" | cut -d. -f2)
+fi
 
 # Build configuration
-BUILD_TAG="${OS_TAG}-${ARCH_TAG}-${GCC_TAG}"
+BUILD_TAG="${OS_TAG}-${ARCH_TAG}-${COMPILER_TAG}"
 
-# GCC toolchain path
-GCC_BASE_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${GCC_TAG}-arm/toolchain-gcc/${GCC_VERSION}"
-GCC_INSTALL_DIR="${GCC_BASE_DIR}/${BUILD_TAG}-release"
+# Toolchain path
+TOOLCHAIN_BASE_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${COMPILER_TAG}-arm/toolchain-${TOOLCHAIN}/${COMPILER_VERSION}"
+TOOLCHAIN_INSTALL_DIR="${TOOLCHAIN_BASE_DIR}/${BUILD_TAG}-release"
 
-# Verify GCC installation exists
-if [ ! -d "$GCC_INSTALL_DIR" ]; then
-    echo "ERROR: GCC installation not found at: $GCC_INSTALL_DIR"
-    echo "Please build GCC first using build-gcc-linux.sh"
+# Verify toolchain installation exists
+if [ ! -d "$TOOLCHAIN_INSTALL_DIR" ]; then
+    echo "ERROR: ${TOOLCHAIN} installation not found at: $TOOLCHAIN_INSTALL_DIR"
+    echo "Please build ${TOOLCHAIN} first using build-${TOOLCHAIN}-linux.sh"
     exit 1
 fi
 
 # Installation paths
-VERSION_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${GCC_TAG}-arm/openssl/${OPENSSL_VERSION}"
+VERSION_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${COMPILER_TAG}-arm/openssl/${OPENSSL_VERSION}"
 ARCHIVE_DIR="${VERSION_DIR}/tar"
 SOURCE_DIR="${VERSION_DIR}/source"
 SOURCE_LINUX_DIR="${VERSION_DIR}/source-linux"
@@ -132,10 +164,11 @@ JOBS=$(nproc)
 echo "==========================================================================="
 echo "OpenSSL ${OPENSSL_VERSION} Build Configuration"
 echo "==========================================================================="
+echo "Toolchain:        ${TOOLCHAIN}"
 echo "Architecture:     ${ARCH} (${ARCH_TAG})"
 echo "OS Version:       $(lsb_release -ds) (${OS_TAG})"
-echo "GCC Version:      ${GCC_VERSION} (${GCC_TAG})"
-echo "GCC Install Dir:  ${GCC_INSTALL_DIR}"
+echo "Compiler Version: ${COMPILER_VERSION} (${COMPILER_TAG})"
+echo "Compiler Dir:     ${TOOLCHAIN_INSTALL_DIR}"
 echo "Build Tag:        ${BUILD_TAG}"
 echo "DevEnv Tag:       ${DEVENV_TAG}"
 echo "OpenSSL Arch:     ${OPENSSL_ARCH}"
@@ -223,11 +256,24 @@ build_variant() {
     cp -R "${SOURCE_LINUX_DIR}" "${WORK_DIR}"
     cd "${WORK_DIR}"
 
-    # Set up environment for GCC toolchain
-    export PATH="${GCC_INSTALL_DIR}/bin:${PATH}"
-    export LD_LIBRARY_PATH="${GCC_INSTALL_DIR}/lib64:${LD_LIBRARY_PATH:-}"
-    export CC="${GCC_INSTALL_DIR}/bin/gcc"
-    export CXX="${GCC_INSTALL_DIR}/bin/g++"
+    # Set up environment based on toolchain
+    if [ "$TOOLCHAIN" = "gcc" ]; then
+        export PATH="${TOOLCHAIN_INSTALL_DIR}/bin:${PATH}"
+        export LD_LIBRARY_PATH="${TOOLCHAIN_INSTALL_DIR}/lib64:${LD_LIBRARY_PATH:-}"
+        export CC="${TOOLCHAIN_INSTALL_DIR}/bin/gcc"
+        export CXX="${TOOLCHAIN_INSTALL_DIR}/bin/g++"
+    else
+        # Clang configuration
+        export PATH="${TOOLCHAIN_INSTALL_DIR}/bin:${PATH}"
+        # Clang libraries are in lib/arch-triplet subdirectory
+        export LD_LIBRARY_PATH="${TOOLCHAIN_INSTALL_DIR}/lib/${ARCH_TRIPLET}:${TOOLCHAIN_INSTALL_DIR}/lib:${LD_LIBRARY_PATH:-}"
+        export CC="${TOOLCHAIN_INSTALL_DIR}/bin/clang"
+        export CXX="${TOOLCHAIN_INSTALL_DIR}/bin/clang++"
+        # Set Clang-specific flags for libc++, compiler-rt, libunwind, and lld
+        export CFLAGS="-stdlib=libc++ -rtlib=compiler-rt --unwindlib=libunwind"
+        export CXXFLAGS="-stdlib=libc++ -rtlib=compiler-rt --unwindlib=libunwind"
+        export LDFLAGS="-fuse-ld=lld -stdlib=libc++ -lc++abi -rtlib=compiler-rt --unwindlib=libunwind -L${TOOLCHAIN_INSTALL_DIR}/lib/${ARCH_TRIPLET} -L${TOOLCHAIN_INSTALL_DIR}/lib -Wl,-rpath,${TOOLCHAIN_INSTALL_DIR}/lib/${ARCH_TRIPLET}"
+    fi
 
     # Determine variant-specific flags
     if [ "$VARIANT" = "debug" ]; then
@@ -274,6 +320,7 @@ echo
 echo "==========================================================================="
 echo "All Builds Complete!"
 echo "==========================================================================="
+echo "Toolchain:   ${TOOLCHAIN} ${COMPILER_VERSION}"
 echo "Version Dir: ${VERSION_DIR}"
 echo
 echo "Debug variant:"

@@ -39,13 +39,13 @@
 /**
  * @brief Main function linkage declaration
  *
- * GCC 15+ with -Wpedantic warns about 'extern "C"' on main function.
+ * GCC 15+ and Clang 20+ with -Wpedantic warn about 'extern "C"' on main function.
  * While the C++11 standard specifies main should not have explicit linkage,
  * some platforms historically required it. This macro provides backward
- * compatibility while avoiding the warning on GCC 15+.
+ * compatibility while avoiding the warning on modern compilers.
  */
 
-#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
+#if (defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15) || (defined(__clang__) && __clang_major__ >= 20)
 #define BL_MAIN_LINKAGE_DECL
 #else
 #define BL_MAIN_LINKAGE_DECL extern "C"
