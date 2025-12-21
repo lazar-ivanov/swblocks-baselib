@@ -126,12 +126,15 @@ fi
 
 # Generate toolchain tag based on selected toolchain
 if [ "$TOOLCHAIN" = "gcc" ]; then
-    # Extract GCC major/minor version for tag (e.g., 15.2.0 -> gcc1502)
+    # Extract GCC version for tag (e.g., 15.2.0 -> gcc1520)
+    # Remove all dots from version string
+    COMPILER_VERSION_NO_DOTS=$(echo "$COMPILER_VERSION" | tr -d '.')
+    COMPILER_TAG="gcc${COMPILER_VERSION_NO_DOTS}"
     COMPILER_MAJOR=$(echo "$COMPILER_VERSION" | cut -d. -f1)
     COMPILER_MINOR=$(echo "$COMPILER_VERSION" | cut -d. -f2)
-    COMPILER_TAG="gcc${COMPILER_MAJOR}$(printf "%02d" $COMPILER_MINOR)"
 else
     # Extract Clang version for tag (e.g., 20.1.0 -> clang2010)
+    # Remove all dots from version string
     COMPILER_VERSION_NO_DOTS=$(echo "$COMPILER_VERSION" | tr -d '.')
     COMPILER_TAG="clang${COMPILER_VERSION_NO_DOTS}"
     COMPILER_MAJOR=$(echo "$COMPILER_VERSION" | cut -d. -f1)

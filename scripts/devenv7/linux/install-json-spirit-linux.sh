@@ -21,12 +21,12 @@
 # This script downloads and installs JSON Spirit source code for use with swblocks-baselib
 #
 # Usage: ./install-json-spirit-linux.sh TOOLCHAIN_TAG [DEVENV_TAG]
-#   TOOLCHAIN_TAG:  Compiler toolchain tag (required, e.g., gcc1502)
+#   TOOLCHAIN_TAG:  Compiler toolchain tag (required, e.g., gcc1520)
 #   DEVENV_TAG:     devenv tag (default: devenv7)
 #
 # Examples:
-#   ./install-json-spirit-linux.sh gcc1502              # Install devenv7 with gcc1502
-#   ./install-json-spirit-linux.sh gcc1502 devenv6      # Install devenv6 with gcc1502
+#   ./install-json-spirit-linux.sh gcc1520              # Install devenv7 with gcc1520
+#   ./install-json-spirit-linux.sh gcc1520 devenv6      # Install devenv6 with gcc1520
 ###############################################################################
 
 set -e  # Exit on error
@@ -39,8 +39,8 @@ if [ $# -lt 1 ]; then
     echo "Usage: $0 TOOLCHAIN_TAG [DEVENV_TAG]"
     echo
     echo "Examples:"
-    echo "  $0 gcc1502              # Install JSON Spirit devenv7 with gcc1502"
-    echo "  $0 gcc1502 devenv6      # Install JSON Spirit devenv6 with gcc1502"
+    echo "  $0 gcc1520              # Install JSON Spirit devenv7 with gcc1520"
+    echo "  $0 gcc1520 devenv6      # Install JSON Spirit devenv6 with gcc1520"
     echo
     exit 1
 fi

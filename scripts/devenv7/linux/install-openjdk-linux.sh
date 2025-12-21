@@ -21,19 +21,19 @@
 # This script downloads and installs OpenJDK for use with swblocks-baselib
 #
 # Usage: ./install-openjdk-linux.sh TOOLCHAIN_TAG [JDK_VERSION] [DEVENV_TAG]
-#   TOOLCHAIN_TAG:  Compiler toolchain tag (required, e.g., gcc1502, clang2010)
+#   TOOLCHAIN_TAG:  Compiler toolchain tag (required, e.g., gcc1520, clang2010)
 #   JDK_VERSION:    OpenJDK version to install (default: 25)
 #   DEVENV_TAG:     devenv tag (default: devenv7)
 #
 # Examples:
-#   ./install-openjdk-linux.sh gcc1502              # Install JDK 25 devenv7 with gcc1502
-#   ./install-openjdk-linux.sh gcc1502 25           # Install JDK 25 devenv7 with gcc1502
+#   ./install-openjdk-linux.sh gcc1520              # Install JDK 25 devenv7 with gcc1520
+#   ./install-openjdk-linux.sh gcc1520 25           # Install JDK 25 devenv7 with gcc1520
 #   ./install-openjdk-linux.sh clang2010 21 devenv6 # Install JDK 21 devenv6 with clang2010
 #
 # Directory structure created:
-#   ${HOME}/swblocks/dist-devenv7-ub24-gcc1502-arm/jdk/open-jdk/25/ub24-a64/
-#   ${HOME}/swblocks/dist-devenv7-ub24-gcc1502-arm/jdk/open-jdk/25/ub24-a64/include/
-#   ${HOME}/swblocks/dist-devenv7-ub24-gcc1502-arm/jdk/open-jdk/25/ub24-a64/include/linux/
+#   ${HOME}/swblocks/dist-devenv7-ub24-gcc1520-arm/jdk/open-jdk/25/ub24-a64/
+#   ${HOME}/swblocks/dist-devenv7-ub24-gcc1520-arm/jdk/open-jdk/25/ub24-a64/include/
+#   ${HOME}/swblocks/dist-devenv7-ub24-gcc1520-arm/jdk/open-jdk/25/ub24-a64/include/linux/
 ###############################################################################
 
 set -e  # Exit on error
@@ -46,8 +46,8 @@ if [ $# -lt 1 ]; then
     echo "Usage: $0 TOOLCHAIN_TAG [JDK_VERSION] [DEVENV_TAG]"
     echo
     echo "Examples:"
-    echo "  $0 gcc1502              # Install JDK 25 devenv7 with gcc1502"
-    echo "  $0 gcc1502 25           # Install JDK 25 devenv7 with gcc1502"
+    echo "  $0 gcc1520              # Install JDK 25 devenv7 with gcc1520"
+    echo "  $0 gcc1520 25           # Install JDK 25 devenv7 with gcc1520"
     echo "  $0 clang2010 21 devenv6 # Install JDK 21 devenv6 with clang2010"
     echo
     exit 1

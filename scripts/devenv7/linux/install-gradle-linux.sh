@@ -21,13 +21,13 @@
 # This script downloads and installs Gradle for use with swblocks-baselib
 #
 # Usage: ./install-gradle-linux.sh TOOLCHAIN_TAG [GRADLE_VERSION] [DEVENV_TAG]
-#   TOOLCHAIN_TAG:  Compiler toolchain tag (required, e.g., gcc1502, clang2010)
+#   TOOLCHAIN_TAG:  Compiler toolchain tag (required, e.g., gcc1520, clang2010)
 #   GRADLE_VERSION: Gradle version to install (default: 9.2.1 - latest)
 #   DEVENV_TAG:     devenv tag (default: devenv7)
 #
 # Examples:
-#   ./install-gradle-linux.sh gcc1502              # Install 9.2.1 devenv7 with gcc1502
-#   ./install-gradle-linux.sh gcc1502 9.2.1        # Install 9.2.1 devenv7 with gcc1502
+#   ./install-gradle-linux.sh gcc1520              # Install 9.2.1 devenv7 with gcc1520
+#   ./install-gradle-linux.sh gcc1520 9.2.1        # Install 9.2.1 devenv7 with gcc1520
 #   ./install-gradle-linux.sh clang2010 8.5 devenv6 # Install 8.5 devenv6 with clang2010
 ###############################################################################
 
@@ -41,8 +41,8 @@ if [ $# -lt 1 ]; then
     echo "Usage: $0 TOOLCHAIN_TAG [GRADLE_VERSION] [DEVENV_TAG]"
     echo
     echo "Examples:"
-    echo "  $0 gcc1502              # Install Gradle 9.2.1 devenv7 with gcc1502"
-    echo "  $0 gcc1502 9.2.1        # Install Gradle 9.2.1 devenv7 with gcc1502"
+    echo "  $0 gcc1520              # Install Gradle 9.2.1 devenv7 with gcc1520"
+    echo "  $0 gcc1520 9.2.1        # Install Gradle 9.2.1 devenv7 with gcc1520"
     echo "  $0 clang2010 8.5 devenv6 # Install Gradle 8.5 devenv6 with clang2010"
     echo
     exit 1

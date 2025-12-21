@@ -41,10 +41,10 @@ set -u  # Exit on undefined variable
 GCC_VERSION="${1:-15.2.0}"
 DEVENV_TAG="${2:-devenv7}"
 
-# Extract major version for tag (e.g., 15.2.0 -> 1520)
-GCC_MAJOR=$(echo "$GCC_VERSION" | cut -d. -f1)
-GCC_MINOR=$(echo "$GCC_VERSION" | cut -d. -f2)
-GCC_TAG="gcc${GCC_MAJOR}$(printf "%02d" $GCC_MINOR)"
+# Extract version for tag (e.g., 15.2.0 -> gcc1520)
+# Remove all dots from version string
+GCC_VERSION_NO_DOTS=$(echo "$GCC_VERSION" | tr -d '.')
+GCC_TAG="gcc${GCC_VERSION_NO_DOTS}"
 
 # Detect architecture
 ARCH=$(uname -m)
