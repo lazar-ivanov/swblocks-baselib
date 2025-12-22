@@ -21,18 +21,21 @@
 # This script builds Boost with static libraries for use with swblocks-baselib
 # Both debug and release variants are built automatically
 #
-# Usage: ./build-boost-linux.sh [TOOLCHAIN] [BOOST_VERSION] [DEVENV_TAG] [COMPILER_VERSION]
+# Usage: ./build-boost-linux.sh [TOOLCHAIN] [BOOST_VERSION] [DEVENV_TAG] [COMPILER_VERSION] [DIST_TAG]
 #   TOOLCHAIN:        Toolchain to use: gcc or clang (default: gcc)
 #   BOOST_VERSION:    Boost version to build (default: 1.89.0)
 #   DEVENV_TAG:       devenv tag (default: devenv7)
 #   COMPILER_VERSION: GCC/Clang version to use (default: 15.2.0 for gcc, 20.1.0 for clang)
+#   DIST_TAG:         Distribution tag for installation directory (default: same as COMPILER_TAG)
+#                     Used for dual-toolchain builds (e.g., gcc1520-clang2010)
 #
 # Examples:
-#   ./build-boost-linux.sh                              # Build with GCC 15.2.0
-#   ./build-boost-linux.sh gcc                          # Build with GCC 15.2.0
-#   ./build-boost-linux.sh clang                        # Build with Clang 20.1.0
-#   ./build-boost-linux.sh gcc 1.89.0                   # Build 1.89.0 with GCC 15.2.0
-#   ./build-boost-linux.sh clang 1.89.0 devenv7 19.1.0  # Build with Clang 19.1.0
+#   ./build-boost-linux.sh                                        # Build with GCC 15.2.0
+#   ./build-boost-linux.sh gcc                                    # Build with GCC 15.2.0
+#   ./build-boost-linux.sh clang                                  # Build with Clang 20.1.0
+#   ./build-boost-linux.sh gcc 1.89.0                             # Build 1.89.0 with GCC 15.2.0
+#   ./build-boost-linux.sh clang 1.89.0 devenv7 19.1.0            # Build with Clang 19.1.0
+#   ./build-boost-linux.sh gcc 1.89.0 devenv7 15.2.0 gcc1520-clang2010  # Dual toolchain build
 ###############################################################################
 
 set -e  # Exit on error
@@ -60,6 +63,10 @@ if [ "$TOOLCHAIN" = "gcc" ]; then
 else
     COMPILER_VERSION="${3:-20.1.0}"
 fi
+
+# Parse DIST_TAG parameter (5th parameter after shift)
+# Will be set below after COMPILER_TAG is calculated if not provided
+DIST_TAG_ARG="${4:-}"
 
 # Convert version to underscore format (e.g., 1.89.0 -> 1_89_0)
 BOOST_VERSION_UNDERSCORE=$(echo "$BOOST_VERSION" | tr '.' '_')
@@ -115,11 +122,19 @@ else
     COMPILER_MINOR=$(echo "$COMPILER_VERSION" | cut -d. -f2)
 fi
 
+# Set DIST_TAG - defaults to COMPILER_TAG if not provided
+# DIST_TAG is used for the top-level dist directory
+if [ -n "$DIST_TAG_ARG" ]; then
+    DIST_TAG="$DIST_TAG_ARG"
+else
+    DIST_TAG="$COMPILER_TAG"
+fi
+
 # Build configuration
 BUILD_TAG="${OS_TAG}-${ARCH_TAG}-${COMPILER_TAG}"
 
-# Toolchain path
-TOOLCHAIN_BASE_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${COMPILER_TAG}-arm/toolchain-${TOOLCHAIN}/${COMPILER_VERSION}"
+# Toolchain path - uses DIST_TAG for dual-toolchain support
+TOOLCHAIN_BASE_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-arm/toolchain-${TOOLCHAIN}/${COMPILER_VERSION}"
 TOOLCHAIN_INSTALL_DIR="${TOOLCHAIN_BASE_DIR}/${BUILD_TAG}-release"
 
 # Verify toolchain installation exists
@@ -130,7 +145,9 @@ if [ ! -d "$TOOLCHAIN_INSTALL_DIR" ]; then
 fi
 
 # Installation paths
-VERSION_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${COMPILER_TAG}-arm/boost/${BOOST_VERSION}"
+# VERSION_DIR uses DIST_TAG for dual-toolchain support
+# The shared folders (tar, source-linux) are common across toolchains
+VERSION_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-arm/boost/${BOOST_VERSION}"
 ARCHIVE_DIR="${VERSION_DIR}/tar"
 SOURCE_DIR="${VERSION_DIR}/source-linux"
 
@@ -147,12 +164,20 @@ echo "Compiler Version: ${COMPILER_VERSION} (${COMPILER_TAG})"
 echo "Compiler Dir:     ${TOOLCHAIN_INSTALL_DIR}"
 echo "Build Tag:        ${BUILD_TAG}"
 echo "DevEnv Tag:       ${DEVENV_TAG}"
+echo "Dist Tag:         ${DIST_TAG}"
 echo "Archive Dir:      ${ARCHIVE_DIR}"
 echo "Source Dir:       ${SOURCE_DIR}"
 echo "Parallel Jobs:    ${JOBS}"
 echo "Building:         debug and release variants"
 echo "==========================================================================="
 echo
+
+# Make boost directory writable if it exists (for dual-toolchain builds)
+BOOST_ROOT_DIR="${VERSION_DIR%/*}"
+if [ -d "${BOOST_ROOT_DIR}" ]; then
+    echo "Boost directory exists, making it writable..."
+    chmod -R u+w "${BOOST_ROOT_DIR}"
+fi
 
 # Create directories
 echo "Creating directories..."

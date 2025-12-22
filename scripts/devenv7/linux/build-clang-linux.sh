@@ -24,13 +24,14 @@
 # Usage: ./build-clang-linux.sh [CLANG_VERSION] [DEVENV_TAG] [DIST_TAG]
 #   CLANG_VERSION: Clang/LLVM version to build (default: 20.1.0)
 #   DEVENV_TAG:    devenv tag (default: devenv7)
-#   DIST_TAG:      distribution tag (default: derived from CLANG_VERSION)
+#   DIST_TAG:      Distribution tag for installation directory (default: same as CLANG_TAG)
+#                  Used for dual-toolchain builds (e.g., gcc1520-clang2010)
 #
 # Examples:
-#   ./build-clang-linux.sh                         # Build Clang 20.1.0 for devenv7
-#   ./build-clang-linux.sh 20.1.0                  # Build Clang 20.1.0 for devenv7
-#   ./build-clang-linux.sh 19.1.0 devenv7          # Build Clang 19.1.0 for devenv7
-#   ./build-clang-linux.sh 20.1.0 devenv7 clang2010 # Custom dist tag
+#   ./build-clang-linux.sh                                  # Build Clang 20.1.0 for devenv7
+#   ./build-clang-linux.sh 20.1.0                           # Build Clang 20.1.0 for devenv7
+#   ./build-clang-linux.sh 19.1.0 devenv7                   # Build Clang 19.1.0 for devenv7
+#   ./build-clang-linux.sh 20.1.0 devenv7 gcc1520-clang2010 # Build for dual toolchain
 #
 # Prerequisites:
 #   sudo apt-get install build-essential cmake ninja-build python3 \

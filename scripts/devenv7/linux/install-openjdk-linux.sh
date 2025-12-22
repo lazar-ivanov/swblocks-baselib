@@ -20,41 +20,43 @@
 # OpenJDK Installation Script for Linux (Ubuntu 24.04)
 # This script downloads and installs OpenJDK for use with swblocks-baselib
 #
-# Usage: ./install-openjdk-linux.sh TOOLCHAIN_TAG [JDK_VERSION] [DEVENV_TAG]
-#   TOOLCHAIN_TAG:  Compiler toolchain tag (required, e.g., gcc1520, clang2010)
-#   JDK_VERSION:    OpenJDK version to install (default: 25)
-#   DEVENV_TAG:     devenv tag (default: devenv7)
+# Usage: ./install-openjdk-linux.sh DIST_TAG [JDK_VERSION] [DEVENV_TAG]
+#   DIST_TAG:    Distribution tag for installation directory (required, e.g., gcc1520 or gcc1520-clang2010)
+#   JDK_VERSION: OpenJDK version to install (default: 25)
+#   DEVENV_TAG:  devenv tag (default: devenv7)
 #
 # Examples:
-#   ./install-openjdk-linux.sh gcc1520              # Install JDK 25 devenv7 with gcc1520
-#   ./install-openjdk-linux.sh gcc1520 25           # Install JDK 25 devenv7 with gcc1520
-#   ./install-openjdk-linux.sh clang2010 21 devenv6 # Install JDK 21 devenv6 with clang2010
+#   ./install-openjdk-linux.sh gcc1520                    # Install JDK 25 devenv7 with gcc1520
+#   ./install-openjdk-linux.sh gcc1520 25                 # Install JDK 25 devenv7 with gcc1520
+#   ./install-openjdk-linux.sh clang2010 21 devenv6       # Install JDK 21 devenv6 with clang2010
+#   ./install-openjdk-linux.sh gcc1520-clang2010 25       # Install for dual toolchain
 #
 # Directory structure created:
-#   ${HOME}/swblocks/dist-devenv7-ub24-gcc1520-arm/jdk/open-jdk/25/ub24-a64/
-#   ${HOME}/swblocks/dist-devenv7-ub24-gcc1520-arm/jdk/open-jdk/25/ub24-a64/include/
-#   ${HOME}/swblocks/dist-devenv7-ub24-gcc1520-arm/jdk/open-jdk/25/ub24-a64/include/linux/
+#   ${HOME}/swblocks/dist-devenv7-ub24-{DIST_TAG}-arm/jdk/open-jdk/25/ub24-a64/
+#   ${HOME}/swblocks/dist-devenv7-ub24-{DIST_TAG}-arm/jdk/open-jdk/25/ub24-a64/include/
+#   ${HOME}/swblocks/dist-devenv7-ub24-{DIST_TAG}-arm/jdk/open-jdk/25/ub24-a64/include/linux/
 ###############################################################################
 
 set -e  # Exit on error
 set -u  # Exit on undefined variable
 
-# Check if toolchain tag is provided
+# Check if dist tag is provided
 if [ $# -lt 1 ]; then
-    echo "ERROR: Compiler toolchain tag is required"
+    echo "ERROR: Distribution tag is required"
     echo
-    echo "Usage: $0 TOOLCHAIN_TAG [JDK_VERSION] [DEVENV_TAG]"
+    echo "Usage: $0 DIST_TAG [JDK_VERSION] [DEVENV_TAG]"
     echo
     echo "Examples:"
-    echo "  $0 gcc1520              # Install JDK 25 devenv7 with gcc1520"
-    echo "  $0 gcc1520 25           # Install JDK 25 devenv7 with gcc1520"
-    echo "  $0 clang2010 21 devenv6 # Install JDK 21 devenv6 with clang2010"
+    echo "  $0 gcc1520                    # Install JDK 25 devenv7 with gcc1520"
+    echo "  $0 gcc1520 25                 # Install JDK 25 devenv7 with gcc1520"
+    echo "  $0 clang2010 21 devenv6       # Install JDK 21 devenv6 with clang2010"
+    echo "  $0 clang2010-gcc1520 25       # Install for dual toolchain"
     echo
     exit 1
 fi
 
 # Parse command line arguments
-TOOLCHAIN_TAG="$1"
+DIST_TAG="$1"
 JDK_VERSION="${2:-25}"
 DEVENV_TAG="${3:-devenv7}"
 
@@ -90,10 +92,10 @@ else
 fi
 
 # Verify distribution directory exists
-DIST_ROOT_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${TOOLCHAIN_TAG}-arm"
+DIST_ROOT_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-arm"
 if [ ! -d "$DIST_ROOT_DIR" ]; then
     echo "ERROR: Distribution directory not found: $DIST_ROOT_DIR"
-    echo "Please ensure the toolchain tag '${TOOLCHAIN_TAG}' is correct and the corresponding"
+    echo "Please ensure the dist tag '${DIST_TAG}' is correct and the corresponding"
     echo "distribution directory exists before installing OpenJDK."
     echo
     exit 1
@@ -104,7 +106,7 @@ fi
 JDK_ARCHIVE="OpenJDK${JDK_VERSION}U-jdk_${JDK_ARCH}_linux_hotspot.tar.gz"
 JDK_URL="https://api.adoptium.net/v3/binary/latest/${JDK_VERSION}/ga/linux/${JDK_ARCH}/jdk/hotspot/normal/eclipse"
 
-# Build tag for directory naming (JDK install dir does not include toolchain tag)
+# Build tag for directory naming (JDK install dir does not include dist tag)
 BUILD_TAG="${OS_TAG}-${ARCH_TAG}"
 
 # Installation paths
@@ -119,7 +121,7 @@ echo "OpenJDK ${JDK_VERSION} Installation Configuration"
 echo "==========================================================================="
 echo "Architecture:     ${ARCH} (${ARCH_TAG})"
 echo "OS Version:       $(lsb_release -ds) (${OS_TAG})"
-echo "Toolchain Tag:    ${TOOLCHAIN_TAG}"
+echo "Dist Tag:         ${DIST_TAG}"
 echo "DevEnv Tag:       ${DEVENV_TAG}"
 echo "Build Tag:        ${BUILD_TAG}"
 echo "JDK Root:         ${JDK_ROOT_DIR}"

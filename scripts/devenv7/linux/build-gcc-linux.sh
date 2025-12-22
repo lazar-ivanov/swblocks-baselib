@@ -20,14 +20,17 @@
 # GCC Build Script for Linux (Ubuntu 24.04 ARM64)
 # This script downloads and builds GCC from source for use with swblocks-baselib
 #
-# Usage: ./build-gcc-linux.sh [GCC_VERSION] [DEVENV_TAG]
+# Usage: ./build-gcc-linux.sh [GCC_VERSION] [DEVENV_TAG] [DIST_TAG]
 #   GCC_VERSION: GCC version to build (default: 15.2.0)
 #   DEVENV_TAG:  devenv tag (default: devenv7)
+#   DIST_TAG:    Distribution tag for installation directory (default: same as GCC_TAG)
+#                Used for dual-toolchain builds (e.g., gcc1520-clang2010)
 #
 # Examples:
-#   ./build-gcc-linux.sh                         # Build GCC 15.2.0 for devenv7
-#   ./build-gcc-linux.sh 15.2.0                  # Build GCC 15.2.0 for devenv7
-#   ./build-gcc-linux.sh 14.2.0 devenv7          # Build GCC 14.2.0 for devenv7
+#   ./build-gcc-linux.sh                                  # Build GCC 15.2.0 for devenv7
+#   ./build-gcc-linux.sh 15.2.0                           # Build GCC 15.2.0 for devenv7
+#   ./build-gcc-linux.sh 14.2.0 devenv7                   # Build GCC 14.2.0 for devenv7
+#   ./build-gcc-linux.sh 15.2.0 devenv7 gcc1520-clang2010 # Build for dual toolchain
 #
 # Prerequisites:
 #   sudo apt-get install build-essential libgmp-dev libmpfr-dev libmpc-dev \
@@ -45,6 +48,10 @@ DEVENV_TAG="${2:-devenv7}"
 # Remove all dots from version string
 GCC_VERSION_NO_DOTS=$(echo "$GCC_VERSION" | tr -d '.')
 GCC_TAG="gcc${GCC_VERSION_NO_DOTS}"
+
+# DIST_TAG is used for the top-level dist directory
+# If not provided, defaults to GCC_TAG for single-toolchain builds
+DIST_TAG="${3:-${GCC_TAG}}"
 
 # Detect architecture
 ARCH=$(uname -m)
@@ -86,8 +93,9 @@ GCC_ARCHIVE="gcc-${GCC_VERSION}.tar.gz"
 GCC_URL="https://ftp.gnu.org/gnu/gcc/gcc-${GCC_VERSION}/${GCC_ARCHIVE}"
 GCC_DIR="gcc-${GCC_VERSION}"
 
-# Installation paths following devenv5 structure
-BASE_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${GCC_TAG}-arm"
+# Installation paths
+# BASE_DIR uses DIST_TAG for dual-toolchain support
+BASE_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-arm"
 VERSION_DIR="${BASE_DIR}/toolchain-gcc/${GCC_VERSION}"
 ARCHIVE_DIR="${VERSION_DIR}/tar"
 SOURCE_DIR="${VERSION_DIR}/source"

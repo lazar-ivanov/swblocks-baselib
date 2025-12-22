@@ -20,36 +20,38 @@
 # Gradle Installation Script for Linux (Ubuntu 24.04)
 # This script downloads and installs Gradle for use with swblocks-baselib
 #
-# Usage: ./install-gradle-linux.sh TOOLCHAIN_TAG [GRADLE_VERSION] [DEVENV_TAG]
-#   TOOLCHAIN_TAG:  Compiler toolchain tag (required, e.g., gcc1520, clang2010)
+# Usage: ./install-gradle-linux.sh DIST_TAG [GRADLE_VERSION] [DEVENV_TAG]
+#   DIST_TAG:       Distribution tag for installation directory (required, e.g., gcc1520 or gcc1520-clang2010)
 #   GRADLE_VERSION: Gradle version to install (default: 9.2.1 - latest)
 #   DEVENV_TAG:     devenv tag (default: devenv7)
 #
 # Examples:
-#   ./install-gradle-linux.sh gcc1520              # Install 9.2.1 devenv7 with gcc1520
-#   ./install-gradle-linux.sh gcc1520 9.2.1        # Install 9.2.1 devenv7 with gcc1520
-#   ./install-gradle-linux.sh clang2010 8.5 devenv6 # Install 8.5 devenv6 with clang2010
+#   ./install-gradle-linux.sh gcc1520                    # Install 9.2.1 devenv7 with gcc1520
+#   ./install-gradle-linux.sh gcc1520 9.2.1              # Install 9.2.1 devenv7 with gcc1520
+#   ./install-gradle-linux.sh clang2010 8.5 devenv6      # Install 8.5 devenv6 with clang2010
+#   ./install-gradle-linux.sh gcc1520-clang2010 9.2.1    # Install for dual toolchain
 ###############################################################################
 
 set -e  # Exit on error
 set -u  # Exit on undefined variable
 
-# Check if toolchain tag is provided
+# Check if dist tag is provided
 if [ $# -lt 1 ]; then
-    echo "ERROR: Compiler toolchain tag is required"
+    echo "ERROR: Distribution tag is required"
     echo
-    echo "Usage: $0 TOOLCHAIN_TAG [GRADLE_VERSION] [DEVENV_TAG]"
+    echo "Usage: $0 DIST_TAG [GRADLE_VERSION] [DEVENV_TAG]"
     echo
     echo "Examples:"
-    echo "  $0 gcc1520              # Install Gradle 9.2.1 devenv7 with gcc1520"
-    echo "  $0 gcc1520 9.2.1        # Install Gradle 9.2.1 devenv7 with gcc1520"
-    echo "  $0 clang2010 8.5 devenv6 # Install Gradle 8.5 devenv6 with clang2010"
+    echo "  $0 gcc1520                    # Install Gradle 9.2.1 devenv7 with gcc1520"
+    echo "  $0 gcc1520 9.2.1              # Install Gradle 9.2.1 devenv7 with gcc1520"
+    echo "  $0 clang2010 8.5 devenv6      # Install Gradle 8.5 devenv6 with clang2010"
+    echo "  $0 clang2010-gcc1520 9.2.1    # Install for dual toolchain"
     echo
     exit 1
 fi
 
 # Parse command line arguments
-TOOLCHAIN_TAG="$1"
+DIST_TAG="$1"
 GRADLE_VERSION="${2:-9.2.1}"
 DEVENV_TAG="${3:-devenv7}"
 
@@ -88,10 +90,10 @@ else
 fi
 
 # Verify distribution directory exists
-DIST_ROOT_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${TOOLCHAIN_TAG}-arm"
+DIST_ROOT_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-arm"
 if [ ! -d "$DIST_ROOT_DIR" ]; then
     echo "ERROR: Distribution directory not found: $DIST_ROOT_DIR"
-    echo "Please ensure the toolchain tag '${TOOLCHAIN_TAG}' is correct and the corresponding"
+    echo "Please ensure the dist tag '${DIST_TAG}' is correct and the corresponding"
     echo "distribution directory exists before installing Gradle."
     echo
     exit 1
@@ -108,7 +110,7 @@ echo "Gradle ${GRADLE_VERSION} Installation Configuration"
 echo "==========================================================================="
 echo "Architecture:     ${ARCH} (${ARCH_TAG})"
 echo "OS Version:       $(lsb_release -ds) (${OS_TAG})"
-echo "Toolchain Tag:    ${TOOLCHAIN_TAG}"
+echo "Dist Tag:         ${DIST_TAG}"
 echo "DevEnv Tag:       ${DEVENV_TAG}"
 echo "Gradle Root:      ${GRADLE_ROOT_DIR}"
 echo "Archive Dir:      ${ZIP_DIR}"
