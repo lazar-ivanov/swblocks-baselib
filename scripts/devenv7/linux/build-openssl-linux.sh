@@ -273,9 +273,11 @@ build_variant() {
         export CC="${TOOLCHAIN_INSTALL_DIR}/bin/clang"
         export CXX="${TOOLCHAIN_INSTALL_DIR}/bin/clang++"
         # Set Clang-specific flags for libc++, compiler-rt, libunwind, and lld
+        # Note: Not including -lc++abi in LDFLAGS because libc++/libc++abi will be
+        # linked statically at final binary link time with -Wl,-Bstatic
         export CFLAGS="-stdlib=libc++ -rtlib=compiler-rt --unwindlib=libunwind"
         export CXXFLAGS="-stdlib=libc++ -rtlib=compiler-rt --unwindlib=libunwind"
-        export LDFLAGS="-fuse-ld=lld -stdlib=libc++ -lc++abi -rtlib=compiler-rt --unwindlib=libunwind -L${TOOLCHAIN_INSTALL_DIR}/lib/${ARCH_TRIPLET} -L${TOOLCHAIN_INSTALL_DIR}/lib -Wl,-rpath,${TOOLCHAIN_INSTALL_DIR}/lib/${ARCH_TRIPLET}"
+        export LDFLAGS="-fuse-ld=lld -stdlib=libc++ -rtlib=compiler-rt --unwindlib=libunwind -L${TOOLCHAIN_INSTALL_DIR}/lib/${ARCH_TRIPLET} -L${TOOLCHAIN_INSTALL_DIR}/lib"
     fi
 
     # Determine variant-specific flags

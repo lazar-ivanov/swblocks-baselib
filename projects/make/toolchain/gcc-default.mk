@@ -115,7 +115,6 @@ BL_CLANG_USE_CLANG_LIBCXX := 1
 BL_CLANG_STANDALONE := 1
 $(info Building with clang2010 standalone (libc++, compiler-rt, libunwind, lld))
 CXXFLAGS += -stdlib=libc++
-CXXFLAGS += -static
 # Suppress unused argument warning for clang2010
 CXXFLAGS += -Wno-unused-command-line-argument
 
@@ -283,28 +282,48 @@ export LD # needed by utf_loader
 ifneq ($(BL_PLAT_IS_DARWIN),1)
 LDFLAGS  += -pthread
 
-# clang2010 uses lld linker and doesn't need -static-libgcc/-static-libstdc++
+# clang2010 uses lld linker with static C++ libs but dynamic system libs
 ifeq ($(TOOLCHAIN),clang2010)
 LDFLAGS  += -fuse-ld=lld
 LDFLAGS  += -stdlib=libc++
 LDFLAGS  += -rtlib=compiler-rt
 LDFLAGS  += --unwindlib=libunwind
+# Static link C++ libraries (libc++, libc++abi, libunwind)
+LDFLAGS  += -static-libstdc++
+LDFLAGS  += -Wl,-Bstatic
+LDADD    += -lc++
+LDADD    += -lc++abi
+LDADD    += -lunwind
+# Dynamic link system libraries (libc, libm, libdl, librt, libpthread)
+LDADD    += -Wl,-Bdynamic
+LDADD    += -lrt
+LDADD    += -ldl
+else ifeq ($(TOOLCHAIN),gcc1520)
+# gcc1520 (devenv7) uses static C++ libs but dynamic system libs
+LDFLAGS  += -static-libgcc
+LDFLAGS  += -static-libstdc++
+# lld (clang2010) is stricter about version scripts - only use for other toolchains
+LDFLAGS  += -Wl,-version-script=$(MKDIR)/versionscript.ld  # mark non-exported symbols as 'local'
+# Static link C++ standard library
+LDFLAGS  += -Wl,-Bstatic
+LDADD    += -lstdc++
+# Dynamic link system libraries (libc, libm, libdl, librt, libpthread)
+LDADD    += -Wl,-Bdynamic
+LDADD    += -lrt
+LDADD    += -ldl
 else
 LDFLAGS  += -static-libgcc
 LDFLAGS  += -static-libstdc++
-endif
 ifneq (, $(BL_CLANG_USE_CLANG_LIBCXX))
 # when clang libcxx is linked statically with stdc++ as ABI it has some duplicate symbols
 # https://libcxx.llvm.org/docs/BuildingLibcxx.html#libc-abi-feature-options
 LDFLAGS  += -Wl,--allow-multiple-definition
 endif
 # lld (clang2010) is stricter about version scripts - only use for other toolchains
-ifneq ($(TOOLCHAIN),clang2010)
 LDFLAGS  += -Wl,-version-script=$(MKDIR)/versionscript.ld  # mark non-exported symbols as 'local'
-endif
 LDFLAGS  += -Wl,-Bstatic
 ifneq (, $(BL_CLANG_USE_CLANG_LIBCXX))
-# to link statically against libc++ it must be mentioned explicitly after -Wl,-Bstatic 
+# to link statically against libc++ it must be mentioned explicitly after -Wl,-Bstatic
 # (including libstdc++ and libc++abi)
 LDADD  += -lc++
 LDADD  += -lc++abi
@@ -313,6 +332,7 @@ endif
 LDADD    += -Wl,-Bdynamic # dynamic linking for os libs
 LDADD    += -lrt          # librt and libdl
 LDADD    += -ldl          # must be last
+endif
 endif
 
 LDFLAGS  += $(LIBPATH:%=-L%)

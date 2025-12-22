@@ -192,20 +192,25 @@ cd "${SOURCE_DIR}"
 # Create user-config.jam based on toolchain
 echo "Creating user-config.jam..."
 if [ "$TOOLCHAIN" = "gcc" ]; then
+    # GCC configuration
+    # Note: Not including -lstdc++ in linkflags because libstdc++ will be
+    # linked statically at final binary link time with -static-libstdc++
     cat > user-config.jam << EOF
 using gcc : ${COMPILER_MAJOR}.${COMPILER_MINOR}
     : ${TOOLCHAIN_INSTALL_DIR}/bin/g++
     : <cxxflags>"-std=c++11 -fPIC"
-      <linkflags>"-L${TOOLCHAIN_INSTALL_DIR}/lib64 -Wl,-rpath,${TOOLCHAIN_INSTALL_DIR}/lib64"
+      <linkflags>"-L${TOOLCHAIN_INSTALL_DIR}/lib64"
     ;
 EOF
 else
     # Clang configuration with libc++, compiler-rt, libunwind, and lld
+    # Note: Not including -lc++ or -lc++abi in linkflags because these static libraries
+    # will be linked at final binary link time with -Wl,-Bstatic
     cat > user-config.jam << EOF
 using clang : ${COMPILER_MAJOR}.${COMPILER_MINOR}
     : ${TOOLCHAIN_INSTALL_DIR}/bin/clang++
     : <cxxflags>"-std=c++11 -fPIC -stdlib=libc++ -isystem ${TOOLCHAIN_INSTALL_DIR}/include/${ARCH_TRIPLET}/c++/v1"
-      <linkflags>"-L${TOOLCHAIN_INSTALL_DIR}/lib/${ARCH_TRIPLET} -L${TOOLCHAIN_INSTALL_DIR}/lib -stdlib=libc++ -lc++abi -fuse-ld=lld -rtlib=compiler-rt --unwindlib=libunwind -Wl,-rpath,${TOOLCHAIN_INSTALL_DIR}/lib/${ARCH_TRIPLET}"
+      <linkflags>"-L${TOOLCHAIN_INSTALL_DIR}/lib/${ARCH_TRIPLET} -L${TOOLCHAIN_INSTALL_DIR}/lib -stdlib=libc++ -fuse-ld=lld -rtlib=compiler-rt --unwindlib=libunwind"
       <archiver>${TOOLCHAIN_INSTALL_DIR}/bin/llvm-ar
       <ranlib>${TOOLCHAIN_INSTALL_DIR}/bin/llvm-ranlib
     ;
