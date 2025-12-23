@@ -3449,10 +3449,10 @@ UTF_AUTO_TEST_CASE( Tasks_SimpleTimerTests )
         os::sleep( time::seconds( 2L ) );
         UTF_REQUIRE( 0U == counter );
 
-        os::sleep( time::seconds( 4L ) );
+        os::sleep( time::seconds( 5L ) );
         UTF_REQUIRE( counter > 0 );
 
-        os::sleep( time::seconds( 4L ) );
+        os::sleep( time::seconds( 6L ) );
         UTF_REQUIRE( counter > 3 );
     }
 
@@ -3470,15 +3470,15 @@ UTF_AUTO_TEST_CASE( Tasks_SimpleTimerTests )
         UTF_REQUIRE( 0U == counter );
 
         timer.start();
-        os::sleep( time::seconds( 2L ) );
+        os::sleep( time::seconds( 3L ) );
         UTF_REQUIRE( counter > 0 );
 
-        os::sleep( time::seconds( 4L ) );
+        os::sleep( time::seconds( 6L ) );
         UTF_REQUIRE( counter > 3 );
 
         timer.stop();
         const std::size_t frozenCounter = counter;
-        os::sleep( time::seconds( 2L ) );
+        os::sleep( time::seconds( 5L ) );
         UTF_REQUIRE_EQUAL( frozenCounter, counter );
     }
 
@@ -3492,7 +3492,7 @@ UTF_AUTO_TEST_CASE( Tasks_SimpleTimerTests )
             false                           /* dontStart */
             );
 
-        os::sleep( time::seconds( 1L ) );
+        os::sleep( time::seconds( 3L ) );
         UTF_REQUIRE( counter > 0 );
 
         /*
@@ -3519,7 +3519,7 @@ UTF_AUTO_TEST_CASE( Tasks_SimpleTimerTests )
          */
 
         const std::size_t frozenCounter = counter;
-        os::sleep( time::seconds( 2L ) );
+        os::sleep( time::seconds( 3L ) );
         UTF_REQUIRE_EQUAL( frozenCounter, counter );
     }
 
