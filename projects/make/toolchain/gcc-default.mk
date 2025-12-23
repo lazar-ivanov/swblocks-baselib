@@ -97,10 +97,18 @@ TOOLCHAIN_STD_INCLUDES :=
 
 # Set compiler and library paths based on toolchain
 ifeq ($(TOOLCHAIN),clang2010)
+# Check early if we should use GCC infrastructure
+ifneq (, $(BL_CLANG_USE_GCC_LIBS))
+# Use clang++ compiler but with GCC library paths
+CXX             := $(TOOLCHAIN_ROOT)/bin/clang++
+LD_LIBRARY_PATH := $(TOOLCHAIN_ROOT_GCC)/$(TOOLCHAIN_GCC_LIB_TAG):$(LD_LIBRARY_PATH)
+LD_LIBRARY_PATH := $(TOOLCHAIN_ROOT_GCC)/libexec/gcc/$(TOOLCHAIN_GCC_ARCH_TAG2)-$(TOOLCHAIN_GCC_TARGET_PLATFORM)-linux-gnu/$(TOOLCHAIN_GCC_VERSION):$(LD_LIBRARY_PATH)
+else
 # clang2010 uses standalone clang with libc++, compiler-rt, libunwind, lld
 CXX             := $(TOOLCHAIN_ROOT)/bin/clang++
 # Clang libraries are in lib/arch-triplet subdirectory
 LD_LIBRARY_PATH := $(TOOLCHAIN_ROOT)/lib/$(TOOLCHAIN_GCC_ARCH_TAG2)-unknown-linux-gnu:$(TOOLCHAIN_ROOT)/lib:$(LD_LIBRARY_PATH)
+endif
 else
 CXX             := $(TOOLCHAIN_ROOT_GCC)/bin/g++
 LD_LIBRARY_PATH := $(TOOLCHAIN_ROOT_GCC)/$(TOOLCHAIN_GCC_LIB_TAG):$(LD_LIBRARY_PATH)
@@ -109,8 +117,36 @@ endif
 
 ifeq (clang, $(findstring clang, $(TOOLCHAIN)))
 
-# clang2010 always uses standalone libc++ (no GCC dependencies)
+# clang2010 can use standalone libc++ or GCC infrastructure
 ifeq ($(TOOLCHAIN),clang2010)
+# Check if clang-built libs exist
+ifneq ("$(wildcard $(BL_EXPECTED_BOOSTDIR))","")
+ifneq ("$(wildcard $(BL_EXPECTED_OPENSSLDIR))","")
+BL_CLANG_LIBS_EXISTS := 1
+$(info Building with BL_CLANG_LIBS_EXISTS = $(BL_CLANG_LIBS_EXISTS))
+endif
+endif
+
+# Auto-enable GCC libs mode if clang libs don't exist
+ifeq (, $(BL_CLANG_LIBS_EXISTS))
+BL_CLANG_USE_GCC_LIBS := 1
+endif
+
+ifneq (, $(BL_CLANG_USE_GCC_LIBS))
+# Building with GCC infrastructure
+$(info Building with BL_CLANG_USE_GCC_LIBS = $(BL_CLANG_USE_GCC_LIBS))
+$(info Building clang2010 with GCC infrastructure (libstdc++))
+# Use GCC-built libraries - construct paths with gcc1520 instead of clang2010
+# Replace only the toolchain part of PLAT (OS-ARCH-TOOLCHAIN-VARIANT)
+BL_GCC_PLAT = $(OS)-$(ARCH)-gcc1520-$(VARIANT)
+BOOSTDIR = $(DIST_ROOT_DEPS3)/boost/$(BL_DEVENV_BOOST_VERSION)/$(BL_GCC_PLAT)
+OPENSSLDIR = $(DIST_ROOT_DEPS3)/openssl/$(BL_DEVENV_OPENSSL_VERSION)/$(BL_GCC_PLAT)
+# Tell clang to use libstdc++ instead of libc++
+CXXFLAGS += -stdlib=libstdc++
+# Suppress unused argument warning for clang2010
+CXXFLAGS += -Wno-unused-command-line-argument
+else
+# Standalone mode with libc++
 BL_CLANG_USE_CLANG_LIBCXX := 1
 BL_CLANG_STANDALONE := 1
 $(info Building with clang2010 standalone (libc++, compiler-rt, libunwind, lld))
@@ -120,6 +156,7 @@ CXXFLAGS += -Wno-unused-command-line-argument
 
 BOOSTDIR = $(BL_EXPECTED_BOOSTDIR)
 OPENSSLDIR = $(BL_EXPECTED_OPENSSLDIR)
+endif
 else
 # For older clang versions, check if clang-built libs exist
 ifneq ("$(wildcard $(BL_EXPECTED_BOOSTDIR))","")
@@ -178,10 +215,13 @@ TOOLCHAIN_STD_INCLUDES += $(TOOLCHAIN_ROOT)/lib/clang/12.0.1/include
 endif
 
 ifeq ($(TOOLCHAIN),clang2010)
+ifneq (, $(BL_CLANG_USE_CLANG_LIBCXX))
 # clang2010 uses standalone libc++ (no GCC dependencies)
 # Include architecture-specific libc++ headers first
 TOOLCHAIN_STD_INCLUDES += $(TOOLCHAIN_ROOT)/include/$(TOOLCHAIN_GCC_ARCH_TAG2)-unknown-linux-gnu/c++/v1
 TOOLCHAIN_STD_INCLUDES += $(TOOLCHAIN_ROOT)/include/c++/v1
+endif
+# Always include clang builtin headers
 TOOLCHAIN_STD_INCLUDES += $(TOOLCHAIN_ROOT)/lib/clang/20/include
 endif
 
@@ -192,9 +232,16 @@ ifneq ($(TOOLCHAIN),clang2010)
 LIBPATH += $(TOOLCHAIN_ROOT_GCC)/$(TOOLCHAIN_GCC_LIB_TAG)
 LIBPATH += $(TOOLCHAIN_ROOT_GCC)/libexec/gcc/$(TOOLCHAIN_GCC_ARCH_TAG2)-$(TOOLCHAIN_GCC_TARGET_PLATFORM)-linux-gnu/$(TOOLCHAIN_GCC_VERSION)
 else
+# clang2010 library paths depend on whether using standalone or GCC infrastructure
+ifneq (, $(BL_CLANG_USE_CLANG_LIBCXX))
 # clang2010 uses standalone runtime libraries (no GCC dependencies)
 LIBPATH += $(TOOLCHAIN_ROOT)/lib/$(TOOLCHAIN_GCC_ARCH_TAG2)-unknown-linux-gnu
 LIBPATH += $(TOOLCHAIN_ROOT)/lib
+else
+# clang2010 with GCC infrastructure
+LIBPATH += $(TOOLCHAIN_ROOT_GCC)/$(TOOLCHAIN_GCC_LIB_TAG)
+LIBPATH += $(TOOLCHAIN_ROOT_GCC)/libexec/gcc/$(TOOLCHAIN_GCC_ARCH_TAG2)-$(TOOLCHAIN_GCC_TARGET_PLATFORM)-linux-gnu/$(TOOLCHAIN_GCC_VERSION)
+endif
 endif
 endif
 
@@ -282,8 +329,10 @@ export LD # needed by utf_loader
 ifneq ($(BL_PLAT_IS_DARWIN),1)
 LDFLAGS  += -pthread
 
-# clang2010 uses lld linker with static C++ libs but dynamic system libs
+# clang2010 linking: standalone libc++ or GCC infrastructure
 ifeq ($(TOOLCHAIN),clang2010)
+ifneq (, $(BL_CLANG_USE_CLANG_LIBCXX))
+# Standalone mode: use lld linker with libc++ and static C++ libs but dynamic system libs
 LDFLAGS  += -fuse-ld=lld
 LDFLAGS  += -stdlib=libc++
 LDFLAGS  += -rtlib=compiler-rt
@@ -298,6 +347,19 @@ LDADD    += -lunwind
 LDADD    += -Wl,-Bdynamic
 LDADD    += -lrt
 LDADD    += -ldl
+else
+# GCC infrastructure mode: use GCC-style linking with libstdc++
+LDFLAGS  += -stdlib=libstdc++
+LDFLAGS  += -static-libgcc
+LDFLAGS  += -static-libstdc++
+# Static link C++ standard library
+LDFLAGS  += -Wl,-Bstatic
+LDADD    += -lstdc++
+# Dynamic link system libraries (libc, libm, libdl, librt, libpthread)
+LDADD    += -Wl,-Bdynamic
+LDADD    += -lrt
+LDADD    += -ldl
+endif
 else ifeq ($(TOOLCHAIN),gcc1520)
 # gcc1520 (devenv7) uses static C++ libs but dynamic system libs
 LDFLAGS  += -static-libgcc
