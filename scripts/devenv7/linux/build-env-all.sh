@@ -120,7 +120,7 @@ fi
 
 # Default versions for other components
 DEVENV_TAG="devenv7"
-BOOST_VERSION="1.89.0"
+BOOST_VERSION="1.90.0"
 OPENSSL_VERSION="3.5.4"
 JDK_VERSION="25"
 GRADLE_VERSION="9.2.1"

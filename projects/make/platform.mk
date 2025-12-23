@@ -143,7 +143,7 @@ else
       $(info Detected OS is $(UNAME_MERGED) - i.e. mscOS Sonoma; devenv6)
     endif
   else ifeq (Darwin-24.,$(findstring Darwin-24.,$(UNAME_MERGED)))
-    ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/boost/1.89.0)","")
+    ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/boost/1.90.0)","")
       # for macOS Sequoia and devenv7
       OS := d25
       BL_PROP_PLAT := darwin-d25
@@ -151,7 +151,7 @@ else
       $(info Detected OS is $(UNAME_MERGED) - i.e. mscOS Sequoia; devenv7)
     endif
   else ifeq (Darwin-25.,$(findstring Darwin-25.,$(UNAME_MERGED)))
-    ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/boost/1.89.0)","")
+    ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/boost/1.90.0)","")
       # for macOS Tahoe and devenv7
       OS := d25
       BL_PROP_PLAT := darwin-d25

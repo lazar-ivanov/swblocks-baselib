@@ -22,12 +22,12 @@
 # Both debug and release variants are built automatically
 #
 # Usage: ./build-boost-macos.sh [BOOST_VERSION] [DEVENV_TAG]
-#   BOOST_VERSION: Boost version to build (default: 1.89.0)
+#   BOOST_VERSION: Boost version to build (default: 1.90.0)
 #   DEVENV_TAG:    devenv tag (default: devenv7)
 #
 # Examples:
-#   ./build-boost-macos.sh                         # Build 1.89.0 debug+release devenv7
-#   ./build-boost-macos.sh 1.89.0                  # Build 1.89.0 debug+release devenv7
+#   ./build-boost-macos.sh                         # Build 1.90.0 debug+release devenv7
+#   ./build-boost-macos.sh 1.90.0                  # Build 1.90.0 debug+release devenv7
 #   ./build-boost-macos.sh 1.84.0 devenv6          # Build 1.84.0 debug+release devenv6
 ###############################################################################
 
@@ -35,7 +35,7 @@ set -e  # Exit on error
 set -u  # Exit on undefined variable
 
 # Parse command line arguments
-BOOST_VERSION="${1:-1.89.0}"
+BOOST_VERSION="${1:-1.90.0}"
 DEVENV_TAG="${2:-devenv7}"
 
 # Convert version to underscore format (e.g., 1.89.0 -> 1_89_0)
@@ -171,7 +171,7 @@ echo "Patching Jamfile.v2 for macOS iconv configuration..."
 chmod u+w libs/locale/build/Jamfile.v2 2>/dev/null || true
 
 # Extract a fresh Jamfile.v2 from the tarball to ensure we start clean
-tar -xzOf "${ARCHIVE_DIR}/boost_1_89_0.tar.gz" boost_1_89_0/libs/locale/build/Jamfile.v2 > libs/locale/build/Jamfile.v2
+tar -xzOf "${ARCHIVE_DIR}/${BOOST_ARCHIVE}" "${BOOST_DIR}/libs/locale/build/Jamfile.v2" > libs/locale/build/Jamfile.v2
 
 # Create a minimal sed script with only the necessary changes for macOS iconv support
 cat > /tmp/jamfile_patch.sed << 'SEDEOF'

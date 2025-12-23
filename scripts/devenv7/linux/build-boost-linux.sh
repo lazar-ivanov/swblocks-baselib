@@ -23,7 +23,7 @@
 #
 # Usage: ./build-boost-linux.sh [TOOLCHAIN] [BOOST_VERSION] [DEVENV_TAG] [COMPILER_VERSION] [DIST_TAG]
 #   TOOLCHAIN:        Toolchain to use: gcc or clang (default: gcc)
-#   BOOST_VERSION:    Boost version to build (default: 1.89.0)
+#   BOOST_VERSION:    Boost version to build (default: 1.90.0)
 #   DEVENV_TAG:       devenv tag (default: devenv7)
 #   COMPILER_VERSION: GCC/Clang version to use (default: 15.2.0 for gcc, 20.1.0 for clang)
 #   DIST_TAG:         Distribution tag for installation directory (default: same as COMPILER_TAG)
@@ -33,9 +33,9 @@
 #   ./build-boost-linux.sh                                        # Build with GCC 15.2.0
 #   ./build-boost-linux.sh gcc                                    # Build with GCC 15.2.0
 #   ./build-boost-linux.sh clang                                  # Build with Clang 20.1.0
-#   ./build-boost-linux.sh gcc 1.89.0                             # Build 1.89.0 with GCC 15.2.0
-#   ./build-boost-linux.sh clang 1.89.0 devenv7 19.1.0            # Build with Clang 19.1.0
-#   ./build-boost-linux.sh gcc 1.89.0 devenv7 15.2.0 gcc1520-clang2010  # Dual toolchain build
+#   ./build-boost-linux.sh gcc 1.90.0                             # Build 1.90.0 with GCC 15.2.0
+#   ./build-boost-linux.sh clang 1.90.0 devenv7 19.1.0            # Build with Clang 19.1.0
+#   ./build-boost-linux.sh gcc 1.90.0 devenv7 15.2.0 gcc1520-clang2010  # Dual toolchain build
 ###############################################################################
 
 set -e  # Exit on error
@@ -54,7 +54,7 @@ if [ "$TOOLCHAIN" = "gcc" ] || [ "$TOOLCHAIN" = "clang" ]; then
 fi
 
 # Parse remaining command line arguments
-BOOST_VERSION="${1:-1.89.0}"
+BOOST_VERSION="${1:-1.90.0}"
 DEVENV_TAG="${2:-devenv7}"
 
 # Set default compiler version based on toolchain
