@@ -284,6 +284,7 @@ build_variant() {
         --with-random \
         --with-test \
         --with-locale \
+        --with-json \
         boost.locale.iconv=on \
         boost.locale.icu=off \
         boost.locale.posix=on \
