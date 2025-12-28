@@ -399,12 +399,6 @@ endif
 
 LDFLAGS  += $(LIBPATH:%=-L%)
 
-###############################################################################
-# Include Clang analysis tools support (sanitizers, scan-build, clang-tidy)
-# This must be included after all compiler/linker flags are set
-###############################################################################
-include $(MKDIR)/toolchain/clang-analysis.mk
-
 # clang2010 uses llvm archiver and ranlib
 ifeq ($(TOOLCHAIN),clang2010)
 AR        = $(TOOLCHAIN_ROOT)/bin/llvm-ar

@@ -220,6 +220,13 @@ endif
 -include $(MKDIR)/toolchain/$(TOOLCHAIN)-$(VARIANT).mk
 -include $(MKDIR)/toolchain/$(TOOLCHAIN)-$(ARCH)-$(VARIANT).mk
 
+###############################################################################
+# Include Clang analysis tools support (sanitizers, scan-build, clang-tidy)
+# This must be included AFTER all toolchain and variant-specific makefiles
+# so that we can override optimization flags set by variant makefiles
+###############################################################################
+-include $(MKDIR)/toolchain/clang-analysis.mk
+
 # common dependencies
 include $(MKDIR)/3rd/boost/common.mk
 include $(MKDIR)/3rd/openssl/common.mk
