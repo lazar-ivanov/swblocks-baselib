@@ -63,4 +63,11 @@ else
 CPPFLAGS += -DBL_NO_BOOST_LOCALE_LIB
 endif
 
+# boost_json linking: Always enabled by default, disable by setting BL_USE_JSON_SPIRIT=1
+ifndef BL_USE_JSON_SPIRIT
+LDLIBS   += boost_json$(LIBTAG)$(ARCHTAG)
+else
+CPPFLAGS += -DBL_USE_JSON_SPIRIT
+endif
+
 endif # BOOST_COMMON_INCLUDED

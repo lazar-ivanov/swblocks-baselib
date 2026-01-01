@@ -188,7 +188,10 @@ UTF_AUTO_TEST_CASE( CoreDataModelTests )
         UTF_REQUIRE_EQUAL( testObj -> strings()[ 1 ], "bar" );
 
         UTF_REQUIRE( ! testObj -> custom().is_null() );
-        UTF_REQUIRE_EQUAL( testObj -> custom().get_obj().at( "name" ).get_str(), "value" );
+        {
+            const auto& s = testObj -> custom().as_object().at( "name" ).as_string();
+            UTF_REQUIRE_EQUAL( std::string( s.c_str(), s.size() ), "value" );
+        }
 
         const auto& complexObj = testObj -> complex();
 
@@ -527,9 +530,12 @@ UTF_AUTO_TEST_CASE( CoreDataModelTests )
             }
 
             {
-                const auto jsonObj = dmu::getJsonObject( testObj );
+                auto jsonObj = dmu::getJsonObject( testObj );
 
-                UTF_REQUIRE_EQUAL( jsonObj.at( "unmappedName" ), std::string( "unmappedValue" ) );
+                {
+                    const auto& s = jsonObj.at( "unmappedName" ).as_string();
+                    UTF_REQUIRE_EQUAL( std::string( s.c_str(), s.size() ), "unmappedValue" );
+                }
 
                 testObj = dmu::loadFromJsonObject< TestObject >( std::move( jsonObj ) );
 

@@ -22,6 +22,12 @@
 #include <baselib/core/EnumUtils.h>
 #include <baselib/core/BaseIncludes.h>
 
+/*
+ * JSON accessor macros (BL_JSON_ITER_VALUE, BL_JSON_PAIR_KEY, BL_JSON_PAIR_VALUE)
+ * are defined in the implementation headers (BoostJsonImpl.h / JsonSpiritImpl.h)
+ * and are included via DataModelObject.h -> JsonUtils.h
+ */
+
 #ifndef BL_DM_SERIALIZATION_CONTEXT_IMPL
 
 #define BL_DM_SERIALIZATION_CONTEXT_IMPL \
@@ -165,10 +171,10 @@ template \
     } \
     private: \
 
-#define BL_DM_DECLARE_SCALAR_SERIALIZATION( name, jsonProp, jsonGetter, isRequired ) \
+#define BL_DM_DECLARE_SCALAR_SERIALIZATION( name, jsonProp, scalar_type, isRequired ) \
     private: \
     void name ## Serialize( \
-        SAA_out         bl::json::Object&                               object, \
+        SAA_out         bl::json::object&                               object, \
         SAA_in          const bool                                      canonicalize \
         ) \
     { \
@@ -182,16 +188,18 @@ template \
         } \
     } \
     void name ## Deserialize( \
-        SAA_in          const bl::json::Object&                         map, \
+        SAA_in          const bl::json::object&                         map, \
         SAA_inout       BL_DM_SERIALIZATION_CONTEXT_IMPL&               context \
         ) \
     { \
         const auto pos = map.find( jsonProp ); \
         \
-        if( pos != map.end() && ! pos -> second.is_null() ) \
+        if( pos != map.end() && ! BL_JSON_ITER_VALUE( pos ).is_null() ) \
         { \
+            const auto& jsonIterValue = BL_JSON_ITER_VALUE( pos ); \
+            BL_UNUSED( jsonIterValue ); \
             m_ ## name ## IsSet = true; \
-            m_ ## name = pos -> jsonGetter; \
+            m_ ## name = bl::json::value_to< scalar_type >( jsonIterValue ); \
             \
             context.addProcessedProperty( jsonProp ); \
         } \
@@ -212,19 +220,19 @@ template \
 
 #define BL_DM_DECLARE_BOOL_PROPERTY( name ) \
     BL_DM_DECLARE_PROPERTY_SCALAR_IMPL( name, bool ) \
-    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, #name, second.get_bool(), false /* isRequired */ ) \
+    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, #name, bool, false /* isRequired */ ) \
 
 #define BL_DM_DECLARE_BOOL_REQUIRED_PROPERTY( name ) \
     BL_DM_DECLARE_PROPERTY_SCALAR_IMPL( name, bool ) \
-    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, #name, second.get_bool(), true /* isRequired */ ) \
+    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, #name, bool, true /* isRequired */ ) \
 
 #define BL_DM_DECLARE_BOOL_ALTERNATE_PROPERTY( name, jsonProp ) \
     BL_DM_DECLARE_PROPERTY_SCALAR_IMPL( name, bool ) \
-    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, jsonProp, second.get_bool(), false /* isRequired */ ) \
+    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, jsonProp, bool, false /* isRequired */ ) \
 
 #define BL_DM_DECLARE_BOOL_ALTERNATE_REQUIRED_PROPERTY( name, jsonProp ) \
     BL_DM_DECLARE_PROPERTY_SCALAR_IMPL( name, bool ) \
-    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, jsonProp, second.get_bool(), true /* isRequired */ ) \
+    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, jsonProp, bool, true /* isRequired */ ) \
 
 /*
  * BL_DM_DECLARE_INT_* macros
@@ -232,19 +240,19 @@ template \
 
 #define BL_DM_DECLARE_INT_PROPERTY( name ) \
     BL_DM_DECLARE_PROPERTY_SCALAR_IMPL( name, int ) \
-    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, #name, second.get_int(), false /* isRequired */ ) \
+    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, #name, int, false /* isRequired */ ) \
 
 #define BL_DM_DECLARE_INT_REQUIRED_PROPERTY( name ) \
     BL_DM_DECLARE_PROPERTY_SCALAR_IMPL( name, int ) \
-    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, #name, second.get_int(), true /* isRequired */ ) \
+    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, #name, int, true /* isRequired */ ) \
 
 #define BL_DM_DECLARE_INT_ALTERNATE_PROPERTY( name, jsonProp ) \
     BL_DM_DECLARE_PROPERTY_SCALAR_IMPL( name, int ) \
-    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, jsonProp, second.get_int(), false /* isRequired */ ) \
+    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, jsonProp, int, false /* isRequired */ ) \
 
 #define BL_DM_DECLARE_INT_ALTERNATE_REQUIRED_PROPERTY( name, jsonProp ) \
     BL_DM_DECLARE_PROPERTY_SCALAR_IMPL( name, int ) \
-    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, jsonProp, second.get_int(), true /* isRequired */ ) \
+    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, jsonProp, int, true /* isRequired */ ) \
 
 /*
  * BL_DM_DECLARE_UINT64_* macros
@@ -252,19 +260,19 @@ template \
 
 #define BL_DM_DECLARE_UINT64_PROPERTY( name ) \
     BL_DM_DECLARE_PROPERTY_SCALAR_IMPL( name, std::uint64_t ) \
-    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, #name, second.get_uint64(), false /* isRequired */ ) \
+    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, #name, std::uint64_t, false /* isRequired */ ) \
 
 #define BL_DM_DECLARE_UINT64_REQUIRED_PROPERTY( name ) \
     BL_DM_DECLARE_PROPERTY_SCALAR_IMPL( name, std::uint64_t ) \
-    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, #name, second.get_uint64(), true /* isRequired */ ) \
+    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, #name, std::uint64_t, true /* isRequired */ ) \
 
 #define BL_DM_DECLARE_UINT64_ALTERNATE_PROPERTY( name, jsonProp ) \
     BL_DM_DECLARE_PROPERTY_SCALAR_IMPL( name, std::uint64_t ) \
-    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, jsonProp, second.get_uint64(), false /* isRequired */ ) \
+    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, jsonProp, std::uint64_t, false /* isRequired */ ) \
 
 #define BL_DM_DECLARE_UINT64_ALTERNATE_REQUIRED_PROPERTY( name, jsonProp ) \
     BL_DM_DECLARE_PROPERTY_SCALAR_IMPL( name, std::uint64_t ) \
-    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, jsonProp, second.get_uint64(), true /* isRequired */ ) \
+    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, jsonProp, std::uint64_t, true /* isRequired */ ) \
 
 /*
  * BL_DM_DECLARE_INT64_* macros
@@ -272,19 +280,19 @@ template \
 
 #define BL_DM_DECLARE_INT64_PROPERTY( name ) \
     BL_DM_DECLARE_PROPERTY_SCALAR_IMPL( name, std::int64_t ) \
-    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, #name, second.get_int64(), false /* isRequired */ ) \
+    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, #name, std::int64_t, false /* isRequired */ ) \
 
 #define BL_DM_DECLARE_INT64_REQUIRED_PROPERTY( name ) \
     BL_DM_DECLARE_PROPERTY_SCALAR_IMPL( name, std::int64_t ) \
-    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, #name, second.get_int64(), true /* isRequired */ ) \
+    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, #name, std::int64_t, true /* isRequired */ ) \
 
 #define BL_DM_DECLARE_INT64_ALTERNATE_PROPERTY( name, jsonProp ) \
     BL_DM_DECLARE_PROPERTY_SCALAR_IMPL( name, std::int64_t ) \
-    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, jsonProp, second.get_int64(), false /* isRequired */ ) \
+    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, jsonProp, std::int64_t, false /* isRequired */ ) \
 
 #define BL_DM_DECLARE_INT64_ALTERNATE_REQUIRED_PROPERTY( name, jsonProp ) \
     BL_DM_DECLARE_PROPERTY_SCALAR_IMPL( name, std::int64_t ) \
-    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, jsonProp, second.get_int64(), true /* isRequired */ ) \
+    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, jsonProp, std::int64_t, true /* isRequired */ ) \
 
 /*
  * BL_DM_DECLARE_DOUBLE_* macros
@@ -292,19 +300,19 @@ template \
 
 #define BL_DM_DECLARE_DOUBLE_PROPERTY( name ) \
     BL_DM_DECLARE_PROPERTY_SCALAR_IMPL( name, double ) \
-    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, #name, second.get_real(), false /* isRequired */ ) \
+    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, #name, double, false /* isRequired */ ) \
 
 #define BL_DM_DECLARE_DOUBLE_REQUIRED_PROPERTY( name ) \
     BL_DM_DECLARE_PROPERTY_SCALAR_IMPL( name, double ) \
-    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, #name, second.get_real(), true /* isRequired */ ) \
+    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, #name, double, true /* isRequired */ ) \
 
 #define BL_DM_DECLARE_DOUBLE_ALTERNATE_PROPERTY( name, jsonProp ) \
     BL_DM_DECLARE_PROPERTY_SCALAR_IMPL( name, double ) \
-    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, jsonProp, second.get_real(), false /* isRequired */ ) \
+    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, jsonProp, double, false /* isRequired */ ) \
 
 #define BL_DM_DECLARE_DOUBLE_ALTERNATE_REQUIRED_PROPERTY( name, jsonProp ) \
     BL_DM_DECLARE_PROPERTY_SCALAR_IMPL( name, double ) \
-    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, jsonProp, second.get_real(), true /* isRequired */ ) \
+    BL_DM_DECLARE_SCALAR_SERIALIZATION( name, jsonProp, double, true /* isRequired */ ) \
 
 /*
  * BL_DM_DECLARE_STRING_* macros
@@ -313,7 +321,7 @@ template \
 #define BL_DM_DECLARE_STRING_PROPERTY_SERIALIZE( name, jsonProp, isRequired ) \
     private: \
     void name ## Serialize( \
-        SAA_out         bl::json::Object&                               object, \
+        SAA_out         bl::json::object&                               object, \
         SAA_in          const bool                                      canonicalize \
         ) \
     { \
@@ -331,15 +339,15 @@ template \
 #define BL_DM_DECLARE_STRING_PROPERTY_DESERIALIZE( name, jsonProp, isRequired ) \
     private: \
     void name ## Deserialize( \
-        SAA_in          const bl::json::Object&                         map, \
+        SAA_in          const bl::json::object&                         map, \
         SAA_inout       BL_DM_SERIALIZATION_CONTEXT_IMPL&               context \
         ) \
     { \
         const auto pos = map.find( jsonProp ); \
         \
-        if( pos != map.end() && ! pos -> second.is_null() ) \
+        if( pos != map.end() && ! BL_JSON_ITER_VALUE( pos ).is_null() ) \
         { \
-            m_ ## name = pos -> second.get_str(); \
+            m_ ## name = bl::json::value_to< std::string >( BL_JSON_ITER_VALUE( pos ) ); \
             \
             context.addProcessedProperty( jsonProp ); \
         } \
@@ -385,7 +393,7 @@ template \
     containerType < item_type > m_ ## name; \
     \
     void name ## Serialize( \
-        SAA_out         bl::json::Object&                               object, \
+        SAA_out         bl::json::object&                               object, \
         SAA_in          const bool                                      canonicalize \
         ) \
     { \
@@ -394,42 +402,42 @@ template \
             return; \
         } \
         \
-        bl::json::Array items; \
+        bl::json::array items; \
         \
         for( const auto& item : m_ ## name ) \
         { \
-            items.push_back( item ); \
+            items.push_back( bl::json::value( item ) ); \
         } \
         \
         object.emplace( #jsonProp, items ); \
     } \
     void name ## Deserialize( \
-        SAA_in          const bl::json::Object&                         map, \
+        SAA_in          const bl::json::object&                         map, \
         SAA_inout       BL_DM_SERIALIZATION_CONTEXT_IMPL&               context \
         ) \
     { \
         const auto pos = map.find( #jsonProp ); \
         \
-        if( pos == map.end() || pos -> second.is_null() ) \
+        if( pos == map.end() || BL_JSON_ITER_VALUE( pos ).is_null() ) \
         { \
             return; \
         } \
         \
-        auto& array = pos -> second.get_array(); \
+        const auto& arr = BL_JSON_ITER_VALUE( pos ).as_array(); \
         \
         containerType < item_type > temp; \
         \
-        for( auto& item : array ) \
+        for( const auto& item : arr ) \
         { \
             if( ! std::is_same< item_type, std::string >::value && \
-                item.type() == bl::json::ValueType::str_type ) \
+                item.is_string() ) \
             { \
-                auto itemValue = item.get_str(); \
+                auto itemValue = bl::json::value_to< std::string >( item ); \
                 temp.inserter( bl::utils::lexical_cast< item_type >( itemValue ) ); \
             } \
             else \
             { \
-                temp.inserter( item.jsonGetter() ); \
+                temp.inserter( bl::json::value_to< item_type >( item ) ); \
             } \
         } \
         \
@@ -469,10 +477,10 @@ template \
 
 #define BL_DM_DECLARE_CUSTOM_PROPERTY( name ) \
     private: \
-    bl::json::Value m_ ## name; \
+    bl::json::value m_ ## name; \
     \
     void name ## Serialize( \
-        SAA_out         bl::json::Object&                               object, \
+        SAA_out         bl::json::object&                               object, \
         SAA_in          const bool                                      canonicalize \
         ) \
     { \
@@ -482,33 +490,33 @@ template \
         } \
     } \
     void name ## Deserialize( \
-        SAA_in          bl::json::Object&                               map, \
+        SAA_in          bl::json::object&                               map, \
         SAA_inout       BL_DM_SERIALIZATION_CONTEXT_IMPL&               context \
         ) \
     { \
         auto pos = map.find( #name ); \
         \
-        if( pos == map.end() || pos -> second.is_null() ) \
+        if( pos == map.end() || BL_JSON_ITER_VALUE( pos ).is_null() ) \
         { \
             return; \
         } \
         \
-        m_ ## name = std::move( pos -> second ); \
+        m_ ## name = BL_JSON_ITER_VALUE( pos ); \
         \
         context.addProcessedProperty( #name ); \
     } \
     \
     public: \
-    const bl::json::Value& name() const NOEXCEPT \
+    const bl::json::value& name() const NOEXCEPT \
     { \
         return m_ ## name; \
     } \
-    bl::json::Value& name ## Lvalue() \
+    bl::json::value& name ## Lvalue() \
     { \
         BL_DM_DEFINE_CHECK_READ_ONLY(); \
         return m_ ## name; \
     } \
-    void name( SAA_inout bl::json::Value&& value ) \
+    void name( SAA_inout bl::json::value&& value ) \
     { \
         BL_DM_DEFINE_CHECK_READ_ONLY(); \
         m_ ## name = BL_PARAM_FWD( value ); \
@@ -532,7 +540,7 @@ template \
     bl::om::ObjPtr< type > m_ ## name; \
     \
     void name ## Serialize( \
-        SAA_out         bl::json::Object&                               object, \
+        SAA_out         bl::json::object&                               object, \
         SAA_in          const bool                                      canonicalize \
         ) \
     { \
@@ -549,20 +557,20 @@ template \
         } \
     } \
     void name ## Deserialize( \
-        SAA_in          bl::json::Object&                               map, \
+        SAA_in          bl::json::object&                               map, \
         SAA_inout       BL_DM_SERIALIZATION_CONTEXT_IMPL&               context \
         ) \
     { \
         auto pos = map.find( #jsonProp ); \
         \
-        if( pos == map.end() || pos -> second.is_null() ) \
+        if( pos == map.end() || BL_JSON_ITER_VALUE( pos ).is_null() ) \
         { \
             return; \
         } \
         \
         auto ptr = type::createInstance(); \
         \
-        BL_DM_SERIALIZATION_CONTEXT_IMPL_DECL_DESERIALIZE( tempContext, std::move( pos -> second.get_obj() ) ); \
+        BL_DM_SERIALIZATION_CONTEXT_IMPL_DECL_DESERIALIZE( tempContext, std::move( BL_JSON_ITER_VALUE( pos ).as_object() ) ); \
         \
         tempContext.detectUnknownProperties( context.detectUnknownProperties() ); \
         \
@@ -604,7 +612,7 @@ template \
     std::vector< bl::om::ObjPtr< type > > m_ ## name; \
     \
     void name ## Serialize( \
-        SAA_out         bl::json::Object&                               object, \
+        SAA_out         bl::json::object&                               object, \
         SAA_in          const bool                                      canonicalize \
         ) \
     { \
@@ -613,36 +621,36 @@ template \
             return; \
         } \
         \
-        bl::json::Array items; \
+        bl::json::array items; \
         \
         for( const auto& item : m_ ## name ) \
         { \
             BL_DM_SERIALIZATION_CONTEXT_IMPL_DECL_SERIALIZE( tempContext ); \
             item -> serializeProperties( tempContext ); \
-            items.push_back( tempContext.serializationDoc() ); \
+            items.push_back( bl::json::value( tempContext.serializationDoc() ) ); \
         } \
         \
         object.emplace( #jsonProp, items ); \
     } \
     void name ## Deserialize( \
-        SAA_in          bl::json::Object&                               map, \
+        SAA_in          bl::json::object&                               map, \
         SAA_inout       BL_DM_SERIALIZATION_CONTEXT_IMPL&               context \
         ) \
     { \
         const auto pos = map.find( #jsonProp ); \
         \
-        if( pos == map.end() || pos -> second.is_null() ) \
+        if( pos == map.end() || BL_JSON_ITER_VALUE( pos ).is_null() ) \
         { \
             return; \
         } \
         \
-        auto& items = pos -> second.get_array(); \
+        const auto& items = BL_JSON_ITER_VALUE( pos ).as_array(); \
         \
         std::vector< bl::om::ObjPtr< type > > temp; \
         \
-        for( auto& item : items ) \
+        for( const auto& item : items ) \
         { \
-            BL_DM_SERIALIZATION_CONTEXT_IMPL_DECL_DESERIALIZE( tempContext, std::move( item.get_obj() ) ); \
+            BL_DM_SERIALIZATION_CONTEXT_IMPL_DECL_DESERIALIZE( tempContext, bl::cpp::copy( item.as_object() ) ); \
             \
             tempContext.detectUnknownProperties( context.detectUnknownProperties() ); \
             \
@@ -677,7 +685,7 @@ template \
     std::map< std::string, bl::om::ObjPtr< type > > m_ ## nameArg; \
     \
     void nameArg ## Serialize( \
-        SAA_out         bl::json::Object&                               object, \
+        SAA_out         bl::json::object&                               object, \
         SAA_in          const bool                                      canonicalize \
         ) \
     { \
@@ -686,7 +694,7 @@ template \
             return; \
         } \
         \
-        bl::json::Object items; \
+        bl::json::object items; \
         \
         for( const auto& pair : m_ ## nameArg ) \
         { \
@@ -698,7 +706,7 @@ template \
         object.emplace( #nameArg, items ); \
     } \
     void nameArg ## Deserialize( \
-        SAA_in          bl::json::Object&                               map, \
+        SAA_in          bl::json::object&                               map, \
         SAA_inout       BL_DM_SERIALIZATION_CONTEXT_IMPL&               context \
         ) \
     { \
@@ -709,20 +717,20 @@ template \
             return; \
         } \
         \
-        auto& items = pos -> second.get_obj(); \
+        const auto& items = BL_JSON_ITER_VALUE( pos ).as_object(); \
         \
         std::map< std::string, bl::om::ObjPtr< type > > temp; \
         \
-        for( auto& pair : items ) \
+        for( const auto& pair : items ) \
         { \
-            BL_DM_SERIALIZATION_CONTEXT_IMPL_DECL_DESERIALIZE( tempContext, std::move( pair.second.get_obj() ) ); \
+            BL_DM_SERIALIZATION_CONTEXT_IMPL_DECL_DESERIALIZE( tempContext, bl::cpp::copy( BL_JSON_PAIR_VALUE( pair ).as_object() ) ); \
             \
             tempContext.detectUnknownProperties( context.detectUnknownProperties() ); \
             \
             auto obj = type::createInstance(); \
             obj -> serializeProperties( tempContext ); \
-            BL_DM_SERIALIZATION_CONTEXT_IMPL_DESERIALIZE_SETNAME( obj, pair.first ); \
-            temp.emplace( pair.first, std::move( obj ) ); \
+            BL_DM_SERIALIZATION_CONTEXT_IMPL_DESERIALIZE_SETNAME( obj, std::string( BL_JSON_PAIR_KEY( pair ) ) ); \
+            temp.emplace( std::string( BL_JSON_PAIR_KEY( pair ) ), std::move( obj ) ); \
         } \
         \
         m_ ##nameArg .swap( temp ); \
@@ -748,7 +756,7 @@ template \
     std::map< std::string, type > m_ ## name; \
     \
     void name ## Serialize( \
-        SAA_out         bl::json::Object&                               object, \
+        SAA_out         bl::json::object&                               object, \
         SAA_in          const bool                                      canonicalize \
         ) \
     { \
@@ -757,7 +765,7 @@ template \
             return; \
         } \
         \
-        bl::json::Object items; \
+        bl::json::object items; \
         \
         for( const auto& pair : m_ ## name ) \
         { \
@@ -767,24 +775,24 @@ template \
         object.emplace( #name, items ); \
     } \
     void name ## Deserialize( \
-        SAA_in          const bl::json::Object&                         map, \
+        SAA_in          const bl::json::object&                         map, \
         SAA_inout       BL_DM_SERIALIZATION_CONTEXT_IMPL&               context \
         ) \
     { \
         const auto pos = map.find( #name ); \
         \
-        if( pos == map.end() || pos -> second.is_null() ) \
+        if( pos == map.end() || BL_JSON_ITER_VALUE( pos ).is_null() ) \
         { \
             return; \
         } \
         \
-        const auto& object = pos -> second.get_obj(); \
+        const auto& obj = BL_JSON_ITER_VALUE( pos ).as_object(); \
         \
         std::map< std::string, type > temp; \
         \
-        for( const auto& pair : object ) \
+        for( const auto& pair : obj ) \
         { \
-            temp[ pair.first ] = pair.second.get_value< type >(); \
+            temp[ std::string( BL_JSON_PAIR_KEY( pair ) ) ] = bl::json::value_to< type >( BL_JSON_PAIR_VALUE( pair ) ); \
         } \
         \
         m_ ## name .swap( temp ); \
@@ -852,20 +860,20 @@ template \
                 \
                 for( const auto& pair : m_unmapped ) \
                 { \
-                    if( bl::cpp::contains( doc, pair.first ) ) \
+                    if( bl::cpp::contains( doc, std::string( BL_JSON_PAIR_KEY( pair ) ) ) ) \
                     { \
                         BL_LOG( \
                             bl::Logging::debug(), \
                             BL_MSG() \
                                 << "Unmapped property '" \
-                                << pair.first \
+                                << std::string( BL_JSON_PAIR_KEY( pair ) ) \
                                 << "' also in document" \
                             ); \
                         \
                         BL_ASSERT( true ); \
                     } \
                     \
-                    doc.emplace( pair.first, pair.second  ); \
+                    doc.emplace( std::string( BL_JSON_PAIR_KEY( pair ) ), BL_JSON_PAIR_VALUE( pair ) ); \
                 } \
             } \
             \
@@ -875,9 +883,9 @@ template \
                 \
                 for( const auto& pair : context.deserializationDoc() ) \
                 { \
-                    if( ! context.containsProcessedProperty( pair.first ) ) \
+                    if( ! context.containsProcessedProperty( std::string( BL_JSON_PAIR_KEY( pair ) ) ) ) \
                     { \
-                        m_unmapped.emplace( pair.first, pair.second ); \
+                        m_unmapped.emplace( std::string( BL_JSON_PAIR_KEY( pair ) ), BL_JSON_PAIR_VALUE( pair ) ); \
                     } \
                 } \
             } \

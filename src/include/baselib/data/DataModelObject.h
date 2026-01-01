@@ -44,8 +44,8 @@ namespace bl
         protected:
 
             const bool                                          m_isSerialization;
-            json::Object                                        m_serializationDoc;
-            json::Object                                        m_deserializationDoc;
+            json::object                                        m_serializationDoc;
+            json::object                                        m_deserializationDoc;
             cpp::ScalarTypeIniter< bool >                       m_detectUnknownProperties;
             std::unordered_set< std::string >                   m_processedProperties;
 
@@ -63,14 +63,14 @@ namespace bl
             {
                 auto rootValue = json::readFromString( json );
 
-                m_deserializationDoc.swap( rootValue.get_obj() );
+                m_deserializationDoc = std::move( rootValue.as_object() );
             }
 
-            SerializationContextBaseT( SAA_inout json::Object&& object ) NOEXCEPT
+            SerializationContextBaseT( SAA_inout json::object&& object ) NOEXCEPT
                 :
-                m_isSerialization( false )
+                m_isSerialization( false ),
+                m_deserializationDoc( std::move( object ) )
             {
-                m_deserializationDoc.swap( object );
             }
 
             bool detectUnknownProperties() const NOEXCEPT
@@ -88,14 +88,14 @@ namespace bl
                 return m_isSerialization;
             }
 
-            json::Object& serializationDoc() NOEXCEPT
+            json::object& serializationDoc() NOEXCEPT
             {
                 BL_ASSERT( isSerialization() );
 
                 return m_serializationDoc;
             }
 
-            json::Object& deserializationDoc() NOEXCEPT
+            json::object& deserializationDoc() NOEXCEPT
             {
                 BL_ASSERT( ! isSerialization() );
 
@@ -142,7 +142,7 @@ namespace bl
         protected:
 
             cpp::ScalarTypeIniter< bool >                                                       m_readOnly;
-            json::Object                                                                        m_unmapped;
+            json::object                                                                        m_unmapped;
 
             void readOnlyPropertyUpdateViolation()
             {
@@ -185,12 +185,12 @@ namespace bl
                 m_readOnly = readOnly;
             }
 
-            auto unmapped() const NOEXCEPT -> const json::Object&
+            auto unmapped() const NOEXCEPT -> const json::object&
             {
                 return m_unmapped;
             }
 
-            auto unmappedLvalue() NOEXCEPT -> json::Object&
+            auto unmappedLvalue() NOEXCEPT -> json::object&
             {
                 return m_unmapped;
             }
@@ -224,7 +224,7 @@ namespace bl
                 SAA_in              const om::ObjPtr< T >&                          dataObject,
                 SAA_in_opt          const bool                                      canonicalize = false
                 )
-                -> json::Object
+                -> json::object
             {
                 SerializationContextBase context;
 
@@ -247,7 +247,7 @@ namespace bl
             {
                 const auto jsonObject = getJsonObject( dataObject, canonicalize );
 
-                return json::saveToString( jsonObject, prettyPrint, rawUTF8 );
+                return json::saveToString( jsonObject, prettyPrint, rawUTF8, canonicalize );
             }
 
             template
@@ -330,7 +330,7 @@ namespace bl
             <
                 typename T
             >
-            static auto loadFromJsonObject( SAA_in json::Object&& jsonObject ) -> om::ObjPtr< T >
+            static auto loadFromJsonObject( SAA_in json::object&& jsonObject ) -> om::ObjPtr< T >
             {
                 SerializationContextBase context( std::move( jsonObject ) );
 
@@ -345,7 +345,7 @@ namespace bl
             <
                 typename T
             >
-            static auto loadFromJsonObject( SAA_in const json::Object& jsonObject ) -> om::ObjPtr< T >
+            static auto loadFromJsonObject( SAA_in const json::object& jsonObject ) -> om::ObjPtr< T >
             {
                 return loadFromJsonObject< T >( cpp::copy( jsonObject ) );
             }
@@ -354,9 +354,9 @@ namespace bl
             <
                 typename T
             >
-            static auto loadFromJsonValue( SAA_in const json::Value& jsonValue ) -> om::ObjPtr< T >
+            static auto loadFromJsonValue( SAA_in const json::value& jsonValue ) -> om::ObjPtr< T >
             {
-                return loadFromJsonObject< T >( jsonValue.get_obj() );
+                return loadFromJsonObject< T >( jsonValue.as_object() );
             }
 
             template

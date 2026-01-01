@@ -80,7 +80,7 @@ UTF_FIXTURE_TEST_CASE( TestManifestWrite, ManifestFixture )
 
     ManifestFactory::write( bl::om::copy( manifest ), cpp::copy( output ) );
 
-    json::Value value;
+    json::value value;
 
     {
         bl::fs::SafeInputFileStreamWrapper inputFile( output );
@@ -89,28 +89,49 @@ UTF_FIXTURE_TEST_CASE( TestManifestWrite, ManifestFixture )
         value = json::readFromStream( is );
     }
 
-    auto json = value.get_obj();
+    const auto& json = value.as_object();
 
-    UTF_CHECK_EQUAL( json[ "manifestVersion" ].get_int(), 1 );
-    UTF_CHECK_EQUAL( json[ "serverId" ].get_str(), "8e213524-8c75-4622-8273-6a5eeaa26250" );
-    UTF_CHECK_EQUAL( json[ "versionMajor" ].get_int(), 1 );
-    UTF_CHECK_EQUAL( json[ "versionMinor" ].get_int(), 2 );
+    UTF_CHECK_EQUAL( json.at( "manifestVersion" ).as_int64(), 1 );
+    UTF_CHECK_EQUAL( bl::json::value_to< std::string >( json.at( "serverId" ) ), "8e213524-8c75-4622-8273-6a5eeaa26250" );
+    UTF_CHECK_EQUAL( json.at( "versionMajor" ).as_int64(), 1 );
+    UTF_CHECK_EQUAL( json.at( "versionMinor" ).as_int64(), 2 );
 
-    const auto clsids = json[ "classIds" ].get_array();
+    const auto& clsids = json.at( "classIds" ).as_array();
 
     UTF_CHECK_EQUAL( clsids.size(), 2U );
-    UTF_CHECK( std::find( clsids.begin(), clsids.end(), "3fd48332-db97-42bd-9cf6-f6a332895d92" ) != clsids.end() );
-    UTF_CHECK( std::find( clsids.begin(), clsids.end(), "c76d0949-92a2-4925-8c9f-890f05484474" ) != clsids.end() );
 
-    UTF_CHECK_EQUAL( json[ "pluginClassId" ].get_str(), "3fd48332-db97-42bd-9cf6-f6a332895d92" );
-    UTF_CHECK_EQUAL( json[ "pluginName" ].get_str(), std::string( "calculator" ) );
-    UTF_CHECK_EQUAL( json[ "pluginDescription" ].get_str(), "Simple calculator plug-in" );
-    UTF_CHECK_EQUAL( json[ "isClientPlugin" ].get_bool(), false );
-    UTF_CHECK_EQUAL( json[ "isServerPlugin" ].get_bool(), true );
+    /*
+     * Check if clsids contains the expected values by iterating
+     */
 
-    UTF_CHECK_EQUAL( json[ "os" ].get_str(), "linux" );
-    UTF_CHECK_EQUAL( json[ "architecture" ].get_str(), "x64" );
-    UTF_CHECK_EQUAL( json[ "toolchain" ].get_str(), "gcc48" );
+    bool foundClsid1 = false;
+    bool foundClsid2 = false;
+
+    for( const auto& clsid : clsids )
+    {
+        auto clsidStr = bl::json::value_to< std::string >( clsid );
+        if( clsidStr == "3fd48332-db97-42bd-9cf6-f6a332895d92" )
+        {
+            foundClsid1 = true;
+        }
+        if( clsidStr == "c76d0949-92a2-4925-8c9f-890f05484474" )
+        {
+            foundClsid2 = true;
+        }
+    }
+
+    UTF_CHECK( foundClsid1 );
+    UTF_CHECK( foundClsid2 );
+
+    UTF_CHECK_EQUAL( bl::json::value_to< std::string >( json.at( "pluginClassId" ) ), "3fd48332-db97-42bd-9cf6-f6a332895d92" );
+    UTF_CHECK_EQUAL( bl::json::value_to< std::string >( json.at( "pluginName" ) ), std::string( "calculator" ) );
+    UTF_CHECK_EQUAL( bl::json::value_to< std::string >( json.at( "pluginDescription" ) ), "Simple calculator plug-in" );
+    UTF_CHECK_EQUAL( json.at( "isClientPlugin" ).as_bool(), false );
+    UTF_CHECK_EQUAL( json.at( "isServerPlugin" ).as_bool(), true );
+
+    UTF_CHECK_EQUAL( bl::json::value_to< std::string >( json.at( "os" ) ), "linux" );
+    UTF_CHECK_EQUAL( bl::json::value_to< std::string >( json.at( "architecture" ) ), "x64" );
+    UTF_CHECK_EQUAL( bl::json::value_to< std::string >( json.at( "toolchain" ) ), "gcc48" );
 }
 
 UTF_AUTO_TEST_CASE( TestToolchainMatch )

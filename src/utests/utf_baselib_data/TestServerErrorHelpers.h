@@ -439,7 +439,7 @@ UTF_AUTO_TEST_CASE( ServerErrorHelpersTests )
     UTF_REQUIRE( pos != std::string::npos );
     UTF_REQUIRE( posEnd != std::string::npos );
 
-    exceptionProperties = exceptionProperties.substr( pos - 1U, posEnd - pos + 2U );
+    exceptionProperties = exceptionProperties.substr( pos, posEnd - pos + 1U );
 
     const auto properties =
         dm::DataModelUtils::loadFromJsonText< dm::ExceptionProperties >( exceptionProperties );

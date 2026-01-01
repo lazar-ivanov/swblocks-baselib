@@ -305,7 +305,7 @@ namespace bl
 
             static om::ObjPtr< Manifest > read( SAA_in const fs::path& filePath )
             {
-                json::Value value;
+                json::value value;
 
                 {
                     fs::SafeInputFileStreamWrapper file( filePath );
@@ -313,14 +313,14 @@ namespace bl
                     value = json::readFromStream( is );
                 }
 
-                auto json = value.get_obj();
+                auto json = cpp::copy( value.as_object() );
 
-                const auto manifestVersion = getRequiredProperty( json, g_manifestVersion ).get_uint64();
-                const auto serveridStr = getRequiredProperty( json, g_serverId ).get_str();
-                const auto versionMajor = ( std::size_t ) getRequiredProperty( json, g_versionMajor ).get_uint64();
-                const auto versionMinor = ( std::size_t ) getRequiredProperty( json, g_versionMinor ).get_uint64();
-                const auto versionPatch = ( std::size_t ) getRequiredProperty( json, g_versionPatch ).get_uint64();
-                const auto clsidsArr = getRequiredProperty( json, g_classIds ).get_array();
+                const auto manifestVersion = json::value_to< std::uint64_t >( getRequiredProperty( json, g_manifestVersion ) );
+                const auto serveridStr = json::value_to< std::string >( getRequiredProperty( json, g_serverId ) );
+                const auto versionMajor = ( std::size_t ) json::value_to< std::uint64_t >( getRequiredProperty( json, g_versionMajor ) );
+                const auto versionMinor = ( std::size_t ) json::value_to< std::uint64_t >( getRequiredProperty( json, g_versionMinor ) );
+                const auto versionPatch = ( std::size_t ) json::value_to< std::uint64_t >( getRequiredProperty( json, g_versionPatch ) );
+                const auto clsidsArr = getRequiredProperty( json, g_classIds ).as_array();
 
                 const auto serverid = uuids::string2uuid( serveridStr );
 
@@ -328,12 +328,12 @@ namespace bl
 
                 for( const auto& clsidStr : clsidsArr )
                 {
-                    clsids.insert( uuids::string2uuid( clsidStr.get_str() ) );
+                    clsids.insert( uuids::string2uuid( json::value_to< std::string >( clsidStr ) ) );
                 }
 
-                auto os = getRequiredProperty( json, g_os ).get_str();
-                auto arch = getRequiredProperty( json, g_architecture ).get_str();
-                auto toolchain = getRequiredProperty( json, g_toolchain ).get_str();
+                auto os = json::value_to< std::string >( getRequiredProperty( json, g_os ) );
+                auto arch = json::value_to< std::string >( getRequiredProperty( json, g_architecture ) );
+                auto toolchain = json::value_to< std::string >( getRequiredProperty( json, g_toolchain ) );
 
                 auto platform = Platform::get(
                     std::move( os ),
@@ -341,19 +341,19 @@ namespace bl
                     std::move( toolchain )
                     );
 
-                const auto cppCompatIdStr = getRequiredProperty( json, g_cppCompatibilityId ).get_str();
+                const auto cppCompatIdStr = json::value_to< std::string >( getRequiredProperty( json, g_cppCompatibilityId ) );
                 auto cppCompatId = uuids::string2uuid( cppCompatIdStr );
 
                 BL_UNUSED( manifestVersion );
 
                 om::ObjPtr< Manifest > manifest;
 
-                const auto pluginClassIdVal = json[ g_pluginClassId ];
-                const auto pluginClassId = uuids::string2uuid( pluginClassIdVal.get_str() );
-                auto pluginName = getRequiredProperty( json, g_pluginName ).get_str();
-                auto pluginDesc = getRequiredProperty( json, g_pluginDescription ).get_str();
-                const auto isClient = getRequiredProperty( json, g_isClientPlugin ).get_bool();
-                const auto isServer = getRequiredProperty( json, g_isServerPlugin ).get_bool();
+                const auto pluginClassIdVal = getRequiredProperty( json, g_pluginClassId );
+                const auto pluginClassId = uuids::string2uuid( json::value_to< std::string >( pluginClassIdVal ) );
+                auto pluginName = json::value_to< std::string >( getRequiredProperty( json, g_pluginName ) );
+                auto pluginDesc = json::value_to< std::string >( getRequiredProperty( json, g_pluginDescription ) );
+                const auto isClient = getRequiredProperty( json, g_isClientPlugin ).as_bool();
+                const auto isServer = getRequiredProperty( json, g_isServerPlugin ).as_bool();
 
                 manifest = Manifest::createInstance(
                     serverid,
@@ -399,13 +399,13 @@ namespace bl
                 SAA_in      fs::path&&                                              output
                 )
             {
-                json::Object json;
+                json::object json;
 
-                json::Array clsids;
+                json::array clsids;
 
                 for( const auto& clsid : manifest -> classIds() )
                 {
-                    clsids.push_back( uuids::uuid2string( clsid ) );
+                    clsids.push_back( json::value( uuids::uuid2string( clsid ) ) );
                 }
 
                 /*
@@ -434,22 +434,22 @@ namespace bl
                 {
                     fs::SafeOutputFileStreamWrapper file( output );
                     auto& os = file.stream();
-                    json::saveToStream( json::Value( json ), os, json::OutputOptions::pretty_print );
+                    json::saveToStream( json, os, true /* prettyPrint */ );
                 }
             }
 
         private:
 
-            static const json::Value& getRequiredProperty(
-                SAA_in      json::Object&               doc,
+            static json::value getRequiredProperty(
+                SAA_in      const json::object&         doc,
                 SAA_in      const std::string&          property
                 )
             {
-                const auto& val = doc[ property ];
+                auto pos = doc.find( property );
 
                 BL_CHK_T_USER_FRIENDLY(
                     true,
-                    val.is_null(),
+                    pos == doc.end() || BL_JSON_ITER_VALUE( pos ).is_null(),
                     UnexpectedException(),
                     BL_MSG()
                         << "Manifest does not contain required property '"
@@ -457,7 +457,7 @@ namespace bl
                         << "'"
                     );
 
-                return val;
+                return BL_JSON_ITER_VALUE( pos );
             }
 
             static void registerPlugin(
@@ -595,6 +595,7 @@ namespace bl
         >
         const std::string
         ManifestFactoryT< E >::g_isServerPlugin = "isServerPlugin";
+
         template
         <
             typename E
