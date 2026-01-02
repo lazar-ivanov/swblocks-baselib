@@ -672,9 +672,9 @@ namespace bl
                             );
                     }
 
-                    const unsigned int options =
-                        ( prettyPrint ? json_spirit::pretty_print : 0U ) |
-                        ( rawUtf8 ? json_spirit::raw_utf8 : 0U );
+                    const int options =
+                        ( prettyPrint ? json_spirit::pretty_print : json_spirit::none ) |
+                        ( rawUtf8 ? json_spirit::raw_utf8 : json_spirit::none );
 
                     return write_string( val, options );
                 }
@@ -710,9 +710,9 @@ namespace bl
                     SAA_in          const bool                                rawUtf8
                     )
                 {
-                    const unsigned int options =
-                        ( prettyPrint ? json_spirit::pretty_print : 0U ) |
-                        ( rawUtf8 ? json_spirit::raw_utf8 : 0U );
+                    const int options =
+                        ( prettyPrint ? json_spirit::pretty_print : json_spirit::none ) |
+                        ( rawUtf8 ? json_spirit::raw_utf8 : json_spirit::none );
 
                     write_stream( val, output, options );
                 }
