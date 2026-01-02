@@ -468,6 +468,28 @@ namespace bl
 
         inline std::uint64_t get_uint64( SAA_in const value& v )
         {
+            if( v.is_uint64() )
+            {
+                return v.as_uint64();
+            }
+            if( v.type() == json_spirit::int_type )
+            {
+                const auto val = v.get_int64();
+
+                if( val < 0 )
+                {
+                    BL_THROW(
+                        JsonException(),
+                        BL_MSG()
+                            << "JSON integer value '"
+                            << val
+                            << "' is negative while unsigned value is expected"
+                        );
+                }
+
+                return static_cast< std::uint64_t >( val );
+            }
+
             return v.as_uint64();
         }
 

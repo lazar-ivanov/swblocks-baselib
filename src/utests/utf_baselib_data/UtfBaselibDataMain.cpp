@@ -22,3 +22,4 @@
 #include "TestFilesystemMetadataInMemory.h"
 #include "TestDataChunkStorageFilesystem.h"
 #include "TestJsonPerformance.h"
+#include "TestJsonAbstraction.h"
