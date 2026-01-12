@@ -53,7 +53,9 @@ endif
 
 ifeq (win, $(findstring win, $(OS)))
   TOOLCHAIN_DEFAULT         := msvc-default
-ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/toolchain-msvc/vc14.1/BuildTools)","")
+ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/toolchain-msvc/vc143/BuildTools)","")
+  TOOLCHAIN                 ?= vc143
+else ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/toolchain-msvc/vc14.1/BuildTools)","")
   TOOLCHAIN                 ?= vc141
 else ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/toolchain-msvc/vc14-update3/default)","")
   TOOLCHAIN                 ?= vc14
@@ -178,6 +180,10 @@ ifeq ($(TOOLCHAIN),clang2010)
 DEVENV_VERSION_TAG := devenv7
 endif
 
+ifeq ($(TOOLCHAIN),vc143)
+DEVENV_VERSION_TAG := devenv7
+endif
+
 ifeq ($(TOOLCHAIN),vc141)
 DEVENV_VERSION_TAG := devenv4
 endif
@@ -190,9 +196,16 @@ ifeq ($(TOOLCHAIN),vc12)
 DEVENV_VERSION_TAG := devenv2
 endif
 
+# Use 'win' prefix for devenv7, keep 'win7' for older devenvs for backward compatibility
+ifeq ($(DEVENV_VERSION_TAG),devenv7)
+ifeq ($(OS),win7)
+OS := win
+endif
+endif
+
 ifneq (devenv, $(findstring devenv, $(DEVENV_VERSION_TAG)))
 $(error The value '$(TOOLCHAIN)' of the TOOLCHAIN parameter is either invalid or the toolchain specified is no \
-longer supported; the supported toolchains are: vc12, gcc492, gcc630, gcc830, gcc1110, gcc1520, \
+longer supported; the supported toolchains are: vc12, vc143, gcc492, gcc630, gcc830, gcc1110, gcc1520, \
 clang35, clang391, clang380, clang801, clang730, clang1000, clang1201, clang1205, clang1500, clang1700, clang2010)
 endif
 
@@ -231,6 +244,7 @@ endif
 
 ifeq ($(DEVENV_VERSION_TAG),devenv7)
 BL_DEVENV_BOOST_VERSION=1.90.0
+BL_DEVENV_PYTHON_VERSION=3.14.2
 ifneq (, $(BL_USE_OPENSSL_1X))
 BL_DEVENV_OPENSSL_VERSION=1.1.1w
 $(info Building with BL_USE_OPENSSL_1X = $(BL_USE_OPENSSL_1X))

@@ -6,7 +6,7 @@
 from optparse import OptionParser, BadOptionError
 from os.path import basename, splitext
 from subprocess import Popen, PIPE, STDOUT
-from sys import argv
+from sys import argv, exit
 
 # an options parser that will pass-through unrecognized options
 class PassThroughOptionParser(OptionParser):
@@ -14,14 +14,14 @@ class PassThroughOptionParser(OptionParser):
     arg = rargs[0]
     try:
       OptionParser._process_long_opt(self, rargs, values)
-    except BadOptionError, err:
+    except BadOptionError as err:
       self.largs.append(arg)
 
   def _process_short_opts(self, rargs, values):
     arg = rargs[0]
     try:
       OptionParser._process_short_opts(self, rargs, values)
-    except BadOptionError, err:
+    except BadOptionError as err:
       self.largs.append(arg)
 
 # callback for dependency option, adds -showIncludes to the command
@@ -57,7 +57,7 @@ parser.add_option('-F',
 # if not output option is specified, attempt to infer
 # the target from the first non-option argument
 if options.dependencies and not options.target:
-  firstNonOpt = filter(lambda a: a[0] not in ('-', '/'), args)[0]
+  firstNonOpt = list(filter(lambda a: a[0] not in ('-', '/'), args))[0]
   options.target = '%s.obj' % (splitext(firstNonOpt)[0],)
   
 # insert the compiler command (basename of this script)
@@ -65,7 +65,7 @@ args.insert(0, splitext(basename(argv[0]))[0])
 
 # run the command tracking dependencies
 deps = []
-p = Popen(args, stdout=PIPE, stderr=STDOUT)
+p = Popen(args, stdout=PIPE, stderr=STDOUT, universal_newlines=True)
 for line in p.stdout:
   line = line.rstrip()
   if line.startswith('Note: including file:'):
@@ -73,7 +73,7 @@ for line in p.stdout:
     if dep not in deps:
       deps.append(dep)
   else:
-    print line
+    print(line)
 p.wait()
 
 # if successful, write the dependency file

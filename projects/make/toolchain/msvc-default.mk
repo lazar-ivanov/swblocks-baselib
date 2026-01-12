@@ -35,8 +35,44 @@ MSVCHOSTARCHTAG     := Hostx86
 endif
 endif
 
+ifeq ($(TOOLCHAIN),vc143)
+MSVC                := $(DIST_ROOT_DEPS3)/toolchain-msvc/vc143/BuildTools
+MSVCRTTAG           := Microsoft.VC143.CRT
+# Dynamically detect MSVC compiler version
+MSVCVERSIONTAG      := $(firstword $(notdir $(wildcard $(MSVC)/VC/Tools/MSVC/*)))
+# Dynamically detect Windows SDK version
+WINSDK10VERSIONTAG  := $(firstword $(notdir $(wildcard $(WINSDK10)/Include/*)))
+# Set host architecture tag based on detected architecture
+ifeq ($(BL_WIN_ARCH_IS_ARM64),1)
+MSVCHOSTARCHTAG     := Hostarm64
+else ifeq ($(BL_WIN_ARCH_IS_X64),1)
+MSVCHOSTARCHTAG     := Hostx64
+else
+MSVCHOSTARCHTAG     := Hostx86
+endif
+endif
+
 ifeq ($(MSVC),)
 $(error unknown toolchain was provided: $(TOOLCHAIN))
+endif
+
+##########################################################################
+# Architecture mapping: Convert makefile ARCH values to MSVC directory names
+# a64 -> arm64, x64 -> x64, x86 -> x86
+#
+
+ifeq ($(ARCH),a64)
+ARCH_LIBPATH := arm64
+ARCH_BINPATH := arm64
+ARCH_REDIST := arm64
+else ifeq ($(ARCH),x64)
+ARCH_LIBPATH := x64
+ARCH_BINPATH := x64
+ARCH_REDIST := x64
+else ifeq ($(ARCH),x86)
+ARCH_LIBPATH := x86
+ARCH_BINPATH := x86
+ARCH_REDIST := x86
 endif
 
 ##########################################################################
@@ -57,8 +93,14 @@ endif
 
 ##########################################################################
 # INCLUDE
+# Note: We use INCLUDE as a makefile variable only, not as an environment
+# variable for cl.exe. The -I flags are passed explicitly via CPPFLAGS.
+# Unexport to prevent conflicts with any INCLUDE env var from setup scripts.
+unexport INCLUDE
 
-ifeq ($(TOOLCHAIN),vc141)
+ifeq ($(TOOLCHAIN),vc143)
+INCLUDE  += $(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)/include
+else ifeq ($(TOOLCHAIN),vc141)
 INCLUDE  += $(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)/include
 else
 INCLUDE  += $(MSVC)/VC/include
@@ -67,7 +109,13 @@ endif
 INCLUDE  += $(WINSDK)/include/shared
 INCLUDE  += $(WINSDK)/include/um
 
-ifeq ($(TOOLCHAIN),vc141)
+ifeq ($(TOOLCHAIN),vc143)
+INCLUDE  += $(WINSDK10)/Include/$(WINSDK10VERSIONTAG)/ucrt
+INCLUDE  += $(WINSDK10)/Include/$(WINSDK10VERSIONTAG)/um
+INCLUDE  += $(WINSDK10)/Include/$(WINSDK10VERSIONTAG)/shared
+INCLUDE  += $(WINSDK10)/Include/$(WINSDK10VERSIONTAG)/winrt
+INCLUDE  += $(WINSDK10)/Include/$(WINSDK10VERSIONTAG)/cppwinrt
+else ifeq ($(TOOLCHAIN),vc141)
 INCLUDE  += $(WINSDK10)/Include/$(WINSDK10VERSIONTAG)/ucrt
 else
 ifeq ($(TOOLCHAIN),vc14)
@@ -77,8 +125,15 @@ endif
 
 ##########################################################################
 # LIBPATH
+# Note: We use LIBPATH/LIB as makefile variables, passed explicitly via linker flags.
+# Unexport to prevent conflicts with any LIB/LIBPATH env vars from setup scripts.
+unexport LIB
+unexport LIBPATH
 
-ifeq ($(TOOLCHAIN),vc141)
+ifeq ($(TOOLCHAIN),vc143)
+LIBPATH  += $(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)/lib/$(ARCH_LIBPATH)
+LIBPATH  += $(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)/atlmfc/lib/$(ARCH_LIBPATH)
+else ifeq ($(TOOLCHAIN),vc141)
 LIBPATH  += $(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)/lib/$(ARCH)
 endif
 
@@ -92,7 +147,10 @@ endif
 
 LIBPATH  += $(WINSDKLIBSROOT)/$(ARCH)
 
-ifeq ($(TOOLCHAIN),vc141)
+ifeq ($(TOOLCHAIN),vc143)
+LIBPATH  += $(WINSDK10)/Lib/$(WINSDK10VERSIONTAG)/ucrt/$(ARCH_LIBPATH)
+LIBPATH  += $(WINSDK10)/Lib/$(WINSDK10VERSIONTAG)/um/$(ARCH_LIBPATH)
+else ifeq ($(TOOLCHAIN),vc141)
 # LIBPATH  += $(WINSDK10UCRTLIBSROOT)/um/$(ARCH)
 LIBPATH  += $(WINSDK10UCRTLIBSROOT)/ucrt/$(ARCH)
 endif
@@ -104,7 +162,12 @@ endif
 ##########################################################################
 # PATH
 
-ifeq ($(TOOLCHAIN),vc141)
+ifeq ($(TOOLCHAIN),vc143)
+
+# For vc143, use architecture-mapped paths
+PATH     := $(MSVC)/VC/Redist/MSVC/$(MSVCVERSIONTAG)\$(ARCH_REDIST)\$(MSVCRTTAG):$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\bin\$(MSVCHOSTARCHTAG)\$(ARCH_BINPATH):$(WINSDK10)/bin/$(WINSDK10VERSIONTAG)/$(ARCH_BINPATH):$(PATH)
+
+else ifeq ($(TOOLCHAIN),vc141)
 
 ifeq ($(ARCH),x64)
 PATH     := $(MSVC)/VC/Redist/MSVC/$(MSVCVERSIONTAG)\$(ARCH)\$(MSVCRTTAG):$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\bin\$(MSVCHOSTARCHTAG)\$(ARCH):$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\bin\$(MSVCHOSTARCHTAG)\x86:$(MSVC)/DIA SDK/bin/amd64:$(WINSDK)/bin/$(ARCH):$(WINSDK10)/bin/$(ARCH)/ucrt:$(PATH)
@@ -127,10 +190,23 @@ endif
 # %HOME%\AppData\Local\Microsoft\WindowsApps\python.exe
 # https://superuser.com/questions/1437590/typing-python-on-windows-10-version-1903-command-prompt-opens-microsoft-stor
 
+# Python version depends on devenv version
+ifeq ($(DEVENV_VERSION_TAG),devenv7)
+# devenv7 uses Python 3.14
+ifeq ($(BL_WIN_ARCH_IS_ARM64),1)
+PATH     := $(DIST_ROOT_DEPS3)/python/$(BL_DEVENV_PYTHON_VERSION)/default:$(PATH)
+else ifeq ($(BL_WIN_ARCH_IS_X64),1)
+PATH     := $(DIST_ROOT_DEPS3)/python/$(BL_DEVENV_PYTHON_VERSION)/default-x64:$(PATH)
+else
+PATH     := $(DIST_ROOT_DEPS3)/python/$(BL_DEVENV_PYTHON_VERSION)/default-x86:$(PATH)
+endif
+else
+# Older devenvs use Python 2.7
 ifeq ($(BL_WIN_ARCH_IS_X64),1)
 PATH     := $(DIST_ROOT_DEPS3)/python/2.7-latest/default:$(PATH)
 else
 PATH     := $(DIST_ROOT_DEPS3)/python/2.7-latest/default-x86:$(PATH)
+endif
 endif
 
 ##########################################################################
@@ -201,6 +277,15 @@ CPPFLAGS += -wd4396
 #
 CPPFLAGS += -wd4503
 
+#
+# Disable Boost.Asio deprecation messages for devenv7 with Boost 1.90.0
+# Use the Boost-provided macro BOOST_ASIO_DISABLE_DEPRECATED_MSG
+# This is the recommended way to suppress deprecation warnings until the code is updated
+#
+ifeq ($(DEVENV_VERSION_TAG),devenv7)
+CPPFLAGS += -DBOOST_ASIO_DISABLE_DEPRECATED_MSG
+endif
+
 ifeq (winxp, $(findstring winxp, $(OS)))
   CPPFLAGS += -D_WIN32_WINNT=0x0501
 else
@@ -225,8 +310,12 @@ LDFLAGS  += -opt:ref
 LDFLAGS  += -release
 LDFLAGS  += -debug
 
-ifeq ($(ARCH),x64)
+ifeq ($(ARCH),a64)
+LDFLAGS  += -machine:arm64
+else ifeq ($(ARCH),x64)
 LDFLAGS  += -machine:x64
+else ifeq ($(ARCH),x86)
+LDFLAGS  += -machine:x86
 endif
 
 AR        = lib

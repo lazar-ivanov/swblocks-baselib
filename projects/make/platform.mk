@@ -15,16 +15,30 @@ ifeq (win, $(findstring win, $(OS)))
   NONSTDARCH   := x86_64-nt-6.0
   NONSTDARCH32 := ia32-nt-4.0
 
-  ifeq ($(PROCESSOR_ARCHITEW6432),AMD64)
-    BL_WIN_ARCH_IS_X64 := 1
-  endif
+  # Detect ARM64 architecture
+  # When make.exe is an x64 binary running under emulation on ARM64 hardware,
+  # environment variables report AMD64 instead of ARM64. Use fallback detection
+  # from the dist root path which contains the architecture (e.g., "-a64").
 
-	ifeq ($(PROCESSOR_ARCHITECTURE),AMD64)
+  # Detect from dist root path (e.g., "dist-devenv7-windows-a64")
+  ifneq ($(findstring -a64,$(DIST_ROOT_DEPS3)),)
+    BL_WIN_ARCH_IS_ARM64 := 1
+    ARCH := a64
+  else ifneq ($(findstring arm64,$(DIST_ROOT_DEPS3)),)
+    BL_WIN_ARCH_IS_ARM64 := 1
+    ARCH := a64
+  else ifneq ($(findstring -x64,$(DIST_ROOT_DEPS3)),)
     BL_WIN_ARCH_IS_X64 := 1
-  endif
-
-	ifneq ($(BL_WIN_ARCH_IS_X64),1)
+    ARCH := x64
+  else ifneq ($(findstring amd64,$(DIST_ROOT_DEPS3)),)
+    BL_WIN_ARCH_IS_X64 := 1
+    ARCH := x64
+  else ifneq ($(findstring -x86,$(DIST_ROOT_DEPS3)),)
     ARCH := x86
+  else
+    # Default to x64 if path doesn't contain architecture markers
+    BL_WIN_ARCH_IS_X64 := 1
+    ARCH := x64
   endif
 
   ifeq ($(ARCH),x86)

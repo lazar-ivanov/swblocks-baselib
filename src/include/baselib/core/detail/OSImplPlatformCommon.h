@@ -1063,7 +1063,14 @@ namespace bl
 
                     if( ! path.empty() )
                     {
-                        if( false == path.is_absolute() || path.root_path() == g_lfnRootPath )
+                        const auto pathStr = path.string();
+
+                        /*
+                         * Use string-based check instead of root_path() comparison
+                         * for Boost 1.89+ compatibility, as root_path() behavior changed
+                         */
+
+                        if( false == path.is_absolute() || str::starts_with( pathStr, g_lfnPrefix ) )
                         {
                             /*
                              * Relative paths and paths that are already prefixes
@@ -1103,8 +1110,19 @@ namespace bl
                 {
                     bfs::path result;
 
-                    if( path.root_path() != g_lfnRootPath )
+                    const auto pathStr = path.string();
+
+                    /*
+                     * Use string-based check instead of root_path() comparison
+                     * for Boost 1.89+ compatibility, as root_path() behavior changed
+                     */
+
+                    if( ! str::starts_with( pathStr, g_lfnPrefix ) )
                     {
+                        /*
+                         * The path doesn't have LFN prefix, return as-is
+                         */
+
                         path.swap( result );
                     }
                     else
@@ -1112,10 +1130,6 @@ namespace bl
                         /*
                          * The path is prefixed, let's remove the prefix
                          */
-
-                        const auto pathStr = path.string();
-
-                        BL_ASSERT( str::starts_with( pathStr, g_lfnPrefix ) );
 
                         if( str::starts_with( pathStr, g_lfnUncPrefix ) )
                         {

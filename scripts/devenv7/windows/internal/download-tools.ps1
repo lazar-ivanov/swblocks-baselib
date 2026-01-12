@@ -1,0 +1,880 @@
+################################################################################
+# This file is part of the swblocks-baselib library.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+################################################################################
+#
+# Download and installation utilities for development tools
+#
+
+# Import common utilities
+$scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+Import-Module (Join-Path $scriptRoot "common.ps1") -Force
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+# Tool download URLs and configurations
+$script:ToolConfigs = @{
+    Git = @{
+        BaseUrl = "https://github.com/git-for-windows/git/releases/download"
+        VersionPattern = "v{VERSION}.windows.1"
+        FilePatterns = @{
+            arm64 = "PortableGit-{VERSION}-arm64.7z.exe"
+            x64   = "PortableGit-{VERSION}-64-bit.7z.exe"
+            x86   = "PortableGit-{VERSION}-32-bit.7z.exe"
+        }
+    }
+    Python = @{
+        BaseUrl = "https://www.python.org/ftp/python"
+        VersionPattern = "{VERSION}"
+        FilePatterns = @{
+            arm64 = "python-{VERSION}-embed-arm64.zip"
+            x64   = "python-{VERSION}-embed-amd64.zip"
+            x86   = "python-{VERSION}-embed-win32.zip"
+        }
+    }
+    MSYS2 = @{
+        BaseUrl = "https://repo.msys2.org/distrib/x86_64"
+        VersionPattern = ""
+        FilePatterns = @{
+            # MSYS2 doesn't have ARM64 native support yet, use x64 for all architectures
+            # Note: As of 2024-05-07, MSYS2 uses .tar.zst format (was .tar.xz)
+            # Download directly from repo.msys2.org instead of GitHub releases
+            arm64 = "msys2-base-x86_64-{VERSION}.tar.zst"
+            x64   = "msys2-base-x86_64-{VERSION}.tar.zst"
+        }
+    }
+    StrawberryPerl = @{
+        BaseUrl = "https://github.com/StrawberryPerl/Perl-Dist-Strawberry/releases/download"
+        VersionPattern = "SP_{VERSION_TAG}_64bit_UCRT"
+        FilePatterns = @{
+            x64 = "strawberry-perl-{VERSION}-64bit-portable.zip"
+            x86 = "strawberry-perl-{VERSION}-32bit-portable.zip"
+        }
+    }
+    JSONSpirit = @{
+        BaseUrl = "https://storage.googleapis.com/swblocks-dist/devenv/deps"
+        VersionPattern = ""
+        FilePatterns = @{
+            source = "json-spirit.tar.gz"
+        }
+    }
+    OpenJDK = @{
+        BaseUrl = "https://aka.ms/download-jdk"
+        VersionPattern = ""
+        FilePatterns = @{
+            arm64 = "microsoft-jdk-{VERSION}.0.1-windows-aarch64.zip"
+            x64   = "microsoft-jdk-{VERSION}.0.1-windows-x64.zip"
+        }
+    }
+    Gradle = @{
+        BaseUrl = "https://services.gradle.org/distributions"
+        VersionPattern = ""
+        FilePatterns = @{
+            all = "gradle-{VERSION}-bin.zip"
+        }
+    }
+    Boost = @{
+        BaseUrl = "https://archives.boost.io/release"
+        VersionPattern = "{VERSION}/source"
+        FilePatterns = @{
+            source = "boost_{VERSION_UNDERSCORE}.tar.gz"
+        }
+    }
+    OpenSSL = @{
+        BaseUrl = "https://www.openssl.org/source"
+        VersionPattern = ""
+        FilePatterns = @{
+            source = "openssl-{VERSION}.tar.gz"
+        }
+    }
+    Jom = @{
+        BaseUrl = "https://download.qt.io/official_releases/jom"
+        VersionPattern = ""
+        FilePatterns = @{
+            all = "jom_{VERSION_UNDERSCORE}.zip"
+        }
+    }
+}
+
+function Get-ToolDownloadUrl {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Tool,
+
+        [Parameter(Mandatory=$true)]
+        [string]$Version,
+
+        [Parameter(Mandatory=$true)]
+        [string]$Architecture
+    )
+
+    $config = $script:ToolConfigs[$Tool]
+
+    if (-not $config) {
+        throw "Unknown tool: $Tool"
+    }
+
+    # Handle version tag conversions
+    $versionTag = $Version
+    $versionUnderscore = $Version -replace '\.', '_'
+    $arch = $Architecture
+
+    if ($Tool -eq "StrawberryPerl") {
+        # Strawberry Perl: 5.40.0.1 -> 54001
+        $versionTag = $Version -replace '\.', ''
+    }
+    elseif ($Tool -eq "Gradle") {
+        # Gradle: use 'all' architecture key
+        $arch = "all"
+    }
+    elseif ($Tool -eq "Boost" -or $Tool -eq "OpenSSL") {
+        # Boost/OpenSSL: use 'source' architecture key
+        $arch = "source"
+    }
+
+    $versionPattern = $config.VersionPattern -replace '\{VERSION\}', $Version -replace '\{VERSION_TAG\}', $versionTag
+    $filePattern = $config.FilePatterns[$arch]
+
+    if (-not $filePattern) {
+        throw "No file pattern found for tool '$Tool' architecture '$arch'"
+    }
+
+    $fileName = $filePattern -replace '\{VERSION\}', $Version -replace '\{VERSION_UNDERSCORE\}', $versionUnderscore
+
+    # Build URL - if VersionPattern is empty, don't add extra slash
+    if ($versionPattern) {
+        $url = "$($config.BaseUrl)/$versionPattern/$fileName"
+    } else {
+        $url = "$($config.BaseUrl)/$fileName"
+    }
+
+    return @{
+        Url = $url
+        FileName = $fileName
+    }
+}
+
+function Install-GitPortable {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Version,
+
+        [Parameter(Mandatory=$true)]
+        [string]$Architecture,
+
+        [Parameter(Mandatory=$true)]
+        [string]$DestinationRoot,
+
+        [string]$CacheDirectory,
+
+        [switch]$SkipDownload
+    )
+
+    $arch = ConvertTo-ArchitectureName -Architecture $Architecture
+
+    Write-SubSection "Installing Git $Version for $arch"
+
+    # Determine paths
+    $archSuffix = if ($arch -eq "arm64") { "" } else { "-$arch" }
+    $installPath = Join-Path $DestinationRoot "git\$Version\default$archSuffix"
+
+    # Set default cache directory if not provided
+    if (-not $CacheDirectory) {
+        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\devenv7-windows-a64-downloads-cache"
+    }
+
+    New-DirectoryIfNotExists -Path $installPath | Out-Null
+    New-DirectoryIfNotExists -Path $CacheDirectory | Out-Null
+
+    # Download portable archive
+    $downloadInfo = Get-ToolDownloadUrl -Tool "Git" -Version $Version -Architecture $arch
+    $archivePath = Join-Path $CacheDirectory $downloadInfo.FileName
+
+    if (-not $SkipDownload) {
+        Invoke-WebDownload -Url $downloadInfo.Url -OutputPath $archivePath `
+            -Description "Downloading Git $Version for $arch" -SkipIfExists
+    }
+
+    if (-not (Test-Path $archivePath)) {
+        throw "Archive file not found: $archivePath"
+    }
+
+    # Extract portable Git using self-extracting 7z archive
+    Expand-ToolArchive -ArchivePath $archivePath -DestinationPath $installPath `
+        -Description "Extracting Git $Version for $arch"
+
+    Write-Log "Git $Version for $arch installed successfully" -Level Success
+
+    return $installPath
+}
+
+function Install-PythonEmbeddable {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Version,
+
+        [Parameter(Mandatory=$true)]
+        [string]$Architecture,
+
+        [Parameter(Mandatory=$true)]
+        [string]$DestinationRoot,
+
+        [string]$CacheDirectory,
+
+        [switch]$SkipDownload
+    )
+
+    $arch = ConvertTo-ArchitectureName -Architecture $Architecture
+
+    Write-SubSection "Installing Python $Version for $arch"
+
+    # Determine paths
+    $archSuffix = if ($arch -eq "arm64") { "" } else { "-$arch" }
+    $installPath = Join-Path $DestinationRoot "python\$Version\default$archSuffix"
+
+    # Set default cache directory if not provided
+    if (-not $CacheDirectory) {
+        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\devenv7-windows-a64-downloads-cache"
+    }
+
+    New-DirectoryIfNotExists -Path $installPath | Out-Null
+    New-DirectoryIfNotExists -Path $CacheDirectory | Out-Null
+
+    # Download embeddable package
+    $downloadInfo = Get-ToolDownloadUrl -Tool "Python" -Version $Version -Architecture $arch
+    $archivePath = Join-Path $CacheDirectory $downloadInfo.FileName
+
+    if (-not $SkipDownload) {
+        Invoke-WebDownload -Url $downloadInfo.Url -OutputPath $archivePath `
+            -Description "Downloading Python $Version embeddable for $arch" -SkipIfExists
+    }
+
+    if (-not (Test-Path $archivePath)) {
+        throw "Archive file not found: $archivePath"
+    }
+
+    # Extract embeddable package
+    Expand-ToolArchive -ArchivePath $archivePath -DestinationPath $installPath `
+        -Description "Extracting Python $Version for $arch"
+
+    Write-Log "Python $Version for $arch installed successfully" -Level Success
+
+    return $installPath
+}
+
+function Install-MSYS2 {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Version,
+
+        [Parameter(Mandatory=$true)]
+        [string]$Architecture,
+
+        [Parameter(Mandatory=$true)]
+        [string]$DestinationRoot,
+
+        [string]$CacheDirectory,
+
+        [switch]$SkipDownload,
+
+        [switch]$UpdatePackages,
+
+        [switch]$InstallMake
+    )
+
+    $arch = ConvertTo-ArchitectureName -Architecture $Architecture
+
+    # MSYS2 only supports arm64 and x64
+    if ($arch -eq "x86") {
+        Write-Log "MSYS2 does not support x86, skipping" -Level Warning
+        return $null
+    }
+
+    Write-SubSection "Installing MSYS2 $Version for $arch"
+
+    $installBase = Join-Path $DestinationRoot "msys2\$Version"
+    $installPath = Join-Path $installBase "msys64"
+
+    # Set default cache directory if not provided
+    if (-not $CacheDirectory) {
+        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\devenv7-windows-a64-downloads-cache"
+    }
+
+    New-DirectoryIfNotExists -Path $installBase | Out-Null
+    New-DirectoryIfNotExists -Path $CacheDirectory | Out-Null
+
+    # Download base tarball
+    $downloadInfo = Get-ToolDownloadUrl -Tool "MSYS2" -Version $Version -Architecture $arch
+    $archivePath = Join-Path $CacheDirectory $downloadInfo.FileName
+
+    if (-not $SkipDownload) {
+        Invoke-WebDownload -Url $downloadInfo.Url -OutputPath $archivePath `
+            -Description "Downloading MSYS2 $Version for $arch" -SkipIfExists
+    }
+
+    if (-not (Test-Path $archivePath)) {
+        throw "Archive file not found: $archivePath"
+    }
+
+    # Remove existing installation if present
+    if (Test-Path $installPath) {
+        Write-Log "Removing existing MSYS2 installation..." -Level Verbose
+        Remove-DirectoryIfExists -Path $installPath -Force
+    }
+
+    # Extract MSYS2 base tarball
+    Expand-ToolArchive -ArchivePath $archivePath -DestinationPath $installBase `
+        -Description "Extracting MSYS2 $Version for $arch"
+
+    if (-not (Test-Path $installPath)) {
+        throw "MSYS2 extraction failed - msys64 directory not found"
+    }
+
+    Write-Log "MSYS2 $Version for $arch installed successfully" -Level Success
+
+    # Update packages if requested
+    if ($UpdatePackages) {
+        Write-Log "Updating MSYS2 packages..." -Level Info
+
+        $bash = Join-Path $installPath "usr\bin\bash.exe"
+
+        if (-not (Test-Path $bash)) {
+            Write-Log "MSYS2 bash not found, skipping package updates" -Level Warning
+        } else {
+            # First-time MSYS2 initialization - run a simple command to trigger setup
+            Write-Log "Initializing MSYS2 (first-time setup)..." -Level Verbose
+            $prevErrorAction = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            try {
+                $null = & $bash -lc "echo MSYS2 initialized" 2>&1
+            } finally {
+                $ErrorActionPreference = $prevErrorAction
+            }
+
+            # Update package database and core packages
+            Write-Log "Updating package database..." -Level Verbose
+            $ErrorActionPreference = "Continue"
+            try {
+                $output = & $bash -lc "pacman -Syu --noconfirm" 2>&1
+            } finally {
+                $ErrorActionPreference = $prevErrorAction
+            }
+
+            # Check for errors
+            $errors = $output | Where-Object { $_ -match "error:" }
+            if ($errors) {
+                Write-Log "Package update errors: $errors" -Level Warning
+            } else {
+                Write-Log "MSYS2 packages updated" -Level Success
+            }
+        }
+    }
+
+    # Install make if requested
+    if ($InstallMake) {
+        Write-Log "Installing make..." -Level Info
+
+        $bash = Join-Path $installPath "usr\bin\bash.exe"
+
+        if (-not (Test-Path $bash)) {
+            Write-Log "MSYS2 bash not found, cannot install make" -Level Warning
+        } else {
+            # First-time MSYS2 initialization - run a simple command to trigger setup
+            Write-Log "Initializing MSYS2 (first-time setup)..." -Level Verbose
+            $prevErrorAction = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            try {
+                $null = & $bash -lc "echo MSYS2 initialized" 2>&1
+            } finally {
+                $ErrorActionPreference = $prevErrorAction
+            }
+
+            # Install make package
+            Write-Log "Installing make package..." -Level Verbose
+            $ErrorActionPreference = "Continue"
+            try {
+                $output = & $bash -lc "pacman -S --noconfirm make" 2>&1
+            } finally {
+                $ErrorActionPreference = $prevErrorAction
+            }
+
+            # Check if there were any errors (ignore informational messages)
+            $errors = $output | Where-Object { $_ -match "error:" }
+            if ($errors) {
+                Write-Log "make installation errors: $errors" -Level Warning
+            }
+
+            # Verify make was installed
+            $makeExe = Join-Path $installPath "usr\bin\make.exe"
+            if (Test-Path $makeExe) {
+                Write-Log "make installed successfully" -Level Success
+            } else {
+                Write-Log "make installation may have failed" -Level Warning
+            }
+        }
+    }
+
+    return $installPath
+}
+
+function Install-StrawberryPerl {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Version,
+
+        [Parameter(Mandatory=$true)]
+        [string]$DestinationRoot,
+
+        [string]$CacheDirectory,
+
+        [switch]$SkipDownload
+    )
+
+    # Strawberry Perl is typically x64 only for portable version
+    $arch = "x64"
+
+    Write-SubSection "Installing Strawberry Perl $Version"
+
+    $installPath = Join-Path $DestinationRoot "strawberry-perl\$Version\default"
+
+    # Set default cache directory if not provided
+    if (-not $CacheDirectory) {
+        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\devenv7-windows-a64-downloads-cache"
+    }
+
+    New-DirectoryIfNotExists -Path $CacheDirectory | Out-Null
+
+    # Download portable version
+    $downloadInfo = Get-ToolDownloadUrl -Tool "StrawberryPerl" -Version $Version -Architecture $arch
+    $archivePath = Join-Path $CacheDirectory $downloadInfo.FileName
+
+    if (-not $SkipDownload) {
+        Invoke-WebDownload -Url $downloadInfo.Url -OutputPath $archivePath `
+            -Description "Downloading Strawberry Perl $Version portable" -SkipIfExists
+    }
+
+    if (-not (Test-Path $archivePath)) {
+        throw "Archive file not found: $archivePath"
+    }
+
+    # Clean up destination directory if it exists (to avoid tar overwrite errors)
+    if (Test-Path $installPath) {
+        Write-Log "Removing existing installation directory: $installPath" -Level Info
+        Remove-Item -Path $installPath -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    New-DirectoryIfNotExists -Path $installPath | Out-Null
+
+    # Extract portable package
+    Expand-ToolArchive -ArchivePath $archivePath -DestinationPath $installPath `
+        -Description "Extracting Strawberry Perl $Version"
+
+    Write-Log "Strawberry Perl $Version installed successfully" -Level Success
+
+    return $installPath
+}
+
+function Install-JSONSpirit {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Version,
+
+        [Parameter(Mandatory=$true)]
+        [string]$DestinationRoot,
+
+        [string]$CacheDirectory,
+
+        [switch]$SkipDownload
+    )
+
+    Write-SubSection "Installing JSON Spirit $Version"
+
+    $installPath = Join-Path $DestinationRoot "json-spirit\$Version\source"
+
+    # Set default cache directory if not provided
+    if (-not $CacheDirectory) {
+        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\devenv7-windows-a64-downloads-cache"
+    }
+
+    New-DirectoryIfNotExists -Path $installPath | Out-Null
+    New-DirectoryIfNotExists -Path $CacheDirectory | Out-Null
+
+    # Download source archive
+    $downloadInfo = Get-ToolDownloadUrl -Tool "JSONSpirit" -Version $Version -Architecture "source"
+    $archivePath = Join-Path $CacheDirectory $downloadInfo.FileName
+
+    if (-not $SkipDownload) {
+        Invoke-WebDownload -Url $downloadInfo.Url -OutputPath $archivePath `
+            -Description "Downloading JSON Spirit $Version" -SkipIfExists
+    }
+
+    if (-not (Test-Path $archivePath)) {
+        throw "Archive file not found: $archivePath"
+    }
+
+    # Extract source to temp location (archive contains versioned subdirectory)
+    $tempExtractPath = Join-Path $env:TEMP "json-spirit-extract-$Version"
+
+    if (Test-Path $tempExtractPath) {
+        Remove-DirectoryIfExists -Path $tempExtractPath -Force
+    }
+
+    Expand-ToolArchive -ArchivePath $archivePath -DestinationPath $tempExtractPath `
+        -Description "Extracting JSON Spirit $Version"
+
+    # The archive extracts to a versioned subdirectory, move contents up
+    $extractedDir = Get-ChildItem -Path $tempExtractPath -Directory | Select-Object -First 1
+
+    if ($extractedDir) {
+        Copy-DirectoryWithProgress -Source $extractedDir.FullName -Destination $installPath `
+            -Description "Copying JSON Spirit source"
+    } else {
+        throw "JSON Spirit extraction failed - no subdirectory found"
+    }
+
+    # Clean up temp extraction
+    Remove-DirectoryIfExists -Path $tempExtractPath -Force
+
+    Write-Log "JSON Spirit $Version installed successfully" -Level Success
+
+    return $installPath
+}
+
+function Install-OpenJDK {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Version,
+
+        [Parameter(Mandatory=$true)]
+        [string]$Architecture,
+
+        [Parameter(Mandatory=$true)]
+        [string]$DestinationRoot,
+
+        [string]$CacheDirectory,
+
+        [switch]$SkipDownload
+    )
+
+    $arch = ConvertTo-ArchitectureName -Architecture $Architecture
+
+    Write-SubSection "Installing OpenJDK $Version for $arch"
+
+    $archSuffix = if ($arch -eq "arm64") { "" } else { "-$arch" }
+    $installPath = Join-Path $DestinationRoot "openjdk\$Version\default$archSuffix"
+
+    # Set default cache directory if not provided
+    if (-not $CacheDirectory) {
+        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\devenv7-windows-a64-downloads-cache"
+    }
+
+    New-DirectoryIfNotExists -Path $installPath | Out-Null
+    New-DirectoryIfNotExists -Path $CacheDirectory | Out-Null
+
+    # Download JDK archive
+    $downloadInfo = Get-ToolDownloadUrl -Tool "OpenJDK" -Version $Version -Architecture $arch
+    $archivePath = Join-Path $CacheDirectory $downloadInfo.FileName
+
+    if (-not $SkipDownload) {
+        Invoke-WebDownload -Url $downloadInfo.Url -OutputPath $archivePath `
+            -Description "Downloading OpenJDK $Version for $arch" -SkipIfExists
+    }
+
+    if (-not (Test-Path $archivePath)) {
+        throw "Archive file not found: $archivePath"
+    }
+
+    # Extract JDK (archive contains jdk-<version> subdirectory)
+    $tempExtractPath = Join-Path $env:TEMP "openjdk-extract-$Version-$arch"
+
+    if (Test-Path $tempExtractPath) {
+        Remove-DirectoryIfExists -Path $tempExtractPath -Force
+    }
+
+    Expand-ToolArchive -ArchivePath $archivePath -DestinationPath $tempExtractPath `
+        -Description "Extracting OpenJDK $Version for $arch"
+
+    # The archive extracts to a jdk-<version> subdirectory, move contents up
+    $extractedDir = Get-ChildItem -Path $tempExtractPath -Directory | Select-Object -First 1
+
+    if ($extractedDir) {
+        Copy-DirectoryWithProgress -Source $extractedDir.FullName -Destination $installPath `
+            -Description "Copying OpenJDK files"
+    } else {
+        throw "OpenJDK extraction failed - no subdirectory found"
+    }
+
+    # Clean up temp extraction
+    Remove-DirectoryIfExists -Path $tempExtractPath -Force
+
+    Write-Log "OpenJDK $Version for $arch installed successfully" -Level Success
+
+    return $installPath
+}
+
+function Install-Gradle {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Version,
+
+        [Parameter(Mandatory=$true)]
+        [string]$DestinationRoot,
+
+        [string]$CacheDirectory,
+
+        [switch]$SkipDownload
+    )
+
+    Write-SubSection "Installing Gradle $Version"
+
+    $installPath = Join-Path $DestinationRoot "gradle\$Version\default"
+
+    # Set default cache directory if not provided
+    if (-not $CacheDirectory) {
+        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\devenv7-windows-a64-downloads-cache"
+    }
+
+    New-DirectoryIfNotExists -Path $installPath | Out-Null
+    New-DirectoryIfNotExists -Path $CacheDirectory | Out-Null
+
+    # Download Gradle archive
+    $downloadInfo = Get-ToolDownloadUrl -Tool "Gradle" -Version $Version -Architecture "all"
+    $archivePath = Join-Path $CacheDirectory $downloadInfo.FileName
+
+    if (-not $SkipDownload) {
+        Invoke-WebDownload -Url $downloadInfo.Url -OutputPath $archivePath `
+            -Description "Downloading Gradle $Version" -SkipIfExists
+    }
+
+    if (-not (Test-Path $archivePath)) {
+        throw "Archive file not found: $archivePath"
+    }
+
+    # Extract Gradle (archive contains gradle-<version> subdirectory)
+    $tempExtractPath = Join-Path $env:TEMP "gradle-extract-$Version"
+
+    if (Test-Path $tempExtractPath) {
+        Remove-DirectoryIfExists -Path $tempExtractPath -Force
+    }
+
+    Expand-ToolArchive -ArchivePath $archivePath -DestinationPath $tempExtractPath `
+        -Description "Extracting Gradle $Version"
+
+    # The archive extracts to a gradle-<version> subdirectory, move contents up
+    $extractedDir = Get-ChildItem -Path $tempExtractPath -Directory | Select-Object -First 1
+
+    if ($extractedDir) {
+        Copy-DirectoryWithProgress -Source $extractedDir.FullName -Destination $installPath `
+            -Description "Copying Gradle files"
+    } else {
+        throw "Gradle extraction failed - no subdirectory found"
+    }
+
+    # Clean up temp extraction
+    Remove-DirectoryIfExists -Path $tempExtractPath -Force
+
+    Write-Log "Gradle $Version installed successfully" -Level Success
+
+    return $installPath
+}
+
+function Install-Jom {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Version,
+
+        [Parameter(Mandatory=$true)]
+        [string]$DestinationRoot,
+
+        [string]$CacheDirectory,
+
+        [switch]$SkipDownload
+    )
+
+    Write-SubSection "Installing Jom $Version"
+
+    $installPath = Join-Path $DestinationRoot "jom\$Version\default"
+
+    # Set default cache directory if not provided
+    if (-not $CacheDirectory) {
+        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\devenv7-windows-a64-downloads-cache"
+    }
+
+    New-DirectoryIfNotExists -Path $installPath | Out-Null
+    New-DirectoryIfNotExists -Path $CacheDirectory | Out-Null
+
+    # Download Jom archive
+    $downloadInfo = Get-ToolDownloadUrl -Tool "Jom" -Version $Version -Architecture "all"
+    $archivePath = Join-Path $CacheDirectory $downloadInfo.FileName
+
+    if (-not $SkipDownload) {
+        Invoke-WebDownload -Url $downloadInfo.Url -OutputPath $archivePath `
+            -Description "Downloading Jom $Version" -SkipIfExists
+    }
+
+    if (-not (Test-Path $archivePath)) {
+        throw "Archive file not found: $archivePath"
+    }
+
+    # Extract Jom (archive contains jom.exe and related files directly)
+    Expand-ToolArchive -ArchivePath $archivePath -DestinationPath $installPath `
+        -Description "Extracting Jom $Version"
+
+    Write-Log "Jom $Version installed successfully" -Level Success
+
+    return $installPath
+}
+
+function Install-Boost {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Version,
+
+        [Parameter(Mandatory=$true)]
+        [string]$DestinationRoot,
+
+        [string]$CacheDirectory,
+
+        [switch]$SkipDownload
+    )
+
+    Write-SubSection "Installing Boost $Version"
+
+    $installPath = Join-Path $DestinationRoot "boost\$Version\source-windows"
+
+    # Set default cache directory if not provided
+    if (-not $CacheDirectory) {
+        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\devenv7-windows-a64-downloads-cache"
+    }
+
+    New-DirectoryIfNotExists -Path $installPath | Out-Null
+    New-DirectoryIfNotExists -Path $CacheDirectory | Out-Null
+
+    # Download Boost source archive
+    $downloadInfo = Get-ToolDownloadUrl -Tool "Boost" -Version $Version -Architecture "source"
+    $archivePath = Join-Path $CacheDirectory $downloadInfo.FileName
+
+    if (-not $SkipDownload) {
+        Invoke-WebDownload -Url $downloadInfo.Url -OutputPath $archivePath `
+            -Description "Downloading Boost $Version" -SkipIfExists
+    }
+
+    if (-not (Test-Path $archivePath)) {
+        throw "Archive file not found: $archivePath"
+    }
+
+    # Extract Boost source (archive contains boost_<version> subdirectory)
+    $tempExtractPath = Join-Path $env:TEMP "boost-extract-$Version"
+
+    if (Test-Path $tempExtractPath) {
+        Remove-DirectoryIfExists -Path $tempExtractPath -Force
+    }
+
+    Expand-ToolArchive -ArchivePath $archivePath -DestinationPath $tempExtractPath `
+        -Description "Extracting Boost $Version"
+
+    # The archive extracts to a boost_<version> subdirectory, move contents up
+    $extractedDir = Get-ChildItem -Path $tempExtractPath -Directory | Select-Object -First 1
+
+    if ($extractedDir) {
+        Copy-DirectoryWithProgress -Source $extractedDir.FullName -Destination $installPath `
+            -Description "Copying Boost source"
+    } else {
+        throw "Boost extraction failed - no subdirectory found"
+    }
+
+    # Clean up temp extraction
+    Remove-DirectoryIfExists -Path $tempExtractPath -Force
+
+    Write-Log "Boost $Version installed successfully" -Level Success
+
+    return $installPath
+}
+
+function Install-OpenSSL {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Version,
+
+        [Parameter(Mandatory=$true)]
+        [string]$DestinationRoot,
+
+        [string]$CacheDirectory,
+
+        [switch]$SkipDownload
+    )
+
+    Write-SubSection "Installing OpenSSL $Version"
+
+    $installPath = Join-Path $DestinationRoot "openssl\$Version\source-windows"
+
+    # Set default cache directory if not provided
+    if (-not $CacheDirectory) {
+        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\devenv7-windows-a64-downloads-cache"
+    }
+
+    New-DirectoryIfNotExists -Path $installPath | Out-Null
+    New-DirectoryIfNotExists -Path $CacheDirectory | Out-Null
+
+    # Download OpenSSL source archive
+    $downloadInfo = Get-ToolDownloadUrl -Tool "OpenSSL" -Version $Version -Architecture "source"
+    $archivePath = Join-Path $CacheDirectory $downloadInfo.FileName
+
+    if (-not $SkipDownload) {
+        Invoke-WebDownload -Url $downloadInfo.Url -OutputPath $archivePath `
+            -Description "Downloading OpenSSL $Version" -SkipIfExists
+    }
+
+    if (-not (Test-Path $archivePath)) {
+        throw "Archive file not found: $archivePath"
+    }
+
+    # Extract OpenSSL source (archive contains openssl-<version> subdirectory)
+    $tempExtractPath = Join-Path $env:TEMP "openssl-extract-$Version"
+
+    if (Test-Path $tempExtractPath) {
+        Remove-DirectoryIfExists -Path $tempExtractPath -Force
+    }
+
+    Expand-ToolArchive -ArchivePath $archivePath -DestinationPath $tempExtractPath `
+        -Description "Extracting OpenSSL $Version"
+
+    # The archive extracts to a openssl-<version> subdirectory, move contents up
+    $extractedDir = Get-ChildItem -Path $tempExtractPath -Directory | Select-Object -First 1
+
+    if ($extractedDir) {
+        Copy-DirectoryWithProgress -Source $extractedDir.FullName -Destination $installPath `
+            -Description "Copying OpenSSL source"
+    } else {
+        throw "OpenSSL extraction failed - no subdirectory found"
+    }
+
+    # Clean up temp extraction
+    Remove-DirectoryIfExists -Path $tempExtractPath -Force
+
+    Write-Log "OpenSSL $Version installed successfully" -Level Success
+
+    return $installPath
+}
+
+# Export functions
+# Export-ModuleMember -Function @(
+#     'Get-ToolDownloadUrl',
+#     'Install-GitPortable',
+#     'Install-PythonEmbeddable',
+#     'Install-MSYS2',
+#     'Install-StrawberryPerl',
+#     'Install-JSONSpirit'
+# )

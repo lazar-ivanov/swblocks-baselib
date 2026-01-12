@@ -10,11 +10,18 @@
 # also, see settings/windows/enable-user-mode-dumps.reg
 #
 
-from sys import argv, exit, platform, stderr
+from sys import argv, exit, platform, stderr, stdout
 from re import search
 from subprocess import Popen, call, PIPE, STDOUT
 from os import rename, getenv
 from os.path import exists, basename, dirname, join
+
+# Reconfigure stdout to use UTF-8 encoding on Windows to handle Unicode characters
+# This prevents UnicodeEncodeError when test output contains characters not in cp1252
+if platform == 'win32':
+    import io
+    stdout = io.TextIOWrapper(stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    stderr = io.TextIOWrapper(stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
 
 # per-os configuration
 cfg = {
@@ -67,11 +74,11 @@ def handle_failure(proc):
 
 def process_output(proc):
   for line in proc.stdout:
-    line = line.rstrip().decode()
+    line = line.rstrip().decode('utf-8', errors='replace')
     if search(': (fatal|error|warn)', line) and not line.startswith('DEBUG:'):
       print(str('\n######### Failure in %s #########\n %s \n' %(basename(argv[1]), line)), file=stderr)
       print('Please see full error details in the log file (search for the test name)\n', file=stderr)
-    print(line)
+    print(line, file=stdout)
   proc.wait()
 
 # run command and deal with failures

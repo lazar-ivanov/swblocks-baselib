@@ -90,8 +90,7 @@ namespace bltool
                         continue;
                     }
 
-                    const auto pathw = it -> path().native();
-                    std::string path( pathw.begin(), pathw.end() );
+                    const auto path = it -> path().string();
 
                     const auto pos = path.rfind( '.' );
                     if( std::string::npos == pos )

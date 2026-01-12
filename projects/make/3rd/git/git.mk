@@ -32,17 +32,23 @@ ifeq (ub14, $(findstring ub14, $(OS)))
 endif
 
 ifeq (win, $(findstring win, $(OS)))
-ifeq ($(BL_WIN_ARCH_IS_X64),1)
+ifeq ($(BL_WIN_ARCH_IS_ARM64),1)
 ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/git/latest/default/bin)","")
   GIT := $(DIST_ROOT_DEPS3)/git/latest/default/bin/git
-else
-  GIT := $(DIST_ROOT_DEPS1)/git/windows/win7-x64/Git/bin/git
+else ifneq ("$(wildcard $(DIST_ROOT_DEPS1)/git/windows/$(OS)-a64/Git/bin/git)","")
+  GIT := $(DIST_ROOT_DEPS1)/git/windows/$(OS)-a64/Git/bin/git
+endif
+else ifeq ($(BL_WIN_ARCH_IS_X64),1)
+ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/git/latest/default/bin)","")
+  GIT := $(DIST_ROOT_DEPS3)/git/latest/default/bin/git
+else ifneq ("$(wildcard $(DIST_ROOT_DEPS1)/git/windows/$(OS)-x64/Git/bin/git)","")
+  GIT := $(DIST_ROOT_DEPS1)/git/windows/$(OS)-x64/Git/bin/git
 endif
 else
 ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/git/latest/default-x86/bin)","")
   GIT := $(DIST_ROOT_DEPS3)/git/latest/default-x86/bin/git
-else
-  GIT := $(DIST_ROOT_DEPS1)/git/windows/win7-x64/Git/bin/git
+else ifneq ("$(wildcard $(DIST_ROOT_DEPS1)/git/windows/$(OS)-x86/Git/bin/git)","")
+  GIT := $(DIST_ROOT_DEPS1)/git/windows/$(OS)-x86/Git/bin/git
 endif
 endif
 endif

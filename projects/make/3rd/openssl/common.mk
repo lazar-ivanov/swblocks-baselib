@@ -18,6 +18,8 @@ else ifeq ($(TOOLCHAIN),clang391)
 TOOLCHAIN_REMAPPED := gcc630
 else ifeq ($(TOOLCHAIN),clang801)
 TOOLCHAIN_REMAPPED := gcc830
+else ifeq ($(TOOLCHAIN),vc143)
+TOOLCHAIN_REMAPPED := vc143
 else
 TOOLCHAIN_REMAPPED := $(TOOLCHAIN)
 endif

@@ -99,8 +99,12 @@ ifeq ($(DEVENV_VERSION_TAG),devenv6)
 PYTHON = python3
 else
 ifeq ($(DEVENV_VERSION_TAG),devenv7)
-# python3 is the default in devenv7
+# devenv7 uses python3 on Linux, but python.exe on Windows
+ifeq ($(OS),win)
+PYTHON = python
+else
 PYTHON = python3
+endif
 else
 ifeq ($(DEVENV_VERSION_TAG),devenv3)
 include $(MKDIR)/3rd/python/2.7-latest.mk
@@ -168,7 +172,12 @@ VERSION         = $(BUILD_RELEASE_DATE)-build-$(BUILD_ID)
 
 # -u (unbuffered stdout/err) would help investigating hanging tests
 # on macOS the default max open files limit is 256, which is not enough
+# ulimit doesn't work properly on Windows (MSYS2), so skip it there
+ifneq ($(OS),win)
 DEBUG_HARNESS   = ulimit -n 4096 ; $(PYTHON) -u $(TOPDIR)scripts/debug_harness.py
+else
+DEBUG_HARNESS   = $(PYTHON) -u $(TOPDIR)scripts/debug_harness.py
+endif
 ASAN_SYMBOLIZE  = $(TOPDIR)scripts/addr2line_symbolizer.sh
 UTF_FLAGS        += --log_level=test_suite
 UTF_FLAGS        += --catch_system_errors=no

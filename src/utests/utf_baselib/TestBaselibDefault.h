@@ -2401,8 +2401,10 @@ UTF_AUTO_TEST_CASE( BaseLib_OSLongFileNamesWindowsTests )
      * The function path::is_complete was depreciated in boost 1.84 when c++17 is enabled
      * When c++17 is enabled path::is_absolute() should be used instead
      */
+    #if defined( __GNUC__ ) || defined( __clang__ )
     #pragma GCC diagnostic push
     #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    #endif
     #endif
 
     {
@@ -2504,7 +2506,9 @@ UTF_AUTO_TEST_CASE( BaseLib_OSLongFileNamesWindowsTests )
             );
     }
     #if defined( BL_DEVENV_VERSION ) && BL_DEVENV_VERSION > 5
+    #if defined( __GNUC__ ) || defined( __clang__ )
     #pragma GCC diagnostic pop
+    #endif
     #endif
 
     {
