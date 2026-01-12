@@ -84,8 +84,9 @@ ARCHIVE_DIR="${VERSION_DIR}/tar"
 SOURCE_DIR="${VERSION_DIR}/source"
 SOURCE_LINUX_DIR="${VERSION_DIR}/source-linux"
 
-# Number of parallel jobs
-JOBS=$(sysctl -n hw.ncpu)
+# Number of parallel jobs (3x CPU count)
+NCPUS=$(sysctl -n hw.ncpu)
+JOBS=$((NCPUS * 3))
 
 echo "==========================================================================="
 echo "OpenSSL ${OPENSSL_VERSION} Build Configuration"
@@ -99,7 +100,8 @@ echo "OpenSSL Arch:     ${OPENSSL_ARCH}"
 echo "Archive Dir:      ${ARCHIVE_DIR}"
 echo "Source Dir:       ${SOURCE_DIR}"
 echo "Source Linux Dir: ${SOURCE_LINUX_DIR}"
-echo "Parallel Jobs:    ${JOBS}"
+echo "CPU Count:        ${NCPUS}"
+echo "Parallel Jobs:    ${JOBS} (${NCPUS} CPUs x 3)"
 echo "Building:         debug and release variants"
 echo "==========================================================================="
 echo
@@ -201,7 +203,8 @@ build_variant() {
     make -j${JOBS}
 
     # Run tests before installing
-    echo "Running tests for ${VARIANT}..."
+    echo "Running tests for ${VARIANT} with ${JOBS} parallel test jobs..."
+    export HARNESS_JOBS=${JOBS}
     make test
 
     # Install OpenSSL
