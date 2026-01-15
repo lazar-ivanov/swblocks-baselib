@@ -29,7 +29,8 @@ $ErrorActionPreference = "Stop"
 function New-ToolchainEnvironment {
     param(
         [string]$DistRoot = "C:\swblocks\dist-devenv7-windows-arm",
-        [string[]]$TargetArchitectures = @("arm64", "x64", "x86"),
+        [string]$HostArchitecture = $null,
+        [string[]]$TargetArchitectures = @(),
         [string]$GitVersion = "2.52.0",
         [string]$PythonVersion = "3.14.2",
         [string]$MSYS2Version = "20251213",
@@ -61,7 +62,8 @@ function New-ToolchainEnvironment {
     # Display configuration
     Write-Host "Configuration:" -ForegroundColor Cyan
     Write-Host "  Distribution Root: $DistRoot" -ForegroundColor White
-    Write-Host "  Target Architectures: $($TargetArchitectures -join ', ')" -ForegroundColor White
+    Write-Host "  Host Architecture: $(if ($HostArchitecture) { $HostArchitecture } else { 'auto-detect' })" -ForegroundColor White
+    Write-Host "  Target Architectures: $(if ($TargetArchitectures) { $TargetArchitectures -join ', ' } else { 'auto-detect' })" -ForegroundColor White
     Write-Host "  Git Version: $GitVersion" -ForegroundColor White
     Write-Host "  Python Version: $PythonVersion" -ForegroundColor White
     Write-Host "  MSYS2 Version: $MSYS2Version" -ForegroundColor White
@@ -80,14 +82,19 @@ function New-ToolchainEnvironment {
         Write-Host ""
     }
 
-    # Detect native architecture
-    $nativeArch = Get-NativeArchitecture
-    Write-Log "Detected native architecture: $nativeArch" -Level Info
+    # Detect or use specified host architecture
+    if (-not $HostArchitecture) {
+        $HostArchitecture = Get-NativeArchitecture
+        Write-Log "Detected host architecture: $HostArchitecture" -Level Info
+    } else {
+        $HostArchitecture = ConvertTo-ArchitectureName $HostArchitecture
+        Write-Log "Using specified host architecture: $HostArchitecture" -Level Info
+    }
 
-    # Ensure native architecture is in target list
-    if ($nativeArch -notin $TargetArchitectures) {
-        $TargetArchitectures = @($nativeArch) + $TargetArchitectures
-        Write-Log "Added native architecture to target list: $nativeArch" -Level Info
+    # Set default target architectures to host architecture if not specified
+    if (-not $TargetArchitectures -or $TargetArchitectures.Count -eq 0) {
+        $TargetArchitectures = @($HostArchitecture)
+        Write-Log "Using default target architecture: $HostArchitecture" -Level Info
     }
 
     # Normalize architecture names
@@ -101,7 +108,8 @@ function New-ToolchainEnvironment {
     # Step 1: Validate Visual Studio installation
     Write-Section "Step 1: Validating Visual Studio Installation"
 
-    $vsInfo = Get-VSInstallationInfo -VSVersion $VSVersion -RequiredArchitectures $TargetArchitectures -ShowInstructionsOnFailure
+    $vsInfo = Get-VSInstallationInfo -VSVersion $VSVersion -RequiredArchitectures $TargetArchitectures `
+        -HostArchitecture $HostArchitecture -ShowInstructionsOnFailure
 
     if (-not $vsInfo.IsValid) {
         throw "Visual Studio installation is invalid or incomplete. Please install required components."
@@ -150,27 +158,25 @@ function New-ToolchainEnvironment {
 
     # Determine cache directory
     if (-not $CacheDirectory) {
-        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\devenv7-windows-a64-downloads-cache"
+        # Use dist folder name for cache directory
+        $distFolderName = Split-Path $DistRoot -Leaf
+        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\$distFolderName-downloads-cache"
     }
 
     New-DirectoryIfNotExists -Path $CacheDirectory
 
-    # Install Git for each architecture
-    foreach ($arch in $TargetArchitectures) {
-        Install-GitPortable -Version $GitVersion -Architecture $arch `
-            -DestinationRoot $DistRoot -CacheDirectory $CacheDirectory `
-            -SkipDownload:$SkipDownloads
-    }
+    # Install Git for host architecture
+    Install-GitPortable -Version $GitVersion -Architecture $HostArchitecture `
+        -DestinationRoot $DistRoot -CacheDirectory $CacheDirectory `
+        -SkipDownload:$SkipDownloads
 
-    # Install Python for each architecture
-    foreach ($arch in $TargetArchitectures) {
-        Install-PythonEmbeddable -Version $PythonVersion -Architecture $arch `
-            -DestinationRoot $DistRoot -CacheDirectory $CacheDirectory `
-            -SkipDownload:$SkipDownloads
-    }
+    # Install Python for host architecture
+    Install-PythonEmbeddable -Version $PythonVersion -Architecture $HostArchitecture `
+        -DestinationRoot $DistRoot -CacheDirectory $CacheDirectory `
+        -SkipDownload:$SkipDownloads
 
-    # Install MSYS2 (native architecture only, works for all targets)
-    Install-MSYS2 -Version $MSYS2Version -Architecture $nativeArch `
+    # Install MSYS2 (host architecture, works for all targets)
+    Install-MSYS2 -Version $MSYS2Version -Architecture $HostArchitecture `
         -DestinationRoot $DistRoot -CacheDirectory $CacheDirectory `
         -SkipDownload:$SkipDownloads -UpdatePackages:$UpdateMSYS2 -InstallMake
 
@@ -184,12 +190,10 @@ function New-ToolchainEnvironment {
         -DestinationRoot $DistRoot -CacheDirectory $CacheDirectory `
         -SkipDownload:$SkipDownloads
 
-    # Install OpenJDK for each architecture
-    foreach ($arch in $TargetArchitectures) {
-        Install-OpenJDK -Version $OpenJDKVersion -Architecture $arch `
-            -DestinationRoot $DistRoot -CacheDirectory $CacheDirectory `
-            -SkipDownload:$SkipDownloads
-    }
+    # Install OpenJDK for host architecture
+    Install-OpenJDK -Version $OpenJDKVersion -Architecture $HostArchitecture `
+        -DestinationRoot $DistRoot -CacheDirectory $CacheDirectory `
+        -SkipDownload:$SkipDownloads
 
     # Install Gradle (architecture independent)
     Install-Gradle -Version $GradleVersion `
@@ -198,6 +202,12 @@ function New-ToolchainEnvironment {
 
     # Install Jom (architecture independent)
     Install-Jom -Version $JomVersion `
+        -DestinationRoot $DistRoot -CacheDirectory $CacheDirectory `
+        -SkipDownload:$SkipDownloads
+
+    # Install 7-Zip (extra edition - architecture independent)
+    $sevenZipVersion = "25.01"
+    Install-SevenZip -Version $sevenZipVersion `
         -DestinationRoot $DistRoot -CacheDirectory $CacheDirectory `
         -SkipDownload:$SkipDownloads
 
@@ -214,7 +224,7 @@ function New-ToolchainEnvironment {
     # Step 5: Create environment initialization scripts
     Write-Section "Step 5: Creating Environment Initialization Scripts"
 
-    New-EnvironmentInitScripts -DistRoot $DistRoot -Architectures $TargetArchitectures `
+    New-EnvironmentInitScripts -DistRoot $DistRoot -HostArchitecture $HostArchitecture -Architectures $TargetArchitectures `
         -GitVersion $GitVersion -PythonVersion $PythonVersion -MSYS2Version $MSYS2Version -JomVersion $JomVersion
 
     # Step 6: Summary
@@ -245,6 +255,9 @@ function New-EnvironmentInitScripts {
     param(
         [Parameter(Mandatory=$true)]
         [string]$DistRoot,
+
+        [Parameter(Mandatory=$true)]
+        [string]$HostArchitecture,
 
         [Parameter(Mandatory=$true)]
         [string[]]$Architectures,
@@ -314,12 +327,12 @@ set "WINSDK_ROOT=%DIST_ROOT_DEPS1%\winsdk\10\default"
 REM For reference:
 REM Path setup examples (uncomment and adjust as needed):
 
-REM for arm64 (default/native):
+REM Using host architecture tools (installed based on -hostarch parameter):
 REM set PATH=$distRootVar\msys2\$MSYS2Version\msys64\usr\bin;$distRootVar\git\$GitVersion\default\bin;%PATH%
 REM OR with Python:
 REM set PATH=$distRootVar\msys2\$MSYS2Version\msys64\usr\bin;$distRootVar\git\$GitVersion\default\bin;$distRootVar\python\$PythonVersion\default;%PATH%
 
-REM for x64 (emulation):
+REM Note: Tool paths use default (arm64), default-x64, or default-x86 based on host architecture
 REM set PATH=$distRootVar\msys2\$MSYS2Version\msys64\usr\bin;$distRootVar\git\$GitVersion\default-x64\bin;%PATH%
 REM OR with Python:
 REM set PATH=$distRootVar\msys2\$MSYS2Version\msys64\usr\bin;$distRootVar\git\$GitVersion\default-x64\bin;$distRootVar\python\$PythonVersion\default-x64;%PATH%
@@ -409,32 +422,40 @@ DIST_ROOT_DEPS3 = /c/Users/`$(USERNAME)/swblocks/$distDirName
     Set-Content -Path $mkPath -Value $mkContent -Encoding ASCII
     Write-Log "Created: $mkPath" -Level Success
 
-    # Create architecture-specific helper scripts
-    foreach ($arch in $Architectures) {
-        $archSuffix = if ($arch -eq "arm64") { "" } else { "-$arch" }
+    # Create architecture-specific helper scripts for all architectures
+    # Always generate all three scripts regardless of target architectures
+    $allArchitectures = @("a64", "x64", "x86")
+    foreach ($arch in $allArchitectures) {
+        # Git and Python use host architecture (not target)
+        $hostArchSuffix = if ($HostArchitecture -eq "a64") { "" } else { "-$HostArchitecture" }
         $helperPath = Join-Path $DistRoot "scripts\ci\setup-env-$arch.bat"
 
-        $gitPath = "$distRootVar\git\$GitVersion\default$archSuffix\bin"
-        $pythonPath = "$distRootVar\python\$PythonVersion\default$archSuffix"
+        $gitPath = "$distRootVar\git\$GitVersion\default$hostArchSuffix\bin"
+        $pythonPath = "$distRootVar\python\$PythonVersion\default$hostArchSuffix"
         $msysPath = "$distRootVar\msys2\$MSYS2Version\msys64\usr\bin"
         $jomPath = "$distRootVar\jom\$JomVersion\default"
 
         # Determine architecture descriptions
-        $archDesc = if ($arch -eq "arm64") { "ARM64 Native" } elseif ($arch -eq "x64") { "x64 Cross-Compilation" } else { "x86 Cross-Compilation" }
+        $hostDesc = if ($HostArchitecture -eq "a64") { "ARM64" } elseif ($HostArchitecture -eq "x64") { "x64" } else { "x86" }
+        $targetDesc = if ($arch -eq $HostArchitecture) { "Native" } else { "Cross-Compilation" }
+        $archDesc = "$($arch.ToUpper()) $targetDesc"
         $targetArch = $arch.ToUpper()
-        $hostArch = "ARM64"
+        $hostArch = $hostDesc.ToUpper()
 
-        # Set up MSVC paths based on architecture
-        if ($arch -eq "arm64") {
-            $msvcBinPath = "%MSVC_ROOT%\bin\Hostarm64\arm64;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\arm64;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x64"
+        # Determine the Host{arch} path component for MSVC
+        $hostPathComponent = if ($HostArchitecture -eq "a64") { "Hostarm64" } elseif ($HostArchitecture -eq "x64") { "Hostx64" } else { "Hostx86" }
+
+        # Set up MSVC paths based on host and target architecture
+        if ($arch -eq "a64") {
+            $msvcBinPath = "%MSVC_ROOT%\bin\$hostPathComponent\arm64;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\arm64;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x64"
             $msvcLib = "%MSVC_ROOT%\lib\arm64;%MSVC_ROOT%\atlmfc\lib\arm64;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\ucrt\arm64;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\um\arm64"
             $msvcLibPath = "%MSVC_ROOT%\lib\arm64;%MSVC_ROOT%\atlmfc\lib\arm64"
         } elseif ($arch -eq "x64") {
-            $msvcBinPath = "%MSVC_ROOT%\bin\Hostarm64\x64;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x64"
+            $msvcBinPath = "%MSVC_ROOT%\bin\$hostPathComponent\x64;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x64"
             $msvcLib = "%MSVC_ROOT%\lib\x64;%MSVC_ROOT%\atlmfc\lib\x64;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\ucrt\x64;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\um\x64"
             $msvcLibPath = "%MSVC_ROOT%\lib\x64;%MSVC_ROOT%\atlmfc\lib\x64"
         } else {
-            $msvcBinPath = "%MSVC_ROOT%\bin\Hostarm64\x86;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x86;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x64"
+            $msvcBinPath = "%MSVC_ROOT%\bin\$hostPathComponent\x86;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x86;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x64"
             $msvcLib = "%MSVC_ROOT%\lib\x86;%MSVC_ROOT%\atlmfc\lib\x86;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\ucrt\x86;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\um\x86"
             $msvcLibPath = "%MSVC_ROOT%\lib\x86;%MSVC_ROOT%\atlmfc\lib\x86"
         }
@@ -461,7 +482,7 @@ REM Set up MSVC compiler environment for $arch development
 REM IMPORTANT: PATH order matters! MSVC/Windows SDK tools must come before MSYS2 to avoid conflicts
 REM (MSYS2 contains 'link' and 'find' commands that conflict with Windows native tools)
 REM Order: MSVC -> Windows SDK -> existing PATH -> Jom -> Git -> Python -> MSYS2 (lowest priority)
-set "PATH=$msvcBinPath;%WINSDK_ROOT%\Debuggers\$arch;%PATH%;$jomPath;$gitPath;$pythonPath;$msysPath"
+set "PATH=$msvcBinPath;%WINSDK_ROOT%\Debuggers\$($HostArchitecture);%PATH%;$jomPath;$gitPath;$pythonPath;$msysPath"
 set "INCLUDE=%MSVC_ROOT%\include;%MSVC_ROOT%\atlmfc\include;%WINSDK_ROOT%\Include\%WINSDK_VERSION%\ucrt;%WINSDK_ROOT%\Include\%WINSDK_VERSION%\um;%WINSDK_ROOT%\Include\%WINSDK_VERSION%\shared;%WINSDK_ROOT%\Include\%WINSDK_VERSION%\winrt;%WINSDK_ROOT%\Include\%WINSDK_VERSION%\cppwinrt"
 set "LIB=$msvcLib"
 set "LIBPATH=$msvcLibPath"
@@ -469,7 +490,7 @@ set "LIBPATH=$msvcLibPath"
 REM Set platform and architecture variables
 set "Platform=$targetArch"
 set "VSCMD_ARG_TGT_ARCH=$($arch.ToLower())"
-set "VSCMD_ARG_HOST_ARCH=arm64"
+set "VSCMD_ARG_HOST_ARCH=$($HostArchitecture.ToLower())"
 
 REM Configure debugger symbol path
 set "_NT_SYMBOL_PATH=srv*%USERPROFILE%\windbg\sym*https://msdl.microsoft.com/download/symbols"

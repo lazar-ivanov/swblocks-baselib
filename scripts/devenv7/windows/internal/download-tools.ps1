@@ -106,6 +106,13 @@ $script:ToolConfigs = @{
             all = "jom_{VERSION_UNDERSCORE}.zip"
         }
     }
+    SevenZip = @{
+        BaseUrl = "https://www.7-zip.org/a"
+        VersionPattern = ""
+        FilePatterns = @{
+            all = "7z{VERSION_NODOT}-extra.7z"
+        }
+    }
 }
 
 function Get-ToolDownloadUrl {
@@ -151,7 +158,12 @@ function Get-ToolDownloadUrl {
         throw "No file pattern found for tool '$Tool' architecture '$arch'"
     }
 
-    $fileName = $filePattern -replace '\{VERSION\}', $Version -replace '\{VERSION_UNDERSCORE\}', $versionUnderscore
+    # Handle VERSION_NODOT for 7-Zip
+    $versionNoDot = $Version -replace '\.', ''
+
+    $fileName = $filePattern -replace '\{VERSION\}', $Version `
+                             -replace '\{VERSION_UNDERSCORE\}', $versionUnderscore `
+                             -replace '\{VERSION_NODOT\}', $versionNoDot
 
     # Build URL - if VersionPattern is empty, don't add extra slash
     if ($versionPattern) {
@@ -182,29 +194,33 @@ function Install-GitPortable {
         [switch]$SkipDownload
     )
 
-    $arch = ConvertTo-ArchitectureName -Architecture $Architecture
+    # Normalize architecture for display and folder naming
+    $archNormalized = ConvertTo-ArchitectureName -Architecture $Architecture
+    # Convert to VS naming for file pattern lookup
+    $archVS = ConvertTo-VSArchitectureName -Architecture $Architecture
 
-    Write-SubSection "Installing Git $Version for $arch"
+    Write-SubSection "Installing Git $Version for $archNormalized"
 
-    # Determine paths
-    $archSuffix = if ($arch -eq "arm64") { "" } else { "-$arch" }
-    $installPath = Join-Path $DestinationRoot "git\$Version\default$archSuffix"
+    # Determine paths - always install to 'default' for host architecture tools
+    $installPath = Join-Path $DestinationRoot "git\$Version\default"
 
     # Set default cache directory if not provided
     if (-not $CacheDirectory) {
-        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\devenv7-windows-a64-downloads-cache"
+        # Use default cache directory based on dist folder name
+        $distFolderName = Split-Path $DestinationRoot -Leaf
+        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\$distFolderName-downloads-cache"
     }
 
     New-DirectoryIfNotExists -Path $installPath | Out-Null
     New-DirectoryIfNotExists -Path $CacheDirectory | Out-Null
 
-    # Download portable archive
-    $downloadInfo = Get-ToolDownloadUrl -Tool "Git" -Version $Version -Architecture $arch
+    # Download portable archive using VS architecture naming for file patterns
+    $downloadInfo = Get-ToolDownloadUrl -Tool "Git" -Version $Version -Architecture $archVS
     $archivePath = Join-Path $CacheDirectory $downloadInfo.FileName
 
     if (-not $SkipDownload) {
         Invoke-WebDownload -Url $downloadInfo.Url -OutputPath $archivePath `
-            -Description "Downloading Git $Version for $arch" -SkipIfExists
+            -Description "Downloading Git $Version for $archNormalized" -SkipIfExists
     }
 
     if (-not (Test-Path $archivePath)) {
@@ -213,9 +229,9 @@ function Install-GitPortable {
 
     # Extract portable Git using self-extracting 7z archive
     Expand-ToolArchive -ArchivePath $archivePath -DestinationPath $installPath `
-        -Description "Extracting Git $Version for $arch"
+        -Description "Extracting Git $Version for $archNormalized"
 
-    Write-Log "Git $Version for $arch installed successfully" -Level Success
+    Write-Log "Git $Version for $archNormalized installed successfully" -Level Success
 
     return $installPath
 }
@@ -236,29 +252,33 @@ function Install-PythonEmbeddable {
         [switch]$SkipDownload
     )
 
-    $arch = ConvertTo-ArchitectureName -Architecture $Architecture
+    # Normalize architecture for display and folder naming
+    $archNormalized = ConvertTo-ArchitectureName -Architecture $Architecture
+    # Convert to VS naming for file pattern lookup
+    $archVS = ConvertTo-VSArchitectureName -Architecture $Architecture
 
-    Write-SubSection "Installing Python $Version for $arch"
+    Write-SubSection "Installing Python $Version for $archNormalized"
 
-    # Determine paths
-    $archSuffix = if ($arch -eq "arm64") { "" } else { "-$arch" }
-    $installPath = Join-Path $DestinationRoot "python\$Version\default$archSuffix"
+    # Determine paths - always install to 'default' for host architecture tools
+    $installPath = Join-Path $DestinationRoot "python\$Version\default"
 
     # Set default cache directory if not provided
     if (-not $CacheDirectory) {
-        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\devenv7-windows-a64-downloads-cache"
+        # Use default cache directory based on dist folder name
+        $distFolderName = Split-Path $DestinationRoot -Leaf
+        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\$distFolderName-downloads-cache"
     }
 
     New-DirectoryIfNotExists -Path $installPath | Out-Null
     New-DirectoryIfNotExists -Path $CacheDirectory | Out-Null
 
-    # Download embeddable package
-    $downloadInfo = Get-ToolDownloadUrl -Tool "Python" -Version $Version -Architecture $arch
+    # Download embeddable package using VS architecture naming for file patterns
+    $downloadInfo = Get-ToolDownloadUrl -Tool "Python" -Version $Version -Architecture $archVS
     $archivePath = Join-Path $CacheDirectory $downloadInfo.FileName
 
     if (-not $SkipDownload) {
         Invoke-WebDownload -Url $downloadInfo.Url -OutputPath $archivePath `
-            -Description "Downloading Python $Version embeddable for $arch" -SkipIfExists
+            -Description "Downloading Python $Version embeddable for $archNormalized" -SkipIfExists
     }
 
     if (-not (Test-Path $archivePath)) {
@@ -267,9 +287,9 @@ function Install-PythonEmbeddable {
 
     # Extract embeddable package
     Expand-ToolArchive -ArchivePath $archivePath -DestinationPath $installPath `
-        -Description "Extracting Python $Version for $arch"
+        -Description "Extracting Python $Version for $archNormalized"
 
-    Write-Log "Python $Version for $arch installed successfully" -Level Success
+    Write-Log "Python $Version for $archNormalized installed successfully" -Level Success
 
     return $installPath
 }
@@ -294,34 +314,39 @@ function Install-MSYS2 {
         [switch]$InstallMake
     )
 
-    $arch = ConvertTo-ArchitectureName -Architecture $Architecture
+    # Normalize architecture for display and folder naming
+    $archNormalized = ConvertTo-ArchitectureName -Architecture $Architecture
+    # Convert to VS naming for file pattern lookup
+    $archVS = ConvertTo-VSArchitectureName -Architecture $Architecture
 
     # MSYS2 only supports arm64 and x64
-    if ($arch -eq "x86") {
+    if ($archNormalized -eq "x86") {
         Write-Log "MSYS2 does not support x86, skipping" -Level Warning
         return $null
     }
 
-    Write-SubSection "Installing MSYS2 $Version for $arch"
+    Write-SubSection "Installing MSYS2 $Version for $archNormalized"
 
     $installBase = Join-Path $DestinationRoot "msys2\$Version"
     $installPath = Join-Path $installBase "msys64"
 
     # Set default cache directory if not provided
     if (-not $CacheDirectory) {
-        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\devenv7-windows-a64-downloads-cache"
+        # Use default cache directory based on dist folder name
+        $distFolderName = Split-Path $DestinationRoot -Leaf
+        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\$distFolderName-downloads-cache"
     }
 
     New-DirectoryIfNotExists -Path $installBase | Out-Null
     New-DirectoryIfNotExists -Path $CacheDirectory | Out-Null
 
-    # Download base tarball
-    $downloadInfo = Get-ToolDownloadUrl -Tool "MSYS2" -Version $Version -Architecture $arch
+    # Download base tarball using VS architecture naming for file patterns
+    $downloadInfo = Get-ToolDownloadUrl -Tool "MSYS2" -Version $Version -Architecture $archVS
     $archivePath = Join-Path $CacheDirectory $downloadInfo.FileName
 
     if (-not $SkipDownload) {
         Invoke-WebDownload -Url $downloadInfo.Url -OutputPath $archivePath `
-            -Description "Downloading MSYS2 $Version for $arch" -SkipIfExists
+            -Description "Downloading MSYS2 $Version for $archNormalized" -SkipIfExists
     }
 
     if (-not (Test-Path $archivePath)) {
@@ -336,13 +361,13 @@ function Install-MSYS2 {
 
     # Extract MSYS2 base tarball
     Expand-ToolArchive -ArchivePath $archivePath -DestinationPath $installBase `
-        -Description "Extracting MSYS2 $Version for $arch"
+        -Description "Extracting MSYS2 $Version for $archNormalized"
 
     if (-not (Test-Path $installPath)) {
         throw "MSYS2 extraction failed - msys64 directory not found"
     }
 
-    Write-Log "MSYS2 $Version for $arch installed successfully" -Level Success
+    Write-Log "MSYS2 $Version for $archNormalized installed successfully" -Level Success
 
     # Update packages if requested
     if ($UpdatePackages) {
@@ -451,7 +476,9 @@ function Install-StrawberryPerl {
 
     # Set default cache directory if not provided
     if (-not $CacheDirectory) {
-        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\devenv7-windows-a64-downloads-cache"
+        # Use default cache directory based on dist folder name
+        $distFolderName = Split-Path $DestinationRoot -Leaf
+        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\$distFolderName-downloads-cache"
     }
 
     New-DirectoryIfNotExists -Path $CacheDirectory | Out-Null
@@ -501,14 +528,17 @@ function Install-JSONSpirit {
 
     Write-SubSection "Installing JSON Spirit $Version"
 
-    $installPath = Join-Path $DestinationRoot "json-spirit\$Version\source"
+    $installBase = Join-Path $DestinationRoot "json-spirit\$Version"
+    $installPath = Join-Path $installBase "source"
 
     # Set default cache directory if not provided
     if (-not $CacheDirectory) {
-        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\devenv7-windows-a64-downloads-cache"
+        # Use default cache directory based on dist folder name
+        $distFolderName = Split-Path $DestinationRoot -Leaf
+        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\$distFolderName-downloads-cache"
     }
 
-    New-DirectoryIfNotExists -Path $installPath | Out-Null
+    New-DirectoryIfNotExists -Path $installBase | Out-Null
     New-DirectoryIfNotExists -Path $CacheDirectory | Out-Null
 
     # Download source archive
@@ -524,30 +554,48 @@ function Install-JSONSpirit {
         throw "Archive file not found: $archivePath"
     }
 
-    # Extract source to temp location (archive contains versioned subdirectory)
-    $tempExtractPath = Join-Path $env:TEMP "json-spirit-extract-$Version"
-
+    # Create a temporary extraction directory
+    $tempExtractPath = Join-Path $installBase "temp-extract"
     if (Test-Path $tempExtractPath) {
-        Remove-DirectoryIfExists -Path $tempExtractPath -Force
+        Remove-Item -Path $tempExtractPath -Recurse -Force
     }
+    New-DirectoryIfNotExists -Path $tempExtractPath | Out-Null
 
+    # Extract to temp directory
+    # Archive structure: json-spirit/4.08/source/(files)
     Expand-ToolArchive -ArchivePath $archivePath -DestinationPath $tempExtractPath `
         -Description "Extracting JSON Spirit $Version"
 
-    # The archive extracts to a versioned subdirectory, move contents up
-    $extractedDir = Get-ChildItem -Path $tempExtractPath -Directory | Select-Object -First 1
+    # The archive contains json-spirit/{version}/source/
+    # We want to move the 'source' directory to our final location
+    $extractedSourcePath = Join-Path $tempExtractPath "json-spirit\$Version\source"
+    if (Test-Path $extractedSourcePath) {
+        # Remove destination if it exists
+        if (Test-Path $installPath) {
+            Remove-Item -Path $installPath -Recurse -Force
+        }
 
-    if ($extractedDir) {
-        Copy-DirectoryWithProgress -Source $extractedDir.FullName -Destination $installPath `
-            -Description "Copying JSON Spirit source"
+        # Create parent directory
+        $installBase = Split-Path -Parent $installPath
+        New-DirectoryIfNotExists -Path $installBase | Out-Null
+
+        # Move the source folder to final location
+        # Use Rename-Item instead of Move-Item to avoid nesting issues
+        Move-Item -Path $extractedSourcePath -Destination $installPath -Force
+
+        # Verify no extra nesting occurred
+        $unwantedNesting = Join-Path $installPath "4.08"
+        if (Test-Path $unwantedNesting) {
+            throw "Unwanted nesting detected at: $unwantedNesting - extraction or move failed"
+        }
+
+        # Clean up temp directory
+        Remove-Item -Path $tempExtractPath -Recurse -Force -ErrorAction SilentlyContinue
+
+        Write-Log "JSON Spirit $Version installed successfully" -Level Success
     } else {
-        throw "JSON Spirit extraction failed - no subdirectory found"
+        throw "Expected source directory not found after extraction at: $extractedSourcePath"
     }
-
-    # Clean up temp extraction
-    Remove-DirectoryIfExists -Path $tempExtractPath -Force
-
-    Write-Log "JSON Spirit $Version installed successfully" -Level Success
 
     return $installPath
 }
@@ -568,28 +616,33 @@ function Install-OpenJDK {
         [switch]$SkipDownload
     )
 
-    $arch = ConvertTo-ArchitectureName -Architecture $Architecture
+    # Normalize architecture for display and folder naming
+    $archNormalized = ConvertTo-ArchitectureName -Architecture $Architecture
+    # Convert to VS naming for file pattern lookup
+    $archVS = ConvertTo-VSArchitectureName -Architecture $Architecture
 
-    Write-SubSection "Installing OpenJDK $Version for $arch"
+    Write-SubSection "Installing OpenJDK $Version for $archNormalized"
 
-    $archSuffix = if ($arch -eq "arm64") { "" } else { "-$arch" }
-    $installPath = Join-Path $DestinationRoot "openjdk\$Version\default$archSuffix"
+    # Determine paths - always install to 'default' for host architecture tools
+    $installPath = Join-Path $DestinationRoot "openjdk\$Version\default"
 
     # Set default cache directory if not provided
     if (-not $CacheDirectory) {
-        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\devenv7-windows-a64-downloads-cache"
+        # Use default cache directory based on dist folder name
+        $distFolderName = Split-Path $DestinationRoot -Leaf
+        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\$distFolderName-downloads-cache"
     }
 
     New-DirectoryIfNotExists -Path $installPath | Out-Null
     New-DirectoryIfNotExists -Path $CacheDirectory | Out-Null
 
-    # Download JDK archive
-    $downloadInfo = Get-ToolDownloadUrl -Tool "OpenJDK" -Version $Version -Architecture $arch
+    # Download JDK archive using VS architecture naming for file patterns
+    $downloadInfo = Get-ToolDownloadUrl -Tool "OpenJDK" -Version $Version -Architecture $archVS
     $archivePath = Join-Path $CacheDirectory $downloadInfo.FileName
 
     if (-not $SkipDownload) {
         Invoke-WebDownload -Url $downloadInfo.Url -OutputPath $archivePath `
-            -Description "Downloading OpenJDK $Version for $arch" -SkipIfExists
+            -Description "Downloading OpenJDK $Version for $archNormalized" -SkipIfExists
     }
 
     if (-not (Test-Path $archivePath)) {
@@ -597,14 +650,14 @@ function Install-OpenJDK {
     }
 
     # Extract JDK (archive contains jdk-<version> subdirectory)
-    $tempExtractPath = Join-Path $env:TEMP "openjdk-extract-$Version-$arch"
+    $tempExtractPath = Join-Path $env:TEMP "openjdk-extract-$Version-$archNormalized"
 
     if (Test-Path $tempExtractPath) {
         Remove-DirectoryIfExists -Path $tempExtractPath -Force
     }
 
     Expand-ToolArchive -ArchivePath $archivePath -DestinationPath $tempExtractPath `
-        -Description "Extracting OpenJDK $Version for $arch"
+        -Description "Extracting OpenJDK $Version for $archNormalized"
 
     # The archive extracts to a jdk-<version> subdirectory, move contents up
     $extractedDir = Get-ChildItem -Path $tempExtractPath -Directory | Select-Object -First 1
@@ -619,7 +672,7 @@ function Install-OpenJDK {
     # Clean up temp extraction
     Remove-DirectoryIfExists -Path $tempExtractPath -Force
 
-    Write-Log "OpenJDK $Version for $arch installed successfully" -Level Success
+    Write-Log "OpenJDK $Version for $archNormalized installed successfully" -Level Success
 
     return $installPath
 }
@@ -643,7 +696,9 @@ function Install-Gradle {
 
     # Set default cache directory if not provided
     if (-not $CacheDirectory) {
-        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\devenv7-windows-a64-downloads-cache"
+        # Use default cache directory based on dist folder name
+        $distFolderName = Split-Path $DestinationRoot -Leaf
+        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\$distFolderName-downloads-cache"
     }
 
     New-DirectoryIfNotExists -Path $installPath | Out-Null
@@ -709,7 +764,9 @@ function Install-Jom {
 
     # Set default cache directory if not provided
     if (-not $CacheDirectory) {
-        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\devenv7-windows-a64-downloads-cache"
+        # Use default cache directory based on dist folder name
+        $distFolderName = Split-Path $DestinationRoot -Leaf
+        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\$distFolderName-downloads-cache"
     }
 
     New-DirectoryIfNotExists -Path $installPath | Out-Null
@@ -737,6 +794,85 @@ function Install-Jom {
     return $installPath
 }
 
+function Install-SevenZip {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Version,
+
+        [Parameter(Mandatory=$true)]
+        [string]$DestinationRoot,
+
+        [string]$CacheDirectory,
+
+        [switch]$SkipDownload
+    )
+
+    Write-SubSection "Installing 7-Zip $Version (extra edition)"
+
+    $installPath = Join-Path $DestinationRoot "7zip\$Version"
+
+    # Set default cache directory if not provided
+    if (-not $CacheDirectory) {
+        # Use default cache directory based on dist folder name
+        $distFolderName = Split-Path $DestinationRoot -Leaf
+        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\$distFolderName-downloads-cache"
+    }
+
+    New-DirectoryIfNotExists -Path $installPath | Out-Null
+    New-DirectoryIfNotExists -Path $CacheDirectory | Out-Null
+
+    # Download 7-Zip extra edition (contains 7za.exe standalone)
+    $downloadInfo = Get-ToolDownloadUrl -Tool "SevenZip" -Version $Version -Architecture "all"
+    $archivePath = Join-Path $CacheDirectory $downloadInfo.FileName
+
+    if (-not $SkipDownload) {
+        Invoke-WebDownload -Url $downloadInfo.Url -OutputPath $archivePath `
+            -Description "Downloading 7-Zip $Version (extra edition)" -SkipIfExists
+    }
+
+    if (-not (Test-Path $archivePath)) {
+        throw "Archive file not found: $archivePath"
+    }
+
+    # Extract 7-Zip using Windows 11's native tar command
+    # Windows 11's tar supports 7z archives natively
+    Write-Host "Extracting 7-Zip $Version (extra edition) using tar..."
+
+    # Create a temporary extraction directory
+    $tempExtractPath = Join-Path $installPath "temp_extract"
+    New-DirectoryIfNotExists -Path $tempExtractPath | Out-Null
+
+    # Use tar to extract the 7z archive
+    $tarArgs = @("-xf", "`"$archivePath`"", "-C", "`"$tempExtractPath`"")
+    Write-Log "Running: tar $($tarArgs -join ' ')" -Level Verbose
+
+    $extractProcess = Start-Process -FilePath "tar.exe" -ArgumentList $tarArgs `
+        -Wait -PassThru -NoNewWindow -RedirectStandardError (Join-Path $env:TEMP "7zip_extract_error.log")
+
+    if ($extractProcess.ExitCode -ne 0) {
+        $errorLog = Get-Content (Join-Path $env:TEMP "7zip_extract_error.log") -Raw -ErrorAction SilentlyContinue
+        throw "Failed to extract 7-Zip archive using tar. Exit code: $($extractProcess.ExitCode). Error: $errorLog"
+    }
+
+    # The 7z extra package contains multiple architectures
+    # Find and move 7za.exe and related files to the install directory
+    $filesToCopy = @("7za.exe", "7za.dll", "7zxa.dll", "License.txt", "readme.txt")
+    foreach ($fileName in $filesToCopy) {
+        $sourceFile = Get-ChildItem -Path $tempExtractPath -Filter $fileName -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($sourceFile) {
+            Copy-Item -Path $sourceFile.FullName -Destination $installPath -Force
+            Write-Log "Copied $fileName to installation directory" -Level Verbose
+        }
+    }
+
+    # Clean up temporary extraction directory
+    Remove-Item -Path $tempExtractPath -Recurse -Force -ErrorAction SilentlyContinue
+
+    Write-Log "7-Zip $Version (extra edition) installed successfully" -Level Success
+
+    return $installPath
+}
+
 function Install-Boost {
     param(
         [Parameter(Mandatory=$true)]
@@ -756,7 +892,9 @@ function Install-Boost {
 
     # Set default cache directory if not provided
     if (-not $CacheDirectory) {
-        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\devenv7-windows-a64-downloads-cache"
+        # Use default cache directory based on dist folder name
+        $distFolderName = Split-Path $DestinationRoot -Leaf
+        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\$distFolderName-downloads-cache"
     }
 
     New-DirectoryIfNotExists -Path $installPath | Out-Null
@@ -822,7 +960,9 @@ function Install-OpenSSL {
 
     # Set default cache directory if not provided
     if (-not $CacheDirectory) {
-        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\devenv7-windows-a64-downloads-cache"
+        # Use default cache directory based on dist folder name
+        $distFolderName = Split-Path $DestinationRoot -Leaf
+        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\$distFolderName-downloads-cache"
     }
 
     New-DirectoryIfNotExists -Path $installPath | Out-Null

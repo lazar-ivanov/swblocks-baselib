@@ -25,8 +25,9 @@ REM Usage:
 REM   build-openssl-windows.bat [options]
 REM
 REM Options:
-REM   -arch <architecture>     Target architecture: arm64, x64, or x86
-REM                            Default: arm64
+REM   -arch <architecture>     Target architecture: a64, x64, or x86
+REM                            Note: arm64 accepted as alias for a64
+REM                            Default: a64
 REM
 REM   -version <version>       OpenSSL version to build
 REM                            Default: 3.5.4
@@ -55,10 +56,10 @@ REM   build-openssl-windows.bat -dist-root C:\mydev\toolchain -skip-tests
 REM
 REM ================================================================================
 
-setlocal
+setlocal enabledelayedexpansion
 
 REM Default parameters
-set "ARCH=arm64"
+set "ARCH=a64"
 set "OPENSSL_VERSION=3.5.4"
 set "TOOLCHAIN_NAME=vc143"
 set "VS_VERSION=2022"
@@ -122,21 +123,20 @@ goto show_help
 
 REM Normalize architecture to lowercase for comparison
 set "ARCH_LOWER=%ARCH%"
-if /i "%ARCH%"=="ARM64" set "ARCH_LOWER=arm64"
-if /i "%ARCH%"=="Arm64" set "ARCH_LOWER=arm64"
+REM Handle aliases - arm64 is an alias for a64
+if /i "%ARCH%"=="ARM64" set "ARCH_LOWER=a64"
+if /i "%ARCH%"=="arm64" set "ARCH_LOWER=a64"
+if /i "%ARCH%"=="A64" set "ARCH_LOWER=a64"
 if /i "%ARCH%"=="X64" set "ARCH_LOWER=x64"
 if /i "%ARCH%"=="AMD64" set "ARCH_LOWER=x64"
+if /i "%ARCH%"=="amd64" set "ARCH_LOWER=x64"
 if /i "%ARCH%"=="X86" set "ARCH_LOWER=x86"
 
-if "%ARCH_LOWER%"=="arm64" (
-    set "ARCH=arm64"
+if "%ARCH_LOWER%"=="a64" (
+    set "ARCH=a64"
     set "ARCH_TAG=a64"
     set "BUILD_CONFIG_NAME=VC-WIN64-ARM"
 ) else if "%ARCH_LOWER%"=="x64" (
-    set "ARCH=x64"
-    set "ARCH_TAG=x64"
-    set "BUILD_CONFIG_NAME=VC-WIN64A"
-) else if "%ARCH_LOWER%"=="amd64" (
     set "ARCH=x64"
     set "ARCH_TAG=x64"
     set "BUILD_CONFIG_NAME=VC-WIN64A"
@@ -145,7 +145,7 @@ if "%ARCH_LOWER%"=="arm64" (
     set "ARCH_TAG=x86"
     set "BUILD_CONFIG_NAME=VC-WIN32"
 ) else (
-    echo ERROR: Invalid architecture '%ARCH%'. Must be arm64, x64, or x86
+    echo ERROR: Invalid architecture '%ARCH%'. Must be a64, x64, or x86 ^(arm64 accepted as alias for a64^)
     goto error
 )
 
@@ -268,7 +268,7 @@ echo Perl found:
 where perl
 
 REM Verify assembler is available (optional; ARM64 uses armasm64, x86/x64 use NASM)
-if /i "%ARCH%"=="arm64" (
+if /i "%ARCH%"=="a64" (
     where armasm64 >nul 2>&1
     if errorlevel 1 (
         echo Warning: armasm64 not found, building with no-asm option
@@ -313,7 +313,7 @@ if not exist "%OPENSSL_SOURCE_PATH%\Configure" (
         echo ERROR: Failed to download OpenSSL source
         echo.
         echo You can manually download from:
-        echo   https://www.openssl.org/source/openssl-%OPENSSL_VERSION%.tar.gz
+        echo   https://github.com/openssl/openssl/releases/download/openssl-%OPENSSL_VERSION%/openssl-%OPENSSL_VERSION%.tar.gz
         echo And extract to:
         echo   %OPENSSL_SOURCE_PATH%
         goto error

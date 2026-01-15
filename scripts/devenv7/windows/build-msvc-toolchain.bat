@@ -38,9 +38,13 @@ REM Options:
 REM   -dist-root <path>        Distribution root directory
 REM                            Default: %USERPROFILE%\swblocks\dist-devenv7-windows-a64
 REM
+REM   -hostarch <arch>         Host architecture for tools and cross-compilation
+REM                            Options: a64, x64, x86 (arm64 accepted as alias for a64)
+REM                            Default: auto-detect from environment
+REM
 REM   -targets <arch-list>     Comma-separated list of target architectures
-REM                            Options: arm64, x64, x86
-REM                            Default: arm64,x64,x86
+REM                            Options: a64, x64, x86 (arm64 accepted as alias for a64)
+REM                            Default: matches -hostarch value
 REM
 REM   -git-version <version>   Git version to download
 REM                            Default: 2.52.0
@@ -91,7 +95,7 @@ REM   -help                    Show this help message
 REM
 REM Examples:
 REM   build-msvc-toolchain.bat
-REM   build-msvc-toolchain.bat -targets arm64,x64
+REM   build-msvc-toolchain.bat -hostarch x64 -targets arm64,x64
 REM   build-msvc-toolchain.bat -dist-root C:\mydev\toolchain -whatif
 REM   build-msvc-toolchain.bat -skip-vs-copy -skip-sdk-copy
 REM
@@ -103,8 +107,10 @@ set "SCRIPT_DIR=%~dp0"
 setlocal enabledelayedexpansion
 
 REM Default parameters
-set "DIST_ROOT=%USERPROFILE%\swblocks\dist-devenv7-windows-a64"
-set "TARGET_ARCHS=arm64,x64,x86"
+set "DIST_ROOT="
+set "DIST_ROOT_PROVIDED="
+set "HOST_ARCH="
+set "TARGET_ARCHS="
 set "GIT_VERSION=2.52.0"
 set "PYTHON_VERSION=3.14.2"
 set "MSYS2_VERSION=20251213"
@@ -129,16 +135,36 @@ REM Parse command line arguments
 if "%~1"=="" goto args_done
 if /i "%~1"=="-dist-root" (
     set "DIST_ROOT=%~2"
+    set "DIST_ROOT_PROVIDED=1"
+    shift
+    shift
+    goto parse_args
+)
+if /i "%~1"=="-hostarch" (
+    set "HOST_ARCH=%~2"
     shift
     shift
     goto parse_args
 )
 if /i "%~1"=="-targets" (
-    set "TARGET_ARCHS=%~2"
+    set "TARGET_ARCHS="
     shift
-    shift
-    goto parse_args
+    goto collect_targets_loop
 )
+goto skip_collect_targets
+:collect_targets_loop
+if "%~1"=="" goto args_done
+set "FIRST_CHAR=%~1"
+set "FIRST_CHAR=!FIRST_CHAR:~0,1!"
+if "!FIRST_CHAR!"=="-" goto parse_args
+if "!TARGET_ARCHS!"=="" (
+    set "TARGET_ARCHS=%~1"
+) else (
+    set "TARGET_ARCHS=!TARGET_ARCHS!,%~1"
+)
+shift
+goto collect_targets_loop
+:skip_collect_targets
 if /i "%~1"=="-git-version" (
     set "GIT_VERSION=%~2"
     shift
@@ -244,6 +270,80 @@ goto show_help
 
 :args_done
 
+REM Auto-detect host architecture if not specified
+if "%HOST_ARCH%"=="" (
+    echo Detecting host architecture...
+    if /i "%PROCESSOR_ARCHITECTURE%"=="AMD64" (
+        set "HOST_ARCH=x64"
+    ) else if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" (
+        set "HOST_ARCH=a64"
+    ) else if /i "%PROCESSOR_ARCHITECTURE%"=="x86" (
+        set "HOST_ARCH=x86"
+    ) else (
+        echo WARNING: Unknown processor architecture "%PROCESSOR_ARCHITECTURE%", defaulting to x64
+        set "HOST_ARCH=x64"
+    )
+    echo Detected host architecture: !HOST_ARCH!
+)
+
+REM Normalize host architecture value (backward compatibility)
+if /i "%HOST_ARCH%"=="arm64" set "HOST_ARCH=a64"
+if /i "%HOST_ARCH%"=="amd64" set "HOST_ARCH=x64"
+if /i "%HOST_ARCH%"=="x86_64" set "HOST_ARCH=x64"
+if /i "%HOST_ARCH%"=="aarch64" set "HOST_ARCH=a64"
+
+REM Validate host architecture
+if /i not "%HOST_ARCH%"=="a64" if /i not "%HOST_ARCH%"=="x64" if /i not "%HOST_ARCH%"=="x86" (
+    echo ERROR: Invalid host architecture "%HOST_ARCH%"
+    echo Valid options: a64, x64, x86 ^(arm64 accepted as alias for a64^)
+    exit /b 1
+)
+
+REM Set default target architectures to host architecture if not specified
+if "%TARGET_ARCHS%"=="" (
+    set "TARGET_ARCHS=!HOST_ARCH!"
+    echo Using default target architecture: !TARGET_ARCHS!
+)
+
+REM Normalize and validate target architectures
+set "NORMALIZED_TARGETS="
+set "TEMP_ARCHS=!TARGET_ARCHS!"
+:parse_arch_loop
+for /f "tokens=1* delims=," %%a in ("!TEMP_ARCHS!") do (
+    set "CURR_ARCH=%%a"
+    set "TEMP_ARCHS=%%b"
+
+    REM Normalize architecture (backward compatibility)
+    if /i "!CURR_ARCH!"=="arm64" set "CURR_ARCH=a64"
+    if /i "!CURR_ARCH!"=="amd64" set "CURR_ARCH=x64"
+    if /i "!CURR_ARCH!"=="x86_64" set "CURR_ARCH=x64"
+    if /i "!CURR_ARCH!"=="aarch64" set "CURR_ARCH=a64"
+
+    REM Validate architecture
+    if /i not "!CURR_ARCH!"=="a64" if /i not "!CURR_ARCH!"=="x64" if /i not "!CURR_ARCH!"=="x86" (
+        echo ERROR: Invalid target architecture "!CURR_ARCH!"
+        echo Valid options: a64, x64, x86 ^(arm64 accepted as alias for a64^)
+        exit /b 1
+    )
+
+    REM Append to normalized list
+    if "!NORMALIZED_TARGETS!"=="" (
+        set "NORMALIZED_TARGETS=!CURR_ARCH!"
+    ) else (
+        set "NORMALIZED_TARGETS=!NORMALIZED_TARGETS!-!CURR_ARCH!"
+    )
+
+    if not "!TEMP_ARCHS!"=="" goto parse_arch_loop
+)
+
+REM Update TARGET_ARCHS with normalized values (comma-separated for passing to scripts)
+set "TARGET_ARCHS=!NORMALIZED_TARGETS:-=,!"
+
+REM Construct dist folder name with hostarch and targets (only if not provided via -dist-root)
+if not "%DIST_ROOT_PROVIDED%"=="1" (
+    set "DIST_ROOT=%USERPROFILE%\swblocks\dist-devenv7-windows-hostarch-!HOST_ARCH!-targets-!NORMALIZED_TARGETS!"
+)
+
 REM Verify script directory was captured correctly
 REM If the internal directory doesn't exist, we have a problem
 REM This can happen if the script is called in unusual ways
@@ -266,7 +366,8 @@ set "PS_SCRIPT=%SCRIPT_DIR%internal\toolchain-setup.ps1"
 REM Build PowerShell command - use dot-sourcing for better compatibility
 set "PS_CMD=. '%PS_SCRIPT%'; New-ToolchainEnvironment"
 set "PS_CMD=%PS_CMD% -DistRoot '%DIST_ROOT%'"
-set "PS_CMD=%PS_CMD% -TargetArchitectures @('%TARGET_ARCHS:,=','%')"
+set "PS_CMD=%PS_CMD% -HostArchitecture '%HOST_ARCH%'"
+set "PS_CMD=%PS_CMD% -TargetArchitectures ('%TARGET_ARCHS%' -split ',')"
 set "PS_CMD=%PS_CMD% -GitVersion '%GIT_VERSION%'"
 set "PS_CMD=%PS_CMD% -PythonVersion '%PYTHON_VERSION%'"
 set "PS_CMD=%PS_CMD% -MSYS2Version '%MSYS2_VERSION%'"

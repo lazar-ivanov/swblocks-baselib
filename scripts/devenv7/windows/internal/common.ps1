@@ -93,7 +93,7 @@ function Get-NativeArchitecture {
 
     switch ($arch) {
         "AMD64" { return "x64" }
-        "ARM64" { return "arm64" }
+        "ARM64" { return "a64" }
         "x86"   { return "x86" }
         default {
             Write-Log "Unknown architecture: $arch, defaulting to x64" -Level Warning
@@ -109,12 +109,41 @@ function ConvertTo-ArchitectureName {
     )
 
     switch ($Architecture.ToLower()) {
-        "arm64"  { return "arm64" }
+        "a64"    { return "a64" }
+        "arm64"  { return "a64" }  # arm64 is an alias for a64
         "x64"    { return "x64" }
         "amd64"  { return "x64" }
         "x86"    { return "x86" }
         "win32"  { return "x86" }
         default  {
+            throw "Unknown architecture: $Architecture"
+        }
+    }
+}
+
+function ConvertTo-VSArchitectureName {
+    <#
+    .SYNOPSIS
+    Converts our normalized architecture tags to Visual Studio's folder naming convention.
+
+    .DESCRIPTION
+    Visual Studio uses 'arm64' in folder paths, while we use 'a64' as our normalized tag.
+    This function converts our tags to the names expected in VS folder structures.
+    #>
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Architecture
+    )
+
+    # First normalize to our standard tags
+    $normalized = ConvertTo-ArchitectureName -Architecture $Architecture
+
+    # Then convert to VS folder naming
+    switch ($normalized) {
+        "a64" { return "arm64" }  # VS uses 'arm64' in folder paths
+        "x64" { return "x64" }
+        "x86" { return "x86" }
+        default {
             throw "Unknown architecture: $Architecture"
         }
     }

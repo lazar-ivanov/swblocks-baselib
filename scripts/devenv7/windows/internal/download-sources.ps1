@@ -41,8 +41,8 @@ function Get-OpenSSLDownloadUrl {
         [string]$Version
     )
 
-    # OpenSSL URL format: https://www.openssl.org/source/openssl-3.5.4.tar.gz
-    return "https://www.openssl.org/source/openssl-$Version.tar.gz"
+    # OpenSSL URL format: https://github.com/openssl/openssl/releases/download/openssl-3.5.4/openssl-3.5.4.tar.gz
+    return "https://github.com/openssl/openssl/releases/download/openssl-$Version/openssl-$Version.tar.gz"
 }
 
 function Install-BoostSource {

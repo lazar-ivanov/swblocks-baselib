@@ -91,16 +91,30 @@ function Test-VSComponentInstalled {
         [string]$VSPath,
 
         [Parameter(Mandatory=$true)]
-        [string]$Architecture
+        [string]$Architecture,
+
+        [Parameter(Mandatory=$false)]
+        [string]$HostArchitecture = $null
     )
 
-    $arch = ConvertTo-ArchitectureName -Architecture $Architecture
+    # Convert to VS folder naming (a64 -> arm64, etc.)
+    $arch = ConvertTo-VSArchitectureName -Architecture $Architecture
 
-    # Check for required compiler binaries
-    $compilerPaths = @(
-        "VC\Tools\MSVC\*\bin\Hostx64\$arch\cl.exe",
-        "VC\Tools\MSVC\*\bin\Hostarm64\$arch\cl.exe"
-    )
+    # If host architecture not specified, check all possible host architectures
+    if (-not $HostArchitecture) {
+        $compilerPaths = @(
+            "VC\Tools\MSVC\*\bin\Hostx64\$arch\cl.exe",
+            "VC\Tools\MSVC\*\bin\Hostarm64\$arch\cl.exe",
+            "VC\Tools\MSVC\*\bin\Hostx86\$arch\cl.exe"
+        )
+    } else {
+        # Use specific host architecture - convert to VS naming
+        $hostArchVS = ConvertTo-VSArchitectureName -Architecture $HostArchitecture
+        $hostPathComponent = if ($hostArchVS -eq "arm64") { "Hostarm64" } elseif ($hostArchVS -eq "x64") { "Hostx64" } else { "Hostx86" }
+        $compilerPaths = @(
+            "VC\Tools\MSVC\*\bin\$hostPathComponent\$arch\cl.exe"
+        )
+    }
 
     foreach ($pattern in $compilerPaths) {
         $fullPattern = Join-Path $VSPath $pattern
@@ -248,6 +262,7 @@ function Get-VSInstallationInfo {
     param(
         [string]$VSVersion = "2022",
         [string[]]$RequiredArchitectures = @("arm64", "x64", "x86"),
+        [string]$HostArchitecture = $null,
         [switch]$ShowInstructionsOnFailure
     )
 
@@ -279,7 +294,7 @@ function Get-VSInstallationInfo {
 
     # Check for required architecture components
     foreach ($arch in $RequiredArchitectures) {
-        if (-not (Test-VSComponentInstalled -VSPath $vsPath -Architecture $arch)) {
+        if (-not (Test-VSComponentInstalled -VSPath $vsPath -Architecture $arch -HostArchitecture $HostArchitecture)) {
             $info.MissingComponents += "MSVC $arch compiler"
             Write-Log "Missing MSVC compiler for architecture: $arch" -Level Warning
         }

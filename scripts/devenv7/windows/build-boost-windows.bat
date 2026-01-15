@@ -25,8 +25,9 @@ REM Usage:
 REM   build-boost-windows.bat [options]
 REM
 REM Options:
-REM   -arch <architecture>     Target architecture: arm64, x64, or x86
-REM                            Default: arm64
+REM   -arch <architecture>     Target architecture: a64, x64, or x86
+REM                            Note: arm64 accepted as alias for a64
+REM                            Default: a64
 REM
 REM   -version <version>       Boost version to build
 REM                            Default: 1.90.0
@@ -53,10 +54,10 @@ REM   build-boost-windows.bat -dist-root C:\mydev\toolchain
 REM
 REM ================================================================================
 
-setlocal
+setlocal enabledelayedexpansion
 
 REM Default parameters
-set "ARCH=arm64"
+set "ARCH=a64"
 set "BOOST_VERSION=1.90.0"
 set "TOOLCHAIN_NAME=vc143"
 set "VS_VERSION=2022"
@@ -115,13 +116,15 @@ goto show_help
 
 REM Normalize architecture to lowercase for comparison
 set "ARCH_LOWER=%ARCH%"
-if /i "%ARCH%"=="ARM64" set "ARCH_LOWER=arm64"
-if /i "%ARCH%"=="Arm64" set "ARCH_LOWER=arm64"
+REM Handle aliases - arm64 is an alias for a64
+if /i "%ARCH%"=="ARM64" set "ARCH_LOWER=a64"
+if /i "%ARCH%"=="arm64" set "ARCH_LOWER=a64"
+if /i "%ARCH%"=="A64" set "ARCH_LOWER=a64"
 if /i "%ARCH%"=="X64" set "ARCH_LOWER=x64"
 if /i "%ARCH%"=="X86" set "ARCH_LOWER=x86"
 
-if "%ARCH_LOWER%"=="arm64" (
-    set "ARCH=arm64"
+if "%ARCH_LOWER%"=="a64" (
+    set "ARCH=a64"
     set "ADDRESS_MODEL=64"
     set "ARCH_TAG=a64"
     set "BOOST_ARCHITECTURE=arm"
@@ -137,7 +140,7 @@ if "%ARCH_LOWER%"=="arm64" (
     set "BOOST_ARCHITECTURE=x86"
 ) else (
     echo ERROR: Unsupported architecture: %ARCH%
-    echo Supported architectures: arm64, x64, x86
+    echo Supported architectures: a64, x64, x86 ^(arm64 accepted as alias for a64^)
     goto error
 )
 
