@@ -63,7 +63,20 @@ else
 CPPFLAGS += -DBL_NO_BOOST_LOCALE_LIB
 endif
 
-# boost_json linking: Always enabled by default, disable by setting BL_USE_JSON_SPIRIT=1
+# JSON library selection based on devenv version:
+# - devenv2-6: Use json-spirit (via BL_USE_JSON_SPIRIT)
+# - devenv7+: Use Boost.JSON (default)
+# Can be overridden by explicitly setting BL_USE_JSON_SPIRIT
+
+# Auto-enable json-spirit for devenv6 and earlier (unless already set)
+ifndef BL_USE_JSON_SPIRIT
+ifneq ($(filter devenv2 devenv3 devenv4 devenv5 devenv6,$(DEVENV_VERSION_TAG)),)
+BL_USE_JSON_SPIRIT := 1
+$(info Building with json-spirit for backward compatibility ($(DEVENV_VERSION_TAG)))
+endif
+endif
+
+# boost_json linking: enabled for devenv7+ (unless BL_USE_JSON_SPIRIT is set)
 ifndef BL_USE_JSON_SPIRIT
 LDLIBS   += boost_json$(LIBTAG)$(ARCHTAG)
 else
