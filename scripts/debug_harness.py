@@ -23,16 +23,20 @@ from os.path import exists, basename, dirname, join
 
 # Reconfigure stdout to use UTF-8 encoding on Windows to handle Unicode characters
 # This prevents UnicodeEncodeError when test output contains characters not in cp1252
-# Note: stdout.buffer only exists in Python 3, so version-check before reconfiguring
 if platform == 'win32':
     import sys
     import io
-    # Only reconfigure in Python 3 where stdout.buffer exists
+    import codecs
+    # Reconfigure for both Python 2 and 3, using different methods
     if sys.version_info[0] >= 3:
+        # Python 3: Use io.TextIOWrapper with stdout.buffer
         stdout = io.TextIOWrapper(stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
         stderr = io.TextIOWrapper(stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
-    # In Python 2, stdout/stderr are regular file objects without .buffer attribute
-    # The print() function from __future__ import will still work correctly
+    else:
+        # Python 2: Use codecs.getwriter() to wrap stdout/stderr
+        # This allows Unicode strings to be encoded to UTF-8 when printed
+        stdout = codecs.getwriter('utf-8')(stdout, errors='replace')
+        stderr = codecs.getwriter('utf-8')(stderr, errors='replace')
 
 # per-os configuration
 cfg = {
