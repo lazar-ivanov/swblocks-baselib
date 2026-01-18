@@ -173,9 +173,12 @@ VERSION         = $(BUILD_RELEASE_DATE)-build-$(BUILD_ID)
 # -u (unbuffered stdout/err) would help investigating hanging tests
 # on macOS the default max open files limit is 256, which is not enough
 # ulimit doesn't work properly on Windows (MSYS2), so skip it there
-ifneq ($(OS),win)
+# Check for any Windows OS (win, win7, etc.) using findstring
+ifeq ($(findstring win,$(OS)),)
+# Non-Windows: use ulimit
 DEBUG_HARNESS   = ulimit -n 4096 ; $(PYTHON) -u $(TOPDIR)scripts/debug_harness.py
 else
+# Windows: skip ulimit
 DEBUG_HARNESS   = $(PYTHON) -u $(TOPDIR)scripts/debug_harness.py
 endif
 ASAN_SYMBOLIZE  = $(TOPDIR)scripts/addr2line_symbolizer.sh
