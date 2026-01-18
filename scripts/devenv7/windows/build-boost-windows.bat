@@ -108,7 +108,15 @@ if /i "%~1"=="-threads" (
 if /i "%~1"=="-help" (
     goto show_help
 )
-echo Unknown option: %~1
+echo ERROR: Unknown option: %~1
+echo.
+echo NOTE: This script builds Boost for ONE architecture at a time.
+echo       To build multiple architectures, use build-env-all-windows.bat
+echo       or call this script multiple times.
+echo.
+echo       Example: build-boost-windows.bat -arch a64
+echo       NOT:     build-boost-windows.bat -arch a64,x64,x86
+echo.
 set "HELP_EXIT_CODE=1"
 goto show_help
 
@@ -275,11 +283,11 @@ if not exist "%BOOST_SOURCE_PATH%\boost\version.hpp" (
     goto error
 )
 
-REM Get repository root (3 levels up from scripts\devenv7\windows)
-set "SCRIPT_DIR=%~dp0"
-pushd "%SCRIPT_DIR%..\..\..\"
-set "REPO_ROOT=%CD%"
-popd
+REM Determine swblocks build root (parallel to dist folder)
+REM Extract parent directory from DIST_ROOT_DEPS1 to get swblocks folder
+for %%I in ("%DIST_ROOT_DEPS1%") do set "SWBLOCKS_ROOT=%%~dpI"
+set "SWBLOCKS_ROOT=%SWBLOCKS_ROOT:~0,-1%"
+set "BLD_ROOT=%SWBLOCKS_ROOT%\bld"
 
 REM Build both debug and release
 for %%B in (debug release) do (
@@ -316,8 +324,8 @@ echo Building Boost %BOOST_VERSION% - %BUILD_TYPE% variant
 echo ================================================================================
 echo.
 
-REM Build directory (in repo bld folder)
-set "BOOST_ROOT_PATH=%REPO_ROOT%\bld\swblocks\boost\%BOOST_VERSION%\win-%ARCH_TAG%-%TOOLCHAIN_NAME%-%BUILD_TYPE%"
+REM Build directory (in swblocks bld folder, parallel to dist)
+set "BOOST_ROOT_PATH=%BLD_ROOT%\boost\%BOOST_VERSION%\win-%ARCH_TAG%-%TOOLCHAIN_NAME%-%BUILD_TYPE%"
 
 REM Clean existing build
 if exist "%BOOST_ROOT_PATH%" (

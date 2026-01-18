@@ -46,6 +46,8 @@ REM                            Default: devenv7
 REM
 REM   -skip-tests              Skip running tests
 REM
+REM   -no-cleanup              Skip cleanup of build directories (for debugging)
+REM
 REM   -help                    Show this help message
 REM
 REM Examples:
@@ -66,6 +68,7 @@ set "VS_VERSION=2022"
 set "DIST_ROOT=%USERPROFILE%\swblocks\dist-devenv7-windows-a64"
 set "DEVENV_TAG=devenv7"
 set "SKIP_TESTS="
+set "NO_CLEANUP="
 set "HELP_EXIT_CODE="
 
 REM Parse command line arguments
@@ -112,10 +115,23 @@ if /i "%~1"=="-skip-tests" (
     shift
     goto parse_args
 )
+if /i "%~1"=="-no-cleanup" (
+    set "NO_CLEANUP=1"
+    shift
+    goto parse_args
+)
 if /i "%~1"=="-help" (
     goto show_help
 )
-echo Unknown option: %~1
+echo ERROR: Unknown option: %~1
+echo.
+echo NOTE: This script builds OpenSSL for ONE architecture at a time.
+echo       To build multiple architectures, use build-env-all-windows.bat
+echo       or call this script multiple times.
+echo.
+echo       Example: build-openssl-windows.bat -arch a64
+echo       NOT:     build-openssl-windows.bat -arch a64,x64,x86
+echo.
 set "HELP_EXIT_CODE=1"
 goto show_help
 
@@ -135,7 +151,7 @@ if /i "%ARCH%"=="X86" set "ARCH_LOWER=x86"
 if "%ARCH_LOWER%"=="a64" (
     set "ARCH=a64"
     set "ARCH_TAG=a64"
-    set "BUILD_CONFIG_NAME=VC-WIN64-ARM"
+    set "BUILD_CONFIG_NAME=VC-WIN64-CLANGASM-ARM"
 ) else if "%ARCH_LOWER%"=="x64" (
     set "ARCH=x64"
     set "ARCH_TAG=x64"
@@ -267,15 +283,19 @@ set "Path=%PERL_PATH%;%Path%"
 echo Perl found:
 where perl
 
-REM Verify assembler is available (optional; ARM64 uses armasm64, x86/x64 use NASM)
+REM Verify assembler is available (optional; ARM64 uses clang-cl, x86/x64 use NASM)
 if /i "%ARCH%"=="a64" (
-    where armasm64 >nul 2>&1
+    echo.
+    echo NOTE: ARM64 build uses VC-WIN64-CLANGASM-ARM configuration
+    echo       This uses clang-cl ONLY for assembler, MSVC cl.exe is used for C/C++ compilation
+    echo.
+    where clang-cl >nul 2>&1
     if errorlevel 1 (
-        echo Warning: armasm64 not found, building with no-asm option
+        echo Warning: clang-cl not found, building with no-asm option
         set "ASM_OPTION=no-asm"
     ) else (
-        echo armasm64 found:
-        where armasm64
+        echo clang-cl found ^(for assembler^):
+        where clang-cl
         set "ASM_OPTION="
     )
 ) else (
@@ -331,11 +351,11 @@ if not exist "%OPENSSL_SOURCE_PATH%\Configure" (
     goto error
 )
 
-REM Get repository root (3 levels up from scripts\devenv7\windows)
-set "SCRIPT_DIR=%~dp0"
-pushd "%SCRIPT_DIR%..\..\..\"
-set "REPO_ROOT=%CD%"
-popd
+REM Determine swblocks build root (parallel to dist folder)
+REM Extract parent directory from DIST_ROOT_DEPS1 to get swblocks folder
+for %%I in ("%DIST_ROOT_DEPS1%") do set "SWBLOCKS_ROOT=%%~dpI"
+set "SWBLOCKS_ROOT=%SWBLOCKS_ROOT:~0,-1%"
+set "BLD_ROOT=%SWBLOCKS_ROOT%\bld"
 
 REM Build both debug and release
 for %%B in (debug release) do (
@@ -374,8 +394,8 @@ echo Building OpenSSL %OPENSSL_VERSION% - %BUILD_TYPE% variant
 echo ================================================================================
 echo.
 
-REM Build directory (in repo bld folder)
-set "OPENSSL_ROOT_PATH=%REPO_ROOT%\bld\swblocks\openssl\%OPENSSL_VERSION%\win-%ARCH_TAG%-%TOOLCHAIN_NAME%-%BUILD_TYPE%"
+REM Build directory (in swblocks bld folder, parallel to dist)
+set "OPENSSL_ROOT_PATH=%BLD_ROOT%\openssl\%OPENSSL_VERSION%\win-%ARCH_TAG%-%TOOLCHAIN_NAME%-%BUILD_TYPE%"
 
 REM Clean existing build
 if exist "%OPENSSL_ROOT_PATH%" (
@@ -407,39 +427,36 @@ move ..\log_src_filecopy.log .
 REM Configure based on build type
 echo Configuring OpenSSL for %BUILD_TYPE%...
 
-if "%BUILD_TYPE%"=="debug" (
-    REM Debug build: no optimizations, debug symbols, no runtime debug CRT
-    REM Use /Z7 instead of /Zi - embeds debug info in .obj files, no PDB conflicts
-    perl Configure %BUILD_CONFIG_NAME% %ASM_OPTION% no-shared --debug ^
-        --prefix=%OPENSSL_ROOT_PATH%\out ^
-        --openssldir=%OPENSSL_ROOT_PATH%\out\ssl ^
-        -Od -Ob0 -Oy- -EHs -Z7 -GS -bigobj > log_bootstrap.log 2>&1
-
-    if errorlevel 1 (
-        echo ERROR: Configure failed, see log: %OPENSSL_ROOT_PATH%\log_bootstrap.log
-        type log_bootstrap.log
-        exit /b 1
-    )
-
-    REM Modify makefile to use release CRT (/MD instead of /MDd)
-    REM This avoids runtime debug dependencies
-    echo Patching makefile to use release CRT...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "$c = Get-Content -Raw -Encoding ASCII makefile; $c = $c -replace '/MDd','/MD' -replace '-DDEBUG','' -replace '-D_DEBUG',''; Set-Content -Encoding ASCII makefile $c"
-
-    REM Patch makefile to use /Z7 instead of /Zi in LIB_CFLAGS (embeds debug info, no PDB files)
-    echo Patching makefile to use /Z7 instead of /Zi...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "$lines = Get-Content makefile; $lines = $lines -replace '/Zi /Fdossl_static\.pdb','/Z7'; Set-Content -Encoding ASCII makefile $lines"
-
-    REM Remove PDB copy commands from install target (no PDB files generated with /Z7)
-    echo Patching makefile to remove PDB install steps...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "$lines = Get-Content makefile; $lines = $lines -replace '.*copy\.pl.*ossl_static\.pdb.*','# Removed: PDB copy (using /Z7)'; Set-Content -Encoding ASCII makefile $lines"
+REM Set assembly activation and architecture macros for ARM64
+REM Two categories of macros are required for ARM64:
+REM
+REM 1. Assembly activation macros (ASM_MACROS):
+REM    Due to quirks in VC-WIN64-CLANGASM-ARM, OpenSSL builds assembly but doesn't activate it in C code
+REM    These macros tell the C "glue" code to call the assembly functions
+REM
+REM 2. ARM architecture macros (ARCH_MACROS):
+REM    MSVC cl.exe does not define __ARM_ARCH__ or __ARM_MAX_ARCH__ when compiling C code
+REM    Without these macros, OpenSSL's compile-time guards prevent AES/GCM fast paths from being compiled
+REM    Example: aes_platform.h (line 98) and gcm128.c (line 372) check __ARM_MAX_ARCH__>=8
+REM    Result: Even with assembly objects and runtime detection, code falls back to generic C implementation
+REM    Fix: Explicitly define __ARM_ARCH__=8 and __ARM_MAX_ARCH__=8 for ARMv8 targets
+if /i "%ARCH%"=="a64" (
+    set "ASM_MACROS=-DOPENSSL_CPUID_OBJ -DOPENSSL_BN_ASM_MONT -DMD5_ASM -DVPAES_ASM -DBSAES_ASM -DSHA1_ASM -DSHA256_ASM -DSHA512_ASM -DKECCAK1600_ASM -DPOLY1305_ASM -DECP_NISTZ256_ASM"
+    set "ARCH_MACROS=-D__ARM_ARCH__=8 -D__ARM_MAX_ARCH__=8"
 ) else (
-    REM Release build: optimizations, debug symbols for debugging
-    REM Use /Z7 instead of /Zi - embeds debug info in .obj files, no PDB conflicts
+    set "ASM_MACROS="
+    set "ARCH_MACROS="
+)
+
+if "%BUILD_TYPE%"=="debug" (
+    REM Debug build: Pass release optimization flags to Configure to keep assembly enabled
+    REM Then patch makefile to replace with debug optimization flags
+    REM Both debug and release use --release to avoid debug CRT (/MDd)
+    REM Debug info flags will be added via makefile patching
     perl Configure %BUILD_CONFIG_NAME% %ASM_OPTION% no-shared --release ^
         --prefix=%OPENSSL_ROOT_PATH%\out ^
         --openssldir=%OPENSSL_ROOT_PATH%\out\ssl ^
-        -O2 -Ob1 -Ot -Oi -Oy- -EHs -Z7 -GS -bigobj -Zo -DNDEBUG > log_bootstrap.log 2>&1
+        -O2 -Ob1 -Ot -Oi -Oy- -EHs -GS -bigobj -DNDEBUG %ASM_MACROS% %ARCH_MACROS% > log_bootstrap.log 2>&1
 
     if errorlevel 1 (
         echo ERROR: Configure failed, see log: %OPENSSL_ROOT_PATH%\log_bootstrap.log
@@ -447,21 +464,74 @@ if "%BUILD_TYPE%"=="debug" (
         exit /b 1
     )
 
-    REM Patch makefile to use /Z7 instead of /Zi in LIB_CFLAGS (embeds debug info, no PDB files)
-    echo Patching makefile to use /Z7 instead of /Zi...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "$lines = Get-Content makefile; $lines = $lines -replace '/Zi /Fdossl_static\.pdb','/Z7'; Set-Content -Encoding ASCII makefile $lines"
+    REM Patch makefile to replace release optimization flags with debug flags
+    REM This prevents Configure from disabling assembly due to -Od detection
+    echo Patching makefile to replace optimization flags for debug build...
+    perl -i.bak -pe "s/-O2 -Ob1 -Ot -Oi/-Od -Ob0/g; s/\/O2 /\/Od /g" makefile
 
-    REM Remove PDB copy commands from install target (no PDB files generated with /Z7)
-    echo Patching makefile to remove PDB install steps...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "$lines = Get-Content makefile; $lines = $lines -replace '.*copy\.pl.*ossl_static\.pdb.*','# Removed: PDB copy (using /Z7)'; Set-Content -Encoding ASCII makefile $lines"
+    if errorlevel 1 (
+        echo ERROR: Failed to patch optimization flags in makefile
+        exit /b 1
+    )
+) else (
+    REM Release build: optimizations enabled, release CRT, NDEBUG defined
+    REM Debug info flags will be added via makefile patching
+    perl Configure %BUILD_CONFIG_NAME% %ASM_OPTION% no-shared --release ^
+        --prefix=%OPENSSL_ROOT_PATH%\out ^
+        --openssldir=%OPENSSL_ROOT_PATH%\out\ssl ^
+        -O2 -Ob1 -Ot -Oi -Oy- -EHs -GS -bigobj -DNDEBUG %ASM_MACROS% %ARCH_MACROS% > log_bootstrap.log 2>&1
+
+    if errorlevel 1 (
+        echo ERROR: Configure failed, see log: %OPENSSL_ROOT_PATH%\log_bootstrap.log
+        type log_bootstrap.log
+        exit /b 1
+    )
+)
+
+REM Patch makefile based on architecture
+if /i "%ARCH%"=="a64" (
+    REM ARM64: Use Perl to redirect assembly preprocessor to clang-cl and add debug symbols
+    REM - Redirects $(CC) /EP to clang-cl.exe /EP for assembly preprocessing
+    REM - This fixes Microsoft C preprocessor mangling GNU-style ARM assembly (# character)
+    REM - Adds /Z7 and /Zo to CFLAGS for debug information
+    REM - Note: cl.exe is still used for C compilation (needed for MSVC intrinsics like _InterlockedAdd64)
+    echo Patching makefile for ARM64: redirecting assembly preprocessor to clang-cl and adding debug flags...
+    perl -i.bak -pe "s/\$\(CC\) \/EP -D__ASSEMBLER__/clang-cl.exe \/EP -D__ASSEMBLER__/g; s/^CFLAGS=(.*)/CFLAGS=$1 \/Z7 \/Zo/g" makefile
+
+    if errorlevel 1 (
+        echo ERROR: Failed to patch makefile with Perl
+        exit /b 1
+    )
+) else (
+    REM x64/x86: Use PowerShell to add debug information flags
+    REM - Convert any /Zi to /Z7 (embeds debug info in .obj files, avoids PDB conflicts with jom)
+    REM - Add /Z7 and /Zo to LIB_CFLAGS only (not ASFLAGS)
+    REM - /Zo enables optimized debugging for release builds
+    echo Patching makefile to add debug information flags...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$content = Get-Content -Raw -Encoding ASCII makefile; $content = $content -replace '/Zi\s+/Fd[^\s]+\s*','/Z7 ' -replace '(LIB_CFLAGS=[^\r\n]+)',('$1 /Z7 /Zo'); Set-Content -Encoding ASCII makefile $content"
+
+    if errorlevel 1 (
+        echo ERROR: Failed to patch makefile
+        exit /b 1
+    )
+)
+
+REM Remove PDB copy commands from install target (no PDB files generated with /Z7)
+REM This applies to all architectures
+echo Patching makefile to remove PDB install steps...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$lines = Get-Content makefile; $lines = $lines -replace '.*copy\.pl.*ossl_static\.pdb.*','# Removed: PDB copy (using /Z7)'; Set-Content -Encoding ASCII makefile $lines"
+
+if errorlevel 1 (
+    echo ERROR: Failed to patch makefile for PDB removal
+    exit /b 1
 )
 
 echo Configuration completed successfully
 
-REM Calculate number of parallel jobs (CPU count * 5 for both build and tests)
+REM Calculate number of parallel jobs (CPU count * 4 for both build and tests)
 for /f "tokens=*" %%i in ('wmic cpu get NumberOfLogicalProcessors /value ^| find "="') do set "%%i"
-set /a "PARALLEL_JOBS=%NumberOfLogicalProcessors% * 5"
-set /a "HARNESS_JOBS=%NumberOfLogicalProcessors% * 5"
+set /a "PARALLEL_JOBS=%NumberOfLogicalProcessors% * 4"
+set /a "HARNESS_JOBS=%NumberOfLogicalProcessors% * 4"
 echo Detected %NumberOfLogicalProcessors% logical processors, using %PARALLEL_JOBS% parallel jobs
 echo TAP::Harness will use %HARNESS_JOBS% parallel test jobs
 
@@ -548,10 +618,14 @@ move makefile "%OPENSSL_TARGET_PATH%" >nul 2>&1
 
 REM Clean up build directory
 popd
-echo Cleaning up build directory...
-rd /s /q "%OPENSSL_ROOT_PATH%"
-if errorlevel 1 (
-    echo WARNING: Failed to delete build directory
+if "%NO_CLEANUP%"=="1" (
+    echo Skipping cleanup of build directory: %OPENSSL_ROOT_PATH%
+) else (
+    echo Cleaning up build directory...
+    rd /s /q "%OPENSSL_ROOT_PATH%"
+    if errorlevel 1 (
+        echo WARNING: Failed to delete build directory
+    )
 )
 
 echo.

@@ -39,6 +39,7 @@ function New-ToolchainEnvironment {
         [string]$OpenJDKVersion = "25",
         [string]$GradleVersion = "9.2.1",
         [string]$JomVersion = "1.1.5",
+        [string]$NASMVersion = "3.01",
         [string]$BoostVersion = "1.90.0",
         [string]$OpenSSLVersion = "3.5.4",
         [string]$VSVersion = "2022",
@@ -72,6 +73,7 @@ function New-ToolchainEnvironment {
     Write-Host "  OpenJDK Version: $OpenJDKVersion" -ForegroundColor White
     Write-Host "  Gradle Version: $GradleVersion" -ForegroundColor White
     Write-Host "  Jom Version: $JomVersion" -ForegroundColor White
+    Write-Host "  NASM Version: $NASMVersion" -ForegroundColor White
     Write-Host "  Boost Version: $BoostVersion" -ForegroundColor White
     Write-Host "  OpenSSL Version: $OpenSSLVersion" -ForegroundColor White
     Write-Host "  Visual Studio Version: $VSVersion" -ForegroundColor White
@@ -211,6 +213,11 @@ function New-ToolchainEnvironment {
         -DestinationRoot $DistRoot -CacheDirectory $CacheDirectory `
         -SkipDownload:$SkipDownloads
 
+    # Install NASM (assembler for x64 and x86 builds)
+    Install-NASM -Version $NASMVersion `
+        -DestinationRoot $DistRoot -CacheDirectory $CacheDirectory `
+        -SkipDownload:$SkipDownloads
+
     # Install Boost source
     Install-Boost -Version $BoostVersion `
         -DestinationRoot $DistRoot -CacheDirectory $CacheDirectory `
@@ -225,7 +232,7 @@ function New-ToolchainEnvironment {
     Write-Section "Step 5: Creating Environment Initialization Scripts"
 
     New-EnvironmentInitScripts -DistRoot $DistRoot -HostArchitecture $HostArchitecture -Architectures $TargetArchitectures `
-        -GitVersion $GitVersion -PythonVersion $PythonVersion -MSYS2Version $MSYS2Version -JomVersion $JomVersion
+        -GitVersion $GitVersion -PythonVersion $PythonVersion -MSYS2Version $MSYS2Version -JomVersion $JomVersion -NASMVersion $NASMVersion
 
     # Step 6: Summary
     Write-Section "Toolchain Setup Complete!"
@@ -272,7 +279,10 @@ function New-EnvironmentInitScripts {
         [string]$MSYS2Version = "",
 
         [Parameter(Mandatory=$false)]
-        [string]$JomVersion = ""
+        [string]$JomVersion = "",
+
+        [Parameter(Mandatory=$false)]
+        [string]$NASMVersion = ""
     )
 
     Write-SubSection "Generating Environment Initialization Scripts"
@@ -320,9 +330,10 @@ for /d %%D in ("%DIST_ROOT_DEPS1%\winsdk\10\default\Include\*") do (
 )
 :found_winsdk_version
 
-REM Set MSVC and Windows SDK root paths
+REM Set MSVC, Windows SDK, and LLVM (Clang) root paths
 set "MSVC_ROOT=%DIST_ROOT_DEPS1%\toolchain-msvc\%TOOLCHAIN_NAME%\BuildTools\VC\Tools\MSVC\%MSVC_VERSION%"
 set "WINSDK_ROOT=%DIST_ROOT_DEPS1%\winsdk\10\default"
+set "LLVM_ROOT=%DIST_ROOT_DEPS1%\toolchain-msvc\%TOOLCHAIN_NAME%\BuildTools\VC\Tools\Llvm"
 
 REM For reference:
 REM Path setup examples (uncomment and adjust as needed):
@@ -434,6 +445,7 @@ DIST_ROOT_DEPS3 = /c/Users/`$(USERNAME)/swblocks/$distDirName
         $pythonPath = "$distRootVar\python\$PythonVersion\default$hostArchSuffix"
         $msysPath = "$distRootVar\msys2\$MSYS2Version\msys64\usr\bin"
         $jomPath = "$distRootVar\jom\$JomVersion\default"
+        $nasmPath = "$distRootVar\nasm\$NASMVersion\default"
 
         # Determine architecture descriptions
         $hostDesc = if ($HostArchitecture -eq "a64") { "ARM64" } elseif ($HostArchitecture -eq "x64") { "x64" } else { "x86" }
@@ -446,18 +458,26 @@ DIST_ROOT_DEPS3 = /c/Users/`$(USERNAME)/swblocks/$distDirName
         $hostPathComponent = if ($HostArchitecture -eq "a64") { "Hostarm64" } elseif ($HostArchitecture -eq "x64") { "Hostx64" } else { "Hostx86" }
 
         # Set up MSVC paths based on host and target architecture
+        # NASM is only needed for x64 and x86 builds (ARM64 uses armasm64)
+        # Clang-CL is available for all architectures
         if ($arch -eq "a64") {
             $msvcBinPath = "%MSVC_ROOT%\bin\$hostPathComponent\arm64;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\arm64;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x64"
+            $clangPath = "%LLVM_ROOT%\ARM64\bin"
             $msvcLib = "%MSVC_ROOT%\lib\arm64;%MSVC_ROOT%\atlmfc\lib\arm64;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\ucrt\arm64;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\um\arm64"
             $msvcLibPath = "%MSVC_ROOT%\lib\arm64;%MSVC_ROOT%\atlmfc\lib\arm64"
+            $pathWithTools = "$msvcBinPath;$clangPath;%WINSDK_ROOT%\Debuggers\$($HostArchitecture);%PATH%;$jomPath;$gitPath;$pythonPath;$msysPath"
         } elseif ($arch -eq "x64") {
             $msvcBinPath = "%MSVC_ROOT%\bin\$hostPathComponent\x64;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x64"
+            $clangPath = "%LLVM_ROOT%\x64\bin"
             $msvcLib = "%MSVC_ROOT%\lib\x64;%MSVC_ROOT%\atlmfc\lib\x64;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\ucrt\x64;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\um\x64"
             $msvcLibPath = "%MSVC_ROOT%\lib\x64;%MSVC_ROOT%\atlmfc\lib\x64"
+            $pathWithTools = "$msvcBinPath;$clangPath;%WINSDK_ROOT%\Debuggers\$($HostArchitecture);%PATH%;$jomPath;$nasmPath;$gitPath;$pythonPath;$msysPath"
         } else {
             $msvcBinPath = "%MSVC_ROOT%\bin\$hostPathComponent\x86;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x86;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x64"
+            $clangPath = "%LLVM_ROOT%\bin"
             $msvcLib = "%MSVC_ROOT%\lib\x86;%MSVC_ROOT%\atlmfc\lib\x86;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\ucrt\x86;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\um\x86"
             $msvcLibPath = "%MSVC_ROOT%\lib\x86;%MSVC_ROOT%\atlmfc\lib\x86"
+            $pathWithTools = "$msvcBinPath;$clangPath;%WINSDK_ROOT%\Debuggers\$($HostArchitecture);%PATH%;$jomPath;$nasmPath;$gitPath;$pythonPath;$msysPath"
         }
 
         $helperContent = @"
@@ -481,8 +501,8 @@ call "%~dp0ci-init-env.bat"
 REM Set up MSVC compiler environment for $arch development
 REM IMPORTANT: PATH order matters! MSVC/Windows SDK tools must come before MSYS2 to avoid conflicts
 REM (MSYS2 contains 'link' and 'find' commands that conflict with Windows native tools)
-REM Order: MSVC -> Windows SDK -> existing PATH -> Jom -> Git -> Python -> MSYS2 (lowest priority)
-set "PATH=$msvcBinPath;%WINSDK_ROOT%\Debuggers\$($HostArchitecture);%PATH%;$jomPath;$gitPath;$pythonPath;$msysPath"
+REM Order: MSVC -> Clang-CL -> Windows SDK -> existing PATH -> Jom -> NASM (x64/x86 only) -> Git -> Python -> MSYS2 (lowest priority)
+set "PATH=$pathWithTools"
 set "INCLUDE=%MSVC_ROOT%\include;%MSVC_ROOT%\atlmfc\include;%WINSDK_ROOT%\Include\%WINSDK_VERSION%\ucrt;%WINSDK_ROOT%\Include\%WINSDK_VERSION%\um;%WINSDK_ROOT%\Include\%WINSDK_VERSION%\shared;%WINSDK_ROOT%\Include\%WINSDK_VERSION%\winrt;%WINSDK_ROOT%\Include\%WINSDK_VERSION%\cppwinrt"
 set "LIB=$msvcLib"
 set "LIBPATH=$msvcLibPath"

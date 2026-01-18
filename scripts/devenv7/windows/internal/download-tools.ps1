@@ -113,6 +113,15 @@ $script:ToolConfigs = @{
             all = "7z{VERSION_NODOT}-extra.7z"
         }
     }
+    NASM = @{
+        BaseUrl = "https://www.nasm.us/pub/nasm/releasebuilds"
+        VersionPattern = "{VERSION}/win64"
+        FilePatterns = @{
+            # NASM win64 package works for both x64 and x86 targets
+            x64 = "nasm-{VERSION}-win64.zip"
+            x86 = "nasm-{VERSION}-win64.zip"
+        }
+    }
 }
 
 function Get-ToolDownloadUrl {
@@ -869,6 +878,68 @@ function Install-SevenZip {
     Remove-Item -Path $tempExtractPath -Recurse -Force -ErrorAction SilentlyContinue
 
     Write-Log "7-Zip $Version (extra edition) installed successfully" -Level Success
+
+    return $installPath
+}
+
+function Install-NASM {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Version,
+
+        [Parameter(Mandatory=$true)]
+        [string]$DestinationRoot,
+
+        [string]$CacheDirectory,
+
+        [switch]$SkipDownload
+    )
+
+    Write-SubSection "Installing NASM $Version"
+
+    # NASM is installed to a single 'default' folder (not architecture-specific)
+    $installPath = Join-Path $DestinationRoot "nasm\$Version\default"
+
+    # Set default cache directory if not provided
+    if (-not $CacheDirectory) {
+        # Use default cache directory based on dist folder name
+        $distFolderName = Split-Path $DestinationRoot -Leaf
+        $CacheDirectory = Join-Path $env:USERPROFILE "swblocks\$distFolderName-downloads-cache"
+    }
+
+    New-DirectoryIfNotExists -Path $installPath | Out-Null
+    New-DirectoryIfNotExists -Path $CacheDirectory | Out-Null
+
+    # Download NASM (win64 package works for both x64 and x86 targets)
+    $downloadInfo = Get-ToolDownloadUrl -Tool "NASM" -Version $Version -Architecture "x64"
+    $archivePath = Join-Path $CacheDirectory $downloadInfo.FileName
+
+    if (-not $SkipDownload) {
+        Invoke-WebDownload -Url $downloadInfo.Url -OutputPath $archivePath `
+            -Description "Downloading NASM $Version" -SkipIfExists
+    }
+
+    if (-not (Test-Path $archivePath)) {
+        throw "Archive file not found: $archivePath"
+    }
+
+    # Extract NASM
+    Expand-ToolArchive -ArchivePath $archivePath -DestinationPath $installPath `
+        -Description "Extracting NASM $Version"
+
+    # The archive extracts to nasm-{version}/ subdirectory
+    # Move contents to the install path root
+    $extractedDir = Join-Path $installPath "nasm-$Version"
+    if (Test-Path $extractedDir) {
+        # Move all files from nasm-{version} to install path
+        Get-ChildItem -Path $extractedDir | ForEach-Object {
+            Move-Item -Path $_.FullName -Destination $installPath -Force
+        }
+        # Remove empty directory
+        Remove-Item -Path $extractedDir -Force
+    }
+
+    Write-Log "NASM $Version installed successfully" -Level Success
 
     return $installPath
 }
