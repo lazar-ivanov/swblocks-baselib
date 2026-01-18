@@ -460,24 +460,28 @@ DIST_ROOT_DEPS3 = /c/Users/`$(USERNAME)/swblocks/$distDirName
         # Set up MSVC paths based on host and target architecture
         # NASM is only needed for x64 and x86 builds (ARM64 uses armasm64)
         # Clang-CL is available for all architectures
+
+        # Convert host architecture to VS naming for debugger path (a64 -> arm64)
+        $hostArchForDebugger = ConvertTo-VSArchitectureName $HostArchitecture
+
         if ($arch -eq "a64") {
             $msvcBinPath = "%MSVC_ROOT%\bin\$hostPathComponent\arm64;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\arm64;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x64"
             $clangPath = "%LLVM_ROOT%\ARM64\bin"
             $msvcLib = "%MSVC_ROOT%\lib\arm64;%MSVC_ROOT%\atlmfc\lib\arm64;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\ucrt\arm64;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\um\arm64"
             $msvcLibPath = "%MSVC_ROOT%\lib\arm64;%MSVC_ROOT%\atlmfc\lib\arm64"
-            $pathWithTools = "$msvcBinPath;$clangPath;%WINSDK_ROOT%\Debuggers\$($HostArchitecture);%PATH%;$jomPath;$gitPath;$pythonPath;$msysPath"
+            $pathWithTools = "$msvcBinPath;$clangPath;%WINSDK_ROOT%\Debuggers\$hostArchForDebugger;%PATH%;$jomPath;$gitPath;$pythonPath;$msysPath"
         } elseif ($arch -eq "x64") {
             $msvcBinPath = "%MSVC_ROOT%\bin\$hostPathComponent\x64;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x64"
             $clangPath = "%LLVM_ROOT%\x64\bin"
             $msvcLib = "%MSVC_ROOT%\lib\x64;%MSVC_ROOT%\atlmfc\lib\x64;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\ucrt\x64;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\um\x64"
             $msvcLibPath = "%MSVC_ROOT%\lib\x64;%MSVC_ROOT%\atlmfc\lib\x64"
-            $pathWithTools = "$msvcBinPath;$clangPath;%WINSDK_ROOT%\Debuggers\$($HostArchitecture);%PATH%;$jomPath;$nasmPath;$gitPath;$pythonPath;$msysPath"
+            $pathWithTools = "$msvcBinPath;$clangPath;%WINSDK_ROOT%\Debuggers\$hostArchForDebugger;%PATH%;$jomPath;$nasmPath;$gitPath;$pythonPath;$msysPath"
         } else {
             $msvcBinPath = "%MSVC_ROOT%\bin\$hostPathComponent\x86;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x86;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x64"
             $clangPath = "%LLVM_ROOT%\bin"
             $msvcLib = "%MSVC_ROOT%\lib\x86;%MSVC_ROOT%\atlmfc\lib\x86;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\ucrt\x86;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\um\x86"
             $msvcLibPath = "%MSVC_ROOT%\lib\x86;%MSVC_ROOT%\atlmfc\lib\x86"
-            $pathWithTools = "$msvcBinPath;$clangPath;%WINSDK_ROOT%\Debuggers\$($HostArchitecture);%PATH%;$jomPath;$nasmPath;$gitPath;$pythonPath;$msysPath"
+            $pathWithTools = "$msvcBinPath;$clangPath;%WINSDK_ROOT%\Debuggers\$hostArchForDebugger;%PATH%;$jomPath;$nasmPath;$gitPath;$pythonPath;$msysPath"
         }
 
         $helperContent = @"

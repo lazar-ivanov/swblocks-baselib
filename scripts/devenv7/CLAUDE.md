@@ -342,6 +342,42 @@ REM Test only x64/x86 makefile patching
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\devenv7\windows\test-openssl-build-config.ps1 -TestName MakefilePatch
 ```
 
+#### Testing Environment Setup and PATH Configuration
+
+After running the toolchain setup, validate that all paths and environment variables are correctly configured:
+
+```batch
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\devenv7\windows\test-setup-env-paths.ps1
+```
+
+This comprehensive test validates:
+- **Environment variables**: DIST_ROOT_DEPS*, MSVC_ROOT, WINSDK_ROOT, LLVM_ROOT, versions, Platform, VSCMD_ARG_*
+- **PATH components**: MSVC bin paths, Windows SDK bin, Clang-CL, Debuggers, Jom, NASM (x64/x86), Git, Python, MSYS2
+- **INCLUDE paths**: MSVC include, ATL/MFC, Windows SDK (ucrt/um/shared/winrt/cppwinrt)
+- **LIB paths**: MSVC lib, ATL/MFC lib, Windows SDK libs (ucrt/um) for target architecture
+- **LIBPATH paths**: MSVC and ATL/MFC library paths
+- **Tool availability**: cl.exe, link.exe, lib.exe, clang-cl.exe, jom.exe, nasm.exe, git.exe, python.exe, perl.exe, debuggers
+
+**Test specific architecture or skip executable checks:**
+```batch
+REM Test only ARM64 environment
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\devenv7\windows\test-setup-env-paths.ps1 -Architecture a64
+
+REM Test with custom dist root
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\devenv7\windows\test-setup-env-paths.ps1 -DistRoot C:\custom\dist
+
+REM Validate paths exist without checking for executables (faster)
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\devenv7\windows\test-setup-env-paths.ps1 -SkipToolChecks
+```
+
+**Common PATH issues detected by this test:**
+- **Incorrect debugger path**: Windows SDK uses `Debuggers\arm64` (VS naming), not `Debuggers\a64` (normalized tag)
+  - **Fixed in**: `scripts\devenv7\windows\internal\toolchain-setup.ps1` lines 464-465, 472, 478, 484
+  - Uses `ConvertTo-VSArchitectureName` to convert `a64` → `arm64` for debugger path
+- **Missing NASM for x64/x86**: NASM should be in PATH for x64 and x86 builds (not needed for ARM64)
+- **MSYS2 PATH conflicts**: MSYS2 should be last in PATH to prevent `link.exe` and `find.exe` shadowing Windows tools
+- **Missing Clang-CL architecture-specific bin**: ARM64 needs `LLVM\ARM64\bin`, x64 needs `LLVM\x64\bin`
+
 #### Verifying Assembly Activation (ARM64 only)
 
 After building OpenSSL for ARM64, verify that assembly optimizations are active:
@@ -395,6 +431,12 @@ If assembly activation macros are missing from the compiler line, or `mont-asm` 
 - Use `a64` in all script logic and user-facing messages
 - Convert to `arm64` only when constructing Visual Studio paths
 - Use `ConvertTo-VSArchitectureName` function in PowerShell
+
+**Specific case - Windows SDK Debuggers path:**
+- **Incorrect**: `%WINSDK_ROOT%\Debuggers\a64` (using normalized tag)
+- **Correct**: `%WINSDK_ROOT%\Debuggers\arm64` (using VS naming)
+- **Solution**: Always use `ConvertTo-VSArchitectureName` before constructing debugger paths
+- **Test**: Run `test-setup-env-paths.ps1` to detect this issue
 
 ### 3. Build Directory in Repository
 
