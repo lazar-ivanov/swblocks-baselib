@@ -10,6 +10,11 @@
 # also, see settings/windows/enable-user-mode-dumps.reg
 #
 
+# Enable Python 3's print function in Python 2.7+ for compatibility
+# This allows print(..., file=stderr) syntax to work in both Python 2 and 3
+# Required for devenv4-6 (Python 2.x) and devenv7+ (Python 3.x)
+from __future__ import print_function
+
 from sys import argv, exit, platform, stderr, stdout
 from re import search
 from subprocess import Popen, call, PIPE, STDOUT
