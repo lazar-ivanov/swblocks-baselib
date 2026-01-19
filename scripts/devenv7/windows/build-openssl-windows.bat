@@ -46,6 +46,8 @@ REM                            Default: devenv7
 REM
 REM   -skip-tests              Skip running tests
 REM
+REM   -skip-verification       Skip build verification (hardware accel, compiler flags)
+REM
 REM   -no-cleanup              Skip cleanup of build directories (for debugging)
 REM
 REM   -help                    Show this help message
@@ -68,6 +70,7 @@ set "VS_VERSION=2022"
 set "DIST_ROOT=%USERPROFILE%\swblocks\dist-devenv7-windows-a64"
 set "DEVENV_TAG=devenv7"
 set "SKIP_TESTS="
+set "SKIP_VERIFICATION="
 set "NO_CLEANUP="
 set "HELP_EXIT_CODE="
 
@@ -112,6 +115,11 @@ if /i "%~1"=="-devenv-tag" (
 )
 if /i "%~1"=="-skip-tests" (
     set "SKIP_TESTS=1"
+    shift
+    goto parse_args
+)
+if /i "%~1"=="-skip-verification" (
+    set "SKIP_VERIFICATION=1"
     shift
     goto parse_args
 )
@@ -584,6 +592,38 @@ if errorlevel 1 (
 )
 
 echo Install completed successfully
+
+REM Verify build configuration before copying to dist
+if not defined SKIP_VERIFICATION (
+    echo.
+    echo ================================================================================
+    echo Verifying OpenSSL Build Configuration
+    echo ================================================================================
+    echo.
+
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0verify-openssl-build.ps1" ^
+        -OpensslExe "%OPENSSL_ROOT_PATH%\out\bin\openssl.exe" ^
+        -BuildType "%BUILD_TYPE%" ^
+        -Architecture "%ARCH_LOWER%"
+
+    if errorlevel 1 (
+        echo.
+        echo ================================================================================
+        echo ERROR: OpenSSL build verification failed
+        echo ================================================================================
+        echo.
+        echo The build completed successfully but verification checks failed.
+        echo Review the verification errors above.
+        echo.
+        echo You can skip verification with -skip-verification flag for debugging.
+        exit /b 1
+    )
+
+    echo.
+    echo ================================================================================
+    echo Verification Passed Successfully
+    echo ================================================================================
+)
 
 REM Copy to destination
 set "OPENSSL_TARGET_PATH=%DIST_ROOT_DEPS1%\openssl\%OPENSSL_VERSION%\win-%ARCH_TAG%-%TOOLCHAIN_NAME%-%BUILD_TYPE%"

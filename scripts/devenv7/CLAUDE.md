@@ -378,9 +378,73 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\devenv7\windows\test
 - **MSYS2 PATH conflicts**: MSYS2 should be last in PATH to prevent `link.exe` and `find.exe` shadowing Windows tools
 - **Missing Clang-CL architecture-specific bin**: ARM64 needs `LLVM\ARM64\bin`, x64 needs `LLVM\x64\bin`
 
+#### OpenSSL Build Verification
+
+The OpenSSL build script automatically verifies the build configuration before copying to the distribution directory. This verification ensures:
+
+1. **Hardware acceleration is working** (performance > 1 GB/sec)
+2. **Correct optimization flags** (debug: `/Od -Od -Ob0`, release: `/O2 -O2 -Ob1 -Ot -Oi`)
+3. **Debug information flags present** (`/Z7 /Zo` for both variants)
+
+**Verification happens automatically** after the build completes and before copying to dist. If any verification fails, the build exits with an error.
+
+**Skip verification for debugging:**
+```batch
+build-openssl-windows.bat -arch a64 -skip-verification
+```
+
+**Test verification logic independently:**
+```batch
+REM Run all verification unit tests
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\devenv7\windows\test-openssl-verification.ps1
+
+REM Run specific test suite
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\devenv7\windows\test-openssl-verification.ps1 -TestName PerformanceParsing
+```
+
+**Verification output example:**
+```
+================================================================================
+Verifying OpenSSL Build Configuration
+================================================================================
+
+[Step 1/3] Checking hardware acceleration performance...
+  Running: openssl.exe speed -evp aes-128-gcm
+  AES-128-GCM Speed (16384 bytes): 7.98 GB/sec
+  [PASS] Performance exceeds 1.00 GB/sec threshold
+
+[Step 2/3] Checking optimization flags...
+  Running: openssl.exe version -a
+  Expected flags (debug): /Od -Od -Ob0
+  [PASS] Optimization flags correct for debug variant
+
+[Step 3/3] Checking debug information flags...
+  Expected flags: /Z7 /Zo
+  [PASS] Debug flags present
+
+Total Verifications: 3, Passed: 3, Failed: 0
+
+================================================================================
+Verification Passed Successfully
+================================================================================
+```
+
+**What verification catches:**
+- **Missing hardware acceleration**: If performance is < 1 GB/sec, indicates assembly is not activated or CPU extensions are disabled
+- **Wrong optimization flags**: If debug flags are in release build or vice versa, indicates makefile patching failed
+- **Missing debug info**: If `/Z7` or `/Zo` flags are missing, debugging will be impaired
+
+**Unit test coverage:**
+- 34 unit tests covering all verification logic
+- Performance parsing and threshold validation
+- Compiler flag detection (debug and release)
+- Debug information flag detection
+- Edge cases (empty output, malformed data, boundary conditions)
+- GB/sec formatting and display
+
 #### Verifying Assembly Activation (ARM64 only)
 
-After building OpenSSL for ARM64, verify that assembly optimizations are active:
+After building OpenSSL for ARM64, verify that assembly optimizations are active (note: this is now done automatically during build):
 
 ```batch
 cd %USERPROFILE%\swblocks\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86\openssl\3.5.4\win-a64-vc143-release\bin
@@ -849,6 +913,11 @@ Before committing changes to batch scripts:
 
 ## Version History
 
+- **2026-01-18**:
+  - Added automated OpenSSL build verification (hardware acceleration, optimization flags, debug flags)
+  - Added comprehensive unit test suite for verification logic (34 tests)
+  - Added `-skip-verification` flag to build-openssl-windows.bat
+  - Added archive distribution script redesign with exact folder naming
 - **2026-01-16**:
   - Added OpenSSL build configuration strategy, debug information handling, and debugging guidelines
   - Added ARM64 assembly preprocessing solution using Perl-based makefile patching
@@ -865,3 +934,6 @@ Before committing changes to batch scripts:
 - Build scripts: `scripts/devenv7/windows/build-*.bat`
 - Toolchain setup: `scripts/devenv7/windows/internal/toolchain-setup.ps1`
 - OpenSSL build config tests: `scripts/devenv7/windows/test-openssl-build-config.ps1`
+- OpenSSL build verification: `scripts/devenv7/windows/verify-openssl-build.ps1`
+- OpenSSL verification tests: `scripts/devenv7/windows/test-openssl-verification.ps1`
+- Archive distribution script: `scripts/devenv7/windows/archive-dists-windows.bat`
