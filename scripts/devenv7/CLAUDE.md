@@ -630,6 +630,209 @@ build-openssl-windows.bat -arch a64,x64,x86
 
 ---
 
+## Archive Distribution Script
+
+### Purpose and Design
+
+The `archive-dists-windows.bat` script creates compressed archives of the distribution folder and downloads cache for backup, distribution, or offline installation.
+
+**Design principles:**
+1. **Simplicity** - Single required parameter, all paths auto-derived
+2. **Relative paths** - Archives preserve folder structure for easy extraction
+3. **Fast compression** - Uses normal compression level (`-mx=5`) for speed
+4. **Self-contained** - Uses 7-zip from the distribution being archived
+
+### Usage
+
+```batch
+archive-dists-windows.bat -dist-root <folder-name> [-delete-target-if-exists]
+```
+
+**Examples:**
+```batch
+REM Create archives (fails if archives already exist)
+archive-dists-windows.bat -dist-root dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86
+
+REM Create archives, deleting existing ones if present
+archive-dists-windows.bat -dist-root dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86 -delete-target-if-exists
+```
+
+### What Gets Archived
+
+The script creates **exactly two archives** using the exact folder names:
+
+1. **Distribution archive**: `{dist-root}.zip`
+   - Contains the complete distribution folder
+   - All toolchain components, libraries, tools, scripts
+   - Example: `dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86.zip`
+
+2. **Downloads cache archive**: `{dist-root}-downloads-cache.zip`
+   - Contains all downloaded source archives
+   - Enables offline installation/rebuilds
+   - Example: `dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86-downloads-cache.zip`
+
+**Archive naming:** Archive names match the exact folder names (no timestamps). This ensures consistent, predictable archive names for scripting and automation.
+
+### Path Derivation
+
+All paths are automatically calculated from the `-dist-root` parameter:
+
+| Path | Location | Example |
+|------|----------|---------|
+| Dist folder | `%USERPROFILE%\swblocks\{dist-root}` | `C:\Users\lazar\swblocks\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86` |
+| Cache folder | `%USERPROFILE%\swblocks\{dist-root}-downloads-cache` | `C:\Users\lazar\swblocks\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86-downloads-cache` |
+| Output folder | `%USERPROFILE%\swblocks\zip` | `C:\Users\lazar\swblocks\zip` |
+| 7-zip exe | `{dist-root}\7zip\{version}\7za.exe` | Auto-detected from `dist-root\7zip\*\7za.exe` |
+
+### Compression Settings
+
+**Compression level:** `-mx=5` (normal compression)
+
+**Why normal compression:**
+- **Faster archiving** - Typically 2-3x faster than maximum compression (`-mx=9`)
+- **Good compression ratio** - Still achieves ~60-70% size reduction
+- **Balanced approach** - Reasonable archive size without excessive CPU time
+
+**Compression level comparison:**
+- `-mx=1` (fastest) - Minimal compression, very fast
+- `-mx=5` (normal) - **Used by this script** - Good balance of speed and size
+- `-mx=9` (maximum) - Best compression, slowest
+
+### Archive Structure and Extraction
+
+**Key feature:** Archives preserve relative paths from `%USERPROFILE%\swblocks`
+
+**During archiving:**
+1. Script changes directory to `%USERPROFILE%\swblocks`
+2. Creates archives with relative paths: `{dist-root}\*` and `{dist-root}-downloads-cache\*`
+3. Working directory ensures paths in ZIP match original structure
+
+**Extraction workflow:**
+```batch
+cd %USERPROFILE%\swblocks
+7za.exe x zip\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86.zip
+7za.exe x zip\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86-downloads-cache.zip
+```
+
+**Result:** Extracts to original locations automatically:
+- `%USERPROFILE%\swblocks\{dist-root}\`
+- `%USERPROFILE%\swblocks\{dist-root}-downloads-cache\`
+
+**Archive name predictability:** Since archive names match folder names exactly (no timestamps), you can script extraction and deployment workflows without pattern matching or parsing.
+
+### Validation and Error Handling
+
+The script validates:
+- ✅ Distribution folder exists
+- ✅ Downloads cache folder exists
+- ✅ 7-zip executable is available (auto-detected version)
+- ✅ Output directory created if missing
+- ✅ Target archives don't already exist (unless `-delete-target-if-exists` specified)
+
+**Error scenarios:**
+- Missing `-dist-root` parameter → Shows help and exits
+- Dist folder doesn't exist → Error with path shown
+- Cache folder doesn't exist → Error with path shown
+- 7-zip not found in dist → Error (suggests running toolchain setup first)
+- **Target archives already exist** → Error unless `-delete-target-if-exists` is used
+
+**Archive overwrite protection:**
+```batch
+REM This will fail if archives already exist
+archive-dists-windows.bat -dist-root dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86
+
+REM Output: ERROR: Target archive(s) already exist:
+REM           C:\Users\lazar\swblocks\zip\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86.zip
+REM         Use -delete-target-if-exists to overwrite existing archives
+
+REM This will delete existing archives first
+archive-dists-windows.bat -dist-root dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86 -delete-target-if-exists
+```
+
+### Example Output
+
+```
+================================================================================
+Archive Distribution Configuration
+================================================================================
+Distribution Folder:  C:\Users\lazar\swblocks\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86
+Downloads Cache:      C:\Users\lazar\swblocks\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86-downloads-cache
+Output Directory:     C:\Users\lazar\swblocks\zip
+7-Zip Version:        25.01
+7-Zip Executable:     C:\Users\lazar\swblocks\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86\7zip\25.01\7za.exe
+Delete If Exists:     1
+================================================================================
+
+Creating archives with normal compression...
+
+Distribution archive:
+  C:\Users\lazar\swblocks\zip\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86.zip
+  Size: 2048 MB (2147483648 bytes)
+
+Downloads cache archive:
+  C:\Users\lazar\swblocks\zip\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86-downloads-cache.zip
+  Size: 512 MB (536870912 bytes)
+```
+
+### Script Implementation Details
+
+**Line count:** ~290 lines (vs original 325 lines)
+
+**Key implementation patterns:**
+
+1. **7-zip version auto-detection:**
+   ```batch
+   for /d %%D in ("%DIST_FOLDER%\7zip\*") do (
+       set "SEVEN_ZIP_VERSION=%%~nxD"
+       set "SEVEN_ZIP_EXE=%%D\7za.exe"
+       goto found_7zip
+   )
+   ```
+
+2. **Archive name derivation (exact folder names, no timestamp):**
+   ```batch
+   set "DIST_ARCHIVE=%OUTPUT_FOLDER%\%DIST_ROOT%.zip"
+   set "CACHE_ARCHIVE=%OUTPUT_FOLDER%\%DIST_ROOT%-downloads-cache.zip"
+   ```
+
+3. **Overwrite protection:**
+   ```batch
+   REM Check if archives already exist
+   set "ARCHIVE_EXISTS="
+   if exist "%DIST_ARCHIVE%" set "ARCHIVE_EXISTS=1"
+   if exist "%CACHE_ARCHIVE%" set "ARCHIVE_EXISTS=1"
+
+   if defined ARCHIVE_EXISTS (
+       if not defined DELETE_TARGET (
+           echo ERROR: Target archive(s) already exist
+           echo Use -delete-target-if-exists to overwrite
+           goto error
+       ) else (
+           REM Delete existing archives
+           del /f /q "%DIST_ARCHIVE%"
+           del /f /q "%CACHE_ARCHIVE%"
+       )
+   )
+   ```
+
+4. **Working directory for relative paths:**
+   ```batch
+   pushd "%SWBLOCKS_ROOT%"
+   "%SEVEN_ZIP_EXE%" a -mx=5 "%DIST_ARCHIVE%" "%DIST_ROOT%\*" -r
+   popd
+   ```
+
+### Design Rationale
+
+**Why no timestamps:**
+- **Predictable names** - Enables scripting without pattern matching
+- **Simpler automation** - CI/CD workflows can reference exact archive names
+- **Version control** - Folder name already contains all version info (devenv7, hostarch, targets)
+- **Overwrite protection** - Explicit `-delete-target-if-exists` flag prevents accidental overwrites
+- **Clarity** - Archive name matches source folder name exactly
+
+---
+
 ## Testing Checklist
 
 Before committing changes to batch scripts:

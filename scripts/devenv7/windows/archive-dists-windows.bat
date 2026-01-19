@@ -18,43 +18,43 @@ REM
 REM Archive Distribution Script for Windows devenv7
 REM ================================================================================
 REM
-REM This script creates compressed archives of the built distribution directories
-REM for easy distribution and backup
+REM This script creates compressed archives of the distribution directory and
+REM downloads cache using 7-zip with proper relative paths for easy extraction.
 REM
 REM Usage:
-REM   archive-dists-windows.bat [options]
+REM   archive-dists-windows.bat -dist-root <folder-name>
 REM
-REM Options:
-REM   -dist-root <path>        Distribution root directory
-REM                            Default: %USERPROFILE%\swblocks\dist-devenv7-windows-a64
+REM Parameters:
+REM   -dist-root <name>        Distribution folder name (required)
+REM                            Expected location: %USERPROFILE%\swblocks\<name>
 REM
-REM   -output-dir <path>       Output directory for archives
-REM                            Default: %USERPROFILE%\swblocks\archives
-REM
-REM   -archive-name <name>     Base name for archive files
-REM                            Default: dist-devenv7-windows-a64
-REM
-REM   -include-toolchain       Include toolchain (VS, SDK) in archive
-REM
-REM   -include-sources         Include source files in archive
+REM   -delete-target-if-exists Delete existing archives if they exist
 REM
 REM   -help                    Show this help message
 REM
+REM The script will:
+REM   1. Archive %USERPROFILE%\swblocks\<dist-root> to zip\<dist-root>.zip
+REM   2. Archive %USERPROFILE%\swblocks\<dist-root>-downloads-cache to zip\<dist-root>-downloads-cache.zip
+REM   3. Use 7-zip from <dist-root>\7zip\<version>\7za.exe
+REM   4. Create archives with relative paths for extraction back to %USERPROFILE%\swblocks
+REM   5. Fail if target archives exist unless -delete-target-if-exists is specified
+REM
 REM Examples:
-REM   archive-dists-windows.bat
-REM   archive-dists-windows.bat -include-toolchain
-REM   archive-dists-windows.bat -dist-root C:\mydev\toolchain -output-dir D:\backups
+REM   archive-dists-windows.bat -dist-root dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86
+REM   archive-dists-windows.bat -dist-root dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86 -delete-target-if-exists
+REM
+REM Extraction:
+REM   cd %USERPROFILE%\swblocks
+REM   7za.exe x zip\<dist-root>.zip
+REM   7za.exe x zip\<dist-root>-downloads-cache.zip
 REM
 REM ================================================================================
 
 setlocal enabledelayedexpansion
 
 REM Default parameters
-set "DIST_ROOT=%USERPROFILE%\swblocks\dist-devenv7-windows-a64"
-set "OUTPUT_DIR=%USERPROFILE%\swblocks\archives"
-set "ARCHIVE_NAME=dist-devenv7-windows-a64"
-set "INCLUDE_TOOLCHAIN="
-set "INCLUDE_SOURCES="
+set "DIST_ROOT="
+set "DELETE_TARGET="
 set "HELP_EXIT_CODE="
 
 REM Parse command line arguments
@@ -66,50 +66,111 @@ if /i "%~1"=="-dist-root" (
     shift
     goto parse_args
 )
-if /i "%~1"=="-output-dir" (
-    set "OUTPUT_DIR=%~2"
-    shift
-    shift
-    goto parse_args
-)
-if /i "%~1"=="-archive-name" (
-    set "ARCHIVE_NAME=%~2"
-    shift
-    shift
-    goto parse_args
-)
-if /i "%~1"=="-include-toolchain" (
-    set "INCLUDE_TOOLCHAIN=1"
-    shift
-    goto parse_args
-)
-if /i "%~1"=="-include-sources" (
-    set "INCLUDE_SOURCES=1"
+if /i "%~1"=="-delete-target-if-exists" (
+    set "DELETE_TARGET=1"
     shift
     goto parse_args
 )
 if /i "%~1"=="-help" (
     goto show_help
 )
-echo Unknown option: %~1
+echo ERROR: Unknown option: %~1
 set "HELP_EXIT_CODE=1"
 goto show_help
 
 :args_done
 
-REM Verify distribution root exists
-if not exist "%DIST_ROOT%" (
-    echo ERROR: Distribution root does not exist: %DIST_ROOT%
+REM Validate required parameter
+if "%DIST_ROOT%"=="" (
+    echo ERROR: -dist-root parameter is required
+    echo.
+    set "HELP_EXIT_CODE=1"
+    goto show_help
+)
+
+REM Set up paths
+set "SWBLOCKS_ROOT=%USERPROFILE%\swblocks"
+set "DIST_FOLDER=%SWBLOCKS_ROOT%\%DIST_ROOT%"
+set "CACHE_FOLDER=%SWBLOCKS_ROOT%\%DIST_ROOT%-downloads-cache"
+set "OUTPUT_FOLDER=%SWBLOCKS_ROOT%\zip"
+
+REM Verify distribution folder exists
+if not exist "%DIST_FOLDER%" (
+    echo ERROR: Distribution folder does not exist: %DIST_FOLDER%
     goto error
 )
 
-REM Create output directory
-if not exist "%OUTPUT_DIR%" (
-    echo Creating output directory: %OUTPUT_DIR%
-    mkdir "%OUTPUT_DIR%"
+REM Verify downloads cache folder exists
+if not exist "%CACHE_FOLDER%" (
+    echo ERROR: Downloads cache folder does not exist: %CACHE_FOLDER%
+    goto error
+)
+
+REM Auto-detect 7-zip version
+set "SEVEN_ZIP_EXE="
+for /d %%D in ("%DIST_FOLDER%\7zip\*") do (
+    set "SEVEN_ZIP_VERSION=%%~nxD"
+    set "SEVEN_ZIP_EXE=%%D\7za.exe"
+    goto found_7zip
+)
+
+:found_7zip
+if not defined SEVEN_ZIP_EXE (
+    echo ERROR: 7-zip not found in %DIST_FOLDER%\7zip
+    goto error
+)
+
+if not exist "%SEVEN_ZIP_EXE%" (
+    echo ERROR: 7-zip executable not found: %SEVEN_ZIP_EXE%
+    goto error
+)
+
+REM Create output directory if needed
+if not exist "%OUTPUT_FOLDER%" (
+    echo Creating output directory: %OUTPUT_FOLDER%
+    mkdir "%OUTPUT_FOLDER%"
     if errorlevel 1 (
         echo ERROR: Failed to create output directory
         goto error
+    )
+)
+
+REM Set archive names (using exact folder names, no timestamp)
+set "DIST_ARCHIVE=%OUTPUT_FOLDER%\%DIST_ROOT%.zip"
+set "CACHE_ARCHIVE=%OUTPUT_FOLDER%\%DIST_ROOT%-downloads-cache.zip"
+
+REM Check if archives already exist
+set "ARCHIVE_EXISTS="
+if exist "%DIST_ARCHIVE%" set "ARCHIVE_EXISTS=1"
+if exist "%CACHE_ARCHIVE%" set "ARCHIVE_EXISTS=1"
+
+if defined ARCHIVE_EXISTS (
+    if not defined DELETE_TARGET (
+        echo ERROR: Target archive^(s^) already exist:
+        if exist "%DIST_ARCHIVE%" echo   %DIST_ARCHIVE%
+        if exist "%CACHE_ARCHIVE%" echo   %CACHE_ARCHIVE%
+        echo.
+        echo Use -delete-target-if-exists to overwrite existing archives
+        goto error
+    ) else (
+        echo Deleting existing archives...
+        if exist "%DIST_ARCHIVE%" (
+            echo   Deleting: %DIST_ARCHIVE%
+            del /f /q "%DIST_ARCHIVE%"
+            if errorlevel 1 (
+                echo ERROR: Failed to delete existing distribution archive
+                goto error
+            )
+        )
+        if exist "%CACHE_ARCHIVE%" (
+            echo   Deleting: %CACHE_ARCHIVE%
+            del /f /q "%CACHE_ARCHIVE%"
+            if errorlevel 1 (
+                echo ERROR: Failed to delete existing cache archive
+                goto error
+            )
+        )
+        echo.
     )
 )
 
@@ -118,199 +179,106 @@ echo.
 echo ================================================================================
 echo Archive Distribution Configuration
 echo ================================================================================
-echo Distribution Root:  %DIST_ROOT%
-echo Output Directory:   %OUTPUT_DIR%
-echo Archive Base Name:  %ARCHIVE_NAME%
-echo Include Toolchain:  %INCLUDE_TOOLCHAIN%
-echo Include Sources:    %INCLUDE_SOURCES%
+echo Distribution Folder:  %DIST_FOLDER%
+echo Downloads Cache:      %CACHE_FOLDER%
+echo Output Directory:     %OUTPUT_FOLDER%
+echo 7-Zip Version:        %SEVEN_ZIP_VERSION%
+echo 7-Zip Executable:     %SEVEN_ZIP_EXE%
+echo Delete If Exists:     %DELETE_TARGET%
 echo ================================================================================
 echo.
 
-REM Generate timestamp for archive name
-for /f "tokens=1-4 delims=/-. " %%a in ('date /t') do (
-    set "DATE_STAMP=%%c%%a%%b"
+REM Change to swblocks root to ensure proper relative paths in archives
+pushd "%SWBLOCKS_ROOT%"
+if errorlevel 1 (
+    echo ERROR: Failed to change directory to %SWBLOCKS_ROOT%
+    goto error
 )
-for /f "tokens=1-2 delims=:. " %%a in ('time /t') do (
-    set "TIME_STAMP=%%a%%b"
-)
-set "TIMESTAMP=%DATE_STAMP%-%TIME_STAMP%"
 
-REM Create archive using PowerShell (built-in ZIP support)
 echo.
-echo Creating archives...
+echo Creating archives with normal compression...
 echo.
 
-REM Archive 1: Essential runtime libraries (Boost, OpenSSL)
-set "ARCHIVE_LIBS=%OUTPUT_DIR%\%ARCHIVE_NAME%-libs-%TIMESTAMP%.zip"
-echo Creating libraries archive: %ARCHIVE_LIBS%
+REM Archive 1: Distribution folder
+echo ================================================================================
+echo Archiving distribution folder...
+echo ================================================================================
+echo Source:  %DIST_ROOT%
+echo Archive: %DIST_ARCHIVE%
+echo.
 
-powershell -Command "& { ^
-    $ProgressPreference = 'SilentlyContinue'; ^
-    $items = @(); ^
-    if (Test-Path '%DIST_ROOT%\boost') { $items += Get-Item '%DIST_ROOT%\boost' }; ^
-    if (Test-Path '%DIST_ROOT%\openssl') { $items += Get-Item '%DIST_ROOT%\openssl' }; ^
-    if (Test-Path '%DIST_ROOT%\json-spirit') { $items += Get-Item '%DIST_ROOT%\json-spirit' }; ^
-    if ($items.Count -gt 0) { ^
-        Compress-Archive -Path $items -DestinationPath '%ARCHIVE_LIBS%' -CompressionLevel Optimal -Force; ^
-        Write-Host 'Libraries archive created successfully'; ^
-    } else { ^
-        Write-Host 'Warning: No library directories found to archive' -ForegroundColor Yellow; ^
-    } ^
-}"
+"%SEVEN_ZIP_EXE%" a -mx=5 "%DIST_ARCHIVE%" "%DIST_ROOT%\*" -r
 
 if errorlevel 1 (
-    echo WARNING: Failed to create libraries archive
+    echo ERROR: Failed to create distribution archive
+    popd
+    goto error
 )
 
-REM Archive 2: Development tools (Git, Python, MSYS2, Perl)
-set "ARCHIVE_TOOLS=%OUTPUT_DIR%\%ARCHIVE_NAME%-tools-%TIMESTAMP%.zip"
 echo.
-echo Creating tools archive: %ARCHIVE_TOOLS%
+echo Distribution archive created successfully
+echo.
 
-powershell -Command "& { ^
-    $ProgressPreference = 'SilentlyContinue'; ^
-    $items = @(); ^
-    if (Test-Path '%DIST_ROOT%\git') { $items += Get-Item '%DIST_ROOT%\git' }; ^
-    if (Test-Path '%DIST_ROOT%\python') { $items += Get-Item '%DIST_ROOT%\python' }; ^
-    if (Test-Path '%DIST_ROOT%\msys2') { $items += Get-Item '%DIST_ROOT%\msys2' }; ^
-    if (Test-Path '%DIST_ROOT%\strawberry-perl') { $items += Get-Item '%DIST_ROOT%\strawberry-perl' }; ^
-    if ($items.Count -gt 0) { ^
-        Compress-Archive -Path $items -DestinationPath '%ARCHIVE_TOOLS%' -CompressionLevel Optimal -Force; ^
-        Write-Host 'Tools archive created successfully'; ^
-    } else { ^
-        Write-Host 'Warning: No tool directories found to archive' -ForegroundColor Yellow; ^
-    } ^
-}"
+REM Archive 2: Downloads cache
+echo ================================================================================
+echo Archiving downloads cache...
+echo ================================================================================
+echo Source:  %DIST_ROOT%-downloads-cache
+echo Archive: %CACHE_ARCHIVE%
+echo.
+
+"%SEVEN_ZIP_EXE%" a -mx=5 "%CACHE_ARCHIVE%" "%DIST_ROOT%-downloads-cache\*" -r
 
 if errorlevel 1 (
-    echo WARNING: Failed to create tools archive
+    echo ERROR: Failed to create downloads cache archive
+    popd
+    goto error
 )
 
-REM Archive 3: Configuration and scripts
-set "ARCHIVE_CONFIG=%OUTPUT_DIR%\%ARCHIVE_NAME%-config-%TIMESTAMP%.zip"
 echo.
-echo Creating configuration archive: %ARCHIVE_CONFIG%
+echo Downloads cache archive created successfully
+echo.
 
-powershell -Command "& { ^
-    $ProgressPreference = 'SilentlyContinue'; ^
-    $items = @(); ^
-    if (Test-Path '%DIST_ROOT%\scripts') { $items += Get-Item '%DIST_ROOT%\scripts' }; ^
-    if (Test-Path '%DIST_ROOT%\projects') { $items += Get-Item '%DIST_ROOT%\projects' }; ^
-    if ($items.Count -gt 0) { ^
-        Compress-Archive -Path $items -DestinationPath '%ARCHIVE_CONFIG%' -CompressionLevel Optimal -Force; ^
-        Write-Host 'Configuration archive created successfully'; ^
-    } else { ^
-        Write-Host 'Warning: No configuration directories found to archive' -ForegroundColor Yellow; ^
-    } ^
-}"
+REM Return to original directory
+popd
 
-if errorlevel 1 (
-    echo WARNING: Failed to create configuration archive
-)
-
-REM Archive 4: Toolchain (optional - VS and SDK, usually large)
-if "%INCLUDE_TOOLCHAIN%"=="1" (
-    set "ARCHIVE_TOOLCHAIN=%OUTPUT_DIR%\%ARCHIVE_NAME%-toolchain-%TIMESTAMP%.zip"
-    echo.
-    echo Creating toolchain archive: !ARCHIVE_TOOLCHAIN!
-    echo Warning: This may be very large and take significant time...
-
-    powershell -Command "& { ^
-        $ProgressPreference = 'SilentlyContinue'; ^
-        $items = @(); ^
-        if (Test-Path '%DIST_ROOT%\toolchain-msvc') { $items += Get-Item '%DIST_ROOT%\toolchain-msvc' }; ^
-        if (Test-Path '%DIST_ROOT%\winsdk') { $items += Get-Item '%DIST_ROOT%\winsdk' }; ^
-        if ($items.Count -gt 0) { ^
-            Compress-Archive -Path $items -DestinationPath '!ARCHIVE_TOOLCHAIN!' -CompressionLevel Optimal -Force; ^
-            Write-Host 'Toolchain archive created successfully'; ^
-        } else { ^
-            Write-Host 'Warning: No toolchain directories found to archive' -ForegroundColor Yellow; ^
-        } ^
-    }"
-
-    if errorlevel 1 (
-        echo WARNING: Failed to create toolchain archive
-    )
-)
-
-REM Archive 5: Source files (optional)
-if "%INCLUDE_SOURCES%"=="1" (
-    set "ARCHIVE_SOURCES=%OUTPUT_DIR%\%ARCHIVE_NAME%-sources-%TIMESTAMP%.zip"
-    echo.
-    echo Creating sources archive: !ARCHIVE_SOURCES!
-
-    powershell -Command "& { ^
-        $ProgressPreference = 'SilentlyContinue'; ^
-        $items = @(); ^
-        if (Test-Path '%DIST_ROOT%\boost\*\source-windows') { $items += Get-Item '%DIST_ROOT%\boost\*\source-windows' }; ^
-        if (Test-Path '%DIST_ROOT%\openssl\*\source-windows') { $items += Get-Item '%DIST_ROOT%\openssl\*\source-windows' }; ^
-        if ($items.Count -gt 0) { ^
-            Compress-Archive -Path $items -DestinationPath '!ARCHIVE_SOURCES!' -CompressionLevel Optimal -Force; ^
-            Write-Host 'Sources archive created successfully'; ^
-        } else { ^
-            Write-Host 'Warning: No source directories found to archive' -ForegroundColor Yellow; ^
-        } ^
-    }"
-
-    if errorlevel 1 (
-        echo WARNING: Failed to create sources archive
-    )
-)
-
-REM Display archive information
+REM Display results
 echo.
 echo ================================================================================
 echo Archive Creation Complete!
 echo ================================================================================
 echo.
-echo Archive files created in: %OUTPUT_DIR%
+echo Archive files created in: %OUTPUT_FOLDER%
 echo.
 
-if exist "%ARCHIVE_LIBS%" (
-    echo Libraries archive:
-    echo   %ARCHIVE_LIBS%
-    for %%F in ("%ARCHIVE_LIBS%") do echo   Size: %%~zF bytes
-    echo.
-)
-
-if exist "%ARCHIVE_TOOLS%" (
-    echo Tools archive:
-    echo   %ARCHIVE_TOOLS%
-    for %%F in ("%ARCHIVE_TOOLS%") do echo   Size: %%~zF bytes
-    echo.
-)
-
-if exist "%ARCHIVE_CONFIG%" (
-    echo Configuration archive:
-    echo   %ARCHIVE_CONFIG%
-    for %%F in ("%ARCHIVE_CONFIG%") do echo   Size: %%~zF bytes
-    echo.
-)
-
-if "%INCLUDE_TOOLCHAIN%"=="1" (
-    if exist "%ARCHIVE_TOOLCHAIN%" (
-        echo Toolchain archive:
-        echo   %ARCHIVE_TOOLCHAIN%
-        for %%F in ("%ARCHIVE_TOOLCHAIN%") do echo   Size: %%~zF bytes
-        echo.
+if exist "%DIST_ARCHIVE%" (
+    echo Distribution archive:
+    echo   %DIST_ARCHIVE%
+    for %%F in ("%DIST_ARCHIVE%") do (
+        set /a "SIZE_MB=%%~zF / 1048576"
+        echo   Size: !SIZE_MB! MB ^(%%~zF bytes^)
     )
+    echo.
 )
 
-if "%INCLUDE_SOURCES%"=="1" (
-    if exist "%ARCHIVE_SOURCES%" (
-        echo Sources archive:
-        echo   %ARCHIVE_SOURCES%
-        for %%F in ("%ARCHIVE_SOURCES%") do echo   Size: %%~zF bytes
-        echo.
+if exist "%CACHE_ARCHIVE%" (
+    echo Downloads cache archive:
+    echo   %CACHE_ARCHIVE%
+    for %%F in ("%CACHE_ARCHIVE%") do (
+        set /a "SIZE_MB=%%~zF / 1048576"
+        echo   Size: !SIZE_MB! MB ^(%%~zF bytes^)
     )
+    echo.
 )
 
 echo ================================================================================
 echo.
 echo To restore from archives:
-echo   1. Extract archives to desired location
-echo   2. Update paths in scripts\ci\ci-init-env.bat
-echo   3. Update paths in projects\make\ci-init-env.mk
+echo   cd %USERPROFILE%\swblocks
+echo   "%SEVEN_ZIP_EXE%" x "zip\%DIST_ROOT%.zip"
+echo   "%SEVEN_ZIP_EXE%" x "zip\%DIST_ROOT%-downloads-cache.zip"
+echo.
+echo Archives contain relative paths and will extract to the correct locations.
 echo.
 
 exit /b 0
