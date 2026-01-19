@@ -22,6 +22,7 @@ REM This script automates the complete setup of the Windows development environm
 REM   1. Toolchain setup (Git, Python, MSYS2, Perl, JSON Spirit, VS detection)
 REM   2. Boost library build (debug and release)
 REM   3. OpenSSL library build (debug and release)
+REM   4. Distribution archive creation (dist + downloads cache)
 REM
 REM This is equivalent to the Linux/macOS build-env-all scripts
 REM
@@ -457,6 +458,35 @@ if not "!SKIP_OPENSSL!"=="1" (
     echo.
 )
 
+REM Step 4: Create distribution archives
+echo.
+echo ################################################################################
+echo # STEP 4: Creating Distribution Archives
+echo ################################################################################
+echo.
+
+REM Extract dist folder name from full path
+for %%F in ("%DIST_ROOT%") do set "DIST_FOLDER_NAME=%%~nxF"
+
+echo Archiving distribution to: %USERPROFILE%\swblocks\zip
+echo.
+
+call "%SCRIPT_DIR%archive-dists-windows.bat" ^
+    -dist-root "%DIST_FOLDER_NAME%" ^
+    -delete-target-if-exists
+
+if errorlevel 1 (
+    echo.
+    echo WARNING: Archive creation failed!
+    echo The build completed successfully but archives were not created.
+    echo You can manually create archives later using:
+    echo   archive-dists-windows.bat -dist-root "%DIST_FOLDER_NAME%" -delete-target-if-exists
+    echo.
+) else (
+    echo.
+    echo Distribution archives created successfully
+)
+
 REM Calculate elapsed time
 set "END_TIME=%TIME%"
 
@@ -486,6 +516,10 @@ if not "!SKIP_OPENSSL!"=="1" (
 )
 echo.
 echo Target Architectures: %TARGET_ARCHS%
+echo.
+echo Distribution Archives:
+echo   - %USERPROFILE%\swblocks\zip\%DIST_FOLDER_NAME%.zip
+echo   - %USERPROFILE%\swblocks\zip\%DIST_FOLDER_NAME%-downloads-cache.zip
 echo.
 echo Next Steps:
 echo   1. Review the environment initialization script:
