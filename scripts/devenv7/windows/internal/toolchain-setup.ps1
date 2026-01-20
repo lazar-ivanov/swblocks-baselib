@@ -31,10 +31,10 @@ function New-ToolchainEnvironment {
         [string]$DistRoot = "C:\swblocks\dist-devenv7-windows-arm",
         [string]$HostArchitecture = $null,
         [string[]]$TargetArchitectures = @(),
-        [string]$GitVersion = "2.52.0",
+        [string]$GitVersion = "2.48.1",
         [string]$PythonVersion = "3.14.2",
         [string]$MSYS2Version = "20251213",
-        [string]$PerlVersion = "5.40.0.1",
+        [string]$PerlVersion = "5.32.1.1",
         [string]$JSONSpiritVersion = "4.08",
         [string]$OpenJDKVersion = "25",
         [string]$GradleVersion = "9.2.1",
@@ -182,8 +182,8 @@ function New-ToolchainEnvironment {
         -DestinationRoot $DistRoot -CacheDirectory $CacheDirectory `
         -SkipDownload:$SkipDownloads -UpdatePackages:$UpdateMSYS2 -InstallMake
 
-    # Install Strawberry Perl (x64 portable version)
-    Install-StrawberryPerl -Version $PerlVersion `
+    # Install Strawberry Perl (portable version for host architecture)
+    Install-StrawberryPerl -Version $PerlVersion -Architecture $HostArchitecture `
         -DestinationRoot $DistRoot -CacheDirectory $CacheDirectory `
         -SkipDownload:$SkipDownloads
 
@@ -192,10 +192,14 @@ function New-ToolchainEnvironment {
         -DestinationRoot $DistRoot -CacheDirectory $CacheDirectory `
         -SkipDownload:$SkipDownloads
 
-    # Install OpenJDK for host architecture
-    Install-OpenJDK -Version $OpenJDKVersion -Architecture $HostArchitecture `
-        -DestinationRoot $DistRoot -CacheDirectory $CacheDirectory `
-        -SkipDownload:$SkipDownloads
+    # Install OpenJDK for all target architectures (except x86 - not available from Microsoft)
+    foreach ($arch in $TargetArchitectures) {
+        if ($arch -ne "x86") {
+            Install-OpenJDK -Version $OpenJDKVersion -Architecture $arch `
+                -DestinationRoot $DistRoot -CacheDirectory $CacheDirectory `
+                -SkipDownload:$SkipDownloads
+        }
+    }
 
     # Install Gradle (architecture independent)
     Install-Gradle -Version $GradleVersion `
@@ -214,7 +218,7 @@ function New-ToolchainEnvironment {
         -SkipDownload:$SkipDownloads
 
     # Install NASM (assembler for x64 and x86 builds)
-    Install-NASM -Version $NASMVersion `
+    Install-NASM -Version $NASMVersion -Architecture $HostArchitecture `
         -DestinationRoot $DistRoot -CacheDirectory $CacheDirectory `
         -SkipDownload:$SkipDownloads
 

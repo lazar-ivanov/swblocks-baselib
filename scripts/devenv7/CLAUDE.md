@@ -927,6 +927,166 @@ Before committing changes to batch scripts:
 
 ---
 
+## Tool Versions and Compatibility
+
+### Git Version Selection
+
+**Current default:** Git 2.48.1
+
+**Rationale:** Git 2.48.1 is the last version that provides a portable package installer for the x86 32-bit version of Git. Later versions (2.49.0+) dropped support for x86 32-bit builds, making it impossible to install Git on x86 target architectures.
+
+**Why this matters:**
+- The devenv7 build environment supports three target architectures: a64, x64, and x86
+- Each architecture needs its own portable Git installation in the distribution
+- Git is required for building certain dependencies and version control operations
+- Using 2.48.1 ensures we can provide Git for all supported architectures
+
+**Version compatibility:**
+- **a64 (ARM64)**: Git 2.48.1+ available (but use 2.48.1 for consistency)
+- **x64**: Git 2.48.1+ available (but use 2.48.1 for consistency)
+- **x86**: Git 2.48.1 is the last version with x86 builds
+
+**Future considerations:** If x86 support is dropped from the project, Git can be upgraded to newer versions. However, as long as x86 remains a target architecture, we must stay on 2.48.1 or older.
+
+### OpenJDK Multi-Architecture Support
+
+**Current default:** OpenJDK 25 (Microsoft Build)
+
+**Architecture support:**
+- **a64 (ARM64)**: ✅ Fully supported - Microsoft JDK provides ARM64 builds
+- **x64**: ✅ Fully supported - Microsoft JDK provides x64 builds
+- **x86**: ❌ **Not supported** - Microsoft and other major vendors have dropped x86 32-bit support
+
+**Implementation strategy:**
+
+The devenv7 build environment installs OpenJDK for **all target architectures** (except x86) to ensure Java-dependent build tools work correctly across all compilation targets.
+
+**Installation pattern:**
+```
+%DIST_ROOT%\openjdk\
+├── 25\
+│   ├── a64\          # ARM64 build (if a64 in targets)
+│   └── x64\          # x64 build (if x64 in targets)
+```
+
+**Why multi-architecture installation is required:**
+
+Unlike host-only tools (Git, Python, MSYS2), OpenJDK must be installed for **each target architecture** because:
+1. **Build tools require native execution** - Tools like Gradle may invoke Java code that needs to run natively on the target architecture during cross-compilation
+2. **Architecture-specific optimizations** - Java HotSpot VM includes architecture-specific JIT optimizations
+3. **Native library dependencies** - Some Java build tools may load native libraries that must match the target architecture
+
+**Folder naming convention:**
+
+OpenJDK uses a simplified naming pattern without the "default" prefix:
+- `openjdk\{version}\{arch}` (e.g., `openjdk\25\a64`, `openjdk\25\x64`)
+
+This differs from host-only tools which use:
+- `git\{version}\default` or `python\{version}\default`
+
+The simplified naming reflects that OpenJDK is installed per-architecture rather than per-host.
+
+**x86 32-bit limitation:**
+
+**Why x86 is not supported:**
+
+On Windows, Microsoft and other major JDK vendors (Oracle, Adoptium/Eclipse Temurin, Amazon Corretto, Azul Zulu) have **discontinued x86 32-bit builds** starting around 2020-2021. The reasons include:
+1. **Market shift** - 64-bit Windows has been the standard since Windows 7/8 era
+2. **Security concerns** - 32-bit systems have reduced security features (no ASLR high-entropy, limited DEP)
+3. **Performance limitations** - 32-bit JVM limited to ~1.5GB heap, insufficient for modern builds
+4. **Maintenance burden** - Testing and supporting 32-bit builds is costly with minimal user base
+5. **Microsoft deprecation** - Microsoft dropped 32-bit Windows 10 new installations in 2020
+
+**Last x86 32-bit versions:**
+- **Microsoft JDK**: Never provided x86 builds (started with JDK 11 in 2021, 64-bit only)
+- **Oracle JDK**: Last x86 build was JDK 8 (end-of-life for free updates in 2019)
+- **Adoptium/Temurin**: Discontinued x86 after JDK 8
+- **Amazon Corretto**: Never provided x86 Windows builds
+
+**Impact on devenv7:**
+
+The build environment skips OpenJDK installation for x86 targets automatically:
+```powershell
+# Install OpenJDK for all target architectures (except x86 - not available from Microsoft)
+foreach ($arch in $TargetArchitectures) {
+    if ($arch -ne "x86") {
+        Install-OpenJDK -Version $OpenJDKVersion -Architecture $arch `
+            -DestinationRoot $DistRoot -CacheDirectory $CacheDirectory `
+            -SkipDownload:$SkipDownloads
+    }
+}
+```
+
+**Workarounds for x86 builds:**
+
+If Java-based build tools are absolutely required for x86 targets:
+1. **Use x64 JDK in WoW64 mode** - x64 Java can run on x86 Windows via WoW64 (but requires 64-bit Windows)
+2. **Use legacy JDK 8** - Download Oracle JDK 8 or Adoptium Temurin 8 (unsupported, security risks)
+3. **Avoid Java dependencies** - Restructure build to not require Java for x86 targets
+
+For most use cases, x64 OpenJDK is sufficient even when building for x86 targets, as the Java tools run on the host system (typically 64-bit) and only the compiled output targets x86.
+
+**Download sources:**
+- Microsoft JDK: https://aka.ms/download-jdk
+- File patterns:
+  - ARM64: `microsoft-jdk-{VERSION}.0.1-windows-aarch64.zip`
+  - x64: `microsoft-jdk-{VERSION}.0.1-windows-x64.zip`
+
+**Version compatibility:**
+- **Gradle 9.2.1**: Requires Java 11 or newer (Microsoft JDK 25 fully compatible)
+- **Most modern build tools**: Support Java 11+ (LTS) and Java 17+ (LTS)
+
+### NASM and Strawberry Perl Architecture Support
+
+**Installation strategy:** Both NASM and Strawberry Perl are **host-only tools** that install to a single `default` folder, with the binary matching the host architecture.
+
+**Installation pattern:**
+```
+%DIST_ROOT%\nasm\3.01\default          # Contains x86 or x64 binary based on host
+%DIST_ROOT%\strawberry-perl\5.32.1.1\default  # Contains x86 or x64 binary based on host
+```
+
+**Architecture handling:**
+- **x86 host**: Installs x86 32-bit binaries (win32 for NASM, 32bit-portable for Perl)
+- **x64 host**: Installs x64 64-bit binaries (win64 for NASM, 64bit-portable for Perl)
+- **ARM64 host**: Installs x64 64-bit binaries (run via emulation)
+
+**Why host-specific binaries are required:**
+
+NASM and Strawberry Perl are **cross-compilation tools** that run on the HOST to generate output for TARGET architectures. The tools themselves must be able to execute on the host system:
+
+1. **NASM** (Netwide Assembler):
+   - Runs on host, generates assembly code for target architecture
+   - x64 NASM can generate both x64 and x86 assembly
+   - But x64 NASM binary cannot run on x86 host
+   - URLs:
+     - x86: `https://www.nasm.us/pub/nasm/releasebuilds/3.01/win32/nasm-3.01-win32.zip`
+     - x64: `https://www.nasm.us/pub/nasm/releasebuilds/3.01/win64/nasm-3.01-win64.zip`
+
+2. **Strawberry Perl**:
+   - Runs on host, executes Configure scripts for target architecture
+   - OpenSSL Configure script is architecture-agnostic Perl code
+   - But x64 Perl binary cannot run on x86 host
+   - URLs for version 5.32.1.1:
+     - x86: `https://strawberryperl.com/download/5.32.1.1/strawberry-perl-no64-5.32.1.1-32bit-portable.zip`
+     - x64: `https://strawberryperl.com/download/5.32.1.1/strawberry-perl-5.32.1.1-64bit-portable.zip`
+
+**Strawberry Perl version downgrade:**
+
+Downgraded from **5.40.0.1** to **5.32.1.1** because:
+- Version 5.32.1.1 is the last release supporting both x86 32-bit and x64 architectures
+- Modern versions (5.40.x+) only provide x64 builds
+- This ensures x86 host builds have access to Perl for OpenSSL configuration
+- x64 and ARM64 hosts continue to work normally with the older version
+
+**Implementation:**
+- Both tools modified to accept `Architecture` parameter
+- Functions normalize a64 → x64 (ARM64 uses x64 binaries via emulation)
+- Download URLs dynamically constructed based on architecture
+- Same `default` folder path used regardless of architecture (binary inside changes)
+
+---
+
 ## References
 
 - Architecture normalization: `scripts/devenv7/windows/internal/common.ps1`

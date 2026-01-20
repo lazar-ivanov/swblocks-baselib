@@ -258,7 +258,7 @@ function Test-PathComponents {
     $distRootDeps1 = [System.Environment]::GetEnvironmentVariable("DIST_ROOT_DEPS1")
     if ($distRootDeps1) {
         Test-PathExists "$distRootDeps1\jom\1.1.5" "Jom"
-        Test-PathExists "$distRootDeps1\git\2.52.0\cmd" "Git"
+        Test-PathExists "$distRootDeps1\git\2.48.1\cmd" "Git"
         Test-PathExists "$distRootDeps1\python\3.14.2" "Python"
         Test-PathExists "$distRootDeps1\msys64\usr\bin" "MSYS2"
         Test-PathExists "$distRootDeps1\perl\5.40.0.1\perl\bin" "Strawberry Perl"

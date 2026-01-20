@@ -36,7 +36,8 @@ REM   build-msvc-toolchain.bat [options]
 REM
 REM Options:
 REM   -dist-root <path>        Distribution root directory
-REM                            Default: %USERPROFILE%\swblocks\dist-devenv7-windows-a64
+REM                            Default: %USERPROFILE%\swblocks\dist-devenv7-windows-hostarch-{HOST}-targets-{TARGETS}
+REM                            Example: dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86
 REM
 REM   -hostarch <arch>         Host architecture for tools and cross-compilation
 REM                            Options: a64, x64, x86 (arm64 accepted as alias for a64)
@@ -47,7 +48,7 @@ REM                            Options: a64, x64, x86 (arm64 accepted as alias f
 REM                            Default: matches -hostarch value
 REM
 REM   -git-version <version>   Git version to download
-REM                            Default: 2.52.0
+REM                            Default: 2.48.1
 REM
 REM   -python-version <ver>    Python version to download
 REM                            Default: 3.14.2
@@ -111,10 +112,10 @@ set "DIST_ROOT="
 set "DIST_ROOT_PROVIDED="
 set "HOST_ARCH="
 set "TARGET_ARCHS="
-set "GIT_VERSION=2.52.0"
+set "GIT_VERSION=2.48.1"
 set "PYTHON_VERSION=3.14.2"
 set "MSYS2_VERSION=20251213"
-set "PERL_VERSION=5.40.0.1"
+set "PERL_VERSION=5.32.1.1"
 set "JSON_VERSION=4.08"
 set "OPENJDK_VERSION=25"
 set "GRADLE_VERSION=9.2.1"

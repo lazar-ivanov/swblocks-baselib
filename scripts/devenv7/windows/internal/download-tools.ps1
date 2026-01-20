@@ -56,11 +56,11 @@ $script:ToolConfigs = @{
         }
     }
     StrawberryPerl = @{
-        BaseUrl = "https://github.com/StrawberryPerl/Perl-Dist-Strawberry/releases/download"
-        VersionPattern = "SP_{VERSION_TAG}_64bit_UCRT"
+        BaseUrl = "https://strawberryperl.com/download"
+        VersionPattern = "{VERSION}"
         FilePatterns = @{
             x64 = "strawberry-perl-{VERSION}-64bit-portable.zip"
-            x86 = "strawberry-perl-{VERSION}-32bit-portable.zip"
+            x86 = "strawberry-perl-no64-{VERSION}-32bit-portable.zip"
         }
     }
     JSONSpirit = @{
@@ -115,11 +115,11 @@ $script:ToolConfigs = @{
     }
     NASM = @{
         BaseUrl = "https://www.nasm.us/pub/nasm/releasebuilds"
-        VersionPattern = "{VERSION}/win64"
+        VersionPattern = "{VERSION}/win{ARCH_BITS}"
         FilePatterns = @{
-            # NASM win64 package works for both x64 and x86 targets
+            # NASM has separate packages for x64 (win64) and x86 (win32)
             x64 = "nasm-{VERSION}-win64.zip"
-            x86 = "nasm-{VERSION}-win64.zip"
+            x86 = "nasm-{VERSION}-win32.zip"
         }
     }
 }
@@ -160,7 +160,10 @@ function Get-ToolDownloadUrl {
         $arch = "source"
     }
 
-    $versionPattern = $config.VersionPattern -replace '\{VERSION\}', $Version -replace '\{VERSION_TAG\}', $versionTag
+    # Calculate architecture bits for URL construction (used by NASM)
+    $archBits = if ($Architecture -in @("x64", "a64")) { "64" } else { "32" }
+
+    $versionPattern = $config.VersionPattern -replace '\{VERSION\}', $Version -replace '\{VERSION_TAG\}', $versionTag -replace '\{ARCH_BITS\}', $archBits
     $filePattern = $config.FilePatterns[$arch]
 
     if (-not $filePattern) {
@@ -469,6 +472,9 @@ function Install-StrawberryPerl {
         [string]$Version,
 
         [Parameter(Mandatory=$true)]
+        [string]$Architecture,
+
+        [Parameter(Mandatory=$true)]
         [string]$DestinationRoot,
 
         [string]$CacheDirectory,
@@ -476,11 +482,14 @@ function Install-StrawberryPerl {
         [switch]$SkipDownload
     )
 
-    # Strawberry Perl is typically x64 only for portable version
-    $arch = "x64"
+    # Normalize architecture for display and folder naming
+    $archNormalized = ConvertTo-ArchitectureName -Architecture $Architecture
+    # Convert a64 to x64 (ARM64 uses x64 Perl via emulation)
+    $perlArch = if ($archNormalized -eq "a64") { "x64" } else { $archNormalized }
 
-    Write-SubSection "Installing Strawberry Perl $Version"
+    Write-SubSection "Installing Strawberry Perl $Version for $archNormalized"
 
+    # Install to single 'default' folder (same for all host architectures)
     $installPath = Join-Path $DestinationRoot "strawberry-perl\$Version\default"
 
     # Set default cache directory if not provided
@@ -492,13 +501,13 @@ function Install-StrawberryPerl {
 
     New-DirectoryIfNotExists -Path $CacheDirectory | Out-Null
 
-    # Download portable version
-    $downloadInfo = Get-ToolDownloadUrl -Tool "StrawberryPerl" -Version $Version -Architecture $arch
+    # Download portable version using architecture-appropriate URL (32bit vs 64bit)
+    $downloadInfo = Get-ToolDownloadUrl -Tool "StrawberryPerl" -Version $Version -Architecture $perlArch
     $archivePath = Join-Path $CacheDirectory $downloadInfo.FileName
 
     if (-not $SkipDownload) {
         Invoke-WebDownload -Url $downloadInfo.Url -OutputPath $archivePath `
-            -Description "Downloading Strawberry Perl $Version portable" -SkipIfExists
+            -Description "Downloading Strawberry Perl $Version for $archNormalized" -SkipIfExists
     }
 
     if (-not (Test-Path $archivePath)) {
@@ -515,9 +524,9 @@ function Install-StrawberryPerl {
 
     # Extract portable package
     Expand-ToolArchive -ArchivePath $archivePath -DestinationPath $installPath `
-        -Description "Extracting Strawberry Perl $Version"
+        -Description "Extracting Strawberry Perl $Version for $archNormalized"
 
-    Write-Log "Strawberry Perl $Version installed successfully" -Level Success
+    Write-Log "Strawberry Perl $Version for $archNormalized installed successfully" -Level Success
 
     return $installPath
 }
@@ -632,8 +641,8 @@ function Install-OpenJDK {
 
     Write-SubSection "Installing OpenJDK $Version for $archNormalized"
 
-    # Determine paths - always install to 'default' for host architecture tools
-    $installPath = Join-Path $DestinationRoot "openjdk\$Version\default"
+    # Determine paths - use architecture-specific naming for multi-arch support
+    $installPath = Join-Path $DestinationRoot "openjdk\$Version\$archNormalized"
 
     # Set default cache directory if not provided
     if (-not $CacheDirectory) {
@@ -888,6 +897,9 @@ function Install-NASM {
         [string]$Version,
 
         [Parameter(Mandatory=$true)]
+        [string]$Architecture,
+
+        [Parameter(Mandatory=$true)]
         [string]$DestinationRoot,
 
         [string]$CacheDirectory,
@@ -895,9 +907,14 @@ function Install-NASM {
         [switch]$SkipDownload
     )
 
-    Write-SubSection "Installing NASM $Version"
+    # Normalize architecture for display and folder naming
+    $archNormalized = ConvertTo-ArchitectureName -Architecture $Architecture
+    # Convert a64 to x64 (ARM64 uses x64 NASM via emulation)
+    $nasmArch = if ($archNormalized -eq "a64") { "x64" } else { $archNormalized }
 
-    # NASM is installed to a single 'default' folder (not architecture-specific)
+    Write-SubSection "Installing NASM $Version for $archNormalized"
+
+    # NASM is installed to a single 'default' folder (same for all host architectures)
     $installPath = Join-Path $DestinationRoot "nasm\$Version\default"
 
     # Set default cache directory if not provided
@@ -910,13 +927,13 @@ function Install-NASM {
     New-DirectoryIfNotExists -Path $installPath | Out-Null
     New-DirectoryIfNotExists -Path $CacheDirectory | Out-Null
 
-    # Download NASM (win64 package works for both x64 and x86 targets)
-    $downloadInfo = Get-ToolDownloadUrl -Tool "NASM" -Version $Version -Architecture "x64"
+    # Download NASM using architecture-appropriate URL (win32 vs win64)
+    $downloadInfo = Get-ToolDownloadUrl -Tool "NASM" -Version $Version -Architecture $nasmArch
     $archivePath = Join-Path $CacheDirectory $downloadInfo.FileName
 
     if (-not $SkipDownload) {
         Invoke-WebDownload -Url $downloadInfo.Url -OutputPath $archivePath `
-            -Description "Downloading NASM $Version" -SkipIfExists
+            -Description "Downloading NASM $Version for $archNormalized" -SkipIfExists
     }
 
     if (-not (Test-Path $archivePath)) {
@@ -925,7 +942,7 @@ function Install-NASM {
 
     # Extract NASM
     Expand-ToolArchive -ArchivePath $archivePath -DestinationPath $installPath `
-        -Description "Extracting NASM $Version"
+        -Description "Extracting NASM $Version for $archNormalized"
 
     # The archive extracts to nasm-{version}/ subdirectory
     # Move contents to the install path root
@@ -939,7 +956,7 @@ function Install-NASM {
         Remove-Item -Path $extractedDir -Force
     }
 
-    Write-Log "NASM $Version installed successfully" -Level Success
+    Write-Log "NASM $Version for $archNormalized installed successfully" -Level Success
 
     return $installPath
 }

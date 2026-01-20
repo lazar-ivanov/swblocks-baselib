@@ -42,7 +42,7 @@ REM                            Options: a64, x64, x86 (arm64 accepted as alias f
 REM                            Default: matches -hostarch value
 REM
 REM   -git-version <version>   Git version to download
-REM                            Default: 2.52.0
+REM                            Default: 2.48.1
 REM
 REM   -python-version <ver>    Python version to download
 REM                            Default: 3.14.2
@@ -86,7 +86,7 @@ REM Default parameters
 set "DIST_ROOT=%USERPROFILE%\swblocks\dist-devenv7-windows-a64"
 set "HOST_ARCH="
 set "TARGET_ARCHS="
-set "GIT_VERSION=2.52.0"
+set "GIT_VERSION=2.48.1"
 set "PYTHON_VERSION=3.14.2"
 set "BOOST_VERSION=1.90.0"
 set "OPENSSL_VERSION=3.5.4"
