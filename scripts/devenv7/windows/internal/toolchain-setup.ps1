@@ -470,28 +470,44 @@ DIST_ROOT_DEPS3 = /c/Users/`$(USERNAME)/swblocks/$distDirName
         # Convert host architecture to VS naming for debugger path (a64 -> arm64)
         $hostArchForDebugger = ConvertTo-VSArchitectureName $HostArchitecture
 
-        # Determine Clang-CL path based on HOST architecture
-        # x86 hosts use base bin folder, x64/ARM64 hosts use architecture-specific subfolders
-        if ($HostArchitecture -eq "x86") {
-            $clangPath = "%LLVM_ROOT%\bin"
-        } elseif ($HostArchitecture -eq "a64") {
-            $clangPath = "%LLVM_ROOT%\ARM64\bin"
+        # Determine Clang-CL path based on HOST architecture with compatible fallbacks
+        # Clang-CL tools run on host, so must match host architecture
+        # a64 hosts can execute: arm64, x64 (via emulation), x86 (via emulation)
+        # x64 hosts can execute: x64, x86 (via WoW64)
+        # x86 hosts can execute: x86 only
+        if ($HostArchitecture -eq "a64") {
+            $clangPath = "%LLVM_ROOT%\ARM64\bin;%LLVM_ROOT%\x64\bin;%LLVM_ROOT%\bin"
+        } elseif ($HostArchitecture -eq "x64") {
+            $clangPath = "%LLVM_ROOT%\x64\bin;%LLVM_ROOT%\bin"
         } else {
-            $clangPath = "%LLVM_ROOT%\x64\bin"
+            $clangPath = "%LLVM_ROOT%\bin"
+        }
+
+        # Determine Windows SDK bin path based on HOST architecture with compatible fallbacks
+        # Windows SDK tools run on host, so must match host architecture
+        # a64 hosts can execute: arm64, x64 (via emulation), x86 (via emulation)
+        # x64 hosts can execute: x64, x86 (via WoW64)
+        # x86 hosts can execute: x86 only
+        if ($HostArchitecture -eq "a64") {
+            $sdkBinPaths = "%WINSDK_ROOT%\bin\%WINSDK_VERSION%\arm64;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x64;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x86"
+        } elseif ($HostArchitecture -eq "x64") {
+            $sdkBinPaths = "%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x64;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x86"
+        } else {
+            $sdkBinPaths = "%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x86"
         }
 
         if ($arch -eq "a64") {
-            $msvcBinPath = "%MSVC_ROOT%\bin\$hostPathComponent\arm64;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\arm64;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x64"
+            $msvcBinPath = "%MSVC_ROOT%\bin\$hostPathComponent\arm64;$sdkBinPaths"
             $msvcLib = "%MSVC_ROOT%\lib\arm64;%MSVC_ROOT%\atlmfc\lib\arm64;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\ucrt\arm64;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\um\arm64"
             $msvcLibPath = "%MSVC_ROOT%\lib\arm64;%MSVC_ROOT%\atlmfc\lib\arm64"
             $pathWithTools = "$msvcBinPath;$clangPath;%WINSDK_ROOT%\Debuggers\$hostArchForDebugger;%PATH%;$jomPath;$gitPath;$pythonPath;$msysPath"
         } elseif ($arch -eq "x64") {
-            $msvcBinPath = "%MSVC_ROOT%\bin\$hostPathComponent\x64;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x64"
+            $msvcBinPath = "%MSVC_ROOT%\bin\$hostPathComponent\x64;$sdkBinPaths"
             $msvcLib = "%MSVC_ROOT%\lib\x64;%MSVC_ROOT%\atlmfc\lib\x64;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\ucrt\x64;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\um\x64"
             $msvcLibPath = "%MSVC_ROOT%\lib\x64;%MSVC_ROOT%\atlmfc\lib\x64"
             $pathWithTools = "$msvcBinPath;$clangPath;%WINSDK_ROOT%\Debuggers\$hostArchForDebugger;%PATH%;$jomPath;$nasmPath;$gitPath;$pythonPath;$msysPath"
         } else {
-            $msvcBinPath = "%MSVC_ROOT%\bin\$hostPathComponent\x86;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x86"
+            $msvcBinPath = "%MSVC_ROOT%\bin\$hostPathComponent\x86;$sdkBinPaths"
             $msvcLib = "%MSVC_ROOT%\lib\x86;%MSVC_ROOT%\atlmfc\lib\x86;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\ucrt\x86;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\um\x86"
             $msvcLibPath = "%MSVC_ROOT%\lib\x86;%MSVC_ROOT%\atlmfc\lib\x86"
             $pathWithTools = "$msvcBinPath;$clangPath;%WINSDK_ROOT%\Debuggers\$hostArchForDebugger;%PATH%;$jomPath;$nasmPath;$gitPath;$pythonPath;$msysPath"
