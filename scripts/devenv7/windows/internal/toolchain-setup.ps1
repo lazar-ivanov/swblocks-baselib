@@ -442,12 +442,14 @@ DIST_ROOT_DEPS3 = /c/Users/`$(USERNAME)/swblocks/$distDirName
     $allArchitectures = @("a64", "x64", "x86")
     foreach ($arch in $allArchitectures) {
         # Git and Python use host architecture (not target)
-        $hostArchSuffix = if ($HostArchitecture -eq "a64") { "" } else { "-$HostArchitecture" }
+        # Both install to 'default' folder for all host architectures
         $helperPath = Join-Path $DistRoot "scripts\ci\setup-env-$arch.bat"
 
-        $gitPath = "$distRootVar\git\$GitVersion\default$hostArchSuffix\bin"
-        $pythonPath = "$distRootVar\python\$PythonVersion\default$hostArchSuffix"
-        $msysPath = "$distRootVar\msys2\$MSYS2Version\msys64\usr\bin"
+        $gitPath = "$distRootVar\git\$GitVersion\default\bin"
+        $pythonPath = "$distRootVar\python\$PythonVersion\default"
+        # Use msys32 for x86 hosts, msys64 for x64/ARM64 hosts
+        $msysFolderName = if ($HostArchitecture -eq "x86") { "msys32" } else { "msys64" }
+        $msysPath = "$distRootVar\msys2\$MSYS2Version\$msysFolderName\usr\bin"
         $jomPath = "$distRootVar\jom\$JomVersion\default"
         $nasmPath = "$distRootVar\nasm\$NASMVersion\default"
 
@@ -468,21 +470,28 @@ DIST_ROOT_DEPS3 = /c/Users/`$(USERNAME)/swblocks/$distDirName
         # Convert host architecture to VS naming for debugger path (a64 -> arm64)
         $hostArchForDebugger = ConvertTo-VSArchitectureName $HostArchitecture
 
+        # Determine Clang-CL path based on HOST architecture
+        # x86 hosts use base bin folder, x64/ARM64 hosts use architecture-specific subfolders
+        if ($HostArchitecture -eq "x86") {
+            $clangPath = "%LLVM_ROOT%\bin"
+        } elseif ($HostArchitecture -eq "a64") {
+            $clangPath = "%LLVM_ROOT%\ARM64\bin"
+        } else {
+            $clangPath = "%LLVM_ROOT%\x64\bin"
+        }
+
         if ($arch -eq "a64") {
             $msvcBinPath = "%MSVC_ROOT%\bin\$hostPathComponent\arm64;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\arm64;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x64"
-            $clangPath = "%LLVM_ROOT%\ARM64\bin"
             $msvcLib = "%MSVC_ROOT%\lib\arm64;%MSVC_ROOT%\atlmfc\lib\arm64;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\ucrt\arm64;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\um\arm64"
             $msvcLibPath = "%MSVC_ROOT%\lib\arm64;%MSVC_ROOT%\atlmfc\lib\arm64"
             $pathWithTools = "$msvcBinPath;$clangPath;%WINSDK_ROOT%\Debuggers\$hostArchForDebugger;%PATH%;$jomPath;$gitPath;$pythonPath;$msysPath"
         } elseif ($arch -eq "x64") {
             $msvcBinPath = "%MSVC_ROOT%\bin\$hostPathComponent\x64;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x64"
-            $clangPath = "%LLVM_ROOT%\x64\bin"
             $msvcLib = "%MSVC_ROOT%\lib\x64;%MSVC_ROOT%\atlmfc\lib\x64;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\ucrt\x64;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\um\x64"
             $msvcLibPath = "%MSVC_ROOT%\lib\x64;%MSVC_ROOT%\atlmfc\lib\x64"
             $pathWithTools = "$msvcBinPath;$clangPath;%WINSDK_ROOT%\Debuggers\$hostArchForDebugger;%PATH%;$jomPath;$nasmPath;$gitPath;$pythonPath;$msysPath"
         } else {
-            $msvcBinPath = "%MSVC_ROOT%\bin\$hostPathComponent\x86;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x86;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x64"
-            $clangPath = "%LLVM_ROOT%\bin"
+            $msvcBinPath = "%MSVC_ROOT%\bin\$hostPathComponent\x86;%WINSDK_ROOT%\bin\%WINSDK_VERSION%\x86"
             $msvcLib = "%MSVC_ROOT%\lib\x86;%MSVC_ROOT%\atlmfc\lib\x86;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\ucrt\x86;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\um\x86"
             $msvcLibPath = "%MSVC_ROOT%\lib\x86;%MSVC_ROOT%\atlmfc\lib\x86"
             $pathWithTools = "$msvcBinPath;$clangPath;%WINSDK_ROOT%\Debuggers\$hostArchForDebugger;%PATH%;$jomPath;$nasmPath;$gitPath;$pythonPath;$msysPath"

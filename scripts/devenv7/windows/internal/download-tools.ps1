@@ -331,16 +331,13 @@ function Install-MSYS2 {
     # Convert to VS naming for file pattern lookup
     $archVS = ConvertTo-VSArchitectureName -Architecture $Architecture
 
-    # MSYS2 only supports arm64 and x64
-    if ($archNormalized -eq "x86") {
-        Write-Log "MSYS2 does not support x86, skipping" -Level Warning
-        return $null
-    }
-
     Write-SubSection "Installing MSYS2 $Version for $archNormalized"
 
     $installBase = Join-Path $DestinationRoot "msys2\$Version"
-    $installPath = Join-Path $installBase "msys64"
+
+    # Use msys32 for x86, msys64 for x64/ARM64
+    $msysFolderName = if ($archNormalized -eq "x86") { "msys32" } else { "msys64" }
+    $installPath = Join-Path $installBase $msysFolderName
 
     # Set default cache directory if not provided
     if (-not $CacheDirectory) {
@@ -352,12 +349,23 @@ function Install-MSYS2 {
     New-DirectoryIfNotExists -Path $installBase | Out-Null
     New-DirectoryIfNotExists -Path $CacheDirectory | Out-Null
 
-    # Download base tarball using VS architecture naming for file patterns
-    $downloadInfo = Get-ToolDownloadUrl -Tool "MSYS2" -Version $Version -Architecture $archVS
-    $archivePath = Join-Path $CacheDirectory $downloadInfo.FileName
+    # Special case for x86: Use older version and i686 distribution
+    # (MSYS2 dropped x86 support after version 20250209)
+    if ($archNormalized -eq "x86") {
+        Write-Log "x86 host: Using MSYS2 version 20250209 (last i686 build) instead of $Version" -Level Info
+        $downloadUrl = "https://repo.msys2.org/distrib/i686/msys2-base-i686-20250209.tar.zst"
+        $fileName = "msys2-base-i686-20250209.tar.zst"
+    } else {
+        # Standard x64/ARM64 path
+        $downloadInfo = Get-ToolDownloadUrl -Tool "MSYS2" -Version $Version -Architecture $archVS
+        $downloadUrl = $downloadInfo.Url
+        $fileName = $downloadInfo.FileName
+    }
+
+    $archivePath = Join-Path $CacheDirectory $fileName
 
     if (-not $SkipDownload) {
-        Invoke-WebDownload -Url $downloadInfo.Url -OutputPath $archivePath `
+        Invoke-WebDownload -Url $downloadUrl -OutputPath $archivePath `
             -Description "Downloading MSYS2 $Version for $archNormalized" -SkipIfExists
     }
 
@@ -376,7 +384,7 @@ function Install-MSYS2 {
         -Description "Extracting MSYS2 $Version for $archNormalized"
 
     if (-not (Test-Path $installPath)) {
-        throw "MSYS2 extraction failed - msys64 directory not found"
+        throw "MSYS2 extraction failed - $msysFolderName directory not found"
     }
 
     Write-Log "MSYS2 $Version for $archNormalized installed successfully" -Level Success
