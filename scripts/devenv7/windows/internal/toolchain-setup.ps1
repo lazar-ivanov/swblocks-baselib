@@ -568,6 +568,173 @@ echo.
         Write-Log "Created: $helperPath" -Level Verbose
     }
 
+    # Create setup-env-nomsvc-{arch}.bat scripts (no MSVC compiler paths)
+    # These scripts include debuggers and build tools but exclude MSVC/SDK/LLVM compiler paths
+    foreach ($arch in $allArchitectures) {
+        $helperPath = Join-Path $DistRoot "scripts\ci\setup-env-nomsvc-$arch.bat"
+
+        # Reuse path variables from above
+        $gitPath = "$distRootVar\git\$GitVersion\default\bin"
+        $pythonPath = "$distRootVar\python\$PythonVersion\default"
+        $msysFolderName = if ($HostArchitecture -eq "x86") { "msys32" } else { "msys64" }
+        $msysPath = "$distRootVar\msys2\$MSYS2Version\$msysFolderName\usr\bin"
+        $jomPath = "$distRootVar\jom\$JomVersion\default"
+        $nasmPath = "$distRootVar\nasm\$NASMVersion\default"
+
+        # Architecture descriptions
+        $hostDesc = if ($HostArchitecture -eq "a64") { "ARM64" } elseif ($HostArchitecture -eq "x64") { "x64" } else { "x86" }
+        $targetDesc = if ($arch -eq $HostArchitecture) { "Native" } else { "Cross-Compilation" }
+        $archDesc = "$($arch.ToUpper()) $targetDesc"
+        $targetArch = $arch.ToUpper()
+        $hostArch = $hostDesc.ToUpper()
+
+        # Convert host architecture to VS naming for debugger path
+        $hostArchForDebugger = ConvertTo-VSArchitectureName $HostArchitecture
+
+        # Construct PATH without MSVC/SDK/LLVM compiler paths
+        # ARM64: No NASM (uses clang-cl as assembler, not included in this variant)
+        # x64/x86: Include NASM
+        if ($arch -eq "a64") {
+            $pathWithTools = "%WINSDK_ROOT%\Debuggers\$hostArchForDebugger;%PATH%;$jomPath;$gitPath;$pythonPath;$msysPath"
+        } else {
+            $pathWithTools = "%WINSDK_ROOT%\Debuggers\$hostArchForDebugger;%PATH%;$jomPath;$nasmPath;$gitPath;$pythonPath;$msysPath"
+        }
+
+        $helperContent = @"
+@echo off
+REM ================================================================================
+REM Setup Development Environment for $archDesc (No MSVC)
+REM ================================================================================
+REM This script sets up a development environment WITHOUT MSVC compiler tools.
+REM
+REM Includes:
+REM   - Windows Debuggers
+REM   - Jom (parallel build tool)
+REM   - NASM (assembler, x64/x86 only)
+REM   - Git (version control)
+REM   - Python (scripting)
+REM   - MSYS2 (Unix utilities)
+REM
+REM Excludes:
+REM   - MSVC compiler (cl.exe, link.exe, lib.exe)
+REM   - Windows SDK bins
+REM   - Clang-CL
+REM   - INCLUDE/LIB/LIBPATH environment variables
+REM
+REM Useful for: Debugging, non-C/C++ builds, scripting tasks
+REM ================================================================================
+
+REM Initialize base environment
+call "%~dp0ci-init-env.bat"
+
+REM Set up PATH with debuggers and build tools (no compiler)
+REM Order: Debuggers -> existing PATH -> Jom -> NASM (x64/x86 only) -> Git -> Python -> MSYS2 (lowest priority)
+set "PATH=$pathWithTools"
+
+REM Set platform and architecture variables
+set "Platform=$targetArch"
+set "VSCMD_ARG_TGT_ARCH=$($arch.ToLower())"
+set "VSCMD_ARG_HOST_ARCH=$($HostArchitecture.ToLower())"
+
+REM Configure debugger symbol path
+set "_NT_SYMBOL_PATH=srv*%USERPROFILE%\windbg\sym*https://msdl.microsoft.com/download/symbols"
+
+echo.
+echo ================================================================================
+echo $archDesc Development Environment Configured (No MSVC)
+echo ================================================================================
+echo Toolchain:     %TOOLCHAIN_NAME%
+echo MSVC Version:  %MSVC_VERSION%
+echo SDK Version:   %WINSDK_VERSION%
+echo Target Arch:   $targetArch
+echo Host Arch:     $hostArch
+echo Configuration: No MSVC compiler paths
+echo ================================================================================
+echo.
+echo Debugger available: cdb.exe
+where cdb 2>nul
+echo.
+"@
+
+        Set-Content -Path $helperPath -Value $helperContent -Encoding ASCII
+        Write-Log "Created: $helperPath" -Level Verbose
+    }
+
+    # Create setup-env-minimal-{arch}.bat scripts (minimal PATH with Git + MSYS2 only)
+    # These scripts provide only version control and Unix utilities
+    foreach ($arch in $allArchitectures) {
+        $helperPath = Join-Path $DistRoot "scripts\ci\setup-env-minimal-$arch.bat"
+
+        # Reuse path variables
+        $gitPath = "$distRootVar\git\$GitVersion\default\bin"
+        $msysFolderName = if ($HostArchitecture -eq "x86") { "msys32" } else { "msys64" }
+        $msysPath = "$distRootVar\msys2\$MSYS2Version\$msysFolderName\usr\bin"
+
+        # Architecture descriptions
+        $hostDesc = if ($HostArchitecture -eq "a64") { "ARM64" } elseif ($HostArchitecture -eq "x64") { "x64" } else { "x86" }
+        $targetDesc = if ($arch -eq $HostArchitecture) { "Native" } else { "Cross-Compilation" }
+        $archDesc = "$($arch.ToUpper()) $targetDesc"
+        $targetArch = $arch.ToUpper()
+        $hostArch = $hostDesc.ToUpper()
+
+        # Minimal PATH: only Git and MSYS2
+        $pathWithTools = "$gitPath;$msysPath;%PATH%"
+
+        $helperContent = @"
+@echo off
+REM ================================================================================
+REM Minimal Development Environment for $archDesc
+REM ================================================================================
+REM This script sets up a minimal development environment.
+REM
+REM Includes:
+REM   - Git (version control)
+REM   - MSYS2 (Unix utilities: bash, make, grep, sed, awk, etc.)
+REM
+REM Excludes:
+REM   - All compiler tools (MSVC, Clang-CL)
+REM   - Debuggers
+REM   - Build utilities (Jom, NASM)
+REM   - Python
+REM   - INCLUDE/LIB/LIBPATH environment variables
+REM
+REM Useful for: Version control operations, shell scripting, text processing
+REM ================================================================================
+
+REM Initialize base environment
+call "%~dp0ci-init-env.bat"
+
+REM Set up minimal PATH with Git and MSYS2 only
+REM Order: Git -> MSYS2 -> existing PATH
+set "PATH=$pathWithTools"
+
+REM Set platform and architecture variables
+set "Platform=$targetArch"
+set "VSCMD_ARG_TGT_ARCH=$($arch.ToLower())"
+set "VSCMD_ARG_HOST_ARCH=$($HostArchitecture.ToLower())"
+
+REM Configure debugger symbol path (for reference)
+set "_NT_SYMBOL_PATH=srv*%USERPROFILE%\windbg\sym*https://msdl.microsoft.com/download/symbols"
+
+echo.
+echo ================================================================================
+echo $archDesc Minimal Development Environment Configured
+echo ================================================================================
+echo Toolchain:     %TOOLCHAIN_NAME%
+echo Target Arch:   $targetArch
+echo Host Arch:     $hostArch
+echo Configuration: Minimal (Git + MSYS2 only)
+echo ================================================================================
+echo.
+echo Git available: git.exe
+where git 2>nul
+echo.
+"@
+
+        Set-Content -Path $helperPath -Value $helperContent -Encoding ASCII
+        Write-Log "Created: $helperPath" -Level Verbose
+    }
+
     Write-Log "Environment initialization scripts created" -Level Success
 }
 

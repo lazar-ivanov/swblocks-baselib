@@ -180,6 +180,169 @@ Three environment setup scripts are **always generated** regardless of target ar
 - `setup-env-x64.bat`
 - `setup-env-x86.bat`
 
+### Environment Setup Script Variants
+
+The toolchain setup generates **three variants** of environment setup scripts for each architecture, providing different levels of tool integration:
+
+#### 1. Full Environment: setup-env-{arch}.bat
+
+**Purpose:** Complete development environment with all MSVC compiler tools and build utilities.
+
+**Includes:**
+- MSVC compiler toolchain (cl.exe, link.exe, lib.exe)
+- Windows SDK bin paths (rc.exe, mt.exe, etc.)
+- Clang-CL (alternative compiler, assembler for ARM64)
+- Windows Debuggers (WinDbg, cdb.exe)
+- Build tools (Jom, NASM)
+- Development tools (Git, Python, MSYS2)
+- Environment variables: INCLUDE, LIB, LIBPATH
+
+**Use cases:**
+- Building C/C++ projects with MSVC
+- Full compilation and linking workflows
+- Development requiring complete toolchain
+
+**PATH order:**
+```
+MSVC → Clang-CL → SDK bins → Debuggers → %PATH% → Jom → NASM → Git → Python → MSYS2
+```
+
+---
+
+#### 2. No MSVC Environment: setup-env-nomsvc-{arch}.bat
+
+**Purpose:** Development environment WITHOUT MSVC compiler tools. Useful for debugging, non-C/C++ builds, and tasks requiring build utilities but not compilation.
+
+**Includes:**
+- Windows Debuggers (WinDbg, cdb.exe) - host architecture
+- Build tools (Jom, NASM for x64/x86)
+- Development tools (Git, Python, MSYS2)
+- Platform variables (Platform, VSCMD_ARG_*)
+- Debugger symbol path (_NT_SYMBOL_PATH)
+
+**Excludes:**
+- MSVC compiler toolchain
+- Windows SDK bin paths
+- Clang-CL
+- INCLUDE, LIB, LIBPATH variables
+
+**Use cases:**
+- Debugging pre-built binaries
+- Building non-C/C++ projects (Rust, Go, etc.)
+- Scripting and automation tasks
+- Using debuggers without compiler
+- Parallel builds with Jom
+
+**PATH order:**
+```
+Debuggers → %PATH% → Jom → NASM (x64/x86) → Git → Python → MSYS2
+```
+
+**Architecture-specific differences:**
+- **ARM64**: No NASM (uses clang-cl as assembler, not included in this variant)
+- **x64/x86**: Includes NASM for assembly tasks
+
+---
+
+#### 3. Minimal Environment: setup-env-minimal-{arch}.bat
+
+**Purpose:** Minimal environment for basic command-line tasks. Only version control and Unix-like utilities.
+
+**Includes:**
+- Git (version control)
+- MSYS2 (Unix utilities: bash, make, grep, sed, awk, find, etc.)
+- Platform variables (Platform, VSCMD_ARG_* - for reference)
+- Debugger symbol path (_NT_SYMBOL_PATH - for reference)
+
+**Excludes:**
+- All compiler tools (MSVC, Clang-CL)
+- Windows SDK paths
+- Debuggers
+- Build utilities (Jom, NASM)
+- Python
+- INCLUDE, LIB, LIBPATH variables
+
+**Use cases:**
+- Version control operations (git clone, commit, push)
+- Shell scripting with bash
+- Text processing (grep, sed, awk)
+- Unix-like command-line workflows
+- Minimal overhead for simple tasks
+
+**PATH order:**
+```
+Git → MSYS2 → %PATH%
+```
+
+**Why include Platform/VSCMD_ARG_* variables:**
+Even though no compiler is present, these variables maintain consistency across all script variants and allow scripts to detect the configured architecture without PATH inspection.
+
+---
+
+#### Variant Comparison Table
+
+| Component | Full | No MSVC | Minimal |
+|-----------|------|---------|---------|
+| **MSVC Compiler** | ✅ | ❌ | ❌ |
+| **Windows SDK bins** | ✅ | ❌ | ❌ |
+| **Clang-CL** | ✅ | ❌ | ❌ |
+| **Debuggers** | ✅ | ✅ | ❌ |
+| **Jom** | ✅ | ✅ | ❌ |
+| **NASM** | ✅ (x64/x86) | ✅ (x64/x86) | ❌ |
+| **Git** | ✅ | ✅ | ✅ |
+| **Python** | ✅ | ✅ | ❌ |
+| **MSYS2** | ✅ | ✅ | ✅ |
+| **INCLUDE** | ✅ | ❌ | ❌ |
+| **LIB** | ✅ | ❌ | ❌ |
+| **LIBPATH** | ✅ | ❌ | ❌ |
+| **Platform vars** | ✅ | ✅ | ✅ |
+
+---
+
+#### Usage Examples
+
+**Full compilation workflow:**
+```batch
+call %DIST_ROOT%\scripts\ci\setup-env-x64.bat
+cl.exe /c myfile.cpp
+link.exe myfile.obj
+```
+
+**Debugging without compilation:**
+```batch
+call %DIST_ROOT%\scripts\ci\setup-env-nomsvc-x64.bat
+cdb.exe myapp.exe
+```
+
+**Version control only:**
+```batch
+call %DIST_ROOT%\scripts\ci\setup-env-minimal-x64.bat
+git clone https://github.com/...
+```
+
+**Non-C++ build with Jom:**
+```batch
+call %DIST_ROOT%\scripts\ci\setup-env-nomsvc-x64.bat
+jom -j 8  REM Parallel build without MSVC
+```
+
+---
+
+#### Script Generation
+
+**Total scripts generated:** 9 (3 variants × 3 architectures)
+
+**Generated for all architectures regardless of -targets parameter:**
+- setup-env-a64.bat, setup-env-nomsvc-a64.bat, setup-env-minimal-a64.bat
+- setup-env-x64.bat, setup-env-nomsvc-x64.bat, setup-env-minimal-x64.bat
+- setup-env-x86.bat, setup-env-nomsvc-x86.bat, setup-env-minimal-x86.bat
+
+**Location:** `{dist-root}\scripts\ci\`
+
+**Design principle:** Always generate all variants to provide flexibility regardless of build configuration.
+
+---
+
 ### PATH Order
 
 The PATH order is critical to avoid conflicts:
