@@ -209,6 +209,10 @@ PATH     := $(DIST_ROOT_DEPS3)/python/2.7-latest/default-x86:$(PATH)
 endif
 endif
 
+# Export PATH so child processes (like test executables) inherit it
+# This is critical for JNI tests which need JAVA_HOME/bin in PATH to find jvm.dll and dependencies
+export PATH
+
 ##########################################################################
 # Other common configuration
 

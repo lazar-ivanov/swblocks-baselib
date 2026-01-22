@@ -10,31 +10,47 @@ else
 include $(MKDIR)/3rd/gradle/latest.mk
 endif
 
-ifneq (win, $(findstring win, $(OS)))
-# JDK 8 and earlier use jre/lib/<arch>/server structure with .so
-# JDK 9+ use lib/server structure with .dylib on macOS
-ifeq ($(DEVENV_VERSION_TAG),devenv7)
-  # JDK 25: Modern structure with lib/server (no arch subdirectory)
-  ifeq (darwin, $(findstring darwin, $(BL_PROP_PLAT)))
+# Windows JNI support: disabled for devenv2-6, enabled by default for devenv7+
+# Use negative filtering pattern (same as json-spirit for backward compatibility)
+ifndef BL_WIN_JNI_DISABLED
+ifneq ($(filter devenv2 devenv3 devenv4 devenv5 devenv6,$(DEVENV_VERSION_TAG)),)
+# Disable Windows JNI for old devenvs (only Linux/macOS supported)
+ifeq (win, $(findstring win, $(OS)))
+BL_WIN_JNI_DISABLED := 1
+endif
+endif
+endif
+
+# Configure JNI library linking based on platform and devenv version
+ifndef BL_WIN_JNI_DISABLED
+  # devenv7+: All platforms supported (Windows, Linux, macOS)
+  ifeq (win, $(findstring win, $(OS)))
+    # Windows: No libjsig linking needed (uses SEH instead of POSIX signals)
+    # Runtime loads jvm.dll via PATH (already configured in jdk/common.mk)
+    # JavaVirtualMachine.h handles dynamic loading from bin/server/jvm.dll
+  else ifeq (darwin, $(findstring darwin, $(BL_PROP_PLAT)))
+    # macOS JDK 25: Modern structure with lib/server (no arch subdirectory)
     $(utf_baselib_jni_ARTIFACT): LDADD += $(JAVA_HOME)/lib/server/libjsig.dylib
     $(utf_baselib_jni_ARTIFACT): LDADD += -Wl,-rpath,$(JAVA_HOME)/lib/server
   else ifeq (linux, $(findstring linux, $(BL_PROP_PLAT)))
-    # JDK 25 on Linux uses lib/server for all architectures
+    # Linux JDK 25: Modern structure with lib/server for all architectures
     $(utf_baselib_jni_ARTIFACT): LDADD += $(JAVA_HOME)/lib/server/libjsig.so
     $(utf_baselib_jni_ARTIFACT): LDADD += -Wl,-rpath,$(JAVA_HOME)/lib/server
   endif
 else
-  # JDK 8: Old structure with jre/lib/<arch>/server and .so
-  ifeq (x86, $(ARCH))
-    $(utf_baselib_jni_ARTIFACT): LDADD += $(JAVA_HOME)/jre/lib/i386/server/libjsig.so
+  # devenv2-6 on Linux/macOS: Use old JDK 8 structure
+  ifneq (win, $(findstring win, $(OS)))
+    # JDK 8: Old structure with jre/lib/<arch>/server and .so
+    ifeq (x86, $(ARCH))
+      $(utf_baselib_jni_ARTIFACT): LDADD += $(JAVA_HOME)/jre/lib/i386/server/libjsig.so
+    endif
+    ifeq (x64, $(ARCH))
+      $(utf_baselib_jni_ARTIFACT): LDADD += $(JAVA_HOME)/jre/lib/amd64/server/libjsig.so
+    endif
+    ifeq (a64, $(ARCH))
+      $(utf_baselib_jni_ARTIFACT): LDADD += $(JAVA_HOME)/jre/lib/aarch64/server/libjsig.so
+    endif
   endif
-  ifeq (x64, $(ARCH))
-    $(utf_baselib_jni_ARTIFACT): LDADD += $(JAVA_HOME)/jre/lib/amd64/server/libjsig.so
-  endif
-  ifeq (a64, $(ARCH))
-    $(utf_baselib_jni_ARTIFACT): LDADD += $(JAVA_HOME)/jre/lib/aarch64/server/libjsig.so
-  endif
-endif
 endif
 
 $(info Building with Gradle = $(GRADLE))

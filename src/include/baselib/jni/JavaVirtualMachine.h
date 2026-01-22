@@ -65,7 +65,20 @@ namespace bl
                     ? g_jvmConfig.getLibraryPath()
                     : getJvmPathFromJavaHome();
 
+                BL_LOG(
+                    Logging::debug(),
+                    BL_MSG()
+                        << "Loading JVM library from: "
+                        << jvmLibraryPath
+                    );
+
                 m_jvmLibrary = os::loadLibrary( jvmLibraryPath );
+
+                BL_LOG(
+                    Logging::debug(),
+                    BL_MSG()
+                        << "JVM library loaded successfully, getting JNI_CreateJavaVM address"
+                    );
 
                 const auto procAddress = os::getProcAddress( m_jvmLibrary, "JNI_CreateJavaVM" );
 
@@ -172,7 +185,16 @@ namespace bl
                  * On macOS, JDK 9+ uses .dylib extension instead of .so
                  */
                 std::vector< fs::path > jvmPathCandidates;
-                const fs::path javaHomeBase( *javaHome );
+
+                /*
+                 * On Windows, normalize the JAVA_HOME path to ensure consistent separators.
+                 * This is critical because JAVA_HOME may come from environment with forward slashes,
+                 * but boost::filesystem uses backslashes on Windows, causing mixed separators
+                 * which breaks fs::exists() checks.
+                 */
+                const fs::path javaHomeBase = os::onWindows()
+                    ? fs::normalize( fs::path( *javaHome ) )
+                    : fs::path( *javaHome );
 
                 if( os::onWindows() )
                 {
@@ -224,6 +246,16 @@ namespace bl
                 fs::path jvmPath;
                 for( const auto& candidate : jvmPathCandidates )
                 {
+                    BL_LOG(
+                        Logging::debug(),
+                        BL_MSG()
+                            << "Checking JVM path candidate: "
+                            << fs::normalizePathParameterForPrint( candidate )
+                            << " (exists: "
+                            << ( fs::exists( candidate ) ? "yes" : "no" )
+                            << ")"
+                        );
+
                     if( fs::exists( candidate ) )
                     {
                         jvmPath = candidate;
@@ -240,7 +272,21 @@ namespace bl
                         << *javaHome
                     );
 
+                BL_LOG(
+                    Logging::debug(),
+                    BL_MSG()
+                        << "Found JVM at: "
+                        << fs::normalizePathParameterForPrint( jvmPath )
+                    );
+
                 jvmPath = fs::normalize( jvmPath );
+
+                BL_LOG(
+                    Logging::debug(),
+                    BL_MSG()
+                        << "Normalized JVM path: "
+                        << fs::normalizePathParameterForPrint( jvmPath )
+                    );
 
                 if( os::onWindows() )
                 {
