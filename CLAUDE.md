@@ -5,6 +5,7 @@ This document contains design decisions, implementation details, and development
 ## Table of Contents
 
 - [Build Commands](#build-commands)
+  - [Cross-Compilation (Windows devenv7+)](#cross-compilation-windows-devenv7)
 - [Development Environment Setup](#development-environment-setup)
 - [devenv Version Gating Pattern](#devenv-version-gating-pattern)
 - [Windows JNI Support (devenv7+)](#windows-jni-support-devenv7)
@@ -40,6 +41,166 @@ make -k -j1 utf_baselib_jni VARIANT=release
 
 **Note:** The `-j1` flag ensures single-threaded builds which can be helpful for debugging build issues.
 
+### Cross-Compilation (Windows devenv7+)
+
+Starting with **devenv7**, Windows builds support cross-compilation to different target architectures using the `ARCH` parameter.
+
+#### Architecture Support
+
+| Architecture | ARCH Value | Status |
+|--------------|------------|--------|
+| ARM64        | `a64`      | ✅ Supported |
+| x64          | `x64`      | ✅ Supported |
+| x86          | `x86`      | ⚠️ Limited (no JDK 25 available) |
+
+#### How Cross-Compilation Works
+
+The build system distinguishes between:
+- **Host Architecture:** The architecture of the compiler binaries (determined by MSVCHOSTARCHTAG)
+- **Target Architecture:** The architecture of the output binaries (controlled by ARCH parameter)
+
+**Host architecture** is auto-detected from the dist folder path and determines which compiler binaries to use:
+- ARM64 host → uses `Hostarm64` compiler binaries
+- x64 host → uses `Hostx64` compiler binaries
+- x86 host → uses `Hostx86` compiler binaries
+
+**Target architecture** is controlled by the `ARCH` parameter:
+- If not specified: defaults to host architecture
+- If specified: overrides detection and targets that architecture
+
+#### Cross-Compilation Examples
+
+```bash
+# On ARM64 host, build for ARM64 (default - no ARCH needed)
+make -k -j4
+# → Host: Hostarm64, Target: a64
+
+# On ARM64 host, cross-compile for x64
+make -k -j4 ARCH=x64
+# → Host: Hostarm64, Target: x64
+
+# On x64 host, cross-compile for ARM64
+make -k -j4 ARCH=a64
+# → Host: Hostx64, Target: a64
+
+# Build JNI tests for specific architecture
+make -k -j1 utf_baselib_jni ARCH=x64
+# → Uses openjdk/25/x64
+```
+
+#### Important Notes
+
+- **JDK Availability:** Each target architecture requires its own JDK installation in `openjdk/25/{arch}`:
+  - `openjdk/25/a64` for ARM64 builds
+  - `openjdk/25/x64` for x64 builds
+  - `openjdk/25/x86` not available (no JDK 25 for x86)
+- **Automatic Skipping:** If JDK not found for target architecture, JNI targets automatically skip
+- **Setup Scripts Optional:** The makefiles configure all compiler paths internally based on ARCH parameter. Setup scripts are optional and only needed for interactive tool use.
+
+#### ARCH Parameter Implementation Details
+
+The ARCH parameter system was designed to support cross-compilation while maintaining backward compatibility with older devenvs. Understanding the implementation is crucial for maintaining the build system.
+
+##### Key Design Principles
+
+1. **Environment Variables Must Be Ignored**
+   - `LIB`, `LIBPATH`, and `INCLUDE` from environment (e.g., setup-env scripts) are completely ignored
+   - Makefiles construct these paths from scratch based on ARCH parameter
+   - `PATH` from environment is preserved but compiler paths are prepended
+
+2. **Host vs Target Architecture Separation**
+   - **Host architecture:** Detected from dist folder path (e.g., `-hostarch-a64`), determines compiler binaries
+   - **Target architecture:** Controlled by ARCH parameter, determines libraries and output architecture
+   - `BL_WIN_ARCH_IS_ARM64` / `BL_WIN_ARCH_IS_X64` flags represent HOST architecture
+   - `ARCH` variable represents TARGET architecture
+
+3. **Command-Line Override Priority**
+   - User-specified `ARCH=x64` on command line takes absolute precedence
+   - Detection logic uses `ARCH ?=` (conditional assignment) to respect command-line values
+   - No early defaults that would prevent command-line override
+
+##### Critical Implementation Files
+
+**[projects/make/common.mk](projects/make/common.mk#L145-L146)**
+```makefile
+# Ignore LIB, LIBPATH, and INCLUDE from environment - makefiles set these explicitly
+LIBPATH  :=
+INCLUDE  :=
+```
+**Why:** Initializes these variables to empty, completely ignoring environment values from setup scripts. Without this, environment variables would be inherited and cause duplicate or incorrect paths.
+
+**[projects/make/platform.mk](projects/make/platform.mk#L23-L67)**
+```makefile
+# Detect host architecture from dist root path
+# devenv7: "dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86"
+# Use ?= for ARCH to allow user override via command line
+
+# Priority 1: devenv7 pattern (explicit -hostarch- prefix)
+ifneq ($(findstring -hostarch-a64,$(DIST_ROOT_DEPS3)),)
+  BL_WIN_ARCH_IS_ARM64 := 1
+  ARCH ?= a64  # ?= allows command-line override
+```
+**Why:** Uses `?=` (conditional assignment) so command-line `ARCH=x64` prevents detection from setting ARCH. Searches for `-hostarch-{arch}` prefix to distinguish host architecture from target architectures in dist folder name.
+
+**[projects/make/toolchain/msvc-default.mk](projects/make/toolchain/msvc-default.mk#L68-L70)**
+```makefile
+# Map ARCH to MSVC-specific directory names
+# Use = (not :=) to ensure evaluation happens when used, not when assigned
+ARCH_LIBPATH = $(if $(filter a64,$(ARCH)),arm64,$(if $(filter x64,$(ARCH)),x64,$(if $(filter x86,$(ARCH)),x86,$(ARCH))))
+ARCH_BINPATH = $(if $(filter a64,$(ARCH)),arm64,$(if $(filter x64,$(ARCH)),x64,$(if $(filter x86,$(ARCH)),x86,$(ARCH))))
+ARCH_REDIST = $(if $(filter a64,$(ARCH)),arm64,$(if $(filter x64,$(ARCH)),x64,$(if $(filter x86,$(ARCH)),x86,$(ARCH))))
+```
+**Why:** Uses `=` (recursive assignment, lazy evaluation) instead of `:=` (immediate assignment). This ensures ARCH_LIBPATH evaluates when *used*, not when *assigned*, so it reflects the current value of ARCH (including command-line overrides). With `:=`, the value would be frozen at makefile parse time before command-line parameters take effect.
+
+**[projects/make/toolchain/msvc-default.mk](projects/make/toolchain/msvc-default.mk#L130-L131)**
+```makefile
+LIBPATH  += $(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)/lib/$(ARCH_LIBPATH)
+LIBPATH  += $(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)/atlmfc/lib/$(ARCH_LIBPATH)
+```
+**Why:** All LIBPATH assignments use `$(ARCH_LIBPATH)` (not `$(ARCH)` directly) to ensure consistent architecture mapping. ARCH_LIBPATH maps `a64→arm64`, `x64→x64`, `x86→x86` to match MSVC directory naming conventions.
+
+##### Common Pitfalls and Solutions
+
+**Problem 1: Environment Variables Contaminating Paths**
+- **Symptom:** Link errors with mixed arm64 and x64 paths, duplicate library paths
+- **Root Cause:** Setup-env scripts set LIB/LIBPATH environment variables, which get inherited by makefiles
+- **Solution:** Initialize `LIBPATH :=` and `INCLUDE :=` to empty in common.mk (line 145-146)
+
+**Problem 2: ARCH Parameter Ignored**
+- **Symptom:** `make ARCH=x64` still builds for detected architecture (a64)
+- **Root Cause:** Detection logic uses `:=` (immediate assignment) instead of `?=` (conditional)
+- **Solution:** Use `ARCH ?= a64` in platform.mk so command-line value takes precedence
+
+**Problem 3: ARCH_LIBPATH Not Updating**
+- **Symptom:** ARCH=x64 but ARCH_LIBPATH still evaluates to arm64
+- **Root Cause:** ARCH_LIBPATH defined with `:=` (immediate evaluation at parse time)
+- **Solution:** Use `=` (lazy evaluation) so ARCH_LIBPATH evaluates when used, reflecting current ARCH value
+
+**Problem 4: Duplicate Paths in LIBPATH**
+- **Symptom:** LIBPATH contains both arm64 and x64 paths
+- **Root Cause:** Makefile included multiple times, or environment contamination
+- **Solution:** Ensure common.mk initializes LIBPATH to empty; use lazy evaluation for ARCH_LIBPATH
+
+##### Testing Cross-Compilation
+
+```bash
+# Test 1: Default build (should use host architecture)
+make -k -j1 utf_baselib
+# Verify: ARCH should match host (e.g., a64 on ARM64 machine)
+
+# Test 2: Cross-compile to different architecture
+make -k -j1 utf_baselib ARCH=x64
+# Verify: ARCH=x64, MSVCHOSTARCHTAG=Hostarm64 (host), paths use x64 libraries
+
+# Test 3: Verify library paths
+make -k -j1 utf_baselib ARCH=x64 2>&1 | grep "lib/x64"
+# Should show x64 library paths, NO arm64 paths
+
+# Test 4: Architecture not available
+make -k -j1 utf_baselib ARCH=x86
+# Should skip or fail gracefully (no x86 libraries available)
+```
+
 ### Cleaning Build Artifacts
 
 **Important:** The standard `make clean` command **does not work** in this project.
@@ -62,7 +223,12 @@ This removes the entire build directory. After cleaning, you can rebuild from sc
 
 ### Windows devenv7 Setup
 
-Before running make commands on Windows, you must load the development environment setup script:
+The makefiles automatically configure all compiler paths (PATH, INCLUDE, LIB, LIBPATH) based on the `ARCH` parameter. **Setup scripts are optional** and only needed for:
+- Adding MSYS2 tools (make, bash, etc.) to PATH
+- Interactive use of compiler tools (cl.exe, link.exe)
+- Running test executables manually
+
+**Optional setup scripts:**
 
 ```cmd
 # For ARM64 architecture
@@ -75,11 +241,10 @@ C:\Users\lazar\swblocks\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86\sc
 C:\Users\lazar\swblocks\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86\scripts\ci\setup-env-x86.bat
 ```
 
-**Why is this required?**
-- The setup script configures PATH to include MSYS2 tools (make, bash, etc.)
-- Sets up MSVC compiler and linker paths
-- Configures JDK paths for JNI builds
-- Sets required environment variables for the build system
+**What these scripts provide:**
+- Adds MSYS2 tools (make, bash, etc.) to PATH
+- Pre-configures MSVC and JDK environment variables for interactive use
+- **Note:** The makefiles do NOT rely on these environment variables - they construct all paths internally based on ARCH parameter
 
 **Example workflow:**
 
@@ -894,11 +1059,13 @@ java -version  # Should work if PATH is correct
 
 ---
 
-**Document Version:** 1.3
-**Last Updated:** 2026-01-21
+**Document Version:** 1.5
+**Last Updated:** 2026-01-22
 **devenv Version:** 7
 
 **Changelog:**
+- v1.5 (2026-01-22): Added comprehensive ARCH parameter implementation details section documenting environment variable handling, lazy evaluation patterns, host vs target architecture separation, and common pitfalls with solutions
+- v1.4 (2026-01-22): Fixed ARCH parameter handling to support cross-compilation - ARCH now overrides auto-detection, documented cross-compilation workflow, clarified that setup scripts are optional
 - v1.3 (2026-01-21): Changed to architecture-specific JDK paths for Windows (openjdk/25/a64, openjdk/25/x64), documented that x86 is not supported
 - v1.2 (2026-01-19): Updated troubleshooting section to reflect all issues as resolved, clarified that PATH export and path normalization are production fixes
 - v1.1 (2026-01-19): Added comprehensive Windows JNI troubleshooting section, documented path normalization fix for mixed separators, detailed JVM loading mechanism and PATH export requirements

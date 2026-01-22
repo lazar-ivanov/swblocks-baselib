@@ -50,6 +50,7 @@ MSVCHOSTARCHTAG     := Hostx64
 else
 MSVCHOSTARCHTAG     := Hostx86
 endif
+$(info Building with MSVCHOSTARCHTAG = $(MSVCHOSTARCHTAG))
 endif
 
 ifeq ($(MSVC),)
@@ -59,21 +60,14 @@ endif
 ##########################################################################
 # Architecture mapping: Convert makefile ARCH values to MSVC directory names
 # a64 -> arm64, x64 -> x64, x86 -> x86
+# Use recursive assignment (=) for lazy evaluation to handle ARCH parameter override
 #
 
-ifeq ($(ARCH),a64)
-ARCH_LIBPATH := arm64
-ARCH_BINPATH := arm64
-ARCH_REDIST := arm64
-else ifeq ($(ARCH),x64)
-ARCH_LIBPATH := x64
-ARCH_BINPATH := x64
-ARCH_REDIST := x64
-else ifeq ($(ARCH),x86)
-ARCH_LIBPATH := x86
-ARCH_BINPATH := x86
-ARCH_REDIST := x86
-endif
+# Map ARCH to MSVC-specific directory names
+# Use = (not :=) to ensure evaluation happens when used, not when assigned
+ARCH_LIBPATH = $(if $(filter a64,$(ARCH)),arm64,$(if $(filter x64,$(ARCH)),x64,$(if $(filter x86,$(ARCH)),x86,$(ARCH))))
+ARCH_BINPATH = $(if $(filter a64,$(ARCH)),arm64,$(if $(filter x64,$(ARCH)),x64,$(if $(filter x86,$(ARCH)),x86,$(ARCH))))
+ARCH_REDIST = $(if $(filter a64,$(ARCH)),arm64,$(if $(filter x64,$(ARCH)),x64,$(if $(filter x86,$(ARCH)),x86,$(ARCH))))
 
 ##########################################################################
 # verify that the req ARCH is available (e.g. x64 vs. x86) by checking if
@@ -145,18 +139,18 @@ LIBPATH  += $(MSVC)/VC/lib/amd64
 endif
 endif
 
-LIBPATH  += $(WINSDKLIBSROOT)/$(ARCH)
+LIBPATH  += $(WINSDKLIBSROOT)/$(ARCH_LIBPATH)
 
 ifeq ($(TOOLCHAIN),vc143)
 LIBPATH  += $(WINSDK10)/Lib/$(WINSDK10VERSIONTAG)/ucrt/$(ARCH_LIBPATH)
 LIBPATH  += $(WINSDK10)/Lib/$(WINSDK10VERSIONTAG)/um/$(ARCH_LIBPATH)
 else ifeq ($(TOOLCHAIN),vc141)
-# LIBPATH  += $(WINSDK10UCRTLIBSROOT)/um/$(ARCH)
-LIBPATH  += $(WINSDK10UCRTLIBSROOT)/ucrt/$(ARCH)
+# LIBPATH  += $(WINSDK10UCRTLIBSROOT)/um/$(ARCH_LIBPATH)
+LIBPATH  += $(WINSDK10UCRTLIBSROOT)/ucrt/$(ARCH_LIBPATH)
 endif
 
 ifeq ($(TOOLCHAIN),vc14)
-LIBPATH  += $(WINSDK10UCRTLIBSROOT)/ucrt/$(ARCH)
+LIBPATH  += $(WINSDK10UCRTLIBSROOT)/ucrt/$(ARCH_LIBPATH)
 endif
 
 ##########################################################################
@@ -343,7 +337,8 @@ PATHCONV = $(subst $(SPACE),\;,$(strip $(foreach d,$(1),\
     $(shell cd "$(d)" >/dev/null 2>&1 && pwd -W || echo "$(d)"))))
 
 # link binaries from objects
-LINK.o = LIB="$(call PATHCONV,$(LIBPATH))" $(LD) $(LDFLAGS) $(TARGET_ARCH)
+# Unset LIB from environment first, then set to our value (ARCH-specific paths)
+LINK.o = env -u LIB -u LIBPATH LIB="$(call PATHCONV,$(LIBPATH))" $(LD) $(LDFLAGS) $(TARGET_ARCH)
 LINK.$(TOOLCHAIN) = \
     $(LINK.o) $^ $(LOADLIBES) $(OUTPUT_OPTION) $(LDLIBS:%=$(LIBPRE)%$(LIBEXT)) $(LDLIBSVERBATIM:%=%$(LIBEXT))
 %$(EXEEXT): OUTPUT_OPTION=-out:$@ -pdb:$(basename $@)$(DBGEXT)

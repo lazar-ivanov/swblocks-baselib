@@ -142,8 +142,9 @@ EMPTY    :=
 SPACE    := $(EMPTY) $(EMPTY)
 
 # common variables and flags
-LIBPATH  := $(subst $(if $(findstring ;,$(LIBPATH)),;,:), ,$(LIBPATH))
-INCLUDE  := $(subst $(if $(findstring ;,$(INCLUDE)),;,:), ,$(INCLUDE))
+# Ignore LIB, LIBPATH, and INCLUDE from environment - makefiles set these explicitly
+LIBPATH  :=
+INCLUDE  :=
 INCLUDE  += $(SRCDIR)/versioning
 INCLUDE  += $(SRCDIR)/include
 INCLUDE  += $(SRCDIR)/utests/include

@@ -3,7 +3,7 @@ ifeq ($(OS),Windows_NT)
 endif
 
 # simple platform detection
-ARCH           ?= x64
+# Note: ARCH is set below in platform-specific detection logic
 PLAT            = $(OS)-$(ARCH)-$(TOOLCHAIN)-$(VARIANT)
 NONSTDARCH     := x86_64-linux-2.6-libc6
 # separate variable for external dependencies
@@ -20,25 +20,50 @@ ifeq (win, $(findstring win, $(OS)))
   # environment variables report AMD64 instead of ARM64. Use fallback detection
   # from the dist root path which contains the architecture (e.g., "-a64").
 
-  # Detect from dist root path (e.g., "dist-devenv7-windows-a64")
-  ifneq ($(findstring -a64,$(DIST_ROOT_DEPS3)),)
+  # Detect host architecture from dist root path
+  # devenv7: "dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86"
+  # devenv2-6: "dist-devenv4-windows-Hostx64-x64-only" or simpler patterns
+  # Use ?= for ARCH to allow user override via command line (e.g., make ARCH=x64)
+
+  # Priority 1: devenv7 pattern (explicit -hostarch- prefix)
+  ifneq ($(findstring -hostarch-a64,$(DIST_ROOT_DEPS3)),)
     BL_WIN_ARCH_IS_ARM64 := 1
-    ARCH := a64
-  else ifneq ($(findstring arm64,$(DIST_ROOT_DEPS3)),)
+    ARCH ?= a64
+  else ifneq ($(findstring -hostarch-arm64,$(DIST_ROOT_DEPS3)),)
     BL_WIN_ARCH_IS_ARM64 := 1
-    ARCH := a64
-  else ifneq ($(findstring -x64,$(DIST_ROOT_DEPS3)),)
+    ARCH ?= a64
+  else ifneq ($(findstring -hostarch-x64,$(DIST_ROOT_DEPS3)),)
     BL_WIN_ARCH_IS_X64 := 1
-    ARCH := x64
-  else ifneq ($(findstring amd64,$(DIST_ROOT_DEPS3)),)
+    ARCH ?= x64
+  else ifneq ($(findstring -hostarch-amd64,$(DIST_ROOT_DEPS3)),)
     BL_WIN_ARCH_IS_X64 := 1
-    ARCH := x64
-  else ifneq ($(findstring -x86,$(DIST_ROOT_DEPS3)),)
-    ARCH := x86
+    ARCH ?= x64
+  else ifneq ($(findstring -hostarch-x86,$(DIST_ROOT_DEPS3)),)
+    ARCH ?= x86
   else
-    # Default to x64 if path doesn't contain architecture markers
-    BL_WIN_ARCH_IS_X64 := 1
-    ARCH := x64
+    # Priority 2: Fallback to devenv2-6 detection (no -hostarch- prefix)
+    ifneq ($(findstring Hostx64,$(DIST_ROOT_DEPS3)),)
+      BL_WIN_ARCH_IS_X64 := 1
+      ARCH ?= x64
+    else ifneq ($(findstring -a64,$(DIST_ROOT_DEPS3)),)
+      BL_WIN_ARCH_IS_ARM64 := 1
+      ARCH ?= a64
+    else ifneq ($(findstring arm64,$(DIST_ROOT_DEPS3)),)
+      BL_WIN_ARCH_IS_ARM64 := 1
+      ARCH ?= a64
+    else ifneq ($(findstring -x64,$(DIST_ROOT_DEPS3)),)
+      BL_WIN_ARCH_IS_X64 := 1
+      ARCH ?= x64
+    else ifneq ($(findstring amd64,$(DIST_ROOT_DEPS3)),)
+      BL_WIN_ARCH_IS_X64 := 1
+      ARCH ?= x64
+    else ifneq ($(findstring -x86,$(DIST_ROOT_DEPS3)),)
+      ARCH ?= x86
+    else
+      # Priority 3: Default to x64 if no architecture markers found
+      BL_WIN_ARCH_IS_X64 := 1
+      ARCH ?= x64
+    endif
   endif
 
   ifeq ($(ARCH),x86)
@@ -281,6 +306,9 @@ else
       --define "_build_id $(BUILD_ID)" \
       --define "_release $(OS)"
   endif
+
+  # Default ARCH to x64 if not set by platform detection above
+  ARCH ?= x64
 
   TRUNCATE_COMMAND := echo -n >
 endif
