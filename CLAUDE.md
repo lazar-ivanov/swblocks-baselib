@@ -59,7 +59,7 @@ The build system distinguishes between:
 - **Host Architecture:** The architecture of the compiler binaries (determined by MSVCHOSTARCHTAG)
 - **Target Architecture:** The architecture of the output binaries (controlled by ARCH parameter)
 
-**Host architecture** is auto-detected from the dist folder path and determines which compiler binaries to use:
+**Host architecture** is auto-detected using Windows environment variables (`PROCESSOR_ARCHITECTURE` and `PROCESSOR_ARCHITEW6432`) and determines which compiler binaries to use:
 - ARM64 host → uses `Hostarm64` compiler binaries
 - x64 host → uses `Hostx64` compiler binaries
 - x86 host → uses `Hostx86` compiler binaries
@@ -109,10 +109,33 @@ The ARCH parameter system was designed to support cross-compilation while mainta
    - `PATH` from environment is preserved but compiler paths are prepended
 
 2. **Host vs Target Architecture Separation**
-   - **Host architecture:** Detected from dist folder path (e.g., `-hostarch-a64`), determines compiler binaries
+   - **Host architecture:** Detected using Windows environment variables (`PROCESSOR_ARCHITECTURE` and `PROCESSOR_ARCHITEW6432`), determines compiler binaries
    - **Target architecture:** Controlled by ARCH parameter, determines libraries and output architecture
    - `BL_WIN_ARCH_IS_ARM64` / `BL_WIN_ARCH_IS_X64` flags represent HOST architecture
    - `ARCH` variable represents TARGET architecture
+
+4. **Host Architecture Detection (Windows)**
+
+   The build system uses Windows environment variables to reliably detect the host architecture. Detection works across all environments including cmd.exe, PowerShell, and MSYS2 shells.
+
+   | Host OS | Process        | PROCESSOR_ARCHITECTURE | PROCESSOR_ARCHITEW6432 | PROCESSOR_IDENTIFIER |
+   |---------|----------------|------------------------|------------------------|----------------------|
+   | x86     | Native x86     | x86                    | (Not Set)              | x86 Family...        |
+   | x64     | Native x64     | AMD64                  | (Not Set)              | Intel64 Family...    |
+   | x64     | x86 WOW64      | x86                    | AMD64                  | Intel64 Family...    |
+   | ARM64   | Native ARM64   | ARM64                  | (Not Set)              | ARMv8 (64-bit)...    |
+   | ARM64   | x86 Emulation  | x86                    | ARM64                  | ARMv8 (64-bit)...    |
+   | ARM64   | x64 Emulation  | AMD64                  | ARM64 or (Not Set)*    | ARMv8 (64-bit)...    |
+
+   *Note: MSYS2 x64 binaries (including make.exe) running on ARM64 don't set `PROCESSOR_ARCHITEW6432`, but `PROCESSOR_IDENTIFIER` reliably contains "ARMv8" or "AArch64".
+
+   **Detection Algorithm:**
+   1. If `PROCESSOR_IDENTIFIER` contains "ARMv8" or "AArch64" → ARM64 host (works in all environments)
+   2. Else if `PROCESSOR_ARCHITECTURE=ARM64` → ARM64 host (native ARM64 process in cmd.exe)
+   3. Else if `PROCESSOR_ARCHITEW6432=ARM64` → ARM64 host (emulated x86 process in cmd.exe)
+   4. Else if `PROCESSOR_ARCHITEW6432=AMD64` → x64 host (x86 WOW64)
+   5. Else if `PROCESSOR_ARCHITECTURE=AMD64` → x64 host (native x64)
+   6. Else → x86 host (native x86)
 
 3. **Command-Line Override Priority**
    - User-specified `ARCH=x64` on command line takes absolute precedence
@@ -129,18 +152,46 @@ INCLUDE  :=
 ```
 **Why:** Initializes these variables to empty, completely ignoring environment values from setup scripts. Without this, environment variables would be inherited and cause duplicate or incorrect paths.
 
-**[projects/make/platform.mk](projects/make/platform.mk#L23-L67)**
+**[projects/make/platform.mk](projects/make/platform.mk#L18-L67)**
 ```makefile
-# Detect host architecture from dist root path
-# devenv7: "dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86"
-# Use ?= for ARCH to allow user override via command line
+# Detect host architecture using Windows environment variables
+# PROCESSOR_IDENTIFIER: CPU identification string (contains "ARMv8" or "AArch64" on ARM64)
+# PROCESSOR_ARCHITECTURE: Architecture of the current process
+# PROCESSOR_ARCHITEW6432: Set when process is emulated, contains real host architecture
 
-# Priority 1: devenv7 pattern (explicit -hostarch- prefix)
-ifneq ($(findstring -hostarch-a64,$(DIST_ROOT_DEPS3)),)
+# Priority 1: Check PROCESSOR_IDENTIFIER for ARM64 hardware (works in all environments including MSYS2)
+ifneq ($(findstring ARMv8,$(PROCESSOR_IDENTIFIER)),)
   BL_WIN_ARCH_IS_ARM64 := 1
-  ARCH ?= a64  # ?= allows command-line override
+  ARCH ?= a64
+else ifneq ($(findstring AArch64,$(PROCESSOR_IDENTIFIER)),)
+  BL_WIN_ARCH_IS_ARM64 := 1
+  ARCH ?= a64
+else
+  # Priority 2: Check if PROCESSOR_ARCHITECTURE is ARM64 (native ARM64 process in cmd.exe)
+  ifeq ($(PROCESSOR_ARCHITECTURE),ARM64)
+    BL_WIN_ARCH_IS_ARM64 := 1
+    ARCH ?= a64
+  else
+    # Priority 3: Check PROCESSOR_ARCHITEW6432 for emulated processes (cmd.exe only)
+    ifeq ($(PROCESSOR_ARCHITEW6432),ARM64)
+      BL_WIN_ARCH_IS_ARM64 := 1
+      ARCH ?= a64
+    else ifeq ($(PROCESSOR_ARCHITEW6432),AMD64)
+      BL_WIN_ARCH_IS_X64 := 1
+      ARCH ?= x64
+    else
+      # Priority 4: Native process, use PROCESSOR_ARCHITECTURE directly
+      ifeq ($(PROCESSOR_ARCHITECTURE),AMD64)
+        BL_WIN_ARCH_IS_X64 := 1
+        ARCH ?= x64
+      else
+        ARCH ?= x86
+      endif
+    endif
+  endif
+endif
 ```
-**Why:** Uses `?=` (conditional assignment) so command-line `ARCH=x64` prevents detection from setting ARCH. Searches for `-hostarch-{arch}` prefix to distinguish host architecture from target architectures in dist folder name.
+**Why:** Uses Windows environment variables for reliable host architecture detection across all environments. `PROCESSOR_IDENTIFIER` is checked first because it works in MSYS2 (where x64 make.exe runs under emulation and doesn't set `PROCESSOR_ARCHITEW6432`). For native cmd.exe processes, `PROCESSOR_ARCHITECTURE` and `PROCESSOR_ARCHITEW6432` provide the architecture info. Uses `?=` (conditional assignment) so command-line `ARCH=x64` takes precedence over detection.
 
 **[projects/make/toolchain/msvc-default.mk](projects/make/toolchain/msvc-default.mk#L68-L70)**
 ```makefile
@@ -1059,11 +1110,12 @@ java -version  # Should work if PATH is correct
 
 ---
 
-**Document Version:** 1.5
-**Last Updated:** 2026-01-22
+**Document Version:** 1.6
+**Last Updated:** 2026-01-23
 **devenv Version:** 7
 
 **Changelog:**
+- v1.6 (2026-01-23): Changed host architecture detection to use PROCESSOR_IDENTIFIER (first priority), PROCESSOR_ARCHITECTURE, and PROCESSOR_ARCHITEW6432 environment variables. This provides robust detection across all environments including cmd.exe, PowerShell, and MSYS2 shells. PROCESSOR_IDENTIFIER check is critical for MSYS2 x64 binaries running under emulation on ARM64 where PROCESSOR_ARCHITEW6432 is not set.
 - v1.5 (2026-01-22): Added comprehensive ARCH parameter implementation details section documenting environment variable handling, lazy evaluation patterns, host vs target architecture separation, and common pitfalls with solutions
 - v1.4 (2026-01-22): Fixed ARCH parameter handling to support cross-compilation - ARCH now overrides auto-detection, documented cross-compilation workflow, clarified that setup scripts are optional
 - v1.3 (2026-01-21): Changed to architecture-specific JDK paths for Windows (openjdk/25/a64, openjdk/25/x64), documented that x86 is not supported

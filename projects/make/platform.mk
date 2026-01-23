@@ -15,54 +15,57 @@ ifeq (win, $(findstring win, $(OS)))
   NONSTDARCH   := x86_64-nt-6.0
   NONSTDARCH32 := ia32-nt-4.0
 
-  # Detect ARM64 architecture
-  # When make.exe is an x64 binary running under emulation on ARM64 hardware,
-  # environment variables report AMD64 instead of ARM64. Use fallback detection
-  # from the dist root path which contains the architecture (e.g., "-a64").
-
-  # Detect host architecture from dist root path
-  # devenv7: "dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86"
-  # devenv2-6: "dist-devenv4-windows-Hostx64-x64-only" or simpler patterns
+  # Detect host architecture using Windows environment variables
+  # PROCESSOR_IDENTIFIER: CPU identification string (contains "ARMv8" or "AArch64" on ARM64)
+  # PROCESSOR_ARCHITECTURE: Architecture of the current process
+  # PROCESSOR_ARCHITEW6432: Set when process is emulated, contains real host architecture
+  #
+  # Detection table:
+  # | Host OS | Process        | PROCESSOR_ARCHITECTURE | PROCESSOR_ARCHITEW6432 | PROCESSOR_IDENTIFIER |
+  # |---------|----------------|------------------------|------------------------|----------------------|
+  # | x86     | Native x86     | x86                    | (Not Set)              | x86 Family...        |
+  # | x64     | Native x64     | AMD64                  | (Not Set)              | Intel64 Family...    |
+  # | x64     | x86 WOW64      | x86                    | AMD64                  | Intel64 Family...    |
+  # | ARM64   | Native ARM64   | ARM64                  | (Not Set)              | ARMv8 (64-bit)...    |
+  # | ARM64   | x86 Emulation  | x86                    | ARM64                  | ARMv8 (64-bit)...    |
+  # | ARM64   | x64 Emulation  | AMD64                  | ARM64 or (Not Set)*    | ARMv8 (64-bit)...    |
+  #
+  # *Note: MSYS2 x64 binaries on ARM64 don't set PROCESSOR_ARCHITEW6432, so we rely on PROCESSOR_IDENTIFIER
+  #
   # Use ?= for ARCH to allow user override via command line (e.g., make ARCH=x64)
 
-  # Priority 1: devenv7 pattern (explicit -hostarch- prefix)
-  ifneq ($(findstring -hostarch-a64,$(DIST_ROOT_DEPS3)),)
+  # Priority 1: Check PROCESSOR_IDENTIFIER for ARM64 hardware (works in all environments including MSYS2)
+  ifneq ($(findstring ARMv8,$(PROCESSOR_IDENTIFIER)),)
     BL_WIN_ARCH_IS_ARM64 := 1
     ARCH ?= a64
-  else ifneq ($(findstring -hostarch-arm64,$(DIST_ROOT_DEPS3)),)
+  else ifneq ($(findstring AArch64,$(PROCESSOR_IDENTIFIER)),)
     BL_WIN_ARCH_IS_ARM64 := 1
     ARCH ?= a64
-  else ifneq ($(findstring -hostarch-x64,$(DIST_ROOT_DEPS3)),)
-    BL_WIN_ARCH_IS_X64 := 1
-    ARCH ?= x64
-  else ifneq ($(findstring -hostarch-amd64,$(DIST_ROOT_DEPS3)),)
-    BL_WIN_ARCH_IS_X64 := 1
-    ARCH ?= x64
-  else ifneq ($(findstring -hostarch-x86,$(DIST_ROOT_DEPS3)),)
-    ARCH ?= x86
   else
-    # Priority 2: Fallback to devenv2-6 detection (no -hostarch- prefix)
-    ifneq ($(findstring Hostx64,$(DIST_ROOT_DEPS3)),)
-      BL_WIN_ARCH_IS_X64 := 1
-      ARCH ?= x64
-    else ifneq ($(findstring -a64,$(DIST_ROOT_DEPS3)),)
+    # Priority 2: Check if PROCESSOR_ARCHITECTURE is ARM64 (native ARM64 process in cmd.exe)
+    ifeq ($(PROCESSOR_ARCHITECTURE),ARM64)
       BL_WIN_ARCH_IS_ARM64 := 1
       ARCH ?= a64
-    else ifneq ($(findstring arm64,$(DIST_ROOT_DEPS3)),)
-      BL_WIN_ARCH_IS_ARM64 := 1
-      ARCH ?= a64
-    else ifneq ($(findstring -x64,$(DIST_ROOT_DEPS3)),)
-      BL_WIN_ARCH_IS_X64 := 1
-      ARCH ?= x64
-    else ifneq ($(findstring amd64,$(DIST_ROOT_DEPS3)),)
-      BL_WIN_ARCH_IS_X64 := 1
-      ARCH ?= x64
-    else ifneq ($(findstring -x86,$(DIST_ROOT_DEPS3)),)
-      ARCH ?= x86
     else
-      # Priority 3: Default to x64 if no architecture markers found
-      BL_WIN_ARCH_IS_X64 := 1
-      ARCH ?= x64
+      # Priority 3: Check PROCESSOR_ARCHITEW6432 for emulated processes (cmd.exe only)
+      ifeq ($(PROCESSOR_ARCHITEW6432),ARM64)
+        # x86 or x64 process emulated on ARM64 host
+        BL_WIN_ARCH_IS_ARM64 := 1
+        ARCH ?= a64
+      else ifeq ($(PROCESSOR_ARCHITEW6432),AMD64)
+        # x86 process on x64 host (WOW64)
+        BL_WIN_ARCH_IS_X64 := 1
+        ARCH ?= x64
+      else
+        # Priority 4: Native process, use PROCESSOR_ARCHITECTURE directly
+        ifeq ($(PROCESSOR_ARCHITECTURE),AMD64)
+          BL_WIN_ARCH_IS_X64 := 1
+          ARCH ?= x64
+        else
+          # x86 native
+          ARCH ?= x86
+        endif
+      endif
     endif
   endif
 
