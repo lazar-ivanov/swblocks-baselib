@@ -22,9 +22,13 @@ REM This script builds OpenSSL libraries for Windows with MSVC toolchain
 REM Both debug and release variants are built automatically
 REM
 REM Usage:
-REM   build-openssl-windows.bat [options]
+REM   build-openssl-windows.bat -hostarch <host-arch> [options]
 REM
 REM Options:
+REM   -hostarch <architecture> Host architecture where build runs (REQUIRED)
+REM                            Must be: a64, x64, or x86
+REM                            Tests are skipped for x64/a64 targets when host is x86
+REM
 REM   -arch <architecture>     Target architecture: a64, x64, or x86
 REM                            Note: arm64 accepted as alias for a64
 REM                            Default: a64
@@ -53,10 +57,10 @@ REM
 REM   -help                    Show this help message
 REM
 REM Examples:
-REM   build-openssl-windows.bat
-REM   build-openssl-windows.bat -arch x64
-REM   build-openssl-windows.bat -arch arm64 -version 3.5.4
-REM   build-openssl-windows.bat -dist-root C:\mydev\toolchain -skip-tests
+REM   build-openssl-windows.bat -hostarch a64
+REM   build-openssl-windows.bat -hostarch a64 -arch x64
+REM   build-openssl-windows.bat -hostarch x86 -arch x64 -version 3.5.4
+REM   build-openssl-windows.bat -hostarch a64 -dist-root C:\mydev\toolchain -skip-tests
 REM
 REM ================================================================================
 
@@ -69,6 +73,7 @@ set "TOOLCHAIN_NAME=vc143"
 set "VS_VERSION=2022"
 set "DIST_ROOT=%USERPROFILE%\swblocks\dist-devenv7-windows-a64"
 set "DEVENV_TAG=devenv7"
+set "HOST_ARCH="
 set "SKIP_TESTS="
 set "SKIP_VERIFICATION="
 set "NO_CLEANUP="
@@ -109,6 +114,12 @@ if /i "%~1"=="-dist-root" (
 )
 if /i "%~1"=="-devenv-tag" (
     set "DEVENV_TAG=%~2"
+    shift
+    shift
+    goto parse_args
+)
+if /i "%~1"=="-hostarch" (
+    set "HOST_ARCH=%~2"
     shift
     shift
     goto parse_args
@@ -173,11 +184,39 @@ if "%ARCH_LOWER%"=="a64" (
     goto error
 )
 
+REM Validate required -hostarch parameter
+if "%HOST_ARCH%"=="" (
+    echo ERROR: Required parameter -hostarch not specified
+    echo Usage: %~n0 -hostarch ^<a64^|x64^|x86^> -arch ^<target-arch^> [other options]
+    echo.
+    echo The -hostarch parameter specifies the host architecture where the build runs.
+    echo Tests are automatically skipped for x64/a64 targets when host is x86.
+    goto error
+)
+
+REM Normalize and validate host architecture
+set "HOST_ARCH_LOWER=%HOST_ARCH%"
+if /i "%HOST_ARCH%"=="ARM64" set "HOST_ARCH_LOWER=a64"
+if /i "%HOST_ARCH%"=="arm64" set "HOST_ARCH_LOWER=a64"
+if /i "%HOST_ARCH%"=="A64" set "HOST_ARCH_LOWER=a64"
+if /i "%HOST_ARCH%"=="X64" set "HOST_ARCH_LOWER=x64"
+if /i "%HOST_ARCH%"=="AMD64" set "HOST_ARCH_LOWER=x64"
+if /i "%HOST_ARCH%"=="amd64" set "HOST_ARCH_LOWER=x64"
+if /i "%HOST_ARCH%"=="X86" set "HOST_ARCH_LOWER=x86"
+if /i "%HOST_ARCH%"=="x86" set "HOST_ARCH_LOWER=x86"
+
+if /i not "%HOST_ARCH_LOWER%"=="a64" if /i not "%HOST_ARCH_LOWER%"=="x64" if /i not "%HOST_ARCH_LOWER%"=="x86" (
+    echo ERROR: Invalid host architecture '%HOST_ARCH%'. Must be a64, x64, or x86
+    goto error
+)
+set "HOST_ARCH=%HOST_ARCH_LOWER%"
+
 REM Display configuration
 echo ================================================================================
 echo OpenSSL Build Configuration
 echo ================================================================================
-echo Architecture:       %ARCH%
+echo Host Architecture:  %HOST_ARCH%
+echo Target Architecture: %ARCH%
 echo OpenSSL Version:    %OPENSSL_VERSION%
 echo Toolchain:          %TOOLCHAIN_NAME%
 echo VS Version:         %VS_VERSION%
@@ -559,6 +598,22 @@ if errorlevel 1 (
 )
 
 echo Build completed successfully
+
+REM Skip tests for 64-bit targets when host is x86 (cannot execute 64-bit binaries)
+REM x86 32-bit Windows cannot run x64 or ARM64 binaries - there is no emulation layer
+REM Additionally, mixed-arch I/O pipe issues between x86 Perl and 64-bit test binaries cause failures
+if "%HOST_ARCH%"=="x86" (
+    if "%ARCH%"=="a64" (
+        echo.
+        echo Skipping tests: x86 host cannot execute ARM64 binaries
+        set "SKIP_TESTS=1"
+    )
+    if "%ARCH%"=="x64" (
+        echo.
+        echo Skipping tests: x86 host cannot execute x64 binaries
+        set "SKIP_TESTS=1"
+    )
+)
 
 REM Test OpenSSL (unless skipped)
 if "%SKIP_TESTS%"=="1" (

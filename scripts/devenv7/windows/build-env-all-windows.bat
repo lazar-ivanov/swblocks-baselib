@@ -431,6 +431,7 @@ if not "!SKIP_OPENSSL!"=="1" (
         if "%SKIP_TESTS%"=="1" set "TEST_ARGS=-skip-tests"
 
         call "%SCRIPT_DIR%build-openssl-windows.bat" ^
+            -hostarch "%HOST_ARCH%" ^
             -arch %%A ^
             -version "%OPENSSL_VERSION%" ^
             -toolchain "%TOOLCHAIN_NAME%" ^
