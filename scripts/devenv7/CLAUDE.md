@@ -658,83 +658,109 @@ The `build-openssl-windows.bat` script requires a `-hostarch` parameter that spe
 
 3. **Explicit is Better Than Implicit**: Making `-hostarch` a required parameter ensures the build system always has accurate information about the execution environment.
 
-#### Why Tests Are Skipped for x64/a64 Targets on x86 Host
+#### ARM64 Perl Compatibility Fix
 
-When the host architecture is x86 (32-bit) and the target is x64 or a64 (64-bit), tests **must be skipped** because:
+##### Problem Statement
 
-**1. Binary Execution Impossibility:**
-- x86 32-bit Windows cannot execute 64-bit binaries natively
-- Unlike x64 Windows (which can run x86 via WoW64) or ARM64 Windows (which can emulate x64/x86), x86 Windows has no mechanism to run 64-bit code
-- Attempting to run x64/a64 test binaries on x86 host results in immediate failure
+OpenSSL tests can fail or hang on Windows ARM64 systems due to deadlocks in Perl's fork() emulation when Perl runs under ARM64 emulation.
 
-**2. Mixed-Architecture I/O Pipe Issues:**
-Even in scenarios where the host *could* theoretically execute the binaries (e.g., ARM64 host running x64 via emulation), there are significant issues with Perl's test harness:
+**Root Cause:**
+- Strawberry Perl is available only as x86 or x64 binaries (no native ARM64 version)
+- On ARM64 Windows, x86/x64 Perl runs under emulation (WoW64 for x86, x64 emulation layer for x64)
+- Perl emulates Unix `fork()` using Windows threads
+- When emulated Perl spawns test processes, IPC/threading operations can deadlock in the ARM64 translation layer (Prism)
+- Modern Windows 10/11 process creation optimizations interact poorly with ARM64 emulation
+- Affects tests with extensive I/O (Poly1305, ChaCha20, SSL configurations)
 
-- **Perl Process Architecture**: The Strawberry Perl installation matches the host architecture. On an x86 host, Perl is a 32-bit process.
-- **Test Binary Architecture**: OpenSSL test binaries match the target architecture. For x64/a64 targets, these are 64-bit binaries.
-- **Pipe Handle Inheritance Bug**: Windows on ARM has known issues with handle duplication and pipe inheritance between x86 (WoW64) and native ARM64/x64 processes.
-- **The "Can't spawn" Error**: When Perl attempts to spawn a 64-bit test binary and capture its output via pipes, the handle negotiation can fail due to 32-bit vs 64-bit handle alignment differences. This manifests as `Can't spawn "..." - No such file or directory` errors.
+**Why This Occurs:**
+The issue happens because Strawberry Perl is running under emulation, not because of any native ARM64 code. If native ARM64 Perl existed (it doesn't for Strawberry Perl), this issue would not occur.
 
-**3. Specific Test Failures Observed:**
-Tests involving Poly1305, ChaCha20, and complex SSL configurations fail because:
-- These tests produce extensive debug output
-- The pipe buffer negotiation fails when the 32-bit parent (Perl) tries to set up I/O for the 64-bit child
-- Simpler tests (like AES encryption) may pass because they produce minimal output
+**Solution:**
+The build script automatically detects ARM64 processor hardware and applies Windows 8 compatibility mode to Perl executables. This prevents the deadlock by disabling modern process creation optimizations that conflict with ARM64 emulation.
 
-#### Test Skipping Logic
+##### Automatic Detection and Fix
 
-| Host Arch | Target Arch | Tests Run? | Reason |
+When building OpenSSL, the script detects the real processor architecture using a 4-priority mechanism:
+
+1. **Priority 1a:** `PROCESSOR_IDENTIFIER` contains "ARMv8" (checked separately, most reliable)
+1. **Priority 1b:** `PROCESSOR_IDENTIFIER` contains "AArch64" (checked separately)
+2. **Priority 2:** `PROCESSOR_ARCHITECTURE == "ARM64"` (direct native process check)
+3. **Priority 3:** `PROCESSOR_ARCHITEW6432 == "ARM64"` (WoW64 emulation detection)
+4. **Priority 4:** Fallback to x64 or x86 based on `PROCESSOR_ARCHITECTURE`
+
+**Important:** ARMv8 and AArch64 are checked as separate substring matches, not as a single combined string.
+
+If ARM64 is detected, the script automatically applies Windows 8 compatibility mode to Perl executables. The script also dynamically detects versioned Perl executables (e.g., perl5.32.1.exe) using wildcard patterns.
+
+**Critical:** If registry commands fail, the build script will abort with an error. This is essential because OpenSSL tests will hang without the compatibility mode fix.
+
+##### Technical Details
+
+**Why Win8RTM Compatibility Mode Works:**
+- Disables process creation optimizations introduced after Windows 8
+- Forces simpler, more stable code paths for inter-process communication
+- Reduces complexity in ARM64 environment interactions
+- Has minimal performance impact (microseconds per process creation)
+
+**Registry Configuration:**
+- **Path:** `HKCU\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers`
+- **Scope:** Per-user (no admin privileges required)
+- **Persistence:** Setting remains after build completes (no cleanup needed)
+- **Effect:** Windows automatically applies shim when launching Perl executables
+
+**Detection Logic:**
+- Runs independently of `-hostarch` parameter
+- `-hostarch` indicates build tool architecture (what compiler/Perl binaries are used)
+- Processor detection indicates CPU hardware (what the physical processor can execute)
+
+##### Verification
+
+Check if compatibility mode is applied:
+
+```batch
+reg query "HKCU\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers" | findstr perl
+```
+
+Expected output:
+```
+...\perl\bin\perl.exe    REG_SZ    ~ WIN8RTM
+...\perl\bin\perl5.32.1.exe    REG_SZ    ~ WIN8RTM
+```
+
+##### Manual Removal (if needed)
+
+To remove compatibility mode:
+
+```batch
+reg delete "HKCU\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers" ^
+    /v "C:\path\to\strawberry-perl\5.32.1.1\default\perl\bin\perl.exe" /f
+
+reg delete "HKCU\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers" ^
+    /v "C:\path\to\strawberry-perl\5.32.1.1\default\perl\bin\perl5.32.1.exe" /f
+```
+
+##### Impact on Test Execution
+
+With this fix in place, test execution depends on the **processor architecture**, not the hostarch parameter:
+
+| Processor | Target Arch | Tests Run? | Reason |
 |-----------|-------------|------------|--------|
-| x86 | x86 | ✅ Yes | Native execution |
-| x86 | x64 | ❌ Skip | Cannot execute 64-bit binaries |
-| x86 | a64 | ❌ Skip | Cannot execute 64-bit binaries |
+| ARM64 | x86 | ✅ Yes | Win8 compat mode applied, x86 via WoW64 |
+| ARM64 | x64 | ✅ Yes | Win8 compat mode applied, x64 via emulation |
+| ARM64 | a64 | ✅ Yes | Win8 compat mode applied, native ARM64 |
+| x64 | x86 | ✅ Yes | x86 via WoW64 |
 | x64 | x64 | ✅ Yes | Native execution |
-| x64 | x86 | ✅ Yes | WoW64 emulation works |
-| x64 | a64 | ✅ Yes* | Requires compatible CPU |
-| a64 | a64 | ✅ Yes | Native execution |
-| a64 | x64 | ✅ Yes | x64 emulation works |
-| a64 | x86 | ✅ Yes | x86 emulation works |
+| x64 | a64 | ❌ Skip | x64 cannot execute ARM64 binaries |
+| x86 | x86 | ✅ Yes | Native execution |
+| x86 | x64 | ❌ Skip | x86 cannot execute x64 binaries |
+| x86 | a64 | ❌ Skip | x86 cannot execute ARM64 binaries |
 
-*Note: x64 host building for a64 is rare and would only work if the CPU supports ARM64 (not typical).
-
-#### Usage Examples
-
-**Direct script invocation (required parameter):**
-```batch
-REM Will fail - missing required -hostarch
-build-openssl-windows.bat -arch x64
-
-REM Correct usage
-build-openssl-windows.bat -hostarch a64 -arch x64 -version 3.5.4 ...
-
-REM Cross-compilation from x86 host (tests automatically skipped for x64)
-build-openssl-windows.bat -hostarch x86 -arch x64 -version 3.5.4 ...
-```
-
-**Via orchestration script (automatically propagated):**
-```batch
-REM -hostarch is auto-detected or specified, and passed to all child builds
-build-env-all-windows.bat -hostarch x86 -targets a64,x64,x86
-
-REM Output will show:
-REM   Building OpenSSL for a64... Skipping tests: x86 host cannot execute ARM64 binaries
-REM   Building OpenSSL for x64... Skipping tests: x86 host cannot execute x64 binaries
-REM   Building OpenSSL for x86... Running tests...
-```
-
-#### Technical Background
-
-The root cause of this issue stems from how Windows handles cross-architecture process creation and I/O:
-
-1. **CreateProcess API Limitations**: When a 32-bit process calls CreateProcess for a 64-bit executable, Windows must perform complex handle translation between the WoW64 environment and native 64-bit kernel space.
-
-2. **Pipe Handle Inheritance**: Perl's test harness uses anonymous pipes for capturing stdout/stderr from test processes. These pipe handles are created in 32-bit address space but must be inherited by a 64-bit child process.
-
-3. **Handle Table Translation**: The Windows kernel must translate 32-bit handles to 64-bit equivalents during process creation. This translation has edge cases that can cause handles to appear invalid to the child process.
-
-4. **STATUS_ILLEGAL_INSTRUCTION**: In some cases, the 64-bit test binary may crash immediately with an illegal instruction if the stack setup or initial thread context is corrupted during the mixed-mode transition.
-
-The safest solution is to skip tests entirely when the host architecture cannot natively execute the target binaries, which is the case for all x86 host + 64-bit target combinations.
+**Key Points:**
+- **ARM64 processor:** All tests run (Win8 compat mode prevents Perl deadlock)
+- **x64 processor:** Skip only a64 targets
+- **x86 processor:** Skip x64 and a64 targets
+- Test skipping based on **processor capability**, not hostarch value
+- Strawberry Perl architecture varies by dist folder (x86 or x64), always runs under emulation on ARM64
 
 ---
 

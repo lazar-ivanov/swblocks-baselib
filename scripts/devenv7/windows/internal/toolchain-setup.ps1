@@ -309,9 +309,9 @@ function New-EnvironmentInitScripts {
 
 REM Initialize the important environment roots
 
-set DIST_ROOT_DEPS1=$distRootVar
-set DIST_ROOT_DEPS2=$distRootVar
-set DIST_ROOT_DEPS3=$distRootVar
+set "DIST_ROOT_DEPS1=$distRootVar"
+set "DIST_ROOT_DEPS2=$distRootVar"
+set "DIST_ROOT_DEPS3=$distRootVar"
 
 REM Detect MSVC toolchain version (find the first vc* directory)
 for /d %%D in ("%DIST_ROOT_DEPS1%\toolchain-msvc\vc*") do (

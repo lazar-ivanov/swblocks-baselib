@@ -310,25 +310,117 @@ if errorlevel 1 (
 echo Compiler found:
 where cl
 
+REM Trim trailing whitespace from DIST_ROOT_DEPS1 (common issue when variable is set manually)
+set "DIST_ROOT=%DIST_ROOT_DEPS1%"
+:trim_dist_root_perl
+if "%DIST_ROOT:~-1%"==" " (
+    set "DIST_ROOT=%DIST_ROOT:~0,-1%"
+    goto trim_dist_root_perl
+)
+
 REM Add Strawberry Perl to PATH - detect version automatically
 set "PERL_PATH="
-for /d %%P in ("%DIST_ROOT_DEPS1%\strawberry-perl\*") do (
+set "PERL_VERSION="
+for /d %%P in ("%DIST_ROOT%\strawberry-perl\*") do (
     if exist "%%P\default\perl\bin\perl.exe" (
         set "PERL_PATH=%%P\default\perl\bin"
+        set "PERL_VERSION=%%~nxP"
         goto :found_perl
     )
 )
 :found_perl
 
 if "%PERL_PATH%"=="" (
-    echo ERROR: Strawberry Perl not found in %DIST_ROOT_DEPS1%\strawberry-perl
+    echo ERROR: Strawberry Perl not found in %DIST_ROOT%\strawberry-perl
     echo Please run build-msvc-toolchain.bat first
     goto error
 )
 
 set "Path=%PERL_PATH%;%Path%"
+echo Perl version: %PERL_VERSION%
 echo Perl found:
 where perl
+
+REM ============================================================================
+REM Detect Real Processor Architecture (for ARM64 Perl compatibility fix)
+REM ============================================================================
+REM Priority 1: PROCESSOR_IDENTIFIER (most reliable, works in all environments)
+REM Check for ARMv8 and AArch64 separately, not as a combined string
+set "REAL_PROCESSOR_ARCH="
+
+echo %PROCESSOR_IDENTIFIER% | findstr /i "ARMv8" >nul
+if %errorlevel% equ 0 (
+    set "REAL_PROCESSOR_ARCH=ARM64"
+    goto detected_processor_arch
+)
+
+echo %PROCESSOR_IDENTIFIER% | findstr /i "AArch64" >nul
+if %errorlevel% equ 0 (
+    set "REAL_PROCESSOR_ARCH=ARM64"
+    goto detected_processor_arch
+)
+
+REM Priority 2: PROCESSOR_ARCHITECTURE direct check
+if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" (
+    set "REAL_PROCESSOR_ARCH=ARM64"
+    goto detected_processor_arch
+)
+
+REM Priority 3: PROCESSOR_ARCHITEW6432 (emulation detection - 32-bit process on 64-bit OS)
+if /i "%PROCESSOR_ARCHITEW6432%"=="ARM64" (
+    set "REAL_PROCESSOR_ARCH=ARM64"
+    goto detected_processor_arch
+)
+
+REM Priority 4: Default to x64 or x86
+if /i "%PROCESSOR_ARCHITECTURE%"=="AMD64" (
+    set "REAL_PROCESSOR_ARCH=x64"
+) else if /i "%PROCESSOR_ARCHITECTURE%"=="x86" (
+    set "REAL_PROCESSOR_ARCH=x86"
+) else (
+    set "REAL_PROCESSOR_ARCH=x64"
+)
+
+:detected_processor_arch
+echo Detected processor architecture: %REAL_PROCESSOR_ARCH%
+
+REM ============================================================================
+REM Apply Windows 8 Compatibility Mode to Perl on ARM64
+REM ============================================================================
+REM This fixes fork() emulation deadlocks when x86/x64 Perl runs under ARM64 emulation
+REM Strawberry Perl is x86 or x64 only (no native ARM64 version), so always runs under emulation on ARM64
+if /i "%REAL_PROCESSOR_ARCH%"=="ARM64" (
+    echo.
+    echo ARM64 processor detected - applying Windows 8 compatibility mode to Perl
+    echo This prevents fork^(^) emulation deadlocks when Perl runs under ARM64 emulation
+
+    REM Construct full path to perl.exe
+    set "PERL_EXE_PATH=%DIST_ROOT%\strawberry-perl\%PERL_VERSION%\default\perl\bin\perl.exe"
+
+    REM Apply Win8RTM compatibility shim via registry for perl.exe
+    REM CRITICAL: If this fails, script must abort - cannot proceed without compatibility mode
+    echo   Setting compatibility mode for: !PERL_EXE_PATH!
+    reg add "HKCU\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers" /v "!PERL_EXE_PATH!" /t REG_SZ /d "~ WIN8RTM" /f >nul 2>&1
+    if !errorlevel! neq 0 (
+        echo ERROR: Failed to set compatibility mode for perl.exe
+        echo Registry command failed - tests may hang without this fix
+        goto error
+    )
+
+    REM Dynamically detect and apply compatibility mode to versioned Perl executable (e.g., perl5.32.1.exe)
+    REM Fail immediately if registry command fails
+    for %%F in ("%DIST_ROOT%\strawberry-perl\%PERL_VERSION%\default\perl\bin\perl5.*.exe") do (
+        echo   Setting compatibility mode for: %%F
+        reg add "HKCU\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers" /v "%%F" /t REG_SZ /d "~ WIN8RTM" /f >nul 2>&1
+        if !errorlevel! neq 0 (
+            echo ERROR: Failed to set compatibility mode for %%~nxF
+            echo Registry command failed - tests may hang without this fix
+            goto error
+        )
+    )
+
+    echo   Compatibility mode applied successfully
+)
 
 REM Verify assembler is available (optional; ARM64 uses clang-cl, x86/x64 use NASM)
 if /i "%ARCH%"=="a64" (
@@ -599,20 +691,35 @@ if errorlevel 1 (
 
 echo Build completed successfully
 
-REM Skip tests for 64-bit targets when host is x86 (cannot execute 64-bit binaries)
-REM x86 32-bit Windows cannot run x64 or ARM64 binaries - there is no emulation layer
-REM Additionally, mixed-arch I/O pipe issues between x86 Perl and 64-bit test binaries cause failures
-if "%HOST_ARCH%"=="x86" (
-    if "%ARCH%"=="a64" (
-        echo.
-        echo Skipping tests: x86 host cannot execute ARM64 binaries
-        set "SKIP_TESTS=1"
+REM Skip tests when target binary cannot execute on the processor
+REM On ARM64 processor: Win8 compatibility mode allows all tests to run (ARM64 can emulate x86/x64 and run native a64)
+REM On x86 processor: Cannot execute x64 or a64 binaries (no emulation layer)
+REM On x64 processor: Cannot execute a64 binaries (x64 cannot run ARM64)
+if NOT "%REAL_PROCESSOR_ARCH%"=="ARM64" (
+    REM Skip tests for architectures the processor cannot execute
+    if "%REAL_PROCESSOR_ARCH%"=="x86" (
+        if "%ARCH%"=="a64" (
+            echo.
+            echo Skipping tests: x86 processor cannot execute ARM64 binaries
+            set "SKIP_TESTS=1"
+        )
+        if "%ARCH%"=="x64" (
+            echo.
+            echo Skipping tests: x86 processor cannot execute x64 binaries
+            set "SKIP_TESTS=1"
+        )
     )
-    if "%ARCH%"=="x64" (
-        echo.
-        echo Skipping tests: x86 host cannot execute x64 binaries
-        set "SKIP_TESTS=1"
+    if "%REAL_PROCESSOR_ARCH%"=="x64" (
+        if "%ARCH%"=="a64" (
+            echo.
+            echo Skipping tests: x64 processor cannot execute ARM64 binaries
+            set "SKIP_TESTS=1"
+        )
     )
+) else (
+    REM On ARM64 processor, all tests can run (Win8 compat mode prevents Perl deadlock)
+    echo Tests enabled: ARM64 processor can execute all architectures
+    echo (Win8 compatibility mode prevents Perl fork emulation deadlocks)
 )
 
 REM Test OpenSSL (unless skipped)
