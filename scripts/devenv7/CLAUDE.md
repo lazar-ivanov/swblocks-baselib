@@ -2,14 +2,6 @@
 
 This document contains project-specific guidelines and best practices for AI-assisted development on the swblocks-baselib project.
 
-## Core Principles - Always Follow
-
-**Default to research and recommendations over implementation.**
-
-Do not jump into implementation or change files unless clearly instructed to make changes. When the user's intent is ambiguous, default to providing information, doing research, and providing recommendations rather than taking action. Only proceed with edits, modifications, or implementations when the user explicitly requests them.
-
----
-
 ## Table of Contents
 
 1. [Windows Batch Script Rules](#windows-batch-script-rules)
