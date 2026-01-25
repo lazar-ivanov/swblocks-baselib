@@ -36,7 +36,7 @@ DEVENV_TAG="${1:-devenv7}"
 
 # JSON Spirit download configuration
 JSON_SPIRIT_ARCHIVE="json-spirit.tar.gz"
-JSON_SPIRIT_URL="https://storage.googleapis.com/swblocks-dist/devenv/deps/${JSON_SPIRIT_ARCHIVE}"
+JSON_SPIRIT_URL="https://github.com/lazar-ivanov/swblocks-assets/releases/download/json-spirit-4.08/${JSON_SPIRIT_ARCHIVE}"
 
 # Detect macOS version
 MACOS_VERSION=$(sw_vers -productVersion | cut -d. -f1)

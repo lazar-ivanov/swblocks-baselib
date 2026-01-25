@@ -64,7 +64,7 @@ $script:ToolConfigs = @{
         }
     }
     JSONSpirit = @{
-        BaseUrl = "https://storage.googleapis.com/swblocks-dist/devenv/deps"
+        BaseUrl = "https://github.com/lazar-ivanov/swblocks-assets/releases/download/json-spirit-4.08"
         VersionPattern = ""
         FilePatterns = @{
             source = "json-spirit.tar.gz"
