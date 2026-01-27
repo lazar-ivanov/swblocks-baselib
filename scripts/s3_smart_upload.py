@@ -82,6 +82,8 @@ def main():
                         help='Number of parallel uploads (default: 3)')
     parser.add_argument('--dry-run', action='store_true',
                         help='Show what would be uploaded without actually uploading')
+    parser.add_argument('--allow-hidden-files', action='store_true',
+                        help='Include hidden files and directories (those starting with ".")')
 
     args = parser.parse_args()
 
@@ -102,7 +104,16 @@ def main():
 
     # 1. Walk through the folder structure
     for root, dirs, files in os.walk(args.local_folder):
+        # Skip hidden directories unless --allow-hidden-files is set
+        if not args.allow_hidden_files:
+            # Modify dirs in-place to prevent os.walk from descending into hidden directories
+            dirs[:] = [d for d in dirs if not d.startswith('.')]
+
         for filename in files:
+            # Skip hidden files unless --allow-hidden-files is set
+            if not args.allow_hidden_files and filename.startswith('.'):
+                continue
+
             local_path = os.path.join(root, filename)
 
             # Create the "Key" (path inside the bucket)
