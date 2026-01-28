@@ -85,7 +85,8 @@ function Write-VerificationFail {
 
 function Test-HardwareAcceleration {
     param(
-        [string]$OpensslExe
+        [string]$OpensslExe,
+        [string]$Architecture
     )
 
     Write-VerificationStep "1/3" "Checking hardware acceleration performance..."
@@ -118,8 +119,10 @@ function Test-HardwareAcceleration {
 
             Write-VerificationDetail ("AES-128-GCM Speed (16384 bytes): {0:F2} GB/sec" -f $perfGBps)
 
-            # Check threshold: must be > 1.00 GB/sec
-            $thresholdGBps = 1.00
+            # Check threshold: x86 has lower hardware acceleration performance
+            # x86: 0.5 GB/sec (32-bit architecture, limited hardware acceleration)
+            # x64/a64: 1.0 GB/sec (64-bit architectures, full hardware acceleration)
+            $thresholdGBps = if ($Architecture -eq "x86") { 0.5 } else { 1.0 }
 
             if ($perfGBps -gt $thresholdGBps) {
                 Write-VerificationPass ("Performance exceeds {0:F2} GB/sec threshold" -f $thresholdGBps)
@@ -273,7 +276,7 @@ if (-not (Test-Path $OpensslExe)) {
 }
 
 # Run all verifications
-Test-HardwareAcceleration -OpensslExe $OpensslExe | Out-Null
+Test-HardwareAcceleration -OpensslExe $OpensslExe -Architecture $Architecture | Out-Null
 Test-OptimizationFlags -OpensslExe $OpensslExe -BuildType $BuildType -Architecture $Architecture | Out-Null
 Test-DebugFlags -OpensslExe $OpensslExe | Out-Null
 
