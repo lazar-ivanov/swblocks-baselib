@@ -55,31 +55,31 @@ A development environment version is a notion of collection of specific versions
 
 In addition to the code dependencies of the library itself (compiler toolchain, Boost, OpenSSL, JSON spirit) the development environment also has few additional dependencies such as GNU make (e.g. via msys on Windows), git, python, etc, plus some optional such as Eclipse CDT (to use C++ indexer and IDE). The "binary blob" that contains the pre-built versions of the development environment with all code dependencies plus the additional and optional such is called "devenv distribution". Some popular combinations of devenv distributions were prebuilt and uploaded on Google drive, so they can be downloaded directly and facilitate the development and ease of use of the swblocks-baselib library. Here is the list of the currently supported devenv distributions with the link of where to download them from (more will be coming in the future):
 
-* **devenv4** for Windows x64 only (Win7 - Win10, including latest Win10 updates, SDK 8.1 and 10), vc14.1 (VS 2017) can be downloaded from [here](https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-windows-Hostx64-x64-only.zip); or from command line:  
-wget https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-windows-Hostx64-x64-only.zip
-* **devenv4** for Windows x86 only (Win7 - Win10, including latest Win10 updates, SDK 8.1 and 10), vc14.1 (VS 2017) can be downloaded from [here](https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-windows-Hostx64-x86-only.zip); or from command line:  
-wget https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-windows-Hostx64-x86-only.zip
-* **devenv4** for Windows both x64 and x86 (Win7 - Win10, including latest Win10 updates, SDK 8.1 and 10), vc14.1 (VS 2017) can be downloaded from [here](https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-windows-Hostx64-x64-and-x86.zip); or from command line:  
-wget https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-windows-Hostx64-x64-and-x86.zip
-* **devenv4** for Darwin / macOS (17.x or later / macOS High Sierra or later), clang 10.00, libc++ can be downloaded [here](https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-darwin-17.tar.gz); or from command line:  
-wget https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-darwin-17.tar.gz
-* **devenv4** for Ubuntu x64 18.04 LTS with GCC 8.3.0 and Clang 8.0.1 can be downloaded [here](https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-ub18-gcc830-clang801.tar.gz); or from command line:  
-wget https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-ub18-gcc830-clang801.tar.gz
-* **devenv4** for Ubuntu x86 18.04 LTS with GCC 8.3.0 and Clang 8.0.1 can be downloaded [here](hhttps://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-ub18-x86-gcc830-clang801.tar.gz); or from command line:  
-wget https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-ub18-x86-gcc830-clang801.tar.gz
-* **devenv4** for RedHat 6 / CentOS 6 with GCC 8.3.0 and Clang 8.0.1 can be downloaded [here](https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-rhel6-gcc830-clang801.tar.gz); or from command line:  
-wget https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-rhel6-gcc830-clang801.tar.gz
-* **devenv4** for RedHat 7 / CentOS 6 with GCC 8.3.0 and Clang 8.0.1 can be downloaded [here](https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-rhel7-gcc830-clang801.tar.gz); or from command line:  
-wget https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-rhel7-gcc830-clang801.tar.gz
-* **devenv4** for RedHat 8 / CentOS 8 with GCC 8.3.0 and Clang 8.0.1 can be downloaded [here](https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-rhel8-gcc830-clang801.tar.gz); or from command line:  
-wget https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-rhel8-gcc830-clang801.tar.gz
+* **devenv4** for Windows x64 only (Win7 - Win10, including latest Win10 updates, SDK 8.1 and 10), vc14.1 (VS 2017) can be downloaded from [here](https://storage.swblocks.net/devenv/4/dist-devenv4-windows-Hostx64-x64-only.zip); or from command line:  
+wget https://storage.swblocks.net/devenv/4/dist-devenv4-windows-Hostx64-x64-only.zip
+* **devenv4** for Windows x86 only (Win7 - Win10, including latest Win10 updates, SDK 8.1 and 10), vc14.1 (VS 2017) can be downloaded from [here](https://storage.swblocks.net/devenv/4/dist-devenv4-windows-Hostx64-x86-only.zip); or from command line:  
+wget https://storage.swblocks.net/devenv/4/dist-devenv4-windows-Hostx64-x86-only.zip
+* **devenv4** for Windows both x64 and x86 (Win7 - Win10, including latest Win10 updates, SDK 8.1 and 10), vc14.1 (VS 2017) can be downloaded from [here](https://storage.swblocks.net/devenv/4/dist-devenv4-windows-Hostx64-x64-and-x86.zip); or from command line:  
+wget https://storage.swblocks.net/devenv/4/dist-devenv4-windows-Hostx64-x64-and-x86.zip
+* **devenv4** for Darwin / macOS (17.x or later / macOS High Sierra or later), clang 10.00, libc++ can be downloaded [here](https://storage.swblocks.net/devenv/4/dist-devenv4-darwin-17.tar.gz); or from command line:  
+wget https://storage.swblocks.net/devenv/4/dist-devenv4-darwin-17.tar.gz
+* **devenv4** for Ubuntu x64 18.04 LTS with GCC 8.3.0 and Clang 8.0.1 can be downloaded [here](https://storage.swblocks.net/devenv/4/dist-devenv4-ub18-gcc830-clang801.tar.gz); or from command line:  
+wget https://storage.swblocks.net/devenv/4/dist-devenv4-ub18-gcc830-clang801.tar.gz
+* **devenv4** for Ubuntu x86 18.04 LTS with GCC 8.3.0 and Clang 8.0.1 can be downloaded [here](https://storage.swblocks.net/devenv/4/dist-devenv4-ub18-x86-gcc830-clang801.tar.gz); or from command line:  
+wget https://storage.swblocks.net/devenv/4/dist-devenv4-ub18-x86-gcc830-clang801.tar.gz
+* **devenv4** for RedHat 6 / CentOS 6 with GCC 8.3.0 and Clang 8.0.1 can be downloaded [here](https://storage.swblocks.net/devenv/4/dist-devenv4-rhel6-gcc830-clang801.tar.gz); or from command line:  
+wget https://storage.swblocks.net/devenv/4/dist-devenv4-rhel6-gcc830-clang801.tar.gz
+* **devenv4** for RedHat 7 / CentOS 6 with GCC 8.3.0 and Clang 8.0.1 can be downloaded [here](https://storage.swblocks.net/devenv/4/dist-devenv4-rhel7-gcc830-clang801.tar.gz); or from command line:  
+wget https://storage.swblocks.net/devenv/4/dist-devenv4-rhel7-gcc830-clang801.tar.gz
+* **devenv4** for RedHat 8 / CentOS 8 with GCC 8.3.0 and Clang 8.0.1 can be downloaded [here](https://storage.swblocks.net/devenv/4/dist-devenv4-rhel8-gcc830-clang801.tar.gz); or from command line:  
+wget https://storage.swblocks.net/devenv/4/dist-devenv4-rhel8-gcc830-clang801.tar.gz
 
 Here are the links to the original source and binary dependencies needed to build new development environment images for new platforms. Instructions about how to do this are in the devenv4 notes files.
 
-* **devenv4** source code for the libraries and compiler toolchains can be downloaded [here](hhttps://storage.googleapis.com/swblocks-dist/devenv/4/source-dependencies.tar.gz); or from command line:  
-wget https://storage.googleapis.com/swblocks-dist/devenv/4/source-dependencies.tar.gz
-* **devenv4** binary dependencies for Windows can be downloaded [here](https://storage.googleapis.com/swblocks-dist/devenv/4/windows-binary-dependencies.zip); or from command line:  
-wget https://storage.googleapis.com/swblocks-dist/devenv/4/windows-binary-dependencies.zip
+* **devenv4** source code for the libraries and compiler toolchains can be downloaded [here](https://storage.swblocks.net/devenv/4/source-dependencies.tar.gz); or from command line:  
+wget https://storage.swblocks.net/devenv/4/source-dependencies.tar.gz
+* **devenv4** binary dependencies for Windows can be downloaded [here](https://storage.swblocks.net/devenv/4/windows-binary-dependencies.zip); or from command line:  
+wget https://storage.swblocks.net/devenv/4/windows-binary-dependencies.zip
 
 All links above are either .zip file (for Windows) or a .gz tar file for Darwin / macOS and Linux. Once they are downloaded they can be extracted into some location (e.g. **c:\\swblocks** for Windows or **/Users/userid/swblocks** for Darwin and Linux) and then once you clone the swblocks-baselib library from github in order to use it you simply need to create a small .mk file in **projects/make** folder called **ci-init-env.mk** and point the 3 _DIST_ roots to the place where you have extracted the development environment blob.
 
