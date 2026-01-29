@@ -4,10 +4,11 @@ A command-line tool for managing S3-compatible object storage with support for u
 
 ## Overview
 
-`s3_manage.py` is a Python script that provides three main commands for working with S3-compatible storage:
+`s3_manage.py` is a Python script that provides four main commands for working with S3-compatible storage:
 - **upload**: Upload local files to an S3 bucket with parallel execution and smart skip logic
 - **list**: List objects in an S3 bucket with filtering and pagination
 - **verify**: Verify local files against S3 objects by comparing checksums (ETags)
+- **indexupload**: Generate HTML and Markdown index files listing bucket contents with download links
 
 ## Requirements
 
@@ -404,6 +405,208 @@ echo "SUCCESS: All files uploaded and verified"
 
 ---
 
+### 4. indexupload - Generate Index Files
+
+Generate HTML and Markdown index files listing all objects in an S3 bucket with clickable download links, then upload the index files to the bucket root. This creates static directory listings that can be viewed in a browser or Markdown viewer.
+
+#### Usage
+
+```bash
+python scripts/s3_manage.py indexupload \
+  --account-id <id> \
+  --access-key <key> \
+  --secret-key <secret> \
+  --bucket-name <bucket> \
+  --endpoint-url <url> \
+  --url-prefix <url> \
+  [--prefix <prefix>]
+```
+
+#### Arguments
+
+| Argument | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `--url-prefix URL` | Yes | - | Base URL for generating file download links (e.g., `https://storage.example.com/mybucket/`) |
+| `--prefix PREFIX` | No | - | Filter objects by prefix (e.g., "folder/subfolder/") |
+
+#### Features
+
+- **Dual Format Output**: Generates both HTML and Markdown index files
+- **Clickable Links**: All file paths are hyperlinked using the provided URL prefix
+- **Aggregate Statistics**: Shows total object count and total storage size
+- **Self-Exclusion**: Automatically excludes `index.html` and `index.md` from generated lists
+- **Prefix Filtering**: Generate indexes for specific subdirectories
+- **Automatic Pagination**: Handles buckets with thousands of objects
+- **UTC Timestamps**: Includes generation timestamp in both formats
+- **Character Escaping**: Properly escapes HTML (`&<>`) and Markdown (`|`) special characters
+
+#### Generated Files
+
+**index.html:**
+- Simple, clean HTML table with minimal styling
+- Responsive design (works on mobile devices)
+- Hover effects on table rows
+- Columns: File Path (linked), Size, Last Modified
+- Summary footer with aggregate statistics
+
+**index.md:**
+- Standard Markdown table format
+- GitHub/GitLab compatible
+- Columns: File Path (linked), Size, Last Modified
+- Summary footer with aggregate statistics
+
+#### Output Format
+
+**Console Output:**
+```
+Listing objects in bucket: my-bucket
+
+Found 15 objects (excluded index.html, index.md)
+
+Generated index files:
+  - index.html (2341 bytes)
+  - index.md (1523 bytes)
+
+Uploading index files to bucket root...
+[SUCCESS] index.html uploaded
+[SUCCESS] index.md uploaded
+
+Index files uploaded successfully!
+```
+
+**Example index.html (rendered in browser):**
+
+| File Path | Size | Last Modified |
+|-----------|------|---------------|
+| [devenv/4/dist-devenv4-ub18.tar.gz](https://storage.example.com/my-bucket/devenv/4/dist-devenv4-ub18.tar.gz) | 1.23 GB | 2024-03-15 10:30:45 UTC |
+| [file1.txt](https://storage.example.com/my-bucket/file1.txt) | 124 B | 2024-03-16 14:22:10 UTC |
+| [data/report.pdf](https://storage.example.com/my-bucket/data/report.pdf) | 2.45 MB | 2024-03-16 15:00:00 UTC |
+
+**Total:** 15 objects, 5.67 GB
+
+*Generated on 2024-03-20 12:00:00 UTC*
+
+#### Example: Basic Index Generation
+
+```bash
+python scripts/s3_manage.py indexupload \
+  --account-id "my-account" \
+  --access-key "my-key" \
+  --secret-key "my-secret" \
+  --bucket-name "my-bucket" \
+  --endpoint-url "https://s3.example.com" \
+  --url-prefix "https://storage.example.com/my-bucket/"
+```
+
+**Use Case:** Static website hosting - users can browse `https://storage.example.com/my-bucket/index.html` to see all available files.
+
+#### Example: Generate Index for Subdirectory
+
+```bash
+python scripts/s3_manage.py indexupload \
+  --account-id "my-account" \
+  --access-key "my-key" \
+  --secret-key "my-secret" \
+  --bucket-name "my-bucket" \
+  --endpoint-url "https://s3.example.com" \
+  --url-prefix "https://storage.example.com/my-bucket/" \
+  --prefix "devenv/7/"
+```
+
+**Use Case:** Build artifacts browser - developers can view `index.html` to browse available builds for a specific version.
+
+#### Example: Complete Deployment Workflow
+
+```bash
+#!/bin/bash
+# Deploy build artifacts with index generation
+
+# Step 1: Upload build artifacts
+python scripts/s3_manage.py upload \
+  --account-id "my-account" \
+  --access-key "my-key" \
+  --secret-key "my-secret" \
+  --bucket-name "build-artifacts" \
+  --endpoint-url "https://s3.example.com" \
+  --local-folder ./dist \
+  --max-threads 5 || exit 1
+
+# Step 2: Generate and upload index files
+python scripts/s3_manage.py indexupload \
+  --account-id "my-account" \
+  --access-key "my-key" \
+  --secret-key "my-secret" \
+  --bucket-name "build-artifacts" \
+  --endpoint-url "https://s3.example.com" \
+  --url-prefix "https://builds.example.com/" || exit 1
+
+# Step 3: Announce deployment
+echo "Deployment complete! View index at: https://builds.example.com/index.html"
+```
+
+#### Use Cases
+
+**1. Static Website Hosting**
+- Generate browsable directory listing for static websites
+- Users can click links to download files directly
+- No server-side code needed
+
+**2. Build Artifact Repository**
+- Create index of build artifacts for developers
+- Easy browsing of available versions
+- Direct download links for CI/CD tools
+
+**3. Documentation Repository**
+- Generate Markdown index for GitHub/GitLab
+- Users can view index.md in repository
+- Links work directly in web interface
+
+**4. Public File Distribution**
+- Create professional-looking download page
+- No custom web application needed
+- Self-updating on each run
+
+#### URL Prefix Handling
+
+The `--url-prefix` parameter is used to construct download URLs:
+
+- **With trailing slash:** `https://storage.example.com/my-bucket/`
+  - Result: `https://storage.example.com/my-bucket/file.txt`
+
+- **Without trailing slash:** `https://storage.example.com/my-bucket`
+  - Result: `https://storage.example.com/my-bucket/file.txt` (slash added automatically)
+
+#### Index File Exclusion
+
+When generating indexes:
+- Existing `index.html` and `index.md` files in the bucket are excluded from the list
+- This prevents self-referencing and allows re-running the command safely
+- After first run, index files exist in bucket but won't appear in their own listings
+
+#### Empty Bucket Handling
+
+If the bucket is empty or no objects match the prefix filter:
+```
+Bucket is empty
+No index files will be generated.
+```
+
+The command exits gracefully without creating empty index files.
+
+#### Character Escaping
+
+**HTML Files:**
+- Special characters in filenames are properly escaped
+- `&` → `&amp;`, `<` → `&lt;`, `>` → `&gt;`
+- Prevents XSS vulnerabilities
+
+**Markdown Files:**
+- Pipe characters in filenames are escaped
+- `|` → `\\|`
+- Prevents table formatting issues
+
+---
+
 ## Error Handling
 
 All commands handle errors gracefully and provide clear error messages:
@@ -429,6 +632,14 @@ All commands handle errors gracefully and provide clear error messages:
 - **S3 API error:** Reported as `[ERROR]` with error code
 - **ETag calculation failure:** Reported as `[ERROR]` (rare)
 
+### IndexUpload Errors
+
+- **Empty bucket:** Displays message, exits gracefully without generating files
+- **No matches for prefix:** Displays message, exits gracefully
+- **Upload failure:** Displays error message, exits with code 1
+- **Access denied:** Displays S3 error code and message
+- **Disk full:** Propagates error during file generation
+
 ---
 
 ## Performance Considerations
@@ -450,6 +661,14 @@ All commands handle errors gracefully and provide clear error messages:
 - **upload:** Uses `head_object()` to check existence before upload (minimal data transfer)
 - **list:** Uses `list_objects_v2()` API (metadata only, no file downloads)
 - **verify:** Uses `head_object()` for metadata (minimal data transfer, no file downloads)
+- **indexupload:** Uses `list_objects_v2()` API (metadata only, no file downloads)
+
+### IndexUpload-Specific Considerations
+
+- **Full Bucket Scan:** Must paginate through entire bucket to collect all objects
+- **Memory Usage:** Stores all objects in memory (~100 bytes per object, ~1MB for 10,000 objects)
+- **Generation Time:** Large buckets (10,000+ objects) may take several minutes to list
+- **File Size:** Generated HTML/MD files scale with object count (~500KB HTML for 10,000 objects)
 
 ---
 
@@ -531,6 +750,12 @@ python scripts/s3_manage.py verify \
   --account-id <id> --access-key <key> --secret-key <secret> \
   --bucket-name <bucket> --endpoint-url <url> \
   --local-folder <path>
+
+# Generate index files with download links
+python scripts/s3_manage.py indexupload \
+  --account-id <id> --access-key <key> --secret-key <secret> \
+  --bucket-name <bucket> --endpoint-url <url> \
+  --url-prefix <base-url>
 ```
 
 ### Environment Variables Pattern
@@ -562,6 +787,7 @@ python scripts/s3_manage.py upload \
 - **v1.0**: Initial implementation with upload command
 - **v1.1**: Added list command with prefix filtering and pagination
 - **v1.2**: Added verify command with ETag calculation for multipart uploads
+- **v1.3**: Added indexupload command to generate HTML and Markdown index files with download links
 
 ---
 
