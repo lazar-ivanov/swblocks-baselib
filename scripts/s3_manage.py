@@ -2,6 +2,8 @@ import os
 import argparse
 import boto3
 import threading
+import hashlib
+import math
 from botocore.exceptions import ClientError, NoCredentialsError
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -23,6 +25,201 @@ def format_size(size_bytes):
             return f"{size_bytes:.2f} {unit}"
         size_bytes /= 1024.0
     return f"{size_bytes:.2f} PB"
+
+def calculate_chunk_size(file_size, part_count):
+    """
+    Deterministically find the chunk size used for S3 multipart upload.
+
+    boto3 uses standard chunk sizes (5MB, 8MB, 16MB, 32MB, 64MB, etc.).
+    This function tests each standard size to find which one produces
+    the expected part count for the given file size.
+
+    Args:
+        file_size (int): Size of file in bytes
+        part_count (int): Number of parts from S3 ETag
+
+    Returns:
+        int: Chunk size in bytes, or None if no standard size matches
+    """
+    if part_count <= 0:
+        return None
+
+    # Standard boto3 chunk sizes (in order of preference)
+    # boto3 default is 8MB, but can use others based on file size
+    standard_chunk_sizes = [
+        5 * 1024 * 1024,    # 5MB
+        8 * 1024 * 1024,    # 8MB (boto3 default)
+        16 * 1024 * 1024,   # 16MB
+        32 * 1024 * 1024,   # 32MB
+        64 * 1024 * 1024,   # 64MB
+        128 * 1024 * 1024,  # 128MB
+        256 * 1024 * 1024,  # 256MB
+        512 * 1024 * 1024,  # 512MB
+    ]
+
+    # Test each standard chunk size to find which produces the expected part count
+    for chunk_size in standard_chunk_sizes:
+        expected_parts = math.ceil(file_size / chunk_size)
+        if expected_parts == part_count:
+            return chunk_size
+
+    # No standard chunk size produces the expected part count
+    # This should never happen with boto3 uploads, but handle gracefully
+    return None
+
+def calculate_s3_etag_simple(file_path):
+    """
+    Calculate S3 ETag for a file as if uploaded without multipart.
+
+    Args:
+        file_path (str): Absolute path to local file
+
+    Returns:
+        str: MD5 hash in hexadecimal format (32 characters, no hyphen)
+
+    Raises:
+        IOError: If file cannot be read
+    """
+    md5_hash = hashlib.md5()
+
+    with open(file_path, 'rb') as f:
+        # Read in 8KB chunks to avoid loading entire file into memory
+        for chunk in iter(lambda: f.read(8192), b''):
+            md5_hash.update(chunk)
+
+    return md5_hash.hexdigest()
+
+def calculate_s3_etag_multipart(file_path, part_count):
+    """
+    Calculate S3 ETag for a file as if uploaded with multipart.
+
+    This uses the deterministic chunk size from calculate_chunk_size(),
+    then calculates the multipart ETag using S3's algorithm:
+    MD5(concatenated MD5 digests) + "-" + part_count
+
+    Args:
+        file_path (str): Absolute path to local file
+        part_count (int): Number of parts used in S3 multipart upload
+
+    Returns:
+        str: Multipart ETag in format "xxxxxxxx-N" or None if calculation fails
+
+    Raises:
+        IOError: If file cannot be read
+    """
+    # Get file size
+    file_size = os.path.getsize(file_path)
+
+    # Deterministically find the chunk size used by boto3
+    chunk_size = calculate_chunk_size(file_size, part_count)
+
+    if chunk_size is None:
+        # No standard chunk size produces the expected part count
+        # This should never happen with boto3 uploads
+        return None
+
+    md5_digests = []
+
+    with open(file_path, 'rb') as f:
+        part_num = 0
+        while True:
+            # Read one chunk
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+
+            # Calculate MD5 for this chunk
+            chunk_md5 = hashlib.md5(chunk)
+            md5_digests.append(chunk_md5.digest())  # Store binary digest
+            part_num += 1
+
+    # Verify part count matches expectation
+    # This should always match since calculate_chunk_size() is deterministic
+    if part_num != part_count:
+        # This indicates an unexpected error - chunk size calculation was wrong
+        return None
+
+    # Concatenate all MD5 digests
+    concatenated_md5 = b''.join(md5_digests)
+
+    # Calculate MD5 of concatenated digests
+    final_md5 = hashlib.md5(concatenated_md5)
+
+    # Return in S3 multipart format: hash-partcount
+    return f"{final_md5.hexdigest()}-{part_count}"
+
+def verify_worker(s3_client, bucket_name, file_path, relative_path):
+    """
+    Verify a single file against its S3 object by comparing ETags.
+
+    This function:
+    1. Checks if file exists in S3 using head_object
+    2. Retrieves S3 ETag from response
+    3. Calculates local ETag matching S3's method (simple or multipart)
+    4. Compares ETags and returns status message
+
+    Args:
+        s3_client: boto3 S3 client instance
+        bucket_name (str): Target S3 bucket name
+        file_path (str): Absolute path to local file
+        relative_path (str): Relative path used as S3 key
+
+    Returns:
+        str: Status message in format "[STATUS] relative_path"
+             Where STATUS is: VERIFIED, DIFFERENT, NOT UPLOADED, or ERROR
+    """
+    try:
+        # STEP 1: Check if file exists in S3 and get metadata
+        try:
+            response = s3_client.head_object(Bucket=bucket_name, Key=relative_path)
+        except ClientError as e:
+            if e.response['Error']['Code'] == "404":
+                return f"[NOT UPLOADED] {relative_path}"
+            else:
+                error_msg = e.response['Error'].get('Message', str(e))
+                return f"[ERROR] {relative_path} - S3 error: {error_msg}"
+
+        # STEP 2: Extract S3 ETag (remove surrounding quotes if present)
+        s3_etag = response['ETag'].strip('"')
+
+        # STEP 3: Detect if multipart upload (contains hyphen)
+        if '-' in s3_etag:
+            # Multipart ETag format: "xxxxxxxx-N" where N is part count
+            etag_parts = s3_etag.split('-')
+            if len(etag_parts) != 2:
+                return f"[ERROR] {relative_path} - Invalid S3 ETag format: {s3_etag}"
+
+            etag_hash = etag_parts[0]
+            try:
+                part_count = int(etag_parts[1])
+            except ValueError:
+                return f"[ERROR] {relative_path} - Invalid part count in ETag: {s3_etag}"
+
+            # STEP 4: Calculate local multipart ETag
+            local_etag = calculate_s3_etag_multipart(file_path, part_count)
+
+            if local_etag is None:
+                return f"[ERROR] {relative_path} - Failed to calculate multipart ETag"
+        else:
+            # Simple upload (no multipart)
+            # STEP 5: Calculate local simple ETag
+            local_etag = calculate_s3_etag_simple(file_path)
+            etag_hash = s3_etag
+
+        # STEP 6: Compare ETags (case-insensitive)
+        local_etag_hash = local_etag.split('-')[0] if '-' in local_etag else local_etag
+
+        if local_etag_hash.lower() == etag_hash.lower():
+            return f"[VERIFIED] {relative_path}"
+        else:
+            return f"[DIFFERENT] {relative_path} (S3: {s3_etag}, Local: {local_etag})"
+
+    except IOError as e:
+        return f"[ERROR] {relative_path} - File read error: {str(e)}"
+    except OSError as e:
+        return f"[ERROR] {relative_path} - File not found: {str(e)}"
+    except Exception as e:
+        return f"[ERROR] {relative_path} - Unexpected error: {str(e)}"
 
 # S3 client will be created in main() using command-line arguments
 
@@ -260,6 +457,92 @@ def command_list(args):
     except Exception as e:
         print(f"Error: {str(e)}")
 
+def command_verify(args):
+    """Execute the verify command."""
+
+    # Create S3 client using command-line arguments
+    s3_client = boto3.client(
+        's3',
+        endpoint_url=args.endpoint_url,
+        aws_access_key_id=args.access_key,
+        aws_secret_access_key=args.secret_key
+    )
+
+    files_to_verify = []
+
+    print(f"Scanning files in {args.local_folder}...")
+
+    # Walk through the folder structure
+    for root, dirs, files in os.walk(args.local_folder):
+        # Skip hidden directories unless --allow-hidden-files is set
+        if not args.allow_hidden_files:
+            # Modify dirs in-place to prevent os.walk from descending into hidden directories
+            dirs[:] = [d for d in dirs if not d.startswith('.')]
+
+        for filename in files:
+            # Skip hidden files unless --allow-hidden-files is set
+            if not args.allow_hidden_files and filename.startswith('.'):
+                continue
+
+            local_path = os.path.join(root, filename)
+
+            # Create the "Key" (path inside the bucket)
+            relative_path = os.path.relpath(local_path, args.local_folder)
+
+            # Windows path fix
+            if os.sep == '\\':
+                relative_path = relative_path.replace('\\', '/')
+
+            files_to_verify.append((local_path, relative_path))
+
+    total_files = len(files_to_verify)
+    print(f"Found {total_files} files. Starting verification...\n")
+
+    # Initialize statistics tracking
+    verified_count = 0
+    different_count = 0
+    not_uploaded_count = 0
+    error_count = 0
+
+    # Execute verification with ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=args.max_threads) as executor:
+        future_to_file = {
+            executor.submit(verify_worker, s3_client, args.bucket_name, f[0], f[1]): f[1]
+            for f in files_to_verify
+        }
+
+        for future in as_completed(future_to_file):
+            try:
+                result_message = future.result()
+                safe_print(result_message)
+
+                # Track statistics based on status in message
+                if "[VERIFIED]" in result_message:
+                    verified_count += 1
+                elif "[DIFFERENT]" in result_message:
+                    different_count += 1
+                elif "[NOT UPLOADED]" in result_message:
+                    not_uploaded_count += 1
+                elif "[ERROR]" in result_message:
+                    error_count += 1
+            except Exception as exc:
+                safe_print(f"[CRITICAL ERROR] Thread crashed: {exc}")
+                error_count += 1
+
+    # Print summary
+    print("\nAll verifications complete!")
+    print("\n--- VERIFICATION SUMMARY ---")
+    print(f"Total files scanned: {total_files}")
+    print(f"Verified (match): {verified_count}")
+    print(f"Different (mismatch): {different_count}")
+    print(f"Not uploaded to S3: {not_uploaded_count}")
+    print(f"Errors: {error_count}")
+
+    # Exit with non-zero code if any mismatches or errors
+    if different_count > 0 or error_count > 0:
+        import sys
+        sys.exit(1)
+
 def main():
     # Create parent parser for common arguments
     parent_parser = create_parent_parser()
@@ -306,6 +589,21 @@ def main():
     list_parser.add_argument('--max-keys', type=int, metavar='N',
                              help='Maximum number of objects to list')
 
+    # Add 'verify' subcommand
+    verify_parser = subparsers.add_parser(
+        'verify',
+        parents=[parent_parser],
+        help='Verify local files against S3 objects by comparing ETags'
+    )
+
+    # Add verify-specific arguments
+    verify_parser.add_argument('--local-folder', required=True, metavar='PATH',
+                              help='Local directory to verify against S3')
+    verify_parser.add_argument('--max-threads', type=int, default=3, metavar='N',
+                              help='Number of parallel verification threads (default: 3)')
+    verify_parser.add_argument('--allow-hidden-files', action='store_true',
+                              help='Include hidden files and directories (those starting with ".")')
+
     # Parse arguments
     args = parser.parse_args()
 
@@ -314,6 +612,8 @@ def main():
         command_upload(args)
     elif args.command == 'list':
         command_list(args)
+    elif args.command == 'verify':
+        command_verify(args)
     else:
         parser.error(f"Unknown command: {args.command}")
 
