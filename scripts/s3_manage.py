@@ -57,36 +57,26 @@ def upload_worker(s3_client, bucket_name, file_path, relative_path, dry_run=Fals
     except Exception as e:
         return f"[FAILURE]  {relative_path} - {str(e)}"
 
-def main():
-    # Parse command-line arguments
-    parser = argparse.ArgumentParser(
-        description='Upload files to S3 with duplicate detection and parallel uploads'
-    )
+def create_parent_parser():
+    """Create parser for arguments common to all commands."""
+    parent_parser = argparse.ArgumentParser(add_help=False)
 
-    # Required arguments
-    parser.add_argument('--account-id', required=True, metavar='ID',
-                        help='S3 account ID')
-    parser.add_argument('--access-key', required=True, metavar='KEY',
-                        help='S3 access key ID')
-    parser.add_argument('--secret-key', required=True, metavar='SECRET',
-                        help='S3 secret access key')
-    parser.add_argument('--bucket-name', required=True, metavar='NAME',
-                        help='Target bucket name')
-    parser.add_argument('--local-folder', required=True, metavar='PATH',
-                        help='Local directory to upload')
-    parser.add_argument('--endpoint-url', required=True, metavar='URL',
-                        help='S3 endpoint URL')
+    # Common required arguments
+    parent_parser.add_argument('--account-id', required=True, metavar='ID',
+                               help='S3 account ID')
+    parent_parser.add_argument('--access-key', required=True, metavar='KEY',
+                               help='S3 access key ID')
+    parent_parser.add_argument('--secret-key', required=True, metavar='SECRET',
+                               help='S3 secret access key')
+    parent_parser.add_argument('--bucket-name', required=True, metavar='NAME',
+                               help='Target bucket name')
+    parent_parser.add_argument('--endpoint-url', required=True, metavar='URL',
+                               help='S3 endpoint URL')
 
-    # Optional arguments
-    parser.add_argument('--max-threads', type=int, default=3, metavar='N',
-                        help='Number of parallel uploads (default: 3)')
-    parser.add_argument('--dry-run', action='store_true',
-                        help='Show what would be uploaded without actually uploading')
-    parser.add_argument('--allow-hidden-files', action='store_true',
-                        help='Include hidden files and directories (those starting with ".")')
+    return parent_parser
 
-    args = parser.parse_args()
-
+def command_upload(args):
+    """Execute the upload command."""
     # Create S3 client using command-line arguments
     # Note: boto3 uses 'aws_access_key_id' and 'aws_secret_access_key' parameter names
     # for all S3-compatible services (not just AWS)
@@ -169,6 +159,48 @@ def main():
         print(f"Files that would be skipped: {skip_count}")
         print(f"Total upload size: {total_upload_size_gb:.2f} GB")
         print("\nNo files were actually uploaded (dry-run mode)")
+
+def main():
+    # Create parent parser for common arguments
+    parent_parser = create_parent_parser()
+
+    # Create main parser
+    parser = argparse.ArgumentParser(
+        description='S3 management tool for upload, download, and bucket operations'
+    )
+
+    # Create subparsers for commands
+    subparsers = parser.add_subparsers(
+        dest='command',
+        required=True,
+        help='Command to execute'
+    )
+
+    # Add 'upload' subcommand
+    upload_parser = subparsers.add_parser(
+        'upload',
+        parents=[parent_parser],
+        help='Upload files to S3 bucket'
+    )
+
+    # Add upload-specific arguments
+    upload_parser.add_argument('--local-folder', required=True, metavar='PATH',
+                               help='Local directory to upload')
+    upload_parser.add_argument('--max-threads', type=int, default=3, metavar='N',
+                               help='Number of parallel uploads (default: 3)')
+    upload_parser.add_argument('--dry-run', action='store_true',
+                               help='Show what would be uploaded without uploading')
+    upload_parser.add_argument('--allow-hidden-files', action='store_true',
+                               help='Include hidden files and directories (those starting with ".")')
+
+    # Parse arguments
+    args = parser.parse_args()
+
+    # Dispatch to appropriate command
+    if args.command == 'upload':
+        command_upload(args)
+    else:
+        parser.error(f"Unknown command: {args.command}")
 
 if __name__ == "__main__":
     main()
