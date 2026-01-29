@@ -16,6 +16,14 @@ def safe_print(message):
     with print_lock:
         print(message)
 
+def format_size(size_bytes):
+    """Format size in bytes to human-readable format."""
+    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+        if size_bytes < 1024.0:
+            return f"{size_bytes:.2f} {unit}"
+        size_bytes /= 1024.0
+    return f"{size_bytes:.2f} PB"
+
 # S3 client will be created in main() using command-line arguments
 
 def file_exists_in_bucket(s3_client, bucket, key):
@@ -160,6 +168,98 @@ def command_upload(args):
         print(f"Total upload size: {total_upload_size_gb:.2f} GB")
         print("\nNo files were actually uploaded (dry-run mode)")
 
+def command_list(args):
+    """Execute the list command."""
+    # Create S3 client using command-line arguments
+    # Note: boto3 uses 'aws_access_key_id' and 'aws_secret_access_key' parameter names
+    # for all S3-compatible services (not just AWS)
+    s3_client = boto3.client(
+        's3',
+        endpoint_url=args.endpoint_url,
+        aws_access_key_id=args.access_key,
+        aws_secret_access_key=args.secret_key
+    )
+
+    # Prepare list_objects_v2 parameters
+    list_params = {
+        'Bucket': args.bucket_name
+    }
+
+    if args.prefix:
+        list_params['Prefix'] = args.prefix
+
+    if args.max_keys:
+        list_params['MaxKeys'] = args.max_keys
+
+    # List objects
+    try:
+        print(f"Listing objects in bucket: {args.bucket_name}")
+        if args.prefix:
+            print(f"Prefix filter: {args.prefix}")
+        print()
+
+        # Print header
+        print(f"{'FILE PATH':<60} {'SIZE':<12} {'LAST MODIFIED':<25}")
+        print("-" * 97)
+
+        # Paginate through results
+        total_objects = 0
+        total_size = 0  # Accumulate total size in bytes for aggregate statistics
+        continuation_token = None
+
+        while True:
+            if continuation_token:
+                list_params['ContinuationToken'] = continuation_token
+
+            response = s3_client.list_objects_v2(**list_params)
+
+            # Check if bucket is empty or no objects match prefix
+            if 'Contents' not in response:
+                if total_objects == 0:
+                    if args.prefix:
+                        print(f"No objects found with prefix: {args.prefix}")
+                    else:
+                        print("Bucket is empty")
+                break
+
+            # Process objects
+            for obj in response['Contents']:
+                key = obj['Key']
+                size_bytes = obj['Size']
+                last_modified = obj['LastModified'].strftime('%Y-%m-%d %H:%M:%S %Z')
+
+                # Format size
+                size_str = format_size(size_bytes)
+
+                # Print object info
+                print(f"{key:<60} {size_str:<12} {last_modified:<25}")
+
+                total_objects += 1
+                total_size += size_bytes
+
+            # Check if there are more results
+            if not response.get('IsTruncated', False):
+                break
+
+            continuation_token = response.get('NextContinuationToken')
+
+            # If max_keys is set, stop after first page
+            if args.max_keys:
+                if response.get('IsTruncated', False):
+                    print(f"\n(Results limited to {args.max_keys} objects. Use --max-keys to adjust or remove to see all.)")
+                break
+
+        # Print summary
+        print("-" * 97)
+        print(f"Total: {total_objects} objects, {format_size(total_size)}")
+
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        error_msg = e.response['Error']['Message']
+        print(f"Error listing bucket: {error_code} - {error_msg}")
+    except Exception as e:
+        print(f"Error: {str(e)}")
+
 def main():
     # Create parent parser for common arguments
     parent_parser = create_parent_parser()
@@ -193,12 +293,27 @@ def main():
     upload_parser.add_argument('--allow-hidden-files', action='store_true',
                                help='Include hidden files and directories (those starting with ".")')
 
+    # Add 'list' subcommand
+    list_parser = subparsers.add_parser(
+        'list',
+        parents=[parent_parser],
+        help='List objects in S3 bucket'
+    )
+
+    # Add list-specific arguments
+    list_parser.add_argument('--prefix', metavar='PREFIX',
+                             help='Filter objects by prefix (e.g., "folder/subfolder/")')
+    list_parser.add_argument('--max-keys', type=int, metavar='N',
+                             help='Maximum number of objects to list')
+
     # Parse arguments
     args = parser.parse_args()
 
     # Dispatch to appropriate command
     if args.command == 'upload':
         command_upload(args)
+    elif args.command == 'list':
+        command_list(args)
     else:
         parser.error(f"Unknown command: {args.command}")
 
