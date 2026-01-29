@@ -199,8 +199,8 @@ def command_list(args):
         print()
 
         # Print header
-        print(f"{'FILE PATH':<60} {'SIZE':<12} {'LAST MODIFIED':<25}")
-        print("-" * 97)
+        print(f"{'FILE PATH':<70} {'SIZE':<12} {'LAST MODIFIED':<25}")
+        print("-" * 107)
 
         # Paginate through results
         total_objects = 0
@@ -232,7 +232,7 @@ def command_list(args):
                 size_str = format_size(size_bytes)
 
                 # Print object info
-                print(f"{key:<60} {size_str:<12} {last_modified:<25}")
+                print(f"{key:<70} {size_str:<12} {last_modified:<25}")
 
                 total_objects += 1
                 total_size += size_bytes
@@ -250,7 +250,7 @@ def command_list(args):
                 break
 
         # Print summary
-        print("-" * 97)
+        print("-" * 107)
         print(f"Total: {total_objects} objects, {format_size(total_size)}")
 
     except ClientError as e:
