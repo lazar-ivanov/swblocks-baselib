@@ -543,6 +543,221 @@ def command_verify(args):
         import sys
         sys.exit(1)
 
+def generate_html_index(objects, total_objects, total_size, url_prefix):
+    """Generate HTML index file content."""
+    from datetime import datetime
+
+    # Ensure url_prefix ends with slash
+    if not url_prefix.endswith('/'):
+        url_prefix += '/'
+
+    # Start HTML document
+    html = []
+    html.append('<!DOCTYPE html>')
+    html.append('<html>')
+    html.append('<head>')
+    html.append('  <meta charset="UTF-8">')
+    html.append('  <meta name="viewport" content="width=device-width, initial-scale=1.0">')
+    html.append('  <title>S3 Bucket Index</title>')
+    html.append('  <style>')
+    html.append('    body { font-family: Arial, sans-serif; margin: 20px; }')
+    html.append('    h1 { color: #333; }')
+    html.append('    table { border-collapse: collapse; width: 100%; }')
+    html.append('    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }')
+    html.append('    th { background-color: #f2f2f2; }')
+    html.append('    tr:hover { background-color: #f5f5f5; }')
+    html.append('    a { color: #0066cc; text-decoration: none; }')
+    html.append('    a:hover { text-decoration: underline; }')
+    html.append('    .summary { margin-top: 20px; font-weight: bold; }')
+    html.append('  </style>')
+    html.append('</head>')
+    html.append('<body>')
+    html.append('  <h1>S3 Bucket Index</h1>')
+    html.append('  <table>')
+    html.append('    <thead>')
+    html.append('      <tr>')
+    html.append('        <th>File Path</th>')
+    html.append('        <th>Size</th>')
+    html.append('        <th>Last Modified</th>')
+    html.append('      </tr>')
+    html.append('    </thead>')
+    html.append('    <tbody>')
+
+    # Add table rows
+    for obj in objects:
+        key = obj['key']
+        size_str = format_size(obj['size'])
+        last_modified_str = obj['last_modified'].strftime('%Y-%m-%d %H:%M:%S %Z')
+        download_url = url_prefix + key
+
+        # Escape HTML special characters in key
+        key_escaped = key.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+        html.append('      <tr>')
+        html.append(f'        <td><a href="{download_url}">{key_escaped}</a></td>')
+        html.append(f'        <td>{size_str}</td>')
+        html.append(f'        <td>{last_modified_str}</td>')
+        html.append('      </tr>')
+
+    html.append('    </tbody>')
+    html.append('  </table>')
+    html.append(f'  <div class="summary">Total: {total_objects} objects, {format_size(total_size)}</div>')
+    html.append(f'  <p><em>Generated on {datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")}</em></p>')
+    html.append('</body>')
+    html.append('</html>')
+
+    return '\n'.join(html)
+
+def generate_markdown_index(objects, total_objects, total_size, url_prefix):
+    """Generate Markdown index file content."""
+    from datetime import datetime
+
+    # Ensure url_prefix ends with slash
+    if not url_prefix.endswith('/'):
+        url_prefix += '/'
+
+    # Start Markdown document
+    md = []
+    md.append('# S3 Bucket Index')
+    md.append('')
+    md.append('| File Path | Size | Last Modified |')
+    md.append('|-----------|------|---------------|')
+
+    # Add table rows
+    for obj in objects:
+        key = obj['key']
+        size_str = format_size(obj['size'])
+        last_modified_str = obj['last_modified'].strftime('%Y-%m-%d %H:%M:%S %Z')
+        download_url = url_prefix + key
+
+        # Escape Markdown special characters in key (pipe character)
+        key_escaped = key.replace('|', '\\|')
+
+        # Create Markdown link
+        md.append(f'| [{key_escaped}]({download_url}) | {size_str} | {last_modified_str} |')
+
+    # Add summary
+    md.append('')
+    md.append(f'**Total:** {total_objects} objects, {format_size(total_size)}')
+    md.append('')
+    md.append(f'*Generated on {datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")}*')
+
+    return '\n'.join(md)
+
+def command_indexupload(args):
+    """Execute the indexupload command."""
+    import tempfile
+    from datetime import datetime
+
+    # Create S3 client
+    s3_client = boto3.client(
+        's3',
+        endpoint_url=args.endpoint_url,
+        aws_access_key_id=args.access_key,
+        aws_secret_access_key=args.secret_key
+    )
+
+    # List all S3 objects (similar to command_list)
+    list_params = {
+        'Bucket': args.bucket_name
+    }
+
+    if args.prefix:
+        list_params['Prefix'] = args.prefix
+
+    print(f"Listing objects in bucket: {args.bucket_name}")
+    if args.prefix:
+        print(f"Prefix filter: {args.prefix}")
+    print()
+
+    # Collect all objects (paginate through entire bucket)
+    objects = []
+    total_size = 0
+    continuation_token = None
+
+    while True:
+        if continuation_token:
+            list_params['ContinuationToken'] = continuation_token
+
+        response = s3_client.list_objects_v2(**list_params)
+
+        # Check if bucket is empty or no objects match prefix
+        if 'Contents' not in response:
+            if len(objects) == 0:
+                if args.prefix:
+                    print(f"No objects found with prefix: {args.prefix}")
+                else:
+                    print("Bucket is empty")
+                print("No index files will be generated.")
+                return
+            break
+
+        # Collect objects
+        for obj in response['Contents']:
+            key = obj['Key']
+
+            # Exclude index.html and index.md from list
+            if key in ('index.html', 'index.md'):
+                continue
+
+            size_bytes = obj['Size']
+            last_modified = obj['LastModified']
+
+            objects.append({
+                'key': key,
+                'size': size_bytes,
+                'last_modified': last_modified
+            })
+            total_size += size_bytes
+
+        # Check if there are more results
+        if not response.get('IsTruncated', False):
+            break
+
+        continuation_token = response.get('NextContinuationToken')
+
+    total_objects = len(objects)
+    print(f"Found {total_objects} objects (excluded index.html, index.md)")
+    print()
+
+    # Generate index.html content
+    html_content = generate_html_index(objects, total_objects, total_size, args.url_prefix)
+
+    # Generate index.md content
+    md_content = generate_markdown_index(objects, total_objects, total_size, args.url_prefix)
+
+    # Write files to temporary location
+    with tempfile.TemporaryDirectory() as tmpdir:
+        html_path = os.path.join(tmpdir, 'index.html')
+        md_path = os.path.join(tmpdir, 'index.md')
+
+        with open(html_path, 'w', encoding='utf-8') as f:
+            f.write(html_content)
+
+        with open(md_path, 'w', encoding='utf-8') as f:
+            f.write(md_content)
+
+        print("Generated index files:")
+        print(f"  - index.html ({os.path.getsize(html_path)} bytes)")
+        print(f"  - index.md ({os.path.getsize(md_path)} bytes)")
+        print()
+
+        # Upload both files to bucket root
+        print("Uploading index files to bucket root...")
+
+        try:
+            s3_client.upload_file(html_path, args.bucket_name, 'index.html')
+            print("[SUCCESS] index.html uploaded")
+
+            s3_client.upload_file(md_path, args.bucket_name, 'index.md')
+            print("[SUCCESS] index.md uploaded")
+
+            print("\nIndex files uploaded successfully!")
+        except Exception as e:
+            print(f"[ERROR] Failed to upload index files: {str(e)}")
+            import sys
+            sys.exit(1)
+
 def main():
     # Create parent parser for common arguments
     parent_parser = create_parent_parser()
@@ -604,6 +819,19 @@ def main():
     verify_parser.add_argument('--allow-hidden-files', action='store_true',
                               help='Include hidden files and directories (those starting with ".")')
 
+    # Add 'indexupload' subcommand
+    indexupload_parser = subparsers.add_parser(
+        'indexupload',
+        parents=[parent_parser],
+        help='Generate index.html and index.md files listing bucket contents, then upload to bucket root'
+    )
+
+    # Add indexupload-specific arguments
+    indexupload_parser.add_argument('--url-prefix', required=True, metavar='URL',
+                                    help='Base URL for generating file download links (e.g., https://storage.example.com/mybucket/)')
+    indexupload_parser.add_argument('--prefix', metavar='PREFIX',
+                                    help='Filter objects by prefix (e.g., "folder/subfolder/")')
+
     # Parse arguments
     args = parser.parse_args()
 
@@ -614,6 +842,8 @@ def main():
         command_list(args)
     elif args.command == 'verify':
         command_verify(args)
+    elif args.command == 'indexupload':
+        command_indexupload(args)
     else:
         parser.error(f"Unknown command: {args.command}")
 
