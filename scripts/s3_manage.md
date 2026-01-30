@@ -4,11 +4,12 @@ A command-line tool for managing S3-compatible object storage with support for u
 
 ## Overview
 
-`s3_manage.py` is a Python script that provides four main commands for working with S3-compatible storage:
+`s3_manage.py` is a Python script that provides five main commands for working with S3-compatible storage:
 - **upload**: Upload local files to an S3 bucket with parallel execution and smart skip logic
 - **list**: List objects in an S3 bucket with filtering and pagination
 - **verify**: Verify local files against S3 objects by comparing checksums (ETags)
 - **indexupload**: Generate HTML and Markdown index files listing bucket contents with download links
+- **download**: Download S3 objects to local folder with parallel execution and automatic verification
 
 ## Requirements
 
@@ -607,6 +608,327 @@ The command exits gracefully without creating empty index files.
 
 ---
 
+### 5. download - Download Files from S3
+
+Download S3 objects to a local folder with parallel execution, automatic verification, and intelligent handling of existing files. The command downloads only missing files and verifies existing files without re-downloading them.
+
+#### Usage
+
+```bash
+python scripts/s3_manage.py download \
+  --account-id <id> \
+  --access-key <key> \
+  --secret-key <secret> \
+  --bucket-name <bucket> \
+  --endpoint-url <url> \
+  --local-folder <path> \
+  [--max-threads <n>] \
+  [--dry-run] \
+  [--prefix <prefix>]
+```
+
+#### Arguments
+
+| Argument | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `--local-folder PATH` | Yes | - | Local directory to download files to |
+| `--max-threads N` | No | 3 | Number of parallel download threads |
+| `--dry-run` | No | False | Preview what would be downloaded without downloading |
+| `--prefix PREFIX` | No | - | Filter S3 objects by prefix (e.g., "folder/subfolder/") |
+
+#### Features
+
+- **Smart Download Logic**: Downloads missing files, verifies existing files without re-downloading
+- **Prefix as Filter Only**: Local paths always match full bucket structure (prefix doesn't act as new root)
+- **Automatic Verification**: All files verified using ETag comparison (same as verify command)
+- **Parallel Execution**: Uses ThreadPoolExecutor for concurrent downloads
+- **Dry-Run Mode**: Preview what would be downloaded without making changes
+- **No Hidden File Filtering**: Downloads ALL S3 objects matching prefix (no --allow-hidden-files flag)
+- **Real-Time Status**: Four status types (DOWNLOADING, DOWNLOADED, VERIFIED, DIFFERENT)
+- **CI/CD Friendly**: Exit code 1 if any files are DIFFERENT or errors occur
+- **Bandwidth Efficient**: Skips re-downloading existing files even if checksums differ
+
+#### Download Behavior
+
+**For each S3 object:**
+1. If file **doesn't exist locally**: Download → Verify → Report status
+2. If file **exists locally**: Verify only (don't re-download even if different)
+
+**This prevents:**
+- Data loss from overwriting modified local files
+- Unnecessary bandwidth usage
+- Accidental corruption of local work
+
+#### Prefix Handling (Critical Design)
+
+The `--prefix` parameter filters which S3 objects to download but **does NOT act as a new root**. Local paths always mirror the full bucket structure.
+
+**Example:**
+- S3 objects: `builds/2024/app.tar.gz`, `builds/2024/README.md`, `configs/app.conf`
+- Command: `download --prefix "builds/2024/" --local-folder ./downloads`
+- Local paths created:
+  - `./downloads/builds/2024/app.tar.gz` ✅
+  - `./downloads/builds/2024/README.md` ✅
+- **NOT created:**
+  - `./downloads/app.tar.gz` ❌ (prefix stripping would be wrong)
+
+#### Download States
+
+| Status | Description | Action Taken | Exit Code |
+|--------|-------------|--------------|-----------|
+| `[DOWNLOADING]` | File download in progress | Downloading file | - |
+| `[DOWNLOADED] → [VERIFIED]` | File downloaded and verified | Downloaded, verified | 0 |
+| `[VERIFIED]` | Existing file matches S3 | Verified only (not downloaded) | 0 |
+| `[DIFFERENT]` | Existing file differs from S3 | Verified only (kept local file) | 1 |
+| `[ERROR]` | Download or verification error | Error reported | 1 |
+
+#### Output Format
+
+**Fresh Download (no existing files):**
+```
+Listing objects in bucket: my-bucket
+
+Found 5 objects (125.45 MB total)
+Local folder: ./downloads
+
+[DOWNLOADING] builds/2024/app-v1.0.tar.gz (45.23 MB)...
+[DOWNLOADING] builds/2024/README.md (1.23 KB)...
+[DOWNLOADED] builds/2024/README.md (1.23 KB) → [VERIFIED]
+[DOWNLOADED] builds/2024/app-v1.0.tar.gz (45.23 MB) → [VERIFIED]
+[DOWNLOADING] configs/app.conf (512 B)...
+[DOWNLOADED] configs/app.conf (512 B) → [VERIFIED]
+
+All operations complete!
+
+--- DOWNLOAD SUMMARY ---
+Total files found: 5
+Downloaded (new files): 5 (125.45 MB)
+Verified (existing files, match): 0 (0 B)
+Different (existing files, mismatch): 0
+Errors: 0
+```
+
+**Incremental Download (some files exist):**
+```
+Listing objects in bucket: my-bucket
+Prefix filter: builds/2024/
+
+Found 3 objects (175.78 MB total)
+Local folder: ./downloads
+
+[VERIFIED] builds/2024/app-v1.0.tar.gz (45.23 MB)
+[DOWNLOADING] builds/2024/app-v1.1.tar.gz (50.12 MB)...
+[DOWNLOADED] builds/2024/app-v1.1.tar.gz (50.12 MB) → [VERIFIED]
+[DIFFERENT] builds/2024/app-v1.2.tar.gz (S3: abc123def456-3, Local: 789abc123def-3)
+
+All operations complete!
+
+--- DOWNLOAD SUMMARY ---
+Total files found: 3
+Downloaded (new files): 1 (50.12 MB)
+Verified (existing files, match): 1 (45.23 MB)
+Different (existing files, mismatch): 1
+Errors: 0
+```
+
+**Exit code:** 1 (due to DIFFERENT status)
+
+#### Example: Basic Download
+
+```bash
+python scripts/s3_manage.py download \
+  --account-id "my-account" \
+  --access-key "my-key" \
+  --secret-key "my-secret" \
+  --bucket-name "my-bucket" \
+  --endpoint-url "https://s3.example.com" \
+  --local-folder ./downloads
+```
+
+#### Example: Download with Prefix Filter
+
+```bash
+python scripts/s3_manage.py download \
+  --account-id "my-account" \
+  --access-key "my-key" \
+  --secret-key "my-secret" \
+  --bucket-name "my-bucket" \
+  --endpoint-url "https://s3.example.com" \
+  --local-folder ./downloads \
+  --prefix "builds/2024/"
+```
+
+**Use Case:** Download only files from a specific subdirectory, but preserve full bucket structure locally.
+
+#### Example: Dry-Run Mode
+
+```bash
+python scripts/s3_manage.py download \
+  --account-id "my-account" \
+  --access-key "my-key" \
+  --secret-key "my-secret" \
+  --bucket-name "my-bucket" \
+  --endpoint-url "https://s3.example.com" \
+  --local-folder ./downloads \
+  --dry-run
+```
+
+**Output:**
+```
+Listing objects in bucket: my-bucket
+
+Found 10 objects (2.34 GB total)
+Local folder: ./downloads
+
+Running in DRY-RUN mode (no files will be downloaded)
+
+[DRY-RUN] file1.txt (1.23 MB would be downloaded)
+[DRY-RUN] file2.bin (456.78 KB would be downloaded)
+[VERIFIED] existing_file.txt (2.34 MB)
+[DRY-RUN] file3.tar.gz (1.12 GB would be downloaded)
+
+All operations complete!
+
+--- DOWNLOAD SUMMARY ---
+Total files found: 10
+Downloaded (new files): 7 (2.12 GB)
+Verified (existing files, match): 3 (220.45 MB)
+Different (existing files, mismatch): 0
+Errors: 0
+
+No files were actually downloaded (dry-run mode)
+```
+
+#### Example: High-Performance Download
+
+```bash
+python scripts/s3_manage.py download \
+  --account-id "my-account" \
+  --access-key "my-key" \
+  --secret-key "my-secret" \
+  --bucket-name "my-bucket" \
+  --endpoint-url "https://s3.example.com" \
+  --local-folder ./downloads \
+  --max-threads 10
+```
+
+**Use Case:** Download large datasets faster with more parallel connections.
+
+#### Example: Backup/Restore Workflow
+
+```bash
+#!/bin/bash
+# Restore backup from S3 with verification
+
+# Download all files from backup bucket
+python scripts/s3_manage.py download \
+  --account-id "my-account" \
+  --access-key "my-key" \
+  --secret-key "my-secret" \
+  --bucket-name "backups" \
+  --endpoint-url "https://s3.example.com" \
+  --local-folder ./restore \
+  --max-threads 5 || {
+  echo "ERROR: Download/verification failed!"
+  exit 1
+}
+
+# Check if any files were DIFFERENT
+# Exit code 1 means verification issues
+echo "SUCCESS: All files downloaded and verified"
+```
+
+#### Example: Incremental Sync Pattern
+
+```bash
+#!/bin/bash
+# Incremental download - only get new/missing files
+
+# First run: Downloads all files
+python scripts/s3_manage.py download \
+  --account-id "my-account" \
+  --access-key "my-key" \
+  --secret-key "my-secret" \
+  --bucket-name "data-lake" \
+  --endpoint-url "https://s3.example.com" \
+  --local-folder ./data
+
+# Second run (later): Only downloads new files, verifies existing
+# Existing files with matching checksums show [VERIFIED]
+# Modified local files show [DIFFERENT] but are NOT overwritten
+python scripts/s3_manage.py download \
+  --account-id "my-account" \
+  --access-key "my-key" \
+  --secret-key "my-secret" \
+  --bucket-name "data-lake" \
+  --endpoint-url "https://s3.example.com" \
+  --local-folder ./data
+```
+
+#### Use Cases
+
+**1. Backup Restoration**
+- Download backups from S3 to restore data
+- Automatic verification ensures data integrity
+- Exit code 1 alerts if any files are corrupted
+
+**2. Incremental Synchronization**
+- Run periodically to download new files
+- Skips re-downloading existing files (saves bandwidth)
+- Verifies existing files haven't changed
+
+**3. Build Artifact Distribution**
+- Download build artifacts from CI/CD bucket
+- Parallel downloads for faster retrieval
+- Automatic verification of downloaded artifacts
+
+**4. Data Lake Mirroring**
+- Mirror S3 data lake to local storage
+- Prefix filtering for specific datasets
+- Preserves full bucket structure locally
+
+**5. Disaster Recovery**
+- Quick restoration of critical files
+- Verification ensures no corruption
+- Prefix filtering for selective recovery
+
+#### Edge Cases and Behavior
+
+**Empty Bucket:**
+```
+Listing objects in bucket: my-bucket
+
+Bucket is empty
+Nothing to download.
+```
+
+Exit code: 0
+
+**No Prefix Matches:**
+```
+Listing objects in bucket: my-bucket
+Prefix filter: missing/prefix/
+
+No objects found with prefix: missing/prefix/
+Nothing to download.
+```
+
+Exit code: 0
+
+**Modified Local File:**
+- Local file has different checksum than S3
+- Status: `[DIFFERENT]`
+- Action: Local file is **NOT overwritten** (preserved)
+- Exit code: 1 (indicates verification issue)
+
+**Download Failure:**
+- Network error, permission denied, disk full, etc.
+- Status: `[ERROR]` with error details
+- Action: Error reported, other files continue
+- Exit code: 1
+
+---
+
 ## Error Handling
 
 All commands handle errors gracefully and provide clear error messages:
@@ -640,6 +962,17 @@ All commands handle errors gracefully and provide clear error messages:
 - **Access denied:** Displays S3 error code and message
 - **Disk full:** Propagates error during file generation
 
+### Download Errors
+
+- **Empty bucket:** Displays message "Nothing to download", exits gracefully with code 0
+- **No prefix matches:** Displays message, exits gracefully with code 0
+- **File download failed:** Reported as `[ERROR]` with details, continues with other files
+- **Local file different:** Reported as `[DIFFERENT]`, local file kept (not overwritten), exits with code 1
+- **Permission denied (local):** Reported as `[ERROR]` (cannot create directory or write file)
+- **Disk full:** Reported as `[ERROR]` during download
+- **Network error:** Reported as `[ERROR]` with details
+- **ETag calculation failure:** Reported as `[ERROR]` (rare)
+
 ---
 
 ## Performance Considerations
@@ -662,6 +995,7 @@ All commands handle errors gracefully and provide clear error messages:
 - **list:** Uses `list_objects_v2()` API (metadata only, no file downloads)
 - **verify:** Uses `head_object()` for metadata (minimal data transfer, no file downloads)
 - **indexupload:** Uses `list_objects_v2()` API (metadata only, no file downloads)
+- **download:** Uses `head_object()` for metadata, `download_file()` for new files only (skips re-downloading existing files)
 
 ### IndexUpload-Specific Considerations
 
@@ -669,6 +1003,16 @@ All commands handle errors gracefully and provide clear error messages:
 - **Memory Usage:** Stores all objects in memory (~100 bytes per object, ~1MB for 10,000 objects)
 - **Generation Time:** Large buckets (10,000+ objects) may take several minutes to list
 - **File Size:** Generated HTML/MD files scale with object count (~500KB HTML for 10,000 objects)
+
+### Download-Specific Considerations
+
+- **Bandwidth Optimization:** Existing files are verified without re-downloading (saves bandwidth)
+- **Incremental Downloads:** Only new/missing files are downloaded on subsequent runs
+- **Parallel Downloads:** Uses ThreadPoolExecutor for concurrent downloads (configurable with --max-threads)
+- **Verification Cost:** ETag calculation for large multipart files can be CPU-intensive
+- **Disk Space:** Ensure sufficient disk space before downloading (check with --dry-run first)
+- **Network Stability:** Large downloads may fail if network is unstable (no automatic retry yet)
+- **Memory Efficiency:** Files are downloaded directly to disk (not loaded entirely into memory)
 
 ---
 
@@ -727,6 +1071,21 @@ pip3 install boto3
 2. Check network bandwidth
 3. Verify S3 endpoint is not rate limiting
 
+### Issue: Download shows "[DIFFERENT]" but I want to re-download
+
+**Solution:** The download command intentionally preserves existing local files to prevent data loss. If you want to force re-download:
+1. Delete the local file: `rm path/to/file`
+2. Run download again
+3. Alternatively, use a different local folder to download to a fresh location
+
+### Issue: Download doesn't preserve my modified local files
+
+**Solution:** The download command is working correctly. When a local file differs from S3:
+- The local file is **NOT overwritten** (preserved)
+- Status shows `[DIFFERENT]`
+- Exit code is 1 (indicates verification issue)
+- This protects your local changes from being accidentally lost
+
 ---
 
 ## Examples Summary
@@ -756,6 +1115,12 @@ python scripts/s3_manage.py indexupload \
   --account-id <id> --access-key <key> --secret-key <secret> \
   --bucket-name <bucket> --endpoint-url <url> \
   --url-prefix <base-url>
+
+# Download files from S3
+python scripts/s3_manage.py download \
+  --account-id <id> --access-key <key> --secret-key <secret> \
+  --bucket-name <bucket> --endpoint-url <url> \
+  --local-folder <path>
 ```
 
 ### Environment Variables Pattern
@@ -788,6 +1153,7 @@ python scripts/s3_manage.py upload \
 - **v1.1**: Added list command with prefix filtering and pagination
 - **v1.2**: Added verify command with ETag calculation for multipart uploads
 - **v1.3**: Added indexupload command to generate HTML and Markdown index files with download links
+- **v1.4**: Added download command with parallel execution, automatic verification, and intelligent handling of existing files
 
 ---
 
