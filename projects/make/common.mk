@@ -81,6 +81,14 @@ $(info Building with ARCH = $(ARCH))
 $(info Building with TOOLCHAIN = $(TOOLCHAIN))
 $(info Building with VARIANT = $(VARIANT))
 
+# Use native date format with numeric timezone offset on Windows to avoid MSYS2 SAPST issue
+# Format matches macOS but uses %z (numeric offset) instead of %Z (timezone abbreviation)
+ifeq (win, $(findstring win, $(OS)))
+  DATE_COMMAND := date '+%a %b %e %H:%M:%S %z %Y'
+else
+  DATE_COMMAND := date
+endif
+
 # so we can use the proper jdk when invoking Java tests
 ifeq ($(DEVENV_VERSION_TAG),devenv3)
 include $(MKDIR)/3rd/jdk/1.8.mk
@@ -447,8 +455,8 @@ define TEMPLATE
     test_$(1)_begin: | mktmppath mkutflogspath $(1)
 	$$(info $$(HR))
 	@echo $$(HR) > $$(UTF_LOGS_DIR)/$(1).log
-	$$(info Starting $(1) at $$(shell date))
-	@echo Starting $(1) at $$(shell date) >>$$(UTF_LOGS_DIR)/$(1).log
+	$$(info Starting $(1) at $$(shell $(DATE_COMMAND)))
+	@echo Starting $(1) at $$(shell $(DATE_COMMAND)) >>$$(UTF_LOGS_DIR)/$(1).log
 	$$(info $$(HR))
 	@echo $$(HR) >>$$(UTF_LOGS_DIR)/$(1).log
 
@@ -474,8 +482,8 @@ define TEMPLATE
     test_$(1)_end: test_$(1)_run
 	$$(info $$(HR))
 	@echo $$(HR) >>$$(UTF_LOGS_DIR)/$(1).log
-	$$(info Completed $(1) at $$(shell date))
-	@echo Completed $(1) at $$(shell date) >>$$(UTF_LOGS_DIR)/$(1).log
+	$$(info Completed $(1) at $$(shell $(DATE_COMMAND)))
+	@echo Completed $(1) at $$(shell $(DATE_COMMAND)) >>$$(UTF_LOGS_DIR)/$(1).log
 	$$(info $$(HR))
 	@echo $$(HR) >>$$(UTF_LOGS_DIR)/$(1).log
 
