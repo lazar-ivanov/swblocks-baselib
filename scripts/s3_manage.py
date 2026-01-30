@@ -221,6 +221,140 @@ def verify_worker(s3_client, bucket_name, file_path, relative_path):
     except Exception as e:
         return f"[ERROR] {relative_path} - Unexpected error: {str(e)}"
 
+def download_worker(s3_client, bucket_name, s3_key, local_folder, dry_run=False):
+    """
+    Download a single S3 object to local folder and verify.
+
+    Args:
+        s3_client: boto3 S3 client instance
+        bucket_name (str): Target S3 bucket name
+        s3_key (str): S3 object key (full path in bucket)
+        local_folder (str): Local root directory for downloads
+        dry_run (bool): If True, preview only (no actual download)
+
+    Returns:
+        tuple: (status_message, downloaded_size, status_category)
+        - status_message (str): Human-readable status line for printing
+        - downloaded_size (int): Size in bytes (0 if not downloaded)
+        - status_category (str): One of: "downloaded", "verified", "different", "error"
+    """
+    try:
+        # STEP 1: Get S3 object metadata (ETag, Size) using head_object
+        try:
+            response = s3_client.head_object(Bucket=bucket_name, Key=s3_key)
+        except ClientError as e:
+            if e.response['Error']['Code'] == "404":
+                return (f"[ERROR] {s3_key} - Object not found in S3", 0, "error")
+            else:
+                error_msg = e.response['Error'].get('Message', str(e))
+                return (f"[ERROR] {s3_key} - S3 error: {error_msg}", 0, "error")
+
+        s3_etag = response['ETag'].strip('"')
+        s3_size = response['ContentLength']
+
+        # STEP 2: Construct local file path (preserve full S3 key as path)
+        # CRITICAL: Do NOT strip prefix - local paths mirror bucket structure
+        local_path = os.path.join(local_folder, s3_key)
+
+        # STEP 3: Check if local file exists
+        file_exists_locally = os.path.exists(local_path)
+
+        if file_exists_locally:
+            # STEP 4A: File exists - VERIFY ONLY (do not re-download)
+            try:
+                local_size = os.path.getsize(local_path)
+
+                # Quick size check first (optimization)
+                if local_size != s3_size:
+                    size_diff = f"S3: {format_size(s3_size)}, Local: {format_size(local_size)}"
+                    return (f"[DIFFERENT] {s3_key} (size mismatch: {size_diff})", 0, "different")
+
+                # Calculate local ETag matching S3's method (reuse verify logic)
+                if '-' in s3_etag:
+                    # Multipart ETag
+                    etag_parts = s3_etag.split('-')
+                    if len(etag_parts) != 2:
+                        return (f"[ERROR] {s3_key} - Invalid S3 ETag format: {s3_etag}", 0, "error")
+
+                    try:
+                        part_count = int(etag_parts[1])
+                    except ValueError:
+                        return (f"[ERROR] {s3_key} - Invalid part count in ETag: {s3_etag}", 0, "error")
+
+                    local_etag = calculate_s3_etag_multipart(local_path, part_count)
+                    if local_etag is None:
+                        return (f"[ERROR] {s3_key} - Failed to calculate multipart ETag", 0, "error")
+                else:
+                    # Simple ETag
+                    local_etag = calculate_s3_etag_simple(local_path)
+
+                # Compare ETags (case-insensitive)
+                local_etag_hash = local_etag.split('-')[0] if '-' in local_etag else local_etag
+                s3_etag_hash = s3_etag.split('-')[0] if '-' in s3_etag else s3_etag
+
+                if local_etag_hash.lower() == s3_etag_hash.lower():
+                    return (f"[VERIFIED] {s3_key} ({format_size(s3_size)})", 0, "verified")
+                else:
+                    return (f"[DIFFERENT] {s3_key} (S3: {s3_etag}, Local: {local_etag})", 0, "different")
+
+            except IOError as e:
+                return (f"[ERROR] {s3_key} - File read error: {str(e)}", 0, "error")
+            except OSError as e:
+                return (f"[ERROR] {s3_key} - File access error: {str(e)}", 0, "error")
+
+        else:
+            # STEP 4B: File does not exist - DOWNLOAD then VERIFY
+
+            # Handle dry-run mode
+            if dry_run:
+                return (f"[DRY-RUN] {s3_key} ({format_size(s3_size)} would be downloaded)", 0, "downloaded")
+
+            # Create parent directories if needed
+            local_dir = os.path.dirname(local_path)
+            if local_dir:
+                os.makedirs(local_dir, exist_ok=True)
+
+            # Announce download start (for user feedback)
+            safe_print(f"[DOWNLOADING] {s3_key} ({format_size(s3_size)})...")
+
+            # Download file using boto3
+            try:
+                s3_client.download_file(bucket_name, s3_key, local_path)
+            except Exception as e:
+                return (f"[ERROR] {s3_key} - Download failed: {str(e)}", 0, "error")
+
+            # Verify downloaded file (same logic as above)
+            try:
+                local_size = os.path.getsize(local_path)
+
+                if local_size != s3_size:
+                    size_diff = f"S3: {format_size(s3_size)}, Local: {format_size(local_size)}"
+                    return (f"[DOWNLOADED] {s3_key} → [DIFFERENT] (size mismatch: {size_diff})", s3_size, "different")
+
+                # Calculate ETag
+                if '-' in s3_etag:
+                    etag_parts = s3_etag.split('-')
+                    part_count = int(etag_parts[1])
+                    local_etag = calculate_s3_etag_multipart(local_path, part_count)
+                    if local_etag is None:
+                        return (f"[DOWNLOADED] {s3_key} → [ERROR] (ETag calculation failed)", s3_size, "error")
+                else:
+                    local_etag = calculate_s3_etag_simple(local_path)
+
+                local_etag_hash = local_etag.split('-')[0] if '-' in local_etag else local_etag
+                s3_etag_hash = s3_etag.split('-')[0] if '-' in s3_etag else s3_etag
+
+                if local_etag_hash.lower() == s3_etag_hash.lower():
+                    return (f"[DOWNLOADED] {s3_key} ({format_size(s3_size)}) → [VERIFIED]", s3_size, "downloaded")
+                else:
+                    return (f"[DOWNLOADED] {s3_key} → [DIFFERENT] (S3: {s3_etag}, Local: {local_etag})", s3_size, "different")
+
+            except (IOError, OSError) as e:
+                return (f"[DOWNLOADED] {s3_key} → [ERROR] (verification failed: {str(e)})", s3_size, "error")
+
+    except Exception as e:
+        return (f"[ERROR] {s3_key} - Unexpected error: {str(e)}", 0, "error")
+
 # S3 client will be created in main() using command-line arguments
 
 def file_exists_in_bucket(s3_client, bucket, key):
@@ -758,6 +892,137 @@ def command_indexupload(args):
             import sys
             sys.exit(1)
 
+def command_download(args):
+    """Execute the download command."""
+
+    # STEP 1: Create S3 client (same pattern as other commands)
+    s3_client = boto3.client(
+        's3',
+        endpoint_url=args.endpoint_url,
+        aws_access_key_id=args.access_key,
+        aws_secret_access_key=args.secret_key
+    )
+
+    # STEP 2: List S3 objects (with optional prefix filter)
+    list_params = {'Bucket': args.bucket_name}
+
+    if args.prefix:
+        list_params['Prefix'] = args.prefix
+
+    print(f"Listing objects in bucket: {args.bucket_name}")
+    if args.prefix:
+        print(f"Prefix filter: {args.prefix}")
+    print()
+
+    # STEP 3: Paginate through S3 objects (reuse indexupload pattern)
+    download_queue = []  # List of tuples: (s3_key, s3_size)
+    total_s3_size = 0
+    continuation_token = None
+
+    while True:
+        if continuation_token:
+            list_params['ContinuationToken'] = continuation_token
+
+        try:
+            response = s3_client.list_objects_v2(**list_params)
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            error_msg = e.response['Error']['Message']
+            print(f"Error listing bucket: {error_code} - {error_msg}")
+            import sys
+            sys.exit(1)
+        except Exception as e:
+            print(f"Error: {str(e)}")
+            import sys
+            sys.exit(1)
+
+        # Check if bucket is empty or no objects match prefix
+        if 'Contents' not in response:
+            if len(download_queue) == 0:
+                if args.prefix:
+                    print(f"No objects found with prefix: {args.prefix}")
+                else:
+                    print("Bucket is empty")
+                print("Nothing to download.")
+                return
+            break
+
+        # Collect objects
+        for obj in response['Contents']:
+            s3_key = obj['Key']
+            s3_size = obj['Size']
+            download_queue.append((s3_key, s3_size))
+            total_s3_size += s3_size
+
+        # Check if there are more results
+        if not response.get('IsTruncated', False):
+            break
+
+        continuation_token = response.get('NextContinuationToken')
+
+    total_files = len(download_queue)
+    print(f"Found {total_files} objects ({format_size(total_s3_size)} total)")
+    print(f"Local folder: {args.local_folder}")
+    print()
+
+    if args.dry_run:
+        print("Running in DRY-RUN mode (no files will be downloaded)")
+        print()
+
+    # STEP 4: Initialize statistics tracking
+    downloaded_count = 0
+    verified_count = 0
+    different_count = 0
+    error_count = 0
+    total_downloaded_size = 0
+    total_verified_size = 0
+
+    # STEP 5: Execute downloads with ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=args.max_threads) as executor:
+        future_to_file = {
+            executor.submit(download_worker, s3_client, args.bucket_name, s3_key, args.local_folder, args.dry_run): (s3_key, s3_size)
+            for s3_key, s3_size in download_queue
+        }
+
+        for future in as_completed(future_to_file):
+            s3_key, s3_size = future_to_file[future]
+            try:
+                status_message, downloaded_size, status_category = future.result()
+                safe_print(status_message)
+
+                # Track statistics
+                if status_category == "downloaded":
+                    downloaded_count += 1
+                    total_downloaded_size += downloaded_size
+                elif status_category == "verified":
+                    verified_count += 1
+                    total_verified_size += s3_size
+                elif status_category == "different":
+                    different_count += 1
+                elif status_category == "error":
+                    error_count += 1
+
+            except Exception as exc:
+                safe_print(f"[CRITICAL ERROR] Thread crashed processing {s3_key}: {exc}")
+                error_count += 1
+
+    # STEP 6: Print summary
+    print("\nAll operations complete!")
+    print("\n--- DOWNLOAD SUMMARY ---")
+    print(f"Total files found: {total_files}")
+    print(f"Downloaded (new files): {downloaded_count} ({format_size(total_downloaded_size)})")
+    print(f"Verified (existing files, match): {verified_count} ({format_size(total_verified_size)})")
+    print(f"Different (existing files, mismatch): {different_count}")
+    print(f"Errors: {error_count}")
+
+    if args.dry_run:
+        print("\nNo files were actually downloaded (dry-run mode)")
+
+    # STEP 7: Exit with appropriate code (like verify command)
+    if different_count > 0 or error_count > 0:
+        import sys
+        sys.exit(1)
+
 def main():
     # Create parent parser for common arguments
     parent_parser = create_parent_parser()
@@ -832,6 +1097,23 @@ def main():
     indexupload_parser.add_argument('--prefix', metavar='PREFIX',
                                     help='Filter objects by prefix (e.g., "folder/subfolder/")')
 
+    # Add 'download' subcommand
+    download_parser = subparsers.add_parser(
+        'download',
+        parents=[parent_parser],
+        help='Download S3 objects to local folder with verification'
+    )
+
+    # Add download-specific arguments
+    download_parser.add_argument('--local-folder', required=True, metavar='PATH',
+                                 help='Local directory to download files to')
+    download_parser.add_argument('--max-threads', type=int, default=3, metavar='N',
+                                 help='Number of parallel download threads (default: 3)')
+    download_parser.add_argument('--dry-run', action='store_true',
+                                 help='Preview what would be downloaded without downloading')
+    download_parser.add_argument('--prefix', metavar='PREFIX',
+                                 help='Filter S3 objects by prefix (e.g., "folder/subfolder/")')
+
     # Parse arguments
     args = parser.parse_args()
 
@@ -844,6 +1126,8 @@ def main():
         command_verify(args)
     elif args.command == 'indexupload':
         command_indexupload(args)
+    elif args.command == 'download':
+        command_download(args)
     else:
         parser.error(f"Unknown command: {args.command}")
 
