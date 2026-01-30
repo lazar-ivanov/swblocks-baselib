@@ -4,6 +4,7 @@ import boto3
 import threading
 import hashlib
 import math
+import time
 from botocore.exceptions import ClientError, NoCredentialsError
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -25,6 +26,30 @@ def format_size(size_bytes):
             return f"{size_bytes:.2f} {unit}"
         size_bytes /= 1024.0
     return f"{size_bytes:.2f} PB"
+
+def format_speed(size_bytes, elapsed_seconds):
+    """
+    Format processing speed with auto-adapting units.
+
+    Args:
+        size_bytes (int): Total bytes processed
+        elapsed_seconds (float): Elapsed time in seconds
+
+    Returns:
+        str: Formatted speed (e.g., "45.23 MB/s", "2.34 GB/s")
+    """
+    if elapsed_seconds <= 0:
+        return "0.00 B/s"
+
+    bytes_per_second = size_bytes / elapsed_seconds
+
+    # Auto-select unit based on speed
+    for unit in ['B/s', 'KB/s', 'MB/s', 'GB/s', 'TB/s']:
+        if bytes_per_second < 1024.0:
+            return f"{bytes_per_second:.2f} {unit}"
+        bytes_per_second /= 1024.0
+
+    return f"{bytes_per_second:.2f} PB/s"
 
 def calculate_chunk_size(file_size, part_count):
     """
@@ -461,7 +486,10 @@ def command_upload(args):
     # Initialize statistics tracking
     upload_count = 0
     skip_count = 0
-    total_upload_size_gb = 0.0
+    total_upload_size_bytes = 0
+
+    # Start timer for speed calculation
+    start_time = time.time()
 
     # 2. Execute
     with ThreadPoolExecutor(max_workers=args.max_threads) as executor:
@@ -484,20 +512,32 @@ def command_upload(args):
                     if "--" in result_message and "GB" in result_message:
                         parts = result_message.split("--")[1].strip().split()
                         if len(parts) >= 2:
-                            total_upload_size_gb += float(parts[0])
+                            size_gb = float(parts[0])
+                            total_upload_size_bytes += int(size_gb * 1024 * 1024 * 1024)
             except Exception as exc:
                 safe_print(f"[CRITICAL ERROR] Thread crashed: {exc}")
 
+    # Stop timer
+    elapsed_time = time.time() - start_time
+
     print("\nAll operations complete!")
 
-    # Print dry-run summary if in dry-run mode
+    # Print summary
     if args.dry_run:
         print("\n--- DRY-RUN SUMMARY ---")
         print(f"Total files scanned: {total_files}")
         print(f"Files that would be uploaded: {upload_count}")
         print(f"Files that would be skipped: {skip_count}")
-        print(f"Total upload size: {total_upload_size_gb:.2f} GB")
+        print(f"Total upload size: {format_size(total_upload_size_bytes)}")
+        print(f"Processing speed: {format_speed(total_upload_size_bytes, elapsed_time)}")
         print("\nNo files were actually uploaded (dry-run mode)")
+    else:
+        print("\n--- UPLOAD SUMMARY ---")
+        print(f"Total files scanned: {total_files}")
+        print(f"Files uploaded: {upload_count}")
+        print(f"Files skipped (already exist): {skip_count}")
+        print(f"Total uploaded size: {format_size(total_upload_size_bytes)}")
+        print(f"Processing speed: {format_speed(total_upload_size_bytes, elapsed_time)}")
 
 def command_list(args):
     """Execute the list command."""
@@ -637,18 +677,30 @@ def command_verify(args):
     different_count = 0
     not_uploaded_count = 0
     error_count = 0
+    total_verified_size_bytes = 0
+
+    # Start timer for speed calculation
+    start_time = time.time()
 
     # Execute verification with ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=args.max_threads) as executor:
         future_to_file = {
-            executor.submit(verify_worker, s3_client, args.bucket_name, f[0], f[1]): f[1]
+            executor.submit(verify_worker, s3_client, args.bucket_name, f[0], f[1]): f
             for f in files_to_verify
         }
 
         for future in as_completed(future_to_file):
+            file_path, relative_path = future_to_file[future]
             try:
                 result_message = future.result()
                 safe_print(result_message)
+
+                # Get file size for ALL processed files
+                try:
+                    file_size = os.path.getsize(file_path)
+                    total_verified_size_bytes += file_size
+                except (IOError, OSError):
+                    pass  # If can't get size, don't count it
 
                 # Track statistics based on status in message
                 if "[VERIFIED]" in result_message:
@@ -663,6 +715,9 @@ def command_verify(args):
                 safe_print(f"[CRITICAL ERROR] Thread crashed: {exc}")
                 error_count += 1
 
+    # Stop timer
+    elapsed_time = time.time() - start_time
+
     # Print summary
     print("\nAll verifications complete!")
     print("\n--- VERIFICATION SUMMARY ---")
@@ -671,6 +726,7 @@ def command_verify(args):
     print(f"Different (mismatch): {different_count}")
     print(f"Not uploaded to S3: {not_uploaded_count}")
     print(f"Errors: {error_count}")
+    print(f"Processing speed: {format_speed(total_verified_size_bytes, elapsed_time)}")
 
     # Exit with non-zero code if any mismatches or errors
     if different_count > 0 or error_count > 0:
@@ -977,6 +1033,9 @@ def command_download(args):
     total_downloaded_size = 0
     total_verified_size = 0
 
+    # Start timer for speed calculation
+    start_time = time.time()
+
     # STEP 5: Execute downloads with ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=args.max_threads) as executor:
         future_to_file = {
@@ -1006,6 +1065,9 @@ def command_download(args):
                 safe_print(f"[CRITICAL ERROR] Thread crashed processing {s3_key}: {exc}")
                 error_count += 1
 
+    # Stop timer
+    elapsed_time = time.time() - start_time
+
     # STEP 6: Print summary
     print("\nAll operations complete!")
     print("\n--- DOWNLOAD SUMMARY ---")
@@ -1014,6 +1076,7 @@ def command_download(args):
     print(f"Verified (existing files, match): {verified_count} ({format_size(total_verified_size)})")
     print(f"Different (existing files, mismatch): {different_count}")
     print(f"Errors: {error_count}")
+    print(f"Processing speed: {format_speed(total_downloaded_size, elapsed_time)}")
 
     if args.dry_run:
         print("\nNo files were actually downloaded (dry-run mode)")
