@@ -65,7 +65,8 @@ python scripts/s3_manage.py upload \
 - **Hidden File Filtering**: By default, skips hidden files and directories (starting with `.`)
 - **Dry-Run Mode**: Preview what would be uploaded without making changes
 - **Progress Tracking**: Real-time status messages for each file
-- **Summary Statistics**: Shows upload counts, skip counts, and total upload size
+- **Summary Statistics**: Shows upload counts, skip counts, total upload size, and upload speed
+- **Speed Measurement**: Automatically calculates and displays upload speed with auto-adapting units (B/s, KB/s, MB/s, GB/s, TB/s)
 
 #### Output Format
 
@@ -119,6 +120,7 @@ Total files scanned: 10
 Files that would be uploaded: 8
 Files that would be skipped: 2
 Total upload size: 2.45 GB
+Upload speed: 125.67 MB/s
 
 No files were actually uploaded (dry-run mode)
 ```
@@ -281,7 +283,8 @@ python scripts/s3_manage.py verify \
 - **Hidden File Filtering**: By default, skips hidden files and directories (starting with `.`)
 - **Detailed Status Reporting**: Four verification states (VERIFIED, DIFFERENT, NOT UPLOADED, ERROR)
 - **CI/CD Friendly**: Returns exit code 1 for failures, 0 for success
-- **Comprehensive Summary**: Shows counts for all verification categories
+- **Comprehensive Summary**: Shows counts for all verification categories and verify speed
+- **Speed Measurement**: Automatically calculates and displays verification speed based on all processed files with auto-adapting units (B/s, KB/s, MB/s, GB/s, TB/s)
 
 #### ETag Calculation Algorithm
 
@@ -330,6 +333,7 @@ Verified (match): 2
 Different (mismatch): 1
 Not uploaded to S3: 1
 Errors: 1
+Verify speed: 234.56 MB/s
 ```
 
 **Exit code:** 1 (non-zero indicates failures)
@@ -647,6 +651,7 @@ python scripts/s3_manage.py download \
 - **Real-Time Status**: Four status types (DOWNLOADING, DOWNLOADED, VERIFIED, DIFFERENT)
 - **CI/CD Friendly**: Exit code 1 if any files are DIFFERENT or errors occur
 - **Bandwidth Efficient**: Skips re-downloading existing files even if checksums differ
+- **Speed Measurement**: Automatically calculates and displays download speed based on downloaded files with auto-adapting units (B/s, KB/s, MB/s, GB/s, TB/s)
 
 #### Download Behavior
 
@@ -706,6 +711,7 @@ Downloaded (new files): 5 (125.45 MB)
 Verified (existing files, match): 0 (0 B)
 Different (existing files, mismatch): 0
 Errors: 0
+Download speed: 45.23 MB/s
 ```
 
 **Incremental Download (some files exist):**
@@ -729,6 +735,7 @@ Downloaded (new files): 1 (50.12 MB)
 Verified (existing files, match): 1 (45.23 MB)
 Different (existing files, mismatch): 1
 Errors: 0
+Download speed: 50.12 MB/s
 ```
 
 **Exit code:** 1 (due to DIFFERENT status)
@@ -795,6 +802,7 @@ Downloaded (new files): 7 (2.12 GB)
 Verified (existing files, match): 3 (220.45 MB)
 Different (existing files, mismatch): 0
 Errors: 0
+Download speed: 156.78 MB/s
 
 No files were actually downloaded (dry-run mode)
 ```
@@ -1154,6 +1162,7 @@ python scripts/s3_manage.py upload \
 - **v1.2**: Added verify command with ETag calculation for multipart uploads
 - **v1.3**: Added indexupload command to generate HTML and Markdown index files with download links
 - **v1.4**: Added download command with parallel execution, automatic verification, and intelligent handling of existing files
+- **v1.5**: Added speed measurement to upload, download, and verify commands with auto-adapting units (B/s to TB/s)
 
 ---
 
