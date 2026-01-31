@@ -8,7 +8,7 @@ This document contains design decisions, implementation details, and development
 
 Do not jump into implementation or change files unless clearly instructed to make changes. When the user's intent is ambiguous, default to providing information, doing research, and providing recommendations rather than taking action. Only proceed with edits, modifications, or implementations when the user explicitly requests them.
 
-Use the AskUserQuestion tool to ask as many follow ups as you need to reach clarity.
+Do not make any assumptions. Use the AskUserQuestion tool to ask as many follow ups as you need to reach clarity.
 
 ---
 
