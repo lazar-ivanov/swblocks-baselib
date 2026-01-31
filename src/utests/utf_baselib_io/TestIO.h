@@ -281,28 +281,27 @@ namespace
                              */
 
                             {
-                                /*
-                                 * TODO: clang 3.9.1 seems to have an issue and complains that this is
-                                 * unused local type if the connection_base_t is defined inside the
-                                 * local class as base_type
-                                 *
-                                 * This seems to be for now an acceptable workaround, but once the
-                                 * compiler issue is fixed we can change the code again
-                                 */
-
                                 typedef TcpBlockTransferClientConnectionT< typename Acceptor::stream_t >
                                     connection_base_t;
 
                                 class LocalClientConnection : public connection_base_t
                                 {
+                                    /*
+                                     * Bring base class type into class scope for member initializer list.
+                                     * clang-cl does not find typedefs from enclosing function scope
+                                     * when resolving member initializer names.
+                                     */
+
+                                    using base_type = connection_base_t;
+
                                 protected:
 
                                     LocalClientConnection(
                                         SAA_in const om::ObjPtr< data::datablocks_pool_type >& dataBlocksPool
                                         )
                                         :
-                                        connection_base_t(
-                                            connection_base_t::CommandId::NoCommand,
+                                        base_type(
+                                            base_type::CommandId::NoCommand,
                                             uuids::create() /* peerId */,
                                             dataBlocksPool
                                         )
@@ -317,12 +316,6 @@ namespace
                                         SAA_in_opt              const eh::error_code*                           ec
                                         )
                                     {
-                                        /*
-                                         * TODO: Compiler workaround
-                                         * "base_type::" should work below (MSVC and GCC accept it)
-                                         * but it fails for Clang3.5 which requires "this ->"
-                                         */
-
                                         UTF_REQUIRE( this -> isExpectedException( eptr, exception, ec ) );
                                     }
                                 };

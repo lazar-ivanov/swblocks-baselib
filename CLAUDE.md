@@ -14,11 +14,111 @@ Use the AskUserQuestion tool to ask as many follow ups as you need to reach clar
 
 ## Table of Contents
 
+- [Windows Batch File Scripting Conventions](#windows-batch-file-scripting-conventions)
 - [Build Commands](#build-commands)
   - [Cross-Compilation (Windows devenv7+)](#cross-compilation-windows-devenv7)
 - [Development Environment Setup](#development-environment-setup)
 - [devenv Version Gating Pattern](#devenv-version-gating-pattern)
 - [Windows JNI Support (devenv7+)](#windows-jni-support-devenv7)
+
+---
+
+## Windows Batch File Scripting Conventions
+
+**CRITICAL: Always escape special characters in batch files.**
+
+When writing or modifying Windows batch files (`.bat`), special characters **MUST** be escaped with `^` when used literally inside control structures (`if`, `for`, etc.).
+
+### Special Characters That Require Escaping
+
+The following characters have special meaning in batch files and must be escaped with `^` when used literally:
+
+- `(` and `)` - Parentheses (delimit code blocks)
+- `<` and `>` - Redirection operators
+- `|` - Pipe operator
+- `&` - Command separator
+- `%` - Variable expansion (use `%%` in batch files, `%` in command line)
+
+### Common Mistake: Parentheses in Echo Statements
+
+**WRONG:**
+```batch
+if /i "%TOOLCHAIN%"=="ccl16" (
+    echo Using clang-cl compiler (version 16)
+)
+```
+
+This will fail because the unescaped `(` in the echo statement is interpreted as starting a new code block.
+
+**CORRECT:**
+```batch
+if /i "%TOOLCHAIN%"=="ccl16" (
+    echo Using clang-cl compiler ^(version 16^)
+)
+```
+
+### Examples from This Codebase
+
+From `build-boost-windows.bat`:
+```batch
+REM Verify clang-cl is available for ccl16 toolchain
+if /i "%TOOLCHAIN_NAME%"=="ccl16" (
+    echo.
+    echo Checking for clang-cl compiler ^(required for ccl16 toolchain^)...
+    where clang-cl 1>nul 2>nul
+    if errorlevel 1 (
+        echo ERROR: clang-cl.exe not found in PATH but required for ccl16 toolchain
+        echo.
+        echo Please ensure clang-cl is installed as part of MSVC Build Tools
+        echo and is available in the PATH set by setup-env-%ARCH%.bat
+        goto error
+    )
+    echo clang-cl found:
+    where clang-cl
+)
+```
+
+### Rule of Thumb
+
+**If you're inside an `if` block, `for` loop, or any other control structure, escape all special characters in echo statements and other commands with `^`.**
+
+### CRITICAL: Line Continuation Does NOT Work with Quoted Strings in Set Commands
+
+**IMPORTANT:** Using `^` for line continuation in batch files **breaks quoted string context** in `set` commands. The subsequent lines after `^` are **NOT** part of the quoted string and will be interpreted as separate commands.
+
+**WRONG:**
+```batch
+if /i "%TOOLCHAIN_NAME%"=="ccl16" (
+    set "ARCH_MACROS=%ARCH_MACROS% -D_InterlockedAdd64=_InterlockedExchangeAdd64 ^
+-Wno-error=implicit-function-declaration ^
+-Wno-error=incompatible-pointer-types-discards-qualifiers"
+)
+```
+
+This will fail with an error like: `'-Wno-error' is not recognized as an internal or external command`
+
+**Why it fails:** The `^` line continuation doesn't preserve the quoted string context. The lines after `^` are executed as separate commands, not as part of the `set "ARCH_MACROS=..."` statement.
+
+**CORRECT Solution 1 - Single Line:**
+```batch
+if /i "%TOOLCHAIN_NAME%"=="ccl16" (
+    set "ARCH_MACROS=%ARCH_MACROS% -D_InterlockedAdd64=_InterlockedExchangeAdd64 -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types-discards-qualifiers"
+)
+```
+
+**CORRECT Solution 2 - Multiple Set Commands:**
+```batch
+if /i "%TOOLCHAIN_NAME%"=="ccl16" (
+    set "ARCH_MACROS=%ARCH_MACROS% -D_InterlockedAdd64=_InterlockedExchangeAdd64"
+    set "ARCH_MACROS=%ARCH_MACROS% -Wno-error=implicit-function-declaration"
+    set "ARCH_MACROS=%ARCH_MACROS% -Wno-error=incompatible-pointer-types-discards-qualifiers"
+)
+```
+
+**Key Rule:** For `set` commands with quoted strings, either:
+1. Keep everything on a single line (preferred for short strings)
+2. Use multiple `set` commands to build up the value incrementally
+3. **NEVER** use `^` line continuation inside quoted strings
 
 ---
 

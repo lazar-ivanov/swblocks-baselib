@@ -53,6 +53,29 @@ endif
 $(info Building with MSVCHOSTARCHTAG = $(MSVCHOSTARCHTAG))
 endif
 
+ifeq ($(TOOLCHAIN),ccl16)
+# ccl16 uses the same MSVC installation as vc143 (MSVC 2022)
+# but with clang-cl.exe instead of cl.exe
+# Setting BL_USE_CLANG_CL here (early) ensures all downstream ifdef checks
+# for compiler selection, warning suppressions, and PATH work correctly
+BL_USE_CLANG_CL     := 1
+MSVC                := $(DIST_ROOT_DEPS3)/toolchain-msvc/vc143/BuildTools
+MSVCRTTAG           := Microsoft.VC143.CRT
+# Dynamically detect MSVC compiler version
+MSVCVERSIONTAG      := $(firstword $(notdir $(wildcard $(MSVC)/VC/Tools/MSVC/*)))
+# Dynamically detect Windows SDK version
+WINSDK10VERSIONTAG  := $(firstword $(notdir $(wildcard $(WINSDK10)/Include/*)))
+# Set host architecture tag based on detected architecture
+ifeq ($(BL_WIN_ARCH_IS_ARM64),1)
+MSVCHOSTARCHTAG     := Hostarm64
+else ifeq ($(BL_WIN_ARCH_IS_X64),1)
+MSVCHOSTARCHTAG     := Hostx64
+else
+MSVCHOSTARCHTAG     := Hostx86
+endif
+$(info Building with MSVCHOSTARCHTAG = $(MSVCHOSTARCHTAG))
+endif
+
 ifeq ($(MSVC),)
 $(error unknown toolchain was provided: $(TOOLCHAIN))
 endif
@@ -81,6 +104,48 @@ ifeq ("$(wildcard $(BL_EXPECTED_OPENSSLDIR))","")
 $(error Requested architecture '$(ARCH)' is not available due to missing dependency: $(BL_EXPECTED_OPENSSLDIR))
 endif
 
+# ============================================================================
+# Clang-CL Support (LLVM C++ Compiler)
+# ============================================================================
+#
+# When BL_USE_CLANG_CL=1, use clang-cl.exe instead of cl.exe
+# clang-cl.exe is LLVM's drop-in replacement for MSVC's cl.exe
+# It uses the same command-line syntax, libraries, and linker as MSVC
+#
+# Architecture-specific locations:
+#   x86:  $(MSVC)/VC/Tools/Llvm/bin/clang-cl.exe
+#   x64:  $(MSVC)/VC/Tools/Llvm/x64/bin/clang-cl.exe
+#   ARM64: $(MSVC)/VC/Tools/Llvm/ARM64/bin/clang-cl.exe
+#
+
+ifdef BL_USE_CLANG_CL
+  # Map target architecture to Llvm directory
+  # ARCH is the target architecture (a64, x64, x86)
+  ifeq ($(ARCH),a64)
+    CLANG_CL_ARCH_DIR := ARM64
+  else ifeq ($(ARCH),x64)
+    CLANG_CL_ARCH_DIR := x64
+  else ifeq ($(ARCH),x86)
+    CLANG_CL_ARCH_DIR := bin
+  else
+    $(error BL_USE_CLANG_CL: Unknown ARCH '$(ARCH)'. Must be a64, x64, or x86)
+  endif
+
+  # Construct clang-cl directory path
+  ifeq ($(ARCH),x86)
+    CLANG_CL_DIR := $(MSVC)/VC/Tools/Llvm/bin
+  else
+    CLANG_CL_DIR := $(MSVC)/VC/Tools/Llvm/$(CLANG_CL_ARCH_DIR)/bin
+  endif
+
+  CLANG_CL_EXE := $(CLANG_CL_DIR)/clang-cl.exe
+
+  # Verify clang-cl.exe is installed for the target architecture
+  ifeq (,$(wildcard $(CLANG_CL_EXE)))
+    $(error BL_USE_CLANG_CL=1 but clang-cl.exe not found at: $(CLANG_CL_EXE). Please install LLVM tools for $(ARCH) architecture as part of MSVC Build Tools.)
+  endif
+endif
+
 ##########################################################################
 # toolchain env setup
 #
@@ -92,7 +157,7 @@ endif
 # Unexport to prevent conflicts with any INCLUDE env var from setup scripts.
 unexport INCLUDE
 
-ifeq ($(TOOLCHAIN),vc143)
+ifneq (,$(filter vc143 ccl16,$(TOOLCHAIN)))
 INCLUDE  += $(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)/include
 else ifeq ($(TOOLCHAIN),vc141)
 INCLUDE  += $(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)/include
@@ -103,7 +168,7 @@ endif
 INCLUDE  += $(WINSDK)/include/shared
 INCLUDE  += $(WINSDK)/include/um
 
-ifeq ($(TOOLCHAIN),vc143)
+ifneq (,$(filter vc143 ccl16,$(TOOLCHAIN)))
 INCLUDE  += $(WINSDK10)/Include/$(WINSDK10VERSIONTAG)/ucrt
 INCLUDE  += $(WINSDK10)/Include/$(WINSDK10VERSIONTAG)/um
 INCLUDE  += $(WINSDK10)/Include/$(WINSDK10VERSIONTAG)/shared
@@ -124,7 +189,7 @@ endif
 unexport LIB
 unexport LIBPATH
 
-ifeq ($(TOOLCHAIN),vc143)
+ifneq (,$(filter vc143 ccl16,$(TOOLCHAIN)))
 LIBPATH  += $(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)/lib/$(ARCH_LIBPATH)
 LIBPATH  += $(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)/atlmfc/lib/$(ARCH_LIBPATH)
 else ifeq ($(TOOLCHAIN),vc141)
@@ -141,7 +206,7 @@ endif
 
 LIBPATH  += $(WINSDKLIBSROOT)/$(ARCH_LIBPATH)
 
-ifeq ($(TOOLCHAIN),vc143)
+ifneq (,$(filter vc143 ccl16,$(TOOLCHAIN)))
 LIBPATH  += $(WINSDK10)/Lib/$(WINSDK10VERSIONTAG)/ucrt/$(ARCH_LIBPATH)
 LIBPATH  += $(WINSDK10)/Lib/$(WINSDK10VERSIONTAG)/um/$(ARCH_LIBPATH)
 else ifeq ($(TOOLCHAIN),vc141)
@@ -156,17 +221,31 @@ endif
 ##########################################################################
 # PATH
 
-ifeq ($(TOOLCHAIN),vc143)
+ifneq (,$(filter vc143 ccl16,$(TOOLCHAIN)))
 
-# For vc143, use architecture-mapped paths
+# For vc143/ccl16, use architecture-mapped paths
+# Prepend Llvm bin directory if using clang-cl
+ifdef BL_USE_CLANG_CL
+PATH     := $(CLANG_CL_DIR):$(MSVC)/VC/Redist/MSVC/$(MSVCVERSIONTAG)\$(ARCH_REDIST)\$(MSVCRTTAG):$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\bin\$(MSVCHOSTARCHTAG)\$(ARCH_BINPATH):$(WINSDK10)/bin/$(WINSDK10VERSIONTAG)/$(ARCH_BINPATH):$(PATH)
+else
 PATH     := $(MSVC)/VC/Redist/MSVC/$(MSVCVERSIONTAG)\$(ARCH_REDIST)\$(MSVCRTTAG):$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\bin\$(MSVCHOSTARCHTAG)\$(ARCH_BINPATH):$(WINSDK10)/bin/$(WINSDK10VERSIONTAG)/$(ARCH_BINPATH):$(PATH)
+endif
 
 else ifeq ($(TOOLCHAIN),vc141)
 
+# Prepend Llvm bin directory if using clang-cl
+ifdef BL_USE_CLANG_CL
+ifeq ($(ARCH),x64)
+PATH     := $(CLANG_CL_DIR):$(MSVC)/VC/Redist/MSVC/$(MSVCVERSIONTAG)\$(ARCH)\$(MSVCRTTAG):$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\bin\$(MSVCHOSTARCHTAG)\$(ARCH):$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\bin\$(MSVCHOSTARCHTAG)\x86:$(MSVC)/DIA SDK/bin/amd64:$(WINSDK)/bin/$(ARCH):$(WINSDK10)/bin/$(ARCH)/ucrt:$(PATH)
+else
+PATH     := $(CLANG_CL_DIR):$(MSVC)/VC/Redist/MSVC/$(MSVCVERSIONTAG)\$(ARCH)\$(MSVCRTTAG):$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\bin\$(MSVCHOSTARCHTAG)\$(ARCH):$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\bin\$(MSVCHOSTARCHTAG)\x64:$(MSVC)/DIA SDK/bin:$(WINSDK)/bin/$(ARCH):$(WINSDK10)/bin/$(ARCH)/ucrt:$(PATH)
+endif
+else
 ifeq ($(ARCH),x64)
 PATH     := $(MSVC)/VC/Redist/MSVC/$(MSVCVERSIONTAG)\$(ARCH)\$(MSVCRTTAG):$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\bin\$(MSVCHOSTARCHTAG)\$(ARCH):$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\bin\$(MSVCHOSTARCHTAG)\x86:$(MSVC)/DIA SDK/bin/amd64:$(WINSDK)/bin/$(ARCH):$(WINSDK10)/bin/$(ARCH)/ucrt:$(PATH)
 else
 PATH     := $(MSVC)/VC/Redist/MSVC/$(MSVCVERSIONTAG)\$(ARCH)\$(MSVCRTTAG):$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\bin\$(MSVCHOSTARCHTAG)\$(ARCH):$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\bin\$(MSVCHOSTARCHTAG)\x64:$(MSVC)/DIA SDK/bin:$(WINSDK)/bin/$(ARCH):$(WINSDK10)/bin/$(ARCH)/ucrt:$(PATH)
+endif
 endif
 
 else
@@ -218,11 +297,19 @@ SOEXT    := .dll
 SOSUFFIX := dll
 DBGEXT   := .pdb
 
-CXX       = $(TOPDIR)scripts/cl.py -M
+# C/C++ Compiler: Use clang-cl.py wrapper if BL_USE_CLANG_CL=1
+ifdef BL_USE_CLANG_CL
+  CXX       = $(TOPDIR)scripts/clang-cl.py -M
+else
+  CXX       = $(TOPDIR)scripts/cl.py -M
+endif
 CXXFLAGS += -nologo
 CXXFLAGS += -EHs
 CXXFLAGS += -Zi
+# -FD flag is MSVC-specific and not supported by clang-cl
+ifndef BL_USE_CLANG_CL
 CXXFLAGS += -FD
+endif
 CXXFLAGS += -bigobj
 CXXFLAGS += -MT
 CXXFLAGS += -GS
@@ -242,6 +329,49 @@ CXXFLAGS += -W3
 endif
 
 CXXFLAGS += -WX
+
+# clang-cl specific warning suppressions
+# clang-cl is much stricter than MSVC and treats Windows SDK header issues as errors
+ifdef BL_USE_CLANG_CL
+# Windows SDK header compatibility
+# '/*' within block comment warnings (ntverp.h)
+CXXFLAGS += -Wno-comment
+# case-sensitive include path warnings (winsock2.h vs WinSock2.h)
+CXXFLAGS += -Wno-nonportable-include-path
+# pointer to smaller integer cast warnings (basetsd.h)
+CXXFLAGS += -Wno-void-pointer-to-int-cast
+# integer to pointer cast warnings (basetsd.h)
+CXXFLAGS += -Wno-int-to-void-pointer-cast
+# unrecognized ARM64 intrinsic warnings (winnt.h)
+CXXFLAGS += -Wno-ignored-pragma-intrinsic
+# __declspec(no_init_all) not supported warnings (winnt.h)
+CXXFLAGS += -Wno-ignored-attributes
+# #pragma prefast warnings (winnt.h)
+CXXFLAGS += -Wno-unknown-pragmas
+# pragma pack alignment warnings (winnt.h, pshpack*.h)
+CXXFLAGS += -Wno-pragma-pack
+# deprecated API warnings (winsock2.h, ws2def.h)
+CXXFLAGS += -Wno-deprecated-declarations
+# Code-level warnings for Boost and project code
+# unused variable warnings (Boost.Test, project code)
+CXXFLAGS += -Wno-unused-variable
+# variable set but not used warnings (Boost.Test)
+CXXFLAGS += -Wno-unused-but-set-variable
+# unused private field warnings (Boost.Asio)
+CXXFLAGS += -Wno-unused-private-field
+# function-to-object pointer cast warnings (Microsoft extension)
+CXXFLAGS += -Wno-microsoft-cast
+# unqualified lookup into dependent base class (Microsoft extension)
+CXXFLAGS += -Wno-microsoft-template
+# struct initialization brace warnings
+CXXFLAGS += -Wno-missing-braces
+# string literal to non-const pointer warnings (security.h)
+CXXFLAGS += -Wno-writable-strings
+# type alias used only in member initializer list (clang doesn't count as usage)
+CXXFLAGS += -Wno-unused-local-typedef
+# macro redefinition conflicts between clang intrinsics and Windows SDK (xmmintrin.h vs winnt.h)
+CXXFLAGS += -Wno-macro-redefined
+endif
 
 #
 # TODO: we have to fix that at some point

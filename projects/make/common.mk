@@ -89,13 +89,6 @@ else
   DATE_COMMAND := date
 endif
 
-# so we can use the proper jdk when invoking Java tests
-ifeq ($(DEVENV_VERSION_TAG),devenv3)
-include $(MKDIR)/3rd/jdk/1.8.mk
-else
-include $(MKDIR)/3rd/jdk/common.mk
-endif
-
 # Exclude boost_locale library for devenv6 (use simple UTF-8 to ISO-8859-1 converter)
 ifeq ($(DEVENV_VERSION_TAG),devenv6)
 NO_BOOST_LOCALE_LIB = 1
@@ -156,6 +149,14 @@ INCLUDE  :=
 INCLUDE  += $(SRCDIR)/versioning
 INCLUDE  += $(SRCDIR)/include
 INCLUDE  += $(SRCDIR)/utests/include
+
+# so we can use the proper jdk when invoking Java tests
+# must be included AFTER the INCLUDE := reset above so JDK paths are preserved
+ifeq ($(DEVENV_VERSION_TAG),devenv3)
+include $(MKDIR)/3rd/jdk/1.8.mk
+else
+include $(MKDIR)/3rd/jdk/common.mk
+endif
 
 CPPFLAGS += -DBL_BUILD_PLATFORM=$(BL_PROP_PLAT)
 CPPFLAGS += -DBL_BUILD_VARIANT=$(VARIANT)

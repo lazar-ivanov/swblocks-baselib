@@ -32,7 +32,7 @@ REM
 REM   -version <version>       Boost version to build
 REM                            Default: 1.90.0
 REM
-REM   -toolchain-name <name>   Toolchain identifier (e.g., vc143)
+REM   -toolchain-name <name>   Toolchain identifier (vc143, ccl16)
 REM                            Default: vc143
 REM
 REM   -vs-version <version>    Visual Studio version (e.g., 2022)
@@ -166,6 +166,9 @@ echo devenv Tag:         %DEVENV_TAG%
 echo ================================================================================
 echo.
 
+REM Save TOOLCHAIN_NAME before calling environment scripts (they may override it)
+set "SAVED_TOOLCHAIN_NAME=%TOOLCHAIN_NAME%"
+
 REM Check for CI_ENV_ROOT or load from DIST_ROOT
 if "%CI_ENV_ROOT%" == "" (
     echo CI_ENV_ROOT not set, using DIST_ROOT
@@ -233,9 +236,13 @@ if errorlevel 1 (
     goto error
 )
 
+REM Restore TOOLCHAIN_NAME after environment scripts (they override it with vc143)
+set "TOOLCHAIN_NAME=%SAVED_TOOLCHAIN_NAME%"
+
 echo Environment configured successfully
 echo Using MSVC %MSVC_VERSION%
 echo Using Windows SDK %WINSDK_VERSION%
+echo Using Toolchain %TOOLCHAIN_NAME%
 echo.
 
 REM Verify compiler is available
@@ -248,6 +255,22 @@ if errorlevel 1 (
 
 echo Compiler found:
 where cl
+
+REM Verify clang-cl is available for ccl16 toolchain
+if /i "%TOOLCHAIN_NAME%"=="ccl16" (
+    echo.
+    echo Checking for clang-cl compiler ^(required for ccl16 toolchain^)...
+    where clang-cl 1>nul 2>nul
+    if errorlevel 1 (
+        echo ERROR: clang-cl.exe not found in PATH but required for ccl16 toolchain
+        echo.
+        echo Please ensure clang-cl is installed as part of MSVC Build Tools
+        echo and is available in the PATH set by setup-env-%ARCH%.bat
+        goto error
+    )
+    echo clang-cl found:
+    where clang-cl
+)
 
 REM Set paths
 set "BOOST_SOURCE_PATH=%DIST_ROOT_DEPS1%\boost\%BOOST_VERSION%\source-windows"
@@ -385,6 +408,15 @@ if "%BUILD_TYPE%"=="debug" (
     set "VARIANT_FLAG=release"
 )
 
+REM Set toolset based on TOOLCHAIN_NAME
+if /i "%TOOLCHAIN_NAME%"=="ccl16" (
+    set "B2_TOOLSET=clang-win"
+    echo Using Boost toolset: clang-win ^(clang-cl compiler^)
+) else (
+    set "B2_TOOLSET=msvc"
+    echo Using Boost toolset: msvc
+)
+
 REM Build with specific variant only - building only the libraries needed by swblocks-baselib
 REM This matches the libraries built in the Linux script
 REM
@@ -408,7 +440,7 @@ REM
     -j%BOOST_BUILD_THREADS% ^
     --layout=tagged ^
     --no-cmake-config ^
-    toolset=msvc ^
+    toolset=%B2_TOOLSET% ^
     variant=%VARIANT_FLAG% ^
     link=static ^
     runtime-link=static ^

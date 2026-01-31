@@ -53,9 +53,6 @@ REM
 REM   -openssl-version <ver>   OpenSSL version to build
 REM                            Default: 3.5.4
 REM
-REM   -toolchain <name>        Toolchain name (vc143, etc.)
-REM                            Default: vc143
-REM
 REM   -vs-version <ver>        Visual Studio version (2022, etc.)
 REM                            Default: 2022
 REM
@@ -90,7 +87,6 @@ set "GIT_VERSION=2.48.1"
 set "PYTHON_VERSION=3.14.2"
 set "BOOST_VERSION=1.90.0"
 set "OPENSSL_VERSION=3.5.4"
-set "TOOLCHAIN_NAME=vc143"
 set "VS_VERSION=2022"
 set "BOOST_THREADS=8"
 set "SKIP_TOOLCHAIN="
@@ -156,12 +152,6 @@ if /i "%~1"=="-boost-version" (
 )
 if /i "%~1"=="-openssl-version" (
     set "OPENSSL_VERSION=%~2"
-    shift
-    shift
-    goto parse_args
-)
-if /i "%~1"=="-toolchain" (
-    set "TOOLCHAIN_NAME=%~2"
     shift
     shift
     goto parse_args
@@ -293,7 +283,8 @@ echo   Git Version:          %GIT_VERSION%
 echo   Python Version:       %PYTHON_VERSION%
 echo   Boost Version:        %BOOST_VERSION%
 echo   OpenSSL Version:      %OPENSSL_VERSION%
-echo   Toolchain:            %TOOLCHAIN_NAME%
+echo   Boost Toolchains:     vc143, ccl16 ^(both will be built^)
+echo   OpenSSL Toolchain:    vc143 only ^(ccl16 uses vc143 OpenSSL^)
 echo   VS Version:           %VS_VERSION%
 echo   Boost Build Threads:  %BOOST_THREADS%
 echo.
@@ -371,29 +362,32 @@ if not "!SKIP_BOOST!"=="1" (
     echo Target architectures ^(raw^): !TARGET_ARCHS!
     echo Target architectures ^(parsed^): !ARCH_LIST!
 
+    REM Build for both vc143 and ccl16 toolchains
     for %%A in (!ARCH_LIST!) do (
-        echo.
-        echo ================================================================================
-        echo Building Boost for architecture: %%A
-        echo ================================================================================
-        echo.
-
-        call "%SCRIPT_DIR%build-boost-windows.bat" ^
-            -arch %%A ^
-            -version "%BOOST_VERSION%" ^
-            -toolchain-name "%TOOLCHAIN_NAME%" ^
-            -vs-version "%VS_VERSION%" ^
-            -dist-root "%DIST_ROOT%" ^
-            -threads "%BOOST_THREADS%"
-
-        if errorlevel 1 (
+        for %%T in (vc143 ccl16) do (
             echo.
-            echo ERROR: Boost build failed for architecture %%A!
-            goto error
-        )
+            echo ================================================================================
+            echo Building Boost for architecture: %%A with toolchain: %%T
+            echo ================================================================================
+            echo.
 
-        echo.
-        echo Boost build for %%A completed successfully
+            call "%SCRIPT_DIR%build-boost-windows.bat" ^
+                -arch %%A ^
+                -version "%BOOST_VERSION%" ^
+                -toolchain-name %%T ^
+                -vs-version "%VS_VERSION%" ^
+                -dist-root "%DIST_ROOT%" ^
+                -threads "%BOOST_THREADS%"
+
+            if errorlevel 1 (
+                echo.
+                echo ERROR: Boost build failed for architecture %%A with toolchain %%T!
+                goto error
+            )
+
+            echo.
+            echo Boost build for %%A with toolchain %%T completed successfully
+        )
     )
 
     echo.
@@ -420,10 +414,11 @@ if not "!SKIP_OPENSSL!"=="1" (
     echo Target architectures ^(raw^): !TARGET_ARCHS!
     echo Target architectures ^(parsed^): !ARCH_LIST!
 
+    REM Build for vc143 toolchain only (ccl16 uses vc143 OpenSSL via ABI compatibility)
     for %%A in (!ARCH_LIST!) do (
         echo.
         echo ================================================================================
-        echo Building OpenSSL for architecture: %%A
+        echo Building OpenSSL for architecture: %%A with toolchain: vc143
         echo ================================================================================
         echo.
 
@@ -434,19 +429,19 @@ if not "!SKIP_OPENSSL!"=="1" (
             -hostarch "%HOST_ARCH%" ^
             -arch %%A ^
             -version "%OPENSSL_VERSION%" ^
-            -toolchain "%TOOLCHAIN_NAME%" ^
+            -toolchain vc143 ^
             -vs-version "%VS_VERSION%" ^
             -dist-root "%DIST_ROOT%" ^
             !TEST_ARGS!
 
         if errorlevel 1 (
             echo.
-            echo ERROR: OpenSSL build failed for architecture %%A!
+            echo ERROR: OpenSSL build failed for architecture %%A with toolchain vc143!
             goto error
         )
 
         echo.
-        echo OpenSSL build for %%A completed successfully
+        echo OpenSSL build for %%A with toolchain vc143 completed successfully
     )
 
     echo.
@@ -510,10 +505,10 @@ if not "!SKIP_TOOLCHAIN!"=="1" (
     echo   - Toolchain ^(Git, Python, MSYS2, Perl, JSON Spirit^)
 )
 if not "!SKIP_BOOST!"=="1" (
-    echo   - Boost %BOOST_VERSION% libraries
+    echo   - Boost %BOOST_VERSION% libraries ^(vc143 and ccl16 toolchains^)
 )
 if not "!SKIP_OPENSSL!"=="1" (
-    echo   - OpenSSL %OPENSSL_VERSION% libraries
+    echo   - OpenSSL %OPENSSL_VERSION% libraries ^(vc143 toolchain only^)
 )
 echo.
 echo Target Architectures: %TARGET_ARCHS%

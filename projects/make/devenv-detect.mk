@@ -184,6 +184,10 @@ ifeq ($(TOOLCHAIN),vc143)
 DEVENV_VERSION_TAG := devenv7
 endif
 
+ifeq ($(TOOLCHAIN),ccl16)
+DEVENV_VERSION_TAG := devenv7
+endif
+
 ifeq ($(TOOLCHAIN),vc141)
 DEVENV_VERSION_TAG := devenv4
 endif
@@ -284,3 +288,8 @@ else
 BL_EXPECTED_BOOSTDIR = $(DIST_ROOT_DEPS3)/boost/$(BL_DEVENV_BOOST_VERSION)/$(PLAT:%-$(VARIANT)=%)
 endif
 BL_EXPECTED_OPENSSLDIR = $(DIST_ROOT_DEPS3)/openssl/$(BL_DEVENV_OPENSSL_VERSION)/$(PLAT)
+
+# ccl16 toolchain uses vc143 OpenSSL artifacts (ABI-compatible)
+ifeq ($(TOOLCHAIN),ccl16)
+BL_EXPECTED_OPENSSLDIR = $(DIST_ROOT_DEPS3)/openssl/$(BL_DEVENV_OPENSSL_VERSION)/$(subst ccl16,vc143,$(PLAT))
+endif
