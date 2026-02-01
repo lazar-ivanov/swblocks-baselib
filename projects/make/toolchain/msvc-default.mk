@@ -305,7 +305,22 @@ else
 endif
 CXXFLAGS += -nologo
 CXXFLAGS += -EHs
+# Use minimal debug info for x86 clang-cl release builds to reduce memory consumption
+# -gline-tables-only generates only line tables (much smaller than full -Zi debug info)
+# Only applies to: ARCH=x86, TOOLCHAIN=ccl16, VARIANT=release
+ifdef BL_USE_CLANG_CL
+ifeq ($(ARCH),x86)
+ifeq ($(VARIANT),release)
+CXXFLAGS += -gline-tables-only
+else
 CXXFLAGS += -Zi
+endif
+else
+CXXFLAGS += -Zi
+endif
+else
+CXXFLAGS += -Zi
+endif
 # -FD flag is MSVC-specific and not supported by clang-cl
 ifndef BL_USE_CLANG_CL
 CXXFLAGS += -FD
