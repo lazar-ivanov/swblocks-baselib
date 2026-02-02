@@ -500,17 +500,17 @@ DIST_ROOT_DEPS3 = /c/Users/`$(USERNAME)/swblocks/$distDirName
             $msvcBinPath = "%MSVC_ROOT%\bin\$hostPathComponent\arm64;$sdkBinPaths"
             $msvcLib = "%MSVC_ROOT%\lib\arm64;%MSVC_ROOT%\atlmfc\lib\arm64;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\ucrt\arm64;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\um\arm64"
             $msvcLibPath = "%MSVC_ROOT%\lib\arm64;%MSVC_ROOT%\atlmfc\lib\arm64"
-            $pathWithTools = "$msvcBinPath;$clangPath;%WINSDK_ROOT%\Debuggers\$hostArchForDebugger;%PATH%;$jomPath;$gitPath;$pythonPath;$msysPath"
+            $pathWithTools = "$msvcBinPath;$clangPath;%WINSDK_ROOT%\Debuggers\$hostArchForDebugger;$pythonPath;%PATH%;$jomPath;$gitPath;$msysPath"
         } elseif ($arch -eq "x64") {
             $msvcBinPath = "%MSVC_ROOT%\bin\$hostPathComponent\x64;$sdkBinPaths"
             $msvcLib = "%MSVC_ROOT%\lib\x64;%MSVC_ROOT%\atlmfc\lib\x64;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\ucrt\x64;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\um\x64"
             $msvcLibPath = "%MSVC_ROOT%\lib\x64;%MSVC_ROOT%\atlmfc\lib\x64"
-            $pathWithTools = "$msvcBinPath;$clangPath;%WINSDK_ROOT%\Debuggers\$hostArchForDebugger;%PATH%;$jomPath;$nasmPath;$gitPath;$pythonPath;$msysPath"
+            $pathWithTools = "$msvcBinPath;$clangPath;%WINSDK_ROOT%\Debuggers\$hostArchForDebugger;$pythonPath;%PATH%;$jomPath;$nasmPath;$gitPath;$msysPath"
         } else {
             $msvcBinPath = "%MSVC_ROOT%\bin\$hostPathComponent\x86;$sdkBinPaths"
             $msvcLib = "%MSVC_ROOT%\lib\x86;%MSVC_ROOT%\atlmfc\lib\x86;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\ucrt\x86;%WINSDK_ROOT%\Lib\%WINSDK_VERSION%\um\x86"
             $msvcLibPath = "%MSVC_ROOT%\lib\x86;%MSVC_ROOT%\atlmfc\lib\x86"
-            $pathWithTools = "$msvcBinPath;$clangPath;%WINSDK_ROOT%\Debuggers\$hostArchForDebugger;%PATH%;$jomPath;$nasmPath;$gitPath;$pythonPath;$msysPath"
+            $pathWithTools = "$msvcBinPath;$clangPath;%WINSDK_ROOT%\Debuggers\$hostArchForDebugger;$pythonPath;%PATH%;$jomPath;$nasmPath;$gitPath;$msysPath"
         }
 
         $helperContent = @"
@@ -534,7 +534,8 @@ call "%~dp0ci-init-env.bat"
 REM Set up MSVC compiler environment for $arch development
 REM IMPORTANT: PATH order matters! MSVC/Windows SDK tools must come before MSYS2 to avoid conflicts
 REM (MSYS2 contains 'link' and 'find' commands that conflict with Windows native tools)
-REM Order: MSVC -> Clang-CL -> Windows SDK -> existing PATH -> Jom -> NASM (x64/x86 only) -> Git -> Python -> MSYS2 (lowest priority)
+REM Python comes before existing PATH to override Windows fake python stubs
+REM Order: MSVC -> Clang-CL -> Windows SDK -> Python -> existing PATH -> Jom -> NASM (x64/x86 only) -> Git -> MSYS2 (lowest priority)
 set "PATH=$pathWithTools"
 set "INCLUDE=%MSVC_ROOT%\include;%MSVC_ROOT%\atlmfc\include;%WINSDK_ROOT%\Include\%WINSDK_VERSION%\ucrt;%WINSDK_ROOT%\Include\%WINSDK_VERSION%\um;%WINSDK_ROOT%\Include\%WINSDK_VERSION%\shared;%WINSDK_ROOT%\Include\%WINSDK_VERSION%\winrt;%WINSDK_ROOT%\Include\%WINSDK_VERSION%\cppwinrt"
 set "LIB=$msvcLib"
@@ -595,9 +596,9 @@ echo.
         # ARM64: No NASM (uses clang-cl as assembler, not included in this variant)
         # x64/x86: Include NASM
         if ($arch -eq "a64") {
-            $pathWithTools = "%WINSDK_ROOT%\Debuggers\$hostArchForDebugger;%PATH%;$jomPath;$gitPath;$pythonPath;$msysPath"
+            $pathWithTools = "%WINSDK_ROOT%\Debuggers\$hostArchForDebugger;$pythonPath;%PATH%;$jomPath;$gitPath;$msysPath"
         } else {
-            $pathWithTools = "%WINSDK_ROOT%\Debuggers\$hostArchForDebugger;%PATH%;$jomPath;$nasmPath;$gitPath;$pythonPath;$msysPath"
+            $pathWithTools = "%WINSDK_ROOT%\Debuggers\$hostArchForDebugger;$pythonPath;%PATH%;$jomPath;$nasmPath;$gitPath;$msysPath"
         }
 
         $helperContent = @"
