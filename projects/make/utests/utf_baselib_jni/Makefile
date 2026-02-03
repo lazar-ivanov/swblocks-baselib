@@ -55,11 +55,21 @@ endif
 
 $(info Building with Gradle = $(GRADLE))
 
+# Gradle daemon control: disabled by default for CI stability
+# Set BL_GRADLE_START_SERVER=1 to enable daemon for faster local builds
+ifdef BL_GRADLE_START_SERVER
+  # Local development mode - use daemon for speed (omit --no-daemon)
+  GRADLE_DAEMON_FLAG :=
+else
+  # CI mode (default) - no daemon for predictability
+  GRADLE_DAEMON_FLAG := --no-daemon
+endif
+
 # Gradle 9+ uses -p (project directory) instead of --build-file
 ifeq ($(DEVENV_VERSION_TAG),devenv7)
-GRADLE_ARGS := -p $(JAVADIR)
+GRADLE_ARGS := -p $(JAVADIR) $(GRADLE_DAEMON_FLAG)
 else
-GRADLE_ARGS := --build-file $(JAVADIR)/build.gradle
+GRADLE_ARGS := --build-file $(JAVADIR)/build.gradle $(GRADLE_DAEMON_FLAG)
 endif
 BASELIB_JAR_SRC_FILE := $(BLDDIR)/../../java/utf_baselib_jni/build/libs/utf_baselib_jni.jar
 BASELIB_JAR_DEST_DIR := $(BLDDIR)/utests/utf_baselib_jni/utf-baselib-jni-lib
