@@ -440,7 +440,7 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueCancelTests )
                 const auto task1 = eq -> push_back(
                     [ &executed1 ]() -> void
                     {
-                        os::sleep( time::seconds( 3 ) );
+                        os::sleep( time::seconds( 5 ) );
                         executed1 = true;
                     }
                     );
