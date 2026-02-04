@@ -44,6 +44,8 @@ REM
 REM   -threads <count>         Number of parallel build threads
 REM                            Default: 8
 REM
+REM   -no-cleanup              Skip cleanup of build directory (for debugging)
+REM
 REM   -help                    Show this help message
 REM
 REM Examples:
@@ -65,6 +67,7 @@ set "DIST_ROOT=%USERPROFILE%\swblocks\dist-devenv7-windows-a64"
 set "BOOST_BUILD_THREADS=8"
 set "DEVENV_TAG=devenv7"
 set "HELP_EXIT_CODE="
+set "NO_CLEANUP="
 
 REM Parse command line arguments
 :parse_args
@@ -102,6 +105,11 @@ if /i "%~1"=="-dist-root" (
 if /i "%~1"=="-threads" (
     set "BOOST_BUILD_THREADS=%~2"
     shift
+    shift
+    goto parse_args
+)
+if /i "%~1"=="-no-cleanup" (
+    set "NO_CLEANUP=1"
     shift
     goto parse_args
 )
@@ -393,6 +401,71 @@ if not exist ".\b2.exe" (
     echo Bootstrap completed successfully
 )
 
+REM ================================================================================
+REM CRITICAL FIX: Patch Boost's clang-win.jam for x86 32-bit Host Support
+REM ================================================================================
+REM
+REM PROBLEM:
+REM   When building on an x86 32-bit Windows host for ARM64 target ^(cross-compilation^),
+REM   Boost's configuration checks fail and trigger OpenWith.exe dialogs for .cpp files.
+REM
+REM ROOT CAUSE:
+REM   1. On x86 32-bit host, clang-cl reports its target triple as "i686-pc-windows-msvc"
+REM   2. Boost's clang-win.jam ^(line 94-99^) only recognizes these target triples:
+REM      - x86_64  ^(x64^)
+REM      - i386    ^(x86 32-bit^)
+REM      - aarch64 ^(ARM64^)
+REM      - arm     ^(ARM 32-bit^)
+REM   3. "i686" is the same as i386 ^(both are x86 32-bit^), but Boost doesn't recognize it
+REM   4. When no match is found, default-arch and default-addr remain unset
+REM   5. Boost falls back to trying arm/32 ^(32-bit ARM^) for configuration checks
+REM   6. arm/32 toolchain initialization fails ^(returns generic "link.exe" without full path^)
+REM   7. Configuration checks try to compile test programs with arm/32 properties
+REM   8. Without proper compiler path, b2 tries to EXECUTE .cpp files directly
+REM   9. Windows shows OpenWith.exe dialog asking how to open .cpp files
+REM
+REM SOLUTION:
+REM   Patch clang-win.jam to add "i686" case alongside "i386" in the target detection switch.
+REM   This ensures proper default detection: i686 -^> x86/32 ^(which IS properly initialized^).
+REM   Configuration checks then use x86/32 instead of broken arm/32, avoiding OpenWith dialogs.
+REM
+REM NOTE:
+REM   This patch is applied to the extracted Boost source ^(temporary build directory^),
+REM   not to the original Boost distribution. Each build gets a fresh patch.
+REM
+REM AFFECTED CODE ^(tools/build/src/tools/clang-win.jam^):
+REM   Before patch:
+REM     case i386    : default-arch = x86 ; default-addr = 32 ;
+REM
+REM   After patch:
+REM     case i686    : default-arch = x86 ; default-addr = 32 ;
+REM     case i386    : default-arch = x86 ; default-addr = 32 ;
+REM
+if /i "%TOOLCHAIN_NAME%"=="ccl16" (
+    echo.
+    echo Patching clang-win.jam to support i686 target triple...
+
+    REM Check if clang-win.jam exists
+    if not exist "tools\build\src\tools\clang-win.jam" (
+        echo ERROR: clang-win.jam not found at tools\build\src\tools\clang-win.jam
+        popd
+        exit /b 1
+    )
+
+    REM Apply patch using PowerShell
+    REM Uses [Environment]::NewLine to create proper line breaks in the replacement
+    powershell -NoProfile -Command "$content = Get-Content 'tools\build\src\tools\clang-win.jam' -Raw; $newline = [Environment]::NewLine; $replacement = \"case i686    : default-arch = x86 ; default-addr = 32 ;$newline    case i386    : default-arch = x86 ; default-addr = 32 ;\"; $content = $content -replace 'case i386    : default-arch = x86 ; default-addr = 32 ;', $replacement; Set-Content 'tools\build\src\tools\clang-win.jam' -Value $content -NoNewline"
+
+    if errorlevel 1 (
+        echo ERROR: Failed to patch clang-win.jam
+        popd
+        exit /b 1
+    )
+
+    echo clang-win.jam patched successfully
+    echo.
+)
+
 echo.
 echo ================================================================================
 echo Building Boost Libraries (%BUILD_TYPE%)
@@ -532,6 +605,14 @@ move log_* "%BOOST_TARGET_PATH%" >nul 2>&1
 
 REM Clean up build directory with retry logic
 popd
+
+if defined NO_CLEANUP (
+    echo.
+    echo Skipping cleanup ^(-no-cleanup specified^)
+    echo Build directory preserved at: %BOOST_ROOT_PATH%
+    goto skip_cleanup
+)
+
 echo Cleaning up build directory...
 
 REM Try to delete with retries (files may be locked by antivirus/indexer)
@@ -559,6 +640,8 @@ if "%DELETE_SUCCESS%"=="1" (
     echo WARNING: Could not fully delete build directory ^(files may be locked by antivirus/indexer^)
     echo You may need to manually delete: %BOOST_ROOT_PATH%
 )
+
+:skip_cleanup
 
 echo.
 echo %BUILD_TYPE% build completed successfully
