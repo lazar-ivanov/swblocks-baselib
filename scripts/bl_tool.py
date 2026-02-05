@@ -115,6 +115,8 @@ def collect_files(folder_path, allow_hidden_files):
                 print("Symlinks are not supported by hash command")
                 sys.exit(1)
 
+            # Resolve to canonical path to handle symlinks like /var -> /private/var on macOS
+            file_path = file_path.resolve()
             relative_path = file_path.relative_to(folder_path_obj)
             files.append((str(file_path), str(relative_path)))
 

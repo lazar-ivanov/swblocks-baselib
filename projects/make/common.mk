@@ -522,3 +522,6 @@ endif
 -include $(CI_ENV_MKDIR)/msi.mk
 -include $(CI_ENV_MKDIR)/deb.mk
 -include $(CI_ENV_MKDIR)/postbuild.mk
+
+# include Python testing targets
+-include $(MKDIR)/python-tests.mk

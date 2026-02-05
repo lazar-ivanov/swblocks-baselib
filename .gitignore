@@ -26,6 +26,8 @@ doc/output/*
 .idea
 *.pyc
 *.log
+.coverage
+.venv/
 nbproject/*
 logs/*
 src/libs/java/*/target/
