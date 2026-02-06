@@ -2134,3 +2134,254 @@ class TestCommandList:
         import re
         timestamp_pattern = r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}'
         assert re.search(timestamp_pattern, captured.out) is not None
+
+
+# ====================================================================================
+# Phase 4 Chunk 1: command_indexupload (Requires S3 Mocking + stdout capture)
+# ====================================================================================
+
+class TestCommandIndexupload:
+    """Test command_indexupload() with mocked S3 and capsys (10 tests)"""
+
+    @mock_aws
+    def test_indexupload_empty_bucket(self, capsys):
+        """Test indexupload with empty bucket."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'url_prefix': None
+        })()
+
+        # Execute
+        s3_manage.command_indexupload(args, s3_client=s3_client)
+
+        # Verify output
+        captured = capsys.readouterr()
+        assert "Bucket is empty" in captured.out
+        assert "No index files will be generated" in captured.out
+
+    @mock_aws
+    def test_indexupload_html_single_file(self, temp_file, capsys):
+        """Test HTML index generation with single file."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'test.txt')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'url_prefix': None
+        })()
+
+        # Execute
+        s3_manage.command_indexupload(args, s3_client=s3_client)
+
+        # Verify index.html uploaded
+        response = s3_client.list_objects_v2(Bucket='test-bucket')
+        object_keys = [obj['Key'] for obj in response['Contents']]
+        assert 'index.html' in object_keys
+
+        # Verify HTML content
+        index_obj = s3_client.get_object(Bucket='test-bucket', Key='index.html')
+        index_content = index_obj['Body'].read().decode('utf-8')
+        assert '<html>' in index_content
+        assert 'test.txt' in index_content
+        assert 'Total: 1 objects' in index_content
+
+        # Verify stdout
+        captured = capsys.readouterr()
+        assert 'Generated index files:' in captured.out
+        assert '[SUCCESS] index.html uploaded' in captured.out
+
+    @mock_aws
+    def test_indexupload_html_multiple_files(self, temp_file, capsys):
+        """Test HTML index with multiple files."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Upload multiple files
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'file1.txt')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'file2.txt')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'data/file3.bin')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'url_prefix': None
+        })()
+
+        # Execute
+        s3_manage.command_indexupload(args, s3_client=s3_client)
+
+        # Verify HTML content
+        index_obj = s3_client.get_object(Bucket='test-bucket', Key='index.html')
+        index_content = index_obj['Body'].read().decode('utf-8')
+        assert 'file1.txt' in index_content
+        assert 'file2.txt' in index_content
+        assert 'data/file3.bin' in index_content
+        assert 'Total: 3 objects' in index_content
+
+    @mock_aws
+    def test_indexupload_markdown_format(self, temp_file, capsys):
+        """Test Markdown index generation."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'test.txt')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'url_prefix': None
+        })()
+
+        # Execute
+        s3_manage.command_indexupload(args, s3_client=s3_client)
+
+        # Verify index.md uploaded
+        response = s3_client.list_objects_v2(Bucket='test-bucket')
+        object_keys = [obj['Key'] for obj in response['Contents']]
+        assert 'index.md' in object_keys
+
+        # Verify Markdown content
+        index_obj = s3_client.get_object(Bucket='test-bucket', Key='index.md')
+        index_content = index_obj['Body'].read().decode('utf-8')
+        assert '# Files Index' in index_content
+        assert '| File Path | Size | Last Modified |' in index_content
+        assert 'test.txt' in index_content
+        assert '**Total:** 1 objects' in index_content
+
+        # Verify stdout (command generates both HTML and MD regardless of format)
+        captured = capsys.readouterr()
+        assert 'Generated index files:' in captured.out
+        assert '[SUCCESS] index.md uploaded' in captured.out
+
+    @mock_aws
+    def test_indexupload_with_prefix(self, temp_file, capsys):
+        """Test index generation with prefix filter."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Upload files with different prefixes
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'data/file1.txt')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'data/file2.txt')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'logs/app.log')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': 'data/',
+            'url_prefix': None
+        })()
+
+        # Execute
+        s3_manage.command_indexupload(args, s3_client=s3_client)
+
+        # Verify HTML content
+        index_obj = s3_client.get_object(Bucket='test-bucket', Key='index.html')
+        index_content = index_obj['Body'].read().decode('utf-8')
+        assert 'data/file1.txt' in index_content
+        assert 'data/file2.txt' in index_content
+        assert 'logs/app.log' not in index_content  # Should be excluded by prefix
+        assert 'Total: 2 objects' in index_content
+
+    @mock_aws
+    def test_indexupload_excludes_index_files(self, temp_file, capsys):
+        """Test that index.html and index.md are excluded."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Upload regular file and existing index files
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'file.txt')
+        s3_client.put_object(Bucket='test-bucket', Key='index.html', Body=b'<html>old</html>')
+        s3_client.put_object(Bucket='test-bucket', Key='index.md', Body=b'# Old Index')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'url_prefix': None
+        })()
+
+        # Execute
+        s3_manage.command_indexupload(args, s3_client=s3_client)
+
+        # Verify new HTML content doesn't include index files
+        index_obj = s3_client.get_object(Bucket='test-bucket', Key='index.html')
+        index_content = index_obj['Body'].read().decode('utf-8')
+        assert 'file.txt' in index_content
+        assert 'Total: 1 objects' in index_content  # Only file.txt counted
+        # Index files should not appear in the listing
+        assert 'index.html' not in [line for line in index_content.split('\n') if '<tr>' in line and 'index.html' in line]
+
+    @mock_aws
+    def test_indexupload_url_prefix(self, temp_file, capsys):
+        """Test index generation with custom URL prefix."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'file.txt')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'format': 'html',
+            'url_prefix': 'https://cdn.example.com/bucket/',
+            'dry_run': False
+        })()
+
+        # Execute
+        s3_manage.command_indexupload(args, s3_client=s3_client)
+
+        # Verify HTML content has custom URL prefix
+        index_obj = s3_client.get_object(Bucket='test-bucket', Key='index.html')
+        index_content = index_obj['Body'].read().decode('utf-8')
+        assert 'https://cdn.example.com/bucket/file.txt' in index_content
+
+        # Verify Markdown also has custom URL prefix (both formats generated simultaneously)
+        index_obj = s3_client.get_object(Bucket='test-bucket', Key='index.md')
+        index_content = index_obj['Body'].read().decode('utf-8')
+        assert 'https://cdn.example.com/bucket/file.txt' in index_content
+
+    @mock_aws
+    def test_indexupload_error_bucket_not_found(self, capsys):
+        """Test error handling when bucket doesn't exist."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+
+        args = type('Args', (), {
+            'bucket_name': 'nonexistent-bucket',
+            'prefix': None,
+            'url_prefix': None
+        })()
+
+        # Execute
+        s3_manage.command_indexupload(args, s3_client=s3_client)
+
+        # Verify error message
+        captured = capsys.readouterr()
+        assert "Error listing bucket" in captured.out
+
+    @mock_aws
+    def test_indexupload_nested_paths(self, temp_file, capsys):
+        """Test index generation with nested paths."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Upload files in nested paths
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'data/2024/01/file.txt')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'logs/app/debug.log')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'url_prefix': None
+        })()
+
+        # Execute
+        s3_manage.command_indexupload(args, s3_client=s3_client)
+
+        # Verify HTML content shows nested paths
+        index_obj = s3_client.get_object(Bucket='test-bucket', Key='index.html')
+        index_content = index_obj['Body'].read().decode('utf-8')
+        assert 'data/2024/01/file.txt' in index_content
+        assert 'logs/app/debug.log' in index_content
+        assert 'Total: 2 objects' in index_content

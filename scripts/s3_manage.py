@@ -791,7 +791,7 @@ def generate_html_index(objects, total_objects, total_size, url_prefix):
     from datetime import datetime
 
     # Ensure url_prefix ends with slash
-    if not url_prefix.endswith('/'):
+    if url_prefix and not url_prefix.endswith('/'):
         url_prefix += '/'
 
     # Start HTML document
@@ -831,7 +831,7 @@ def generate_html_index(objects, total_objects, total_size, url_prefix):
         key = obj['key']
         size_str = format_size(obj['size'])
         last_modified_str = obj['last_modified'].strftime('%Y-%m-%d %H:%M:%S %Z')
-        download_url = url_prefix + key
+        download_url = (url_prefix + key) if url_prefix else key
 
         # Escape HTML special characters in key
         key_escaped = key.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
@@ -856,7 +856,7 @@ def generate_markdown_index(objects, total_objects, total_size, url_prefix):
     from datetime import datetime
 
     # Ensure url_prefix ends with slash
-    if not url_prefix.endswith('/'):
+    if url_prefix and not url_prefix.endswith('/'):
         url_prefix += '/'
 
     # Start Markdown document
@@ -871,7 +871,7 @@ def generate_markdown_index(objects, total_objects, total_size, url_prefix):
         key = obj['key']
         size_str = format_size(obj['size'])
         last_modified_str = obj['last_modified'].strftime('%Y-%m-%d %H:%M:%S %Z')
-        download_url = url_prefix + key
+        download_url = (url_prefix + key) if url_prefix else key
 
         # Escape Markdown special characters in key (pipe character)
         key_escaped = key.replace('|', '\\|')
@@ -887,77 +887,68 @@ def generate_markdown_index(objects, total_objects, total_size, url_prefix):
 
     return '\n'.join(md)
 
-def command_indexupload(args):
-    """Execute the indexupload command."""
+def command_indexupload(args, s3_client=None):
+    """Execute the indexupload command.
+
+    Args:
+        args: Command-line arguments
+        s3_client: Optional boto3 S3 client (for testing)
+    """
     import tempfile
     from datetime import datetime
 
-    # Create S3 client
-    s3_client = boto3.client(
-        's3',
-        endpoint_url=args.endpoint_url,
-        aws_access_key_id=args.access_key,
-        aws_secret_access_key=args.secret_key
-    )
-
-    # List all S3 objects (similar to command_list)
-    list_params = {
-        'Bucket': args.bucket_name
-    }
-
-    if args.prefix:
-        list_params['Prefix'] = args.prefix
+    # Create S3 client if not provided (for testing)
+    if s3_client is None:
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=args.endpoint_url,
+            aws_access_key_id=args.access_key,
+            aws_secret_access_key=args.secret_key
+        )
 
     print(f"Listing objects in bucket: {args.bucket_name}")
     if args.prefix:
         print(f"Prefix filter: {args.prefix}")
     print()
 
-    # Collect all objects (paginate through entire bucket)
+    # Collect all objects using paginate_s3_objects() generator
+    try:
+        all_s3_objects = list(paginate_s3_objects(s3_client, args.bucket_name, args.prefix))
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        error_message = e.response['Error']['Message']
+        print(f"Error listing bucket: [{error_code}] {error_message}")
+        return
+
+    # Filter out index files and build object list
     objects = []
     total_size = 0
-    continuation_token = None
 
-    while True:
-        if continuation_token:
-            list_params['ContinuationToken'] = continuation_token
+    for obj in all_s3_objects:
+        key = obj['Key']
 
-        response = s3_client.list_objects_v2(**list_params)
+        # Exclude index.html and index.md from list
+        if key in ('index.html', 'index.md'):
+            continue
 
-        # Check if bucket is empty or no objects match prefix
-        if 'Contents' not in response:
-            if len(objects) == 0:
-                if args.prefix:
-                    print(f"No objects found with prefix: {args.prefix}")
-                else:
-                    print("Bucket is empty")
-                print("No index files will be generated.")
-                return
-            break
+        size_bytes = obj['Size']
+        last_modified = obj['LastModified']
 
-        # Collect objects
-        for obj in response['Contents']:
-            key = obj['Key']
+        objects.append({
+            'key': key,
+            'size': size_bytes,
+            'last_modified': last_modified
+        })
+        total_size += size_bytes
 
-            # Exclude index.html and index.md from list
-            if key in ('index.html', 'index.md'):
-                continue
-
-            size_bytes = obj['Size']
-            last_modified = obj['LastModified']
-
-            objects.append({
-                'key': key,
-                'size': size_bytes,
-                'last_modified': last_modified
-            })
-            total_size += size_bytes
-
-        # Check if there are more results
-        if not response.get('IsTruncated', False):
-            break
-
-        continuation_token = response.get('NextContinuationToken')
+    # Check if any objects were found
+    if len(objects) == 0:
+        if args.prefix:
+            print(f"No objects found with prefix: {args.prefix}")
+        else:
+            print("Bucket is empty")
+        print("No index files will be generated.")
+        return
 
     total_objects = len(objects)
     print(f"Found {total_objects} objects (excluded index.html, index.md)")

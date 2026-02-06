@@ -12,8 +12,142 @@ Do not make any assumptions. Use the AskUserQuestion tool to ask as many follow 
 
 ---
 
+## Code Review Hygiene and File Modification Guidelines
+
+### Critical Rule: Incremental, Intentional Changes Only
+
+**ALL file modifications must be incremental, intentional, and independently reviewable.** Never rewrite entire files or mix unrelated changes.
+
+### File Modification Tools
+
+**Use the correct tool for the task:**
+
+1. **Edit Tool** - For ALL modifications to existing files
+   - ✅ Modifying existing code
+   - ✅ Adding new content to existing files (append to end)
+   - ✅ Fixing bugs in existing code
+   - ✅ Refactoring existing functions
+   - **Why**: Edit tool shows exact before/after diffs that are reviewable
+
+2. **Write Tool** - ONLY for creating NEW files
+   - ✅ Creating a new file that doesn't exist
+   - ❌ **NEVER** use to modify existing files
+   - ❌ **NEVER** use to append to existing files
+   - **Why**: Write tool overwrites entire file content, creating massive diffs with unintended changes
+
+### Rule: Never Mix Changes
+
+**Each PR/commit should contain ONE type of change:**
+
+❌ **WRONG - Mixed changes in same PR:**
+```
+- Add new feature (logic change)
+- Remove shebang lines (style change)
+- Fix typos (non-functional change)
+- Reformat docstrings (style change)
+- Change assertions (functional change)
+```
+
+✅ **CORRECT - Separate PRs:**
+- PR 1: Add new feature (logic only)
+- PR 2: Style cleanup (style only, if needed)
+
+### Git Diff Review Perspective
+
+**Before making ANY file change, ask:**
+1. Will the git diff show ONLY the changes I intend to make?
+2. Could I explain every line in the diff to a reviewer?
+3. Are there any unintended changes (style, formatting, unrelated fixes)?
+
+**If the answer to #3 is YES, STOP and use Edit tool instead.**
+
+### Real Example: What NOT to Do
+
+**Scenario**: Adding new tests to existing test file
+
+❌ **WRONG approach:**
+```python
+# Using Write tool - overwrites entire file
+Write(file_path="test_file.py", content="""
+# Entire file content with:
+# - New tests (intended)
+# - Removed shebang (unintended)
+# - Changed assertions (unintended)
+# - Modified docstrings (unintended)
+""")
+```
+
+**Result**: Git shows 1,312 insertions, 1,292 deletions - impossible to review
+
+✅ **CORRECT approach:**
+```python
+# Using Edit tool - append new tests only
+Edit(
+    file_path="test_file.py",
+    old_string="        assert re.search(timestamp_pattern, captured.out) is not None\n",
+    new_string="""        assert re.search(timestamp_pattern, captured.out) is not None
+
+
+# ====================================================================================
+# Phase 4: New Tests
+# ====================================================================================
+
+class TestNewFeature:
+    def test_new_feature(self):
+        ...
+"""
+)
+```
+
+**Result**: Git shows only new lines added - clean, reviewable diff
+
+### Separation of Concerns
+
+**Logic changes and style changes must NEVER be mixed:**
+
+1. **Logic changes** (functional):
+   - Bug fixes
+   - New features
+   - Refactoring
+   - Algorithm changes
+
+2. **Style changes** (non-functional):
+   - Formatting (whitespace, line breaks)
+   - Naming (variable renames for clarity)
+   - Comments/docstrings
+   - Import order
+   - Shebang lines
+
+**Rule**: If you're making a logic change, do NOT touch style. If you're making a style change, do NOT touch logic.
+
+### Pre-Commit Checklist
+
+Before committing, verify:
+- [ ] Used Edit tool (not Write) for existing files?
+- [ ] Git diff shows ONLY intended changes?
+- [ ] No style changes mixed with logic changes?
+- [ ] No unintended modifications to existing code?
+- [ ] Each modified line has a clear reason?
+- [ ] Diff is reviewable (not 1000+ lines)?
+
+### When You Make a Mistake
+
+If you accidentally rewrite a file or mix changes:
+1. **STOP immediately**
+2. `git checkout <file>` to restore original
+3. Use Edit tool to make ONLY intended changes
+4. Verify git diff shows only what you meant to change
+5. Commit with clean diff
+
+### Summary
+
+**Golden Rule**: Every line in `git diff` should be intentional and explainable. If you can't explain why a line changed, you've made a mistake.
+
+---
+
 ## Table of Contents
 
+- [Code Review Hygiene and File Modification Guidelines](#code-review-hygiene-and-file-modification-guidelines)
 - [Windows Batch File Scripting Conventions](#windows-batch-file-scripting-conventions)
 - [Build Commands](#build-commands)
   - [Cross-Compilation (Windows devenv7+)](#cross-compilation-windows-devenv7)
@@ -1220,11 +1354,12 @@ java -version  # Should work if PATH is correct
 
 ---
 
-**Document Version:** 1.6
-**Last Updated:** 2026-01-23
+**Document Version:** 1.7
+**Last Updated:** 2026-02-06
 **devenv Version:** 7
 
 **Changelog:**
+- v1.7 (2026-02-06): Added "Code Review Hygiene and File Modification Guidelines" section. Documents critical rules for incremental file changes, proper use of Edit vs Write tools, separation of logic and style changes, and git diff review best practices. Prevents common mistakes like rewriting entire files or mixing unrelated changes in the same PR.
 - v1.6 (2026-01-23): Changed host architecture detection to use PROCESSOR_IDENTIFIER (first priority), PROCESSOR_ARCHITECTURE, and PROCESSOR_ARCHITEW6432 environment variables. This provides robust detection across all environments including cmd.exe, PowerShell, and MSYS2 shells. PROCESSOR_IDENTIFIER check is critical for MSYS2 x64 binaries running under emulation on ARM64 where PROCESSOR_ARCHITEW6432 is not set.
 - v1.5 (2026-01-22): Added comprehensive ARCH parameter implementation details section documenting environment variable handling, lazy evaluation patterns, host vs target architecture separation, and common pitfalls with solutions
 - v1.4 (2026-01-22): Fixed ARCH parameter handling to support cross-compilation - ARCH now overrides auto-detection, documented cross-compilation workflow, clarified that setup scripts are optional
