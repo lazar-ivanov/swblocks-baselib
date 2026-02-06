@@ -748,7 +748,7 @@ def generate_html_index(objects, total_objects, total_size, url_prefix):
     html.append('<head>')
     html.append('  <meta charset="UTF-8">')
     html.append('  <meta name="viewport" content="width=device-width, initial-scale=1.0">')
-    html.append('  <title>S3 Bucket Index</title>')
+    html.append('  <title>Files Index</title>')
     html.append('  <style>')
     html.append('    body { font-family: Arial, sans-serif; margin: 20px; }')
     html.append('    h1 { color: #333; }')
@@ -762,7 +762,7 @@ def generate_html_index(objects, total_objects, total_size, url_prefix):
     html.append('  </style>')
     html.append('</head>')
     html.append('<body>')
-    html.append('  <h1>S3 Bucket Index</h1>')
+    html.append('  <h1>Files Index</h1>')
     html.append('  <table>')
     html.append('    <thead>')
     html.append('      <tr>')
@@ -808,7 +808,7 @@ def generate_markdown_index(objects, total_objects, total_size, url_prefix):
 
     # Start Markdown document
     md = []
-    md.append('# S3 Bucket Index')
+    md.append('# Files Index')
     md.append('')
     md.append('| File Path | Size | Last Modified |')
     md.append('|-----------|------|---------------|')
