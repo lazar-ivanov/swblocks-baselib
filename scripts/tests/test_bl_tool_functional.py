@@ -215,7 +215,7 @@ class TestDryRun:
     """Test --dry-run mode."""
 
     def test_dry_run_single_file(self, temp_file_small):
-        """Test dry-run with single file."""
+        """Test dry-run with single file (non-verbose)."""
         result = subprocess.run(
             [sys.executable, BL_TOOL, "hash", "--path", str(temp_file_small), "--dry-run"],
             capture_output=True,
@@ -223,15 +223,17 @@ class TestDryRun:
         )
 
         assert result.returncode == 0
-        assert "[DRY-RUN]" in result.stdout
         assert "--- DRY-RUN SUMMARY ---" in result.stdout
         assert "No files were actually hashed" in result.stdout
 
         # Should NOT contain actual hash
         assert "Combined SHA256:" not in result.stdout
 
+        # Should NOT show individual files in non-verbose mode
+        assert "[DRY-RUN]" not in result.stdout
+
     def test_dry_run_directory(self, dir_with_files):
-        """Test dry-run with directory."""
+        """Test dry-run with directory (non-verbose)."""
         result = subprocess.run(
             [sys.executable, BL_TOOL, "hash", "--path", str(dir_with_files), "--dry-run"],
             capture_output=True,
@@ -239,8 +241,24 @@ class TestDryRun:
         )
 
         assert result.returncode == 0
-        assert "[DRY-RUN]" in result.stdout
         assert "No files were actually hashed" in result.stdout
+
+        # Should NOT show individual files in non-verbose mode
+        assert "[DRY-RUN]" not in result.stdout
+
+    def test_dry_run_verbose(self, dir_with_files):
+        """Test dry-run with verbose mode shows file list."""
+        result = subprocess.run(
+            [sys.executable, BL_TOOL, "hash", "--path", str(dir_with_files), "--dry-run", "--verbose"],
+            capture_output=True,
+            text=True
+        )
+
+        assert result.returncode == 0
+        assert "No files were actually hashed" in result.stdout
+
+        # Should show individual files in verbose mode
+        assert "[DRY-RUN]" in result.stdout
 
 
 class TestVerboseMode:

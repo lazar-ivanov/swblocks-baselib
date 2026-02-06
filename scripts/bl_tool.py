@@ -291,7 +291,8 @@ def command_hash(args):
             try:
                 file_size = os.path.getsize(file_path)
                 total_size += file_size
-                print(f"[DRY-RUN] Would hash {relative_path}")
+                if args.verbose:
+                    print(f"[DRY-RUN] Would hash {relative_path}")
             except Exception as e:
                 print(f"[ERROR] Failed to stat {relative_path}: {e}")
                 sys.exit(1)

@@ -345,7 +345,7 @@ class TestCommandHash:
         assert "Combined SHA256:" in captured.out
 
     def test_command_hash_dry_run(self, dir_with_files, capsys):
-        """Test command_hash with dry-run mode."""
+        """Test command_hash with dry-run mode (non-verbose)."""
         import argparse
 
         args = argparse.Namespace(
@@ -363,9 +363,34 @@ class TestCommandHash:
         assert exc_info.value.code == 0
 
         captured = capsys.readouterr()
-        assert "[DRY-RUN]" in captured.out
         assert "No files were actually hashed" in captured.out
         assert "Combined SHA256:" not in captured.out
+        # Should NOT show individual files in non-verbose mode
+        assert "[DRY-RUN]" not in captured.out
+
+    def test_command_hash_dry_run_verbose(self, dir_with_files, capsys):
+        """Test command_hash with dry-run mode and verbose."""
+        import argparse
+
+        args = argparse.Namespace(
+            path=str(dir_with_files),
+            verify_sha256=None,
+            allow_hidden_files=False,
+            max_threads=4,
+            dry_run=True,
+            verbose=True
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            bl_tool.command_hash(args)
+
+        assert exc_info.value.code == 0
+
+        captured = capsys.readouterr()
+        assert "No files were actually hashed" in captured.out
+        assert "Combined SHA256:" not in captured.out
+        # Should show individual files in verbose mode
+        assert "[DRY-RUN]" in captured.out
 
     def test_command_hash_verification_match(self, temp_file_small, capsys):
         """Test command_hash with matching verification hash."""
