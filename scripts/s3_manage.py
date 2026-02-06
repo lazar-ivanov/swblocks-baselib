@@ -529,7 +529,7 @@ def command_upload(args):
         print(f"Files that would be uploaded: {upload_count}")
         print(f"Files that would be skipped: {skip_count}")
         print(f"Total upload size: {format_size(total_upload_size_bytes)}")
-        print(f"Upload speed: {format_speed(total_upload_size_bytes, elapsed_time)}")
+        print(f"Upload speed: {format_speed(total_upload_size_bytes, elapsed_time)} ({format_size(total_upload_size_bytes)} in {elapsed_time:.2f} seconds)")
         print("\nNo files were actually uploaded (dry-run mode)")
     else:
         print("\n--- UPLOAD SUMMARY ---")
@@ -537,7 +537,7 @@ def command_upload(args):
         print(f"Files uploaded: {upload_count}")
         print(f"Files skipped (already exist): {skip_count}")
         print(f"Total uploaded size: {format_size(total_upload_size_bytes)}")
-        print(f"Upload speed: {format_speed(total_upload_size_bytes, elapsed_time)}")
+        print(f"Upload speed: {format_speed(total_upload_size_bytes, elapsed_time)} ({format_size(total_upload_size_bytes)} in {elapsed_time:.2f} seconds)")
 
 def command_list(args):
     """Execute the list command."""
@@ -726,7 +726,7 @@ def command_verify(args):
     print(f"Different (mismatch): {different_count}")
     print(f"Not uploaded to S3: {not_uploaded_count}")
     print(f"Errors: {error_count}")
-    print(f"Verify speed: {format_speed(total_verified_size_bytes, elapsed_time)}")
+    print(f"Verify speed: {format_speed(total_verified_size_bytes, elapsed_time)} ({format_size(total_verified_size_bytes)} in {elapsed_time:.2f} seconds)")
 
     # Exit with non-zero code if any mismatches or errors
     if different_count > 0 or error_count > 0:
@@ -1076,7 +1076,7 @@ def command_download(args):
     print(f"Verified (existing files, match): {verified_count} ({format_size(total_verified_size)})")
     print(f"Different (existing files, mismatch): {different_count}")
     print(f"Errors: {error_count}")
-    print(f"Download speed: {format_speed(total_downloaded_size, elapsed_time)}")
+    print(f"Download speed: {format_speed(total_downloaded_size, elapsed_time)} ({format_size(total_downloaded_size)} in {elapsed_time:.2f} seconds)")
 
     if args.dry_run:
         print("\nNo files were actually downloaded (dry-run mode)")
