@@ -1,5 +1,22 @@
+#!/usr/bin/env python3
+#
+# This file is part of the swblocks-baselib library.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
 """
-Shared pytest fixtures for bl_tool.py tests.
+Shared pytest fixtures for bl_tool.py and s3_manage.py tests.
 
 Provides reusable test data generation and temporary file/directory fixtures.
 Used by both unit and functional tests.
@@ -10,6 +27,7 @@ import tempfile
 import os
 import sys
 from pathlib import Path
+from datetime import datetime, timezone
 
 
 # ========== Temporary Directory Fixtures ==========
@@ -25,6 +43,14 @@ def temp_dir():
 def empty_dir(temp_dir):
     """Empty directory for testing."""
     return temp_dir
+
+
+@pytest.fixture
+def download_dir(temp_dir):
+    """Separate directory for download testing (isolated from source files)."""
+    dl_dir = temp_dir / "downloads"
+    dl_dir.mkdir()
+    return dl_dir
 
 
 @pytest.fixture
@@ -177,3 +203,57 @@ def create_test_directory_tree(base_path, num_files=10, num_dirs=3):
 def large_directory_tree(temp_dir):
     """Create large directory tree (100 files, 10 subdirs) for performance testing."""
     return create_test_directory_tree(temp_dir, num_files=10, num_dirs=10)
+
+
+# ========== S3 Mock Fixtures (for s3_manage.py tests) ==========
+
+@pytest.fixture
+def sample_s3_objects():
+    """Sample S3 object list for index generation testing."""
+    return [
+        {
+            'key': 'file1.txt',
+            'size': 1024,
+            'last_modified': datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        },
+        {
+            'key': 'folder/file2.bin',
+            'size': 1024 * 1024,
+            'last_modified': datetime(2024, 1, 2, 12, 0, 0, tzinfo=timezone.utc)
+        },
+        {
+            'key': 'large.dat',
+            'size': 1024 * 1024 * 1024,  # 1 GB
+            'last_modified': datetime(2024, 1, 3, 12, 0, 0, tzinfo=timezone.utc)
+        }
+    ]
+
+
+@pytest.fixture
+def known_etag_files(temp_dir):
+    """Create files with known S3 ETags for validation."""
+    files = {}
+
+    # Empty file (known MD5)
+    empty = temp_dir / "empty.txt"
+    empty.touch()
+    files['empty'] = (empty, 'd41d8cd98f00b204e9800998ecf8427e')
+
+    # Known content (pre-calculated MD5)
+    known = temp_dir / "known.txt"
+    known.write_text("test content\n")
+    files['known'] = (known, '9a0364b9e99bb480dd25e1f0284c8555')
+
+    return files
+
+
+@pytest.fixture
+def mock_s3_bucket():
+    """Create a mock S3 bucket for testing with moto."""
+    from moto import mock_s3
+    import boto3
+
+    with mock_s3():
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        yield s3_client, 'test-bucket'

@@ -41,3 +41,4 @@ java/.gradle/
 java/init.gradle
 .vscode/
 .DS_Store
+.claude/
