@@ -64,8 +64,8 @@ class TestSingleFileHashing:
         hash_match = re.search(r"Combined SHA256: ([0-9a-f]{64})", result.stdout)
         assert hash_match is not None
 
-        # Verify speed measurement
-        assert re.search(r"Hashing speed: \d+\.\d+ [KMGT]?B/s", result.stdout)
+        # Verify speed measurement with raw values
+        assert re.search(r"Hashing speed: \d+\.\d+ [KMGT]?B/s \(\d+\.\d+ [KMGT]?B in \d+\.\d+ seconds\)", result.stdout)
 
     def test_hash_medium_file(self, temp_file_medium):
         """Test hashing medium file (~10 MB)."""

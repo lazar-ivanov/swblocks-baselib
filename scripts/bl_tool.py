@@ -360,7 +360,7 @@ def command_hash(args):
     print(f"Total files processed: {total_files}")
     print(f"Total size: {format_size(total_size)}")
     print(f"Combined SHA256: {combined_hash}")
-    print(f"Hashing speed: {format_speed(total_size, elapsed_time)}")
+    print(f"Hashing speed: {format_speed(total_size, elapsed_time)} ({format_size(total_size)} in {elapsed_time:.2f} seconds)")
 
     # Step 8: Verify hash if requested
     if args.verify_sha256:
