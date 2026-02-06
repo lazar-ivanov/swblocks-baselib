@@ -1691,3 +1691,446 @@ class TestDownloadWorker:
         downloaded_content = downloaded_file.read_text()
         assert downloaded_content == original_content
         assert category == 'downloaded'
+# ====================================================================================
+# Phase 3: Command Functions (Complex Testing - Requires S3 Mocking + stdout capture)
+# ====================================================================================
+
+class TestPaginateS3Objects:
+    """Test paginate_s3_objects() generator function with mocked S3."""
+
+    @mock_aws
+    def test_paginate_empty_bucket(self):
+        """Test pagination returns nothing for empty bucket."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        objects = list(s3_manage.paginate_s3_objects(s3_client, 'test-bucket'))
+        assert objects == []
+
+    @mock_aws
+    def test_paginate_single_object(self, temp_file):
+        """Test pagination with single object."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'file1.txt')
+
+        objects = list(s3_manage.paginate_s3_objects(s3_client, 'test-bucket'))
+
+        assert len(objects) == 1
+        assert objects[0]['Key'] == 'file1.txt'
+        assert objects[0]['Size'] > 0
+        assert 'LastModified' in objects[0]
+
+    @mock_aws
+    def test_paginate_multiple_objects(self, temp_dir):
+        """Test pagination with multiple objects (single page)."""
+        # Create 10 files
+        files = []
+        for i in range(10):
+            f = temp_dir / f"file{i}.txt"
+            f.write_text(f"content {i}")
+            files.append(f)
+
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        for f in files:
+            s3_client.upload_file(str(f), 'test-bucket', f.name)
+
+        objects = list(s3_manage.paginate_s3_objects(s3_client, 'test-bucket'))
+
+        assert len(objects) == 10
+        keys = [obj['Key'] for obj in objects]
+        assert 'file0.txt' in keys
+        assert 'file9.txt' in keys
+
+    @mock_aws
+    def test_paginate_with_prefix(self, temp_dir):
+        """Test pagination with prefix filter."""
+        # Create files with different prefixes
+        (temp_dir / "data1.txt").write_text("data1")
+        (temp_dir / "data2.txt").write_text("data2")
+        (temp_dir / "log1.txt").write_text("log1")
+
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(temp_dir / "data1.txt"), 'test-bucket', 'data1.txt')
+        s3_client.upload_file(str(temp_dir / "data2.txt"), 'test-bucket', 'data2.txt')
+        s3_client.upload_file(str(temp_dir / "log1.txt"), 'test-bucket', 'log1.txt')
+
+        # Filter by prefix
+        objects = list(s3_manage.paginate_s3_objects(s3_client, 'test-bucket', prefix='data'))
+
+        assert len(objects) == 2
+        keys = [obj['Key'] for obj in objects]
+        assert 'data1.txt' in keys
+        assert 'data2.txt' in keys
+        assert 'log1.txt' not in keys
+
+    @mock_aws
+    def test_paginate_with_max_keys(self, temp_dir):
+        """Test pagination with max_keys limit (stops after first page)."""
+        # Create 20 files
+        for i in range(20):
+            f = temp_dir / f"file{i:02d}.txt"
+            f.write_text(f"content {i}")
+
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        for i in range(20):
+            s3_client.upload_file(str(temp_dir / f"file{i:02d}.txt"), 'test-bucket', f"file{i:02d}.txt")
+
+        # Limit to 5 objects
+        objects = list(s3_manage.paginate_s3_objects(s3_client, 'test-bucket', max_keys=5))
+
+        # Should stop after first page
+        assert len(objects) == 5
+
+    @mock_aws
+    def test_paginate_generator_pattern(self, temp_dir):
+        """Test that paginate_s3_objects is a generator (lazy evaluation)."""
+        # Create 3 files
+        for i in range(3):
+            f = temp_dir / f"file{i}.txt"
+            f.write_text(f"content {i}")
+
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        for i in range(3):
+            s3_client.upload_file(str(temp_dir / f"file{i}.txt"), 'test-bucket', f"file{i}.txt")
+
+        # Get generator
+        gen = s3_manage.paginate_s3_objects(s3_client, 'test-bucket')
+
+        # Should be generator, not list
+        import types
+        assert isinstance(gen, types.GeneratorType)
+
+        # Should yield objects one at a time
+        first = next(gen)
+        assert 'Key' in first
+        assert first['Key'] == 'file0.txt'
+
+    @mock_aws
+    def test_paginate_no_prefix_match(self):
+        """Test pagination when prefix doesn't match any objects."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.put_object(Bucket='test-bucket', Key='data/file1.txt', Body=b'content')
+
+        # Prefix doesn't match
+        objects = list(s3_manage.paginate_s3_objects(s3_client, 'test-bucket', prefix='logs/'))
+
+        assert objects == []
+
+    @mock_aws
+    def test_paginate_nested_paths(self, temp_file):
+        """Test pagination with nested directory structures."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Upload to nested paths
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'data/2024/01/file1.txt')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'data/2024/02/file2.txt')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'logs/app.log')
+
+        # Get all objects
+        objects = list(s3_manage.paginate_s3_objects(s3_client, 'test-bucket'))
+
+        assert len(objects) == 3
+        keys = [obj['Key'] for obj in objects]
+        assert 'data/2024/01/file1.txt' in keys
+        assert 'data/2024/02/file2.txt' in keys
+        assert 'logs/app.log' in keys
+
+
+class TestCommandList:
+    """Test command_list() function with mocked S3 and stdout capture."""
+
+    @mock_aws
+    def test_list_empty_bucket(self, capsys):
+        """Test listing empty bucket."""
+        # Setup
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Create args mock
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'max_keys': None
+        })()
+
+        # Execute
+        s3_manage.command_list(args, s3_client=s3_client)
+
+        # Verify output
+        captured = capsys.readouterr()
+        assert "Listing objects in bucket: test-bucket" in captured.out
+        assert "Bucket is empty" in captured.out
+        assert "Total: 0 objects" in captured.out
+
+    @mock_aws
+    def test_list_single_file(self, temp_file, capsys):
+        """Test listing single file."""
+        # Setup
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'test.txt')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'max_keys': None
+        })()
+
+        # Execute
+        s3_manage.command_list(args, s3_client=s3_client)
+
+        # Verify output
+        captured = capsys.readouterr()
+        assert "FILE PATH" in captured.out
+        assert "SIZE" in captured.out
+        assert "LAST MODIFIED" in captured.out
+        assert "test.txt" in captured.out
+        assert "Total: 1 objects" in captured.out
+
+    @mock_aws
+    def test_list_multiple_files(self, temp_dir, capsys):
+        """Test listing multiple files."""
+        # Create 5 files
+        for i in range(5):
+            f = temp_dir / f"file{i}.txt"
+            f.write_text(f"content {i}")
+
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        for i in range(5):
+            s3_client.upload_file(str(temp_dir / f"file{i}.txt"), 'test-bucket', f"file{i}.txt")
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'max_keys': None
+        })()
+
+        # Execute
+        s3_manage.command_list(args, s3_client=s3_client)
+
+        # Verify output
+        captured = capsys.readouterr()
+        assert "file0.txt" in captured.out
+        assert "file4.txt" in captured.out
+        assert "Total: 5 objects" in captured.out
+
+    @mock_aws
+    def test_list_with_prefix(self, temp_dir, capsys):
+        """Test listing with prefix filter."""
+        # Create files with different prefixes
+        (temp_dir / "data1.txt").write_text("data1")
+        (temp_dir / "data2.txt").write_text("data2")
+        (temp_dir / "log1.txt").write_text("log1")
+
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(temp_dir / "data1.txt"), 'test-bucket', 'data1.txt')
+        s3_client.upload_file(str(temp_dir / "data2.txt"), 'test-bucket', 'data2.txt')
+        s3_client.upload_file(str(temp_dir / "log1.txt"), 'test-bucket', 'log1.txt')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': 'data',
+            'max_keys': None
+        })()
+
+        # Execute
+        s3_manage.command_list(args, s3_client=s3_client)
+
+        # Verify output
+        captured = capsys.readouterr()
+        assert "Prefix filter: data" in captured.out
+        assert "data1.txt" in captured.out
+        assert "data2.txt" in captured.out
+        assert "log1.txt" not in captured.out
+        assert "Total: 2 objects" in captured.out
+
+    @mock_aws
+    def test_list_with_max_keys(self, temp_dir, capsys):
+        """Test listing with max_keys limit."""
+        # Create 10 files
+        for i in range(10):
+            f = temp_dir / f"file{i:02d}.txt"
+            f.write_text(f"content {i}")
+
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        for i in range(10):
+            s3_client.upload_file(str(temp_dir / f"file{i:02d}.txt"), 'test-bucket', f"file{i:02d}.txt")
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'max_keys': 3
+        })()
+
+        # Execute
+        s3_manage.command_list(args, s3_client=s3_client)
+
+        # Verify output
+        captured = capsys.readouterr()
+        assert "Total: 3 objects" in captured.out
+        assert "Results limited to 3 objects" in captured.out
+
+    @mock_aws
+    def test_list_no_prefix_match(self, temp_file, capsys):
+        """Test listing when prefix doesn't match any objects."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'data/file1.txt')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': 'logs/',
+            'max_keys': None
+        })()
+
+        # Execute
+        s3_manage.command_list(args, s3_client=s3_client)
+
+        # Verify output
+        captured = capsys.readouterr()
+        assert "No objects found with prefix: logs/" in captured.out
+        assert "Total: 0 objects" in captured.out
+
+    @mock_aws
+    def test_list_formatted_output(self, temp_file_small, capsys):
+        """Test that output is properly formatted (columns aligned)."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(temp_file_small), 'test-bucket', 'test.bin')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'max_keys': None
+        })()
+
+        # Execute
+        s3_manage.command_list(args, s3_client=s3_client)
+
+        # Verify formatting
+        captured = capsys.readouterr()
+        lines = captured.out.split('\n')
+
+        # Find header line
+        header_line = [line for line in lines if 'FILE PATH' in line][0]
+        separator_line = [line for line in lines if line.startswith('-')][0]
+
+        # Verify separator matches header width
+        assert len(separator_line) == 107
+
+        # Verify columns are present
+        assert 'FILE PATH' in header_line
+        assert 'SIZE' in header_line
+        assert 'LAST MODIFIED' in header_line
+
+    @mock_aws
+    def test_list_size_formatting(self, temp_dir, capsys):
+        """Test that file sizes are formatted correctly."""
+        # Create files of different sizes
+        small = temp_dir / "small.txt"
+        small.write_bytes(b"x" * 1024)  # 1 KB
+
+        medium = temp_dir / "medium.bin"
+        medium.write_bytes(b"y" * (1024 * 1024))  # 1 MB
+
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(small), 'test-bucket', 'small.txt')
+        s3_client.upload_file(str(medium), 'test-bucket', 'medium.bin')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'max_keys': None
+        })()
+
+        # Execute
+        s3_manage.command_list(args, s3_client=s3_client)
+
+        # Verify size formatting
+        captured = capsys.readouterr()
+        assert "1.00 KB" in captured.out  # small.txt
+        assert "1.00 MB" in captured.out  # medium.bin
+
+        # Verify total includes both
+        assert "Total: 2 objects" in captured.out
+
+    @mock_aws
+    def test_list_nested_paths(self, temp_file, capsys):
+        """Test listing with nested directory structures."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Upload to nested paths
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'data/2024/file1.txt')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'logs/app.log')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'max_keys': None
+        })()
+
+        # Execute
+        s3_manage.command_list(args, s3_client=s3_client)
+
+        # Verify output
+        captured = capsys.readouterr()
+        assert "data/2024/file1.txt" in captured.out
+        assert "logs/app.log" in captured.out
+        assert "Total: 2 objects" in captured.out
+
+    @mock_aws
+    def test_list_error_handling_bucket_not_found(self, capsys):
+        """Test error handling when bucket doesn't exist."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+
+        args = type('Args', (), {
+            'bucket_name': 'nonexistent-bucket',
+            'prefix': None,
+            'max_keys': None
+        })()
+
+        # Execute
+        s3_manage.command_list(args, s3_client=s3_client)
+
+        # Verify error message
+        captured = capsys.readouterr()
+        assert "Error listing bucket" in captured.out or "NoSuchBucket" in captured.out
+
+    @mock_aws
+    def test_list_timestamp_format(self, temp_file, capsys):
+        """Test that timestamps are formatted correctly."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'test.txt')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'max_keys': None
+        })()
+
+        # Execute
+        s3_manage.command_list(args, s3_client=s3_client)
+
+        # Verify timestamp format (YYYY-MM-DD HH:MM:SS)
+        captured = capsys.readouterr()
+        import re
+        timestamp_pattern = r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}'
+        assert re.search(timestamp_pattern, captured.out) is not None

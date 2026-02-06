@@ -68,6 +68,64 @@ def format_speed(size_bytes, elapsed_seconds):
 
     return f"{bytes_per_second:.2f} PB/s"
 
+def paginate_s3_objects(s3_client, bucket_name, prefix=None, max_keys=None):
+    """
+    Paginate through S3 objects and yield them one at a time.
+
+    This is a reusable helper for list, indexupload, and download commands that need
+    to iterate through S3 bucket contents with pagination.
+
+    Args:
+        s3_client: boto3 S3 client
+        bucket_name (str): S3 bucket name
+        prefix (str, optional): Prefix filter for object keys
+        max_keys (int, optional): Maximum keys per page (if specified, stops after first page)
+
+    Yields:
+        dict: S3 object dict with keys: 'Key', 'Size', 'LastModified', 'ETag', etc.
+
+    Example:
+        # Collect all objects
+        objects = list(paginate_s3_objects(s3_client, 'my-bucket', prefix='data/'))
+
+        # Process objects without collecting
+        for obj in paginate_s3_objects(s3_client, 'my-bucket'):
+            print(f"{obj['Key']}: {obj['Size']} bytes")
+    """
+    list_params = {'Bucket': bucket_name}
+
+    if prefix:
+        list_params['Prefix'] = prefix
+
+    if max_keys:
+        list_params['MaxKeys'] = max_keys
+
+    continuation_token = None
+
+    while True:
+        if continuation_token:
+            list_params['ContinuationToken'] = continuation_token
+
+        response = s3_client.list_objects_v2(**list_params)
+
+        # Stop if bucket is empty or no objects match prefix
+        if 'Contents' not in response:
+            return
+
+        # Yield each object
+        for obj in response['Contents']:
+            yield obj
+
+        # Check if there are more results
+        if not response.get('IsTruncated', False):
+            break
+
+        continuation_token = response.get('NextContinuationToken')
+
+        # Stop after first page if max_keys specified
+        if max_keys:
+            break
+
 def calculate_chunk_size(file_size, part_count):
     """
     Deterministically find the chunk size used for S3 multipart upload.
@@ -556,28 +614,24 @@ def command_upload(args):
         print(f"Total uploaded size: {format_size(total_upload_size_bytes)}")
         print(f"Upload speed: {format_speed(total_upload_size_bytes, elapsed_time)} ({format_size(total_upload_size_bytes)} in {elapsed_time:.2f} seconds)")
 
-def command_list(args):
-    """Execute the list command."""
-    # Create S3 client using command-line arguments
+def command_list(args, s3_client=None):
+    """
+    Execute the list command.
+
+    Args:
+        args: Command-line arguments with bucket_name, prefix, max_keys, etc.
+        s3_client: Optional boto3 S3 client (for testing). If None, creates client from args.
+    """
+    # Create S3 client if not provided (for testing)
     # Note: boto3 uses 'aws_access_key_id' and 'aws_secret_access_key' parameter names
     # for all S3-compatible services (not just AWS)
-    s3_client = boto3.client(
-        's3',
-        endpoint_url=args.endpoint_url,
-        aws_access_key_id=args.access_key,
-        aws_secret_access_key=args.secret_key
-    )
-
-    # Prepare list_objects_v2 parameters
-    list_params = {
-        'Bucket': args.bucket_name
-    }
-
-    if args.prefix:
-        list_params['Prefix'] = args.prefix
-
-    if args.max_keys:
-        list_params['MaxKeys'] = args.max_keys
+    if s3_client is None:
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=args.endpoint_url,
+            aws_access_key_id=args.access_key,
+            aws_secret_access_key=args.secret_key
+        )
 
     # List objects
     try:
@@ -590,52 +644,34 @@ def command_list(args):
         print(f"{'FILE PATH':<70} {'SIZE':<12} {'LAST MODIFIED':<25}")
         print("-" * 107)
 
-        # Paginate through results
+        # Paginate through results using reusable helper
         total_objects = 0
-        total_size = 0  # Accumulate total size in bytes for aggregate statistics
-        continuation_token = None
+        total_size = 0
 
-        while True:
-            if continuation_token:
-                list_params['ContinuationToken'] = continuation_token
+        for obj in paginate_s3_objects(s3_client, args.bucket_name, args.prefix, args.max_keys):
+            key = obj['Key']
+            size_bytes = obj['Size']
+            last_modified = obj['LastModified'].strftime('%Y-%m-%d %H:%M:%S %Z')
 
-            response = s3_client.list_objects_v2(**list_params)
+            # Format size
+            size_str = format_size(size_bytes)
 
-            # Check if bucket is empty or no objects match prefix
-            if 'Contents' not in response:
-                if total_objects == 0:
-                    if args.prefix:
-                        print(f"No objects found with prefix: {args.prefix}")
-                    else:
-                        print("Bucket is empty")
-                break
+            # Print object info
+            print(f"{key:<70} {size_str:<12} {last_modified:<25}")
 
-            # Process objects
-            for obj in response['Contents']:
-                key = obj['Key']
-                size_bytes = obj['Size']
-                last_modified = obj['LastModified'].strftime('%Y-%m-%d %H:%M:%S %Z')
+            total_objects += 1
+            total_size += size_bytes
 
-                # Format size
-                size_str = format_size(size_bytes)
+        # Check if bucket is empty or no objects match prefix
+        if total_objects == 0:
+            if args.prefix:
+                print(f"No objects found with prefix: {args.prefix}")
+            else:
+                print("Bucket is empty")
 
-                # Print object info
-                print(f"{key:<70} {size_str:<12} {last_modified:<25}")
-
-                total_objects += 1
-                total_size += size_bytes
-
-            # Check if there are more results
-            if not response.get('IsTruncated', False):
-                break
-
-            continuation_token = response.get('NextContinuationToken')
-
-            # If max_keys is set, stop after first page
-            if args.max_keys:
-                if response.get('IsTruncated', False):
-                    print(f"\n(Results limited to {args.max_keys} objects. Use --max-keys to adjust or remove to see all.)")
-                break
+        # Print max_keys warning if results may be truncated
+        if args.max_keys and total_objects == args.max_keys:
+            print(f"\n(Results limited to {args.max_keys} objects. Use --max-keys to adjust or remove to see all.)")
 
         # Print summary
         print("-" * 107)
