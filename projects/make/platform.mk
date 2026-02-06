@@ -15,6 +15,10 @@ ifeq (win, $(findstring win, $(OS)))
   NONSTDARCH   := x86_64-nt-6.0
   NONSTDARCH32 := ia32-nt-4.0
 
+  # Save original ARCH from command line (before any conditional assignment)
+  # If ARCH was not set on command line, this will be empty
+  BL_CMDLINE_ARCH := $(ARCH)
+
   # Detect host architecture using Windows environment variables
   # PROCESSOR_IDENTIFIER: CPU identification string (contains "ARMv8" or "AArch64" on ARM64)
   # PROCESSOR_ARCHITECTURE: Architecture of the current process

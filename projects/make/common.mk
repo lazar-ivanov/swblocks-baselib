@@ -21,6 +21,11 @@ include $(MKDIR)/platform.mk
 
 include $(MKDIR)/devenv-detect.mk
 
+# Apply architecture compatibility fixes
+# Must come after devenv-detect.mk so DEVENV_VERSION_TAG is available
+# Must come before toolchain includes so ARCH is finalized before toolchain config
+include $(MKDIR)/arch-compat.mk
+
 # ======================================================================================
 # The CI environment is expected to initialize some common roots (e.g. dist root for
 # 3rd party tools and 3rd party deps etc)
@@ -77,7 +82,7 @@ endif
 $(info Building with DEVENV_VERSION_TAG = $(DEVENV_VERSION_TAG))
 $(info Building with CI_ENV_ROOT = $(CI_ENV_ROOT))
 $(info Building with OS = $(OS))
-$(info Building with ARCH = $(ARCH))
+$(info Building with ARCH = $(ARCH)$(if $(BL_ARCH_DOWNGRADE_APPLIED), (downgraded from a64),))
 $(info Building with TOOLCHAIN = $(TOOLCHAIN))
 $(info Building with VARIANT = $(VARIANT))
 
