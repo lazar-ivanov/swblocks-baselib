@@ -26,6 +26,10 @@ include $(MKDIR)/devenv-detect.mk
 # Must come before toolchain includes so ARCH is finalized before toolchain config
 include $(MKDIR)/arch-compat.mk
 
+# Capture finalized ARCH value after any compatibility downgrades
+# This must come after arch-compat.mk to ensure downgraded ARCH is captured
+BL_PROP_ARCH := $(ARCH)
+
 # ======================================================================================
 # The CI environment is expected to initialize some common roots (e.g. dist root for
 # 3rd party tools and 3rd party deps etc)

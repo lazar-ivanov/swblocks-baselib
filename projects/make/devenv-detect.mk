@@ -112,8 +112,6 @@ else
 TOOLS_PLATFORM ?= $(PLAT)
 endif
 
-BL_PROP_ARCH := $(ARCH)
-
 DEVENV_VERSION_TAG := invalid
 
 ifeq ($(TOOLCHAIN),gcc492)
