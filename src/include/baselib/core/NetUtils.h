@@ -195,6 +195,10 @@ namespace bl
                      * Even if the getaddrinfo function succeeds, the host name may be empty.
                      */
 
+#if BL_DEVENV_VERSION >= 4
+                    /*
+                     * Boost 1.66+ (devenv4+): resolver::resolve() returns results_type with begin()/end()
+                     */
                     BL_CHK_USER_FRIENDLY(
                         true,
                         endpoints == end || endpoints.begin() -> host_name().empty(),
@@ -205,6 +209,21 @@ namespace bl
                         );
 
                     return endpoints.begin() -> host_name();
+#else
+                    /*
+                     * Boost ≤1.63 (devenv2-3): resolver::resolve() returns iterator directly
+                     */
+                    BL_CHK_USER_FRIENDLY(
+                        true,
+                        endpoints == end || endpoints -> host_name().empty(),
+                        BL_MSG()
+                            << "Host '"
+                            << hostName
+                            << "' has no canonical name"
+                        );
+
+                    return endpoints -> host_name();
+#endif
                 }
             };
 
