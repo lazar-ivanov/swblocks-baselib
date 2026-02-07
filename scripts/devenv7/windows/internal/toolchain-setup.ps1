@@ -193,13 +193,69 @@ function New-ToolchainEnvironment {
         -SkipDownload:$SkipDownloads
 
     # Install OpenJDK for all target architectures (except x86 - not available from Microsoft)
+    Write-SubSection "Installing OpenJDK for Target Architectures"
+    Write-Log "Target architectures for OpenJDK installation: $($TargetArchitectures -join ', ')" -Level Info
+    Write-Log "Target architectures array count: $($TargetArchitectures.Count)" -Level Verbose
+
     foreach ($arch in $TargetArchitectures) {
         if ($arch -ne "x86") {
-            Install-OpenJDK -Version $OpenJDKVersion -Architecture $arch `
-                -DestinationRoot $DistRoot -CacheDirectory $CacheDirectory `
-                -SkipDownload:$SkipDownloads
+            try {
+                Write-Log "Starting OpenJDK $OpenJDKVersion installation for architecture: $arch" -Level Info
+
+                $installPath = Install-OpenJDK -Version $OpenJDKVersion -Architecture $arch `
+                    -DestinationRoot $DistRoot -CacheDirectory $CacheDirectory `
+                    -SkipDownload:$SkipDownloads
+
+                Write-Log "Successfully installed OpenJDK $OpenJDKVersion for $arch at: $installPath" -Level Success
+
+                # Verify installation
+                $jdkBinPath = Join-Path $installPath "bin\java.exe"
+                if (-not (Test-Path $jdkBinPath)) {
+                    Write-Log "WARNING: OpenJDK installed but java.exe not found at: $jdkBinPath" -Level Warning
+                }
+            }
+            catch {
+                Write-Log "FAILED to install OpenJDK $OpenJDKVersion for $arch" -Level Error
+                Write-Log "Error details: $($_.Exception.Message)" -Level Error
+                Write-Log "Stack trace: $($_.ScriptStackTrace)" -Level Error
+
+                # Re-throw to fail the entire toolchain setup
+                $errorMsg = "OpenJDK installation failed for architecture ${arch}: $($_.Exception.Message)"
+                throw $errorMsg
+            }
+        } else {
+            Write-Log "Skipping OpenJDK installation for $arch (not available from Microsoft)" -Level Info
         }
     }
+
+    # Verify all OpenJDK installations
+    Write-SubSection "Verifying OpenJDK Installations"
+    $missingInstalls = @()
+    foreach ($arch in $TargetArchitectures) {
+        if ($arch -ne "x86") {
+            $expectedPath = Join-Path $DistRoot "openjdk\$OpenJDKVersion\$arch"
+            $javaExe = Join-Path $expectedPath "bin\java.exe"
+
+            if (-not (Test-Path $expectedPath)) {
+                $missingInstalls += "$arch (directory missing: $expectedPath)"
+                Write-Log "ERROR: OpenJDK installation missing for $arch at: $expectedPath" -Level Error
+            }
+            elseif (-not (Test-Path $javaExe)) {
+                $missingInstalls += "$arch (java.exe missing: $javaExe)"
+                Write-Log "ERROR: OpenJDK installation incomplete for $arch - java.exe not found" -Level Error
+            }
+            else {
+                Write-Log "OpenJDK for $arch verified at: $expectedPath" -Level Success
+            }
+        }
+    }
+
+    if ($missingInstalls.Count -gt 0) {
+        $errorMsg = "OpenJDK installation verification failed for: $($missingInstalls -join ', ')"
+        throw $errorMsg
+    }
+
+    Write-Log "All OpenJDK installations verified successfully" -Level Success
 
     # Install Gradle (architecture independent)
     Install-Gradle -Version $GradleVersion `

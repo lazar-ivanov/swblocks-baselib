@@ -644,13 +644,17 @@ function Install-OpenJDK {
 
     # Normalize architecture for display and folder naming
     $archNormalized = ConvertTo-ArchitectureName -Architecture $Architecture
+    Write-Log "Normalized architecture: $Architecture -> $archNormalized" -Level Verbose
+
     # Convert to VS naming for file pattern lookup
     $archVS = ConvertTo-VSArchitectureName -Architecture $Architecture
+    Write-Log "VS architecture name: $archNormalized -> $archVS" -Level Verbose
 
     Write-SubSection "Installing OpenJDK $Version for $archNormalized"
 
     # Determine paths - use architecture-specific naming for multi-arch support
     $installPath = Join-Path $DestinationRoot "openjdk\$Version\$archNormalized"
+    Write-Log "OpenJDK installation path: $installPath" -Level Verbose
 
     # Set default cache directory if not provided
     if (-not $CacheDirectory) {
@@ -663,17 +667,29 @@ function Install-OpenJDK {
     New-DirectoryIfNotExists -Path $CacheDirectory | Out-Null
 
     # Download JDK archive using VS architecture naming for file patterns
+    Write-Log "Getting download URL for OpenJDK $Version with architecture: $archVS" -Level Verbose
     $downloadInfo = Get-ToolDownloadUrl -Tool "OpenJDK" -Version $Version -Architecture $archVS
     $archivePath = Join-Path $CacheDirectory $downloadInfo.FileName
 
+    Write-Log "Download URL: $($downloadInfo.Url)" -Level Info
+    Write-Log "Archive file name: $($downloadInfo.FileName)" -Level Verbose
+    Write-Log "Cache file path: $archivePath" -Level Verbose
+
     if (-not $SkipDownload) {
+        Write-Log "Downloading OpenJDK archive (SkipDownload is false)" -Level Verbose
         Invoke-WebDownload -Url $downloadInfo.Url -OutputPath $archivePath `
             -Description "Downloading OpenJDK $Version for $archNormalized" -SkipIfExists
+    } else {
+        Write-Log "Skipping download (SkipDownload flag is true)" -Level Verbose
     }
 
     if (-not (Test-Path $archivePath)) {
         throw "Archive file not found: $archivePath"
     }
+
+    # Verify file size
+    $fileSize = (Get-Item $archivePath).Length
+    Write-Log "Archive file size: $([Math]::Round($fileSize / 1MB, 2)) MB" -Level Verbose
 
     # Extract JDK (archive contains jdk-<version> subdirectory)
     $tempExtractPath = Join-Path $env:TEMP "openjdk-extract-$Version-$archNormalized"

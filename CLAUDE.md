@@ -254,6 +254,128 @@ if /i "%TOOLCHAIN_NAME%"=="ccl16" (
 2. Use multiple `set` commands to build up the value incrementally
 3. **NEVER** use `^` line continuation inside quoted strings
 
+### CRITICAL: Delayed Expansion Inside Control Structures
+
+**IMPORTANT:** Variables set or modified inside `if` blocks, `for` loops, or other control structures require **delayed expansion** syntax (`!VAR!`) instead of regular expansion (`%VAR%`).
+
+#### The Problem
+
+When a batch file parses a control structure (like an `if` block), ALL variable expansions using `%VAR%` are evaluated **at parse time** (before the block executes). This means:
+
+- Variables set INSIDE the block will appear empty when referenced with `%VAR%`
+- String substitutions like `%VAR:old=new%` will use the value from BEFORE the block
+- The block behaves as if variables are "frozen" at their pre-block values
+
+#### The Solution
+
+Use delayed expansion (`!VAR!`) for variables that are:
+1. Set or modified inside the same control structure
+2. Used in string substitutions inside control structures
+3. Referenced after being changed in the same block
+
+#### Real Bug Example from This Codebase
+
+**WRONG - Produces Empty String:**
+```batch
+if not "!SKIP_TOOLCHAIN!"=="1" (
+    set "TARGETS_SPACED=%TARGET_ARCHS:,= %"
+    echo Targets: %TARGETS_SPACED%
+    call script.bat -targets %TARGETS_SPACED%
+)
+```
+
+**Why it fails:**
+- Line 2: String substitution `%TARGET_ARCHS:,= %` is evaluated at parse time
+- If `TARGET_ARCHS` was set before the block, the substitution might fail
+- Result: `TARGETS_SPACED` becomes empty
+- Line 4: Passes empty string to script, causing it to use defaults
+
+**CORRECT - Uses Delayed Expansion:**
+```batch
+if not "!SKIP_TOOLCHAIN!"=="1" (
+    set "TARGETS_SPACED=!TARGET_ARCHS:,= !"
+    echo Targets: !TARGETS_SPACED!
+    call script.bat -targets !TARGETS_SPACED!
+)
+```
+
+**Why it works:**
+- Line 2: String substitution `!TARGET_ARCHS:,= !` evaluates at execution time
+- Uses current value of `TARGET_ARCHS`
+- Result: `TARGETS_SPACED` correctly contains "a64 x64 x86"
+- Line 4: Passes correct value to script
+
+#### When to Use Each Syntax
+
+| Syntax | When to Use | Example |
+|--------|-------------|---------|
+| `%VAR%` | Variables set BEFORE the control structure | `%DIST_ROOT%`, `%HOST_ARCH%` |
+| `!VAR!` | Variables set INSIDE the control structure | `!TARGETS_SPACED!`, `!CURR_ARCH!` |
+| `!VAR!` | String substitutions inside control structures | `!TARGET_ARCHS:,= !` |
+| `!VAR!` | Loop variables in `for` loops | `for %%A in (...) do echo !%%A!` |
+
+#### Enabling Delayed Expansion
+
+Delayed expansion is enabled with:
+```batch
+setlocal enabledelayedexpansion
+```
+
+This is typically placed near the beginning of the script, after capturing script directory and before any control structures.
+
+#### Common Mistakes and Symptoms
+
+**Symptom 1: Variable appears empty inside loop**
+```batch
+for %%A in (a64 x64 x86) do (
+    set "CURRENT=%%A"
+    echo Current: %CURRENT%  REM Shows nothing or wrong value!
+)
+```
+**Fix:** Use `!CURRENT!` instead of `%CURRENT%`
+
+**Symptom 2: String substitution produces empty result**
+```batch
+set "TARGET_ARCHS=a64,x64,x86"
+if condition (
+    set "SPACED=%TARGET_ARCHS:,= %"  REM Results in empty string!
+)
+```
+**Fix:** Use `!TARGET_ARCHS:,= !` instead
+
+**Symptom 3: Variable has old value, not updated value**
+```batch
+set "COUNT=5"
+if condition (
+    set /a COUNT=%COUNT%+1
+    echo Count is: %COUNT%  REM Still shows 5, not 6!
+)
+```
+**Fix:** Use `!COUNT!` in the echo statement
+
+#### Rule of Thumb
+
+**Inside ANY control structure (`if`, `for`, `while`), use `!VAR!` for:**
+1. Variables you just set or modified in the same structure
+2. Any string substitutions (`:search=replace`)
+3. Variables that change during loop iterations
+
+**Use `%VAR%` only for:**
+1. Variables that were set BEFORE entering the control structure
+2. Environment variables that don't change
+3. Parameters passed to the script (`%1`, `%2`, etc.)
+
+#### Testing for Delayed Expansion Issues
+
+When debugging, add diagnostic echo statements:
+```batch
+echo DEBUG: Before substitution - TARGET_ARCHS=!TARGET_ARCHS!
+set "TARGETS_SPACED=!TARGET_ARCHS:,= !"
+echo DEBUG: After substitution - TARGETS_SPACED=!TARGETS_SPACED!
+```
+
+If `TARGETS_SPACED` is empty but `TARGET_ARCHS` is not, you have a delayed expansion issue.
+
 ---
 
 ## Build Commands

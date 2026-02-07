@@ -67,6 +67,8 @@ REM   -skip-openssl            Skip OpenSSL build
 REM
 REM   -skip-tests              Skip OpenSSL tests
 REM
+REM   -skip-archive            Skip distribution archive creation
+REM
 REM   -help                    Show this help message
 REM
 REM Examples:
@@ -93,6 +95,7 @@ set "SKIP_TOOLCHAIN="
 set "SKIP_BOOST="
 set "SKIP_OPENSSL="
 set "SKIP_TESTS="
+set "SKIP_ARCHIVE="
 set "HELP_EXIT_CODE="
 
 REM Get script directory
@@ -185,6 +188,11 @@ if /i "%~1"=="-skip-openssl" (
 )
 if /i "%~1"=="-skip-tests" (
     set "SKIP_TESTS=1"
+    shift
+    goto parse_args
+)
+if /i "%~1"=="-skip-archive" (
+    set "SKIP_ARCHIVE=1"
     shift
     goto parse_args
 )
@@ -307,6 +315,12 @@ if "%SKIP_OPENSSL%"=="1" (
 ) else (
     echo      [ENABLED]
 )
+echo   4. Archive Creation:  %SKIP_ARCHIVE:~0,1%
+if "%SKIP_ARCHIVE%"=="1" (
+    echo      [SKIPPED]
+) else (
+    echo      [ENABLED]
+)
 echo.
 echo ================================================================================
 echo.
@@ -322,12 +336,12 @@ if not "!SKIP_TOOLCHAIN!"=="1" (
     echo.
 
     REM Convert comma-separated targets to space-separated for passing to sub-script
-    set "TARGETS_SPACED=%TARGET_ARCHS:,= %"
+    set "TARGETS_SPACED=!TARGET_ARCHS:,= !"
 
     call "%SCRIPT_DIR%build-msvc-toolchain.bat" ^
         -dist-root "%DIST_ROOT%" ^
         -hostarch "%HOST_ARCH%" ^
-        -targets %TARGETS_SPACED% ^
+        -targets !TARGETS_SPACED! ^
         -git-version "%GIT_VERSION%" ^
         -python-version "%PYTHON_VERSION%" ^
         -vs-version "%VS_VERSION%"
@@ -455,32 +469,40 @@ if not "!SKIP_OPENSSL!"=="1" (
 )
 
 REM Step 4: Create distribution archives
-echo.
-echo ################################################################################
-echo # STEP 4: Creating Distribution Archives
-echo ################################################################################
-echo.
-
-REM Extract dist folder name from full path
-for %%F in ("%DIST_ROOT%") do set "DIST_FOLDER_NAME=%%~nxF"
-
-echo Archiving distribution to: %USERPROFILE%\swblocks\zip
-echo.
-
-call "%SCRIPT_DIR%archive-dists-windows.bat" ^
-    -dist-root "%DIST_FOLDER_NAME%" ^
-    -delete-target-if-exists
-
-if errorlevel 1 (
+if not "!SKIP_ARCHIVE!"=="1" (
     echo.
-    echo WARNING: Archive creation failed!
-    echo The build completed successfully but archives were not created.
-    echo You can manually create archives later using:
-    echo   archive-dists-windows.bat -dist-root "%DIST_FOLDER_NAME%" -delete-target-if-exists
+    echo ################################################################################
+    echo # STEP 4: Creating Distribution Archives
+    echo ################################################################################
     echo.
+
+    REM Extract dist folder name from full path
+    for %%F in ("%DIST_ROOT%") do set "DIST_FOLDER_NAME=%%~nxF"
+
+    echo Archiving distribution to: %USERPROFILE%\swblocks\zip
+    echo.
+
+    call "%SCRIPT_DIR%archive-dists-windows.bat" ^
+        -dist-root "%DIST_FOLDER_NAME%" ^
+        -delete-target-if-exists
+
+    if errorlevel 1 (
+        echo.
+        echo WARNING: Archive creation failed!
+        echo The build completed successfully but archives were not created.
+        echo You can manually create archives later using:
+        echo   archive-dists-windows.bat -dist-root "%DIST_FOLDER_NAME%" -delete-target-if-exists
+        echo.
+    ) else (
+        echo.
+        echo Distribution archives created successfully
+    )
 ) else (
     echo.
-    echo Distribution archives created successfully
+    echo ################################################################################
+    echo # STEP 4: Creating Distribution Archives [SKIPPED]
+    echo ################################################################################
+    echo.
 )
 
 REM Calculate elapsed time
@@ -513,10 +535,12 @@ if not "!SKIP_OPENSSL!"=="1" (
 echo.
 echo Target Architectures: %TARGET_ARCHS%
 echo.
-echo Distribution Archives:
-echo   - %USERPROFILE%\swblocks\zip\%DIST_FOLDER_NAME%.zip
-echo   - %USERPROFILE%\swblocks\zip\%DIST_FOLDER_NAME%-downloads-cache.zip
-echo.
+if not "!SKIP_ARCHIVE!"=="1" (
+    echo Distribution Archives:
+    echo   - %USERPROFILE%\swblocks\zip\%DIST_FOLDER_NAME%.zip
+    echo   - %USERPROFILE%\swblocks\zip\%DIST_FOLDER_NAME%-downloads-cache.zip
+    echo.
+)
 echo Next Steps:
 echo   1. Review the environment initialization script:
 echo      %DIST_ROOT%\scripts\ci\ci-init-env.bat
