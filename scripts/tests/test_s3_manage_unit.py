@@ -2753,3 +2753,458 @@ class TestCommandDownload:
         assert 'Different (existing files, mismatch): 0' in captured.out
         assert 'Errors: 0' in captured.out
         assert 'Download speed:' in captured.out
+
+# ====================================================================================
+# Phase 4 Chunk 3: command_upload (Requires S3 Mocking + stdout capture + file I/O)
+# ====================================================================================
+
+class TestCommandUpload:
+    """Test command_upload() with mocked S3 and capsys (12 tests)"""
+
+    @mock_aws
+    def test_upload_empty_directory(self, temp_dir, capsys):
+        """Test upload from empty directory shows appropriate message."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Create empty directory
+        local_folder = temp_dir / 'uploads'
+        local_folder.mkdir()
+
+        # Create mock args
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'dry_run': False,
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        # Execute command
+        s3_manage.command_upload(args, s3_client=s3_client)
+
+        # Verify output
+        captured = capsys.readouterr()
+        assert 'Found 0 files' in captured.out
+
+    @mock_aws
+    def test_upload_single_file_new(self, temp_dir, temp_file, capsys):
+        """Test uploading a single new file."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Create local directory with file
+        local_folder = temp_dir / 'uploads'
+        local_folder.mkdir()
+        test_file = local_folder / 'test.txt'
+        shutil.copy(str(temp_file), str(test_file))
+
+        # Create mock args
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'dry_run': False,
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        # Execute command
+        s3_manage.command_upload(args, s3_client=s3_client)
+
+        # Verify file was uploaded
+        response = s3_client.list_objects_v2(Bucket='test-bucket')
+        assert 'Contents' in response
+        assert len(response['Contents']) == 1
+        assert response['Contents'][0]['Key'] == 'test.txt'
+
+        # Verify output
+        captured = capsys.readouterr()
+        assert 'Found 1 files' in captured.out
+        assert '[SUCCESS]' in captured.out
+        assert 'Files uploaded: 1' in captured.out
+
+    @mock_aws
+    def test_upload_multiple_files(self, temp_dir, temp_file, capsys):
+        """Test uploading multiple files."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Create local directory with multiple files
+        local_folder = temp_dir / 'uploads'
+        local_folder.mkdir()
+        for i in range(3):
+            test_file = local_folder / f'file{i}.txt'
+            shutil.copy(str(temp_file), str(test_file))
+
+        # Create mock args
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'dry_run': False,
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        # Execute command
+        s3_manage.command_upload(args, s3_client=s3_client)
+
+        # Verify all files uploaded
+        response = s3_client.list_objects_v2(Bucket='test-bucket')
+        assert len(response['Contents']) == 3
+        keys = [obj['Key'] for obj in response['Contents']]
+        assert 'file0.txt' in keys
+        assert 'file1.txt' in keys
+        assert 'file2.txt' in keys
+
+        # Verify output
+        captured = capsys.readouterr()
+        assert 'Found 3 files' in captured.out
+        assert 'Files uploaded: 3' in captured.out
+
+    @mock_aws
+    def test_upload_file_already_exists_skipped(self, temp_dir, temp_file, capsys):
+        """Test uploading when file already exists in S3 (should skip)."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Upload file to S3 first
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'test.txt')
+
+        # Create local directory with same file
+        local_folder = temp_dir / 'uploads'
+        local_folder.mkdir()
+        test_file = local_folder / 'test.txt'
+        shutil.copy(str(temp_file), str(test_file))
+
+        # Create mock args
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'dry_run': False,
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        # Execute command
+        s3_manage.command_upload(args, s3_client=s3_client)
+
+        # Verify output shows skip
+        captured = capsys.readouterr()
+        assert '[SKIPPED]' in captured.out
+        assert 'Already exists' in captured.out
+        assert 'Files uploaded: 0' in captured.out
+        assert 'Files skipped (already exist): 1' in captured.out
+
+    @mock_aws
+    def test_upload_dry_run(self, temp_dir, temp_file, capsys):
+        """Test upload in dry-run mode (no actual uploads)."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Create local directory with file
+        local_folder = temp_dir / 'uploads'
+        local_folder.mkdir()
+        test_file = local_folder / 'test.txt'
+        shutil.copy(str(temp_file), str(test_file))
+
+        # Create mock args with dry_run=True
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'dry_run': True,
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        # Execute command
+        s3_manage.command_upload(args, s3_client=s3_client)
+
+        # Verify NO file was uploaded
+        response = s3_client.list_objects_v2(Bucket='test-bucket')
+        assert 'Contents' not in response
+
+        # Verify output shows dry-run
+        captured = capsys.readouterr()
+        assert '[DRY-RUN]' in captured.out
+        assert 'would upload' in captured.out
+        assert 'DRY-RUN SUMMARY' in captured.out
+        assert 'No files were actually uploaded' in captured.out
+
+    @mock_aws
+    def test_upload_hidden_files_excluded_by_default(self, temp_dir, temp_file, capsys):
+        """Test that hidden files are excluded by default."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Create local directory with hidden and regular files
+        local_folder = temp_dir / 'uploads'
+        local_folder.mkdir()
+
+        # Regular file
+        regular_file = local_folder / 'regular.txt'
+        shutil.copy(str(temp_file), str(regular_file))
+
+        # Hidden file
+        hidden_file = local_folder / '.hidden.txt'
+        shutil.copy(str(temp_file), str(hidden_file))
+
+        # Hidden directory with file
+        hidden_dir = local_folder / '.hidden_dir'
+        hidden_dir.mkdir()
+        hidden_dir_file = hidden_dir / 'file.txt'
+        shutil.copy(str(temp_file), str(hidden_dir_file))
+
+        # Create mock args with allow_hidden_files=False (default)
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'dry_run': False,
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        # Execute command
+        s3_manage.command_upload(args, s3_client=s3_client)
+
+        # Verify only regular file uploaded
+        response = s3_client.list_objects_v2(Bucket='test-bucket')
+        assert len(response['Contents']) == 1
+        assert response['Contents'][0]['Key'] == 'regular.txt'
+
+        # Verify output
+        captured = capsys.readouterr()
+        assert 'Found 1 files' in captured.out
+
+    @mock_aws
+    def test_upload_hidden_files_included_when_allowed(self, temp_dir, temp_file, capsys):
+        """Test that hidden files are included when --allow-hidden-files is set."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Create local directory with hidden and regular files
+        local_folder = temp_dir / 'uploads'
+        local_folder.mkdir()
+
+        regular_file = local_folder / 'regular.txt'
+        shutil.copy(str(temp_file), str(regular_file))
+
+        hidden_file = local_folder / '.hidden.txt'
+        shutil.copy(str(temp_file), str(hidden_file))
+
+        # Create mock args with allow_hidden_files=True
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'dry_run': False,
+            'max_threads': 2,
+            'allow_hidden_files': True
+        })()
+
+        # Execute command
+        s3_manage.command_upload(args, s3_client=s3_client)
+
+        # Verify both files uploaded
+        response = s3_client.list_objects_v2(Bucket='test-bucket')
+        assert len(response['Contents']) == 2
+        keys = [obj['Key'] for obj in response['Contents']]
+        assert 'regular.txt' in keys
+        assert '.hidden.txt' in keys
+
+    @mock_aws
+    def test_upload_nested_directories(self, temp_dir, temp_file, capsys):
+        """Test upload preserves nested directory structure."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Create nested directory structure
+        local_folder = temp_dir / 'uploads'
+        local_folder.mkdir()
+
+        # Create nested structure: uploads/data/2024/01/file.txt
+        nested_dir = local_folder / 'data' / '2024' / '01'
+        nested_dir.mkdir(parents=True)
+        nested_file = nested_dir / 'file.txt'
+        shutil.copy(str(temp_file), str(nested_file))
+
+        # Also create file at root
+        root_file = local_folder / 'root.txt'
+        shutil.copy(str(temp_file), str(root_file))
+
+        # Create mock args
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'dry_run': False,
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        # Execute command
+        s3_manage.command_upload(args, s3_client=s3_client)
+
+        # Verify nested paths preserved
+        response = s3_client.list_objects_v2(Bucket='test-bucket')
+        assert len(response['Contents']) == 2
+        keys = [obj['Key'] for obj in response['Contents']]
+        assert 'root.txt' in keys
+        assert 'data/2024/01/file.txt' in keys
+
+    @mock_aws
+    def test_upload_statistics_validation(self, temp_dir, temp_file, capsys):
+        """Test upload command reports accurate statistics."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Upload 1 file to S3 (will be skipped)
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'existing.txt')
+
+        # Create local directory with 3 files (1 exists, 2 new)
+        local_folder = temp_dir / 'uploads'
+        local_folder.mkdir()
+
+        # Existing file (will be skipped)
+        existing = local_folder / 'existing.txt'
+        shutil.copy(str(temp_file), str(existing))
+
+        # New files (will be uploaded)
+        for i in range(2):
+            new_file = local_folder / f'new{i}.txt'
+            shutil.copy(str(temp_file), str(new_file))
+
+        # Create mock args
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'dry_run': False,
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        # Execute command
+        s3_manage.command_upload(args, s3_client=s3_client)
+
+        # Verify statistics in output
+        captured = capsys.readouterr()
+        assert 'Total files scanned: 3' in captured.out
+        assert 'Files uploaded: 2' in captured.out
+        assert 'Files skipped (already exist): 1' in captured.out
+        assert 'Upload speed:' in captured.out
+
+    @mock_aws
+    def test_upload_error_handling_invalid_bucket(self, temp_dir, temp_file, capsys):
+        """Test upload handles errors gracefully."""
+        # Setup S3 environment (bucket NOT created - will cause error)
+        s3_client = boto3.client('s3', region_name='us-east-1')
+
+        # Create local directory with file
+        local_folder = temp_dir / 'uploads'
+        local_folder.mkdir()
+        test_file = local_folder / 'test.txt'
+        shutil.copy(str(temp_file), str(test_file))
+
+        # Create mock args
+        args = type('Args', (), {
+            'bucket_name': 'nonexistent-bucket',
+            'local_folder': str(local_folder),
+            'dry_run': False,
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        # Execute command - should handle error gracefully
+        s3_manage.command_upload(args, s3_client=s3_client)
+
+        # Verify error message in output
+        captured = capsys.readouterr()
+        assert '[FAILURE]' in captured.out or 'ERROR' in captured.out
+
+    @mock_aws
+    def test_upload_mixed_success_and_skip(self, temp_dir, temp_file, capsys):
+        """Test upload with mix of new files and existing files."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Upload 2 files to S3 first
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'skip1.txt')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'skip2.txt')
+
+        # Create local directory with 5 files (2 exist, 3 new)
+        local_folder = temp_dir / 'uploads'
+        local_folder.mkdir()
+
+        # Existing files (will be skipped)
+        for i in range(2):
+            skip_file = local_folder / f'skip{i+1}.txt'
+            shutil.copy(str(temp_file), str(skip_file))
+
+        # New files (will be uploaded)
+        for i in range(3):
+            new_file = local_folder / f'new{i}.txt'
+            shutil.copy(str(temp_file), str(new_file))
+
+        # Create mock args
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'dry_run': False,
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        # Execute command
+        s3_manage.command_upload(args, s3_client=s3_client)
+
+        # Verify final state
+        response = s3_client.list_objects_v2(Bucket='test-bucket')
+        assert len(response['Contents']) == 5
+
+        # Verify output statistics
+        captured = capsys.readouterr()
+        assert 'Total files scanned: 5' in captured.out
+        assert 'Files uploaded: 3' in captured.out
+        assert 'Files skipped (already exist): 2' in captured.out
+
+    @mock_aws
+    def test_upload_summary_format(self, temp_dir, temp_file, capsys):
+        """Test upload summary format matches expected output."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Create local directory with file
+        local_folder = temp_dir / 'uploads'
+        local_folder.mkdir()
+        test_file = local_folder / 'test.txt'
+        shutil.copy(str(temp_file), str(test_file))
+
+        # Create mock args
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'dry_run': False,
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        # Execute command
+        s3_manage.command_upload(args, s3_client=s3_client)
+
+        # Verify summary format
+        captured = capsys.readouterr()
+        assert '--- UPLOAD SUMMARY ---' in captured.out
+        assert 'Total files scanned:' in captured.out
+        assert 'Files uploaded:' in captured.out
+        assert 'Files skipped (already exist):' in captured.out
+        assert 'Total uploaded size:' in captured.out
+        assert 'Upload speed:' in captured.out
+        assert 'All operations complete!' in captured.out

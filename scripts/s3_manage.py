@@ -514,17 +514,23 @@ def create_parent_parser():
 
     return parent_parser
 
-def command_upload(args):
-    """Execute the upload command."""
+def command_upload(args, s3_client=None):
+    """Execute the upload command.
+
+    Args:
+        args: Command-line arguments
+        s3_client: Optional boto3 S3 client (for testing)
+    """
     # Create S3 client using command-line arguments
     # Note: boto3 uses 'aws_access_key_id' and 'aws_secret_access_key' parameter names
     # for all S3-compatible services (not just AWS)
-    s3_client = boto3.client(
-        's3',
-        endpoint_url=args.endpoint_url,
-        aws_access_key_id=args.access_key,
-        aws_secret_access_key=args.secret_key
-    )
+    if s3_client is None:
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=args.endpoint_url,
+            aws_access_key_id=args.access_key,
+            aws_secret_access_key=args.secret_key
+        )
 
     files_to_upload = []
     total_size_bytes = 0
