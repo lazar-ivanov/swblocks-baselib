@@ -29,6 +29,7 @@ Test Organization:
 import pytest
 import sys
 import os
+import shutil
 from pathlib import Path
 
 # Add scripts directory to path to import s3_manage
@@ -2385,3 +2386,370 @@ class TestCommandIndexupload:
         assert 'data/2024/01/file.txt' in index_content
         assert 'logs/app/debug.log' in index_content
         assert 'Total: 2 objects' in index_content
+
+# ====================================================================================
+# Phase 4 Chunk 2: command_download (Requires S3 Mocking + stdout capture + file I/O)
+# ====================================================================================
+
+class TestCommandDownload:
+    """Test command_download() with mocked S3 and capsys (12 tests)"""
+
+    @mock_aws
+    def test_download_empty_bucket(self, temp_dir, capsys):
+        """Test download from empty bucket shows appropriate message."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Create mock args
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'local_folder': str(temp_dir),
+            'dry_run': False,
+            'max_threads': 2
+        })()
+
+        # Execute command
+        s3_manage.command_download(args, s3_client=s3_client)
+
+        # Verify output
+        captured = capsys.readouterr()
+        assert 'Bucket is empty' in captured.out
+        assert 'Nothing to download' in captured.out
+
+    @mock_aws
+    def test_download_single_file_new(self, temp_dir, temp_file, capsys):
+        """Test downloading a single new file."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'test.txt')
+
+        # Create mock args
+        local_folder = temp_dir / 'downloads'
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'local_folder': str(local_folder),
+            'dry_run': False,
+            'max_threads': 2
+        })()
+
+        # Execute command
+        s3_manage.command_download(args, s3_client=s3_client)
+
+        # Verify file was downloaded
+        downloaded_file = local_folder / 'test.txt'
+        assert downloaded_file.exists()
+
+        # Verify output
+        captured = capsys.readouterr()
+        assert 'Found 1 objects' in captured.out
+        assert '[DOWNLOADED]' in captured.out
+        assert 'Downloaded (new files): 1' in captured.out
+
+    @mock_aws
+    def test_download_multiple_files(self, temp_dir, temp_file, capsys):
+        """Test downloading multiple files."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Upload multiple files
+        for i in range(3):
+            s3_client.upload_file(str(temp_file), 'test-bucket', f'file{i}.txt')
+
+        # Create mock args
+        local_folder = temp_dir / 'downloads'
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'local_folder': str(local_folder),
+            'dry_run': False,
+            'max_threads': 2
+        })()
+
+        # Execute command
+        s3_manage.command_download(args, s3_client=s3_client)
+
+        # Verify all files downloaded
+        assert (local_folder / 'file0.txt').exists()
+        assert (local_folder / 'file1.txt').exists()
+        assert (local_folder / 'file2.txt').exists()
+
+        # Verify output
+        captured = capsys.readouterr()
+        assert 'Found 3 objects' in captured.out
+        assert 'Downloaded (new files): 3' in captured.out
+
+    @mock_aws
+    def test_download_existing_file_verified(self, temp_dir, temp_file, capsys):
+        """Test downloading when local file already exists and matches."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'test.txt')
+
+        # Create local file with same content
+        local_folder = temp_dir / 'downloads'
+        local_folder.mkdir(parents=True)
+        local_file = local_folder / 'test.txt'
+        shutil.copy(str(temp_file), str(local_file))
+
+        # Create mock args
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'local_folder': str(local_folder),
+            'dry_run': False,
+            'max_threads': 2
+        })()
+
+        # Execute command
+        s3_manage.command_download(args, s3_client=s3_client)
+
+        # Verify output shows verification (not download)
+        captured = capsys.readouterr()
+        assert '[VERIFIED]' in captured.out
+        assert 'Verified (existing files, match): 1' in captured.out
+        assert 'Downloaded (new files): 0' in captured.out
+
+    @mock_aws
+    def test_download_existing_file_different(self, temp_dir, temp_file, capsys):
+        """Test downloading when local file exists but differs from S3."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'test.txt')
+
+        # Create local file with different content
+        local_folder = temp_dir / 'downloads'
+        local_folder.mkdir(parents=True)
+        local_file = local_folder / 'test.txt'
+        local_file.write_text('different content')
+
+        # Create mock args
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'local_folder': str(local_folder),
+            'dry_run': False,
+            'max_threads': 2
+        })()
+
+        # Execute command - should exit with code 1
+        with pytest.raises(SystemExit) as exc_info:
+            s3_manage.command_download(args, s3_client=s3_client)
+        assert exc_info.value.code == 1
+
+        # Verify output shows difference
+        captured = capsys.readouterr()
+        assert '[DIFFERENT]' in captured.out
+        assert 'Different (existing files, mismatch): 1' in captured.out
+
+    @mock_aws
+    def test_download_with_prefix(self, temp_dir, temp_file, capsys):
+        """Test downloading with prefix filter."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Upload files with different prefixes
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'data/file1.txt')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'data/file2.txt')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'logs/file3.txt')
+
+        # Create mock args with prefix filter
+        local_folder = temp_dir / 'downloads'
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': 'data/',
+            'local_folder': str(local_folder),
+            'dry_run': False,
+            'max_threads': 2
+        })()
+
+        # Execute command
+        s3_manage.command_download(args, s3_client=s3_client)
+
+        # Verify only matching files downloaded
+        assert (local_folder / 'data' / 'file1.txt').exists()
+        assert (local_folder / 'data' / 'file2.txt').exists()
+        assert not (local_folder / 'logs' / 'file3.txt').exists()
+
+        # Verify output
+        captured = capsys.readouterr()
+        assert 'Prefix filter: data/' in captured.out
+        assert 'Found 2 objects' in captured.out
+
+    @mock_aws
+    def test_download_dry_run(self, temp_dir, temp_file, capsys):
+        """Test download in dry-run mode (no actual downloads)."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'test.txt')
+
+        # Create mock args with dry_run=True
+        local_folder = temp_dir / 'downloads'
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'local_folder': str(local_folder),
+            'dry_run': True,
+            'max_threads': 2
+        })()
+
+        # Execute command
+        s3_manage.command_download(args, s3_client=s3_client)
+
+        # Verify NO file was downloaded
+        assert not (local_folder / 'test.txt').exists()
+
+        # Verify output shows dry-run
+        captured = capsys.readouterr()
+        assert 'DRY-RUN mode' in captured.out
+        assert 'No files were actually downloaded' in captured.out
+
+    @mock_aws
+    def test_download_error_bucket_not_found(self, temp_dir, capsys):
+        """Test download from non-existent bucket shows error."""
+        # Setup S3 environment (bucket NOT created)
+        s3_client = boto3.client('s3', region_name='us-east-1')
+
+        # Create mock args
+        args = type('Args', (), {
+            'bucket_name': 'nonexistent-bucket',
+            'prefix': None,
+            'local_folder': str(temp_dir),
+            'dry_run': False,
+            'max_threads': 2
+        })()
+
+        # Execute command - should exit with code 1
+        with pytest.raises(SystemExit) as exc_info:
+            s3_manage.command_download(args, s3_client=s3_client)
+        assert exc_info.value.code == 1
+
+        # Verify error message
+        captured = capsys.readouterr()
+        assert 'Error listing bucket' in captured.out
+
+    @mock_aws
+    def test_download_creates_directories(self, temp_dir, temp_file, capsys):
+        """Test download creates nested directories for S3 keys."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'path/to/nested/file.txt')
+
+        # Create mock args
+        local_folder = temp_dir / 'downloads'
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'local_folder': str(local_folder),
+            'dry_run': False,
+            'max_threads': 2
+        })()
+
+        # Execute command
+        s3_manage.command_download(args, s3_client=s3_client)
+
+        # Verify nested directories created
+        downloaded_file = local_folder / 'path' / 'to' / 'nested' / 'file.txt'
+        assert downloaded_file.exists()
+        assert downloaded_file.parent.exists()
+
+    @mock_aws
+    def test_download_nested_paths(self, temp_dir, temp_file, capsys):
+        """Test download handles nested S3 paths correctly."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Upload files with nested paths
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'data/2024/01/file.txt')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'logs/app/debug.log')
+
+        # Create mock args
+        local_folder = temp_dir / 'downloads'
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'local_folder': str(local_folder),
+            'dry_run': False,
+            'max_threads': 2
+        })()
+
+        # Execute command
+        s3_manage.command_download(args, s3_client=s3_client)
+
+        # Verify nested paths created correctly
+        assert (local_folder / 'data' / '2024' / '01' / 'file.txt').exists()
+        assert (local_folder / 'logs' / 'app' / 'debug.log').exists()
+
+        # Verify output
+        captured = capsys.readouterr()
+        assert 'Found 2 objects' in captured.out
+        assert 'Downloaded (new files): 2' in captured.out
+
+    @mock_aws
+    def test_download_no_prefix_match(self, temp_dir, temp_file, capsys):
+        """Test download with prefix that matches no objects."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'data/file.txt')
+
+        # Create mock args with non-matching prefix
+        local_folder = temp_dir / 'downloads'
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': 'logs/',
+            'local_folder': str(local_folder),
+            'dry_run': False,
+            'max_threads': 2
+        })()
+
+        # Execute command
+        s3_manage.command_download(args, s3_client=s3_client)
+
+        # Verify output shows no objects found
+        captured = capsys.readouterr()
+        assert 'No objects found with prefix: logs/' in captured.out
+        assert 'Nothing to download' in captured.out
+
+    @mock_aws
+    def test_download_statistics_validation(self, temp_dir, temp_file, capsys):
+        """Test download command reports accurate statistics."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Upload 3 files
+        for i in range(3):
+            s3_client.upload_file(str(temp_file), 'test-bucket', f'file{i}.txt')
+
+        # Create mock args
+        local_folder = temp_dir / 'downloads'
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'local_folder': str(local_folder),
+            'dry_run': False,
+            'max_threads': 2
+        })()
+
+        # Execute command
+        s3_manage.command_download(args, s3_client=s3_client)
+
+        # Verify statistics in output
+        captured = capsys.readouterr()
+        assert 'Total files found: 3' in captured.out
+        assert 'Downloaded (new files): 3' in captured.out
+        assert 'Verified (existing files, match): 0' in captured.out
+        assert 'Different (existing files, mismatch): 0' in captured.out
+        assert 'Errors: 0' in captured.out
+        assert 'Download speed:' in captured.out

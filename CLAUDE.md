@@ -10,6 +10,14 @@ Do not jump into implementation or change files unless clearly instructed to mak
 
 Do not make any assumptions. Use the AskUserQuestion tool to ask as many follow ups as you need to reach clarity.
 
+**Always use the project's Python virtual environment.**
+
+When running Python commands, tests, or scripts, ALWAYS use the Python interpreter from the project's `.venv` virtual environment located at `/Users/lazar/dev/github/swblocks-baselib/.venv/bin/python` (or `.venv/bin/pytest` for pytest). If the `.venv` directory does not exist, run `make python-install` to create it before proceeding.
+
+**Never commit to git without explicit permission.**
+
+Do NOT attempt to commit changes to the git repository using `git add`, `git commit`, or `git push` unless the user explicitly asks you to do so. Changes should remain uncommitted until the user reviews and decides to commit them.
+
 ---
 
 ## Code Review Hygiene and File Modification Guidelines
@@ -1476,11 +1484,12 @@ java -version  # Should work if PATH is correct
 
 ---
 
-**Document Version:** 1.7
+**Document Version:** 1.8
 **Last Updated:** 2026-02-06
 **devenv Version:** 7
 
 **Changelog:**
+- v1.8 (2026-02-06): Added Core Principles for Python virtual environment usage and git commit restrictions. All Python commands must use the project's .venv virtual environment (create with `make python-install` if missing). Git commits are forbidden without explicit user permission.
 - v1.7 (2026-02-06): Added "Code Review Hygiene and File Modification Guidelines" section. Documents critical rules for incremental file changes, proper use of Edit vs Write tools, separation of logic and style changes, and git diff review best practices. Prevents common mistakes like rewriting entire files or mixing unrelated changes in the same PR.
 - v1.6 (2026-01-23): Changed host architecture detection to use PROCESSOR_IDENTIFIER (first priority), PROCESSOR_ARCHITECTURE, and PROCESSOR_ARCHITEW6432 environment variables. This provides robust detection across all environments including cmd.exe, PowerShell, and MSYS2 shells. PROCESSOR_IDENTIFIER check is critical for MSYS2 x64 binaries running under emulation on ARM64 where PROCESSOR_ARCHITEW6432 is not set.
 - v1.5 (2026-01-22): Added comprehensive ARCH parameter implementation details section documenting environment variable handling, lazy evaluation patterns, host vs target architecture separation, and common pitfalls with solutions

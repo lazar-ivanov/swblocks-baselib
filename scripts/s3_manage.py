@@ -992,73 +992,55 @@ def command_indexupload(args, s3_client=None):
             import sys
             sys.exit(1)
 
-def command_download(args):
-    """Execute the download command."""
+def command_download(args, s3_client=None):
+    """Execute the download command.
+
+    Args:
+        args: Command-line arguments
+        s3_client: Optional boto3 S3 client (for testing)
+    """
 
     # STEP 1: Create S3 client (same pattern as other commands)
-    s3_client = boto3.client(
-        's3',
-        endpoint_url=args.endpoint_url,
-        aws_access_key_id=args.access_key,
-        aws_secret_access_key=args.secret_key
-    )
+    if s3_client is None:
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=args.endpoint_url,
+            aws_access_key_id=args.access_key,
+            aws_secret_access_key=args.secret_key
+        )
 
-    # STEP 2: List S3 objects (with optional prefix filter)
-    list_params = {'Bucket': args.bucket_name}
-
-    if args.prefix:
-        list_params['Prefix'] = args.prefix
-
+    # STEP 2: List S3 objects using pagination generator
     print(f"Listing objects in bucket: {args.bucket_name}")
     if args.prefix:
         print(f"Prefix filter: {args.prefix}")
     print()
 
-    # STEP 3: Paginate through S3 objects (reuse indexupload pattern)
-    download_queue = []  # List of tuples: (s3_key, s3_size)
-    total_s3_size = 0
-    continuation_token = None
+    # STEP 3: Paginate through S3 objects and build download queue
+    try:
+        all_s3_objects = list(paginate_s3_objects(s3_client, args.bucket_name, args.prefix))
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        error_msg = e.response['Error']['Message']
+        print(f"Error listing bucket: {error_code} - {error_msg}")
+        import sys
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        import sys
+        sys.exit(1)
 
-    while True:
-        if continuation_token:
-            list_params['ContinuationToken'] = continuation_token
+    # Check if bucket is empty or no objects match prefix
+    if not all_s3_objects:
+        if args.prefix:
+            print(f"No objects found with prefix: {args.prefix}")
+        else:
+            print("Bucket is empty")
+        print("Nothing to download.")
+        return
 
-        try:
-            response = s3_client.list_objects_v2(**list_params)
-        except ClientError as e:
-            error_code = e.response['Error']['Code']
-            error_msg = e.response['Error']['Message']
-            print(f"Error listing bucket: {error_code} - {error_msg}")
-            import sys
-            sys.exit(1)
-        except Exception as e:
-            print(f"Error: {str(e)}")
-            import sys
-            sys.exit(1)
-
-        # Check if bucket is empty or no objects match prefix
-        if 'Contents' not in response:
-            if len(download_queue) == 0:
-                if args.prefix:
-                    print(f"No objects found with prefix: {args.prefix}")
-                else:
-                    print("Bucket is empty")
-                print("Nothing to download.")
-                return
-            break
-
-        # Collect objects
-        for obj in response['Contents']:
-            s3_key = obj['Key']
-            s3_size = obj['Size']
-            download_queue.append((s3_key, s3_size))
-            total_s3_size += s3_size
-
-        # Check if there are more results
-        if not response.get('IsTruncated', False):
-            break
-
-        continuation_token = response.get('NextContinuationToken')
+    # Build download queue from S3 objects
+    download_queue = [(obj['Key'], obj['Size']) for obj in all_s3_objects]
+    total_s3_size = sum(obj['Size'] for obj in all_s3_objects)
 
     total_files = len(download_queue)
     print(f"Found {total_files} objects ({format_size(total_s3_size)} total)")
