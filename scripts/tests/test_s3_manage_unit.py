@@ -3208,3 +3208,460 @@ class TestCommandUpload:
         assert 'Total uploaded size:' in captured.out
         assert 'Upload speed:' in captured.out
         assert 'All operations complete!' in captured.out
+
+# ====================================================================================
+# Phase 4 Chunk 4: command_verify (Requires S3 Mocking + stdout capture + file I/O)
+# ====================================================================================
+
+class TestCommandVerify:
+    """Test command_verify() with mocked S3 and capsys (13 tests)"""
+
+    @mock_aws
+    def test_verify_empty_directory(self, temp_dir, capsys):
+        """Test verify from empty directory shows appropriate message."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Create empty directory
+        local_folder = temp_dir / 'verify'
+        local_folder.mkdir()
+
+        # Create mock args
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        # Execute command
+        s3_manage.command_verify(args, s3_client=s3_client)
+
+        # Verify output
+        captured = capsys.readouterr()
+        assert 'Found 0 files' in captured.out
+
+    @mock_aws
+    def test_verify_all_files_match(self, temp_dir, temp_file, capsys):
+        """Test verify when all files match S3."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Create local directory with file
+        local_folder = temp_dir / 'verify'
+        local_folder.mkdir()
+        test_file = local_folder / 'test.txt'
+        shutil.copy(str(temp_file), str(test_file))
+
+        # Upload same file to S3
+        s3_client.upload_file(str(test_file), 'test-bucket', 'test.txt')
+
+        # Create mock args
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        # Execute command (should succeed with exit code 0)
+        s3_manage.command_verify(args, s3_client=s3_client)
+
+        # Verify output
+        captured = capsys.readouterr()
+        assert '[VERIFIED]' in captured.out
+        assert 'Verified (match): 1' in captured.out
+        assert 'Different (mismatch): 0' in captured.out
+
+    @mock_aws
+    def test_verify_file_different(self, temp_dir, temp_file, capsys):
+        """Test verify when file differs from S3 (should exit 1)."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Create local file with content
+        local_folder = temp_dir / 'verify'
+        local_folder.mkdir()
+        test_file = local_folder / 'test.txt'
+        test_file.write_text('local content')
+
+        # Upload different content to S3
+        s3_client.put_object(Bucket='test-bucket', Key='test.txt', Body=b'different content')
+
+        # Create mock args
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        # Execute command - should exit with code 1
+        with pytest.raises(SystemExit) as exc_info:
+            s3_manage.command_verify(args, s3_client=s3_client)
+        assert exc_info.value.code == 1
+
+        # Verify output
+        captured = capsys.readouterr()
+        assert '[DIFFERENT]' in captured.out
+        assert 'Different (mismatch): 1' in captured.out
+
+    @mock_aws
+    def test_verify_file_not_uploaded(self, temp_dir, temp_file, capsys):
+        """Test verify when file doesn't exist in S3."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Create local file (not uploaded to S3)
+        local_folder = temp_dir / 'verify'
+        local_folder.mkdir()
+        test_file = local_folder / 'test.txt'
+        shutil.copy(str(temp_file), str(test_file))
+
+        # Create mock args
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        # Execute command
+        s3_manage.command_verify(args, s3_client=s3_client)
+
+        # Verify output
+        captured = capsys.readouterr()
+        assert '[NOT UPLOADED]' in captured.out
+        assert 'Not uploaded to S3: 1' in captured.out
+
+    @mock_aws
+    def test_verify_mixed_scenarios(self, temp_dir, temp_file, capsys):
+        """Test verify with mixed verified, different, and not uploaded files."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Create local directory
+        local_folder = temp_dir / 'verify'
+        local_folder.mkdir()
+
+        # File 1: Verified (matches S3)
+        verified_file = local_folder / 'verified.txt'
+        shutil.copy(str(temp_file), str(verified_file))
+        s3_client.upload_file(str(verified_file), 'test-bucket', 'verified.txt')
+
+        # File 2: Different (content differs)
+        different_file = local_folder / 'different.txt'
+        different_file.write_text('local content')
+        s3_client.put_object(Bucket='test-bucket', Key='different.txt', Body=b'different content')
+
+        # File 3: Not uploaded
+        not_uploaded_file = local_folder / 'not_uploaded.txt'
+        shutil.copy(str(temp_file), str(not_uploaded_file))
+
+        # Create mock args
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        # Execute command - should exit with code 1 due to different file
+        with pytest.raises(SystemExit) as exc_info:
+            s3_manage.command_verify(args, s3_client=s3_client)
+        assert exc_info.value.code == 1
+
+        # Verify output
+        captured = capsys.readouterr()
+        assert 'Total files scanned: 3' in captured.out
+        assert 'Verified (match): 1' in captured.out
+        assert 'Different (mismatch): 1' in captured.out
+        assert 'Not uploaded to S3: 1' in captured.out
+
+    @mock_aws
+    def test_verify_hidden_files_excluded_by_default(self, temp_dir, temp_file, capsys):
+        """Test that hidden files are excluded by default."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Create local directory with hidden and regular files
+        local_folder = temp_dir / 'verify'
+        local_folder.mkdir()
+
+        # Regular file
+        regular_file = local_folder / 'regular.txt'
+        shutil.copy(str(temp_file), str(regular_file))
+        s3_client.upload_file(str(regular_file), 'test-bucket', 'regular.txt')
+
+        # Hidden file
+        hidden_file = local_folder / '.hidden.txt'
+        shutil.copy(str(temp_file), str(hidden_file))
+
+        # Create mock args with allow_hidden_files=False (default)
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        # Execute command
+        s3_manage.command_verify(args, s3_client=s3_client)
+
+        # Verify only regular file verified
+        captured = capsys.readouterr()
+        assert 'Found 1 files' in captured.out
+        assert 'Verified (match): 1' in captured.out
+
+    @mock_aws
+    def test_verify_hidden_files_included_when_allowed(self, temp_dir, temp_file, capsys):
+        """Test that hidden files are included when --allow-hidden-files is set."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Create local directory with hidden and regular files
+        local_folder = temp_dir / 'verify'
+        local_folder.mkdir()
+
+        regular_file = local_folder / 'regular.txt'
+        shutil.copy(str(temp_file), str(regular_file))
+        s3_client.upload_file(str(regular_file), 'test-bucket', 'regular.txt')
+
+        hidden_file = local_folder / '.hidden.txt'
+        shutil.copy(str(temp_file), str(hidden_file))
+        s3_client.upload_file(str(hidden_file), 'test-bucket', '.hidden.txt')
+
+        # Create mock args with allow_hidden_files=True
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'max_threads': 2,
+            'allow_hidden_files': True
+        })()
+
+        # Execute command
+        s3_manage.command_verify(args, s3_client=s3_client)
+
+        # Verify both files verified
+        captured = capsys.readouterr()
+        assert 'Found 2 files' in captured.out
+        assert 'Verified (match): 2' in captured.out
+
+    @mock_aws
+    def test_verify_nested_directories(self, temp_dir, temp_file, capsys):
+        """Test verify preserves nested directory structure."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Create nested directory structure
+        local_folder = temp_dir / 'verify'
+        local_folder.mkdir()
+
+        # Create nested structure: verify/data/2024/01/file.txt
+        nested_dir = local_folder / 'data' / '2024' / '01'
+        nested_dir.mkdir(parents=True)
+        nested_file = nested_dir / 'file.txt'
+        shutil.copy(str(temp_file), str(nested_file))
+
+        # Upload to S3 with nested path
+        s3_client.upload_file(str(nested_file), 'test-bucket', 'data/2024/01/file.txt')
+
+        # Also create file at root
+        root_file = local_folder / 'root.txt'
+        shutil.copy(str(temp_file), str(root_file))
+        s3_client.upload_file(str(root_file), 'test-bucket', 'root.txt')
+
+        # Create mock args
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        # Execute command
+        s3_manage.command_verify(args, s3_client=s3_client)
+
+        # Verify both files verified
+        captured = capsys.readouterr()
+        assert 'Found 2 files' in captured.out
+        assert 'Verified (match): 2' in captured.out
+
+    @mock_aws
+    def test_verify_statistics_validation(self, temp_dir, temp_file, capsys):
+        """Test verify command reports accurate statistics."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Create local directory with various scenarios
+        local_folder = temp_dir / 'verify'
+        local_folder.mkdir()
+
+        # 2 verified files
+        for i in range(2):
+            verified = local_folder / f'verified{i}.txt'
+            shutil.copy(str(temp_file), str(verified))
+            s3_client.upload_file(str(verified), 'test-bucket', f'verified{i}.txt')
+
+        # 1 different file
+        different = local_folder / 'different.txt'
+        different.write_text('local content')
+        s3_client.put_object(Bucket='test-bucket', Key='different.txt', Body=b'different')
+
+        # 1 not uploaded file
+        not_uploaded = local_folder / 'not_uploaded.txt'
+        shutil.copy(str(temp_file), str(not_uploaded))
+
+        # Create mock args
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        # Execute command
+        with pytest.raises(SystemExit) as exc_info:
+            s3_manage.command_verify(args, s3_client=s3_client)
+        assert exc_info.value.code == 1
+
+        # Verify statistics
+        captured = capsys.readouterr()
+        assert 'Total files scanned: 4' in captured.out
+        assert 'Verified (match): 2' in captured.out
+        assert 'Different (mismatch): 1' in captured.out
+        assert 'Not uploaded to S3: 1' in captured.out
+        assert 'Errors: 0' in captured.out
+        assert 'Verify speed:' in captured.out
+
+    @mock_aws
+    def test_verify_error_handling_invalid_bucket(self, temp_dir, temp_file, capsys):
+        """Test verify handles errors gracefully."""
+        # Setup S3 environment (bucket NOT created)
+        s3_client = boto3.client('s3', region_name='us-east-1')
+
+        # Create local directory with file
+        local_folder = temp_dir / 'verify'
+        local_folder.mkdir()
+        test_file = local_folder / 'test.txt'
+        shutil.copy(str(temp_file), str(test_file))
+
+        # Create mock args
+        args = type('Args', (), {
+            'bucket_name': 'nonexistent-bucket',
+            'local_folder': str(local_folder),
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        # Execute command - should handle error gracefully and exit 1
+        with pytest.raises(SystemExit) as exc_info:
+            s3_manage.command_verify(args, s3_client=s3_client)
+        assert exc_info.value.code == 1
+
+        # Verify error in output
+        captured = capsys.readouterr()
+        assert 'ERROR' in captured.out or 'Errors: 1' in captured.out
+
+    @mock_aws
+    def test_verify_exit_code_success(self, temp_dir, temp_file, capsys):
+        """Test verify exits with code 0 when all files verified."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Create local file matching S3
+        local_folder = temp_dir / 'verify'
+        local_folder.mkdir()
+        test_file = local_folder / 'test.txt'
+        shutil.copy(str(temp_file), str(test_file))
+        s3_client.upload_file(str(test_file), 'test-bucket', 'test.txt')
+
+        # Create mock args
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        # Execute command - should NOT raise SystemExit
+        s3_manage.command_verify(args, s3_client=s3_client)
+
+        # Verify output (no exception means exit code 0)
+        captured = capsys.readouterr()
+        assert 'Verified (match): 1' in captured.out
+        assert 'Different (mismatch): 0' in captured.out
+        assert 'Errors: 0' in captured.out
+
+    @mock_aws
+    def test_verify_exit_code_failure_on_mismatch(self, temp_dir, temp_file, capsys):
+        """Test verify exits with code 1 when mismatches found."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Create local file with different content
+        local_folder = temp_dir / 'verify'
+        local_folder.mkdir()
+        test_file = local_folder / 'test.txt'
+        test_file.write_text('local content')
+        s3_client.put_object(Bucket='test-bucket', Key='test.txt', Body=b'different')
+
+        # Create mock args
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        # Execute command - should raise SystemExit with code 1
+        with pytest.raises(SystemExit) as exc_info:
+            s3_manage.command_verify(args, s3_client=s3_client)
+        assert exc_info.value.code == 1
+
+    @mock_aws
+    def test_verify_summary_format(self, temp_dir, temp_file, capsys):
+        """Test verify summary format matches expected output."""
+        # Setup S3 environment
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        # Create local file matching S3
+        local_folder = temp_dir / 'verify'
+        local_folder.mkdir()
+        test_file = local_folder / 'test.txt'
+        shutil.copy(str(temp_file), str(test_file))
+        s3_client.upload_file(str(test_file), 'test-bucket', 'test.txt')
+
+        # Create mock args
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        # Execute command
+        s3_manage.command_verify(args, s3_client=s3_client)
+
+        # Verify summary format
+        captured = capsys.readouterr()
+        assert '--- VERIFICATION SUMMARY ---' in captured.out
+        assert 'Total files scanned:' in captured.out
+        assert 'Verified (match):' in captured.out
+        assert 'Different (mismatch):' in captured.out
+        assert 'Not uploaded to S3:' in captured.out
+        assert 'Errors:' in captured.out
+        assert 'Verify speed:' in captured.out
+        assert 'All verifications complete!' in captured.out

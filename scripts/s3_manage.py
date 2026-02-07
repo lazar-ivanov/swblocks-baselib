@@ -690,16 +690,22 @@ def command_list(args, s3_client=None):
     except Exception as e:
         print(f"Error: {str(e)}")
 
-def command_verify(args):
-    """Execute the verify command."""
+def command_verify(args, s3_client=None):
+    """Execute the verify command.
+
+    Args:
+        args: Command-line arguments
+        s3_client: Optional boto3 S3 client (for testing)
+    """
 
     # Create S3 client using command-line arguments
-    s3_client = boto3.client(
-        's3',
-        endpoint_url=args.endpoint_url,
-        aws_access_key_id=args.access_key,
-        aws_secret_access_key=args.secret_key
-    )
+    if s3_client is None:
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=args.endpoint_url,
+            aws_access_key_id=args.access_key,
+            aws_secret_access_key=args.secret_key
+        )
 
     files_to_verify = []
 
