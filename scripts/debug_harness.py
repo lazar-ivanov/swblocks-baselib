@@ -112,9 +112,10 @@ def process_output(proc):
     print(line, file=stdout)
   proc.wait()
 
-# run command and deal with failures
-p = Popen(argv[1:], stdout=PIPE, stderr=STDOUT)
-process_output(p)
-if p.returncode:
-  handle_failure(p)
-exit(p.returncode)
+if __name__ == '__main__':
+  # run command and deal with failures
+  p = Popen(argv[1:], stdout=PIPE, stderr=STDOUT)
+  process_output(p)
+  if p.returncode:
+    handle_failure(p)
+  exit(p.returncode)

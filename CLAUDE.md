@@ -20,6 +20,46 @@ Do NOT attempt to commit changes to the git repository using `git add`, `git com
 
 ---
 
+## Configuration File Changes - Research When Uncertain
+
+**Core Principle: If you're uncertain about the impact or correctness of a change, research first. If you're certain, proceed.**
+
+### When Research Is Required
+
+Research official documentation when you are **uncertain** about:
+- Syntax rules you haven't used before
+- How a tool interprets a specific option
+- Impact of a configuration change
+- Whether a feature actually exists
+
+**Examples requiring research:**
+- ✅ "Does pytest filterwarnings use glob or substring matching?" → Research
+- ✅ "What's the correct INI file comment syntax?" → Research
+- ✅ "How does coverage.py handle omit patterns?" → Research
+
+**Examples NOT requiring research:**
+- ❌ Adding a file path to an existing, working omit list (pattern is obvious)
+- ❌ Copying syntax from another working section in the same file
+- ❌ Making a change you've made successfully before
+
+### Mandatory Rules
+
+1. **Never add features not requested** - No "nice to have" additions
+2. **Minimal changes only** - Only what's explicitly needed
+3. **Single-pass correctness** - If you need multiple fixes, you failed to verify adequately
+4. **When in doubt, verify** - Better to take 2 minutes confirming than creating a problem
+
+### Quick Verification Checklist
+
+Before proposing a configuration change, ask:
+- Am I certain this syntax is correct? (If no → research)
+- Is this change actually needed? (If no → don't add it)
+- Have I seen this exact pattern work before? (If no and uncertain → verify)
+
+**The goal: Get it right the first time through good judgment and targeted research, not through trial-and-error.**
+
+---
+
 ## Code Review Hygiene and File Modification Guidelines
 
 ### Critical Rule: Incremental, Intentional Changes Only
@@ -155,6 +195,7 @@ If you accidentally rewrite a file or mix changes:
 
 ## Table of Contents
 
+- [Configuration File Changes - Research When Uncertain](#configuration-file-changes---research-when-uncertain)
 - [Code Review Hygiene and File Modification Guidelines](#code-review-hygiene-and-file-modification-guidelines)
 - [Windows Batch File Scripting Conventions](#windows-batch-file-scripting-conventions)
 - [Build Commands](#build-commands)
@@ -1669,11 +1710,12 @@ java -version  # Should work if PATH is correct
 
 ---
 
-**Document Version:** 1.8
-**Last Updated:** 2026-02-06
+**Document Version:** 1.9
+**Last Updated:** 2026-02-07
 **devenv Version:** 7
 
 **Changelog:**
+- v1.9 (2026-02-07): Added "Configuration File Changes - Research When Uncertain" section. Documents when to research before making configuration changes, mandatory rules for minimal changes, and verification checklist to ensure single-pass correctness.
 - v1.8 (2026-02-06): Added Core Principles for Python virtual environment usage and git commit restrictions. All Python commands must use the project's .venv virtual environment (create with `make python-install` if missing). Git commits are forbidden without explicit user permission.
 - v1.7 (2026-02-06): Added "Code Review Hygiene and File Modification Guidelines" section. Documents critical rules for incremental file changes, proper use of Edit vs Write tools, separation of logic and style changes, and git diff review best practices. Prevents common mistakes like rewriting entire files or mixing unrelated changes in the same PR.
 - v1.6 (2026-01-23): Changed host architecture detection to use PROCESSOR_IDENTIFIER (first priority), PROCESSOR_ARCHITECTURE, and PROCESSOR_ARCHITEW6432 environment variables. This provides robust detection across all environments including cmd.exe, PowerShell, and MSYS2 shells. PROCESSOR_IDENTIFIER check is critical for MSYS2 x64 binaries running under emulation on ARM64 where PROCESSOR_ARCHITEW6432 is not set.

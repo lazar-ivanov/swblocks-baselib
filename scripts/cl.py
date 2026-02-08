@@ -67,38 +67,39 @@ parser.add_option('-F',
           type='string', dest='target',
           help='standard MSVC cl.exe output options')
 
-# parse options
-(options, args) = parser.parse_args()
+if __name__ == '__main__':
+  # parse options
+  (options, args) = parser.parse_args()
 
-# if not output option is specified, attempt to infer
-# the target from the first non-option argument
-if options.dependencies and not options.target:
-  firstNonOpt = list(filter(lambda a: a[0] not in ('-', '/'), args))[0]
-  options.target = '%s.obj' % (splitext(firstNonOpt)[0],)
-  
-# insert the compiler command (basename of this script)
-args.insert(0, splitext(basename(argv[0]))[0])
+  # if not output option is specified, attempt to infer
+  # the target from the first non-option argument
+  if options.dependencies and not options.target:
+    firstNonOpt = list(filter(lambda a: a[0] not in ('-', '/'), args))[0]
+    options.target = '%s.obj' % (splitext(firstNonOpt)[0],)
 
-# run the command tracking dependencies
-deps = []
-p = Popen(args, stdout=PIPE, stderr=STDOUT, universal_newlines=True)
-for line in p.stdout:
-  line = line.rstrip()
-  if line.startswith('Note: including file:'):
-    dep = line.split()[-1]
-    if dep not in deps:
-      deps.append(dep)
-  else:
-    print(line)
-p.wait()
+  # insert the compiler command (basename of this script)
+  args.insert(0, splitext(basename(argv[0]))[0])
 
-# if successful, write the dependency file
-if p.returncode == 0 and options.dependencies:
-  f = open('%s.d' % splitext(options.target)[0], 'wt')
-  f.writelines([options.target, ': \\\n' ] +
-               [' %s \\\n' % (dep,) for dep in deps])
-  f.writelines(['\n\n' ] +
-               ['%s:\n' % (dep,) for dep in deps])
-  f.close()
+  # run the command tracking dependencies
+  deps = []
+  p = Popen(args, stdout=PIPE, stderr=STDOUT, universal_newlines=True)
+  for line in p.stdout:
+    line = line.rstrip()
+    if line.startswith('Note: including file:'):
+      dep = line.split()[-1]
+      if dep not in deps:
+        deps.append(dep)
+    else:
+      print(line)
+  p.wait()
 
-exit(p.returncode)
+  # if successful, write the dependency file
+  if p.returncode == 0 and options.dependencies:
+    f = open('%s.d' % splitext(options.target)[0], 'wt')
+    f.writelines([options.target, ': \\\n' ] +
+                 [' %s \\\n' % (dep,) for dep in deps])
+    f.writelines(['\n\n' ] +
+                 ['%s:\n' % (dep,) for dep in deps])
+    f.close()
+
+  exit(p.returncode)

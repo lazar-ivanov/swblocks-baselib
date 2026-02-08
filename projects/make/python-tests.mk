@@ -71,19 +71,19 @@ pytest-check:
 .PHONY: pytest
 pytest: pytest-check
 	@echo "Running Python tests for bl_tool.py..."
-	@cd scripts/tests && ../../$(PYTHON_VENV) -m pytest -v --cov=../ --cov-report=term --cov-report=html
+	@cd scripts/tests && ../../$(PYTHON_VENV) -m pytest -v --cov --cov-report=term --cov-report=html
 	@echo ""
 	@echo "Coverage report generated in scripts/tests/htmlcov/"
 
 .PHONY: pytest-unit
 pytest-unit: pytest-check
 	@echo "Running Stage 1: Unit tests..."
-	@cd scripts/tests && ../../$(PYTHON_VENV) -m pytest -v test_bl_tool_unit.py --cov=../ --cov-report=term
+	@cd scripts/tests && ../../$(PYTHON_VENV) -m pytest -v test_bl_tool_unit.py --cov --cov-report=term
 
 .PHONY: pytest-functional
 pytest-functional: pytest-check
 	@echo "Running Stage 2: Functional tests..."
-	@cd scripts/tests && ../../$(PYTHON_VENV) -m pytest -v test_bl_tool_functional.py --cov=../ --cov-report=term
+	@cd scripts/tests && ../../$(PYTHON_VENV) -m pytest -v test_bl_tool_functional.py --cov --cov-report=term
 
 .PHONY: pytest-fast
 pytest-fast: pytest-check
@@ -93,5 +93,5 @@ pytest-fast: pytest-check
 .PHONY: pytest-coverage
 pytest-coverage: pytest-check
 	@echo "Generating detailed coverage report..."
-	@cd scripts/tests && ../../$(PYTHON_VENV) -m pytest --cov=../ --cov-report=html --cov-report=term-missing
+	@cd scripts/tests && ../../$(PYTHON_VENV) -m pytest --cov --cov-report=html --cov-report=term-missing
 	@echo "Coverage report: scripts/tests/htmlcov/index.html"
