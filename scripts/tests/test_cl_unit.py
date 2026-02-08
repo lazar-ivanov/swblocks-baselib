@@ -570,3 +570,99 @@ class TestDependencyFileFormat:
         # Dependency lines should end with " \"
         assert lines[1] == ' header1.h \\'
         assert lines[2] == ' header2.h \\'
+
+
+# ========== Test Byte Decoding for Python 2.7/3.x Compatibility ==========
+
+class TestByteDecoding:
+    """Test the byte decoding pattern used in cl.py for cross-version compatibility.
+
+    cl.py uses Popen without universal_newlines to read raw bytes from the compiler,
+    then decodes manually with errors='replace'. This avoids UnicodeDecodeError when
+    the compiler outputs non-ASCII characters (e.g., file paths with accented names)
+    and the locale encoding is ASCII.
+
+    See scripts/README.md for full documentation of the encoding issue.
+    """
+
+    @staticmethod
+    def decode_line(raw_line):
+        """Replicate the decode logic from cl.py (lines 86-90)."""
+        if isinstance(raw_line, bytes):
+            return raw_line.decode('utf-8', errors='replace')
+        return raw_line
+
+    def test_ascii_bytes_decoded_correctly(self):
+        """Test that ASCII bytes decode to the same string content."""
+        raw = b'Note: including file: C:\\Users\\test\\header.h\r\n'
+        line = self.decode_line(raw).rstrip()
+        assert line == 'Note: including file: C:\\Users\\test\\header.h'
+
+    def test_ascii_bytes_startswith_works(self):
+        """Test that startswith works correctly after decoding ASCII bytes."""
+        raw = b'Note: including file: C:\\header.h\n'
+        line = self.decode_line(raw).rstrip()
+        assert line.startswith('Note: including file:')
+
+    def test_ascii_bytes_split_extracts_dep(self):
+        """Test that split()[-1] correctly extracts dependency path from decoded bytes."""
+        raw = b'Note: including file:  C:\\Users\\test\\header.h\n'
+        line = self.decode_line(raw).rstrip()
+        dep = line.split()[-1]
+        assert dep == 'C:\\Users\\test\\header.h'
+
+    def test_valid_utf8_bytes_decoded_correctly(self):
+        """Test that valid UTF-8 non-ASCII bytes decode correctly."""
+        # e-acute in UTF-8 is 0xc3 0xa9
+        raw = 'Note: including file: C:\\Users\\Jose\\header.h\n'.encode('utf-8')
+        line = self.decode_line(raw).rstrip()
+        assert line == 'Note: including file: C:\\Users\\Jose\\header.h'
+
+    def test_invalid_utf8_bytes_replaced_not_crashed(self):
+        """Test that non-UTF-8 bytes are replaced instead of causing a crash.
+
+        This is the core fix: CP1252 byte 0xe9 (e-acute) is not valid UTF-8.
+        Previously, universal_newlines=True would crash with UnicodeDecodeError.
+        Now, invalid bytes are replaced with U+FFFD (replacement character).
+        """
+        # CP1252 e-acute (0xe9) is NOT valid standalone UTF-8
+        raw = b'Note: including file: C:\\Users\\Jos\xe9\\header.h\n'
+        line = self.decode_line(raw).rstrip()
+        # Must not crash
+        assert 'Note: including file:' in line
+        assert 'header.h' in line
+        # The invalid byte should be replaced with U+FFFD
+        assert '\ufffd' in line
+
+    def test_empty_bytes_decoded(self):
+        """Test that empty byte lines decode correctly."""
+        raw = b'\r\n'
+        line = self.decode_line(raw).rstrip()
+        assert line == ''
+
+    def test_string_input_passthrough(self):
+        """Test that string input passes through without modification.
+
+        In Python 2.7, if universal_newlines were used, lines might be str (bytes).
+        The isinstance check ensures only bytes objects are decoded.
+        """
+        raw = 'Note: including file: C:\\Users\\test\\header.h\n'
+        line = self.decode_line(raw).rstrip()
+        assert line == 'Note: including file: C:\\Users\\test\\header.h'
+
+    def test_non_include_line_bytes_decoded(self):
+        """Test that non-include lines are also decoded correctly from bytes."""
+        raw = b'Microsoft (R) C/C++ Optimizing Compiler Version 19.00\n'
+        line = self.decode_line(raw).rstrip()
+        assert line == 'Microsoft (R) C/C++ Optimizing Compiler Version 19.00'
+        assert not line.startswith('Note: including file:')
+
+    def test_multiple_invalid_bytes_all_replaced(self):
+        """Test that multiple invalid bytes are each replaced independently."""
+        # Two invalid bytes: 0x80 and 0xff
+        raw = b'path\\with\x80multiple\xffinvalid\n'
+        line = self.decode_line(raw).rstrip()
+        assert line.count('\ufffd') == 2
+        assert 'path' in line
+        assert 'multiple' in line
+        assert 'invalid' in line

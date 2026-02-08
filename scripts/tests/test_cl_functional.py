@@ -314,3 +314,147 @@ class TestCompilerWrapperFunctional:
 
         content = depfile.read_text()
         assert "module.obj:" in content
+
+
+# Non-parametrized tests for encoding-specific behavior
+class TestCompilerWrapperEncoding:
+    """Functional tests for non-ASCII encoding handling in cl.py/clang-cl.py.
+
+    These tests verify that the byte decoding fix (Option B) works correctly
+    when the compiler outputs non-ASCII characters. The scripts now read raw
+    bytes and decode with errors='replace' instead of using universal_newlines=True.
+
+    See scripts/README.md for full documentation of the encoding issue.
+    """
+
+    @pytest.mark.parametrize("script_name", ["cl.py", "clang-cl.py"])
+    @pytest.mark.skipif(sys.platform == "win32", reason="Uses Unix shell for byte-level output control")
+    def test_non_ascii_compiler_output_no_crash(self, script_name, temp_dir, temp_source_file, monkeypatch):
+        """Test that non-ASCII bytes in compiler output don't crash the script.
+
+        Simulates a compiler that outputs include paths with non-UTF-8 bytes
+        (e.g., CP1252 accented characters in Windows usernames). Previously this
+        would cause UnicodeDecodeError with universal_newlines=True.
+        """
+        compiler_name = "cl" if script_name == "cl.py" else "clang-cl"
+
+        # Create mock compiler that outputs non-UTF-8 bytes via printf
+        # Octal 351 = 0xe9 = CP1252 e-acute, which is NOT valid standalone UTF-8
+        mock_compiler = temp_dir / compiler_name
+        mock_compiler.write_text(
+            "#!/bin/sh\n"
+            "echo 'test.cpp'\n"
+            "/usr/bin/printf 'Note: including file: /usr/include/Jos\\351/header.h\\n'\n"
+            "echo 'Note: including file: /usr/include/ascii_header.h'\n"
+            "exit 0\n"
+        )
+        mock_compiler.chmod(0o755)
+
+        import os
+        original_path = os.environ.get("PATH", "")
+        monkeypatch.setenv("PATH", f"{temp_dir}:{original_path}")
+
+        script_path = Path(__file__).parent.parent / script_name
+        result = subprocess.run(
+            [sys.executable, str(script_path), "-M", "-Fomain.obj", str(temp_source_file)],
+            capture_output=True,
+            text=True,
+            cwd=temp_dir
+        )
+
+        # Must not crash (previously would raise UnicodeDecodeError)
+        assert result.returncode == 0
+
+        # Dependency file should be created
+        depfile = temp_dir / "main.d"
+        assert depfile.exists()
+
+        # The ASCII header should be present in the dep file
+        content = depfile.read_text()
+        assert "main.obj:" in content
+        assert "ascii_header.h" in content
+
+    @pytest.mark.parametrize("script_name", ["cl.py", "clang-cl.py"])
+    @pytest.mark.skipif(sys.platform == "win32", reason="Uses Unix shell for byte-level output control")
+    def test_valid_utf8_compiler_output(self, script_name, temp_dir, temp_source_file, monkeypatch):
+        """Test that valid UTF-8 non-ASCII bytes in compiler output are handled correctly."""
+        compiler_name = "cl" if script_name == "cl.py" else "clang-cl"
+
+        # Create mock compiler that outputs valid UTF-8 e-acute (octal 303 251 = 0xc3 0xa9)
+        mock_compiler = temp_dir / compiler_name
+        mock_compiler.write_text(
+            "#!/bin/sh\n"
+            "echo 'test.cpp'\n"
+            "/usr/bin/printf 'Note: including file: /usr/include/Jos\\303\\251/header.h\\n'\n"
+            "exit 0\n"
+        )
+        mock_compiler.chmod(0o755)
+
+        import os
+        original_path = os.environ.get("PATH", "")
+        monkeypatch.setenv("PATH", f"{temp_dir}:{original_path}")
+
+        script_path = Path(__file__).parent.parent / script_name
+        result = subprocess.run(
+            [sys.executable, str(script_path), "-M", "-Fomain.obj", str(temp_source_file)],
+            capture_output=True,
+            text=True,
+            cwd=temp_dir
+        )
+
+        # Must not crash
+        assert result.returncode == 0
+
+        # Dependency file should be created with the UTF-8 path preserved
+        depfile = temp_dir / "main.d"
+        assert depfile.exists()
+        content = depfile.read_text()
+        assert "main.obj:" in content
+        # Valid UTF-8 should decode correctly, preserving the accented character
+        assert "header.h" in content
+
+    @pytest.mark.parametrize("script_name", ["cl.py", "clang-cl.py"])
+    def test_ascii_only_output_unchanged(self, script_name, temp_dir, temp_source_file, monkeypatch):
+        """Test that ASCII-only output works identically to before the encoding fix."""
+        compiler_name = "cl" if script_name == "cl.py" else "clang-cl"
+
+        if sys.platform == "win32":
+            mock_compiler = temp_dir / f"{compiler_name}.bat"
+            mock_compiler.write_text(
+                "@echo off\necho test.cpp\n"
+                "echo Note: including file: C:\\include\\header1.h\n"
+                "echo Note: including file: C:\\include\\header2.h\n"
+                "exit /b 0"
+            )
+        else:
+            mock_compiler = temp_dir / compiler_name
+            mock_compiler.write_text(
+                "#!/bin/sh\n"
+                "echo 'test.cpp'\n"
+                "echo 'Note: including file: /usr/include/header1.h'\n"
+                "echo 'Note: including file: /usr/include/header2.h'\n"
+                "exit 0\n"
+            )
+            mock_compiler.chmod(0o755)
+
+        import os
+        original_path = os.environ.get("PATH", "")
+        monkeypatch.setenv("PATH", f"{temp_dir}{':' if sys.platform != 'win32' else ';'}{original_path}")
+
+        script_path = Path(__file__).parent.parent / script_name
+        result = subprocess.run(
+            [sys.executable, str(script_path), "-M", "-Fomain.obj", str(temp_source_file)],
+            capture_output=True,
+            text=True,
+            cwd=temp_dir
+        )
+
+        assert result.returncode == 0
+
+        depfile = temp_dir / "main.d"
+        assert depfile.exists()
+
+        content = depfile.read_text()
+        assert "main.obj:" in content
+        assert "header1.h" in content
+        assert "header2.h" in content

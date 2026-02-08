@@ -82,8 +82,12 @@ if __name__ == '__main__':
 
   # run the command tracking dependencies
   deps = []
-  p = Popen(args, stdout=PIPE, stderr=STDOUT, universal_newlines=True)
-  for line in p.stdout:
+  p = Popen(args, stdout=PIPE, stderr=STDOUT)
+  for raw_line in p.stdout:
+    if isinstance(raw_line, bytes):
+      line = raw_line.decode('utf-8', errors='replace')
+    else:
+      line = raw_line
     line = line.rstrip()
     if line.startswith('Note: including file:'):
       dep = line.split()[-1]
