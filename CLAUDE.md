@@ -264,63 +264,148 @@ if /i "%TOOLCHAIN_NAME%"=="ccl16" (
 
 ### CRITICAL: Delayed Expansion Inside Control Structures
 
-**IMPORTANT:** Variables set or modified inside `if` blocks, `for` loops, or other control structures require **delayed expansion** syntax (`!VAR!`) instead of regular expansion (`%VAR%`).
+---
 
-#### The Problem
+## 🔴 MANDATORY RULE - NEVER VIOLATE THIS 🔴
+
+**ABSOLUTE REQUIREMENT:** When modifying ANY Windows batch file in this codebase, you MUST use delayed expansion syntax (`!VAR!`) for ALL variable references inside control structures.
+
+**THIS IS NON-NEGOTIABLE. FAILURE TO FOLLOW THIS RULE CAUSES SILENT, HARD-TO-DEBUG BUGS.**
+
+---
+
+### The Problem (Why This Keeps Happening)
 
 When a batch file parses a control structure (like an `if` block), ALL variable expansions using `%VAR%` are evaluated **at parse time** (before the block executes). This means:
 
-- Variables set INSIDE the block will appear empty when referenced with `%VAR%`
-- String substitutions like `%VAR:old=new%` will use the value from BEFORE the block
+- Variables set INSIDE the block will appear **empty** when referenced with `%VAR%`
+- String substitutions like `%VAR:old=new%` will use the value from **BEFORE** the block
 - The block behaves as if variables are "frozen" at their pre-block values
+- **The bug is completely silent** - no error messages, just wrong behavior
 
-#### The Solution
+### MANDATORY Pre-Modification Checklist
 
-Use delayed expansion (`!VAR!`) for variables that are:
-1. Set or modified inside the same control structure
-2. Used in string substitutions inside control structures
-3. Referenced after being changed in the same block
+**BEFORE modifying ANY batch file, answer these questions:**
 
-#### Real Bug Example from This Codebase
+1. ✅ **Is the line I'm modifying inside an `if` block or `for` loop?**
+   - If YES → Use `!VAR!` syntax
+   - If NO → Can use `%VAR%` syntax
+
+2. ✅ **Does the line reference a variable that was set inside the same control structure?**
+   - If YES → MUST use `!VAR!` syntax
+   - If NO → Check question 3
+
+3. ✅ **Does the line use string substitution (`:search=replace`)?**
+   - If YES → MUST use `!VAR:old=new!` syntax
+   - If NO → Check question 4
+
+4. ✅ **Is the variable a loop variable or changes during iterations?**
+   - If YES → MUST use `!VAR!` syntax
+   - If NO → Can use `%VAR%` for constants only
+
+**If you answered YES to ANY question, you MUST use delayed expansion (`!VAR!`).**
+
+### The Solution (Absolute Rules)
+
+**RULE 1:** Inside ANY control structure (`if`, `for`, `while`), use `!VAR!` for:
+1. ✅ Variables you just set or modified in the same structure
+2. ✅ Any string substitutions (`:search=replace`)
+3. ✅ Variables that change during loop iterations
+4. ✅ **WHEN IN DOUBT, USE `!VAR!` - IT ALWAYS WORKS**
+
+**RULE 2:** Use `%VAR%` ONLY for:
+1. ✅ Variables that were set BEFORE entering the control structure AND never change
+2. ✅ System environment variables that don't change (e.g., `%USERPROFILE%`, `%TEMP%`)
+3. ✅ Script parameters (`%1`, `%2`, etc.)
+4. ✅ **When NOT inside any control structure**
+
+#### Real Bug Examples from This Codebase (Both Bugs Actually Happened!)
+
+**BUG #1: Empty TARGETS_SPACED in build-env-all-windows.bat**
 
 **WRONG - Produces Empty String:**
 ```batch
 if not "!SKIP_TOOLCHAIN!"=="1" (
-    set "TARGETS_SPACED=%TARGET_ARCHS:,= %"
-    echo Targets: %TARGETS_SPACED%
-    call script.bat -targets %TARGETS_SPACED%
+    set "TARGETS_SPACED=%TARGET_ARCHS:,= %"          ❌ WRONG - parse-time expansion
+    echo Targets: %TARGETS_SPACED%                    ❌ WRONG - shows empty
+    call script.bat -targets %TARGETS_SPACED%         ❌ WRONG - passes empty string
 )
 ```
 
-**Why it fails:**
-- Line 2: String substitution `%TARGET_ARCHS:,= %` is evaluated at parse time
-- If `TARGET_ARCHS` was set before the block, the substitution might fail
-- Result: `TARGETS_SPACED` becomes empty
-- Line 4: Passes empty string to script, causing it to use defaults
+**Impact:** Script received empty string for targets, defaulted to wrong architecture, caused OpenJDK to install only for x64 instead of a64,x64,x86.
 
 **CORRECT - Uses Delayed Expansion:**
 ```batch
 if not "!SKIP_TOOLCHAIN!"=="1" (
-    set "TARGETS_SPACED=!TARGET_ARCHS:,= !"
-    echo Targets: !TARGETS_SPACED!
-    call script.bat -targets !TARGETS_SPACED!
+    set "TARGETS_SPACED=!TARGET_ARCHS:,= !"          ✅ CORRECT - execution-time expansion
+    echo Targets: !TARGETS_SPACED!                    ✅ CORRECT - shows "a64 x64 x86"
+    call script.bat -targets !TARGETS_SPACED!         ✅ CORRECT - passes correct value
 )
 ```
 
-**Why it works:**
-- Line 2: String substitution `!TARGET_ARCHS:,= !` evaluates at execution time
-- Uses current value of `TARGET_ARCHS`
-- Result: `TARGETS_SPACED` correctly contains "a64 x64 x86"
-- Line 4: Passes correct value to script
+---
 
-#### When to Use Each Syntax
+**BUG #2: Empty DIST_FOLDER_NAME in build-env-all-windows.bat**
 
-| Syntax | When to Use | Example |
-|--------|-------------|---------|
-| `%VAR%` | Variables set BEFORE the control structure | `%DIST_ROOT%`, `%HOST_ARCH%` |
-| `!VAR!` | Variables set INSIDE the control structure | `!TARGETS_SPACED!`, `!CURR_ARCH!` |
-| `!VAR!` | String substitutions inside control structures | `!TARGET_ARCHS:,= !` |
-| `!VAR!` | Loop variables in `for` loops | `for %%A in (...) do echo !%%A!` |
+**WRONG - Variable Set and Used Inside Same Block:**
+```batch
+if not "!SKIP_ARCHIVE!"=="1" (
+    REM Extract dist folder name from full path
+    for %%F in ("%DIST_ROOT%") do set "DIST_FOLDER_NAME=%%~nxF"     ❌ WRONG - %DIST_ROOT%
+
+    call archive-dists-windows.bat -dist-root "%DIST_FOLDER_NAME%"  ❌ WRONG - empty string
+
+    echo   archive-dists-windows.bat -dist-root "%DIST_FOLDER_NAME%" ❌ WRONG - empty in error message
+    echo   - %USERPROFILE%\swblocks\zip\%DIST_FOLDER_NAME%.zip       ❌ WRONG - incomplete path
+)
+```
+
+**Impact:** Archive script received empty string for -dist-root parameter, failed with "ERROR: -dist-root parameter is required", even though the variable was set. Variable appeared empty because wrong syntax was used.
+
+**CORRECT - Uses Delayed Expansion:**
+```batch
+if not "!SKIP_ARCHIVE!"=="1" (
+    REM Extract dist folder name from full path
+    for %%F in ("!DIST_ROOT!") do set "DIST_FOLDER_NAME=%%~nxF"     ✅ CORRECT - !DIST_ROOT!
+
+    call archive-dists-windows.bat -dist-root "!DIST_FOLDER_NAME!"  ✅ CORRECT - passes folder name
+
+    echo   archive-dists-windows.bat -dist-root "!DIST_FOLDER_NAME!" ✅ CORRECT - shows in message
+    echo   - %USERPROFILE%\swblocks\zip\!DIST_FOLDER_NAME!.zip       ✅ CORRECT - complete path
+)
+```
+
+---
+
+**KEY LESSON FROM THESE BUGS:**
+
+Both bugs were **completely silent** - no parse errors, no warnings, just empty strings passed to commands. The bugs were only discovered when:
+1. User ran the script and noticed wrong behavior
+2. Added DEBUG statements to trace variable values
+3. Discovered variables that should have values were empty
+
+**This is why the rule is MANDATORY and NON-NEGOTIABLE.**
+
+#### Decision Matrix: When to Use Each Syntax
+
+| Context | Variable Type | Correct Syntax | Example | Wrong Syntax | Consequence |
+|---------|---------------|----------------|---------|--------------|-------------|
+| Inside `if` block | Set BEFORE block, never changes | `%VAR%` | `%USERPROFILE%`, `%SCRIPT_DIR%` | N/A | N/A |
+| Inside `if` block | Set INSIDE same block | `!VAR!` ✅ | `!TARGETS_SPACED!`, `!DIST_FOLDER_NAME!` | `%VAR%` ❌ | Empty string |
+| Inside `if` block | String substitution | `!VAR:old=new!` ✅ | `!TARGET_ARCHS:,= !` | `%VAR:old=new%` ❌ | Empty result |
+| Inside `for` loop | Loop variable | `!VAR!` ✅ | `for %%A in (...) do echo !CURR!` | `%VAR%` ❌ | Shows old value |
+| Outside control structures | Any variable | `%VAR%` | `%DIST_ROOT%`, `%HOST_ARCH%` | N/A | N/A |
+
+**🔴 CRITICAL RULE OF THUMB:**
+
+```
+IF you are inside an `if` block, `for` loop, or any `(...)` control structure:
+  → Use `!VAR!` for EVERYTHING except system environment variables
+  → When in doubt, ALWAYS use `!VAR!` - it's safer
+
+IF you are NOT inside any control structure:
+  → Use `%VAR%` (standard expansion)
+```
 
 #### Enabling Delayed Expansion
 
@@ -373,6 +458,56 @@ if condition (
 2. Environment variables that don't change
 3. Parameters passed to the script (`%1`, `%2`, etc.)
 
+#### MANDATORY Verification Procedure After Modifying Batch Files
+
+**BEFORE committing ANY batch file changes:**
+
+1. ✅ **Visual Inspection:** Search the entire file for `%` inside `if` blocks:
+   ```batch
+   # Look for lines like:
+   if ... (
+       ... %SOME_VAR% ...    ← SUSPECT! Check if this needs !SOME_VAR!
+   )
+   ```
+
+2. ✅ **Pattern Search:** Use these regex patterns to find potential issues:
+   - Search for: `if.*\(\s*\n.*%[A-Z_]+%` (finds `%VAR%` inside `if` blocks)
+   - Search for: `for.*\(\s*\n.*%[A-Z_]+%` (finds `%VAR%` inside `for` loops)
+
+3. ✅ **Test with Debug Output:** Add these lines to verify variables:
+   ```batch
+   echo DEBUG: Variable value = !VAR_NAME!
+   ```
+   If the echo shows empty when it shouldn't be, you have a delayed expansion bug.
+
+4. ✅ **Ask Yourself:** For EVERY `%VAR%` inside a control structure:
+   - Is this variable set BEFORE the control structure starts? → OK to use `%VAR%`
+   - Is this variable set INSIDE the control structure? → MUST use `!VAR!`
+   - Does this use string substitution (`:`)? → MUST use `!VAR:old=new!`
+   - Are you unsure? → **USE `!VAR!` TO BE SAFE**
+
+#### File-Specific Guidance for This Codebase
+
+**scripts/devenv7/windows/build-env-all-windows.bat:**
+- ALL variables inside `if not "!SKIP_*!"=="1"` blocks MUST use `!VAR!`
+- Examples that MUST use delayed expansion:
+  - `!TARGETS_SPACED!` (set inside `if` block)
+  - `!DIST_FOLDER_NAME!` (set inside `if` block)
+  - `!TARGET_ARCHS:,= !` (string substitution)
+  - Any variable used in `call` statements inside `if` blocks
+
+**scripts/devenv7/windows/build-msvc-toolchain.bat:**
+- ALL variables inside normalization loop MUST use `!VAR!`
+- Examples that MUST use delayed expansion:
+  - `!CURR_ARCH!` (changes every loop iteration)
+  - `!TEMP_ARCHS!` (changes every loop iteration)
+  - `!NORMALIZED_TARGETS!` (changes every loop iteration)
+  - `!TARGET_ARCHS:,= !` (string substitution)
+
+**scripts/devenv7/windows/build-boost-windows.bat, build-openssl-windows.bat:**
+- ALL variables inside architecture loops MUST use `!VAR!`
+- ALL variables used in nested `if` blocks MUST use `!VAR!`
+
 #### Testing for Delayed Expansion Issues
 
 When debugging, add diagnostic echo statements:
@@ -383,6 +518,56 @@ echo DEBUG: After substitution - TARGETS_SPACED=!TARGETS_SPACED!
 ```
 
 If `TARGETS_SPACED` is empty but `TARGET_ARCHS` is not, you have a delayed expansion issue.
+
+**Common Symptoms of Delayed Expansion Bugs:**
+- ❌ Variable shows empty value inside loop but has value outside
+- ❌ String substitution produces empty result
+- ❌ Script receives empty parameters when non-empty values are expected
+- ❌ Error messages show `""` (empty quotes) for variables that should have values
+- ❌ Commands fail with "parameter required" even though you set the variable
+
+---
+
+### 📋 QUICK REFERENCE CARD - PRINT THIS OUT
+
+**Before modifying ANY batch file, check each line:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  ARE YOU INSIDE AN if (...) OR for (...) BLOCK?            │
+│                                                             │
+│  ✅ YES → Use !VAR! for EVERYTHING except:                 │
+│           - System environment variables (%USERPROFILE%)   │
+│           - Script parameters (%1, %2)                     │
+│                                                             │
+│  ✅ NO  → Use %VAR% (normal expansion)                     │
+│                                                             │
+│  ⚠️  UNSURE? → Use !VAR! to be safe                        │
+└─────────────────────────────────────────────────────────────┘
+
+MANDATORY PATTERNS TO REMEMBER:
+
+❌ WRONG:  set "VAR=%OTHER:,= %"    (inside if block)
+✅ RIGHT:  set "VAR=!OTHER:,= !"    (inside if block)
+
+❌ WRONG:  for %%F in ("%VAR%") do  (inside if block)
+✅ RIGHT:  for %%F in ("!VAR!") do  (inside if block)
+
+❌ WRONG:  call script.bat -param "%VAR%"  (VAR set in same block)
+✅ RIGHT:  call script.bat -param "!VAR!"  (VAR set in same block)
+
+❌ WRONG:  echo %VAR%    (inside for loop, VAR changes each iteration)
+✅ RIGHT:  echo !VAR!    (inside for loop, VAR changes each iteration)
+```
+
+**IF YOU VIOLATE THIS RULE:**
+- ⚠️ Your code will compile with NO ERRORS
+- ⚠️ Your code will run with NO WARNINGS
+- ⚠️ Variables will silently become EMPTY STRINGS
+- ⚠️ Users will report "broken" scripts
+- ⚠️ Debugging will take HOURS to find the issue
+
+**THE RULE IS NON-NEGOTIABLE. ALWAYS USE !VAR! INSIDE CONTROL STRUCTURES.**
 
 ---
 

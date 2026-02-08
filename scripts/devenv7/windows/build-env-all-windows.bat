@@ -477,13 +477,13 @@ if not "!SKIP_ARCHIVE!"=="1" (
     echo.
 
     REM Extract dist folder name from full path
-    for %%F in ("%DIST_ROOT%") do set "DIST_FOLDER_NAME=%%~nxF"
+    for %%F in ("!DIST_ROOT!") do set "DIST_FOLDER_NAME=%%~nxF"
 
     echo Archiving distribution to: %USERPROFILE%\swblocks\zip
     echo.
 
     call "%SCRIPT_DIR%archive-dists-windows.bat" ^
-        -dist-root "%DIST_FOLDER_NAME%" ^
+        -dist-root "!DIST_FOLDER_NAME!" ^
         -delete-target-if-exists
 
     if errorlevel 1 (
@@ -491,7 +491,7 @@ if not "!SKIP_ARCHIVE!"=="1" (
         echo WARNING: Archive creation failed!
         echo The build completed successfully but archives were not created.
         echo You can manually create archives later using:
-        echo   archive-dists-windows.bat -dist-root "%DIST_FOLDER_NAME%" -delete-target-if-exists
+        echo   archive-dists-windows.bat -dist-root "!DIST_FOLDER_NAME!" -delete-target-if-exists
         echo.
     ) else (
         echo.
@@ -537,8 +537,8 @@ echo Target Architectures: %TARGET_ARCHS%
 echo.
 if not "!SKIP_ARCHIVE!"=="1" (
     echo Distribution Archives:
-    echo   - %USERPROFILE%\swblocks\zip\%DIST_FOLDER_NAME%.zip
-    echo   - %USERPROFILE%\swblocks\zip\%DIST_FOLDER_NAME%-downloads-cache.zip
+    echo   - %USERPROFILE%\swblocks\zip\!DIST_FOLDER_NAME!.zip
+    echo   - %USERPROFILE%\swblocks\zip\!DIST_FOLDER_NAME!-downloads-cache.zip
     echo.
 )
 echo Next Steps:
