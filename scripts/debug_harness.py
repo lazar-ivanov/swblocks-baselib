@@ -104,10 +104,14 @@ def handle_failure(proc):
     rename(dumpfile, newfile)
 
 def process_output(proc):
-  for line in proc.stdout:
-    line = line.rstrip().decode('utf-8', errors='replace')
+  for raw_line in proc.stdout:
+    if isinstance(raw_line, bytes):
+      line = raw_line.decode('utf-8', errors='replace')
+    else:
+      line = raw_line
+    line = line.rstrip()
     if search(': (fatal|error|warn)', line) and not line.startswith('DEBUG:'):
-      print(str('\n######### Failure in %s #########\n %s \n' %(basename(argv[1]), line)), file=stderr)
+      print('\n######### Failure in %s #########\n %s \n' %(basename(argv[1]), line), file=stderr)
       print('Please see full error details in the log file (search for the test name)\n', file=stderr)
     print(line, file=stdout)
   proc.wait()

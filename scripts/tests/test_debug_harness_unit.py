@@ -506,3 +506,142 @@ class TestUTF8Handling:
         # On non-Windows, debug_harness should import sys.stdout directly
         # Just verify the module loads without error
         assert hasattr(debug_harness, 'stdout')
+
+
+# ========== Test Byte Decoding for Python 2.7/3.x Compatibility ==========
+
+class TestByteDecodingCompatibility:
+    """Test the byte decoding pattern in process_output() for cross-version compatibility.
+
+    debug_harness.py reads raw bytes from subprocess and decodes with
+    errors='replace'. This avoids UnicodeDecodeError when test output
+    contains non-ASCII characters (e.g., file paths with accented names).
+
+    See scripts/README.md for full documentation of the encoding issue.
+    """
+
+    @staticmethod
+    def decode_line(raw_line):
+        """Replicate the decode logic from debug_harness.py process_output()."""
+        if isinstance(raw_line, bytes):
+            return raw_line.decode('utf-8', errors='replace')
+        return raw_line
+
+    def test_ascii_bytes_decoded_correctly(self):
+        """Test that ASCII bytes decode to the same string content."""
+        raw = b'Running test suite...\n'
+        line = self.decode_line(raw).rstrip()
+        assert line == 'Running test suite...'
+
+    def test_valid_utf8_bytes_decoded_correctly(self):
+        """Test that valid UTF-8 non-ASCII bytes decode correctly."""
+        raw = 'Test with UTF-8: cafe\n'.encode('utf-8')
+        line = self.decode_line(raw).rstrip()
+        assert line == 'Test with UTF-8: cafe'
+
+    def test_invalid_utf8_bytes_replaced_not_crashed(self):
+        """Test that non-UTF-8 bytes are replaced instead of causing a crash."""
+        # CP1252 e-acute (0xe9) is NOT valid standalone UTF-8
+        raw = b'C:\\Users\\Jos\xe9\\test.exe: error: failed\n'
+        line = self.decode_line(raw).rstrip()
+        # Must not crash
+        assert 'error' in line
+        assert 'test.exe' in line
+        # The invalid byte should be replaced with U+FFFD
+        assert '\ufffd' in line
+
+    def test_string_input_passthrough(self):
+        """Test that string input passes through without modification."""
+        raw = 'already a string\n'
+        line = self.decode_line(raw).rstrip()
+        assert line == 'already a string'
+
+    def test_error_pattern_matches_after_decode(self):
+        """Test that the error detection regex works on decoded bytes."""
+        from re import search
+        raw = b'module.cpp:42: error: undefined reference\n'
+        line = self.decode_line(raw).rstrip()
+        assert search(': (fatal|error|warn)', line)
+
+    def test_debug_prefix_detected_after_decode(self):
+        """Test that DEBUG: prefix is detected correctly after decoding bytes."""
+        raw = b'DEBUG: error in subsystem (not a real error)\n'
+        line = self.decode_line(raw).rstrip()
+        assert line.startswith('DEBUG:')
+
+    def test_non_ascii_in_error_line_no_crash(self, monkeypatch):
+        """Test that non-ASCII characters in error lines don't crash process_output().
+
+        Previously, the str() wrapper on the error message format string would
+        crash in Python 2.7 when line contained unicode characters > 127,
+        because str(unicode_value) attempts ASCII encoding.
+        """
+        class MockProc:
+            stdout = [
+                b'Running test...\n',
+                # Error line with non-UTF-8 byte (CP1252 e-acute)
+                b'C:\\Users\\Jos\xe9\\module.cpp:42: error: failed\n',
+                b'Test complete\n'
+            ]
+            returncode = 1
+
+            def wait(self):
+                pass
+
+        import debug_harness
+        from io import StringIO
+
+        original_argv = debug_harness.argv
+        debug_harness.argv = ['debug_harness.py', 'test_example']
+        mock_stdout = StringIO()
+        mock_stderr = StringIO()
+        monkeypatch.setattr(debug_harness, 'stdout', mock_stdout)
+        monkeypatch.setattr(debug_harness, 'stderr', mock_stderr)
+
+        try:
+            proc = MockProc()
+            # Must not crash (previously str() wrapper would cause
+            # UnicodeEncodeError on Python 2.7 for non-ASCII unicode)
+            debug_harness.process_output(proc)
+
+            stderr_output = mock_stderr.getvalue()
+            # Error should be detected and reported
+            assert 'Failure in test_example' in stderr_output
+            assert 'error' in stderr_output.lower()
+
+            stdout_output = mock_stdout.getvalue()
+            # All lines should appear in stdout
+            assert 'Running test' in stdout_output
+            assert 'Test complete' in stdout_output
+        finally:
+            debug_harness.argv = original_argv
+
+    def test_multiple_invalid_bytes_in_output(self, monkeypatch):
+        """Test that multiple lines with invalid bytes all decode without crashing."""
+        class MockProc:
+            stdout = [
+                b'Line with \x80 invalid byte\n',
+                b'Another \xff invalid byte\n',
+                b'Normal ASCII line\n'
+            ]
+            returncode = 0
+
+            def wait(self):
+                pass
+
+        import debug_harness
+        from io import StringIO
+
+        mock_stdout = StringIO()
+        mock_stderr = StringIO()
+        monkeypatch.setattr(debug_harness, 'stdout', mock_stdout)
+        monkeypatch.setattr(debug_harness, 'stderr', mock_stderr)
+
+        proc = MockProc()
+        debug_harness.process_output(proc)
+
+        stdout_output = mock_stdout.getvalue()
+        # All lines should be present (invalid bytes replaced with U+FFFD)
+        assert 'invalid byte' in stdout_output
+        assert 'Normal ASCII line' in stdout_output
+        assert stdout_output.count('\ufffd') == 2
