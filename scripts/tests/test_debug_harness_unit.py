@@ -500,12 +500,15 @@ class TestUTF8Handling:
         assert debug_harness.stderr is not None
 
     @pytest.mark.skipif(sys.platform == 'win32', reason="Non-Windows test")
-    def test_non_windows_stdout_unchanged(self):
-        """Test that stdout is not reconfigured on non-Windows platforms."""
+    def test_non_windows_stdout_reconfigured(self):
+        """Test that stdout is reconfigured for UTF-8 on non-Windows platforms too.
+
+        Previously only Windows had stdout reconfiguration. Now all platforms
+        reconfigure to prevent UnicodeEncodeError when piped through make.
+        """
         import debug_harness
-        # On non-Windows, debug_harness should import sys.stdout directly
-        # Just verify the module loads without error
         assert hasattr(debug_harness, 'stdout')
+        assert debug_harness.stdout is not None
 
 
 # ========== Test Byte Decoding for Python 2.7/3.x Compatibility ==========
