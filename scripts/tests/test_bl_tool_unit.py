@@ -260,14 +260,14 @@ class TestCombineHashes:
         assert result == expected
 
     def test_combine_hashes_single_hash(self):
-        """Test combining single hash."""
+        """Test combining single hash returns it directly (no re-hashing)."""
         import hashlib
 
         hash1 = hashlib.sha256(b"test").digest()
         result = bl_tool.combine_hashes([hash1])
 
-        # Result should be SHA256(hash1)
-        expected = hashlib.sha256(hash1).hexdigest()
+        # Result should be hash1 directly (not SHA256(hash1))
+        expected = hash1.hex()
         assert result == expected
 
     def test_combine_hashes_multiple_hashes(self):
@@ -319,7 +319,9 @@ class TestCommandHash:
 
         args = argparse.Namespace(
             path=str(temp_file_small),
-            verify_sha256=None,
+            expected_hash=None,
+            exclude_paths=False,
+            use_sha1=False,
             allow_hidden_files=False,
             max_threads=4,
             dry_run=False,
@@ -344,7 +346,9 @@ class TestCommandHash:
 
         args = argparse.Namespace(
             path=str(dir_with_files),
-            verify_sha256=None,
+            expected_hash=None,
+            exclude_paths=False,
+            use_sha1=False,
             allow_hidden_files=False,
             max_threads=4,
             dry_run=False,
@@ -367,7 +371,9 @@ class TestCommandHash:
 
         args = argparse.Namespace(
             path=str(dir_with_files),
-            verify_sha256=None,
+            expected_hash=None,
+            exclude_paths=False,
+            use_sha1=False,
             allow_hidden_files=False,
             max_threads=4,
             dry_run=True,
@@ -391,7 +397,9 @@ class TestCommandHash:
 
         args = argparse.Namespace(
             path=str(dir_with_files),
-            verify_sha256=None,
+            expected_hash=None,
+            exclude_paths=False,
+            use_sha1=False,
             allow_hidden_files=False,
             max_threads=4,
             dry_run=True,
@@ -414,17 +422,19 @@ class TestCommandHash:
         import argparse
         import hashlib
 
-        # First, calculate the expected hash
+        # Calculate the expected hash (single file returns hash directly, no re-hashing)
         file_content = temp_file_small.read_bytes()
         relative_path = temp_file_small.name
         hasher = hashlib.sha256()
         hasher.update(file_content)
         hasher.update(relative_path.encode('utf-8'))
-        expected_hash = hashlib.sha256(hasher.digest()).hexdigest()
+        expected_hash = hasher.hexdigest()
 
         args = argparse.Namespace(
             path=str(temp_file_small),
-            verify_sha256=expected_hash,
+            expected_hash=expected_hash,
+            exclude_paths=False,
+            use_sha1=False,
             allow_hidden_files=False,
             max_threads=4,
             dry_run=False,
@@ -447,7 +457,9 @@ class TestCommandHash:
 
         args = argparse.Namespace(
             path=str(temp_file_small),
-            verify_sha256=wrong_hash,
+            expected_hash=wrong_hash,
+            exclude_paths=False,
+            use_sha1=False,
             allow_hidden_files=False,
             max_threads=4,
             dry_run=False,
@@ -468,7 +480,9 @@ class TestCommandHash:
 
         args = argparse.Namespace(
             path="/nonexistent/path",
-            verify_sha256=None,
+            expected_hash=None,
+            exclude_paths=False,
+            use_sha1=False,
             allow_hidden_files=False,
             max_threads=4,
             dry_run=False,
@@ -490,7 +504,9 @@ class TestCommandHash:
 
         args = argparse.Namespace(
             path=str(empty_dir),
-            verify_sha256=None,
+            expected_hash=None,
+            exclude_paths=False,
+            use_sha1=False,
             allow_hidden_files=False,
             max_threads=4,
             dry_run=False,
@@ -517,7 +533,9 @@ class TestCommandHash:
 
         args = argparse.Namespace(
             path=str(fifo_path),
-            verify_sha256=None,
+            expected_hash=None,
+            exclude_paths=False,
+            use_sha1=False,
             allow_hidden_files=False,
             max_threads=4,
             dry_run=False,
@@ -558,7 +576,9 @@ class TestCommandHash:
 
         args = argparse.Namespace(
             path=str(temp_dir),
-            verify_sha256=None,
+            expected_hash=None,
+            exclude_paths=False,
+            use_sha1=False,
             allow_hidden_files=False,
             max_threads=4,
             dry_run=True,
@@ -574,3 +594,132 @@ class TestCommandHash:
         captured = capsys.readouterr()
         assert "[ERROR]" in captured.out
         assert "Failed to stat" in captured.out
+
+
+class TestExcludePaths:
+    """Test --exclude-paths functionality."""
+
+    def test_hash_worker_exclude_paths_same_hash(self, temp_file_small):
+        """Test that exclude_paths=True ignores relative path in hash."""
+        file_path = str(temp_file_small)
+
+        result1 = bl_tool.hash_worker(file_path, "path1.txt", verbose=False, exclude_paths=True)
+        result2 = bl_tool.hash_worker(file_path, "path2.txt", verbose=False, exclude_paths=True)
+
+        # With exclude_paths, different relative paths should produce same hash
+        assert result1[1] == result2[1]
+
+    def test_hash_worker_exclude_paths_vs_include(self, temp_file_small):
+        """Test that exclude_paths produces different hash than including path."""
+        file_path = str(temp_file_small)
+        relative_path = Path(file_path).name
+
+        result_with = bl_tool.hash_worker(file_path, relative_path, verbose=False, exclude_paths=False)
+        result_without = bl_tool.hash_worker(file_path, relative_path, verbose=False, exclude_paths=True)
+
+        # Including vs excluding path should produce different hashes
+        assert result_with[1] != result_without[1]
+
+    def test_command_hash_exclude_paths(self, temp_file_small, capsys):
+        """Test command_hash with --exclude-paths flag."""
+        import argparse
+        import hashlib
+
+        # Calculate expected hash: SHA256(file_contents) only, no path
+        file_content = temp_file_small.read_bytes()
+        expected_hash = hashlib.sha256(file_content).hexdigest()
+
+        args = argparse.Namespace(
+            path=str(temp_file_small),
+            expected_hash=expected_hash,
+            exclude_paths=True,
+            use_sha1=False,
+            allow_hidden_files=False,
+            max_threads=4,
+            dry_run=False,
+            verbose=False
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            bl_tool.command_hash(args)
+
+        assert exc_info.value.code == 0
+
+        captured = capsys.readouterr()
+        assert "Verification: MATCH" in captured.out
+
+
+class TestSha1Mode:
+    """Test --use-sha1 functionality."""
+
+    def test_hash_worker_sha1_digest_size(self, temp_file_small):
+        """Test SHA-1 produces 20-byte digest."""
+        file_path = str(temp_file_small)
+        relative_path = Path(file_path).name
+
+        result = bl_tool.hash_worker(file_path, relative_path, verbose=False, hash_algo='sha1')
+
+        assert isinstance(result[1], bytes)
+        assert len(result[1]) == 20  # SHA-1 = 20 bytes
+
+    def test_hash_worker_sha1_vs_sha256_different(self, temp_file_small):
+        """Test SHA-1 and SHA-256 produce different hashes."""
+        file_path = str(temp_file_small)
+        relative_path = Path(file_path).name
+
+        result_sha256 = bl_tool.hash_worker(file_path, relative_path, verbose=False, hash_algo='sha256')
+        result_sha1 = bl_tool.hash_worker(file_path, relative_path, verbose=False, hash_algo='sha1')
+
+        # Different algorithms produce different hash bytes
+        assert result_sha256[1] != result_sha1[1]
+
+    def test_combine_hashes_sha1(self):
+        """Test combining multiple hashes with SHA-1."""
+        import hashlib
+
+        hash1 = hashlib.sha1(b"file1").digest()
+        hash2 = hashlib.sha1(b"file2").digest()
+
+        result = bl_tool.combine_hashes([hash1, hash2], hash_algo='sha1')
+
+        # Result should be SHA1(hash1 + hash2)
+        expected = hashlib.sha1(hash1 + hash2).hexdigest()
+        assert result == expected
+        assert len(result) == 40  # SHA-1 hex = 40 chars
+
+    def test_combine_hashes_single_sha1(self):
+        """Test single SHA-1 hash returns directly."""
+        import hashlib
+
+        hash1 = hashlib.sha1(b"test").digest()
+        result = bl_tool.combine_hashes([hash1], hash_algo='sha1')
+
+        # Single hash returned directly
+        assert result == hash1.hex()
+        assert len(result) == 40
+
+    def test_command_hash_sha1(self, temp_file_small, capsys):
+        """Test command_hash with --use-sha1 flag."""
+        import argparse
+
+        args = argparse.Namespace(
+            path=str(temp_file_small),
+            expected_hash=None,
+            exclude_paths=False,
+            use_sha1=True,
+            allow_hidden_files=False,
+            max_threads=4,
+            dry_run=False,
+            verbose=False
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            bl_tool.command_hash(args)
+
+        assert exc_info.value.code == 0
+
+        captured = capsys.readouterr()
+        assert "Combined SHA1:" in captured.out
+        # SHA-1 hex is 40 chars
+        import re
+        assert re.search(r"Combined SHA1: [0-9a-f]{40}", captured.out)

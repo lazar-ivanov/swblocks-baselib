@@ -44,7 +44,7 @@ class TestCommandExecution:
         )
 
         assert result.returncode == 0
-        assert "Calculate SHA256 hash" in result.stdout
+        assert "Calculate hash" in result.stdout
         assert "--path" in result.stdout
 
     def test_no_arguments_shows_error(self):
@@ -187,7 +187,7 @@ class TestDirectoryHashing:
 
 
 class TestVerification:
-    """Test hash verification with --verify-sha256."""
+    """Test hash verification with --expected-hash."""
 
     def test_verify_match(self, temp_file_small):
         """Test verification succeeds with matching hash."""
@@ -203,7 +203,7 @@ class TestVerification:
         # Verify with same hash
         result2 = subprocess.run(
             [sys.executable, BL_TOOL, "hash", "--path", str(temp_file_small),
-             "--verify-sha256", hash_value],
+             "--expected-hash", hash_value],
             capture_output=True,
             text=True
         )
@@ -217,7 +217,7 @@ class TestVerification:
 
         result = subprocess.run(
             [sys.executable, BL_TOOL, "hash", "--path", str(temp_file_small),
-             "--verify-sha256", wrong_hash],
+             "--expected-hash", wrong_hash],
             capture_output=True,
             text=True
         )
@@ -381,3 +381,144 @@ class TestConsistency:
 
         # Hashes should match
         assert hash_file == hash_dir
+
+
+class TestExcludePaths:
+    """Test --exclude-paths flag."""
+
+    def test_exclude_paths_matches_sha256sum(self, temp_file_small):
+        """Test --exclude-paths on single file matches hashlib sha256."""
+        import hashlib
+
+        # Calculate expected hash using pure hashlib (no path in input)
+        file_content = temp_file_small.read_bytes()
+        expected_hash = hashlib.sha256(file_content).hexdigest()
+
+        result = subprocess.run(
+            [sys.executable, BL_TOOL, "hash", "--path", str(temp_file_small),
+             "--exclude-paths"],
+            capture_output=True,
+            text=True
+        )
+
+        assert result.returncode == 0
+        actual_hash = re.search(r"Combined SHA256: ([0-9a-f]{64})", result.stdout).group(1)
+        assert actual_hash == expected_hash
+
+    def test_exclude_paths_different_from_default(self, temp_file_small):
+        """Test --exclude-paths produces different hash than default."""
+        result_default = subprocess.run(
+            [sys.executable, BL_TOOL, "hash", "--path", str(temp_file_small)],
+            capture_output=True,
+            text=True
+        )
+
+        result_exclude = subprocess.run(
+            [sys.executable, BL_TOOL, "hash", "--path", str(temp_file_small),
+             "--exclude-paths"],
+            capture_output=True,
+            text=True
+        )
+
+        hash_default = re.search(r"Combined SHA256: ([0-9a-f]{64})", result_default.stdout).group(1)
+        hash_exclude = re.search(r"Combined SHA256: ([0-9a-f]{64})", result_exclude.stdout).group(1)
+
+        assert hash_default != hash_exclude
+
+    def test_exclude_paths_with_verification(self, temp_file_small):
+        """Test --exclude-paths works with --expected-hash."""
+        import hashlib
+
+        file_content = temp_file_small.read_bytes()
+        expected_hash = hashlib.sha256(file_content).hexdigest()
+
+        result = subprocess.run(
+            [sys.executable, BL_TOOL, "hash", "--path", str(temp_file_small),
+             "--exclude-paths", "--expected-hash", expected_hash],
+            capture_output=True,
+            text=True
+        )
+
+        assert result.returncode == 0
+        assert "Verification: MATCH" in result.stdout
+
+
+class TestSha1Mode:
+    """Test --use-sha1 flag."""
+
+    def test_sha1_output_format(self, temp_file_small):
+        """Test SHA-1 output shows SHA1 label and 40-char hex."""
+        result = subprocess.run(
+            [sys.executable, BL_TOOL, "hash", "--path", str(temp_file_small),
+             "--use-sha1"],
+            capture_output=True,
+            text=True
+        )
+
+        assert result.returncode == 0
+        assert "Combined SHA1:" in result.stdout
+        assert re.search(r"Combined SHA1: [0-9a-f]{40}", result.stdout)
+        # Should NOT contain SHA256 label
+        assert "Combined SHA256:" not in result.stdout
+
+    def test_sha1_deterministic(self, temp_file_small):
+        """Test SHA-1 is deterministic."""
+        result1 = subprocess.run(
+            [sys.executable, BL_TOOL, "hash", "--path", str(temp_file_small),
+             "--use-sha1"],
+            capture_output=True,
+            text=True
+        )
+
+        result2 = subprocess.run(
+            [sys.executable, BL_TOOL, "hash", "--path", str(temp_file_small),
+             "--use-sha1"],
+            capture_output=True,
+            text=True
+        )
+
+        hash1 = re.search(r"Combined SHA1: ([0-9a-f]{40})", result1.stdout).group(1)
+        hash2 = re.search(r"Combined SHA1: ([0-9a-f]{40})", result2.stdout).group(1)
+
+        assert hash1 == hash2
+
+    def test_sha1_with_verification(self, temp_file_small):
+        """Test --use-sha1 works with --expected-hash."""
+        # Get the SHA-1 hash first
+        result1 = subprocess.run(
+            [sys.executable, BL_TOOL, "hash", "--path", str(temp_file_small),
+             "--use-sha1"],
+            capture_output=True,
+            text=True
+        )
+
+        hash_value = re.search(r"Combined SHA1: ([0-9a-f]{40})", result1.stdout).group(1)
+
+        # Verify with same hash
+        result2 = subprocess.run(
+            [sys.executable, BL_TOOL, "hash", "--path", str(temp_file_small),
+             "--use-sha1", "--expected-hash", hash_value],
+            capture_output=True,
+            text=True
+        )
+
+        assert result2.returncode == 0
+        assert "Verification: MATCH" in result2.stdout
+
+    def test_sha1_exclude_paths_combined(self, temp_file_small):
+        """Test --use-sha1 and --exclude-paths together."""
+        import hashlib
+
+        # Calculate expected: SHA1(file_contents) only
+        file_content = temp_file_small.read_bytes()
+        expected_hash = hashlib.sha1(file_content).hexdigest()
+
+        result = subprocess.run(
+            [sys.executable, BL_TOOL, "hash", "--path", str(temp_file_small),
+             "--use-sha1", "--exclude-paths", "--expected-hash", expected_hash],
+            capture_output=True,
+            text=True
+        )
+
+        assert result.returncode == 0
+        assert "Verification: MATCH" in result.stdout

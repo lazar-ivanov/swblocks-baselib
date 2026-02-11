@@ -18,7 +18,7 @@
 bl_tool.py - Utility for baselib repository operations
 
 Commands:
-  hash    Calculate SHA256 hash of file or directory contents
+  hash    Calculate hash of file or directory contents
 """
 
 import argparse
@@ -170,16 +170,20 @@ def handle_directory(folder_path, allow_hidden_files):
     return files
 
 
-def hash_worker(file_path, relative_path, verbose):
+def hash_worker(file_path, relative_path, verbose, exclude_paths=False, hash_algo='sha256'):
     """
-    Hash a single file using chunked reading: SHA256(file_contents + relative_path_bytes)
+    Hash a single file using chunked reading.
 
     Reads file in 1 MB chunks to handle large files without loading into memory.
+    By default appends the relative path to the hash input for content-addressable
+    uniqueness. Use exclude_paths=True to hash file contents only.
 
     Args:
         file_path (str): Absolute path to file
         relative_path (str): Relative path from root (for hash input)
         verbose (bool): If True, print status for each file
+        exclude_paths (bool): If True, exclude relative path from hash input
+        hash_algo (str): Hash algorithm name ('sha256' or 'sha1')
 
     Returns:
         tuple: (relative_path, hash_bytes, file_size)
@@ -189,7 +193,7 @@ def hash_worker(file_path, relative_path, verbose):
     """
     try:
         # Hash file in chunks to handle large files
-        hasher = hashlib.sha256()
+        hasher = hashlib.new(hash_algo)
         file_size = 0
 
         with open(file_path, 'rb') as f:
@@ -200,9 +204,10 @@ def hash_worker(file_path, relative_path, verbose):
                 hasher.update(chunk)
                 file_size += len(chunk)
 
-        # After all file chunks, append relative path
-        hasher.update(relative_path.encode('utf-8'))
-        hash_bytes = hasher.digest()  # Raw bytes (32 bytes)
+        # After all file chunks, append relative path (unless excluded)
+        if not exclude_paths:
+            hasher.update(relative_path.encode('utf-8'))
+        hash_bytes = hasher.digest()
         hash_hex = hash_bytes.hex()    # For display only
 
         # Thread-safe print (only in verbose mode)
@@ -217,24 +222,29 @@ def hash_worker(file_path, relative_path, verbose):
         raise  # Re-raise to fail entire operation
 
 
-def combine_hashes(hash_list):
+def combine_hashes(hash_list, hash_algo='sha256'):
     """
     Combine hashes in blocks to avoid large memory allocations.
 
-    Processes hashes in blocks of HASH_BLOCK_SIZE, feeding each block
-    to a single streaming hasher. This produces the same result as
-    concatenating all hashes at once, but without allocating a large buffer.
+    If only one hash is provided, returns it directly without re-hashing.
+    Otherwise, processes hashes in blocks of HASH_BLOCK_SIZE, feeding each
+    block to a single streaming hasher.
 
     Args:
-        hash_list (list): List of raw hash bytes (32 bytes each) in order
+        hash_list (list): List of raw hash bytes in order
+        hash_algo (str): Hash algorithm name ('sha256' or 'sha1')
 
     Returns:
-        str: Final combined hash as hex string (64 characters)
+        str: Final combined hash as hex string
     """
     total_hashes = len(hash_list)
 
-    # Initialize the final hasher
-    final_hasher = hashlib.sha256()
+    # Single hash: return directly without re-hashing
+    if total_hashes == 1:
+        return hash_list[0].hex()
+
+    # Initialize the final hasher with selected algorithm
+    final_hasher = hashlib.new(hash_algo)
 
     # Process hashes in blocks to avoid large memory allocation
     for block_start in range(0, total_hashes, HASH_BLOCK_SIZE):
@@ -250,7 +260,7 @@ def combine_hashes(hash_list):
 
 def command_hash(args):
     """
-    Execute hash command: calculate SHA256 hash of file or directory.
+    Execute hash command: calculate hash of file or directory.
 
     Workflow:
     1. Validate path exists
@@ -258,7 +268,7 @@ def command_hash(args):
     3. If file: Hash single file (fail on symlinks)
     4. If directory: Hash all files in directory (existing logic)
     5. Combine hashes and print summary
-    6. Verify hash if --verify-sha256 provided
+    6. Verify hash if --expected-hash provided
     """
 
     # Step 1: Validate path exists
@@ -305,6 +315,10 @@ def command_hash(args):
         print("\nNo files were actually hashed (dry-run mode)")
         sys.exit(0)
 
+    # Determine hash algorithm and display name
+    hash_algo = 'sha1' if args.use_sha1 else 'sha256'
+    hash_name = 'SHA1' if args.use_sha1 else 'SHA256'
+
     # Step 4: Hash files (single or multiple)
     if total_files == 1:
         print(f"Hashing single file...")
@@ -321,7 +335,8 @@ def command_hash(args):
         with ThreadPoolExecutor(max_workers=args.max_threads) as executor:
             # Submit all files
             future_to_file = {
-                executor.submit(hash_worker, file_path, relative_path, args.verbose): (file_path, relative_path)
+                executor.submit(hash_worker, file_path, relative_path, args.verbose,
+                                args.exclude_paths, hash_algo): (file_path, relative_path)
                 for file_path, relative_path in files_to_process
             }
 
@@ -346,9 +361,9 @@ def command_hash(args):
 
     if len(hash_list) == 0:
         # Empty directory
-        combined_hash = hashlib.sha256(b'').hexdigest()
+        combined_hash = hashlib.new(hash_algo, b'').hexdigest()
     else:
-        combined_hash = combine_hashes(hash_list)
+        combined_hash = combine_hashes(hash_list, hash_algo)
 
     # Calculate total size
     total_size = sum(file_size for _, _, file_size in results)
@@ -359,12 +374,12 @@ def command_hash(args):
     print(f"Path: {root_path}")
     print(f"Total files processed: {total_files}")
     print(f"Total size: {format_size(total_size)}")
-    print(f"Combined SHA256: {combined_hash}")
+    print(f"Combined {hash_name}: {combined_hash}")
     print(f"Hashing speed: {format_speed(total_size, elapsed_time)} ({format_size(total_size)} in {elapsed_time:.2f} seconds)")
 
     # Step 8: Verify hash if requested
-    if args.verify_sha256:
-        expected_hash = args.verify_sha256.lower()
+    if args.expected_hash:
+        expected_hash = args.expected_hash.lower()
         actual_hash = combined_hash.lower()
 
         if expected_hash == actual_hash:
@@ -396,7 +411,13 @@ Examples:
   %(prog)s hash --path /path/to/dir
 
   # Hash with verification
-  %(prog)s hash --path /path/to/dir --verify-sha256 abc123...
+  %(prog)s hash --path /path/to/dir --expected-hash abc123...
+
+  # Hash without paths in hash input (matches sha256sum output for single files)
+  %(prog)s hash --path /path/to/file.txt --exclude-paths
+
+  # Use SHA-1 instead of SHA-256
+  %(prog)s hash --path /path/to/dir --use-sha1
 
   # Include hidden files (directory only)
   %(prog)s hash --path /path/to/dir --allow-hidden-files --max-threads 8
@@ -416,8 +437,8 @@ Examples:
     # ========== hash command ==========
     parser_hash = subparsers.add_parser(
         'hash',
-        help='Calculate SHA256 hash of file or directory contents',
-        description='Calculate SHA256 hash of a single file or combined hash of all files in a directory'
+        help='Calculate hash of file or directory contents',
+        description='Calculate hash of a single file or combined hash of all files in a directory'
     )
 
     parser_hash.add_argument(
@@ -427,8 +448,20 @@ Examples:
     )
 
     parser_hash.add_argument(
-        '--verify-sha256',
-        help='Expected SHA256 hash for verification (hex string)'
+        '--expected-hash',
+        help='Expected hash for verification (hex string)'
+    )
+
+    parser_hash.add_argument(
+        '--exclude-paths',
+        action='store_true',
+        help='Exclude relative file paths from hash input (hash file contents only)'
+    )
+
+    parser_hash.add_argument(
+        '--use-sha1',
+        action='store_true',
+        help='Use SHA-1 instead of SHA-256 (default)'
     )
 
     parser_hash.add_argument(
