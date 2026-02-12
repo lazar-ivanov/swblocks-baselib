@@ -1,6 +1,15 @@
-# Claude AI Development Guidelines for swblocks-baselib
+# devenv7 Build System Guidelines
 
-This document contains project-specific guidelines and best practices for AI-assisted development on the swblocks-baselib project.
+## Rules for Modifying This File
+
+- **Keep under 1,000 lines.** If it grows beyond, condense or move content.
+- **Rules and operational guidance only.** No root cause analyses or implementation walkthroughs — those go in `docs/`.
+- **State each rule once.** Reference root `CLAUDE.md` for shared rules (batch escaping, delayed expansion).
+- **Code snippets: 10 lines max.** Reference implementation files for longer examples.
+- **Use the Edit tool** (never Write) when modifying this file.
+- **Every addition must justify its presence.** When adding content, consider removing something.
+
+---
 
 ## Table of Contents
 
@@ -11,74 +20,20 @@ This document contains project-specific guidelines and best practices for AI-ass
 5. [devenv Version Gating Pattern](#devenv-version-gating-pattern)
 6. [Windows JNI Support (devenv7+)](#windows-jni-support-devenv7)
 7. [Common Pitfalls](#common-pitfalls)
+8. [Archive Distribution Script](#archive-distribution-script)
+9. [Tool Versions and Compatibility](#tool-versions-and-compatibility)
 
 ---
 
 ## Windows Batch Script Rules
 
-### Critical: Special Character Escaping
-
-**ALWAYS escape special characters in echo statements inside conditional blocks.**
-
-#### Problem Characters
-
-The following characters MUST be escaped with `^` when used in `echo` statements inside `if` blocks or `for` loops:
-
-- `(` → `^(`
-- `)` → `^)`
-- `<` → `^<`
-- `>` → `^>`
-- `|` → `^|`
-- `&` → `^&`
-- `%` → `%%` (use double percent)
-
-#### Examples
-
-**❌ WRONG - Will cause "was unexpected at this time" error:**
-```batch
-if /i "%ARCH%"=="a64" (
-    echo clang-cl found (for assembler):
-)
-```
-
-**✅ CORRECT:**
-```batch
-if /i "%ARCH%"=="a64" (
-    echo clang-cl found ^(for assembler^):
-)
-```
-
-**❌ WRONG:**
-```batch
-for %%A in (a64 x64 x86) do (
-    echo Building for architecture: %%A (native)
-)
-```
-
-**✅ CORRECT:**
-```batch
-for %%A in (a64 x64 x86) do (
-    echo Building for architecture: %%A ^(native^)
-)
-```
-
-### Delayed Expansion and Line Continuation
-
-See root `CLAUDE.md` for the full rules on delayed expansion (`!VAR!` inside control structures), line continuation in set commands, and the decision matrix. The rules below are **file-specific guidance** for devenv7 batch files.
+See root `CLAUDE.md` for the full rules on special character escaping, delayed expansion (`!VAR!` inside control structures), line continuation in set commands, and the decision matrix.
 
 **File-specific delayed expansion guidance:**
 
-- **build-env-all-windows.bat:** ALL variables inside `if not "!SKIP_*!"=="1"` blocks MUST use `!VAR!` (e.g., `!TARGETS_SPACED!`, `!DIST_FOLDER_NAME!`, `!TARGET_ARCHS:,= !`)
-- **build-msvc-toolchain.bat:** ALL variables inside normalization loop MUST use `!VAR!` (e.g., `!CURR_ARCH!`, `!TEMP_ARCHS!`, `!NORMALIZED_TARGETS!`)
+- **build-env-all-windows.bat:** ALL variables inside `if not "!SKIP_*!"=="1"` blocks MUST use `!VAR!`
+- **build-msvc-toolchain.bat:** ALL variables inside normalization loop MUST use `!VAR!`
 - **build-boost-windows.bat, build-openssl-windows.bat:** ALL variables inside architecture loops and nested `if` blocks MUST use `!VAR!`
-
-### Batch Script Best Practices
-
-1. **Always use `setlocal enabledelayedexpansion`** at the beginning of scripts that use variables inside loops or conditionals
-2. **Quote all paths** that may contain spaces: `"%DIST_ROOT%"`
-3. **Use `goto` labels outside `if` blocks** - labels must be at column 1
-4. **Avoid special characters in echo** - escape with `^` when necessary
-5. **Test batch scripts** after any modifications to echo statements
 
 ---
 
@@ -194,164 +149,20 @@ Three environment setup scripts are **always generated** regardless of target ar
 
 ### Environment Setup Script Variants
 
-The toolchain setup generates **three variants** of environment setup scripts for each architecture, providing different levels of tool integration:
+Three variants are generated for each architecture (9 scripts total, all architectures regardless of `-targets`). Location: `{dist-root}\scripts\ci\`.
 
-#### 1. Full Environment: setup-env-{arch}.bat
-
-**Purpose:** Complete development environment with all MSVC compiler tools and build utilities.
-
-**Includes:**
-- MSVC compiler toolchain (cl.exe, link.exe, lib.exe)
-- Windows SDK bin paths (rc.exe, mt.exe, etc.)
-- Clang-CL (alternative compiler, assembler for ARM64)
-- Windows Debuggers (WinDbg, cdb.exe)
-- Build tools (Jom, NASM)
-- Development tools (Git, Python, MSYS2)
-- Environment variables: INCLUDE, LIB, LIBPATH
-
-**Use cases:**
-- Building C/C++ projects with MSVC
-- Full compilation and linking workflows
-- Development requiring complete toolchain
-
-**PATH order:**
-```
-MSVC → Clang-CL → SDK bins → Debuggers → %PATH% → Jom → NASM → Git → Python → MSYS2
-```
-
----
-
-#### 2. No MSVC Environment: setup-env-nomsvc-{arch}.bat
-
-**Purpose:** Development environment WITHOUT MSVC compiler tools. Useful for debugging, non-C/C++ builds, and tasks requiring build utilities but not compilation.
-
-**Includes:**
-- Windows Debuggers (WinDbg, cdb.exe) - host architecture
-- Build tools (Jom, NASM for x64/x86)
-- Development tools (Git, Python, MSYS2)
-- Platform variables (Platform, VSCMD_ARG_*)
-- Debugger symbol path (_NT_SYMBOL_PATH)
-
-**Excludes:**
-- MSVC compiler toolchain
-- Windows SDK bin paths
-- Clang-CL
-- INCLUDE, LIB, LIBPATH variables
-
-**Use cases:**
-- Debugging pre-built binaries
-- Building non-C/C++ projects (Rust, Go, etc.)
-- Scripting and automation tasks
-- Using debuggers without compiler
-- Parallel builds with Jom
-
-**PATH order:**
-```
-Debuggers → %PATH% → Jom → NASM (x64/x86) → Git → Python → MSYS2
-```
-
-**Architecture-specific differences:**
-- **ARM64**: No NASM (uses clang-cl as assembler, not included in this variant)
-- **x64/x86**: Includes NASM for assembly tasks
-
----
-
-#### 3. Minimal Environment: setup-env-minimal-{arch}.bat
-
-**Purpose:** Minimal environment for basic command-line tasks. Only version control and Unix-like utilities.
-
-**Includes:**
-- Git (version control)
-- MSYS2 (Unix utilities: bash, make, grep, sed, awk, find, etc.)
-- Platform variables (Platform, VSCMD_ARG_* - for reference)
-- Debugger symbol path (_NT_SYMBOL_PATH - for reference)
-
-**Excludes:**
-- All compiler tools (MSVC, Clang-CL)
-- Windows SDK paths
-- Debuggers
-- Build utilities (Jom, NASM)
-- Python
-- INCLUDE, LIB, LIBPATH variables
-
-**Use cases:**
-- Version control operations (git clone, commit, push)
-- Shell scripting with bash
-- Text processing (grep, sed, awk)
-- Unix-like command-line workflows
-- Minimal overhead for simple tasks
-
-**PATH order:**
-```
-Git → MSYS2 → %PATH%
-```
-
-**Why include Platform/VSCMD_ARG_* variables:**
-Even though no compiler is present, these variables maintain consistency across all script variants and allow scripts to detect the configured architecture without PATH inspection.
-
----
-
-#### Variant Comparison Table
+- **`setup-env-{arch}.bat`** — Full environment: MSVC compiler, SDK, Clang-CL, debuggers, Jom, NASM, Git, Python, MSYS2, INCLUDE/LIB/LIBPATH.
+- **`setup-env-nomsvc-{arch}.bat`** — No MSVC: debuggers, Jom, NASM (x64/x86), Git, Python, MSYS2. No compiler, SDK, or INCLUDE/LIB/LIBPATH.
+- **`setup-env-minimal-{arch}.bat`** — Minimal: Git and MSYS2 only.
 
 | Component | Full | No MSVC | Minimal |
 |-----------|------|---------|---------|
-| **MSVC Compiler** | ✅ | ❌ | ❌ |
-| **Windows SDK bins** | ✅ | ❌ | ❌ |
-| **Clang-CL** | ✅ | ❌ | ❌ |
-| **Debuggers** | ✅ | ✅ | ❌ |
-| **Jom** | ✅ | ✅ | ❌ |
-| **NASM** | ✅ (x64/x86) | ✅ (x64/x86) | ❌ |
-| **Git** | ✅ | ✅ | ✅ |
-| **Python** | ✅ | ✅ | ❌ |
-| **MSYS2** | ✅ | ✅ | ✅ |
-| **INCLUDE** | ✅ | ❌ | ❌ |
-| **LIB** | ✅ | ❌ | ❌ |
-| **LIBPATH** | ✅ | ❌ | ❌ |
-| **Platform vars** | ✅ | ✅ | ✅ |
-
----
-
-#### Usage Examples
-
-**Full compilation workflow:**
-```batch
-call %DIST_ROOT%\scripts\ci\setup-env-x64.bat
-cl.exe /c myfile.cpp
-link.exe myfile.obj
-```
-
-**Debugging without compilation:**
-```batch
-call %DIST_ROOT%\scripts\ci\setup-env-nomsvc-x64.bat
-cdb.exe myapp.exe
-```
-
-**Version control only:**
-```batch
-call %DIST_ROOT%\scripts\ci\setup-env-minimal-x64.bat
-git clone https://github.com/...
-```
-
-**Non-C++ build with Jom:**
-```batch
-call %DIST_ROOT%\scripts\ci\setup-env-nomsvc-x64.bat
-jom -j 8  REM Parallel build without MSVC
-```
-
----
-
-#### Script Generation
-
-**Total scripts generated:** 9 (3 variants × 3 architectures)
-
-**Generated for all architectures regardless of -targets parameter:**
-- setup-env-a64.bat, setup-env-nomsvc-a64.bat, setup-env-minimal-a64.bat
-- setup-env-x64.bat, setup-env-nomsvc-x64.bat, setup-env-minimal-x64.bat
-- setup-env-x86.bat, setup-env-nomsvc-x86.bat, setup-env-minimal-x86.bat
-
-**Location:** `{dist-root}\scripts\ci\`
-
-**Design principle:** Always generate all variants to provide flexibility regardless of build configuration.
+| MSVC/SDK/Clang-CL | Yes | No | No |
+| Debuggers/Jom | Yes | Yes | No |
+| NASM | Yes (x64/x86) | Yes (x64/x86) | No |
+| Git/MSYS2 | Yes | Yes | Yes |
+| Python | Yes | Yes | No |
+| INCLUDE/LIB/LIBPATH | Yes | No | No |
 
 ---
 
@@ -419,634 +230,84 @@ make -k -j4 ARCH=x64
 
 ### OpenSSL Build Configuration Strategy
 
-The OpenSSL build uses a unified configuration approach for both debug and release variants:
-
 #### Unified CRT and Optimization Strategy
 
-**Both debug and release variants:**
-- Use `--release` flag (not `--debug`)
-- Define `-DNDEBUG`
-- Use release CRT (`/MD`, not `/MDd`)
-
-**Only difference between variants:**
-- **Debug**: `-Od -Ob0` (no optimizations, no inline expansion)
-- **Release**: `-O2 -Ob1 -Ot -Oi` (full optimizations)
-
-**Why this approach:**
-1. **Simpler deployment** - Only release CRT required, no debug CRT dependencies
-2. **Consistent behavior** - Both variants use same CRT, reducing deployment issues
-3. **Better testing** - Debug variant can catch runtime issues without CRT debug checks
+Both debug and release use `--release` flag, `-DNDEBUG`, and release CRT (`/MD`). Only difference: debug uses `-Od -Ob0`, release uses `-O2 -Ob1 -Ot -Oi`. This simplifies deployment (no debug CRT dependencies).
 
 #### Debug Information Strategy
 
-**Critical:** Do NOT pass debug flags (`-Zi`, `-Z7`, `-Zo`) to the Configure command.
+**Critical rule:** Do NOT pass debug flags (`-Zi`, `-Z7`, `-Zo`) to the Configure command. OpenSSL's Configure detects debug flags and disables the assembler, severely impacting performance. Add debug flags AFTER Configure via makefile patching.
 
-**Reason:** OpenSSL's Configure script detects debug flags and disables the assembler to avoid historical issues with debug info generation in assembly code. This significantly impacts performance.
+**x64/x86 (PowerShell):** Replace `/Zi` with `/Z7`, then append `/Z7 /Zo` to `LIB_CFLAGS`. Use `/Z7` (not `/Zi`) to avoid PDB conflicts with jom parallel builds. Remove PDB install commands since `/Z7` embeds debug info in `.obj` files (no `ossl_static.pdb` generated).
 
-**Solution:** Add debug flags AFTER Configure via makefile patching.
+**ARM64 (Perl):** Redirect assembly preprocessor from `$(CC) /EP` to `clang-cl.exe /EP` (MSVC cl.exe cannot preprocess GNU-style ARM assembly), add `/Z7 /Zo` to CFLAGS, and replace release optimization flags with debug flags for debug builds.
 
-**For x64/x86 builds (PowerShell patching):**
+#### ARM64 Build — Key Requirements
 
-```batch
-REM Patch makefile to add debug information flags
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$content = Get-Content -Raw -Encoding ASCII makefile; $content = $content -replace '/Zi\s+/Fd[^\s]+\s*','/Z7 ' -replace '(LIB_CFLAGS=[^\r\n]+)',('$1 /Z7 /Zo'); Set-Content -Encoding ASCII makefile $content"
-```
+ARM64 uses a hybrid approach: MSVC cl.exe for C compilation + clang-cl for assembly preprocessing. Three additional requirements:
 
-**For ARM64 builds (Perl patching):**
+1. **Assembly activation macros** — OpenSSL builds assembly objects but the C "glue" code doesn't call them without explicit macros (`-DOPENSSL_CPUID_OBJ -DOPENSSL_BN_ASM_MONT` etc.)
+2. **ARM architecture macros** — `-D__ARM_ARCH__=8 -D__ARM_MAX_ARCH__=8` (MSVC doesn't define these). Without them, compile-time guards exclude ARMv8 fast paths (~200 MB/s vs multi-GB/s)
+3. **Debug optimization workaround** — Pass release flags to Configure (keeps assembly enabled), then patch makefile to restore debug flags
 
-```batch
-REM Patch makefile for ARM64: redirect assembly preprocessor to clang-cl and add debug flags
-perl -i.bak -pe "s/\$\(CC\) \/EP -D__ASSEMBLER__/clang-cl.exe \/EP -D__ASSEMBLER__/g; s/^CFLAGS=(.*)/CFLAGS=$1 \/Z7 \/Zo/g" makefile
-```
+**Deep dive:** See [docs/openssl-arm64-build.md](docs/openssl-arm64-build.md) for full technical analysis.
 
-**Why ARM64 requires special handling:**
-
-The Microsoft C Preprocessor (invoked by `cl.exe /EP`) does not understand GNU-style ARM assembly syntax. When it encounters the `#` character (used for comments and directives in ARM assembly), it interprets it as an invalid C preprocessor directive, either stripping the line or mangling the instruction. This breaks ARM64 assembly compilation.
-
-**ARM64 solution components:**
-
-1. **Use MSVC cl.exe for C compilation**: Required for MSVC intrinsics like `_InterlockedAdd64` that OpenSSL relies on. LLVM/Clang ARM64 intrinsics don't fully implement MSVC-compatible aliases.
-
-2. **Add assembly activation macros to Configure command**: Due to quirks in the VC-WIN64-CLANGASM-ARM target configuration, OpenSSL correctly builds assembly objects but fails to tell the C compiler to use them. These macros activate the assembly code paths in the C "glue" code:
-   ```batch
-   -DOPENSSL_CPUID_OBJ -DOPENSSL_BN_ASM_MONT -DMD5_ASM
-   -DVPAES_ASM -DBSAES_ASM -DSHA1_ASM -DSHA256_ASM -DSHA512_ASM
-   -DKECCAK1600_ASM -DPOLY1305_ASM -DECP_NISTZ256_ASM
-   ```
-   **Critical:** Without these macros, the assembly functions are compiled into the library but never called. The C code falls back to slow software implementations. You can verify assembly activation by checking `openssl.exe speed -evp aes-128-gcm` output - the compiler line should show these macros, and `options:` should display `bn(64,64) mont-asm` (not just `bn(64,64)`).
-
-3. **Define ARM architecture macros for compile-time path selection**: MSVC cl.exe does not define `__ARM_ARCH__` or `__ARM_MAX_ARCH__` when compiling C code, unlike Clang/GCC. OpenSSL uses these macros as compile-time guards to enable ARMv8-specific fast paths:
-   ```batch
-   -D__ARM_ARCH__=8 -D__ARM_MAX_ARCH__=8
-   ```
-
-   **Why this is critical:**
-   - Files like `aes_platform.h` (line 98) and `gcm128.c` (line 372) check `__ARM_MAX_ARCH__>=8` to enable AES/PMULL intrinsics
-   - `cipher_aes_gcm_hw.c` (line 135) only compiles the ARMv8 AES-GCM provider path when these macros are defined
-   - Without these macros, even though assembly objects exist and `IsProcessorFeaturePresent(30)` returns true at runtime, the **compile-time guards prevent the fast paths from being compiled into the C code**
-   - Result: Code falls back to generic C implementation (~200 MB/s instead of multi-GB/s for AES-GCM)
-
-   **How runtime and compile-time gating interact:**
-   - Runtime gating in `armcap.c` (line 32) sets AES/PMULL capability bits based on CPU features
-   - But if compile-time guards excluded the fast path code, there's nothing for runtime to call
-   - Both conditions must be satisfied: code must be compiled (needs `__ARM_MAX_ARCH__=8`) AND runtime must detect capability
-
-4. **Work around debug optimization flag detection (debug builds only)**: OpenSSL's Configure script detects debug optimization flags (`-Od -Ob0`) and disables assembler to avoid historical issues with debug info generation in assembly code. This causes significant performance degradation.
-
-   **Solution:** Pass release optimization flags (`-O2 -Ob1 -Ot -Oi`) to Configure, then patch the makefile to replace them with debug flags:
-   ```batch
-   REM Debug build: Pass release optimization flags to Configure to keep assembly enabled
-   perl Configure VC-WIN64-CLANGASM-ARM no-shared --release ^
-       --prefix=%OPENSSL_ROOT_PATH%\out ^
-       --openssldir=%OPENSSL_ROOT_PATH%\out\ssl ^
-       -O2 -Ob1 -Ot -Oi -Oy- -EHs -GS -bigobj -DNDEBUG %ASM_MACROS%
-
-   REM Patch makefile to replace release optimization flags with debug flags
-   perl -i.bak -pe "s/-O2 -Ob1 -Ot -Oi/-Od -Ob0/g; s/\/O2 /\/Od /g" makefile
-   ```
-   This allows debug builds to have full assembly support while still compiling with no optimization.
-
-5. **Redirect assembly preprocessing to clang-cl**: The Perl patch replaces `$(CC) /EP -D__ASSEMBLER__` with `clang-cl.exe /EP -D__ASSEMBLER__` throughout the makefile. This ensures ARM assembly files are preprocessed by clang-cl, which understands GNU-style ARM syntax.
-
-6. **Add debug symbols to CFLAGS**: The Perl patch also adds `/Z7 /Zo` to the `CFLAGS` line for debug information.
-
-**Why this hybrid approach works:**
-- C code compiled with MSVC cl.exe (provides full intrinsics support)
-- ARM architecture macros enable compile-time fast paths in C code (AES/GCM/etc.)
-- Assembly activation macros tell C code to call assembly functions at runtime
-- Debug builds use optimization flag workaround to prevent Configure from disabling assembler
-- ARM assembly preprocessing handled by clang-cl (understands GNU syntax)
-- Assembly still assembled with the assembler defined by `$(AS)` in VC-WIN64-CLANGASM-ARM configuration
-- Full debugging capability with `/Z7` embedded debug info and `/Zo` optimized debugging
-
-**Performance impact of missing architecture macros:**
-- Without `-D__ARM_ARCH__=8 -D__ARM_MAX_ARCH__=8`: ~200 MB/s for AES-128-GCM (generic C fallback)
-- With architecture macros: Multi-GB/s (ARM crypto extensions + assembly optimizations)
-- The difference is due to compile-time guards preventing fast path compilation, not runtime detection
-
-**Important for PowerShell patching (x64/x86):**
-- Order of replacements matters: first convert `/Zi` to `/Z7`, then append `/Z7 /Zo`
-- Use `[^\r\n]+` to match to end of line when appending flags
-
-**Why `/Z7` instead of `/Zi`:**
-- `/Zi` creates separate PDB files, which causes conflicts with jom parallel builds
-- `/Z7` embeds debug info directly in `.obj` files, works perfectly with parallel builds
-- Both provide full debugging capability
-
-**Why remove PDB install commands:**
-- Since `/Z7` embeds debug info in `.obj` files, no `ossl_static.pdb` file is generated
-- Without this removal, the install step fails with "Can't Open ossl_static.pdb" error
-- The makefile is patched to replace PDB copy commands with a comment explaining the removal
-
-#### Testing the Configuration
-
-Use the unit test script to validate configuration without running full builds:
+#### Testing
 
 ```batch
+REM OpenSSL build config tests
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\devenv7\windows\test-openssl-build-config.ps1
-```
 
-This validates:
-- Configure command construction for both debug and release
-- Assembly activation macros presence in Configure command (ARM64 only)
-- Debug optimization flag workaround (passes release flags to Configure)
-- Makefile patching logic for debug information flags (x64/x86 PowerShell approach)
-- ARM64 assembly preprocessor redirection to clang-cl (Perl approach)
-- Debug optimization flag replacement in makefile (debug builds only)
-- CFLAGS modification for debug symbols
-- Proper flag placement (LIB_CFLAGS vs ASFLAGS)
-- PDB install command removal to prevent install failures
-
-Run specific test suites:
-```batch
-REM Test only ARM64 assembly preprocessing patch
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\devenv7\windows\test-openssl-build-config.ps1 -TestName ARM64PerlPatch
-
-REM Test only debug optimization flag patching
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\devenv7\windows\test-openssl-build-config.ps1 -TestName DebugOptimizationPatch
-
-REM Test only x64/x86 makefile patching
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\devenv7\windows\test-openssl-build-config.ps1 -TestName MakefilePatch
-```
-
-#### Testing Environment Setup and PATH Configuration
-
-After running the toolchain setup, validate that all paths and environment variables are correctly configured:
-
-```batch
+REM Environment setup and PATH validation
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\devenv7\windows\test-setup-env-paths.ps1
 ```
 
-This comprehensive test validates:
-- **Environment variables**: DIST_ROOT_DEPS*, MSVC_ROOT, WINSDK_ROOT, LLVM_ROOT, versions, Platform, VSCMD_ARG_*
-- **PATH components**: MSVC bin paths, Windows SDK bin, Clang-CL, Debuggers, Jom, NASM (x64/x86), Git, Python, MSYS2
-- **INCLUDE paths**: MSVC include, ATL/MFC, Windows SDK (ucrt/um/shared/winrt/cppwinrt)
-- **LIB paths**: MSVC lib, ATL/MFC lib, Windows SDK libs (ucrt/um) for target architecture
-- **LIBPATH paths**: MSVC and ATL/MFC library paths
-- **Tool availability**: cl.exe, link.exe, lib.exe, clang-cl.exe, jom.exe, nasm.exe, git.exe, python.exe, perl.exe, debuggers
+#### Build Verification
 
-**Test specific architecture or skip executable checks:**
+Verification runs automatically after build (before copying to dist). Checks: hardware acceleration (>1 GB/s), correct optimization flags, debug info flags (`/Z7 /Zo`). Skip with `-skip-verification`.
+
 ```batch
-REM Test only ARM64 environment
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\devenv7\windows\test-setup-env-paths.ps1 -Architecture a64
-
-REM Test with custom dist root
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\devenv7\windows\test-setup-env-paths.ps1 -DistRoot C:\custom\dist
-
-REM Validate paths exist without checking for executables (faster)
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\devenv7\windows\test-setup-env-paths.ps1 -SkipToolChecks
-```
-
-**Common PATH issues detected by this test:**
-- **Incorrect debugger path**: Windows SDK uses `Debuggers\arm64` (VS naming), not `Debuggers\a64` (normalized tag)
-  - **Fixed in**: `scripts\devenv7\windows\internal\toolchain-setup.ps1` lines 464-465, 472, 478, 484
-  - Uses `ConvertTo-VSArchitectureName` to convert `a64` → `arm64` for debugger path
-- **Missing NASM for x64/x86**: NASM should be in PATH for x64 and x86 builds (not needed for ARM64)
-- **MSYS2 PATH conflicts**: MSYS2 should be last in PATH to prevent `link.exe` and `find.exe` shadowing Windows tools
-- **Missing Clang-CL architecture-specific bin**: ARM64 needs `LLVM\ARM64\bin`, x64 needs `LLVM\x64\bin`
-
-#### OpenSSL Build Verification
-
-The OpenSSL build script automatically verifies the build configuration before copying to the distribution directory. This verification ensures:
-
-1. **Hardware acceleration is working** (performance > 1 GB/sec)
-2. **Correct optimization flags** (debug: `/Od -Od -Ob0`, release: `/O2 -O2 -Ob1 -Ot -Oi`)
-3. **Debug information flags present** (`/Z7 /Zo` for both variants)
-
-**Verification happens automatically** after the build completes and before copying to dist. If any verification fails, the build exits with an error.
-
-**Skip verification for debugging:**
-```batch
-build-openssl-windows.bat -arch a64 -skip-verification
-```
-
-**Test verification logic independently:**
-```batch
-REM Run all verification unit tests
+REM Test verification logic independently
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\devenv7\windows\test-openssl-verification.ps1
-
-REM Run specific test suite
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\devenv7\windows\test-openssl-verification.ps1 -TestName PerformanceParsing
 ```
-
-**Verification output example:**
-```
-================================================================================
-Verifying OpenSSL Build Configuration
-================================================================================
-
-[Step 1/3] Checking hardware acceleration performance...
-  Running: openssl.exe speed -evp aes-128-gcm
-  AES-128-GCM Speed (16384 bytes): 7.98 GB/sec
-  [PASS] Performance exceeds 1.00 GB/sec threshold
-
-[Step 2/3] Checking optimization flags...
-  Running: openssl.exe version -a
-  Expected flags (debug): /Od -Od -Ob0
-  [PASS] Optimization flags correct for debug variant
-
-[Step 3/3] Checking debug information flags...
-  Expected flags: /Z7 /Zo
-  [PASS] Debug flags present
-
-Total Verifications: 3, Passed: 3, Failed: 0
-
-================================================================================
-Verification Passed Successfully
-================================================================================
-```
-
-**What verification catches:**
-- **Missing hardware acceleration**: If performance is < 1 GB/sec, indicates assembly is not activated or CPU extensions are disabled
-- **Wrong optimization flags**: If debug flags are in release build or vice versa, indicates makefile patching failed
-- **Missing debug info**: If `/Z7` or `/Zo` flags are missing, debugging will be impaired
-
-**Unit test coverage:**
-- 34 unit tests covering all verification logic
-- Performance parsing and threshold validation
-- Compiler flag detection (debug and release)
-- Debug information flag detection
-- Edge cases (empty output, malformed data, boundary conditions)
-- GB/sec formatting and display
-
-#### Verifying Assembly Activation (ARM64 only)
-
-After building OpenSSL for ARM64, verify that assembly optimizations are active (note: this is now done automatically during build):
-
-```batch
-cd %USERPROFILE%\swblocks\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86\openssl\3.5.4\win-a64-vc143-release\bin
-openssl.exe speed -evp aes-128-gcm
-```
-
-**What to check:**
-
-1. **Compiler flags line** - Should contain assembly activation macros:
-   ```
-   compiler: ... -DOPENSSL_BN_ASM_MONT -DOPENSSL_CPUID_OBJ -DBSAES_ASM -DVPAES_ASM ...
-   ```
-
-2. **Options line** - Should show `mont-asm` indicating assembly is active:
-   ```
-   options: bn(64,64) mont-asm
-   ```
-   **NOT:** `options: bn(64,64)` (missing `mont-asm` means assembly is built but not active)
-
-3. **Verify assembly symbols in library**:
-   ```batch
-   cd %USERPROFILE%\swblocks\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86\openssl\3.5.4\win-a64-vc143-release\lib
-   dumpbin /symbols libcrypto.lib | findstr aes_v8_set_encrypt_key
-   ```
-   Should find the symbol, proving assembly code is in the library.
-
-If assembly activation macros are missing from the compiler line, or `mont-asm` is absent from options, the assembly functions exist in the library but the C code won't call them, resulting in significantly slower performance.
 
 ---
 
 ### Boost Build Configuration
 
-#### OpenWith.exe Dialog Issue with clang-win Toolset (ccl16)
+#### clang-win.jam i686 Patch (ccl16 toolchain)
 
-**Issue:** When building Boost 1.90.0 with the ccl16 toolchain (clang-cl compiler), Windows displays OpenWith.exe dialogs asking how to open `.cpp` files. The dialog appears twice per build variant (4 times total for debug and release builds).
+**Problem:** Building Boost with ccl16 (clang-cl) on x86 32-bit host causes OpenWith.exe dialogs — builds hang waiting for user interaction.
 
-**Symptoms:**
-- OpenWith.exe dialog shows during Boost configuration checks
-- Dialog displays ".cpp" with no path information
-- Build completes successfully only after manually closing dialogs
-- No compilation errors, but configuration checks fail silently
+**Root cause:** Boost's `clang-win.jam` recognizes `i386` but not `i686` in its target triple detection. clang-cl on x86 32-bit reports `i686`, causing architecture detection to fail and fall back to broken arm/32 toolchain configuration.
 
-**Impact:**
-- Automated builds hang indefinitely waiting for user interaction
-- CI/CD pipelines cannot complete without manual intervention
-- Build process appears broken despite eventually succeeding
+**Fix:** The build script patches `clang-win.jam` after bootstrap (ccl16 only), adding an `i686` case mapping to x86/32. Patch is applied to extracted source in temporary build directory — does not modify the original archive.
 
-#### Root Cause Analysis
+**Verify:** `type tools\build\src\tools\clang-win.jam | findstr /C:"i686"` in the build directory.
 
-**Environment context:**
-- **Host architecture:** x86 32-bit (i686)
-- **Target architecture:** ARM64 (aarch64) - cross-compilation scenario
-- **Compiler:** clang-cl.exe from MSVC Build Tools (ccl16 toolchain)
+**Impact:** Only affects ccl16 cross-compilation from x86 32-bit host. No impact on vc143 or other architectures.
 
-**The bug sequence:**
-
-1. **clang-cl reports target triple as "i686-pc-windows-msvc"**
-   - When queried with `clang-cl -v`, the compiler identifies itself as targeting i686 (x86 32-bit)
-   - This is correct for the host architecture
-
-2. **Boost's clang-win.jam only recognizes specific target triples**
-   - File: `tools/build/src/tools/clang-win.jam` (lines 92-100)
-   - Switch statement checks for: `x86_64`, `i386`, `aarch64`, `arm`
-   - **Missing:** `i686` case (even though i686 and i386 are both x86 32-bit)
-
-3. **Mismatch causes default detection to fail**
-   - When "i686" doesn't match any case, `default-arch` and `default-addr` remain unset
-   - Boost.Build cannot determine correct architecture/address-model combination
-
-4. **Fallback to incorrect architecture**
-   - Without proper detection, Boost falls back to trying arm/32 (32-bit ARM) configuration
-   - This is wrong - we're cross-compiling from x86/32 (host) to ARM64/64 (target)
-
-5. **arm/32 toolchain initialization fails**
-   - Boost tries to initialize arm/32 tools but gets generic tool names without full paths
-   - Returns "link.exe" instead of full path to linker
-   - Returns "ml.exe" instead of full path to assembler
-
-6. **Configuration checks attempt to compile with broken paths**
-   - Boost runs configuration tests to check compiler features
-   - Tests try to compile small .cpp programs using arm/32 properties
-   - Without proper compiler paths, compilation fails
-
-7. **b2 tries to execute .cpp files directly**
-   - When compilation fails, b2 attempts to run the .cpp file as an executable
-   - This is a fallback behavior when the build system can't figure out how to handle a file
-   - Windows doesn't know how to execute a .cpp file
-
-8. **OpenWith.exe dialog appears**
-   - Windows shows "How do you want to open this .cpp file?" dialog
-   - User must manually close the dialog for each failed configuration check
-   - Dialog appears twice per variant (debug and release), 4 times total
-
-**Why the build completes successfully:**
-- The configuration checks are optional feature detection tests
-- After checks complete (or fail), the actual build uses the correctly specified `toolset=clang-win` parameter
-- The main build works because the clang-win toolset is properly initialized via command-line options
-
-#### The Fix: Patching clang-win.jam
-
-**Solution:** Add "i686" case to Boost's target triple detection in clang-win.jam.
-
-**Location:** `tools/build/src/tools/clang-win.jam` lines 92-100
-
-**Before patch:**
-```jam
-local default-addr ;
-local default-arch ;
-switch $(target) {
-case x86_64  : default-arch = x86 ; default-addr = 64 ;
-case i386    : default-arch = x86 ; default-addr = 32 ;
-case aarch64 : default-arch = arm ; default-addr = 64 ;
-case arm     : default-arch = arm ; default-addr = 32 ;
-}
-```
-
-**After patch:**
-```jam
-local default-addr ;
-local default-arch ;
-switch $(target) {
-case x86_64  : default-arch = x86 ; default-addr = 64 ;
-case i686    : default-arch = x86 ; default-addr = 32 ;
-case i386    : default-arch = x86 ; default-addr = 32 ;
-case aarch64 : default-arch = arm ; default-addr = 64 ;
-case arm     : default-arch = arm ; default-addr = 32 ;
-}
-```
-
-**What the patch does:**
-- Adds explicit recognition of "i686" target triple
-- Maps i686 → x86/32 (same as i386)
-- Ensures proper default architecture and address-model detection
-- Configuration checks now use x86/32 properties (which ARE properly initialized)
-- No more fallback to broken arm/32 toolchain
-- No more OpenWith.exe dialogs
-
-#### Implementation in build-boost-windows.bat
-
-**Script location:** [scripts/devenv7/windows/build-boost-windows.bat](windows/build-boost-windows.bat) lines 396-467
-
-**Patch timing:** After bootstrap completes, before running b2 build command
-
-**Patch method:** PowerShell string replacement with proper newline handling
-
-**Key implementation details:**
-
-1. **Applied only for ccl16 toolchain:**
-   ```batch
-   if /i "%TOOLCHAIN_NAME%"=="ccl16" (
-       REM Apply patch
-   )
-   ```
-
-2. **PowerShell patch command:**
-   ```batch
-   powershell -NoProfile -Command "$content = Get-Content 'tools\build\src\tools\clang-win.jam' -Raw; $newline = [Environment]::NewLine; $replacement = \"case i686    : default-arch = x86 ; default-addr = 32 ;$newline    case i386    : default-arch = x86 ; default-addr = 32 ;\"; $content = $content -replace 'case i386    : default-arch = x86 ; default-addr = 32 ;', $replacement; Set-Content 'tools\build\src\tools\clang-win.jam' -Value $content -NoNewline"
-   ```
-
-3. **Uses `[Environment]::NewLine` for proper line breaks:**
-   - Ensures correct newline characters on Windows (CRLF)
-   - Maintains proper indentation in the patched file
-   - Prevents literal `\n` or backtick-r backtick-n in output
-
-4. **Validates patch success:**
-   ```batch
-   if errorlevel 1 (
-       echo ERROR: Failed to patch clang-win.jam
-       popd
-       exit /b 1
-   )
-   ```
-
-**Temporary nature of patch:**
-- Patch is applied to extracted Boost source in temporary build directory
-- Does not modify the original Boost distribution archive
-- Each build gets a fresh extraction and fresh patch
-- No permanent modification to downloaded Boost source
-
-#### Why This Issue Occurs
-
-**Target triple naming:**
-- Both "i686" and "i386" refer to Intel x86 32-bit architecture
-- "i686" is the Pentium Pro (P6) microarchitecture and later (introduced 1995)
-- "i386" is the Intel 80386 (introduced 1985)
-- Modern compilers typically report "i686" for generic x86 32-bit
-- "i386" is retained for maximum compatibility (older CPUs)
-
-**Boost's incomplete recognition:**
-- Boost.Build's clang-win.jam only checks for "i386"
-- Many modern builds use "i686" as the default x86 32-bit identifier
-- The missing case causes a cascading failure in architecture detection
-
-**Cross-compilation complexity:**
-- Building from x86 32-bit host to ARM64 target is a cross-compilation scenario
-- Boost's configuration checks try to validate the compiler by running test programs
-- Without correct architecture detection, tests run with wrong toolchain settings
-- The wrong toolchain (arm/32) is not properly initialized, leading to missing paths
-
-#### Verification and Testing
-
-**Test the build:**
-```batch
-cd C:\Users\lazar\dev\github\swblocks-baselib
-.\scripts\devenv7\windows\build-boost-windows.bat -arch a64 -toolchain-name ccl16 -dist-root C:\Users\lazar\swblocks\dist-devenv7-windows-hostarch-x86-targets-a64-x64-x86
-```
-
-**Expected behavior with fix:**
-- No OpenWith.exe dialogs appear
-- Build proceeds without manual intervention
-- Configuration checks complete successfully
-- Boost libraries build correctly
-
-**Verify patch was applied:**
-```batch
-cd C:\Users\lazar\swblocks\bld\boost\1.90.0\win-a64-ccl16-debug
-type tools\build\src\tools\clang-win.jam | findstr /C:"i686"
-```
-
-Expected output should show:
-```
-case i686    : default-arch = x86 ; default-addr = 32 ;
-```
-
-**Debugging with -no-cleanup:**
-```batch
-.\scripts\devenv7\windows\build-boost-windows.bat -arch a64 -toolchain-name ccl16 -no-cleanup
-```
-
-This preserves build artifacts for inspection:
-- Build directory: `%USERPROFILE%\swblocks\bld\boost\1.90.0\win-a64-ccl16-debug`
-- Patched clang-win.jam: `tools\build\src\tools\clang-win.jam`
-- Build logs: `log_boost_build.log` and `log_boost_test.log`
-
-#### Related Issues and Workarounds
-
-**Alternative approaches (not used):**
-
-1. **Modify bootstrap.bat to recognize clang-win** - Rejected because:
-   - Requires patching Boost's bootstrap.bat itself
-   - Fragile across Boost versions
-   - More invasive than patching clang-win.jam
-
-2. **Use project-config.jam to configure clang-win** - Rejected because:
-   - Does not fix the target triple detection issue
-   - Configuration checks still fail even with proper initialization
-   - Root cause is in architecture detection, not toolset initialization
-
-3. **Pass explicit compiler paths to b2** - Rejected because:
-   - More complex command-line arguments
-   - Does not fix configuration check failures
-   - Does not address root cause
-
-**Why the selected patch approach:**
-- **Minimal and targeted** - Only adds one line to switch statement
-- **Correct root cause fix** - Addresses the actual detection issue
-- **Non-invasive** - Applied to temporary build directory, not source distribution
-- **Maintainable** - Simple string replacement, easy to understand
-- **Effective** - Completely eliminates the OpenWith.exe dialog issue
-
-#### Impact on Other Toolchains
-
-**No impact on vc143 (MSVC) toolchain:**
-- MSVC toolchain uses different code paths in Boost.Build
-- Does not use clang-win.jam
-- Architecture detection works correctly
-
-**No impact on other architectures:**
-- x64 and x86 native builds use x86_64 or i386 target triples
-- Both are already recognized by Boost's switch statement
-- No configuration check failures occur
-
-**Only affects ccl16 cross-compilation from x86 32-bit host:**
-- Specific scenario: x86 32-bit host → ARM64 target
-- clang-cl on x86 32-bit reports "i686" target
-- Other host architectures report different targets (x86_64, aarch64)
+**Deep dive:** See [docs/boost-clang-win-patch.md](docs/boost-clang-win-patch.md) for full root cause analysis, before/after patch code, implementation details, and rejected alternatives.
 
 ---
 
 ### OpenSSL Cross-Compilation Test Skipping
 
-#### The -hostarch Parameter Requirement
-
-The `build-openssl-windows.bat` script requires a `-hostarch` parameter that specifies the host architecture where the build is running. This is necessary because:
-
-1. **Host vs Target Architecture Distinction**: The script needs to know both the host architecture (where build tools run) and the target architecture (what binaries are being built for) to make intelligent decisions about test execution.
-
-2. **The -dist-root Parameter Doesn't Reveal Host Architecture**: While the distribution folder name includes hostarch (e.g., `dist-devenv7-windows-hostarch-x86-targets-a64-x64-x86`), parsing this from the path would be fragile and error-prone.
-
-3. **Explicit is Better Than Implicit**: Making `-hostarch` a required parameter ensures the build system always has accurate information about the execution environment.
+The `build-openssl-windows.bat` script requires `-hostarch` to distinguish host architecture (where tools run) from target architecture (what binaries are built for). This drives test execution decisions — tests are skipped when the host processor cannot execute target binaries.
 
 #### ARM64 Perl Compatibility Fix
 
-##### Problem Statement
+OpenSSL tests hang on ARM64 Windows because Strawberry Perl (x86/x64 only) running under ARM64 emulation deadlocks in `fork()` emulation when modern process creation optimizations interact with the ARM64 translation layer.
 
-OpenSSL tests can fail or hang on Windows ARM64 systems due to deadlocks in Perl's fork() emulation when Perl runs under ARM64 emulation.
+**Fix:** The script auto-detects ARM64 processor hardware and applies Win8RTM compatibility mode via registry (`HKCU\...\AppCompatFlags\Layers`), disabling the problematic optimizations. If registry commands fail, the build aborts — tests will hang without the fix.
 
-**Root Cause:**
-- Strawberry Perl is available only as x86 or x64 binaries (no native ARM64 version)
-- On ARM64 Windows, x86/x64 Perl runs under emulation (WoW64 for x86, x64 emulation layer for x64)
-- Perl emulates Unix `fork()` using Windows threads
-- When emulated Perl spawns test processes, IPC/threading operations can deadlock in the ARM64 translation layer (Prism)
-- Modern Windows 10/11 process creation optimizations interact poorly with ARM64 emulation
-- Affects tests with extensive I/O (Poly1305, ChaCha20, SSL configurations)
+**Verify:** `reg query "HKCU\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers" | findstr perl`
 
-**Why This Occurs:**
-The issue happens because Strawberry Perl is running under emulation, not because of any native ARM64 code. If native ARM64 Perl existed (it doesn't for Strawberry Perl), this issue would not occur.
+**Remove:** `reg delete "HKCU\...\AppCompatFlags\Layers" /v "C:\path\to\perl.exe" /f`
 
-**Solution:**
-The build script automatically detects ARM64 processor hardware and applies Windows 8 compatibility mode to Perl executables. This prevents the deadlock by disabling modern process creation optimizations that conflict with ARM64 emulation.
+#### Test Execution Matrix
 
-##### Automatic Detection and Fix
-
-When building OpenSSL, the script detects the real processor architecture using a 4-priority mechanism:
-
-1. **Priority 1a:** `PROCESSOR_IDENTIFIER` contains "ARMv8" (checked separately, most reliable)
-1. **Priority 1b:** `PROCESSOR_IDENTIFIER` contains "AArch64" (checked separately)
-2. **Priority 2:** `PROCESSOR_ARCHITECTURE == "ARM64"` (direct native process check)
-3. **Priority 3:** `PROCESSOR_ARCHITEW6432 == "ARM64"` (WoW64 emulation detection)
-4. **Priority 4:** Fallback to x64 or x86 based on `PROCESSOR_ARCHITECTURE`
-
-**Important:** ARMv8 and AArch64 are checked as separate substring matches, not as a single combined string.
-
-If ARM64 is detected, the script automatically applies Windows 8 compatibility mode to Perl executables. The script also dynamically detects versioned Perl executables (e.g., perl5.32.1.exe) using wildcard patterns.
-
-**Critical:** If registry commands fail, the build script will abort with an error. This is essential because OpenSSL tests will hang without the compatibility mode fix.
-
-##### Technical Details
-
-**Why Win8RTM Compatibility Mode Works:**
-- Disables process creation optimizations introduced after Windows 8
-- Forces simpler, more stable code paths for inter-process communication
-- Reduces complexity in ARM64 environment interactions
-- Has minimal performance impact (microseconds per process creation)
-
-**Registry Configuration:**
-- **Path:** `HKCU\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers`
-- **Scope:** Per-user (no admin privileges required)
-- **Persistence:** Setting remains after build completes (no cleanup needed)
-- **Effect:** Windows automatically applies shim when launching Perl executables
-
-**Detection Logic:**
-- Runs independently of `-hostarch` parameter
-- `-hostarch` indicates build tool architecture (what compiler/Perl binaries are used)
-- Processor detection indicates CPU hardware (what the physical processor can execute)
-
-##### Verification
-
-Check if compatibility mode is applied:
-
-```batch
-reg query "HKCU\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers" | findstr perl
-```
-
-Expected output:
-```
-...\perl\bin\perl.exe    REG_SZ    ~ WIN8RTM
-...\perl\bin\perl5.32.1.exe    REG_SZ    ~ WIN8RTM
-```
-
-##### Manual Removal (if needed)
-
-To remove compatibility mode:
-
-```batch
-reg delete "HKCU\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers" ^
-    /v "C:\path\to\strawberry-perl\5.32.1.1\default\perl\bin\perl.exe" /f
-
-reg delete "HKCU\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers" ^
-    /v "C:\path\to\strawberry-perl\5.32.1.1\default\perl\bin\perl5.32.1.exe" /f
-```
-
-##### Impact on Test Execution
-
-With this fix in place, test execution depends on the **processor architecture**, not the hostarch parameter:
+Test execution depends on **processor architecture** (not hostarch parameter):
 
 | Processor | Target Arch | Tests Run? | Reason |
 |-----------|-------------|------------|--------|
@@ -1174,62 +435,17 @@ Starting with devenv7, Windows builds of `utf_baselib_jni` are fully supported a
 
 ### 4. Comma-Separated Arguments Without Quotes
 
-**Symptom:** `Unknown option: x64` when passing `-targets a64,x64,x86` or `-arch a64,x64,x86`
+**Symptom:** `Unknown option: x64` when passing `-targets a64,x64,x86`
 
-**Cause:** Windows batch treats commas as argument separators when unquoted, splitting `a64,x64,x86` into three separate arguments
+**Cause:** Windows batch treats commas as argument separators, splitting into three separate arguments.
 
-**Solution:**
-
-**For scripts that accept multiple values (build-env-all-windows.bat):**
-Use the argument collection loop pattern:
-
-```batch
-if /i "%~1"=="-targets" (
-    set "TARGET_ARCHS="
-    shift
-    goto collect_targets_loop
-)
-goto skip_collect_targets
-:collect_targets_loop
-if "%~1"=="" goto args_done
-set "FIRST_CHAR=%~1"
-set "FIRST_CHAR=!FIRST_CHAR:~0,1!"
-if "!FIRST_CHAR!"=="-" goto parse_args
-if "!TARGET_ARCHS!"=="" (
-    set "TARGET_ARCHS=%~1"
-) else (
-    set "TARGET_ARCHS=!TARGET_ARCHS!,%~1"
-)
-shift
-goto collect_targets_loop
-:skip_collect_targets
-```
-
-**For single-architecture scripts (build-boost-windows.bat, build-openssl-windows.bat):**
-These scripts build ONE architecture at a time. Users should either:
-1. Quote comma-separated values: `-arch "a64,x64,x86"` (but script will treat as invalid single value)
-2. **Use build-env-all-windows.bat** to build multiple architectures
-3. Call the script multiple times with single architecture values
-
-**Important:** Document clearly in help text that the script accepts only ONE architecture.
+**Solution:** Multi-value scripts (`build-env-all-windows.bat`) use an argument collection loop — see implementation in that script. Single-arch scripts (`build-boost-windows.bat`, `build-openssl-windows.bat`) only accept ONE architecture.
 
 ### 5. Label Scoping
 
 **Symptom:** `The system cannot find the batch label specified`
 
-**Cause:** Label placed inside an `if` block
-
-**Solution:** Labels MUST be at column 1, outside any blocks:
-
-```batch
-if condition (
-    goto my_label
-)
-goto skip_label
-:my_label
-REM Label code here
-:skip_label
-```
+**Cause:** Label placed inside an `if` block. Labels MUST be at column 1, outside any blocks.
 
 ### 6. JSON Spirit Directory Structure
 
@@ -1241,27 +457,9 @@ REM Label code here
 
 ### 7. Makefile Patching Regex Breaks Syntax
 
-**Symptom:** `Error: syntax error in Makefile line 151` with flags appearing on separate line:
-```makefile
-LIB_CFLAGS=/MT /Zl $(CNF_CFLAGS) $(CFLAGS)
- /Z7 /Zo
-```
+**Symptom:** `Error: syntax error in Makefile` — flags appear on separate line instead of appending.
 
-**Cause:** Incorrect regex pattern appends to line without anchoring to end of line, causing flags to appear on next line
-
-**Solution:** Use `[^\r\n]+` to match to end of line when appending:
-
-```powershell
-# ❌ WRONG - creates new line
-$content = $content -replace '(LIB_CFLAGS=.*)','$1 /Z7 /Zo'
-
-# ✅ CORRECT - appends to existing line
-$content = $content -replace '(LIB_CFLAGS=[^\r\n]+)','$1 /Z7 /Zo'
-```
-
-**Also important:** Order of replacements matters:
-1. First convert `/Zi` to `/Z7` (removes PDB references)
-2. Then append `/Z7 /Zo` to `LIB_CFLAGS` line
+**Cause:** Regex `(LIB_CFLAGS=.*)` matches to end of line including newline. Use `[^\r\n]+` instead: `(LIB_CFLAGS=[^\r\n]+)`. Also: order matters — convert `/Zi` to `/Z7` first, then append `/Z7 /Zo`.
 
 ---
 
@@ -1304,258 +502,46 @@ build-boost-windows.bat -arch a64 -no-cleanup
 
 ## Script Usage Guidelines
 
-### Multi-Architecture vs Single-Architecture Scripts
+**Multi-architecture:** Use `build-env-all-windows.bat` — accepts comma-separated or space-separated targets (`-targets a64,x64,x86` or `-targets a64 x64 x86`).
 
-The project has two types of build scripts:
-
-#### Multi-Architecture Script: `build-env-all-windows.bat`
-
-**Purpose:** Build complete environment for multiple architectures
-
-**Usage:**
-```batch
-build-env-all-windows.bat -hostarch a64 -targets a64,x64,x86
-build-env-all-windows.bat -hostarch a64 -targets a64 x64 x86
-build-env-all-windows.bat -hostarch a64 -targets "a64,x64,x86"
-```
-
-**Features:**
-- Accepts comma-separated or space-separated architecture lists
-- Handles both quoted and unquoted arguments
-- Loops over architectures and calls single-arch build scripts
-- Uses argument collection loop to handle all formats
-
-#### Single-Architecture Scripts: `build-boost-windows.bat`, `build-openssl-windows.bat`
-
-**Purpose:** Build ONE library for ONE architecture
-
-**Usage:**
-```batch
-REM ✅ CORRECT
-build-boost-windows.bat -arch a64
-build-openssl-windows.bat -arch x64
-
-REM ❌ WRONG - Will fail with "Unknown option" error
-build-boost-windows.bat -arch a64,x64,x86
-build-openssl-windows.bat -arch a64,x64,x86
-```
-
-**Why single-arch only:**
-- These scripts build and test one variant at a time
-- They manage a single build directory
-- They load one architecture's environment
-
-**To build multiple architectures:**
-1. Use `build-env-all-windows.bat` (recommended)
-2. Call the single-arch script multiple times:
-   ```batch
-   for %%A in (a64 x64 x86) do (
-       build-boost-windows.bat -arch %%A
-   )
-   ```
+**Single-architecture:** `build-boost-windows.bat` and `build-openssl-windows.bat` build ONE architecture at a time (`-arch a64`). Passing multiple architectures causes "Unknown option" errors. To build multiple architectures, use `build-env-all-windows.bat` instead.
 
 ---
 
 ## Archive Distribution Script
 
-### Purpose and Design
+The `archive-dists-windows.bat` script creates compressed archives of the distribution folder and downloads cache.
 
-The `archive-dists-windows.bat` script creates compressed archives of the distribution folder and downloads cache for backup, distribution, or offline installation.
-
-**Design principles:**
-1. **Simplicity** - Single required parameter, all paths auto-derived
-2. **Relative paths** - Archives preserve folder structure for easy extraction
-3. **Fast compression** - Uses normal compression level (`-mx=5`) for speed
-4. **Self-contained** - Uses 7-zip from the distribution being archived
-
-### Usage
-
+**Usage:**
 ```batch
 archive-dists-windows.bat -dist-root <folder-name> [-delete-target-if-exists]
 ```
 
-**Examples:**
-```batch
-REM Create archives (fails if archives already exist)
-archive-dists-windows.bat -dist-root dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86
+**Creates two archives** (names match folder names exactly, no timestamps):
 
-REM Create archives, deleting existing ones if present
-archive-dists-windows.bat -dist-root dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86 -delete-target-if-exists
-```
+| Archive | Content |
+|---------|---------|
+| `{dist-root}.zip` | Complete distribution (toolchains, libraries, tools) |
+| `{dist-root}-downloads-cache.zip` | Downloaded source archives (offline rebuilds) |
 
-### What Gets Archived
+**Path derivation** (all auto-calculated from `-dist-root`):
 
-The script creates **exactly two archives** using the exact folder names:
+| Path | Location |
+|------|----------|
+| Dist folder | `%USERPROFILE%\swblocks\{dist-root}` |
+| Cache folder | `%USERPROFILE%\swblocks\{dist-root}-downloads-cache` |
+| Output | `%USERPROFILE%\swblocks\zip` |
+| 7-zip | Auto-detected from `{dist-root}\7zip\*\7za.exe` |
 
-1. **Distribution archive**: `{dist-root}.zip`
-   - Contains the complete distribution folder
-   - All toolchain components, libraries, tools, scripts
-   - Example: `dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86.zip`
+**Compression:** `-mx=5` (normal) — 2-3x faster than maximum with ~60-70% size reduction.
 
-2. **Downloads cache archive**: `{dist-root}-downloads-cache.zip`
-   - Contains all downloaded source archives
-   - Enables offline installation/rebuilds
-   - Example: `dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86-downloads-cache.zip`
-
-**Archive naming:** Archive names match the exact folder names (no timestamps). This ensures consistent, predictable archive names for scripting and automation.
-
-### Path Derivation
-
-All paths are automatically calculated from the `-dist-root` parameter:
-
-| Path | Location | Example |
-|------|----------|---------|
-| Dist folder | `%USERPROFILE%\swblocks\{dist-root}` | `C:\Users\lazar\swblocks\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86` |
-| Cache folder | `%USERPROFILE%\swblocks\{dist-root}-downloads-cache` | `C:\Users\lazar\swblocks\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86-downloads-cache` |
-| Output folder | `%USERPROFILE%\swblocks\zip` | `C:\Users\lazar\swblocks\zip` |
-| 7-zip exe | `{dist-root}\7zip\{version}\7za.exe` | Auto-detected from `dist-root\7zip\*\7za.exe` |
-
-### Compression Settings
-
-**Compression level:** `-mx=5` (normal compression)
-
-**Why normal compression:**
-- **Faster archiving** - Typically 2-3x faster than maximum compression (`-mx=9`)
-- **Good compression ratio** - Still achieves ~60-70% size reduction
-- **Balanced approach** - Reasonable archive size without excessive CPU time
-
-**Compression level comparison:**
-- `-mx=1` (fastest) - Minimal compression, very fast
-- `-mx=5` (normal) - **Used by this script** - Good balance of speed and size
-- `-mx=9` (maximum) - Best compression, slowest
-
-### Archive Structure and Extraction
-
-**Key feature:** Archives preserve relative paths from `%USERPROFILE%\swblocks`
-
-**During archiving:**
-1. Script changes directory to `%USERPROFILE%\swblocks`
-2. Creates archives with relative paths: `{dist-root}\*` and `{dist-root}-downloads-cache\*`
-3. Working directory ensures paths in ZIP match original structure
-
-**Extraction workflow:**
+**Archives preserve relative paths** from `%USERPROFILE%\swblocks`. Extract with:
 ```batch
 cd %USERPROFILE%\swblocks
-7za.exe x zip\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86.zip
-7za.exe x zip\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86-downloads-cache.zip
+7za.exe x zip\{archive-name}.zip
 ```
 
-**Result:** Extracts to original locations automatically:
-- `%USERPROFILE%\swblocks\{dist-root}\`
-- `%USERPROFILE%\swblocks\{dist-root}-downloads-cache\`
-
-**Archive name predictability:** Since archive names match folder names exactly (no timestamps), you can script extraction and deployment workflows without pattern matching or parsing.
-
-### Validation and Error Handling
-
-The script validates:
-- ✅ Distribution folder exists
-- ✅ Downloads cache folder exists
-- ✅ 7-zip executable is available (auto-detected version)
-- ✅ Output directory created if missing
-- ✅ Target archives don't already exist (unless `-delete-target-if-exists` specified)
-
-**Error scenarios:**
-- Missing `-dist-root` parameter → Shows help and exits
-- Dist folder doesn't exist → Error with path shown
-- Cache folder doesn't exist → Error with path shown
-- 7-zip not found in dist → Error (suggests running toolchain setup first)
-- **Target archives already exist** → Error unless `-delete-target-if-exists` is used
-
-**Archive overwrite protection:**
-```batch
-REM This will fail if archives already exist
-archive-dists-windows.bat -dist-root dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86
-
-REM Output: ERROR: Target archive(s) already exist:
-REM           C:\Users\lazar\swblocks\zip\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86.zip
-REM         Use -delete-target-if-exists to overwrite existing archives
-
-REM This will delete existing archives first
-archive-dists-windows.bat -dist-root dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86 -delete-target-if-exists
-```
-
-### Example Output
-
-```
-================================================================================
-Archive Distribution Configuration
-================================================================================
-Distribution Folder:  C:\Users\lazar\swblocks\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86
-Downloads Cache:      C:\Users\lazar\swblocks\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86-downloads-cache
-Output Directory:     C:\Users\lazar\swblocks\zip
-7-Zip Version:        25.01
-7-Zip Executable:     C:\Users\lazar\swblocks\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86\7zip\25.01\7za.exe
-Delete If Exists:     1
-================================================================================
-
-Creating archives with normal compression...
-
-Distribution archive:
-  C:\Users\lazar\swblocks\zip\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86.zip
-  Size: 2048 MB (2147483648 bytes)
-
-Downloads cache archive:
-  C:\Users\lazar\swblocks\zip\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86-downloads-cache.zip
-  Size: 512 MB (536870912 bytes)
-```
-
-### Script Implementation Details
-
-**Line count:** ~290 lines (vs original 325 lines)
-
-**Key implementation patterns:**
-
-1. **7-zip version auto-detection:**
-   ```batch
-   for /d %%D in ("%DIST_FOLDER%\7zip\*") do (
-       set "SEVEN_ZIP_VERSION=%%~nxD"
-       set "SEVEN_ZIP_EXE=%%D\7za.exe"
-       goto found_7zip
-   )
-   ```
-
-2. **Archive name derivation (exact folder names, no timestamp):**
-   ```batch
-   set "DIST_ARCHIVE=%OUTPUT_FOLDER%\%DIST_ROOT%.zip"
-   set "CACHE_ARCHIVE=%OUTPUT_FOLDER%\%DIST_ROOT%-downloads-cache.zip"
-   ```
-
-3. **Overwrite protection:**
-   ```batch
-   REM Check if archives already exist
-   set "ARCHIVE_EXISTS="
-   if exist "%DIST_ARCHIVE%" set "ARCHIVE_EXISTS=1"
-   if exist "%CACHE_ARCHIVE%" set "ARCHIVE_EXISTS=1"
-
-   if defined ARCHIVE_EXISTS (
-       if not defined DELETE_TARGET (
-           echo ERROR: Target archive(s) already exist
-           echo Use -delete-target-if-exists to overwrite
-           goto error
-       ) else (
-           REM Delete existing archives
-           del /f /q "%DIST_ARCHIVE%"
-           del /f /q "%CACHE_ARCHIVE%"
-       )
-   )
-   ```
-
-4. **Working directory for relative paths:**
-   ```batch
-   pushd "%SWBLOCKS_ROOT%"
-   "%SEVEN_ZIP_EXE%" a -mx=5 "%DIST_ARCHIVE%" "%DIST_ROOT%\*" -r
-   popd
-   ```
-
-### Design Rationale
-
-**Why no timestamps:**
-- **Predictable names** - Enables scripting without pattern matching
-- **Simpler automation** - CI/CD workflows can reference exact archive names
-- **Version control** - Folder name already contains all version info (devenv7, hostarch, targets)
-- **Overwrite protection** - Explicit `-delete-target-if-exists` flag prevents accidental overwrites
-- **Clarity** - Archive name matches source folder name exactly
+**Validation:** Checks dist/cache folders exist, 7-zip available, archives don't already exist (use `-delete-target-if-exists` to overwrite).
 
 ---
 
@@ -1575,182 +561,45 @@ Before committing changes to batch scripts:
 
 ## Version History
 
-- **2026-02-04**:
-  - Added comprehensive documentation of Boost OpenWith.exe issue with clang-win toolset
-  - Documented root cause analysis: i686 vs i386 target triple mismatch in clang-win.jam
-  - Documented clang-win.jam patch solution and implementation details
-  - Added verification and testing procedures for Boost build with ccl16 toolchain
-- **2026-01-18**:
-  - Added automated OpenSSL build verification (hardware acceleration, optimization flags, debug flags)
-  - Added comprehensive unit test suite for verification logic (34 tests)
-  - Added `-skip-verification` flag to build-openssl-windows.bat
-  - Added archive distribution script redesign with exact folder naming
-- **2026-01-16**:
-  - Added OpenSSL build configuration strategy, debug information handling, and debugging guidelines
-  - Added ARM64 assembly preprocessing solution using Perl-based makefile patching
-  - Added assembly activation macros for ARM64 to fix VC-WIN64-CLANGASM-ARM quirk
-  - Added verification procedures for assembly activation
-- **2026-01-15**: Initial version with batch script rules, architecture tags, and build system guidelines
+- **2026-02-11**: Restructured — condensed from ~1,800 lines, moved deep technical content to `docs/`
+- **2026-02-04**: Added Boost clang-win.jam patch documentation (ccl16 toolchain)
+- **2026-01-18**: Added OpenSSL build verification, archive distribution script
+- **2026-01-16**: Added OpenSSL ARM64 build configuration and assembly activation
+- **2026-01-15**: Initial version
 
 ---
 
 ## Tool Versions and Compatibility
 
-### Git Version Selection
+### Git
 
-**Current default:** Git 2.48.1
+**Version:** 2.48.1 — last version with x86 32-bit portable installer. Versions 2.49.0+ dropped x86 builds. Can upgrade if x86 support is dropped.
 
-**Rationale:** Git 2.48.1 is the last version that provides a portable package installer for the x86 32-bit version of Git. Later versions (2.49.0+) dropped support for x86 32-bit builds, making it impossible to install Git on x86 target architectures.
+### OpenJDK
 
-**Why this matters:**
-- The devenv7 build environment supports three target architectures: a64, x64, and x86
-- Each architecture needs its own portable Git installation in the distribution
-- Git is required for building certain dependencies and version control operations
-- Using 2.48.1 ensures we can provide Git for all supported architectures
+**Version:** OpenJDK 25 (Microsoft Build). Installed **per target architecture** (not host-only).
 
-**Version compatibility:**
-- **a64 (ARM64)**: Git 2.48.1+ available (but use 2.48.1 for consistency)
-- **x64**: Git 2.48.1+ available (but use 2.48.1 for consistency)
-- **x86**: Git 2.48.1 is the last version with x86 builds
+| Architecture | Supported | Install path |
+|--------------|-----------|-------------|
+| a64 (ARM64) | Yes | `openjdk/25/a64` |
+| x64 | Yes | `openjdk/25/x64` |
+| x86 | No | All major vendors dropped x86 32-bit JDK builds |
 
-**Future considerations:** If x86 support is dropped from the project, Git can be upgraded to newer versions. However, as long as x86 remains a target architecture, we must stay on 2.48.1 or older.
+**Why per-architecture:** Unlike host-only tools (Git, Python), JDK must match the target because build tools may invoke Java code that needs native execution on the target architecture.
 
-### OpenJDK Multi-Architecture Support
+**Naming:** `openjdk/{version}/{arch}` (no `default` prefix — reflects per-architecture installation).
 
-**Current default:** OpenJDK 25 (Microsoft Build)
+### NASM and Strawberry Perl
 
-**Architecture support:**
-- **a64 (ARM64)**: ✅ Fully supported - Microsoft JDK provides ARM64 builds
-- **x64**: ✅ Fully supported - Microsoft JDK provides x64 builds
-- **x86**: ❌ **Not supported** - Microsoft and other major vendors have dropped x86 32-bit support
+**Host-only tools** installed to a single `default` folder with host-matching binary.
 
-**Implementation strategy:**
+| Host | NASM binary | Perl binary |
+|------|-------------|-------------|
+| x86 | win32 (x86) | 32bit-portable |
+| x64 | win64 (x64) | 64bit-portable |
+| ARM64 | win64 (x64, emulated) | 64bit-portable (emulated) |
 
-The devenv7 build environment installs OpenJDK for **all target architectures** (except x86) to ensure Java-dependent build tools work correctly across all compilation targets.
-
-**Installation pattern:**
-```
-%DIST_ROOT%\openjdk\
-├── 25\
-│   ├── a64\          # ARM64 build (if a64 in targets)
-│   └── x64\          # x64 build (if x64 in targets)
-```
-
-**Why multi-architecture installation is required:**
-
-Unlike host-only tools (Git, Python, MSYS2), OpenJDK must be installed for **each target architecture** because:
-1. **Build tools require native execution** - Tools like Gradle may invoke Java code that needs to run natively on the target architecture during cross-compilation
-2. **Architecture-specific optimizations** - Java HotSpot VM includes architecture-specific JIT optimizations
-3. **Native library dependencies** - Some Java build tools may load native libraries that must match the target architecture
-
-**Folder naming convention:**
-
-OpenJDK uses a simplified naming pattern without the "default" prefix:
-- `openjdk\{version}\{arch}` (e.g., `openjdk\25\a64`, `openjdk\25\x64`)
-
-This differs from host-only tools which use:
-- `git\{version}\default` or `python\{version}\default`
-
-The simplified naming reflects that OpenJDK is installed per-architecture rather than per-host.
-
-**x86 32-bit limitation:**
-
-**Why x86 is not supported:**
-
-On Windows, Microsoft and other major JDK vendors (Oracle, Adoptium/Eclipse Temurin, Amazon Corretto, Azul Zulu) have **discontinued x86 32-bit builds** starting around 2020-2021. The reasons include:
-1. **Market shift** - 64-bit Windows has been the standard since Windows 7/8 era
-2. **Security concerns** - 32-bit systems have reduced security features (no ASLR high-entropy, limited DEP)
-3. **Performance limitations** - 32-bit JVM limited to ~1.5GB heap, insufficient for modern builds
-4. **Maintenance burden** - Testing and supporting 32-bit builds is costly with minimal user base
-5. **Microsoft deprecation** - Microsoft dropped 32-bit Windows 10 new installations in 2020
-
-**Last x86 32-bit versions:**
-- **Microsoft JDK**: Never provided x86 builds (started with JDK 11 in 2021, 64-bit only)
-- **Oracle JDK**: Last x86 build was JDK 8 (end-of-life for free updates in 2019)
-- **Adoptium/Temurin**: Discontinued x86 after JDK 8
-- **Amazon Corretto**: Never provided x86 Windows builds
-
-**Impact on devenv7:**
-
-The build environment skips OpenJDK installation for x86 targets automatically:
-```powershell
-# Install OpenJDK for all target architectures (except x86 - not available from Microsoft)
-foreach ($arch in $TargetArchitectures) {
-    if ($arch -ne "x86") {
-        Install-OpenJDK -Version $OpenJDKVersion -Architecture $arch `
-            -DestinationRoot $DistRoot -CacheDirectory $CacheDirectory `
-            -SkipDownload:$SkipDownloads
-    }
-}
-```
-
-**Workarounds for x86 builds:**
-
-If Java-based build tools are absolutely required for x86 targets:
-1. **Use x64 JDK in WoW64 mode** - x64 Java can run on x86 Windows via WoW64 (but requires 64-bit Windows)
-2. **Use legacy JDK 8** - Download Oracle JDK 8 or Adoptium Temurin 8 (unsupported, security risks)
-3. **Avoid Java dependencies** - Restructure build to not require Java for x86 targets
-
-For most use cases, x64 OpenJDK is sufficient even when building for x86 targets, as the Java tools run on the host system (typically 64-bit) and only the compiled output targets x86.
-
-**Download sources:**
-- Microsoft JDK: https://aka.ms/download-jdk
-- File patterns:
-  - ARM64: `microsoft-jdk-{VERSION}.0.1-windows-aarch64.zip`
-  - x64: `microsoft-jdk-{VERSION}.0.1-windows-x64.zip`
-
-**Version compatibility:**
-- **Gradle 9.2.1**: Requires Java 11 or newer (Microsoft JDK 25 fully compatible)
-- **Most modern build tools**: Support Java 11+ (LTS) and Java 17+ (LTS)
-
-### NASM and Strawberry Perl Architecture Support
-
-**Installation strategy:** Both NASM and Strawberry Perl are **host-only tools** that install to a single `default` folder, with the binary matching the host architecture.
-
-**Installation pattern:**
-```
-%DIST_ROOT%\nasm\3.01\default          # Contains x86 or x64 binary based on host
-%DIST_ROOT%\strawberry-perl\5.32.1.1\default  # Contains x86 or x64 binary based on host
-```
-
-**Architecture handling:**
-- **x86 host**: Installs x86 32-bit binaries (win32 for NASM, 32bit-portable for Perl)
-- **x64 host**: Installs x64 64-bit binaries (win64 for NASM, 64bit-portable for Perl)
-- **ARM64 host**: Installs x64 64-bit binaries (run via emulation)
-
-**Why host-specific binaries are required:**
-
-NASM and Strawberry Perl are **cross-compilation tools** that run on the HOST to generate output for TARGET architectures. The tools themselves must be able to execute on the host system:
-
-1. **NASM** (Netwide Assembler):
-   - Runs on host, generates assembly code for target architecture
-   - x64 NASM can generate both x64 and x86 assembly
-   - But x64 NASM binary cannot run on x86 host
-   - URLs:
-     - x86: `https://www.nasm.us/pub/nasm/releasebuilds/3.01/win32/nasm-3.01-win32.zip`
-     - x64: `https://www.nasm.us/pub/nasm/releasebuilds/3.01/win64/nasm-3.01-win64.zip`
-
-2. **Strawberry Perl**:
-   - Runs on host, executes Configure scripts for target architecture
-   - OpenSSL Configure script is architecture-agnostic Perl code
-   - But x64 Perl binary cannot run on x86 host
-   - URLs for version 5.32.1.1:
-     - x86: `https://strawberryperl.com/download/5.32.1.1/strawberry-perl-no64-5.32.1.1-32bit-portable.zip`
-     - x64: `https://strawberryperl.com/download/5.32.1.1/strawberry-perl-5.32.1.1-64bit-portable.zip`
-
-**Strawberry Perl version downgrade:**
-
-Downgraded from **5.40.0.1** to **5.32.1.1** because:
-- Version 5.32.1.1 is the last release supporting both x86 32-bit and x64 architectures
-- Modern versions (5.40.x+) only provide x64 builds
-- This ensures x86 host builds have access to Perl for OpenSSL configuration
-- x64 and ARM64 hosts continue to work normally with the older version
-
-**Implementation:**
-- Both tools modified to accept `Architecture` parameter
-- Functions normalize a64 → x64 (ARM64 uses x64 binaries via emulation)
-- Download URLs dynamically constructed based on architecture
-- Same `default` folder path used regardless of architecture (binary inside changes)
+**Perl version:** 5.32.1.1 — downgraded from 5.40.x because 5.32.1.1 is the last release with x86 32-bit builds. Ensures x86 hosts can run Perl for OpenSSL configuration.
 
 ---
 
@@ -1759,9 +608,7 @@ Downgraded from **5.40.0.1** to **5.32.1.1** because:
 - Architecture normalization: `scripts/devenv7/windows/internal/common.ps1`
 - VS architecture conversion: `ConvertTo-VSArchitectureName` function
 - Build scripts: `scripts/devenv7/windows/build-*.bat`
-- Boost build script: `scripts/devenv7/windows/build-boost-windows.bat` (clang-win.jam patch implementation)
 - Toolchain setup: `scripts/devenv7/windows/internal/toolchain-setup.ps1`
-- OpenSSL build config tests: `scripts/devenv7/windows/test-openssl-build-config.ps1`
-- OpenSSL build verification: `scripts/devenv7/windows/verify-openssl-build.ps1`
-- OpenSSL verification tests: `scripts/devenv7/windows/test-openssl-verification.ps1`
-- Archive distribution script: `scripts/devenv7/windows/archive-dists-windows.bat`
+- Archive distribution: `scripts/devenv7/windows/archive-dists-windows.bat`
+- OpenSSL ARM64 deep dive: [docs/openssl-arm64-build.md](docs/openssl-arm64-build.md)
+- Boost clang-win.jam patch deep dive: [docs/boost-clang-win-patch.md](docs/boost-clang-win-patch.md)
