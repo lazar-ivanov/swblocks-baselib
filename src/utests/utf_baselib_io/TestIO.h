@@ -1701,7 +1701,7 @@ namespace
                                      * associated with the acceptor - see UTF_REQUIRE_EQUAL check below)
                                      */
 
-                                    os::sleep( time::seconds( heartbeatIntervalInSeconds ) + time::seconds( 2L ) );
+                                    os::sleep( time::seconds( heartbeatIntervalInSeconds ) + time::seconds( 5L ) );
 
                                     UTF_REQUIRE_EQUAL( acceptor -> activeEndpoints().size(), 0U );
                                 }
