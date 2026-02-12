@@ -8,7 +8,9 @@ This document contains project-specific guidelines and best practices for AI-ass
 2. [Architecture Tags](#architecture-tags)
 3. [Directory Structure](#directory-structure)
 4. [Build System](#build-system)
-5. [Common Pitfalls](#common-pitfalls)
+5. [devenv Version Gating Pattern](#devenv-version-gating-pattern)
+6. [Windows JNI Support (devenv7+)](#windows-jni-support-devenv7)
+7. [Common Pitfalls](#common-pitfalls)
 
 ---
 
@@ -59,6 +61,16 @@ for %%A in (a64 x64 x86) do (
     echo Building for architecture: %%A ^(native^)
 )
 ```
+
+### Delayed Expansion and Line Continuation
+
+See root `CLAUDE.md` for the full rules on delayed expansion (`!VAR!` inside control structures), line continuation in set commands, and the decision matrix. The rules below are **file-specific guidance** for devenv7 batch files.
+
+**File-specific delayed expansion guidance:**
+
+- **build-env-all-windows.bat:** ALL variables inside `if not "!SKIP_*!"=="1"` blocks MUST use `!VAR!` (e.g., `!TARGETS_SPACED!`, `!DIST_FOLDER_NAME!`, `!TARGET_ARCHS:,= !`)
+- **build-msvc-toolchain.bat:** ALL variables inside normalization loop MUST use `!VAR!` (e.g., `!CURR_ARCH!`, `!TEMP_ARCHS!`, `!NORMALIZED_TARGETS!`)
+- **build-boost-windows.bat, build-openssl-windows.bat:** ALL variables inside architecture loops and nested `if` blocks MUST use `!VAR!`
 
 ### Batch Script Best Practices
 
@@ -352,6 +364,58 @@ MSVC → Clang-CL → Windows SDK → Debuggers → %PATH% → Jom → NASM (x64
 ```
 
 **Why:** MSYS2 contains `link.exe` and `find.exe` that conflict with Windows native tools, so it must be last.
+
+### Cross-Compilation and ARCH Parameter (devenv7+)
+
+Windows builds support cross-compilation using the `ARCH` parameter:
+
+| Architecture | ARCH Value | Status |
+|--------------|------------|--------|
+| ARM64        | `a64`      | Supported |
+| x64          | `x64`      | Supported |
+| x86          | `x86`      | Limited (no JDK 25) |
+
+```bash
+# Default: builds for detected host architecture
+make -k -j4
+
+# Cross-compile for x64 from ARM64 host
+make -k -j4 ARCH=x64
+```
+
+**Host vs Target Architecture:**
+- **Host architecture:** Auto-detected, determines which compiler binaries to use (e.g., `Hostarm64`)
+- **Target architecture:** Controlled by `ARCH` parameter, determines output binary architecture
+- `BL_WIN_ARCH_IS_ARM64` / `BL_WIN_ARCH_IS_X64` flags represent HOST architecture
+- `ARCH` variable represents TARGET architecture
+
+**Host Architecture Detection Algorithm:**
+
+1. If `PROCESSOR_IDENTIFIER` contains "ARMv8" or "AArch64" → ARM64 host (works in all environments including MSYS2)
+2. Else if `PROCESSOR_ARCHITECTURE=ARM64` → ARM64 host (native ARM64 process)
+3. Else if `PROCESSOR_ARCHITEW6432=ARM64` → ARM64 host (emulated x86 process)
+4. Else if `PROCESSOR_ARCHITEW6432=AMD64` → x64 host (x86 WOW64)
+5. Else if `PROCESSOR_ARCHITECTURE=AMD64` → x64 host (native x64)
+6. Else → x86 host
+
+**Note:** `PROCESSOR_IDENTIFIER` is checked first because MSYS2 x64 binaries (including make.exe) running on ARM64 don't set `PROCESSOR_ARCHITEW6432`, but `PROCESSOR_IDENTIFIER` reliably contains "ARMv8" or "AArch64".
+
+**Key Design Principles:**
+
+1. **Environment variables are ignored:** `LIB`, `LIBPATH`, and `INCLUDE` from environment (setup-env scripts) are completely ignored. Makefiles construct paths from scratch based on ARCH. Implemented in `projects/make/common.mk` (lines 145-146).
+2. **Command-line override priority:** Detection uses `ARCH ?=` (conditional assignment) so command-line `ARCH=x64` takes precedence. Implemented in `projects/make/platform.mk`.
+3. **Lazy evaluation for ARCH mapping:** `ARCH_LIBPATH` uses `=` (not `:=`) to evaluate when used, not when assigned, reflecting current ARCH value. Implemented in `projects/make/toolchain/msvc-default.mk`.
+
+**Common ARCH Pitfalls:**
+
+| Problem | Symptom | Solution |
+|---------|---------|----------|
+| Env contaminating paths | Mixed arm64/x64 paths in LIBPATH | Ensure `LIBPATH :=` in common.mk |
+| ARCH parameter ignored | `make ARCH=x64` still builds for a64 | Use `ARCH ?=` in platform.mk |
+| ARCH_LIBPATH not updating | ARCH=x64 but paths still use arm64 | Use `=` (lazy eval) not `:=` |
+| Duplicate paths | Both arm64 and x64 in LIBPATH | Init LIBPATH to empty; use lazy eval |
+
+**Setup scripts are optional.** Makefiles configure all compiler paths internally. Setup scripts only needed for interactive tool use or adding MSYS2 to PATH.
 
 ### OpenSSL Build Configuration Strategy
 
@@ -1002,6 +1066,74 @@ With this fix in place, test execution depends on the **processor architecture**
 - **x86 processor:** Skip x64 and a64 targets
 - Test skipping based on **processor capability**, not hostarch value
 - Strawberry Perl architecture varies by dist folder (x86 or x64), always runs under emulation on ARM64
+
+---
+
+## devenv Version Gating Pattern
+
+When implementing features for **devenv7+ and all future versions**, use the **negative filtering pattern**. This explicitly lists old devenv versions that should NOT have the feature, so new versions are automatically supported.
+
+```makefile
+# Use negative filtering: devenv7+ by default, devenv2-6 explicitly handled
+ifneq ($(filter devenv2 devenv3 devenv4 devenv5 devenv6,$(DEVENV_VERSION_TAG)),)
+  # Old devenv behavior (devenv2-6)
+else
+  # New devenv behavior (devenv7, devenv8, devenv9, ...)
+  # No code changes needed when devenv8+ are added
+endif
+```
+
+**Why negative filtering (not positive checks):** A positive check like `ifeq ($(DEVENV_VERSION_TAG),devenv7)` would require code changes when devenv8 is added. Negative filtering makes new versions automatically get the new behavior.
+
+**Current usage in codebase:**
+- Windows JNI support: `projects/make/utests/utf_baselib_jni/Makefile`
+- Gradle path configuration: `projects/make/3rd/gradle/latest.mk`
+- Boost.JSON support: `projects/make/3rd/boost/common.mk`
+
+**Best practices:**
+- Always use same filter list order: `devenv2 devenv3 devenv4 devenv5 devenv6`
+- Always use `ifneq` (not `ifeq`) with `$(filter ...)`
+- Comment intent: `# Use negative filtering: devenv7+ by default, devenv2-6 explicitly handled`
+
+---
+
+## Windows JNI Support (devenv7+)
+
+Starting with devenv7, Windows builds of `utf_baselib_jni` are fully supported alongside Linux and macOS.
+
+**Version gating:** Uses negative filtering pattern (see above). `BL_WIN_JNI_DISABLED` flag set for devenv2-6 on Windows only. Windows enabled by default for devenv7+.
+
+**Signal handling differences:**
+- **Unix/Linux/macOS:** POSIX signal handling requires `libjsig` library for signal chaining. Must link against `libjsig.so` (Linux) or `libjsig.dylib` (macOS) with rpath configured.
+- **Windows:** Uses Structured Exception Handling (SEH). No `libjsig` linking needed — signal/exception chaining works through SEH automatically.
+
+**JDK directory structure (devenv7):**
+- **Windows:** `${DIST_ROOT_DEPS3}/openjdk/25/{arch}/bin/server/jvm.dll` (arch-specific: `a64`, `x64`)
+- **Linux:** `${DIST_ROOT_DEPS3}/openjdk/25/default/lib/server/libjvm.so`
+- **macOS:** `${DIST_ROOT_DEPS3}/openjdk/25/default/lib/server/libjvm.dylib`
+- x86 is not supported (no JDK 25 available for this architecture)
+
+**JVM runtime loading:** The JVM is loaded dynamically via `LoadLibrary()` (Windows) or `dlopen()` (Unix). Code in `src/include/baselib/jni/JavaVirtualMachine.h` checks multiple path candidates for backward compatibility across JDK 8, 9-24, and 25+.
+
+**JDK configuration:** `projects/make/3rd/jdk/common.mk` auto-detects JDK and sets `BL_JNI_ENABLED`, `JAVA_HOME`, and include paths.
+
+| Architecture | JDK Path (devenv7) | JNI Support |
+|--------------|---------------------|-------------|
+| ARM64 (`a64`) | `openjdk/25/a64` | Supported |
+| x64           | `openjdk/25/x64` | Supported |
+| x86           | N/A                | Not available |
+
+### JNI Lessons Learned (All Resolved)
+
+1. **PATH must be exported:** Without `export PATH` in makefiles, test executables fail with error code 200 because `LoadLibrary()` can't find `jvm.dll`. Fixed in `projects/make/3rd/jdk/common.mk` and `projects/make/toolchain/msvc-default.mk`.
+
+2. **Path normalization on Windows:** `JAVA_HOME` from MSYS/Cygwin contains forward slashes, but Boost.Filesystem appends with backslashes, creating mixed separators that break `fs::exists()`. Fixed by normalizing `JAVA_HOME` with `fs::normalize()` before constructing paths. See `JavaVirtualMachine.h:195-197`.
+
+3. **JNI not enabled:** Verify JDK exists at expected path (`openjdk/25/{arch}`), check `DEVENV_VERSION_TAG` is `devenv7`, and ensure architecture is not in the disabled filter list.
+
+4. **JVM exception warnings:** Warnings like "JNI call made without checking exceptions" are expected during exception handling tests when running with `-Xcheck:jni`. No action needed.
+
+5. **Wrong JVM architecture:** Each target architecture needs its own JDK installation. ARM64 builds require ARM64 JDK, x64 builds require x64 JDK.
 
 ---
 
