@@ -131,6 +131,8 @@ if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     ARCH_TAG="a64"
 elif [ "$ARCH" = "x86_64" ]; then
     ARCH_TAG="x64"
+elif [ "$ARCH" = "i386" ] || [ "$ARCH" = "i486" ] || [ "$ARCH" = "i586" ] || [ "$ARCH" = "i686" ]; then
+    ARCH_TAG="x86"
 else
     echo "Unsupported architecture: $ARCH"
     exit 1
@@ -462,24 +464,24 @@ echo "  ✓ OpenJDK ${JDK_VERSION}"
 echo "  ✓ Gradle ${GRADLE_VERSION}"
 echo
 echo "Installation directory:"
-echo "  ${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-arm"
+echo "  ${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-${ARCH_TAG}"
 echo
 if [ "$TOOLCHAIN" = "gcc-clang" ]; then
     echo "To use this environment with GCC, set the following environment variables:"
-    echo "  export PATH=\"${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-arm/toolchain-gcc/${GCC_VERSION}/${OS_TAG}-${ARCH_TAG}-${GCC_TAG}-release/bin:\$PATH\""
-    echo "  export LD_LIBRARY_PATH=\"${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-arm/toolchain-gcc/${GCC_VERSION}/${OS_TAG}-${ARCH_TAG}-${GCC_TAG}-release/lib64:\$LD_LIBRARY_PATH\""
+    echo "  export PATH=\"${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-${ARCH_TAG}/toolchain-gcc/${GCC_VERSION}/${OS_TAG}-${ARCH_TAG}-${GCC_TAG}-release/bin:\$PATH\""
+    echo "  export LD_LIBRARY_PATH=\"${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-${ARCH_TAG}/toolchain-gcc/${GCC_VERSION}/${OS_TAG}-${ARCH_TAG}-${GCC_TAG}-release/lib64:\$LD_LIBRARY_PATH\""
     echo
     echo "To use this environment with Clang, set the following environment variables:"
-    echo "  export PATH=\"${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-arm/toolchain-clang/${CLANG_VERSION}/${OS_TAG}-${ARCH_TAG}-${CLANG_TAG}-release/bin:\$PATH\""
-    echo "  export LD_LIBRARY_PATH=\"${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-arm/toolchain-clang/${CLANG_VERSION}/${OS_TAG}-${ARCH_TAG}-${CLANG_TAG}-release/lib:\$LD_LIBRARY_PATH\""
+    echo "  export PATH=\"${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-${ARCH_TAG}/toolchain-clang/${CLANG_VERSION}/${OS_TAG}-${ARCH_TAG}-${CLANG_TAG}-release/bin:\$PATH\""
+    echo "  export LD_LIBRARY_PATH=\"${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-${ARCH_TAG}/toolchain-clang/${CLANG_VERSION}/${OS_TAG}-${ARCH_TAG}-${CLANG_TAG}-release/lib:\$LD_LIBRARY_PATH\""
 elif [ "$TOOLCHAIN" = "gcc" ]; then
     echo "To use this environment, set the following environment variables:"
-    echo "  export PATH=\"${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-arm/toolchain-gcc/${GCC_VERSION}/${OS_TAG}-${ARCH_TAG}-${GCC_TAG}-release/bin:\$PATH\""
-    echo "  export LD_LIBRARY_PATH=\"${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-arm/toolchain-gcc/${GCC_VERSION}/${OS_TAG}-${ARCH_TAG}-${GCC_TAG}-release/lib64:\$LD_LIBRARY_PATH\""
+    echo "  export PATH=\"${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-${ARCH_TAG}/toolchain-gcc/${GCC_VERSION}/${OS_TAG}-${ARCH_TAG}-${GCC_TAG}-release/bin:\$PATH\""
+    echo "  export LD_LIBRARY_PATH=\"${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-${ARCH_TAG}/toolchain-gcc/${GCC_VERSION}/${OS_TAG}-${ARCH_TAG}-${GCC_TAG}-release/lib64:\$LD_LIBRARY_PATH\""
 else
     echo "To use this environment, set the following environment variables:"
-    echo "  export PATH=\"${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-arm/toolchain-clang/${CLANG_VERSION}/${OS_TAG}-${ARCH_TAG}-${CLANG_TAG}-release/bin:\$PATH\""
-    echo "  export LD_LIBRARY_PATH=\"${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-arm/toolchain-clang/${CLANG_VERSION}/${OS_TAG}-${ARCH_TAG}-${CLANG_TAG}-release/lib:\$LD_LIBRARY_PATH\""
+    echo "  export PATH=\"${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-${ARCH_TAG}/toolchain-clang/${CLANG_VERSION}/${OS_TAG}-${ARCH_TAG}-${CLANG_TAG}-release/bin:\$PATH\""
+    echo "  export LD_LIBRARY_PATH=\"${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-${ARCH_TAG}/toolchain-clang/${CLANG_VERSION}/${OS_TAG}-${ARCH_TAG}-${CLANG_TAG}-release/lib:\$LD_LIBRARY_PATH\""
 fi
 echo
 echo "==========================================================================="

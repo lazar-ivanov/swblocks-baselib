@@ -64,6 +64,9 @@ if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
 elif [ "$ARCH" = "x86_64" ]; then
     ARCH_TAG="x64"
     ARCH_TRIPLET="x86_64-unknown-linux-gnu"
+elif [ "$ARCH" = "i386" ] || [ "$ARCH" = "i486" ] || [ "$ARCH" = "i586" ] || [ "$ARCH" = "i686" ]; then
+    ARCH_TAG="x86"
+    ARCH_TRIPLET="i686-unknown-linux-gnu"
 else
     echo "Unsupported architecture: $ARCH"
     exit 1
@@ -97,7 +100,7 @@ LLVM_URL="https://github.com/llvm/llvm-project/releases/download/llvmorg-${CLANG
 LLVM_DIR="llvm-project-${CLANG_VERSION}.src"
 
 # Installation paths following devenv5 structure
-BASE_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-arm"
+BASE_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-${ARCH_TAG}"
 VERSION_DIR="${BASE_DIR}/toolchain-clang/${CLANG_VERSION}"
 ARCHIVE_DIR="${VERSION_DIR}/tar"
 SOURCE_DIR="${VERSION_DIR}/source"

@@ -162,6 +162,19 @@ else
     exit 1
 fi
 
+# Detect architecture
+ARCH=$(uname -m)
+if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+    ARCH_TAG="a64"
+elif [ "$ARCH" = "x86_64" ]; then
+    ARCH_TAG="x64"
+elif [ "$ARCH" = "i386" ] || [ "$ARCH" = "i486" ] || [ "$ARCH" = "i586" ] || [ "$ARCH" = "i686" ]; then
+    ARCH_TAG="x86"
+else
+    echo "Unsupported architecture: $ARCH"
+    exit 1
+fi
+
 for dist_tag in "${DIST_TAGS[@]}"; do
     case "${dist_tag}" in
         gcc)
@@ -180,7 +193,7 @@ for dist_tag in "${DIST_TAGS[@]}"; do
             ;;
     esac
 
-    dist_name="dist-${DEVENV_TAG}-${OS_TAG}-${DIST_SUFFIX}-arm"
+    dist_name="dist-${DEVENV_TAG}-${OS_TAG}-${DIST_SUFFIX}-${ARCH_TAG}"
     dist_path="${SWBLOCKS_ROOT}/${dist_name}"
     tar_path="${TAR_DIR}/${dist_name}.tar.gz"
 

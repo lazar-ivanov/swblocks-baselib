@@ -73,8 +73,21 @@ else
     exit 1
 fi
 
+# Detect architecture
+ARCH=$(uname -m)
+if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+    ARCH_TAG="a64"
+elif [ "$ARCH" = "x86_64" ]; then
+    ARCH_TAG="x64"
+elif [ "$ARCH" = "i386" ] || [ "$ARCH" = "i486" ] || [ "$ARCH" = "i586" ] || [ "$ARCH" = "i686" ]; then
+    ARCH_TAG="x86"
+else
+    echo "Unsupported architecture: $ARCH"
+    exit 1
+fi
+
 # Create distribution directory if it doesn't exist
-DIST_ROOT_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-arm"
+DIST_ROOT_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-${ARCH_TAG}"
 if [ ! -d "$DIST_ROOT_DIR" ]; then
     echo "Distribution directory not found. Creating: $DIST_ROOT_DIR"
     mkdir -p "$DIST_ROOT_DIR"

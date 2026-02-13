@@ -108,6 +108,10 @@ elif [ "$ARCH" = "x86_64" ]; then
     ARCH_TAG="x64"
     ARCH_TRIPLET="x86_64-unknown-linux-gnu"
     OPENSSL_ARCH="linux-x86_64"
+elif [ "$ARCH" = "i386" ] || [ "$ARCH" = "i486" ] || [ "$ARCH" = "i586" ] || [ "$ARCH" = "i686" ]; then
+    ARCH_TAG="x86"
+    ARCH_TRIPLET="i686-unknown-linux-gnu"
+    OPENSSL_ARCH="linux-x86"
 else
     echo "Unsupported architecture: $ARCH"
     exit 1
@@ -160,7 +164,7 @@ fi
 BUILD_TAG="${OS_TAG}-${ARCH_TAG}-${COMPILER_TAG}"
 
 # Toolchain path - uses DIST_TAG for dual-toolchain support
-TOOLCHAIN_BASE_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-arm/toolchain-${TOOLCHAIN}/${COMPILER_VERSION}"
+TOOLCHAIN_BASE_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-${ARCH_TAG}/toolchain-${TOOLCHAIN}/${COMPILER_VERSION}"
 TOOLCHAIN_INSTALL_DIR="${TOOLCHAIN_BASE_DIR}/${BUILD_TAG}-release"
 
 # Verify toolchain installation exists
@@ -173,7 +177,7 @@ fi
 # Installation paths
 # VERSION_DIR uses DIST_TAG for dual-toolchain support
 # The shared folders (tar, source, source-linux) are common across toolchains
-VERSION_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-arm/openssl/${OPENSSL_VERSION}"
+VERSION_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-${ARCH_TAG}/openssl/${OPENSSL_VERSION}"
 ARCHIVE_DIR="${VERSION_DIR}/tar"
 SOURCE_DIR="${VERSION_DIR}/source"
 SOURCE_LINUX_DIR="${VERSION_DIR}/source-linux"

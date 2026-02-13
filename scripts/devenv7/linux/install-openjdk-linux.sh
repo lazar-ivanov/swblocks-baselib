@@ -32,9 +32,9 @@
 #   ./install-openjdk-linux.sh gcc1520-clang2010 25       # Install for dual toolchain
 #
 # Directory structure created:
-#   ${HOME}/swblocks/dist-devenv7-ub24-{DIST_TAG}-arm/jdk/open-jdk/25/ub24-a64/
-#   ${HOME}/swblocks/dist-devenv7-ub24-{DIST_TAG}-arm/jdk/open-jdk/25/ub24-a64/include/
-#   ${HOME}/swblocks/dist-devenv7-ub24-{DIST_TAG}-arm/jdk/open-jdk/25/ub24-a64/include/linux/
+#   ${HOME}/swblocks/dist-devenv7-ub24-{DIST_TAG}-{ARCH_TAG}/jdk/open-jdk/25/ub24-a64/
+#   ${HOME}/swblocks/dist-devenv7-ub24-{DIST_TAG}-{ARCH_TAG}/jdk/open-jdk/25/ub24-a64/include/
+#   ${HOME}/swblocks/dist-devenv7-ub24-{DIST_TAG}-{ARCH_TAG}/jdk/open-jdk/25/ub24-a64/include/linux/
 ###############################################################################
 
 set -e  # Exit on error
@@ -68,6 +68,9 @@ if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
 elif [ "$ARCH" = "x86_64" ]; then
     ARCH_TAG="x64"
     JDK_ARCH="x64"
+elif [ "$ARCH" = "i386" ] || [ "$ARCH" = "i486" ] || [ "$ARCH" = "i586" ] || [ "$ARCH" = "i686" ]; then
+    ARCH_TAG="x86"
+    JDK_ARCH="x86"
 else
     echo "Unsupported architecture: $ARCH"
     exit 1
@@ -92,7 +95,7 @@ else
 fi
 
 # Verify distribution directory exists
-DIST_ROOT_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-arm"
+DIST_ROOT_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-${ARCH_TAG}"
 if [ ! -d "$DIST_ROOT_DIR" ]; then
     echo "ERROR: Distribution directory not found: $DIST_ROOT_DIR"
     echo "Please ensure the dist tag '${DIST_TAG}' is correct and the corresponding"

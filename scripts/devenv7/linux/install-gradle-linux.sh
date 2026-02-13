@@ -66,6 +66,8 @@ if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     ARCH_TAG="a64"
 elif [ "$ARCH" = "x86_64" ]; then
     ARCH_TAG="x64"
+elif [ "$ARCH" = "i386" ] || [ "$ARCH" = "i486" ] || [ "$ARCH" = "i586" ] || [ "$ARCH" = "i686" ]; then
+    ARCH_TAG="x86"
 else
     echo "Unsupported architecture: $ARCH"
     exit 1
@@ -90,7 +92,7 @@ else
 fi
 
 # Verify distribution directory exists
-DIST_ROOT_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-arm"
+DIST_ROOT_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-${ARCH_TAG}"
 if [ ! -d "$DIST_ROOT_DIR" ]; then
     echo "ERROR: Distribution directory not found: $DIST_ROOT_DIR"
     echo "Please ensure the dist tag '${DIST_TAG}' is correct and the corresponding"
