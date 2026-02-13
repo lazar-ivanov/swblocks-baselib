@@ -72,15 +72,27 @@ For backward compatibility, the following aliases are accepted and automatically
 
 ### Distribution Folder Naming
 
-The distribution folder follows this format:
+Distribution folder naming is platform-specific. The architecture suffix uses the canonical tags (`a64`, `x64`, `x86`) — never hardcoded values like `-arm`.
 
+**Windows:**
 ```
 dist-devenv7-windows-hostarch-{host}-targets-{target1}-{target2}-{target3}
 ```
+Examples: `dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86`, `dist-devenv7-windows-hostarch-x64-targets-x64`
 
-**Examples:**
-- `dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86`
-- `dist-devenv7-windows-hostarch-x64-targets-x64`
+**Linux:**
+```
+dist-{DEVENV_TAG}-{OS_TAG}-{DIST_TAG}-{ARCH_TAG}
+```
+Architecture detected via `uname -m`: `aarch64`/`arm64` → `a64`, `x86_64` → `x64`, `i386`/`i686` → `x86`.
+Examples: `dist-devenv7-ub24-gcc1520-a64`, `dist-devenv7-rhel9-gcc1520-x64`
+
+**macOS:**
+```
+dist-{DEVENV_TAG}-darwin-{OS_NUMBER}-{ARCH_TAG}
+```
+Architecture detected via `uname -m`: `arm64` → `a64`, `x86_64` → `x64`.
+Examples: `dist-devenv7-darwin-25-a64`, `dist-devenv7-darwin-25-x64`
 
 ### Build Directory Location
 
@@ -561,6 +573,7 @@ Before committing changes to batch scripts:
 
 ## Version History
 
+- **2026-02-13**: Added Linux and macOS dist folder naming conventions to Directory Structure section
 - **2026-02-11**: Restructured — condensed from ~1,800 lines, moved deep technical content to `docs/`
 - **2026-02-04**: Added Boost clang-win.jam patch documentation (ccl16 toolchain)
 - **2026-01-18**: Added OpenSSL build verification, archive distribution script
@@ -607,8 +620,10 @@ Before committing changes to batch scripts:
 
 - Architecture normalization: `scripts/devenv7/windows/internal/common.ps1`
 - VS architecture conversion: `ConvertTo-VSArchitectureName` function
-- Build scripts: `scripts/devenv7/windows/build-*.bat`
+- Windows build scripts: `scripts/devenv7/windows/build-*.bat`
+- Linux build scripts: `scripts/devenv7/linux/build-*.sh`, `scripts/devenv7/linux/install-*.sh`
+- macOS build scripts: `scripts/devenv7/macos/build-*.sh`, `scripts/devenv7/macos/install-*.sh`
 - Toolchain setup: `scripts/devenv7/windows/internal/toolchain-setup.ps1`
-- Archive distribution: `scripts/devenv7/windows/archive-dists-windows.bat`
+- Archive distribution: `scripts/devenv7/windows/archive-dists-windows.bat`, `scripts/devenv7/linux/archive-dists-linux.sh`, `scripts/devenv7/macos/archive-dists-macos.sh`
 - OpenSSL ARM64 deep dive: [docs/openssl-arm64-build.md](docs/openssl-arm64-build.md)
 - Boost clang-win.jam patch deep dive: [docs/boost-clang-win-patch.md](docs/boost-clang-win-patch.md)
