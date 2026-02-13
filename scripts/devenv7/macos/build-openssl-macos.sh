@@ -79,7 +79,7 @@ BUILD_TAG="${OS_TAG}-${ARCH_TAG}-${CLANG_TAG}"
 OS_NUMBER="${OS_TAG:1}"
 
 # Installation paths
-VERSION_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-darwin-${OS_NUMBER}-arm/openssl/${OPENSSL_VERSION}"
+VERSION_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-darwin-${OS_NUMBER}-${ARCH_TAG}/openssl/${OPENSSL_VERSION}"
 ARCHIVE_DIR="${VERSION_DIR}/tar"
 SOURCE_DIR="${VERSION_DIR}/source"
 SOURCE_LINUX_DIR="${VERSION_DIR}/source-linux"

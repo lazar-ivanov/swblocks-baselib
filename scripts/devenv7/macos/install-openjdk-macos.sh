@@ -30,9 +30,9 @@
 #   ./install-openjdk-macos.sh 21 devenv6           # Install JDK 21 devenv6
 #
 # Directory structure created:
-#   ${HOME}/swblocks/dist-devenv7-darwin-25-arm/jdk/open-jdk/25/d25-a64/
-#   ${HOME}/swblocks/dist-devenv7-darwin-25-arm/jdk/open-jdk/25/d25-a64/include/
-#   ${HOME}/swblocks/dist-devenv7-darwin-25-arm/jdk/open-jdk/25/d25-a64/include/darwin/
+#   ${HOME}/swblocks/dist-devenv7-darwin-25-{ARCH_TAG}/jdk/open-jdk/25/d25-a64/
+#   ${HOME}/swblocks/dist-devenv7-darwin-25-{ARCH_TAG}/jdk/open-jdk/25/d25-a64/include/
+#   ${HOME}/swblocks/dist-devenv7-darwin-25-{ARCH_TAG}/jdk/open-jdk/25/d25-a64/include/darwin/
 ###############################################################################
 
 set -e  # Exit on error
@@ -73,7 +73,7 @@ JDK_ARCHIVE="OpenJDK${JDK_VERSION}U-jdk_${JDK_ARCH}_mac_hotspot.tar.gz"
 JDK_URL="https://api.adoptium.net/v3/binary/latest/${JDK_VERSION}/ga/mac/${JDK_ARCH}/jdk/hotspot/normal/eclipse"
 
 # Installation paths
-JDK_ROOT_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-darwin-${OS_NUMBER}-arm/jdk"
+JDK_ROOT_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-darwin-${OS_NUMBER}-${ARCH_TAG}/jdk"
 JDK_OPENJDK_DIR="${JDK_ROOT_DIR}/open-jdk"
 JDK_VERSION_DIR="${JDK_OPENJDK_DIR}/${JDK_VERSION}"
 JDK_INSTALL_DIR="${JDK_VERSION_DIR}/${OS_TAG}-${ARCH_TAG}"

@@ -57,8 +57,19 @@ fi
 # Extract OS number from OS_TAG (e.g., d25 -> 25)
 OS_NUMBER="${OS_TAG:1}"
 
+# Detect architecture
+ARCH=$(uname -m)
+if [ "$ARCH" = "arm64" ]; then
+    ARCH_TAG="a64"
+elif [ "$ARCH" = "x86_64" ]; then
+    ARCH_TAG="x64"
+else
+    echo "Unsupported architecture: $ARCH"
+    exit 1
+fi
+
 # Installation paths
-GRADLE_ROOT_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-darwin-${OS_NUMBER}-arm/gradle"
+GRADLE_ROOT_DIR="${HOME}/swblocks/dist-${DEVENV_TAG}-darwin-${OS_NUMBER}-${ARCH_TAG}/gradle"
 ZIP_DIR="${GRADLE_ROOT_DIR}/zip"
 LATEST_DIR="${GRADLE_ROOT_DIR}/latest"
 DEFAULT_DIR="${LATEST_DIR}/default"

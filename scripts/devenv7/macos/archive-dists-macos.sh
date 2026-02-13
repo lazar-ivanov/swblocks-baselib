@@ -113,7 +113,7 @@ fi
 # Detect architecture
 ARCH=$(uname -m)
 if [ "${ARCH}" = "arm64" ]; then
-    ARCH_TAG="arm"
+    ARCH_TAG="a64"
 elif [ "${ARCH}" = "x86_64" ]; then
     ARCH_TAG="x64"
 else
