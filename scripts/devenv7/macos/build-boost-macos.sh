@@ -86,6 +86,7 @@ SOURCE_DIR="${VERSION_DIR}/source-linux"
 
 # Number of parallel jobs
 JOBS=$(sysctl -n hw.ncpu)
+JOBS=${BL_MAKE_JOBS:-${JOBS}}
 
 echo "==========================================================================="
 echo "Boost ${BOOST_VERSION} Build Configuration"

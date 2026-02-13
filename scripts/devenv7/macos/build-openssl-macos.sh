@@ -87,6 +87,7 @@ SOURCE_LINUX_DIR="${VERSION_DIR}/source-linux"
 # Number of parallel jobs (3x CPU count)
 NCPUS=$(sysctl -n hw.ncpu)
 JOBS=$((NCPUS * 3))
+JOBS=${BL_MAKE_JOBS:-${JOBS}}
 
 echo "==========================================================================="
 echo "OpenSSL ${OPENSSL_VERSION} Build Configuration"

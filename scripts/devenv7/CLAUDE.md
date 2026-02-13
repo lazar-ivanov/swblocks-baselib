@@ -94,6 +94,14 @@ dist-{DEVENV_TAG}-darwin-{OS_NUMBER}-{ARCH_TAG}
 Architecture detected via `uname -m`: `arm64` → `a64`, `x86_64` → `x64`.
 Examples: `dist-devenv7-darwin-25-a64`, `dist-devenv7-darwin-25-x64`
 
+### Parallel Build Jobs Override
+
+All Linux and macOS build scripts that use parallel jobs (`make -j`, `ninja -j`, `b2 -j`) support the `BL_MAKE_JOBS` environment variable. When set, it overrides the auto-calculated job count. When unset, the default calculation is preserved.
+
+Usage: `BL_MAKE_JOBS=1 ./build-env-all.sh gcc` — propagates to all child build scripts.
+
+Scripts with this override: `build-gcc-linux.sh`, `build-clang-linux.sh`, `build-boost-linux.sh`, `build-openssl-linux.sh`, `build-boost-macos.sh`, `build-openssl-macos.sh`.
+
 ### Build Directory Location
 
 **CRITICAL:** Build directories MUST be created in the swblocks folder **parallel to the dist folder**, NOT in the repository.
@@ -573,7 +581,7 @@ Before committing changes to batch scripts:
 
 ## Version History
 
-- **2026-02-13**: Added Linux and macOS dist folder naming conventions to Directory Structure section
+- **2026-02-13**: Added Linux and macOS dist folder naming conventions; added `BL_MAKE_JOBS` parallel jobs override documentation
 - **2026-02-11**: Restructured — condensed from ~1,800 lines, moved deep technical content to `docs/`
 - **2026-02-04**: Added Boost clang-win.jam patch documentation (ccl16 toolchain)
 - **2026-01-18**: Added OpenSSL build verification, archive distribution script

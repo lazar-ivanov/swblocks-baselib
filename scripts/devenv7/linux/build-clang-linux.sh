@@ -121,6 +121,7 @@ else
     JOBS=$((NPROC / 2))
     JOBS=$((JOBS < 1 ? 1 : JOBS))
 fi
+JOBS=${BL_MAKE_JOBS:-${JOBS}}
 
 echo "==========================================================================="
 echo "Clang/LLVM ${CLANG_VERSION} Build Configuration"

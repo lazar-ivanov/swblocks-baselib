@@ -107,6 +107,7 @@ INSTALL_DIR="${VERSION_DIR}/${BUILD_TAG}-${VARIANT}"
 
 # Number of parallel jobs
 JOBS=$(nproc)
+JOBS=${BL_MAKE_JOBS:-${JOBS}}
 
 echo "==========================================================================="
 echo "GCC ${GCC_VERSION} Build Configuration"
