@@ -122,6 +122,8 @@ echo "Source Dir:       ${SOURCE_DIR}"
 echo "Build Dir:        ${BUILD_DIR}"
 echo "Install Dir:      ${INSTALL_DIR}"
 echo "Parallel Jobs:    ${JOBS}"
+echo "Bootstrap:        $([ "${BL_GCC_DISABLE_BOOTSTRAP:-0}" = "1" ] && echo "disabled" || echo "enabled")"
+echo "Sanitizers:       $([ "${BL_GCC_DISABLE_SANITIZERS:-0}" = "1" ] && echo "disabled" || echo "enabled")"
 echo "==========================================================================="
 
 # Check prerequisites
@@ -245,6 +247,17 @@ if [ ! -f "$BUILD_DIR/Makefile" ]; then
     echo "Configuring GCC ${GCC_VERSION}..."
     cd "$BUILD_DIR"
 
+    # Build optional configure flags
+    EXTRA_CONFIGURE_FLAGS=""
+    if [ "${BL_GCC_DISABLE_BOOTSTRAP:-0}" = "1" ]; then
+        EXTRA_CONFIGURE_FLAGS="$EXTRA_CONFIGURE_FLAGS --disable-bootstrap"
+    else
+        EXTRA_CONFIGURE_FLAGS="$EXTRA_CONFIGURE_FLAGS --enable-bootstrap"
+    fi
+    if [ "${BL_GCC_DISABLE_SANITIZERS:-0}" = "1" ]; then
+        EXTRA_CONFIGURE_FLAGS="$EXTRA_CONFIGURE_FLAGS --disable-libsanitizer"
+    fi
+
     "$SOURCE_DIR/$GCC_DIR/configure" \
         --prefix="$INSTALL_DIR" \
         --build="$ARCH_TRIPLET" \
@@ -265,8 +278,8 @@ if [ ! -f "$BUILD_DIR/Makefile" ]; then
         --enable-gnu-indirect-function \
         --with-tune=generic \
         --enable-lto \
-        --enable-bootstrap \
-        --with-pkgversion="swblocks-baselib ${DEVENV_TAG} build"
+        --with-pkgversion="swblocks-baselib ${DEVENV_TAG} build" \
+        $EXTRA_CONFIGURE_FLAGS
 
     if [ $? -ne 0 ]; then
         echo "ERROR: GCC configuration failed"
