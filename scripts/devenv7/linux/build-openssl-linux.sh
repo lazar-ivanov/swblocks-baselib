@@ -326,7 +326,8 @@ build_variant() {
         ${CONFIG_OPTIONS} \
         no-shared \
         --prefix="${BUILD_DIR}" \
-        --openssldir="${BUILD_DIR}/openssl"
+        --openssldir="${BUILD_DIR}/openssl" \
+        --libdir=lib
 
     # Build OpenSSL
     echo "Building OpenSSL for ${VARIANT}..."
