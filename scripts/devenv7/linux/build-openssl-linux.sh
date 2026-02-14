@@ -106,11 +106,11 @@ if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     OPENSSL_ARCH="linux-aarch64"
 elif [ "$ARCH" = "x86_64" ]; then
     ARCH_TAG="x64"
-    ARCH_TRIPLET="x86_64-unknown-linux-gnu"
+    ARCH_TRIPLET="x86_64-pc-linux-gnu"
     OPENSSL_ARCH="linux-x86_64"
 elif [ "$ARCH" = "i386" ] || [ "$ARCH" = "i486" ] || [ "$ARCH" = "i586" ] || [ "$ARCH" = "i686" ]; then
     ARCH_TAG="x86"
-    ARCH_TRIPLET="i686-unknown-linux-gnu"
+    ARCH_TRIPLET="i686-pc-linux-gnu"
     OPENSSL_ARCH="linux-x86"
 else
     echo "Unsupported architecture: $ARCH"

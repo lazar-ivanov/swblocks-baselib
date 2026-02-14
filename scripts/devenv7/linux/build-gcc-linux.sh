@@ -60,10 +60,10 @@ if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     ARCH_TRIPLET="aarch64-unknown-linux-gnu"
 elif [ "$ARCH" = "x86_64" ]; then
     ARCH_TAG="x64"
-    ARCH_TRIPLET="x86_64-unknown-linux-gnu"
+    ARCH_TRIPLET="x86_64-pc-linux-gnu"
 elif [ "$ARCH" = "i386" ] || [ "$ARCH" = "i486" ] || [ "$ARCH" = "i586" ] || [ "$ARCH" = "i686" ]; then
     ARCH_TAG="x86"
-    ARCH_TRIPLET="i686-unknown-linux-gnu"
+    ARCH_TRIPLET="i686-pc-linux-gnu"
 else
     echo "Unsupported architecture: $ARCH"
     exit 1
