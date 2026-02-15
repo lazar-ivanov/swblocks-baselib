@@ -46,6 +46,13 @@ set -u  # Exit on undefined variable
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Check for --setup-env-scripts-only flag
+SETUP_ENV_ONLY=0
+if [ "${1:-}" = "--setup-env-scripts-only" ]; then
+    SETUP_ENV_ONLY=1
+    shift
+fi
+
 # Check if toolchain argument is provided
 if [ $# -lt 1 ]; then
     echo "ERROR: Toolchain parameter is required"
@@ -181,6 +188,22 @@ echo "OpenJDK Version:   ${JDK_VERSION}"
 echo "Gradle Version:    ${GRADLE_VERSION}"
 echo "==========================================================================="
 echo
+
+# If --setup-env-scripts-only, regenerate env scripts and exit
+if [ "${SETUP_ENV_ONLY}" = "1" ]; then
+    echo "Regenerating environment setup scripts only (skipping build)..."
+    DIST_DIR_NAME="dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-${ARCH_TAG}"
+    if [ "$TOOLCHAIN" = "gcc" ] || [ "$TOOLCHAIN" = "gcc-clang" ]; then
+        "${SCRIPT_DIR}/build-gcc-linux.sh" --setup-env-scripts-only "${GCC_VERSION}" "${DEVENV_TAG}" "${DIST_TAG}"
+    fi
+    if [ "$TOOLCHAIN" = "clang" ] || [ "$TOOLCHAIN" = "gcc-clang" ]; then
+        "${SCRIPT_DIR}/build-clang-linux.sh" --setup-env-scripts-only "${CLANG_VERSION}" "${DEVENV_TAG}" "${DIST_TAG}"
+    fi
+    "${SCRIPT_DIR}/generate-ci-init-env.sh" "${DIST_DIR_NAME}"
+    echo "Done."
+    exit 0
+fi
+
 echo "Build order:"
 if [ "$TOOLCHAIN" = "gcc-clang" ]; then
     echo "  1. GCC toolchain"
@@ -440,6 +463,17 @@ else
     echo
     echo "✓ Gradle ${GRADLE_VERSION} installation complete"
 fi
+
+# Generate ci-init-env.mk
+echo
+echo "==========================================================================="
+echo "Generating environment initialization files..."
+echo "==========================================================================="
+echo
+DIST_DIR_NAME="dist-${DEVENV_TAG}-${OS_TAG}-${DIST_TAG}-${ARCH_TAG}"
+"${SCRIPT_DIR}/generate-ci-init-env.sh" "${DIST_DIR_NAME}"
+echo
+echo "✓ Environment initialization files generated"
 
 # Archive the distribution
 echo
