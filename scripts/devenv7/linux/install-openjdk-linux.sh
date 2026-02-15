@@ -32,9 +32,9 @@
 #   ./install-openjdk-linux.sh gcc1520-clang2010 25       # Install for dual toolchain
 #
 # Directory structure created:
-#   ${HOME}/swblocks/dist-devenv7-ub24-{DIST_TAG}-{ARCH_TAG}/jdk/open-jdk/25/ub24-a64/
-#   ${HOME}/swblocks/dist-devenv7-ub24-{DIST_TAG}-{ARCH_TAG}/jdk/open-jdk/25/ub24-a64/include/
-#   ${HOME}/swblocks/dist-devenv7-ub24-{DIST_TAG}-{ARCH_TAG}/jdk/open-jdk/25/ub24-a64/include/linux/
+#   ${HOME}/swblocks/dist-devenv7-ub24-{DIST_TAG}-{ARCH_TAG}/openjdk/25/{ARCH_TAG}/
+#   ${HOME}/swblocks/dist-devenv7-ub24-{DIST_TAG}-{ARCH_TAG}/openjdk/25/{ARCH_TAG}/include/
+#   ${HOME}/swblocks/dist-devenv7-ub24-{DIST_TAG}-{ARCH_TAG}/openjdk/25/{ARCH_TAG}/include/linux/
 ###############################################################################
 
 set -e  # Exit on error
@@ -109,14 +109,10 @@ fi
 JDK_ARCHIVE="OpenJDK${JDK_VERSION}U-jdk_${JDK_ARCH}_linux_hotspot.tar.gz"
 JDK_URL="https://api.adoptium.net/v3/binary/latest/${JDK_VERSION}/ga/linux/${JDK_ARCH}/jdk/hotspot/normal/eclipse"
 
-# Build tag for directory naming (JDK install dir does not include dist tag)
-BUILD_TAG="${OS_TAG}-${ARCH_TAG}"
-
 # Installation paths
-JDK_ROOT_DIR="${DIST_ROOT_DIR}/jdk"
-JDK_OPENJDK_DIR="${JDK_ROOT_DIR}/open-jdk"
-JDK_VERSION_DIR="${JDK_OPENJDK_DIR}/${JDK_VERSION}"
-JDK_INSTALL_DIR="${JDK_VERSION_DIR}/${BUILD_TAG}"
+JDK_ROOT_DIR="${DIST_ROOT_DIR}/openjdk"
+JDK_VERSION_DIR="${JDK_ROOT_DIR}/${JDK_VERSION}"
+JDK_INSTALL_DIR="${JDK_VERSION_DIR}/${ARCH_TAG}"
 ARCHIVE_DIR="${JDK_ROOT_DIR}/archives"
 
 echo "==========================================================================="
@@ -126,7 +122,6 @@ echo "Architecture:     ${ARCH} (${ARCH_TAG})"
 echo "OS Version:       $(lsb_release -ds) (${OS_TAG})"
 echo "Dist Tag:         ${DIST_TAG}"
 echo "DevEnv Tag:       ${DEVENV_TAG}"
-echo "Build Tag:        ${BUILD_TAG}"
 echo "JDK Root:         ${JDK_ROOT_DIR}"
 echo "Archive Dir:      ${ARCHIVE_DIR}"
 echo "Install Dir:      ${JDK_INSTALL_DIR}"
@@ -136,7 +131,6 @@ echo
 # Create directories
 echo "Creating directories..."
 mkdir -p "${JDK_ROOT_DIR}"
-mkdir -p "${JDK_OPENJDK_DIR}"
 mkdir -p "${JDK_VERSION_DIR}"
 mkdir -p "${ARCHIVE_DIR}"
 

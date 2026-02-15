@@ -186,7 +186,7 @@ echo "Component locations:"
 echo "  Boost:       ${HOME}/swblocks/dist-${DEVENV_TAG}-darwin-${OS_NUMBER}-${ARCH_TAG}/boost/${BOOST_VERSION}"
 echo "  OpenSSL:     ${HOME}/swblocks/dist-${DEVENV_TAG}-darwin-${OS_NUMBER}-${ARCH_TAG}/openssl/${OPENSSL_VERSION}"
 echo "  JSON Spirit: ${HOME}/swblocks/dist-${DEVENV_TAG}-darwin-${OS_NUMBER}-${ARCH_TAG}/json-spirit"
-echo "  OpenJDK:     ${HOME}/swblocks/dist-${DEVENV_TAG}-darwin-${OS_NUMBER}-${ARCH_TAG}/jdk/open-jdk/${JDK_VERSION}"
+echo "  OpenJDK:     ${HOME}/swblocks/dist-${DEVENV_TAG}-darwin-${OS_NUMBER}-${ARCH_TAG}/openjdk/${JDK_VERSION}"
 echo "  Gradle:      ${HOME}/swblocks/dist-${DEVENV_TAG}-darwin-${OS_NUMBER}-${ARCH_TAG}/gradle/latest/default"
 echo
 echo "To use this environment, set DIST_ROOT_DEPS paths in your project to:"

@@ -4,13 +4,8 @@ JDK_COMMON_INCLUDED = 1
 # Determine JDK version and path based on devenv
 ifeq ($(DEVENV_VERSION_TAG),devenv7)
 JDK_VERSION = 25
-# devenv7 uses architecture-specific paths on Windows (openjdk/25/a64, openjdk/25/x64)
-# Linux/macOS use single default path (openjdk/25/default)
-ifeq (win, $(findstring win, $(OS)))
-  JDK_BASE_PATH = $(DIST_ROOT_DEPS3)/openjdk/$(JDK_VERSION)/$(ARCH)
-else
-  JDK_BASE_PATH = $(DIST_ROOT_DEPS3)/openjdk/$(JDK_VERSION)/default
-endif
+# devenv7 uses architecture-specific paths on all platforms: openjdk/25/<arch>
+JDK_BASE_PATH = $(DIST_ROOT_DEPS3)/openjdk/$(JDK_VERSION)/$(ARCH)
 else
 JDK_VERSION = 8
 # Older devenvs use jdk/open-jdk/8/<os>-<arch> structure
