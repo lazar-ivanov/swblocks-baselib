@@ -131,8 +131,8 @@ if [ ! -d "${dist_path}" ]; then
 fi
 
 if [ -f "${tar_path}" ]; then
-    echo "Skipping existing archive: ${tar_path}"
-    exit 0
+    echo "ERROR: Archive already exists: ${tar_path}"
+    exit 1
 fi
 
 echo "Creating archive: ${tar_path}"
