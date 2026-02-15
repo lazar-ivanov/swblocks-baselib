@@ -441,13 +441,6 @@ echo "Cleanup complete. Keeping only:"
 echo "  - Archives in: $ARCHIVE_DIR"
 echo "  - Installation in: $INSTALL_DIR"
 
-# Make the entire toolchain-clang directory read-only
-CLANG_ROOT_DIR="${BASE_DIR}/toolchain-clang"
-echo ""
-echo "Making ${CLANG_ROOT_DIR} read-only recursively..."
-chmod -R a-w "${CLANG_ROOT_DIR}"
-echo "Done! All files in ${CLANG_ROOT_DIR} are now read-only."
-
 echo ""
 echo "==========================================================================="
 echo "Clang/LLVM ${CLANG_VERSION} Build Complete!"

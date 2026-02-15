@@ -339,11 +339,4 @@ echo
 echo "To use this Boost build, update your project's DIST_ROOT_DEPS paths to:"
 echo "  ${VERSION_DIR%/*}"
 echo "==========================================================================="
-echo
-
-# Make the entire boost directory read-only (parent of VERSION_DIR)
-BOOST_ROOT_DIR="${VERSION_DIR%/*}"
-echo "Making ${BOOST_ROOT_DIR} read-only recursively..."
-chmod -R a-w "${BOOST_ROOT_DIR}"
-echo "Done! All files in ${BOOST_ROOT_DIR} are now read-only."
 echo "==========================================================================="

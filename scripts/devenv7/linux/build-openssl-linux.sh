@@ -208,13 +208,6 @@ echo "Building:         debug and release variants"
 echo "==========================================================================="
 echo
 
-# Make openssl directory writable if it exists (for dual-toolchain builds)
-OPENSSL_ROOT_DIR="${VERSION_DIR%/*}"
-if [ -d "${OPENSSL_ROOT_DIR}" ]; then
-    echo "OpenSSL directory exists, making it writable..."
-    chmod -R u+w "${OPENSSL_ROOT_DIR}"
-fi
-
 # Create directories
 echo "Creating directories..."
 mkdir -p "${VERSION_DIR}"
@@ -386,10 +379,4 @@ echo "To use this OpenSSL build, update your project's DIST_ROOT_DEPS paths to:"
 echo "  ${VERSION_DIR%/*}"
 echo "==========================================================================="
 echo
-
-# Make the entire openssl directory read-only (parent of VERSION_DIR)
-OPENSSL_ROOT_DIR="${VERSION_DIR%/*}"
-echo "Making ${OPENSSL_ROOT_DIR} read-only recursively..."
-chmod -R a-w "${OPENSSL_ROOT_DIR}"
-echo "Done! All files in ${OPENSSL_ROOT_DIR} are now read-only."
 echo "==========================================================================="

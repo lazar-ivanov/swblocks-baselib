@@ -105,10 +105,9 @@ echo "Installation Dir: ${DIST_ROOT_DIR}"
 echo "==========================================================================="
 echo
 
-# Check if json-spirit already exists and make it writable if needed
+# Check if json-spirit already exists, remove it
 if [ -d "${DIST_ROOT_DIR}/json-spirit" ]; then
     echo "Removing existing JSON Spirit installation..."
-    chmod -R u+w "${DIST_ROOT_DIR}/json-spirit" 2>/dev/null || true
     rm -rf "${DIST_ROOT_DIR}/json-spirit"
 fi
 
@@ -140,13 +139,4 @@ echo "To use this JSON Spirit installation, update your project's DIST_ROOT_DEPS
 echo "  ${DIST_ROOT_DIR}"
 echo "==========================================================================="
 echo
-
-# Make the json-spirit directory read-only
-if [ -d "${DIST_ROOT_DIR}/json-spirit" ]; then
-    echo "Making json-spirit directory read-only recursively..."
-    chmod -R a-w "${DIST_ROOT_DIR}/json-spirit"
-    echo "Done! JSON Spirit files are now read-only."
-else
-    echo "Warning: json-spirit directory not found after extraction"
-fi
 echo "==========================================================================="

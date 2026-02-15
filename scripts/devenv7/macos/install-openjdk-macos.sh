@@ -108,8 +108,6 @@ fi
 # Remove existing installation if present
 if [ -d "${JDK_INSTALL_DIR}" ]; then
     echo "Removing existing OpenJDK installation..."
-    # Need to remove read-only protection first if it exists
-    chmod -R u+w "${JDK_INSTALL_DIR}" 2>/dev/null || true
     rm -rf "${JDK_INSTALL_DIR}"
 fi
 
@@ -189,11 +187,4 @@ echo "  export PATH=\"\$JAVA_HOME/bin:\$PATH\""
 echo
 echo "Or update your project's DIST_ROOT_DEPS paths to:"
 echo "  ${JDK_ROOT_DIR}"
-echo "==========================================================================="
-echo
-
-# Make the entire JDK directory read-only
-echo "Making ${JDK_ROOT_DIR} read-only recursively..."
-chmod -R a-w "${JDK_ROOT_DIR}"
-echo "Done! All files in ${JDK_ROOT_DIR} are now read-only."
 echo "==========================================================================="

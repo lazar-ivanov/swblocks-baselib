@@ -103,8 +103,6 @@ fi
 # Remove existing default installation if present
 if [ -d "${DEFAULT_DIR}" ]; then
     echo "Removing existing Gradle installation..."
-    # Need to remove read-only protection first if it exists
-    chmod -R u+w "${DEFAULT_DIR}" 2>/dev/null || true
     rm -rf "${DEFAULT_DIR}"
 fi
 
@@ -141,11 +139,4 @@ echo "  export PATH=\"${DEFAULT_DIR}/bin:\$PATH\""
 echo
 echo "Or update your project's DIST_ROOT_DEPS paths to:"
 echo "  ${GRADLE_ROOT_DIR}"
-echo "==========================================================================="
-echo
-
-# Make the entire gradle directory read-only
-echo "Making ${GRADLE_ROOT_DIR} read-only recursively..."
-chmod -R a-w "${GRADLE_ROOT_DIR}"
-echo "Done! All files in ${GRADLE_ROOT_DIR} are now read-only."
 echo "==========================================================================="

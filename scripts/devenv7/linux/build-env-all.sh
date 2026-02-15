@@ -441,6 +441,27 @@ else
     echo "✓ Gradle ${GRADLE_VERSION} installation complete"
 fi
 
+# Archive the distribution
+echo
+echo "==========================================================================="
+echo "Archiving distribution..."
+echo "==========================================================================="
+echo
+
+ARCHIVE_ARGS="--devenv ${DEVENV_TAG}"
+if [ "$TOOLCHAIN" = "gcc-clang" ]; then
+    ARCHIVE_ARGS="${ARCHIVE_ARGS} --gcc ${GCC_VERSION} --clang ${CLANG_VERSION}"
+elif [ "$TOOLCHAIN" = "gcc" ]; then
+    ARCHIVE_ARGS="${ARCHIVE_ARGS} --gcc ${GCC_VERSION}"
+else
+    ARCHIVE_ARGS="${ARCHIVE_ARGS} --clang ${CLANG_VERSION}"
+fi
+
+"${SCRIPT_DIR}/archive-dists-linux.sh" ${ARCHIVE_ARGS} "${TOOLCHAIN}"
+
+echo
+echo "✓ Distribution archived successfully"
+
 # Final summary
 echo
 echo "==========================================================================="

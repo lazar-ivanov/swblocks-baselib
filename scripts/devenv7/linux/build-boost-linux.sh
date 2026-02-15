@@ -176,13 +176,6 @@ echo "Building:         debug and release variants"
 echo "==========================================================================="
 echo
 
-# Make boost directory writable if it exists (for dual-toolchain builds)
-BOOST_ROOT_DIR="${VERSION_DIR%/*}"
-if [ -d "${BOOST_ROOT_DIR}" ]; then
-    echo "Boost directory exists, making it writable..."
-    chmod -R u+w "${BOOST_ROOT_DIR}"
-fi
-
 # Create directories
 echo "Creating directories..."
 mkdir -p "${VERSION_DIR}"
@@ -419,10 +412,4 @@ echo "To use this Boost build, update your project's DIST_ROOT_DEPS paths to:"
 echo "  ${VERSION_DIR%/*}"
 echo "==========================================================================="
 echo
-
-# Make the entire boost directory read-only (parent of VERSION_DIR)
-BOOST_ROOT_DIR="${VERSION_DIR%/*}"
-echo "Making ${BOOST_ROOT_DIR} read-only recursively..."
-chmod -R a-w "${BOOST_ROOT_DIR}"
-echo "Done! All files in ${BOOST_ROOT_DIR} are now read-only."
 echo "==========================================================================="

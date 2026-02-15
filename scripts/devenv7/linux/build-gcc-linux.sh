@@ -109,6 +109,13 @@ INSTALL_DIR="${VERSION_DIR}/${BUILD_TAG}-${VARIANT}"
 JOBS=$(nproc)
 JOBS=${BL_MAKE_JOBS:-${JOBS}}
 
+# Auto-detect Rosetta emulation (x86_64 container on ARM64 host)
+# Rosetta causes bootstrap comparison failures due to non-deterministic translation
+if [ "$(uname -m)" = "x86_64" ] && [ -f /proc/sys/fs/binfmt_misc/rosetta ]; then
+    echo "NOTE: Rosetta emulation detected — disabling bootstrap"
+    BL_GCC_DISABLE_BOOTSTRAP=${BL_GCC_DISABLE_BOOTSTRAP:-1}
+fi
+
 echo "==========================================================================="
 echo "GCC ${GCC_VERSION} Build Configuration"
 echo "==========================================================================="
@@ -368,13 +375,6 @@ echo ""
 echo "Cleanup complete. Keeping only:"
 echo "  - Archives in: $ARCHIVE_DIR"
 echo "  - Installation in: $INSTALL_DIR"
-
-# Make the entire toolchain-gcc directory read-only
-GCC_ROOT_DIR="${BASE_DIR}/toolchain-gcc"
-echo ""
-echo "Making ${GCC_ROOT_DIR} read-only recursively..."
-chmod -R a-w "${GCC_ROOT_DIR}"
-echo "Done! All files in ${GCC_ROOT_DIR} are now read-only."
 
 echo ""
 echo "==========================================================================="
