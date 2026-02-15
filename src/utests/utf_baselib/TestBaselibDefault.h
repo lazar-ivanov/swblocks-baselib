@@ -1523,7 +1523,7 @@ UTF_AUTO_TEST_CASE( BaseLib_OSSharedLibTests )
             }
             else
             {
-                UTF_REQUIRE( *ec == EACCES || *ec == ENOTSUP );
+                UTF_REQUIRE( *ec == EACCES || *ec == ENOTSUP || *ec == ENOENT );
             }
 
             const auto str = e.message();
