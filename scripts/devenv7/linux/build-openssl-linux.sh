@@ -311,8 +311,13 @@ build_variant() {
         # Set Clang-specific flags for libc++, compiler-rt, libunwind, and lld
         # Note: Not including -lc++abi in LDFLAGS because libc++/libc++abi will be
         # linked statically at final binary link time with -Wl,-Bstatic
-        export CFLAGS="-stdlib=libc++ -rtlib=compiler-rt --unwindlib=libunwind"
-        export CXXFLAGS="-stdlib=libc++ -rtlib=compiler-rt --unwindlib=libunwind"
+        # -fno-strict-float-cast-overflow: OpenSSL's crypto/params.c has undefined
+        # behavior in OSSL_PARAM_set_double() — it casts negative doubles to uint64_t
+        # and out-of-range doubles to int64_t (lines ~1265, ~1296). At -O3, Clang
+        # exploits this UB, causing 04-test_params_conversion.t to fail. This flag
+        # makes out-of-range float-to-int casts produce defined results instead of UB.
+        export CFLAGS="-stdlib=libc++ -rtlib=compiler-rt --unwindlib=libunwind -fno-strict-float-cast-overflow"
+        export CXXFLAGS="-stdlib=libc++ -rtlib=compiler-rt --unwindlib=libunwind -fno-strict-float-cast-overflow"
         export LDFLAGS="-fuse-ld=lld -stdlib=libc++ -rtlib=compiler-rt --unwindlib=libunwind -L${TOOLCHAIN_INSTALL_DIR}/lib/${ARCH_TRIPLET} -L${TOOLCHAIN_INSTALL_DIR}/lib"
     fi
 

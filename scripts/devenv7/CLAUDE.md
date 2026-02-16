@@ -487,7 +487,15 @@ Starting with devenv7, Windows builds of `utf_baselib_jni` are fully supported a
 
 GCC build scripts correctly use `pc` — this is an LLVM-specific requirement. Do NOT change the clang-related triples to `pc` to match GCC.
 
-### 8. Makefile Patching Regex Breaks Syntax
+### 8. OpenSSL `params_conversion_test` Fails at `-O3` with Clang
+
+**Symptom:** `04-test_params_conversion.t` fails in the release (`-O3`) build with Clang. Debug (`-O0`) passes.
+
+**Cause:** OpenSSL's `crypto/params.c` `OSSL_PARAM_set_double()` casts negative doubles to `uint64_t` and out-of-range doubles to `int64_t` — both undefined behavior per C11 §6.3.1.4. At `-O0` the hardware wraps predictably; at `-O3` Clang exploits the UB and miscompiles the guard checks. Not fixed as of OpenSSL 3.6.x.
+
+**Solution:** Add `-fno-strict-float-cast-overflow` to Clang CFLAGS in `build-openssl-linux.sh`. This flag makes out-of-range float-to-integer casts produce implementation-defined results instead of UB, with no performance or correctness risk.
+
+### 9. Makefile Patching Regex Breaks Syntax
 
 **Symptom:** `Error: syntax error in Makefile` — flags appear on separate line instead of appending.
 
