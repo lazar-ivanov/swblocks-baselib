@@ -118,7 +118,8 @@ JOBS=${BL_MAKE_JOBS:-${JOBS}}
 
 # Auto-detect Rosetta emulation (x86_64 container on ARM64 host)
 # Rosetta causes bootstrap comparison failures due to non-deterministic translation
-if [ "$(uname -m)" = "x86_64" ] && [ -f /proc/sys/fs/binfmt_misc/rosetta ]; then
+# Detection: VirtualApple in /proc/cpuinfo (Docker on Apple Silicon) or rosetta binfmt_misc
+if [ "$(uname -m)" = "x86_64" ] && { [ -f /proc/sys/fs/binfmt_misc/rosetta ] || grep -qi 'VirtualApple' /proc/cpuinfo 2>/dev/null; }; then
     echo "NOTE: Rosetta emulation detected — disabling bootstrap"
     BL_GCC_DISABLE_BOOTSTRAP=${BL_GCC_DISABLE_BOOTSTRAP:-1}
 fi
