@@ -481,7 +481,11 @@ Starting with devenv7, Windows builds of `utf_baselib_jni` are fully supported a
 
 **Cause:** `build-clang-linux.sh` passes `ARCH_TRIPLET` as `CMAKE_C_COMPILER_TARGET`. LLVM normalizes `pc` → `unknown` internally, so the clang driver looks for compiler-rt in `x86_64-unknown-linux-gnu/`, but compiler-rt installed to `x86_64-pc-linux-gnu/` (the unnormalized triple). Path mismatch breaks all linking.
 
-**Solution:** ARCH_TRIPLET in `build-clang-linux.sh` must use `unknown` as vendor: `x86_64-unknown-linux-gnu`, `i686-unknown-linux-gnu`. GCC build scripts correctly use `pc` — this is an LLVM-specific requirement. Do NOT change the clang script's triples to match the GCC script's.
+**Solution:** All scripts that reference clang toolchain library paths must use `unknown` as the vendor in ARCH_TRIPLET for x64/x86. The affected scripts handle this differently:
+- `build-clang-linux.sh` — uses `unknown` directly in its ARCH_TRIPLET (LLVM-only script)
+- `build-boost-linux.sh`, `build-openssl-linux.sh` — override ARCH_TRIPLET to `unknown` when `TOOLCHAIN=clang` (dual-toolchain scripts, keep `pc` for GCC)
+
+GCC build scripts correctly use `pc` — this is an LLVM-specific requirement. Do NOT change the clang-related triples to `pc` to match GCC.
 
 ### 8. Makefile Patching Regex Breaks Syntax
 

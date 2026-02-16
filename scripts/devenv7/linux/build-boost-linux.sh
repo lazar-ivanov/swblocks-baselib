@@ -125,6 +125,17 @@ else
     COMPILER_MINOR=$(echo "$COMPILER_VERSION" | cut -d. -f2)
 fi
 
+# When building with clang, override ARCH_TRIPLET to use 'unknown' vendor.
+# LLVM normalizes all target triples to 'unknown' internally, so clang installs
+# its libraries under e.g. lib/x86_64-unknown-linux-gnu/ (not x86_64-pc-linux-gnu/).
+# GCC uses 'pc', so ARCH_TRIPLET is only overridden for clang.
+if [ "$TOOLCHAIN" = "clang" ]; then
+    case "$ARCH_TAG" in
+        x64) ARCH_TRIPLET="x86_64-unknown-linux-gnu" ;;
+        x86) ARCH_TRIPLET="i686-unknown-linux-gnu" ;;
+    esac
+fi
+
 # Set DIST_TAG - defaults to COMPILER_TAG if not provided
 # DIST_TAG is used for the top-level dist directory
 if [ -n "$DIST_TAG_ARG" ]; then

@@ -21,15 +21,24 @@
 # This script orchestrates the complete build of all components for devenv7
 # It builds GCC or Clang, Boost, OpenSSL, and installs all dependencies in the correct order
 #
-# Usage: ./build-env-all.sh TOOLCHAIN [COMPILER_VERSION]
-#   TOOLCHAIN:        Toolchain to use: gcc or clang (required)
+# Usage: ./build-env-all.sh [OPTIONS] TOOLCHAIN [COMPILER_VERSION]
+#   OPTIONS:
+#     --setup-env-scripts-only  Only regenerate env scripts (gccrc/clangrc, ci-init-env.mk),
+#                               skip all builds. Useful for updating scripts after manual changes.
+#     --skip-toolchains         Skip building the compiler toolchain(s), run everything else
+#                               (Boost, OpenSSL, JSON Spirit, OpenJDK, Gradle, archiving).
+#                               Useful when toolchains are already built and you only need
+#                               to rebuild the dependent libraries.
+#   TOOLCHAIN:        Toolchain to use: gcc, clang, or gcc-clang (required)
 #   COMPILER_VERSION: Compiler version to build (default: 20.1.0 for clang, 15.2.0 for gcc)
 #
 # Examples:
-#   ./build-env-all.sh clang           # Build complete environment with Clang 20.1.0
-#   ./build-env-all.sh gcc             # Build complete environment with GCC 15.2.0
-#   ./build-env-all.sh clang 20.1.0    # Build complete environment with Clang 20.1.0
-#   ./build-env-all.sh gcc 15.2.0      # Build complete environment with GCC 15.2.0
+#   ./build-env-all.sh clang                        # Build complete environment with Clang 20.1.0
+#   ./build-env-all.sh gcc                          # Build complete environment with GCC 15.2.0
+#   ./build-env-all.sh clang 20.1.0                 # Build complete environment with Clang 20.1.0
+#   ./build-env-all.sh gcc 15.2.0                   # Build complete environment with GCC 15.2.0
+#   ./build-env-all.sh --skip-toolchains clang      # Skip Clang build, build Boost/OpenSSL/etc.
+#   ./build-env-all.sh --setup-env-scripts-only gcc  # Only regenerate env scripts
 #
 # Build order:
 #   1. build-gcc-linux.sh or build-clang-linux.sh  - Build compiler toolchain
@@ -46,12 +55,17 @@ set -u  # Exit on undefined variable
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Check for --setup-env-scripts-only flag
+# Parse optional flags (before positional arguments)
 SETUP_ENV_ONLY=0
-if [ "${1:-}" = "--setup-env-scripts-only" ]; then
-    SETUP_ENV_ONLY=1
+SKIP_TOOLCHAINS=0
+while [ "${1:-}" = "--setup-env-scripts-only" ] || [ "${1:-}" = "--skip-toolchains" ]; do
+    if [ "$1" = "--setup-env-scripts-only" ]; then
+        SETUP_ENV_ONLY=1
+    elif [ "$1" = "--skip-toolchains" ]; then
+        SKIP_TOOLCHAINS=1
+    fi
     shift
-fi
+done
 
 # Check if toolchain argument is provided
 if [ $# -lt 1 ]; then
@@ -230,27 +244,34 @@ trap 'echo ""; echo "ERROR: Build failed at step: ${CURRENT_STEP}"; exit 1' ERR
 
 # Build toolchains based on mode
 if [ "$TOOLCHAIN" = "gcc-clang" ]; then
-    # Step 1: Build GCC toolchain
-    CURRENT_STEP="Building GCC ${GCC_VERSION}"
-    echo
-    echo "==========================================================================="
-    echo "Step 1/7: ${CURRENT_STEP}"
-    echo "==========================================================================="
-    echo
-    "${SCRIPT_DIR}/build-gcc-linux.sh" "${GCC_VERSION}" "${DEVENV_TAG}" "${DIST_TAG}"
-    echo
-    echo "✓ GCC ${GCC_VERSION} build complete"
+    if [ "${SKIP_TOOLCHAINS}" = "1" ]; then
+        echo
+        echo "==========================================================================="
+        echo "Skipping toolchain builds (--skip-toolchains)"
+        echo "==========================================================================="
+    else
+        # Step 1: Build GCC toolchain
+        CURRENT_STEP="Building GCC ${GCC_VERSION}"
+        echo
+        echo "==========================================================================="
+        echo "Step 1/7: ${CURRENT_STEP}"
+        echo "==========================================================================="
+        echo
+        "${SCRIPT_DIR}/build-gcc-linux.sh" "${GCC_VERSION}" "${DEVENV_TAG}" "${DIST_TAG}"
+        echo
+        echo "✓ GCC ${GCC_VERSION} build complete"
 
-    # Step 2: Build Clang/LLVM toolchain
-    CURRENT_STEP="Building Clang/LLVM ${CLANG_VERSION}"
-    echo
-    echo "==========================================================================="
-    echo "Step 2/7: ${CURRENT_STEP}"
-    echo "==========================================================================="
-    echo
-    "${SCRIPT_DIR}/build-clang-linux.sh" "${CLANG_VERSION}" "${DEVENV_TAG}" "${DIST_TAG}"
-    echo
-    echo "✓ Clang/LLVM ${CLANG_VERSION} build complete"
+        # Step 2: Build Clang/LLVM toolchain
+        CURRENT_STEP="Building Clang/LLVM ${CLANG_VERSION}"
+        echo
+        echo "==========================================================================="
+        echo "Step 2/7: ${CURRENT_STEP}"
+        echo "==========================================================================="
+        echo
+        "${SCRIPT_DIR}/build-clang-linux.sh" "${CLANG_VERSION}" "${DEVENV_TAG}" "${DIST_TAG}"
+        echo
+        echo "✓ Clang/LLVM ${CLANG_VERSION} build complete"
+    fi
 
     # Step 3: Build Boost for GCC
     CURRENT_STEP="Building Boost ${BOOST_VERSION} for GCC"
@@ -330,16 +351,23 @@ if [ "$TOOLCHAIN" = "gcc-clang" ]; then
     echo "✓ Gradle ${GRADLE_VERSION} installation complete"
 
 elif [ "$TOOLCHAIN" = "gcc" ]; then
-    # Step 1: Build GCC toolchain
-    CURRENT_STEP="Building GCC ${GCC_VERSION}"
-    echo
-    echo "==========================================================================="
-    echo "Step 1/6: ${CURRENT_STEP}"
-    echo "==========================================================================="
-    echo
-    "${SCRIPT_DIR}/build-gcc-linux.sh" "${GCC_VERSION}" "${DEVENV_TAG}" "${DIST_TAG}"
-    echo
-    echo "✓ GCC ${GCC_VERSION} build complete"
+    if [ "${SKIP_TOOLCHAINS}" = "1" ]; then
+        echo
+        echo "==========================================================================="
+        echo "Skipping toolchain build (--skip-toolchains)"
+        echo "==========================================================================="
+    else
+        # Step 1: Build GCC toolchain
+        CURRENT_STEP="Building GCC ${GCC_VERSION}"
+        echo
+        echo "==========================================================================="
+        echo "Step 1/6: ${CURRENT_STEP}"
+        echo "==========================================================================="
+        echo
+        "${SCRIPT_DIR}/build-gcc-linux.sh" "${GCC_VERSION}" "${DEVENV_TAG}" "${DIST_TAG}"
+        echo
+        echo "✓ GCC ${GCC_VERSION} build complete"
+    fi
 
     # Step 2: Build Boost
     CURRENT_STEP="Building Boost ${BOOST_VERSION}"
@@ -397,16 +425,23 @@ elif [ "$TOOLCHAIN" = "gcc" ]; then
     echo "✓ Gradle ${GRADLE_VERSION} installation complete"
 
 else
-    # Step 1: Build Clang/LLVM toolchain
-    CURRENT_STEP="Building Clang/LLVM ${CLANG_VERSION}"
-    echo
-    echo "==========================================================================="
-    echo "Step 1/6: ${CURRENT_STEP}"
-    echo "==========================================================================="
-    echo
-    "${SCRIPT_DIR}/build-clang-linux.sh" "${CLANG_VERSION}" "${DEVENV_TAG}" "${DIST_TAG}"
-    echo
-    echo "✓ Clang/LLVM ${CLANG_VERSION} build complete"
+    if [ "${SKIP_TOOLCHAINS}" = "1" ]; then
+        echo
+        echo "==========================================================================="
+        echo "Skipping toolchain build (--skip-toolchains)"
+        echo "==========================================================================="
+    else
+        # Step 1: Build Clang/LLVM toolchain
+        CURRENT_STEP="Building Clang/LLVM ${CLANG_VERSION}"
+        echo
+        echo "==========================================================================="
+        echo "Step 1/6: ${CURRENT_STEP}"
+        echo "==========================================================================="
+        echo
+        "${SCRIPT_DIR}/build-clang-linux.sh" "${CLANG_VERSION}" "${DEVENV_TAG}" "${DIST_TAG}"
+        echo
+        echo "✓ Clang/LLVM ${CLANG_VERSION} build complete"
+    fi
 
     # Step 2: Build Boost
     CURRENT_STEP="Building Boost ${BOOST_VERSION}"
