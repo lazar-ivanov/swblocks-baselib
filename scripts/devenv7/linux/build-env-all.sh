@@ -251,7 +251,11 @@ if [ "$TOOLCHAIN" = "gcc-clang" ]; then
         echo
         echo "==========================================================================="
         echo "Skipping toolchain builds (--skip-toolchains)"
+        echo "Generating toolchain env scripts only..."
         echo "==========================================================================="
+        echo
+        "${SCRIPT_DIR}/build-gcc-linux.sh" --setup-env-scripts-only "${GCC_VERSION}" "${DEVENV_TAG}" "${DIST_TAG}"
+        "${SCRIPT_DIR}/build-clang-linux.sh" --setup-env-scripts-only "${CLANG_VERSION}" "${DEVENV_TAG}" "${DIST_TAG}"
     else
         # Step 1: Build GCC toolchain
         CURRENT_STEP="Building GCC ${GCC_VERSION}"
@@ -358,7 +362,10 @@ elif [ "$TOOLCHAIN" = "gcc" ]; then
         echo
         echo "==========================================================================="
         echo "Skipping toolchain build (--skip-toolchains)"
+        echo "Generating toolchain env scripts only..."
         echo "==========================================================================="
+        echo
+        "${SCRIPT_DIR}/build-gcc-linux.sh" --setup-env-scripts-only "${GCC_VERSION}" "${DEVENV_TAG}" "${DIST_TAG}"
     else
         # Step 1: Build GCC toolchain
         CURRENT_STEP="Building GCC ${GCC_VERSION}"
@@ -432,7 +439,10 @@ else
         echo
         echo "==========================================================================="
         echo "Skipping toolchain build (--skip-toolchains)"
+        echo "Generating toolchain env scripts only..."
         echo "==========================================================================="
+        echo
+        "${SCRIPT_DIR}/build-clang-linux.sh" --setup-env-scripts-only "${CLANG_VERSION}" "${DEVENV_TAG}" "${DIST_TAG}"
     else
         # Step 1: Build Clang/LLVM toolchain
         CURRENT_STEP="Building Clang/LLVM ${CLANG_VERSION}"
