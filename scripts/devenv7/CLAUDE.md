@@ -284,10 +284,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\devenv7\windows\test
 
 #### Build Verification
 
-Verification runs automatically after build (before copying to dist). Checks: hardware acceleration (>1 GB/s), correct optimization flags, debug info flags (`/Z7 /Zo`). Skip with `-skip-verification`.
+Verification runs automatically after each variant's `make install` (all platforms). Checks 3 things:
+
+1. **Hardware acceleration**: AES-128-GCM speed via `openssl speed -evp aes-128-gcm` — must exceed threshold (1.0 GB/s for x64/a64, 0.5 GB/s for x86 or Rosetta emulation on Linux)
+2. **Optimization flags**: via `openssl version -a` compiler line — debug: `-O0`+`-g` (Linux/macOS) or `/Od -Od -Ob0` (Windows); release: `-O3` (Linux/macOS) or `/O2 -O2 -Ob1 -Ot -Oi` (Windows)
+3. **Debug info flags**: debug only on Linux/macOS (`-g` or `-ggdb`, skipped for release); both variants on Windows (`/Z7 /Zo`)
+
+**Standalone verification** (skip build, run checks on existing binaries):
+- Linux: `./build-openssl-linux.sh --test-hw-acceleration-speed-only [TOOLCHAIN] [VERSION] [DEVENV_TAG] [COMPILER_VERSION] [DIST_TAG]`
+- macOS: `./build-openssl-macos.sh --test-hw-acceleration-speed-only [VERSION] [DEVENV_TAG]`
+- Windows: Skip with `-skip-verification`
+
+**Rosetta detection (Linux only)**: When running x86_64 under Rosetta emulation on Apple Silicon, the threshold is lowered to 0.5 GB/s. Detection checks for `VirtualApple` in `/proc/cpuinfo` or rosetta binfmt_misc entry.
 
 ```batch
-REM Test verification logic independently
+REM Test verification logic independently (Windows)
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\devenv7\windows\test-openssl-verification.ps1
 ```
 
@@ -607,6 +618,7 @@ Before committing changes to batch scripts:
 
 ## Version History
 
+- **2026-02-16**: Added cross-platform OpenSSL build verification documentation (Linux, macOS, Windows)
 - **2026-02-13**: Added Linux and macOS dist folder naming conventions; added `BL_MAKE_JOBS` parallel jobs override documentation
 - **2026-02-11**: Restructured — condensed from ~1,800 lines, moved deep technical content to `docs/`
 - **2026-02-04**: Added Boost clang-win.jam patch documentation (ccl16 toolchain)
