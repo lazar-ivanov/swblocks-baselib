@@ -21,7 +21,12 @@
 # This script builds OpenSSL with static libraries for use with swblocks-baselib
 # Both debug and release variants are built automatically
 #
-# Usage: ./build-openssl-macos.sh [OPENSSL_VERSION] [DEVENV_TAG]
+# Usage: ./build-openssl-macos.sh [OPTIONS] [OPENSSL_VERSION] [DEVENV_TAG]
+#   OPTIONS:
+#     --test-hw-acceleration-speed-only  Skip build/test/install, only run verification
+#                                        checks (HW acceleration speed, optimization flags,
+#                                        debug info flags) on already-built binaries.
+#                                        Assumes build completed successfully.
 #   OPENSSL_VERSION: OpenSSL version to build (default: 3.5.4 - latest LTS)
 #   DEVENV_TAG:      devenv tag (default: devenv7)
 #
@@ -29,10 +34,19 @@
 #   ./build-openssl-macos.sh                       # Build 3.5.4 debug+release devenv7
 #   ./build-openssl-macos.sh 3.5.4                 # Build 3.5.4 debug+release devenv7
 #   ./build-openssl-macos.sh 3.0.12 devenv6        # Build 3.0.12 debug+release devenv6
+#   ./build-openssl-macos.sh --test-hw-acceleration-speed-only          # Verify existing build
+#   ./build-openssl-macos.sh --test-hw-acceleration-speed-only 3.5.4    # Verify specific version
 ###############################################################################
 
 set -e  # Exit on error
 set -u  # Exit on undefined variable
+
+# Parse optional flags (before positional arguments)
+TEST_HW_ACCEL_ONLY=0
+if [ "${1:-}" = "--test-hw-acceleration-speed-only" ]; then
+    TEST_HW_ACCEL_ONLY=1
+    shift
+fi
 
 # Parse command line arguments
 OPENSSL_VERSION="${1:-3.5.4}"
@@ -106,6 +120,198 @@ echo "Parallel Jobs:    ${JOBS} (${NCPUS} CPUs x 3)"
 echo "Building:         debug and release variants"
 echo "==========================================================================="
 echo
+
+###############################################################################
+# OpenSSL Build Verification
+# Verifies that an OpenSSL build has been configured correctly:
+#   1. Hardware acceleration performance (AES-128-GCM speed test)
+#   2. Optimization flags (debug: -O0 -g, release: -O3)
+#   3. Debug information flags (debug only: -g or -ggdb)
+# Matches the Windows verify-openssl-build.ps1 verification pattern.
+###############################################################################
+
+# Verify an OpenSSL build: HW acceleration speed, optimization flags, debug info flags.
+# Arguments: OPENSSL_EXE BUILD_TYPE(debug|release) ARCH_TAG_ARG(x86|x64|a64)
+# Returns: 0 if all passed, 1 if any failed
+verify_openssl_build() {
+    local OPENSSL_EXE="$1"
+    local BUILD_TYPE="$2"
+    local ARCH_TAG_ARG="$3"
+
+    local VERIFICATIONS_PASSED=0
+    local VERIFICATIONS_FAILED=0
+
+    # =========================================================================
+    # Verification 1: Hardware Acceleration Performance
+    # =========================================================================
+    echo ""
+    echo "[Step 1/3] Checking hardware acceleration performance..."
+    echo "  Running: openssl speed -evp aes-128-gcm"
+
+    local SPEED_OUTPUT
+    SPEED_OUTPUT=$("${OPENSSL_EXE}" speed -evp aes-128-gcm 2>&1) || true
+
+    local PERF_LINE
+    PERF_LINE=$(echo "$SPEED_OUTPUT" | grep -E '^\s*AES-128-GCM\s+' || true)
+
+    if [ -z "$PERF_LINE" ]; then
+        echo "  [FAIL] Could not find AES-128-GCM performance line in output"
+        VERIFICATIONS_FAILED=$((VERIFICATIONS_FAILED + 1))
+    else
+        # Extract last column (16384-byte block performance) and convert to GB/sec
+        local PERF_GBPS
+        PERF_GBPS=$(echo "$PERF_LINE" | awk '{
+            val = $NF;
+            sub(/k$/, "", val);
+            printf "%.2f", val / 1024 / 1024
+        }')
+
+        echo "  AES-128-GCM Speed (16384 bytes): ${PERF_GBPS} GB/sec"
+
+        # Threshold: x86=0.5 GB/sec, x64/a64=1.0 GB/sec
+        local THRESHOLD
+        if [ "$ARCH_TAG_ARG" = "x86" ]; then
+            THRESHOLD="0.50"
+        else
+            THRESHOLD="1.00"
+        fi
+
+        local PASS
+        PASS=$(awk "BEGIN { print (${PERF_GBPS} > ${THRESHOLD}) }")
+        if [ "$PASS" = "1" ]; then
+            echo "  [PASS] Performance exceeds ${THRESHOLD} GB/sec threshold"
+            VERIFICATIONS_PASSED=$((VERIFICATIONS_PASSED + 1))
+        else
+            echo "  [FAIL] Performance ${PERF_GBPS} GB/sec is below ${THRESHOLD} GB/sec threshold"
+            echo "  This indicates hardware acceleration is not working correctly"
+            VERIFICATIONS_FAILED=$((VERIFICATIONS_FAILED + 1))
+        fi
+    fi
+
+    # =========================================================================
+    # Verification 2: Optimization Flags
+    # =========================================================================
+    echo ""
+    echo "[Step 2/3] Checking optimization flags..."
+    echo "  Running: openssl version -a"
+
+    local VERSION_OUTPUT
+    VERSION_OUTPUT=$("${OPENSSL_EXE}" version -a 2>&1)
+
+    local COMPILER_LINE
+    COMPILER_LINE=$(echo "$VERSION_OUTPUT" | grep -E '^compiler:' || true)
+
+    if [ -z "$COMPILER_LINE" ]; then
+        echo "  [FAIL] Could not find compiler line in version output"
+        VERIFICATIONS_FAILED=$((VERIFICATIONS_FAILED + 1))
+    else
+        if [ "$BUILD_TYPE" = "debug" ]; then
+            echo "  Expected flags (debug): -O0 and -g"
+            # Debug variant: check for -O0 AND -g
+            local HAS_O0 HAS_G
+            HAS_O0=$(echo "$COMPILER_LINE" | grep -c '\-O0' || true)
+            HAS_G=$(echo "$COMPILER_LINE" | grep -c '\-g ' || true)
+            if [ "$HAS_O0" -gt 0 ] && [ "$HAS_G" -gt 0 ]; then
+                echo "  [PASS] Optimization flags correct for debug variant"
+                VERIFICATIONS_PASSED=$((VERIFICATIONS_PASSED + 1))
+            else
+                echo "  Compiler line: ${COMPILER_LINE}"
+                echo "  [FAIL] Missing or incorrect debug optimization flags"
+                VERIFICATIONS_FAILED=$((VERIFICATIONS_FAILED + 1))
+            fi
+        else
+            echo "  Expected flags (release): -O3"
+            # Release variant: check for -O3
+            local HAS_O3
+            HAS_O3=$(echo "$COMPILER_LINE" | grep -c '\-O3' || true)
+            if [ "$HAS_O3" -gt 0 ]; then
+                echo "  [PASS] Optimization flags correct for release variant"
+                VERIFICATIONS_PASSED=$((VERIFICATIONS_PASSED + 1))
+            else
+                echo "  Compiler line: ${COMPILER_LINE}"
+                echo "  [FAIL] Missing or incorrect release optimization flags"
+                VERIFICATIONS_FAILED=$((VERIFICATIONS_FAILED + 1))
+            fi
+        fi
+    fi
+
+    # =========================================================================
+    # Verification 3: Debug Information Flags
+    # =========================================================================
+    echo ""
+    echo "[Step 3/3] Checking debug information flags..."
+
+    if [ "$BUILD_TYPE" = "release" ]; then
+        # Release does not pass -g to Configure, so this check is not applicable
+        echo "  [SKIP] Not applicable for release variant (debug symbols not used)"
+        VERIFICATIONS_PASSED=$((VERIFICATIONS_PASSED + 1))
+    else
+        echo "  Expected flags: -g or -ggdb"
+        if [ -z "$COMPILER_LINE" ]; then
+            echo "  [FAIL] Could not find compiler line in version output"
+            VERIFICATIONS_FAILED=$((VERIFICATIONS_FAILED + 1))
+        else
+            # Check for -g or -ggdb in compiler line
+            local HAS_DEBUG_FLAG
+            HAS_DEBUG_FLAG=$(echo "$COMPILER_LINE" | grep -cE '(\-ggdb|\-g )' || true)
+            if [ "$HAS_DEBUG_FLAG" -gt 0 ]; then
+                echo "  [PASS] Debug flags present"
+                VERIFICATIONS_PASSED=$((VERIFICATIONS_PASSED + 1))
+            else
+                echo "  Compiler line: ${COMPILER_LINE}"
+                echo "  [FAIL] Missing debug information flags (-g or -ggdb)"
+                VERIFICATIONS_FAILED=$((VERIFICATIONS_FAILED + 1))
+            fi
+        fi
+    fi
+
+    # =========================================================================
+    # Summary
+    # =========================================================================
+    local TOTAL=$((VERIFICATIONS_PASSED + VERIFICATIONS_FAILED))
+    echo ""
+    echo "Total Verifications: ${TOTAL}, Passed: ${VERIFICATIONS_PASSED}, Failed: ${VERIFICATIONS_FAILED}"
+
+    if [ "$VERIFICATIONS_FAILED" -gt 0 ]; then
+        return 1
+    fi
+    return 0
+}
+
+# If --test-hw-acceleration-speed-only, run verification on existing builds and exit
+if [ "${TEST_HW_ACCEL_ONLY}" = "1" ]; then
+    echo "Running verification checks only (skipping build)..."
+    echo
+
+    OVERALL_RESULT=0
+    for VARIANT in debug release; do
+        VERIFY_BUILD_DIR="${VERSION_DIR}/${BUILD_TAG}-${VARIANT}"
+        VERIFY_OPENSSL_EXE="${VERIFY_BUILD_DIR}/bin/openssl"
+        if [ ! -f "${VERIFY_OPENSSL_EXE}" ]; then
+            echo "ERROR: OpenSSL binary not found: ${VERIFY_OPENSSL_EXE}" >&2
+            exit 1
+        fi
+        echo "==========================================================================="
+        echo "Verifying ${VARIANT} variant: ${VERIFY_OPENSSL_EXE}"
+        echo "==========================================================================="
+        if ! verify_openssl_build "${VERIFY_OPENSSL_EXE}" "${VARIANT}" "${ARCH_TAG}"; then
+            OVERALL_RESULT=1
+        fi
+        echo
+    done
+
+    if [ "${OVERALL_RESULT}" = "0" ]; then
+        echo "==========================================================================="
+        echo "All Verification Checks Passed"
+        echo "==========================================================================="
+    else
+        echo "==========================================================================="
+        echo "ERROR: Some verification checks failed"
+        echo "==========================================================================="
+    fi
+
+    exit ${OVERALL_RESULT}
+fi
 
 # Create directories
 echo "Creating directories..."
@@ -211,6 +417,17 @@ build_variant() {
     # Install OpenSSL
     echo "Installing OpenSSL for ${VARIANT}..."
     make install
+
+    # Verify build (HW acceleration, optimization flags, debug info flags)
+    echo ""
+    echo "==========================================================================="
+    echo "Verifying OpenSSL Build Configuration (${VARIANT})"
+    echo "==========================================================================="
+    verify_openssl_build "${BUILD_DIR}/bin/openssl" "${VARIANT}" "${ARCH_TAG}"
+    echo ""
+    echo "==========================================================================="
+    echo "Verification Passed Successfully (${VARIANT})"
+    echo "==========================================================================="
 
     # Clean up work directory
     echo "Cleaning up work directory..."
