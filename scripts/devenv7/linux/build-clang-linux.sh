@@ -183,7 +183,9 @@ export CXXFLAGS="-std=c++11 -fPIC -Wall -Wpedantic -Wextra -fno-strict-aliasing 
 export CPPFLAGS="-D_FILE_OFFSET_BITS=64"
 
 # LDFLAGS (common, non-variant — standalone clang with libc++)
-export LDFLAGS="-pthread -fuse-ld=lld -stdlib=libc++ -rtlib=compiler-rt --unwindlib=libunwind -static-libstdc++"
+# -lc++abi is required because libc++.a does not include the C++ ABI symbols
+# (__cxa_*, operator new/delete, std::exception, etc.) — those live in libc++abi.
+export LDFLAGS="-pthread -fuse-ld=lld -stdlib=libc++ -rtlib=compiler-rt --unwindlib=libunwind -static-libstdc++ -lc++abi"
 RCEOF
 
     echo "Generated: ${RC_FILE}"
