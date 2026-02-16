@@ -475,7 +475,15 @@ Starting with devenv7, Windows builds of `utf_baselib_jni` are fully supported a
 
 **Solution:** Extract to temp, then move `json-spirit/{version}/source/` to final location
 
-### 7. Makefile Patching Regex Breaks Syntax
+### 7. LLVM/Clang ARCH_TRIPLET Must Use 'unknown' Vendor
+
+**Symptom:** Stage 2 runtimes configure fails — every cmake test fails with `ld.lld: error: cannot open .../lib/clang/20/lib/x86_64-unknown-linux-gnu/libclang_rt.builtins.a: No such file or directory`
+
+**Cause:** `build-clang-linux.sh` passes `ARCH_TRIPLET` as `CMAKE_C_COMPILER_TARGET`. LLVM normalizes `pc` → `unknown` internally, so the clang driver looks for compiler-rt in `x86_64-unknown-linux-gnu/`, but compiler-rt installed to `x86_64-pc-linux-gnu/` (the unnormalized triple). Path mismatch breaks all linking.
+
+**Solution:** ARCH_TRIPLET in `build-clang-linux.sh` must use `unknown` as vendor: `x86_64-unknown-linux-gnu`, `i686-unknown-linux-gnu`. GCC build scripts correctly use `pc` — this is an LLVM-specific requirement. Do NOT change the clang script's triples to match the GCC script's.
+
+### 8. Makefile Patching Regex Breaks Syntax
 
 **Symptom:** `Error: syntax error in Makefile` — flags appear on separate line instead of appending.
 

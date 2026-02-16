@@ -64,16 +64,21 @@ CLANG_MAJOR=$(echo "$CLANG_VERSION" | cut -d. -f1)
 DIST_TAG="${3:-$CLANG_TAG}"
 
 # Detect architecture
+# IMPORTANT: ARCH_TRIPLET must use 'unknown' as the vendor (not 'pc') for Clang/LLVM builds.
+# LLVM normalizes all target triples to use 'unknown' internally. If 'pc' is passed via
+# CMAKE_C_COMPILER_TARGET, compiler-rt installs builtins under 'x86_64-pc-linux-gnu/' but
+# the clang driver looks in 'x86_64-unknown-linux-gnu/', causing a path mismatch that breaks
+# all linking during the runtimes sub-build. GCC uses 'pc' — this difference is LLVM-specific.
 ARCH=$(uname -m)
 if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     ARCH_TAG="a64"
     ARCH_TRIPLET="aarch64-unknown-linux-gnu"
 elif [ "$ARCH" = "x86_64" ]; then
     ARCH_TAG="x64"
-    ARCH_TRIPLET="x86_64-pc-linux-gnu"
+    ARCH_TRIPLET="x86_64-unknown-linux-gnu"
 elif [ "$ARCH" = "i386" ] || [ "$ARCH" = "i486" ] || [ "$ARCH" = "i586" ] || [ "$ARCH" = "i686" ]; then
     ARCH_TAG="x86"
-    ARCH_TRIPLET="i686-pc-linux-gnu"
+    ARCH_TRIPLET="i686-unknown-linux-gnu"
 else
     echo "Unsupported architecture: $ARCH"
     exit 1
