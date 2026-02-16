@@ -44,6 +44,15 @@ def format_size(size_bytes):
         size_bytes /= 1024.0
     return f"{size_bytes:.2f} PB"
 
+def format_duration(seconds):
+    """Format duration in seconds to human-readable format (seconds, minutes, or hours)."""
+    if seconds < 60:
+        return f"{seconds:.2f} seconds"
+    elif seconds < 3600:
+        return f"{seconds / 60:.2f} minutes"
+    else:
+        return f"{seconds / 3600:.2f} hours"
+
 def format_speed(size_bytes, elapsed_seconds):
     """
     Format processing speed with auto-adapting units.
@@ -610,7 +619,7 @@ def command_upload(args, s3_client=None):
         print(f"Files that would be uploaded: {upload_count}")
         print(f"Files that would be skipped: {skip_count}")
         print(f"Total upload size: {format_size(total_upload_size_bytes)}")
-        print(f"Upload speed: {format_speed(total_upload_size_bytes, elapsed_time)} ({format_size(total_upload_size_bytes)} in {elapsed_time:.2f} seconds)")
+        print(f"Upload speed: {format_speed(total_upload_size_bytes, elapsed_time)} ({format_size(total_upload_size_bytes)} in {format_duration(elapsed_time)})")
         print("\nNo files were actually uploaded (dry-run mode)")
     else:
         print("\n--- UPLOAD SUMMARY ---")
@@ -618,7 +627,7 @@ def command_upload(args, s3_client=None):
         print(f"Files uploaded: {upload_count}")
         print(f"Files skipped (already exist): {skip_count}")
         print(f"Total uploaded size: {format_size(total_upload_size_bytes)}")
-        print(f"Upload speed: {format_speed(total_upload_size_bytes, elapsed_time)} ({format_size(total_upload_size_bytes)} in {elapsed_time:.2f} seconds)")
+        print(f"Upload speed: {format_speed(total_upload_size_bytes, elapsed_time)} ({format_size(total_upload_size_bytes)} in {format_duration(elapsed_time)})")
 
 def command_list(args, s3_client=None):
     """
@@ -791,7 +800,7 @@ def command_verify(args, s3_client=None):
     print(f"Different (mismatch): {different_count}")
     print(f"Not uploaded to S3: {not_uploaded_count}")
     print(f"Errors: {error_count}")
-    print(f"Verify speed: {format_speed(total_verified_size_bytes, elapsed_time)} ({format_size(total_verified_size_bytes)} in {elapsed_time:.2f} seconds)")
+    print(f"Verify speed: {format_speed(total_verified_size_bytes, elapsed_time)} ({format_size(total_verified_size_bytes)} in {format_duration(elapsed_time)})")
 
     # Exit with non-zero code if any mismatches or errors
     if different_count > 0 or error_count > 0:
@@ -1114,7 +1123,7 @@ def command_download(args, s3_client=None):
     print(f"Verified (existing files, match): {verified_count} ({format_size(total_verified_size)})")
     print(f"Different (existing files, mismatch): {different_count}")
     print(f"Errors: {error_count}")
-    print(f"Download speed: {format_speed(total_downloaded_size, elapsed_time)} ({format_size(total_downloaded_size)} in {elapsed_time:.2f} seconds)")
+    print(f"Download speed: {format_speed(total_downloaded_size, elapsed_time)} ({format_size(total_downloaded_size)} in {format_duration(elapsed_time)})")
 
     if args.dry_run:
         print("\nNo files were actually downloaded (dry-run mode)")

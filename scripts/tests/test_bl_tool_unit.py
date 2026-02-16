@@ -88,6 +88,28 @@ class TestFormatting:
         assert bl_tool.format_speed(3 * 1024 * 1024 * 1024 * 1024 * 1024, 1.0) == "3.00 PB/s"
 
 
+class TestFormatDuration:
+    """Test format_duration() function."""
+
+    def test_format_duration_seconds(self):
+        """Test duration under 60 seconds stays in seconds."""
+        assert bl_tool.format_duration(0) == "0.00 seconds"
+        assert bl_tool.format_duration(30.5) == "30.50 seconds"
+        assert bl_tool.format_duration(59.99) == "59.99 seconds"
+
+    def test_format_duration_minutes(self):
+        """Test duration between 60 seconds and 1 hour converts to minutes."""
+        assert bl_tool.format_duration(60) == "1.00 minutes"
+        assert bl_tool.format_duration(90) == "1.50 minutes"
+        assert bl_tool.format_duration(3599) == "59.98 minutes"
+
+    def test_format_duration_hours(self):
+        """Test duration of 1 hour or more converts to hours."""
+        assert bl_tool.format_duration(3600) == "1.00 hours"
+        assert bl_tool.format_duration(10207.90) == "2.84 hours"
+        assert bl_tool.format_duration(7200) == "2.00 hours"
+
+
 class TestFileCollection:
     """Test collect_files() function."""
 

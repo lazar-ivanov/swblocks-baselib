@@ -82,7 +82,7 @@ class TestSingleFileHashing:
         assert hash_match is not None
 
         # Verify speed measurement with raw values
-        assert re.search(r"Hashing speed: \d+\.\d+ [KMGT]?B/s \(\d+\.\d+ [KMGT]?B in \d+\.\d+ seconds\)", result.stdout)
+        assert re.search(r"Hashing speed: \d+\.\d+ [KMGT]?B/s \(\d+\.\d+ [KMGT]?B in \d+\.\d+ (?:seconds|minutes|hours)\)", result.stdout)
 
     def test_hash_medium_file(self, temp_file_medium):
         """Test hashing medium file (~10 MB)."""

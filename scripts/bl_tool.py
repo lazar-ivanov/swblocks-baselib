@@ -55,6 +55,16 @@ def format_size(size_bytes):
     return f"{size_bytes:.2f} PB"
 
 
+def format_duration(seconds):
+    """Format duration in seconds to human-readable format (seconds, minutes, or hours)."""
+    if seconds < 60:
+        return f"{seconds:.2f} seconds"
+    elif seconds < 3600:
+        return f"{seconds / 60:.2f} minutes"
+    else:
+        return f"{seconds / 3600:.2f} hours"
+
+
 def format_speed(size_bytes, elapsed_seconds):
     """
     Format processing speed with auto-adapting units.
@@ -375,7 +385,7 @@ def command_hash(args):
     print(f"Total files processed: {total_files}")
     print(f"Total size: {format_size(total_size)}")
     print(f"Combined {hash_name}: {combined_hash}")
-    print(f"Hashing speed: {format_speed(total_size, elapsed_time)} ({format_size(total_size)} in {elapsed_time:.2f} seconds)")
+    print(f"Hashing speed: {format_speed(total_size, elapsed_time)} ({format_size(total_size)} in {format_duration(elapsed_time)})")
 
     # Step 8: Verify hash if requested
     if args.expected_hash:
