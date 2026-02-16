@@ -130,6 +130,10 @@ generate_gccrc() {
     local RC_FILE="${RC_DIR}/gccrc"
 
     # Determine architecture-dependent values (matching gcc-default.mk)
+    # NOTE: GCC uses 'pc' as the vendor in its target triple (e.g. x86_64-pc-linux-gnu).
+    # This differs from Clang/LLVM which requires 'unknown' (see generate_clangrc in
+    # build-clang-linux.sh). The LD_LIBRARY_PATH below uses ARCH_TRIPLET which has 'pc'
+    # for GCC — do NOT change this to 'unknown' to match Clang.
     local LIB_TAG="lib64"
     local ARCH_TAG2=""
     case "${ARCH_TAG}" in

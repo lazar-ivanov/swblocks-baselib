@@ -21,13 +21,17 @@
 # This script orchestrates the complete build of all components for devenv7
 # It builds Boost, OpenSSL, and installs all dependencies in the correct order
 #
-# Usage: ./build-env-all-macos.sh [DEVENV_TAG]
+# Usage: ./build-env-all-macos.sh [OPTIONS] [DEVENV_TAG]
+#   OPTIONS:
+#     --setup-env-scripts-only  Only regenerate env scripts (clangrc, ci-init-env.mk),
+#                               skip all builds. Useful for updating scripts after manual changes.
 #   DEVENV_TAG: devenv tag (default: devenv7)
 #
 # Examples:
-#   ./build-env-all-macos.sh           # Build complete environment for devenv7
-#   ./build-env-all-macos.sh devenv7   # Build complete environment for devenv7
-#   ./build-env-all-macos.sh devenv6   # Build complete environment for devenv6
+#   ./build-env-all-macos.sh                                # Build complete environment for devenv7
+#   ./build-env-all-macos.sh devenv7                        # Build complete environment for devenv7
+#   ./build-env-all-macos.sh devenv6                        # Build complete environment for devenv6
+#   ./build-env-all-macos.sh --setup-env-scripts-only       # Only regenerate env scripts
 #
 # Build order:
 #   1. build-boost-macos.sh        - Build Boost with system clang

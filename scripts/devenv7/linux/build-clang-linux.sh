@@ -142,6 +142,11 @@ generate_clangrc() {
     local RC_FILE="${RC_DIR}/clangrc"
 
     # Determine architecture-dependent values (matching gcc-default.mk)
+    # NOTE: The LD_LIBRARY_PATH below uses 'unknown' as the vendor in the target triple
+    # (e.g. x86_64-unknown-linux-gnu). LLVM normalizes all triples to use 'unknown'
+    # internally, so Clang installs its libraries under paths with 'unknown'. This differs
+    # from GCC which uses 'pc' (see generate_gccrc in build-gcc-linux.sh). Do NOT change
+    # the 'unknown' below to 'pc' to match GCC — it would break library resolution.
     local ARCH_TAG2=""
     case "${ARCH_TAG}" in
         x86) ARCH_TAG2="i686" ;;

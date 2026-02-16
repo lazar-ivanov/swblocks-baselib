@@ -487,6 +487,12 @@ Starting with devenv7, Windows builds of `utf_baselib_jni` are fully supported a
 
 GCC build scripts correctly use `pc` — this is an LLVM-specific requirement. Do NOT change the clang-related triples to `pc` to match GCC.
 
+**Generated rc files also differ:** The `generate_gccrc()` and `generate_clangrc()` functions in the toolchain build scripts emit LD_LIBRARY_PATH entries with different vendor triples:
+- `gccrc` uses `pc` (e.g. `libexec/gcc/x86_64-pc-linux-gnu/...`) — matches where GCC installs libraries
+- `clangrc` uses `unknown` (e.g. `lib/x86_64-unknown-linux-gnu`) — matches where Clang installs libraries
+
+These must remain different. Do NOT unify them.
+
 ### 8. OpenSSL `params_conversion_test` Fails at `-O3` with Clang
 
 **Symptom:** `04-test_params_conversion.t` fails in the release (`-O3`) build with Clang. Debug (`-O0`) passes.
