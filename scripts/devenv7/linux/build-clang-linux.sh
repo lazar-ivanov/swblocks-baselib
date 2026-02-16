@@ -216,28 +216,7 @@ echo "Parallel Jobs:    ${JOBS} (memory-limited)"
 echo "==========================================================================="
 
 # Check prerequisites
-echo ""
-echo "Checking prerequisites..."
-MISSING_DEPS=""
-for cmd in make cmake ninja python3; do
-    if ! command -v $cmd &> /dev/null; then
-        MISSING_DEPS="${MISSING_DEPS} $cmd"
-    fi
-done
-
-if [ -n "$MISSING_DEPS" ]; then
-    echo "ERROR: Missing required tools:${MISSING_DEPS}"
-    echo "Please install build dependencies:"
-    if [ "$ID" = "ubuntu" ]; then
-        echo "  sudo apt-get install build-essential cmake ninja-build python3 libxml2-dev libz-dev libedit-dev swig"
-    elif [ "$ID" = "rhel" ]; then
-        echo "  Note: ninja-build requires CodeReady Builder repository:"
-        echo "    sudo subscription-manager repos --enable codeready-builder-for-rhel-${RHEL_VERSION}-\$(arch)-rpms"
-        echo "  Then install:"
-        echo "    sudo dnf install gcc gcc-c++ make cmake ninja-build python3 libxml2-devel zlib-devel libedit-devel swig"
-    fi
-    exit 1
-fi
+"$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/check-prerequisites.sh"
 
 # Create directory structure
 echo ""

@@ -68,30 +68,8 @@ fi
 # Will be set below after COMPILER_TAG is calculated if not provided
 DIST_TAG_ARG="${4:-}"
 
-# Check for required Perl modules and provide a single installation command
-# We check for a few common modules and if any are missing, we recommend installing a bundle of packages
-# to avoid having to install them one by one.
-REQUIRED_PERL_MODULES="FindBin IPC::Cmd Text::Template Pod::Man Time::Piece Test::More"
-for module in ${REQUIRED_PERL_MODULES}; do
-    if ! perl -M${module} -e 1 &> /dev/null; then
-        echo "ERROR: At least one required Perl module ('${module}') is not installed." >&2
-        echo "The OpenSSL build process requires several Perl modules." >&2
-        echo "To avoid resolving them one-by-one, it's recommended to install a comprehensive set of Perl packages for development." >&2
-        echo >&2
-        if command -v dnf &> /dev/null; then
-            echo "On RHEL-based systems like yours, please run the following command to install them:" >&2
-            echo "    sudo dnf install perl-devel perl-core perl-FindBin perl-IPC-Cmd perl-Text-Template perl-podlators perl-Time-Piece perl-Test-Simple perl-Test-Harness" >&2
-        elif command -v apt-get &> /dev/null; then
-            echo "On Debian/Ubuntu-based systems, please run the following command to install them:" >&2
-            echo "    sudo apt-get install perl libtext-template-perl" >&2
-        else
-            echo "Please use your system's package manager to install the required Perl modules, including:" >&2
-            echo "FindBin, IPC::Cmd, Text::Template, Pod::Man, Time::Piece, Test::More" >&2
-        fi
-        echo >&2
-        exit 1
-    fi
-done
+# Check prerequisites (includes Perl module packages for OpenSSL build)
+"$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/check-prerequisites.sh"
 
 # Convert version to OpenSSL archive format (e.g., 3.5.4 -> openssl-3.5.4)
 OPENSSL_ARCHIVE="openssl-${OPENSSL_VERSION}.tar.gz"

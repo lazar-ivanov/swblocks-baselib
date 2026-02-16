@@ -55,6 +55,9 @@ set -u  # Exit on undefined variable
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Check all build prerequisites before proceeding
+"${SCRIPT_DIR}/check-prerequisites.sh"
+
 # Parse optional flags (before positional arguments)
 SETUP_ENV_ONLY=0
 SKIP_TOOLCHAINS=0

@@ -203,21 +203,7 @@ echo "Sanitizers:       $([ "${BL_GCC_DISABLE_SANITIZERS:-0}" = "1" ] && echo "d
 echo "==========================================================================="
 
 # Check prerequisites
-echo ""
-echo "Checking prerequisites..."
-MISSING_DEPS=""
-for cmd in make gcc g++ flex bison; do
-    if ! command -v $cmd &> /dev/null; then
-        MISSING_DEPS="${MISSING_DEPS} $cmd"
-    fi
-done
-
-if [ -n "$MISSING_DEPS" ]; then
-    echo "ERROR: Missing required tools:${MISSING_DEPS}"
-    echo "Please install build dependencies:"
-    echo "  sudo apt-get install build-essential libgmp-dev libmpfr-dev libmpc-dev flex bison texinfo libzstd-dev"
-    exit 1
-fi
+"$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/check-prerequisites.sh"
 
 # Create directory structure
 echo ""
