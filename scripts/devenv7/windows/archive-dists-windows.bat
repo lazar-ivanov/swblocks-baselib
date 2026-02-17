@@ -36,7 +36,7 @@ REM The script will:
 REM   1. Archive %USERPROFILE%\swblocks\<dist-root> to zip\<dist-root>.zip
 REM   2. Archive %USERPROFILE%\swblocks\<dist-root>-downloads-cache to zip\<dist-root>-downloads-cache.zip
 REM   3. Use 7-zip from <dist-root>\7zip\<version>\7za.exe
-REM   4. Create archives with relative paths for extraction back to %USERPROFILE%\swblocks
+REM   4. Create archives with relative paths for extraction back to %USERPROFILE%
 REM   5. Fail if target archives exist unless -delete-target-if-exists is specified
 REM
 REM Examples:
@@ -44,9 +44,9 @@ REM   archive-dists-windows.bat -dist-root dist-devenv7-windows-hostarch-a64-tar
 REM   archive-dists-windows.bat -dist-root dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86 -delete-target-if-exists
 REM
 REM Extraction:
-REM   cd %USERPROFILE%\swblocks
-REM   7za.exe x zip\<dist-root>.zip
-REM   7za.exe x zip\<dist-root>-downloads-cache.zip
+REM   cd %USERPROFILE%
+REM   7za.exe x swblocks\zip\<dist-root>.zip
+REM   7za.exe x swblocks\zip\<dist-root>-downloads-cache.zip
 REM
 REM ================================================================================
 
@@ -188,10 +188,10 @@ echo Delete If Exists:     %DELETE_TARGET%
 echo ================================================================================
 echo.
 
-REM Change to swblocks root to ensure proper relative paths in archives
-pushd "%SWBLOCKS_ROOT%"
+REM Change to user profile root to ensure swblocks\ prefix in archive paths
+pushd "%USERPROFILE%"
 if errorlevel 1 (
-    echo ERROR: Failed to change directory to %SWBLOCKS_ROOT%
+    echo ERROR: Failed to change directory to %USERPROFILE%
     goto error
 )
 
@@ -203,11 +203,11 @@ REM Archive 1: Distribution folder
 echo ================================================================================
 echo Archiving distribution folder...
 echo ================================================================================
-echo Source:  %DIST_ROOT%
+echo Source:  swblocks\%DIST_ROOT%
 echo Archive: %DIST_ARCHIVE%
 echo.
 
-"%SEVEN_ZIP_EXE%" a -mx=5 "%DIST_ARCHIVE%" "%DIST_ROOT%\*" -r
+"%SEVEN_ZIP_EXE%" a -mx=5 "%DIST_ARCHIVE%" "swblocks\%DIST_ROOT%\*" -r
 
 if errorlevel 1 (
     echo ERROR: Failed to create distribution archive
@@ -223,11 +223,11 @@ REM Archive 2: Downloads cache
 echo ================================================================================
 echo Archiving downloads cache...
 echo ================================================================================
-echo Source:  %DIST_ROOT%-downloads-cache
+echo Source:  swblocks\%DIST_ROOT%-downloads-cache
 echo Archive: %CACHE_ARCHIVE%
 echo.
 
-"%SEVEN_ZIP_EXE%" a -mx=5 "%CACHE_ARCHIVE%" "%DIST_ROOT%-downloads-cache\*" -r
+"%SEVEN_ZIP_EXE%" a -mx=5 "%CACHE_ARCHIVE%" "swblocks\%DIST_ROOT%-downloads-cache\*" -r
 
 if errorlevel 1 (
     echo ERROR: Failed to create downloads cache archive
@@ -274,9 +274,9 @@ if exist "%CACHE_ARCHIVE%" (
 echo ================================================================================
 echo.
 echo To restore from archives:
-echo   cd %USERPROFILE%\swblocks
-echo   "%SEVEN_ZIP_EXE%" x "zip\%DIST_ROOT%.zip"
-echo   "%SEVEN_ZIP_EXE%" x "zip\%DIST_ROOT%-downloads-cache.zip"
+echo   cd %USERPROFILE%
+echo   "%SEVEN_ZIP_EXE%" x "swblocks\zip\%DIST_ROOT%.zip"
+echo   "%SEVEN_ZIP_EXE%" x "swblocks\zip\%DIST_ROOT%-downloads-cache.zip"
 echo.
 echo Archives contain relative paths and will extract to the correct locations.
 echo.

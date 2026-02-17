@@ -136,4 +136,4 @@ if [ -f "${tar_path}" ]; then
 fi
 
 echo "Creating archive: ${tar_path}"
-COPYFILE_DISABLE=1 tar --uid 0 --gid 0 -czf "${tar_path}" -C "${SWBLOCKS_ROOT}" "${dist_name}"
+COPYFILE_DISABLE=1 tar --uid 0 --gid 0 -czf "${tar_path}" -C "${HOME}" "swblocks/${dist_name}"

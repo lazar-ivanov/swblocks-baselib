@@ -208,5 +208,5 @@ for dist_tag in "${DIST_TAGS[@]}"; do
     fi
 
     echo "Creating archive: ${tar_path}"
-    tar --owner=0 --group=0 --numeric-owner -czf "${tar_path}" -C "${SWBLOCKS_ROOT}" "${dist_name}"
+    tar --owner=0 --group=0 --numeric-owner -czf "${tar_path}" -C "${HOME}" "swblocks/${dist_name}"
 done
