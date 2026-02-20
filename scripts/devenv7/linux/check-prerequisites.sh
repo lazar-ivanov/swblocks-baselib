@@ -130,6 +130,7 @@ RHEL_PACKAGES_BASE="
     perl-Test-Harness
     bzip2
     diffutils
+    procps-ng
     xz
     zip
     unzip

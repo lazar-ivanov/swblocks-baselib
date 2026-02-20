@@ -123,16 +123,14 @@ INSTALL_DIR="${VERSION_DIR}/${BUILD_TAG}-${VARIANT}"
 # Calculate based on available memory (assume ~4GB per job for LLVM)
 NPROC=$(nproc)
 TOTAL_MEM_GB=$(free -g | awk '/^Mem:/{print $2}')
-if [ "$TOTAL_MEM_GB" -gt 0 ]; then
-    MEM_BASED_JOBS=$((TOTAL_MEM_GB / 4))
-    # Use the minimum of CPU cores and memory-based jobs, but at least 1
-    JOBS=$((MEM_BASED_JOBS < NPROC ? MEM_BASED_JOBS : NPROC))
-    JOBS=$((JOBS < 1 ? 1 : JOBS))
-else
-    # Fallback: use half the cores for safety
-    JOBS=$((NPROC / 2))
-    JOBS=$((JOBS < 1 ? 1 : JOBS))
+if [ -z "$TOTAL_MEM_GB" ] || ! [ "$TOTAL_MEM_GB" -gt 0 ] 2>/dev/null; then
+    echo "ERROR: Failed to determine total memory (is 'free' installed? Try: dnf install procps-ng)" >&2
+    exit 1
 fi
+MEM_BASED_JOBS=$((TOTAL_MEM_GB / 4))
+# Use the minimum of CPU cores and memory-based jobs, but at least 1
+JOBS=$((MEM_BASED_JOBS < NPROC ? MEM_BASED_JOBS : NPROC))
+JOBS=$((JOBS < 1 ? 1 : JOBS))
 JOBS=${BL_MAKE_JOBS:-${JOBS}}
 
 # Function to generate clangrc environment setup script
