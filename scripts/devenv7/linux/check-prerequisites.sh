@@ -121,13 +121,16 @@ RHEL_PACKAGES_BASE="
     libzstd-devel
     perl
     perl-devel
-    perl-core
+    perl-interpreter
     perl-FindBin
     perl-IPC-Cmd
     perl-podlators
     perl-Time-Piece
     perl-Test-Simple
     perl-Test-Harness
+    bzip2
+    diffutils
+    xz
     zip
     unzip
     python3
