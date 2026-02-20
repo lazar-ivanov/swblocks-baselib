@@ -1,0 +1,14 @@
+[Unit]
+Description=Register Rosetta for x86_64 Emulation
+# Ensure the Parallels mount points are handled before registration
+After=network.target local-fs.target
+RequiresMountsFor=/media/psf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/register-rosetta.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+
