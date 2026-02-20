@@ -365,7 +365,9 @@ namespace bl
             >
             static auto loadFromJsonText( SAA_in const std::string& jsonText ) -> om::ObjPtr< T >
             {
-                return loadFromJsonValue< T >( json::readFromString( jsonText ) );
+                auto rootValue = json::readFromString( jsonText );
+
+                return loadFromJsonObject< T >( std::move( rootValue.as_object() ) );
             }
 
             template
