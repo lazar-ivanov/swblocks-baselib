@@ -201,7 +201,7 @@ echo "==========================================================================
 echo "Clang/LLVM ${CLANG_VERSION} Build Configuration"
 echo "==========================================================================="
 echo "Architecture:     $(uname -m) (${ARCH_TAG})"
-echo "OS Version:       $(lsb_release -ds) (${OS_TAG})"
+echo "OS Version:       ${PRETTY_NAME} (${OS_TAG})"
 echo "Clang Tag:        ${CLANG_TAG}"
 echo "Dist Tag:         ${DIST_TAG}"
 echo "Build Tag:        ${BUILD_TAG}"

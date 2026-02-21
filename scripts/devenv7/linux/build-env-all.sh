@@ -185,7 +185,7 @@ echo "==========================================================================
 echo "Complete DevEnv Build Configuration"
 echo "==========================================================================="
 echo "Architecture:      ${ARCH} (${ARCH_TAG})"
-echo "OS Version:        $(lsb_release -ds 2>/dev/null || echo "Unknown") (${OS_TAG})"
+echo "OS Version:        ${PRETTY_NAME} (${OS_TAG})"
 echo "DevEnv Tag:        ${DEVENV_TAG}"
 echo "Toolchain Mode:    ${TOOLCHAIN}"
 if [ "$TOOLCHAIN" = "gcc-clang" ]; then

@@ -119,7 +119,7 @@ echo "==========================================================================
 echo "OpenJDK ${JDK_VERSION} Installation Configuration"
 echo "==========================================================================="
 echo "Architecture:     ${ARCH} (${ARCH_TAG})"
-echo "OS Version:       $(lsb_release -ds) (${OS_TAG})"
+echo "OS Version:       ${PRETTY_NAME} (${OS_TAG})"
 echo "Dist Tag:         ${DIST_TAG}"
 echo "DevEnv Tag:       ${DEVENV_TAG}"
 echo "JDK Root:         ${JDK_ROOT_DIR}"
