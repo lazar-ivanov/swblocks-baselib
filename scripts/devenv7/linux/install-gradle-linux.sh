@@ -164,7 +164,7 @@ echo "Installation Complete!"
 echo "==========================================================================="
 echo "Gradle Root:      ${GRADLE_ROOT_DIR}"
 echo "Installation:     ${DEFAULT_DIR}"
-echo "Gradle Version:   $(${DEFAULT_DIR}/bin/gradle --version | grep '^Gradle' || echo 'Unable to determine')"
+echo "Gradle Version:   ${GRADLE_VERSION}"
 echo
 echo "Directory contents:"
 ls -lh "${DEFAULT_DIR}" | tail -n +2 | awk '{print "  " $9, $5}'
