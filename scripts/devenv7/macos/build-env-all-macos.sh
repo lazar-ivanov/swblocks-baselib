@@ -76,9 +76,12 @@ fi
 
 # Detect macOS version
 MACOS_VERSION=$(sw_vers -productVersion | cut -d. -f1)
-if [ "$MACOS_VERSION" -ge 15 ]; then
+if [ "$MACOS_VERSION" -ge 26 ]; then
     OS_TAG="d25"
     OS_NUMBER="25"
+elif [ "$MACOS_VERSION" -ge 15 ]; then
+    OS_TAG="d24"
+    OS_NUMBER="24"
 elif [ "$MACOS_VERSION" -ge 14 ]; then
     OS_TAG="d24"
     OS_NUMBER="24"

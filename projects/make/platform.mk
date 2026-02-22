@@ -191,8 +191,8 @@ else
   else ifeq (Darwin-24.,$(findstring Darwin-24.,$(UNAME_MERGED)))
     ifneq ("$(wildcard $(DIST_ROOT_DEPS3)/boost/1.90.0)","")
       # for macOS Sequoia and devenv7
-      OS := d25
-      BL_PROP_PLAT := darwin-d25
+      OS := d24
+      BL_PROP_PLAT := darwin-d24
       BL_PLAT_IS_DARWIN := 1
       $(info Detected OS is $(UNAME_MERGED) - i.e. mscOS Sequoia; devenv7)
     endif

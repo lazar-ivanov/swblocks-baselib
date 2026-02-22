@@ -40,8 +40,10 @@ JSON_SPIRIT_URL="https://github.com/lazar-ivanov/swblocks-assets/releases/downlo
 
 # Detect macOS version
 MACOS_VERSION=$(sw_vers -productVersion | cut -d. -f1)
-if [ "$MACOS_VERSION" -ge 15 ]; then
-    OS_TAG="25"  # macOS 15 (Sequoia) and above
+if [ "$MACOS_VERSION" -ge 26 ]; then
+    OS_TAG="25"  # macOS 26 (Tahoe) and above
+elif [ "$MACOS_VERSION" -ge 15 ]; then
+    OS_TAG="24"  # macOS 15 (Sequoia)
 elif [ "$MACOS_VERSION" -ge 14 ]; then
     OS_TAG="24"  # macOS 14 (Sonoma)
 elif [ "$MACOS_VERSION" -ge 13 ]; then

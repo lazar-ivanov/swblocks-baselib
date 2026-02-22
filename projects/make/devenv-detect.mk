@@ -86,6 +86,8 @@ else ifeq ($(OS),d20)
   TOOLCHAIN                 ?= clang1205
 else ifeq ($(OS),d22)
   TOOLCHAIN                 ?= clang1500
+else ifeq ($(OS),d24)
+  TOOLCHAIN                 ?= clang1700
 else ifeq ($(OS),d25)
   TOOLCHAIN                 ?= clang1700
 else
