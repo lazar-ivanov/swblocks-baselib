@@ -223,13 +223,13 @@ if [ "$OS_FAMILY" = "debian" ]; then
 else
     # RHEL-like: check base packages
     for pkg in ${RHEL_PACKAGES_BASE}; do
-        if ! rpm -q "${pkg}" >/dev/null 2>&1; then
+        if ! rpm -q --whatprovides "${pkg}" >/dev/null 2>&1; then
             MISSING="${MISSING} ${pkg}"
         fi
     done
     # RHEL-like: check CRB packages separately
     for pkg in ${RHEL_PACKAGES_CRB}; do
-        if ! rpm -q "${pkg}" >/dev/null 2>&1; then
+        if ! rpm -q --whatprovides "${pkg}" >/dev/null 2>&1; then
             MISSING="${MISSING} ${pkg}"
             MISSING_CRB="${MISSING_CRB} ${pkg}"
         fi
