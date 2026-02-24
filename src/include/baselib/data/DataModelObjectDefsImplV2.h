@@ -553,7 +553,7 @@ template \
                 m_ ## name -> invokeSerialize; \
             } \
             \
-            object.emplace( #jsonProp, tempContext.serializationDoc() ); \
+            object.emplace( #jsonProp, std::move( tempContext.serializationDoc() ) ); \
         } \
     } \
     void name ## Deserialize( \
@@ -627,7 +627,7 @@ template \
         { \
             BL_DM_SERIALIZATION_CONTEXT_IMPL_DECL_SERIALIZE( tempContext ); \
             item -> serializeProperties( tempContext ); \
-            items.push_back( bl::json::value( tempContext.serializationDoc() ) ); \
+            items.push_back( bl::json::value( std::move( tempContext.serializationDoc() ) ) ); \
         } \
         \
         object.emplace( #jsonProp, items ); \
@@ -644,13 +644,13 @@ template \
             return; \
         } \
         \
-        const auto& items = BL_JSON_ITER_VALUE( pos ).as_array(); \
+        auto& items = BL_JSON_ITER_VALUE( pos ).as_array(); \
         \
         std::vector< bl::om::ObjPtr< type > > temp; \
         \
-        for( const auto& item : items ) \
+        for( auto& item : items ) \
         { \
-            BL_DM_SERIALIZATION_CONTEXT_IMPL_DECL_DESERIALIZE( tempContext, bl::cpp::copy( item.as_object() ) ); \
+            BL_DM_SERIALIZATION_CONTEXT_IMPL_DECL_DESERIALIZE( tempContext, std::move( item.as_object() ) ); \
             \
             tempContext.detectUnknownProperties( context.detectUnknownProperties() ); \
             \
@@ -700,7 +700,7 @@ template \
         { \
             BL_DM_SERIALIZATION_CONTEXT_IMPL_DECL_SERIALIZE( tempContext ); \
             pair.second -> serializeProperties( tempContext ); \
-            items.emplace( pair.first, tempContext.serializationDoc() ); \
+            items.emplace( pair.first, std::move( tempContext.serializationDoc() ) ); \
         } \
         \
         object.emplace( #nameArg, items ); \
@@ -717,13 +717,13 @@ template \
             return; \
         } \
         \
-        const auto& items = BL_JSON_ITER_VALUE( pos ).as_object(); \
+        auto& items = BL_JSON_ITER_VALUE( pos ).as_object(); \
         \
         std::map< std::string, bl::om::ObjPtr< type > > temp; \
         \
-        for( const auto& pair : items ) \
+        for( auto& pair : items ) \
         { \
-            BL_DM_SERIALIZATION_CONTEXT_IMPL_DECL_DESERIALIZE( tempContext, bl::cpp::copy( BL_JSON_PAIR_VALUE( pair ).as_object() ) ); \
+            BL_DM_SERIALIZATION_CONTEXT_IMPL_DECL_DESERIALIZE( tempContext, std::move( BL_JSON_PAIR_VALUE( pair ).as_object() ) ); \
             \
             tempContext.detectUnknownProperties( context.detectUnknownProperties() ); \
             \

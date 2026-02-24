@@ -194,6 +194,64 @@ Compare timing at each stage against Stage 0 baseline and previous stage.
 
 ---
 
+## Stage 1 Results — Eliminate deep copies in complex vector/map deserialization
+
+**Date:** 2026-02-24
+**Platform:** macOS (Darwin), ARM64 (different host from Stage 0 — compare ratios, not absolute times)
+
+### Simple Object (4 scalar properties)
+
+| Operation | Direct JSON | Data Model | Overhead | vs Stage 0 |
+|-----------|------------|------------|----------|------------|
+| Deserialization (5000 iter) | 1.19 ms (0.0002 ms/iter) | 2.26 ms (0.0005 ms/iter) | **1.91x** | was 2.43x |
+| Serialization (5000 iter) | 0.37 ms (0.0001 ms/iter) | 2.04 ms (0.0004 ms/iter) | **5.59x** | was 8.40x |
+
+### Complex Object (scalars + map + vectors + nested object + nested vector)
+
+| Operation | Direct JSON | Data Model | Overhead | vs Stage 0 |
+|-----------|------------|------------|----------|------------|
+| Deserialization (2000 iter) | 2.95 ms (0.0015 ms/iter) | 6.03 ms (0.0030 ms/iter) | **2.04x** | was 2.15x |
+| Serialization (2000 iter) | 0.78 ms (0.0004 ms/iter) | 7.76 ms (0.0039 ms/iter) | **9.98x** | was 9.66x |
+| Round-trip (2000 iter) | 3.64 ms (0.0018 ms/iter) | 13.82 ms (0.0069 ms/iter) | **3.80x** | was 3.64x |
+
+### Key Observations
+
+1. **Different host machine** — absolute times differ from Stage 0; overhead ratios are the meaningful comparison
+2. **Complex deserialization improved modestly** — 2.15x → 2.04x (5% improvement in ratio). The test object only has 5 nested items, limiting the impact of eliminating deep copies
+3. **Simple object ratios also shifted** — likely machine/environment variance since Stage 1 changes don't affect simple objects (no complex vectors/maps)
+4. **Serialization unchanged as expected** — Stage 1 only targets deserialization; serialization copy overhead is addressed in Stage 2
+
+---
+
+## Stage 2 Results — Eliminate json::object copies in nested serialization
+
+**Date:** 2026-02-24
+**Platform:** macOS (Darwin), ARM64 (same host as Stage 1)
+
+### Simple Object (4 scalar properties)
+
+| Operation | Direct JSON | Data Model | Overhead | vs Stage 0 | vs Stage 1 |
+|-----------|------------|------------|----------|------------|------------|
+| Deserialization (5000 iter) | 2.34 ms (0.0005 ms/iter) | 4.19 ms (0.0008 ms/iter) | **1.79x** | was 2.43x | was 1.91x |
+| Serialization (5000 iter) | 0.70 ms (0.0001 ms/iter) | 3.48 ms (0.0007 ms/iter) | **4.95x** | was 8.40x | was 5.59x |
+
+### Complex Object (scalars + map + vectors + nested object + nested vector)
+
+| Operation | Direct JSON | Data Model | Overhead | vs Stage 0 | vs Stage 1 |
+|-----------|------------|------------|----------|------------|------------|
+| Deserialization (2000 iter) | 5.57 ms (0.0028 ms/iter) | 9.76 ms (0.0049 ms/iter) | **1.75x** | was 2.15x | was 2.04x |
+| Serialization (2000 iter) | 0.97 ms (0.0005 ms/iter) | 9.38 ms (0.0047 ms/iter) | **9.68x** | was 9.66x | was 9.98x |
+| Round-trip (2000 iter) | 4.59 ms (0.0023 ms/iter) | 15.20 ms (0.0076 ms/iter) | **3.31x** | was 3.64x | was 3.80x |
+
+### Key Observations
+
+1. **Complex serialization overhead unchanged** — 9.68x, roughly same as Stage 0 (9.66x). The move optimization helps for the nested objects, but the dominant cost appears to be elsewhere in the serialization path (context construction, property-by-property building of the json::object)
+2. **Deserialization continues to improve** — complex object down to 1.75x from 2.04x (Stage 1) and 2.15x (Stage 0)
+3. **Round-trip improved** — 3.31x from 3.64x (Stage 0), driven by deserialization gains
+4. **Simple object serialization ratio variance** — 4.95x vs 5.59x (Stage 1) vs 8.40x (Stage 0); the Stage 0 number was on a different machine, so Stage 1→2 comparison (5.59x→4.95x) is more meaningful
+
+---
+
 ## Files summary
 
 | File | Stage |
