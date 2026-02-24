@@ -83,4 +83,15 @@ else
 CPPFLAGS += -DBL_USE_JSON_SPIRIT
 endif
 
+# Data model implementation selection:
+# - BL_JSON_USE_DM_V1: Use V1 (original) data model implementation
+# - Default (not set): Use V2 (optimized) data model implementation
+# - If BL_USE_JSON_SPIRIT is set, force DM V1 (implied)
+ifdef BL_JSON_USE_DM_V1
+CPPFLAGS += -DBL_JSON_USE_DM_V1
+endif
+ifdef BL_USE_JSON_SPIRIT
+CPPFLAGS += -DBL_JSON_USE_DM_V1
+endif
+
 endif # BOOST_COMMON_INCLUDED

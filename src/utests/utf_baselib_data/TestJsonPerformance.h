@@ -1186,3 +1186,273 @@ UTF_AUTO_TEST_CASE( DataModelPerformanceRoundTrip )
     UTF_REQUIRE_EQUAL( loaded -> name(), complexObjects[ 0 ] -> name() );
     UTF_REQUIRE_EQUAL( loaded -> id(), complexObjects[ 0 ] -> id() );
 }
+
+/*
+ * Data Model vs Raw JSON overhead comparison benchmarks
+ *
+ * These tests measure the same operations through direct Boost.JSON and through the
+ * data model layer, reporting the overhead ratio. This allows tracking improvements
+ * to the data model implementation across stages.
+ */
+
+UTF_AUTO_TEST_CASE( DataModelPerformanceOverheadSimple )
+{
+    using namespace utest::json_perf;
+    using namespace utest::dm_perf;
+    using namespace bl::dm;
+
+    if( ! test::UtfArgsParser::isClient() )
+    {
+        return;
+    }
+
+    const std::size_t testIterations = 5000;
+
+    /*
+     * Generate JSON for a single simple object
+     */
+
+    const auto jsonText = generateSimpleObjectJson( 42 );
+
+    /*
+     * Warmup
+     */
+
+    for( std::size_t i = 0; i < 100; ++i )
+    {
+        bl::json::readFromString( jsonText );
+        DataModelUtils::loadFromJsonText< PerfSimpleObject >( jsonText );
+    }
+
+    /*
+     * Measure direct JSON parse time
+     */
+
+    const auto directParseMs = measureTimeMs(
+        [ &jsonText ]()
+        {
+            auto value = bl::json::readFromString( jsonText );
+            ( void ) value;
+        },
+        testIterations
+        );
+
+    /*
+     * Measure data model deserialize time (includes parse + property extraction)
+     */
+
+    const auto dmDeserializeMs = measureTimeMs(
+        [ &jsonText ]()
+        {
+            auto obj = DataModelUtils::loadFromJsonText< PerfSimpleObject >( jsonText );
+            ( void ) obj;
+        },
+        testIterations
+        );
+
+    /*
+     * Measure direct JSON serialize time (from pre-parsed object)
+     */
+
+    const auto parsedValue = bl::json::readFromString( jsonText );
+
+    const auto directSerializeMs = measureTimeMs(
+        [ &parsedValue ]()
+        {
+            auto str = bl::json::saveToString( parsedValue );
+            ( void ) str;
+        },
+        testIterations
+        );
+
+    /*
+     * Measure data model serialize time (from data model object)
+     */
+
+    const auto dmObj = DataModelUtils::loadFromJsonText< PerfSimpleObject >( jsonText );
+
+    const auto dmSerializeMs = measureTimeMs(
+        [ &dmObj ]()
+        {
+            auto json = DataModelUtils::getDocAsPackedJsonString( dmObj );
+            ( void ) json;
+        },
+        testIterations
+        );
+
+    const auto implName = bl::json::implName();
+    const auto deserializeOverhead = dmDeserializeMs / directParseMs;
+    const auto serializeOverhead = dmSerializeMs / directSerializeMs;
+
+    BL_LOG(
+        bl::Logging::notify(),
+        BL_MSG()
+            << "\n=== Data Model vs Raw JSON Overhead — Simple Object (" << implName << ") ===\n"
+            << "Deserialization (" << testIterations << " iterations):\n"
+            << "  Direct JSON parse:       "
+            << std::fixed << std::setprecision( 2 ) << directParseMs << " ms ("
+            << std::setprecision( 4 ) << ( directParseMs / testIterations ) << " ms/iter)\n"
+            << "  Data model deserialize:  "
+            << std::setprecision( 2 ) << dmDeserializeMs << " ms ("
+            << std::setprecision( 4 ) << ( dmDeserializeMs / testIterations ) << " ms/iter)\n"
+            << "  Overhead ratio:          "
+            << std::setprecision( 2 ) << deserializeOverhead << "x\n"
+            << "Serialization (" << testIterations << " iterations):\n"
+            << "  Direct JSON serialize:   "
+            << std::setprecision( 2 ) << directSerializeMs << " ms ("
+            << std::setprecision( 4 ) << ( directSerializeMs / testIterations ) << " ms/iter)\n"
+            << "  Data model serialize:    "
+            << std::setprecision( 2 ) << dmSerializeMs << " ms ("
+            << std::setprecision( 4 ) << ( dmSerializeMs / testIterations ) << " ms/iter)\n"
+            << "  Overhead ratio:          "
+            << std::setprecision( 2 ) << serializeOverhead << "x"
+        );
+}
+
+UTF_AUTO_TEST_CASE( DataModelPerformanceOverheadComplex )
+{
+    using namespace utest::json_perf;
+    using namespace utest::dm_perf;
+    using namespace bl::dm;
+
+    if( ! test::UtfArgsParser::isClient() )
+    {
+        return;
+    }
+
+    const std::size_t testIterations = 2000;
+
+    /*
+     * Generate JSON for a single complex object
+     */
+
+    const auto jsonText = generateComplexObjectJson( 42 );
+
+    /*
+     * Warmup
+     */
+
+    for( std::size_t i = 0; i < 100; ++i )
+    {
+        bl::json::readFromString( jsonText );
+        DataModelUtils::loadFromJsonText< PerfComplexObject >( jsonText );
+    }
+
+    /*
+     * Measure direct JSON parse time
+     */
+
+    const auto directParseMs = measureTimeMs(
+        [ &jsonText ]()
+        {
+            auto value = bl::json::readFromString( jsonText );
+            ( void ) value;
+        },
+        testIterations
+        );
+
+    /*
+     * Measure data model deserialize time (includes parse + property extraction)
+     */
+
+    const auto dmDeserializeMs = measureTimeMs(
+        [ &jsonText ]()
+        {
+            auto obj = DataModelUtils::loadFromJsonText< PerfComplexObject >( jsonText );
+            ( void ) obj;
+        },
+        testIterations
+        );
+
+    /*
+     * Measure direct JSON serialize time (from pre-parsed object)
+     */
+
+    const auto parsedValue = bl::json::readFromString( jsonText );
+
+    const auto directSerializeMs = measureTimeMs(
+        [ &parsedValue ]()
+        {
+            auto str = bl::json::saveToString( parsedValue );
+            ( void ) str;
+        },
+        testIterations
+        );
+
+    /*
+     * Measure data model serialize time (from data model object)
+     */
+
+    const auto dmObj = DataModelUtils::loadFromJsonText< PerfComplexObject >( jsonText );
+
+    const auto dmSerializeMs = measureTimeMs(
+        [ &dmObj ]()
+        {
+            auto json = DataModelUtils::getDocAsPackedJsonString( dmObj );
+            ( void ) json;
+        },
+        testIterations
+        );
+
+    /*
+     * Measure round-trip: direct JSON (parse + serialize) vs data model (deserialize + serialize)
+     */
+
+    const auto directRoundTripMs = measureTimeMs(
+        [ &jsonText ]()
+        {
+            auto value = bl::json::readFromString( jsonText );
+            auto str = bl::json::saveToString( value );
+            ( void ) str;
+        },
+        testIterations
+        );
+
+    const auto dmRoundTripMs = measureTimeMs(
+        [ &jsonText ]()
+        {
+            auto obj = DataModelUtils::loadFromJsonText< PerfComplexObject >( jsonText );
+            auto json = DataModelUtils::getDocAsPackedJsonString( obj );
+            ( void ) json;
+        },
+        testIterations
+        );
+
+    const auto implName = bl::json::implName();
+    const auto deserializeOverhead = dmDeserializeMs / directParseMs;
+    const auto serializeOverhead = dmSerializeMs / directSerializeMs;
+    const auto roundTripOverhead = dmRoundTripMs / directRoundTripMs;
+
+    BL_LOG(
+        bl::Logging::notify(),
+        BL_MSG()
+            << "\n=== Data Model vs Raw JSON Overhead — Complex Object (" << implName << ") ===\n"
+            << "Deserialization (" << testIterations << " iterations):\n"
+            << "  Direct JSON parse:       "
+            << std::fixed << std::setprecision( 2 ) << directParseMs << " ms ("
+            << std::setprecision( 4 ) << ( directParseMs / testIterations ) << " ms/iter)\n"
+            << "  Data model deserialize:  "
+            << std::setprecision( 2 ) << dmDeserializeMs << " ms ("
+            << std::setprecision( 4 ) << ( dmDeserializeMs / testIterations ) << " ms/iter)\n"
+            << "  Overhead ratio:          "
+            << std::setprecision( 2 ) << deserializeOverhead << "x\n"
+            << "Serialization (" << testIterations << " iterations):\n"
+            << "  Direct JSON serialize:   "
+            << std::setprecision( 2 ) << directSerializeMs << " ms ("
+            << std::setprecision( 4 ) << ( directSerializeMs / testIterations ) << " ms/iter)\n"
+            << "  Data model serialize:    "
+            << std::setprecision( 2 ) << dmSerializeMs << " ms ("
+            << std::setprecision( 4 ) << ( dmSerializeMs / testIterations ) << " ms/iter)\n"
+            << "  Overhead ratio:          "
+            << std::setprecision( 2 ) << serializeOverhead << "x\n"
+            << "Round-trip (" << testIterations << " iterations):\n"
+            << "  Direct JSON round-trip:  "
+            << std::setprecision( 2 ) << directRoundTripMs << " ms ("
+            << std::setprecision( 4 ) << ( directRoundTripMs / testIterations ) << " ms/iter)\n"
+            << "  Data model round-trip:   "
+            << std::setprecision( 2 ) << dmRoundTripMs << " ms ("
+            << std::setprecision( 4 ) << ( dmRoundTripMs / testIterations ) << " ms/iter)\n"
+            << "  Overhead ratio:          "
+            << std::setprecision( 2 ) << roundTripOverhead << "x"
+        );
+}
