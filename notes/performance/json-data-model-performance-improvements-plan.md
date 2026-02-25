@@ -348,6 +348,53 @@ Compare timing at each stage against Stage 0 baseline and previous stage.
 
 ---
 
+## Final Analysis — Theoretical Floor Assessment
+
+**Date:** 2026-02-25
+**Platform:** macOS (Darwin), ARM64 (same host as previous stages)
+
+**What:** After all optimizations (Stages 0–4 + 2b), we added a micro-benchmark that measures the raw cost of building a `json::object` via `emplace` calls with the same properties and values as the test objects — but without any data model macro, virtual call, or context overhead. This establishes the theoretical performance floor for a build-then-serialize approach.
+
+### Raw Emplace Baseline vs Data Model (Overhead Benchmarks)
+
+| Measurement | Simple (5000 iter) | Complex (2000 iter) |
+|---|---|---|
+| Direct JSON serialize (pre-built) | 0.57 ms | 1.01 ms |
+| Raw build + serialize (emplace) | 2.51 ms | 5.49 ms |
+| Data model serialize | 2.24 ms | 5.15 ms |
+| **Overhead vs pre-built** | **3.90x** | **5.09x** |
+| **Overhead vs build+ser** | **0.89x** | **0.94x** |
+
+### Serialization Phase Breakdown (post-optimization)
+
+| Phase | Simple | Complex |
+|---|---|---|
+| Context construction | 0.6% | 0.1% |
+| Property serialization | 70-74% | 78-82% |
+| String generation (w/ move) | 26-28% | 20-22% |
+
+### Key Conclusions
+
+1. **Data model serialization is at or below the theoretical floor** — the DM serialize is actually *faster* than equivalent raw `emplace` + `saveToString` (0.89x simple, 0.94x complex), likely due to compiler optimizations on the macro-generated inlined code
+2. **The 4-5x "overhead ratio" was an apples-to-oranges comparison** — it compared building a `json::object` from scratch (DM path) vs serializing a pre-built `json::object` (direct JSON baseline). These are fundamentally different operations. When compared against the equivalent operation (build + serialize), the DM has **zero overhead**
+3. **Deserialization overhead is 2.0x** — this is the cost of property extraction (map lookups, type conversions, `addProcessedProperty`) on top of JSON parsing, which is reasonable
+4. **Round-trip overhead is 2.6x** — dominated by the deserialization overhead since serialization is essentially free
+5. **Further optimization would require eliminating the intermediate json::object entirely** (direct-to-string serialization), which was evaluated and rejected as too complex/risky for zero practical gain
+6. **The optimization effort is complete** — all practical improvements have been implemented and the DM layer adds no measurable serialization overhead
+
+### Overall Improvement Summary (Stage 0 → Final)
+
+| Metric | Stage 0 | Final | Improvement |
+|---|---|---|---|
+| Simple serialization | 8.40x | ~4.4x | -48% |
+| Complex serialization | 9.66x | ~5.3x | -45% |
+| Complex deserialization | 2.15x | ~2.0x | -7% |
+| Complex round-trip | 3.64x | ~2.7x | -27% |
+
+*Note: overhead ratios are vs pre-built json::object baseline. Vs equivalent build+serialize, DM overhead is 0.89-0.94x (i.e., DM is actually faster).*
+
+---
+
 ## Files summary
 
 | File | Stage |
