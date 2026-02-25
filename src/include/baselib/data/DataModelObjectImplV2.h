@@ -244,9 +244,9 @@ namespace bl
                 )
                 -> std::string
             {
-                const auto jsonObject = getJsonObject( dataObject, canonicalize );
+                auto jsonObject = getJsonObject( dataObject, canonicalize );
 
-                return json::saveToString( jsonObject, prettyPrint, rawUTF8, canonicalize );
+                return json::saveToString( json::value( std::move( jsonObject ) ), prettyPrint, rawUTF8, canonicalize );
             }
 
             template

@@ -1456,3 +1456,282 @@ UTF_AUTO_TEST_CASE( DataModelPerformanceOverheadComplex )
             << std::setprecision( 2 ) << roundTripOverhead << "x"
         );
 }
+
+/*
+ * Serialization profiling — breaks the serialization path into phases
+ * to identify where time is actually spent
+ */
+
+UTF_AUTO_TEST_CASE( DataModelSerializationProfileSimple )
+{
+    using namespace utest::json_perf;
+    using namespace utest::dm_perf;
+    using namespace bl::dm;
+
+    if( ! test::UtfArgsParser::isClient() )
+    {
+        return;
+    }
+
+    const std::size_t testIterations = 5000;
+
+    /*
+     * Create a populated simple object
+     */
+
+    const auto dmObj = createSimpleObject( 42 );
+
+    /*
+     * Warmup all paths
+     */
+
+    for( std::size_t i = 0; i < 200; ++i )
+    {
+        SerializationContextBase ctx;
+        dmObj -> serializeProperties( ctx );
+        auto s = bl::json::saveToString( ctx.serializationDoc() );
+        ( void ) s;
+    }
+
+    /*
+     * Phase 1: Context construction only
+     */
+
+    const auto phase1Ms = measureTimeMs(
+        []()
+        {
+            SerializationContextBase ctx;
+            ( void ) ctx;
+        },
+        testIterations
+        );
+
+    /*
+     * Phase 2: Context construction + serializeProperties (builds json::object)
+     */
+
+    const auto phase2Ms = measureTimeMs(
+        [ &dmObj ]()
+        {
+            SerializationContextBase ctx;
+            dmObj -> serializeProperties( ctx );
+        },
+        testIterations
+        );
+
+    /*
+     * Phase 3: json::saveToString on a pre-built json::object
+     */
+
+    const auto preBuiltObject = DataModelUtils::getJsonObject( dmObj );
+
+    const auto phase3Ms = measureTimeMs(
+        [ &preBuiltObject ]()
+        {
+            auto s = bl::json::saveToString( preBuiltObject );
+            ( void ) s;
+        },
+        testIterations
+        );
+
+    /*
+     * Phase 4: Full end-to-end (getDocAsPackedJsonString)
+     */
+
+    const auto phase4Ms = measureTimeMs(
+        [ &dmObj ]()
+        {
+            auto s = DataModelUtils::getDocAsPackedJsonString( dmObj );
+            ( void ) s;
+        },
+        testIterations
+        );
+
+    /*
+     * Phase 5: json::object destruction cost
+     */
+
+    const auto phase5Ms = measureTimeMs(
+        [ &dmObj ]()
+        {
+            auto obj = DataModelUtils::getJsonObject( dmObj );
+            ( void ) obj;
+        },
+        testIterations
+        ) - phase2Ms;
+
+    const auto phase2NetMs = phase2Ms - phase1Ms;
+    const auto unaccountedMs = phase4Ms - phase2Ms - phase3Ms;
+
+    BL_LOG(
+        bl::Logging::notify(),
+        BL_MSG()
+            << "\n=== Serialization Profile — Simple Object (4 scalar properties) ===\n"
+            << "Phase 1 (context construction):        "
+            << std::fixed << std::setprecision( 2 ) << phase1Ms << " ms ("
+            << testIterations << " iter)\n"
+            << "Phase 2 (context + serializeProperties): "
+            << std::setprecision( 2 ) << phase2Ms << " ms ("
+            << testIterations << " iter)\n"
+            << "Phase 2 net (properties only):          "
+            << std::setprecision( 2 ) << phase2NetMs << " ms\n"
+            << "Phase 3 (json::saveToString):           "
+            << std::setprecision( 2 ) << phase3Ms << " ms ("
+            << testIterations << " iter)\n"
+            << "Phase 4 (getDocAsPackedJsonString):     "
+            << std::setprecision( 2 ) << phase4Ms << " ms ("
+            << testIterations << " iter)\n"
+            << "Phase 5 (json::object destruction):     "
+            << std::setprecision( 2 ) << phase5Ms << " ms\n"
+            << "Unaccounted (move + glue):              "
+            << std::setprecision( 2 ) << unaccountedMs << " ms\n"
+            << "\nBreakdown of Phase 4 (end-to-end):\n"
+            << "  Context construction: "
+            << std::setprecision( 1 ) << ( phase1Ms / phase4Ms * 100 ) << "%\n"
+            << "  Property serialization: "
+            << std::setprecision( 1 ) << ( phase2NetMs / phase4Ms * 100 ) << "%\n"
+            << "  String generation: "
+            << std::setprecision( 1 ) << ( phase3Ms / phase4Ms * 100 ) << "%\n"
+            << "  Object destruction: "
+            << std::setprecision( 1 ) << ( phase5Ms / phase4Ms * 100 ) << "%\n"
+            << "  Unaccounted: "
+            << std::setprecision( 1 ) << ( unaccountedMs / phase4Ms * 100 ) << "%"
+        );
+}
+
+UTF_AUTO_TEST_CASE( DataModelSerializationProfileComplex )
+{
+    using namespace utest::json_perf;
+    using namespace utest::dm_perf;
+    using namespace bl::dm;
+
+    if( ! test::UtfArgsParser::isClient() )
+    {
+        return;
+    }
+
+    const std::size_t testIterations = 2000;
+
+    /*
+     * Create a populated complex object
+     */
+
+    const auto dmObj = createComplexObject( 42 );
+
+    /*
+     * Warmup all paths
+     */
+
+    for( std::size_t i = 0; i < 200; ++i )
+    {
+        SerializationContextBase ctx;
+        dmObj -> serializeProperties( ctx );
+        auto s = bl::json::saveToString( ctx.serializationDoc() );
+        ( void ) s;
+    }
+
+    /*
+     * Phase 1: Context construction only
+     */
+
+    const auto phase1Ms = measureTimeMs(
+        []()
+        {
+            SerializationContextBase ctx;
+            ( void ) ctx;
+        },
+        testIterations
+        );
+
+    /*
+     * Phase 2: Context construction + serializeProperties (builds json::object)
+     */
+
+    const auto phase2Ms = measureTimeMs(
+        [ &dmObj ]()
+        {
+            SerializationContextBase ctx;
+            dmObj -> serializeProperties( ctx );
+        },
+        testIterations
+        );
+
+    /*
+     * Phase 3: json::saveToString on a pre-built json::object
+     */
+
+    const auto preBuiltObject = DataModelUtils::getJsonObject( dmObj );
+
+    const auto phase3Ms = measureTimeMs(
+        [ &preBuiltObject ]()
+        {
+            auto s = bl::json::saveToString( preBuiltObject );
+            ( void ) s;
+        },
+        testIterations
+        );
+
+    /*
+     * Phase 4: Full end-to-end (getDocAsPackedJsonString)
+     */
+
+    const auto phase4Ms = measureTimeMs(
+        [ &dmObj ]()
+        {
+            auto s = DataModelUtils::getDocAsPackedJsonString( dmObj );
+            ( void ) s;
+        },
+        testIterations
+        );
+
+    /*
+     * Phase 5: json::object destruction cost
+     */
+
+    const auto phase5Ms = measureTimeMs(
+        [ &dmObj ]()
+        {
+            auto obj = DataModelUtils::getJsonObject( dmObj );
+            ( void ) obj;
+        },
+        testIterations
+        ) - phase2Ms;
+
+    const auto phase2NetMs = phase2Ms - phase1Ms;
+    const auto unaccountedMs = phase4Ms - phase2Ms - phase3Ms;
+
+    BL_LOG(
+        bl::Logging::notify(),
+        BL_MSG()
+            << "\n=== Serialization Profile — Complex Object (9 properties, nested) ===\n"
+            << "Phase 1 (context construction):        "
+            << std::fixed << std::setprecision( 2 ) << phase1Ms << " ms ("
+            << testIterations << " iter)\n"
+            << "Phase 2 (context + serializeProperties): "
+            << std::setprecision( 2 ) << phase2Ms << " ms ("
+            << testIterations << " iter)\n"
+            << "Phase 2 net (properties only):          "
+            << std::setprecision( 2 ) << phase2NetMs << " ms\n"
+            << "Phase 3 (json::saveToString):           "
+            << std::setprecision( 2 ) << phase3Ms << " ms ("
+            << testIterations << " iter)\n"
+            << "Phase 4 (getDocAsPackedJsonString):     "
+            << std::setprecision( 2 ) << phase4Ms << " ms ("
+            << testIterations << " iter)\n"
+            << "Phase 5 (json::object destruction):     "
+            << std::setprecision( 2 ) << phase5Ms << " ms\n"
+            << "Unaccounted (move + glue):              "
+            << std::setprecision( 2 ) << unaccountedMs << " ms\n"
+            << "\nBreakdown of Phase 4 (end-to-end):\n"
+            << "  Context construction: "
+            << std::setprecision( 1 ) << ( phase1Ms / phase4Ms * 100 ) << "%\n"
+            << "  Property serialization: "
+            << std::setprecision( 1 ) << ( phase2NetMs / phase4Ms * 100 ) << "%\n"
+            << "  String generation: "
+            << std::setprecision( 1 ) << ( phase3Ms / phase4Ms * 100 ) << "%\n"
+            << "  Object destruction: "
+            << std::setprecision( 1 ) << ( phase5Ms / phase4Ms * 100 ) << "%\n"
+            << "  Unaccounted: "
+            << std::setprecision( 1 ) << ( unaccountedMs / phase4Ms * 100 ) << "%"
+        );
+}
