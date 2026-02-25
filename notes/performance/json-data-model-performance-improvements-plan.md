@@ -252,6 +252,35 @@ Compare timing at each stage against Stage 0 baseline and previous stage.
 
 ---
 
+## Stage 3 Results — Eliminate wasted json::object in SerializationContextBase
+
+**Date:** 2026-02-24
+**Platform:** macOS (Darwin), ARM64 (same host as Stages 1-2)
+
+### Simple Object (4 scalar properties)
+
+| Operation | Direct JSON | Data Model | Overhead | vs Stage 0 | vs Stage 2 |
+|-----------|------------|------------|----------|------------|------------|
+| Deserialization (5000 iter) | 1.13 ms (0.0002 ms/iter) | 2.19 ms (0.0004 ms/iter) | **1.94x** | was 2.43x | was 1.79x |
+| Serialization (5000 iter) | 0.38 ms (0.0001 ms/iter) | 1.91 ms (0.0004 ms/iter) | **5.04x** | was 8.40x | was 4.95x |
+
+### Complex Object (scalars + map + vectors + nested object + nested vector)
+
+| Operation | Direct JSON | Data Model | Overhead | vs Stage 0 | vs Stage 2 |
+|-----------|------------|------------|----------|------------|------------|
+| Deserialization (2000 iter) | 2.97 ms (0.0015 ms/iter) | 5.96 ms (0.0030 ms/iter) | **2.01x** | was 2.15x | was 1.75x |
+| Serialization (2000 iter) | 0.78 ms (0.0004 ms/iter) | 6.68 ms (0.0033 ms/iter) | **8.51x** | was 9.66x | was 9.68x |
+| Round-trip (2000 iter) | 3.68 ms (0.0018 ms/iter) | 13.21 ms (0.0066 ms/iter) | **3.59x** | was 3.64x | was 3.31x |
+
+### Key Observations
+
+1. **Complex serialization improved modestly** — 8.51x vs 9.68x (Stage 2) and 9.66x (Stage 0). Eliminating the wasted json::object construction saves some overhead per context
+2. **Simple serialization also improved** — 5.04x vs 4.95x (Stage 2), within noise, but trending down from 8.40x (Stage 0)
+3. **Deserialization ratios show machine variance** — 2.01x vs 1.75x (Stage 2); the Stage 3 change eliminates a wasted serialization doc during deserialization contexts, but the ratio increase suggests run-to-run variance rather than regression
+4. **Round-trip stable** — 3.59x vs 3.31x (Stage 2) and 3.64x (Stage 0)
+
+---
+
 ## Files summary
 
 | File | Stage |

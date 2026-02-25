@@ -44,8 +44,7 @@ namespace bl
         protected:
 
             const bool                                          m_isSerialization;
-            json::object                                        m_serializationDoc;
-            json::object                                        m_deserializationDoc;
+            json::object                                        m_doc;
             cpp::ScalarTypeIniter< bool >                       m_detectUnknownProperties;
             std::unordered_set< std::string >                   m_processedProperties;
 
@@ -63,13 +62,13 @@ namespace bl
             {
                 auto rootValue = json::readFromString( json );
 
-                m_deserializationDoc = std::move( rootValue.as_object() );
+                m_doc = std::move( rootValue.as_object() );
             }
 
             SerializationContextBaseT( SAA_inout json::object&& object ) NOEXCEPT
                 :
                 m_isSerialization( false ),
-                m_deserializationDoc( std::move( object ) )
+                m_doc( std::move( object ) )
             {
             }
 
@@ -92,14 +91,14 @@ namespace bl
             {
                 BL_ASSERT( isSerialization() );
 
-                return m_serializationDoc;
+                return m_doc;
             }
 
             json::object& deserializationDoc() NOEXCEPT
             {
                 BL_ASSERT( ! isSerialization() );
 
-                return m_deserializationDoc;
+                return m_doc;
             }
 
             void addProcessedProperty( SAA_in std::string&& name )
