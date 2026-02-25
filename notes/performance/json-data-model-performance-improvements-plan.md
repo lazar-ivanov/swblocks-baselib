@@ -281,6 +281,41 @@ Compare timing at each stage against Stage 0 baseline and previous stage.
 
 ---
 
+## Stage 2b Results — Move local arrays/objects in container serialization
+
+**Date:** 2026-02-24
+**Platform:** macOS (Darwin), ARM64 (same host as Stages 1-3)
+
+**What:** Fixed 4 additional locations where local `items` (json::array or json::object) was copied instead of moved into the parent json::object during serialization:
+- Complex vector property serialize (json::array)
+- Complex map property serialize (json::object)
+- Simple map property serialize (json::object)
+- Simple container property serialize (json::array)
+
+### Simple Object (4 scalar properties)
+
+| Operation | Direct JSON | Data Model | Overhead | vs Stage 0 |
+|-----------|------------|------------|----------|------------|
+| Deserialization (5000 iter) | 1.12 ms (0.0002 ms/iter) | 2.29 ms (0.0005 ms/iter) | **2.04x** | was 2.43x |
+| Serialization (5000 iter) | 0.37 ms (0.0001 ms/iter) | 2.22 ms (0.0004 ms/iter) | **5.99x** | was 8.40x |
+
+### Complex Object (scalars + map + vectors + nested object + nested vector)
+
+| Operation | Direct JSON | Data Model | Overhead | vs Stage 0 | vs Stage 3 |
+|-----------|------------|------------|----------|------------|------------|
+| Deserialization (2000 iter) | 3.18 ms (0.0016 ms/iter) | 6.47 ms (0.0032 ms/iter) | **2.04x** | was 2.15x | was 2.01x |
+| Serialization (2000 iter) | 0.76 ms (0.0004 ms/iter) | 6.51 ms (0.0033 ms/iter) | **8.60x** | was 9.66x | was 8.51x |
+| Round-trip (2000 iter) | 3.89 ms (0.0019 ms/iter) | 12.71 ms (0.0064 ms/iter) | **3.27x** | was 3.64x | was 3.59x |
+
+### Key Observations
+
+1. **Round-trip improved** — 3.27x vs 3.64x (Stage 0), the best result so far
+2. **Serialization ratios within noise of Stage 3** — 8.60x vs 8.51x. The test object's containers are small (5 items), limiting the impact. Larger containers would benefit more
+3. **Deserialization stable** — 2.04x, consistent with Stage 3
+4. **Simple object unaffected as expected** — simple objects have no containers, so these changes don't apply
+
+---
+
 ## Files summary
 
 | File | Stage |

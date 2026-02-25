@@ -409,7 +409,7 @@ template \
             items.push_back( bl::json::value( item ) ); \
         } \
         \
-        object.emplace( #jsonProp, items ); \
+        object.emplace( #jsonProp, std::move( items ) ); \
     } \
     void name ## Deserialize( \
         SAA_in          const bl::json::object&                         map, \
@@ -630,7 +630,7 @@ template \
             items.push_back( bl::json::value( std::move( tempContext.serializationDoc() ) ) ); \
         } \
         \
-        object.emplace( #jsonProp, items ); \
+        object.emplace( #jsonProp, std::move( items ) ); \
     } \
     void name ## Deserialize( \
         SAA_in          bl::json::object&                               map, \
@@ -703,7 +703,7 @@ template \
             items.emplace( pair.first, std::move( tempContext.serializationDoc() ) ); \
         } \
         \
-        object.emplace( #nameArg, items ); \
+        object.emplace( #nameArg, std::move( items ) ); \
     } \
     void nameArg ## Deserialize( \
         SAA_in          bl::json::object&                               map, \
@@ -772,7 +772,7 @@ template \
             items.emplace( pair.first, pair.second ); \
         } \
         \
-        object.emplace( #name, items ); \
+        object.emplace( #name, std::move( items ) ); \
     } \
     void name ## Deserialize( \
         SAA_in          const bl::json::object&                         map, \
