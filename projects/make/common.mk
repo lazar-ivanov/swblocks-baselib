@@ -207,6 +207,50 @@ UTF_FLAGS        += --build_info=yes
 
 UTF_LOGS_DIR   ?= $(BLDDIR)/utflogs
 
+# Application Verifier support (Windows only)
+# Usage: make test BL_APP_VERIFIER_ENABLED=1 [BL_APP_VERIFIER_CHECKS="..."] [BL_APP_VERIFIER_PAGE_HEAP=Light]
+# Heaps is always enabled regardless of BL_APP_VERIFIER_CHECKS
+# BL_APP_VERIFIER_PAGE_HEAP: Full (default) or Light
+# BL_APP_VERIFIER_PAGE_HEAP_BACKWARD: set to 1 to enable underflow detection (Heaps.Backward=true)
+BL_APP_VERIFIER_CHECKS   ?= Handles Locks Memory
+BL_APP_VERIFIER_PAGE_HEAP ?= Full
+
+# Imply BL_APP_VERIFIER_ENABLED if any BL_APP_VERIFIER_* macro is explicitly passed
+ifeq ($(origin BL_APP_VERIFIER_CHECKS),command line)
+  BL_APP_VERIFIER_ENABLED ?= 1
+endif
+ifeq ($(origin BL_APP_VERIFIER_PAGE_HEAP),command line)
+  BL_APP_VERIFIER_ENABLED ?= 1
+endif
+ifdef BL_APP_VERIFIER_PAGE_HEAP_BACKWARD
+  BL_APP_VERIFIER_ENABLED ?= 1
+endif
+
+ifdef BL_APP_VERIFIER_ENABLED
+  ifeq ($(findstring win,$(OS)),)
+    $(error BL_APP_VERIFIER_ENABLED is only supported on Windows)
+  endif
+  # Check for Administrator privileges (net session fails if not elevated)
+  BL_ADMIN_CHECK := $(shell net session >nul 2>&1 && echo 1 || echo 0)
+  ifneq ($(BL_ADMIN_CHECK),1)
+    $(error BL_APP_VERIFIER_ENABLED requires an elevated Administrator command prompt)
+  endif
+  # Build the -with property list for the appverif -enable command
+  ifeq ($(BL_APP_VERIFIER_PAGE_HEAP),Light)
+    BL_APP_VERIFIER_PROPS = Heaps.Full=false
+  else
+    BL_APP_VERIFIER_PROPS = Heaps.Full=true
+  endif
+  ifdef BL_APP_VERIFIER_PAGE_HEAP_BACKWARD
+    BL_APP_VERIFIER_PROPS += Heaps.Backward=true
+  endif
+  BL_APP_VERIFIER_MSG = (with app verifier enabled)
+  $(info Building with BL_APP_VERIFIER_ENABLED = $(BL_APP_VERIFIER_ENABLED))
+  $(info Building with BL_APP_VERIFIER_CHECKS = Heaps $(BL_APP_VERIFIER_CHECKS))
+  $(info Building with BL_APP_VERIFIER_PAGE_HEAP = $(BL_APP_VERIFIER_PAGE_HEAP))
+  $(info Building with BL_APP_VERIFIER_PAGE_HEAP_BACKWARD = $(BL_APP_VERIFIER_PAGE_HEAP_BACKWARD))
+endif
+
 # targets
 APPS        := $(patsubst $(SRCDIR)/apps/%, %, $(wildcard $(SRCDIR)/apps/*))
 PLUGINS     := $(patsubst $(SRCDIR)/plugins/%, %, $(wildcard $(SRCDIR)/plugins/*))
@@ -465,10 +509,13 @@ define TEMPLATE
     test_$(1)_begin: | mktmppath mkutflogspath $(1)
 	$$(info $$(HR))
 	@echo $$(HR) > $$(UTF_LOGS_DIR)/$(1).log
-	$$(info Starting $(1) at $$(shell $(DATE_COMMAND)))
-	@echo Starting $(1) at $$(shell $(DATE_COMMAND)) >>$$(UTF_LOGS_DIR)/$(1).log
+	$$(info Starting $(1) $$(BL_APP_VERIFIER_MSG) at $$(shell $(DATE_COMMAND)))
+	@echo "Starting $(1) $$(BL_APP_VERIFIER_MSG) at $$(shell $(DATE_COMMAND))" >>$$(UTF_LOGS_DIR)/$(1).log
 	$$(info $$(HR))
 	@echo $$(HR) >>$$(UTF_LOGS_DIR)/$(1).log
+    ifdef BL_APP_VERIFIER_ENABLED
+	@appverif -enable Heaps $$(BL_APP_VERIFIER_CHECKS) -for $$(notdir $$($(1)_ARTIFACT)) -with $$(BL_APP_VERIFIER_PROPS) > /dev/null
+    endif
 
     test_$(1)_run: test_$(1)_begin
       ifeq (,$$(findstring $$(SOEXT), $$($(1)_ARTIFACT)))
@@ -479,6 +526,15 @@ define TEMPLATE
 		echo -e "\n*** Memory errors detected"; \
 	fi
         else
+          ifdef BL_APP_VERIFIER_ENABLED
+            ifeq (utf_baselib,$$(findstring utf_baselib, $$($(1)_ARTIFACT)))
+	@BL_ANALYSIS_TESTING=1 $$(DEBUG_HARNESS) $$($(1)_ARTIFACT) $$(UTF_FLAGS) >>$$(UTF_LOGS_DIR)/$(1).log
+            else ifeq (utf_shared,$$(findstring utf_shared, $$($(1)_ARTIFACT)))
+	@BL_ANALYSIS_TESTING=1 $$(DEBUG_HARNESS) $$($(1)_ARTIFACT) $$(UTF_FLAGS) >>$$(UTF_LOGS_DIR)/$(1).log
+            else
+	@BL_ANALYSIS_TESTING=1 $$(DEBUG_HARNESS) $$($(1)_ARTIFACT) $$(UTF_FLAGS) $$(UTF_FLAGS_EXTRA) >>$$(UTF_LOGS_DIR)/$(1).log
+            endif
+          else
             ifeq (utf_baselib,$$(findstring utf_baselib, $$($(1)_ARTIFACT)))
 	@$$(DEBUG_HARNESS) $$($(1)_ARTIFACT) $$(UTF_FLAGS) >>$$(UTF_LOGS_DIR)/$(1).log
             else ifeq (utf_shared,$$(findstring utf_shared, $$($(1)_ARTIFACT)))
@@ -486,14 +542,18 @@ define TEMPLATE
             else
 	@$$(DEBUG_HARNESS) $$($(1)_ARTIFACT) $$(UTF_FLAGS) $$(UTF_FLAGS_EXTRA) >>$$(UTF_LOGS_DIR)/$(1).log
             endif
+          endif
         endif
       endif
 
     test_$(1)_end: test_$(1)_run
+    ifdef BL_APP_VERIFIER_ENABLED
+	@appverif -disable '*' -for $$(notdir $$($(1)_ARTIFACT)) > /dev/null
+    endif
 	$$(info $$(HR))
 	@echo $$(HR) >>$$(UTF_LOGS_DIR)/$(1).log
-	$$(info Completed $(1) at $$(shell $(DATE_COMMAND)))
-	@echo Completed $(1) at $$(shell $(DATE_COMMAND)) >>$$(UTF_LOGS_DIR)/$(1).log
+	$$(info Completed $(1) $$(BL_APP_VERIFIER_MSG) at $$(shell $(DATE_COMMAND)))
+	@echo "Completed $(1) $$(BL_APP_VERIFIER_MSG) at $$(shell $(DATE_COMMAND))" >>$$(UTF_LOGS_DIR)/$(1).log
 	$$(info $$(HR))
 	@echo $$(HR) >>$$(UTF_LOGS_DIR)/$(1).log
 
