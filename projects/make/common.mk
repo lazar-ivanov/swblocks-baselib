@@ -514,7 +514,9 @@ define TEMPLATE
 	$$(info $$(HR))
 	@echo $$(HR) >>$$(UTF_LOGS_DIR)/$(1).log
     ifdef BL_APP_VERIFIER_ENABLED
+      ifeq (,$$(findstring $$(SOEXT), $$($(1)_ARTIFACT)))
 	@appverif -enable Heaps $$(BL_APP_VERIFIER_CHECKS) -for $$(notdir $$($(1)_ARTIFACT)) -with $$(BL_APP_VERIFIER_PROPS) > /dev/null
+      endif
     endif
 
     test_$(1)_run: test_$(1)_begin
@@ -528,11 +530,11 @@ define TEMPLATE
         else
           ifdef BL_APP_VERIFIER_ENABLED
             ifeq (utf_baselib,$$(findstring utf_baselib, $$($(1)_ARTIFACT)))
-	@BL_ANALYSIS_TESTING=1 $$(DEBUG_HARNESS) $$($(1)_ARTIFACT) $$(UTF_FLAGS) >>$$(UTF_LOGS_DIR)/$(1).log
+	@rc=0; BL_ANALYSIS_TESTING=1 $$(DEBUG_HARNESS) $$($(1)_ARTIFACT) $$(UTF_FLAGS) >>$$(UTF_LOGS_DIR)/$(1).log || rc=$$$$?; appverif -delete settings -for $$(notdir $$($(1)_ARTIFACT)) > /dev/null 2>&1; exit $$$$rc
             else ifeq (utf_shared,$$(findstring utf_shared, $$($(1)_ARTIFACT)))
-	@BL_ANALYSIS_TESTING=1 $$(DEBUG_HARNESS) $$($(1)_ARTIFACT) $$(UTF_FLAGS) >>$$(UTF_LOGS_DIR)/$(1).log
+	@rc=0; BL_ANALYSIS_TESTING=1 $$(DEBUG_HARNESS) $$($(1)_ARTIFACT) $$(UTF_FLAGS) >>$$(UTF_LOGS_DIR)/$(1).log || rc=$$$$?; appverif -delete settings -for $$(notdir $$($(1)_ARTIFACT)) > /dev/null 2>&1; exit $$$$rc
             else
-	@BL_ANALYSIS_TESTING=1 $$(DEBUG_HARNESS) $$($(1)_ARTIFACT) $$(UTF_FLAGS) $$(UTF_FLAGS_EXTRA) >>$$(UTF_LOGS_DIR)/$(1).log
+	@rc=0; BL_ANALYSIS_TESTING=1 $$(DEBUG_HARNESS) $$($(1)_ARTIFACT) $$(UTF_FLAGS) $$(UTF_FLAGS_EXTRA) >>$$(UTF_LOGS_DIR)/$(1).log || rc=$$$$?; appverif -delete settings -for $$(notdir $$($(1)_ARTIFACT)) > /dev/null 2>&1; exit $$$$rc
             endif
           else
             ifeq (utf_baselib,$$(findstring utf_baselib, $$($(1)_ARTIFACT)))
@@ -547,9 +549,6 @@ define TEMPLATE
       endif
 
     test_$(1)_end: test_$(1)_run
-    ifdef BL_APP_VERIFIER_ENABLED
-	@appverif -disable '*' -for $$(notdir $$($(1)_ARTIFACT)) > /dev/null
-    endif
 	$$(info $$(HR))
 	@echo $$(HR) >>$$(UTF_LOGS_DIR)/$(1).log
 	$$(info Completed $(1) $$(BL_APP_VERIFIER_MSG) at $$(shell $(DATE_COMMAND)))

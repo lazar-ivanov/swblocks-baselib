@@ -155,7 +155,7 @@ For each test binary, the build system:
 1. **Validates** platform (Windows) and admin privileges at makefile parse time
 2. **Enables** appverif: `appverif -enable Heaps <BL_APP_VERIFIER_CHECKS> -for <binary>.exe -with Heaps.Full=true|false [Heaps.Backward=true]`
 3. **Runs** the test with `BL_ANALYSIS_TESTING=1` set in the environment (activates all false-positive workarounds)
-4. **Disables** appverif: `appverif -disable * -for <binary>.exe`
+4. **Cleans up** appverif: `appverif -delete settings -for <binary>.exe` (removes all IFEO registry entries, not just disabling checks)
 
 ### Debug Harness Interaction
 
@@ -164,6 +164,7 @@ Tests run through the debug harness ([scripts/debug_harness.py](../../debug_harn
 - Application Verifier hooks in at process load time via IFEO registry and works correctly
 - Violations crash the process → Windows Error Reporting writes a dump → the debug harness analyzes it post-mortem with `cdb -c '!analyze -v'`
 - First-chance breaks (like the `apphelp.dll` issue) are silently swallowed without a debugger, which is beneficial for automated runs
+- **Cleanup is guaranteed**: The `appverif -delete settings` command runs after each test regardless of pass/fail, ensuring no IFEO registry entries are left behind. This is critical because leftover entries cause appverif shim DLLs to load into subsequent runs even without `BL_APP_VERIFIER_ENABLED`, which can cause test failures
 
 ---
 
