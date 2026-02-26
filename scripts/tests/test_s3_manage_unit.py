@@ -1883,7 +1883,8 @@ class TestCommandList:
         args = type('Args', (), {
             'bucket_name': 'test-bucket',
             'prefix': None,
-            'max_keys': None
+            'max_keys': None,
+            'paths_only': False
         })()
 
         # Execute
@@ -1906,7 +1907,8 @@ class TestCommandList:
         args = type('Args', (), {
             'bucket_name': 'test-bucket',
             'prefix': None,
-            'max_keys': None
+            'max_keys': None,
+            'paths_only': False
         })()
 
         # Execute
@@ -1937,7 +1939,8 @@ class TestCommandList:
         args = type('Args', (), {
             'bucket_name': 'test-bucket',
             'prefix': None,
-            'max_keys': None
+            'max_keys': None,
+            'paths_only': False
         })()
 
         # Execute
@@ -1966,7 +1969,8 @@ class TestCommandList:
         args = type('Args', (), {
             'bucket_name': 'test-bucket',
             'prefix': 'data',
-            'max_keys': None
+            'max_keys': None,
+            'paths_only': False
         })()
 
         # Execute
@@ -1997,7 +2001,8 @@ class TestCommandList:
         args = type('Args', (), {
             'bucket_name': 'test-bucket',
             'prefix': None,
-            'max_keys': 3
+            'max_keys': 3,
+            'paths_only': False
         })()
 
         # Execute
@@ -2018,7 +2023,8 @@ class TestCommandList:
         args = type('Args', (), {
             'bucket_name': 'test-bucket',
             'prefix': 'logs/',
-            'max_keys': None
+            'max_keys': None,
+            'paths_only': False
         })()
 
         # Execute
@@ -2039,7 +2045,8 @@ class TestCommandList:
         args = type('Args', (), {
             'bucket_name': 'test-bucket',
             'prefix': None,
-            'max_keys': None
+            'max_keys': None,
+            'paths_only': False
         })()
 
         # Execute
@@ -2056,10 +2063,14 @@ class TestCommandList:
         # Verify separator matches header width
         assert len(separator_line) == 107
 
-        # Verify columns are present
-        assert 'FILE PATH' in header_line
+        # Verify columns are present in correct order: SIZE, LAST MODIFIED, FILE PATH
         assert 'SIZE' in header_line
         assert 'LAST MODIFIED' in header_line
+        assert 'FILE PATH' in header_line
+        size_pos = header_line.index('SIZE')
+        modified_pos = header_line.index('LAST MODIFIED')
+        path_pos = header_line.index('FILE PATH')
+        assert size_pos < modified_pos < path_pos
 
     @mock_aws
     def test_list_size_formatting(self, temp_dir, capsys):
@@ -2079,7 +2090,8 @@ class TestCommandList:
         args = type('Args', (), {
             'bucket_name': 'test-bucket',
             'prefix': None,
-            'max_keys': None
+            'max_keys': None,
+            'paths_only': False
         })()
 
         # Execute
@@ -2106,7 +2118,8 @@ class TestCommandList:
         args = type('Args', (), {
             'bucket_name': 'test-bucket',
             'prefix': None,
-            'max_keys': None
+            'max_keys': None,
+            'paths_only': False
         })()
 
         # Execute
@@ -2126,7 +2139,8 @@ class TestCommandList:
         args = type('Args', (), {
             'bucket_name': 'nonexistent-bucket',
             'prefix': None,
-            'max_keys': None
+            'max_keys': None,
+            'paths_only': False
         })()
 
         # Execute
@@ -2146,7 +2160,8 @@ class TestCommandList:
         args = type('Args', (), {
             'bucket_name': 'test-bucket',
             'prefix': None,
-            'max_keys': None
+            'max_keys': None,
+            'paths_only': False
         })()
 
         # Execute
@@ -2157,6 +2172,118 @@ class TestCommandList:
         import re
         timestamp_pattern = r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}'
         assert re.search(timestamp_pattern, captured.out) is not None
+
+    @mock_aws
+    def test_list_paths_only_single_file(self, temp_file, capsys):
+        """Test --paths-only outputs only file paths, one per line."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'test.txt')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'max_keys': None,
+            'paths_only': True
+        })()
+
+        s3_manage.command_list(args, s3_client=s3_client)
+
+        captured = capsys.readouterr()
+        assert captured.out.strip() == "test.txt"
+
+    @mock_aws
+    def test_list_paths_only_multiple_files(self, temp_dir, capsys):
+        """Test --paths-only with multiple files outputs one path per line."""
+        for i in range(3):
+            (temp_dir / f"file{i}.txt").write_text(f"content {i}")
+
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        for i in range(3):
+            s3_client.upload_file(str(temp_dir / f"file{i}.txt"), 'test-bucket', f"file{i}.txt")
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'max_keys': None,
+            'paths_only': True
+        })()
+
+        s3_manage.command_list(args, s3_client=s3_client)
+
+        captured = capsys.readouterr()
+        lines = captured.out.strip().split('\n')
+        assert len(lines) == 3
+        assert "file0.txt" in lines
+        assert "file1.txt" in lines
+        assert "file2.txt" in lines
+
+    @mock_aws
+    def test_list_paths_only_no_header_or_summary(self, temp_file, capsys):
+        """Test --paths-only suppresses header, separator, summary, and intro messages."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'test.txt')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'max_keys': None,
+            'paths_only': True
+        })()
+
+        s3_manage.command_list(args, s3_client=s3_client)
+
+        captured = capsys.readouterr()
+        assert "Listing objects" not in captured.out
+        assert "FILE PATH" not in captured.out
+        assert "SIZE" not in captured.out
+        assert "LAST MODIFIED" not in captured.out
+        assert "Total:" not in captured.out
+        assert "---" not in captured.out
+
+    @mock_aws
+    def test_list_paths_only_empty_bucket(self, capsys):
+        """Test --paths-only with empty bucket produces no output."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'max_keys': None,
+            'paths_only': True
+        })()
+
+        s3_manage.command_list(args, s3_client=s3_client)
+
+        captured = capsys.readouterr()
+        assert captured.out.strip() == ""
+
+    @mock_aws
+    def test_list_paths_only_with_prefix(self, temp_dir, capsys):
+        """Test --paths-only respects prefix filter."""
+        (temp_dir / "data1.txt").write_text("data1")
+        (temp_dir / "log1.txt").write_text("log1")
+
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(temp_dir / "data1.txt"), 'test-bucket', 'data1.txt')
+        s3_client.upload_file(str(temp_dir / "log1.txt"), 'test-bucket', 'log1.txt')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': 'data',
+            'max_keys': None,
+            'paths_only': True
+        })()
+
+        s3_manage.command_list(args, s3_client=s3_client)
+
+        captured = capsys.readouterr()
+        assert captured.out.strip() == "data1.txt"
+        assert "log1.txt" not in captured.out
 
 
 # ====================================================================================
