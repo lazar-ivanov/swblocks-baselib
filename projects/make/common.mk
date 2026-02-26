@@ -212,8 +212,11 @@ UTF_LOGS_DIR   ?= $(BLDDIR)/utflogs
 # Heaps is always enabled regardless of BL_APP_VERIFIER_CHECKS
 # BL_APP_VERIFIER_PAGE_HEAP: Full (default) or Light
 # BL_APP_VERIFIER_PAGE_HEAP_BACKWARD: set to 1 to enable underflow detection (Heaps.Backward=true)
+# BL_APP_VERIFIER_JVM_BINARIES: space-separated list of exe names that use the JVM platform
+#   (page heap is restricted to the exe itself via Heaps.Dlls to avoid known JVM false positives)
 BL_APP_VERIFIER_CHECKS   ?= Handles Locks Memory
 BL_APP_VERIFIER_PAGE_HEAP ?= Full
+BL_APP_VERIFIER_JVM_BINARIES ?= utf-baselib-jni.exe
 
 # Imply BL_APP_VERIFIER_ENABLED if any BL_APP_VERIFIER_* macro is explicitly passed
 ifeq ($(origin BL_APP_VERIFIER_CHECKS),command line)
@@ -244,11 +247,18 @@ ifdef BL_APP_VERIFIER_ENABLED
   ifdef BL_APP_VERIFIER_PAGE_HEAP_BACKWARD
     BL_APP_VERIFIER_PROPS += Heaps.Backward=true
   endif
+  # JVM binaries: light page heap, Heaps.Dlls restriction, no Locks/Handles (known JVM false positives)
+  BL_APP_VERIFIER_JVM_PROPS = Heaps.Full=false
+  ifdef BL_APP_VERIFIER_PAGE_HEAP_BACKWARD
+    BL_APP_VERIFIER_JVM_PROPS += Heaps.Backward=true
+  endif
+  BL_APP_VERIFIER_JVM_CHECKS = $(filter-out Locks Handles Memory,$(BL_APP_VERIFIER_CHECKS))
   BL_APP_VERIFIER_MSG = (with app verifier enabled)
   $(info Building with BL_APP_VERIFIER_ENABLED = $(BL_APP_VERIFIER_ENABLED))
   $(info Building with BL_APP_VERIFIER_CHECKS = Heaps $(BL_APP_VERIFIER_CHECKS))
   $(info Building with BL_APP_VERIFIER_PAGE_HEAP = $(BL_APP_VERIFIER_PAGE_HEAP))
   $(info Building with BL_APP_VERIFIER_PAGE_HEAP_BACKWARD = $(BL_APP_VERIFIER_PAGE_HEAP_BACKWARD))
+  $(info Building with BL_APP_VERIFIER_JVM_BINARIES = $(BL_APP_VERIFIER_JVM_BINARIES))
 endif
 
 # targets
@@ -511,13 +521,20 @@ define TEMPLATE
 	@echo $$(HR) > $$(UTF_LOGS_DIR)/$(1).log
 	$$(info Starting $(1) $$(BL_APP_VERIFIER_MSG) at $$(shell $(DATE_COMMAND)))
 	@echo "Starting $(1) $$(BL_APP_VERIFIER_MSG) at $$(shell $(DATE_COMMAND))" >>$$(UTF_LOGS_DIR)/$(1).log
-	$$(info $$(HR))
-	@echo $$(HR) >>$$(UTF_LOGS_DIR)/$(1).log
     ifdef BL_APP_VERIFIER_ENABLED
       ifeq (,$$(findstring $$(SOEXT), $$($(1)_ARTIFACT)))
+        ifneq (,$$(findstring $$(notdir $$($(1)_ARTIFACT)),$$(BL_APP_VERIFIER_JVM_BINARIES)))
+	$$(info appverif -enable Heaps $$(BL_APP_VERIFIER_JVM_CHECKS) -for $$(notdir $$($(1)_ARTIFACT)) -with $$(BL_APP_VERIFIER_JVM_PROPS) Heaps.Dlls=$$(notdir $$($(1)_ARTIFACT)))
+	@appverif -enable Heaps $$(BL_APP_VERIFIER_JVM_CHECKS) -for $$(notdir $$($(1)_ARTIFACT)) -with $$(BL_APP_VERIFIER_JVM_PROPS) Heaps.Dlls=$$(notdir $$($(1)_ARTIFACT)) > /dev/null
+        else
+	$$(info appverif -enable Heaps $$(BL_APP_VERIFIER_CHECKS) -for $$(notdir $$($(1)_ARTIFACT)) -with $$(BL_APP_VERIFIER_PROPS))
 	@appverif -enable Heaps $$(BL_APP_VERIFIER_CHECKS) -for $$(notdir $$($(1)_ARTIFACT)) -with $$(BL_APP_VERIFIER_PROPS) > /dev/null
+        endif
+	$$(info appverif -delete settings -for $$(notdir $$($(1)_ARTIFACT)))
       endif
     endif
+	$$(info $$(HR))
+	@echo $$(HR) >>$$(UTF_LOGS_DIR)/$(1).log
 
     test_$(1)_run: test_$(1)_begin
       ifeq (,$$(findstring $$(SOEXT), $$($(1)_ARTIFACT)))

@@ -126,13 +126,14 @@ make test_utf_baselib BL_APP_VERIFIER_ENABLED=1
 
 ### Custom Verification Checks
 
-Two macros control the appverif configuration:
+These macros control the appverif configuration:
 
 | Macro | Default | Description |
 |-------|---------|-------------|
 | `BL_APP_VERIFIER_CHECKS` | `Handles Locks Memory` | Additional checks to enable (Heaps is always enabled regardless) |
 | `BL_APP_VERIFIER_PAGE_HEAP` | `Full` | Page heap mode: `Full` (default) or `Light` |
 | `BL_APP_VERIFIER_PAGE_HEAP_BACKWARD` | _(not set)_ | Set to `1` to enable underflow detection (`Heaps.Backward=true`) |
+| `BL_APP_VERIFIER_JVM_BINARIES` | `utf-baselib-jni.exe` | Space-separated list of exe names that use the JVM platform (see [JVM Compatibility](#application-verifier-and-jvm-compatibility)) |
 
 ```bash
 # Light page heap (faster, fewer false positives)
@@ -153,7 +154,7 @@ make test BL_APP_VERIFIER_ENABLED=1 BL_APP_VERIFIER_PAGE_HEAP_BACKWARD=1
 For each test binary, the build system:
 
 1. **Validates** platform (Windows) and admin privileges at makefile parse time
-2. **Enables** appverif: `appverif -enable Heaps <BL_APP_VERIFIER_CHECKS> -for <binary>.exe -with Heaps.Full=true|false [Heaps.Backward=true]`
+2. **Enables** appverif: `appverif -enable Heaps <checks> -for <binary>.exe -with <props>` — for JVM binaries (listed in `BL_APP_VERIFIER_JVM_BINARIES`), Locks/Handles/Memory checks are removed and light page heap with `Heaps.Dlls=<binary>.exe` is forced (see [JVM Compatibility](#application-verifier-and-jvm-compatibility))
 3. **Runs** the test with `BL_ANALYSIS_TESTING=1` set in the environment (activates all false-positive workarounds)
 4. **Cleans up** appverif: `appverif -delete settings -for <binary>.exe` (removes all IFEO registry entries, not just disabling checks)
 
@@ -188,6 +189,39 @@ All documented workarounds address **false positives in external code**, not bug
 - **Windows APIs** (`GetUserNameW`, `CreateProcess`) trigger spurious breaks, especially with unaligned page heap enabled
 
 **Important:** If you encounter Application Verifier breaks in swblocks-baselib code (not external libraries), these may be real bugs and should be investigated.
+
+---
+
+## Application Verifier and JVM Compatibility
+
+There is a well-documented incompatibility between Windows Application Verifier and the Java Virtual Machine (`jvm.dll`). Enabling Full PageHeap or certain Basics checks on a process that loads the JVM commonly causes the application to crash before it even reaches `main()`.
+
+The build system automatically handles this: binaries listed in `BL_APP_VERIFIER_JVM_BINARIES` get a reduced appverif configuration — light page heap only, restricted to the main executable via `Heaps.Dlls`, with Locks, Handles, and Memory checks disabled.
+
+### Why the JVM Is Incompatible
+
+**Memory management conflicts (PageHeap):** The JVM pre-allocates large chunks of memory and manages them using its own algorithms. When Full PageHeap is enabled, every allocation — even those made by the JVM's internal C++ code — is forced into two separate memory pages (one data page and one guard page). The JVM often fails to initialize its heap because it exceeds the virtual address space or because the JVM's memory handshakes with the OS are intercepted and modified by the verifier, leading to `0xc0000005` (Access Violation) errors.
+
+**JIT compilation:** The JVM generates executable code at runtime. Application Verifier is sensitive to executable memory regions. Verifier layers like Dangerous APIs or Code Integrity can flag the JVM's creation of executable memory pages as suspicious behavior, potentially causing the OS to terminate the process.
+
+**DLL load order and hooking:** Application Verifier works by hooking the Import Address Table (IAT) of DLLs as they load. The JVM uses complex loading sequences for its internal components. If the verifier tries to shim a function that the JVM expects to be unmanaged, it can cause a deadlock during `DllMain`, resulting in the application hanging indefinitely during startup or crashing with a stack trace ending in `ntdll!LdrpInitializeProcess`.
+
+**Locks and Handles:** The JVM does non-standard things with synchronization and handle inheritance that frequently trigger false-positive verifier stops in the Locks and Handles checks.
+
+### What the Build System Does for JVM Binaries
+
+For binaries listed in `BL_APP_VERIFIER_JVM_BINARIES`, the build system automatically:
+
+1. **Forces light page heap** (`Heaps.Full=false`) — uses fill patterns instead of guard pages, which is compatible with the JVM's memory model
+2. **Restricts page heap to the main executable** (`Heaps.Dlls=<binary>.exe`) — JVM platform DLLs are not subjected to page heap verification
+3. **Disables Locks, Handles, and Memory checks** — these are incompatible with the JVM's non-standard usage of synchronization, handles, and virtual memory
+
+The resulting appverif command for JVM binaries is:
+```
+appverif -enable Heaps -for <binary>.exe -with Heaps.Full=false Heaps.Dlls=<binary>.exe
+```
+
+**Note:** Do not confuse the Windows Application Verifier (which checks C++/OS API calls) with the Java Bytecode Verifier (which checks `.class` file integrity). They are completely unrelated, though they can sometimes conflict over the same process resources.
 
 ---
 
