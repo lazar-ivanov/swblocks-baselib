@@ -634,7 +634,7 @@ def command_list(args, s3_client=None):
     Execute the list command.
 
     Args:
-        args: Command-line arguments with bucket_name, prefix, max_keys, etc.
+        args: Command-line arguments with bucket_name, prefix, max_keys, paths_only, etc.
         s3_client: Optional boto3 S3 client (for testing). If None, creates client from args.
     """
     # Create S3 client if not provided (for testing)
@@ -650,14 +650,17 @@ def command_list(args, s3_client=None):
 
     # List objects
     try:
-        print(f"Listing objects in bucket: {args.bucket_name}")
-        if args.prefix:
-            print(f"Prefix filter: {args.prefix}")
-        print()
+        paths_only = getattr(args, 'paths_only', False)
 
-        # Print header
-        print(f"{'FILE PATH':<70} {'SIZE':<12} {'LAST MODIFIED':<25}")
-        print("-" * 107)
+        if not paths_only:
+            print(f"Listing objects in bucket: {args.bucket_name}")
+            if args.prefix:
+                print(f"Prefix filter: {args.prefix}")
+            print()
+
+            # Print header
+            print(f"{'SIZE':<12} {'LAST MODIFIED':<25} FILE PATH")
+            print("-" * 107)
 
         # Paginate through results using reusable helper
         total_objects = 0
@@ -666,31 +669,32 @@ def command_list(args, s3_client=None):
         for obj in paginate_s3_objects(s3_client, args.bucket_name, args.prefix, args.max_keys):
             key = obj['Key']
             size_bytes = obj['Size']
-            last_modified = obj['LastModified'].strftime('%Y-%m-%d %H:%M:%S %Z')
 
-            # Format size
-            size_str = format_size(size_bytes)
-
-            # Print object info
-            print(f"{key:<70} {size_str:<12} {last_modified:<25}")
+            if paths_only:
+                print(key)
+            else:
+                last_modified = obj['LastModified'].strftime('%Y-%m-%d %H:%M:%S %Z')
+                size_str = format_size(size_bytes)
+                print(f"{size_str:<12} {last_modified:<25} {key}")
 
             total_objects += 1
             total_size += size_bytes
 
-        # Check if bucket is empty or no objects match prefix
-        if total_objects == 0:
-            if args.prefix:
-                print(f"No objects found with prefix: {args.prefix}")
-            else:
-                print("Bucket is empty")
+        if not paths_only:
+            # Check if bucket is empty or no objects match prefix
+            if total_objects == 0:
+                if args.prefix:
+                    print(f"No objects found with prefix: {args.prefix}")
+                else:
+                    print("Bucket is empty")
 
-        # Print max_keys warning if results may be truncated
-        if args.max_keys and total_objects == args.max_keys:
-            print(f"\n(Results limited to {args.max_keys} objects. Use --max-keys to adjust or remove to see all.)")
+            # Print max_keys warning if results may be truncated
+            if args.max_keys and total_objects == args.max_keys:
+                print(f"\n(Results limited to {args.max_keys} objects. Use --max-keys to adjust or remove to see all.)")
 
-        # Print summary
-        print("-" * 107)
-        print(f"Total: {total_objects} objects, {format_size(total_size)}")
+            # Print summary
+            print("-" * 107)
+            print(f"Total: {total_objects} objects, {format_size(total_size)}")
 
     except ClientError as e:
         error_code = e.response['Error']['Code']
@@ -1178,6 +1182,8 @@ def main():
                              help='Filter objects by prefix (e.g., "folder/subfolder/")')
     list_parser.add_argument('--max-keys', type=int, metavar='N',
                              help='Maximum number of objects to list')
+    list_parser.add_argument('--paths-only', action='store_true',
+                             help='Output only file paths, one per line (no header, summary, or other columns)')
 
     # Add 'verify' subcommand
     verify_parser = subparsers.add_parser(
