@@ -524,13 +524,13 @@ define TEMPLATE
     ifdef BL_APP_VERIFIER_ENABLED
       ifeq (,$$(findstring $$(SOEXT), $$($(1)_ARTIFACT)))
         ifneq (,$$(findstring $$(notdir $$($(1)_ARTIFACT)),$$(BL_APP_VERIFIER_JVM_BINARIES)))
-	$$(info appverif -enable Heaps $$(BL_APP_VERIFIER_JVM_CHECKS) -for $$(notdir $$($(1)_ARTIFACT)) -with $$(BL_APP_VERIFIER_JVM_PROPS) Heaps.Dlls=$$(notdir $$($(1)_ARTIFACT)))
+	$$(info appverif enable command: appverif -enable Heaps $$(BL_APP_VERIFIER_JVM_CHECKS) -for $$(notdir $$($(1)_ARTIFACT)) -with $$(BL_APP_VERIFIER_JVM_PROPS) Heaps.Dlls=$$(notdir $$($(1)_ARTIFACT)))
 	@appverif -enable Heaps $$(BL_APP_VERIFIER_JVM_CHECKS) -for $$(notdir $$($(1)_ARTIFACT)) -with $$(BL_APP_VERIFIER_JVM_PROPS) Heaps.Dlls=$$(notdir $$($(1)_ARTIFACT)) > /dev/null
         else
-	$$(info appverif -enable Heaps $$(BL_APP_VERIFIER_CHECKS) -for $$(notdir $$($(1)_ARTIFACT)) -with $$(BL_APP_VERIFIER_PROPS))
+	$$(info appverif enable command: appverif -enable Heaps $$(BL_APP_VERIFIER_CHECKS) -for $$(notdir $$($(1)_ARTIFACT)) -with $$(BL_APP_VERIFIER_PROPS))
 	@appverif -enable Heaps $$(BL_APP_VERIFIER_CHECKS) -for $$(notdir $$($(1)_ARTIFACT)) -with $$(BL_APP_VERIFIER_PROPS) > /dev/null
         endif
-	$$(info appverif -delete settings -for $$(notdir $$($(1)_ARTIFACT)))
+	$$(info appverif cleanup command: appverif -delete settings -for $$(notdir $$($(1)_ARTIFACT)))
       endif
     endif
 	$$(info $$(HR))
