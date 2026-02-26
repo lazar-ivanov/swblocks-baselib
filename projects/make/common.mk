@@ -234,7 +234,7 @@ ifdef BL_APP_VERIFIER_ENABLED
     $(error BL_APP_VERIFIER_ENABLED is only supported on Windows)
   endif
   # Check for Administrator privileges (net session fails if not elevated)
-  BL_ADMIN_CHECK := $(shell net session >nul 2>&1 && echo 1 || echo 0)
+  BL_ADMIN_CHECK := $(shell net session > /dev/null 2>&1 && echo 1 || echo 0)
   ifneq ($(BL_ADMIN_CHECK),1)
     $(error BL_APP_VERIFIER_ENABLED requires an elevated Administrator command prompt)
   endif
