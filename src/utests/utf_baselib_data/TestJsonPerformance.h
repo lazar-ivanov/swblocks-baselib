@@ -1186,3 +1186,823 @@ UTF_AUTO_TEST_CASE( DataModelPerformanceRoundTrip )
     UTF_REQUIRE_EQUAL( loaded -> name(), complexObjects[ 0 ] -> name() );
     UTF_REQUIRE_EQUAL( loaded -> id(), complexObjects[ 0 ] -> id() );
 }
+
+/*
+ * Data Model vs Raw JSON overhead comparison benchmarks
+ *
+ * These tests measure the same operations through direct Boost.JSON and through the
+ * data model layer, reporting the overhead ratio. This allows tracking improvements
+ * to the data model implementation across stages.
+ */
+
+UTF_AUTO_TEST_CASE( DataModelPerformanceOverheadSimple )
+{
+    using namespace utest::json_perf;
+    using namespace utest::dm_perf;
+    using namespace bl::dm;
+
+    if( ! test::UtfArgsParser::isClient() )
+    {
+        return;
+    }
+
+    const std::size_t testIterations = 5000;
+
+    /*
+     * Generate JSON for a single simple object
+     */
+
+    const auto jsonText = generateSimpleObjectJson( 42 );
+
+    /*
+     * Warmup
+     */
+
+    for( std::size_t i = 0; i < 100; ++i )
+    {
+        bl::json::readFromString( jsonText );
+        DataModelUtils::loadFromJsonText< PerfSimpleObject >( jsonText );
+    }
+
+    /*
+     * Measure direct JSON parse time
+     */
+
+    const auto directParseMs = measureTimeMs(
+        [ &jsonText ]()
+        {
+            auto value = bl::json::readFromString( jsonText );
+            ( void ) value;
+        },
+        testIterations
+        );
+
+    /*
+     * Measure data model deserialize time (includes parse + property extraction)
+     */
+
+    const auto dmDeserializeMs = measureTimeMs(
+        [ &jsonText ]()
+        {
+            auto obj = DataModelUtils::loadFromJsonText< PerfSimpleObject >( jsonText );
+            ( void ) obj;
+        },
+        testIterations
+        );
+
+    /*
+     * Measure direct JSON serialize time (from pre-parsed object)
+     */
+
+    const auto parsedValue = bl::json::readFromString( jsonText );
+
+    const auto directSerializeMs = measureTimeMs(
+        [ &parsedValue ]()
+        {
+            auto str = bl::json::saveToString( parsedValue );
+            ( void ) str;
+        },
+        testIterations
+        );
+
+    /*
+     * Measure raw emplace + saveToString (build object from scratch, like DM does)
+     */
+
+    const std::string nameVal = "item_42";
+    const int idVal = 42;
+    const bool activeVal = true;
+    const double scoreVal = 63.0;
+
+    const auto rawBuildSerializeMs = measureTimeMs(
+        [ & ]()
+        {
+            bl::json::object obj;
+            obj.emplace( "name", nameVal );
+            obj.emplace( "id", idVal );
+            obj.emplace( "active", activeVal );
+            obj.emplace( "score", scoreVal );
+            auto s = bl::json::saveToString( bl::json::value( std::move( obj ) ) );
+            ( void ) s;
+        },
+        testIterations
+        );
+
+    /*
+     * Measure data model serialize time (from data model object)
+     */
+
+    const auto dmObj = DataModelUtils::loadFromJsonText< PerfSimpleObject >( jsonText );
+
+    const auto dmSerializeMs = measureTimeMs(
+        [ &dmObj ]()
+        {
+            auto json = DataModelUtils::getDocAsPackedJsonString( dmObj );
+            ( void ) json;
+        },
+        testIterations
+        );
+
+    const auto implName = bl::json::implName();
+    const auto deserializeOverhead = dmDeserializeMs / directParseMs;
+    const auto serializeOverhead = dmSerializeMs / directSerializeMs;
+    const auto serializeOverheadVsBuild = dmSerializeMs / rawBuildSerializeMs;
+
+    BL_LOG(
+        bl::Logging::notify(),
+        BL_MSG()
+            << "\n=== Data Model vs Raw JSON Overhead — Simple Object (" << implName << ") ===\n"
+            << "Deserialization (" << testIterations << " iterations):\n"
+            << "  Direct JSON parse:       "
+            << std::fixed << std::setprecision( 2 ) << directParseMs << " ms ("
+            << std::setprecision( 4 ) << ( directParseMs / testIterations ) << " ms/iter)\n"
+            << "  Data model deserialize:  "
+            << std::setprecision( 2 ) << dmDeserializeMs << " ms ("
+            << std::setprecision( 4 ) << ( dmDeserializeMs / testIterations ) << " ms/iter)\n"
+            << "  Overhead ratio:          "
+            << std::setprecision( 2 ) << deserializeOverhead << "x\n"
+            << "Serialization (" << testIterations << " iterations):\n"
+            << "  Direct JSON serialize (pre-built):  "
+            << std::setprecision( 2 ) << directSerializeMs << " ms ("
+            << std::setprecision( 4 ) << ( directSerializeMs / testIterations ) << " ms/iter)\n"
+            << "  Raw build + serialize (emplace):    "
+            << std::setprecision( 2 ) << rawBuildSerializeMs << " ms ("
+            << std::setprecision( 4 ) << ( rawBuildSerializeMs / testIterations ) << " ms/iter)\n"
+            << "  Data model serialize:               "
+            << std::setprecision( 2 ) << dmSerializeMs << " ms ("
+            << std::setprecision( 4 ) << ( dmSerializeMs / testIterations ) << " ms/iter)\n"
+            << "  Overhead vs pre-built:   "
+            << std::setprecision( 2 ) << serializeOverhead << "x\n"
+            << "  Overhead vs build+ser:   "
+            << std::setprecision( 2 ) << serializeOverheadVsBuild << "x"
+        );
+}
+
+UTF_AUTO_TEST_CASE( DataModelPerformanceOverheadComplex )
+{
+    using namespace utest::json_perf;
+    using namespace utest::dm_perf;
+    using namespace bl::dm;
+
+    if( ! test::UtfArgsParser::isClient() )
+    {
+        return;
+    }
+
+    const std::size_t testIterations = 2000;
+
+    /*
+     * Generate JSON for a single complex object
+     */
+
+    const auto jsonText = generateComplexObjectJson( 42 );
+
+    /*
+     * Warmup
+     */
+
+    for( std::size_t i = 0; i < 100; ++i )
+    {
+        bl::json::readFromString( jsonText );
+        DataModelUtils::loadFromJsonText< PerfComplexObject >( jsonText );
+    }
+
+    /*
+     * Measure direct JSON parse time
+     */
+
+    const auto directParseMs = measureTimeMs(
+        [ &jsonText ]()
+        {
+            auto value = bl::json::readFromString( jsonText );
+            ( void ) value;
+        },
+        testIterations
+        );
+
+    /*
+     * Measure data model deserialize time (includes parse + property extraction)
+     */
+
+    const auto dmDeserializeMs = measureTimeMs(
+        [ &jsonText ]()
+        {
+            auto obj = DataModelUtils::loadFromJsonText< PerfComplexObject >( jsonText );
+            ( void ) obj;
+        },
+        testIterations
+        );
+
+    /*
+     * Measure direct JSON serialize time (from pre-parsed object)
+     */
+
+    const auto parsedValue = bl::json::readFromString( jsonText );
+
+    const auto directSerializeMs = measureTimeMs(
+        [ &parsedValue ]()
+        {
+            auto str = bl::json::saveToString( parsedValue );
+            ( void ) str;
+        },
+        testIterations
+        );
+
+    /*
+     * Measure raw emplace + saveToString (build object from scratch, like DM does)
+     */
+
+    const std::string complexNameVal = "complex_item_42";
+    const int idVal = 42;
+    const bool activeVal = true;
+    const double complexScoreVal = 105.0;
+    const std::string descVal = "nested description 42";
+    const std::uint64_t tsVal = 42000000ULL;
+
+    const auto rawBuildSerializeMs = measureTimeMs(
+        [ & ]()
+        {
+            bl::json::object obj;
+            obj.emplace( "name", complexNameVal );
+            obj.emplace( "id", idVal );
+            obj.emplace( "active", activeVal );
+            obj.emplace( "score", complexScoreVal );
+
+            bl::json::object metadata;
+            metadata.emplace( "key1", "value1" );
+            metadata.emplace( "key2", "value2" );
+            metadata.emplace( "key3", "value3" );
+            obj.emplace( "metadata", std::move( metadata ) );
+
+            bl::json::array tags;
+            tags.push_back( bl::json::value( "tag1" ) );
+            tags.push_back( bl::json::value( "tag2" ) );
+            tags.push_back( bl::json::value( "tag3" ) );
+            obj.emplace( "tags", std::move( tags ) );
+
+            bl::json::array scores;
+            for( int i = 0; i < 5; ++i )
+            {
+                scores.push_back( bl::json::value( i * 10 ) );
+            }
+            obj.emplace( "scores", std::move( scores ) );
+
+            bl::json::object nested;
+            nested.emplace( "description", descVal );
+            nested.emplace( "timestamp", tsVal );
+            obj.emplace( "nested", std::move( nested ) );
+
+            bl::json::array items;
+            for( int i = 0; i < 5; ++i )
+            {
+                bl::json::object item;
+                item.emplace( "description", "item " + std::to_string( i ) );
+                item.emplace( "timestamp", static_cast< std::uint64_t >( i ) * 500000ULL );
+                items.push_back( bl::json::value( std::move( item ) ) );
+            }
+            obj.emplace( "items", std::move( items ) );
+
+            auto s = bl::json::saveToString( bl::json::value( std::move( obj ) ) );
+            ( void ) s;
+        },
+        testIterations
+        );
+
+    /*
+     * Measure data model serialize time (from data model object)
+     */
+
+    const auto dmObj = DataModelUtils::loadFromJsonText< PerfComplexObject >( jsonText );
+
+    const auto dmSerializeMs = measureTimeMs(
+        [ &dmObj ]()
+        {
+            auto json = DataModelUtils::getDocAsPackedJsonString( dmObj );
+            ( void ) json;
+        },
+        testIterations
+        );
+
+    /*
+     * Measure round-trip: direct JSON (parse + serialize) vs data model (deserialize + serialize)
+     */
+
+    const auto directRoundTripMs = measureTimeMs(
+        [ &jsonText ]()
+        {
+            auto value = bl::json::readFromString( jsonText );
+            auto str = bl::json::saveToString( value );
+            ( void ) str;
+        },
+        testIterations
+        );
+
+    const auto dmRoundTripMs = measureTimeMs(
+        [ &jsonText ]()
+        {
+            auto obj = DataModelUtils::loadFromJsonText< PerfComplexObject >( jsonText );
+            auto json = DataModelUtils::getDocAsPackedJsonString( obj );
+            ( void ) json;
+        },
+        testIterations
+        );
+
+    const auto implName = bl::json::implName();
+    const auto deserializeOverhead = dmDeserializeMs / directParseMs;
+    const auto serializeOverhead = dmSerializeMs / directSerializeMs;
+    const auto serializeOverheadVsBuild = dmSerializeMs / rawBuildSerializeMs;
+    const auto roundTripOverhead = dmRoundTripMs / directRoundTripMs;
+
+    BL_LOG(
+        bl::Logging::notify(),
+        BL_MSG()
+            << "\n=== Data Model vs Raw JSON Overhead — Complex Object (" << implName << ") ===\n"
+            << "Deserialization (" << testIterations << " iterations):\n"
+            << "  Direct JSON parse:       "
+            << std::fixed << std::setprecision( 2 ) << directParseMs << " ms ("
+            << std::setprecision( 4 ) << ( directParseMs / testIterations ) << " ms/iter)\n"
+            << "  Data model deserialize:  "
+            << std::setprecision( 2 ) << dmDeserializeMs << " ms ("
+            << std::setprecision( 4 ) << ( dmDeserializeMs / testIterations ) << " ms/iter)\n"
+            << "  Overhead ratio:          "
+            << std::setprecision( 2 ) << deserializeOverhead << "x\n"
+            << "Serialization (" << testIterations << " iterations):\n"
+            << "  Direct JSON serialize (pre-built):  "
+            << std::setprecision( 2 ) << directSerializeMs << " ms ("
+            << std::setprecision( 4 ) << ( directSerializeMs / testIterations ) << " ms/iter)\n"
+            << "  Raw build + serialize (emplace):    "
+            << std::setprecision( 2 ) << rawBuildSerializeMs << " ms ("
+            << std::setprecision( 4 ) << ( rawBuildSerializeMs / testIterations ) << " ms/iter)\n"
+            << "  Data model serialize:               "
+            << std::setprecision( 2 ) << dmSerializeMs << " ms ("
+            << std::setprecision( 4 ) << ( dmSerializeMs / testIterations ) << " ms/iter)\n"
+            << "  Overhead vs pre-built:   "
+            << std::setprecision( 2 ) << serializeOverhead << "x\n"
+            << "  Overhead vs build+ser:   "
+            << std::setprecision( 2 ) << serializeOverheadVsBuild << "x\n"
+            << "Round-trip (" << testIterations << " iterations):\n"
+            << "  Direct JSON round-trip:  "
+            << std::setprecision( 2 ) << directRoundTripMs << " ms ("
+            << std::setprecision( 4 ) << ( directRoundTripMs / testIterations ) << " ms/iter)\n"
+            << "  Data model round-trip:   "
+            << std::setprecision( 2 ) << dmRoundTripMs << " ms ("
+            << std::setprecision( 4 ) << ( dmRoundTripMs / testIterations ) << " ms/iter)\n"
+            << "  Overhead ratio:          "
+            << std::setprecision( 2 ) << roundTripOverhead << "x"
+        );
+}
+
+/*
+ * Serialization profiling — breaks the serialization path into phases
+ * to identify where time is actually spent
+ */
+
+UTF_AUTO_TEST_CASE( DataModelSerializationProfileSimple )
+{
+    using namespace utest::json_perf;
+    using namespace utest::dm_perf;
+    using namespace bl::dm;
+
+    if( ! test::UtfArgsParser::isClient() )
+    {
+        return;
+    }
+
+    const std::size_t testIterations = 5000;
+
+    /*
+     * Create a populated simple object
+     */
+
+    const auto dmObj = createSimpleObject( 42 );
+
+    /*
+     * Warmup all paths
+     */
+
+    for( std::size_t i = 0; i < 200; ++i )
+    {
+        SerializationContextBase ctx;
+        dmObj -> serializeProperties( ctx );
+        auto s = bl::json::saveToString( ctx.serializationDoc() );
+        ( void ) s;
+    }
+
+    /*
+     * Phase 1: Context construction only
+     */
+
+    const auto phase1Ms = measureTimeMs(
+        []()
+        {
+            SerializationContextBase ctx;
+            ( void ) ctx;
+        },
+        testIterations
+        );
+
+    /*
+     * Phase 2: Context construction + serializeProperties (builds json::object)
+     */
+
+    const auto phase2Ms = measureTimeMs(
+        [ &dmObj ]()
+        {
+            SerializationContextBase ctx;
+            dmObj -> serializeProperties( ctx );
+        },
+        testIterations
+        );
+
+    /*
+     * Phase 3: saveToString cost (builds json::object, moves into value, serializes to string)
+     * Measured as: (Phase 2 + saveToString) - Phase 2 = saveToString cost alone
+     */
+
+    const auto phase3Ms = measureTimeMs(
+        [ &dmObj ]()
+        {
+            auto obj = DataModelUtils::getJsonObject( dmObj );
+            auto s = bl::json::saveToString( bl::json::value( std::move( obj ) ) );
+            ( void ) s;
+        },
+        testIterations
+        ) - phase2Ms;
+
+    /*
+     * Phase 4: Full end-to-end (getDocAsPackedJsonString)
+     */
+
+    const auto phase4Ms = measureTimeMs(
+        [ &dmObj ]()
+        {
+            auto s = DataModelUtils::getDocAsPackedJsonString( dmObj );
+            ( void ) s;
+        },
+        testIterations
+        );
+
+    const auto phase2NetMs = phase2Ms - phase1Ms;
+    const auto unaccountedMs = phase4Ms - phase2Ms - phase3Ms;
+
+    BL_LOG(
+        bl::Logging::notify(),
+        BL_MSG()
+            << "\n=== Serialization Profile — Simple Object (4 scalar properties) ===\n"
+            << "Phase 1 (context construction):        "
+            << std::fixed << std::setprecision( 2 ) << phase1Ms << " ms ("
+            << testIterations << " iter)\n"
+            << "Phase 2 (context + serializeProperties): "
+            << std::setprecision( 2 ) << phase2Ms << " ms ("
+            << testIterations << " iter)\n"
+            << "Phase 2 net (properties only):          "
+            << std::setprecision( 2 ) << phase2NetMs << " ms\n"
+            << "Phase 3 (saveToString w/ move):         "
+            << std::setprecision( 2 ) << phase3Ms << " ms ("
+            << testIterations << " iter)\n"
+            << "Phase 4 (getDocAsPackedJsonString):     "
+            << std::setprecision( 2 ) << phase4Ms << " ms ("
+            << testIterations << " iter)\n"
+            << "Unaccounted (glue overhead):            "
+            << std::setprecision( 2 ) << unaccountedMs << " ms\n"
+            << "\nBreakdown of Phase 4 (end-to-end):\n"
+            << "  Context construction: "
+            << std::setprecision( 1 ) << ( phase1Ms / phase4Ms * 100 ) << "%\n"
+            << "  Property serialization: "
+            << std::setprecision( 1 ) << ( phase2NetMs / phase4Ms * 100 ) << "%\n"
+            << "  String generation (w/ move): "
+            << std::setprecision( 1 ) << ( phase3Ms / phase4Ms * 100 ) << "%\n"
+            << "  Unaccounted: "
+            << std::setprecision( 1 ) << ( unaccountedMs / phase4Ms * 100 ) << "%"
+        );
+}
+
+UTF_AUTO_TEST_CASE( DataModelSerializationProfileComplex )
+{
+    using namespace utest::json_perf;
+    using namespace utest::dm_perf;
+    using namespace bl::dm;
+
+    if( ! test::UtfArgsParser::isClient() )
+    {
+        return;
+    }
+
+    const std::size_t testIterations = 2000;
+
+    /*
+     * Create a populated complex object
+     */
+
+    const auto dmObj = createComplexObject( 42 );
+
+    /*
+     * Warmup all paths
+     */
+
+    for( std::size_t i = 0; i < 200; ++i )
+    {
+        SerializationContextBase ctx;
+        dmObj -> serializeProperties( ctx );
+        auto s = bl::json::saveToString( ctx.serializationDoc() );
+        ( void ) s;
+    }
+
+    /*
+     * Phase 1: Context construction only
+     */
+
+    const auto phase1Ms = measureTimeMs(
+        []()
+        {
+            SerializationContextBase ctx;
+            ( void ) ctx;
+        },
+        testIterations
+        );
+
+    /*
+     * Phase 2: Context construction + serializeProperties (builds json::object)
+     */
+
+    const auto phase2Ms = measureTimeMs(
+        [ &dmObj ]()
+        {
+            SerializationContextBase ctx;
+            dmObj -> serializeProperties( ctx );
+        },
+        testIterations
+        );
+
+    /*
+     * Phase 3: saveToString cost (builds json::object, moves into value, serializes to string)
+     * Measured as: (Phase 2 + saveToString) - Phase 2 = saveToString cost alone
+     */
+
+    const auto phase3Ms = measureTimeMs(
+        [ &dmObj ]()
+        {
+            auto obj = DataModelUtils::getJsonObject( dmObj );
+            auto s = bl::json::saveToString( bl::json::value( std::move( obj ) ) );
+            ( void ) s;
+        },
+        testIterations
+        ) - phase2Ms;
+
+    /*
+     * Phase 4: Full end-to-end (getDocAsPackedJsonString)
+     */
+
+    const auto phase4Ms = measureTimeMs(
+        [ &dmObj ]()
+        {
+            auto s = DataModelUtils::getDocAsPackedJsonString( dmObj );
+            ( void ) s;
+        },
+        testIterations
+        );
+
+    const auto phase2NetMs = phase2Ms - phase1Ms;
+    const auto unaccountedMs = phase4Ms - phase2Ms - phase3Ms;
+
+    BL_LOG(
+        bl::Logging::notify(),
+        BL_MSG()
+            << "\n=== Serialization Profile — Complex Object (9 properties, nested) ===\n"
+            << "Phase 1 (context construction):        "
+            << std::fixed << std::setprecision( 2 ) << phase1Ms << " ms ("
+            << testIterations << " iter)\n"
+            << "Phase 2 (context + serializeProperties): "
+            << std::setprecision( 2 ) << phase2Ms << " ms ("
+            << testIterations << " iter)\n"
+            << "Phase 2 net (properties only):          "
+            << std::setprecision( 2 ) << phase2NetMs << " ms\n"
+            << "Phase 3 (saveToString w/ move):         "
+            << std::setprecision( 2 ) << phase3Ms << " ms ("
+            << testIterations << " iter)\n"
+            << "Phase 4 (getDocAsPackedJsonString):     "
+            << std::setprecision( 2 ) << phase4Ms << " ms ("
+            << testIterations << " iter)\n"
+            << "Unaccounted (glue overhead):            "
+            << std::setprecision( 2 ) << unaccountedMs << " ms\n"
+            << "\nBreakdown of Phase 4 (end-to-end):\n"
+            << "  Context construction: "
+            << std::setprecision( 1 ) << ( phase1Ms / phase4Ms * 100 ) << "%\n"
+            << "  Property serialization: "
+            << std::setprecision( 1 ) << ( phase2NetMs / phase4Ms * 100 ) << "%\n"
+            << "  String generation (w/ move): "
+            << std::setprecision( 1 ) << ( phase3Ms / phase4Ms * 100 ) << "%\n"
+            << "  Unaccounted: "
+            << std::setprecision( 1 ) << ( unaccountedMs / phase4Ms * 100 ) << "%"
+        );
+}
+
+UTF_AUTO_TEST_CASE( DataModelSerializationEmplaceBaseline )
+{
+    using namespace utest::json_perf;
+    using namespace utest::dm_perf;
+
+    if( ! test::UtfArgsParser::isClient() )
+    {
+        return;
+    }
+
+    /*
+     * Micro-benchmark: measure the raw cost of building a json::object via emplace
+     * with the same properties and values as our test objects, but without any data
+     * model / macro / virtual call overhead. This gives us the theoretical floor.
+     */
+
+    const std::size_t simpleIterations = 5000;
+    const std::size_t complexIterations = 2000;
+
+    const std::string nameVal = "item_42";
+    const int idVal = 42;
+    const bool activeVal = true;
+    const double scoreVal = 63.0;
+
+    /*
+     * Warmup
+     */
+
+    for( std::size_t i = 0; i < 200; ++i )
+    {
+        bl::json::object obj;
+        obj.emplace( "name", nameVal );
+        obj.emplace( "id", idVal );
+        obj.emplace( "active", activeVal );
+        obj.emplace( "score", scoreVal );
+        ( void ) obj;
+    }
+
+    /*
+     * Simple object: 4 scalar/string properties via raw emplace
+     */
+
+    const auto simpleEmplaceMs = measureTimeMs(
+        [ & ]()
+        {
+            bl::json::object obj;
+            obj.emplace( "name", nameVal );
+            obj.emplace( "id", idVal );
+            obj.emplace( "active", activeVal );
+            obj.emplace( "score", scoreVal );
+            ( void ) obj;
+        },
+        simpleIterations
+        );
+
+    /*
+     * Simple object: raw emplace + saveToString (full serialize path equivalent)
+     */
+
+    const auto simpleFullMs = measureTimeMs(
+        [ & ]()
+        {
+            bl::json::object obj;
+            obj.emplace( "name", nameVal );
+            obj.emplace( "id", idVal );
+            obj.emplace( "active", activeVal );
+            obj.emplace( "score", scoreVal );
+            auto s = bl::json::saveToString( bl::json::value( std::move( obj ) ) );
+            ( void ) s;
+        },
+        simpleIterations
+        );
+
+    /*
+     * Complex object: emplace matching all properties of PerfComplexObject
+     * (4 scalars + 3-entry string map + 3-entry string vector + 5-entry int vector
+     *  + 1 nested object + 5-element nested vector)
+     */
+
+    const std::string complexNameVal = "complex_item_42";
+    const double complexScoreVal = 105.0;
+    const std::string descVal = "nested description 42";
+    const std::uint64_t tsVal = 42000000ULL;
+
+    const auto complexEmplaceMs = measureTimeMs(
+        [ & ]()
+        {
+            bl::json::object obj;
+            obj.emplace( "name", complexNameVal );
+            obj.emplace( "id", idVal );
+            obj.emplace( "active", activeVal );
+            obj.emplace( "score", complexScoreVal );
+
+            bl::json::object metadata;
+            metadata.emplace( "key1", "value1" );
+            metadata.emplace( "key2", "value2" );
+            metadata.emplace( "key3", "value3" );
+            obj.emplace( "metadata", std::move( metadata ) );
+
+            bl::json::array tags;
+            tags.push_back( bl::json::value( "tag1" ) );
+            tags.push_back( bl::json::value( "tag2" ) );
+            tags.push_back( bl::json::value( "tag3" ) );
+            obj.emplace( "tags", std::move( tags ) );
+
+            bl::json::array scores;
+            for( int i = 0; i < 5; ++i )
+            {
+                scores.push_back( bl::json::value( i * 10 ) );
+            }
+            obj.emplace( "scores", std::move( scores ) );
+
+            bl::json::object nested;
+            nested.emplace( "description", descVal );
+            nested.emplace( "timestamp", tsVal );
+            obj.emplace( "nested", std::move( nested ) );
+
+            bl::json::array items;
+            for( int i = 0; i < 5; ++i )
+            {
+                bl::json::object item;
+                item.emplace( "description", "item " + std::to_string( i ) );
+                item.emplace( "timestamp", static_cast< std::uint64_t >( i ) * 500000ULL );
+                items.push_back( bl::json::value( std::move( item ) ) );
+            }
+            obj.emplace( "items", std::move( items ) );
+
+            ( void ) obj;
+        },
+        complexIterations
+        );
+
+    /*
+     * Complex object: raw emplace + saveToString (full serialize path equivalent)
+     */
+
+    const auto complexFullMs = measureTimeMs(
+        [ & ]()
+        {
+            bl::json::object obj;
+            obj.emplace( "name", complexNameVal );
+            obj.emplace( "id", idVal );
+            obj.emplace( "active", activeVal );
+            obj.emplace( "score", complexScoreVal );
+
+            bl::json::object metadata;
+            metadata.emplace( "key1", "value1" );
+            metadata.emplace( "key2", "value2" );
+            metadata.emplace( "key3", "value3" );
+            obj.emplace( "metadata", std::move( metadata ) );
+
+            bl::json::array tags;
+            tags.push_back( bl::json::value( "tag1" ) );
+            tags.push_back( bl::json::value( "tag2" ) );
+            tags.push_back( bl::json::value( "tag3" ) );
+            obj.emplace( "tags", std::move( tags ) );
+
+            bl::json::array scores;
+            for( int i = 0; i < 5; ++i )
+            {
+                scores.push_back( bl::json::value( i * 10 ) );
+            }
+            obj.emplace( "scores", std::move( scores ) );
+
+            bl::json::object nested;
+            nested.emplace( "description", descVal );
+            nested.emplace( "timestamp", tsVal );
+            obj.emplace( "nested", std::move( nested ) );
+
+            bl::json::array items;
+            for( int i = 0; i < 5; ++i )
+            {
+                bl::json::object item;
+                item.emplace( "description", "item " + std::to_string( i ) );
+                item.emplace( "timestamp", static_cast< std::uint64_t >( i ) * 500000ULL );
+                items.push_back( bl::json::value( std::move( item ) ) );
+            }
+            obj.emplace( "items", std::move( items ) );
+
+            auto s = bl::json::saveToString( bl::json::value( std::move( obj ) ) );
+            ( void ) s;
+        },
+        complexIterations
+        );
+
+    BL_LOG(
+        bl::Logging::notify(),
+        BL_MSG()
+            << "\n=== Raw Emplace Baseline (no data model overhead) ===\n"
+            << "\nSimple Object (4 properties):\n"
+            << "  Raw emplace only:           "
+            << std::fixed << std::setprecision( 2 ) << simpleEmplaceMs << " ms ("
+            << simpleIterations << " iter)\n"
+            << "  Raw emplace + saveToString: "
+            << std::setprecision( 2 ) << simpleFullMs << " ms ("
+            << simpleIterations << " iter)\n"
+            << "\nComplex Object (9 properties, nested):\n"
+            << "  Raw emplace only:           "
+            << std::setprecision( 2 ) << complexEmplaceMs << " ms ("
+            << complexIterations << " iter)\n"
+            << "  Raw emplace + saveToString: "
+            << std::setprecision( 2 ) << complexFullMs << " ms ("
+            << complexIterations << " iter)\n"
+            << "\nCompare with data model profiling:\n"
+            << "  Simple — DM serializeProperties should be close to simple raw emplace\n"
+            << "  Complex — DM serializeProperties should be close to complex raw emplace\n"
+            << "  Difference = macro/virtual call/context overhead"
+        );
+}
