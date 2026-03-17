@@ -30,6 +30,7 @@ A development environment version is a notion of collection of specific versions
       * RHEL 9 (a64, x64)
       * RHEL 10 (a64)
       * Ubuntu 24.04 LTS (a64, x64)
+      * Linux Mint 22.x based on Ubuntu 24.04 LTS (a64, x64)
     * Windows platforms
       * Windows 10+ (a64, x64, x86) — ARM64 (a64) is a notable new capability
   * Compilers
@@ -118,16 +119,16 @@ wget https://storage.swblocks.net/devenv/7/rhel/rhel9/x64/dist-devenv7-rhel9-gcc
 * GCC-only variant: [dist-devenv7-rhel9-gcc1520-x64.tar.gz](https://storage.swblocks.net/devenv/7/rhel/rhel9/x64/dist-devenv7-rhel9-gcc1520-x64.tar.gz)
 * Clang-only variant: [dist-devenv7-rhel9-clang2010-x64.tar.gz](https://storage.swblocks.net/devenv/7/rhel/rhel9/x64/dist-devenv7-rhel9-clang2010-x64.tar.gz)
 
-**Ubuntu 24.04 (a64):**
+**Ubuntu 24.04 / Linux Mint 22.x (a64):**
 
-* **devenv7** for Ubuntu 24.04 a64 with GCC 15.2.0 and Clang 20.1.0 (recommended) can be downloaded from [here](https://storage.swblocks.net/devenv/7/ubuntu/ub24/a64/dist-devenv7-ub24-gcc1520-clang2010-a64.tar.gz); or from command line:
+* **devenv7** for Ubuntu 24.04 a64 (also used for Linux Mint 22.x) with GCC 15.2.0 and Clang 20.1.0 (recommended) can be downloaded from [here](https://storage.swblocks.net/devenv/7/ubuntu/ub24/a64/dist-devenv7-ub24-gcc1520-clang2010-a64.tar.gz); or from command line:
 wget https://storage.swblocks.net/devenv/7/ubuntu/ub24/a64/dist-devenv7-ub24-gcc1520-clang2010-a64.tar.gz
 * GCC-only variant: [dist-devenv7-ub24-gcc1520-a64.tar.gz](https://storage.swblocks.net/devenv/7/ubuntu/ub24/a64/dist-devenv7-ub24-gcc1520-a64.tar.gz)
 * Clang-only variant: [dist-devenv7-ub24-clang2010-a64.tar.gz](https://storage.swblocks.net/devenv/7/ubuntu/ub24/a64/dist-devenv7-ub24-clang2010-a64.tar.gz)
 
-**Ubuntu 24.04 (x64):**
+**Ubuntu 24.04 / Linux Mint 22.x (x64):**
 
-* **devenv7** for Ubuntu 24.04 x64 with GCC 15.2.0 and Clang 20.1.0 (recommended) can be downloaded from [here](https://storage.swblocks.net/devenv/7/ubuntu/ub24/x64/dist-devenv7-ub24-gcc1520-clang2010-x64.tar.gz); or from command line:
+* **devenv7** for Ubuntu 24.04 x64 (also used for Linux Mint 22.x) with GCC 15.2.0 and Clang 20.1.0 (recommended) can be downloaded from [here](https://storage.swblocks.net/devenv/7/ubuntu/ub24/x64/dist-devenv7-ub24-gcc1520-clang2010-x64.tar.gz); or from command line:
 wget https://storage.swblocks.net/devenv/7/ubuntu/ub24/x64/dist-devenv7-ub24-gcc1520-clang2010-x64.tar.gz
 * GCC-only variant: [dist-devenv7-ub24-gcc1520-x64.tar.gz](https://storage.swblocks.net/devenv/7/ubuntu/ub24/x64/dist-devenv7-ub24-gcc1520-x64.tar.gz)
 * Clang-only variant: [dist-devenv7-ub24-clang2010-x64.tar.gz](https://storage.swblocks.net/devenv/7/ubuntu/ub24/x64/dist-devenv7-ub24-clang2010-x64.tar.gz)
