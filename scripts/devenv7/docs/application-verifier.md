@@ -439,8 +439,8 @@ if( OSImplBase::tryGetEnvironmentVariable( "BL_ANALYSIS_TESTING" ) )
 
 ## See Also
 
-- **Main project documentation**: [CLAUDE.md](../../../CLAUDE.md) - Build commands and development guidelines
-- **Build system details**: [scripts/devenv7/CLAUDE.md](../CLAUDE.md) - Build system internals and cross-compilation
+- **Main project documentation**: [AGENTS.md](../../../AGENTS.md) - Build commands and development guidelines
+- **Build system details**: [scripts/devenv7/AGENTS.md](../AGENTS.md) - Build system internals and cross-compilation
 - **Microsoft Application Verifier Documentation**: [Microsoft Docs](https://docs.microsoft.com/en-us/windows-hardware/drivers/devtest/application-verifier)
 - **Boost.Filesystem path workaround**: [OSImplPlatformCommon.h](../../../src/include/baselib/core/detail/OSImplPlatformCommon.h#L1238)
 - **OpenSSL DLL pinning**: [CryptoBase.h](../../../src/include/baselib/crypto/CryptoBase.h#L514)

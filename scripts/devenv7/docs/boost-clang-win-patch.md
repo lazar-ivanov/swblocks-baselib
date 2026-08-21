@@ -1,6 +1,6 @@
 # Boost clang-win.jam i686 Patch: Root Cause Analysis
 
-This document contains the detailed root cause analysis and technical explanation of the OpenWith.exe dialog issue when building Boost with the ccl16 (clang-cl) toolchain. For operational guidance (what commands to run), see the parent [CLAUDE.md](../CLAUDE.md).
+This document contains the detailed root cause analysis and technical explanation of the OpenWith.exe dialog issue when building Boost with the ccl16 (clang-cl) toolchain. For operational guidance (what commands to run), see the parent [AGENTS.md](../AGENTS.md).
 
 ---
 

@@ -1,6 +1,6 @@
 # OpenSSL ARM64 Build: Technical Deep Dive
 
-This document contains detailed technical analysis of the ARM64-specific OpenSSL build challenges and solutions for Windows devenv7. For operational guidance (what commands to run), see the parent [CLAUDE.md](../CLAUDE.md).
+This document contains detailed technical analysis of the ARM64-specific OpenSSL build challenges and solutions for Windows devenv7. For operational guidance (what commands to run), see the parent [AGENTS.md](../AGENTS.md).
 
 ---
 
