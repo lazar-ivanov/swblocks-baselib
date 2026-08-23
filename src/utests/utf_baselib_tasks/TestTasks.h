@@ -27,6 +27,8 @@
 #include <baselib/tasks/Task.h>
 #include <baselib/tasks/TaskBase.h>
 #include <baselib/tasks/ExecutionQueue.h>
+#include <baselib/tasks/ExecutionQueueImpl.h>
+#include <baselib/tasks/ExecutionQueueNotifyBase.h>
 #include <baselib/tasks/utils/ScanDirectoryTask.h>
 #include <baselib/tasks/SimpleTaskControlToken.h>
 
@@ -56,8 +58,11 @@
 #include <baselib/core/Random.h>
 #include <baselib/core/BaseIncludes.h>
 
+#include <atomic>
 #include <cstdlib>
 #include <cstdint>
+#include <functional>
+#include <memory>
 #include <unordered_map>
 
 #include <utests/baselib/MachineGlobalTestLock.h>
@@ -583,6 +588,993 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueWaitNoPrioritizeTests )
             }
         }
         );
+}
+
+namespace
+{
+    class ExecutionQueueTestSignal
+    {
+        BL_NO_COPY_OR_MOVE( ExecutionQueueTestSignal )
+
+    private:
+
+        bl::os::mutex                   m_lock;
+        bl::os::condition_variable      m_cv;
+        bool                            m_signaled;
+
+    public:
+
+        ExecutionQueueTestSignal()
+            :
+            m_signaled( false )
+        {
+        }
+
+        void signal() NOEXCEPT
+        {
+            {
+                BL_MUTEX_GUARD( m_lock );
+                m_signaled = true;
+            }
+
+            m_cv.notify_all();
+        }
+
+        bool wait()
+        {
+            bl::os::mutex_unique_lock guard( m_lock );
+
+            return m_cv.wait_for(
+                guard,
+                bl::os::chrono::seconds( 10 ),
+                [ this ]() -> bool
+                {
+                    return m_signaled;
+                }
+                );
+        }
+    };
+
+    class ExecutionQueueCompletionControl
+    {
+        BL_NO_COPY_OR_MOVE( ExecutionQueueCompletionControl )
+
+    private:
+
+        bl::os::mutex                   m_lock;
+        bl::os::condition_variable      m_cv;
+        std::vector< bl::tasks::CompletionCallback >
+                                        m_completionCallbacks;
+        std::size_t                     m_scheduledCount;
+        std::size_t                     m_startedCount;
+        std::size_t                     m_returnedCount;
+        std::exception_ptr              m_failure;
+
+    public:
+
+        ExecutionQueueCompletionControl()
+            :
+            m_scheduledCount( 0U ),
+            m_startedCount( 0U ),
+            m_returnedCount( 0U )
+        {
+        }
+
+        void scheduled( SAA_in const bl::tasks::CompletionCallback& completionCallback )
+        {
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                m_completionCallbacks.push_back( completionCallback );
+                ++m_scheduledCount;
+            }
+
+            m_cv.notify_all();
+        }
+
+        bool waitUntilScheduled( SAA_in const std::size_t count )
+        {
+            bl::os::mutex_unique_lock guard( m_lock );
+
+            return m_cv.wait_for(
+                guard,
+                bl::os::chrono::seconds( 10 ),
+                [ this, count ]() -> bool
+                {
+                    return m_scheduledCount >= count;
+                }
+                );
+        }
+
+        bool waitUntilReturned( SAA_in const std::size_t count )
+        {
+            bl::os::mutex_unique_lock guard( m_lock );
+
+            return m_cv.wait_for(
+                guard,
+                bl::os::chrono::seconds( 10 ),
+                [ this, count ]() -> bool
+                {
+                    return m_returnedCount >= count;
+                }
+                );
+        }
+
+        bool completeNext()
+        {
+            bl::tasks::CompletionCallback completionCallback;
+
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                if(
+                    m_startedCount >= m_completionCallbacks.size() ||
+                    ! m_completionCallbacks[ m_startedCount ]
+                    )
+                {
+                    return false;
+                }
+
+                completionCallback = m_completionCallbacks[ m_startedCount ];
+                m_completionCallbacks[ m_startedCount ] = bl::tasks::CompletionCallback();
+                ++m_startedCount;
+            }
+
+            try
+            {
+                completionCallback( std::exception_ptr() );
+            }
+            catch( std::exception& )
+            {
+                BL_MUTEX_GUARD( m_lock );
+                m_failure = std::current_exception();
+            }
+
+            {
+                BL_MUTEX_GUARD( m_lock );
+                ++m_returnedCount;
+            }
+
+            m_cv.notify_all();
+
+            return ! failed();
+        }
+
+        bool failed()
+        {
+            BL_MUTEX_GUARD( m_lock );
+            return nullptr != m_failure;
+        }
+    };
+
+    class ExecutionQueueNotificationRecorder :
+        public bl::tasks::ExecutionQueueNotifyBase
+    {
+        BL_CTR_DEFAULT( ExecutionQueueNotificationRecorder, protected )
+        BL_DECLARE_OBJECT_IMPL( ExecutionQueueNotificationRecorder )
+
+        BL_QITBL_BEGIN()
+            BL_QITBL_ENTRY_CHAIN_BASE( bl::tasks::ExecutionQueueNotifyBase )
+        BL_QITBL_END( bl::tasks::ExecutionQueueNotify )
+
+    public:
+
+        typedef bl::tasks::Task                                         Task;
+        typedef bl::tasks::ExecutionQueueNotify                         ExecutionQueueNotify;
+        typedef ExecutionQueueNotify::EventId                           EventId;
+        typedef bl::cpp::function
+        <
+            void (
+                SAA_in              const EventId,
+                SAA_in_opt          const bl::om::ObjPtrCopyable< Task >&
+                )
+        >
+        event_hook_t;
+
+    private:
+
+        struct Event
+        {
+            const EventId                              eventId;
+            const bl::om::ObjPtrCopyable< Task >       task;
+
+            Event(
+                SAA_in              const EventId                           eventId,
+                SAA_in_opt          const bl::om::ObjPtrCopyable< Task >&   task
+                )
+                :
+                eventId( eventId ),
+                task( task )
+            {
+            }
+        };
+
+        mutable bl::os::mutex             m_lock;
+        bl::os::condition_variable        m_cv;
+        std::vector< Event >              m_events;
+        event_hook_t                      m_hook;
+        std::exception_ptr                m_hookFailure;
+
+        std::size_t eventCountNoLock(
+            SAA_in              const EventId               eventId,
+            SAA_in_opt          const Task*                 task
+            ) const NOEXCEPT
+        {
+            std::size_t count = 0U;
+
+            for( const auto& event : m_events )
+            {
+                if( eventId == event.eventId && ( ! task || task == event.task.get() ) )
+                {
+                    ++count;
+                }
+            }
+
+            return count;
+        }
+
+    public:
+
+        void setHook( SAA_in event_hook_t&& hook )
+        {
+            BL_MUTEX_GUARD( m_lock );
+            m_hook = std::move( hook );
+        }
+
+        std::size_t eventCount(
+            SAA_in              const EventId               eventId,
+            SAA_in_opt          const Task*                 task = nullptr
+            ) const NOEXCEPT
+        {
+            BL_MUTEX_GUARD( m_lock );
+            return eventCountNoLock( eventId, task );
+        }
+
+        bool waitForEventCount(
+            SAA_in              const EventId               eventId,
+            SAA_in              const std::size_t           count,
+            SAA_in_opt          const Task*                 task = nullptr
+            )
+        {
+            bl::os::mutex_unique_lock guard( m_lock );
+
+            return m_cv.wait_for(
+                guard,
+                bl::os::chrono::seconds( 10 ),
+                [ this, eventId, count, task ]() -> bool
+                {
+                    return eventCountNoLock( eventId, task ) >= count || nullptr != m_hookFailure;
+                }
+                );
+        }
+
+        bool hookFailed() const NOEXCEPT
+        {
+            BL_MUTEX_GUARD( m_lock );
+            return nullptr != m_hookFailure;
+        }
+
+        virtual void onEvent(
+            SAA_in              const EventId                           eventId,
+            SAA_in_opt          const bl::om::ObjPtrCopyable< Task >&   task
+            ) NOEXCEPT OVERRIDE
+        {
+            event_hook_t hook;
+
+            BL_NOEXCEPT_BEGIN()
+
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                m_events.push_back( Event( eventId, task ) );
+                hook = m_hook;
+            }
+
+            m_cv.notify_all();
+
+            if( hook )
+            {
+                try
+                {
+                    hook( eventId, task );
+                }
+                catch( std::exception& )
+                {
+                    {
+                        BL_MUTEX_GUARD( m_lock );
+
+                        if( ! m_hookFailure )
+                        {
+                            m_hookFailure = std::current_exception();
+                        }
+                    }
+
+                    m_cv.notify_all();
+                }
+            }
+
+            BL_NOEXCEPT_END()
+        }
+    };
+
+    typedef bl::om::ObjectImpl< ExecutionQueueNotificationRecorder >
+        ExecutionQueueNotificationRecorderImpl;
+
+    class ExecutionQueueNotificationTestContext
+    {
+        BL_NO_COPY_OR_MOVE( ExecutionQueueNotificationTestContext )
+
+    public:
+
+        const bl::om::ObjPtr< ExecutionQueueNotificationRecorderImpl >  recorder;
+        const bl::om::ObjPtr< bl::om::Proxy >                           notifyProxy;
+        bl::om::ObjPtrDisposable< bl::tasks::ExecutionQueue >           eq;
+
+        explicit ExecutionQueueNotificationTestContext( SAA_in const unsigned options )
+            :
+            recorder( ExecutionQueueNotificationRecorderImpl::createInstance() ),
+            notifyProxy( bl::om::ProxyImpl::createInstance< bl::om::Proxy >() ),
+            eq(
+                bl::tasks::ExecutionQueueImpl::createInstance< bl::tasks::ExecutionQueue >(
+                    options
+                    )
+                )
+        {
+            notifyProxy -> connect(
+                static_cast< bl::tasks::ExecutionQueueNotify* >( recorder.get() )
+                );
+
+            eq -> setNotifyCallback(
+                bl::om::copy( notifyProxy ),
+                bl::tasks::ExecutionQueueNotify::AllEvents
+                );
+        }
+
+        ~ExecutionQueueNotificationTestContext() NOEXCEPT
+        {
+            notifyProxy -> disconnect();
+        }
+    };
+
+    bl::om::ObjPtr< bl::tasks::ExternalCompletionTaskImpl > createControlledCompletionTask(
+        SAA_inout ExecutionQueueCompletionControl& control
+        )
+    {
+        return bl::tasks::ExternalCompletionTaskImpl::createInstance(
+            [ &control ]( SAA_in const bl::tasks::CompletionCallback& completionCallback ) -> void
+            {
+                control.scheduled( completionCallback );
+            }
+            );
+    }
+
+    bl::om::ObjPtr< bl::tasks::Task > continuationOnce(
+        SAA_inout               bl::tasks::Task*               continuationTask,
+        SAA_inout               bool&                          continuationReturned,
+        SAA_inout               bl::tasks::Task*               finishedTask
+        )
+    {
+        BL_UNUSED( finishedTask );
+
+        if( continuationReturned )
+        {
+            return nullptr;
+        }
+
+        continuationReturned = true;
+        return bl::om::copy( continuationTask );
+    }
+
+} // __unnamed
+
+UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueAllTasksCompletedReentrantTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    {
+        ExecutionQueueNotificationTestContext context( ExecutionQueue::OptionKeepAll );
+        ExecutionQueueCompletionControl controlA;
+        ExecutionQueueCompletionControl controlB;
+
+        const auto taskA = om::qi< Task >( createControlledCompletionTask( controlA ) );
+        const auto taskB = om::qi< Task >( createControlledCompletionTask( controlB ) );
+
+        context.recorder -> setHook(
+            [ & ](
+                SAA_in              const ExecutionQueueNotify::EventId         eventId,
+                SAA_in_opt          const om::ObjPtrCopyable< Task >&           task
+                ) -> void
+            {
+                if( ExecutionQueueNotify::TaskReady == eventId && om::areEqual( task, taskA ) )
+                {
+                    context.eq -> push_back( taskB );
+                }
+            }
+            );
+
+        context.eq -> push_back( taskA );
+
+        UTF_REQUIRE( controlA.waitUntilScheduled( 1U ) );
+        UTF_REQUIRE( controlA.completeNext() );
+        UTF_REQUIRE( controlB.waitUntilScheduled( 1U ) );
+        UTF_REQUIRE_EQUAL(
+            0U,
+            context.recorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
+            );
+
+        UTF_REQUIRE( controlB.completeNext() );
+        UTF_REQUIRE_EQUAL(
+            1U,
+            context.recorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
+            );
+        UTF_REQUIRE( ! context.recorder -> hookFailed() );
+    }
+
+    {
+        ExecutionQueueNotificationTestContext context( ExecutionQueue::OptionKeepNone );
+        ExecutionQueueCompletionControl controlA;
+        ExecutionQueueCompletionControl controlB;
+
+        const auto taskA = om::qi< Task >( createControlledCompletionTask( controlA ) );
+        const auto taskB = om::qi< Task >( createControlledCompletionTask( controlB ) );
+
+        context.recorder -> setHook(
+            [ & ](
+                SAA_in              const ExecutionQueueNotify::EventId         eventId,
+                SAA_in_opt          const om::ObjPtrCopyable< Task >&           task
+                ) -> void
+            {
+                if( ExecutionQueueNotify::TaskDiscarded == eventId && om::areEqual( task, taskA ) )
+                {
+                    context.eq -> push_back( taskB );
+                }
+            }
+            );
+
+        context.eq -> push_back( taskA );
+
+        UTF_REQUIRE( controlA.waitUntilScheduled( 1U ) );
+        UTF_REQUIRE( controlA.completeNext() );
+        UTF_REQUIRE( controlB.waitUntilScheduled( 1U ) );
+        UTF_REQUIRE_EQUAL(
+            0U,
+            context.recorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
+            );
+
+        UTF_REQUIRE( controlB.completeNext() );
+        UTF_REQUIRE_EQUAL(
+            1U,
+            context.recorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
+            );
+        UTF_REQUIRE( ! context.recorder -> hookFailed() );
+    }
+}
+
+UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueAllTasksCompletedObsoleteCandidateTest )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    ExecutionQueueNotificationTestContext context( ExecutionQueue::OptionKeepNone );
+    ExecutionQueueCompletionControl controlA;
+    ExecutionQueueCompletionControl controlB;
+    ExecutionQueueTestSignal callbackAEntered;
+    ExecutionQueueTestSignal callbackBEntered;
+    ExecutionQueueTestSignal releaseCallbackA;
+    ExecutionQueueTestSignal releaseCallbackB;
+    std::atomic< bool > hookTimedOut( false );
+    std::atomic< bool > completionAFailed( false );
+    std::atomic< bool > completionBFailed( false );
+
+    const auto taskA = om::qi< Task >( createControlledCompletionTask( controlA ) );
+    const auto taskB = om::qi< Task >( createControlledCompletionTask( controlB ) );
+
+    context.recorder -> setHook(
+        [ & ](
+            SAA_in              const ExecutionQueueNotify::EventId         eventId,
+            SAA_in_opt          const om::ObjPtrCopyable< Task >&           task
+            ) -> void
+        {
+            if( ExecutionQueueNotify::TaskDiscarded != eventId )
+            {
+                return;
+            }
+
+            if( om::areEqual( task, taskA ) )
+            {
+                callbackAEntered.signal();
+
+                if( ! releaseCallbackA.wait() )
+                {
+                    hookTimedOut = true;
+                }
+            }
+            else if( om::areEqual( task, taskB ) )
+            {
+                callbackBEntered.signal();
+
+                if( ! releaseCallbackB.wait() )
+                {
+                    hookTimedOut = true;
+                }
+            }
+        }
+        );
+
+    context.eq -> push_back( taskA );
+    UTF_REQUIRE( controlA.waitUntilScheduled( 1U ) );
+
+    os::thread completionThreadA(
+        [ & ]() -> void
+        {
+            completionAFailed = ! controlA.completeNext();
+        }
+        );
+
+    const bool callbackAWasEntered = callbackAEntered.wait();
+
+    context.eq -> push_back( taskB );
+    const bool taskBWasScheduled = controlB.waitUntilScheduled( 1U );
+
+    os::thread completionThreadB(
+        [ & ]() -> void
+        {
+            completionBFailed = ! controlB.completeNext();
+        }
+        );
+
+    const bool callbackBWasEntered = callbackBEntered.wait();
+
+    releaseCallbackA.signal();
+    const bool completionAReturned = controlA.waitUntilReturned( 1U );
+    const bool noCompletionAfterA =
+        0U == context.recorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted );
+
+    releaseCallbackB.signal();
+    const bool completionBReturned = controlB.waitUntilReturned( 1U );
+
+    completionThreadA.join();
+    completionThreadB.join();
+
+    UTF_REQUIRE( callbackAWasEntered );
+    UTF_REQUIRE( taskBWasScheduled );
+    UTF_REQUIRE( callbackBWasEntered );
+    UTF_REQUIRE( completionAReturned );
+    UTF_REQUIRE( noCompletionAfterA );
+    UTF_REQUIRE( completionBReturned );
+    UTF_REQUIRE( ! completionAFailed.load() );
+    UTF_REQUIRE( ! completionBFailed.load() );
+    UTF_REQUIRE( ! hookTimedOut.load() );
+    UTF_REQUIRE( ! context.recorder -> hookFailed() );
+    UTF_REQUIRE_EQUAL(
+        1U,
+        context.recorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
+        );
+}
+
+UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueNotificationBlockingReentryTest )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    const auto context =
+        std::make_shared< ExecutionQueueNotificationTestContext >( ExecutionQueue::OptionKeepNone );
+
+    const auto controlA = std::make_shared< ExecutionQueueCompletionControl >();
+    const auto controlB = std::make_shared< ExecutionQueueCompletionControl >();
+    const auto callbackAEntered = std::make_shared< ExecutionQueueTestSignal >();
+    const auto completionAFailed = std::make_shared< std::atomic< bool > >( false );
+    const auto completionBFailed = std::make_shared< std::atomic< bool > >( false );
+
+    const auto taskA = om::qi< Task >( createControlledCompletionTask( *controlA ) );
+    const auto taskB = om::qi< Task >( createControlledCompletionTask( *controlB ) );
+    const om::ObjPtrCopyable< Task > taskACopy( taskA );
+    const om::ObjPtrCopyable< Task > taskBCopy( taskB );
+
+    context -> recorder -> setHook(
+        [
+            context,
+            callbackAEntered,
+            taskACopy,
+            taskBCopy
+        ](
+            SAA_in              const ExecutionQueueNotify::EventId         eventId,
+            SAA_in_opt          const om::ObjPtrCopyable< Task >&           task
+            ) -> void
+        {
+            if( ExecutionQueueNotify::TaskDiscarded == eventId && om::areEqual( task, taskACopy ) )
+            {
+                callbackAEntered -> signal();
+                context -> eq -> wait( taskBCopy );
+            }
+        }
+        );
+
+    context -> eq -> push_back( taskB );
+    context -> eq -> push_back( taskA );
+
+    UTF_REQUIRE( controlA -> waitUntilScheduled( 1U ) );
+    UTF_REQUIRE( controlB -> waitUntilScheduled( 1U ) );
+
+    os::thread completionThreadA(
+        [ controlA, completionAFailed ]() -> void
+        {
+            *completionAFailed = ! controlA -> completeNext();
+        }
+        );
+
+    const bool callbackAWasEntered = callbackAEntered -> wait();
+
+    os::thread completionThreadB(
+        [ controlB, completionBFailed ]() -> void
+        {
+            *completionBFailed = ! controlB -> completeNext();
+        }
+        );
+
+    const bool completionAReturned = controlA -> waitUntilReturned( 1U );
+    const bool completionBReturned = controlB -> waitUntilReturned( 1U );
+    const bool completedBeforeDeadline = completionAReturned && completionBReturned;
+
+    /*
+     * A timed-out completion can be deadlocked inside the queue. Joining it would hang the
+     * test process, so the failure path detaches it. Every object captured by these threads
+     * has shared ownership and therefore remains alive if a thread must be detached.
+     */
+
+    if( completionAReturned )
+    {
+        completionThreadA.join();
+    }
+    else
+    {
+        completionThreadA.detach();
+    }
+
+    if( completionBReturned )
+    {
+        completionThreadB.join();
+    }
+    else
+    {
+        completionThreadB.detach();
+    }
+
+    if( completedBeforeDeadline )
+    {
+        context -> recorder -> setHook(
+            ExecutionQueueNotificationRecorder::event_hook_t()
+            );
+    }
+
+    UTF_REQUIRE( callbackAWasEntered );
+    UTF_REQUIRE( completedBeforeDeadline );
+    UTF_REQUIRE( ! completionAFailed -> load() );
+    UTF_REQUIRE( ! completionBFailed -> load() );
+    UTF_REQUIRE( ! context -> recorder -> hookFailed() );
+    UTF_REQUIRE_EQUAL(
+        1U,
+        context -> recorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
+        );
+}
+
+UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueAllTasksCompletedObserverSelectionTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    {
+        const auto newRecorder = ExecutionQueueNotificationRecorderImpl::createInstance();
+        const auto newProxy = om::ProxyImpl::createInstance< om::Proxy >();
+        newProxy -> connect( static_cast< ExecutionQueueNotify* >( newRecorder.get() ) );
+
+        ExecutionQueueNotificationTestContext context( ExecutionQueue::OptionKeepNone );
+        ExecutionQueueCompletionControl control;
+        const auto task = om::qi< Task >( createControlledCompletionTask( control ) );
+
+        context.recorder -> setHook(
+            [ & ](
+                SAA_in              const ExecutionQueueNotify::EventId         eventId,
+                SAA_in_opt          const om::ObjPtrCopyable< Task >&           eventTask
+                ) -> void
+            {
+                if( ExecutionQueueNotify::TaskDiscarded == eventId && om::areEqual( eventTask, task ) )
+                {
+                    context.eq -> setNotifyCallback(
+                        om::copy( newProxy ),
+                        ExecutionQueueNotify::AllTasksCompleted
+                        );
+                }
+            }
+            );
+
+        context.eq -> push_back( task );
+
+        UTF_REQUIRE( control.waitUntilScheduled( 1U ) );
+        UTF_REQUIRE( control.completeNext() );
+        UTF_REQUIRE_EQUAL(
+            0U,
+            context.recorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
+            );
+        UTF_REQUIRE_EQUAL(
+            1U,
+            newRecorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
+            );
+        UTF_REQUIRE( ! context.recorder -> hookFailed() );
+
+        newProxy -> disconnect();
+    }
+
+    {
+        ExecutionQueueNotificationTestContext context( ExecutionQueue::OptionKeepNone );
+        ExecutionQueueCompletionControl controlA;
+        const auto taskA = om::qi< Task >( createControlledCompletionTask( controlA ) );
+
+        context.recorder -> setHook(
+            [ & ](
+                SAA_in              const ExecutionQueueNotify::EventId         eventId,
+                SAA_in_opt          const om::ObjPtrCopyable< Task >&           task
+                ) -> void
+            {
+                if( ExecutionQueueNotify::TaskDiscarded == eventId && om::areEqual( task, taskA ) )
+                {
+                    context.notifyProxy -> disconnect();
+                }
+            }
+            );
+
+        context.eq -> push_back( taskA );
+
+        UTF_REQUIRE( controlA.waitUntilScheduled( 1U ) );
+        UTF_REQUIRE( controlA.completeNext() );
+        UTF_REQUIRE_EQUAL(
+            0U,
+            context.recorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
+            );
+
+        const auto newRecorder = ExecutionQueueNotificationRecorderImpl::createInstance();
+        const auto newProxy = om::ProxyImpl::createInstance< om::Proxy >();
+        newProxy -> connect( static_cast< ExecutionQueueNotify* >( newRecorder.get() ) );
+
+        context.eq -> setNotifyCallback(
+            om::copy( newProxy ),
+            ExecutionQueueNotify::AllEvents
+            );
+
+        UTF_REQUIRE_EQUAL(
+            0U,
+            newRecorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
+            );
+
+        ExecutionQueueCompletionControl controlB;
+        const auto taskB = om::qi< Task >( createControlledCompletionTask( controlB ) );
+
+        context.eq -> push_back( taskB );
+
+        UTF_REQUIRE( controlB.waitUntilScheduled( 1U ) );
+        UTF_REQUIRE( controlB.completeNext() );
+        UTF_REQUIRE_EQUAL(
+            1U,
+            newRecorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
+            );
+        UTF_REQUIRE( ! context.recorder -> hookFailed() );
+
+        newProxy -> disconnect();
+    }
+}
+
+UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueAllTasksCompletedDisposalCompatibilityTest )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    ExecutionQueueNotificationTestContext context( ExecutionQueue::OptionKeepNone );
+    ExecutionQueueCompletionControl control;
+    const auto task = om::qi< Task >( createControlledCompletionTask( control ) );
+
+    context.recorder -> setHook(
+        [ & ](
+            SAA_in              const ExecutionQueueNotify::EventId         eventId,
+            SAA_in_opt          const om::ObjPtrCopyable< Task >&           eventTask
+            ) -> void
+        {
+            if( ExecutionQueueNotify::TaskDiscarded == eventId && om::areEqual( eventTask, task ) )
+            {
+                context.eq -> dispose();
+            }
+        }
+        );
+
+    context.eq -> push_back( task );
+
+    UTF_REQUIRE( control.waitUntilScheduled( 1U ) );
+    UTF_REQUIRE( control.completeNext() );
+    UTF_REQUIRE( ! context.recorder -> hookFailed() );
+    UTF_REQUIRE_EQUAL(
+        1U,
+        context.recorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
+        );
+}
+
+UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueAllTasksCompletedAdmissionTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    {
+        ExecutionQueueNotificationTestContext context( ExecutionQueue::OptionKeepNone );
+        ExecutionQueueCompletionControl control;
+        std::atomic< bool > readyTaskExecuted( false );
+
+        const auto task = om::qi< Task >( createControlledCompletionTask( control ) );
+        const auto readyTask = om::qi< Task >(
+            SimpleTaskImpl::createInstance(
+                [ &readyTaskExecuted ]() -> void
+                {
+                    readyTaskExecuted = true;
+                }
+                )
+            );
+
+        context.recorder -> setHook(
+            [ & ](
+                SAA_in              const ExecutionQueueNotify::EventId         eventId,
+                SAA_in_opt          const om::ObjPtrCopyable< Task >&           eventTask
+                ) -> void
+            {
+                if( ExecutionQueueNotify::TaskDiscarded == eventId && om::areEqual( eventTask, task ) )
+                {
+                    context.eq -> push_back( readyTask, true /* dontSchedule */ );
+                }
+            }
+            );
+
+        context.eq -> push_back( task );
+
+        UTF_REQUIRE( control.waitUntilScheduled( 1U ) );
+        UTF_REQUIRE( control.completeNext() );
+        UTF_REQUIRE( ! context.recorder -> hookFailed() );
+        UTF_REQUIRE( ! readyTaskExecuted.load() );
+        UTF_REQUIRE( om::areEqual( readyTask, context.eq -> top( false /* wait */ ) ) );
+        UTF_REQUIRE_EQUAL(
+            1U,
+            context.recorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
+            );
+    }
+
+    {
+        ExecutionQueueNotificationTestContext context( ExecutionQueue::OptionKeepAll );
+        ExecutionQueueCompletionControl control;
+        const auto task = om::qi< Task >( createControlledCompletionTask( control ) );
+
+        context.eq -> push_back( task );
+
+        UTF_REQUIRE( control.waitUntilScheduled( 1U ) );
+        UTF_REQUIRE( control.completeNext() );
+        UTF_REQUIRE_EQUAL(
+            1U,
+            context.recorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
+            );
+
+        context.eq -> push_back( task );
+
+        UTF_REQUIRE( control.waitUntilScheduled( 2U ) );
+        UTF_REQUIRE_EQUAL(
+            1U,
+            context.recorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
+            );
+        UTF_REQUIRE( control.completeNext() );
+        UTF_REQUIRE_EQUAL(
+            2U,
+            context.recorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
+            );
+    }
+
+    {
+        ExecutionQueueNotificationTestContext context( ExecutionQueue::OptionKeepNone );
+        ExecutionQueueTestSignal secondExecutionStarted;
+        ExecutionQueueTestSignal releaseSecondExecution;
+        std::atomic< std::size_t > executions( 0U );
+        std::atomic< bool > executionTimedOut( false );
+        bool continuationReturned = false;
+
+        const auto taskImpl = SimpleTaskImpl::createInstance(
+            [ & ]() -> void
+            {
+                if( 2U == ++executions )
+                {
+                    secondExecutionStarted.signal();
+
+                    if( ! releaseSecondExecution.wait() )
+                    {
+                        executionTimedOut = true;
+                    }
+                }
+            }
+            );
+
+        const auto task = om::qi< Task >( taskImpl );
+
+        taskImpl -> setContinuationCallback(
+            cpp::bind< om::ObjPtr< Task > >(
+                &continuationOnce,
+                static_cast< Task* >( task.get() ),
+                cpp::ref( continuationReturned ),
+                _1
+                )
+            );
+
+        context.eq -> push_back( task );
+
+        const bool secondExecutionWasStarted = secondExecutionStarted.wait();
+        const bool noIntermediateCompletion =
+            0U == context.recorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted );
+
+        releaseSecondExecution.signal();
+
+        const bool finalCompletionDelivered =
+            context.recorder -> waitForEventCount(
+                ExecutionQueueNotify::AllTasksCompleted,
+                1U
+                );
+
+        UTF_REQUIRE( secondExecutionWasStarted );
+        UTF_REQUIRE( noIntermediateCompletion );
+        UTF_REQUIRE( finalCompletionDelivered );
+        UTF_REQUIRE_EQUAL( 2U, executions.load() );
+        UTF_REQUIRE( ! executionTimedOut.load() );
+        UTF_REQUIRE_EQUAL(
+            1U,
+            context.recorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
+            );
+    }
+
+    {
+        ExecutionQueueNotificationTestContext context( ExecutionQueue::OptionKeepNone );
+        ExecutionQueueCompletionControl continuationControl;
+        const auto continuationTask =
+            om::qi< Task >( createControlledCompletionTask( continuationControl ) );
+
+        bool continuationReturned = false;
+        const auto taskImpl = SimpleTaskImpl::createInstance(
+            []() -> void
+            {
+            }
+            );
+
+        const auto task = om::qi< Task >( taskImpl );
+
+        taskImpl -> setContinuationCallback(
+            cpp::bind< om::ObjPtr< Task > >(
+                &continuationOnce,
+                static_cast< Task* >( continuationTask.get() ),
+                cpp::ref( continuationReturned ),
+                _1
+                )
+            );
+
+        context.eq -> push_back( task );
+
+        UTF_REQUIRE( continuationControl.waitUntilScheduled( 1U ) );
+        UTF_REQUIRE(
+            context.recorder -> waitForEventCount(
+                ExecutionQueueNotify::TaskDiscarded,
+                1U,
+                task.get()
+                )
+            );
+        UTF_REQUIRE_EQUAL(
+            0U,
+            context.recorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
+            );
+
+        UTF_REQUIRE( continuationControl.completeNext() );
+        UTF_REQUIRE_EQUAL(
+            1U,
+            context.recorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
+            );
+    }
 }
 
 UTF_AUTO_TEST_CASE( Tasks_TaskContinuationsTests )

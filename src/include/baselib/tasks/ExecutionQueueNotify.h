@@ -65,6 +65,19 @@ namespace bl
              * @brief Notify the callback that an event have occurred in the execution queue
              *
              * Note: The task parameter can be nullptr depending on the eventId (e.g. if eventId=AllTasksCompleted)
+             *
+             * AllTasksCompleted is a point-in-time notification. Immediately before it is dispatched,
+             * the pending and executing queues were empty and no scheduled work had been admitted or
+             * rescheduled since the completion candidate was created. Work can be enqueued concurrently
+             * after that validation point, including before or during the callback. Ready tasks, including
+             * retained tasks and tasks added with dontSchedule=true, do not prevent AllTasksCompleted.
+             * The event is generated from task completion processing; removing the last pending task through
+             * cancellation or flush does not by itself generate AllTasksCompleted.
+             *
+             * No internal execution queue mutex is held while onEvent is invoked. Callbacks from the same
+             * queue can overlap, and their ordering across tasks is unspecified. TaskReady and TaskDiscarded
+             * use the observer selected when the corresponding task state transition commits, while the
+             * AllTasksCompleted observer is selected at final delivery validation.
              */
 
             virtual void onEvent(

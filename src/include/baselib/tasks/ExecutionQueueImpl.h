@@ -29,6 +29,7 @@
 #include <baselib/core/Pool.h>
 #include <baselib/core/BaseIncludes.h>
 
+#include <cstdint>
 #include <unordered_map>
 #include <type_traits>
 
@@ -217,6 +218,8 @@ namespace bl
 
             std::size_t                                                             m_executingCount;
             std::size_t                                                             m_readyCount;
+            std::uint64_t                                                           m_activeWorkGeneration;
+            std::uint64_t                                                           m_lastPublishedGeneration;
             tasks_queue_t                                                           m_pending;
             tasks_queue_t                                                           m_executing;
             tasks_queue_t                                                           m_ready;
@@ -244,6 +247,8 @@ namespace bl
                 m_shutdown( false ),
                 m_executingCount( 0U ),
                 m_readyCount( 0U ),
+                m_activeWorkGeneration( 0U ),
+                m_lastPublishedGeneration( 0U ),
                 m_eventsMask( 0 ),
                 m_taskInfoPool( taskinfo_pool_t::template createInstance< taskinfo_pool_t >() )
             {
@@ -366,6 +371,8 @@ namespace bl
             {
                 cpp::void_callback_noexcept_t onNotify;
                 cpp::void_callback_noexcept_t onNotifyAllCompleted;
+                bool allTasksCompletedCandidate = false;
+                std::uint64_t allTasksCompletedCandidateGeneration = 0U;
 
                 {
                     BL_MUTEX_GUARD( m_lockEvents );
@@ -402,6 +409,7 @@ namespace bl
                                 if( om::areEqual( continuationTask, task ) )
                                 {
                                     moveExecutingTaskToPendingQueue( taskInfo );
+                                    ++m_activeWorkGeneration;
                                     padExecutingQueueNothrow();
 
                                     continuationIsSelf = true;
@@ -453,19 +461,13 @@ namespace bl
 
                             m_cvReady.notify_all();
                         }
-                    }
-
-                    {
-                        BL_MUTEX_GUARD( m_lock );
 
                         if( m_pending.empty() && m_executing.empty() )
                         {
                             BL_ASSERT( 0U == m_executingCount );
 
-                            onNotifyAllCompleted = getEventNotifyCB(
-                                ExecutionQueueNotify::AllTasksCompleted,
-                                om::ObjPtrCopyable< Task >::acquireRef( nullptr )
-                                );
+                            allTasksCompletedCandidate = true;
+                            allTasksCompletedCandidateGeneration = m_activeWorkGeneration;
                         }
                     }
                 }
@@ -479,6 +481,26 @@ namespace bl
                 if( onNotify )
                 {
                     onNotify();
+                }
+
+                if( allTasksCompletedCandidate )
+                {
+                    BL_MUTEX_GUARD( m_lock );
+
+                    if(
+                        m_pending.empty() &&
+                        m_executing.empty() &&
+                        m_activeWorkGeneration == allTasksCompletedCandidateGeneration &&
+                        m_lastPublishedGeneration != allTasksCompletedCandidateGeneration
+                        )
+                    {
+                        m_lastPublishedGeneration = allTasksCompletedCandidateGeneration;
+
+                        onNotifyAllCompleted = getEventNotifyCB(
+                            ExecutionQueueNotify::AllTasksCompleted,
+                            om::ObjPtrCopyable< Task >::acquireRef( nullptr )
+                            );
+                    }
                 }
 
                 if( onNotifyAllCompleted )
@@ -585,6 +607,7 @@ namespace bl
                         inserter_t::insert( m_pending, *taskInfo );
 
                         --m_readyCount;
+                        ++m_activeWorkGeneration;
                     }
                 }
                 else
@@ -611,6 +634,10 @@ namespace bl
                     if( dontSchedule )
                     {
                         ++m_readyCount;
+                    }
+                    else
+                    {
+                        ++m_activeWorkGeneration;
                     }
                 }
 
