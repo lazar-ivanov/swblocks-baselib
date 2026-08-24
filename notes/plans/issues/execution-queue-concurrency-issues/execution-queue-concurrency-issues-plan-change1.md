@@ -11,7 +11,7 @@ After this change, an `AllTasksCompleted` notification means:
 - A completion candidate is consumed at most once for its active-work generation.
 - A producer may enqueue work after validation, including before or during the callback. This is valid under the point-in-time contract, not an unresolved race.
 - Retained or `dontSchedule=true` ready tasks continue to be excluded from the existing completion condition.
-- Callbacks may still overlap or reorder until the separate F-07b change.
+- Callbacks may overlap or reorder under the intentionally concurrent notification contract.
 
 The public callback signature, event IDs, queue interface, and ABI remain unchanged.
 
@@ -50,15 +50,15 @@ Place the increment after the relevant structural transition has succeeded and b
 
 Refactor [onReady](/home/lazar/dev/github/swblocks-baselib/src/include/baselib/tasks/ExecutionQueueImpl.h:365) while preserving continuation, retention, scheduling, and condition-variable behavior:
 
-1. Keep the existing outer `m_lockEvents` guard for this change; do not alter lock ordering.
-2. In the existing first `m_lock` scope:
+1. Acquire `m_lock` for the task state transition and candidate creation.
+2. In that `m_lock` scope:
    - perform the task state transition;
    - snapshot `TaskReady` or `TaskDiscarded` as today;
    - call `padExecutingQueueNothrow()` as today;
    - after padding, if pending and executing are empty, record a local all-complete candidate and its current generation.
 3. Do not resolve or snapshot the `AllTasksCompleted` callback there.
 4. Remove the current second `m_lock` scope that pre-captures `AllTasksCompleted`.
-5. Release both queue mutexes and invoke the task-event callback.
+5. Release `m_lock` and invoke the task-event callback.
 
 Use an explicit local candidate flag plus candidate generation rather than relying solely on a sentinel value.
 
@@ -91,7 +91,7 @@ Use generations rather than a single “idle already published” flag because t
 
 If A’s candidate is waiting, B is admitted and completes, and B’s task callback has not yet published its candidate, a boolean could allow A’s old path to publish. Generation comparison rejects A regardless of whether B has already published.
 
-The generation representation also becomes the reusable candidate identity for the later F-07b FIFO without changing Change 1’s public behavior.
+The generation remains the candidate identity used to reject stale or duplicate completion publication.
 
 ## Public documentation
 
@@ -103,7 +103,8 @@ Update [ExecutionQueueNotify.h](/home/lazar/dev/github/swblocks-baselib/src/incl
 - Ready/retained tasks do not prevent this event.
 - Becoming empty solely because pending work is canceled or discarded by a flush does not itself originate this event; completion publication remains driven by task readiness processing.
 - No internal queue mutex is held during `onEvent`.
-- Until F-07b, callbacks from the same queue may overlap and their cross-task delivery order is unspecified.
+- Callbacks from the same queue may overlap and delivery order is unspecified, including across repeated attempts of one retained task.
+- Observers must be thread-safe, callback thread identity is unspecified, and `AllTasksCompleted` is not a notification-drain barrier.
 - A task-event callback is snapshotted when its state transition commits; the all-complete observer is resolved at final delivery validation.
 
 Do not document or imply permanent quiescence, callback serialization, queue closure, or a producer barrier.
@@ -165,7 +166,7 @@ Add these focused cases:
    - From a task-event callback, add a new task with `dontSchedule=true`; assert the ready-only task neither invalidates the candidate nor prevents exactly one all-complete notification.
    - Review prioritization, padding, and cancellation paths to verify they do not increment the generation. These exact counter values are internal review invariants rather than focused behavioral cases.
 
-Do not add F-07b overlap, FIFO-order, dispatcher-thread, or maximum-callback-concurrency assertions in this change. Existing cancellation and general option tests remain the regression coverage for cancellation behavior.
+Do not add FIFO-order, dispatcher-thread, or maximum-callback-concurrency assertions. Existing cancellation and general option tests remain the regression coverage for cancellation behavior.
 
 ## Verification and acceptance
 
@@ -177,15 +178,15 @@ Do not add F-07b overlap, FIFO-order, dispatcher-thread, or maximum-callback-con
 - Confirm the controllable completion helper consumes callbacks in scheduling order without overwriting an outstanding callback.
 - Review every scheduled-admission path to confirm exactly one generation increment.
 - Confirm `getEventNotifyCB(AllTasksCompleted, ...)` is called only during final validation, never before the task callback.
-- Confirm every `onEvent` invocation occurs without `m_lock` or `m_lockEvents`.
+- Confirm every `onEvent` invocation occurs without `m_lock`.
 - Confirm no public signature, event value, scheduler behavior, task ownership, or cancellation policy changes.
 
 Acceptance requires all new deterministic tests and the existing task suite to pass, with no stale or duplicate completion for an invalidated generation.
 
 ## Boundaries and estimate
 
-- F-07b callback serialization/FIFO remains a separate follow-up change built on this generation candidate.
+- Callback serialization/FIFO is intentionally not planned; concurrent, unordered notification delivery is the documented contract.
 - CXX-07 public accessor/configuration races and `maxReadyOrExecuting()` under-lock callback behavior remain separate.
-- No changes are required in `TcpBaseTasks.h`, `FanoutTasksObservable.h`, or `ExecutionQueue.h`.
+- No changes are required in `TcpBaseTasks.h` or `FanoutTasksObservable.h`; `ExecutionQueue.h` points callback registrants to the notification contract.
 - Estimated Change 1 size: approximately 40–80 production/documentation lines touched, with a smaller net increase, plus approximately 900–1,000 test/support lines touched for deterministic concurrency helpers and focused cases.
 - Estimated effort: 1–2 engineering days plus cross-platform and sanitizer stabilization.

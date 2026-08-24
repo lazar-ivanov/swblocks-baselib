@@ -72,6 +72,11 @@ namespace bl
 
             virtual void setOptions( SAA_in const unsigned options = OptionKeepFailed ) = 0;
 
+            /**
+             * @brief Sets the notification callback; see ExecutionQueueNotify::onEvent() for
+             * callback concurrency and ordering requirements
+             */
+
             virtual void setNotifyCallback(
                 SAA_in                  om::ObjPtr< om::Proxy >&&                   notifyCB,
                 SAA_in                  const unsigned                              eventsMask = ExecutionQueueNotify::AllEvents

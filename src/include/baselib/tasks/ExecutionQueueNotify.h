@@ -75,9 +75,15 @@ namespace bl
              * cancellation or flush does not by itself generate AllTasksCompleted.
              *
              * No internal execution queue mutex is held while onEvent is invoked. Callbacks from the same
-             * queue can overlap, and their ordering across tasks is unspecified. TaskReady and TaskDiscarded
-             * use the observer selected when the corresponding task state transition commits, while the
-             * AllTasksCompleted observer is selected at final delivery validation.
+             * queue may execute concurrently on different threads, so observer implementations must be
+             * thread-safe and synchronize access to shared state. Do not rely on callback thread identity
+             * or delivery order between different task completion paths, including repeated execution
+             * attempts of the same retained task.
+             *
+             * AllTasksCompleted does not wait for previously started notification callbacks to return and
+             * is not a notification-drain barrier. TaskReady and TaskDiscarded use the observer selected
+             * when the corresponding task state transition commits, while the AllTasksCompleted observer
+             * is selected at final delivery validation.
              */
 
             virtual void onEvent(

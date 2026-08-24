@@ -226,7 +226,6 @@ namespace bl
             tasks_map_t                                                             m_allTasks;
 
             mutable os::mutex                                                       m_lock;
-            os::mutex                                                               m_lockEvents;
             os::condition_variable                                                  m_cvReady;
 
             om::ObjPtr< om::Proxy >                                                 m_notifyCB;
@@ -375,107 +374,103 @@ namespace bl
                 std::uint64_t allTasksCompletedCandidateGeneration = 0U;
 
                 {
-                    BL_MUTEX_GUARD( m_lockEvents );
+                    BL_MUTEX_GUARD( m_lock );
 
+                    if( ! m_observerThis )
                     {
-                        BL_MUTEX_GUARD( m_lock );
+                        /*
+                         * The object has already been disposed -
+                         * don't try to do anything
+                         */
 
-                        if( ! m_observerThis )
+                        return;
+                    }
+
+                    std::exception_ptr continuationException;
+
+                    bool continuationIsSelf = false;
+                    auto taskInfo = getTaskInfoPtrFromTask( task.get() );
+
+                    try
+                    {
+                        const auto continuationTask = task -> continuationTask();
+
+                        if( continuationTask )
                         {
                             /*
-                             * The object has already been disposed -
-                             * don't try to do anything
+                             * Push the continuation task to the front of the execution queue and attempt
+                             * to schedule it immediately
                              */
 
-                            return;
-                        }
-
-                        std::exception_ptr continuationException;
-
-                        bool continuationIsSelf = false;
-                        auto taskInfo = getTaskInfoPtrFromTask( task.get() );
-
-                        try
-                        {
-                            const auto continuationTask = task -> continuationTask();
-
-                            if( continuationTask )
+                            if( om::areEqual( continuationTask, task ) )
                             {
-                                /*
-                                 * Push the continuation task to the front of the execution queue and attempt
-                                 * to schedule it immediately
-                                 */
+                                moveExecutingTaskToPendingQueue( taskInfo );
+                                ++m_activeWorkGeneration;
+                                padExecutingQueueNothrow();
 
-                                if( om::areEqual( continuationTask, task ) )
-                                {
-                                    moveExecutingTaskToPendingQueue( taskInfo );
-                                    ++m_activeWorkGeneration;
-                                    padExecutingQueueNothrow();
-
-                                    continuationIsSelf = true;
-                                }
-                                else
-                                {
-                                    pushInternalNoLock< false /* isBack */ >( continuationTask, false /* dontSchedule */ );
-                                }
-                            }
-                        }
-                        catch( std::exception& )
-                        {
-                            continuationException = std::current_exception();
-                        }
-
-                        if( continuationException )
-                        {
-                            /*
-                             * Something with creating and scheduling the continuation task has
-                             * failed
-                             *
-                             * We treat this as a regular task failure as creating and scheduling
-                             * the continuation is considered as part of the task itself
-                             */
-
-                            task -> exception( continuationException );
-                        }
-
-                        if( ! continuationIsSelf )
-                        {
-                            --m_executingCount;
-
-                            task -> setCompletedState();
-
-                            if( keepTask( task ) )
-                            {
-                                moveTaskToReadyQueue( taskInfo );
-
-                                onNotify = getEventNotifyCB( ExecutionQueueNotify::TaskReady, task );
+                                continuationIsSelf = true;
                             }
                             else
                             {
-                                unlinkAndDestroy( taskInfo );
-
-                                onNotify = getEventNotifyCB( ExecutionQueueNotify::TaskDiscarded, task );
+                                pushInternalNoLock< false /* isBack */ >( continuationTask, false /* dontSchedule */ );
                             }
-
-                            padExecutingQueueNothrow();
-
-                            m_cvReady.notify_all();
                         }
+                    }
+                    catch( std::exception& )
+                    {
+                        continuationException = std::current_exception();
+                    }
 
-                        if( m_pending.empty() && m_executing.empty() )
+                    if( continuationException )
+                    {
+                        /*
+                         * Something with creating and scheduling the continuation task has
+                         * failed
+                         *
+                         * We treat this as a regular task failure as creating and scheduling
+                         * the continuation is considered as part of the task itself
+                         */
+
+                        task -> exception( continuationException );
+                    }
+
+                    if( ! continuationIsSelf )
+                    {
+                        --m_executingCount;
+
+                        task -> setCompletedState();
+
+                        if( keepTask( task ) )
                         {
-                            BL_ASSERT( 0U == m_executingCount );
+                            moveTaskToReadyQueue( taskInfo );
 
-                            allTasksCompletedCandidate = true;
-                            allTasksCompletedCandidateGeneration = m_activeWorkGeneration;
+                            onNotify = getEventNotifyCB( ExecutionQueueNotify::TaskReady, task );
                         }
+                        else
+                        {
+                            unlinkAndDestroy( taskInfo );
+
+                            onNotify = getEventNotifyCB( ExecutionQueueNotify::TaskDiscarded, task );
+                        }
+
+                        padExecutingQueueNothrow();
+
+                        m_cvReady.notify_all();
+                    }
+
+                    if( m_pending.empty() && m_executing.empty() )
+                    {
+                        BL_ASSERT( 0U == m_executingCount );
+
+                        allTasksCompletedCandidate = true;
+                        allTasksCompletedCandidateGeneration = m_activeWorkGeneration;
                     }
                 }
                 /*
-                 * IMPORTANT: Callbacks are invoked outside of m_lockEvents to prevent deadlock
+                 * IMPORTANT: Callbacks are invoked outside of m_lock to prevent deadlock
                  * if the callbacks attempt to call back into the ExecutionQueue (e.g., push_back,
-                 * flush, wait, etc.). This means callbacks may execute concurrently with other
-                 * queue operations, so they must be thread-safe.
+                 * flush, wait, etc.). Callbacks from the same queue may execute concurrently
+                 * with each other and with queue operations, so observers must be thread-safe.
                  */
 
                 if( onNotify )
