@@ -21,7 +21,10 @@ import boto3
 import threading
 import hashlib
 import math
+import stat
+import tempfile
 import time
+import unicodedata
 from botocore.exceptions import ClientError, NoCredentialsError
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -330,6 +333,180 @@ def verify_worker(s3_client, bucket_name, file_path, relative_path):
     except Exception as e:
         return f"[ERROR] {relative_path} - Unexpected error: {str(e)}"
 
+class UnsafeDownloadPathError(ValueError):
+    """Raised when an S3 key cannot be mapped safely below the download root."""
+
+
+_WINDOWS_RESERVED_NAMES = {
+    'CON', 'PRN', 'AUX', 'NUL', 'CONIN$', 'CONOUT$',
+    *(f'COM{suffix}' for suffix in '123456789¹²³'),
+    *(f'LPT{suffix}' for suffix in '123456789¹²³'),
+}
+_WINDOWS_INVALID_CHARS = set('<>"|?*')
+
+
+def validate_s3_key_components(s3_key):
+    """Validate an S3 POSIX key and return (components, is_folder_marker)."""
+    if not isinstance(s3_key, str) or not s3_key:
+        raise UnsafeDownloadPathError("S3 key is empty")
+    if '\x00' in s3_key:
+        raise UnsafeDownloadPathError("S3 key contains NUL")
+    if '\\' in s3_key:
+        raise UnsafeDownloadPathError("S3 key contains a backslash")
+
+    parts = s3_key.split('/')
+    is_folder_marker = parts[-1] == ''
+    components = parts[:-1] if is_folder_marker else parts
+
+    if not components:
+        raise UnsafeDownloadPathError("S3 key has no file-name components")
+
+    for component in components:
+        if component == '':
+            raise UnsafeDownloadPathError("S3 key is absolute or contains an empty component")
+        if component in ('.', '..'):
+            raise UnsafeDownloadPathError(f"S3 key contains {component!r} component")
+        if ':' in component:
+            raise UnsafeDownloadPathError("S3 key contains ':'")
+        if component[-1] in ('.', ' '):
+            raise UnsafeDownloadPathError("S3 key component ends with a dot or space")
+        if any(ord(char) < 0x20 or char in _WINDOWS_INVALID_CHARS for char in component):
+            raise UnsafeDownloadPathError("S3 key contains a control or Windows-invalid character")
+
+        device_name = component.split('.', 1)[0].rstrip(' ').upper()
+        if device_name in _WINDOWS_RESERVED_NAMES:
+            raise UnsafeDownloadPathError("S3 key contains a Windows reserved device name")
+
+    return tuple(components), is_folder_marker
+
+
+def resolve_download_root(local_folder, create=False):
+    """Resolve the user-controlled download root, optionally creating it."""
+    local_folder = os.path.abspath(local_folder)
+
+    if create:
+        os.makedirs(local_folder, exist_ok=True)
+
+    root = os.path.realpath(local_folder)
+    if os.path.lexists(local_folder) and not os.path.exists(root):
+        raise UnsafeDownloadPathError("download root is a broken symbolic link")
+    if os.path.exists(root) and not os.path.isdir(root):
+        raise UnsafeDownloadPathError("download root is not a directory")
+
+    return root
+
+
+def ensure_download_root(local_folder):
+    """Create and resolve the download root."""
+    return resolve_download_root(local_folder, create=True)
+
+
+def resolve_download_path(root, components):
+    """Map validated key components below a resolved download root."""
+    root = os.path.normpath(os.path.abspath(root))
+    dest = os.path.normpath(os.path.join(root, *components))
+    try:
+        contained = os.path.commonpath([root, dest]) == root
+    except ValueError as exc:
+        raise UnsafeDownloadPathError("resolved path is outside the download root") from exc
+    if not contained or dest == root:
+        raise UnsafeDownloadPathError("resolved path is outside the download root")
+    return dest
+
+
+def is_hostile_reparse(path, st=None):
+    """Return True for symlinks, junctions, and Windows reparse points."""
+    if st is None:
+        st = os.lstat(path)
+    if stat.S_ISLNK(st.st_mode) or os.path.islink(path):
+        return True
+
+    isjunction = getattr(os.path, 'isjunction', None)
+    if isjunction is not None and isjunction(path):
+        return True
+
+    file_attributes = getattr(st, 'st_file_attributes', 0)
+    reparse_flag = getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400)
+    return bool(file_attributes & reparse_flag)
+
+
+def lstat_walk_parents(root, dest):
+    """Validate existing destination components without following links."""
+    relative_path = os.path.relpath(dest, root)
+    components = relative_path.split(os.sep)
+    current = root
+
+    for index, component in enumerate(components):
+        current = os.path.join(current, component)
+        try:
+            current_stat = os.lstat(current)
+        except FileNotFoundError:
+            return None
+
+        if is_hostile_reparse(current, current_stat):
+            raise UnsafeDownloadPathError(f"destination contains a reparse point: {current}")
+
+        is_final = index == len(components) - 1
+        if is_final:
+            if not stat.S_ISREG(current_stat.st_mode):
+                raise UnsafeDownloadPathError(f"destination is not a regular file: {current}")
+            return current_stat
+        if not stat.S_ISDIR(current_stat.st_mode):
+            raise UnsafeDownloadPathError(f"destination parent is not a directory: {current}")
+
+    return None
+
+
+def ensure_parent_dirs_nofollow(root, dest):
+    """Create missing destination parents one component at a time, without links."""
+    relative_parent = os.path.relpath(os.path.dirname(dest), root)
+    if relative_parent == '.':
+        return
+
+    current = root
+    for component in relative_parent.split(os.sep):
+        current = os.path.join(current, component)
+        try:
+            current_stat = os.lstat(current)
+        except FileNotFoundError:
+            try:
+                os.mkdir(current)
+            except FileExistsError:
+                pass
+            current_stat = os.lstat(current)
+
+        if is_hostile_reparse(current, current_stat) or not stat.S_ISDIR(current_stat.st_mode):
+            raise UnsafeDownloadPathError(f"destination parent is not a real directory: {current}")
+
+
+def _verify_download_file(file_path, s3_etag, s3_size):
+    """Return (category, details) after verifying a local file against S3 metadata."""
+    local_size = os.path.getsize(file_path)
+    if local_size != s3_size:
+        size_diff = f"S3: {format_size(s3_size)}, Local: {format_size(local_size)}"
+        return "different", f"size mismatch: {size_diff}"
+
+    if '-' in s3_etag:
+        etag_parts = s3_etag.split('-')
+        if len(etag_parts) != 2:
+            return "error", f"Invalid S3 ETag format: {s3_etag}"
+        try:
+            part_count = int(etag_parts[1])
+        except ValueError:
+            return "error", f"Invalid part count in ETag: {s3_etag}"
+        local_etag = calculate_s3_etag_multipart(file_path, part_count)
+        if local_etag is None:
+            return "error", "Failed to calculate multipart ETag"
+    else:
+        local_etag = calculate_s3_etag_simple(file_path)
+
+    local_hash = local_etag.split('-')[0] if '-' in local_etag else local_etag
+    s3_hash = s3_etag.split('-')[0] if '-' in s3_etag else s3_etag
+    if local_hash.lower() == s3_hash.lower():
+        return "verified", ""
+    return "different", f"S3: {s3_etag}, Local: {local_etag}"
+
+
 def download_worker(s3_client, bucket_name, s3_key, local_folder, dry_run=False):
     """
     Download a single S3 object to local folder and verify.
@@ -345,125 +522,94 @@ def download_worker(s3_client, bucket_name, s3_key, local_folder, dry_run=False)
         tuple: (status_message, downloaded_size, status_category)
         - status_message (str): Human-readable status line for printing
         - downloaded_size (int): Size in bytes (0 if not downloaded)
-        - status_category (str): One of: "downloaded", "verified", "different", "error"
+        - status_category (str): One of: "downloaded", "verified", "different", "error", "skipped"
     """
     try:
-        # STEP 1: Get S3 object metadata (ETag, Size) using head_object
+        components, is_folder_marker = validate_s3_key_components(s3_key)
+
         try:
             response = s3_client.head_object(Bucket=bucket_name, Key=s3_key)
         except ClientError as e:
             if e.response['Error']['Code'] == "404":
                 return (f"[ERROR] {s3_key} - Object not found in S3", 0, "error")
-            else:
-                error_msg = e.response['Error'].get('Message', str(e))
-                return (f"[ERROR] {s3_key} - S3 error: {error_msg}", 0, "error")
+            error_msg = e.response['Error'].get('Message', str(e))
+            return (f"[ERROR] {s3_key} - S3 error: {error_msg}", 0, "error")
 
         s3_etag = response['ETag'].strip('"')
         s3_size = response['ContentLength']
 
-        # STEP 2: Construct local file path (preserve full S3 key as path)
-        # CRITICAL: Do NOT strip prefix - local paths mirror bucket structure
-        local_path = os.path.join(local_folder, s3_key)
+        if is_folder_marker:
+            if s3_size == 0:
+                return (f"[SKIPPED] {s3_key!r} (folder marker)", 0, "skipped")
+            raise UnsafeDownloadPathError("non-empty trailing-slash object is not a folder marker")
 
-        # STEP 3: Check if local file exists
-        file_exists_locally = os.path.exists(local_path)
+        root = resolve_download_root(local_folder, create=False)
+        local_path = resolve_download_path(root, components)
+        local_stat = lstat_walk_parents(root, local_path)
 
-        if file_exists_locally:
-            # STEP 4A: File exists - VERIFY ONLY (do not re-download)
-            try:
-                local_size = os.path.getsize(local_path)
+        if local_stat is not None:
+            category, details = _verify_download_file(local_path, s3_etag, s3_size)
+            if category == "verified":
+                return (f"[VERIFIED] {s3_key} ({format_size(s3_size)})", 0, "verified")
+            if category == "different":
+                return (f"[DIFFERENT] {s3_key} ({details})", 0, "different")
+            return (f"[ERROR] {s3_key} - {details}", 0, "error")
 
-                # Quick size check first (optimization)
-                if local_size != s3_size:
-                    size_diff = f"S3: {format_size(s3_size)}, Local: {format_size(local_size)}"
-                    return (f"[DIFFERENT] {s3_key} (size mismatch: {size_diff})", 0, "different")
+        if dry_run:
+            return (f"[DRY-RUN] {s3_key} ({format_size(s3_size)} would be downloaded)", 0, "downloaded")
 
-                # Calculate local ETag matching S3's method (reuse verify logic)
-                if '-' in s3_etag:
-                    # Multipart ETag
-                    etag_parts = s3_etag.split('-')
-                    if len(etag_parts) != 2:
-                        return (f"[ERROR] {s3_key} - Invalid S3 ETag format: {s3_etag}", 0, "error")
+        if not os.path.exists(root):
+            root = ensure_download_root(local_folder)
+            local_path = resolve_download_path(root, components)
+            if lstat_walk_parents(root, local_path) is not None:
+                raise UnsafeDownloadPathError("destination appeared before download")
 
-                    try:
-                        part_count = int(etag_parts[1])
-                    except ValueError:
-                        return (f"[ERROR] {s3_key} - Invalid part count in ETag: {s3_etag}", 0, "error")
-
-                    local_etag = calculate_s3_etag_multipart(local_path, part_count)
-                    if local_etag is None:
-                        return (f"[ERROR] {s3_key} - Failed to calculate multipart ETag", 0, "error")
-                else:
-                    # Simple ETag
-                    local_etag = calculate_s3_etag_simple(local_path)
-
-                # Compare ETags (case-insensitive)
-                local_etag_hash = local_etag.split('-')[0] if '-' in local_etag else local_etag
-                s3_etag_hash = s3_etag.split('-')[0] if '-' in s3_etag else s3_etag
-
-                if local_etag_hash.lower() == s3_etag_hash.lower():
-                    return (f"[VERIFIED] {s3_key} ({format_size(s3_size)})", 0, "verified")
-                else:
-                    return (f"[DIFFERENT] {s3_key} (S3: {s3_etag}, Local: {local_etag})", 0, "different")
-
-            except IOError as e:
-                return (f"[ERROR] {s3_key} - File read error: {str(e)}", 0, "error")
-            except OSError as e:
-                return (f"[ERROR] {s3_key} - File access error: {str(e)}", 0, "error")
-
-        else:
-            # STEP 4B: File does not exist - DOWNLOAD then VERIFY
-
-            # Handle dry-run mode
-            if dry_run:
-                return (f"[DRY-RUN] {s3_key} ({format_size(s3_size)} would be downloaded)", 0, "downloaded")
-
-            # Create parent directories if needed
-            local_dir = os.path.dirname(local_path)
-            if local_dir:
-                os.makedirs(local_dir, exist_ok=True)
-
-            # Announce download start (for user feedback)
+        ensure_parent_dirs_nofollow(root, local_path)
+        parent = os.path.dirname(local_path)
+        fd = None
+        tmp_path = None
+        try:
+            fd, tmp_path = tempfile.mkstemp(prefix='.s3dl-', dir=parent)
             safe_print(f"[DOWNLOADING] {s3_key} ({format_size(s3_size)})...")
-
-            # Download file using boto3
             try:
-                s3_client.download_file(bucket_name, s3_key, local_path)
+                with os.fdopen(fd, 'wb') as fileobj:
+                    fd = None
+                    s3_client.download_fileobj(bucket_name, s3_key, fileobj)
             except Exception as e:
                 return (f"[ERROR] {s3_key} - Download failed: {str(e)}", 0, "error")
 
-            # Verify downloaded file (same logic as above)
             try:
-                local_size = os.path.getsize(local_path)
-
-                if local_size != s3_size:
-                    size_diff = f"S3: {format_size(s3_size)}, Local: {format_size(local_size)}"
-                    return (f"[DOWNLOADED] {s3_key} → [DIFFERENT] (size mismatch: {size_diff})", s3_size, "different")
-
-                # Calculate ETag
-                if '-' in s3_etag:
-                    etag_parts = s3_etag.split('-')
-                    part_count = int(etag_parts[1])
-                    local_etag = calculate_s3_etag_multipart(local_path, part_count)
-                    if local_etag is None:
-                        return (f"[DOWNLOADED] {s3_key} → [ERROR] (ETag calculation failed)", s3_size, "error")
-                else:
-                    local_etag = calculate_s3_etag_simple(local_path)
-
-                local_etag_hash = local_etag.split('-')[0] if '-' in local_etag else local_etag
-                s3_etag_hash = s3_etag.split('-')[0] if '-' in s3_etag else s3_etag
-
-                if local_etag_hash.lower() == s3_etag_hash.lower():
-                    return (f"[DOWNLOADED] {s3_key} ({format_size(s3_size)}) → [VERIFIED]", s3_size, "downloaded")
-                else:
-                    return (f"[DOWNLOADED] {s3_key} → [DIFFERENT] (S3: {s3_etag}, Local: {local_etag})", s3_size, "different")
-
+                category, details = _verify_download_file(tmp_path, s3_etag, s3_size)
             except (IOError, OSError) as e:
-                return (f"[DOWNLOADED] {s3_key} → [ERROR] (verification failed: {str(e)})", s3_size, "error")
+                return (f"[DOWNLOADED] {s3_key} -> [ERROR] (verification failed: {str(e)})", 0, "error")
 
+            if category == "different":
+                return (f"[DOWNLOADED] {s3_key} -> [DIFFERENT] ({details})", 0, "different")
+            if category == "error":
+                return (f"[DOWNLOADED] {s3_key} -> [ERROR] ({details})", 0, "error")
+
+            try:
+                os.lstat(local_path)
+            except FileNotFoundError:
+                pass
+            else:
+                return (f"[ERROR] {s3_key} - Destination appeared before publish", 0, "error")
+
+            os.replace(tmp_path, local_path)
+            tmp_path = None
+            return (f"[DOWNLOADED] {s3_key} ({format_size(s3_size)}) -> [VERIFIED]", s3_size, "downloaded")
+        finally:
+            if fd is not None:
+                os.close(fd)
+            if tmp_path is not None:
+                try:
+                    os.unlink(tmp_path)
+                except FileNotFoundError:
+                    pass
+    except UnsafeDownloadPathError as e:
+        return (f"[ERROR] {s3_key!r} - {str(e)}", 0, "error")
     except Exception as e:
         return (f"[ERROR] {s3_key} - Unexpected error: {str(e)}", 0, "error")
-
 # S3 client will be created in main() using command-line arguments
 
 def file_exists_in_bucket(s3_client, bucket, key):
@@ -1017,6 +1163,77 @@ def command_indexupload(args, s3_client=None):
             import sys
             sys.exit(1)
 
+def _download_collision_identity(component):
+    """Return the fail-closed cross-platform collision identity for a component."""
+    decomposed = unicodedata.normalize('NFD', component)
+    return unicodedata.normalize('NFD', decomposed.casefold())
+
+
+def preflight_download_objects(s3_objects):
+    """Classify listed objects and find unsafe or colliding destination keys."""
+    download_queue = []
+    folder_markers = []
+    errors = {}
+    trie = {'children': {}, 'terminals': [], 'keys': []}
+
+    for obj in s3_objects:
+        s3_key = obj['Key']
+        s3_size = obj['Size']
+        try:
+            components, is_folder_marker = validate_s3_key_components(s3_key)
+        except UnsafeDownloadPathError as exc:
+            errors[s3_key] = str(exc)
+            continue
+
+        if is_folder_marker:
+            if s3_size == 0:
+                folder_markers.append(s3_key)
+            else:
+                errors[s3_key] = "non-empty trailing-slash object is not a folder marker"
+            continue
+
+        node = trie
+        path_nodes = [node]
+        conflicts = set()
+        for component in components:
+            conflicts.update(node['terminals'])
+            identity = _download_collision_identity(component)
+            node = node['children'].setdefault(
+                identity,
+                {'children': {}, 'terminals': [], 'keys': []}
+            )
+            path_nodes.append(node)
+
+        conflicts.update(node['keys'])
+        if conflicts:
+            for conflict_key in conflicts:
+                errors[conflict_key] = "destination namespace conflict"
+            errors[s3_key] = "destination namespace conflict"
+
+        node['terminals'].append(s3_key)
+        for path_node in path_nodes:
+            path_node['keys'].append(s3_key)
+        download_queue.append((s3_key, s3_size))
+
+    return download_queue, folder_markers, errors
+
+
+def _print_download_summary(total_files, downloaded_count, verified_count,
+                            different_count, error_count, skipped_count,
+                            total_downloaded_size, total_verified_size,
+                            elapsed_time):
+    """Print download statistics in one consistent format."""
+    print("\n--- DOWNLOAD SUMMARY ---")
+    print(f"Total files found: {total_files}")
+    print(f"Downloaded (new files): {downloaded_count} ({format_size(total_downloaded_size)})")
+    print(f"Verified (existing files, match): {verified_count} ({format_size(total_verified_size)})")
+    print(f"Different (existing files, mismatch): {different_count}")
+    print(f"Skipped (folder markers): {skipped_count}")
+    print(f"Errors: {error_count}")
+    print(f"Download speed: {format_speed(total_downloaded_size, elapsed_time)} "
+          f"({format_size(total_downloaded_size)} in {format_duration(elapsed_time)})")
+
+
 def command_download(args, s3_client=None):
     """Execute the download command.
 
@@ -1025,7 +1242,6 @@ def command_download(args, s3_client=None):
         s3_client: Optional boto3 S3 client (for testing)
     """
 
-    # STEP 1: Create S3 client (same pattern as other commands)
     if s3_client is None:
         s3_client = boto3.client(
             's3',
@@ -1034,13 +1250,11 @@ def command_download(args, s3_client=None):
             aws_secret_access_key=args.secret_key
         )
 
-    # STEP 2: List S3 objects using pagination generator
     print(f"Listing objects in bucket: {args.bucket_name}")
     if args.prefix:
         print(f"Prefix filter: {args.prefix}")
     print()
 
-    # STEP 3: Paginate through S3 objects and build download queue
     try:
         all_s3_objects = list(paginate_s3_objects(s3_client, args.bucket_name, args.prefix))
     except ClientError as e:
@@ -1054,7 +1268,6 @@ def command_download(args, s3_client=None):
         import sys
         sys.exit(1)
 
-    # Check if bucket is empty or no objects match prefix
     if not all_s3_objects:
         if args.prefix:
             print(f"No objects found with prefix: {args.prefix}")
@@ -1063,11 +1276,8 @@ def command_download(args, s3_client=None):
         print("Nothing to download.")
         return
 
-    # Build download queue from S3 objects
-    download_queue = [(obj['Key'], obj['Size']) for obj in all_s3_objects]
+    total_files = len(all_s3_objects)
     total_s3_size = sum(obj['Size'] for obj in all_s3_objects)
-
-    total_files = len(download_queue)
     print(f"Found {total_files} objects ({format_size(total_s3_size)} total)")
     print(f"Local folder: {args.local_folder}")
     print()
@@ -1076,67 +1286,93 @@ def command_download(args, s3_client=None):
         print("Running in DRY-RUN mode (no files will be downloaded)")
         print()
 
-    # STEP 4: Initialize statistics tracking
+    download_queue, folder_markers, preflight_errors = preflight_download_objects(all_s3_objects)
+
+    for marker_key in folder_markers:
+        safe_print(f"[SKIPPED] {marker_key!r} (folder marker)")
+
+    if preflight_errors:
+        for s3_key, reason in preflight_errors.items():
+            safe_print(f"[ERROR] {s3_key!r} - {reason}")
+        print("\nDownload preflight failed; no files were changed.")
+        _print_download_summary(
+            total_files, 0, 0, 0, len(preflight_errors), len(folder_markers),
+            0, 0, 0
+        )
+        if args.dry_run:
+            print("\nNo files were actually downloaded (dry-run mode)")
+        import sys
+        sys.exit(1)
+
+    try:
+        resolved_root = resolve_download_root(args.local_folder, create=False)
+        if download_queue and not args.dry_run and not os.path.exists(resolved_root):
+            ensure_download_root(args.local_folder)
+    except (OSError, UnsafeDownloadPathError) as exc:
+        safe_print(f"[ERROR] Download root {args.local_folder!r} - {str(exc)}")
+        _print_download_summary(
+            total_files, 0, 0, 0, 1, len(folder_markers), 0, 0, 0
+        )
+        import sys
+        sys.exit(1)
+
     downloaded_count = 0
     verified_count = 0
     different_count = 0
     error_count = 0
+    skipped_count = len(folder_markers)
     total_downloaded_size = 0
     total_verified_size = 0
-
-    # Start timer for speed calculation
     start_time = time.time()
 
-    # STEP 5: Execute downloads with ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=args.max_threads) as executor:
-        future_to_file = {
-            executor.submit(download_worker, s3_client, args.bucket_name, s3_key, args.local_folder, args.dry_run): (s3_key, s3_size)
-            for s3_key, s3_size in download_queue
-        }
+    if download_queue:
+        with ThreadPoolExecutor(max_workers=args.max_threads) as executor:
+            future_to_file = {
+                executor.submit(
+                    download_worker, s3_client, args.bucket_name, s3_key,
+                    args.local_folder, args.dry_run
+                ): (s3_key, s3_size)
+                for s3_key, s3_size in download_queue
+            }
 
-        for future in as_completed(future_to_file):
-            s3_key, s3_size = future_to_file[future]
-            try:
-                status_message, downloaded_size, status_category = future.result()
-                safe_print(status_message)
+            for future in as_completed(future_to_file):
+                s3_key, s3_size = future_to_file[future]
+                try:
+                    status_message, downloaded_size, status_category = future.result()
+                    safe_print(status_message)
 
-                # Track statistics
-                if status_category == "downloaded":
-                    downloaded_count += 1
-                    total_downloaded_size += downloaded_size
-                elif status_category == "verified":
-                    verified_count += 1
-                    total_verified_size += s3_size
-                elif status_category == "different":
-                    different_count += 1
-                elif status_category == "error":
+                    if status_category == "downloaded":
+                        downloaded_count += 1
+                        total_downloaded_size += downloaded_size
+                    elif status_category == "verified":
+                        verified_count += 1
+                        total_verified_size += s3_size
+                    elif status_category == "different":
+                        different_count += 1
+                    elif status_category == "error":
+                        error_count += 1
+                    elif status_category == "skipped":
+                        skipped_count += 1
+
+                except Exception as exc:
+                    safe_print(f"[CRITICAL ERROR] Thread crashed processing {s3_key}: {exc}")
                     error_count += 1
 
-            except Exception as exc:
-                safe_print(f"[CRITICAL ERROR] Thread crashed processing {s3_key}: {exc}")
-                error_count += 1
-
-    # Stop timer
     elapsed_time = time.time() - start_time
 
-    # STEP 6: Print summary
     print("\nAll operations complete!")
-    print("\n--- DOWNLOAD SUMMARY ---")
-    print(f"Total files found: {total_files}")
-    print(f"Downloaded (new files): {downloaded_count} ({format_size(total_downloaded_size)})")
-    print(f"Verified (existing files, match): {verified_count} ({format_size(total_verified_size)})")
-    print(f"Different (existing files, mismatch): {different_count}")
-    print(f"Errors: {error_count}")
-    print(f"Download speed: {format_speed(total_downloaded_size, elapsed_time)} ({format_size(total_downloaded_size)} in {format_duration(elapsed_time)})")
+    _print_download_summary(
+        total_files, downloaded_count, verified_count, different_count,
+        error_count, skipped_count, total_downloaded_size,
+        total_verified_size, elapsed_time
+    )
 
     if args.dry_run:
         print("\nNo files were actually downloaded (dry-run mode)")
 
-    # STEP 7: Exit with appropriate code (like verify command)
     if different_count > 0 or error_count > 0:
         import sys
         sys.exit(1)
-
 def main():
     # Create parent parser for common arguments
     parent_parser = create_parent_parser()

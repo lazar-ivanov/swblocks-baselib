@@ -643,24 +643,36 @@ python scripts/s3_manage.py download \
 #### Features
 
 - **Smart Download Logic**: Downloads missing files, verifies existing files without re-downloading
+- **Secure Path Preflight**: Validates every listed key and its destination namespace before creating the root or starting workers
 - **Prefix as Filter Only**: Local paths always match full bucket structure (prefix doesn't act as new root)
 - **Automatic Verification**: All files verified using ETag comparison (same as verify command)
+- **Atomic Verified Publish**: Downloads to a unique private temporary file, verifies it, then publishes it with an atomic replace
 - **Parallel Execution**: Uses ThreadPoolExecutor for concurrent downloads
-- **Dry-Run Mode**: Preview what would be downloaded without making changes
-- **No Hidden File Filtering**: Downloads ALL S3 objects matching prefix (no --allow-hidden-files flag)
-- **Real-Time Status**: Four status types (DOWNLOADING, DOWNLOADED, VERIFIED, DIFFERENT)
+- **Dry-Run Mode**: Runs the same key and collision preflight without making changes
+- **Folder Markers**: Skips only validated, zero-byte keys with one trailing slash
+- **No Hidden File Filtering**: Downloads ALL safe S3 objects matching prefix (no --allow-hidden-files flag)
+- **Real-Time Status**: Reports DOWNLOADING, DOWNLOADED, VERIFIED, DIFFERENT, SKIPPED, and ERROR states
 - **CI/CD Friendly**: Exit code 1 if any files are DIFFERENT or errors occur
 - **Bandwidth Efficient**: Skips re-downloading existing files even if checksums differ
 - **Speed Measurement**: Automatically calculates and displays download speed based on downloaded files with auto-adapting units (B/s, KB/s, MB/s, GB/s, TB/s)
 
 #### Download Behavior
 
-**For each S3 object:**
-1. If file **doesn't exist locally**: Download → Verify → Report status
-2. If file **exists locally**: Verify only (don't re-download even if different)
+Before any local mutation, the command validates all listed S3 keys as POSIX paths. It rejects traversal, absolute, drive/UNC, backslash, empty/dot components, Windows-invalid characters, ADS, trailing-dot/space, controls, and CPython's reserved device names. It also aborts on case-folded or Unicode-normalized duplicate destinations and file-versus-directory conflicts such as `a` and `a/b`. Any such key aborts the entire command, including dry-run, before workers start.
+
+A validated trailing-slash key is skipped as a folder marker only when its listed size is zero. Other trailing-slash objects are unsafe.
+
+**For each downloadable S3 object:**
+1. If the file **doesn't exist locally**: Download through `download_fileobj` to a unique `.s3dl-` temporary file → Verify size/ETag → Atomically publish → Report status
+2. If the file **exists locally**: Verify only (don't re-download even if different)
+
+Temporary files use mode `0o600` on POSIX. A failed download, verification, or publish removes the temporary file and does not create the final destination. Operational per-key errors and `[DIFFERENT]` results continue processing safe sibling keys.
 
 **This prevents:**
+- S3 keys escaping the selected download root
+- Writes through pre-existing symlinks, junctions, or other reparse points below the root
 - Data loss from overwriting modified local files
+- Publishing an unverified or partial download
 - Unnecessary bandwidth usage
 - Accidental corruption of local work
 
@@ -686,6 +698,7 @@ The `--prefix` parameter filters which S3 objects to download but **does NOT act
 | `[VERIFIED]` | Existing file matches S3 | Verified only (not downloaded) | 0 |
 | `[DIFFERENT]` | Existing file differs from S3 | Verified only (kept local file) | 1 |
 | `[ERROR]` | Download or verification error | Error reported | 1 |
+| `[SKIPPED]` | Validated zero-byte folder marker | No file or marker directory created | 0 |
 
 #### Output Format
 
@@ -974,7 +987,9 @@ All commands handle errors gracefully and provide clear error messages:
 
 - **Empty bucket:** Displays message "Nothing to download", exits gracefully with code 0
 - **No prefix matches:** Displays message, exits gracefully with code 0
-- **File download failed:** Reported as `[ERROR]` with details, continues with other files
+- **Path-unsafe key:** Printed as `[ERROR] repr(key)`; aborts the entire command before local mutation
+- **Destination namespace conflict:** Every colliding key is printed with `repr(key)`; aborts the entire command before local mutation
+- **File download failed:** Reported as `[ERROR]` with details; removes its temporary file and continues with other safe files
 - **Local file different:** Reported as `[DIFFERENT]`, local file kept (not overwritten), exits with code 1
 - **Permission denied (local):** Reported as `[ERROR]` (cannot create directory or write file)
 - **Disk full:** Reported as `[ERROR]` during download
@@ -1003,7 +1018,7 @@ All commands handle errors gracefully and provide clear error messages:
 - **list:** Uses `list_objects_v2()` API (metadata only, no file downloads)
 - **verify:** Uses `head_object()` for metadata (minimal data transfer, no file downloads)
 - **indexupload:** Uses `list_objects_v2()` API (metadata only, no file downloads)
-- **download:** Uses `head_object()` for metadata, `download_file()` for new files only (skips re-downloading existing files)
+- **download:** Uses `head_object()` for metadata and `download_fileobj()` into a verified temporary file for new files only
 
 ### IndexUpload-Specific Considerations
 
@@ -1029,7 +1044,10 @@ All commands handle errors gracefully and provide clear error messages:
 1. **Credentials:** Never hardcode credentials in scripts. Use environment variables or secure configuration management.
 2. **Access Keys:** Rotate access keys regularly.
 3. **Bucket Permissions:** Ensure the S3 user has appropriate permissions (read, write, list).
-4. **Hidden Files:** By default, hidden files (like `.env`, `.git/`) are skipped to avoid accidentally uploading sensitive data.
+4. **Hidden Files:** By default, hidden files (like `.env`, `.git/`) are skipped during upload to avoid accidentally uploading sensitive data.
+5. **Untrusted S3 Keys:** Download treats object keys as untrusted input. Unsafe keys and destination namespace conflicts abort the whole command before the download root is created or workers start.
+6. **No-Follow Destinations:** Download rejects any symlink, Windows junction, other reparse point, or special file below the resolved root. The user-supplied root itself may be a symlink.
+7. **Local Concurrency Boundary:** Do not let an untrusted local user modify the destination tree during a download. The no-follow checks protect against pre-existing hostile entries, not concurrent directory swapping.
 
 ---
 

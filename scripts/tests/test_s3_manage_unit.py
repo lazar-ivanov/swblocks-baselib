@@ -1331,6 +1331,59 @@ class TestVerifyWorker:
         assert 'medium.bin' in result
 
 
+class TestDownloadPathSafety:
+    """Test platform-independent S3 key and destination validation."""
+
+    def test_safe_nested_key_and_folder_marker(self):
+        components, is_marker = s3_manage.validate_s3_key_components('safe/nested/file.txt')
+        assert components == ('safe', 'nested', 'file.txt')
+        assert is_marker is False
+
+        components, is_marker = s3_manage.validate_s3_key_components('safe/folder/')
+        assert components == ('safe', 'folder')
+        assert is_marker is True
+
+    @pytest.mark.parametrize('s3_key', [
+        '', '/', '///', '.', '..', '../', '../escape.txt', '../../escape/',
+        '/absolute/path', '/etc/passwd', '//server/share', 'foo//bar', 'foo//',
+        'foo/../bar', 'foo/./bar', '\\server\\share', 'C:\\escape',
+        'C:/escape', '\\', 'foo:bar', 'control/\x1bname', 'nul/\x00name',
+        'bad<name', 'bad>name', 'bad"name', 'bad|name', 'bad?name',
+        'bad*name', 'CON', 'CON/', 'con.txt', 'NUL .txt', 'CONIN$', 'CONOUT$',
+        'COM1', 'COM¹', 'LPT9', 'LPT³', 'foo.', 'foo ',
+    ])
+    def test_rejects_hostile_keys(self, s3_key):
+        with pytest.raises(s3_manage.UnsafeDownloadPathError):
+            s3_manage.validate_s3_key_components(s3_key)
+
+    def test_resolve_download_path_stays_below_root(self, temp_dir):
+        components, _ = s3_manage.validate_s3_key_components('a/b/file.txt')
+        root = s3_manage.resolve_download_root(str(temp_dir), create=False)
+        assert s3_manage.resolve_download_path(root, components) == str(
+            temp_dir / 'a' / 'b' / 'file.txt'
+        )
+
+    def test_windows_reparse_attribute_is_rejected(self, monkeypatch):
+        fake_stat = type('Stat', (), {
+            'st_mode': s3_manage.stat.S_IFREG,
+            'st_file_attributes': 0x400,
+        })()
+        monkeypatch.setattr(s3_manage.os.path, 'islink', lambda path: False)
+        assert s3_manage.is_hostile_reparse('/unused', fake_stat) is True
+
+    @pytest.mark.parametrize('keys', [
+        ['README', 'readme'],
+        ['café.txt', 'cafe\u0301.txt'],
+        ['a', 'a/b'],
+    ])
+    def test_preflight_rejects_destination_namespace_collisions(self, keys):
+        objects = [{'Key': key, 'Size': 1} for key in keys]
+        queue, markers, errors = s3_manage.preflight_download_objects(objects)
+        assert queue == [(key, 1) for key in keys]
+        assert markers == []
+        assert set(errors) == set(keys)
+
+
 class TestDownloadWorker:
     """Test download_worker() function with mocked S3."""
 
@@ -1478,7 +1531,7 @@ class TestDownloadWorker:
         assert isinstance(message, str)
         assert isinstance(size, int)
         assert isinstance(category, str)
-        assert category in ['downloaded', 'verified', 'different', 'error']
+        assert category in ['downloaded', 'verified', 'different', 'error', 'skipped']
 
     @mock_aws
     def test_download_worker_empty_file(self, temp_dir):
@@ -1714,6 +1767,169 @@ class TestDownloadWorker:
         downloaded_content = downloaded_file.read_text()
         assert downloaded_content == original_content
         assert category == 'downloaded'
+
+    def test_hostile_key_does_not_escape_root(self, temp_dir):
+        download_root = temp_dir / 'downloads'
+        sentinel = temp_dir / 'sentinel.txt'
+        sentinel.write_text('unchanged')
+
+        message, size, category = s3_manage.download_worker(
+            object(), 'test-bucket', '../sentinel.txt', str(download_root)
+        )
+
+        assert category == 'error'
+        assert size == 0
+        assert repr('../sentinel.txt') in message
+        assert sentinel.read_text() == 'unchanged'
+        assert not download_root.exists()
+
+    @mock_aws
+    def test_folder_marker_is_skipped_by_direct_worker(self, temp_dir):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.put_object(Bucket='test-bucket', Key='folder/', Body=b'')
+
+        message, size, category = s3_manage.download_worker(
+            s3_client, 'test-bucket', 'folder/', str(temp_dir)
+        )
+
+        assert '[SKIPPED]' in message
+        assert size == 0
+        assert category == 'skipped'
+        assert not (temp_dir / 'folder').exists()
+
+    @pytest.mark.skipif(sys.platform == 'win32', reason='Symlink creation is not reliable on Windows')
+    @mock_aws
+    def test_existing_symlink_file_is_rejected(self, temp_dir):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.put_object(Bucket='test-bucket', Key='file.txt', Body=b's3')
+
+        download_root = temp_dir / 'downloads'
+        download_root.mkdir()
+        sentinel = temp_dir / 'sentinel.txt'
+        sentinel.write_text('unchanged')
+        (download_root / 'file.txt').symlink_to(sentinel)
+
+        message, _, category = s3_manage.download_worker(
+            s3_client, 'test-bucket', 'file.txt', str(download_root)
+        )
+
+        assert category == 'error'
+        assert 'reparse point' in message
+        assert sentinel.read_text() == 'unchanged'
+
+    @pytest.mark.parametrize('outside_file_exists', [False, True])
+    @pytest.mark.skipif(sys.platform == 'win32', reason='Symlink creation is not reliable on Windows')
+    @mock_aws
+    def test_symlink_parent_is_rejected(self, temp_dir, outside_file_exists):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.put_object(Bucket='test-bucket', Key='link/file.txt', Body=b's3')
+
+        download_root = temp_dir / 'downloads'
+        outside = temp_dir / 'outside'
+        download_root.mkdir()
+        outside.mkdir()
+        if outside_file_exists:
+            (outside / 'file.txt').write_text('unchanged')
+        (download_root / 'link').symlink_to(outside, target_is_directory=True)
+
+        message, _, category = s3_manage.download_worker(
+            s3_client, 'test-bucket', 'link/file.txt', str(download_root)
+        )
+
+        assert category == 'error'
+        assert 'reparse point' in message
+        if outside_file_exists:
+            assert (outside / 'file.txt').read_text() == 'unchanged'
+        else:
+            assert not (outside / 'file.txt').exists()
+
+    @pytest.mark.skipif(sys.platform == 'win32', reason='FIFO creation is not supported on Windows')
+    @mock_aws
+    def test_special_file_destination_is_rejected(self, temp_dir):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.put_object(Bucket='test-bucket', Key='pipe', Body=b's3')
+        os.mkfifo(temp_dir / 'pipe')
+
+        message, _, category = s3_manage.download_worker(
+            s3_client, 'test-bucket', 'pipe', str(temp_dir)
+        )
+
+        assert category == 'error'
+        assert 'not a regular file' in message
+
+    @pytest.mark.parametrize('failure_kind', ['download', 'verify', 'replace'])
+    @mock_aws
+    def test_failed_atomic_download_leaves_no_output(
+            self, temp_dir, monkeypatch, failure_kind):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.put_object(Bucket='test-bucket', Key='file.txt', Body=b'content')
+        download_root = temp_dir / 'downloads'
+        download_root.mkdir()
+
+        if failure_kind == 'download':
+            def fail_download(*args, **kwargs):
+                raise OSError('download failed')
+            monkeypatch.setattr(s3_client, 'download_fileobj', fail_download)
+        elif failure_kind == 'verify':
+            monkeypatch.setattr(
+                s3_manage, '_verify_download_file',
+                lambda *args: ('different', 'forced mismatch')
+            )
+        else:
+            def fail_replace(*args, **kwargs):
+                raise OSError('replace failed')
+            monkeypatch.setattr(s3_manage.os, 'replace', fail_replace)
+
+        message, _, category = s3_manage.download_worker(
+            s3_client, 'test-bucket', 'file.txt', str(download_root)
+        )
+
+        assert category in ('error', 'different')
+        assert '[ERROR]' in message or '[DIFFERENT]' in message
+        assert not (download_root / 'file.txt').exists()
+        assert list(download_root.glob('.s3dl-*')) == []
+
+    @pytest.mark.skipif(os.name == 'nt', reason='POSIX permissions are not portable to Windows')
+    @mock_aws
+    def test_published_file_retains_private_temp_mode(self, temp_dir):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.put_object(Bucket='test-bucket', Key='nested/file.txt', Body=b'content')
+
+        message, _, category = s3_manage.download_worker(
+            s3_client, 'test-bucket', 'nested/file.txt', str(temp_dir)
+        )
+
+        downloaded_file = temp_dir / 'nested' / 'file.txt'
+        assert category == 'downloaded'
+        assert '[VERIFIED]' in message
+        assert s3_manage.stat.S_IMODE(downloaded_file.stat().st_mode) == 0o600
+
+    @pytest.mark.skipif(sys.platform == 'win32', reason='Symlink creation is not reliable on Windows')
+    @mock_aws
+    def test_download_root_symlink_is_allowed(self, temp_dir):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.put_object(Bucket='test-bucket', Key='file.txt', Body=b'content')
+
+        real_root = temp_dir / 'real-root'
+        link_root = temp_dir / 'link-root'
+        real_root.mkdir()
+        link_root.symlink_to(real_root, target_is_directory=True)
+
+        _, _, category = s3_manage.download_worker(
+            s3_client, 'test-bucket', 'file.txt', str(link_root)
+        )
+
+        assert category == 'downloaded'
+        assert (real_root / 'file.txt').read_bytes() == b'content'
+
+
 # ====================================================================================
 # Phase 3: Command Functions (Complex Testing - Requires S3 Mocking + stdout capture)
 # ====================================================================================
@@ -2902,6 +3118,153 @@ class TestCommandDownload:
         assert 'Different (existing files, mismatch): 0' in captured.out
         assert 'Errors: 0' in captured.out
         assert 'Download speed:' in captured.out
+
+    @staticmethod
+    def _security_test_args(local_folder, dry_run=False):
+        return type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'local_folder': str(local_folder),
+            'dry_run': dry_run,
+            'max_threads': 2,
+        })()
+
+    @pytest.mark.parametrize('s3_key,dry_run', [
+        ('../outside.txt', False),
+        ('../', False),
+        ('../outside.txt', True),
+    ])
+    def test_path_unsafe_preflight_aborts_without_mutation(
+            self, temp_dir, capsys, monkeypatch, s3_key, dry_run):
+        download_root = temp_dir / 'downloads'
+        objects = [
+            {'Key': 'safe.txt', 'Size': 1},
+            {'Key': s3_key, 'Size': 0},
+        ]
+        worker_called = False
+
+        monkeypatch.setattr(
+            s3_manage, 'paginate_s3_objects',
+            lambda *args, **kwargs: iter(objects)
+        )
+
+        def unexpected_worker(*args, **kwargs):
+            nonlocal worker_called
+            worker_called = True
+            raise AssertionError('worker must not run after failed preflight')
+
+        monkeypatch.setattr(s3_manage, 'download_worker', unexpected_worker)
+        args = self._security_test_args(download_root, dry_run=dry_run)
+
+        with pytest.raises(SystemExit) as exc_info:
+            s3_manage.command_download(args, s3_client=object())
+
+        assert exc_info.value.code == 1
+        assert worker_called is False
+        assert not download_root.exists()
+        assert repr(s3_key) in capsys.readouterr().out
+
+    @pytest.mark.parametrize('keys', [
+        ['README', 'readme'],
+        ['café.txt', 'cafe\u0301.txt'],
+        ['a', 'a/b'],
+    ])
+    def test_collision_preflight_aborts_without_mutation(
+            self, temp_dir, capsys, monkeypatch, keys):
+        download_root = temp_dir / 'downloads'
+        objects = [{'Key': key, 'Size': 1} for key in keys]
+        monkeypatch.setattr(
+            s3_manage, 'paginate_s3_objects',
+            lambda *args, **kwargs: iter(objects)
+        )
+        monkeypatch.setattr(
+            s3_manage, 'download_worker',
+            lambda *args, **kwargs: pytest.fail('worker must not run')
+        )
+        args = self._security_test_args(download_root)
+
+        with pytest.raises(SystemExit) as exc_info:
+            s3_manage.command_download(args, s3_client=object())
+
+        assert exc_info.value.code == 1
+        assert not download_root.exists()
+        output = capsys.readouterr().out
+        for key in keys:
+            assert repr(key) in output
+
+    def test_zero_byte_folder_marker_is_skipped(
+            self, temp_dir, capsys, monkeypatch):
+        download_root = temp_dir / 'downloads'
+        monkeypatch.setattr(
+            s3_manage, 'paginate_s3_objects',
+            lambda *args, **kwargs: iter([{'Key': 'folder/', 'Size': 0}])
+        )
+        args = self._security_test_args(download_root)
+
+        s3_manage.command_download(args, s3_client=object())
+
+        output = capsys.readouterr().out
+        assert '[SKIPPED]' in output
+        assert 'Skipped (folder markers): 1' in output
+        assert not download_root.exists()
+
+    def test_nonzero_trailing_slash_object_aborts(
+            self, temp_dir, capsys, monkeypatch):
+        download_root = temp_dir / 'downloads'
+        monkeypatch.setattr(
+            s3_manage, 'paginate_s3_objects',
+            lambda *args, **kwargs: iter([{'Key': 'folder/', 'Size': 1}])
+        )
+        args = self._security_test_args(download_root)
+
+        with pytest.raises(SystemExit) as exc_info:
+            s3_manage.command_download(args, s3_client=object())
+
+        assert exc_info.value.code == 1
+        assert repr('folder/') in capsys.readouterr().out
+        assert not download_root.exists()
+
+    @mock_aws
+    def test_shared_parent_downloads_succeed(self, temp_dir, capsys):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.put_object(Bucket='test-bucket', Key='shared/a.txt', Body=b'a')
+        s3_client.put_object(Bucket='test-bucket', Key='shared/b.txt', Body=b'b')
+        download_root = temp_dir / 'downloads'
+        args = self._security_test_args(download_root)
+
+        s3_manage.command_download(args, s3_client=s3_client)
+
+        assert (download_root / 'shared' / 'a.txt').read_bytes() == b'a'
+        assert (download_root / 'shared' / 'b.txt').read_bytes() == b'b'
+        assert 'Errors: 0' in capsys.readouterr().out
+
+    def test_post_preflight_404_may_leave_created_root(
+            self, temp_dir, monkeypatch):
+        download_root = temp_dir / 'downloads'
+        monkeypatch.setattr(
+            s3_manage, 'paginate_s3_objects',
+            lambda *args, **kwargs: iter([{'Key': 'gone.txt', 'Size': 1}])
+        )
+
+        class MissingObjectClient:
+            def head_object(self, **kwargs):
+                raise s3_manage.ClientError(
+                    {
+                        'Error': {'Code': '404', 'Message': 'Not Found'},
+                        'ResponseMetadata': {'HTTPStatusCode': 404},
+                    },
+                    'HeadObject'
+                )
+
+        args = self._security_test_args(download_root)
+        with pytest.raises(SystemExit) as exc_info:
+            s3_manage.command_download(args, s3_client=MissingObjectClient())
+
+        assert exc_info.value.code == 1
+        assert download_root.is_dir()
+        assert list(download_root.iterdir()) == []
+
 
 # ====================================================================================
 # Phase 4 Chunk 3: command_upload (Requires S3 Mocking + stdout capture + file I/O)
