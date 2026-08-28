@@ -25,6 +25,8 @@ import stat
 import tempfile
 import time
 import unicodedata
+import html
+import urllib.parse
 from botocore.exceptions import ClientError, NoCredentialsError
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -957,78 +959,163 @@ def command_verify(args, s3_client=None):
         import sys
         sys.exit(1)
 
+
+class InvalidIndexUrlPrefixError(ValueError):
+    """Raised when --url-prefix cannot be used as an index download base."""
+
+
+_INDEX_PREFIX_FORBIDDEN_CHARS = set(chr(code) for code in range(0x00, 0x21)) | {
+    '\x7f', '\\', '(', ')', '<', '>', '"', "'",
+}
+_INDEX_PERCENT_HEX = set('0123456789ABCDEFabcdef')
+
+
+def validate_index_url_prefix(url_prefix):
+    """Return a normalized http(s) prefix ending in '/' for index download URLs."""
+    if not isinstance(url_prefix, str) or not url_prefix:
+        raise InvalidIndexUrlPrefixError("url prefix must be a non-empty string")
+
+    for character in url_prefix:
+        if character in _INDEX_PREFIX_FORBIDDEN_CHARS:
+            raise InvalidIndexUrlPrefixError("url prefix contains a forbidden character")
+
+    index = 0
+    length = len(url_prefix)
+    while index < length:
+        if url_prefix[index] == '%':
+            if (
+                index + 2 >= length
+                or url_prefix[index + 1] not in _INDEX_PERCENT_HEX
+                or url_prefix[index + 2] not in _INDEX_PERCENT_HEX
+            ):
+                raise InvalidIndexUrlPrefixError("url prefix contains a malformed percent-escape")
+            index += 3
+        else:
+            index += 1
+
+    try:
+        parts = urllib.parse.urlsplit(url_prefix)
+        hostname = parts.hostname
+        port = parts.port
+    except ValueError as exc:
+        raise InvalidIndexUrlPrefixError(str(exc)) from exc
+
+    if parts.scheme not in ('http', 'https'):
+        raise InvalidIndexUrlPrefixError("url prefix scheme must be http or https")
+
+    if not hostname:
+        raise InvalidIndexUrlPrefixError("url prefix must include a host")
+
+    if parts.username is not None or parts.password is not None or '@' in parts.netloc:
+        raise InvalidIndexUrlPrefixError("url prefix must not include userinfo")
+
+    if '?' in url_prefix:
+        raise InvalidIndexUrlPrefixError("url prefix must not include a query")
+
+    if '#' in url_prefix:
+        raise InvalidIndexUrlPrefixError("url prefix must not include a fragment")
+
+    if port is None and parts.netloc.endswith(':'):
+        raise InvalidIndexUrlPrefixError("url prefix port is empty")
+
+    path = parts.path if parts.path else '/'
+    if not path.endswith('/'):
+        path += '/'
+
+    return f"{parts.scheme}://{parts.netloc}{path}"
+
+
+def encode_s3_key_for_url(key):
+    """Percent-encode an S3 key as URL path data, keeping '/' as a separator."""
+    if not isinstance(key, str):
+        raise TypeError("S3 key must be a str")
+    return urllib.parse.quote(key, safe='/', encoding='utf-8', errors='strict')
+
+
+def build_index_download_url(url_prefix, key):
+    """Build an index download URL from a validated prefix and encoded key."""
+    prefix = validate_index_url_prefix(url_prefix)
+    return prefix + encode_s3_key_for_url(key)
+
+
+def _escape_markdown_index_label(key):
+    """Escape an S3 key for use as a Markdown table link label."""
+    label = key.replace('\r', ' ').replace('\n', ' ').replace('\t', ' ')
+    label = html.escape(label, quote=True)
+    label = label.replace('\\', '\\\\')
+    label = label.replace('[', '\\[')
+    label = label.replace(']', '\\]')
+    label = label.replace('|', '\\|')
+    return label
+
+
 def generate_html_index(objects, total_objects, total_size, url_prefix):
     """Generate HTML index file content."""
     from datetime import datetime
 
-    # Ensure url_prefix ends with slash
-    if url_prefix and not url_prefix.endswith('/'):
-        url_prefix += '/'
+    url_prefix = validate_index_url_prefix(url_prefix)
 
     # Start HTML document
-    html = []
-    html.append('<!DOCTYPE html>')
-    html.append('<html>')
-    html.append('<head>')
-    html.append('  <meta charset="UTF-8">')
-    html.append('  <meta name="viewport" content="width=device-width, initial-scale=1.0">')
-    html.append('  <title>Files Index</title>')
-    html.append('  <style>')
-    html.append('    body { font-family: Arial, sans-serif; margin: 20px; }')
-    html.append('    h1 { color: #333; }')
-    html.append('    table { border-collapse: collapse; width: 100%; }')
-    html.append('    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }')
-    html.append('    th { background-color: #f2f2f2; }')
-    html.append('    tr:hover { background-color: #f5f5f5; }')
-    html.append('    a { color: #0066cc; text-decoration: none; }')
-    html.append('    a:hover { text-decoration: underline; }')
-    html.append('    .summary { margin-top: 20px; font-weight: bold; }')
-    html.append('  </style>')
-    html.append('</head>')
-    html.append('<body>')
-    html.append('  <h1>Files Index</h1>')
-    html.append('  <table>')
-    html.append('    <thead>')
-    html.append('      <tr>')
-    html.append('        <th>File Path</th>')
-    html.append('        <th>Size</th>')
-    html.append('        <th>Last Modified</th>')
-    html.append('      </tr>')
-    html.append('    </thead>')
-    html.append('    <tbody>')
+    html_lines = []
+    html_lines.append('<!DOCTYPE html>')
+    html_lines.append('<html>')
+    html_lines.append('<head>')
+    html_lines.append('  <meta charset="UTF-8">')
+    html_lines.append('  <meta name="viewport" content="width=device-width, initial-scale=1.0">')
+    html_lines.append('  <title>Files Index</title>')
+    html_lines.append('  <style>')
+    html_lines.append('    body { font-family: Arial, sans-serif; margin: 20px; }')
+    html_lines.append('    h1 { color: #333; }')
+    html_lines.append('    table { border-collapse: collapse; width: 100%; }')
+    html_lines.append('    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }')
+    html_lines.append('    th { background-color: #f2f2f2; }')
+    html_lines.append('    tr:hover { background-color: #f5f5f5; }')
+    html_lines.append('    a { color: #0066cc; text-decoration: none; }')
+    html_lines.append('    a:hover { text-decoration: underline; }')
+    html_lines.append('    .summary { margin-top: 20px; font-weight: bold; }')
+    html_lines.append('  </style>')
+    html_lines.append('</head>')
+    html_lines.append('<body>')
+    html_lines.append('  <h1>Files Index</h1>')
+    html_lines.append('  <table>')
+    html_lines.append('    <thead>')
+    html_lines.append('      <tr>')
+    html_lines.append('        <th>File Path</th>')
+    html_lines.append('        <th>Size</th>')
+    html_lines.append('        <th>Last Modified</th>')
+    html_lines.append('      </tr>')
+    html_lines.append('    </thead>')
+    html_lines.append('    <tbody>')
 
     # Add table rows
     for obj in objects:
         key = obj['key']
         size_str = format_size(obj['size'])
         last_modified_str = obj['last_modified'].strftime('%Y-%m-%d %H:%M:%S %Z')
-        download_url = (url_prefix + key) if url_prefix else key
+        download_url = build_index_download_url(url_prefix, key)
+        href = html.escape(download_url, quote=True)
+        key_escaped = html.escape(key, quote=True)
 
-        # Escape HTML special characters in key
-        key_escaped = key.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        html_lines.append('      <tr>')
+        html_lines.append(f'        <td><a href="{href}">{key_escaped}</a></td>')
+        html_lines.append(f'        <td>{size_str}</td>')
+        html_lines.append(f'        <td>{last_modified_str}</td>')
+        html_lines.append('      </tr>')
 
-        html.append('      <tr>')
-        html.append(f'        <td><a href="{download_url}">{key_escaped}</a></td>')
-        html.append(f'        <td>{size_str}</td>')
-        html.append(f'        <td>{last_modified_str}</td>')
-        html.append('      </tr>')
+    html_lines.append('    </tbody>')
+    html_lines.append('  </table>')
+    html_lines.append(f'  <div class="summary">Total: {total_objects} objects, {format_size(total_size)}</div>')
+    html_lines.append(f'  <p><em>Generated on {datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")}</em></p>')
+    html_lines.append('</body>')
+    html_lines.append('</html>')
 
-    html.append('    </tbody>')
-    html.append('  </table>')
-    html.append(f'  <div class="summary">Total: {total_objects} objects, {format_size(total_size)}</div>')
-    html.append(f'  <p><em>Generated on {datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")}</em></p>')
-    html.append('</body>')
-    html.append('</html>')
-
-    return '\n'.join(html)
+    return '\n'.join(html_lines)
 
 def generate_markdown_index(objects, total_objects, total_size, url_prefix):
     """Generate Markdown index file content."""
     from datetime import datetime
 
-    # Ensure url_prefix ends with slash
-    if url_prefix and not url_prefix.endswith('/'):
-        url_prefix += '/'
+    url_prefix = validate_index_url_prefix(url_prefix)
 
     # Start Markdown document
     md = []
@@ -1042,10 +1129,8 @@ def generate_markdown_index(objects, total_objects, total_size, url_prefix):
         key = obj['key']
         size_str = format_size(obj['size'])
         last_modified_str = obj['last_modified'].strftime('%Y-%m-%d %H:%M:%S %Z')
-        download_url = (url_prefix + key) if url_prefix else key
-
-        # Escape Markdown special characters in key (pipe character)
-        key_escaped = key.replace('|', '\\|')
+        download_url = build_index_download_url(url_prefix, key)
+        key_escaped = _escape_markdown_index_label(key)
 
         # Create Markdown link
         md.append(f'| [{key_escaped}]({download_url}) | {size_str} | {last_modified_str} |')
@@ -1067,6 +1152,13 @@ def command_indexupload(args, s3_client=None):
     """
     import tempfile
     from datetime import datetime
+    import sys
+
+    try:
+        validate_index_url_prefix(args.url_prefix)
+    except InvalidIndexUrlPrefixError as exc:
+        print(f"[ERROR] {exc}")
+        sys.exit(1)
 
     # Create S3 client if not provided (for testing)
     if s3_client is None:

@@ -443,7 +443,7 @@ python scripts/s3_manage.py indexupload \
 - **Prefix Filtering**: Generate indexes for specific subdirectories
 - **Automatic Pagination**: Handles buckets with thousands of objects
 - **UTC Timestamps**: Includes generation timestamp in both formats
-- **Character Escaping**: Properly escapes HTML (`&<>`) and Markdown (`|`) special characters
+- **Character Escaping**: Percent-encodes S3 keys in download URLs and HTML-escapes labels and `href` attributes; Markdown labels escape `|`, `[`, `]`, and `\`
 
 #### Generated Files
 
@@ -573,7 +573,15 @@ echo "Deployment complete! View index at: https://builds.example.com/index.html"
 
 #### URL Prefix Handling
 
-The `--url-prefix` parameter is used to construct download URLs:
+The `--url-prefix` parameter is the operator-selected base URL for download links. Any `http` or `https` origin with a host is approved; there is no host allowlist and no same-origin check against `--endpoint-url`.
+
+- Scheme must be `http` or `https`. Relative, protocol-relative, `javascript:`, `data:`, and `file:` prefixes are rejected.
+- A host is required. Userinfo and literal query or fragment delimiters are rejected, including trailing empty `?`, `#`, or `?#`.
+- Percent-encoded `%3F` and `%23` remain valid path data.
+- ASCII whitespace, controls, backslash, quotes, parentheses, and angle brackets are rejected so the prefix cannot break HTML attributes or Markdown `](url)` destinations.
+- Malformed `%` escapes and empty or invalid ports are rejected. The prefix is not rewritten or percent-encoded.
+- A missing trailing slash is added automatically.
+- An invalid prefix fails with `[ERROR]` and exit code 1 **before** S3 client construction and listing.
 
 - **With trailing slash:** `https://storage.example.com/my-bucket/`
   - Result: `https://storage.example.com/my-bucket/file.txt`
@@ -600,15 +608,16 @@ The command exits gracefully without creating empty index files.
 
 #### Character Escaping
 
+S3 object keys are untrusted. Every listed key is included after encoding; keys are not omitted because they contain quotes, controls, Unicode, fragments, `.` / `..`, or repeated slashes.
+
 **HTML Files:**
-- Special characters in filenames are properly escaped
-- `&` → `&amp;`, `<` → `&lt;`, `>` → `&gt;`
-- Prevents XSS vulnerabilities
+- Each key is percent-encoded as URL path data (`urllib.parse.quote`, `/` kept as a separator) and the complete `href` is passed through `html.escape(..., quote=True)`.
+- Visible labels use `html.escape(..., quote=True)`.
+- `.` and `..` path segments are left as-is. Browsers may normalize those links out of the prefix path without changing scheme or origin; that is link correctness, not XSS.
 
 **Markdown Files:**
-- Pipe characters in filenames are escaped
-- `|` → `\\|`
-- Prevents table formatting issues
+- Download URLs match the HTML encoding so `)` in a key cannot close `](url)`.
+- Labels collapse CR/LF/TAB to a space, HTML-escape, then escape `\`, `[`, `]`, and `|` (`|` → `\|`).
 
 ---
 
@@ -977,6 +986,7 @@ All commands handle errors gracefully and provide clear error messages:
 
 ### IndexUpload Errors
 
+- **Invalid URL prefix:** Displays `[ERROR]`, exits with code 1 before client construction and listing
 - **Empty bucket:** Displays message, exits gracefully without generating files
 - **No matches for prefix:** Displays message, exits gracefully
 - **Upload failure:** Displays error message, exits with code 1
@@ -1048,6 +1058,7 @@ All commands handle errors gracefully and provide clear error messages:
 5. **Untrusted S3 Keys:** Download treats object keys as untrusted input. Unsafe keys and destination namespace conflicts abort the whole command before the download root is created or workers start.
 6. **No-Follow Destinations:** Download rejects any symlink, Windows junction, other reparse point, or special file below the resolved root. The user-supplied root itself may be a symlink.
 7. **Local Concurrency Boundary:** Do not let an untrusted local user modify the destination tree during a download. The no-follow checks protect against pre-existing hostile entries, not concurrent directory swapping.
+8. **Untrusted Index Keys:** Generated `index.html` / `index.md` treat S3 keys as untrusted. Keys are percent-encoded and HTML/Markdown-escaped so they cannot introduce a scheme or break out of `href` / `](url)`. Operators must not pass a hostile `--url-prefix`; invalid prefixes are rejected. Documented static-hosting use is why this is stored XSS, not a console-only issue. Keys containing `.` / `..` segments can still be path-normalized by browsers; that is link correctness, not XSS.
 
 ---
 

@@ -618,10 +618,12 @@ class TestIndexGeneration:
             'last_modified': datetime(2024, 1, 1, tzinfo=timezone.utc)
         }]
         html = s3_manage.generate_html_index(objects, 1, 100, "https://example.com/")
+        href, text = _parse_single_index_anchor(html)
 
-        # HTML entities should be escaped
+        assert href == "https://example.com/file%3Ctest%3E.txt"
+        assert text == "file<test>.txt"
         assert "file&lt;test&gt;.txt" in html
-        assert "file<test>.txt" not in html or "<td>" in html  # Either escaped or in tags
+        assert "file<test>.txt" not in html
 
     def test_generate_html_url_prefix(self):
         """Test HTML URL generation with different prefixes."""
@@ -743,6 +745,278 @@ class TestIndexGeneration:
 
         assert "Generated on" in md or "generated on" in md.lower()
         assert "UTC" in md
+
+    def test_generate_html_invalid_prefix_empty_list(self):
+        """Invalid prefix is rejected even with an empty object list."""
+        with pytest.raises(s3_manage.InvalidIndexUrlPrefixError):
+            s3_manage.generate_html_index([], 0, 0, "javascript:alert(1)")
+        with pytest.raises(s3_manage.InvalidIndexUrlPrefixError):
+            s3_manage.generate_html_index([], 0, 0, "https://example.com/)<img src=x>")
+
+    def test_generate_markdown_invalid_prefix_empty_list(self):
+        """Invalid prefix is rejected even with an empty object list."""
+        with pytest.raises(s3_manage.InvalidIndexUrlPrefixError):
+            s3_manage.generate_markdown_index([], 0, 0, "javascript:alert(1)")
+        with pytest.raises(s3_manage.InvalidIndexUrlPrefixError):
+            s3_manage.generate_markdown_index([], 0, 0, "https://example.com/)<img src=x>")
+
+
+from html.parser import HTMLParser
+from datetime import datetime, timezone
+import urllib.parse
+
+
+class _IndexAnchorParser(HTMLParser):
+    """Collect <a> tags and extra start tags from a generated index."""
+
+    def __init__(self):
+        super().__init__()
+        self.anchors = []
+        self.start_tags = []
+        self._current = None
+        self._data = []
+
+    def handle_starttag(self, tag, attrs):
+        self.start_tags.append(tag)
+        if tag == 'a':
+            self._current = {'attrs': list(attrs), 'text': ''}
+            self._data = []
+
+    def handle_data(self, data):
+        if self._current is not None:
+            self._data.append(data)
+
+    def handle_endtag(self, tag):
+        if tag == 'a' and self._current is not None:
+            self._current['text'] = ''.join(self._data)
+            self.anchors.append(self._current)
+            self._current = None
+            self._data = []
+
+
+def _parse_single_index_anchor(html):
+    parser = _IndexAnchorParser()
+    parser.feed(html)
+    assert parser.start_tags.count('a') == 1
+    assert 'script' not in parser.start_tags
+    assert len(parser.anchors) == 1
+    attrs = parser.anchors[0]['attrs']
+    assert [name for name, _ in attrs] == ['href']
+    return attrs[0][1], parser.anchors[0]['text']
+
+
+def _expected_index_url(key, prefix="https://example.com/"):
+    return prefix + urllib.parse.quote(key, safe='/', encoding='utf-8', errors='strict')
+
+
+def _index_object(key, size=100):
+    return {
+        'key': key,
+        'size': size,
+        'last_modified': datetime(2024, 1, 1, tzinfo=timezone.utc),
+    }
+
+
+class TestIndexUrlPrefix:
+    """Test validate_index_url_prefix() and build_index_download_url()."""
+
+    def test_accept_http_and_https_trailing_slash(self):
+        assert s3_manage.validate_index_url_prefix("https://example.com/") == "https://example.com/"
+        assert s3_manage.validate_index_url_prefix("http://example.com/") == "http://example.com/"
+
+    def test_accept_missing_trailing_slash(self):
+        assert s3_manage.validate_index_url_prefix("https://example.com") == "https://example.com/"
+
+    def test_accept_port_and_path(self):
+        assert s3_manage.validate_index_url_prefix("https://example.com:8443/bucket") == "https://example.com:8443/bucket/"
+
+    def test_accept_scheme_case(self):
+        assert s3_manage.validate_index_url_prefix("HTTP://example.com") == "http://example.com/"
+
+    def test_accept_ipv6_with_port(self):
+        assert s3_manage.validate_index_url_prefix("http://[::1]:9000/bucket") == "http://[::1]:9000/bucket/"
+
+    def test_accept_valid_percent_escape(self):
+        assert s3_manage.validate_index_url_prefix("https://example.com/%2F") == "https://example.com/%2F/"
+        assert s3_manage.validate_index_url_prefix("https://example.com/%3F/%23") == (
+            "https://example.com/%3F/%23/"
+        )
+
+    @pytest.mark.parametrize("prefix", [
+        "javascript:alert(1)",
+        "data:text/html,hi",
+        "file:///tmp",
+        "",
+        None,
+        "   ",
+        " https://example.com/",
+        "https://example.com/with space/",
+        "/bucket/",
+        "//cdn.example/",
+        "https://u:p@host/",
+        "https://example.com/?x=1",
+        "https://example.com/path?",
+        "https://example.com/#x",
+        "https://example.com/path#",
+        "https://example.com/path?#",
+        "https://example.com/\\path/",
+        "https://example.com/\x00/",
+        "https://example.com/)/",
+        "https://example.com/(/",
+        "https://example.com/</",
+        "https://example.com/>/",
+        'https://example.com/"/',
+        "https://example.com/'/",
+        "https://example.com/%zz/",
+        "https://example.com/%2",
+        "https://example.com:/path",
+        "http://[::1]:/path",
+        "https://example.com:abc/",
+        "https://example.com:70000/",
+    ])
+    def test_reject_invalid_prefixes(self, prefix):
+        with pytest.raises(s3_manage.InvalidIndexUrlPrefixError):
+            s3_manage.validate_index_url_prefix(prefix)
+
+    def test_build_index_download_url_concatenates_normalized_prefix(self):
+        url = s3_manage.build_index_download_url("https://example.com", "folder/file.txt")
+        assert url == "https://example.com/folder/file.txt"
+
+    def test_build_index_download_url_encodes_key_only(self):
+        url = s3_manage.build_index_download_url("https://example.com/", 'a b.txt')
+        assert url == "https://example.com/a%20b.txt"
+
+
+class TestIndexHostileKeys:
+    """Hostile S3 keys are encoded and included, never omitted."""
+
+    def test_html_quote_breakout(self):
+        key = 'foo"><script>alert(1)</script>'
+        html = s3_manage.generate_html_index([_index_object(key)], 1, 100, "https://example.com/")
+        href, text = _parse_single_index_anchor(html)
+        assert href == _expected_index_url(key)
+        assert '%22' in href
+        assert text == key
+
+    def test_html_ampersand_and_angles(self):
+        key = 'a&b<c>.txt'
+        html = s3_manage.generate_html_index([_index_object(key)], 1, 100, "https://example.com/")
+        href, text = _parse_single_index_anchor(html)
+        assert href == "https://example.com/a%26b%3Cc%3E.txt"
+        assert "a&amp;b&lt;c&gt;.txt" in html
+        assert text == key
+
+    def test_html_fragment_and_query_and_scheme_like(self):
+        cases = [
+            ('file.txt#xss', 'https://example.com/file.txt%23xss'),
+            ('file.txt?x=1', 'https://example.com/file.txt%3Fx%3D1'),
+            ('javascript:alert(1)', 'https://example.com/javascript%3Aalert%281%29'),
+        ]
+        for key, expected in cases:
+            html = s3_manage.generate_html_index([_index_object(key)], 1, 100, "https://example.com/")
+            href, text = _parse_single_index_anchor(html)
+            assert href == expected
+            assert text == key
+
+    def test_html_control_characters(self):
+        key = "a\x00b\tc\rd\ne\x0cf\x7fg.txt"
+        html = s3_manage.generate_html_index([_index_object(key)], 1, 100, "https://example.com/")
+        href, text = _parse_single_index_anchor(html)
+        assert href == "https://example.com/a%00b%09c%0Dd%0Ae%0Cf%7Fg.txt"
+        assert text == key
+
+    def test_html_unicode_and_nested_and_percent(self):
+        cases = [
+            ('café.txt', 'https://example.com/caf%C3%A9.txt', 'café.txt'),
+            ('folder/file.txt', 'https://example.com/folder/file.txt', 'folder/file.txt'),
+            ('100%.txt', 'https://example.com/100%25.txt', '100%.txt'),
+        ]
+        for key, expected, label in cases:
+            html = s3_manage.generate_html_index([_index_object(key)], 1, 100, "https://example.com/")
+            href, text = _parse_single_index_anchor(html)
+            assert href == expected
+            assert text == label
+
+    def test_html_dot_segments_and_slashes_source_only(self):
+        cases = [
+            ('../file', 'https://example.com/../file'),
+            ('a/../b', 'https://example.com/a/../b'),
+            ('./file', 'https://example.com/./file'),
+            ('/file', 'https://example.com//file'),
+            ('//file', 'https://example.com///file'),
+            ('foo//bar', 'https://example.com/foo//bar'),
+        ]
+        for key, expected in cases:
+            html = s3_manage.generate_html_index([_index_object(key)], 1, 100, "https://example.com/")
+            href, text = _parse_single_index_anchor(html)
+            assert href == expected
+            assert '%2E' not in href
+            assert '%2F' not in href
+            assert text == key
+
+    def test_markdown_matches_html_url_and_escapes_label(self):
+        key = 'file\\path|with|[brackets] and ).txt'
+        objects = [_index_object(key)]
+        html = s3_manage.generate_html_index(objects, 1, 100, "https://example.com/")
+        md = s3_manage.generate_markdown_index(objects, 1, 100, "https://example.com/")
+        href, _text = _parse_single_index_anchor(html)
+        assert f']({href})' in md
+        assert 'file\\\\path' in md
+        assert '\\|' in md
+        assert '\\[' in md
+        assert '\\]' in md
+        assert '%29' in href
+
+    @pytest.mark.parametrize("key", [
+        'foo"><script>alert(1)</script>',
+        'a&b<c>.txt',
+        'file.txt#xss',
+        'file.txt?x=1',
+        'javascript:alert(1)',
+        "a\x00b\tc\rd\ne\x0cf\x7fg.txt",
+        'café.txt',
+        'folder/file.txt',
+        '100%.txt',
+        '../file',
+        'a/../b',
+        './file',
+        '/file',
+        '//file',
+        'foo//bar',
+    ])
+    def test_markdown_url_matches_html_for_hostile_keys(self, key):
+        """HTML and Markdown use the same encoded URL for every hostile-key class."""
+        objects = [_index_object(key)]
+        html = s3_manage.generate_html_index(objects, 1, 100, "https://example.com/")
+        md = s3_manage.generate_markdown_index(objects, 1, 100, "https://example.com/")
+        href, _text = _parse_single_index_anchor(html)
+        assert href == _expected_index_url(key)
+        assert f']({href})' in md
+
+    def test_markdown_html_escapes_script_like_label(self):
+        key = 'foo"><script>alert(1)</script>'
+        md = s3_manage.generate_markdown_index(
+            [_index_object(key)], 1, 100, "https://example.com/"
+        )
+        assert 'foo&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;' in md
+        assert '<script>' not in md
+
+    def test_markdown_javascript_key_is_not_javascript_url(self):
+        key = 'javascript:alert(1)'
+        md = s3_manage.generate_markdown_index([_index_object(key)], 1, 100, "https://example.com/")
+        expected = _expected_index_url(key)
+        assert f']({expected})' in md
+        assert '](javascript:' not in md
+
+    def test_markdown_newline_stays_one_table_row(self):
+        key = "file\r\nwith\ttab.txt"
+        md = s3_manage.generate_markdown_index([_index_object(key)], 1, 100, "https://example.com/")
+        data_rows = [line for line in md.split('\n') if line.startswith('| [')]
+        assert len(data_rows) == 1
+        assert '\n' not in data_rows[0]
+        assert '\r' not in data_rows[0]
+        assert '\t' not in data_rows[0]
+        assert 'file with tab.txt' in data_rows[0] or 'file  with tab.txt' in data_rows[0]
 
 
 # Phase 1 Complete! Now moving to Phase 2...
@@ -2518,7 +2792,7 @@ class TestCommandIndexupload:
         args = type('Args', (), {
             'bucket_name': 'test-bucket',
             'prefix': None,
-            'url_prefix': None
+            'url_prefix': 'https://example.com/'
         })()
 
         # Execute
@@ -2539,7 +2813,7 @@ class TestCommandIndexupload:
         args = type('Args', (), {
             'bucket_name': 'test-bucket',
             'prefix': None,
-            'url_prefix': None
+            'url_prefix': 'https://example.com/'
         })()
 
         # Execute
@@ -2576,7 +2850,7 @@ class TestCommandIndexupload:
         args = type('Args', (), {
             'bucket_name': 'test-bucket',
             'prefix': None,
-            'url_prefix': None
+            'url_prefix': 'https://example.com/'
         })()
 
         # Execute
@@ -2600,7 +2874,7 @@ class TestCommandIndexupload:
         args = type('Args', (), {
             'bucket_name': 'test-bucket',
             'prefix': None,
-            'url_prefix': None
+            'url_prefix': 'https://example.com/'
         })()
 
         # Execute
@@ -2638,7 +2912,7 @@ class TestCommandIndexupload:
         args = type('Args', (), {
             'bucket_name': 'test-bucket',
             'prefix': 'data/',
-            'url_prefix': None
+            'url_prefix': 'https://example.com/'
         })()
 
         # Execute
@@ -2666,7 +2940,7 @@ class TestCommandIndexupload:
         args = type('Args', (), {
             'bucket_name': 'test-bucket',
             'prefix': None,
-            'url_prefix': None
+            'url_prefix': 'https://example.com/'
         })()
 
         # Execute
@@ -2716,7 +2990,7 @@ class TestCommandIndexupload:
         args = type('Args', (), {
             'bucket_name': 'nonexistent-bucket',
             'prefix': None,
-            'url_prefix': None
+            'url_prefix': 'https://example.com/'
         })()
 
         # Execute
@@ -2739,7 +3013,7 @@ class TestCommandIndexupload:
         args = type('Args', (), {
             'bucket_name': 'test-bucket',
             'prefix': None,
-            'url_prefix': None
+            'url_prefix': 'https://example.com/'
         })()
 
         # Execute
@@ -2751,6 +3025,65 @@ class TestCommandIndexupload:
         assert 'data/2024/01/file.txt' in index_content
         assert 'logs/app/debug.log' in index_content
         assert 'Total: 2 objects' in index_content
+
+    def test_indexupload_invalid_prefix_injected_client(self, capsys):
+        """Invalid prefix exits before listing, generating, or uploading."""
+        s3_client = object()
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'url_prefix': 'javascript:alert(1)'
+        })()
+
+        with pytest.raises(SystemExit) as excinfo:
+            s3_manage.command_indexupload(args, s3_client=s3_client)
+        assert excinfo.value.code == 1
+        captured = capsys.readouterr()
+        assert "[ERROR]" in captured.out
+
+    def test_indexupload_invalid_prefix_does_not_construct_client(self, capsys, monkeypatch):
+        """Invalid prefix exits before boto3.client is constructed."""
+        def fail_client(*_args, **_kwargs):
+            raise AssertionError("boto3.client must not be called")
+
+        monkeypatch.setattr(s3_manage.boto3, "client", fail_client)
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'url_prefix': 'javascript:alert(1)',
+            'endpoint_url': 'https://s3.example.com',
+            'access_key': 'key',
+            'secret_key': 'secret'
+        })()
+
+        with pytest.raises(SystemExit) as excinfo:
+            s3_manage.command_indexupload(args, s3_client=None)
+        assert excinfo.value.code == 1
+        captured = capsys.readouterr()
+        assert "[ERROR]" in captured.out
+
+    def test_indexupload_invalid_prefix_does_not_generate_or_upload(self, capsys, monkeypatch):
+        """Invalid prefix does not call generators or upload_file."""
+        class FakeClient:
+            def list_objects_v2(self, **_kwargs):
+                raise AssertionError("listing must not occur")
+
+            def upload_file(self, *_args, **_kwargs):
+                raise AssertionError("upload must not occur")
+
+        monkeypatch.setattr(s3_manage, "generate_html_index", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("html")))
+        monkeypatch.setattr(s3_manage, "generate_markdown_index", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("md")))
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'url_prefix': 'https://example.com/)<img src=x>'
+        })()
+
+        with pytest.raises(SystemExit) as excinfo:
+            s3_manage.command_indexupload(args, s3_client=FakeClient())
+        assert excinfo.value.code == 1
+        captured = capsys.readouterr()
+        assert "[ERROR]" in captured.out
 
 # ====================================================================================
 # Phase 4 Chunk 2: command_download (Requires S3 Mocking + stdout capture + file I/O)
