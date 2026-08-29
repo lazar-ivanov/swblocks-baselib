@@ -247,18 +247,6 @@ def known_etag_files(temp_dir):
     return files
 
 
-@pytest.fixture
-def mock_s3_bucket():
-    """Create a mock S3 bucket for testing with moto."""
-    from moto import mock_s3
-    import boto3
-
-    with mock_s3():
-        s3_client = boto3.client('s3', region_name='us-east-1')
-        s3_client.create_bucket(Bucket='test-bucket')
-        yield s3_client, 'test-bucket'
-
-
 # ========== Compiler Wrapper Mock Fixtures (for cl.py/clang-cl.py tests) ==========
 
 @pytest.fixture

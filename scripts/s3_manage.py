@@ -1092,7 +1092,7 @@ def _escape_markdown_index_label(key):
 
 def generate_html_index(objects, total_objects, total_size, url_prefix):
     """Generate HTML index file content."""
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     url_prefix = validate_index_url_prefix(url_prefix)
 
@@ -1146,7 +1146,7 @@ def generate_html_index(objects, total_objects, total_size, url_prefix):
     html_lines.append('    </tbody>')
     html_lines.append('  </table>')
     html_lines.append(f'  <div class="summary">Total: {total_objects} objects, {format_size(total_size)}</div>')
-    html_lines.append(f'  <p><em>Generated on {datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")}</em></p>')
+    html_lines.append(f'  <p><em>Generated on {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")}</em></p>')
     html_lines.append('</body>')
     html_lines.append('</html>')
 
@@ -1154,7 +1154,7 @@ def generate_html_index(objects, total_objects, total_size, url_prefix):
 
 def generate_markdown_index(objects, total_objects, total_size, url_prefix):
     """Generate Markdown index file content."""
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     url_prefix = validate_index_url_prefix(url_prefix)
 
@@ -1180,7 +1180,7 @@ def generate_markdown_index(objects, total_objects, total_size, url_prefix):
     md.append('')
     md.append(f'**Total:** {total_objects} objects, {format_size(total_size)}')
     md.append('')
-    md.append(f'*Generated on {datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")}*')
+    md.append(f'*Generated on {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")}*')
 
     return '\n'.join(md)
 
@@ -1197,7 +1197,6 @@ def command_indexupload(args, s3_client=None):
              invalid, listing failed, or the index upload failed
     """
     import tempfile
-    from datetime import datetime
 
     try:
         validate_index_url_prefix(args.url_prefix)
