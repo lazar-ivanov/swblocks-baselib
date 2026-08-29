@@ -16,6 +16,7 @@
 #
 
 import os
+import sys
 import argparse
 import boto3
 import threading
@@ -31,6 +32,10 @@ from botocore.exceptions import ClientError, NoCredentialsError
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Configuration will be provided via command-line arguments
+
+# --- EXIT CODES ---
+EXIT_SUCCESS = 0
+EXIT_FAILURE = 1
 
 # --- THREAD SAFE PRINTING ---
 # This lock stops threads from writing over each other
@@ -279,8 +284,10 @@ def verify_worker(s3_client, bucket_name, file_path, relative_path):
         relative_path (str): Relative path used as S3 key
 
     Returns:
-        str: Status message in format "[STATUS] relative_path"
-             Where STATUS is: VERIFIED, DIFFERENT, NOT UPLOADED, or ERROR
+        tuple: (status_message, status_category)
+        - status_message (str): Status message in format "[STATUS] relative_path"
+          Where STATUS is: VERIFIED, DIFFERENT, NOT UPLOADED, or ERROR
+        - status_category (str): One of: "verified", "different", "not_uploaded", "error"
     """
     try:
         # STEP 1: Check if file exists in S3 and get metadata
@@ -288,10 +295,10 @@ def verify_worker(s3_client, bucket_name, file_path, relative_path):
             response = s3_client.head_object(Bucket=bucket_name, Key=relative_path)
         except ClientError as e:
             if e.response['Error']['Code'] == "404":
-                return f"[NOT UPLOADED] {relative_path}"
+                return (f"[NOT UPLOADED] {relative_path}", "not_uploaded")
             else:
                 error_msg = e.response['Error'].get('Message', str(e))
-                return f"[ERROR] {relative_path} - S3 error: {error_msg}"
+                return (f"[ERROR] {relative_path} - S3 error: {error_msg}", "error")
 
         # STEP 2: Extract S3 ETag (remove surrounding quotes if present)
         s3_etag = response['ETag'].strip('"')
@@ -301,19 +308,19 @@ def verify_worker(s3_client, bucket_name, file_path, relative_path):
             # Multipart ETag format: "xxxxxxxx-N" where N is part count
             etag_parts = s3_etag.split('-')
             if len(etag_parts) != 2:
-                return f"[ERROR] {relative_path} - Invalid S3 ETag format: {s3_etag}"
+                return (f"[ERROR] {relative_path} - Invalid S3 ETag format: {s3_etag}", "error")
 
             etag_hash = etag_parts[0]
             try:
                 part_count = int(etag_parts[1])
             except ValueError:
-                return f"[ERROR] {relative_path} - Invalid part count in ETag: {s3_etag}"
+                return (f"[ERROR] {relative_path} - Invalid part count in ETag: {s3_etag}", "error")
 
             # STEP 4: Calculate local multipart ETag
             local_etag = calculate_s3_etag_multipart(file_path, part_count)
 
             if local_etag is None:
-                return f"[ERROR] {relative_path} - Failed to calculate multipart ETag"
+                return (f"[ERROR] {relative_path} - Failed to calculate multipart ETag", "error")
         else:
             # Simple upload (no multipart)
             # STEP 5: Calculate local simple ETag
@@ -324,16 +331,16 @@ def verify_worker(s3_client, bucket_name, file_path, relative_path):
         local_etag_hash = local_etag.split('-')[0] if '-' in local_etag else local_etag
 
         if local_etag_hash.lower() == etag_hash.lower():
-            return f"[VERIFIED] {relative_path}"
+            return (f"[VERIFIED] {relative_path}", "verified")
         else:
-            return f"[DIFFERENT] {relative_path} (S3: {s3_etag}, Local: {local_etag})"
+            return (f"[DIFFERENT] {relative_path} (S3: {s3_etag}, Local: {local_etag})", "different")
 
     except IOError as e:
-        return f"[ERROR] {relative_path} - File read error: {str(e)}"
+        return (f"[ERROR] {relative_path} - File read error: {str(e)}", "error")
     except OSError as e:
-        return f"[ERROR] {relative_path} - File not found: {str(e)}"
+        return (f"[ERROR] {relative_path} - File not found: {str(e)}", "error")
     except Exception as e:
-        return f"[ERROR] {relative_path} - Unexpected error: {str(e)}"
+        return (f"[ERROR] {relative_path} - Unexpected error: {str(e)}", "error")
 
 class UnsafeDownloadPathError(ValueError):
     """Raised when an S3 key cannot be mapped safely below the download root."""
@@ -627,11 +634,18 @@ def file_exists_in_bucket(s3_client, bucket, key):
         raise e
 
 def upload_worker(s3_client, bucket_name, file_path, relative_path, dry_run=False):
-    """Handles logic for skipping or uploading a single file."""
+    """Handles logic for skipping or uploading a single file.
+
+    Returns:
+        tuple: (status_message, size_bytes, status_category)
+        - status_message (str): Human-readable status line for printing
+        - size_bytes (int): Size in bytes (0 if not uploaded)
+        - status_category (str): One of: "skipped", "uploaded", "failure"
+    """
     try:
         # 1. CHECK IF EXISTS
         if file_exists_in_bucket(s3_client, bucket_name, relative_path):
-            return f"[SKIPPED]  {relative_path} (Already exists)"
+            return (f"[SKIPPED]  {relative_path} (Already exists)", 0, "skipped")
 
         # 2. ANNOUNCE START
         # We print this immediately so you know it's working
@@ -644,14 +658,14 @@ def upload_worker(s3_client, bucket_name, file_path, relative_path, dry_run=Fals
         # 4. UPLOAD or DRY-RUN
         if dry_run:
             # Dry-run: skip actual upload, just report what would happen
-            return f"[DRY-RUN]  {relative_path}  --  {size_gb:.2f} GB (would upload)"
+            return (f"[DRY-RUN]  {relative_path}  --  {size_gb:.2f} GB (would upload)", size_bytes, "uploaded")
         else:
             # Actual upload
             s3_client.upload_file(file_path, bucket_name, relative_path)
-            return f"[SUCCESS]  {relative_path}  --  {size_gb:.2f} GB"
+            return (f"[SUCCESS]  {relative_path}  --  {size_gb:.2f} GB", size_bytes, "uploaded")
 
     except Exception as e:
-        return f"[FAILURE]  {relative_path} - {str(e)}"
+        return (f"[FAILURE]  {relative_path} - {str(e)}", 0, "failure")
 
 def create_parent_parser():
     """Create parser for arguments common to all commands."""
@@ -677,6 +691,10 @@ def command_upload(args, s3_client=None):
     Args:
         args: Command-line arguments
         s3_client: Optional boto3 S3 client (for testing)
+
+    Returns:
+        int: EXIT_SUCCESS if every file uploaded/skipped/dry-ran cleanly,
+             EXIT_FAILURE if the local folder is unusable or any file failed
     """
     # Create S3 client using command-line arguments
     # Note: boto3 uses 'aws_access_key_id' and 'aws_secret_access_key' parameter names
@@ -688,6 +706,10 @@ def command_upload(args, s3_client=None):
             aws_access_key_id=args.access_key,
             aws_secret_access_key=args.secret_key
         )
+
+    if not os.path.isdir(args.local_folder):
+        print(f"[ERROR] Local folder not found or not a directory: {args.local_folder}")
+        return EXIT_FAILURE
 
     files_to_upload = []
     total_size_bytes = 0
@@ -724,6 +746,7 @@ def command_upload(args, s3_client=None):
     # Initialize statistics tracking
     upload_count = 0
     skip_count = 0
+    failure_count = 0
     total_upload_size_bytes = 0
 
     # Start timer for speed calculation
@@ -738,22 +761,20 @@ def command_upload(args, s3_client=None):
 
         for future in as_completed(future_to_file):
             try:
-                result_message = future.result()
+                result_message, size_bytes, status_category = future.result()
                 safe_print(result_message)
 
                 # Track statistics
-                if "[SKIPPED]" in result_message:
+                if status_category == "skipped":
                     skip_count += 1
-                elif "[DRY-RUN]" in result_message or "[SUCCESS]" in result_message:
+                elif status_category == "uploaded":
                     upload_count += 1
-                    # Extract size from message (format: "-- X.XX GB")
-                    if "--" in result_message and "GB" in result_message:
-                        parts = result_message.split("--")[1].strip().split()
-                        if len(parts) >= 2:
-                            size_gb = float(parts[0])
-                            total_upload_size_bytes += int(size_gb * 1024 * 1024 * 1024)
+                    total_upload_size_bytes += size_bytes
+                elif status_category == "failure":
+                    failure_count += 1
             except Exception as exc:
                 safe_print(f"[CRITICAL ERROR] Thread crashed: {exc}")
+                failure_count += 1
 
     # Stop timer
     elapsed_time = time.time() - start_time
@@ -766,6 +787,7 @@ def command_upload(args, s3_client=None):
         print(f"Total files scanned: {total_files}")
         print(f"Files that would be uploaded: {upload_count}")
         print(f"Files that would be skipped: {skip_count}")
+        print(f"Failed: {failure_count}")
         print(f"Total upload size: {format_size(total_upload_size_bytes)}")
         print(f"Upload speed: {format_speed(total_upload_size_bytes, elapsed_time)} ({format_size(total_upload_size_bytes)} in {format_duration(elapsed_time)})")
         print("\nNo files were actually uploaded (dry-run mode)")
@@ -774,8 +796,11 @@ def command_upload(args, s3_client=None):
         print(f"Total files scanned: {total_files}")
         print(f"Files uploaded: {upload_count}")
         print(f"Files skipped (already exist): {skip_count}")
+        print(f"Failed: {failure_count}")
         print(f"Total uploaded size: {format_size(total_upload_size_bytes)}")
         print(f"Upload speed: {format_speed(total_upload_size_bytes, elapsed_time)} ({format_size(total_upload_size_bytes)} in {format_duration(elapsed_time)})")
+
+    return EXIT_FAILURE if failure_count else EXIT_SUCCESS
 
 def command_list(args, s3_client=None):
     """
@@ -784,6 +809,9 @@ def command_list(args, s3_client=None):
     Args:
         args: Command-line arguments with bucket_name, prefix, max_keys, paths_only, etc.
         s3_client: Optional boto3 S3 client (for testing). If None, creates client from args.
+
+    Returns:
+        int: EXIT_SUCCESS if listing succeeded, EXIT_FAILURE if it failed
     """
     # Create S3 client if not provided (for testing)
     # Note: boto3 uses 'aws_access_key_id' and 'aws_secret_access_key' parameter names
@@ -844,12 +872,16 @@ def command_list(args, s3_client=None):
             print("-" * 107)
             print(f"Total: {total_objects} objects, {format_size(total_size)}")
 
+        return EXIT_SUCCESS
+
     except ClientError as e:
         error_code = e.response['Error']['Code']
         error_msg = e.response['Error']['Message']
         print(f"Error listing bucket: {error_code} - {error_msg}")
+        return EXIT_FAILURE
     except Exception as e:
         print(f"Error: {str(e)}")
+        return EXIT_FAILURE
 
 def command_verify(args, s3_client=None):
     """Execute the verify command.
@@ -857,6 +889,11 @@ def command_verify(args, s3_client=None):
     Args:
         args: Command-line arguments
         s3_client: Optional boto3 S3 client (for testing)
+
+    Returns:
+        int: EXIT_SUCCESS if every file verified as matching,
+             EXIT_FAILURE if the local folder is unusable or any file
+             differed, was not uploaded, or errored
     """
 
     # Create S3 client using command-line arguments
@@ -867,6 +904,10 @@ def command_verify(args, s3_client=None):
             aws_access_key_id=args.access_key,
             aws_secret_access_key=args.secret_key
         )
+
+    if not os.path.isdir(args.local_folder):
+        print(f"[ERROR] Local folder not found or not a directory: {args.local_folder}")
+        return EXIT_FAILURE
 
     files_to_verify = []
 
@@ -918,7 +959,7 @@ def command_verify(args, s3_client=None):
         for future in as_completed(future_to_file):
             file_path, relative_path = future_to_file[future]
             try:
-                result_message = future.result()
+                result_message, status_category = future.result()
                 safe_print(result_message)
 
                 # Get file size for ALL processed files
@@ -928,14 +969,14 @@ def command_verify(args, s3_client=None):
                 except (IOError, OSError):
                     pass  # If can't get size, don't count it
 
-                # Track statistics based on status in message
-                if "[VERIFIED]" in result_message:
+                # Track statistics based on status category
+                if status_category == "verified":
                     verified_count += 1
-                elif "[DIFFERENT]" in result_message:
+                elif status_category == "different":
                     different_count += 1
-                elif "[NOT UPLOADED]" in result_message:
+                elif status_category == "not_uploaded":
                     not_uploaded_count += 1
-                elif "[ERROR]" in result_message:
+                elif status_category == "error":
                     error_count += 1
             except Exception as exc:
                 safe_print(f"[CRITICAL ERROR] Thread crashed: {exc}")
@@ -954,10 +995,10 @@ def command_verify(args, s3_client=None):
     print(f"Errors: {error_count}")
     print(f"Verify speed: {format_speed(total_verified_size_bytes, elapsed_time)} ({format_size(total_verified_size_bytes)} in {format_duration(elapsed_time)})")
 
-    # Exit with non-zero code if any mismatches or errors
-    if different_count > 0 or error_count > 0:
-        import sys
-        sys.exit(1)
+    # Fail if any files are missing, mismatched, or errored
+    if different_count > 0 or not_uploaded_count > 0 or error_count > 0:
+        return EXIT_FAILURE
+    return EXIT_SUCCESS
 
 
 class InvalidIndexUrlPrefixError(ValueError):
@@ -1149,16 +1190,20 @@ def command_indexupload(args, s3_client=None):
     Args:
         args: Command-line arguments
         s3_client: Optional boto3 S3 client (for testing)
+
+    Returns:
+        int: EXIT_SUCCESS if the index was generated and uploaded (or there
+             was nothing to index), EXIT_FAILURE if the URL prefix was
+             invalid, listing failed, or the index upload failed
     """
     import tempfile
     from datetime import datetime
-    import sys
 
     try:
         validate_index_url_prefix(args.url_prefix)
     except InvalidIndexUrlPrefixError as exc:
         print(f"[ERROR] {exc}")
-        sys.exit(1)
+        return EXIT_FAILURE
 
     # Create S3 client if not provided (for testing)
     if s3_client is None:
@@ -1181,7 +1226,10 @@ def command_indexupload(args, s3_client=None):
         error_code = e.response['Error']['Code']
         error_message = e.response['Error']['Message']
         print(f"Error listing bucket: [{error_code}] {error_message}")
-        return
+        return EXIT_FAILURE
+    except Exception as e:
+        print(f"Error listing bucket: {str(e)}")
+        return EXIT_FAILURE
 
     # Filter out index files and build object list
     objects = []
@@ -1211,7 +1259,7 @@ def command_indexupload(args, s3_client=None):
         else:
             print("Bucket is empty")
         print("No index files will be generated.")
-        return
+        return EXIT_SUCCESS
 
     total_objects = len(objects)
     print(f"Found {total_objects} objects (excluded index.html, index.md)")
@@ -1252,8 +1300,9 @@ def command_indexupload(args, s3_client=None):
             print("\nIndex files uploaded successfully!")
         except Exception as e:
             print(f"[ERROR] Failed to upload index files: {str(e)}")
-            import sys
-            sys.exit(1)
+            return EXIT_FAILURE
+
+    return EXIT_SUCCESS
 
 def _download_collision_identity(component):
     """Return the fail-closed cross-platform collision identity for a component."""
@@ -1332,6 +1381,11 @@ def command_download(args, s3_client=None):
     Args:
         args: Command-line arguments
         s3_client: Optional boto3 S3 client (for testing)
+
+    Returns:
+        int: EXIT_SUCCESS if every object downloaded/verified cleanly (or
+             there was nothing to download), EXIT_FAILURE if listing,
+             preflight, or the download root failed, or any object failed
     """
 
     if s3_client is None:
@@ -1353,12 +1407,10 @@ def command_download(args, s3_client=None):
         error_code = e.response['Error']['Code']
         error_msg = e.response['Error']['Message']
         print(f"Error listing bucket: {error_code} - {error_msg}")
-        import sys
-        sys.exit(1)
+        return EXIT_FAILURE
     except Exception as e:
         print(f"Error: {str(e)}")
-        import sys
-        sys.exit(1)
+        return EXIT_FAILURE
 
     if not all_s3_objects:
         if args.prefix:
@@ -1366,7 +1418,7 @@ def command_download(args, s3_client=None):
         else:
             print("Bucket is empty")
         print("Nothing to download.")
-        return
+        return EXIT_SUCCESS
 
     total_files = len(all_s3_objects)
     total_s3_size = sum(obj['Size'] for obj in all_s3_objects)
@@ -1393,8 +1445,7 @@ def command_download(args, s3_client=None):
         )
         if args.dry_run:
             print("\nNo files were actually downloaded (dry-run mode)")
-        import sys
-        sys.exit(1)
+        return EXIT_FAILURE
 
     try:
         resolved_root = resolve_download_root(args.local_folder, create=False)
@@ -1405,8 +1456,7 @@ def command_download(args, s3_client=None):
         _print_download_summary(
             total_files, 0, 0, 0, 1, len(folder_markers), 0, 0, 0
         )
-        import sys
-        sys.exit(1)
+        return EXIT_FAILURE
 
     downloaded_count = 0
     verified_count = 0
@@ -1463,8 +1513,9 @@ def command_download(args, s3_client=None):
         print("\nNo files were actually downloaded (dry-run mode)")
 
     if different_count > 0 or error_count > 0:
-        import sys
-        sys.exit(1)
+        return EXIT_FAILURE
+    return EXIT_SUCCESS
+
 def main():
     # Create parent parser for common arguments
     parent_parser = create_parent_parser()
@@ -1563,17 +1614,19 @@ def main():
 
     # Dispatch to appropriate command
     if args.command == 'upload':
-        command_upload(args)
+        exit_code = command_upload(args)
     elif args.command == 'list':
-        command_list(args)
+        exit_code = command_list(args)
     elif args.command == 'verify':
-        command_verify(args)
+        exit_code = command_verify(args)
     elif args.command == 'indexupload':
-        command_indexupload(args)
+        exit_code = command_indexupload(args)
     elif args.command == 'download':
-        command_download(args)
+        exit_code = command_download(args)
     else:
         parser.error(f"Unknown command: {args.command}")
+
+    sys.exit(exit_code)
 
 if __name__ == "__main__":
     main()

@@ -28,6 +28,16 @@ All commands share the following required arguments:
 | `--bucket-name NAME` | Target S3 bucket name |
 | `--endpoint-url URL` | S3 endpoint URL |
 
+## Exit Codes
+
+All five commands share the same exit code contract, so `command || exit 1` is safe to use in CI for any of them:
+
+| Code | Meaning |
+|------|---------|
+| `0` | Every requested operation succeeded (or there was nothing to do, e.g. an empty bucket/folder) |
+| `1` | At least one file/object failed, was missing, differed, or the input (bucket, local folder, URL prefix) was unusable |
+| `2` | Command-line usage error (invalid/missing arguments, from argparse) |
+
 ## Commands
 
 ### 1. upload - Upload Files to S3
@@ -65,8 +75,9 @@ python scripts/s3_manage.py upload \
 - **Hidden File Filtering**: By default, skips hidden files and directories (starting with `.`)
 - **Dry-Run Mode**: Preview what would be uploaded without making changes
 - **Progress Tracking**: Real-time status messages for each file
-- **Summary Statistics**: Shows upload counts, skip counts, total upload size, and upload speed
+- **Summary Statistics**: Shows upload counts, skip counts, failure counts, total upload size, and upload speed
 - **Speed Measurement**: Automatically calculates and displays upload speed with auto-adapting units (B/s, KB/s, MB/s, GB/s, TB/s)
+- **CI/CD Friendly**: Returns exit code 1 if the local folder is missing/unusable or any file fails to upload, 0 for success
 
 #### Output Format
 
@@ -74,8 +85,17 @@ python scripts/s3_manage.py upload \
 [STARTING] path/to/file.txt...
 [SUCCESS]  path/to/file.txt  --  1.23 GB
 [SKIPPED]  path/to/existing.txt (Already exists)
+[FAILURE]  path/to/broken.txt - Access Denied
 
 All operations complete!
+
+--- UPLOAD SUMMARY ---
+Total files scanned: 3
+Files uploaded: 1
+Files skipped (already exist): 1
+Failed: 1
+Total uploaded size: 1.23 GB
+Upload speed: 45.67 MB/s
 ```
 
 #### Example: Basic Upload
@@ -282,7 +302,7 @@ python scripts/s3_manage.py verify \
 - **Parallel Verification**: Uses ThreadPoolExecutor for concurrent verification
 - **Hidden File Filtering**: By default, skips hidden files and directories (starting with `.`)
 - **Detailed Status Reporting**: Four verification states (VERIFIED, DIFFERENT, NOT UPLOADED, ERROR)
-- **CI/CD Friendly**: Returns exit code 1 for failures, 0 for success
+- **CI/CD Friendly**: Returns exit code 1 if any file is DIFFERENT, NOT UPLOADED, or ERROR (see Verification States below), or if the local folder is missing/unusable; 0 for success
 - **Comprehensive Summary**: Shows counts for all verification categories and verify speed
 - **Speed Measurement**: Automatically calculates and displays verification speed based on all processed files with auto-adapting units (B/s, KB/s, MB/s, GB/s, TB/s)
 
@@ -965,32 +985,34 @@ All commands handle errors gracefully and provide clear error messages:
 
 ### Upload Errors
 
+- **Local folder missing or not a directory:** Displays `[ERROR]`, exits with code 1 before scanning
 - **File not found:** Skipped with warning
-- **Permission denied:** Reported as failure
-- **Network error:** Reported as failure with details
-- **S3 API error:** Reported with error code and message
+- **Permission denied:** Reported as `[FAILURE]`, counted in the `Failed:` summary line, exits with code 1
+- **Network error:** Reported as `[FAILURE]` with details, counted in the `Failed:` summary line, exits with code 1
+- **S3 API error:** Reported as `[FAILURE]` with error code and message, counted in the `Failed:` summary line, exits with code 1
 
 ### List Errors
 
-- **Empty bucket:** Displays "Bucket is empty"
-- **No matches for prefix:** Displays "No objects found with prefix: {prefix}"
-- **Access denied:** Displays error code and message
-- **Bucket not found:** Displays error code and message
+- **Empty bucket:** Displays "Bucket is empty", exits gracefully with code 0
+- **No matches for prefix:** Displays "No objects found with prefix: {prefix}", exits gracefully with code 0
+- **Access denied:** Displays error code and message, exits with code 1
+- **Bucket not found:** Displays error code and message, exits with code 1
 
 ### Verify Errors
 
-- **File not in S3:** Reported as `[NOT UPLOADED]`
-- **File read error:** Reported as `[ERROR]` with details
-- **S3 API error:** Reported as `[ERROR]` with error code
-- **ETag calculation failure:** Reported as `[ERROR]` (rare)
+- **Local folder missing or not a directory:** Displays `[ERROR]`, exits with code 1 before scanning
+- **File not in S3:** Reported as `[NOT UPLOADED]`, exits with code 1
+- **File read error:** Reported as `[ERROR]` with details, exits with code 1
+- **S3 API error:** Reported as `[ERROR]` with error code, exits with code 1
+- **ETag calculation failure:** Reported as `[ERROR]` (rare), exits with code 1
 
 ### IndexUpload Errors
 
 - **Invalid URL prefix:** Displays `[ERROR]`, exits with code 1 before client construction and listing
-- **Empty bucket:** Displays message, exits gracefully without generating files
-- **No matches for prefix:** Displays message, exits gracefully
+- **Empty bucket:** Displays message, exits gracefully without generating files (code 0)
+- **No matches for prefix:** Displays message, exits gracefully (code 0)
 - **Upload failure:** Displays error message, exits with code 1
-- **Access denied:** Displays S3 error code and message
+- **Access denied / bucket not found (listing):** Displays S3 error code and message, exits with code 1
 - **Disk full:** Propagates error during file generation
 
 ### Download Errors

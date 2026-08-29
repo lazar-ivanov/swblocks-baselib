@@ -1105,7 +1105,7 @@ class TestUploadWorker:
         s3_client.create_bucket(Bucket='test-bucket')
 
         # Test upload
-        result = s3_manage.upload_worker(s3_client, 'test-bucket', str(temp_file), 'test.txt', dry_run=False)
+        result, _, _ = s3_manage.upload_worker(s3_client, 'test-bucket', str(temp_file), 'test.txt', dry_run=False)
 
         # Verify result string format
         assert '[SUCCESS]' in result
@@ -1124,7 +1124,7 @@ class TestUploadWorker:
         s3_client.upload_file(str(temp_file), 'test-bucket', 'test.txt')
 
         # Test upload again
-        result = s3_manage.upload_worker(s3_client, 'test-bucket', str(temp_file), 'test.txt', dry_run=False)
+        result, _, _ = s3_manage.upload_worker(s3_client, 'test-bucket', str(temp_file), 'test.txt', dry_run=False)
 
         # Verify skip message
         assert '[SKIPPED]' in result
@@ -1139,7 +1139,7 @@ class TestUploadWorker:
         s3_client.create_bucket(Bucket='test-bucket')
 
         # Test dry-run upload
-        result = s3_manage.upload_worker(s3_client, 'test-bucket', str(temp_file), 'test.txt', dry_run=True)
+        result, _, _ = s3_manage.upload_worker(s3_client, 'test-bucket', str(temp_file), 'test.txt', dry_run=True)
 
         # Verify dry-run message
         assert '[DRY-RUN]' in result
@@ -1158,7 +1158,7 @@ class TestUploadWorker:
         s3_client.create_bucket(Bucket='test-bucket')
 
         # Test upload non-existent file
-        result = s3_manage.upload_worker(s3_client, 'test-bucket', '/nonexistent/file.txt', 'file.txt', dry_run=False)
+        result, _, _ = s3_manage.upload_worker(s3_client, 'test-bucket', '/nonexistent/file.txt', 'file.txt', dry_run=False)
 
         # Verify failure message
         assert '[FAILURE]' in result
@@ -1172,7 +1172,7 @@ class TestUploadWorker:
         s3_client.create_bucket(Bucket='test-bucket')
 
         # Test upload
-        result = s3_manage.upload_worker(s3_client, 'test-bucket', str(temp_file_small), 'small.bin', dry_run=False)
+        result, _, _ = s3_manage.upload_worker(s3_client, 'test-bucket', str(temp_file_small), 'small.bin', dry_run=False)
 
         # Verify size is reported (100 KB = 0.00009 GB)
         assert '[SUCCESS]' in result
@@ -1188,7 +1188,7 @@ class TestUploadWorker:
         s3_client.create_bucket(Bucket='test-bucket')
 
         # Test upload
-        result = s3_manage.upload_worker(s3_client, 'test-bucket', str(temp_file_medium), 'medium.bin', dry_run=False)
+        result, _, _ = s3_manage.upload_worker(s3_client, 'test-bucket', str(temp_file_medium), 'medium.bin', dry_run=False)
 
         # Verify size is reported (10 MB = 0.0093 GB)
         assert '[SUCCESS]' in result
@@ -1203,7 +1203,7 @@ class TestUploadWorker:
         s3_client.create_bucket(Bucket='test-bucket')
 
         # Test upload to nested path
-        result = s3_manage.upload_worker(s3_client, 'test-bucket', str(temp_file), 'folder/subfolder/file.txt', dry_run=False)
+        result, _, _ = s3_manage.upload_worker(s3_client, 'test-bucket', str(temp_file), 'folder/subfolder/file.txt', dry_run=False)
 
         # Verify success
         assert '[SUCCESS]' in result
@@ -1224,7 +1224,7 @@ class TestUploadWorker:
         s3_client.create_bucket(Bucket='test-bucket')
 
         # Test upload
-        result = s3_manage.upload_worker(s3_client, 'test-bucket', str(special_file), 'file-with_special.chars.txt', dry_run=False)
+        result, _, _ = s3_manage.upload_worker(s3_client, 'test-bucket', str(special_file), 'file-with_special.chars.txt', dry_run=False)
 
         # Verify success
         assert '[SUCCESS]' in result
@@ -1242,7 +1242,7 @@ class TestUploadWorker:
         s3_client.create_bucket(Bucket='test-bucket')
 
         # Test upload
-        result = s3_manage.upload_worker(s3_client, 'test-bucket', str(empty_file), 'empty.txt', dry_run=False)
+        result, _, _ = s3_manage.upload_worker(s3_client, 'test-bucket', str(empty_file), 'empty.txt', dry_run=False)
 
         # Verify success
         assert '[SUCCESS]' in result
@@ -1266,8 +1266,8 @@ class TestUploadWorker:
         s3_client.create_bucket(Bucket='test-bucket')
 
         # Upload both files
-        result1 = s3_manage.upload_worker(s3_client, 'test-bucket', str(file1), 'file1.txt', dry_run=False)
-        result2 = s3_manage.upload_worker(s3_client, 'test-bucket', str(file2), 'file2.txt', dry_run=False)
+        result1, _, _ = s3_manage.upload_worker(s3_client, 'test-bucket', str(file1), 'file1.txt', dry_run=False)
+        result2, _, _ = s3_manage.upload_worker(s3_client, 'test-bucket', str(file2), 'file2.txt', dry_run=False)
 
         # Verify both succeeded
         assert '[SUCCESS]' in result1
@@ -1291,11 +1291,11 @@ class TestUploadWorker:
         s3_client.create_bucket(Bucket='test-bucket')
 
         # Upload original
-        result1 = s3_manage.upload_worker(s3_client, 'test-bucket', str(file1), 'data.txt', dry_run=False)
+        result1, _, _ = s3_manage.upload_worker(s3_client, 'test-bucket', str(file1), 'data.txt', dry_run=False)
         assert '[SUCCESS]' in result1
 
         # Try to upload modified version with same key
-        result2 = s3_manage.upload_worker(s3_client, 'test-bucket', str(file2), 'data.txt', dry_run=False)
+        result2, _, _ = s3_manage.upload_worker(s3_client, 'test-bucket', str(file2), 'data.txt', dry_run=False)
         assert '[SKIPPED]' in result2
         assert 'Already exists' in result2
 
@@ -1317,7 +1317,7 @@ class TestVerifyWorker:
         s3_client.upload_file(str(temp_file), 'test-bucket', 'test.txt')
 
         # Test verification
-        result = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file), 'test.txt')
+        result, _ = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file), 'test.txt')
 
         # Verify result
         assert '[VERIFIED]' in result
@@ -1338,7 +1338,7 @@ class TestVerifyWorker:
         s3_client.upload_file(str(file1), 'test-bucket', 'data.txt')
 
         # Verify with different file
-        result = s3_manage.verify_worker(s3_client, 'test-bucket', str(file2), 'data.txt')
+        result, _ = s3_manage.verify_worker(s3_client, 'test-bucket', str(file2), 'data.txt')
 
         # Should report difference
         assert '[DIFFERENT]' in result
@@ -1354,7 +1354,7 @@ class TestVerifyWorker:
         s3_client.create_bucket(Bucket='test-bucket')
 
         # Test verification
-        result = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file), 'test.txt')
+        result, _ = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file), 'test.txt')
 
         # Should report not uploaded
         assert '[NOT UPLOADED]' in result
@@ -1369,7 +1369,7 @@ class TestVerifyWorker:
         s3_client.upload_file(str(temp_file_small), 'test-bucket', 'small.bin')
 
         # Verify
-        result = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file_small), 'small.bin')
+        result, _ = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file_small), 'small.bin')
 
         # Should verify successfully
         assert '[VERIFIED]' in result
@@ -1423,7 +1423,7 @@ class TestVerifyWorker:
         )
 
         # Verify - should at least detect multipart format
-        result = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file_large), 'large.bin')
+        result, _ = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file_large), 'large.bin')
 
         # The result should be either VERIFIED or DIFFERENT (not ERROR)
         # Due to moto behavior differences, we just verify it doesn't error
@@ -1439,7 +1439,7 @@ class TestVerifyWorker:
         s3_client.put_object(Bucket='test-bucket', Key='test.txt', Body=b'content')
 
         # Try to verify non-existent local file
-        result = s3_manage.verify_worker(s3_client, 'test-bucket', '/nonexistent/file.txt', 'test.txt')
+        result, _ = s3_manage.verify_worker(s3_client, 'test-bucket', '/nonexistent/file.txt', 'test.txt')
 
         # Should report error
         assert '[ERROR]' in result
@@ -1458,7 +1458,7 @@ class TestVerifyWorker:
         s3_client.upload_file(str(empty_file), 'test-bucket', 'empty.txt')
 
         # Verify
-        result = s3_manage.verify_worker(s3_client, 'test-bucket', str(empty_file), 'empty.txt')
+        result, _ = s3_manage.verify_worker(s3_client, 'test-bucket', str(empty_file), 'empty.txt')
 
         # Should verify successfully
         assert '[VERIFIED]' in result
@@ -1472,7 +1472,7 @@ class TestVerifyWorker:
         s3_client.upload_file(str(temp_file), 'test-bucket', 'test.txt')
 
         # Verify (ETags should match regardless of case)
-        result = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file), 'test.txt')
+        result, _ = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file), 'test.txt')
         assert '[VERIFIED]' in result
 
     @mock_aws
@@ -1484,7 +1484,7 @@ class TestVerifyWorker:
         s3_client.upload_file(str(temp_file), 'test-bucket', 'folder/subfolder/file.txt')
 
         # Verify
-        result = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file), 'folder/subfolder/file.txt')
+        result, _ = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file), 'folder/subfolder/file.txt')
 
         assert '[VERIFIED]' in result
         assert 'folder/subfolder/file.txt' in result
@@ -1505,8 +1505,8 @@ class TestVerifyWorker:
         s3_client.upload_file(str(file2), 'test-bucket', 'file2.txt')
 
         # Verify both
-        result1 = s3_manage.verify_worker(s3_client, 'test-bucket', str(file1), 'file1.txt')
-        result2 = s3_manage.verify_worker(s3_client, 'test-bucket', str(file2), 'file2.txt')
+        result1, _ = s3_manage.verify_worker(s3_client, 'test-bucket', str(file1), 'file1.txt')
+        result2, _ = s3_manage.verify_worker(s3_client, 'test-bucket', str(file2), 'file2.txt')
 
         assert '[VERIFIED]' in result1
         assert '[VERIFIED]' in result2
@@ -1526,7 +1526,7 @@ class TestVerifyWorker:
         s3_client.upload_file(str(small), 'test-bucket', 'data.txt')
 
         # Verify with large file (different size = different content)
-        result = s3_manage.verify_worker(s3_client, 'test-bucket', str(large), 'data.txt')
+        result, _ = s3_manage.verify_worker(s3_client, 'test-bucket', str(large), 'data.txt')
 
         assert '[DIFFERENT]' in result
 
@@ -1545,7 +1545,7 @@ class TestVerifyWorker:
         s3_client.upload_file(str(file1), 'test-bucket', 'data.txt')
 
         # Verify with second file
-        result = s3_manage.verify_worker(s3_client, 'test-bucket', str(file2), 'data.txt')
+        result, _ = s3_manage.verify_worker(s3_client, 'test-bucket', str(file2), 'data.txt')
 
         assert '[DIFFERENT]' in result
 
@@ -1558,9 +1558,9 @@ class TestVerifyWorker:
         s3_client.upload_file(str(temp_file), 'test-bucket', 'test.txt')
 
         # Verify multiple times
-        result1 = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file), 'test.txt')
-        result2 = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file), 'test.txt')
-        result3 = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file), 'test.txt')
+        result1, _ = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file), 'test.txt')
+        result2, _ = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file), 'test.txt')
+        result3, _ = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file), 'test.txt')
 
         # All results should be identical
         assert result1 == result2 == result3
@@ -1579,7 +1579,7 @@ class TestVerifyWorker:
         s3_client.upload_file(str(special_file), 'test-bucket', 'file-with_special.chars.txt')
 
         # Verify
-        result = s3_manage.verify_worker(s3_client, 'test-bucket', str(special_file), 'file-with_special.chars.txt')
+        result, _ = s3_manage.verify_worker(s3_client, 'test-bucket', str(special_file), 'file-with_special.chars.txt')
 
         assert '[VERIFIED]' in result
         assert 'file-with_special.chars.txt' in result
@@ -1597,7 +1597,7 @@ class TestVerifyWorker:
         s3_client.upload_file(str(temp_file_medium), 'test-bucket', 'medium.bin')
 
         # Verify
-        result = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file_medium), 'medium.bin')
+        result, _ = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file_medium), 'medium.bin')
 
         # Due to moto's multipart behavior, result may be VERIFIED or DIFFERENT
         # The important part is it doesn't error and processes the ETag correctly
@@ -2634,9 +2634,10 @@ class TestCommandList:
         })()
 
         # Execute
-        s3_manage.command_list(args, s3_client=s3_client)
+        exit_code = s3_manage.command_list(args, s3_client=s3_client)
 
-        # Verify error message
+        # Verify error message and nonzero exit code
+        assert exit_code == 1
         captured = capsys.readouterr()
         assert "Error listing bucket" in captured.out or "NoSuchBucket" in captured.out
 
@@ -2994,9 +2995,10 @@ class TestCommandIndexupload:
         })()
 
         # Execute
-        s3_manage.command_indexupload(args, s3_client=s3_client)
+        exit_code = s3_manage.command_indexupload(args, s3_client=s3_client)
 
-        # Verify error message
+        # Verify error message and nonzero exit code
+        assert exit_code == 1
         captured = capsys.readouterr()
         assert "Error listing bucket" in captured.out
 
@@ -3035,9 +3037,8 @@ class TestCommandIndexupload:
             'url_prefix': 'javascript:alert(1)'
         })()
 
-        with pytest.raises(SystemExit) as excinfo:
-            s3_manage.command_indexupload(args, s3_client=s3_client)
-        assert excinfo.value.code == 1
+        exit_code = s3_manage.command_indexupload(args, s3_client=s3_client)
+        assert exit_code == 1
         captured = capsys.readouterr()
         assert "[ERROR]" in captured.out
 
@@ -3056,9 +3057,8 @@ class TestCommandIndexupload:
             'secret_key': 'secret'
         })()
 
-        with pytest.raises(SystemExit) as excinfo:
-            s3_manage.command_indexupload(args, s3_client=None)
-        assert excinfo.value.code == 1
+        exit_code = s3_manage.command_indexupload(args, s3_client=None)
+        assert exit_code == 1
         captured = capsys.readouterr()
         assert "[ERROR]" in captured.out
 
@@ -3079,9 +3079,8 @@ class TestCommandIndexupload:
             'url_prefix': 'https://example.com/)<img src=x>'
         })()
 
-        with pytest.raises(SystemExit) as excinfo:
-            s3_manage.command_indexupload(args, s3_client=FakeClient())
-        assert excinfo.value.code == 1
+        exit_code = s3_manage.command_indexupload(args, s3_client=FakeClient())
+        assert exit_code == 1
         captured = capsys.readouterr()
         assert "[ERROR]" in captured.out
 
@@ -3109,7 +3108,8 @@ class TestCommandDownload:
         })()
 
         # Execute command
-        s3_manage.command_download(args, s3_client=s3_client)
+        exit_code = s3_manage.command_download(args, s3_client=s3_client)
+        assert exit_code == 0
 
         # Verify output
         captured = capsys.readouterr()
@@ -3237,9 +3237,8 @@ class TestCommandDownload:
         })()
 
         # Execute command - should exit with code 1
-        with pytest.raises(SystemExit) as exc_info:
-            s3_manage.command_download(args, s3_client=s3_client)
-        assert exc_info.value.code == 1
+        exit_code = s3_manage.command_download(args, s3_client=s3_client)
+        assert exit_code == 1
 
         # Verify output shows difference
         captured = capsys.readouterr()
@@ -3326,9 +3325,8 @@ class TestCommandDownload:
         })()
 
         # Execute command - should exit with code 1
-        with pytest.raises(SystemExit) as exc_info:
-            s3_manage.command_download(args, s3_client=s3_client)
-        assert exc_info.value.code == 1
+        exit_code = s3_manage.command_download(args, s3_client=s3_client)
+        assert exit_code == 1
 
         # Verify error message
         captured = capsys.readouterr()
@@ -3489,10 +3487,9 @@ class TestCommandDownload:
         monkeypatch.setattr(s3_manage, 'download_worker', unexpected_worker)
         args = self._security_test_args(download_root, dry_run=dry_run)
 
-        with pytest.raises(SystemExit) as exc_info:
-            s3_manage.command_download(args, s3_client=object())
+        exit_code = s3_manage.command_download(args, s3_client=object())
+        assert exit_code == 1
 
-        assert exc_info.value.code == 1
         assert worker_called is False
         assert not download_root.exists()
         assert repr(s3_key) in capsys.readouterr().out
@@ -3516,10 +3513,9 @@ class TestCommandDownload:
         )
         args = self._security_test_args(download_root)
 
-        with pytest.raises(SystemExit) as exc_info:
-            s3_manage.command_download(args, s3_client=object())
+        exit_code = s3_manage.command_download(args, s3_client=object())
+        assert exit_code == 1
 
-        assert exc_info.value.code == 1
         assert not download_root.exists()
         output = capsys.readouterr().out
         for key in keys:
@@ -3550,10 +3546,9 @@ class TestCommandDownload:
         )
         args = self._security_test_args(download_root)
 
-        with pytest.raises(SystemExit) as exc_info:
-            s3_manage.command_download(args, s3_client=object())
+        exit_code = s3_manage.command_download(args, s3_client=object())
+        assert exit_code == 1
 
-        assert exc_info.value.code == 1
         assert repr('folder/') in capsys.readouterr().out
         assert not download_root.exists()
 
@@ -3591,10 +3586,9 @@ class TestCommandDownload:
                 )
 
         args = self._security_test_args(download_root)
-        with pytest.raises(SystemExit) as exc_info:
-            s3_manage.command_download(args, s3_client=MissingObjectClient())
+        exit_code = s3_manage.command_download(args, s3_client=MissingObjectClient())
+        assert exit_code == 1
 
-        assert exc_info.value.code == 1
         assert download_root.is_dir()
         assert list(download_root.iterdir()) == []
 
@@ -3627,7 +3621,8 @@ class TestCommandUpload:
         })()
 
         # Execute command
-        s3_manage.command_upload(args, s3_client=s3_client)
+        exit_code = s3_manage.command_upload(args, s3_client=s3_client)
+        assert exit_code == 0
 
         # Verify output
         captured = capsys.readouterr()
@@ -3935,13 +3930,15 @@ class TestCommandUpload:
         })()
 
         # Execute command
-        s3_manage.command_upload(args, s3_client=s3_client)
+        exit_code = s3_manage.command_upload(args, s3_client=s3_client)
+        assert exit_code == 0
 
         # Verify statistics in output
         captured = capsys.readouterr()
         assert 'Total files scanned: 3' in captured.out
         assert 'Files uploaded: 2' in captured.out
         assert 'Files skipped (already exist): 1' in captured.out
+        assert 'Failed: 0' in captured.out
         assert 'Upload speed:' in captured.out
 
     @mock_aws
@@ -3965,12 +3962,14 @@ class TestCommandUpload:
             'allow_hidden_files': False
         })()
 
-        # Execute command - should handle error gracefully
-        s3_manage.command_upload(args, s3_client=s3_client)
+        # Execute command - should report failure and return EXIT_FAILURE
+        exit_code = s3_manage.command_upload(args, s3_client=s3_client)
+        assert exit_code == 1
 
         # Verify error message in output
         captured = capsys.readouterr()
         assert '[FAILURE]' in captured.out or 'ERROR' in captured.out
+        assert 'Failed: 1' in captured.out
 
     @mock_aws
     def test_upload_mixed_success_and_skip(self, temp_dir, temp_file, capsys):
@@ -4112,7 +4111,8 @@ class TestCommandVerify:
         })()
 
         # Execute command (should succeed with exit code 0)
-        s3_manage.command_verify(args, s3_client=s3_client)
+        exit_code = s3_manage.command_verify(args, s3_client=s3_client)
+        assert exit_code == 0
 
         # Verify output
         captured = capsys.readouterr()
@@ -4145,9 +4145,8 @@ class TestCommandVerify:
         })()
 
         # Execute command - should exit with code 1
-        with pytest.raises(SystemExit) as exc_info:
-            s3_manage.command_verify(args, s3_client=s3_client)
-        assert exc_info.value.code == 1
+        exit_code = s3_manage.command_verify(args, s3_client=s3_client)
+        assert exit_code == 1
 
         # Verify output
         captured = capsys.readouterr()
@@ -4175,8 +4174,9 @@ class TestCommandVerify:
             'allow_hidden_files': False
         })()
 
-        # Execute command
-        s3_manage.command_verify(args, s3_client=s3_client)
+        # Execute command - a missing remote object is a failure
+        exit_code = s3_manage.command_verify(args, s3_client=s3_client)
+        assert exit_code == 1
 
         # Verify output
         captured = capsys.readouterr()
@@ -4217,9 +4217,8 @@ class TestCommandVerify:
         })()
 
         # Execute command - should exit with code 1 due to different file
-        with pytest.raises(SystemExit) as exc_info:
-            s3_manage.command_verify(args, s3_client=s3_client)
-        assert exc_info.value.code == 1
+        exit_code = s3_manage.command_verify(args, s3_client=s3_client)
+        assert exit_code == 1
 
         # Verify output
         captured = capsys.readouterr()
@@ -4375,9 +4374,8 @@ class TestCommandVerify:
         })()
 
         # Execute command
-        with pytest.raises(SystemExit) as exc_info:
-            s3_manage.command_verify(args, s3_client=s3_client)
-        assert exc_info.value.code == 1
+        exit_code = s3_manage.command_verify(args, s3_client=s3_client)
+        assert exit_code == 1
 
         # Verify statistics
         captured = capsys.readouterr()
@@ -4409,9 +4407,8 @@ class TestCommandVerify:
         })()
 
         # Execute command - should handle error gracefully and exit 1
-        with pytest.raises(SystemExit) as exc_info:
-            s3_manage.command_verify(args, s3_client=s3_client)
-        assert exc_info.value.code == 1
+        exit_code = s3_manage.command_verify(args, s3_client=s3_client)
+        assert exit_code == 1
 
         # Verify error in output
         captured = capsys.readouterr()
@@ -4439,10 +4436,11 @@ class TestCommandVerify:
             'allow_hidden_files': False
         })()
 
-        # Execute command - should NOT raise SystemExit
-        s3_manage.command_verify(args, s3_client=s3_client)
+        # Execute command - should return EXIT_SUCCESS
+        exit_code = s3_manage.command_verify(args, s3_client=s3_client)
+        assert exit_code == 0
 
-        # Verify output (no exception means exit code 0)
+        # Verify output
         captured = capsys.readouterr()
         assert 'Verified (match): 1' in captured.out
         assert 'Different (mismatch): 0' in captured.out
@@ -4470,10 +4468,9 @@ class TestCommandVerify:
             'allow_hidden_files': False
         })()
 
-        # Execute command - should raise SystemExit with code 1
-        with pytest.raises(SystemExit) as exc_info:
-            s3_manage.command_verify(args, s3_client=s3_client)
-        assert exc_info.value.code == 1
+        # Execute command - should return EXIT_FAILURE
+        exit_code = s3_manage.command_verify(args, s3_client=s3_client)
+        assert exit_code == 1
 
     @mock_aws
     def test_verify_summary_format(self, temp_dir, temp_file, capsys):
@@ -4510,3 +4507,309 @@ class TestCommandVerify:
         assert 'Errors:' in captured.out
         assert 'Verify speed:' in captured.out
         assert 'All verifications complete!' in captured.out
+
+
+# ====================================================================================
+# Phase 5: Exit code contract (F-04 regression coverage)
+#
+# Every command_* function must return EXIT_SUCCESS (0) only when every
+# requested operation actually succeeded, and EXIT_FAILURE (1) if anything
+# failed, was missing, differed, or the input was unusable.
+# ====================================================================================
+
+class TestExitCodeContract:
+    """Test that every command_* returns the documented exit code, not just a
+    printed message, for every failure mode."""
+
+    # --- Invalid/nonexistent bucket: every command must return 1 ---
+
+    @mock_aws
+    def test_upload_invalid_bucket_returns_failure(self, temp_dir, temp_file, capsys):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        local_folder = temp_dir / 'uploads'
+        local_folder.mkdir()
+        shutil.copy(str(temp_file), str(local_folder / 'test.txt'))
+
+        args = type('Args', (), {
+            'bucket_name': 'nonexistent-bucket',
+            'local_folder': str(local_folder),
+            'dry_run': False,
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        assert s3_manage.command_upload(args, s3_client=s3_client) == 1
+
+    @mock_aws
+    def test_list_invalid_bucket_returns_failure(self, capsys):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        args = type('Args', (), {
+            'bucket_name': 'nonexistent-bucket',
+            'prefix': None,
+            'max_keys': None,
+            'paths_only': False
+        })()
+
+        assert s3_manage.command_list(args, s3_client=s3_client) == 1
+
+    @mock_aws
+    def test_verify_invalid_bucket_returns_failure(self, temp_dir, temp_file, capsys):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        local_folder = temp_dir / 'verify'
+        local_folder.mkdir()
+        shutil.copy(str(temp_file), str(local_folder / 'test.txt'))
+
+        args = type('Args', (), {
+            'bucket_name': 'nonexistent-bucket',
+            'local_folder': str(local_folder),
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        assert s3_manage.command_verify(args, s3_client=s3_client) == 1
+
+    @mock_aws
+    def test_indexupload_invalid_bucket_returns_failure(self, capsys):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        args = type('Args', (), {
+            'bucket_name': 'nonexistent-bucket',
+            'prefix': None,
+            'url_prefix': 'https://example.com/'
+        })()
+
+        assert s3_manage.command_indexupload(args, s3_client=s3_client) == 1
+
+    @mock_aws
+    def test_download_invalid_bucket_returns_failure(self, temp_dir, capsys):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        args = type('Args', (), {
+            'bucket_name': 'nonexistent-bucket',
+            'prefix': None,
+            'local_folder': str(temp_dir),
+            'dry_run': False,
+            'max_threads': 2
+        })()
+
+        assert s3_manage.command_download(args, s3_client=s3_client) == 1
+
+    # --- Upload worker failures ---
+
+    @mock_aws
+    def test_upload_file_failure_returns_failure(self, temp_dir, temp_file, capsys):
+        """A single file whose upload_file() raises must fail the whole command."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        local_folder = temp_dir / 'uploads'
+        local_folder.mkdir()
+        good_file = local_folder / 'good.txt'
+        shutil.copy(str(temp_file), str(good_file))
+        bad_file = local_folder / 'bad.txt'
+        shutil.copy(str(temp_file), str(bad_file))
+
+        real_upload_file = s3_client.upload_file
+
+        def flaky_upload_file(filename, bucket, key, *args, **kwargs):
+            if key == 'bad.txt':
+                raise RuntimeError('simulated upload failure')
+            return real_upload_file(filename, bucket, key, *args, **kwargs)
+
+        s3_client.upload_file = flaky_upload_file
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'dry_run': False,
+            'max_threads': 1,
+            'allow_hidden_files': False
+        })()
+
+        exit_code = s3_manage.command_upload(args, s3_client=s3_client)
+        assert exit_code == 1
+
+        captured = capsys.readouterr()
+        assert '[FAILURE]' in captured.out
+        assert 'Files uploaded: 1' in captured.out
+        assert 'Failed: 1' in captured.out
+
+    def test_upload_worker_thread_crash_returns_failure(self, temp_dir, temp_file, capsys, monkeypatch):
+        """A worker that raises instead of returning must still fail the command."""
+        def crashing_worker(*_args, **_kwargs):
+            raise RuntimeError('simulated thread crash')
+
+        monkeypatch.setattr(s3_manage, 'upload_worker', crashing_worker)
+
+        local_folder = temp_dir / 'uploads'
+        local_folder.mkdir()
+        shutil.copy(str(temp_file), str(local_folder / 'test.txt'))
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'dry_run': False,
+            'max_threads': 1,
+            'allow_hidden_files': False
+        })()
+
+        exit_code = s3_manage.command_upload(args, s3_client=object())
+        assert exit_code == 1
+
+        captured = capsys.readouterr()
+        assert '[CRITICAL ERROR]' in captured.out
+        assert 'Failed: 1' in captured.out
+
+    # --- Missing remote object ---
+
+    @mock_aws
+    def test_verify_missing_remote_object_returns_failure(self, temp_dir, temp_file, capsys):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        local_folder = temp_dir / 'verify'
+        local_folder.mkdir()
+        shutil.copy(str(temp_file), str(local_folder / 'test.txt'))
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        exit_code = s3_manage.command_verify(args, s3_client=s3_client)
+        assert exit_code == 1
+
+        captured = capsys.readouterr()
+        assert 'Not uploaded to S3: 1' in captured.out
+
+    # --- Failed index/bucket listing (list and indexupload) ---
+
+    def test_indexupload_listing_client_error_returns_failure(self, capsys, monkeypatch):
+        def raise_client_error(*_args, **_kwargs):
+            raise s3_manage.ClientError(
+                {'Error': {'Code': 'AccessDenied', 'Message': 'Access Denied'}},
+                'ListObjectsV2'
+            )
+
+        monkeypatch.setattr(s3_manage, 'paginate_s3_objects', raise_client_error)
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'url_prefix': 'https://example.com/'
+        })()
+
+        assert s3_manage.command_indexupload(args, s3_client=object()) == 1
+
+    def test_indexupload_listing_unexpected_error_returns_failure(self, capsys, monkeypatch):
+        def raise_error(*_args, **_kwargs):
+            raise RuntimeError('simulated listing failure')
+
+        monkeypatch.setattr(s3_manage, 'paginate_s3_objects', raise_error)
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'url_prefix': 'https://example.com/'
+        })()
+
+        assert s3_manage.command_indexupload(args, s3_client=object()) == 1
+
+    def test_list_listing_unexpected_error_returns_failure(self, capsys, monkeypatch):
+        def raise_error(*_args, **_kwargs):
+            raise RuntimeError('simulated listing failure')
+
+        monkeypatch.setattr(s3_manage, 'paginate_s3_objects', raise_error)
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'max_keys': None,
+            'paths_only': False
+        })()
+
+        assert s3_manage.command_list(args, s3_client=object()) == 1
+
+    # --- Missing local folder ---
+
+    @mock_aws
+    def test_upload_missing_local_folder_returns_failure(self, temp_dir, capsys):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(temp_dir / 'does-not-exist'),
+            'dry_run': False,
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        exit_code = s3_manage.command_upload(args, s3_client=s3_client)
+        assert exit_code == 1
+        captured = capsys.readouterr()
+        assert '[ERROR]' in captured.out
+
+    @mock_aws
+    def test_verify_missing_local_folder_returns_failure(self, temp_dir, capsys):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(temp_dir / 'does-not-exist'),
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        exit_code = s3_manage.command_verify(args, s3_client=s3_client)
+        assert exit_code == 1
+        captured = capsys.readouterr()
+        assert '[ERROR]' in captured.out
+
+    @mock_aws
+    def test_upload_existing_empty_folder_still_succeeds(self, temp_dir, capsys):
+        """An existing-but-empty directory is a legitimate no-op, not a failure."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        local_folder = temp_dir / 'uploads'
+        local_folder.mkdir()
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'dry_run': False,
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        assert s3_manage.command_upload(args, s3_client=s3_client) == 0
+
+
+class TestMainDispatch:
+    """Test that main() propagates each command's return value to sys.exit()."""
+
+    def _upload_argv(self, local_folder):
+        return [
+            's3_manage.py', 'upload',
+            '--account-id', 'acct',
+            '--access-key', 'key',
+            '--secret-key', 'secret',
+            '--bucket-name', 'test-bucket',
+            '--endpoint-url', 'http://127.0.0.1:1',
+            '--local-folder', str(local_folder),
+        ]
+
+    def test_main_exits_zero_on_command_success(self, temp_dir, monkeypatch):
+        monkeypatch.setattr(sys, 'argv', self._upload_argv(temp_dir))
+        monkeypatch.setattr(s3_manage, 'command_upload', lambda args: s3_manage.EXIT_SUCCESS)
+
+        with pytest.raises(SystemExit) as exc_info:
+            s3_manage.main()
+        assert exc_info.value.code == 0
+
+    def test_main_exits_one_on_command_failure(self, temp_dir, monkeypatch):
+        monkeypatch.setattr(sys, 'argv', self._upload_argv(temp_dir))
+        monkeypatch.setattr(s3_manage, 'command_upload', lambda args: s3_manage.EXIT_FAILURE)
+
+        with pytest.raises(SystemExit) as exc_info:
+            s3_manage.main()
+        assert exc_info.value.code == 1
