@@ -189,11 +189,19 @@ namespace bl
                 const auto buffer = crypto::bio_ptr_t::attach( ::BIO_new( ::BIO_s_mem() ) );
                 BL_CHK_CRYPTO_API_NM( buffer );
 
-#if OPENSSL_VERSION_NUMBER >= 0x30000000L
                 /*
-                 * OpenSSL 3.x+: Use EVP_PKEY-based PEM write functions
-                 * First convert RSA to EVP_PKEY
+                 * Private keys are always emitted as PKCS#8 ('-----BEGIN PRIVATE KEY-----' or
+                 * '-----BEGIN ENCRYPTED PRIVATE KEY-----') regardless of the version of OpenSSL
+                 * we are built with, so the emitted format is a property of the library and not
+                 * of the environment which happened to build it
+                 *
+                 * The legacy PKCS#1 format ('-----BEGIN RSA PRIVATE KEY-----') is still accepted
+                 * on read, but it is no longer written; note that its encrypted form derives the
+                 * key with a single MD5 iteration while PKCS#8 uses PBES2
+                 *
+                 * Changing the emitted format is a breaking change and requires a release note
                  */
+
                 auto pkey = crypto::evppkey_ptr_t::attach( ::EVP_PKEY_new() );
                 BL_CHK_CRYPTO_API_NM( pkey );
                 BL_CHK_CRYPTO_API_NM( ::EVP_PKEY_set1_RSA( pkey.get(), &rsaKey -> get() ) );
@@ -202,26 +210,13 @@ namespace bl
                     ::PEM_write_bio_PrivateKey(
                         buffer.get(),
                         pkey.get(),
-                        password.empty() ? nullptr : ::EVP_des_ede3_cbc()       /* Triple DES encryption */,
+                        password.empty() ? nullptr : ::EVP_aes_256_cbc()        /* AES-256 encryption */,
                         nullptr                                                 /* Key data */,
                         0                                                       /* Key length */,
                         nullptr                                                 /* Password callback */,
                         password.empty() ? nullptr : const_cast< char* >( password.c_str() )
                         )
                     );
-#else
-                BL_CHK_CRYPTO_API_NM(
-                    ::PEM_write_bio_RSAPrivateKey(
-                        buffer.get(),
-                        &rsaKey -> get(),
-                        password.empty() ? nullptr : ::EVP_des_ede3_cbc()       /* Triple DES encryption */,
-                        nullptr                                                 /* Key data */,
-                        0                                                       /* Key length */,
-                        nullptr                                                 /* Password callback */,
-                        password.empty() ? nullptr : const_cast< char* >( password.c_str() )
-                        )
-                    );
-#endif
 
                 return getBufferAsString( buffer );
             }
@@ -232,10 +227,17 @@ namespace bl
                 const auto buffer = crypto::bio_ptr_t::attach( ::BIO_new( ::BIO_s_mem() ) );
                 BL_CHK_CRYPTO_API_NM( buffer );
 
-#if OPENSSL_VERSION_NUMBER >= 0x30000000L
                 /*
-                 * OpenSSL 3.x+: Use EVP_PKEY-based PEM write functions
+                 * Public keys are always emitted as SubjectPublicKeyInfo ('-----BEGIN PUBLIC KEY-----')
+                 * regardless of the version of OpenSSL we are built with, so the emitted format is a
+                 * property of the library and not of the environment which happened to build it
+                 *
+                 * The legacy PKCS#1 format ('-----BEGIN RSA PUBLIC KEY-----') is still accepted on
+                 * read, but it is no longer written
+                 *
+                 * Changing the emitted format is a breaking change and requires a release note
                  */
+
                 auto pkey = crypto::evppkey_ptr_t::attach( ::EVP_PKEY_new() );
                 BL_CHK_CRYPTO_API_NM( pkey );
                 BL_CHK_CRYPTO_API_NM( ::EVP_PKEY_set1_RSA( pkey.get(), &rsaKey -> get() ) );
@@ -246,14 +248,6 @@ namespace bl
                         pkey.get()
                         )
                     );
-#else
-                BL_CHK_CRYPTO_API_NM(
-                    ::PEM_write_bio_RSAPublicKey(
-                        buffer.get(),
-                        &rsaKey -> get()
-                        )
-                    );
-#endif
 
                 return getBufferAsString( buffer );
             }
@@ -365,14 +359,7 @@ namespace bl
                 )
                 -> om::ObjPtr< crypto::RsaKey >
             {
-                const auto buffer = crypto::bio_ptr_t::attach(
-                    ::BIO_new_mem_buf(
-                        const_cast< char* >( pemKeyText.c_str() ),
-                        static_cast< int >( pemKeyText.size() )
-                        )
-                    );
-
-                BL_CHK_CRYPTO_API_NM( buffer );
+                const auto buffer = createMemoryBio( pemKeyText );
 
                 auto* passwordBytes = const_cast< char* >( password.c_str() );
                 std::string randomPassword;
@@ -393,11 +380,17 @@ namespace bl
                     passwordBytes = const_cast< char* >( randomPassword.c_str() );
                 }
 
-#if OPENSSL_VERSION_NUMBER >= 0x30000000L
                 /*
-                 * OpenSSL 3.x+: Use EVP_PKEY-based PEM read, then extract RSA
+                 * ::PEM_read_bio_PrivateKey accepts PKCS#8 ('-----BEGIN PRIVATE KEY-----' and
+                 * '-----BEGIN ENCRYPTED PRIVATE KEY-----') as well as the legacy PKCS#1 format
+                 * ('-----BEGIN RSA PRIVATE KEY-----') which older versions of the library used
+                 * to write, so no fallback is required here for any version of OpenSSL
+                 *
+                 * Note that the legacy format must remain readable indefinitely as the keys
+                 * which were persisted in it outlive the toolchain which wrote them
                  */
-                auto pkeyPtr = crypto::evppkey_ptr_t::attach(
+
+                const auto pkeyPtr = crypto::evppkey_ptr_t::attach(
                     ::PEM_read_bio_PrivateKey(
                         buffer.get(),
                         nullptr                 /* EVP_PKEY */,
@@ -407,21 +400,10 @@ namespace bl
                     );
 
                 BL_CHK_CRYPTO_API_NM( pkeyPtr );
+                BL_CHK_CRYPTO_API_NM( ::EVP_PKEY_base_id( pkeyPtr.get() ) == EVP_PKEY_RSA );
 
                 auto rsa = crypto::rsakey_ptr_t::attach( ::EVP_PKEY_get1_RSA( pkeyPtr.get() ) );
                 BL_CHK_CRYPTO_API_NM( rsa );
-#else
-                auto rsa = crypto::rsakey_ptr_t::attach(
-                    ::PEM_read_bio_RSAPrivateKey(
-                        buffer.get(),
-                        nullptr                 /* RSA key */,
-                        nullptr                 /* Password callback */,
-                        passwordBytes
-                        )
-                    );
-
-                BL_CHK_CRYPTO_API_NM( rsa );
-#endif
 
                 return crypto::RsaKey::template createInstance< crypto::RsaKey >( std::move( rsa ) );
             }
@@ -432,15 +414,6 @@ namespace bl
                 )
                 -> om::ObjPtr< crypto::RsaKey >
             {
-                const auto buffer = crypto::bio_ptr_t::attach(
-                    ::BIO_new_mem_buf(
-                        const_cast< char* >( pemKeyText.c_str() ),
-                        static_cast< int >( pemKeyText.size() )
-                        )
-                    );
-
-                BL_CHK_CRYPTO_API_NM( buffer );
-
                 auto* passwordBytes = const_cast< char* >( password.c_str() );
                 std::string randomPassword;
 
@@ -460,35 +433,64 @@ namespace bl
                     passwordBytes = const_cast< char* >( randomPassword.c_str() );
                 }
 
-#if OPENSSL_VERSION_NUMBER >= 0x30000000L
                 /*
-                 * OpenSSL 3.x+: Use EVP_PKEY-based PEM read, then extract RSA
+                 * Public keys are accepted both as SubjectPublicKeyInfo ('-----BEGIN PUBLIC KEY-----')
+                 * and as the legacy PKCS#1 format ('-----BEGIN RSA PUBLIC KEY-----') which older
+                 * versions of the library used to write; the legacy format must remain readable
+                 * indefinitely as the keys which were persisted in it outlive the toolchain which
+                 * wrote them
+                 *
+                 * The first attempt is expected to fail for the legacy format when we are built
+                 * against OpenSSL 1.x where ::PEM_read_bio_PUBKEY only understands the former; for
+                 * OpenSSL 3.x+ it is implemented over the decoder APIs and understands both
+                 *
+                 * A failed attempt leaves entries in the OpenSSL error queue which survive into
+                 * later operations, so the queue must be cleared before the second attempt is made
+                 * or an unrelated failure later on can be reported with a stale reason string
+                 *
+                 * Note that a fresh BIO is created for the second attempt rather than rewinding
+                 * the one which was used for the first
                  */
-                auto pkeyPtr = crypto::evppkey_ptr_t::attach(
-                    ::PEM_read_bio_PUBKEY(
-                        buffer.get(),
-                        nullptr                 /* EVP_PKEY */,
-                        nullptr                 /* Password callback */,
-                        passwordBytes
-                        )
-                    );
 
-                BL_CHK_CRYPTO_API_NM( pkeyPtr );
+                crypto::rsakey_ptr_t rsa;
 
-                auto rsa = crypto::rsakey_ptr_t::attach( ::EVP_PKEY_get1_RSA( pkeyPtr.get() ) );
+                {
+                    const auto buffer = createMemoryBio( pemKeyText );
+
+                    const auto pkeyPtr = crypto::evppkey_ptr_t::attach(
+                        ::PEM_read_bio_PUBKEY(
+                            buffer.get(),
+                            nullptr                 /* EVP_PKEY */,
+                            nullptr                 /* Password callback */,
+                            passwordBytes
+                            )
+                        );
+
+                    if( pkeyPtr )
+                    {
+                        BL_CHK_CRYPTO_API_NM( ::EVP_PKEY_base_id( pkeyPtr.get() ) == EVP_PKEY_RSA );
+
+                        rsa = crypto::rsakey_ptr_t::attach( ::EVP_PKEY_get1_RSA( pkeyPtr.get() ) );
+                    }
+                }
+
+                if( ! rsa )
+                {
+                    BL_CHK_CRYPTO_API_RESET_ERROR();
+
+                    const auto buffer = createMemoryBio( pemKeyText );
+
+                    rsa = crypto::rsakey_ptr_t::attach(
+                        ::PEM_read_bio_RSAPublicKey(
+                            buffer.get(),
+                            nullptr                 /* RSA key */,
+                            nullptr                 /* Password callback */,
+                            passwordBytes
+                            )
+                        );
+                }
+
                 BL_CHK_CRYPTO_API_NM( rsa );
-#else
-                auto rsa = crypto::rsakey_ptr_t::attach(
-                    ::PEM_read_bio_RSAPublicKey(
-                        buffer.get(),
-                        nullptr                 /* RSA key */,
-                        nullptr                 /* Password callback */,
-                        passwordBytes
-                        )
-                    );
-
-                BL_CHK_CRYPTO_API_NM( rsa );
-#endif
 
                 return crypto::RsaKey::template createInstance< crypto::RsaKey >( std::move( rsa ) );
             }
@@ -506,6 +508,20 @@ namespace bl
             }
 
         private:
+
+            static auto createMemoryBio( SAA_in const std::string& pemKeyText ) -> crypto::bio_ptr_t
+            {
+                auto buffer = crypto::bio_ptr_t::attach(
+                    ::BIO_new_mem_buf(
+                        const_cast< char* >( pemKeyText.c_str() ),
+                        static_cast< int >( pemKeyText.size() )
+                        )
+                    );
+
+                BL_CHK_CRYPTO_API_NM( buffer );
+
+                return buffer;
+            }
 
             static void loadRequiredProperty(
                 SAA_in          const std::string&                                          property,

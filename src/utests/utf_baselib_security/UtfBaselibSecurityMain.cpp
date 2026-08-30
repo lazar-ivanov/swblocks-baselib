@@ -24,5 +24,6 @@
 #include "TestBignumBase64Url.h"
 #include "TestRsaSignVerify.h"
 #include "TestCryptoUtils.h"
+#include "TestPemKeyFormats.h"
 #include "TestAuthorizationCacheImpl.h"
 #include "TestAuthorizationCacheRestImpl.h"
