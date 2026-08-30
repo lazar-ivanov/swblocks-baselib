@@ -393,7 +393,7 @@ endif
 
 Starting with devenv7, Windows builds of `utf_baselib_jni` are fully supported alongside Linux and macOS.
 
-**Version gating:** Uses negative filtering pattern (see above). `BL_WIN_JNI_DISABLED` flag set for devenv2-6 on Windows only. Windows enabled by default for devenv7+.
+**Version gating:** Uses negative filtering pattern (see above). The `libjsig` path is selected from the explicit devenv2-6 set (JDK 8 `jre/lib` layout) versus devenv7+ (JDK 25 `lib/server` layout). Windows JNI is devenv7+ only because no `jdk/open-jdk/8/win7-<arch>` dist is published for devenv2-6, so `BL_JNI_ENABLED` stays unset and the JNI targets are filtered out of the build.
 
 **Signal handling differences:**
 - **Unix/Linux/macOS:** POSIX signal handling requires `libjsig` library for signal chaining. Must link against `libjsig.so` (Linux) or `libjsig.dylib` (macOS) with rpath configured.
