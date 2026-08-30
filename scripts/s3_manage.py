@@ -16,12 +16,13 @@
 #
 
 import os
+import re
 import sys
 import argparse
 import boto3
+from boto3.s3.transfer import TransferConfig
 import threading
 import hashlib
-import math
 import stat
 import tempfile
 import time
@@ -36,6 +37,21 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # --- EXIT CODES ---
 EXIT_SUCCESS = 0
 EXIT_FAILURE = 1
+
+# --- CONTENT INTEGRITY ---
+# SHA-256 of the local file, recorded on upload as S3 user metadata (surfaces as
+# x-amz-meta-bl-content-sha256) and preferred over the ETag when verifying.
+CONTENT_SHA256_METADATA_KEY = 'bl-content-sha256'
+
+# Pin the multipart layout so an uploaded object has a reproducible ETag rather
+# than one that depends on the s3transfer defaults of the installed boto3. These
+# values match the current defaults, so objects already in a bucket still verify.
+MULTIPART_THRESHOLD_BYTES = 8 * 1024 * 1024
+MULTIPART_CHUNKSIZE_BYTES = 8 * 1024 * 1024
+TRANSFER_CONFIG = TransferConfig(
+    multipart_threshold=MULTIPART_THRESHOLD_BYTES,
+    multipart_chunksize=MULTIPART_CHUNKSIZE_BYTES,
+)
 
 # --- THREAD SAFE PRINTING ---
 # This lock stops threads from writing over each other
@@ -145,46 +161,56 @@ def paginate_s3_objects(s3_client, bucket_name, prefix=None, max_keys=None):
         if max_keys:
             break
 
-def calculate_chunk_size(file_size, part_count):
-    """
-    Deterministically find the chunk size used for S3 multipart upload.
+# Standard S3 multipart chunk sizes. boto3's 8 MiB default is first so it wins
+# any tie when several sizes are consistent with the same part count.
+_MIB = 1024 * 1024
+_STANDARD_MULTIPART_CHUNK_SIZES = [
+    8 * _MIB,
+    5 * _MIB,
+    16 * _MIB,
+    32 * _MIB,
+    64 * _MIB,
+    128 * _MIB,
+    256 * _MIB,
+    512 * _MIB,
+]
 
-    boto3 uses standard chunk sizes (5MB, 8MB, 16MB, 32MB, 64MB, etc.).
-    This function tests each standard size to find which one produces
-    the expected part count for the given file size.
+# Upper bound on a single read() while hashing a multipart part, so a large
+# chunk size (a single-part ETag uses the whole file as one "chunk") does not
+# pull the entire part into memory at once.
+_ETAG_READ_BLOCK_BYTES = 1024 * 1024
+
+def candidate_chunk_sizes(file_size, part_count):
+    """
+    Return every standard multipart chunk size consistent with a file size and
+    a multipart ETag's part count.
+
+    A uniform chunk size ``C`` splits ``file_size`` bytes into exactly
+    ``part_count`` parts iff ``(part_count - 1) * C < file_size <= part_count * C``
+    (equivalently ``part_count == ceil(file_size / C)``). Part count alone does
+    not identify a single chunk size, so all matches are returned and the caller
+    disambiguates by recomputing the full multipart ETag for each.
 
     Args:
-        file_size (int): Size of file in bytes
-        part_count (int): Number of parts from S3 ETag
+        file_size (int): Size of the local file in bytes
+        part_count (int): Part count parsed from the S3 multipart ETag
 
     Returns:
-        int: Chunk size in bytes, or None if no standard size matches
+        list[int]: Consistent chunk sizes in bytes, most likely first. Empty when
+        ``part_count`` is not positive. A single-part upload has no interior
+        boundary, so the whole file is returned as the only chunk size.
     """
     if part_count <= 0:
-        return None
+        return []
 
-    # Standard boto3 chunk sizes (in order of preference)
-    # boto3 default is 8MB, but can use others based on file size
-    standard_chunk_sizes = [
-        5 * 1024 * 1024,    # 5MB
-        8 * 1024 * 1024,    # 8MB (boto3 default)
-        16 * 1024 * 1024,   # 16MB
-        32 * 1024 * 1024,   # 32MB
-        64 * 1024 * 1024,   # 64MB
-        128 * 1024 * 1024,  # 128MB
-        256 * 1024 * 1024,  # 256MB
-        512 * 1024 * 1024,  # 512MB
+    if part_count == 1:
+        return [max(file_size, 1)]
+
+    return [
+        chunk_size
+        for chunk_size in _STANDARD_MULTIPART_CHUNK_SIZES
+        if (part_count - 1) * chunk_size < file_size <= part_count * chunk_size
     ]
-
-    # Test each standard chunk size to find which produces the expected part count
-    for chunk_size in standard_chunk_sizes:
-        expected_parts = math.ceil(file_size / chunk_size)
-        if expected_parts == part_count:
-            return chunk_size
-
-    # No standard chunk size produces the expected part count
-    # This should never happen with boto3 uploads, but handle gracefully
-    return None
 
 def calculate_s3_etag_simple(file_path):
     """
@@ -208,64 +234,103 @@ def calculate_s3_etag_simple(file_path):
 
     return md5_hash.hexdigest()
 
-def calculate_s3_etag_multipart(file_path, part_count):
+def calculate_file_sha256(file_path):
     """
-    Calculate S3 ETag for a file as if uploaded with multipart.
-
-    This uses the deterministic chunk size from calculate_chunk_size(),
-    then calculates the multipart ETag using S3's algorithm:
-    MD5(concatenated MD5 digests) + "-" + part_count
+    Calculate the SHA-256 of a local file.
 
     Args:
         file_path (str): Absolute path to local file
-        part_count (int): Number of parts used in S3 multipart upload
 
     Returns:
-        str: Multipart ETag in format "xxxxxxxx-N" or None if calculation fails
+        str: SHA-256 digest as lowercase hex (64 characters)
 
     Raises:
         IOError: If file cannot be read
     """
-    # Get file size
-    file_size = os.path.getsize(file_path)
+    sha256_hash = hashlib.sha256()
 
-    # Deterministically find the chunk size used by boto3
-    chunk_size = calculate_chunk_size(file_size, part_count)
+    with open(file_path, 'rb') as f:
+        # Read in 8KB chunks to avoid loading entire file into memory
+        for chunk in iter(lambda: f.read(8192), b''):
+            sha256_hash.update(chunk)
 
-    if chunk_size is None:
-        # No standard chunk size produces the expected part count
-        # This should never happen with boto3 uploads
-        return None
+    return sha256_hash.hexdigest()
 
+def _valid_sha256(value):
+    """Return the lowercase hex digest if value is a well-formed SHA-256, else None."""
+    if value and re.fullmatch(r'[0-9a-fA-F]{64}', value):
+        return value.lower()
+    return None
+
+def _multipart_etag_for_chunk_size(file_path, chunk_size):
+    """
+    Compute S3's multipart ETag for a file assuming a given chunk size.
+
+    S3's algorithm: MD5 each part, concatenate the binary digests, MD5 the
+    concatenation, and append "-<part count>".
+
+    Args:
+        file_path (str): Absolute path to the local file
+        chunk_size (int): Bytes per part (must be positive)
+
+    Returns:
+        tuple: (hex_md5_of_concatenated_digests, part_count). An empty file is
+        treated as a single empty part.
+
+    Raises:
+        IOError: If the file cannot be read
+    """
     md5_digests = []
 
     with open(file_path, 'rb') as f:
-        part_num = 0
         while True:
-            # Read one chunk
-            chunk = f.read(chunk_size)
-            if not chunk:
+            part_md5 = hashlib.md5()
+            remaining = chunk_size
+            while remaining > 0:
+                block = f.read(min(_ETAG_READ_BLOCK_BYTES, remaining))
+                if not block:
+                    break
+                part_md5.update(block)
+                remaining -= len(block)
+            if remaining == chunk_size:
+                # This part consumed no bytes: end of file.
                 break
+            md5_digests.append(part_md5.digest())
 
-            # Calculate MD5 for this chunk
-            chunk_md5 = hashlib.md5(chunk)
-            md5_digests.append(chunk_md5.digest())  # Store binary digest
-            part_num += 1
+    if not md5_digests:
+        md5_digests.append(hashlib.md5(b'').digest())
 
-    # Verify part count matches expectation
-    # This should always match since calculate_chunk_size() is deterministic
-    if part_num != part_count:
-        # This indicates an unexpected error - chunk size calculation was wrong
-        return None
+    return hashlib.md5(b''.join(md5_digests)).hexdigest(), len(md5_digests)
 
-    # Concatenate all MD5 digests
-    concatenated_md5 = b''.join(md5_digests)
+def multipart_etag_matches(file_path, etag_hash, part_count):
+    """
+    Return True if the local file reproduces a multipart ETag exactly.
 
-    # Calculate MD5 of concatenated digests
-    final_md5 = hashlib.md5(concatenated_md5)
+    The chunk size used for a multipart upload cannot be recovered from the part
+    count alone, so every standard chunk size consistent with the file size and
+    part count is tried and the full multipart ETag is recomputed for each. The
+    match must be exact; a chunk size that merely reproduces the part count is
+    not accepted.
 
-    # Return in S3 multipart format: hash-partcount
-    return f"{final_md5.hexdigest()}-{part_count}"
+    Args:
+        file_path (str): Absolute path to the local file
+        etag_hash (str): Hash portion of the S3 ETag (before the "-")
+        part_count (int): Part count parsed from the S3 ETag
+
+    Returns:
+        bool: True on an exact match for some consistent chunk size, else False.
+
+    Raises:
+        IOError: If the file cannot be read
+    """
+    file_size = os.path.getsize(file_path)
+
+    for chunk_size in candidate_chunk_sizes(file_size, part_count):
+        local_hash, local_parts = _multipart_etag_for_chunk_size(file_path, chunk_size)
+        if local_parts == part_count and local_hash.lower() == etag_hash.lower():
+            return True
+
+    return False
 
 def verify_worker(s3_client, bucket_name, file_path, relative_path):
     """
@@ -303,6 +368,13 @@ def verify_worker(s3_client, bucket_name, file_path, relative_path):
         # STEP 2: Extract S3 ETag (remove surrounding quotes if present)
         s3_etag = response['ETag'].strip('"')
 
+        # STEP 2b: Prefer a recorded SHA-256 of the content over the ETag
+        remote_sha256 = _valid_sha256(response.get('Metadata', {}).get(CONTENT_SHA256_METADATA_KEY))
+        if remote_sha256 is not None:
+            if calculate_file_sha256(file_path) == remote_sha256:
+                return (f"[VERIFIED] {relative_path}", "verified")
+            return (f"[DIFFERENT] {relative_path} (SHA-256 mismatch)", "different")
+
         # STEP 3: Detect if multipart upload (contains hyphen)
         if '-' in s3_etag:
             # Multipart ETag format: "xxxxxxxx-N" where N is part count
@@ -316,21 +388,17 @@ def verify_worker(s3_client, bucket_name, file_path, relative_path):
             except ValueError:
                 return (f"[ERROR] {relative_path} - Invalid part count in ETag: {s3_etag}", "error")
 
-            # STEP 4: Calculate local multipart ETag
-            local_etag = calculate_s3_etag_multipart(file_path, part_count)
+            # STEP 4: Reproduce the multipart ETag exactly (no chunk-size guessing)
+            if multipart_etag_matches(file_path, etag_hash, part_count):
+                return (f"[VERIFIED] {relative_path}", "verified")
+            return (f"[DIFFERENT] {relative_path} (S3: {s3_etag}, Local: multipart mismatch)", "different")
 
-            if local_etag is None:
-                return (f"[ERROR] {relative_path} - Failed to calculate multipart ETag", "error")
-        else:
-            # Simple upload (no multipart)
-            # STEP 5: Calculate local simple ETag
-            local_etag = calculate_s3_etag_simple(file_path)
-            etag_hash = s3_etag
+        # Simple upload (no multipart)
+        # STEP 5: Calculate local simple ETag
+        local_etag = calculate_s3_etag_simple(file_path)
 
         # STEP 6: Compare ETags (case-insensitive)
-        local_etag_hash = local_etag.split('-')[0] if '-' in local_etag else local_etag
-
-        if local_etag_hash.lower() == etag_hash.lower():
+        if local_etag.lower() == s3_etag.lower():
             return (f"[VERIFIED] {relative_path}", "verified")
         else:
             return (f"[DIFFERENT] {relative_path} (S3: {s3_etag}, Local: {local_etag})", "different")
@@ -488,12 +556,17 @@ def ensure_parent_dirs_nofollow(root, dest):
             raise UnsafeDownloadPathError(f"destination parent is not a real directory: {current}")
 
 
-def _verify_download_file(file_path, s3_etag, s3_size):
+def _verify_download_file(file_path, s3_etag, s3_size, remote_sha256=None):
     """Return (category, details) after verifying a local file against S3 metadata."""
     local_size = os.path.getsize(file_path)
     if local_size != s3_size:
         size_diff = f"S3: {format_size(s3_size)}, Local: {format_size(local_size)}"
         return "different", f"size mismatch: {size_diff}"
+
+    if remote_sha256 is not None:
+        if calculate_file_sha256(file_path) == remote_sha256:
+            return "verified", ""
+        return "different", "SHA-256 mismatch"
 
     if '-' in s3_etag:
         etag_parts = s3_etag.split('-')
@@ -503,15 +576,12 @@ def _verify_download_file(file_path, s3_etag, s3_size):
             part_count = int(etag_parts[1])
         except ValueError:
             return "error", f"Invalid part count in ETag: {s3_etag}"
-        local_etag = calculate_s3_etag_multipart(file_path, part_count)
-        if local_etag is None:
-            return "error", "Failed to calculate multipart ETag"
-    else:
-        local_etag = calculate_s3_etag_simple(file_path)
+        if multipart_etag_matches(file_path, etag_parts[0], part_count):
+            return "verified", ""
+        return "different", f"S3: {s3_etag}, Local: multipart mismatch"
 
-    local_hash = local_etag.split('-')[0] if '-' in local_etag else local_etag
-    s3_hash = s3_etag.split('-')[0] if '-' in s3_etag else s3_etag
-    if local_hash.lower() == s3_hash.lower():
+    local_etag = calculate_s3_etag_simple(file_path)
+    if local_etag.lower() == s3_etag.lower():
         return "verified", ""
     return "different", f"S3: {s3_etag}, Local: {local_etag}"
 
@@ -546,6 +616,7 @@ def download_worker(s3_client, bucket_name, s3_key, local_folder, dry_run=False)
 
         s3_etag = response['ETag'].strip('"')
         s3_size = response['ContentLength']
+        remote_sha256 = _valid_sha256(response.get('Metadata', {}).get(CONTENT_SHA256_METADATA_KEY))
 
         if is_folder_marker:
             if s3_size == 0:
@@ -557,7 +628,7 @@ def download_worker(s3_client, bucket_name, s3_key, local_folder, dry_run=False)
         local_stat = lstat_walk_parents(root, local_path)
 
         if local_stat is not None:
-            category, details = _verify_download_file(local_path, s3_etag, s3_size)
+            category, details = _verify_download_file(local_path, s3_etag, s3_size, remote_sha256)
             if category == "verified":
                 return (f"[VERIFIED] {s3_key} ({format_size(s3_size)})", 0, "verified")
             if category == "different":
@@ -588,7 +659,7 @@ def download_worker(s3_client, bucket_name, s3_key, local_folder, dry_run=False)
                 return (f"[ERROR] {s3_key} - Download failed: {str(e)}", 0, "error")
 
             try:
-                category, details = _verify_download_file(tmp_path, s3_etag, s3_size)
+                category, details = _verify_download_file(tmp_path, s3_etag, s3_size, remote_sha256)
             except (IOError, OSError) as e:
                 return (f"[DOWNLOADED] {s3_key} -> [ERROR] (verification failed: {str(e)})", 0, "error")
 
@@ -633,8 +704,12 @@ def file_exists_in_bucket(s3_client, bucket, key):
         # If it's another error (e.g., 403 Forbidden), re-raise it
         raise e
 
-def upload_worker(s3_client, bucket_name, file_path, relative_path, dry_run=False):
+def upload_worker(s3_client, bucket_name, file_path, relative_path, dry_run=False, force=False):
     """Handles logic for skipping or uploading a single file.
+
+    Args:
+        force (bool): Re-upload even if the key already exists (repairs a bad
+            recorded checksum, backfills checksums onto older objects).
 
     Returns:
         tuple: (status_message, size_bytes, status_category)
@@ -643,8 +718,8 @@ def upload_worker(s3_client, bucket_name, file_path, relative_path, dry_run=Fals
         - status_category (str): One of: "skipped", "uploaded", "failure"
     """
     try:
-        # 1. CHECK IF EXISTS
-        if file_exists_in_bucket(s3_client, bucket_name, relative_path):
+        # 1. CHECK IF EXISTS (unless --force re-uploads regardless)
+        if not force and file_exists_in_bucket(s3_client, bucket_name, relative_path):
             return (f"[SKIPPED]  {relative_path} (Already exists)", 0, "skipped")
 
         # 2. ANNOUNCE START
@@ -652,7 +727,8 @@ def upload_worker(s3_client, bucket_name, file_path, relative_path, dry_run=Fals
         safe_print(f"[STARTING] {relative_path}...")
 
         # 3. CALCULATE SIZE (for report)
-        size_bytes = os.path.getsize(file_path)
+        st_before = os.stat(file_path)
+        size_bytes = st_before.st_size
         size_gb = size_bytes / (1024 * 1024 * 1024)
 
         # 4. UPLOAD or DRY-RUN
@@ -660,8 +736,24 @@ def upload_worker(s3_client, bucket_name, file_path, relative_path, dry_run=Fals
             # Dry-run: skip actual upload, just report what would happen
             return (f"[DRY-RUN]  {relative_path}  --  {size_gb:.2f} GB (would upload)", size_bytes, "uploaded")
         else:
-            # Actual upload
-            s3_client.upload_file(file_path, bucket_name, relative_path)
+            # Actual upload; record the content SHA-256 and pin the multipart layout
+            extra_args = {'Metadata': {CONTENT_SHA256_METADATA_KEY: calculate_file_sha256(file_path)}}
+            s3_client.upload_file(
+                file_path, bucket_name, relative_path,
+                ExtraArgs=extra_args, Config=TRANSFER_CONFIG,
+            )
+
+            # The SHA-256 was read separately from the body s3transfer uploaded. If the
+            # file changed in between, the recorded checksum is a lie and the object is
+            # torn - remove it (best effort) and fail rather than leave it stranded.
+            st_after = os.stat(file_path)
+            if (st_after.st_size, st_after.st_mtime_ns) != (st_before.st_size, st_before.st_mtime_ns):
+                try:
+                    s3_client.delete_object(Bucket=bucket_name, Key=relative_path)
+                except Exception:
+                    pass
+                return (f"[FAILURE]  {relative_path} - file changed during upload", 0, "failure")
+
             return (f"[SUCCESS]  {relative_path}  --  {size_gb:.2f} GB", size_bytes, "uploaded")
 
     except Exception as e:
@@ -711,6 +803,8 @@ def command_upload(args, s3_client=None):
         print(f"[ERROR] Local folder not found or not a directory: {args.local_folder}")
         return EXIT_FAILURE
 
+    force = getattr(args, 'force', False)
+
     files_to_upload = []
     total_size_bytes = 0
 
@@ -755,7 +849,7 @@ def command_upload(args, s3_client=None):
     # 2. Execute
     with ThreadPoolExecutor(max_workers=args.max_threads) as executor:
         future_to_file = {
-            executor.submit(upload_worker, s3_client, args.bucket_name, f[0], f[1], args.dry_run): f[1]
+            executor.submit(upload_worker, s3_client, args.bucket_name, f[0], f[1], args.dry_run, force): f[1]
             for f in files_to_upload
         }
 
@@ -1290,11 +1384,13 @@ def command_indexupload(args, s3_client=None):
         print("Uploading index files to bucket root...")
 
         try:
-            s3_client.upload_file(html_path, args.bucket_name, 'index.html')
-            print("[SUCCESS] index.html uploaded")
-
-            s3_client.upload_file(md_path, args.bucket_name, 'index.md')
-            print("[SUCCESS] index.md uploaded")
+            for local_path, key in ((html_path, 'index.html'), (md_path, 'index.md')):
+                s3_client.upload_file(
+                    local_path, args.bucket_name, key,
+                    ExtraArgs={'Metadata': {CONTENT_SHA256_METADATA_KEY: calculate_file_sha256(local_path)}},
+                    Config=TRANSFER_CONFIG,
+                )
+                print(f"[SUCCESS] {key} uploaded")
 
             print("\nIndex files uploaded successfully!")
         except Exception as e:
@@ -1547,6 +1643,9 @@ def main():
                                help='Show what would be uploaded without uploading')
     upload_parser.add_argument('--allow-hidden-files', action='store_true',
                                help='Include hidden files and directories (those starting with ".")')
+    upload_parser.add_argument('--force', action='store_true',
+                               help='Re-upload objects that already exist (repairs a bad recorded '
+                                    'checksum and backfills checksums onto older objects)')
 
     # Add 'list' subcommand
     list_parser = subparsers.add_parser(

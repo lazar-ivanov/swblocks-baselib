@@ -7,7 +7,7 @@ A command-line tool for managing S3-compatible object storage with support for u
 `s3_manage.py` is a Python script that provides five main commands for working with S3-compatible storage:
 - **upload**: Upload local files to an S3 bucket with parallel execution and smart skip logic
 - **list**: List objects in an S3 bucket with filtering and pagination
-- **verify**: Verify local files against S3 objects by comparing checksums (ETags)
+- **verify**: Verify local files against S3 objects by comparing a recorded SHA-256 checksum (falling back to the ETag for objects that have none)
 - **indexupload**: Generate HTML and Markdown index files listing bucket contents with download links
 - **download**: Download S3 objects to local folder with parallel execution and automatic verification
 
@@ -56,7 +56,8 @@ python scripts/s3_manage.py upload \
   --local-folder <path> \
   [--max-threads <n>] \
   [--dry-run] \
-  [--allow-hidden-files]
+  [--allow-hidden-files] \
+  [--force]
 ```
 
 #### Arguments
@@ -67,10 +68,14 @@ python scripts/s3_manage.py upload \
 | `--max-threads N` | No | 3 | Number of parallel upload threads |
 | `--dry-run` | No | False | Show what would be uploaded without actually uploading |
 | `--allow-hidden-files` | No | False | Include hidden files and directories (starting with `.`) |
+| `--force` | No | False | Re-upload objects that already exist instead of skipping them |
 
 #### Features
 
-- **Smart Skip Logic**: Automatically skips files that already exist in S3
+- **Smart Skip Logic**: Automatically skips files that already exist in S3 (unless `--force`)
+- **Content Checksum**: Records the file's SHA-256 as object metadata (`x-amz-meta-bl-content-sha256`) and pins the multipart layout (8 MiB threshold and chunk size) so the object has a reproducible ETag; `verify` and `download` prefer this checksum
+- **Re-upload / Repair (`--force`)**: Ignores the skip check and re-uploads. Use it to backfill a `bl-content-sha256` onto objects uploaded before v1.6, or to repair an object whose recorded checksum is wrong (see the caveat below)
+- **Torn-upload Guard**: The checksum is read from the file in a separate pass from the upload. The tool records the file's size and modification time before and after the upload; if either changed, the object is treated as torn — it is deleted (best effort) and the file is reported as `[FAILURE]`. A change that preserves *both* size and nanosecond mtime is not detected, so do not rewrite files while `upload` is running
 - **Parallel Uploads**: Uses ThreadPoolExecutor for concurrent uploads (configurable)
 - **Hidden File Filtering**: By default, skips hidden files and directories (starting with `.`)
 - **Dry-Run Mode**: Preview what would be uploaded without making changes
@@ -271,7 +276,10 @@ Total: 10 objects, 45.67 KB
 
 ### 3. verify - Verify Files Against S3
 
-Verify that local files match their S3 counterparts by comparing ETags (checksums). This command is useful for ensuring upload integrity or detecting local modifications.
+Verify that local files match their S3 counterparts. Objects uploaded by this tool carry a
+SHA-256 of their content in metadata and are verified against it; other objects fall back to
+an ETag comparison. This command is useful for ensuring upload integrity or detecting local
+modifications.
 
 #### Usage
 
@@ -297,8 +305,8 @@ python scripts/s3_manage.py verify \
 
 #### Features
 
-- **100% Accurate ETag Matching**: Uses deterministic algorithm to calculate ETags matching S3's method
-- **Multipart Upload Support**: Correctly handles files uploaded via multipart (large files)
+- **SHA-256 Content Verification**: For objects uploaded by this tool, compares a SHA-256 of the local content against the value recorded in object metadata
+- **ETag Fallback**: For objects with no recorded checksum, compares against the S3 ETag; multipart ETags are reproduced by trying each standard chunk size and requiring an exact match (the chunk size is never inferred from the part count alone)
 - **Parallel Verification**: Uses ThreadPoolExecutor for concurrent verification
 - **Hidden File Filtering**: By default, skips hidden files and directories (starting with `.`)
 - **Detailed Status Reporting**: Four verification states (VERIFIED, DIFFERENT, NOT UPLOADED, ERROR)
@@ -306,31 +314,36 @@ python scripts/s3_manage.py verify \
 - **Comprehensive Summary**: Shows counts for all verification categories and verify speed
 - **Speed Measurement**: Automatically calculates and displays verification speed based on all processed files with auto-adapting units (B/s, KB/s, MB/s, GB/s, TB/s)
 
-#### ETag Calculation Algorithm
+#### Verification Algorithm
 
-The verify command accurately calculates ETags for both simple and multipart uploads:
+**Recorded SHA-256 (preferred):**
+- When the object has an `x-amz-meta-bl-content-sha256` value (written by this tool's
+  `upload` command), `verify`/`download` compute the SHA-256 of the local file and require
+  an exact match. A well-formed but non-matching value is reported as `[DIFFERENT]`; a
+  malformed value is ignored and the ETag fallback is used.
 
-**Simple Uploads (< 8MB):**
-- ETag = MD5 hash of file content
-- Format: `xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` (32 hex chars, no hyphen)
+**ETag fallback (objects with no recorded checksum):**
 
-**Multipart Uploads (>= 8MB):**
-- boto3 automatically uses multipart for large files
-- Default chunk size: 8MB (can be 5MB, 16MB, 32MB, 64MB, 128MB, 256MB, 512MB)
-- Algorithm:
-  1. Deterministically find chunk size by testing standard sizes against file size and part count
-  2. Split file into chunks
-  3. Calculate MD5 for each chunk
-  4. Concatenate all MD5 digests (binary)
-  5. Calculate MD5 of concatenated digests
-  6. Format: `xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-N` (hash + hyphen + part count)
+*Simple uploads (< 8 MiB):*
+- ETag = MD5 of the file content; format `xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` (32 hex chars, no hyphen).
+
+*Multipart uploads (>= 8 MiB):*
+- The chunk size cannot be recovered from the part count alone (several standard sizes can
+  produce the same count), so the tool tries every standard size — 5, 8, 16, 32, 64, 128,
+  256, 512 MiB — that is consistent with the file size and part count, computes the full
+  multipart ETag for each (`MD5` per chunk -> concatenate the binary digests -> `MD5` of the
+  concatenation -> `hash-N`), and reports `[VERIFIED]` only on an exact match. If no
+  standard size reproduces the ETag (for example an object uploaded elsewhere with a
+  non-standard chunk size), it is reported as `[DIFFERENT]`.
+- This tool's own uploads pin an 8 MiB threshold and chunk size, so their multipart ETags
+  are always reproducible.
 
 #### Verification States
 
 | Status | Description | Exit Code |
 |--------|-------------|-----------|
-| `[VERIFIED]` | File matches S3 exactly (ETag match) | 0 |
-| `[DIFFERENT]` | File exists in S3 but ETag differs (modified) | 1 |
+| `[VERIFIED]` | File matches S3 exactly (SHA-256 or ETag match) | 0 |
+| `[DIFFERENT]` | File exists in S3 but cannot be confirmed to match: content actually differs; or, with no recorded `bl-content-sha256`, the object was uploaded elsewhere with a non-standard multipart chunk size, or is SSE-KMS/SSE-C encrypted, or was created by `CopyObject` — in those cases the ETag is not a content MD5 and always reads as `[DIFFERENT]` (re-upload with `--force` to record a checksum) | 1 |
 | `[NOT UPLOADED]` | File does not exist in S3 | 1 |
 | `[ERROR]` | Verification error (permissions, network, etc.) | 1 |
 
@@ -674,7 +687,7 @@ python scripts/s3_manage.py download \
 - **Smart Download Logic**: Downloads missing files, verifies existing files without re-downloading
 - **Secure Path Preflight**: Validates every listed key and its destination namespace before creating the root or starting workers
 - **Prefix as Filter Only**: Local paths always match full bucket structure (prefix doesn't act as new root)
-- **Automatic Verification**: All files verified using ETag comparison (same as verify command)
+- **Automatic Verification**: Every file is verified against its recorded SHA-256, or the ETag when there is none (same as the verify command)
 - **Atomic Verified Publish**: Downloads to a unique private temporary file, verifies it, then publishes it with an atomic replace
 - **Parallel Execution**: Uses ThreadPoolExecutor for concurrent downloads
 - **Dry-Run Mode**: Runs the same key and collision preflight without making changes
@@ -767,7 +780,7 @@ Local folder: ./downloads
 [VERIFIED] builds/2024/app-v1.0.tar.gz (45.23 MB)
 [DOWNLOADING] builds/2024/app-v1.1.tar.gz (50.12 MB)...
 [DOWNLOADED] builds/2024/app-v1.1.tar.gz (50.12 MB) → [VERIFIED]
-[DIFFERENT] builds/2024/app-v1.2.tar.gz (S3: abc123def456-3, Local: 789abc123def-3)
+[DIFFERENT] builds/2024/app-v1.2.tar.gz (SHA-256 mismatch)
 
 All operations complete!
 
@@ -990,6 +1003,7 @@ All commands handle errors gracefully and provide clear error messages:
 - **Permission denied:** Reported as `[FAILURE]`, counted in the `Failed:` summary line, exits with code 1
 - **Network error:** Reported as `[FAILURE]` with details, counted in the `Failed:` summary line, exits with code 1
 - **S3 API error:** Reported as `[FAILURE]` with error code and message, counted in the `Failed:` summary line, exits with code 1
+- **File changed during upload:** Size or modification time differed before vs. after the upload — the object is deleted (best effort) and reported as `[FAILURE]`, exits with code 1
 
 ### List Errors
 
@@ -1004,7 +1018,8 @@ All commands handle errors gracefully and provide clear error messages:
 - **File not in S3:** Reported as `[NOT UPLOADED]`, exits with code 1
 - **File read error:** Reported as `[ERROR]` with details, exits with code 1
 - **S3 API error:** Reported as `[ERROR]` with error code, exits with code 1
-- **ETag calculation failure:** Reported as `[ERROR]` (rare), exits with code 1
+- **Malformed S3 ETag:** Reported as `[ERROR]` (rare), exits with code 1
+- **Multipart ETag not reproducible by any standard chunk size:** Reported as `[DIFFERENT]`, exits with code 1
 
 ### IndexUpload Errors
 
@@ -1026,7 +1041,8 @@ All commands handle errors gracefully and provide clear error messages:
 - **Permission denied (local):** Reported as `[ERROR]` (cannot create directory or write file)
 - **Disk full:** Reported as `[ERROR]` during download
 - **Network error:** Reported as `[ERROR]` with details
-- **ETag calculation failure:** Reported as `[ERROR]` (rare)
+- **Malformed S3 ETag:** Reported as `[ERROR]` (rare)
+- **SHA-256 or multipart-ETag mismatch:** Reported as `[DIFFERENT]`, local file kept, exits with code 1
 
 ---
 
@@ -1120,8 +1136,8 @@ pip3 install boto3
 
 **Solution:** This can happen if:
 1. File was modified locally after upload
-2. File was uploaded with different tool (different chunk size)
-3. S3 object was replaced (check last modified date with `list` command)
+2. S3 object was replaced (check last modified date with `list` command)
+3. The object has no recorded `bl-content-sha256` and its ETag is not a content MD5 — it was uploaded by another tool with a non-standard multipart chunk size, or it is SSE-KMS/SSE-C encrypted, or it was produced by `CopyObject`. Re-upload it with `upload --force` to record a checksum.
 
 ### Issue: Upload is very slow
 
@@ -1214,6 +1230,8 @@ python scripts/s3_manage.py upload \
 - **v1.3**: Added indexupload command to generate HTML and Markdown index files with download links
 - **v1.4**: Added download command with parallel execution, automatic verification, and intelligent handling of existing files
 - **v1.5**: Added speed measurement to upload, download, and verify commands with auto-adapting units (B/s to TB/s)
+- **v1.6**: `upload` records a SHA-256 of each file in object metadata and pins the multipart layout (8 MiB); `verify`/`download` prefer that checksum and no longer infer the multipart chunk size from the part count
+- **v1.7**: Added `upload --force` (re-upload / repair / checksum backfill) and a torn-upload guard that fails and removes an object whose file changed mid-upload; multipart-ETag verification now hashes each part with a bounded read instead of loading a whole part into memory
 
 ---
 

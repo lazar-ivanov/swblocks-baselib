@@ -22,7 +22,7 @@ Tests pure functions, ETag calculation, index generation, and worker functions
 following the same patterns as test_bl_tool_unit.py.
 
 Test Organization:
-- Phase 1: Pure Functions (TestFormatting, TestChunkSize, TestETagSimple, TestETagMultipart, TestIndexGeneration)
+- Phase 1: Pure Functions (TestFormatting, TestCandidateChunkSizes, TestETagSimple, TestMultipartEtagMatches, TestIndexGeneration)
 - Phase 2: Worker Functions (TestFileExistsInBucket, TestUploadWorker, TestVerifyWorker, TestDownloadWorker)
 """
 
@@ -30,12 +30,16 @@ import pytest
 import sys
 import os
 import shutil
+import hashlib
+import tracemalloc
 from pathlib import Path
 
 # Add scripts directory to path to import s3_manage
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import s3_manage
+
+MIB = 1024 * 1024
 
 
 # ====================================================================================
@@ -131,66 +135,53 @@ class TestFormatDuration:
         assert s3_manage.format_duration(7200) == "2.00 hours"
 
 
-class TestChunkSize:
-    """Test calculate_chunk_size() function for multipart upload chunk size determination."""
+class TestCandidateChunkSizes:
+    """Test candidate_chunk_sizes() - every standard chunk size consistent with a part count."""
 
-    def test_calculate_chunk_size_5mb(self):
-        """Test chunk size calculation for 5MB chunks."""
-        # 50 MB file with 10 parts = 5 MB chunks
-        file_size = 50 * 1024 * 1024
-        part_count = 10
-        assert s3_manage.calculate_chunk_size(file_size, part_count) == 5 * 1024 * 1024
+    def test_exact_multiple_5mb(self):
+        """50 MiB in 10 parts is reproducible only by 5 MiB chunks."""
+        assert s3_manage.candidate_chunk_sizes(50 * MIB, 10) == [5 * MIB]
 
-    def test_calculate_chunk_size_8mb_default(self):
-        """Test chunk size calculation for 8MB chunks (boto3 default)."""
-        # 80 MB file with 10 parts = 8 MB chunks
-        file_size = 80 * 1024 * 1024
-        part_count = 10
-        assert s3_manage.calculate_chunk_size(file_size, part_count) == 8 * 1024 * 1024
+    def test_exact_multiple_8mb(self):
+        """80 MiB in 10 parts is reproducible only by 8 MiB chunks."""
+        assert s3_manage.candidate_chunk_sizes(80 * MIB, 10) == [8 * MIB]
 
-    def test_calculate_chunk_size_16mb(self):
-        """Test chunk size calculation for 16MB chunks."""
-        # 160 MB file with 10 parts = 16 MB chunks
-        file_size = 160 * 1024 * 1024
-        part_count = 10
-        assert s3_manage.calculate_chunk_size(file_size, part_count) == 16 * 1024 * 1024
+    def test_exact_multiple_128mb(self):
+        """5 GiB in 40 parts is reproducible only by 128 MiB chunks."""
+        assert s3_manage.candidate_chunk_sizes(5 * 1024 * MIB, 40) == [128 * MIB]
 
-    def test_calculate_chunk_size_32mb(self):
-        """Test chunk size calculation for 32MB chunks."""
-        # 320 MB file with 10 parts = 32 MB chunks
-        file_size = 320 * 1024 * 1024
-        part_count = 10
-        assert s3_manage.calculate_chunk_size(file_size, part_count) == 32 * 1024 * 1024
+    def test_no_standard_size_matches(self):
+        """100 MiB in 11 parts matches no standard chunk size."""
+        assert s3_manage.candidate_chunk_sizes(100 * MIB, 11) == []
 
-    def test_calculate_chunk_size_64mb(self):
-        """Test chunk size calculation for 64MB chunks."""
-        # 640 MB file with 10 parts = 64 MB chunks
-        file_size = 640 * 1024 * 1024
-        part_count = 10
-        assert s3_manage.calculate_chunk_size(file_size, part_count) == 64 * 1024 * 1024
+    def test_non_positive_part_count(self):
+        """A non-positive part count yields no candidates."""
+        assert s3_manage.candidate_chunk_sizes(100 * MIB, 0) == []
+        assert s3_manage.candidate_chunk_sizes(100 * MIB, -1) == []
 
-    def test_calculate_chunk_size_no_match(self):
-        """Test chunk size calculation when no standard size matches."""
-        # Non-standard part count that doesn't match any standard chunk size
-        # 100 MB with 11 parts - no standard chunk size produces exactly 11 parts
-        file_size = 100 * 1024 * 1024
-        part_count = 11
-        assert s3_manage.calculate_chunk_size(file_size, part_count) is None
+    def test_ambiguous_part_count_returns_all_matches_8mb_first(self):
+        """F-05: a 9.5 MiB / 2-part object is consistent with both 5 MiB and 8 MiB chunks.
 
-    def test_calculate_chunk_size_zero_parts(self):
-        """Test chunk size calculation with zero parts."""
-        file_size = 100 * 1024 * 1024
-        part_count = 0
-        assert s3_manage.calculate_chunk_size(file_size, part_count) is None
+        The old calculate_chunk_size() returned 5 MiB (first in its list) and computed the
+        wrong ETag. The candidate list must contain both, with boto3's 8 MiB default first.
+        """
+        candidates = s3_manage.candidate_chunk_sizes(9_961_472, 2)
+        assert set(candidates) == {5 * MIB, 8 * MIB}
+        assert candidates[0] == 8 * MIB
 
-    def test_calculate_chunk_size_large_file(self):
-        """Test chunk size calculation for large files."""
-        # 5 GB file with 40 parts = 128 MB chunks
-        # ceil(5GB / 128MB) = ceil(40) = 40 parts
-        file_size = 5 * 1024 * 1024 * 1024
-        part_count = 40
-        result = s3_manage.calculate_chunk_size(file_size, part_count)
-        assert result == 128 * 1024 * 1024
+    def test_single_part_empty_file(self):
+        """A single-part upload has no interior boundary; an empty file maps to one chunk."""
+        assert s3_manage.candidate_chunk_sizes(0, 1) == [1]
+
+    def test_single_part_small_file(self):
+        """A single-part upload returns the whole file as the only chunk size."""
+        assert s3_manage.candidate_chunk_sizes(3 * MIB, 1) == [3 * MIB]
+
+    def test_single_part_beyond_old_512mib_ceiling(self):
+        """The old calculate_chunk_size() capped at 512 MiB and returned None (-> [ERROR])
+        for a larger single-part object; the size-based rule now handles any size."""
+        assert s3_manage.candidate_chunk_sizes(600 * MIB, 1) == [600 * MIB]
+        assert s3_manage.candidate_chunk_sizes(5 * 1024 * MIB, 1) == [5 * 1024 * MIB]
 
 
 class TestETagSimple:
@@ -325,257 +316,122 @@ class TestETagSimple:
         assert all(c in '0123456789abcdef' for c in result)
 
 
-class TestETagMultipart:
-    """Test calculate_s3_etag_multipart() function for multipart ETag calculation."""
+class TestMultipartEtagMatches:
+    """Test multipart_etag_matches() - exact multipart-ETag reproduction, never guessing."""
 
-    def test_etag_multipart_5mb_chunks(self, temp_dir):
-        """Test multipart ETag with 5MB chunks."""
-        # Create 50 MB file
-        test_file = temp_dir / "50mb.bin"
-        test_file.write_bytes(b"x" * (50 * 1024 * 1024))
+    @staticmethod
+    def _reference_multipart_hash(data, chunk_size):
+        """Independent oracle for S3's multipart-ETag hash over in-memory bytes."""
+        digests = [
+            hashlib.md5(data[offset:offset + chunk_size]).digest()
+            for offset in range(0, max(len(data), 1), chunk_size)
+        ]
+        return hashlib.md5(b"".join(digests)).hexdigest()
 
-        # 50 MB / 10 parts = 5 MB chunks
-        result = s3_manage.calculate_s3_etag_multipart(str(test_file), 10)
+    def test_matches_actual_8mb_chunking(self, temp_dir):
+        """A 24 MiB / 3-part object chunked at 8 MiB verifies against its true ETag."""
+        data = b"x" * (24 * MIB)
+        test_file = temp_dir / "24mb.bin"
+        test_file.write_bytes(data)
 
-        assert result is not None
-        assert "-" in result
-        etag_hash, part_count = result.split("-")
-        assert len(etag_hash) == 32
-        assert part_count == "10"
+        expected = self._reference_multipart_hash(data, 8 * MIB)
+        assert s3_manage.multipart_etag_matches(str(test_file), expected, 3) is True
 
-    def test_etag_multipart_8mb_chunks(self, temp_dir):
-        """Test multipart ETag with 8MB chunks (boto3 default)."""
-        # Create 80 MB file
-        test_file = temp_dir / "80mb.bin"
-        with open(test_file, "wb") as f:
-            chunk = b"y" * (1 * 1024 * 1024)  # 1 MB chunk
-            for _ in range(80):
-                f.write(chunk)
+    def test_ambiguous_size_still_matches_8mb_upload(self, temp_dir):
+        """F-05: a 9.5 MiB object uploaded with 8 MiB chunks (2 parts) still verifies.
 
-        # 80 MB / 10 parts = 8 MB chunks
-        result = s3_manage.calculate_s3_etag_multipart(str(test_file), 10)
+        5 MiB chunks also yield 2 parts for this size; the old code guessed 5 MiB and
+        failed. The candidate loop must try 8 MiB and match exactly.
+        """
+        data = b"q" * 9_961_472
+        test_file = temp_dir / "ambiguous.bin"
+        test_file.write_bytes(data)
 
-        assert result is not None
-        assert "-" in result
-        etag_hash, part_count = result.split("-")
-        assert len(etag_hash) == 32
-        assert part_count == "10"
+        etag_8mb = self._reference_multipart_hash(data, 8 * MIB)
+        assert s3_manage.multipart_etag_matches(str(test_file), etag_8mb, 2) is True
 
-    def test_etag_multipart_16mb_chunks(self, temp_dir):
-        """Test multipart ETag with 16MB chunks."""
-        # Create 160 MB file
-        test_file = temp_dir / "160mb.bin"
-        with open(test_file, "wb") as f:
-            chunk = b"z" * (1 * 1024 * 1024)  # 1 MB chunk
-            for _ in range(160):
-                f.write(chunk)
+    def test_reproduces_genuine_5mb_upload_of_ambiguous_size(self, temp_dir):
+        """The same 9.5 MiB body genuinely uploaded with 5 MiB chunks also verifies."""
+        data = b"q" * 9_961_472
+        test_file = temp_dir / "ambiguous.bin"
+        test_file.write_bytes(data)
 
-        # 160 MB / 10 parts = 16 MB chunks
-        result = s3_manage.calculate_s3_etag_multipart(str(test_file), 10)
+        etag_5mb = self._reference_multipart_hash(data, 5 * MIB)
+        assert s3_manage.multipart_etag_matches(str(test_file), etag_5mb, 2) is True
 
-        assert result is not None
-        etag_hash, part_count = result.split("-")
-        assert part_count == "10"
+    def test_rejects_unrelated_hash(self, temp_dir):
+        """A hash that no consistent chunk size reproduces is not a match."""
+        data = b"q" * 9_961_472
+        test_file = temp_dir / "ambiguous.bin"
+        test_file.write_bytes(data)
 
-    def test_etag_multipart_deterministic(self, temp_dir):
-        """Test that same file produces same multipart ETag."""
-        test_file = temp_dir / "test.bin"
-        test_file.write_bytes(b"a" * (50 * 1024 * 1024))
+        assert s3_manage.multipart_etag_matches(str(test_file), "0" * 32, 2) is False
 
-        result1 = s3_manage.calculate_s3_etag_multipart(str(test_file), 10)
-        result2 = s3_manage.calculate_s3_etag_multipart(str(test_file), 10)
+    def test_single_part_uses_whole_file(self, temp_dir):
+        """A 'hash-1' ETag is MD5(MD5(whole file)), independent of chunk size."""
+        data = b"z" * 4096
+        test_file = temp_dir / "small.bin"
+        test_file.write_bytes(data)
 
-        assert result1 == result2
+        expected = hashlib.md5(hashlib.md5(data).digest()).hexdigest()
+        assert s3_manage.multipart_etag_matches(str(test_file), expected, 1) is True
 
-    def test_etag_multipart_different_part_count(self, temp_dir):
-        """Test that different part counts produce different ETags."""
-        # Create 100 MB file
-        test_file = temp_dir / "test.bin"
-        test_file.write_bytes(b"b" * (100 * 1024 * 1024))
+    def test_empty_file_single_part(self, temp_dir):
+        """An empty single-part object hashes as one empty part."""
+        test_file = temp_dir / "empty.bin"
+        test_file.touch()
 
-        # Same file, different part counts (both valid)
-        # 100 MB / 10 parts = 10 MB chunks (not standard, but let's use valid ones)
-        # 100 MB / 20 parts = 5 MB chunks (valid)
-        result_10_parts = s3_manage.calculate_s3_etag_multipart(str(test_file), 10)
-        result_20_parts = s3_manage.calculate_s3_etag_multipart(str(test_file), 20)
+        expected = hashlib.md5(hashlib.md5(b"").digest()).hexdigest()
+        assert s3_manage.multipart_etag_matches(str(test_file), expected, 1) is True
 
-        # At least result_20_parts should be valid
-        assert result_20_parts is not None
-        assert "-20" in result_20_parts
-        # result_10_parts might be None if no standard chunk size matches
-        if result_10_parts is not None:
-            assert result_10_parts != result_20_parts
-            assert "-10" in result_10_parts
+    def test_exactly_8mib_is_single_part_multipart(self, temp_dir):
+        """boto3's multipart threshold is >=, so an exactly-8-MiB upload is 'hash-1'."""
+        data = b"m" * (8 * MIB)
+        test_file = temp_dir / "exact8.bin"
+        test_file.write_bytes(data)
 
-    def test_etag_multipart_invalid_part_count(self, temp_dir):
-        """Test multipart ETag with invalid part count returns None."""
-        test_file = temp_dir / "test.bin"
-        test_file.write_bytes(b"c" * (100 * 1024 * 1024))
+        expected = hashlib.md5(hashlib.md5(data).digest()).hexdigest()
+        assert s3_manage.multipart_etag_matches(str(test_file), expected, 1) is True
 
-        # Part count that doesn't match any standard chunk size
-        result = s3_manage.calculate_s3_etag_multipart(str(test_file), 11)
+    def test_wrong_part_count_has_no_candidates(self, temp_dir):
+        """No standard chunk size splits this file into the claimed number of parts."""
+        test_file = temp_dir / "tiny.bin"
+        test_file.write_bytes(b"w" * 100)
 
-        assert result is None
+        assert s3_manage.multipart_etag_matches(str(test_file), "a" * 32, 11) is False
 
-    def test_etag_multipart_chunk_size_none(self, temp_dir):
-        """Test multipart ETag when chunk size calculation fails."""
-        test_file = temp_dir / "test.bin"
-        test_file.write_bytes(b"d" * (100 * 1024 * 1024))
+    def test_deterministic(self, temp_dir):
+        """Repeated calls return the same verdict."""
+        data = b"d" * (15 * MIB)
+        test_file = temp_dir / "15mb.bin"
+        test_file.write_bytes(data)
 
-        # Part count of 0 should cause chunk size calculation to fail
-        result = s3_manage.calculate_s3_etag_multipart(str(test_file), 0)
+        expected = self._reference_multipart_hash(data, 5 * MIB)
+        assert s3_manage.multipart_etag_matches(str(test_file), expected, 3) is True
+        assert s3_manage.multipart_etag_matches(str(test_file), expected, 3) is True
 
-        assert result is None
+    def test_single_part_read_is_memory_bounded(self, temp_dir):
+        """A 'hash-1' ETag hashes the whole file as one part; that must not pull the
+        whole part into memory at once (regression: it used to allocate 2x file size)."""
+        data = b"p" * (32 * MIB)
+        test_file = temp_dir / "onepart.bin"
+        test_file.write_bytes(data)
+        expected = hashlib.md5(hashlib.md5(data).digest()).hexdigest()
 
-    def test_etag_multipart_empty_file(self, temp_dir):
-        """Test multipart ETag for empty file."""
-        empty_file = temp_dir / "empty.bin"
-        empty_file.touch()
+        tracemalloc.start()
+        try:
+            matched = s3_manage.multipart_etag_matches(str(test_file), expected, 1)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
 
-        # Empty file with 1 part
-        result = s3_manage.calculate_s3_etag_multipart(str(empty_file), 1)
+        assert matched is True
+        assert peak < 8 * MIB, f"peak alloc {peak / MIB:.1f} MiB for a 32 MiB single-part file"
 
-        # Empty file should still work
-        assert result is not None or result is None  # Implementation dependent
-
-    def test_etag_multipart_single_part(self, temp_dir):
-        """Test multipart ETag with single part."""
-        test_file = temp_dir / "5mb.bin"
-        test_file.write_bytes(b"e" * (5 * 1024 * 1024))
-
-        result = s3_manage.calculate_s3_etag_multipart(str(test_file), 1)
-
-        assert result is not None
-        assert "-1" in result
-
-    def test_etag_multipart_many_parts(self, temp_dir):
-        """Test multipart ETag with many parts."""
-        # Create file that requires 64MB chunks
-        test_file = temp_dir / "large.bin"
-        with open(test_file, "wb") as f:
-            chunk = b"f" * (1 * 1024 * 1024)  # 1 MB chunk
-            for _ in range(640):  # 640 MB
-                f.write(chunk)
-
-        # 640 MB / 10 parts = 64 MB chunks
-        result = s3_manage.calculate_s3_etag_multipart(str(test_file), 10)
-
-        assert result is not None
-        etag_hash, part_count = result.split("-")
-        assert len(etag_hash) == 32
-        assert part_count == "10"
-
-    def test_etag_multipart_format_validation(self, temp_dir):
-        """Test that multipart ETag has correct format."""
-        test_file = temp_dir / "test.bin"
-        test_file.write_bytes(b"g" * (50 * 1024 * 1024))
-
-        result = s3_manage.calculate_s3_etag_multipart(str(test_file), 10)
-
-        assert result is not None
-        # Should be "hash-count" format
-        parts = result.split("-")
-        assert len(parts) == 2
-        # Hash part should be 32 hex characters
-        assert len(parts[0]) == 32
-        assert all(c in '0123456789abcdef' for c in parts[0])
-        # Count part should be numeric
-        assert parts[1].isdigit()
-
-    def test_etag_multipart_file_not_found(self, temp_dir):
-        """Test multipart ETag for non-existent file."""
-        nonexistent = temp_dir / "nonexistent.bin"
-
-        with pytest.raises(IOError):
-            s3_manage.calculate_s3_etag_multipart(str(nonexistent), 10)
-
-    def test_etag_multipart_different_content_same_size(self, temp_dir):
-        """Test that files with same size but different content have different multipart ETags."""
-        file1 = temp_dir / "file1.bin"
-        file1.write_bytes(b"a" * (50 * 1024 * 1024))
-
-        file2 = temp_dir / "file2.bin"
-        file2.write_bytes(b"b" * (50 * 1024 * 1024))
-
-        etag1 = s3_manage.calculate_s3_etag_multipart(str(file1), 10)
-        etag2 = s3_manage.calculate_s3_etag_multipart(str(file2), 10)
-
-        assert etag1 != etag2
-
-    def test_etag_multipart_partial_last_chunk(self, temp_dir):
-        """Test multipart ETag when last chunk is partial."""
-        # Create 55 MB file (11 * 5MB chunks)
-        test_file = temp_dir / "55mb.bin"
-        test_file.write_bytes(b"h" * (55 * 1024 * 1024))
-
-        # 55 MB / 11 parts = 5 MB chunks (last chunk is 5MB)
-        result = s3_manage.calculate_s3_etag_multipart(str(test_file), 11)
-
-        assert result is not None
-        assert "-11" in result
-
-    def test_etag_multipart_128mb_chunks(self, temp_dir):
-        """Test multipart ETag with 128MB chunks."""
-        # Create 5 GB file (40 * 128MB chunks)
-        test_file = temp_dir / "5gb.bin"
-        with open(test_file, "wb") as f:
-            chunk = b"i" * (1 * 1024 * 1024)  # 1 MB chunk
-            for _ in range(5 * 1024):  # 5 GB = 5120 MB
-                f.write(chunk)
-
-        # 5 GB / 40 parts = 128 MB chunks
-        result = s3_manage.calculate_s3_etag_multipart(str(test_file), 40)
-
-        assert result is not None
-        etag_hash, part_count = result.split("-")
-        assert len(etag_hash) == 32
-        assert part_count == "40"
-
-    def test_etag_multipart_exact_chunk_boundary(self, temp_dir):
-        """Test multipart ETag when file size is exact multiple of chunk size."""
-        # Create exactly 80 MB (10 * 8MB chunks)
-        test_file = temp_dir / "exact.bin"
-        test_file.write_bytes(b"j" * (80 * 1024 * 1024))
-
-        result = s3_manage.calculate_s3_etag_multipart(str(test_file), 10)
-
-        assert result is not None
-        assert "-10" in result
-
-    def test_etag_multipart_minimal_file(self, temp_dir):
-        """Test multipart ETag with minimal non-empty file."""
-        test_file = temp_dir / "minimal.bin"
-        test_file.write_bytes(b"x")
-
-        result = s3_manage.calculate_s3_etag_multipart(str(test_file), 1)
-
-        assert result is not None
-        assert "-1" in result
-
-    def test_etag_multipart_binary_content(self, temp_dir):
-        """Test multipart ETag with binary content."""
-        test_file = temp_dir / "binary.bin"
-        # Write binary pattern
-        with open(test_file, "wb") as f:
-            for i in range(50 * 1024):  # 50 MB
-                f.write(bytes([i % 256]) * 1024)
-
-        result = s3_manage.calculate_s3_etag_multipart(str(test_file), 10)
-
-        assert result is not None
-        assert "-10" in result
-
-    def test_etag_multipart_all_zeros(self, temp_dir):
-        """Test multipart ETag with file containing all zeros."""
-        test_file = temp_dir / "zeros.bin"
-        test_file.write_bytes(b"\x00" * (50 * 1024 * 1024))
-
-        result = s3_manage.calculate_s3_etag_multipart(str(test_file), 10)
-
-        assert result is not None
-        etag_hash, part_count = result.split("-")
-        assert len(etag_hash) == 32
-        assert part_count == "10"
+    def test_missing_file_raises(self, temp_dir):
+        """A missing local file surfaces as OSError."""
+        with pytest.raises(OSError):
+            s3_manage.multipart_etag_matches(str(temp_dir / "nope.bin"), "a" * 32, 2)
 
 
 class TestIndexGeneration:
@@ -1305,6 +1161,212 @@ class TestUploadWorker:
         assert content == "original content"
 
 
+class TestUploadWorkerIntegrity:
+    """Test upload_worker() checksum recording, TransferConfig pinning, and TOCTOU guard."""
+
+    @mock_aws
+    def test_transfer_config_and_metadata_passed_to_upload_file(self, temp_file, monkeypatch):
+        """The pinned TRANSFER_CONFIG and the content SHA-256 reach s3transfer verbatim."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        seen = {}
+        real = s3_client.upload_file
+
+        def spy(Filename, Bucket, Key, ExtraArgs=None, Config=None, **kw):
+            seen['ExtraArgs'] = ExtraArgs
+            seen['Config'] = Config
+            return real(Filename, Bucket, Key, ExtraArgs=ExtraArgs, Config=Config, **kw)
+
+        monkeypatch.setattr(s3_client, 'upload_file', spy)
+
+        s3_manage.upload_worker(s3_client, 'test-bucket', str(temp_file), 'test.txt', dry_run=False)
+
+        assert seen['Config'] is s3_manage.TRANSFER_CONFIG
+        assert seen['ExtraArgs']['Metadata'][s3_manage.CONTENT_SHA256_METADATA_KEY] == \
+            s3_manage.calculate_file_sha256(str(temp_file))
+
+    @mock_aws
+    def test_sha256_read_failure_reports_failure(self, temp_file, monkeypatch):
+        """calculate_file_sha256 now runs before upload_file; a read error must fail the file."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        def boom(path):
+            raise OSError('unreadable')
+
+        monkeypatch.setattr(s3_manage, 'calculate_file_sha256', boom)
+
+        msg, size, cat = s3_manage.upload_worker(
+            s3_client, 'test-bucket', str(temp_file), 'test.txt', dry_run=False)
+        assert cat == 'failure'
+        assert '[FAILURE]' in msg
+        assert not s3_manage.file_exists_in_bucket(s3_client, 'test-bucket', 'test.txt')
+
+    @mock_aws
+    def test_command_upload_exits_nonzero_on_sha256_read_failure(self, temp_dir, monkeypatch):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        folder = temp_dir / 'up'
+        folder.mkdir()
+        (folder / 'a.txt').write_text('hi')
+
+        def boom(path):
+            raise OSError('unreadable')
+
+        monkeypatch.setattr(s3_manage, 'calculate_file_sha256', boom)
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket', 'local_folder': str(folder),
+            'max_threads': 2, 'allow_hidden_files': False, 'dry_run': False,
+        })()
+        assert s3_manage.command_upload(args, s3_client=s3_client) == 1
+
+    @mock_aws
+    def test_file_changed_during_upload_fails_and_removes_object(self, temp_dir, monkeypatch):
+        """A concurrent writer touching the file after the SHA-256 read strands the object;
+        the guard must fail the file and remove the torn object."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        p = temp_dir / 'a.bin'
+        p.write_bytes(b'original content')
+
+        real = s3_client.upload_file
+
+        def upload_then_grow(Filename, Bucket, Key, **kw):
+            real(Filename, Bucket, Key, **kw)      # object really lands in the bucket
+            with open(p, 'ab') as f:               # ...then the file changes underneath us
+                f.write(b'MORE BYTES')
+
+        monkeypatch.setattr(s3_client, 'upload_file', upload_then_grow)
+
+        msg, size, cat = s3_manage.upload_worker(s3_client, 'test-bucket', str(p), 'a.bin', dry_run=False)
+        assert cat == 'failure'
+        assert 'changed during upload' in msg
+        assert not s3_manage.file_exists_in_bucket(s3_client, 'test-bucket', 'a.bin')
+
+    @mock_aws
+    def test_unchanged_file_uploads_and_object_remains(self, temp_dir):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        p = temp_dir / 'a.bin'
+        p.write_bytes(b'stable content')
+
+        msg, size, cat = s3_manage.upload_worker(s3_client, 'test-bucket', str(p), 'a.bin', dry_run=False)
+        assert cat == 'uploaded'
+        assert '[SUCCESS]' in msg
+        assert s3_manage.file_exists_in_bucket(s3_client, 'test-bucket', 'a.bin')
+
+    @mock_aws
+    def test_delete_failure_does_not_mask_failure_result(self, temp_dir, monkeypatch):
+        """A missing s3:DeleteObject permission must not hide the 'changed during upload' failure."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        p = temp_dir / 'a.bin'
+        p.write_bytes(b'original content')
+
+        real = s3_client.upload_file
+
+        def upload_then_grow(Filename, Bucket, Key, **kw):
+            real(Filename, Bucket, Key, **kw)
+            with open(p, 'ab') as f:
+                f.write(b'X')
+
+        monkeypatch.setattr(s3_client, 'upload_file', upload_then_grow)
+
+        def boom(**kw):
+            raise RuntimeError('no s3:DeleteObject permission')
+
+        monkeypatch.setattr(s3_client, 'delete_object', boom)
+
+        msg, size, cat = s3_manage.upload_worker(s3_client, 'test-bucket', str(p), 'a.bin', dry_run=False)
+        assert cat == 'failure'
+        assert 'changed during upload' in msg
+
+
+class TestUploadForce:
+    """Test `upload --force` re-uploads existing objects (repair / checksum backfill)."""
+
+    @mock_aws
+    def test_existing_object_skipped_without_force(self, temp_file):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_manage.upload_worker(s3_client, 'test-bucket', str(temp_file), 't.txt', dry_run=False)
+
+        msg, _, cat = s3_manage.upload_worker(s3_client, 'test-bucket', str(temp_file), 't.txt', dry_run=False)
+        assert cat == 'skipped'
+        assert '[SKIPPED]' in msg
+
+    @mock_aws
+    def test_force_reuploads_existing_object(self, temp_file):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_manage.upload_worker(s3_client, 'test-bucket', str(temp_file), 't.txt', dry_run=False)
+
+        msg, _, cat = s3_manage.upload_worker(
+            s3_client, 'test-bucket', str(temp_file), 't.txt', dry_run=False, force=True)
+        assert cat == 'uploaded'
+        assert '[SUCCESS]' in msg
+
+    @mock_aws
+    def test_force_backfills_checksum_on_legacy_object(self, temp_dir):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        p = temp_dir / 'legacy.bin'
+        p.write_bytes(b'legacy payload')
+        s3_client.put_object(Bucket='test-bucket', Key='legacy.bin', Body=b'legacy payload')
+        assert 'bl-content-sha256' not in s3_client.head_object(
+            Bucket='test-bucket', Key='legacy.bin').get('Metadata', {})
+
+        s3_manage.upload_worker(s3_client, 'test-bucket', str(p), 'legacy.bin', dry_run=False, force=True)
+
+        head = s3_client.head_object(Bucket='test-bucket', Key='legacy.bin')
+        assert head['Metadata']['bl-content-sha256'] == s3_manage.calculate_file_sha256(str(p))
+        result, cat = s3_manage.verify_worker(s3_client, 'test-bucket', str(p), 'legacy.bin')
+        assert '[VERIFIED]' in result
+        assert cat == 'verified'
+
+    @mock_aws
+    def test_force_repairs_bad_recorded_checksum(self, temp_dir):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        p = temp_dir / 'bad.bin'
+        p.write_bytes(b'good bytes')
+        s3_client.put_object(
+            Bucket='test-bucket', Key='bad.bin', Body=b'good bytes',
+            Metadata={'bl-content-sha256': hashlib.sha256(b'WRONG').hexdigest()})
+
+        pre, pre_cat = s3_manage.verify_worker(s3_client, 'test-bucket', str(p), 'bad.bin')
+        assert '[DIFFERENT]' in pre
+        assert pre_cat == 'different'
+
+        s3_manage.upload_worker(s3_client, 'test-bucket', str(p), 'bad.bin', dry_run=False, force=True)
+
+        post, post_cat = s3_manage.verify_worker(s3_client, 'test-bucket', str(p), 'bad.bin')
+        assert '[VERIFIED]' in post
+        assert post_cat == 'verified'
+
+    @mock_aws
+    def test_command_upload_force_reuploads(self, temp_dir, capsys):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        folder = temp_dir / 'artifacts'
+        folder.mkdir()
+        (folder / 't.txt').write_bytes(b'hello')
+
+        def make_args(force):
+            return type('Args', (), {
+                'bucket_name': 'test-bucket', 'local_folder': str(folder),
+                'max_threads': 2, 'allow_hidden_files': False, 'dry_run': False, 'force': force,
+            })()
+
+        assert s3_manage.command_upload(make_args(False), s3_client=s3_client) == 0
+        capsys.readouterr()
+        s3_manage.command_upload(make_args(False), s3_client=s3_client)
+        assert 'SKIPPED' in capsys.readouterr().out
+        assert s3_manage.command_upload(make_args(True), s3_client=s3_client) == 0
+        assert 'SUCCESS' in capsys.readouterr().out
+
+
 class TestVerifyWorker:
     """Test verify_worker() function with mocked S3."""
 
@@ -1378,10 +1440,9 @@ class TestVerifyWorker:
     def test_verify_worker_multipart_etag(self, temp_file_large):
         """Test verification with multipart ETag.
 
-        Note: This test verifies the multipart ETag detection and calculation logic,
-        but ETags may not match exactly due to moto's multipart chunking behavior
-        differing from production S3. The important part is that it detects multipart
-        format and attempts verification rather than erroring.
+        The 100 MiB fixture uploaded in 8 MiB parts has 13 parts, and 8 MiB is the only
+        standard chunk size consistent with that (size, part count), so the fallback
+        reproduces moto's ETag exactly and reports VERIFIED.
         """
         # Upload large file (multipart ETag) using multipart upload with 8MB chunks
         s3_client = boto3.client('s3', region_name='us-east-1')
@@ -1422,12 +1483,11 @@ class TestVerifyWorker:
             MultipartUpload={'Parts': parts}
         )
 
-        # Verify - should at least detect multipart format
-        result, _ = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file_large), 'large.bin')
+        # Verify - the fallback reproduces the multipart ETag exactly
+        result, category = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file_large), 'large.bin')
 
-        # The result should be either VERIFIED or DIFFERENT (not ERROR)
-        # Due to moto behavior differences, we just verify it doesn't error
-        assert '[ERROR]' not in result or 'Failed to calculate multipart ETag' not in result
+        assert '[VERIFIED]' in result
+        assert category == 'verified'
         assert 'large.bin' in result
 
     @mock_aws
@@ -1586,10 +1646,11 @@ class TestVerifyWorker:
 
     @mock_aws
     def test_verify_worker_medium_file(self, temp_file_medium):
-        """Test verification of medium-sized file.
+        """Test verification of a medium-sized file.
 
-        Note: moto may use multipart upload for files > 5MB with its own chunking logic.
-        This test verifies the function handles both simple and multipart ETags correctly.
+        The 10 MiB fixture is uploaded multipart (8 MiB default chunk => 2 parts). 5 MiB
+        chunks would also give 2 parts, but the fallback tries every consistent size and
+        matches the full ETag, so it deterministically reports VERIFIED.
         """
         # Upload medium file
         s3_client = boto3.client('s3', region_name='us-east-1')
@@ -1597,12 +1658,296 @@ class TestVerifyWorker:
         s3_client.upload_file(str(temp_file_medium), 'test-bucket', 'medium.bin')
 
         # Verify
-        result, _ = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file_medium), 'medium.bin')
+        result, category = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file_medium), 'medium.bin')
 
-        # Due to moto's multipart behavior, result may be VERIFIED or DIFFERENT
-        # The important part is it doesn't error and processes the ETag correctly
-        assert '[ERROR]' not in result or 'Failed to calculate' not in result
-        assert 'medium.bin' in result
+        assert '[VERIFIED]' in result
+        assert category == 'verified'
+
+
+class TestMultipartEtagAmbiguity:
+    """F-05 regression: a size where several standard chunk sizes yield the same part count."""
+
+    KEY = 'ambiguous.bin'
+    SIZE = 9_961_472  # 9.5 MiB: 2 parts under both 8 MiB and 5 MiB chunks
+
+    def _put_8mb_multipart(self, s3_client, body):
+        """Store *body* as a 2-part multipart object chunked at 8 MiB (boto3's default)."""
+        s3_client.create_bucket(Bucket='test-bucket')
+        upload_id = s3_client.create_multipart_upload(Bucket='test-bucket', Key=self.KEY)['UploadId']
+        parts = []
+        for number, offset in enumerate(range(0, len(body), 8 * MIB), start=1):
+            resp = s3_client.upload_part(
+                Bucket='test-bucket', Key=self.KEY, UploadId=upload_id,
+                PartNumber=number, Body=body[offset:offset + 8 * MIB],
+            )
+            parts.append({'PartNumber': number, 'ETag': resp['ETag']})
+        s3_client.complete_multipart_upload(
+            Bucket='test-bucket', Key=self.KEY, UploadId=upload_id,
+            MultipartUpload={'Parts': parts},
+        )
+
+    @mock_aws
+    def test_identical_file_verifies_against_8mb_multipart_etag(self, temp_dir):
+        """The old code guessed 5 MiB here and reported DIFFERENT for a byte-identical file."""
+        body = b'q' * self.SIZE
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        self._put_8mb_multipart(s3_client, body)
+
+        etag = s3_client.head_object(Bucket='test-bucket', Key=self.KEY)['ETag'].strip('"')
+        assert etag.endswith('-2')
+
+        local = temp_dir / self.KEY
+        local.write_bytes(body)
+
+        result, category = s3_manage.verify_worker(s3_client, 'test-bucket', str(local), self.KEY)
+        assert '[VERIFIED]' in result
+        assert category == 'verified'
+
+    @mock_aws
+    def test_modified_file_reports_different(self, temp_dir):
+        """A same-length change to the object is still detected once guessing is removed."""
+        body = b'q' * self.SIZE
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        self._put_8mb_multipart(s3_client, body)
+
+        local = temp_dir / self.KEY
+        local.write_bytes(body[:-1] + b'Z')
+
+        result, category = s3_manage.verify_worker(s3_client, 'test-bucket', str(local), self.KEY)
+        assert '[DIFFERENT]' in result
+        assert category == 'different'
+
+    @mock_aws
+    def test_verify_download_file_helper_matches(self, temp_dir):
+        """The download-side verifier reproduces the same ETag."""
+        body = b'q' * self.SIZE
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        self._put_8mb_multipart(s3_client, body)
+
+        head = s3_client.head_object(Bucket='test-bucket', Key=self.KEY)
+        local = temp_dir / self.KEY
+        local.write_bytes(body)
+
+        category, details = s3_manage._verify_download_file(
+            str(local), head['ETag'].strip('"'), head['ContentLength'],
+        )
+        assert (category, details) == ('verified', '')
+
+
+class TestNonStandardChunkSizeVerification:
+    """A correct object uploaded elsewhere with a non-standard multipart chunk size cannot
+    be verified by ETag alone, but a recorded SHA-256 rescues it."""
+
+    KEY = 'weird.bin'
+    SIZE = 15 * MIB          # 3 parts at a non-standard 6 MiB chunk size
+    PART = 6 * MIB
+
+    def _put_multipart(self, s3_client, body, part_size, metadata=None):
+        s3_client.create_bucket(Bucket='test-bucket')
+        kwargs = {'Bucket': 'test-bucket', 'Key': self.KEY}
+        if metadata:
+            kwargs['Metadata'] = metadata
+        upload_id = s3_client.create_multipart_upload(**kwargs)['UploadId']
+        parts = []
+        for number, offset in enumerate(range(0, len(body), part_size), start=1):
+            resp = s3_client.upload_part(
+                Bucket='test-bucket', Key=self.KEY, UploadId=upload_id,
+                PartNumber=number, Body=body[offset:offset + part_size],
+            )
+            parts.append({'PartNumber': number, 'ETag': resp['ETag']})
+        s3_client.complete_multipart_upload(
+            Bucket='test-bucket', Key=self.KEY, UploadId=upload_id,
+            MultipartUpload={'Parts': parts},
+        )
+
+    @mock_aws
+    def test_no_recorded_checksum_reports_different(self, temp_dir):
+        body = b'w' * self.SIZE
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        self._put_multipart(s3_client, body, self.PART)
+
+        etag = s3_client.head_object(Bucket='test-bucket', Key=self.KEY)['ETag'].strip('"')
+        assert etag.endswith('-3')
+
+        local = temp_dir / self.KEY
+        local.write_bytes(body)          # byte-identical, yet unverifiable by ETag alone
+
+        result, category = s3_manage.verify_worker(s3_client, 'test-bucket', str(local), self.KEY)
+        assert '[DIFFERENT]' in result
+        assert 'multipart mismatch' in result
+        assert category == 'different'
+
+    @mock_aws
+    def test_recorded_checksum_verifies_the_same_object(self, temp_dir):
+        body = b'w' * self.SIZE
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        self._put_multipart(s3_client, body, self.PART,
+                            metadata={'bl-content-sha256': hashlib.sha256(body).hexdigest()})
+
+        local = temp_dir / self.KEY
+        local.write_bytes(body)
+
+        result, category = s3_manage.verify_worker(s3_client, 'test-bucket', str(local), self.KEY)
+        assert '[VERIFIED]' in result
+        assert category == 'verified'
+
+
+class TestContentSha256:
+    """Test the SHA-256 content checksum: recorded on upload, preferred on verify/download."""
+
+    def test_calculate_file_sha256_matches_hashlib(self, temp_dir):
+        data = b"the quick brown fox\n" * 1000
+        f = temp_dir / "f.bin"
+        f.write_bytes(data)
+        assert s3_manage.calculate_file_sha256(str(f)) == hashlib.sha256(data).hexdigest()
+
+    def test_calculate_file_sha256_empty_and_chunked(self, temp_dir):
+        empty = temp_dir / "empty.bin"
+        empty.touch()
+        assert s3_manage.calculate_file_sha256(str(empty)) == hashlib.sha256(b"").hexdigest()
+
+        spanning = temp_dir / "spanning.bin"
+        data = b"y" * (5 * MIB + 123)  # spans many 8 KiB read blocks
+        spanning.write_bytes(data)
+        assert s3_manage.calculate_file_sha256(str(spanning)) == hashlib.sha256(data).hexdigest()
+
+    def test_calculate_file_sha256_deterministic(self, temp_dir):
+        f = temp_dir / "f.bin"
+        f.write_bytes(b"abc")
+        assert s3_manage.calculate_file_sha256(str(f)) == s3_manage.calculate_file_sha256(str(f))
+
+    @pytest.mark.parametrize("value", [
+        None, "", "xyz", "g" * 64, "a" * 63, "a" * 65, "  " + "a" * 62,
+    ])
+    def test_valid_sha256_rejects_malformed(self, value):
+        assert s3_manage._valid_sha256(value) is None
+
+    def test_valid_sha256_accepts_and_lowercases(self):
+        digest = hashlib.sha256(b"x").hexdigest()
+        assert s3_manage._valid_sha256(digest.upper()) == digest
+
+    @mock_aws
+    def test_upload_worker_records_sha256_metadata(self, temp_file):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        s3_manage.upload_worker(s3_client, 'test-bucket', str(temp_file), 'test.txt', dry_run=False)
+
+        head = s3_client.head_object(Bucket='test-bucket', Key='test.txt')
+        assert head['Metadata']['bl-content-sha256'] == s3_manage.calculate_file_sha256(str(temp_file))
+
+    @mock_aws
+    def test_verify_worker_uses_recorded_sha256(self, temp_file):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_manage.upload_worker(s3_client, 'test-bucket', str(temp_file), 'test.txt', dry_run=False)
+
+        result, category = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file), 'test.txt')
+        assert '[VERIFIED]' in result
+        assert category == 'verified'
+
+    @mock_aws
+    def test_recorded_sha256_beats_ambiguous_multipart_etag(self, temp_dir):
+        """A ~9.5 MiB upload (ambiguous 5/8 MiB) verifies via SHA-256, not ETag guessing."""
+        src = temp_dir / "src" / "big.bin"
+        src.parent.mkdir()
+        src.write_bytes(b"q" * 9_961_472)
+
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_manage.upload_worker(s3_client, 'test-bucket', str(src), 'big.bin', dry_run=False)
+
+        etag = s3_client.head_object(Bucket='test-bucket', Key='big.bin')['ETag'].strip('"')
+        assert etag.endswith('-2')  # pinned 8 MiB layout => 2 parts
+
+        result, category = s3_manage.verify_worker(s3_client, 'test-bucket', str(src), 'big.bin')
+        assert '[VERIFIED]' in result
+        assert category == 'verified'
+
+    @mock_aws
+    def test_verify_worker_detects_tampered_content(self, temp_dir):
+        """The recorded SHA-256 does not match the local bytes => DIFFERENT."""
+        local = temp_dir / "data.bin"
+        local.write_bytes(b"real content")
+
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.put_object(
+            Bucket='test-bucket', Key='data.bin', Body=b"real content",
+            Metadata={'bl-content-sha256': hashlib.sha256(b"different bytes entirely").hexdigest()},
+        )
+
+        result, category = s3_manage.verify_worker(s3_client, 'test-bucket', str(local), 'data.bin')
+        assert '[DIFFERENT]' in result
+        assert 'SHA-256 mismatch' in result
+        assert category == 'different'
+
+    @mock_aws
+    def test_malformed_metadata_falls_back_to_etag(self, temp_dir):
+        local = temp_dir / "data.bin"
+        local.write_bytes(b"x")
+
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.put_object(
+            Bucket='test-bucket', Key='data.bin', Body=b"x",
+            Metadata={'bl-content-sha256': 'not-a-valid-digest'},
+        )
+
+        result, category = s3_manage.verify_worker(s3_client, 'test-bucket', str(local), 'data.bin')
+        assert '[VERIFIED]' in result
+        assert category == 'verified'
+
+    @mock_aws
+    def test_verify_worker_without_metadata_uses_etag(self, temp_file):
+        """Legacy objects (no recorded SHA-256) still verify via the ETag path."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'test.txt')  # no ExtraArgs
+
+        head = s3_client.head_object(Bucket='test-bucket', Key='test.txt')
+        assert 'bl-content-sha256' not in head.get('Metadata', {})
+
+        result, category = s3_manage.verify_worker(s3_client, 'test-bucket', str(temp_file), 'test.txt')
+        assert '[VERIFIED]' in result
+        assert category == 'verified'
+
+    @mock_aws
+    def test_download_worker_verifies_via_sha256(self, temp_dir):
+        src = temp_dir / "src" / "f.bin"
+        src.parent.mkdir()
+        src.write_bytes(b"payload bytes")
+
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_manage.upload_worker(s3_client, 'test-bucket', str(src), 'f.bin', dry_run=False)
+
+        dest = temp_dir / "dest"
+        dest.mkdir()
+        message, size, category = s3_manage.download_worker(
+            s3_client, 'test-bucket', 'f.bin', str(dest), dry_run=False,
+        )
+        assert category == 'downloaded'
+        assert '[VERIFIED]' in message
+        assert (dest / 'f.bin').read_bytes() == b"payload bytes"
+
+    @mock_aws
+    def test_download_worker_rejects_sha256_mismatch(self, temp_dir):
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.put_object(
+            Bucket='test-bucket', Key='f.bin', Body=b"payload bytes",
+            Metadata={'bl-content-sha256': hashlib.sha256(b"other").hexdigest()},
+        )
+
+        dest = temp_dir / "dest"
+        dest.mkdir()
+        message, size, category = s3_manage.download_worker(
+            s3_client, 'test-bucket', 'f.bin', str(dest), dry_run=False,
+        )
+        assert category == 'different'
+        assert 'SHA-256 mismatch' in message
+        assert not (dest / 'f.bin').exists()
 
 
 class TestDownloadPathSafety:
@@ -1847,20 +2192,19 @@ class TestDownloadWorker:
 
     @mock_aws
     def test_download_worker_medium_file(self, temp_dir, temp_file_medium):
-        """Test downloading medium file."""
-        # Setup
+        """A pre-existing medium file at the destination verifies against its multipart ETag."""
+        # Setup: the fixture already wrote temp_dir/medium.bin, which is the download target
         s3_client = boto3.client('s3', region_name='us-east-1')
         s3_client.create_bucket(Bucket='test-bucket')
         s3_client.upload_file(str(temp_file_medium), 'test-bucket', 'medium.bin')
 
-        # Test download
+        # Existing local file -> verified in place, nothing downloaded
         message, size, category = s3_manage.download_worker(s3_client, 'test-bucket', 'medium.bin', str(temp_dir), dry_run=False)
 
-        # Verify success or known moto multipart issue
-        assert category in ['downloaded', 'different']  # May be different due to moto multipart
-        if category == 'downloaded':
-            assert '[VERIFIED]' in message
-            assert size == 10 * 1024 * 1024  # 10 MB
+        # The multipart ETag is reproduced exactly (8 MiB tried before 5 MiB), so it verifies
+        assert category == 'verified'
+        assert '[VERIFIED]' in message
+        assert size == 0
 
     @mock_aws
     def test_download_worker_size_mismatch(self, temp_dir, temp_file):
@@ -2152,7 +2496,7 @@ class TestDownloadWorker:
         elif failure_kind == 'verify':
             monkeypatch.setattr(
                 s3_manage, '_verify_download_file',
-                lambda *args: ('different', 'forced mismatch')
+                lambda *args, **kwargs: ('different', 'forced mismatch')
             )
         else:
             def fail_replace(*args, **kwargs):
@@ -2836,6 +3180,25 @@ class TestCommandIndexupload:
         captured = capsys.readouterr()
         assert 'Generated index files:' in captured.out
         assert '[SUCCESS] index.html uploaded' in captured.out
+
+    @mock_aws
+    def test_indexupload_records_checksum_metadata(self, temp_file):
+        """Every object this tool writes carries a bl-content-sha256, index files included."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'test.txt')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'url_prefix': 'https://example.com/'
+        })()
+        s3_manage.command_indexupload(args, s3_client=s3_client)
+
+        for key in ('index.html', 'index.md'):
+            meta = s3_client.head_object(Bucket='test-bucket', Key=key)['Metadata']
+            digest = meta.get('bl-content-sha256', '')
+            assert len(digest) == 64 and all(c in '0123456789abcdef' for c in digest)
 
     @mock_aws
     def test_indexupload_html_multiple_files(self, temp_file, capsys):
@@ -4471,6 +4834,60 @@ class TestCommandVerify:
         # Execute command - should return EXIT_FAILURE
         exit_code = s3_manage.command_verify(args, s3_client=s3_client)
         assert exit_code == 1
+
+    @mock_aws
+    def test_verify_exit_code_failure_on_sha256_mismatch(self, temp_dir, capsys):
+        """A recorded SHA-256 that does not match the local content exits with code 1."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        local_folder = temp_dir / 'verify'
+        local_folder.mkdir()
+        (local_folder / 'test.txt').write_bytes(b'real content')
+        s3_client.put_object(
+            Bucket='test-bucket', Key='test.txt', Body=b'real content',
+            Metadata={'bl-content-sha256': hashlib.sha256(b'tampered').hexdigest()},
+        )
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        exit_code = s3_manage.command_verify(args, s3_client=s3_client)
+        assert exit_code == 1
+        assert 'Different (mismatch): 1' in capsys.readouterr().out
+
+    @mock_aws
+    def test_verify_exit_code_success_with_recorded_sha256(self, temp_dir, temp_file, capsys):
+        """A file round-tripped through command_upload carries its SHA-256 and verifies."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+
+        local_folder = temp_dir / 'artifacts'
+        local_folder.mkdir()
+        shutil.copy(str(temp_file), str(local_folder / 'test.txt'))
+
+        upload_args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'max_threads': 2,
+            'allow_hidden_files': False,
+            'dry_run': False,
+        })()
+        assert s3_manage.command_upload(upload_args, s3_client=s3_client) == 0
+
+        verify_args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(local_folder),
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+        exit_code = s3_manage.command_verify(verify_args, s3_client=s3_client)
+        assert exit_code == 0
+        assert 'Verified (match): 1' in capsys.readouterr().out
 
     @mock_aws
     def test_verify_summary_format(self, temp_dir, temp_file, capsys):
