@@ -101,6 +101,116 @@ typedef io_context_compat io_service;
 namespace ip {
 
 /*
+ * Resolver query compatibility wrapper
+ *
+ * Boost 1.89+ removed the query-based resolve() / async_resolve() overloads, so a query
+ * object now has to be forwarded to the string-based API by hand.
+ *
+ * The legacy boost::asio::ip::basic_resolver_query cannot be used for that because it does
+ * not expose the protocol and the resolve flags it was constructed with (it only provides
+ * host_name(), service_name() and hints()). This class stores the protocol, the host, the
+ * service and the flags explicitly and mirrors the constructors of the legacy query class,
+ * including their default flags.
+ */
+
+template <typename Protocol>
+class basic_resolver_query_compat : public resolver_base
+{
+public:
+
+    typedef Protocol protocol_type;
+
+    basic_resolver_query_compat(
+        const std::string& service,
+        flags resolve_flags = passive | address_configured)
+        : m_protocol(protocol_type::v4())
+        , m_hasProtocol(false)
+        , m_serviceName(service)
+        , m_flags(resolve_flags)
+    {
+    }
+
+    basic_resolver_query_compat(
+        const protocol_type& protocol,
+        const std::string& service,
+        flags resolve_flags = passive | address_configured)
+        : m_protocol(protocol)
+        , m_hasProtocol(true)
+        , m_serviceName(service)
+        , m_flags(resolve_flags)
+    {
+    }
+
+    basic_resolver_query_compat(
+        const std::string& host,
+        const std::string& service,
+        flags resolve_flags = address_configured)
+        : m_protocol(protocol_type::v4())
+        , m_hasProtocol(false)
+        , m_hostName(host)
+        , m_serviceName(service)
+        , m_flags(resolve_flags)
+    {
+    }
+
+    basic_resolver_query_compat(
+        const protocol_type& protocol,
+        const std::string& host,
+        const std::string& service,
+        flags resolve_flags = address_configured)
+        : m_protocol(protocol)
+        , m_hasProtocol(true)
+        , m_hostName(host)
+        , m_serviceName(service)
+        , m_flags(resolve_flags)
+    {
+    }
+
+    bool has_protocol() const
+    {
+        return m_hasProtocol;
+    }
+
+    const protocol_type& protocol() const
+    {
+        return m_protocol;
+    }
+
+    std::string host_name() const
+    {
+        return m_hostName;
+    }
+
+    std::string service_name() const
+    {
+        return m_serviceName;
+    }
+
+    /*
+     * Note: this accessor cannot be called flags() because that would hide the
+     * resolver_base::flags type name inherited by this class
+     */
+
+    flags flags_value() const
+    {
+        return m_flags;
+    }
+
+private:
+
+    /*
+     * When no protocol was specified m_protocol holds an unused placeholder value
+     * and m_hasProtocol is false
+     */
+
+    protocol_type m_protocol;
+    bool m_hasProtocol;
+    std::string m_hostName;
+    std::string m_serviceName;
+    flags m_flags;
+};
+
+/*
  * TCP/UDP/ICMP resolver compatibility wrapper
  *
  * This template class wraps basic_resolver<Protocol> and restores:
@@ -116,7 +226,7 @@ public:
     typedef basic_resolver<Protocol> base_type;
 
     /* Nested typedefs removed in Boost 1.89 */
-    typedef basic_resolver_query<Protocol> query;
+    typedef basic_resolver_query_compat<Protocol> query;
     typedef basic_resolver_results<Protocol> results_type;
     typedef typename results_type::iterator iterator;
     typedef typename Protocol::endpoint endpoint_type;
@@ -125,17 +235,38 @@ public:
     using base_type::base_type;
 
     /*
+     * Keep the modern string-based overloads visible - the compatibility overloads
+     * below would otherwise hide all of them
+     */
+    using base_type::resolve;
+    using base_type::async_resolve;
+
+    /*
      * Compatibility resolve() methods that accept query objects
-     * Maps to string-based resolve(host, service) API
+     *
+     * The protocol (if one was specified), the host, the service and the resolve flags
+     * are all forwarded to the corresponding string-based resolve() overload
      */
     results_type resolve(const query& q)
     {
-        return base_type::resolve(q.host_name(), q.service_name());
+        if( q.has_protocol() )
+        {
+            return base_type::resolve(
+                q.protocol(), q.host_name(), q.service_name(), q.flags_value());
+        }
+
+        return base_type::resolve(q.host_name(), q.service_name(), q.flags_value());
     }
 
     results_type resolve(const query& q, boost::system::error_code& ec)
     {
-        return base_type::resolve(q.host_name(), q.service_name(), ec);
+        if( q.has_protocol() )
+        {
+            return base_type::resolve(
+                q.protocol(), q.host_name(), q.service_name(), q.flags_value(), ec);
+        }
+
+        return base_type::resolve(q.host_name(), q.service_name(), q.flags_value(), ec);
     }
 
 private:
@@ -158,7 +289,9 @@ private:
 public:
     /*
      * Async resolve with query object
-     * Maps to string-based async_resolve(host, service, handler) API
+     *
+     * The protocol (if one was specified), the host, the service and the resolve flags
+     * are all forwarded to the corresponding string-based async_resolve() overload
      *
      * Note: In Boost 1.89+, async_resolve passes basic_resolver_results<Protocol>
      * but our code expects basic_resolver_iterator<Protocol>. We wrap the handler
@@ -167,10 +300,26 @@ public:
     template <typename ResolveHandler>
     void async_resolve(const query& q, ResolveHandler&& handler)
     {
+        resolve_handler_wrapper<ResolveHandler> wrapper{ std::forward<ResolveHandler>(handler) };
+
+        if( q.has_protocol() )
+        {
+            base_type::async_resolve(
+                q.protocol(),
+                q.host_name(),
+                q.service_name(),
+                q.flags_value(),
+                std::move(wrapper)
+            );
+
+            return;
+        }
+
         base_type::async_resolve(
             q.host_name(),
             q.service_name(),
-            resolve_handler_wrapper<ResolveHandler>{ std::forward<ResolveHandler>(handler) }
+            q.flags_value(),
+            std::move(wrapper)
         );
     }
 };
