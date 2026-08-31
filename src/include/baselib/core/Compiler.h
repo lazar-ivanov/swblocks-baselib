@@ -22,6 +22,7 @@
 
 #include <utility>
 #include <type_traits>
+#include <cstring>
 
 /*
  * GCC 15+ warns about overloaded virtual functions being hidden.

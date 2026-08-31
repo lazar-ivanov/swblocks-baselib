@@ -278,17 +278,17 @@ namespace bl
                     }
 
                     return std::string( pStart.get(), pEnd );
-                }               
+                }
 
                 /*
                  * This is a simple implementation of converting UTF8 to ISO-8859-1 to avoid
                  * using the Boost.Locale library when one of the following is true:
-                 * 
+                 *
                  * 1. The library dependency is not desirable for some reason on some platform
                  * 2. It has issues and not building correctly and has to be patched (e.g. on Darwin)
-                 * 
+                 *
                  * If having dependency Boost.Locale library is ok then simply use the following:
-                 * 
+                 *
                  * bl::str::from_utf( content, HttpHeader::g_iso8859_1, str::method_type::stop );
                  */
                 static std::string utf8ToIso88591Simple( SAA_in const std::string& inputUtf8 )
@@ -346,7 +346,7 @@ namespace bl
                         /*
                          * Characters outside of ISO-8859-1 range
                          */
-                        
+
                         invalidMessage = "Input cannot be converted to ISO-8859-1. Characters outside of ISO-8859-1 range.";
                         break;
                     }
@@ -360,7 +360,7 @@ namespace bl
                             );
                     }
 
-                    return result;                    
+                    return result;
                 }
 
                 template

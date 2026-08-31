@@ -37,6 +37,10 @@
 #include <type_traits>
 #include <set>
 #include <unordered_map>
+#include <algorithm>
+#include <cstring>
+#include <cwchar>
+#include <iosfwd>
 
 #define BL_STDIO_TEXT( lambdaBody ) \
     bl::stdioText( [ & ]() -> void lambdaBody ) \

@@ -270,7 +270,7 @@ public:
     }
 
 private:
-    /* 
+    /*
      * Helper function to convert results to iterator - C++11 compatible
      * This is needed because async_resolve in Boost 1.89+ passes results,
      * but our callbacks expect iterator
@@ -279,7 +279,7 @@ private:
     struct resolve_handler_wrapper
     {
         Handler handler;
-        
+
         void operator()(const boost::system::error_code& ec, const results_type& results)
         {
             handler(ec, results.begin());
