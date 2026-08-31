@@ -20,6 +20,12 @@
 #include <baselib/core/detail/BoostIncludeGuardPush.h>
 #define BOOST_UUID_RANDOM_GENERATOR_COMPAT
 /*
+ * boost/version.hpp must be included before the first BOOST_VERSION guard below;
+ * otherwise BOOST_VERSION expands to 0 for any translation unit which hasn't already
+ * pulled in a Boost header, which silently selects the wrong compatibility branch
+ */
+#include <boost/version.hpp>
+/*
  * Boost 1.89+ added 8-byte alignment to boost::uuids::uuid which breaks
  * binary protocol compatibility. Disable alignment to maintain compatibility.
  */
