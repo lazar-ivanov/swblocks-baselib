@@ -29,6 +29,7 @@
 #include <baselib/core/Pool.h>
 #include <baselib/core/BaseIncludes.h>
 
+#include <atomic>
 #include <cstdint>
 #include <unordered_map>
 #include <type_traits>
@@ -210,7 +211,7 @@ namespace bl
             typedef ExecutionQueueImplT< E >                                        this_type;
             typedef std::unordered_map< Task*, TaskInfo* >                          tasks_map_t;
 
-            ThreadPool*                                                             m_localThreadPool;
+            std::atomic< ThreadPool* >                                              m_localThreadPool;
 
             std::size_t                                                             m_maxExecuting;
             unsigned                                                                m_options;
@@ -1055,27 +1056,31 @@ namespace bl
 
             virtual bool isEmpty() const NOEXCEPT OVERRIDE
             {
-                BL_MUTEX_GUARD( const_cast< this_type* >( this ) -> m_lock );
+                BL_MUTEX_GUARD( m_lock );
                 return isEmptyInternal();
             }
 
             virtual bool hasReady() const NOEXCEPT OVERRIDE
             {
+                BL_MUTEX_GUARD( m_lock );
                 return ( ! m_ready.empty() );
             }
 
             virtual bool hasExecuting() const NOEXCEPT OVERRIDE
             {
+                BL_MUTEX_GUARD( m_lock );
                 return ( ! m_executing.empty() );
             }
 
             virtual bool hasPending() const NOEXCEPT OVERRIDE
             {
+                BL_MUTEX_GUARD( m_lock );
                 return ( ! m_pending.empty() );
             }
 
             virtual std::size_t size() const NOEXCEPT OVERRIDE
             {
+                BL_MUTEX_GUARD( m_lock );
                 return m_allTasks.size();
             }
 
@@ -1088,6 +1093,8 @@ namespace bl
 
             virtual void setOptions( SAA_in const unsigned options = OptionKeepFailed ) OVERRIDE
             {
+                BL_MUTEX_GUARD( m_lock );
+
                 m_options = options;
             }
 
@@ -1104,12 +1111,12 @@ namespace bl
 
             virtual ThreadPool* getLocalThreadPool() const NOEXCEPT OVERRIDE
             {
-                return m_localThreadPool;
+                return m_localThreadPool.load();
             }
 
             virtual void setLocalThreadPool( SAA_inout ThreadPool* threadPool ) NOEXCEPT OVERRIDE
             {
-                m_localThreadPool = threadPool;
+                m_localThreadPool.store( threadPool );
             }
 
             virtual om::ObjPtr< Task > push_back(

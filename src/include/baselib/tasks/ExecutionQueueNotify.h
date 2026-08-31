@@ -57,6 +57,11 @@ namespace bl
              *
              * We're not going to schedule more tasks until some of these are
              * processed and removed from the queue.
+             *
+             * Note: unlike onEvent(), this method *is* invoked while the execution queue's
+             * internal lock is held (from the task scheduling path). Implementations must
+             * therefore return a value which can be computed without calling back into the
+             * execution queue; doing so will deadlock.
              */
 
             virtual std::size_t maxReadyOrExecuting() const NOEXCEPT = 0;
