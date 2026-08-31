@@ -4349,6 +4349,92 @@ UTF_AUTO_TEST_CASE( FsUtils_JunctionsTests )
     UTF_REQUIRE( ! bl::fs::exists( tmpPath ) );
 }
 
+UTF_AUTO_TEST_CASE( FsUtils_TestCopyErrorCodeOverload )
+{
+    bl::fs::TmpDir tmpDir;
+
+    const auto restrictedDir = tmpDir.path() / "restricted";
+    const auto sourcePath = restrictedDir / "source.txt";
+    const auto targetPath = tmpDir.path() / "target.txt";
+
+    bl::fs::safeMkdirs( restrictedDir );
+
+    {
+        const auto file = bl::os::fopen( sourcePath, "wb" );
+    }
+
+    /*
+     * Make the parent directory inaccessible, so obtaining the status of the source path
+     * fails with a real error
+     *
+     * Note that a merely missing path is not an error for the filesystem status APIs, so
+     * it would not exercise the non-throwing contract of the error code overload here
+     */
+
+    bl::fs::permissions( restrictedDir, bl::fs::perms::no_perms );
+
+    bool statusQueryThrows = false;
+
+    try
+    {
+        ( void ) bl::fs::is_directory( sourcePath );
+    }
+    catch( std::exception& )
+    {
+        statusQueryThrows = true;
+    }
+
+    bl::eh::error_code ec;
+    bool copyWithErrorCodeThrows = false;
+
+    if( statusQueryThrows )
+    {
+        try
+        {
+            bl::fs::copy( sourcePath, targetPath, ec );
+        }
+        catch( std::exception& )
+        {
+            copyWithErrorCodeThrows = true;
+        }
+    }
+
+    /*
+     * Restore the permissions before checking the results, so the temporary directory
+     * can always be cleaned up
+     */
+
+    bl::fs::permissions( restrictedDir, bl::fs::perms::owner_all );
+
+    if( statusQueryThrows )
+    {
+        /*
+         * The platform enforces the restriction, so the error code overload must have
+         * reported the failure via 'ec' instead of throwing
+         */
+
+        UTF_REQUIRE( ! copyWithErrorCodeThrows );
+        UTF_REQUIRE( ec );
+        UTF_REQUIRE( ! bl::fs::path_exists( targetPath ) );
+    }
+
+    /*
+     * The error code overload must also succeed and leave 'ec' clear for a valid source
+     */
+
+    const auto validSourcePath = tmpDir.path() / "source-dir";
+    const auto validTargetPath = tmpDir.path() / "target-dir";
+
+    bl::fs::safeMkdirs( validSourcePath );
+
+    ec.clear();
+
+    UTF_CHECK_NO_THROW( bl::fs::copy( validSourcePath, validTargetPath, ec ) );
+
+    UTF_REQUIRE( ! ec );
+    UTF_REQUIRE( bl::fs::is_directory( validTargetPath ) );
+}
+
 UTF_AUTO_TEST_CASE( FsUtils_TestSafeRemove )
 {
     bl::fs::path tmpPath;

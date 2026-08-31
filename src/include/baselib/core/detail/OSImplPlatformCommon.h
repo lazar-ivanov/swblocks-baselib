@@ -1998,11 +1998,20 @@ namespace bl
              * The behavior of the copy function has changed for directories now it attempts
              * to copy the directory content to the target directory instead of copying the
              * directory itself
+             *
+             * Note that we must use the non-throwing overload of is_directory here, so an
+             * invalid or inaccessible source path is reported via 'ec' as the contract of
+             * this overload requires (instead of throwing)
              */
 
-            if( is_directory( sourcePath ) )
+            if( is_directory( sourcePath, ec ) )
             {
                 detail::bfs::create_directory( targetPath, sourcePath, ec );
+                return;
+            }
+
+            if( ec )
+            {
                 return;
             }
             #endif
