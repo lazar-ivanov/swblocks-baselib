@@ -108,8 +108,8 @@ ifeq ($(DEVENV_VERSION_TAG),devenv6)
 # python3 is the default in devenv6
 PYTHON = python3
 else
-ifeq ($(DEVENV_VERSION_TAG),devenv7)
-# devenv7 uses python3 on Linux, but python.exe on Windows
+ifeq (, $(BL_DEVENV_IS_LEGACY))
+# devenv7+ uses python3 on Linux, but python.exe on Windows
 ifeq ($(OS),win)
 PYTHON = python
 else

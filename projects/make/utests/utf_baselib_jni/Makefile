@@ -56,7 +56,7 @@ else
 endif
 
 # Gradle 9+ uses -p (project directory) instead of --build-file
-ifeq ($(DEVENV_VERSION_TAG),devenv7)
+ifeq (, $(BL_DEVENV_IS_LEGACY))
 GRADLE_ARGS := -p $(JAVADIR) $(GRADLE_DAEMON_FLAG)
 else
 GRADLE_ARGS := --build-file $(JAVADIR)/build.gradle $(GRADLE_DAEMON_FLAG)

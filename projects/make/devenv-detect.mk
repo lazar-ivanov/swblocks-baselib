@@ -213,6 +213,11 @@ longer supported; the supported toolchains are: vc12, vc143, gcc492, gcc630, gcc
 clang35, clang391, clang380, clang801, clang730, clang1000, clang1201, clang1205, clang1500, clang1700, clang2010)
 endif
 
+# Legacy devenv predicate; expressed as an explicit finite set of the old environments, so
+# devenv7 and any future devenv version take the current code paths by default
+# Non-empty for devenv2-6 and empty for devenv7+
+BL_DEVENV_IS_LEGACY := $(filter devenv2 devenv3 devenv4 devenv5 devenv6,$(DEVENV_VERSION_TAG))
+
 BL_DEVENV_JSON_SPIRIT_VERSION=4.08
 BL_DEVENV_BOOST_VERSION=1.58.0-devenv2
 BL_DEVENV_OPENSSL_VERSION=1.0.2d

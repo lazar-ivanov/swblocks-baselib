@@ -2,8 +2,8 @@ ifndef BOOST_COMMON_INCLUDED
 BOOST_COMMON_INCLUDED = 1
 
 ifeq (, $(BOOSTDIR))
-# For devenv7, the directory structure includes the variant suffix (e.g., d25-a64-clang1700-debug)
-ifeq ($(DEVENV_VERSION_TAG),devenv7)
+# For devenv7+, the directory structure includes the variant suffix (e.g., d25-a64-clang1700-debug)
+ifeq (, $(BL_DEVENV_IS_LEGACY))
 BOOSTDIR := $(DIST_ROOT_DEPS3)/boost/$(BL_DEVENV_BOOST_VERSION)/$(EXTPLAT)
 else
 BOOSTDIR := $(DIST_ROOT_DEPS3)/boost/$(BL_DEVENV_BOOST_VERSION)/$(EXTPLAT:%-$(VARIANT)=%)
@@ -22,7 +22,7 @@ ifeq ($(DEVENV_VERSION_TAG),devenv6)
 CPPFLAGS += -DBOOST_BIND_GLOBAL_PLACEHOLDERS
 endif
 
-ifeq ($(DEVENV_VERSION_TAG),devenv7)
+ifeq (, $(BL_DEVENV_IS_LEGACY))
 CPPFLAGS += -DBOOST_BIND_GLOBAL_PLACEHOLDERS
 endif
 
@@ -40,8 +40,8 @@ endif
 endif
 
 LDLIBS   += boost_date_time$(LIBTAG)$(ARCHTAG)
-# Boost 1.89+ made boost_system header-only, so skip it for devenv7
-ifneq ($(DEVENV_VERSION_TAG),devenv7)
+# Boost 1.89+ made boost_system header-only, so skip it for devenv7+
+ifneq (, $(BL_DEVENV_IS_LEGACY))
 LDLIBS   += boost_system$(LIBTAG)$(ARCHTAG)
 endif
 LDLIBS   += boost_thread$(LIBTAG)$(ARCHTAG)

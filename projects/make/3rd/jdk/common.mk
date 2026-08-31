@@ -2,9 +2,9 @@ ifndef JDK_COMMON_INCLUDED
 JDK_COMMON_INCLUDED = 1
 
 # Determine JDK version and path based on devenv
-ifeq ($(DEVENV_VERSION_TAG),devenv7)
+ifeq (, $(BL_DEVENV_IS_LEGACY))
 JDK_VERSION = 25
-# devenv7 uses architecture-specific paths on all platforms: openjdk/25/<arch>
+# devenv7+ uses architecture-specific paths on all platforms: openjdk/25/<arch>
 JDK_BASE_PATH = $(DIST_ROOT_DEPS3)/openjdk/$(JDK_VERSION)/$(ARCH)
 else
 JDK_VERSION = 8
