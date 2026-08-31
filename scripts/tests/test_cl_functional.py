@@ -320,9 +320,10 @@ class TestCompilerWrapperFunctional:
 class TestCompilerWrapperEncoding:
     """Functional tests for non-ASCII encoding handling in cl.py/clang-cl.py.
 
-    These tests verify that the byte decoding fix (Option B) works correctly
-    when the compiler outputs non-ASCII characters. The scripts now read raw
-    bytes and decode with errors='replace' instead of using universal_newlines=True.
+    These tests verify that the byte decoding fix (Option C) works correctly
+    when the compiler outputs non-ASCII characters. The scripts read raw bytes and
+    decode them as latin-1 instead of using universal_newlines=True, so the original
+    bytes survive into the generated dependency file.
 
     See scripts/README.md for full documentation of the encoding issue.
     """
@@ -369,10 +370,10 @@ class TestCompilerWrapperEncoding:
         depfile = temp_dir / "main.d"
         assert depfile.exists()
 
-        # The ASCII header should be present in the dep file
-        content = depfile.read_text()
-        assert "main.obj:" in content
-        assert "ascii_header.h" in content
+        # The dependency file can now hold non-UTF-8 bytes verbatim, so read it as bytes
+        content = depfile.read_bytes()
+        assert b"main.obj:" in content
+        assert b"ascii_header.h" in content
 
     @pytest.mark.parametrize("script_name", ["cl.py", "clang-cl.py"])
     @pytest.mark.skipif(sys.platform == "win32", reason="Uses Unix shell for byte-level output control")
@@ -458,3 +459,46 @@ class TestCompilerWrapperEncoding:
         assert "main.obj:" in content
         assert "header1.h" in content
         assert "header2.h" in content
+
+    @pytest.mark.parametrize("script_name", ["cl.py", "clang-cl.py"])
+    @pytest.mark.skipif(sys.platform == "win32", reason="Uses Unix shell for byte-level output control")
+    def test_non_utf8_dependency_path_round_trips(self, script_name, temp_dir, temp_source_file, monkeypatch):
+        """Test that non-UTF-8 dependency paths are written to the .d file byte-exactly.
+
+        latin-1 maps bytes 0-255 bijectively, so a path the compiler emitted in a legacy
+        code page must come back out of the dependency file as the identical byte sequence.
+        Under the previous errors='replace' decoding these bytes became U+FFFD and make
+        could no longer resolve the header.
+        """
+        compiler_name = "cl" if script_name == "cl.py" else "clang-cl"
+
+        # Octal 351 = 0xe9 = CP1252 e-acute, which is NOT valid standalone UTF-8
+        mock_compiler = temp_dir / compiler_name
+        mock_compiler.write_text(
+            "#!/bin/sh\n"
+            "echo 'test.cpp'\n"
+            "/usr/bin/printf 'Note: including file: /usr/include/Jos\\351/header.h\\n'\n"
+            "exit 0\n"
+        )
+        mock_compiler.chmod(0o755)
+
+        import os
+        original_path = os.environ.get("PATH", "")
+        monkeypatch.setenv("PATH", f"{temp_dir}:{original_path}")
+
+        script_path = Path(__file__).parent.parent / script_name
+        result = subprocess.run(
+            [sys.executable, str(script_path), "-M", "-Fomain.obj", str(temp_source_file)],
+            capture_output=True,
+            cwd=temp_dir
+        )
+
+        assert result.returncode == 0
+
+        depfile = temp_dir / "main.d"
+        assert depfile.exists()
+
+        # The original bytes must be preserved verbatim, with no U+FFFD replacement
+        content = depfile.read_bytes()
+        assert b"/usr/include/Jos\xe9/header.h" in content
+        assert "�".encode("utf-8") not in content

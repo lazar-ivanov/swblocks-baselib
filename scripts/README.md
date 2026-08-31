@@ -6,10 +6,9 @@ These scripts wrap MSVC `cl.exe` and `clang-cl.exe` to parse `/showIncludes` out
 generate make-compatible `.d` dependency files. They must support both Python 2.7 and
 Python 3.6+.
 
-### Known Limitation: Non-ASCII Encoding in Compiler Output
+### Non-ASCII Encoding in Compiler Output
 
-**Status:** Partial fix implemented (Option B). See "Future Improvement" below for the
-complete fix (Option C).
+**Status:** Fixed (Option C). Option B below is retained for historical context.
 
 #### The Problem
 
@@ -32,9 +31,9 @@ See also:
   encoding on Windows
 - [CPython issue #6135](https://bugs.python.org/issue6135) - subprocess local encoding
 
-#### Current Fix (Option B): Decode with `errors='replace'`
+#### Superseded Fix (Option B): Decode with `errors='replace'`
 
-The current implementation removes `universal_newlines=True` and decodes bytes manually:
+The first fix removed `universal_newlines=True` and decoded bytes with replacement:
 
 ```python
 p = Popen(args, stdout=PIPE, stderr=STDOUT)
@@ -46,21 +45,19 @@ for raw_line in p.stdout:
     line = line.rstrip()
 ```
 
-**Trade-offs:**
-- Works in both Python 2.7 and Python 3.6+
-- Prevents crashes on non-ASCII output
-- Non-ASCII characters are replaced with U+FFFD (replacement character), so dependency
-  file paths containing non-ASCII characters become incorrect and `make` cannot find those
-  headers
-- This is acceptable because non-ASCII paths in compiler include directories are rare
+**Why it was replaced:**
+- It prevented decode crashes, but non-ASCII characters became U+FFFD (replacement
+  character), so dependency file paths containing non-ASCII characters were written
+  incorrectly and `make` could not resolve those headers
+- Stale objects could therefore be reused because the dependency edge was missing
 
-#### Future Improvement (Option C): Lossless Decode with `latin-1`
+#### Current Fix (Option C): Lossless Decode with `latin-1`
 
 For lossless byte preservation, `latin-1` encoding maps bytes 0-255 to unicode code points
 0-255 bijectively. This means round-tripping (decode then encode) preserves the original
 bytes exactly, so dependency file paths remain correct even with non-ASCII characters.
 
-The implementation would require:
+The implementation requires:
 
 1. Decode with `latin-1` instead of `utf-8`:
    ```python
@@ -92,5 +89,9 @@ The implementation would require:
   latin-1 code points), but the `.d` file content is correct
 - More code changes than Option B (file open mode, encode on write)
 
-This improvement should be implemented if non-ASCII paths in include directories become
-a requirement.
+The wrappers also reconfigure `stdout` to UTF-8 with `errors='replace'` before running the
+compiler (the same approach `debug_harness.py` uses), so echoing a latin-1 decoded line to an
+ASCII stdout under MSYS2 or make cannot raise `UnicodeEncodeError`.
+
+For pure-ASCII compiler output `latin-1` and `utf-8` produce byte-identical results, so this
+change has no effect on builds whose include paths are all ASCII.
