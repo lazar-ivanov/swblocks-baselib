@@ -104,6 +104,23 @@ namespace bl
             detail::JsonUtilsImpl::saveToStream( val, output, prettyPrint, rawUtf8 );
         }
 
+        /*
+         * The third argument of saveToStream used to be an OutputOptions bitmask and
+         * it is now a bool; deleting the integral overload ensures that old call sites
+         * which pass an option value fail to compile instead of silently binding the
+         * option value to the 'prettyPrint' argument
+         */
+
+        template
+        <
+            typename STREAM
+        >
+        inline void saveToStream(
+            SAA_in          const json::value&                      val,
+            SAA_inout       STREAM&                                 output,
+            SAA_in          const unsigned int                      options
+            ) = delete;
+
         inline static void remapIncorrectValueTypeException(
             SAA_in      const std::runtime_error&           e,
             SAA_in      const std::exception_ptr&           eptr,
