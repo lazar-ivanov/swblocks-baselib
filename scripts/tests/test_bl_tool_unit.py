@@ -188,9 +188,10 @@ class TestSingleFileHandling:
 class TestDirectoryHandling:
     """Test handle_directory() function."""
 
-    def test_handle_directory_returns_file_list(self, dir_with_files):
-        """Test directory handling returns file list."""
-        files = bl_tool.handle_directory(str(dir_with_files), allow_hidden_files=False)
+    def test_handle_directory_returns_file_and_directory_lists(self, dir_with_files):
+        """Test directory handling returns both file and directory lists."""
+        files, directories = bl_tool.handle_directory(str(dir_with_files),
+                                                      allow_hidden_files=False)
 
         assert isinstance(files, list)
         assert len(files) > 0
@@ -199,6 +200,10 @@ class TestDirectoryHandling:
         for item in files:
             assert isinstance(item, tuple)
             assert len(item) == 2
+
+        # Directories are collected as relative paths so the digest commits tree shape
+        assert isinstance(directories, list)
+        assert "subdir" in directories
 
 
 class TestHashWorker:
@@ -444,13 +449,24 @@ class TestCommandHash:
         import argparse
         import hashlib
 
-        # Calculate the expected hash (single file returns hash directly, no re-hashing)
+        # Calculate the expected hash directly from the v2 record format, independently
+        # of bl_tool's own helpers, so this also pins the format
         file_content = temp_file_small.read_bytes()
-        relative_path = temp_file_small.name
-        hasher = hashlib.sha256()
-        hasher.update(file_content)
-        hasher.update(relative_path.encode('utf-8'))
-        expected_hash = hasher.hexdigest()
+        path_bytes = temp_file_small.name.encode('utf-8')
+
+        leaf = hashlib.sha256(
+            b"blhash/v2/file\x00"
+            + len(path_bytes).to_bytes(8, 'big')
+            + path_bytes
+            + len(file_content).to_bytes(8, 'big')
+            + hashlib.sha256(file_content).digest()
+        ).digest()
+
+        expected_hash = hashlib.sha256(
+            b"blhash/v2/single\x00" + b"sha256" + b"\x00"
+            + (1).to_bytes(8, 'big')
+            + leaf
+        ).hexdigest()
 
         args = argparse.Namespace(
             path=str(temp_file_small),
@@ -745,3 +761,191 @@ class TestSha1Mode:
         # SHA-1 hex is 40 chars
         import re
         assert re.search(r"Combined SHA1: [0-9a-f]{40}", captured.out)
+
+
+class TestRecordFormat:
+    """Test the v2 record format primitives.
+
+    Expected values are computed inline from the format specification rather than from
+    bl_tool's own helpers, so these tests pin the format instead of restating the code.
+    """
+
+    def test_encode_length_is_u64_big_endian(self):
+        """Test length fields are 8-byte big-endian."""
+        assert bl_tool.encode_length(0) == b"\x00" * 8
+        assert bl_tool.encode_length(1) == b"\x00" * 7 + b"\x01"
+        assert bl_tool.encode_length(256) == b"\x00" * 6 + b"\x01\x00"
+
+    def test_encode_path_surrogate_escape(self):
+        """Test a path that is not valid UTF-8 encodes instead of raising."""
+        # os.fsdecode() maps undecodable bytes to lone surrogates; a plain utf-8
+        # encode would raise UnicodeEncodeError part way through a run
+        assert bl_tool.encode_path("caf\udcff") == b"caf\xff"
+
+    def test_hash_dir_record_format(self):
+        """Test directory record framing matches the specification."""
+        import hashlib
+
+        path_bytes = b"sub/dir"
+        expected = hashlib.sha256(
+            b"blhash/v2/dir\x00" + (7).to_bytes(8, 'big') + path_bytes
+        ).digest()
+
+        assert bl_tool.hash_dir_record("sub/dir") == expected
+
+    def test_hash_worker_frames_path_and_size(self, temp_file_small):
+        """Test the file record commits path length, path, size and content digest."""
+        import hashlib
+
+        content = temp_file_small.read_bytes()
+        path_bytes = b"some/name.bin"
+
+        expected = hashlib.sha256(
+            b"blhash/v2/file\x00"
+            + len(path_bytes).to_bytes(8, 'big')
+            + path_bytes
+            + len(content).to_bytes(8, 'big')
+            + hashlib.sha256(content).digest()
+        ).digest()
+
+        result = bl_tool.hash_worker(str(temp_file_small), "some/name.bin", verbose=False)
+
+        assert result[1] == expected
+
+    def test_compute_root_digest_format(self):
+        """Test root framing binds the scope tag, algorithm and record count."""
+        import hashlib
+
+        records = [b"\x01" * 32, b"\x02" * 32]
+        expected = hashlib.sha256(
+            b"blhash/v2/tree\x00" + b"sha256" + b"\x00"
+            + (2).to_bytes(8, 'big')
+            + records[0] + records[1]
+        ).hexdigest()
+
+        assert bl_tool.compute_root_digest(records, bl_tool.ROOT_TAG_TREE) == expected
+
+    def test_compute_root_digest_scope_tags_differ(self):
+        """Test file scope and tree scope produce different digests for one record."""
+        records = [b"\x01" * 32]
+
+        assert (bl_tool.compute_root_digest(records, bl_tool.ROOT_TAG_FILE)
+                != bl_tool.compute_root_digest(records, bl_tool.ROOT_TAG_TREE))
+
+    def test_compute_root_digest_never_returns_record_verbatim(self):
+        """Test a single record is still framed, so it cannot pass as a root digest."""
+        record = b"\x01" * 32
+
+        assert bl_tool.compute_root_digest([record], bl_tool.ROOT_TAG_TREE) != record.hex()
+
+    def test_compute_root_digest_empty_is_not_hash_of_nothing(self):
+        """Test the empty tree digest is domain separated, not SHA256 of empty input."""
+        import hashlib
+
+        result = bl_tool.compute_root_digest([], bl_tool.ROOT_TAG_TREE)
+
+        assert result != hashlib.sha256(b'').hexdigest()
+        assert result == "6aee79c1b49be4dac70ce5e6f754421021005070f2d06c4b1f0968ffda563282"
+
+
+class TestTreeCollection:
+    """Test tree collection: directory records and traversal rejections."""
+
+    def test_collect_tree_records_directories(self, dir_with_files):
+        """Test directories are collected alongside files."""
+        files, directories = bl_tool.collect_tree(str(dir_with_files),
+                                                  allow_hidden_files=False)
+
+        assert len(files) == 3
+        assert directories == ["subdir"]
+
+    def test_collect_tree_records_empty_directories(self, temp_dir):
+        """Test empty directories are recorded so tree shape is committed."""
+        (temp_dir / "a" / "b" / "c").mkdir(parents=True)
+
+        files, directories = bl_tool.collect_tree(str(temp_dir), allow_hidden_files=False)
+
+        assert files == []
+        assert directories == ["a", "a/b", "a/b/c"]
+
+    def test_collect_tree_relative_paths_use_forward_slashes(self, dir_with_files):
+        """Test relative paths are '/' separated so digests match across platforms."""
+        files, directories = bl_tool.collect_tree(str(dir_with_files),
+                                                  allow_hidden_files=False)
+        rel_paths = [rel_path for _, rel_path in files] + directories
+
+        assert "subdir/file3.txt" in rel_paths
+        assert not any("\\" in p for p in rel_paths)
+
+    def test_collect_tree_skips_hidden_directories(self, dir_with_hidden_files):
+        """Test hidden directories produce no records unless requested."""
+        _, directories = bl_tool.collect_tree(str(dir_with_hidden_files),
+                                              allow_hidden_files=False)
+        assert directories == []
+
+        _, directories = bl_tool.collect_tree(str(dir_with_hidden_files),
+                                              allow_hidden_files=True)
+        assert directories == [".hidden_dir"]
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="Symlinks may not be supported on Windows")
+    def test_collect_tree_rejects_directory_symlink(self, temp_dir, capsys):
+        """Test symlinked directories fail instead of being silently omitted."""
+        target = temp_dir / "target"
+        target.mkdir()
+        (target / "hidden_from_digest.txt").write_text("content")
+
+        tree = temp_dir / "tree"
+        tree.mkdir()
+        (tree / "link").symlink_to(target)
+
+        with pytest.raises(SystemExit) as exc_info:
+            bl_tool.collect_tree(str(tree), allow_hidden_files=False)
+
+        assert exc_info.value.code == 1
+
+        captured = capsys.readouterr()
+        assert "Symlink encountered" in captured.out
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="FIFO creation not supported on Windows")
+    def test_collect_tree_rejects_fifo(self, temp_dir, capsys):
+        """Test a FIFO inside the tree fails instead of blocking forever in open()."""
+        os.mkfifo(str(temp_dir / "pipe"))
+
+        with pytest.raises(SystemExit) as exc_info:
+            bl_tool.collect_tree(str(temp_dir), allow_hidden_files=False)
+
+        assert exc_info.value.code == 1
+
+        captured = capsys.readouterr()
+        assert "Not a regular file" in captured.out
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="Symlinks may not be supported on Windows")
+    def test_command_hash_rejects_symlinked_directory_root(self, temp_dir, capsys):
+        """Test a symlinked directory passed as the root is rejected."""
+        import argparse
+
+        target = temp_dir / "target"
+        target.mkdir()
+        (target / "file.txt").write_text("content")
+
+        link = temp_dir / "link"
+        link.symlink_to(target)
+
+        args = argparse.Namespace(
+            path=str(link),
+            expected_hash=None,
+            exclude_paths=False,
+            use_sha1=False,
+            allow_hidden_files=False,
+            max_threads=4,
+            dry_run=False,
+            verbose=False
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            bl_tool.command_hash(args)
+
+        assert exc_info.value.code == 1
+
+        captured = capsys.readouterr()
+        assert "Symlink encountered" in captured.out

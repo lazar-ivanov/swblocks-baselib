@@ -47,9 +47,10 @@ A command-line utility for performing various operations on the baselib reposito
 
 - **Chunked Reading**: 1 MB chunk size prevents memory issues with large files
 - **Block-Based Combining**: Processes hashes in 32,000-hash blocks (~1 MB) for memory efficiency
-- **Symlink Protection**: Fails gracefully when symlinks are encountered
+- **Framed Records**: Domain-separated, length-prefixed records make the digest an unambiguous tree commitment
+- **Symlink Protection**: Fails gracefully when symlinks, junctions or non-regular files are encountered
 - **Hidden File Control**: Optional inclusion of hidden files (directories only)
-- **Deterministic Output**: Same input always produces same hash (canonical ordering)
+- **Deterministic Output**: Same input always produces same hash, on any platform (canonical ordering and path encoding)
 
 ---
 
@@ -82,7 +83,7 @@ bl_tool.py hash --path PATH [OPTIONS]
 - **Automatic Detection**: Automatically detects if path is file or directory
 - **Memory Efficient**: Handles large files and large directories without memory issues
 - **Parallel Processing**: Multi-threaded directory hashing for performance
-- **Symlink Protection**: Fails immediately if symlinks are encountered
+- **Symlink Protection**: Fails immediately if symlinks, junctions or non-regular files are encountered
 - **Hidden File Control**: For directories, optionally include/exclude hidden files
 - **Verification**: Compare computed hash against expected value
 - **Speed Measurement**: Displays processing speed with auto-adapting units (B/s to TB/s)
@@ -100,6 +101,7 @@ Path: /path/to/file.txt
 Total files processed: 1
 Total size: 1.23 MB
 Combined SHA256: abc123def456...
+Hash format: blhash/v2
 Hashing speed: 234.56 MB/s
 ```
 
@@ -116,6 +118,7 @@ Path: /path/to/dir
 Total files processed: 1234
 Total size: 5.67 GB
 Combined SHA256: def789abc012...
+Hash format: blhash/v2
 Hashing speed: 456.78 MB/s
 ```
 
@@ -142,6 +145,7 @@ No files were actually hashed (dry-run mode)
 --- HASH SUMMARY ---
 ...
 Combined SHA256: abc123def456...
+Hash format: blhash/v2
 Hashing speed: 234.56 MB/s
 Verification: MATCH
 ```
@@ -151,6 +155,7 @@ Verification: MATCH
 --- HASH SUMMARY ---
 ...
 Combined SHA256: abc123def456...
+Hash format: blhash/v2
 Hashing speed: 234.56 MB/s
 Verification: MISMATCH
 Expected: def789abc012...
@@ -172,89 +177,123 @@ Actual:   abc123def456...
 
 The hash command uses SHA256 cryptographic hashing with a two-stage algorithm designed for deterministic, verifiable results across both individual files and directory trees.
 
-### Single File Hashing
+The digest format is versioned and identified as **`blhash/v2`**, reported on the `Hash format:` line of the summary. Every hashed field is domain separated and length prefixed, so the digest is an unambiguous commitment to the tree: no two structurally different trees can produce the same digest without breaking SHA256 itself.
 
-**Algorithm:**
+### Record Format
+
+All length and size fields are unsigned 64-bit big-endian. `H` is the selected algorithm (SHA256 by default, SHA1 with `--use-sha1`).
+
+**File record:**
 ```
-SHA256(file_contents + relative_path_bytes)
-```
-
-**Process:**
-1. Read file in 1 MB chunks (memory-efficient streaming)
-2. Update SHA256 hasher with each chunk
-3. After all chunks, append the filename (as UTF-8 bytes) to the hash
-4. Finalize the hash
-
-**Example:**
-```python
-# For file: /path/to/report.pdf
-relative_path = "report.pdf"
-hash = SHA256(pdf_contents + "report.pdf".encode('utf-8'))
+H( "blhash/v2/file\0" ‖ u64(len(path)) ‖ path ‖ u64(size) ‖ H(contents) )
 ```
 
-**Why include filename?**
-- Ensures different files with identical content have different hashes
-- The relative path becomes part of the file's identity
+**Directory record:**
+```
+H( "blhash/v2/dir\0" ‖ u64(len(path)) ‖ path )
+```
+
+**Root digest:**
+```
+H( root_tag ‖ algorithm_name ‖ "\0" ‖ u64(record_count) ‖ record_1 ‖ record_2 ‖ ... ‖ record_N )
+```
+
+Where `root_tag` is:
+
+| Target | Tag |
+|--------|-----|
+| Single file | `blhash/v2/single\0` |
+| Directory tree | `blhash/v2/tree\0` |
+
+**Why each field exists:**
+
+| Field | Prevents |
+|-------|----------|
+| Length-prefixed path | Content bytes being read as path bytes, or vice versa. Without it, content `a` at path `bc` and content `ab` at path `c` both hash the stream `abc` and collide. |
+| Record type tag | A directory record being substituted for a file record |
+| Root scope tag | A file digest being presented as a tree digest |
+| Algorithm name | A digest being reinterpreted under a different algorithm |
+| Record count | Records being appended to or truncated from a tree |
+| File size | Content and the following field being shifted across the boundary |
+
+### Path Canonicalization
+
+Relative paths are committed in a canonical form so the same tree hashes identically everywhere:
+
+- **Separators** are normalized to `/`, so a tree hashed on Windows matches the same tree hashed on POSIX.
+- **Encoding** is UTF-8 with `surrogateescape`, so file names that are not valid UTF-8 (possible on POSIX) round-trip to their original bytes rather than aborting the run.
+- **Unicode normalization is deliberately not applied.** NFC and NFD names are distinct files on filesystems that do not normalize, and folding them would make the digest ambiguous.
+- **Ordering** is by canonical path bytes, which is independent of platform and locale.
 
 ### Directory Hashing
 
-**Algorithm:**
-```
-SHA256(hash1 + hash2 + hash3 + ... + hashN)
-```
-
-Where each `hashN` is computed using the single file algorithm above.
-
 **Process:**
-1. Scan directory recursively, collecting all files
-2. Sort files alphabetically by full relative path (canonical order)
-3. Hash each file in parallel (using file algorithm above)
-4. Sort results by relative path (maintains canonical order)
-5. Combine individual hashes:
-   - Extract raw hash bytes (32 bytes each) from all files
-   - Process hashes in blocks of 32,000 (~1 MB of hash data)
-   - Feed each block to a single streaming SHA256 hasher
-   - Finalize the combined hash
+1. Scan directory recursively, collecting all files and all directories
+2. Reject symlinks, junctions and non-regular files (see below)
+3. Hash each file in parallel into a file record
+4. Build a directory record for every directory below the root
+5. Sort all records by canonical path bytes
+6. Combine into the root digest:
+   - Emit the root tag, algorithm name and record count
+   - Process records in blocks of 32,000 (~1 MB of record data)
+   - Feed each block to a single streaming hasher
+   - Finalize the root digest
+
+Directory records mean the tree **shape** is committed, not just its file contents. Two trees that differ only by an empty directory receive different digests, and an empty tree has its own well-defined digest rather than the hash of empty input.
 
 **Why this design?**
-- **Deterministic**: Same files in same order always produce same hash
-- **Verifiable**: Can verify entire directory tree with single hash
-- **Efficient**: Block-based combining prevents large memory allocations
-- **Canonical**: Alphabetical sorting ensures consistent results
+- **Unambiguous**: Framed records admit no structural collisions
+- **Deterministic**: The same tree always produces the same digest, on any platform
+- **Verifiable**: An entire directory tree is verified by a single digest
+- **Efficient**: Block-based combining keeps memory usage constant
+- **Versioned**: The format name is part of the hashed input and of the reported output
 
-### Hash Consistency
+### File Scope and Tree Scope Are Distinct
 
-**Important Property:**
-A single file hashed directly produces the **same result** as that file hashed as part of a directory containing only that file.
+Hashing a file directly and hashing a directory that contains only that file produce **different** digests — a file and a tree containing that file are different objects, and the root scope tag separates them.
 
-**Example:**
 ```bash
-# These produce identical hashes:
-python bl_tool.py hash --path /tmp/singledir/file.txt
-python bl_tool.py hash --path /tmp/singledir
-# (where singledir contains only file.txt)
+# These produce different hashes:
+python bl_tool.py hash --path /tmp/singledir/file.txt   # blhash/v2/single
+python bl_tool.py hash --path /tmp/singledir            # blhash/v2/tree
 ```
 
-This works because:
-- Directory hash: `SHA256(hash1)` where `hash1 = SHA256(file_contents + "file.txt")`
-- Single file hash: `SHA256(file_contents + "file.txt")`
-- Since there's only one file, the directory hash is just `SHA256(hash1)`, which equals the file hash
+### Raw Content Mode (`--exclude-paths`)
 
-### Symlink Handling
+`--exclude-paths` selects an unframed raw content digest, reported as `raw-content (no tree commitment)`:
 
-**Behavior:** The tool **fails immediately** if a symlink is encountered.
+- For a **single file** the output is exactly `SHA256(contents)`, matching `sha256sum` and equivalent tools. This is its intended use.
+- For a **directory** it is the combined hash of the ordered content digests only. It commits to file contents, **not** to names, structure, or ordering, and it is **not** a tree commitment. Renaming or moving a file does not change it.
+
+Use the default mode for integrity verification; use `--exclude-paths` only for interoperability with content-only hashes.
+
+### Symlink and Special File Handling
+
+**Behavior:** The tool **fails immediately** if a symlink, a Windows junction, or a non-regular file is encountered — whether it is the path given on the command line or an entry found during traversal.
 
 **Rationale:**
 - Symlinks can point outside the directory tree (breaks determinism)
 - Symlink targets can change (breaks reproducibility)
 - Circular symlinks can cause infinite loops
 - Cross-platform symlink behavior is inconsistent
+- Silently skipping a linked directory would omit its contents from a digest that claims to cover the whole tree
+- Opening a FIFO, socket or device can block indefinitely
 
-**Error Message:**
+**Error Messages:**
 ```
 [ERROR] Symlink encountered: /path/to/link
 Symlinks are not supported by hash command
 ```
+```
+[ERROR] Not a regular file: /path/to/pipe
+Only regular files are supported by hash command
+```
+
+### Format Compatibility
+
+`blhash/v2` replaces the earlier unversioned format, which concatenated file contents and the relative path without framing and returned a lone file hash verbatim as the digest of a one-file tree. That format admitted structural collisions and could silently omit symlinked subtrees, so it was withdrawn rather than kept as an option.
+
+**Digests produced by the earlier format cannot be reproduced and will not verify.** Any stored expected hash must be regenerated. The `Hash format:` line identifies which construction produced a digest.
 
 ---
 
@@ -353,17 +392,18 @@ Even single files use ThreadPoolExecutor for code simplicity - there's no perfor
 
 **Canonical Order Guarantee:**
 ```python
-# 1. Collect files with relative paths
+# 1. Collect files and directories with canonical relative paths
 files = [(absolute_path, relative_path), ...]
+directories = [relative_path, ...]
 
-# 2. Sort by full relative path
-files.sort(key=lambda x: x[1])  # x[1] is relative_path
+# 2. Sort by canonical path bytes
+files.sort(key=lambda x: encode_path(x[1]))
 
 # 3. Hash files (may complete in any order due to parallelism)
 results = hash_all_files(files)
 
-# 4. Sort results again to maintain canonical order
-results.sort(key=lambda x: x[0])  # x[0] is relative_path
+# 4. Merge file and directory records, then restore canonical order
+records.sort(key=lambda x: encode_path(x[0]))
 ```
 
 **Why sort twice?**
@@ -450,6 +490,7 @@ Path: /path/to/file.txt
 Total files processed: 1
 Total size: 1.23 MB
 Combined SHA256: a1b2c3d4e5f6...
+Hash format: blhash/v2
 Hashing speed: 234.56 MB/s
 ```
 
@@ -472,6 +513,7 @@ Path: /path/to/directory
 Total files processed: 1234
 Total size: 5.67 GB
 Combined SHA256: d4e5f6a1b2c3...
+Hash format: blhash/v2
 Hashing speed: 456.78 MB/s
 ```
 
@@ -487,6 +529,7 @@ python scripts/bl_tool.py hash \
 ```
 ...
 Combined SHA256: d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5
+Hash format: blhash/v2
 Hashing speed: 456.78 MB/s
 Verification: MATCH
 ```
@@ -497,6 +540,7 @@ Verification: MATCH
 ```
 ...
 Combined SHA256: a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2
+Hash format: blhash/v2
 Hashing speed: 456.78 MB/s
 Verification: MISMATCH
 Expected: d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5
@@ -592,6 +636,7 @@ Path: /path/to/directory
 Total files processed: 10
 Total size: 5.67 MB
 Combined SHA256: d4e5f6a1b2c3...
+Hash format: blhash/v2
 Hashing speed: 123.45 MB/s
 ```
 
@@ -862,6 +907,7 @@ diff dir1.log dir2.log
 - **v1.1**: Added memory-efficient chunked file reading (1 MB chunks) and block-based hash combining (32K blocks)
 - **v1.2**: Added `--verbose` flag to control per-file output
 - **v1.3**: Redesigned to support both files and directories with unified `hash` command
+- **v2.0**: Replaced the unframed digest with the versioned `blhash/v2` record format. Records are domain separated and length prefixed, directories are committed so tree shape is covered, file and tree scopes are distinguished, paths are canonicalized across platforms, and symlinked directories, junctions and non-regular files are rejected rather than silently skipped. **Digests from earlier versions cannot be reproduced.**
 
 ---
 

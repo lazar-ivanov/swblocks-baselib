@@ -353,11 +353,11 @@ class TestErrorHandling:
         assert "Symlink" in result.stdout or "symlink" in result.stdout
 
 
-class TestConsistency:
-    """Test hash consistency between file and directory."""
+class TestScopeSeparation:
+    """Test that file scope and tree scope digests are domain separated."""
 
-    def test_single_file_matches_directory(self, temp_dir):
-        """Test hashing file directly matches hashing directory with that file."""
+    def test_single_file_differs_from_directory(self, temp_dir):
+        """Test hashing a file differs from hashing a directory holding only that file."""
         # Create directory with single file
         file_path = temp_dir / "test.txt"
         file_path.write_text("test content")
@@ -379,8 +379,9 @@ class TestConsistency:
         hash_file = re.search(r"Combined SHA256: ([0-9a-f]{64})", result_file.stdout).group(1)
         hash_dir = re.search(r"Combined SHA256: ([0-9a-f]{64})", result_dir.stdout).group(1)
 
-        # Hashes should match
-        assert hash_file == hash_dir
+        # A file and a tree containing that file are different objects and must not
+        # share a digest - they are separated by distinct root tags
+        assert hash_file != hash_dir
 
 
 class TestExcludePaths:
@@ -522,3 +523,171 @@ class TestSha1Mode:
 
         assert result.returncode == 0
         assert "Verification: MATCH" in result.stdout
+
+
+def hash_of(path, *extra_args):
+    """Run the hash command and return the reported digest."""
+    result = subprocess.run(
+        [sys.executable, BL_TOOL, "hash", "--path", str(path), *extra_args],
+        capture_output=True,
+        text=True
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    return re.search(r"Combined SHA(?:256|1): ([0-9a-f]+)", result.stdout).group(1)
+
+
+class TestTreeCommitment:
+    """Test that the digest is an unambiguous commitment to the tree (F-10)."""
+
+    def test_content_and_path_cannot_be_shifted(self, temp_dir):
+        """Test the F-10 collision vector produces different digests.
+
+        Without length prefixed records, content 'a' at path 'bc' and content 'ab' at
+        path 'c' both hash the byte stream b'abc' and collide.
+        """
+        tree_a = temp_dir / "a"
+        tree_a.mkdir()
+        (tree_a / "bc").write_bytes(b"a")
+
+        tree_b = temp_dir / "b"
+        tree_b.mkdir()
+        (tree_b / "c").write_bytes(b"ab")
+
+        assert hash_of(tree_a) != hash_of(tree_b)
+
+    def test_empty_directory_changes_the_digest(self, temp_dir):
+        """Test a tree with an extra empty directory differs from one without."""
+        without = temp_dir / "without"
+        without.mkdir()
+        (without / "f").write_bytes(b"x")
+
+        with_empty = temp_dir / "with_empty"
+        with_empty.mkdir()
+        (with_empty / "f").write_bytes(b"x")
+        (with_empty / "empty").mkdir()
+
+        assert hash_of(without) != hash_of(with_empty)
+
+    def test_empty_directory_depth_changes_the_digest(self, temp_dir):
+        """Test nested empty directories are each committed."""
+        shallow = temp_dir / "shallow"
+        (shallow / "a").mkdir(parents=True)
+
+        deep = temp_dir / "deep"
+        (deep / "a" / "b").mkdir(parents=True)
+
+        assert hash_of(shallow) != hash_of(deep)
+
+    def test_file_rename_changes_the_digest(self, temp_dir):
+        """Test the path is committed, so a rename is visible."""
+        before = temp_dir / "before"
+        before.mkdir()
+        (before / "one.txt").write_bytes(b"same")
+
+        after = temp_dir / "after"
+        after.mkdir()
+        (after / "two.txt").write_bytes(b"same")
+
+        assert hash_of(before) != hash_of(after)
+
+
+class TestGoldenVectors:
+    """Pin the v2 digest format against precomputed vectors.
+
+    These detect accidental format drift, which is otherwise invisible - a changed
+    digest looks exactly like changed input.
+    """
+
+    def test_empty_directory_vector(self, empty_dir):
+        """Test the empty tree digest."""
+        assert hash_of(empty_dir) == \
+            "6aee79c1b49be4dac70ce5e6f754421021005070f2d06c4b1f0968ffda563282"
+
+    def test_single_file_vector(self, temp_dir):
+        """Test the single file (file scope) digest."""
+        file_path = temp_dir / "hello.txt"
+        file_path.write_bytes(b"hello")
+
+        assert hash_of(file_path) == \
+            "1ea84d0204067d8e6880380fe38bd97a09c4fa83a155b7b94edb9c329e6803b7"
+
+    def test_one_file_tree_vector(self, temp_dir):
+        """Test the tree scope digest for the same single file."""
+        (temp_dir / "hello.txt").write_bytes(b"hello")
+
+        assert hash_of(temp_dir) == \
+            "5bbdf4c3a4031ab7ba652a625e81feb6cb5e72db42169bc72ba1b538cd4c5b78"
+
+    def test_nested_tree_vector(self, temp_dir):
+        """Test a tree with a file, a subdirectory and a nested file."""
+        (temp_dir / "a.txt").write_bytes(b"A")
+        (temp_dir / "sub").mkdir()
+        (temp_dir / "sub" / "b.txt").write_bytes(b"B")
+
+        assert hash_of(temp_dir) == \
+            "bfecc6b7bee037cba92c8787bc0b9423e21aeafab80bb2b732d101c605770b49"
+
+
+class TestUnicodePaths:
+    """Test path encoding behavior for non-ASCII and undecodable names."""
+
+    @pytest.mark.skipif(sys.platform != "linux",
+                        reason="Requires a filesystem that does not normalize names")
+    def test_unicode_normalization_forms_are_distinct(self, temp_dir):
+        """Test NFC and NFD names are not silently folded together.
+
+        Normalizing would conflate names the filesystem treats as distinct.
+        """
+        import unicodedata
+
+        # Derive both forms rather than relying on source literals, which an editor
+        # could normalize
+        name = "café.txt"
+
+        nfc = temp_dir / "nfc"
+        nfc.mkdir()
+        (nfc / unicodedata.normalize("NFC", name)).write_bytes(b"x")
+
+        nfd = temp_dir / "nfd"
+        nfd.mkdir()
+        (nfd / unicodedata.normalize("NFD", name)).write_bytes(b"x")
+
+        assert hash_of(nfc) != hash_of(nfd)
+
+    @pytest.mark.skipif(sys.platform != "linux",
+                        reason="Only POSIX allows file names that are not valid UTF-8")
+    def test_undecodable_file_name_hashes(self, temp_dir):
+        """Test a name that is not valid UTF-8 hashes instead of raising."""
+        import os
+
+        with open(os.path.join(os.fsencode(str(temp_dir)), b"caf\xff.txt"), "wb") as f:
+            f.write(b"x")
+
+        assert re.fullmatch(r"[0-9a-f]{64}", hash_of(temp_dir))
+
+
+class TestHashFormatReporting:
+    """Test the reported hash format identifies the digest construction."""
+
+    def test_tree_reports_versioned_format(self, dir_with_files):
+        """Test directory hashing reports the versioned format name."""
+        result = subprocess.run(
+            [sys.executable, BL_TOOL, "hash", "--path", str(dir_with_files)],
+            capture_output=True,
+            text=True
+        )
+
+        assert "Hash format: blhash/v2" in result.stdout
+
+    def test_exclude_paths_reports_raw_format(self, temp_file_small):
+        """Test raw content mode is reported as not being a tree commitment."""
+        result = subprocess.run(
+            [sys.executable, BL_TOOL, "hash", "--path", str(temp_file_small),
+             "--exclude-paths"],
+            capture_output=True,
+            text=True
+        )
+
+        assert "Hash format: raw-content (no tree commitment)" in result.stdout

@@ -24,6 +24,7 @@ Commands:
 import argparse
 import hashlib
 import os
+import stat
 import sys
 import threading
 import time
@@ -34,6 +35,24 @@ from pathlib import Path
 # Memory management constants
 FILE_CHUNK_SIZE = 1024 * 1024  # 1 MB - size of chunks when reading large files
 HASH_BLOCK_SIZE = 32000        # ~1 MB of hash data (32000 hashes × 32 bytes = 1 MB)
+
+# Hash format v2 domain separation tags
+#
+# Every record is domain separated and length prefixed so the digest is an unambiguous
+# commitment to the tree. Format v1 concatenated unframed fields, which let structurally
+# different trees produce identical digests (content 'a' at path 'bc' collided with
+# content 'ab' at path 'c').
+HASH_FORMAT_NAME = 'blhash/v2'
+LEAF_TAG_FILE = b'blhash/v2/file\x00'
+LEAF_TAG_DIR = b'blhash/v2/dir\x00'
+ROOT_TAG_TREE = b'blhash/v2/tree\x00'
+ROOT_TAG_FILE = b'blhash/v2/single\x00'
+
+# Width of every length and size field in the record format (unsigned 64-bit big-endian)
+LENGTH_FIELD_SIZE = 8
+
+# Name reported for the raw content mode selected by --exclude-paths
+RAW_FORMAT_NAME = 'raw-content (no tree commitment)'
 
 
 # --- THREAD SAFE PRINTING ---
@@ -90,6 +109,154 @@ def format_speed(size_bytes, elapsed_seconds):
     return f"{bytes_per_second:.2f} PB/s"
 
 
+def encode_path(relative_path):
+    """
+    Encode a relative path to its canonical byte representation for hashing.
+
+    Paths are '/' separated by the collection step, so an identical tree produces an
+    identical digest on Windows and POSIX. 'surrogateescape' round-trips file names that
+    are not valid UTF-8 (possible on POSIX) instead of failing part way through a run.
+
+    Args:
+        relative_path (str): Relative path from the hashed root
+
+    Returns:
+        bytes: Canonical path bytes
+    """
+    return relative_path.encode('utf-8', 'surrogateescape')
+
+
+def encode_length(value):
+    """Encode a length or size as an unsigned 64-bit big-endian record field."""
+    return value.to_bytes(LENGTH_FIELD_SIZE, 'big')
+
+
+def is_reparse_link(path):
+    """
+    Check whether a path is a symlink or a Windows junction.
+
+    Path.is_symlink() reports False for junctions, so they are tested separately.
+    os.path.isjunction() requires Python 3.12, hence the guarded lookup.
+
+    Args:
+        path (Path): Path to check
+
+    Returns:
+        bool: True if the path is a symlink or a junction
+    """
+    if path.is_symlink():
+        return True
+
+    isjunction = getattr(os.path, 'isjunction', None)
+
+    return isjunction is not None and isjunction(path)
+
+
+def fail_on_link(path):
+    """
+    Report a rejected symlink or junction and exit.
+
+    Raises:
+        SystemExit: Always
+    """
+    print(f"[ERROR] Symlink encountered: {path}")
+    print("Symlinks are not supported by hash command")
+    sys.exit(1)
+
+
+def relative_path_for(path, folder_path_obj):
+    """
+    Compute the '/' separated relative path of an entry inside the hashed root.
+
+    Args:
+        path (Path): Absolute path of the entry
+        folder_path_obj (Path): Resolved root directory
+
+    Returns:
+        str: Relative path using '/' separators
+
+    Raises:
+        SystemExit: If the entry lies outside the root
+    """
+    try:
+        return path.relative_to(folder_path_obj).as_posix()
+    except ValueError:
+        print(f"[ERROR] Path escapes the hashed root: {path}")
+        sys.exit(1)
+
+
+def collect_tree(folder_path, allow_hidden_files):
+    """
+    Collect all files and directories in a tree, sorted by canonical relative path.
+
+    Directories are collected as well as files so that the digest commits to the tree
+    shape, including directories that are empty or hold only filtered out entries.
+
+    Args:
+        folder_path (str): Root directory path
+        allow_hidden_files (bool): Include entries starting with '.'
+
+    Returns:
+        tuple: (files, directories) where files is a list of
+               (absolute_path, relative_path) tuples and directories is a list of
+               relative paths, both sorted by canonical path bytes
+
+    Raises:
+        SystemExit: If a symlink, junction or non-regular file is encountered
+    """
+    files = []
+    directories = []
+    folder_path_obj = Path(folder_path).resolve()
+
+    # Walk the resolved root so relative paths can be derived lexically. The root is
+    # link free (checked by the caller) and links inside the tree are rejected below,
+    # so no per-file resolve() is needed.
+    for root, dirs, filenames in os.walk(folder_path_obj):
+        root_path = Path(root)
+
+        # Filter hidden directories if needed
+        if not allow_hidden_files:
+            dirs[:] = [d for d in dirs if not d.startswith('.')]
+
+        for dirname in dirs:
+            dir_path = root_path / dirname
+
+            # Reject symlinked directories before descending. os.walk() does not follow
+            # them, so without this check their contents would be silently omitted.
+            if is_reparse_link(dir_path):
+                fail_on_link(dir_path)
+
+            directories.append(relative_path_for(dir_path, folder_path_obj))
+
+        for filename in filenames:
+            # Filter hidden files if needed
+            if not allow_hidden_files and filename.startswith('.'):
+                continue
+
+            file_path = root_path / filename
+
+            # A single lstat() classifies the entry without following it
+            entry_stat = os.lstat(file_path)
+
+            # Check for symlinks - FAIL if found
+            if stat.S_ISLNK(entry_stat.st_mode):
+                fail_on_link(file_path)
+
+            # Reject FIFOs, sockets and devices - opening them can block forever
+            if not stat.S_ISREG(entry_stat.st_mode):
+                print(f"[ERROR] Not a regular file: {file_path}")
+                print("Only regular files are supported by hash command")
+                sys.exit(1)
+
+            files.append((str(file_path), relative_path_for(file_path, folder_path_obj)))
+
+    # Sort by canonical path bytes (platform and locale independent)
+    files.sort(key=lambda x: encode_path(x[1]))
+    directories.sort(key=encode_path)
+
+    return files, directories
+
+
 def collect_files(folder_path, allow_hidden_files):
     """
     Collect all files in directory, sorted by full relative path.
@@ -102,36 +269,9 @@ def collect_files(folder_path, allow_hidden_files):
         list: Tuples of (absolute_path, relative_path) sorted by relative path
 
     Raises:
-        SystemExit: If symlink encountered
+        SystemExit: If a symlink, junction or non-regular file is encountered
     """
-    files = []
-    folder_path_obj = Path(folder_path).resolve()
-
-    for root, dirs, filenames in os.walk(folder_path):
-        # Filter hidden directories if needed
-        if not allow_hidden_files:
-            dirs[:] = [d for d in dirs if not d.startswith('.')]
-
-        for filename in filenames:
-            # Filter hidden files if needed
-            if not allow_hidden_files and filename.startswith('.'):
-                continue
-
-            file_path = Path(root) / filename
-
-            # Check for symlinks - FAIL if found
-            if file_path.is_symlink():
-                print(f"[ERROR] Symlink encountered: {file_path}")
-                print("Symlinks are not supported by hash command")
-                sys.exit(1)
-
-            # Resolve to canonical path to handle symlinks like /var -> /private/var on macOS
-            file_path = file_path.resolve()
-            relative_path = file_path.relative_to(folder_path_obj)
-            files.append((str(file_path), str(relative_path)))
-
-    # Sort by full relative path (alphabetically)
-    files.sort(key=lambda x: x[1])
+    files, _ = collect_tree(folder_path, allow_hidden_files)
 
     return files
 
@@ -148,13 +288,11 @@ def handle_single_file(file_path, file_path_obj):
         list: Single-element list of (absolute_path, relative_path) tuple
 
     Raises:
-        SystemExit: If file is a symlink
+        SystemExit: If file is a symlink or junction
     """
     # Check for symlink - FAIL if found (consistent with directory behavior)
-    if file_path_obj.is_symlink():
-        print(f"[ERROR] Symlink encountered: {file_path}")
-        print("Symlinks are not supported by hash command")
-        sys.exit(1)
+    if is_reparse_link(file_path_obj):
+        fail_on_link(file_path)
 
     # Use filename as relative path
     relative_path = file_path_obj.name
@@ -172,12 +310,12 @@ def handle_directory(folder_path, allow_hidden_files):
         allow_hidden_files (bool): Include hidden files/directories
 
     Returns:
-        list: List of (absolute_path, relative_path) tuples
+        tuple: (files, directories) as returned by collect_tree()
     """
     print(f"Scanning directory: {folder_path}")
-    files = collect_files(folder_path, allow_hidden_files)
+    files, directories = collect_tree(folder_path, allow_hidden_files)
     print(f"Found {len(files)} files to process")
-    return files
+    return files, directories
 
 
 def hash_worker(file_path, relative_path, verbose, exclude_paths=False, hash_algo='sha256'):
@@ -185,14 +323,15 @@ def hash_worker(file_path, relative_path, verbose, exclude_paths=False, hash_alg
     Hash a single file using chunked reading.
 
     Reads file in 1 MB chunks to handle large files without loading into memory.
-    By default appends the relative path to the hash input for content-addressable
-    uniqueness. Use exclude_paths=True to hash file contents only.
+    By default the content digest is framed into a length prefixed file record that
+    commits the relative path and the file size, so no field can be shifted across a
+    record boundary. Use exclude_paths=True to return the raw content digest instead.
 
     Args:
         file_path (str): Absolute path to file
-        relative_path (str): Relative path from root (for hash input)
+        relative_path (str): Relative path from root (committed by the file record)
         verbose (bool): If True, print status for each file
-        exclude_paths (bool): If True, exclude relative path from hash input
+        exclude_paths (bool): If True, return the unframed content digest
         hash_algo (str): Hash algorithm name ('sha256' or 'sha1')
 
     Returns:
@@ -214,10 +353,21 @@ def hash_worker(file_path, relative_path, verbose, exclude_paths=False, hash_alg
                 hasher.update(chunk)
                 file_size += len(chunk)
 
-        # After all file chunks, append relative path (unless excluded)
-        if not exclude_paths:
-            hasher.update(relative_path.encode('utf-8'))
-        hash_bytes = hasher.digest()
+        if exclude_paths:
+            # Raw content digest - no path, no framing, no tree commitment
+            hash_bytes = hasher.digest()
+        else:
+            # Frame the content digest into a length prefixed file record
+            path_bytes = encode_path(relative_path)
+
+            leaf_hasher = hashlib.new(hash_algo)
+            leaf_hasher.update(LEAF_TAG_FILE)
+            leaf_hasher.update(encode_length(len(path_bytes)))
+            leaf_hasher.update(path_bytes)
+            leaf_hasher.update(encode_length(file_size))
+            leaf_hasher.update(hasher.digest())
+            hash_bytes = leaf_hasher.digest()
+
         hash_hex = hash_bytes.hex()    # For display only
 
         # Thread-safe print (only in verbose mode)
@@ -232,9 +382,69 @@ def hash_worker(file_path, relative_path, verbose, exclude_paths=False, hash_alg
         raise  # Re-raise to fail entire operation
 
 
+def hash_dir_record(relative_path, hash_algo='sha256'):
+    """
+    Compute the record digest for a directory entry.
+
+    Directory records commit the tree shape, so two trees that differ only by an empty
+    directory receive different digests.
+
+    Args:
+        relative_path (str): Relative path of the directory from the hashed root
+        hash_algo (str): Hash algorithm name ('sha256' or 'sha1')
+
+    Returns:
+        bytes: Raw record digest
+    """
+    path_bytes = encode_path(relative_path)
+
+    hasher = hashlib.new(hash_algo)
+    hasher.update(LEAF_TAG_DIR)
+    hasher.update(encode_length(len(path_bytes)))
+    hasher.update(path_bytes)
+
+    return hasher.digest()
+
+
+def compute_root_digest(record_hashes, root_tag, hash_algo='sha256'):
+    """
+    Combine record digests into the final root digest.
+
+    The root is domain separated by root_tag (single file vs directory tree), bound to
+    the hash algorithm and committed to the record count, so a record digest can never
+    be mistaken for a root digest. Records are fed in blocks of HASH_BLOCK_SIZE to keep
+    memory usage constant for very large trees.
+
+    Args:
+        record_hashes (list): Raw record digests in canonical order
+        root_tag (bytes): Domain separation tag for the hashed scope
+        hash_algo (str): Hash algorithm name ('sha256' or 'sha1')
+
+    Returns:
+        str: Root digest as hex string
+    """
+    total_records = len(record_hashes)
+
+    final_hasher = hashlib.new(hash_algo)
+    final_hasher.update(root_tag)
+    final_hasher.update(hash_algo.encode('ascii'))
+    final_hasher.update(b'\x00')
+    final_hasher.update(encode_length(total_records))
+
+    # Process records in blocks to avoid large memory allocation
+    for block_start in range(0, total_records, HASH_BLOCK_SIZE):
+        block_end = min(block_start + HASH_BLOCK_SIZE, total_records)
+        final_hasher.update(b''.join(record_hashes[block_start:block_end]))
+
+    return final_hasher.hexdigest()
+
+
 def combine_hashes(hash_list, hash_algo='sha256'):
     """
     Combine hashes in blocks to avoid large memory allocations.
+
+    Used only by the raw content mode selected by --exclude-paths. The tree digest is
+    built by compute_root_digest() instead.
 
     If only one hash is provided, returns it directly without re-hashing.
     Otherwise, processes hashes in blocks of HASH_BLOCK_SIZE, feeding each
@@ -290,13 +500,21 @@ def command_hash(args):
     # Step 2: Detect path type
     path_obj = Path(path)
 
+    # Reject a linked root before classifying it - is_file()/is_dir() follow links, so a
+    # symlinked directory would otherwise be accepted while a symlinked file is rejected
+    if is_reparse_link(path_obj):
+        fail_on_link(path)
+
     if path_obj.is_file():
         # Single file path
         files_to_process = handle_single_file(path, path_obj)
+        directories = []
+        root_tag = ROOT_TAG_FILE
         root_path = path  # For display in summary
     elif path_obj.is_dir():
         # Directory path
-        files_to_process = handle_directory(path, args.allow_hidden_files)
+        files_to_process, directories = handle_directory(path, args.allow_hidden_files)
+        root_tag = ROOT_TAG_TREE
         root_path = path
     else:
         print(f"[ERROR] Path is neither a file nor a directory: {path}")
@@ -363,17 +581,33 @@ def command_hash(args):
     # Stop timer
     elapsed_time = time.time() - start_time
 
-    # Step 5: Sort results by relative path to maintain canonical order
-    results.sort(key=lambda x: x[0])
+    # Step 5: Sort results by canonical path bytes to maintain canonical order
+    results.sort(key=lambda x: encode_path(x[0]))
 
     # Step 6: Combine hashes
-    hash_list = [hash_bytes for _, hash_bytes, _ in results]
+    if args.exclude_paths:
+        # Raw content mode - contents only, no records and no tree commitment
+        hash_list = [hash_bytes for _, hash_bytes, _ in results]
 
-    if len(hash_list) == 0:
-        # Empty directory
-        combined_hash = hashlib.new(hash_algo, b'').hexdigest()
+        if len(hash_list) == 0:
+            # Empty directory
+            combined_hash = hashlib.new(hash_algo, b'').hexdigest()
+        else:
+            combined_hash = combine_hashes(hash_list, hash_algo)
+
+        hash_format = RAW_FORMAT_NAME
     else:
-        combined_hash = combine_hashes(hash_list, hash_algo)
+        # Merge file and directory records into a single canonically ordered list
+        records = [(relative_path, hash_bytes) for relative_path, hash_bytes, _ in results]
+        records.extend(
+            (relative_path, hash_dir_record(relative_path, hash_algo))
+            for relative_path in directories
+        )
+        records.sort(key=lambda x: encode_path(x[0]))
+
+        combined_hash = compute_root_digest(
+            [record_hash for _, record_hash in records], root_tag, hash_algo)
+        hash_format = HASH_FORMAT_NAME
 
     # Calculate total size
     total_size = sum(file_size for _, _, file_size in results)
@@ -385,6 +619,7 @@ def command_hash(args):
     print(f"Total files processed: {total_files}")
     print(f"Total size: {format_size(total_size)}")
     print(f"Combined {hash_name}: {combined_hash}")
+    print(f"Hash format: {hash_format}")
     print(f"Hashing speed: {format_speed(total_size, elapsed_time)} ({format_size(total_size)} in {format_duration(elapsed_time)})")
 
     # Step 8: Verify hash if requested
