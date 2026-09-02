@@ -34,6 +34,26 @@ namespace bl
 {
     namespace crypto
     {
+        /**
+         * @brief The minimum TLS protocol version which will be negotiated
+         *
+         * Tls12 is the default and the only value which is not a legacy opt-in; both of the
+         * legacy values permit protocol versions with known weaknesses and exist solely for
+         * interoperability with peers which have not been upgraded yet
+         *
+         * The value must be set before crypto::CryptoBase::init() is called because the
+         * process-global client context is created once during initialization; server contexts
+         * are created per call to createAsioSslServerContext() and will pick up the value
+         * which is current at the time of the call
+         */
+
+        enum class TlsMinimumVersion
+        {
+            Tls12,
+            Tls11Legacy,
+            Tls10Legacy,
+        };
+
         namespace detail
         {
             /**
@@ -61,7 +81,8 @@ namespace bl
 
                 static std::map< std::string, std::string >     g_untrustedEndpointsInfo;
                 static os::mutex                                g_untrustedEndpointsInfoLock;
-                static bool                                     g_isEnableTlsV10;
+                static TlsMinimumVersion                        g_tlsMinimumVersion;
+                static bool                                     g_allowUntrustedCertificates;
 
                 static void initRandomEngine()
                 {
@@ -188,29 +209,102 @@ namespace bl
                     }
                 }
 
+                /**
+                 * @brief Verifies that the configured cipher policy left at least one cipher
+                 * suite which can be negotiated below TLS 1.3
+                 *
+                 * ::SSL_CTX_set_cipher_list returns zero when nothing matched and its return
+                 * value is checked at the call site, but from OpenSSL 1.1.1 onwards it returns
+                 * success as long as any TLS 1.3 cipher suite is configured, even when the list
+                 * selected no TLS 1.2 suite at all
+                 *
+                 * Without this check an OpenSSL built without the relevant algorithms would
+                 * silently become TLS 1.3 only and would then fail every TLS 1.2 peer at
+                 * handshake time rather than failing loudly here at configuration time
+                 */
+
+                static void chkUsableCipherSuitesAvailable( SAA_inout ::SSL_CTX* nativeSslContext )
+                {
+                    const auto* ciphers = ::SSL_CTX_get_ciphers( nativeSslContext );
+
+                    BL_CHK_CRYPTO_API_NM( ciphers );
+
+                    int usableCount = 0;
+
+                    /*
+                     * Note that sk_SSL_CIPHER_num and sk_SSL_CIPHER_value are macros and
+                     * therefore they must not be qualified with the global namespace operator
+                     *
+                     * ::SSL_CIPHER_get_version returns the name of the lowest protocol version
+                     * in which the cipher suite can be negotiated; it is available on all the
+                     * versions of OpenSSL we support and on the versions which predate TLS 1.3
+                     * it simply never returns the TLS 1.3 name, so the loop below degenerates
+                     * into a plain non-empty check there, which is the correct behavior
+                     */
+
+                    for( int i = 0, count = sk_SSL_CIPHER_num( ciphers ); i < count; ++i )
+                    {
+                        const char* version = ::SSL_CIPHER_get_version( sk_SSL_CIPHER_value( ciphers, i ) );
+
+                        if( version && std::string( "TLSv1.3" ) == version )
+                        {
+                            continue;
+                        }
+
+                        ++usableCount;
+                    }
+
+                    BL_CHK_CRYPTO_API(
+                        usableCount > 0,
+                        "No usable TLS cipher suites are configured"
+                        );
+                }
+
                 static void initNativeSslContext( SAA_inout ::SSL_CTX* nativeSslContext )
                 {
                     auto options = ::SSL_CTX_get_options( nativeSslContext );
 
                     /*
-                     * Disable most of the non-secure protocols (according to Wikipedia):
-                     * http://en.wikipedia.org/wiki/Transport_Layer_Security#SSL_1.0.2C_2.0_and_3.0
+                     * Disable the non-secure protocols; by default the minimum protocol version
+                     * which will be negotiated is TLS 1.2 and both TLS 1.0 and TLS 1.1 are only
+                     * available via the explicit legacy opt-in (see TlsMinimumVersion)
                      *
-                     * By default the configuration is secure - i.e. we basically want
-                     * TLS 1.1 or higher
+                     * Note that we also allow for all bug workarounds via SSL_OP_ALL; on the
+                     * OpenSSL versions we support this only enables interoperability workarounds
+                     * and the historically dangerous members of it have become no-ops
                      *
-                     * Note that even TLS 1.0 is considered weak, but in some cases it might have
-                     * to be allowed as some servers are not supporting TLS 1.1; we will allow the
-                     * users of baselib to control this via g_isEnableTlsV10 global flag
+                     * Two things about SSL_OP_ALL are worth knowing when the legacy opt-ins are
+                     * used, as neither matters at a TLS 1.2 floor:
                      *
-                     * Note that we also allow for all bug workarounds via SSL_OP_ALL
+                     * -- it includes SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS, which disables the 1/n-1
+                     *    record splitting countermeasure against the BEAST attack on TLS 1.0
+                     *
+                     * -- on OpenSSL versions before 3.0 it also included SSL_OP_LEGACY_SERVER_CONNECT,
+                     *    which permits connecting to servers which do not support the RFC 5746
+                     *    renegotiation indication extension
                      */
 
                     options |= ( SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_ALL | SSL_OP_NO_TICKET );
 
-                    if( ! g_isEnableTlsV10 )
+                    int minProtoVersion = TLS1_2_VERSION;
+                    bool isLegacyProtocolRequested = false;
+
+                    switch( g_tlsMinimumVersion )
                     {
-                        options |= SSL_OP_NO_TLSv1;
+                        case TlsMinimumVersion::Tls10Legacy:
+                            minProtoVersion = TLS1_VERSION;
+                            isLegacyProtocolRequested = true;
+                            break;
+
+                        case TlsMinimumVersion::Tls11Legacy:
+                            options |= SSL_OP_NO_TLSv1;
+                            minProtoVersion = TLS1_1_VERSION;
+                            isLegacyProtocolRequested = true;
+                            break;
+
+                        default:
+                            options |= ( SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1 );
+                            break;
                     }
 
                     /*
@@ -219,22 +313,86 @@ namespace bl
 
                     ( void ) ::SSL_CTX_set_options( nativeSslContext, options );
 
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
                     /*
-                     * Enable only the fully secure ciphers for each of the secure protocols (TLS 1.0/1.1/1.2)
+                     * ::SSL_CTX_set_min_proto_version is the API which OpenSSL recommends for
+                     * protocol selection, but it does not exist before OpenSSL 1.1.0, which is
+                     * why the SSL_OP_NO_TLSv1* bits above are set as well; on 1.1.0+ both
+                     * mechanisms are in force and they agree
                      *
-                     * This is per recommendation for cipher hardening - e.g. here:
-                     * https://www.acunetix.com/blog/articles/tls-ssl-cipher-hardening
+                     * Unlike the option bits this is a real floor rather than an enumeration of
+                     * the denied versions and it can be queried back, which makes the policy
+                     * verifiable
+                     */
+
+                    BL_CHK_CRYPTO_API_NM(
+                        ::SSL_CTX_set_min_proto_version( nativeSslContext, minProtoVersion )
+                        );
+
+                    if( isLegacyProtocolRequested )
+                    {
+                        /*
+                         * The protocol floor alone is not sufficient to make TLS 1.0 or TLS 1.1
+                         * reachable on a modern OpenSSL
+                         *
+                         * OpenSSL applies a security level on top of the configured protocol
+                         * range and from OpenSSL 3.x the default level prohibits every protocol
+                         * version below TLS 1.2, so a context which asks for the older versions
+                         * and leaves the security level alone rejects them with 'unsupported
+                         * protocol' regardless of what the floor says - verified against
+                         * OpenSSL 3.5.4, where a TLS 1.1 handshake fails at level 1 and above
+                         * and succeeds only at level 0
+                         *
+                         * An opt-in which silently does not do what it says is worse than no
+                         * opt-in at all, so the security level is lowered here as part of it
+                         *
+                         * This is deliberately scoped to the legacy opt-in and it is the reason
+                         * that opt-in is described as permitting known weaknesses rather than
+                         * merely as permitting an older protocol version - it also relaxes the
+                         * minimum key sizes and permits SHA-1 in certificate signatures
+                         */
+
+                        ( void ) ::SSL_CTX_set_security_level( nativeSslContext, 0 );
+                    }
+#else
+                    BL_UNUSED( minProtoVersion );
+                    BL_UNUSED( isLegacyProtocolRequested );
+#endif
+
+                    /*
+                     * Enable only forward-secret ciphers with a modern bulk cipher for the
+                     * protocols up to and including TLS 1.2
                      *
-                     * The SSL labs (www.ssllabs.com) test score is now good ('A')
+                     * Note that the 3DES suites which used to be part of this list have been
+                     * removed and are now also denied explicitly, so that no future alias can
+                     * reintroduce them silently
+                     *
+                     * Note also that only cipher aliases are used here and never individual
+                     * cipher names, so that the policy resolves identically on every version of
+                     * OpenSSL we support; OpenSSL ignores unrecognized tokens silently, so an
+                     * alias which does not exist on the older versions (CHACHA20 for example)
+                     * would make the effective policy differ between builds for a reason which
+                     * is not visible in the source
+                     *
+                     * Note that ::SSL_CTX_set_cipher_list configures the protocols up to and
+                     * including TLS 1.2 only and it does not affect the TLS 1.3 cipher suites,
+                     * which are configured via ::SSL_CTX_set_ciphersuites; that API is
+                     * deliberately not called because the OpenSSL default TLS 1.3 suite list is
+                     * already exactly the set we would ask for - TLS 1.3 has no non-AEAD,
+                     * non-forward-secret or NULL suites to remove - and because pinning it would
+                     * make this library rather than the platform the owner of the decision of
+                     * which TLS 1.3 suite to drop when one is found to be weak
                      */
 
                     BL_CHK_CRYPTO_API_NM(
                         ::SSL_CTX_set_cipher_list(
                             nativeSslContext,
-                            "ECDH+AESGCM:DH+AESGCM:ECDH+AES256:DH+AES256:ECDH+AES128:DH+AES:ECDH+3DES:"
-                            "DH+3DES:RSA+AESGCM:RSA+AES:RSA+3DES:!aNULL:!kRSA:!PSK:!SRP:!MD5:!RC4"
+                            "ECDH+AESGCM:DH+AESGCM:ECDH+AES256:DH+AES256:ECDH+AES128:DH+AES:"
+                            "!aNULL:!eNULL:!kRSA:!PSK:!SRP:!MD5:!RC4:!3DES:!DES:!EXPORT"
                             )
                         );
+
+                    chkUsableCipherSuitesAvailable( nativeSslContext );
 
                     ( void ) loadAllKnownCertificateAuthorities( nativeSslContext );
                 }
@@ -358,6 +516,20 @@ namespace bl
                         asio::const_buffer( certificatePem.data(), certificatePem.size() )
                         );
 
+                    /*
+                     * The private key and the leaf certificate must be a matching pair
+                     *
+                     * Note that this check must come after the certificate has been loaded
+                     * because it compares the private key against the certificate which is
+                     * currently in the context
+                     *
+                     * Without it a mismatched pair is only discovered when the first client
+                     * attempts a handshake and it is then reported as a per-connection error
+                     * rather than as the server misconfiguration which it is
+                     */
+
+                    BL_CHK_CRYPTO_API_NM( ::SSL_CTX_check_private_key( context -> native_handle() ) );
+
                     return context;
                 }
 
@@ -440,9 +612,19 @@ namespace bl
                     }
                 }
 
-                static void isEnableTlsV10( SAA_in const bool isEnableTlsV10 )
+                static void tlsMinimumVersion( SAA_in const TlsMinimumVersion minimumVersion )
                 {
-                    g_isEnableTlsV10 = isEnableTlsV10;
+                    g_tlsMinimumVersion = minimumVersion;
+                }
+
+                static bool allowUntrustedCertificates() NOEXCEPT
+                {
+                    return g_allowUntrustedCertificates;
+                }
+
+                static void allowUntrustedCertificates( SAA_in const bool allowUntrusted ) NOEXCEPT
+                {
+                    g_allowUntrustedCertificates = allowUntrusted;
                 }
             };
 
@@ -450,7 +632,9 @@ namespace bl
             BL_DEFINE_STATIC_MEMBER( CryptoInitT, os::mutex*, g_locks ) = nullptr;
             BL_DEFINE_STATIC_MEMBER( CryptoInitT, int, g_lockCount ) = 0;
             BL_DEFINE_STATIC_MEMBER( CryptoInitT, int, g_sessionIdContext ) = 42;
-            BL_DEFINE_STATIC_MEMBER( CryptoInitT, bool, g_isEnableTlsV10 ) = false;
+            BL_DEFINE_STATIC_MEMBER( CryptoInitT, TlsMinimumVersion, g_tlsMinimumVersion ) =
+                TlsMinimumVersion::Tls12;
+            BL_DEFINE_STATIC_MEMBER( CryptoInitT, bool, g_allowUntrustedCertificates ) = false;
 
             template
             <
@@ -572,17 +756,40 @@ namespace bl
                 return detail::CryptoInit::createAsioSslServerContext( privateKeyPem, certificatePem );
             }
 
+            /**
+             * @brief Whether a client connection whose peer certificate could not be verified
+             * is nevertheless allowed to complete the handshake
+             *
+             * The default is false - i.e. the connection fails closed
+             *
+             * This used to be hard-coded to true, on the reasoning that an expired or otherwise
+             * unverifiable certificate should be a soft error which the application reports to
+             * the user and lets them continue, in the way a browser does; the reasoning is sound
+             * but the second half of it was never implemented - the failure is only recorded in
+             * the untrusted endpoints map and logged as a warning, and nothing consumes it - so
+             * in practice it disabled certificate verification altogether
+             *
+             * An application which genuinely implements the prompt-the-user behavior, or which
+             * connects to endpoints with self-signed or otherwise unverifiable certificates on
+             * purpose, can restore the previous behavior by calling the setter below before it
+             * establishes any connection, and can then use hasUntrustedEndpoints() and
+             * getUntrustedEndpointsInfo() to report what was accepted
+             *
+             * Note that the trust anchors are the roots bundled in TrustedRoots.h plus whatever
+             * was passed to registerTrustedRoot(); the platform certificate store is
+             * deliberately not consulted (see the comment on set_default_verify_paths in
+             * initSsl above), so an endpoint whose root is only in the platform store must be
+             * registered explicitly rather than handled by allowing untrusted certificates
+             */
+
             static bool allowUntrustedCertificates() NOEXCEPT
             {
-                /*
-                 * We need to allow SSL connections to servers which provide certificates
-                 * that cannot be trusted because we don't want to make the app non-operational
-                 * as a hard policy - e.g. if some certificate expires that might be
-                 * considered soft error, prompt the user to continue, etc (like in the
-                 * browsers)
-                 */
+                return detail::CryptoInit::allowUntrustedCertificates();
+            }
 
-                return true;
+            static void allowUntrustedCertificates( SAA_in const bool allowUntrusted ) NOEXCEPT
+            {
+                detail::CryptoInit::allowUntrustedCertificates( allowUntrusted );
             }
 
             static bool hasUntrustedEndpoints() NOEXCEPT
@@ -608,9 +815,26 @@ namespace bl
                 detail::CryptoInit::clearUntrustedEndpointInfo( endpointId );
             }
 
+            static void tlsMinimumVersion( SAA_in const TlsMinimumVersion minimumVersion )
+            {
+                detail::CryptoInit::tlsMinimumVersion( minimumVersion );
+            }
+
+            /**
+             * @brief Deprecated - use tlsMinimumVersion() instead
+             *
+             * isEnableTlsV10( true ) is equivalent to tlsMinimumVersion( Tls10Legacy ) and is
+             * retained so existing callers keep compiling and keep their behavior
+             *
+             * Note that isEnableTlsV10( false ) now selects the TLS 1.2 floor rather than the
+             * TLS 1.1 floor which it used to select - that is the point of the change
+             */
+
             static void isEnableTlsV10( SAA_in const bool isEnableTlsV10 )
             {
-                detail::CryptoInit::isEnableTlsV10( isEnableTlsV10 );
+                detail::CryptoInit::tlsMinimumVersion(
+                    isEnableTlsV10 ? TlsMinimumVersion::Tls10Legacy : TlsMinimumVersion::Tls12
+                    );
             }
         };
 

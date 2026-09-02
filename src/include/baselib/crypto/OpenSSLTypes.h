@@ -142,6 +142,16 @@ namespace bl
                 }
             };
 
+            class EvpPkeyCtxDeleter
+            {
+            public:
+
+                void operator ()( SAA_in ::EVP_PKEY_CTX* ctx ) const NOEXCEPT
+                {
+                    ( void ) ::EVP_PKEY_CTX_free( ctx );
+                }
+            };
+
         } // detail
 
         typedef cpp::SafeUniquePtr< ::BIGNUM, detail::BigNumDeleter >                   bignum_ptr_t;
@@ -149,6 +159,7 @@ namespace bl
         typedef cpp::SafeUniquePtr< ::RSA, detail::RsaDeleter >                         rsakey_ptr_t;
         typedef cpp::SafeUniquePtr< ::X509, detail::X509CertDeleter >                   x509cert_ptr_t;
         typedef cpp::SafeUniquePtr< ::EVP_PKEY, detail::EvpPkeyDeleter >                evppkey_ptr_t;
+        typedef cpp::SafeUniquePtr< ::EVP_PKEY_CTX, detail::EvpPkeyCtxDeleter >         evppkeyctx_ptr_t;
         typedef cpp::SafeUniquePtr< char[], detail::OpenSslFree >                       openssl_string_ptr_t;
 
     } // crypto

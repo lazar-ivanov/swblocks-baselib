@@ -228,12 +228,12 @@ namespace bl
                 BL_WARN_NOEXCEPT_END( "AsioSslStreamWrapperT<...>::verifyCertificate" )
 
                 /*
-                 * We check allowUntrustedCertificates() and return true in this case
-                 * as we don't want to block on expired certificate or other such
-                 * certificate issues
+                 * By default a certificate which could not be verified fails the handshake
                  *
-                 * The caller code will check for untrusted certificate issues and they
-                 * will report a loud warning to the user, prompt the user, etc
+                 * crypto::CryptoBase::allowUntrustedCertificates( true ) restores the previous
+                 * behavior, in which the failure is only recorded in the untrusted endpoints map
+                 * and logged, so that an application which wants to treat it as a soft error and
+                 * prompt the user can do so; see the comment on that method
                  */
 
                 return ( ok || allowUntrustedCertificates() );
@@ -415,7 +415,24 @@ namespace bl
                  * stream and do the SSL handshake
                  */
 
-                getStream().set_verify_mode( asio::ssl::verify_peer );
+                /*
+                 * Peer verification is requested for the client role only
+                 *
+                 * In the server role asio::ssl::verify_peer means 'request a client certificate'
+                 * and the verify callback then decides whether a certificate which was supplied
+                 * is acceptable; this library has never authenticated clients by certificate -
+                 * the callback used to return true unconditionally - so requesting one and
+                 * accepting whatever arrives is equivalent to not requesting one at all, and
+                 * once the callback fails closed the two stop being equivalent: a client which
+                 * volunteers a certificate the server cannot chain would be rejected
+                 *
+                 * Mutual TLS is a separate feature and would need an explicit policy, a trust
+                 * anchor set for client certificates and a way to surface the client identity
+                 */
+
+                getStream().set_verify_mode(
+                    m_isServer ? asio::ssl::verify_none : asio::ssl::verify_peer
+                    );
 
                 /*
                  * Clear the last verify error info state in case the object has been reused

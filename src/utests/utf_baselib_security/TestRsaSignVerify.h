@@ -45,6 +45,7 @@ namespace utest
 
             auto privateKeyPemString = bl::security::JsonSecuritySerialization::getPrivateKeyAsPemString(
                 rsaKey,
+                bl::security::KeyProtection::Encrypted,
                 password
                 );
 

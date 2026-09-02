@@ -60,6 +60,15 @@ namespace bl
                  */
 
                 RSA_KEY_EXPONENT_DEFAULT                        = RSA_F4,
+
+                /*
+                 * The smallest RSA modulus size which is accepted when a key is imported
+                 *
+                 * Keys below this size are not considered to provide meaningful security and
+                 * are rejected rather than downgraded
+                 */
+
+                RSA_KEY_SIZE_MINIMUM                            = 2048,
             };
 
         private:
@@ -139,6 +148,44 @@ namespace bl
 #endif
             }
 
+            /**
+             * @brief Obtains the key as an EVP_PKEY
+             *
+             * This is the preferred accessor and new code should use it rather than get()
+             *
+             * OpenSSL 3.x deprecates the low-level RSA APIs in favor of the provider-backed
+             * EVP interfaces, and an EVP_PKEY is also the only representation which can refer
+             * to a key which is not extractable (a key held in a provider or in hardware)
+             *
+             * Note that this returns a new EVP_PKEY which holds its own reference to the
+             * underlying RSA key rather than a handle onto a stored one; the stored type is
+             * still ::RSA and migrating it is tracked separately - see
+             * notes/plans/issues/pr-review-residual-cxx-findings-plan.md
+             */
+
+            auto evpKey() const -> evppkey_ptr_t
+            {
+                auto pkey = evppkey_ptr_t::attach( ::EVP_PKEY_new() );
+
+                BL_CHK_CRYPTO_API_NM( pkey );
+
+                BL_CHK_CRYPTO_API_NM(
+                    ::EVP_PKEY_set1_RSA( pkey.get(), const_cast< ::RSA* >( m_rsaKey.get() ) )
+                    );
+
+                return pkey;
+            }
+
+            /**
+             * @brief Obtains the underlying RSA key
+             *
+             * This accessor is legacy; prefer evpKey() above
+             *
+             * No new call site should be added which operates on the ::RSA object directly,
+             * because every such call site has to be rewritten when the stored key type moves
+             * to EVP_PKEY
+             */
+
             ::RSA& get() NOEXCEPT
             {
                 return *m_rsaKey;
@@ -148,6 +195,12 @@ namespace bl
             {
                 return *m_rsaKey;
             }
+
+            /**
+             * @brief Releases the ownership of the underlying RSA key
+             *
+             * This accessor is legacy; see the note on get() above
+             */
 
             ::RSA* releaseRsa()
             {

@@ -254,7 +254,10 @@ UTF_AUTO_TEST_CASE( PemKeyFormats_EmittedFormatsAreSpkiAndPkcs8 )
         publicPem.find( "-----BEGIN PUBLIC KEY-----" ) == LocalTestPemKeyFormatsHelpers::labelPos
         );
 
-    const auto privatePem = bl::security::JsonSecuritySerialization::getPrivateKeyAsPemString( rsaKey );
+    const auto privatePem = bl::security::JsonSecuritySerialization::getPrivateKeyAsPemString(
+        rsaKey,
+        bl::security::KeyProtection::PlaintextExplicit
+        );
 
     UTF_CHECK(
         privatePem.find( "-----BEGIN PRIVATE KEY-----" ) == LocalTestPemKeyFormatsHelpers::labelPos
@@ -262,6 +265,7 @@ UTF_AUTO_TEST_CASE( PemKeyFormats_EmittedFormatsAreSpkiAndPkcs8 )
 
     const auto encryptedPrivatePem = bl::security::JsonSecuritySerialization::getPrivateKeyAsPemString(
         rsaKey,
+        bl::security::KeyProtection::Encrypted,
         "1234" /* password */
         );
 
