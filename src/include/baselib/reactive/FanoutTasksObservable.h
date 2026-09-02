@@ -101,6 +101,7 @@ namespace bl
 
                     m_eqChildTasks -> setNotifyCallback(
                         om::copy( m_notifyCB ),
+                        tasks::ExecutionQueueNotify::DeliveryConcurrent /* delivery */,
                         tasks::ExecutionQueueNotify::AllTasksCompleted /* eventsMask */
                         );
 

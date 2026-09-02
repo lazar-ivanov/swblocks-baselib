@@ -32,6 +32,13 @@ Modify [ExecutionQueueImpl.h](/home/lazar/dev/github/swblocks-baselib/src/includ
 
 ## Notification-delivery decision — do not implement F-07b
 
+> **Superseded in part.** The rejection of the F-07b FIFO dispatcher stands. The decision below to
+> leave concurrent delivery as the *only* available behavior does not: see
+> `execution-queue-notification-delivery-plan.md`, which keeps concurrent delivery as the default but
+> adds an opt-in `ExecutionQueueNotify::DeliverySerialized` mode and makes the choice a mandatory
+> parameter of `setNotifyCallback`. The breaking-change record is in
+> `execution-queue-notification-delivery-breaking-change.md`.
+
 Adopt concurrent, unordered notification delivery as the intentional public contract:
 
 - Callbacks from one queue may execute concurrently on different threads.

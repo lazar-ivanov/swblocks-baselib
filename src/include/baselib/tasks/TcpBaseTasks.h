@@ -1874,6 +1874,7 @@ namespace bl
 
                 m_eqConnections -> setNotifyCallback(
                     om::copy( m_notifyCB ),
+                    tasks::ExecutionQueueNotify::DeliveryConcurrent /* delivery */,
                     tasks::ExecutionQueueNotify::AllEvents /* eventsMask */
                     );
 

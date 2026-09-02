@@ -103,12 +103,27 @@ namespace bl
             virtual void setOptions( SAA_in const unsigned options = OptionKeepFailed ) = 0;
 
             /**
-             * @brief Sets the notification callback; see ExecutionQueueNotify::onEvent() for
-             * callback concurrency and ordering requirements
+             * @brief Sets the notification callback and its delivery policy
+             *
+             * The delivery parameter is mandatory by design. Callbacks used to be serialized by
+             * the queue and are not any more by default, and that change is invisible at runtime,
+             * so every call site is required to state which behavior it wants rather than inherit
+             * one silently. Pass ExecutionQueueNotify::DeliveryConcurrent for the current default
+             * behavior, or ExecutionQueueNotify::DeliverySerialized for mutually exclusive
+             * callbacks.
+             *
+             * Read the NotifyDelivery enumeration before choosing DeliverySerialized -- it carries
+             * a deadlock restriction and a thread pool starvation hazard. See also
+             * ExecutionQueueNotify::onEvent() for the callback concurrency and ordering contract.
+             *
+             * This call also samples the observer's ExecutionQueueNotify::maxReadyOrExecuting()
+             * throttle limit, once, and caches it for the lifetime of the registration; register
+             * again to install a different limit.
              */
 
             virtual void setNotifyCallback(
                 SAA_in                  om::ObjPtr< om::Proxy >&&                   notifyCB,
+                SAA_in                  const ExecutionQueueNotify::NotifyDelivery  delivery,
                 SAA_in                  const unsigned                              eventsMask = ExecutionQueueNotify::AllEvents
                 ) = 0;
 

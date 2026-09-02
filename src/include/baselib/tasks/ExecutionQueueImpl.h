@@ -213,7 +213,14 @@ namespace bl
 
             std::atomic< ThreadPool* >                                              m_localThreadPool;
 
+            /*
+             * The two throttle limits. Both are plain configuration values read under m_lock:
+             * m_maxExecuting is pushed by setThrottleLimit(), and m_maxReadyOrExecuting is
+             * sampled once from the observer by setNotifyCallback(). Zero means no limit.
+             */
+
             std::size_t                                                             m_maxExecuting;
+            std::size_t                                                             m_maxReadyOrExecuting;
             unsigned                                                                m_options;
             bool                                                                    m_shutdown;
 
@@ -231,6 +238,14 @@ namespace bl
 
             om::ObjPtr< om::Proxy >                                                 m_notifyCB;
             unsigned                                                                m_eventsMask;
+            ExecutionQueueNotify::NotifyDelivery                                    m_notifyDelivery;
+
+            /*
+             * LOCK ORDERING: m_lockNotify is strictly OUTER to m_lock - see invokeNotifyCB()
+             */
+
+            os::mutex                                                               m_lockNotify;
+
             om::ObjPtr< om::Proxy >                                                 m_observerThis;
             om::ObjPtr< taskinfo_pool_t >                                           m_taskInfoPool;
 
@@ -243,6 +258,7 @@ namespace bl
                 :
                 m_localThreadPool( nullptr ),
                 m_maxExecuting( maxExecuting ),
+                m_maxReadyOrExecuting( 0U ),
                 m_options( options ),
                 m_shutdown( false ),
                 m_executingCount( 0U ),
@@ -250,6 +266,7 @@ namespace bl
                 m_activeWorkGeneration( 0U ),
                 m_lastPublishedGeneration( 0U ),
                 m_eventsMask( 0 ),
+                m_notifyDelivery( ExecutionQueueNotify::DeliveryConcurrent ),
                 m_taskInfoPool( taskinfo_pool_t::template createInstance< taskinfo_pool_t >() )
             {
                 m_observerThis = om::ProxyImpl::createInstance< om::Proxy >();
@@ -282,24 +299,10 @@ namespace bl
                 return m_readyCount + m_executingCount;
             }
 
-            std::size_t getMaxReadyOrExecuting() const NOEXCEPT
-            {
-                if( m_notifyCB )
-                {
-                    const auto notifyCB = m_notifyCB -> tryAcquireRef< ExecutionQueueNotify >();
-
-                    if( notifyCB )
-                    {
-                        return notifyCB -> maxReadyOrExecuting();
-                    }
-                }
-
-                return 0U;
-            }
-
             cpp::void_callback_noexcept_t getEventNotifyCB(
                 SAA_in                  const ExecutionQueueNotify::EventId         eventId,
-                SAA_in_opt              const om::ObjPtrCopyable< Task >&           task
+                SAA_in_opt              const om::ObjPtrCopyable< Task >&           task,
+                SAA_out                 bool&                                       serializeNotify
                 ) const
             {
                 cpp::void_callback_noexcept_t onNotify;
@@ -317,10 +320,59 @@ namespace bl
                             eventId,
                             task
                             );
+
+                        /*
+                         * The delivery policy travels with the registration and is captured here,
+                         * under the same m_lock scope which resolved the observer, so a concurrent
+                         * setNotifyCallback() cannot change the policy for a callback which was
+                         * already bound
+                         *
+                         * Note this assignment is inside the block which already gates the bind
+                         * above, so queues with no connected observer pay nothing for it
+                         */
+
+                        serializeNotify =
+                            ( ExecutionQueueNotify::DeliverySerialized == m_notifyDelivery );
                     }
                 }
 
                 return onNotify;
+            }
+
+            /**
+             * @brief Invokes a notification callback, honoring the registered delivery policy
+             *
+             * LOCK ORDERING: m_lockNotify is acquired ONLY here, and this is called only from
+             * onReady() after every m_lock guard has been released. No code path may acquire
+             * m_lockNotify while holding m_lock. The reverse edge (m_lockNotify -> m_lock)
+             * exists and is intentional: an observer callback may legitimately re-enter the
+             * execution queue.
+             *
+             * Note this is the only place where the queue invokes user code with a queue mutex
+             * held, and it holds only m_lockNotify. No user code runs under m_lock at all -
+             * maxReadyOrExecuting() is sampled once by setNotifyCallback(), outside the lock.
+             *
+             * The mutex is deliberately non-recursive. onReady() cannot be re-entered on the
+             * same thread, so recursion would never be exercised, and granting it would silently
+             * permit a nested callback to observe the observer's state mid-update - which is
+             * precisely what DeliverySerialized is being used to prevent.
+             */
+
+            void invokeNotifyCB(
+                SAA_in                  const bool                                  serializeNotify,
+                SAA_in                  const cpp::void_callback_noexcept_t&        onNotify
+                ) NOEXCEPT
+            {
+                if( serializeNotify )
+                {
+                    BL_MUTEX_GUARD( m_lockNotify );
+
+                    onNotify();
+
+                    return;
+                }
+
+                onNotify();
             }
 
             static void onReadyObserver(
@@ -371,6 +423,8 @@ namespace bl
             {
                 cpp::void_callback_noexcept_t onNotify;
                 cpp::void_callback_noexcept_t onNotifyAllCompleted;
+                bool serializeNotify = false;
+                bool serializeNotifyAllCompleted = false;
                 bool allTasksCompletedCandidate = false;
                 std::uint64_t allTasksCompletedCandidateGeneration = 0U;
 
@@ -445,13 +499,21 @@ namespace bl
                         {
                             moveTaskToReadyQueue( taskInfo );
 
-                            onNotify = getEventNotifyCB( ExecutionQueueNotify::TaskReady, task );
+                            onNotify = getEventNotifyCB(
+                                ExecutionQueueNotify::TaskReady,
+                                task,
+                                serializeNotify
+                                );
                         }
                         else
                         {
                             unlinkAndDestroy( taskInfo );
 
-                            onNotify = getEventNotifyCB( ExecutionQueueNotify::TaskDiscarded, task );
+                            onNotify = getEventNotifyCB(
+                                ExecutionQueueNotify::TaskDiscarded,
+                                task,
+                                serializeNotify
+                                );
                         }
 
                         padExecutingQueueNothrow();
@@ -472,11 +534,16 @@ namespace bl
                  * if the callbacks attempt to call back into the ExecutionQueue (e.g., push_back,
                  * flush, wait, etc.). Callbacks from the same queue may execute concurrently
                  * with each other and with queue operations, so observers must be thread-safe.
+                 *
+                 * An observer registered with ExecutionQueueNotify::DeliverySerialized instead has
+                 * its callbacks delivered under m_lockNotify; see invokeNotifyCB(). Note the state
+                 * transition above and its m_cvReady.notify_all() have already completed by this
+                 * point, so a serialized callback which blocks cannot stall other completions.
                  */
 
                 if( onNotify )
                 {
-                    onNotify();
+                    invokeNotifyCB( serializeNotify, onNotify );
                 }
 
                 if( allTasksCompletedCandidate )
@@ -494,14 +561,15 @@ namespace bl
 
                         onNotifyAllCompleted = getEventNotifyCB(
                             ExecutionQueueNotify::AllTasksCompleted,
-                            om::ObjPtrCopyable< Task >::acquireRef( nullptr )
+                            om::ObjPtrCopyable< Task >::acquireRef( nullptr ),
+                            serializeNotifyAllCompleted
                             );
                     }
                 }
 
                 if( onNotifyAllCompleted )
                 {
-                    onNotifyAllCompleted();
+                    invokeNotifyCB( serializeNotifyAllCompleted, onNotifyAllCompleted );
                 }
             }
 
@@ -530,12 +598,11 @@ namespace bl
 
                 while( ! m_pending.empty() )
                 {
-                    const auto maxReadyOrExecuting = getMaxReadyOrExecuting();
                     const auto readyOrExecuting = getReadyOrExecuting();
 
                     if(
                         ( m_maxExecuting && m_executingCount >= m_maxExecuting ) ||
-                        ( maxReadyOrExecuting && readyOrExecuting >= maxReadyOrExecuting )
+                        ( m_maxReadyOrExecuting && readyOrExecuting >= m_maxReadyOrExecuting )
                         )
                     {
                         /*
@@ -1100,13 +1167,36 @@ namespace bl
 
             virtual void setNotifyCallback(
                 SAA_in                  om::ObjPtr< om::Proxy >&&                   notifyCB,
+                SAA_in                  const ExecutionQueueNotify::NotifyDelivery  delivery,
                 SAA_in                  const unsigned                              eventsMask = ExecutionQueueNotify::AllEvents
                 ) OVERRIDE
             {
+                /*
+                 * The observer's throttle limit is sampled here, exactly once per registration
+                 * and before m_lock is taken, rather than being re-queried from the scheduling
+                 * path. That keeps the user virtual off the scheduling critical section
+                 * entirely - no user code runs under m_lock - and removes a proxy lock
+                 * acquisition plus a virtual call per scheduled task.
+                 */
+
+                std::size_t maxReadyOrExecuting = 0U;
+
+                if( notifyCB )
+                {
+                    const auto observer = notifyCB -> tryAcquireRef< ExecutionQueueNotify >();
+
+                    if( observer )
+                    {
+                        maxReadyOrExecuting = observer -> maxReadyOrExecuting();
+                    }
+                }
+
                 BL_MUTEX_GUARD( m_lock );
 
                 m_notifyCB = std::move( notifyCB );
+                m_notifyDelivery = delivery;
                 m_eventsMask = eventsMask;
+                m_maxReadyOrExecuting = maxReadyOrExecuting;
             }
 
             virtual ThreadPool* getLocalThreadPool() const NOEXCEPT OVERRIDE
