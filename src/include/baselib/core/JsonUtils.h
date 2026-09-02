@@ -62,6 +62,36 @@ namespace bl
          * delegate to the appropriate detail::JsonUtils implementation.
          */
 
+        /**
+         * @brief Parses a JSON document from a string
+         *
+         * Duplicate object keys - i.e. an object which contains the same member name more than
+         * once - are not a supported input shape and the behavior for such a document is
+         * BACKEND-DEFINED:
+         *
+         * -- Boost.JSON, the default backend, keeps the last of the equal members and discards
+         *    the earlier ones
+         *
+         * -- json-spirit, selected by building with BL_USE_JSON_SPIRIT, rejects the document
+         *    and throws bl::UserMessageException
+         *
+         * The Boost.JSON behavior is the one this library documents and it is what RFC 8259
+         * permits: it says object member names SHOULD be unique and leaves the handling of
+         * documents where they are not to the implementation, which is why parsers disagree.
+         * Last-value-wins is what JavaScript, Python and Go do, and RFC 7515 and RFC 7519
+         * explicitly allow it for JOSE and JWT. Detecting duplicates is not free - it requires
+         * the parser to track the member names it has already seen for every object - which is
+         * why Boost.JSON does not offer it even as an option.
+         *
+         * Do not rely on either behavior. A document with duplicate member names may be read
+         * differently by this library and by a peer written against a different parser, so an
+         * application for which that difference is security relevant must reject such documents
+         * before it hands them here, or must build against the json-spirit backend, which
+         * remains supported (see CONTRIBUTING.md) and rejects them during parsing.
+         *
+         * See notes/plans/issues/json-duplicate-key-contract.md for the full record.
+         */
+
         inline json::value readFromString( SAA_in const std::string& input )
         {
             return detail::JsonUtilsImpl::readFromString( input );
@@ -75,6 +105,20 @@ namespace bl
         {
             return detail::JsonUtilsImpl::readFromStream< STREAM >( input );
         }
+
+        /*
+         * Note on the rawUtf8 parameter of the serialization functions below
+         *
+         * It is retained for source compatibility and it has NO effect - string content is
+         * always emitted as raw UTF-8, as RFC 8259 section 8.1 requires of JSON exchanged
+         * between systems, on both backends
+         *
+         * It used to select json-spirit's non-raw mode, which escapes each byte above 0x7F
+         * separately as \u00XX; that output is locale dependent and is not read back as the
+         * same string by a conformant parser, so it was never a mode worth preserving. Note
+         * that a document which was written by an older build in that mode and which contains
+         * non-ASCII text will not read back correctly on either backend now
+         */
 
         template
         <

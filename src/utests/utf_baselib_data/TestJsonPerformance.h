@@ -1457,7 +1457,7 @@ UTF_AUTO_TEST_CASE( DataModelPerformanceOverheadComplex )
             {
                 bl::json::object item;
                 item.emplace( "description", "item " + std::to_string( i ) );
-                item.emplace( "timestamp", static_cast< std::uint64_t >( i ) * 500000ULL );
+                item.emplace( "timestamp", static_cast< std::uint64_t >( i * 500000 ) );
                 items.push_back( bl::json::value( std::move( item ) ) );
             }
             obj.emplace( "items", std::move( items ) );
@@ -1919,7 +1919,7 @@ UTF_AUTO_TEST_CASE( DataModelSerializationEmplaceBaseline )
             {
                 bl::json::object item;
                 item.emplace( "description", "item " + std::to_string( i ) );
-                item.emplace( "timestamp", static_cast< std::uint64_t >( i ) * 500000ULL );
+                item.emplace( "timestamp", static_cast< std::uint64_t >( i * 500000 ) );
                 items.push_back( bl::json::value( std::move( item ) ) );
             }
             obj.emplace( "items", std::move( items ) );
@@ -1971,7 +1971,7 @@ UTF_AUTO_TEST_CASE( DataModelSerializationEmplaceBaseline )
             {
                 bl::json::object item;
                 item.emplace( "description", "item " + std::to_string( i ) );
-                item.emplace( "timestamp", static_cast< std::uint64_t >( i ) * 500000ULL );
+                item.emplace( "timestamp", static_cast< std::uint64_t >( i * 500000 ) );
                 items.push_back( bl::json::value( std::move( item ) ) );
             }
             obj.emplace( "items", std::move( items ) );

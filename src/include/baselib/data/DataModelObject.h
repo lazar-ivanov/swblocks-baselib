@@ -232,6 +232,15 @@ namespace bl
                 return std::move( context.serializationDoc() );
             }
 
+            /**
+             * @brief Serializes a data model object into a JSON string
+             *
+             * Note that the rawUTF8 parameter of this function and of the getDocAs*JsonString
+             * wrappers below is retained for source compatibility and has no effect - string
+             * content is always emitted as raw UTF-8 on both backends; see the note on rawUtf8
+             * in baselib/core/JsonUtils.h
+             */
+
             template
             <
                 typename T
@@ -275,6 +284,27 @@ namespace bl
                 return getJsonString( dataObject, false /* prettyPrint */, false /* canonicalize */, rawUTF8 );
             }
 
+            /**
+             * @brief Computes a hash over the serialized form of a data model object
+             *
+             * Note that canonicalize defaults to false, in which case the hash is taken over the
+             * serialization in property declaration and insertion order rather than over a
+             * normalized form; getObjectHashCanonical() below is the form which should be
+             * preferred and it is the only one used inside this library
+             *
+             * The canonical form is a project specific stable ordering and is NOT RFC 8785 /
+             * JCS - see the comment on canonicalizeValue() in
+             * baselib/core/detail/BoostJsonImpl.h
+             *
+             * Neither form is stable across a change of JSON backend for a document which
+             * contains non-ASCII text or numbers whose shortest representation differs between
+             * the two serializers, so a hash produced here must not be persisted, used as a
+             * cache key across processes built differently, or fed into a signature which
+             * another build has to reproduce, unless the backend is pinned. This is a known and
+             * accepted limitation - see notes/plans/issues/medium-severity-findings-f11-f17-plan.md
+             * (F-11) - and it is not re-litigated by review findings against this file
+             */
+
             template
             <
                 typename T
@@ -286,7 +316,7 @@ namespace bl
                 )
                 -> std::string
             {
-                const auto canonicalizedProperties =
+                const auto serializedProperties =
                     getJsonString< T >( dataObject, false /* prettyPrint */, canonicalize );
 
                 /*
@@ -301,7 +331,7 @@ namespace bl
                     hasher.update( salt.c_str(), salt.size() );
                 }
 
-                hasher.update( canonicalizedProperties.c_str(), canonicalizedProperties.size() );
+                hasher.update( serializedProperties.c_str(), serializedProperties.size() );
 
                 hasher.finalize();
 

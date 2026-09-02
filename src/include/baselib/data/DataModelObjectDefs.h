@@ -626,7 +626,7 @@ template \
         for( const auto& item : m_ ## name ) \
         { \
             BL_DM_SERIALIZATION_CONTEXT_IMPL_DECL_SERIALIZE( tempContext ); \
-            item -> serializeProperties( tempContext ); \
+            item -> serializeProperties( tempContext, canonicalize ); \
             items.push_back( bl::json::value( std::move( tempContext.serializationDoc() ) ) ); \
         } \
         \
@@ -699,7 +699,7 @@ template \
         for( const auto& pair : m_ ## nameArg ) \
         { \
             BL_DM_SERIALIZATION_CONTEXT_IMPL_DECL_SERIALIZE( tempContext ); \
-            pair.second -> serializeProperties( tempContext ); \
+            pair.second -> serializeProperties( tempContext, canonicalize ); \
             items.emplace( pair.first, std::move( tempContext.serializationDoc() ) ); \
         } \
         \

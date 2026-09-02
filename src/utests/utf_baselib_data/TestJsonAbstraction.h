@@ -1248,4 +1248,187 @@ UTF_AUTO_TEST_CASE( JsonIntegrationDataModel )
     UTF_REQUIRE_EQUAL( reparsed.as_object().size(), obj.size() );
 }
 
+/************************************************************************
+ * Serialization encoding policy (CXX-08)
+ */
+
+UTF_AUTO_TEST_CASE( JsonSerializeAlwaysEmitsRawUtf8 )
+{
+    utest::json::logImplementation();
+
+    /*
+     * The rawUtf8 parameter is retained for source compatibility and has no effect - string
+     * content is always emitted as raw UTF-8 on both backends
+     *
+     * This is asserted on the exact bytes, because a round trip cannot detect the difference:
+     * the escaping which the parameter used to select is lossy in a way that only shows up when
+     * the serialized text is compared byte for byte or read by a different parser
+     */
+
+    bl::json::object obj;
+    obj.emplace( "text", "Caf\xC3\xA9" );
+
+    const auto value = bl::json::value( std::move( obj ) );
+
+    const auto withRawOff = bl::json::saveToString( value, false /* prettyPrint */, false /* rawUtf8 */ );
+    const auto withRawOn = bl::json::saveToString( value, false /* prettyPrint */, true /* rawUtf8 */ );
+
+    UTF_REQUIRE_EQUAL( withRawOff, withRawOn );
+
+    /*
+     * The exact expected bytes - the two UTF-8 bytes of U+00E9 appear literally and there is no
+     * \u escape anywhere in the output
+     */
+
+    UTF_REQUIRE_EQUAL( withRawOff, std::string( "{\"text\":\"Caf\xC3\xA9\"}" ) );
+    UTF_REQUIRE( withRawOff.find( "\\u" ) == std::string::npos );
+
+    /*
+     * ... and the value survives a round trip through the parser unchanged
+     */
+
+    const auto reparsed = bl::json::readFromString( withRawOff );
+
+    UTF_REQUIRE_EQUAL( bl::json::get_str( reparsed.as_object().at( "text" ) ), std::string( "Caf\xC3\xA9" ) );
+}
+
+UTF_AUTO_TEST_CASE( JsonSerializeStreamAlsoEmitsRawUtf8 )
+{
+    utest::json::logImplementation();
+
+    bl::json::object obj;
+    obj.emplace( "text", "\xE4\xBD\xA0\xE5\xA5\xBD" /* two CJK characters */ );
+
+    const auto value = bl::json::value( std::move( obj ) );
+
+    std::ostringstream withRawOff;
+    std::ostringstream withRawOn;
+
+    bl::json::saveToStream( value, withRawOff, false /* prettyPrint */, false /* rawUtf8 */ );
+    bl::json::saveToStream( value, withRawOn, false /* prettyPrint */, true /* rawUtf8 */ );
+
+    UTF_REQUIRE_EQUAL( withRawOff.str(), withRawOn.str() );
+
+    UTF_REQUIRE_EQUAL(
+        withRawOff.str(),
+        std::string( "{\"text\":\"\xE4\xBD\xA0\xE5\xA5\xBD\"}" )
+        );
+}
+
+/************************************************************************
+ * Numeric conversion policy (CXX-08)
+ */
+
+UTF_AUTO_TEST_CASE( JsonNumericNegativeToUnsignedIsRejected )
+{
+    utest::json::logImplementation();
+
+    const auto parsed = bl::json::readFromString( R"({"n":-1})" );
+    const auto& v = parsed.as_object().at( "n" );
+
+    /*
+     * A negative JSON integer must never be converted into an unsigned C++ type; before this
+     * was enforced on both backends the json-spirit one returned 18446744073709551615 here
+     */
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        bl::json::get_uint64( v ),
+        std::exception,
+        "is negative while unsigned value is expected"
+        );
+
+    /*
+     * value_to<> rejects it as well, but the message is backend specific - on the Boost.JSON
+     * backend the range check is Boost's own and reports 'not exact' - so only the rejection
+     * is asserted here, which is what the policy actually says
+     */
+
+    UTF_REQUIRE_THROW( bl::json::value_to< std::uint64_t >( v ), std::exception );
+
+    /*
+     * ... while reading it as a signed type is of course fine
+     */
+
+    UTF_REQUIRE_EQUAL( bl::json::get_int64( v ), -1 );
+    UTF_REQUIRE_EQUAL( bl::json::value_to< std::int64_t >( v ), -1 );
+}
+
+UTF_AUTO_TEST_CASE( JsonNumericOutOfRangeIntIsRejected )
+{
+    utest::json::logImplementation();
+
+    /*
+     * 2^40 does not fit an int and must be rejected rather than truncated
+     */
+
+    const auto parsed = bl::json::readFromString( R"({"big":1099511627776,"negBig":-1099511627776})" );
+    const auto& obj = parsed.as_object();
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        bl::json::get_int( obj.at( "big" ) ),
+        std::exception,
+        "is out of range for the requested integer type"
+        );
+
+    /*
+     * See the note in JsonNumericNegativeToUnsignedIsRejected on why only the rejection and
+     * not the message is asserted for value_to<>
+     */
+
+    UTF_REQUIRE_THROW( bl::json::value_to< int >( obj.at( "big" ) ), std::exception );
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        bl::json::get_int( obj.at( "negBig" ) ),
+        std::exception,
+        "is out of range for the requested integer type"
+        );
+
+    /*
+     * A value which does fit is returned unchanged, including the boundaries
+     */
+
+    const auto boundaries = bl::json::readFromString( R"({"max":2147483647,"min":-2147483648})" );
+
+    UTF_REQUIRE_EQUAL( bl::json::get_int( boundaries.as_object().at( "max" ) ), 2147483647 );
+    UTF_REQUIRE_EQUAL( bl::json::get_int( boundaries.as_object().at( "min" ) ), -2147483647 - 1 );
+}
+
+UTF_AUTO_TEST_CASE( JsonNumericIntegerReadsAsDouble )
+{
+    utest::json::logImplementation();
+
+    /*
+     * JSON has a single number type, so an integer valued number is readable as a double on
+     * both backends; only boost::json::value::as_double() is strict about the stored kind
+     */
+
+    const auto parsed = bl::json::readFromString( R"({"i":1,"u":18446744073709551615,"d":1.5})" );
+    const auto& obj = parsed.as_object();
+
+    UTF_REQUIRE( utest::json::doubleEquals( bl::json::get_real( obj.at( "i" ) ), 1.0, 1e-9 ) );
+    UTF_REQUIRE( utest::json::doubleEquals( bl::json::get_real( obj.at( "d" ) ), 1.5, 1e-9 ) );
+    UTF_REQUIRE( bl::json::get_real( obj.at( "u" ) ) > 0.0 );
+}
+
+UTF_AUTO_TEST_CASE( JsonNumericNegativeZero )
+{
+    utest::json::logImplementation();
+
+    /*
+     * -0 is an integer valued JSON number and both backends drop the sign when they store it
+     * as an integer; this is asserted so that a future change of that behavior is deliberate
+     * rather than accidental
+     */
+
+    const auto parsed = bl::json::readFromString( R"({"z":-0})" );
+    const auto& v = parsed.as_object().at( "z" );
+
+    UTF_REQUIRE_EQUAL( bl::json::get_int64( v ), 0 );
+    UTF_REQUIRE_EQUAL( bl::json::get_uint64( v ), 0U );
+
+    const auto serialized = bl::json::saveToString( parsed );
+
+    UTF_REQUIRE_EQUAL( serialized, std::string( "{\"z\":0}" ) );
+}
+
 #endif /* __UTEST_TESTJSONABSTRACTION_H_ */

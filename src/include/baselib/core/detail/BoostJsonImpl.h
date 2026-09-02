@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <sstream>
 #include <vector>
 
@@ -94,7 +95,41 @@ namespace bl
 
         inline int get_int( SAA_in const value& v )
         {
-            return static_cast< int >( v.as_int64() );
+            if( v.is_uint64() )
+            {
+                const auto val = v.as_uint64();
+
+                if( val > static_cast< std::uint64_t >( std::numeric_limits< int >::max() ) )
+                {
+                    BL_THROW(
+                        JsonException(),
+                        BL_MSG()
+                            << "JSON integer value '"
+                            << val
+                            << "' is out of range for the requested integer type"
+                        );
+                }
+
+                return static_cast< int >( val );
+            }
+
+            const auto val = v.as_int64();
+
+            if(
+                val < static_cast< std::int64_t >( std::numeric_limits< int >::min() ) ||
+                val > static_cast< std::int64_t >( std::numeric_limits< int >::max() )
+                )
+            {
+                BL_THROW(
+                    JsonException(),
+                    BL_MSG()
+                        << "JSON integer value '"
+                        << val
+                        << "' is out of range for the requested integer type"
+                    );
+            }
+
+            return static_cast< int >( val );
         }
 
         inline std::int64_t get_int64( SAA_in const value& v )
@@ -131,6 +166,23 @@ namespace bl
 
         inline double get_real( SAA_in const value& v )
         {
+            /*
+             * JSON has a single number type, so an integer valued number is accepted here and
+             * widened; this matches the json-spirit backend, whose get_real() has always done
+             * the same, and boost::json::value_to< double >, which also accepts every number
+             * kind - only boost::json::value::as_double() is strict about the stored kind
+             */
+
+            if( v.is_int64() )
+            {
+                return static_cast< double >( v.as_int64() );
+            }
+
+            if( v.is_uint64() )
+            {
+                return static_cast< double >( v.as_uint64() );
+            }
+
             return v.as_double();
         }
 
@@ -180,6 +232,13 @@ namespace bl
                 {
                     try
                     {
+                        /*
+                         * Note that when an object contains the same member name more than once
+                         * Boost.JSON keeps the last of the equal members; that is the documented
+                         * contract of this library - see the comment on bl::json::readFromString
+                         * in baselib/core/JsonUtils.h
+                         */
+
                         return boost::json::parse( input );
                     }
                     catch( const boost::system::system_error& e )
@@ -213,6 +272,11 @@ namespace bl
 
                     try
                     {
+                        /*
+                         * The duplicate member name handling is the same as on the one-shot path
+                         * above - the last of the equal members wins
+                         */
+
                         boost::json::stream_parser parser;
                         eh::error_code ec;
                         std::array< char, 2048 > buffer;
@@ -276,6 +340,18 @@ namespace bl
                  *
                  * Collects pointers to key-value pairs, sorts them by key, and rebuilds
                  * the boost::json::object in sorted order.
+                 *
+                 * Note that this is a PROJECT SPECIFIC stable ordering and NOT RFC 8785 / JCS
+                 * canonical JSON: keys are ordered by their UTF-8 bytes whereas JCS orders them
+                 * by UTF-16 code units, which differ for some Unicode keys, and none of the JCS
+                 * number and string normalization rules are applied here
+                 *
+                 * It is therefore suitable for making a hash reproducible within a single
+                 * backend, which is what it is used for, and it must not be described as or
+                 * relied upon to be interoperable with a JCS implementation. Adopting a fully
+                 * specified canonical format is a separate decision with a data migration
+                 * attached to it - see notes/plans/issues/medium-severity-findings-f11-f17-plan.md
+                 * (F-11)
                  */
 
                 static value canonicalizeValue( SAA_in const value& val )
@@ -452,6 +528,11 @@ namespace bl
                     SAA_in_opt      const bool                                canonicalize = false
                     )
                 {
+                    /*
+                     * Boost.JSON always serializes string content as raw UTF-8; see the note on
+                     * rawUtf8 in baselib/core/JsonUtils.h
+                     */
+
                     BL_UNUSED( rawUtf8 );
 
                     if( canonicalize && prettyPrint )

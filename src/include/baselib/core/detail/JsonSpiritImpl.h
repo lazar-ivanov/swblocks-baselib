@@ -65,6 +65,7 @@
 #include <vector>
 #include <string>
 #include <cstdint>
+#include <limits>
 
 /*
  * JSON accessor macros for json-spirit
@@ -334,6 +335,19 @@ namespace bl
                 typedef object_wrapper< String_type, Value_type >               Object_type;
                 typedef std::pair< const String_type, Value_type >              Pair_type;
 
+                /**
+                 * @brief Inserts a member into an object while the parser builds it
+                 *
+                 * Note that rejecting a repeated member name is specific to this backend and is
+                 * NOT part of the library contract; the default Boost.JSON backend keeps the
+                 * last of the equal members instead. See the comment on bl::json::readFromString
+                 * in baselib/core/JsonUtils.h
+                 *
+                 * Note also that the exception thrown here is bl::UserMessageException rather
+                 * than bl::JsonException, which the rest of the parse error paths in this file
+                 * use
+                 */
+
                 static Value_type& add(
                     SAA_inout   Object_type&                                    obj,
                     SAA_in      const String_type&                              name,
@@ -396,6 +410,88 @@ namespace bl
         typedef object                                              Object;
         typedef array                                               Array;
 
+        namespace detail
+        {
+            /*
+             * Checked numeric conversions
+             *
+             * These exist so that this backend applies the same numeric policy as the
+             * Boost.JSON backend, whose value_to<T> is range checked by Boost itself:
+             *
+             * -- a negative JSON integer is never converted to an unsigned C++ type
+             * -- a value which does not fit the requested C++ type is rejected rather than
+             *    wrapped or truncated
+             * -- an integer valued JSON number may be read as a double, because JSON has a
+             *    single number type and the widening is exact for the range which matters
+             *
+             * Without these the json-spirit accessors cast silently, so a JSON -1 read as an
+             * unsigned type used to become 18446744073709551615
+             */
+
+            inline std::uint64_t checkedUInt64( SAA_in const value& v )
+            {
+                if( v.is_uint64() )
+                {
+                    return v.as_uint64();
+                }
+
+                const auto val = v.as_int64();
+
+                if( val < 0 )
+                {
+                    BL_THROW(
+                        JsonException(),
+                        BL_MSG()
+                            << "JSON integer value '"
+                            << val
+                            << "' is negative while unsigned value is expected"
+                        );
+                }
+
+                return static_cast< std::uint64_t >( val );
+            }
+
+            inline int checkedInt( SAA_in const value& v )
+            {
+                if( v.is_uint64() )
+                {
+                    const auto val = v.as_uint64();
+
+                    if( val > static_cast< std::uint64_t >( std::numeric_limits< int >::max() ) )
+                    {
+                        BL_THROW(
+                            JsonException(),
+                            BL_MSG()
+                                << "JSON integer value '"
+                                << val
+                                << "' is out of range for the requested integer type"
+                            );
+                    }
+
+                    return static_cast< int >( val );
+                }
+
+                const auto val = v.as_int64();
+
+                if(
+                    val < static_cast< std::int64_t >( std::numeric_limits< int >::min() ) ||
+                    val > static_cast< std::int64_t >( std::numeric_limits< int >::max() )
+                    )
+                {
+                    BL_THROW(
+                        JsonException(),
+                        BL_MSG()
+                            << "JSON integer value '"
+                            << val
+                            << "' is out of range for the requested integer type"
+                        );
+                }
+
+                return static_cast< int >( val );
+            }
+
+        } // namespace detail
+
         /*
          * Free-standing value_to<T>() template functions - matching Boost.JSON API
          */
@@ -415,7 +511,7 @@ namespace bl
         template<>
         inline int value_to< int >( SAA_in const value& v )
         {
-            return static_cast< int >( v.as_int64() );
+            return detail::checkedInt( v );
         }
 
         template<>
@@ -427,7 +523,7 @@ namespace bl
         template<>
         inline std::uint64_t value_to< std::uint64_t >( SAA_in const value& v )
         {
-            return v.as_uint64();
+            return detail::checkedUInt64( v );
         }
 
         template<>
@@ -458,7 +554,7 @@ namespace bl
 
         inline int get_int( SAA_in const value& v )
         {
-            return static_cast< int >( v.as_int64() );
+            return detail::checkedInt( v );
         }
 
         inline std::int64_t get_int64( SAA_in const value& v )
@@ -468,29 +564,7 @@ namespace bl
 
         inline std::uint64_t get_uint64( SAA_in const value& v )
         {
-            if( v.is_uint64() )
-            {
-                return v.as_uint64();
-            }
-            if( v.type() == json_spirit::int_type )
-            {
-                const auto val = v.get_int64();
-
-                if( val < 0 )
-                {
-                    BL_THROW(
-                        JsonException(),
-                        BL_MSG()
-                            << "JSON integer value '"
-                            << val
-                            << "' is negative while unsigned value is expected"
-                        );
-                }
-
-                return static_cast< std::uint64_t >( val );
-            }
-
-            return v.as_uint64();
+            return detail::checkedUInt64( v );
         }
 
         inline double get_real( SAA_in const value& v )
@@ -694,9 +768,29 @@ namespace bl
                             );
                     }
 
+                    /*
+                     * Note that json_spirit::raw_utf8 is requested unconditionally and the
+                     * rawUtf8 parameter is deliberately not honored
+                     *
+                     * With that option off json-spirit escapes every byte above 0x7F
+                     * individually as \u00XX, deciding byte by byte via iswprint(), which has
+                     * three problems: the output is locale dependent; a multi-byte UTF-8
+                     * sequence is emitted as one escape per byte, so a conformant parser reads
+                     * back a different string than was written (U+00E9 becomes the two
+                     * characters U+00C3 U+00A9); and it therefore does not round trip outside
+                     * of json-spirit itself
+                     *
+                     * RFC 8259 section 8.1 requires JSON exchanged between systems to be
+                     * encoded in UTF-8, which is what the Boost.JSON backend always emits, so
+                     * emitting it here as well is both correct and what makes the two backends
+                     * agree
+                     */
+
+                    BL_UNUSED( rawUtf8 );
+
                     const int options =
                         ( prettyPrint ? json_spirit::pretty_print : json_spirit::none ) |
-                        ( rawUtf8 ? json_spirit::raw_utf8 : json_spirit::none );
+                        json_spirit::raw_utf8;
 
                     return write_string( val, options );
                 }
@@ -732,9 +826,29 @@ namespace bl
                     SAA_in          const bool                                rawUtf8
                     )
                 {
+                    /*
+                     * Note that json_spirit::raw_utf8 is requested unconditionally and the
+                     * rawUtf8 parameter is deliberately not honored
+                     *
+                     * With that option off json-spirit escapes every byte above 0x7F
+                     * individually as \u00XX, deciding byte by byte via iswprint(), which has
+                     * three problems: the output is locale dependent; a multi-byte UTF-8
+                     * sequence is emitted as one escape per byte, so a conformant parser reads
+                     * back a different string than was written (U+00E9 becomes the two
+                     * characters U+00C3 U+00A9); and it therefore does not round trip outside
+                     * of json-spirit itself
+                     *
+                     * RFC 8259 section 8.1 requires JSON exchanged between systems to be
+                     * encoded in UTF-8, which is what the Boost.JSON backend always emits, so
+                     * emitting it here as well is both correct and what makes the two backends
+                     * agree
+                     */
+
+                    BL_UNUSED( rawUtf8 );
+
                     const int options =
                         ( prettyPrint ? json_spirit::pretty_print : json_spirit::none ) |
-                        ( rawUtf8 ? json_spirit::raw_utf8 : json_spirit::none );
+                        json_spirit::raw_utf8;
 
                     write_stream( val, output, options );
                 }
