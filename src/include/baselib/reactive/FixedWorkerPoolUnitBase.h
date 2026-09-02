@@ -179,6 +179,10 @@ namespace bl
                 {
                     /*
                      * Our task hasn't started yet or there was an error; we can't accept input.
+                     *
+                     * Note: size() is a point-in-time snapshot, but it can only decrease
+                     * concurrently, so this admission check is conservative -- at worst we
+                     * reject input which would have fit and the caller retries.
                      */
 
                     return false;

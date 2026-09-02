@@ -587,6 +587,13 @@ namespace bl
 
                 om::ObjPtr< detail::BlockReaderTaskImpl > packager;
 
+                /*
+                 * Note: size() is a point-in-time snapshot, but both branches remain valid under
+                 * concurrent task completion -- size() can only decrease, and a task which is
+                 * already in the ready queue stays there until this thread takes it, so the
+                 * top( false ) below cannot lose the worker this branch was chosen for
+                 */
+
                 if( base_type::m_eqWorkerTasks -> size() < base_type::m_tasksPoolSize )
                 {
                     packager = detail::BlockReaderTaskImpl::createInstance( m_fsmd );

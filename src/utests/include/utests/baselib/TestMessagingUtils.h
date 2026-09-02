@@ -483,6 +483,12 @@ namespace utest
             {
                 os::sleep( time::seconds( 2 ) );
 
+                /*
+                 * Note: this composes four independent snapshots across two queues, so it is not
+                 * an atomic view of quiescence; that is fine because it is a sleep-and-retry
+                 * poll -- a stale reading simply means we go round the loop once more
+                 */
+
                 if(
                     ! inboundQueue -> hasPending()      &&
                     ! inboundQueue -> hasExecuting()    &&

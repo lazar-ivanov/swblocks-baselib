@@ -58,6 +58,36 @@ namespace bl
 
             typedef cpp::function< void ( SAA_in const om::ObjPtr< Task >& task ) > task_callback_type;
 
+            /**
+             * @brief Point-in-time observers of the queue state
+             *
+             * Each of these is individually synchronized, so a single call is always safe and
+             * returns a consistent value. The queue lock is released before the call returns,
+             * however, which means the value is a snapshot -- a *sequence* of observer calls is
+             * not atomic and the state may change between any two of them.
+             *
+             * What can change concurrently is bounded and directional. Tasks complete on thread
+             * pool threads and are processed by the queue itself, which can only:
+             *
+             * -- remove entries from the pending and executing queues
+             * -- append completed entries at the *back* of the ready queue
+             *
+             * Nothing is ever added to the pending queue except by a caller of push_back() or
+             * push_front(). Callers may therefore rely on the following:
+             *
+             * -- ready entries are removed only by callers (pop, flush, wait, cancelAll) and
+             *    never by task completion, so where a single thread owns the popping
+             *    hasReady() == true is stable until that thread itself acts
+             * -- size() can only decrease concurrently
+             * -- under that same condition the front of the ready queue is stable too, since
+             *    completions append at the back
+             * -- isEmpty() == false is *not* stable; the queue can drain to empty at any moment
+             *
+             * Where a single atomic check-and-retrieve is required prefer pop( false ) or
+             * top( false ), which do both under one lock acquisition, over hasReady() followed
+             * by pop().
+             */
+
             virtual bool isEmpty() const NOEXCEPT = 0;
 
             virtual bool hasReady() const NOEXCEPT = 0;
@@ -307,6 +337,14 @@ namespace bl
                     }
                 }
             }
+
+            /**
+             * @brief Counts the entries currently in one of the queues
+             *
+             * Note: this acquires the queue lock separately from size() (via scanQueue), so an
+             * expression such as size() == getQueueSize( Ready ) compares two independent
+             * snapshots rather than one consistent view; see the observer notes above.
+             */
 
             std::size_t getQueueSize( SAA_in const QueueId queueId ) NOEXCEPT
             {

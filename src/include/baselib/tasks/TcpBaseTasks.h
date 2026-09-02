@@ -1798,6 +1798,12 @@ namespace bl
 
                 const auto& remoteEndpointId = pos -> second;
 
+                /*
+                 * Note: size() is only used to pick a logging channel and to report a count, so
+                 * the fact that it is a point-in-time snapshot taken outside any queue lock is
+                 * immaterial here -- a slightly stale connection count is cosmetic
+                 */
+
                 auto& loggingChannel =
                     server_policy_t::isLogOnDisconnect( m_eqConnections -> size() ) ?
                         Logging::debug() : Logging::trace();
@@ -1885,6 +1891,13 @@ namespace bl
 
                 if( asio::error::operation_aborted != ec )
                 {
+                    /*
+                     * Note: these are two independent snapshots and neither is stable, but this
+                     * is a shutdown progress check driven from a timer -- if we observe them as
+                     * not yet quiescent we simply poll again, so staleness costs one more timer
+                     * iteration and nothing else
+                     */
+
                     if( m_eqConnections -> isEmpty() && m_eqSupportingTasks -> isEmpty() )
                     {
                         BL_LOG(
@@ -1985,6 +1998,12 @@ namespace bl
                 {
                     m_executionServices -> disconnect( &guard );
                 }
+
+                /*
+                 * Note: as above these are point-in-time snapshots used to decide whether to keep
+                 * waiting for shutdown; the size() calls further down only supply numbers for the
+                 * log messages and need not agree with the isEmpty() checks made here
+                 */
 
                 const bool areConnectionsPending =
                     m_eqConnections && false == m_eqConnections -> isEmpty();

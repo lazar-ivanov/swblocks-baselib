@@ -1054,6 +1054,17 @@ namespace bl
                 }
             }
 
+            /**
+             * @brief Checks if the input is disconnected and all worker tasks have completed
+             *
+             * Note: size() and getQueueSize() each acquire the queue lock separately, so this
+             * compares two independent snapshots. It is nonetheless correct because ready <= size
+             * always holds, and between the two reads size can only decrease while ready can only
+             * increase (no pushes happen -- we are the only pushing thread). Equality therefore
+             * implies the work really is done; the check can only ever be falsely negative, which
+             * costs one more iteration of the caller's loop.
+             */
+
             bool isInputDisconnectedAndAllWorkersDone()
             {
                 return (
