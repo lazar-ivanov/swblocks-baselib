@@ -1978,8 +1978,8 @@ class TestDownloadPathSafety:
     def test_resolve_download_path_stays_below_root(self, temp_dir):
         components, _ = s3_manage.validate_s3_key_components('a/b/file.txt')
         root = s3_manage.resolve_download_root(str(temp_dir), create=False)
-        assert s3_manage.resolve_download_path(root, components) == str(
-            temp_dir / 'a' / 'b' / 'file.txt'
+        assert s3_manage.resolve_download_path(root, components) == os.path.join(
+            root, 'a', 'b', 'file.txt'
         )
 
     def test_windows_reparse_attribute_is_rejected(self, monkeypatch):
