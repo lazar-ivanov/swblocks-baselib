@@ -62,6 +62,19 @@ Before making ANY file change, verify:
 
 **Golden Rule**: Every line in `git diff` should be intentional and explainable. If you can't explain why a line changed, you've made a mistake.
 
+### Building and Testing Changes
+
+**Never do full parallel builds of the entire repo unless explicitly requested.**
+
+- Validate changes with focused builds of the individually affected test modules only.
+- When more than one test module (or the entire repo) must be built, **do NOT parallelize the build** — always use `-j1`.
+- Tests may be parallelized, up to **5 test modules running concurrently**.
+
+**Build and test the relevant mix of supported toolchains and variants.**
+
+- Linux: `gcc` and `clang`. Windows: `msvc` and `clang`. Select with `TOOLCHAIN=`.
+- Both `VARIANT=debug` and `VARIANT=release`.
+
 ---
 
 ## Configuration File Changes
@@ -228,10 +241,11 @@ For detailed build system documentation, see `scripts/devenv7/AGENTS.md`:
 
 ---
 
-**Document Version:** 2.0
-**Last Updated:** 2026-02-11
+**Document Version:** 2.1
+**Last Updated:** 2026-09-03
 
 **Changelog:**
+- v2.1 (2026-09-03): Added build and test rules to Code Change Guidelines
 - v2.0 (2026-02-11): Major restructuring — condensed from ~1,700 lines to under 500 lines. Added meta-rules. Moved technical reference to `scripts/devenv7/AGENTS.md`.
 - v1.9 (2026-02-07): Added configuration file changes section
 - v1.8 (2026-02-06): Added core principles for venv and git
