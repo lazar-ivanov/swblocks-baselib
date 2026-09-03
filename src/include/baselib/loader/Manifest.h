@@ -87,6 +87,16 @@ namespace bl
             /*
              * Move assignment operator is deleted because this class has const members.
              * GCC 15+ enforces that you cannot assign to const members in template bodies.
+             *
+             * This is a source compatibility break for code outside this repository which
+             * assigned to an instance of this type; the break is accepted rather than fixed,
+             * for the same reasons recorded on PlatformIdentityT in Platform.h.
+             *
+             * Note that this type is only partly immutable - m_classIds, m_pluginName,
+             * m_pluginDescription and m_platform are not const - so the const members are the
+             * reason the operation cannot be generated rather than evidence that assignment
+             * would be meaningless here. See
+             * notes/plans/issues/residual-cxx-findings-deferral.md, item 3
              */
             ManifestT& operator =( SAA_in ManifestT&& other ) = delete;
 

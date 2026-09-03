@@ -24,24 +24,46 @@ Only `F-07` is shared. Where a deferral record exists it is cited under its `F-`
 | ID | Severity (as filed) | Status now | Evidence |
 |---|---|---|---|
 | F-07 | High | **Closed** — contract change retained, made explicit and opt-outable | `execution-queue-notification-delivery-breaking-change.md`, `ExecutionQueueNotify.h` (`NotifyDelivery`) |
-| CXX-01 | High | **Open** | `BoostJsonImpl.h:183` vs `JsonSpiritImpl.h:349` |
-| CXX-02 | High | **Open — formally deferred as F-11** | `DataModelObjectDefs.h:629,702` |
+| CXX-01 | High | **Closed** — contract documented, backend-defined by decision | `json-duplicate-key-contract.md`, `JsonUtils.h` (`readFromString`) |
+| CXX-02 | High | **Closed** — deferral recorded in code; nested-canonicalize bug fixed | `DataModelObject.h` (`getObjectHash`), `BoostJsonImpl.h` (`canonicalizeValue`) |
 | CXX-03 | High | **Closed** | `JsonSecuritySerializationImpl.h:444-490` |
 | CXX-04 | High | **Closed** | `BoostAsioCompat.h:252-266,300-320` |
 | CXX-05 | High | **Closed** | `UuidBoostImports.h` (`d60a046`) |
-| CXX-06 | High | **Partly open** — private-key at-rest fixed, TLS policy not | `CryptoBase.h:195-240` |
+| CXX-06 | High | **Closed** — TLS floor, cipher policy, key/cert checks, explicit key protection, fail-closed certificate trust | `CryptoBase.h` (`TlsMinimumVersion`), `TestTlsProtocolPolicy.h` |
 | CXX-07 | Medium | **Closed** — no user code runs under `m_lock` any more | `execution-queue-notification-delivery-plan.md` (CXX-07 section) |
-| CXX-08 | Medium | **Partly open** | `JsonUtils.h:105-122`, `BoostJsonImpl.h:455` |
-| CXX-09 | Medium | **Partly open** | `BoostAsioCompat.h:278-283`, `OSBoostImports.h:29` |
-| CXX-10 | Medium | **Partly open** — throw fixed, symlink policy not | `OSImplPlatformCommon.h:1990-2020` |
-| CXX-11 | Medium | **Open (documented, not resolved)** | `Manifest.h`, `Platform.h:75` |
-| CXX-12 | Medium | **Open — partly deferred as F-18** | `CPP.h:1368-1370`, `Compiler.h:36` |
+| CXX-08 | Medium | **Closed** — `rawUtf8` documented and backends aligned; numeric policy unified | `JsonSpiritImpl.h` (`checkedInt` / `checkedUInt64`), `TestJsonAbstraction.h` |
+| CXX-09 | Medium | **Closed** — decay fixed; shim documented as internal | `BoostAsioCompat.h`, `residual-cxx-findings-deferral.md` item 1 |
+| CXX-10 | Medium | **Closed** — throw fixed previously; skip behaviour documented, policy deferred | `FsUtils.h` (`copyDirectoryWithContents`), `residual-cxx-findings-deferral.md` item 2 |
+| CXX-11 | Medium | **Closed** — documented in code, break accepted | `Platform.h:75`, `Manifest.h:91`, `residual-cxx-findings-deferral.md` item 3 |
+| CXX-12 | Medium | **Closed** — specialization removed, not deferred | `BignumBase64Url.h`, `RsaSignVerify.h`; `CPP.h` specialization deleted |
 | CXX-13 | Medium | **Closed** | no Boost.Locale reference remains in `TestBaselibDefault.h` |
 
-Seven of fourteen are fully or substantially closed — F-07 and CXX-07 fully, as of the
-notification-delivery workstream. What is left is dominated by **two clusters**:
-the JSON backend compatibility surface (CXX-01/02/08) and the OpenSSL/TLS security-defaults
-surface (CXX-06 plus the EVP migration).
+**All fourteen are now closed**, either by a code change or by a written risk acceptance. The
+remainder of this document is the assessment as it stood before that work and is retained as the
+record of what was found; the sections below are **not** updated in place, so where they disagree
+with the table above the table is current.
+
+What was actually done, and where it is recorded:
+
+| Workstream | Findings | Record |
+|---|---|---|
+| Crypto and TLS security defaults | CXX-06 | `pr-review-residual-cxx-findings-plan.md`, `evp-provider-migration-deferral.md` |
+| JSON compatibility surface | CXX-01, CXX-02, CXX-08 | `json-duplicate-key-contract.md`, `medium-severity-findings-f11-f17-plan.md` (F-11) |
+| Standalone fixes | CXX-09 (decay), CXX-12 | `residual-cxx-findings-deferral.md` |
+| Documentation-only closes | CXX-09 (residual), CXX-10, CXX-11 | `residual-cxx-findings-deferral.md` |
+
+Two estimates in the per-finding sections below turned out to be wrong and are corrected here rather
+than in place:
+
+- **CXX-12 was costed at ~3-4 days** on the assumption that removing the `std::char_traits`
+  specialization meant touching every `std::basic_string< unsigned char >` use site. There were
+  exactly **two**, both local typedefs feeding a base64url decode, and
+  `SerializationUtils::base64UrlDecodeVector` already existed. It was done in well under a day and
+  removed 100 lines.
+- **CXX-10 is described as silently skipping symlinks.** It does not. `fs::is_regular_file` and
+  `fs::is_directory` follow links, so a link to a regular file **is** copied, dereferenced; what is
+  actually dropped is special files, dangling links, and the contents of linked directories. The gap
+  is real but narrower than filed — see `residual-cxx-findings-deferral.md` item 2.
 
 ---
 

@@ -277,6 +277,22 @@ private:
      * Helper function to convert results to iterator - C++11 compatible
      * This is needed because async_resolve in Boost 1.89+ passes results,
      * but our callbacks expect iterator
+     *
+     * IMPORTANT - this shim is INTERNAL to baselib and is not a general purpose Asio
+     * compatibility layer; it is deliberately narrower than the operation it replaces and it
+     * must not be treated as public API:
+     *
+     * -- it accepts a plain callable only, not an Asio completion token, and async_resolve()
+     *    returns void, so use_future, use_awaitable and the deferred token do not work with it
+     *
+     * -- it does not propagate the handler's associated executor, allocator or cancellation
+     *    slot, so an operation started through it does not participate in cancellation and does
+     *    not run on the handler's intended executor
+     *
+     * Every call site inside this repository passes a bound callable and needs none of the
+     * above. Closing the gap means writing a token conforming adapter, which is a substantially
+     * larger piece of work than the shim itself - see
+     * notes/plans/issues/residual-cxx-findings-deferral.md, item 1
      */
     template <typename Handler>
     struct resolve_handler_wrapper
