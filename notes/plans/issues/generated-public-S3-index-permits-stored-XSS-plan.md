@@ -112,7 +112,7 @@ Confirmed decisions:
 
 ## Verification
 
-1. Interpreter: project `.venv` (`/Users/lazar/dev/github/swblocks-baselib/.venv/bin/python`; this workspace may use `/home/lazar/dev/github/swblocks-baselib/.venv/bin/python`). If missing, `make python-install`.
+1. Interpreter: project `.venv`, i.e. `.venv/bin/python` relative to the repository root. If missing, `make pytest-install`.
 2. `.venv/bin/python -m pytest scripts/tests/test_s3_manage_unit.py -v` — the **complete** module, not only `TestIndexGeneration` / `TestCommandIndexupload`.
 3. Single-object HTMLParser assertion: key `x" onclick="alert(1)` yields exactly one `<a>`, `href` only, parsed href is the percent-encoded URL, no extra tags.
 4. `generate_html_index` / `generate_markdown_index` with prefix `javascript:alert(1)` and with prefix `https://example.com/)<img src=x>` raise `InvalidIndexUrlPrefixError` even when `objects` is empty.

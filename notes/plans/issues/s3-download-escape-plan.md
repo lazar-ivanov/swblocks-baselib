@@ -92,7 +92,7 @@ Confirmed decisions:
 
 ## Verification
 
-1. `.venv/bin/python -m pytest scripts/tests/test_s3_manage_unit.py -v` (create venv with `make python-install` if missing). Interpreter: project `.venv`.
+1. `.venv/bin/python -m pytest scripts/tests/test_s3_manage_unit.py -v` (create venv with `make pytest-install` if missing). Interpreter: project `.venv`.
 2. Confirm existing `TestDownloadWorker` / `TestCommandDownload` still pass (nested paths, prefix mirroring, overwrite-protection, dry-run).
 3. Manual sanity: resolver unit tests cover every rejected form above; worker test with key `../outside.txt` leaves `temp_dir` parent untouched; a mixed safe+`../` listing creates no files and starts no workers.
 

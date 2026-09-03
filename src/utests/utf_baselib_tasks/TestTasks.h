@@ -2077,6 +2077,108 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueAllTasksCompletedAdmissionTests )
     }
 }
 
+/*
+ * ExecutionQueueNotify.h states that "the event is generated from task completion processing;
+ * removing the last pending task through cancellation or flush does not by itself generate
+ * AllTasksCompleted"
+ *
+ * That promise is verifiable by reading flushInternal(), cancel() and waitInternal(), none of which
+ * forms a completion candidate - but nothing asserted it, so a refactor which added a candidate
+ * check to any of them would have broken a documented contract silently. These cases close that
+ */
+UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueAllTasksCompletedNotGeneratedByCancelOrFlushTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    /*
+     * Flushing a queue which never held a task generates nothing
+     */
+
+    {
+        ExecutionQueueNotificationTestContext context( ExecutionQueue::OptionKeepNone );
+
+        context.eq -> flush();
+
+        UTF_REQUIRE_EQUAL(
+            0U,
+            context.recorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
+            );
+    }
+
+    /*
+     * A task which was admitted but never scheduled, and is then removed by cancellation, takes the
+     * queue from non-empty to empty without any task completing - so no event is generated
+     *
+     * dontSchedule is what keeps the task out of the pending queue and therefore out of completion
+     * processing entirely; the admission tests above cover the complementary case, that such a task
+     * also does not PREVENT the event
+     */
+
+    {
+        ExecutionQueueNotificationTestContext context( ExecutionQueue::OptionKeepNone );
+
+        std::atomic< bool > executed( false );
+
+        const auto readyTask = om::qi< Task >(
+            SimpleTaskImpl::createInstance(
+                [ &executed ]() -> void
+                {
+                    executed = true;
+                }
+                )
+            );
+
+        context.eq -> push_back( readyTask, true /* dontSchedule */ );
+
+        UTF_REQUIRE( ! context.eq -> isEmpty() );
+        UTF_REQUIRE_EQUAL(
+            0U,
+            context.recorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
+            );
+
+        context.eq -> cancelAll( true /* wait */ );
+
+        UTF_REQUIRE( context.eq -> isEmpty() );
+        UTF_REQUIRE( ! executed.load() );
+
+        UTF_REQUIRE_EQUAL(
+            0U,
+            context.recorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
+            );
+    }
+
+    /*
+     * The same, removed by flush rather than by cancellation
+     */
+
+    {
+        ExecutionQueueNotificationTestContext context( ExecutionQueue::OptionKeepNone );
+
+        std::atomic< bool > executed( false );
+
+        const auto readyTask = om::qi< Task >(
+            SimpleTaskImpl::createInstance(
+                [ &executed ]() -> void
+                {
+                    executed = true;
+                }
+                )
+            );
+
+        context.eq -> push_back( readyTask, true /* dontSchedule */ );
+
+        UTF_REQUIRE( ! context.eq -> isEmpty() );
+
+        context.eq -> flush();
+
+        UTF_REQUIRE_EQUAL(
+            0U,
+            context.recorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
+            );
+    }
+}
+
 UTF_AUTO_TEST_CASE( Tasks_TaskContinuationsTests )
 {
     using namespace bl;

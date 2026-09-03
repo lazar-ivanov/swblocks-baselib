@@ -3201,6 +3201,59 @@ class TestCommandIndexupload:
             assert len(digest) == 64 and all(c in '0123456789abcdef' for c in digest)
 
     @mock_aws
+    def test_indexupload_sets_content_type_so_the_index_renders(self, temp_file):
+        """Without an explicit ContentType S3 serves binary/octet-stream and browsers download."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'test.txt')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'url_prefix': 'https://example.com/'
+        })()
+        assert s3_manage.command_indexupload(args, s3_client=s3_client) == 0
+
+        expected = {
+            'index.html': 'text/html; charset=utf-8',
+            'index.md': 'text/markdown; charset=utf-8',
+        }
+
+        for key, content_type in expected.items():
+            head = s3_client.head_object(Bucket='test-bucket', Key=key)
+            assert head['ContentType'] == content_type
+            assert head['CacheControl'] == 'no-cache'
+
+    @mock_aws
+    def test_indexupload_html_carries_a_restrictive_csp(self, temp_file):
+        """Setting ContentType re-enables rendering, so the CSP must ship with it.
+
+        S3 cannot set arbitrary response headers on an object, so the policy is delivered as a
+        meta element inside the document itself.
+        """
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'test.txt')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'url_prefix': 'https://example.com/'
+        })()
+        assert s3_manage.command_indexupload(args, s3_client=s3_client) == 0
+
+        body = s3_client.get_object(Bucket='test-bucket', Key='index.html')['Body'].read().decode('utf-8')
+
+        assert '<meta http-equiv="Content-Security-Policy"' in body
+        assert "default-src 'none'" in body
+        assert "form-action 'none'" in body
+        assert "base-uri 'none'" in body
+
+        # the page must remain self-contained for that policy to be satisfiable
+        assert '<script' not in body.lower()
+        assert '<img' not in body.lower()
+
+    @mock_aws
     def test_indexupload_html_multiple_files(self, temp_file, capsys):
         """Test HTML index with multiple files."""
         s3_client = boto3.client('s3', region_name='us-east-1')

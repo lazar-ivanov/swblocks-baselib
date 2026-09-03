@@ -239,6 +239,48 @@ namespace bl
              * wrappers below is retained for source compatibility and has no effect - string
              * content is always emitted as raw UTF-8 on both backends; see the note on rawUtf8
              * in baselib/core/JsonUtils.h
+             *
+             *
+             * ON THE 'canonicalize' PARAMETER - a decision, not an oversight
+             *
+             * This single flag is forwarded to two different layers, where it means two different
+             * things:
+             *
+             * -- to the data model, via getJsonObject() -> serializeProperties(): emit properties
+             *    even when unset, and - less obviously - suppress the required-property check; see
+             *    the note above BL_DM_DECLARE_SCALAR_SERIALIZATION in
+             *    baselib/data/DataModelObjectDefs.h
+             *
+             * -- to the serializer, via json::saveToString(): sort object keys, and refuse to also
+             *    pretty print
+             *
+             * Reviews have repeatedly flagged this as a conflated parameter which should be split
+             * into something like emitUnsetProperties + sortKeys. The DECISION IS TO KEEP IT AS IT
+             * IS, for three reasons:
+             *
+             * 1) no caller wants the two meanings separated. getObjectHashCanonical() wants both
+             *    on; getObjectHash( canonicalize = false ), getDocAsPrettyJsonString() and
+             *    getDocAsPackedJsonString() want both off. Splitting would add a knob which nothing
+             *    turns
+             *
+             * 2) "canonical form" - sorted keys AND every property emitted - is a single coherent
+             *    concept, so one flag expressing it is reasonable even though the two behaviours are
+             *    implemented in different layers
+             *
+             * 3) no compatible migration exists. A split parameter would occupy the same positional
+             *    slot as the current one, so getJsonString( obj, true, true ) would compile under
+             *    both spellings and mean different things - producing different bytes and a
+             *    different hash. That is exactly the failure mode which the deleted integral
+             *    saveToStream() overload in baselib/core/JsonUtils.h was introduced to prevent, and
+             *    reintroducing it here to stage a rename would be a regression
+             *
+             * Performance note for anyone reconsidering the default: canonical serialization costs
+             * roughly 5.5x non-canonical on Boost.JSON and roughly 1.0x on json-spirit, because
+             * canonicalizeValue() rebuilds the whole value tree while std::map is already ordered -
+             * see notes/performance/json-library-performance-comparison.md
+             *
+             * See also the note on getObjectHash() below, which records the separate and already
+             * accepted limitation that these hashes are process local
              */
 
             template

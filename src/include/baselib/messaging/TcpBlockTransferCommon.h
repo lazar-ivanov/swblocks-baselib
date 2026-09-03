@@ -262,6 +262,34 @@ namespace bl
                     static_assert( 0 == ( sizeof( *this ) % 8 ), "CommandBlock must be 8-byte aligned" );
                     static_assert( sizeof( data ) == sizeof( data.reserved ), "Reserved block must be the largest" );
                     static_assert( sizeof( data ) == sizeof( data.raw ), "Raw bytes sections size must match" );
+
+                    /*
+                     * The three assertions above are all satisfied by both the intended layout and
+                     * the unintended one, so they cannot detect the failure they appear to guard
+                     * against; the two below pin the absolute sizes and are the ones which can
+                     *
+                     * The whole struct is written to and read from the socket as raw bytes, with
+                     * sizeof( *this ) used as the framing length - see TcpBlockTransferServer.h and
+                     * TcpBlockTransferClient.h - so its size is part of the blob transfer wire
+                     * protocol and not merely an implementation detail
+                     *
+                     * That size depends on alignof( uuid_t ), which Boost 1.89+ changed from 1 to 8
+                     * unless BOOST_UUID_DISABLE_ALIGNMENT is defined before <boost/uuid/uuid.hpp> is
+                     * first included (see UuidBoostImports.h). Without it the uuid inside tagReserved
+                     * pads to offset 16 and DataHeader grows 28 -> 32, which grows CommandBlock
+                     * 72 -> 80 - and 80 satisfies all three of the assertions above: 80 % 8 == 0,
+                     * sizeof( data ) still equals sizeof( data.reserved ) since both grow together,
+                     * and sizeof( data.raw ) is defined in terms of sizeof( tagReserved ) so it
+                     * tracks as well
+                     *
+                     * A 72-byte peer and an 80-byte peer do not corrupt a single frame, they
+                     * desynchronize the stream, because the byte count is the framing. Since the
+                     * macro must be defined before an include which any translation unit may reach
+                     * first, this is pinned here rather than assumed
+                     */
+
+                    static_assert( 28 == sizeof( data ), "DataHeader must be 28 bytes on the wire" );
+                    static_assert( 72 == sizeof( *this ), "CommandBlock must be 72 bytes on the wire" );
                 }
 
                 void network2Host()

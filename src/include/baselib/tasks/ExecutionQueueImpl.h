@@ -580,11 +580,14 @@ namespace bl
                  *
                  * This function is called while holding m_lock and calls task->scheduleNothrow()
                  * which acquires task->m_lock, creating the lock order: queue->m_lock → task->m_lock.
-                 * This is PERMITTED per the documented lock ordering (TaskBase.h:52-59).
+                 * This is PERMITTED per the documented lock ordering - see the "order in which the
+                 * locks should always be acquired" passage in the header comment of TaskBase.h.
                  *
                  * CRITICAL: To prevent deadlock, task implementations MUST NEVER call back into
                  * this execution queue (e.g., push_back, wait, flush) while holding task->m_lock.
-                 * This requirement is documented in TaskBase.h:65-71.
+                 * This requirement is documented in the same header comment in TaskBase.h, in the
+                 * passage beginning "Task code which holds the task lock should *never* make calls
+                 * back into the execution queue which owns the task".
                  *
                  * Violating this creates a circular wait deadlock:
                  *   Thread A: task->m_lock → queue->m_lock [BLOCKED waiting for queue lock]

@@ -25,6 +25,11 @@
 #include <openssl/evp.h>
 #include <openssl/sha.h>
 
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+#include <openssl/core_names.h>
+#include <openssl/params.h>
+#endif
+
 namespace bl
 {
     namespace crypto
@@ -55,42 +60,85 @@ namespace bl
 
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L
                     /*
-                     * OpenSSL 3.x+: HMAC_CTX is opaque and must be heap-allocated
+                     * OpenSSL 3.x+: the whole HMAC_* interface is deprecated in favour of EVP_MAC,
+                     * so this branch - which exists specifically for 3.x - is written against
+                     * EVP_MAC rather than against APIs 3.x itself deprecates
+                     *
+                     * EVP_MAC is also the only one of the two which can be backed by a provider,
+                     * so unlike the RSA paths this needs no legacy bridge
                      */
-                    ::HMAC_CTX* ctx = ::HMAC_CTX_new();
+
+                    ::EVP_MAC* mac = ::EVP_MAC_fetch( nullptr, "HMAC", nullptr );
+                    BL_CHK_CRYPTO_API_NM( mac );
+
+                    BL_SCOPE_EXIT(
+                        {
+                            ::EVP_MAC_free( mac );
+                        }
+                        );
+
+                    ::EVP_MAC_CTX* ctx = ::EVP_MAC_CTX_new( mac );
                     BL_CHK_CRYPTO_API_NM( ctx );
 
                     BL_SCOPE_EXIT(
                         {
-                            ::HMAC_CTX_free( ctx );
+                            ::EVP_MAC_CTX_free( ctx );
                         }
                         );
 
+                    /*
+                     * The digest is selected by name through the parameter list rather than by
+                     * passing an EVP_MD*, which is how the provider based interface is configured
+                     */
+
+                    char digestName[] = "SHA256";
+
+                    ::OSSL_PARAM params[] =
+                    {
+                        ::OSSL_PARAM_construct_utf8_string(
+                            OSSL_MAC_PARAM_DIGEST,
+                            digestName,
+                            0U
+                            ),
+                        ::OSSL_PARAM_construct_end(),
+                    };
+
                     BL_CHK_CRYPTO_API_NM(
-                        ::HMAC_Init_ex(
+                        ::EVP_MAC_init(
                             ctx,
-                            key.c_str(),
-                            static_cast< int >( key.length() ),
-                            EVP_sha256(),
-                            nullptr
+                            reinterpret_cast< const unsigned char* >( key.c_str() ),
+                            key.length(),
+                            params
                             )
                         );
 
                     BL_CHK_CRYPTO_API_NM(
-                        ::HMAC_Update(
+                        ::EVP_MAC_update(
                             ctx,
                             reinterpret_cast< const unsigned char* >( message.c_str() ),
                             message.length()
                             )
                         );
 
+                    std::size_t macLength = 0U;
+
                     BL_CHK_CRYPTO_API_NM(
-                        ::HMAC_Final(
+                        ::EVP_MAC_final(
                             ctx,
                             messageDigest,
-                            &digestLength
+                            &macLength,
+                            sizeof( messageDigest )
                             )
                         );
+
+                    /*
+                     * HMAC-SHA-256 is 32 bytes by definition; anything else means the digest was
+                     * not the one requested
+                     */
+
+                    BL_CHK_CRYPTO_API_NM( macLength == sizeof( messageDigest ) );
+
+                    digestLength = static_cast< unsigned int >( macLength );
 #else
                     /*
                      * OpenSSL 1.1.x: HMAC_CTX can be stack-allocated

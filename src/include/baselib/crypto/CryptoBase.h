@@ -404,9 +404,15 @@ namespace bl
                      * OpenSSL 3.x+: SSL_library_init() is deprecated and becomes a no-op.
                      * Threading is handled automatically; no manual locking callbacks needed.
                      * Use OPENSSL_init_ssl() if explicit initialization is required.
+                     *
+                     * Note that unlike ::SSL_library_init(), which is documented to always return 1
+                     * and whose return value is therefore correctly discarded on the 1.1.x branch
+                     * below, ::OPENSSL_init_ssl() returns 0 on failure. It must be checked, or a
+                     * failed initialization proceeds silently into initRandomEngine() and into
+                     * context creation, where the eventual error is far from its cause
                      */
 
-                    ( void ) ::OPENSSL_init_ssl( 0, nullptr );
+                    BL_CHK_CRYPTO_API_NM( ::OPENSSL_init_ssl( 0, nullptr ) );
 
                     initRandomEngine();
 #else

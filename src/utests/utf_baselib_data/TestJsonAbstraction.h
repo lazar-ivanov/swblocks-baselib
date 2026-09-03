@@ -47,8 +47,120 @@ namespace utest
         }
 
         /*
+         * UTF_REQUIRE reports only the stringized expression, which for a recursive comparison is
+         * the same text at every level and therefore useless. This logs the path first so a
+         * failure says where in the document it happened
+         */
+        inline void requireAtPath(
+            SAA_in          const bool                  condition,
+            SAA_in          const std::string&          message
+            )
+        {
+            if( ! condition )
+            {
+                UTF_MESSAGE( "JSON comparison failed: " + message );
+            }
+
+            UTF_REQUIRE( condition );
+        }
+
+        /*
+         * Compare two JSON values for deep equality
+         *
+         * This is written out rather than using operator== so it works identically on both
+         * backends, and so a mismatch reports the path at which it occurred rather than just
+         * 'not equal'. Numbers are compared through their serialized form, which is what makes
+         * this usable as a round-trip check: a value which survived a trip through text is equal
+         * here if and only if it produces the same text
+         */
+        inline void verifyDeepEqual(
+            SAA_in          const bl::json::value&      lhs,
+            SAA_in          const bl::json::value&      rhs,
+            SAA_in_opt      const std::string&          path = std::string( "$" )
+            )
+        {
+            requireAtPath(
+                lhs.is_object() == rhs.is_object() &&
+                    lhs.is_array() == rhs.is_array() &&
+                    lhs.is_string() == rhs.is_string() &&
+                    lhs.is_bool() == rhs.is_bool() &&
+                    lhs.is_null() == rhs.is_null(),
+                "value kind differs at " + path
+                );
+
+            if( lhs.is_object() )
+            {
+                const auto& lhsObject = lhs.as_object();
+                const auto& rhsObject = rhs.as_object();
+
+                requireAtPath(
+                    lhsObject.size() == rhsObject.size(),
+                    "object size differs at " + path
+                    );
+
+                for( const auto& pair : lhsObject )
+                {
+                    const auto key = std::string( BL_JSON_PAIR_KEY( pair ) );
+
+                    const auto pos = rhsObject.find( key );
+
+                    requireAtPath(
+                        pos != rhsObject.end(),
+                        "object member '" + key + "' missing at " + path
+                        );
+
+                    verifyDeepEqual(
+                        BL_JSON_PAIR_VALUE( pair ),
+                        BL_JSON_ITER_VALUE( pos ),
+                        path + "." + key
+                        );
+                }
+
+                return;
+            }
+
+            if( lhs.is_array() )
+            {
+                const auto& lhsArray = lhs.as_array();
+                const auto& rhsArray = rhs.as_array();
+
+                requireAtPath(
+                    lhsArray.size() == rhsArray.size(),
+                    "array size differs at " + path
+                    );
+
+                for( std::size_t i = 0U; i < lhsArray.size(); ++i )
+                {
+                    verifyDeepEqual(
+                        lhsArray[ i ],
+                        rhsArray[ i ],
+                        path + "[" + bl::utils::lexical_cast< std::string >( i ) + "]"
+                        );
+                }
+
+                return;
+            }
+
+            /*
+             * Primitives: compare the serialized form, which covers strings, bools, null and every
+             * numeric kind without having to branch on which numeric kind the backend chose
+             */
+
+            requireAtPath(
+                bl::json::saveToString( lhs ) == bl::json::saveToString( rhs ),
+                "value differs at " + path +
+                    ": '" + bl::json::saveToString( lhs ) +
+                    "' vs '" + bl::json::saveToString( rhs ) + "'"
+                );
+        }
+
+        /*
          * Verify JSON round-trip: parse -> serialize -> parse again
-         * Ensures structural integrity is preserved
+         *
+         * Note that this asserts DEEP equality of the two parsed values, not merely that the
+         * top level container kind and element count agree. A round trip which corrupted every
+         * string value, mangled every number or dropped a nested key would pass the weaker check
+         * and fails this one
          */
         inline void verifyRoundTrip( SAA_in const std::string& jsonText )
         {
@@ -56,32 +168,60 @@ namespace utest
             const auto serialized = bl::json::saveToString( parsed );
             const auto reparsed = bl::json::readFromString( serialized );
 
+            verifyDeepEqual( parsed, reparsed );
+
             /*
-             * Verify basic structural properties match
-             * (exact string comparison may fail due to formatting differences)
+             * Serialization is a pure function of the value, so a value which survived one round
+             * trip must serialize identically on the next one; this pins the text as well as the
+             * structure
              */
-            UTF_REQUIRE_EQUAL( parsed.is_object(), reparsed.is_object() );
-            UTF_REQUIRE_EQUAL( parsed.is_array(), reparsed.is_array() );
 
-            if( parsed.is_object() )
-            {
-                UTF_REQUIRE_EQUAL( parsed.as_object().size(), reparsed.as_object().size() );
-            }
-
-            if( parsed.is_array() )
-            {
-                UTF_REQUIRE_EQUAL( parsed.as_array().size(), reparsed.as_array().size() );
-            }
+            UTF_REQUIRE_EQUAL( serialized, bl::json::saveToString( reparsed ) );
         }
 
         /*
-         * Verify canonical serialization is deterministic
+         * Verify canonical serialization actually orders object keys
+         *
+         * Note that calling the same pure function twice and comparing the results, which is what
+         * this helper used to do, asserts nothing: canonicalizeValue() has no state and no
+         * iteration over an unordered container, so the two calls cannot disagree whether or not
+         * the ordering is correct.
+         *
+         * What is asserted instead is the property canonical output exists for: that the bytes
+         * depend only on the content and not on the order in which members were inserted. The
+         * caller supplies two values which are equal as documents but were built in different
+         * orders
          */
-        inline void verifyCanonicalDeterminism( SAA_in const bl::json::value& val )
+        inline void verifyCanonicalOrderIndependent(
+            SAA_in          const bl::json::value&      lhs,
+            SAA_in          const bl::json::value&      rhs
+            )
         {
-            const auto canonical1 = bl::json::saveToString( val, false /* prettyPrint */, false /* rawUtf8 */, true /* canonicalize */ );
-            const auto canonical2 = bl::json::saveToString( val, false /* prettyPrint */, false /* rawUtf8 */, true /* canonicalize */ );
-            UTF_REQUIRE_EQUAL( canonical1, canonical2 );
+            const auto canonicalLhs =
+                bl::json::saveToString( lhs, false /* prettyPrint */, false /* rawUtf8 */, true /* canonicalize */ );
+
+            const auto canonicalRhs =
+                bl::json::saveToString( rhs, false /* prettyPrint */, false /* rawUtf8 */, true /* canonicalize */ );
+
+            UTF_REQUIRE_EQUAL( canonicalLhs, canonicalRhs );
+        }
+
+        /*
+         * Assert the exact canonical bytes for a value
+         *
+         * This pins ordering, escaping and number formatting together, which is the only way any
+         * of them is actually verified - the structural helpers above are all satisfied by output
+         * which is correctly shaped but wrongly spelled
+         */
+        inline void verifyCanonicalText(
+            SAA_in          const bl::json::value&      val,
+            SAA_in          const std::string&          expected
+            )
+        {
+            UTF_REQUIRE_EQUAL(
+                bl::json::saveToString( val, false /* prettyPrint */, false /* rawUtf8 */, true /* canonicalize */ ),
+                expected
+                );
         }
 
         /*
@@ -488,9 +628,26 @@ UTF_AUTO_TEST_CASE( JsonSerializeCanonical )
     UTF_REQUIRE( middlePos < zebraPos );
 
     /*
-     * Verify determinism
+     * Verify the canonical bytes depend only on content, not on insertion order, by building the
+     * same document in the opposite order
      */
-    utest::json::verifyCanonicalDeterminism( obj );
+
+    bl::json::object reversed;
+    reversed[ "middle" ] = "middle";
+    reversed[ "apple" ] = "first";
+    reversed[ "zebra" ] = "last";
+
+    utest::json::verifyCanonicalOrderIndependent( bl::json::value( obj ), bl::json::value( reversed ) );
+
+    /*
+     * And pin the exact bytes, which asserts the ordering, the escaping and the absence of
+     * incidental whitespace all at once
+     */
+
+    utest::json::verifyCanonicalText(
+        bl::json::value( obj ),
+        "{\"apple\":\"first\",\"middle\":\"middle\",\"zebra\":\"last\"}"
+        );
 }
 
 UTF_AUTO_TEST_CASE( JsonSerializeToStream )
@@ -536,7 +693,17 @@ UTF_AUTO_TEST_CASE( JsonSerializeOptions )
      * Test canonical serialization
      */
     const auto canonical = bl::json::saveToString( obj, false, false, true );
-    utest::json::verifyCanonicalDeterminism( obj );
+    UTF_REQUIRE( canonical.find( '\n' ) == std::string::npos );
+
+    /*
+     * The simple test object is built as name / value / flag, so canonical form must reorder it
+     * to flag / name / value
+     */
+
+    utest::json::verifyCanonicalText(
+        bl::json::value( obj ),
+        "{\"flag\":true,\"name\":\"test\",\"value\":42}"
+        );
 }
 
 /********************************************************************************************
@@ -1429,6 +1596,213 @@ UTF_AUTO_TEST_CASE( JsonNumericNegativeZero )
     const auto serialized = bl::json::saveToString( parsed );
 
     UTF_REQUIRE_EQUAL( serialized, std::string( "{\"z\":0}" ) );
+}
+
+/********************************************************************************************
+ * 10. Parser Limits and Backend Divergences
+ *
+ * These cases pin behaviors which differ between the two backends, or which are enforced by
+ * this library rather than by the underlying parser. See the contract comments on
+ * bl::json::readFromString in baselib/core/JsonUtils.h
+ ********************************************************************************************/
+
+namespace
+{
+    /*
+     * Build a document nested 'depth' objects deep: {"n":{"n":{ ... {"n":1} ... }}}
+     */
+    inline std::string makeNestedJsonText( SAA_in const std::size_t depth )
+    {
+        std::string text;
+
+        text.reserve( depth * 6U + 8U );
+
+        for( std::size_t i = 0U; i < depth; ++i )
+        {
+            text += "{\"n\":";
+        }
+
+        text += "1";
+
+        text.append( depth, '}' );
+
+        return text;
+    }
+
+} // __unnamed
+
+UTF_AUTO_TEST_CASE( JsonParseDepthWithinLimitIsAccepted )
+{
+    utest::json::logImplementation();
+
+    /*
+     * 500 is inside the 512 limit the Boost.JSON backend configures, and json-spirit applies no
+     * limit, so this must parse on both backends
+     *
+     * Note that it is also far beyond Boost.JSON's own default of 32, so this case fails against
+     * an unconfigured parser and is the regression test for that configuration being applied
+     */
+
+    const auto parsed = bl::json::readFromString( makeNestedJsonText( 500U ) );
+
+    UTF_REQUIRE( parsed.is_object() );
+
+    auto current = parsed;
+    std::size_t levels = 0U;
+
+    while( current.is_object() )
+    {
+        current = current.as_object().at( "n" );
+        ++levels;
+    }
+
+    UTF_REQUIRE_EQUAL( levels, 500U );
+    UTF_REQUIRE_EQUAL( bl::json::get_int64( current ), 1 );
+}
+
+#if !defined( BL_USE_JSON_SPIRIT )
+
+UTF_AUTO_TEST_CASE( JsonParseDepthBeyondLimitIsRejected )
+{
+    utest::json::logImplementation();
+
+    /*
+     * Boost.JSON backend only - json-spirit applies no depth limit at all and is deliberately
+     * left that way; see the contract note in baselib/core/JsonUtils.h
+     */
+
+    UTF_REQUIRE_THROW(
+        bl::json::readFromString( makeNestedJsonText( 600U ) ),
+        bl::JsonException
+        );
+}
+
+UTF_AUTO_TEST_CASE( JsonParseTrailingDataIsRejected )
+{
+    utest::json::logImplementation();
+
+    /*
+     * J-9 - trailing content after a complete document. Boost.JSON reports extra_data; json-spirit
+     * stops at the end of the first value and ignores the remainder, so this is asserted on the
+     * default backend only and the divergence is what the contract note records
+     */
+
+    UTF_REQUIRE_THROW(
+        bl::json::readFromString( R"({"a":1} {"b":2})" ),
+        bl::JsonException
+        );
+
+    UTF_REQUIRE_THROW(
+        bl::json::readFromString( R"([1,2,3]garbage)" ),
+        bl::JsonException
+        );
+}
+
+UTF_AUTO_TEST_CASE( JsonParseInvalidUtf8IsRejected )
+{
+    utest::json::logImplementation();
+
+    /*
+     * J-3 - an invalid UTF-8 sequence inside a string literal. Boost.JSON validates the encoding
+     * and rejects it; json-spirit passes the bytes through untouched, so this too is asserted on
+     * the default backend only
+     */
+
+    std::string text( "{\"s\":\"" );
+
+    text += static_cast< char >( 0xC3 );     /* a lead byte expecting one continuation byte ... */
+    text += static_cast< char >( 0x28 );     /* ... followed by '(' which is not one            */
+
+    text += "\"}";
+
+    UTF_REQUIRE_THROW( bl::json::readFromString( text ), bl::JsonException );
+}
+
+UTF_AUTO_TEST_CASE( JsonPrettyPrintEmptyContainers )
+{
+    utest::json::logImplementation();
+
+    /*
+     * An empty object and an empty array pretty print as {} and [] rather than as a brace, a
+     * blank line and a closing brace, which is what the json-spirit backend produces for the
+     * same values
+     */
+
+    UTF_REQUIRE_EQUAL(
+        bl::json::saveToString( bl::json::value( bl::json::object() ), true /* prettyPrint */ ),
+        std::string( "{}" )
+        );
+
+    UTF_REQUIRE_EQUAL(
+        bl::json::saveToString( bl::json::value( bl::json::array() ), true /* prettyPrint */ ),
+        std::string( "[]" )
+        );
+
+    /*
+     * And nested inside a non-empty parent, where the indentation of the closing brace matters
+     */
+
+    bl::json::object outer;
+    outer[ "empty" ] = bl::json::object();
+
+    const auto pretty = bl::json::saveToString( bl::json::value( outer ), true /* prettyPrint */ );
+
+    UTF_REQUIRE( pretty.find( "{}" ) != std::string::npos );
+    UTF_REQUIRE( pretty.find( "\n\n" ) == std::string::npos );
+}
+
+#endif /* !BL_USE_JSON_SPIRIT */
+
+UTF_AUTO_TEST_CASE( JsonSerializeToStreamCanonical )
+{
+    utest::json::logImplementation();
+
+    /*
+     * saveToStream accepts the same canonicalize flag as saveToString, so a large document can be
+     * written to a stream in canonical form without first materializing it as a std::string
+     */
+
+    bl::json::object obj;
+    obj[ "zebra" ] = "last";
+    obj[ "apple" ] = "first";
+
+    std::ostringstream canonicalStream;
+
+    bl::json::saveToStream(
+        bl::json::value( obj ),
+        canonicalStream,
+        false /* prettyPrint */,
+        false /* rawUtf8 */,
+        true  /* canonicalize */
+        );
+
+    UTF_REQUIRE_EQUAL(
+        canonicalStream.str(),
+        bl::json::saveToString( bl::json::value( obj ), false, false, true /* canonicalize */ )
+        );
+
+    UTF_REQUIRE_EQUAL(
+        canonicalStream.str(),
+        std::string( "{\"apple\":\"first\",\"zebra\":\"last\"}" )
+        );
+
+    /*
+     * The prettyPrint restriction applies here exactly as it does on saveToString, and both
+     * backends enforce it
+     */
+
+    std::ostringstream rejected;
+
+    UTF_REQUIRE_THROW(
+        bl::json::saveToStream(
+            bl::json::value( obj ),
+            rejected,
+            true  /* prettyPrint */,
+            false /* rawUtf8 */,
+            true  /* canonicalize */
+            ),
+        bl::ArgumentException
+        );
 }
 
 #endif /* __UTEST_TESTJSONABSTRACTION_H_ */

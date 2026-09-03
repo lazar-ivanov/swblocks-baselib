@@ -22,6 +22,53 @@
  *
  * By default uses Boost.JSON library with direct typedefs (zero overhead).
  * Define BL_USE_JSON_SPIRIT to use json-spirit instead via compatibility wrappers.
+ *
+ *
+ * LINK REQUIREMENT
+ *
+ * The default backend is NOT header-only. Boost.JSON is a compiled library and including this
+ * header on the default path creates a link dependency on boost_json; the project makefiles add it
+ * in projects/make/3rd/boost/common.mk. A consumer who includes this header from their own build
+ * system and does not link boost_json gets unresolved symbols with nothing pointing at the cause,
+ * which is why it is stated here.
+ *
+ * Building with BL_USE_JSON_SPIRIT selects json-spirit, which is header-only and adds no link
+ * dependency. Note that Boost dropped BOOST_JSON_STANDALONE in 1.81, so there is no header-only
+ * mode of the default backend to select instead.
+ *
+ *
+ * THE PORTABLE SUBSET
+ *
+ * The two backends do not present the same API, and only their intersection is safe to use in code
+ * which must build both ways - which is all shared production code in this library. Repository-wide
+ * verification confirms the current code stays inside it; nothing enforces that mechanically, so it
+ * is written down here.
+ *
+ * Available on Boost.JSON ONLY - do not use in shared code:
+ *
+ * -- value::kind(), is_number(), is_primitive(), is_structured()
+ * -- object::if_contains(), object::reserve()
+ * -- any directly qualified boost::json:: name
+ *
+ * Available on json-spirit ONLY - do not use in shared code:
+ *
+ * -- json::ValueType and the member-style getters get_str(), get_obj(), get_array(), get_int(),
+ *    get_value< T >()
+ *
+ * Same spelling, different meaning - do not rely on either:
+ *
+ * -- as_string() returns const std::string& on json-spirit and boost::json::string& on Boost.JSON,
+ *    so there is no common usable type. Portable code must write
+ *    std::string( s.c_str(), s.size() ), as the tests do, or use json::value_to< std::string >()
+ * -- is_int64() is true for unsigned values on json-spirit, which stores both in int_type, but is
+ *    strictly kind::int64 on Boost.JSON
+ *
+ * Use the BL_JSON_ITER_VALUE, BL_JSON_PAIR_KEY and BL_JSON_PAIR_VALUE macros for iteration, since
+ * the iterator and pair shapes differ between the backends.
+ *
+ * The json-spirit backend has no continuous verification - see
+ * notes/plans/issues/json-backend-verification-decision.md for the prescribed manual check and why
+ * it is manual.
  */
 
 #include <baselib/core/StringUtils.h>
@@ -90,6 +137,31 @@ namespace bl
          * remains supported (see CONTRIBUTING.md) and rejects them during parsing.
          *
          * See notes/plans/issues/json-duplicate-key-contract.md for the full record.
+         *
+         *
+         * MAXIMUM NESTING DEPTH, also backend-defined
+         *
+         * The Boost.JSON backend rejects a document nested more than 512 objects or arrays deep,
+         * set explicitly as detail::JsonUtilsImpl::MAX_PARSE_DEPTH. The json-spirit backend applies
+         * no limit at all.
+         *
+         * The limit exists because a parser with no bound on recursion depth will exhaust the stack
+         * on a hostile document, and 512 was chosen because this library carries opaque payloads
+         * whose depth it does not control - BrokerProtocol::passThroughUserData and
+         * FunctionInputData::arguments hold whatever a caller put there - while its own data models
+         * nest around five levels. It is far above any legitimate document this library produces
+         * and far below anything that threatens the stack.
+         *
+         * Note that Boost.JSON's own default is 32, so setting this RAISES the limit: every
+         * document between 33 and 512 levels deep is rejected by an unconfigured Boost.JSON build
+         * and accepted here. Nothing which parses today stops parsing.
+         *
+         * The json-spirit backend is deliberately left unbounded rather than being made to match.
+         * It is selected only on devenv2-6 and by explicit opt-in, the two backends are never
+         * loaded into the same process, and adding a depth counter to it would mean modifying a
+         * third-party parser to defend a configuration which is not the default. An application
+         * which parses untrusted input on that backend should bound the document size before
+         * calling here.
          */
 
         inline json::value readFromString( SAA_in const std::string& input )
@@ -134,6 +206,16 @@ namespace bl
             return detail::JsonUtilsImpl::saveToString( json, prettyPrint, rawUtf8, canonicalize );
         }
 
+        /**
+         * @brief Serializes a JSON value directly into a stream
+         *
+         * The canonicalize parameter has the same meaning and the same restriction as on
+         * saveToString above - it sorts object keys and it cannot be combined with prettyPrint, so
+         * canonical output through this function is always compact. That is the shape the case
+         * which needs it wants: hashing or signing a large document without first materializing it
+         * as a std::string. See the note on getJsonString() in baselib/data/DataModelObject.h
+         */
+
         template
         <
             typename STREAM
@@ -142,10 +224,11 @@ namespace bl
             SAA_in          const json::value&                      val,
             SAA_inout       STREAM&                                 output,
             SAA_in_opt      const bool                              prettyPrint = false,
-            SAA_in_opt      const bool                              rawUtf8 = false
+            SAA_in_opt      const bool                              rawUtf8 = false,
+            SAA_in_opt      const bool                              canonicalize = false
             )
         {
-            detail::JsonUtilsImpl::saveToStream( val, output, prettyPrint, rawUtf8 );
+            detail::JsonUtilsImpl::saveToStream( val, output, prettyPrint, rawUtf8, canonicalize );
         }
 
         /*

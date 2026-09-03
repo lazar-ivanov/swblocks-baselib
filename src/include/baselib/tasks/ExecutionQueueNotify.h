@@ -162,6 +162,24 @@ namespace bl
              * is not a notification-drain barrier. TaskReady and TaskDiscarded use the observer selected
              * when the corresponding task state transition commits, while the AllTasksCompleted observer
              * is selected at final delivery validation.
+             *
+             * EVENT COLLAPSING: the count of AllTasksCompleted events delivered is NOT the count of
+             * times the queue drained. Two or more drain cycles can complete and produce a single
+             * event, or none at all for the earlier ones. The event is deduplicated against the
+             * generation of the work which produced the completion candidate, so a candidate whose
+             * generation has been overtaken by a later publish is suppressed rather than delivered
+             * late. Concretely: a thread which completes the last task, forms a candidate, and then
+             * enters a slow callback can find, when it finally re-acquires the lock, that another
+             * thread has already admitted, executed and published a newer generation - and its own
+             * candidate is then dropped, even though a distinct batch really did drain.
+             *
+             * This is correct under the point-in-time semantics above, and it is the price of not
+             * holding a lock across user code. But it means the event MUST NOT be used as a
+             * per-batch boundary marker or counted against the number of batches submitted; under
+             * load - which is exactly when a callback is most likely to be slow - boundaries are
+             * silently missed. An observer which needs to know that a specific set of work finished
+             * must track that set itself, for example by counting TaskReady and TaskDiscarded, and
+             * treat AllTasksCompleted only as a hint that the queue was momentarily idle.
              */
 
             virtual void onEvent(

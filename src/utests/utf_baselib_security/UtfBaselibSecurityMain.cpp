@@ -21,6 +21,7 @@
 #include <utests/baselib/UtfMain.h>
 
 #include "TestHashUtils.h"
+#include "TestHmacSha256.h"
 #include "TestBignumBase64Url.h"
 #include "TestRsaSignVerify.h"
 #include "TestCryptoUtils.h"

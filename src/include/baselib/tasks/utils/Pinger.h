@@ -217,7 +217,7 @@ namespace bl
 
             static const str::regex                             g_patternAvgRttWindows;
             static const str::regex                             g_patternAvgRttLinux;
-            static const str::regex                             g_patternAvgRttLinuxOrDarwin;
+            static const str::regex                             g_patternAvgRttDarwin;
 
         protected:
 
@@ -434,13 +434,13 @@ namespace bl
             static const str::regex& getPatternAvgRtt() NOEXCEPT
             {
                 return os::onWindows() ? g_patternAvgRttWindows :
-                    os::onLinux() ? g_patternAvgRttLinux : g_patternAvgRttLinuxOrDarwin;
+                    os::onLinux() ? g_patternAvgRttLinux : g_patternAvgRttDarwin;
             }
 
             static const str::regex& getPatternAvgRttAlt() NOEXCEPT
             {
                 return os::onWindows() ? g_patternAvgRttWindows :
-                    os::onLinux() ? g_patternAvgRttLinuxOrDarwin : g_patternAvgRttLinux;
+                    os::onLinux() ? g_patternAvgRttDarwin : g_patternAvgRttLinux;
             }
 
             static bool matchAverageRoundTripTime(
@@ -466,7 +466,23 @@ namespace bl
                     return false;
                 };
 
-                if( cbMatch( getPatternAvgRtt() ) || cbMatch( getPatternAvgRttAlt() ) )
+                const auto& primary = getPatternAvgRtt();
+
+                if( cbMatch( primary ) )
+                {
+                    return true;
+                }
+
+                /*
+                 * On Windows both accessors resolve to g_patternAvgRttWindows, so without this
+                 * check the same input would be matched twice against an identical pattern; the
+                 * alternate is only a distinct pattern on Linux and Darwin, where each of the two
+                 * platforms can encounter the other's ping output format
+                 */
+
+                const auto& alternate = getPatternAvgRttAlt();
+
+                if( &alternate != &primary && cbMatch( alternate ) )
                 {
                     return true;
                 }
@@ -483,7 +499,7 @@ namespace bl
             "rtt min/avg/max/mdev = ([^/]+)/([^/]+)/.*"
             );
 
-        BL_DEFINE_STATIC_MEMBER( ProcessPingerTaskT, const str::regex, g_patternAvgRttLinuxOrDarwin )(
+        BL_DEFINE_STATIC_MEMBER( ProcessPingerTaskT, const str::regex, g_patternAvgRttDarwin )(
             "round-trip min/avg/max/stddev = ([^/]+)/([^/]+)/.*"
             );
 

@@ -21,7 +21,7 @@ Do not make any assumptions. Use the AskUserQuestion tool to ask as many follow 
 
 **Always use the project's Python virtual environment.**
 
-When running Python commands, tests, or scripts, ALWAYS use the Python interpreter from the project's `.venv` virtual environment located at `/Users/lazar/dev/github/swblocks-baselib/.venv/bin/python` (or `.venv/bin/pytest` for pytest). If the `.venv` directory does not exist, run `make python-install` to create it before proceeding.
+When running Python commands, tests, or scripts, ALWAYS use the Python interpreter from the project's `.venv` virtual environment, i.e. `.venv/bin/python` relative to the repository root (or `.venv/bin/pytest` for pytest). On Windows these are `.venv/Scripts/python.exe` and `.venv/Scripts/pip.exe`. If the `.venv` directory does not exist, run `make pytest-install` to create it before proceeding.
 
 **Never commit to git without explicit permission.**
 

@@ -758,6 +758,13 @@ namespace bl
                      * For json-spirit, canonicalize is ignored since std::map already
                      * maintains alphabetically sorted keys. However, we still validate
                      * that prettyPrint and canonicalize are not both true.
+                     *
+                     * That validation is kept even though it costs this backend nothing, so both
+                     * backends reject the same call and a document which serializes here also
+                     * serializes on Boost.JSON. The exclusion is a DELIBERATE NARROWING rather than
+                     * an implementation limitation - see the equivalent note in
+                     * baselib/core/detail/BoostJsonImpl.h and the note on getJsonString() in
+                     * baselib/data/DataModelObject.h. Do not re-file it
                      */
 
                     if( canonicalize && prettyPrint )
@@ -823,9 +830,25 @@ namespace bl
                     SAA_in          const value&                              val,
                     SAA_inout       STREAM&                                   output,
                     SAA_in          const bool                                prettyPrint,
-                    SAA_in          const bool                                rawUtf8
+                    SAA_in          const bool                                rawUtf8,
+                    SAA_in_opt      const bool                                canonicalize = false
                     )
                 {
+                    /*
+                     * As on the saveToString path, canonicalize needs no work on this backend
+                     * because Object_type is a std::map and its keys are already ordered, but the
+                     * prettyPrint exclusion is still enforced so that both backends reject the
+                     * same call
+                     */
+
+                    if( canonicalize && prettyPrint )
+                    {
+                        BL_THROW(
+                            ArgumentException(),
+                            "Cannot use both prettyPrint and canonicalize options together"
+                            );
+                    }
+
                     /*
                      * Note that json_spirit::raw_utf8 is requested unconditionally and the
                      * rawUtf8 parameter is deliberately not honored

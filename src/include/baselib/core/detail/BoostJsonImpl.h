@@ -226,6 +226,32 @@ namespace bl
                     MAX_DUMP_STRING_LENGTH = 1024
                 };
 
+                /*
+                 * The maximum object / array nesting depth accepted when parsing
+                 *
+                 * Boost.JSON applies a default of 32, which is low for this library because the
+                 * data model carries opaque caller-supplied payloads whose depth it does not
+                 * control - BrokerProtocol::passThroughUserData and FunctionInputData::arguments
+                 * are declared with BL_DM_DECLARE_CUSTOM_PROPERTY and hold whatever the caller put
+                 * there. The library's own models nest around five levels
+                 *
+                 * Setting it explicitly raises the limit rather than lowering it, so nothing which
+                 * parses today stops parsing. See the note on bl::json::readFromString in
+                 * baselib/core/JsonUtils.h for the contract this establishes and for why the
+                 * json-spirit backend, which applies no limit, is deliberately left alone
+                 */
+
+                static const std::size_t MAX_PARSE_DEPTH = 512;
+
+                static boost::json::parse_options parseOptions() NOEXCEPT
+                {
+                    boost::json::parse_options options;
+
+                    options.max_depth = MAX_PARSE_DEPTH;
+
+                    return options;
+                }
+
             public:
 
                 static value readFromString( SAA_in const std::string& input )
@@ -239,7 +265,11 @@ namespace bl
                          * in baselib/core/JsonUtils.h
                          */
 
-                        return boost::json::parse( input );
+                        return boost::json::parse(
+                            input,
+                            boost::json::storage_ptr(),
+                            parseOptions()
+                            );
                     }
                     catch( const boost::system::system_error& e )
                     {
@@ -277,7 +307,7 @@ namespace bl
                          * above - the last of the equal members wins
                          */
 
-                        boost::json::stream_parser parser;
+                        boost::json::stream_parser parser( boost::json::storage_ptr(), parseOptions() );
                         eh::error_code ec;
                         std::array< char, 2048 > buffer;
 
@@ -425,27 +455,36 @@ namespace bl
                     {
                         case kind::object:
                             {
+                                const auto& obj = jv.as_object();
+
+                                /*
+                                 * An empty object is emitted as {} rather than as an open brace, a
+                                 * blank line and a close brace, so the output matches what the
+                                 * json-spirit backend produces for the same value
+                                 */
+
+                                if( obj.empty() )
+                                {
+                                    os << "{}";
+                                    break;
+                                }
+
                                 os << "{\n";
                                 indent.append( 4, ' ' );
 
-                                const auto& obj = jv.as_object();
+                                auto it = obj.begin();
 
-                                if( ! obj.empty() )
+                                for( ;; )
                                 {
-                                    auto it = obj.begin();
+                                    os << indent << boost::json::serialize( it -> key() ) << ": ";
+                                    prettyPrintImpl( os, it -> value(), indent );
 
-                                    for( ;; )
+                                    if( ++it == obj.end() )
                                     {
-                                        os << indent << boost::json::serialize( it -> key() ) << ": ";
-                                        prettyPrintImpl( os, it -> value(), indent );
-
-                                        if( ++it == obj.end() )
-                                        {
-                                            break;
-                                        }
-
-                                        os << ",\n";
+                                        break;
                                     }
+
+                                    os << ",\n";
                                 }
 
                                 os << "\n";
@@ -456,27 +495,35 @@ namespace bl
 
                         case kind::array:
                             {
+                                const auto& arr = jv.as_array();
+
+                                /*
+                                 * As for the empty object above - [] rather than an open bracket, a
+                                 * blank line and a close bracket
+                                 */
+
+                                if( arr.empty() )
+                                {
+                                    os << "[]";
+                                    break;
+                                }
+
                                 os << "[\n";
                                 indent.append( 4, ' ' );
 
-                                const auto& arr = jv.as_array();
+                                auto it = arr.begin();
 
-                                if( ! arr.empty() )
+                                for( ;; )
                                 {
-                                    auto it = arr.begin();
+                                    os << indent;
+                                    prettyPrintImpl( os, *it, indent );
 
-                                    for( ;; )
+                                    if( ++it == arr.end() )
                                     {
-                                        os << indent;
-                                        prettyPrintImpl( os, *it, indent );
-
-                                        if( ++it == arr.end() )
-                                        {
-                                            break;
-                                        }
-
-                                        os << ",\n";
+                                        break;
                                     }
+
+                                    os << ",\n";
                                 }
 
                                 os << "\n";
@@ -535,6 +582,20 @@ namespace bl
 
                     BL_UNUSED( rawUtf8 );
 
+                    /*
+                     * At this layer 'canonicalize' means one thing only: sort object keys, so the
+                     * serialized bytes do not depend on insertion order. It is spelled the same as
+                     * the data model flag of the same name, which carries a different meaning - see
+                     * the note on getJsonString() in baselib/data/DataModelObject.h
+                     *
+                     * The mutual exclusion below is a DELIBERATE NARROWING and not an implementation
+                     * limitation. The two options compose trivially - prettyPrint( canonicalizeValue(
+                     * val ) ) would be a few lines - but the combination has no caller, canonical
+                     * output exists to be hashed rather than read, and rejecting it keeps one
+                     * meaning per call. Do not re-file this as a defect; if a caller ever genuinely
+                     * needs sorted pretty output, removing the throw is the whole change
+                     */
+
                     if( canonicalize && prettyPrint )
                     {
                         BL_THROW(
@@ -590,10 +651,11 @@ namespace bl
                     SAA_in          const value&                              val,
                     SAA_inout       STREAM&                                   output,
                     SAA_in          const bool                                prettyPrint,
-                    SAA_in          const bool                                rawUtf8
+                    SAA_in          const bool                                rawUtf8,
+                    SAA_in_opt      const bool                                canonicalize = false
                     )
                 {
-                    output << saveToString( val, prettyPrint, rawUtf8 );
+                    output << saveToString( val, prettyPrint, rawUtf8, canonicalize );
                 }
 
                 static void remapIncorrectValueTypeException(

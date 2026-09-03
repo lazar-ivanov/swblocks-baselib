@@ -43,6 +43,38 @@ EXIT_FAILURE = 1
 # x-amz-meta-bl-content-sha256) and preferred over the ETag when verifying.
 CONTENT_SHA256_METADATA_KEY = 'bl-content-sha256'
 
+# --- GENERATED INDEX SERVING ---
+# Content types for the generated index objects. Without an explicit type S3 stores them as
+# binary/octet-stream, so a browser downloads the index instead of rendering it and the feature
+# does not work at all.
+#
+# Note that setting this re-enables rendering of content which is derived from S3 keys, so it is
+# deliberately paired with the meta CSP below and with the output encoding in generate_html_index()
+# and _escape_markdown_index_label(). Do not set the content type without them.
+INDEX_CONTENT_TYPES = {
+    'index.html': 'text/html; charset=utf-8',
+    'index.md': 'text/markdown; charset=utf-8',
+}
+
+# The index is regenerated on every publish, so a stale cached copy is worse than a re-fetch.
+INDEX_CACHE_CONTROL = 'no-cache'
+
+# Defence in depth for the generated HTML index, delivered as a meta element because S3 cannot set
+# arbitrary response headers on an object - only Content-Type, Cache-Control and the other
+# well-known ones plus x-amz-meta-* user metadata.
+#
+# The page is entirely self-contained: one inline <style> block, no scripts, no images, no fonts and
+# no forms. 'unsafe-inline' is therefore needed for the style element and nothing else is permitted.
+# Ordinary link navigation is unaffected by these directives.
+#
+# NOTE that X-Content-Type-Options: nosniff CANNOT be delivered this way - it is header-only and has
+# no meta equivalent. Serving the index through a layer which can set response headers, such as
+# CloudFront with a response headers policy, should add it there. With an explicit and correct
+# Content-Type set above, sniffing is a much narrower concern than it would be with none.
+INDEX_CONTENT_SECURITY_POLICY = (
+    "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
+)
+
 # Pin the multipart layout so an uploaded object has a reproducible ETag rather
 # than one that depends on the s3transfer defaults of the installed boto3. These
 # values match the current defaults, so objects already in a bucket still verify.
@@ -1196,6 +1228,9 @@ def generate_html_index(objects, total_objects, total_size, url_prefix):
     html_lines.append('<html>')
     html_lines.append('<head>')
     html_lines.append('  <meta charset="UTF-8">')
+    html_lines.append(
+        f'  <meta http-equiv="Content-Security-Policy" content="{INDEX_CONTENT_SECURITY_POLICY}">'
+    )
     html_lines.append('  <meta name="viewport" content="width=device-width, initial-scale=1.0">')
     html_lines.append('  <title>Files Index</title>')
     html_lines.append('  <style>')
@@ -1387,7 +1422,11 @@ def command_indexupload(args, s3_client=None):
             for local_path, key in ((html_path, 'index.html'), (md_path, 'index.md')):
                 s3_client.upload_file(
                     local_path, args.bucket_name, key,
-                    ExtraArgs={'Metadata': {CONTENT_SHA256_METADATA_KEY: calculate_file_sha256(local_path)}},
+                    ExtraArgs={
+                        'ContentType': INDEX_CONTENT_TYPES[key],
+                        'CacheControl': INDEX_CACHE_CONTROL,
+                        'Metadata': {CONTENT_SHA256_METADATA_KEY: calculate_file_sha256(local_path)},
+                    },
                     Config=TRANSFER_CONFIG,
                 )
                 print(f"[SUCCESS] {key} uploaded")

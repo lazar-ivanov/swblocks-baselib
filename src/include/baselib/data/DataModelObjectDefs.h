@@ -171,6 +171,26 @@ template \
     } \
     private: \
 
+/*
+ * The 'canonicalize' parameter carried by every *Serialize below has TWO effects at this layer,
+ * and the second one is not obvious from its name:
+ *
+ * 1) properties are emitted even when they were never set, so the output shape does not depend on
+ *    which setters a caller happened to call
+ *
+ * 2) the required-property check is SUPPRESSED. Note that the emit branch is tested first, so when
+ *    canonicalize is true the 'else if( isRequired && ! IsSet )' branch below is unreachable and
+ *    BL_DM_THROW_REQUIRED_PROPERTY_NOT_SET never fires
+ *
+ * Effect 2 means canonical serialization accepts an object which packed serialization would
+ * reject, and therefore that a canonical hash can be computed over an object which is not valid.
+ * That is a real consequence and it is why this is written down rather than left to be rediscovered
+ *
+ * This is the DECIDED behavior and it is deliberately not being changed - see the note on
+ * getJsonString() in baselib/data/DataModelObject.h for the reasoning and for why splitting the
+ * parameter was considered and rejected. Do not re-file it
+ */
+
 #define BL_DM_DECLARE_SCALAR_SERIALIZATION( name, jsonProp, scalar_type, isRequired ) \
     private: \
     void name ## Serialize( \
@@ -501,7 +521,7 @@ template \
             return; \
         } \
         \
-        m_ ## name = BL_JSON_ITER_VALUE( pos ); \
+        m_ ## name = std::move( BL_JSON_ITER_VALUE( pos ) ); \
         \
         context.addProcessedProperty( #name ); \
     } \
