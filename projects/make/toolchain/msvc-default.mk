@@ -264,8 +264,8 @@ endif
 # https://superuser.com/questions/1437590/typing-python-on-windows-10-version-1903-command-prompt-opens-microsoft-stor
 
 # Python version depends on devenv version
-ifeq ($(DEVENV_VERSION_TAG),devenv7)
-# devenv7 uses Python 3.14
+ifeq (, $(BL_DEVENV_IS_LEGACY))
+# devenv7+ uses Python 3.14
 ifeq ($(BL_WIN_ARCH_IS_ARM64),1)
 PATH     := $(DIST_ROOT_DEPS3)/python/$(BL_DEVENV_PYTHON_VERSION)/default:$(PATH)
 else ifeq ($(BL_WIN_ARCH_IS_X64),1)
@@ -421,11 +421,11 @@ CPPFLAGS += -wd4396
 CPPFLAGS += -wd4503
 
 #
-# Disable Boost.Asio deprecation messages for devenv7 with Boost 1.90.0
+# Disable Boost.Asio deprecation messages for devenv7+ with Boost 1.90.0
 # Use the Boost-provided macro BOOST_ASIO_DISABLE_DEPRECATED_MSG
 # This is the recommended way to suppress deprecation warnings until the code is updated
 #
-ifeq ($(DEVENV_VERSION_TAG),devenv7)
+ifeq (, $(BL_DEVENV_IS_LEGACY))
 CPPFLAGS += -DBOOST_ASIO_DISABLE_DEPRECATED_MSG
 endif
 

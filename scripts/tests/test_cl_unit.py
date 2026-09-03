@@ -578,18 +578,19 @@ class TestByteDecoding:
     """Test the byte decoding pattern used in cl.py for cross-version compatibility.
 
     cl.py uses Popen without universal_newlines to read raw bytes from the compiler,
-    then decodes manually with errors='replace'. This avoids UnicodeDecodeError when
-    the compiler outputs non-ASCII characters (e.g., file paths with accented names)
-    and the locale encoding is ASCII.
+    then decodes manually as latin-1, which maps bytes 0-255 bijectively and so can
+    never fail. Encoding the result back to latin-1 reproduces the original bytes
+    exactly, which is what keeps generated dependency paths byte-accurate regardless
+    of the code page the compiler used.
 
     See scripts/README.md for full documentation of the encoding issue.
     """
 
     @staticmethod
     def decode_line(raw_line):
-        """Replicate the decode logic from cl.py (lines 86-90)."""
+        """Replicate the decode logic from cl.py."""
         if isinstance(raw_line, bytes):
-            return raw_line.decode('utf-8', errors='replace')
+            return raw_line.decode('latin-1')
         return raw_line
 
     def test_ascii_bytes_decoded_correctly(self):
@@ -618,12 +619,13 @@ class TestByteDecoding:
         line = self.decode_line(raw).rstrip()
         assert line == 'Note: including file: C:\\Users\\Jose\\header.h'
 
-    def test_invalid_utf8_bytes_replaced_not_crashed(self):
-        """Test that non-UTF-8 bytes are replaced instead of causing a crash.
+    def test_non_utf8_bytes_preserved_not_replaced(self):
+        """Test that non-UTF-8 bytes survive the decode instead of being lost.
 
-        This is the core fix: CP1252 byte 0xe9 (e-acute) is not valid UTF-8.
-        Previously, universal_newlines=True would crash with UnicodeDecodeError.
-        Now, invalid bytes are replaced with U+FFFD (replacement character).
+        CP1252 byte 0xe9 (e-acute) is not valid UTF-8. universal_newlines=True
+        would crash on it, and errors='replace' silently turned it into U+FFFD,
+        which produced a dependency path pointing at a file that does not exist.
+        latin-1 preserves it, so the path stays byte-accurate.
         """
         # CP1252 e-acute (0xe9) is NOT valid standalone UTF-8
         raw = b'Note: including file: C:\\Users\\Jos\xe9\\header.h\n'
@@ -631,8 +633,9 @@ class TestByteDecoding:
         # Must not crash
         assert 'Note: including file:' in line
         assert 'header.h' in line
-        # The invalid byte should be replaced with U+FFFD
-        assert '\ufffd' in line
+        # The byte must survive, and must round-trip back to the original
+        assert '\ufffd' not in line
+        assert line.encode('latin-1') == raw.rstrip()
 
     def test_empty_bytes_decoded(self):
         """Test that empty byte lines decode correctly."""
@@ -657,12 +660,13 @@ class TestByteDecoding:
         assert line == 'Microsoft (R) C/C++ Optimizing Compiler Version 19.00'
         assert not line.startswith('Note: including file:')
 
-    def test_multiple_invalid_bytes_all_replaced(self):
-        """Test that multiple invalid bytes are each replaced independently."""
-        # Two invalid bytes: 0x80 and 0xff
+    def test_multiple_non_utf8_bytes_all_preserved(self):
+        """Test that multiple non-UTF-8 bytes are each preserved independently."""
+        # Two bytes that are not valid standalone UTF-8: 0x80 and 0xff
         raw = b'path\\with\x80multiple\xffinvalid\n'
         line = self.decode_line(raw).rstrip()
-        assert line.count('\ufffd') == 2
+        assert '\ufffd' not in line
+        assert line.encode('latin-1') == raw.rstrip()
         assert 'path' in line
         assert 'multiple' in line
         assert 'invalid' in line

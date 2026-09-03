@@ -23,6 +23,8 @@
 
 #include <baselib/async/AsyncExecutorWrapperBase.h>
 
+#include <cstring>
+
 namespace bl
 {
     namespace detail

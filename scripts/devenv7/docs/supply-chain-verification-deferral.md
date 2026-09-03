@@ -181,14 +181,41 @@ Revisit sooner if any of these change:
 
 ---
 
-## Related defect found during this analysis (not covered by this deferral)
+## Deferred defect — `download-sources.ps1` passes a parameter that does not exist
+
+**Status:** Deferred to the same trigger as the rest of this record — the devenv8 upgrade.
 
 `windows/internal/download-sources.ps1` calls `Invoke-WebDownload -Url ... -DestinationPath ...` at
 lines 96 and 212, but the function's parameter is `-OutputPath`. With `Set-StrictMode -Version
-Latest` and `$ErrorActionPreference = "Stop"`, these calls throw at runtime, which suggests the
-Windows Boost/OpenSSL *source* download path is not exercised.
+Latest` and `$ErrorActionPreference = "Stop"`, these calls throw at runtime.
 
-This is an ordinary bug, not a security deferral, and should be tracked and fixed separately.
+**The inference matters more than the typo:** a mandatory parameter that has never been spelled
+correctly means the Windows Boost/OpenSSL *source* download path has never been exercised. The
+Windows source builds either take a different route or have not been run since this script was
+written. Whoever picks this up should establish which, before assuming the rename is the whole fix.
+
+### Why it is not being fixed now
+
+- It is a deployment script that **cannot be tested from a development checkout**. Validating it
+  needs a Windows devenv7 machine performing a real Boost/OpenSSL source provisioning run.
+- The rename is one word, but it *exposes* an unexercised code path rather than repairing a working
+  one. Shipping it means shipping whatever else is wrong further down that path, unvalidated —
+  strictly worse than a call that fails loudly and immediately.
+
+### Why it is recorded here rather than elsewhere
+
+This defect was found during the F-02 analysis and was originally written up at the end of this
+document as an aside saying it "should be tracked and fixed separately". No separate tracking record
+was ever created, so it resurfaced unchanged in the next review. It is promoted to a first-class
+deferred item here so that it is encountered by whoever next works in these scripts, which is the
+same person the checksum items above are addressed to.
+
+### Scope when picked up
+
+1. Rename both call sites to `-OutputPath`.
+2. Run a Windows Boost/OpenSSL source provisioning end to end and fix what it uncovers.
+3. Fold the two sites into the atomic-download work in step 1 of the scope list above — they are
+   downloads like any other, and will want the same `.tmp`-and-rename treatment.
 
 ---
 

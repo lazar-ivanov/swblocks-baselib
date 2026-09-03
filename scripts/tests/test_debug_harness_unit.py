@@ -516,9 +516,9 @@ class TestUTF8Handling:
 class TestByteDecodingCompatibility:
     """Test the byte decoding pattern in process_output() for cross-version compatibility.
 
-    debug_harness.py reads raw bytes from subprocess and decodes with
-    errors='replace'. This avoids UnicodeDecodeError when test output
-    contains non-ASCII characters (e.g., file paths with accented names).
+    debug_harness.py reads raw bytes from subprocess and decodes UTF-8 first,
+    falling back to latin-1. Both branches are lossless, so test output with
+    non-ASCII characters (e.g., file paths with accented names) survives intact.
 
     See scripts/README.md for full documentation of the encoding issue.
     """
@@ -527,7 +527,10 @@ class TestByteDecodingCompatibility:
     def decode_line(raw_line):
         """Replicate the decode logic from debug_harness.py process_output()."""
         if isinstance(raw_line, bytes):
-            return raw_line.decode('utf-8', errors='replace')
+            try:
+                return raw_line.decode('utf-8')
+            except UnicodeDecodeError:
+                return raw_line.decode('latin-1')
         return raw_line
 
     def test_ascii_bytes_decoded_correctly(self):
@@ -537,21 +540,26 @@ class TestByteDecodingCompatibility:
         assert line == 'Running test suite...'
 
     def test_valid_utf8_bytes_decoded_correctly(self):
-        """Test that valid UTF-8 non-ASCII bytes decode correctly."""
-        raw = 'Test with UTF-8: cafe\n'.encode('utf-8')
-        line = self.decode_line(raw).rstrip()
-        assert line == 'Test with UTF-8: cafe'
+        """Test that valid UTF-8 non-ASCII bytes decode correctly.
 
-    def test_invalid_utf8_bytes_replaced_not_crashed(self):
-        """Test that non-UTF-8 bytes are replaced instead of causing a crash."""
+        This is the case a latin-1-only decode would corrupt: genuine UTF-8 is the
+        normal output encoding on Linux and macOS, so it must not be mojibaked.
+        """
+        raw = u'Test with UTF-8: caf\u00e9\n'.encode('utf-8')
+        line = self.decode_line(raw).rstrip()
+        assert line == u'Test with UTF-8: caf\u00e9'
+
+    def test_invalid_utf8_bytes_preserved_not_replaced(self):
+        """Test that non-UTF-8 bytes fall back to latin-1 without loss."""
         # CP1252 e-acute (0xe9) is NOT valid standalone UTF-8
         raw = b'C:\\Users\\Jos\xe9\\test.exe: error: failed\n'
         line = self.decode_line(raw).rstrip()
         # Must not crash
         assert 'error' in line
         assert 'test.exe' in line
-        # The invalid byte should be replaced with U+FFFD
-        assert '\ufffd' in line
+        # The byte must survive, not become U+FFFD
+        assert '\ufffd' not in line
+        assert line.encode('latin-1') == raw.rstrip()
 
     def test_string_input_passthrough(self):
         """Test that string input passes through without modification."""
@@ -644,7 +652,9 @@ class TestByteDecodingCompatibility:
         debug_harness.process_output(proc)
 
         stdout_output = mock_stdout.getvalue()
-        # All lines should be present (invalid bytes replaced with U+FFFD)
+        # All lines present, and the non-UTF-8 bytes survive the latin-1 fallback
         assert 'invalid byte' in stdout_output
         assert 'Normal ASCII line' in stdout_output
-        assert stdout_output.count('\ufffd') == 2
+        assert '\ufffd' not in stdout_output
+        assert u'\u0080' in stdout_output
+        assert u'\u00ff' in stdout_output

@@ -95,3 +95,10 @@ ASCII stdout under MSYS2 or make cannot raise `UnicodeEncodeError`.
 
 For pure-ASCII compiler output `latin-1` and `utf-8` produce byte-identical results, so this
 change has no effect on builds whose include paths are all ASCII.
+
+**`debug_harness.py` decodes differently, deliberately.** It tries `utf-8` first and falls back to
+`latin-1`, rather than using `latin-1` unconditionally. It writes no `.d` file, so it has no
+byte-exact round-trip to protect; its output only ever reaches a UTF-8 stdout. Decoding genuine
+UTF-8 test output as `latin-1` would mojibake it, which on Linux and macOS is the common case rather
+than the exceptional one. Both branches are lossless and neither can raise, so nothing is replaced
+with U+FFFD in either script.

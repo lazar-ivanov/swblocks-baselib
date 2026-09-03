@@ -26,6 +26,8 @@
 #include <baselib/core/ObjModel.h>
 #include <baselib/core/BaseIncludes.h>
 
+#include <cstring>
+
 namespace bl
 {
     namespace jni

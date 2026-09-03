@@ -89,7 +89,14 @@ def handle_failure(proc):
 def process_output(proc):
   for raw_line in proc.stdout:
     if isinstance(raw_line, bytes):
-      line = raw_line.decode('utf-8', errors='replace')
+      # decode losslessly: UTF-8 first, which is the normal case on Linux and macOS, then
+      # latin-1, which maps bytes 0-255 bijectively and therefore cannot fail. Unlike
+      # errors='replace' this keeps non-UTF-8 diagnostics readable rather than collapsing
+      # every offending byte to U+FFFD
+      try:
+        line = raw_line.decode('utf-8')
+      except UnicodeDecodeError:
+        line = raw_line.decode('latin-1')
     else:
       line = raw_line
     line = line.rstrip()
