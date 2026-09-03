@@ -799,6 +799,97 @@ R-1 (Bundle B), R-9 and R-10 (Bundle C), R-20's Windows verification (Bundle D).
 
 ---
 
+# Bundle B — implementation status (2026-09-03)
+
+Implemented in the working tree, uncommitted.
+
+## Delivered
+
+| Item | Where |
+|---|---|
+| The verifier | **new** `src/include/baselib/crypto/TlsPeerVerification.h` |
+| Wired into the handshake | `src/include/baselib/tasks/AsioSslStreamWrapper.h` (`verifyCertificate`) |
+| Test certificate | **new** `certs/test-server-ip-cert.pem`, `certs/test-server-ip-key.pem`, `certs/ip-openssl.conf` |
+| Embedded fixture | `src/utests/include/utests/baselib/UtfCrypto.h` (`getIpAddressServerCertificate`) |
+| Tests | **new** `src/utests/utf_baselib_http/TestTlsPeerVerification.h`, wired into `UtfBaselibHttpMain.cpp` |
+| Release notes | `devenv7-breaking-changes-release-notes.md` entry 5 rewritten as 5a / 5b |
+
+## Verification performed
+
+Per `AGENTS.md:64-77` - focused builds of the affected modules, `-j1`, both toolchains, both
+variants. No full-repo build.
+
+`AsioSslStreamWrapper.h` is reached by every test module through `UtfMain.h`, so the compile surface
+is wide, but only `utf_baselib_http`, `utf_baselib_rest` and `utf_baselib_messaging` exercise TLS.
+Those three plus `utf_baselib` were run across the matrix.
+
+| Check | Result |
+|---|---|
+| 4 modules x {clang2010, gcc1520} x {debug, release} | **16/16 ok** |
+| Case counts, identical across all four configurations | `utf_baselib` 146, `utf_baselib_messaging` 27, `utf_baselib_http` 21 (was 14), `utf_baselib_rest` 5 |
+| New `TlsPeerVerification_*` cases | 7, all passing |
+| `git diff --check` on `src` and `certs` | clean |
+| Dispatch semantics probed against the real certificate before coding | see the finding below |
+
+**One unit initially failed on `No space left on device`**, not on anything in the change - the host
+was at 99% disk with 409 MB free and `bld/` at 4.2 GB. The fully verified
+`bld/ub24-a64-clang2010-debug` tree was removed to make room and the unit was rebuilt and rerun
+clean. Worth knowing when repeating this: a full four-config matrix of these modules needs several
+GB of build output.
+
+## Design decisions worth recording
+
+**The IP literal test is `::X509_check_ip_asc()` itself.** It parses the name before comparing
+anything and returns **-2** when the string is not an address, which makes OpenSSL's own parser the
+arbiter. That avoids a separate literal predicate and, more importantly, avoids depending on a
+particular Boost address parser across the devenv2-7 range. `a2i_ipadd()` was considered and
+rejected - it is not declared in the public headers of OpenSSL 3.5.4.
+
+**When the peer name is a literal the IP result is FINAL.** It must not fall through to
+`::X509_check_host()`. This is the security-relevant part of the change and it is verified
+empirically, not merely reasoned - see the finding below.
+
+**The bound `rfc2818` parameter is retained in `verifyCertificate`'s signature** and marked
+`BL_UNUSED`, rather than removed. Removing it would change the signature of a method reachable by
+anyone who has overridden the verify callback, for no benefit.
+
+**The shim in `AsioSslCompat.h` stays a pure Boost typedef.** The dispatch is project-owned code in
+`baselib/crypto/`, not an extension of a third-party namespace.
+
+## Findings from implementing it
+
+**The typedef broke a second thing nobody had noticed: multi-label wildcards.**
+`::X509_check_host()` permits a wildcard only as the complete leftmost label (RFC 6125 6.4.3); Asio's
+own matcher was looser. So `*.*.example.com` certificates now match **nothing** - and this is not
+hypothetical, the repository's own `certs/test-server-cert.pem` carries `DNS:*.*.mycompany.com`,
+which is now dead. Only its `localhost` SAN still works.
+
+This was found because a test I wrote asserting the *old* behaviour failed. It is **deliberately not
+fixed**: restoring multi-label wildcards would loosen verification below RFC 6125, which is the
+opposite of what the switch bought. Affected deployments need a reissued certificate. Recorded as
+release-note item 5b and asserted by `TlsPeerVerification_MultiLabelWildcardsDoNotMatch`.
+
+**The no-fall-through rule was verified against a real certificate before the code was written.** A
+standalone probe against `certs/test-server-ip-cert.pem` shows, for the peer name `10.11.12.13`:
+
+```
+check_ip = 0    valid literal, no matching iPAddress SAN
+check_host = 1  the DNS:10.11.12.13 entry matches the text
+dispatch = no   refused, per RFC 6125 6.4
+```
+
+So a fall-through implementation would let a certificate carrying `DNS:10.11.12.13` authenticate the
+host at 10.11.12.13. One certificate covers every branch of the match, which is why the SAN set is
+what it is.
+
+## Note on the fixture
+
+`certs/test-server-ip-key.pem` is kept alongside the certificate even though the tests use only the
+certificate, matching how every other pair in `certs/` is stored and leaving the fixture usable if a
+real handshake test is ever wanted. `certs/ip-openssl.conf` documents how it was generated.
+
+---
+
 # Execution bundles
 
 Bundled by **verifiability**, not by subsystem or urgency. Each bundle is a unit of work that can be

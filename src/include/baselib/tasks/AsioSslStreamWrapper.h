@@ -18,6 +18,7 @@
 #define __BL_BASELIB_TASKS_ASIOSSLSTREAMWRAPPER_H_
 
 #include <baselib/crypto/CryptoBase.h>
+#include <baselib/crypto/TlsPeerVerification.h>
 
 #include <baselib/core/AsioSSL.h>
 #include <baselib/core/BaseIncludes.h>
@@ -146,9 +147,18 @@ namespace bl
                      *
                      * Note that this will only match the certificate at the end of the
                      * chain (i.e. when depth = 0)
+                     *
+                     * Note also that the bound 'rfc2818' object is deliberately NOT used for the
+                     * match. On Boost 1.89+ that name is a typedef for host_name_verification,
+                     * which delegates to ::X509_check_host() and therefore cannot match an IP
+                     * address literal - see baselib/crypto/TlsPeerVerification.h. It is retained in
+                     * the signature so this remains a source compatible change for anyone who has
+                     * overridden the callback, and so the object's lifetime keeps working as before
                      */
 
-                    if( rfc2818( preVerified, ctx ) )
+                    BL_UNUSED( rfc2818 );
+
+                    if( crypto::TlsPeerVerification::verifyPeerName( m_hostName, ctx ) )
                     {
                         ok = true;
                     }
@@ -156,12 +166,12 @@ namespace bl
                     {
                         m_verifyFailed = true;
                         m_lastVerifyErrorMessage =
-                            "RFC2818 verification failed due to the subject name not matching the host name";
+                            "Peer verification failed due to the subject name not matching the host name";
 
                         BL_LOG(
                             Logging::trace(),
                             BL_MSG()
-                                << "RFC2818 verification of subject name '"
+                                << "Peer verification of subject name '"
                                 << m_lastVerifySubjectName
                                 << "' has failed for host name '"
                                 << m_hostName

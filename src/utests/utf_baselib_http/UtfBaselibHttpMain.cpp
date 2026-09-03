@@ -20,3 +20,4 @@
 #include "TestClientHttpTasks.h"
 #include "TestHttpServer.h"
 #include "TestTlsProtocolPolicy.h"
+#include "TestTlsPeerVerification.h"

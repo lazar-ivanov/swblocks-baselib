@@ -132,6 +132,51 @@ namespace test
                 "fK6Vl0UXcuz5VIU=\n"
                 "-----END CERTIFICATE-----\n";
         }
+
+        static auto getIpAddressServerCertificate() -> const char*
+        {
+            /*
+             * This is from following file: "certs/test-server-ip-cert.pem"
+             *
+             * A self-signed certificate used only by the TlsPeerVerification tests. Its SAN set
+             * is chosen so one certificate covers every branch of the peer-name match:
+             *
+             *   IP:127.0.0.1     - an address literal which matches
+             *   IP:::1           - the same for IPv6
+             *   DNS:10.11.12.13  - a DNS entry which LOOKS like an address, so that asking for
+             *                      10.11.12.13 exercises the RFC 6125 rule that a literal must
+             *                      not be matched against DNS names; ::X509_check_host() returns
+             *                      1 for it and the match must still be refused
+             *   DNS:example.test - an ordinary DNS name which matches
+             *
+             * See certs/ip-openssl.conf for how it was generated.
+             */
+
+            return
+                "-----BEGIN CERTIFICATE-----\n"
+                "MIIDwzCCAqugAwIBAgIUUGav9VKl88PqHSRyWLErX2NYdPwwDQYJKoZIhvcNAQEL\n"
+                "BQAwXjELMAkGA1UEBhMCVVMxETAPBgNVBAgMCE5ldyBZb3JrMQwwCgYDVQQHDANO\n"
+                "WUMxFzAVBgNVBAoMDk15IENvbXBhbnkgTHRkMRUwEwYDVQQDDAxleGFtcGxlLnRl\n"
+                "c3QwIBcNMjYwOTAzMjEzNzQ1WhgPMjA1NDAxMTkyMTM3NDVaMF4xCzAJBgNVBAYT\n"
+                "AlVTMREwDwYDVQQIDAhOZXcgWW9yazEMMAoGA1UEBwwDTllDMRcwFQYDVQQKDA5N\n"
+                "eSBDb21wYW55IEx0ZDEVMBMGA1UEAwwMZXhhbXBsZS50ZXN0MIIBIjANBgkqhkiG\n"
+                "9w0BAQEFAAOCAQ8AMIIBCgKCAQEAss/hjDYnHd4M4eUUvPKMcru/k/JoPvLA6EHX\n"
+                "pYMIURdhbIsKGSjI0yLx6/abYRJWrrPiC1WcPps41RZ5wyHhOTNLU+nMmjuKQUuY\n"
+                "cCoVNPk8ltdYQuvR3SqtYfLyBZ9/lCZTmFTBsX4L5dbAKA4BKpwOZH6zEF1EqoIW\n"
+                "QIaO1nLgYGYzUpvHcs6n0HFzfcrpyPQmYrzCXyExr6Ur7aQS9BM9t8rYk0FJSdVz\n"
+                "zTWLPHT9he1AZpSr1l5oDJtS6x+0j90oPJmPdJiwR3y5FnnsQTdg3rqdfeKps2+7\n"
+                "WI3Mfvy3O7ot4y68nhBt3AFkUCiNhbewAwmSyTG8iSGLWa7jAQIDAQABo3cwdTAJ\n"
+                "BgNVHRMEAjAAMAsGA1UdDwQEAwIF4DA8BgNVHREENTAzggxleGFtcGxlLnRlc3SC\n"
+                "CzEwLjExLjEyLjEzhwR/AAABhxAAAAAAAAAAAAAAAAAAAAABMB0GA1UdDgQWBBQE\n"
+                "cDdvpxq64qvuCtoOR7p5xYA5TDANBgkqhkiG9w0BAQsFAAOCAQEANC2kH5xA00MB\n"
+                "aKo2kQRrIP38/xoYg12HlmLFk17bfnakFGJwTliM6sRmimcFQ+6d0XEkHks6GIgy\n"
+                "YTNqXMQTxAd92hzf914VablTNp+R+m/o5JCfzZro6PTj4mGuohCPQA+4YrGZxUvX\n"
+                "aO094WVlUr/pZb3Jwh2HMzBAZGmCP18TEG19ovvG1pLcl3B/+oHAoeiyCbhusvZ4\n"
+                "LyjUAa+tzoheBB2cR5cV6exIdIEAfLyxNPpkqfVMieq1hqwXX/VlEr0Te9efYr2z\n"
+                "dRSJbSYWHUkyJDXZi0Vc/iDHncVkero+u32OgBWHoHN+gJVWQ+eGbBy5Ze7rwXsj\n"
+                "CrymOjILEw==\n"
+                "-----END CERTIFICATE-----\n";
+        }
     };
 
     typedef UtfCryptoT<> UtfCrypto;

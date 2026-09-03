@@ -118,9 +118,9 @@ creates.**
 
 ---
 
-## 5. TLS peer verification semantics changed on Boost ≥ 1.89
+## 5. TLS peer verification semantics changed on Boost >= 1.89
 
-**Presents as:** a runtime behaviour change. Silent — a handshake that used to succeed now fails.
+**Presents as:** a runtime behaviour change. Silent - a handshake that used to succeed now fails.
 
 `src/include/baselib/core/detail/AsioSslCompat.h:41` typedefs Asio's removed `rfc2818_verification`
 to `host_name_verification`. These are **not the same implementation**:
@@ -131,17 +131,37 @@ to `host_name_verification`. These are **not the same implementation**:
 | subjectAltName | partial | correct |
 | CN when a SAN is present | consulted | **ignored**, per RFC 6125 |
 | Embedded NUL in names | accepted | **rejected** |
-| **IP addresses** | matched | **not matched** — needs `X509_check_ip` |
+| **IP addresses** | matched | not matched - see 5a |
+| **Multi-label wildcards** | matched | **not matched** - see 5b |
 
 The first three rows are a genuine security improvement and are the reason not to revert this.
 
-**The fourth row is a break.** A deployment that connects to a peer **by IP address** against a
-certificate carrying that IP now fails verification where it previously succeeded, with no
-diagnostic beyond a handshake failure. Note that `AsioSslStreamWrapper.h` is not in the branch's
-changed-file list — its behaviour changed without its source changing.
+### 5a. IP address literals - FIXED
 
-**Status:** IP-address support is being restored (R-1 / Bundle B of
-`notes/plans/issues/pr-review-opus5-residual-findings-plan.md`), by dispatching on whether the host
-is an address literal and using `X509_check_ip_asc` for that case. **If that lands before release,
-trim this entry to the first three rows** — the improvement still deserves a note, the break does
-not.
+A deployment connecting to a peer **by IP address** against a certificate carrying that IP in an
+iPAddress SAN stopped verifying, with no diagnostic beyond a handshake failure.
+
+**This is fixed.** `src/include/baselib/crypto/TlsPeerVerification.h` dispatches on whether the peer
+name is an address literal and uses `::X509_check_ip_asc()` for that case, keeping
+`::X509_check_host()` for everything else. `AsioSslStreamWrapper.h` calls it in place of the bound
+verifier. Covered by `TestTlsPeerVerification.h` in `utf_baselib_http`.
+
+Note for anyone reviewing that code: when the peer name is an address literal the IP result is
+**final** and must not fall through to the DNS matcher. RFC 6125 section 6.4 is explicit that an
+address literal is not a domain name, and falling through would let a certificate carrying
+`DNS:10.11.12.13` authenticate the host at 10.11.12.13. There is a test for exactly that.
+
+### 5b. Multi-label wildcard certificates - NOT fixed, by decision
+
+`::X509_check_host()` permits a wildcard only as the complete leftmost label, per RFC 6125 section
+6.4.3. Asio's own matcher was looser and accepted a wildcard in more than one label.
+
+So a certificate whose SAN is `*.*.example.com` now matches **nothing**. This is not hypothetical -
+the repository's own `certs/test-server-cert.pem` carries `DNS:*.*.mycompany.com`, and that SAN is
+now dead; only its second SAN, `localhost`, is usable.
+
+**This is deliberately not restored.** Multi-label wildcards are non-conformant, and accepting them
+again would loosen name verification below what RFC 6125 allows - the opposite of what the switch to
+`::X509_check_host()` bought. **A deployment using such a certificate needs a reissued certificate**
+with either an explicit SAN per host or a single leftmost wildcard. Asserted by
+`TlsPeerVerification_MultiLabelWildcardsDoNotMatch`.
