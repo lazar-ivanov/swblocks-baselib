@@ -19,6 +19,9 @@
 
 #include <boost/version.hpp>
 
+#include <type_traits>
+#include <utility>
+
 /*
  * Boost.Asio Compatibility Layer for Boost 1.89+
  *
@@ -300,7 +303,20 @@ public:
     template <typename ResolveHandler>
     void async_resolve(const query& q, ResolveHandler&& handler)
     {
-        resolve_handler_wrapper<ResolveHandler> wrapper{ std::forward<ResolveHandler>(handler) };
+        /*
+         * Note that the handler type must be decayed before it is used as the wrapper's
+         * template argument
+         *
+         * ResolveHandler is deduced from a forwarding reference, so for an lvalue argument it
+         * deduces to T& and the wrapper's member would become a reference bound to the caller's
+         * object; the wrapper outlives the call because it is handed to the asynchronous
+         * operation, so that reference would dangle as soon as the caller's frame goes away
+         */
+
+        resolve_handler_wrapper< typename std::decay< ResolveHandler >::type > wrapper
+        {
+            std::forward<ResolveHandler>(handler)
+        };
 
         if( q.has_protocol() )
         {

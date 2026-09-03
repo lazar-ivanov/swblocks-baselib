@@ -59,13 +59,17 @@ namespace bl
 
             static bignum_ptr_t base64UrlToBignum( SAA_in const std::string& base64Url )
             {
-                typedef std::basic_string< unsigned char > unsigned_string_t;
+                /*
+                 * Note that the decoded key component is a byte buffer and not text, so it is
+                 * held in a vector rather than in a std::basic_string< unsigned char >, which
+                 * would require a std::char_traits specialization for a fundamental type
+                 */
 
-                const auto buffer = SerializationUtils::base64UrlDecodeT< unsigned_string_t >( base64Url );
+                const auto buffer = SerializationUtils::base64UrlDecodeVector( base64Url );
 
                 auto result = bignum_ptr_t::attach(
                     ::BN_bin2bn(
-                        buffer.c_str(),
+                        buffer.data(),
                         static_cast< int >( buffer.size() ),
                         nullptr
                         )

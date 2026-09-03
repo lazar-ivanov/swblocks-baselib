@@ -443,4 +443,91 @@ UTF_AUTO_TEST_CASE( BoostAsioCompat_ResolverQueryAccessors )
     UTF_CHECK( fullyQualified.flags_value() == flags_t::canonical_name );
 }
 
+UTF_AUTO_TEST_CASE( BoostAsioCompat_ResolverAsyncHandlerIsStoredByValue )
+{
+    using namespace bl;
+
+    typedef asio::ip::tcp_resolver resolver_t;
+
+    /*
+     * The async_resolve() shim stores the handler inside a wrapper object which it then hands to
+     * the asynchronous operation, so the wrapper outlives the call which created it
+     *
+     * The handler template parameter is deduced from a forwarding reference, so an lvalue
+     * handler deduces to a reference type; unless it is decayed the wrapper's member becomes a
+     * reference bound to the caller's object rather than a copy of it, and that reference
+     * dangles once the caller's scope ends
+     *
+     * The assertion below is on the handler being COPIED rather than on the dangling read,
+     * deliberately: reading through a dangling reference is undefined behavior which in
+     * practice usually still returns the expected value, so a test written that way passes
+     * whether or not the bug is present. Copying is directly observable and deterministic -
+     * storing by value must copy the handler, storing by reference cannot.
+     *
+     * Note that Asio copies the wrapper itself as it moves the operation around, but in the
+     * un-decayed case the wrapper holds only a reference, so copying it still does not copy the
+     * handler and the count stays at zero
+     */
+
+    struct CopyCountingHandler
+    {
+        std::size_t*        m_copies;
+        bool*               m_completed;
+        eh::error_code*     m_ec;
+
+        CopyCountingHandler(
+            SAA_in          std::size_t*                            copies,
+            SAA_in          bool*                                   completed,
+            SAA_in          eh::error_code*                         ec
+            )
+            :
+            m_copies( copies ),
+            m_completed( completed ),
+            m_ec( ec )
+        {
+        }
+
+        CopyCountingHandler( SAA_in const CopyCountingHandler& other )
+            :
+            m_copies( other.m_copies ),
+            m_completed( other.m_completed ),
+            m_ec( other.m_ec )
+        {
+            ++( *m_copies );
+        }
+
+        void operator()( SAA_in const eh::error_code& code, SAA_in resolver_t::iterator endpoints ) const
+        {
+            BL_UNUSED( endpoints );
+
+            *m_completed = true;
+            *m_ec = code;
+        }
+    };
+
+    asio::io_service ioService;
+    resolver_t resolver( ioService );
+
+    std::size_t copies = 0U;
+    bool completed = false;
+    eh::error_code ec;
+
+    const resolver_t::query query( asio::ip::tcp::v4(), "localhost", "80" );
+
+    /*
+     * The handler is deliberately a named local, i.e. an lvalue
+     */
+
+    CopyCountingHandler handler( &copies, &completed, &ec );
+
+    resolver.async_resolve( query, handler );
+
+    UTF_REQUIRE( 0U != copies );
+
+    ioService.run();
+
+    UTF_REQUIRE( completed );
+    UTF_REQUIRE( ! ec );
+}
+
 #endif // BOOST_VERSION >= 108900
