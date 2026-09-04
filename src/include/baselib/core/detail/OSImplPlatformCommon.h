@@ -1961,6 +1961,34 @@ namespace bl
             detail::bfs::resize_file( path, size, ec );
         }
 
+/*
+ * fs::copy directory shim - Boost version gate
+ *
+ * Boost 1.84 changed fs::copy() for directories: it now copies the directory's CONTENT into the
+ * target rather than creating the directory itself. The shim below restores the older meaning by
+ * routing a directory source to create_directory().
+ *
+ * The gate keys on BOOST_VERSION only. It used to also fire on BL_DEVENV_VERSION > 5, which was
+ * wrong: the thing whose behavior changed is Boost, not the development environment, and BOOSTDIR
+ * is overridable (see projects/make/3rd/boost/common.mk), so a devenv6 or devenv7 build pinned to
+ * an older Boost took the new code path while fs::copy() still had its old semantics.
+ *
+ * For every default configuration the two conditions agree - devenv6 pins Boost 1.84.0 and devenv7
+ * pins 1.90.0 - so dropping the devenv disjunct is a no-op for every supported build and a fix only
+ * for the overridden case.
+ *
+ * BOOST_VERSION must be usable here or the gate silently evaluates to false and the shim disappears,
+ * which is the failure mode F-16 was filed about in UuidBoostImports.h. It is supplied by
+ * OSBoostImports.h at the top of this file; the guard below makes that a build error rather than a
+ * silent behavior change if the include graph ever changes.
+ */
+
+#if !defined( BOOST_VERSION ) || 0 == BOOST_VERSION
+#error BOOST_VERSION must be defined before the fs::copy directory shim gates below
+#endif
+
+#define BL_FS_COPY_DIRECTORY_SHIM_REQUIRED  ( ( BOOST_VERSION / 100 ) >= 1084 )
+
         /*
          * fs::copy
          */
@@ -1970,7 +1998,7 @@ namespace bl
             SAA_in          const path&                 targetPath
             )
         {
-            #if ( defined( BL_DEVENV_VERSION ) && BL_DEVENV_VERSION > 5 ) || ( ( BOOST_VERSION / 100 ) >= 1084 )
+            #if BL_FS_COPY_DIRECTORY_SHIM_REQUIRED
             /*
              * The behavior of the copy function has changed for directories now it attempts
              * to copy the directory content to the target directory instead of copying the
@@ -1993,7 +2021,7 @@ namespace bl
             SAA_out         eh::error_code&             ec
             )
         {
-            #if ( defined( BL_DEVENV_VERSION ) && BL_DEVENV_VERSION > 5 ) || ( ( BOOST_VERSION / 100 ) >= 1084 )
+            #if BL_FS_COPY_DIRECTORY_SHIM_REQUIRED
             /*
              * The behavior of the copy function has changed for directories now it attempts
              * to copy the directory content to the target directory instead of copying the

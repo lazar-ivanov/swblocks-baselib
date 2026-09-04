@@ -890,6 +890,110 @@ real handshake test is ever wanted. `certs/ip-openssl.conf` documents how it was
 
 ---
 
+# Bundle C — implementation status (2026-09-03)
+
+Implemented in the working tree, uncommitted.
+
+## Delivered
+
+| Slice | Item | Where |
+|---|---|---|
+| S-I | R-9 - the `os::copy` directory shim keys on Boost version, not devenv version | `src/include/baselib/core/detail/OSImplPlatformCommon.h` |
+| S-J | R-10 - make flag semantics honour the VALUE, and reject unrecognized ones | `projects/make/3rd/boost/common.mk`, `projects/make/3rd/json-spirit/4.08.mk` |
+
+## S-I — what changed and why it is safe
+
+The two gates were
+
+```
+#if ( defined( BL_DEVENV_VERSION ) && BL_DEVENV_VERSION > 5 ) || ( ( BOOST_VERSION / 100 ) >= 1084 )
+```
+
+and are now a single named condition, `BL_FS_COPY_DIRECTORY_SHIM_REQUIRED`, keyed on `BOOST_VERSION`
+alone. The devenv disjunct was wrong because the behaviour that changed is Boost's, not the
+environment's, and `BOOSTDIR` is overridable - so a devenv6 or devenv7 build pinned to an older
+Boost took the new path while `fs::copy()` still had its old semantics.
+
+**It is a no-op for every default configuration**: devenv6 pins Boost 1.84.0 and devenv7 pins
+1.90.0 (`projects/make/devenv-detect.mk`), so both conditions agree everywhere except the override
+case the change exists to fix.
+
+**A tripwire was added with it.** The gate now depends solely on `BOOST_VERSION`, and a
+`BOOST_VERSION` which is undefined at that point expands to 0, silently turning the shim off - which
+is exactly the failure mode F-16 was filed about in `UuidBoostImports.h`. A `#error` guard makes that
+a build failure instead. Before writing the change I verified empirically, with a temporary `#error`
+probe and a real compile, that `BOOST_VERSION` is in fact defined and non-zero there (it arrives via
+`OSBoostImports.h` at the top of the file).
+
+## S-J — what changed
+
+`ifdef` / `ifndef` test definedness, not truth, so the value which plainly means "no" selected the
+opposite of what was asked:
+
+| Invocation | Before | After |
+|---|---|---|
+| `make BL_USE_JSON_SPIRIT=0` | selected **json-spirit** | selects **Boost.JSON** |
+| `make NO_BOOST_LOCALE_LIB=0` | **disabled** boost_locale and defined `-DBL_NO_BOOST_LOCALE_LIB` | **links** boost_locale |
+| `make BL_USE_JSON_SPIRIT=yes` | silently selected json-spirit | **hard error** naming the bad value |
+| unset, devenv7 | Boost.JSON | unchanged |
+| unset, devenv2-6 | auto json-spirit | unchanged |
+| `=1` | json-spirit | unchanged |
+
+Unset is deliberately NOT the same as `0` for `BL_USE_JSON_SPIRIT`: unset means "choose from the
+devenv version", `0` means "Boost.JSON even on a legacy devenv". Asking for `0` on a devenv which
+ships no `boost_json` is allowed and fails loudly at link; that is the caller's explicit request and
+is left to fail rather than being second-guessed, which is noted in the makefile.
+
+The two include guards at the top of each file remain `ifndef` - those test definedness correctly.
+
+## Verification performed
+
+The interesting half of this bundle is provable without building anything, which is fortunate
+because a full build matrix is what it would otherwise cost.
+
+**S-J is a proven no-op for every default configuration.** Following the method F-14 used, the
+resolved `LDLIBS`, `CPPFLAGS`, `BOOSTDIR`, `BL_USE_JSON_SPIRIT` and `BL_DEVENV_IS_LEGACY` were
+dumped with `make -p -n` across **devenv7, devenv6 (`TOOLCHAIN=clang1500`), devenv5
+(`TOOLCHAIN=gcc1110`) and devenv2 (`TOOLCHAIN=gcc492`), each in debug and release** - eight
+configurations - before and after the change. The two dumps are **byte identical**.
+
+**The behaviour changes were confirmed by direct comparison against `HEAD`**, not merely asserted:
+
+| Case | HEAD | with the change |
+|---|---|---|
+| `BL_USE_JSON_SPIRIT=0` | `-DBL_USE_JSON_SPIRIT` set, no `boost_json` | no define, `boost_json` linked |
+| `NO_BOOST_LOCALE_LIB=0` | no `boost_locale` | `boost_locale` linked |
+| default | `boost_json` + `boost_locale` | identical |
+
+Invalid values were confirmed to stop the build with the intended message, and devenv6 was confirmed
+to still auto-select json-spirit and still print its `$(info)` line.
+
+**Builds and tests, 13/13 ok.** Three modules - `utf_baselib` (which carries the ten `FsUtils_*`
+cases, the coverage that matters for S-I), `utf_baselib_io` and `utf_baselib_data` - across
+clang2010 and gcc1520, debug and release, plus one `BL_USE_JSON_SPIRIT=1` build to confirm the new
+`ifeq` form still selects json-spirit through the changed makefiles.
+
+| Config | utf_baselib | utf_baselib_io | utf_baselib_data |
+|---|---|---|---|
+| clang2010 debug | 146 | 20 | 79 |
+| clang2010 release | 146 | 20 | 79 |
+| gcc1520 debug | 146 | 20 | 79 |
+| gcc1520 release | 146 | 20 | 79 |
+| gcc1520 release, `BL_USE_JSON_SPIRIT=1` | - | - | 75 |
+
+Case counts are identical across every configuration, and the json-spirit run shows 75 rather than
+79 - the four cases guarded `#if !defined( BL_USE_JSON_SPIRIT )` - which is the same split Bundle A
+produced, so the flag is still being honoured end to end.
+
+The `BL_USE_JSON_SPIRIT=0` path was deliberately NOT given its own build: the variable comparison
+above shows it resolves byte identically to the default configuration, so a build of it would
+exercise the same compilation as the default rows and prove nothing further.
+
+**Note on disk.** The matrix clears each toolchain's build trees before moving to the next rather
+than holding four configurations at once; the host was at 95% with 1.9 GB free when it started. A
+switch of JSON backend additionally requires a clean tree, since dependency tracking keys on sources
+rather than on flags.
+
 # Execution bundles
 
 Bundled by **verifiability**, not by subsystem or urgency. Each bundle is a unit of work that can be
