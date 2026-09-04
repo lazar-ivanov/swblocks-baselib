@@ -87,7 +87,7 @@ namespace utest
                 return sslctx_ptr_t();
             }
 
-            long options = ::SSL_CTX_get_options( ctx.get() );
+            auto options = ::SSL_CTX_get_options( ctx.get() );
 
             options |= ( SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 );
 

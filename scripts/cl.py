@@ -26,6 +26,13 @@ from os.path import basename, splitext
 from subprocess import Popen, PIPE, STDOUT
 from sys import argv, exit, getfilesystemencoding, stdout
 
+# shutil.which resolves through PATH honoring PATHEXT; Python 2.7 (devenv2/devenv3)
+# has no shutil.which, where the fallback keeps the previous bare-name behavior
+try:
+  from shutil import which
+except ImportError:
+  which = lambda _cmd: None
+
 # an options parser that will pass-through unrecognized options
 class PassThroughOptionParser(OptionParser):
   def _process_long_opt(self, rargs, values):
@@ -110,7 +117,11 @@ if __name__ == '__main__':
     options.target = '%s.obj' % (splitext(firstNonOpt)[0],)
 
   # insert the compiler command (basename of this script)
-  args.insert(0, splitext(basename(argv[0]))[0])
+  compiler = splitext(basename(argv[0]))[0]
+  # pass the resolved path: on Windows CreateProcess appends only '.exe' to a bare
+  # name, so a compiler provided as .bat or .cmd is unreachable without resolving it
+  resolved = which(compiler)
+  args.insert(0, resolved if resolved else compiler)
 
   # run the command tracking dependencies
   deps = []

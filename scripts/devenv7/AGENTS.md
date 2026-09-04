@@ -19,9 +19,10 @@
 4. [Build System](#build-system)
 5. [devenv Version Gating Pattern](#devenv-version-gating-pattern)
 6. [Windows JNI Support (devenv7+)](#windows-jni-support-devenv7)
-7. [Common Pitfalls](#common-pitfalls)
-8. [Archive Distribution Script](#archive-distribution-script)
-9. [Tool Versions and Compatibility](#tool-versions-and-compatibility)
+7. [Python Test Suite on Windows](#python-test-suite-on-windows)
+8. [Common Pitfalls](#common-pitfalls)
+9. [Archive Distribution Script](#archive-distribution-script)
+10. [Tool Versions and Compatibility](#tool-versions-and-compatibility)
 
 ---
 
@@ -426,6 +427,44 @@ Starting with devenv7, Windows builds of `utf_baselib_jni` are fully supported a
 4. **JVM exception warnings:** Warnings like "JNI call made without checking exceptions" are expected during exception handling tests when running with `-Xcheck:jni`. No action needed.
 
 5. **Wrong JVM architecture:** Each target architecture needs its own JDK installation. ARM64 builds require ARM64 JDK, x64 builds require x64 JDK.
+
+---
+
+## Python Test Suite on Windows
+
+`make pytest-install` fails on Windows out of the box. `Install-PythonEmbeddable` in
+`windows/internal/download-tools.ps1` fetches `python-{VERSION}-embed-{arch}.zip`, and the
+**embeddable** package ships no `venv`, `ensurepip` or `pip` — the stdlib is a trimmed
+`python314.zip` and a `._pth` file additionally makes CPython ignore `PYTHONPATH`. No makefile
+change can work around this; a full interpreter is required.
+
+**Do not modify the dist or install Python system-wide.** Provision a full CPython of the same
+version into a scratch directory instead — the NuGet packages are the same CPython build with a
+complete `Lib/`, and are plain zips needing no installer.
+
+1. Pick the package for the **host** architecture: `pythonarm64`, `python` (x64), or `pythonx86`.
+2. Download and extract (interpreter lands at `tools/python.exe`):
+
+```bash
+curl -sSL -o py.zip "https://www.nuget.org/api/v2/package/pythonarm64/3.14.2"
+unzip -q py.zip -d "$SCRATCH/python-full"
+```
+
+3. Create the venv, overriding the dist interpreter via the `PYTHON` make variable:
+
+```bash
+make pytest-install PYTHON="$SCRATCH/python-full/tools/python.exe"
+```
+
+4. If pip backtracks to a `cryptography` sdist and fails demanding Rust/cargo, install the wheel
+   explicitly first, then re-run step 3:
+   `.venv/Scripts/python.exe -m pip install --only-binary=cryptography cryptography`
+5. Run `make pytest` normally afterwards — it uses `.venv` directly and needs no override.
+
+**Known Windows-only failures:** `test_cl_functional.py` fails because its mock compiler is written
+as `cl.bat`, and Windows `CreateProcess` appends only `.exe` (never `.bat`) when resolving a bare
+name, so `scripts/cl.py` never launches the mock. These tests pass on Linux/macOS, where the mock
+is an extension-less executable script.
 
 ---
 

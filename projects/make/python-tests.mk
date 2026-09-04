@@ -11,7 +11,8 @@
 #   pytest-coverage - Detailed coverage report with missing lines
 #
 # Prerequisites:
-#   python3 must be installed and in PATH
+#   the interpreter named by $(PYTHON) (python3 on Linux/macOS, python on Windows)
+#   must be installed and in PATH
 
 # Detect platform and set Python paths accordingly
 ifeq (win, $(findstring win, $(OS)))
@@ -32,8 +33,8 @@ PYTEST_REQUIREMENTS := scripts/tests/requirements-test.txt
 pytest-install:
 	@echo "Setting up Python virtual environment..."
 	@if [ ! -d .venv ]; then \
-		echo "Creating virtual environment with python3..."; \
-		python3 -m venv .venv; \
+		echo "Creating virtual environment with $(PYTHON)..."; \
+		$(PYTHON) -m venv .venv; \
 		echo "Creating .venv/.gitignore..."; \
 		echo '*' > .venv/.gitignore; \
 	else \
@@ -56,7 +57,7 @@ pytest-check:
 		echo "  make pytest-install"; \
 		echo ""; \
 		echo "Or manually:"; \
-		echo "  python3 -m venv .venv"; \
+		echo "  $(PYTHON) -m venv .venv"; \
 		echo "  $(PYTHON_PIP) install -r $(PYTEST_REQUIREMENTS)"; \
 		exit 1; \
 	fi

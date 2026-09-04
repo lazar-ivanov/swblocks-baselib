@@ -21,7 +21,7 @@ Do not make any assumptions. Use the AskUserQuestion tool to ask as many follow 
 
 **Always use the project's Python virtual environment.**
 
-When running Python commands, tests, or scripts, ALWAYS use the Python interpreter from the project's `.venv` virtual environment, i.e. `.venv/bin/python` relative to the repository root (or `.venv/bin/pytest` for pytest). On Windows these are `.venv/Scripts/python.exe` and `.venv/Scripts/pip.exe`. If the `.venv` directory does not exist, run `make pytest-install` to create it before proceeding.
+When running Python commands, tests, or scripts, ALWAYS use the Python interpreter from the project's `.venv` virtual environment, i.e. `.venv/bin/python` relative to the repository root (or `.venv/bin/pytest` for pytest). On Windows these are `.venv/Scripts/python.exe` and `.venv/Scripts/pip.exe`. If the `.venv` directory does not exist, run `make pytest-install` to create it before proceeding. On Windows that target fails against the devenv7 dist interpreter, which is an embeddable build with no `venv` or `pip` — see `scripts/devenv7/AGENTS.md` for the procedure to provision a full CPython into a scratch directory.
 
 **Never commit to git without explicit permission.**
 
@@ -238,13 +238,15 @@ For detailed build system documentation, see `scripts/devenv7/AGENTS.md`:
 - Batch file per-file guidance
 - Environment setup script variants
 - Archive distribution scripts
+- Running the Python test suite on Windows
 
 ---
 
-**Document Version:** 2.1
+**Document Version:** 2.2
 **Last Updated:** 2026-09-03
 
 **Changelog:**
+- v2.2 (2026-09-03): Noted the Windows Python provisioning procedure under the venv principle
 - v2.1 (2026-09-03): Added build and test rules to Code Change Guidelines
 - v2.0 (2026-02-11): Major restructuring — condensed from ~1,700 lines to under 500 lines. Added meta-rules. Moved technical reference to `scripts/devenv7/AGENTS.md`.
 - v1.9 (2026-02-07): Added configuration file changes section

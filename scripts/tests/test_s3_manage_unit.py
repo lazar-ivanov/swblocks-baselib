@@ -254,7 +254,9 @@ class TestETagSimple:
     def test_etag_simple_known_content(self, temp_dir):
         """Test ETag against known MD5 hash."""
         test_file = temp_dir / "known.txt"
-        test_file.write_text("test content\n")
+        # write_bytes, not write_text: on Windows text mode translates "\n" to
+        # "\r\n", which changes the bytes on disk and therefore the ETag
+        test_file.write_bytes(b"test content\n")
 
         result = s3_manage.calculate_s3_etag_simple(str(test_file))
         # Pre-calculated MD5 for "test content\n"

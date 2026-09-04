@@ -470,10 +470,22 @@ namespace bl
                     {
                         BL_MUTEX_GUARD( m_lock );
 
-                        m_messagingBackend -> dispose();
-
                         getRequestsToDisposeInternal().swap( requestsInFlight );
                     }
+
+                    /*
+                     * m_lock must NOT be held across the backend dispose below; it blocks until
+                     * the messaging client's execution queue drains, and tasks in that queue
+                     * complete requests via closeRequest() -> completeRequestInternal(), which
+                     * acquires m_lock. Holding it here deadlocks: the queue cannot drain until
+                     * the lock is released, and the lock is not released until the queue drains.
+                     *
+                     * The map swap above is what makes releasing the lock safe -- it sets
+                     * m_isDisposed, so those completions now take the ignoreIfDisposed path and
+                     * unwind immediately instead of mutating state we have already taken over.
+                     */
+
+                    m_messagingBackend -> dispose();
 
                     cancelRequestsNoThrow( std::move( requestsInFlight ) );
 
@@ -1078,6 +1090,7 @@ namespace bl
                 }
 
                 m_timer.stop();
+                m_cancelRequestsTimer.stop();
                 m_hostServices -> disconnect();
                 m_sharedState -> dispose();
 
