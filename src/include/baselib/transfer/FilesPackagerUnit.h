@@ -591,7 +591,9 @@ namespace bl
                  * Note: size() is a point-in-time snapshot, but both branches remain valid under
                  * concurrent task completion -- size() can only decrease, and a task which is
                  * already in the ready queue stays there until this thread takes it, so the
-                 * top( false ) below cannot lose the worker this branch was chosen for
+                 * top( false ) below cannot lose the worker this branch was chosen for. This
+                 * assumes no worker task uses a non-self continuation (see the note on size()
+                 * in ExecutionQueue.h), which holds for BlockReaderTaskImpl
                  */
 
                 if( base_type::m_eqWorkerTasks -> size() < base_type::m_tasksPoolSize )

@@ -35,7 +35,7 @@ All five commands share the same exit code contract, so `command || exit 1` is s
 | Code | Meaning |
 |------|---------|
 | `0` | Every requested operation succeeded (or there was nothing to do, e.g. an empty bucket/folder) |
-| `1` | At least one file/object failed, was missing, differed, or the input (bucket, local folder, URL prefix) was unusable |
+| `1` | At least one file/object failed, was missing, differed, or the input (bucket, local folder, URL prefix) was unusable, or a directory could not be scanned |
 | `2` | Command-line usage error (invalid/missing arguments, from argparse) |
 
 ## Commands

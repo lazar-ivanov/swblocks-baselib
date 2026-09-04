@@ -31,6 +31,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <thread>
 #include <unordered_map>
 #include <type_traits>
 
@@ -242,9 +243,14 @@ namespace bl
 
             /*
              * LOCK ORDERING: m_lockNotify is strictly OUTER to m_lock - see invokeNotifyCB()
+             *
+             * m_notifyOwner is the id of the thread currently inside a serialized callback, or
+             * the default (no thread) id. It is written only while m_lockNotify is held and is
+             * read before acquiring it, so it must be atomic - see invokeNotifyCB()
              */
 
             os::mutex                                                               m_lockNotify;
+            std::atomic< std::thread::id >                                          m_notifyOwner;
 
             om::ObjPtr< om::Proxy >                                                 m_observerThis;
             om::ObjPtr< taskinfo_pool_t >                                           m_taskInfoPool;
@@ -267,6 +273,7 @@ namespace bl
                 m_lastPublishedGeneration( 0U ),
                 m_eventsMask( 0 ),
                 m_notifyDelivery( ExecutionQueueNotify::DeliveryConcurrent ),
+                m_notifyOwner( std::thread::id() ),
                 m_taskInfoPool( taskinfo_pool_t::template createInstance< taskinfo_pool_t >() )
             {
                 m_observerThis = om::ProxyImpl::createInstance< om::Proxy >();
@@ -352,10 +359,15 @@ namespace bl
              * held, and it holds only m_lockNotify. No user code runs under m_lock at all -
              * maxReadyOrExecuting() is sampled once by setNotifyCallback(), outside the lock.
              *
-             * The mutex is deliberately non-recursive. onReady() cannot be re-entered on the
-             * same thread, so recursion would never be exercised, and granting it would silently
-             * permit a nested callback to observe the observer's state mid-update - which is
-             * precisely what DeliverySerialized is being used to prevent.
+             * The mutex is deliberately non-recursive. onReady() CAN be re-entered on the same
+             * thread: a serialized callback which synchronously completes another task of this
+             * queue (ExternalCompletionTask::markCompleted() -> notifyReady() -> cbReady() ->
+             * onReadyObserver() -> onReady()) arrives here again while already holding
+             * m_lockNotify. That is a documented contract violation (see
+             * ExecutionQueueNotify::NotifyDelivery) and is detected via m_notifyOwner and
+             * reported with BL_RT_ASSERT rather than silently permitted; a recursive mutex would
+             * let the nested callback observe the observer's state mid-update, which is
+             * precisely what DeliverySerialized exists to prevent.
              */
 
             void invokeNotifyCB(
@@ -365,9 +377,30 @@ namespace bl
             {
                 if( serializeNotify )
                 {
+                    /*
+                     * If this thread is already inside a serialized callback of this queue then
+                     * the callback has synchronously completed another task of the same queue,
+                     * which is a documented contract violation; locking m_lockNotify again would
+                     * deadlock, so fail loudly instead. Reading m_notifyOwner before the lock is
+                     * safe: a value equal to this thread's id can only have been stored by this
+                     * thread. Completing a task of a *different* queue is fine, since each queue
+                     * has its own notification mutex and owner
+                     */
+
+                    BL_RT_ASSERT(
+                        m_notifyOwner.load() != std::this_thread::get_id(),
+                        "ExecutionQueueNotify::onEvent() under DeliverySerialized re-entered the "
+                        "same execution queue on the same thread: a task of this queue was "
+                        "completed synchronously from inside the callback"
+                        );
+
                     BL_MUTEX_GUARD( m_lockNotify );
 
+                    m_notifyOwner.store( std::this_thread::get_id() );
+
                     onNotify();
+
+                    m_notifyOwner.store( std::thread::id() );
 
                     return;
                 }

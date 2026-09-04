@@ -127,17 +127,29 @@ namespace bl
                 /**
                  * @brief The verify-callback form, for use from an Asio verify callback
                  *
-                 * Matches the semantics of asio::ssl::host_name_verification: only the certificate
-                 * at the end of the chain carries the peer's identity, so anything above depth zero
-                 * is passed through - it has already been validated by the chain verification which
-                 * produced 'preVerified'.
+                 * Matches the semantics of asio::ssl::host_name_verification, including its
+                 * order of checks: a certificate which failed the chain verification which
+                 * produced 'preVerified' is refused before its name is even looked at, so the
+                 * name match can never turn an untrusted or expired chain into success. Then,
+                 * because only the certificate at the end of the chain carries the peer's
+                 * identity, anything above depth zero is passed through.
+                 *
+                 * This form is safe to install directly as the verify callback (e.g. through
+                 * the rfc2818 verify callback hook in AsioSslStreamWrapper.h); a caller which
+                 * gates on 'preVerified' itself may still pass it, which changes nothing.
                  */
 
                 static bool verifyPeerName(
+                    SAA_in          const bool                                  preVerified,
                     SAA_in          const std::string&                          peerName,
                     SAA_inout       asio::ssl::verify_context&                  verifyContext
                     ) NOEXCEPT
                 {
+                    if( ! preVerified )
+                    {
+                        return false;
+                    }
+
                     if( ::X509_STORE_CTX_get_error_depth( verifyContext.native_handle() ) > 0 )
                     {
                         return true;

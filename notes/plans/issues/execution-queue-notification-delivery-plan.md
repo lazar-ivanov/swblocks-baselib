@@ -547,6 +547,14 @@ Use a **non-recursive** mutex: same-thread reentrancy into `onReady` is provably
 never run inline, and nothing under `tasks/` drives the io_service on a caller thread), and
 recursion would silently grant thread-exclusion while violating the logical exclusion being bought.
 
+> **Premise corrected (2026-09-04, M-1 of the Fable 5.1 review):** same-thread re-entry *is*
+> reachable — `ExternalCompletionTask::markCompleted()` runs `notifyReadyImpl` → `cbReady()` on the
+> caller's thread, so a serialized callback which synchronously completes a sibling task of the same
+> queue re-enters `invokeNotifyCB()` while holding `m_lockNotify`. The non-recursive mutex decision
+> stands; the contract in `ExecutionQueueNotify.h` now forbids that pattern explicitly and
+> `invokeNotifyCB()` detects it with a per-queue owner-thread check and `BL_RT_ASSERT`. See
+> `pr-review-fable51-merge-gate-items4-8-plan.md`.
+
 ---
 
 ## Verification

@@ -219,3 +219,87 @@ in-repo consumer compares or persists the text (item 4).
 **Who is affected:** nobody negatively; a devenv2-6 node's messages containing such characters are
 parseable again by a devenv7 peer. Asserted by `JsonSerializeEscapesControlCharacters` in
 `utf_baselib_data`, on both backends.
+
+---
+
+## 8. Peer certificate verification now fails closed, against a bundled trust set only
+
+**Presents as:** a runtime behaviour change. Silent until a client handshake fails.
+
+`src/include/baselib/crypto/CryptoBase.h:595`, `:717-751`
+
+`CryptoBase::allowUntrustedCertificates()` now defaults to **false**. On `master` it was `true`,
+and because the "report it and let the user continue" half of that design was never implemented,
+the practical effect was that peer certificate verification was disabled for every client
+connection. It is now enforced: a client whose peer chain does not verify fails the handshake, and
+`enhanceException` attaches the verification error.
+
+What the chain is verified against is the important part. Trust anchors are **only** the roots
+bundled in `TrustedRoots.h` plus whatever the application passes to `registerTrustedRoot()`; the
+platform certificate store is **deliberately not consulted on any operating system** (the
+`set_default_verify_paths` TODO at `CryptoBase.h:400-406`). The default bundled set is three roots
+(VeriSign Class 3, VeriSign Class 3 G5, Entrust G2) and `initAdditionalCommonTrustedRoots()` opts in
+four more (DigiCert Global, DigiCert High Assurance EV, GeoTrust Primary, and GeoTrust Global, which
+expired in May 2022). Most public endpoints are therefore not trusted out of the box.
+
+**Who is affected:** every client of this library that connects to an endpoint whose issuing root is
+not in that set. It connected on `master`; it fails now.
+
+**What to do:** register the issuing root explicitly with `registerTrustedRoot()` (or install a
+replacement set through `initGlobalTrustedRootsCallback()`). Do **not** reach for
+`allowUntrustedCertificates( true )`: it is process-global and disables chain verification for every
+connection, which recreates exactly the state this change removed. Server contexts request no client
+certificate, so servers are unaffected. The test suites register `certs/test-root-ca.pem` through
+`UtfMain.h`; those fixtures were reissued to 2054 so this default does not turn into a test cliff.
+
+See B6 in `notes/plans/issues/pr-review-residual-cxx-findings-plan.md`.
+
+---
+
+## 9. Serialized JSON text differs between the two backends: key order and double formatting
+
+**Presents as:** an interop / data change, visible only to a consumer that byte-compares, hashes or
+stores the serialized text. Every document parses identically on both backends.
+
+`src/include/baselib/core/detail/BoostJsonImpl.h`, `JsonSpiritImpl.h`
+
+| | json-spirit (devenv2-6) | Boost.JSON (devenv7) |
+|---|---|---|
+| Object key order | sorted (`std::map`) | **insertion order**: declared-property order for data model objects, unmapped properties appended |
+| Double text | `setprecision( 17 )` | shortest round-trip form, e.g. `1.5E0` |
+| Pretty print | `{\n}`, `"key" : v` | `{}`, `"key": v` |
+
+Canonicalization (`getObjectHashCanonical`, `saveToString( …, canonicalize = true )`) sorts keys
+bytewise on both backends but does not normalize number text, so it removes the first difference
+only. This is the concrete reason behind item 4: a hash or a byte comparison of the text is only
+meaningful between processes built with the same backend.
+
+**Who is affected:** anyone comparing serialized documents textually, or persisting the text as a
+canonical form. No consumer in this repository does either (traced in the review's §7.1).
+
+---
+
+## 10. Header expectations for consumers who compile with their own flags
+
+**Presents as:** two compile-time changes in public headers, one a fix and one a new diagnostic.
+
+**`BL_DEVENV_VERSION` is no longer required by any public header.** `NetUtils.h` (resolver results
+API) and `OpenSSLTypes.h` (the Windows `_InterlockedExchangeAdd` shim) used to select their branch
+with a bare `BL_DEVENV_VERSION >= 4`, a macro only the project makefiles define; a consumer building
+without it took the legacy branch and, on Boost 1.66+, `getCanonicalHostName` did not compile. Both
+now key on `BOOST_VERSION` / `OPENSSL_VERSION_NUMBER`, the same rule the `fs::copy` shim already
+followed. Presents as: a compile error that goes away.
+
+**`UuidBoostImports.h` now enforces its include-order requirement.** Boost 1.86+ aligns
+`boost::uuids::uuid` to 8 bytes; the header defines `BOOST_UUID_DISABLE_ALIGNMENT` (now
+unconditionally) to keep alignment 1, because `uuid_t` members sit inside the 72-byte `CommandBlock`
+wire frame of the blob transfer protocol and would otherwise grow it to 80 bytes and desynchronize
+the stream. The macro only takes effect if it is defined before the *first* inclusion of
+`<boost/uuid/uuid.hpp>` in a translation unit, so a consumer whose own code included that Boost
+header before any baselib header was silently compiling a differently laid out `uuid_t`. That is now
+a build error (`#error`), and a `static_assert` pins the alignment where the type is defined.
+
+**Who is affected:** consumers whose translation units include `<boost/uuid/uuid.hpp>` (or
+`<boost/uuid.hpp>`) before the first baselib header. Fix: include the baselib headers first, or
+define `BOOST_UUID_DISABLE_ALIGNMENT` globally in the build. A build that fails here was already
+producing mismatched object layouts.

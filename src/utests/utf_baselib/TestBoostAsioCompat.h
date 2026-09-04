@@ -44,6 +44,9 @@ namespace
          *
          * The iterator holds a shared reference to the resolved values, so it remains
          * valid after the results object goes out of scope
+         *
+         * Gated on BOOST_VERSION rather than BL_DEVENV_VERSION for the reason given at the
+         * same gate in baselib/core/NetUtils.h
          */
 
         template
@@ -56,7 +59,7 @@ namespace
             SAA_out         bl::eh::error_code&                         ec
             )
         {
-#if BL_DEVENV_VERSION >= 4
+#if BOOST_VERSION >= 106600
             return resolver.resolve( query, ec ).begin();
 #else
             return resolver.resolve( query, ec );

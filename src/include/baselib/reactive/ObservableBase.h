@@ -713,7 +713,9 @@ namespace bl
                          * Note: this check and the push_back( ... ) further down are in the same
                          * function under the same task lock, and size() can only decrease
                          * concurrently, so the check is conservative -- at worst we reject an
-                         * event which would have fit and the caller retries.
+                         * event which would have fit and the caller retries. This assumes no
+                         * task in the events queue uses a non-self continuation (see the note on
+                         * size() in ExecutionQueue.h), which holds for the tasks pushed there.
                          */
 
                         return false;

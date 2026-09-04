@@ -41,6 +41,20 @@ import s3_manage
 
 MIB = 1024 * 1024
 
+RUNNING_AS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
+
+
+def _deny_scandir_for(monkeypatch, denied):
+    """Make os.scandir raise PermissionError for one directory; os.walk then calls onerror."""
+    original = os.scandir
+
+    def fake_scandir(path=".", *args, **kwargs):
+        if os.path.normpath(str(path)) == os.path.normpath(str(denied)):
+            raise PermissionError(13, "Permission denied", str(path))
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "scandir", fake_scandir)
+
 
 # ====================================================================================
 # Phase 1: Pure Functions (Easy Testing - No S3 Mocking)
@@ -4979,6 +4993,90 @@ class TestCommandVerify:
         assert 'Errors:' in captured.out
         assert 'Verify speed:' in captured.out
         assert 'All verifications complete!' in captured.out
+
+
+# ====================================================================================
+# Phase 4 Chunk 5: os.walk() errors in command_upload / command_verify
+#
+# A directory which os.walk() cannot scan must be reported and turn the exit code
+# into EXIT_FAILURE instead of being silently dropped from the file list.
+# ====================================================================================
+
+class TestWalkErrors:
+    """Test that unreadable directories fail command_upload / command_verify."""
+
+    def test_upload_unreadable_directory_fails(self, temp_dir, capsys, monkeypatch):
+        """Test upload reports an unscannable subdirectory, keeps walking, and exits 1."""
+        good_dir = temp_dir / 'good'
+        good_dir.mkdir()
+        (good_dir / 'a.txt').write_text('a')
+        bad_dir = temp_dir / 'bad'
+        bad_dir.mkdir()
+        (bad_dir / 'hidden.txt').write_text('hidden')
+
+        _deny_scandir_for(monkeypatch, bad_dir)
+
+        # dry_run + force: upload_worker never touches the client, so a sentinel suffices
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(temp_dir),
+            'dry_run': True,
+            'force': True,
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        exit_code = s3_manage.command_upload(args, s3_client=object())
+        assert exit_code == s3_manage.EXIT_FAILURE
+
+        captured = capsys.readouterr()
+        assert f'[ERROR] Cannot scan directory: {bad_dir}' in captured.out
+        assert 'Directories not scanned: 1' in captured.out
+        # The walk continued past the unreadable directory
+        assert 'good/a.txt' in captured.out
+
+    def test_upload_unreadable_root_fails(self, temp_dir, capsys, monkeypatch):
+        """Test upload exits 1 when the local folder itself cannot be scanned."""
+        _deny_scandir_for(monkeypatch, temp_dir)
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(temp_dir),
+            'dry_run': True,
+            'force': True,
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        exit_code = s3_manage.command_upload(args, s3_client=object())
+        assert exit_code == s3_manage.EXIT_FAILURE
+
+        captured = capsys.readouterr()
+        assert f'[ERROR] Cannot scan directory: {temp_dir}' in captured.out
+        assert 'Directories not scanned: 1' in captured.out
+
+    def test_verify_unreadable_directory_fails(self, temp_dir, capsys, monkeypatch):
+        """Test verify exits 1 when a subdirectory cannot be scanned."""
+        bad_dir = temp_dir / 'bad'
+        bad_dir.mkdir()
+        (bad_dir / 'f.txt').write_text('f')
+
+        _deny_scandir_for(monkeypatch, bad_dir)
+
+        # No files survive the walk, so verify_worker (and the client) is never used
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(temp_dir),
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        exit_code = s3_manage.command_verify(args, s3_client=object())
+        assert exit_code == s3_manage.EXIT_FAILURE
+
+        captured = capsys.readouterr()
+        assert f'[ERROR] Cannot scan directory: {bad_dir}' in captured.out
+        assert 'Directories not scanned: 1' in captured.out
 
 
 # ====================================================================================

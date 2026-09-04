@@ -218,6 +218,25 @@ namespace bl
 
             std::int64_t as_int64() const
             {
+                /*
+                 * json-spirit's get_int64() silently wraps a value it stores as uint64 (i.e. one
+                 * above INT64_MAX) to a negative number; boost::json::value::as_int64() refuses
+                 * that kind, so refuse it here too - this is the int64 half of the numeric policy
+                 * described in namespace detail below (value_to< std::int64_t >() and get_int64()
+                 * both route through this accessor)
+                 */
+
+                if( is_uint64() )
+                {
+                    BL_THROW(
+                        JsonException(),
+                        BL_MSG()
+                            << "JSON integer value '"
+                            << get_uint64()
+                            << "' is out of range for the requested integer type"
+                        );
+                }
+
                 return get_int64();
             }
 
@@ -426,6 +445,12 @@ namespace bl
              *
              * Without these the json-spirit accessors cast silently, so a JSON -1 read as an
              * unsigned type used to become 18446744073709551615
+             *
+             * The signed 64-bit case has no helper here: value_wrapper::as_int64() above refuses
+             * a value stored as uint64 (one above INT64_MAX, which json-spirit's own get_int64()
+             * would wrap to a negative number), and value_to< std::int64_t >() and get_int64()
+             * both route through it. The helpers below only call as_int64() after checking
+             * is_uint64() themselves, so they are unaffected
              */
 
             inline std::uint64_t checkedUInt64( SAA_in const value& v )

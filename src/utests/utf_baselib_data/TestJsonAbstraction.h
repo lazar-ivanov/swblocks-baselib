@@ -1648,6 +1648,33 @@ UTF_AUTO_TEST_CASE( JsonNumericOutOfRangeIntIsRejected )
 
     UTF_REQUIRE_EQUAL( bl::json::get_int( boundaries.as_object().at( "max" ) ), 2147483647 );
     UTF_REQUIRE_EQUAL( bl::json::get_int( boundaries.as_object().at( "min" ) ), -2147483647 - 1 );
+
+    /*
+     * The same policy applies to the signed 64-bit accessors: a JSON integer above INT64_MAX is
+     * stored as an unsigned value by both backends and must be rejected rather than wrapped to
+     * a negative number, which is what json-spirit's own get_int64() used to do (the value below
+     * read as -1). The message is backend specific here for get_int64() as well, since on
+     * Boost.JSON the refusal comes from boost::json::value::as_int64() itself, so only the
+     * rejection is asserted
+     */
+
+    const auto wide = bl::json::readFromString(
+        R"({"huge":18446744073709551615,"max":9223372036854775807,"min":-9223372036854775807})"
+        );
+
+    const auto& wideObj = wide.as_object();
+
+    UTF_REQUIRE_THROW( bl::json::get_int64( wideObj.at( "huge" ) ), std::exception );
+    UTF_REQUIRE_THROW( bl::json::value_to< std::int64_t >( wideObj.at( "huge" ) ), std::exception );
+
+    /*
+     * ... while the unsigned accessor and the in-range signed values are unaffected
+     */
+
+    UTF_REQUIRE( bl::json::get_uint64( wideObj.at( "huge" ) ) == 18446744073709551615ULL );
+    UTF_REQUIRE( bl::json::get_int64( wideObj.at( "max" ) ) == 9223372036854775807LL );
+    UTF_REQUIRE( bl::json::value_to< std::int64_t >( wideObj.at( "max" ) ) == 9223372036854775807LL );
+    UTF_REQUIRE( bl::json::get_int64( wideObj.at( "min" ) ) == -9223372036854775807LL );
 }
 
 UTF_AUTO_TEST_CASE( JsonNumericIntegerReadsAsDouble )

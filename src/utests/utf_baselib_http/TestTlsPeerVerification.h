@@ -211,4 +211,80 @@ UTF_AUTO_TEST_CASE( TlsPeerVerification_DegenerateInputsAreRefused )
         );
 }
 
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+
+namespace utest
+{
+    namespace tlspeer
+    {
+        /*
+         * Drives the verify-callback form through a hand built X509_STORE_CTX, so the gate on
+         * the chain verification result and the depth pass-through can be asserted without a
+         * handshake. The two setters used exist from OpenSSL 1.1.0 on
+         */
+
+        inline bool verifyCallback(
+            SAA_in          const bool                          preVerified,
+            SAA_in          const bl::crypto::x509cert_ptr_t&   certificate,
+            SAA_in          const std::string&                  peerName,
+            SAA_in          const int                           depth
+            )
+        {
+            ::X509_STORE_CTX* storeContext = ::X509_STORE_CTX_new();
+            BL_CHK_CRYPTO_API_NM( storeContext );
+
+            BL_SCOPE_EXIT( { ::X509_STORE_CTX_free( storeContext ); } );
+
+            BL_CHK_CRYPTO_API_NM(
+                ::X509_STORE_CTX_init(
+                    storeContext,
+                    nullptr             /* trust store */,
+                    certificate.get(),
+                    nullptr             /* untrusted chain */
+                    )
+                );
+
+            ::X509_STORE_CTX_set_current_cert( storeContext, certificate.get() );
+            ::X509_STORE_CTX_set_error_depth( storeContext, depth );
+
+            bl::asio::ssl::verify_context verifyContext( storeContext );
+
+            return bl::crypto::TlsPeerVerification::verifyPeerName(
+                preVerified,
+                peerName,
+                verifyContext
+                );
+        }
+
+    } // tlspeer
+
+} // utest
+
+UTF_AUTO_TEST_CASE( TlsPeerVerification_CallbackFormFailsClosedWithoutPreverification )
+{
+    const auto certificate =
+        utest::tlspeer::loadCertificate( test::UtfCrypto::getIpAddressServerCertificate() );
+
+    /*
+     * The order of checks is the one asio::ssl::host_name_verification uses: a chain which
+     * failed verification is refused before the name is looked at, so a matching name can
+     * never turn an untrusted or expired chain into success. This matters because the
+     * function is public and can be installed directly as the verify callback
+     */
+
+    UTF_REQUIRE( ! utest::tlspeer::verifyCallback( false, certificate, "127.0.0.1", 0 ) );
+    UTF_REQUIRE( utest::tlspeer::verifyCallback( true, certificate, "127.0.0.1", 0 ) );
+    UTF_REQUIRE( ! utest::tlspeer::verifyCallback( true, certificate, "192.168.1.1", 0 ) );
+
+    /*
+     * Above depth zero the certificate is not the peer's and is passed through - but only
+     * once the chain check has passed
+     */
+
+    UTF_REQUIRE( utest::tlspeer::verifyCallback( true, certificate, "192.168.1.1", 1 ) );
+    UTF_REQUIRE( ! utest::tlspeer::verifyCallback( false, certificate, "127.0.0.1", 1 ) );
+}
+
+#endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L */
+
 #endif /* __UTEST_TESTTLSPEERVERIFICATION_H_ */

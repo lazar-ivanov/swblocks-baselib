@@ -215,7 +215,9 @@ namespace bl
                  *
                  * Note: size() is a point-in-time snapshot, but it can only decrease
                  * concurrently, so this admission check is conservative -- at worst we take the
-                 * slower waitForReadyWorkerTask( ... ) path when we did not have to
+                 * slower waitForReadyWorkerTask( ... ) path when we did not have to. This
+                 * assumes no worker task uses a non-self continuation (see the note on size()
+                 * in ExecutionQueue.h), which holds for the tasks pushed to m_eqWorkerTasks
                  */
 
                 if( m_eqWorkerTasks -> size() < base_type::m_tasksPoolSize )

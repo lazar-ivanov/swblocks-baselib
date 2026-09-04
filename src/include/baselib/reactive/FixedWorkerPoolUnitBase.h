@@ -182,7 +182,9 @@ namespace bl
                      *
                      * Note: size() is a point-in-time snapshot, but it can only decrease
                      * concurrently, so this admission check is conservative -- at worst we
-                     * reject input which would have fit and the caller retries.
+                     * reject input which would have fit and the caller retries. This assumes
+                     * no task in this queue uses a non-self continuation (see the note on
+                     * size() in ExecutionQueue.h), which holds for the tasks pushed here.
                      */
 
                     return false;

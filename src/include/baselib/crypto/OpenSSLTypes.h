@@ -38,7 +38,12 @@
  * and convoluted code to deal with the different versions of the code)
  */
 
-#if defined( _WIN32 ) && BL_DEVENV_VERSION >= 4 && OPENSSL_VERSION_NUMBER >= 0x1010104fL
+/*
+ * Gated on the OpenSSL version only: the condition is a property of the OpenSSL headers, and
+ * BL_DEVENV_VERSION is defined only by the project makefiles (an external consumer would
+ * otherwise silently lose the shim)
+ */
+#if defined( _WIN32 ) && OPENSSL_VERSION_NUMBER >= 0x1010104fL
 namespace
 {
     /*

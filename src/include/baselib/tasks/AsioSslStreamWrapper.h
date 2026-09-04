@@ -158,7 +158,7 @@ namespace bl
 
                     BL_UNUSED( rfc2818 );
 
-                    if( crypto::TlsPeerVerification::verifyPeerName( m_hostName, ctx ) )
+                    if( crypto::TlsPeerVerification::verifyPeerName( preVerified, m_hostName, ctx ) )
                     {
                         ok = true;
                     }

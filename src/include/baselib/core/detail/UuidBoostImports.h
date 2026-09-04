@@ -26,12 +26,22 @@
  */
 #include <boost/version.hpp>
 /*
- * Boost 1.89+ added 8-byte alignment to boost::uuids::uuid which breaks
- * binary protocol compatibility. Disable alignment to maintain compatibility.
+ * Boost 1.86+ aligns boost::uuids::uuid to std::uint64_t (it previously had alignment 1).
+ * The uuid_t members of the wire structures in baselib/messaging/TcpBlockTransferCommon.h
+ * would then pad, growing CommandBlock from 72 to 80 bytes and desynchronizing the blob
+ * transfer protocol, so the alignment is disabled - see the static_assert on the probe
+ * below and the size assertions in that header.
+ *
+ * The macro is defined unconditionally: older Boost ignores it, and it is honored only by
+ * the FIRST inclusion of <boost/uuid/uuid.hpp> in a translation unit. This header must
+ * therefore be reached before any other include of that file; a translation unit which got
+ * there first would otherwise compile with a differently laid out uuid and link without any
+ * diagnostic, which is why the check below is an error rather than a warning.
  */
-#if BOOST_VERSION >= 108900
-#define BOOST_UUID_DISABLE_ALIGNMENT
+#if defined( BOOST_UUID_UUID_HPP_INCLUDED ) && !defined( BOOST_UUID_DISABLE_ALIGNMENT )
+#error "<boost/uuid/uuid.hpp> was included before UuidBoostImports.h without BOOST_UUID_DISABLE_ALIGNMENT; include the baselib headers first"
 #endif
+#define BOOST_UUID_DISABLE_ALIGNMENT
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/random_generator.hpp>
 #include <boost/uuid/nil_generator.hpp>
@@ -88,6 +98,28 @@ namespace bl
     } // uuids
 
     typedef uuids::uuid uuid_t;
+
+    namespace detail
+    {
+        /*
+         * Pins the property the wire structures depend on (see the comment at the top of the
+         * file): with alignment 1 a uuid_t placed after a single byte does not pad. A sizeof
+         * probe is used instead of alignof() because the latter is unavailable on the oldest
+         * supported MSVC
+         */
+
+        struct UuidAlignmentProbe
+        {
+            char                                                                    c;
+            uuid_t                                                                  u;
+        };
+
+        static_assert(
+            17 == sizeof( UuidAlignmentProbe ),
+            "bl::uuid_t must have alignment 1; BOOST_UUID_DISABLE_ALIGNMENT was not honored"
+            );
+
+    } // detail
 
 } // bl
 

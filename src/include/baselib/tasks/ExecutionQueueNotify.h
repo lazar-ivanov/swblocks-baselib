@@ -83,13 +83,21 @@ namespace bl
              *
              * WARNING (deadlock): a DeliverySerialized callback must never block waiting for
              * *another notification* from the same queue, because delivering that notification
-             * requires the same internal mutex, which the blocked callback is holding. This is a
-             * narrower restriction than the one which applied before the concurrent delivery
-             * change: a serialized callback *may* safely call back into the queue (push_back,
-             * wait, flush, dispose) and *may* block waiting for another *task* to complete,
-             * because the queue's state transition and its condition variable signalling both
-             * happen before the notification mutex is acquired. Only waiting on another *delivery*
-             * deadlocks.
+             * requires the same internal mutex, which the blocked callback is holding. For the
+             * same reason it must never *synchronously complete* another task of the same queue
+             * from inside onEvent() - e.g. by calling ExternalCompletionTask::markCompleted() or
+             * notifyReady() on a sibling task - because completion delivers that task's
+             * notification on the calling thread, which would re-acquire the mutex it already
+             * holds. The queue detects this case and aborts the process (BL_RT_ASSERT) rather
+             * than deadlocking. Completing a task of a *different* queue is fine.
+             *
+             * This is still a narrower restriction than the one which applied before the
+             * concurrent delivery change: a serialized callback *may* safely call back into the
+             * queue (push_back, wait, flush, dispose) and *may* block waiting for another *task*
+             * to complete, provided that completion happens on another thread, because the
+             * queue's state transition and its condition variable signalling both happen before
+             * the notification mutex is acquired. Only waiting on, or synchronously producing,
+             * another *delivery* of the same queue deadlocks.
              *
              * WARNING (thread pool starvation): notification callbacks run on thread pool worker
              * threads. Under DeliverySerialized every concurrently completing task parks one

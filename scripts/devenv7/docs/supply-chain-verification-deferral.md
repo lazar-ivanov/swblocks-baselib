@@ -219,6 +219,55 @@ same person the checksum items above are addressed to.
 
 ---
 
+## Deferred defects in the devenv7 deployment scripts (2026-09-04 review)
+
+**Status:** Deferred to the same trigger as the rest of this record — the devenv8 upgrade, or the
+next provisioning run on the affected platform, whichever comes first.
+
+**Source:** M-11 … M-17 in `notes/reviews/major/update_2025/v1/pr_review_analysis_fable51.md`;
+assessed in `notes/plans/issues/pr-review-fable51-merge-gate-items4-8-plan.md`.
+
+### Why none of these is being fixed now
+
+Every item below is a change to a bootstrap script whose only validation is a full provisioning
+run per operating system × architecture. The development checkout this was reviewed from has no
+Windows or macOS host and there is no CI, so each fix would ship blind. That is the same
+cost argument given under [Why this is deferred](#why-this-is-deferred), and for the Windows
+source-download items the same reasoning as the `download-sources.ps1` defect above: a blind edit
+replaces a call which fails loudly and immediately with whatever else is wrong further down an
+unexercised path. The decision was taken explicitly by the maintainer on 2026-09-04: deployment
+script defects found by review are recorded here, not fixed from a checkout that cannot run them.
+
+Each entry gives the location, the symptom, the rule it violates, and the one-line fix, so that
+whoever runs the next provisioning can apply and validate them together. None of the entries
+shifts a line number cited elsewhere in this record, because no script has been edited.
+
+| # | Finding | Location | Symptom | Rule / precedent | Fix when picked up |
+|---|---|---|---|---|---|
+| 1 | M-11 residual | macOS `build-boost-macos.sh:117`, `build-openssl-macos.sh:328`, `install-openjdk-macos.sh:104`, `install-gradle-macos.sh:99`, `install-json-spirit-macos.sh:97` | `curl -L` without `--fail` exits 0 on an HTTP 4xx/5xx, so `set -e` does not fire and the HTML error page is saved under the archive name; the `[ ! -f "${ARCHIVE}" ]` gate then treats it as a cache hit forever. This is a different class from the truncated-download case described under "What is not reduced": the file is complete, well formed, and wrong | `set -e` cannot catch it | `curl -fL`; fold into scope step 1 (atomic download). Linux `wget` already exits non-zero on HTTP errors |
+| 2 | M-12 (1) | `windows/build-openssl-windows.bat:463-468` | `^` line continuation inside a double-quoted `-Command "…"` string (with the quote flag on, `cmd` treats `^` literally and ends the command at the line break, so PowerShell receives `& { ^` and the next two lines run as `cmd` commands); and `PS_SCRIPT_DIR` is `set` at `:463` and read as `%PS_SCRIPT_DIR%` at `:466` inside the same `if (` block, so it expands empty at parse time | root `AGENTS.md`, "Line Continuation in Set Commands" and "Delayed Expansion Inside Control Structures"; `scripts/devenv7/AGENTS.md` names this file under the `!VAR!` rule | single-line `-Command`, `!PS_SCRIPT_DIR!` |
+| 3 | M-12 (2) | `windows/build-boost-windows.bat:296-298` | `SCRIPT_DIR` is `set` and read as `%SCRIPT_DIR%` inside the same `if not exist (` block, so `Import-Module '…internal\common.ps1'` resolves relative to the current directory | same delayed-expansion rule | `!SCRIPT_DIR!` |
+| 4 | M-12 (3) | `windows/internal/download-sources.ps1:151, 267` | `Copy-DirectoryWithProgress -SourcePath … -DestinationPath …`, but the function (`common.ps1:212-221`) declares `-Source` / `-Destination`; the six other callers (`download-tools.ps1:708, 776, 1042, 1110`, `vs-detector.ps1:341, 361`) use the right names | same family, and the same two functions, as the `-OutputPath` typo recorded above | rename the parameters |
+| 5 | M-12 (4) | `windows/build-openssl-windows.bat:465-468` | imports only `download-sources.ps1`, never `common.ps1`, so `Copy-DirectoryWithProgress` (not exported; `common.ps1:568-581`) is unresolved on that path even after #4; `build-boost-windows.bat:298` imports both | — | import `common.ps1` first, as the Boost script does |
+| 6 | M-13 | `windows/build-openssl-windows.bat:673-675` | `wmic cpu get NumberOfLogicalProcessors` — `wmic` is deprecated and absent by default on Windows 11 24H2+ and Server 2025; when missing the `for /f` body never runs, `PARALLEL_JOBS` is empty and `jom -j` at `:686` fails. New ARM64 Windows 11 hosts, the primary target, are exactly the machines affected | `NUMBER_OF_PROCESSORS` is a standard environment variable, used nowhere in `scripts/devenv7` yet | `set /a "PARALLEL_JOBS=%NUMBER_OF_PROCESSORS% * 4"` and `HARNESS_JOBS=… * 2`; the variables are set outside any block, so `%VAR%` is correct there |
+| 7 | M-14 | `docker/ubuntu/Dockerfile:2, 40`; `docker/rhel/build-notes.txt:12, 18` | `FROM ubuntu:latest` no longer resolves to 24.04. The Linux build scripts derive `OS_TAG` from `VERSION_ID` (`linux/build-gcc-linux.sh:82-84` and four siblings), producing e.g. `dist-devenv7-ub26-…`, which `projects/make/platform.mk:278-293` rejects with `Unsupported Ubuntu Version`; `unminimize` at `:40` is also gone after 24.04. The `ubi9/ubi:latest` and `ubi10/ubi:latest` recipes float the same way (and `platform.mk` maps only `rhel5..rhel8`, so those recipes are ahead of the makefiles regardless) | reproducible builds | `FROM --platform=linux/amd64 ubuntu:24.04@sha256:<digest>` (digest from `docker manifest inspect`; refresh manually); pinned `ubi9/ubi:9.x` tags |
+| 8 | M-15 | `macos/build-boost-macos.sh:271` | `architecture=arm` is unconditional while `:49-54` sets `ARCH_FLAGS` per `uname -m`; with `--layout=tagged` an Intel Mac produces `libboost_*-mt-s-a64.a` containing x86_64 code, which `projects/make/3rd/boost/common.mk:38` (`-x64`) cannot link. Fails loudly, at consumer link time | `windows/build-boost-windows.bat:144-156` derives `BOOST_ARCHITECTURE` per architecture | set `BOOST_ARCHITECTURE=arm` / `x86` beside `ARCH_FLAGS` and use it at `:271` |
+| 9 | M-16 | `windows/build-openssl-windows.bat:743-749, 760, 827, 850` | a failing `jom test` sets `TESTS_FAILED=1`, prints a warning, and the script still installs, verifies, copies to the dist, archives, and exits 0. Linux and macOS abort under `set -e` (`linux/build-openssl-linux.sh:554`, `macos/build-openssl-macos.sh:417`, "before installing"). No record says warn-only was intended; whether the Windows suite passes today is unknown from this checkout, so this is a policy decision for the provisioning run: if the suite passes, `exit /b 1` on failure and keep `-skip-tests` plus the cross-execution auto-skip; if it does not, understand the failing test first | platform parity | `exit /b 1` at `:745` |
+| 10 | M-17 (a) | `windows/internal/common.ps1:548` | `Start-Process -FilePath "tar" -ArgumentList @("-xf", $ArchivePath, "-C", $DestinationPath)` passes the elements unquoted, so a `%USERPROFILE%` containing a space (`C:\Users\First Last`) breaks every non-`.7z.exe` extraction. `download-tools.ps1:888` uses the opposite convention — elements pre-wrapped in literal quotes — which Windows PowerShell 5.1 can double up; the two cannot both be right, and only a Windows host can tell which | — | settle one quoting convention for `Start-Process -ArgumentList` and apply it to both sites |
+| 11 | M-17 (b) | `windows/build-openssl-windows.bat:596-597, 620-621` | `--prefix=%OPENSSL_ROOT_PATH%\out` and `--openssldir=…` are unquoted; the default `DIST_ROOT` (`:74`) is under `%USERPROFILE%`, so a profile path with a space splits into extra `Configure` arguments and the failure lands inside `log_bootstrap.log` | the Unix scripts quote (`linux/build-openssl-linux.sh:542-544`) | `--prefix="%OPENSSL_ROOT_PATH%\out"`, likewise `--openssldir` |
+
+### Scope when picked up
+
+1. Apply items 2-6, 9, 10 and 11 on a Windows devenv7 host and run one Boost + OpenSSL
+   provisioning for each target architecture; this is the same run the `download-sources.ps1`
+   defect above is waiting for, so do them together.
+2. Apply items 1 and 8 on a macOS host (item 8 needs an Intel Mac, or at least an inspection of
+   the produced library names) and run one Boost provisioning.
+3. Apply item 7 and rebuild the Ubuntu image; confirm `build-env-all.sh` produces a `ub24` dist.
+4. Update the line-number tables in this record afterwards.
+
+---
+
 ## References
 
 - Finding F-02: `notes/reviews/swblocks-baselib/major/update_2025/v1/pr_review_analysis_gpt56sol.md`

@@ -71,9 +71,15 @@ namespace bl
              *
              * -- remove entries from the pending and executing queues
              * -- append completed entries at the *back* of the ready queue
+             * -- push a *continuation* to the front of the pending queue, when a completing task
+             *    returns a task other than itself from Task::continuationTask() (or via
+             *    setContinuationCallback); this is the one way an entry is added without a caller
+             *    of push_back() or push_front(), and it makes size() grow on a completion thread
              *
-             * Nothing is ever added to the pending queue except by a caller of push_back() or
-             * push_front(). Callers may therefore rely on the following:
+             * For a queue whose tasks do not use such non-self continuations, nothing is ever
+             * added to the pending queue except by a caller of push_back() or push_front(), and
+             * callers may rely on the following (a site which depends on this must say so, since
+             * the property is a convention of the tasks pushed, not of the queue):
              *
              * -- ready entries are removed only by callers (pop, flush, wait, cancelAll) and
              *    never by task completion, so where a single thread owns the popping

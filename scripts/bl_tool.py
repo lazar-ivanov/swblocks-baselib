@@ -164,6 +164,22 @@ def fail_on_link(path):
     sys.exit(1)
 
 
+def fail_on_walk_error(error):
+    """
+    os.walk() onerror callback: a directory which cannot be listed would silently drop
+    part of the tree from the digest, so treat it as fatal.
+
+    Args:
+        error: The OSError raised by os.scandir()
+
+    Raises:
+        SystemExit: Always
+    """
+    print(f"[ERROR] Cannot read directory: {error.filename} ({error.strerror})")
+    print("Every directory in the tree must be readable by hash command")
+    sys.exit(1)
+
+
 def relative_path_for(path, folder_path_obj):
     """
     Compute the '/' separated relative path of an entry inside the hashed root.
@@ -202,7 +218,8 @@ def collect_tree(folder_path, allow_hidden_files):
                relative paths, both sorted by canonical path bytes
 
     Raises:
-        SystemExit: If a symlink, junction or non-regular file is encountered
+        SystemExit: If a symlink, junction or non-regular file is encountered, or a
+                    directory cannot be read
     """
     files = []
     directories = []
@@ -210,8 +227,10 @@ def collect_tree(folder_path, allow_hidden_files):
 
     # Walk the resolved root so relative paths can be derived lexically. The root is
     # link free (checked by the caller) and links inside the tree are rejected below,
-    # so no per-file resolve() is needed.
-    for root, dirs, filenames in os.walk(folder_path_obj):
+    # so no per-file resolve() is needed. An unreadable directory is fatal for the same
+    # reason as a linked one: os.walk() would otherwise skip it and silently omit its
+    # contents from the digest.
+    for root, dirs, filenames in os.walk(folder_path_obj, onerror=fail_on_walk_error):
         root_path = Path(root)
 
         # Filter hidden directories if needed

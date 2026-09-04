@@ -1713,6 +1713,81 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueNotificationSerializedDeliveryTest )
     UTF_REQUIRE_EQUAL( 1U, probe.maxDepth() );
 }
 
+UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueNotificationSerializedCrossQueueReentryTest )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    /*
+     * A serialized callback may synchronously complete a task which belongs to a DIFFERENT
+     * queue: the re-entry guard in ExecutionQueueImpl::invokeNotifyCB() is per queue, not per
+     * thread. Both deliveries below happen on this thread, nested one inside the other, and
+     * an over-broad guard (e.g. a thread-local flag) would fail this test.
+     *
+     * The mirror image - completing a sibling task of the SAME queue from inside a serialized
+     * callback - is a documented contract violation (see ExecutionQueueNotify::NotifyDelivery)
+     * which the queue reports with BL_RT_ASSERT, i.e. it aborts the process, so it cannot be
+     * asserted from a unit test and is deliberately not exercised here.
+     */
+
+    ExecutionQueueNotificationTestContext contextA(
+        ExecutionQueue::OptionKeepNone,
+        ExecutionQueueNotify::DeliverySerialized
+        );
+
+    ExecutionQueueNotificationTestContext contextB(
+        ExecutionQueue::OptionKeepNone,
+        ExecutionQueueNotify::DeliverySerialized
+        );
+
+    ExecutionQueueCompletionControl controlA;
+    ExecutionQueueCompletionControl controlB;
+
+    const auto taskA = om::qi< Task >( createControlledCompletionTask( controlA ) );
+    const auto taskB = om::qi< Task >( createControlledCompletionTask( controlB ) );
+
+    std::atomic< bool > nestedCompletionFailed( false );
+
+    contextA.recorder -> setHook(
+        [ &controlB, &taskA, &nestedCompletionFailed ](
+            SAA_in              const ExecutionQueueNotify::EventId         eventId,
+            SAA_in_opt          const om::ObjPtrCopyable< Task >&           eventTask
+            ) -> void
+        {
+            if( ExecutionQueueNotify::TaskDiscarded != eventId || eventTask.get() != taskA.get() )
+            {
+                return;
+            }
+
+            /*
+             * Nested, same thread, different queue - must not trip the re-entry guard
+             */
+
+            if( ! controlB.completeNext() )
+            {
+                nestedCompletionFailed = true;
+            }
+        }
+        );
+
+    contextA.eq -> push_back( taskA );
+    contextB.eq -> push_back( taskB );
+
+    UTF_REQUIRE( controlA.waitUntilScheduled( 1U ) );
+    UTF_REQUIRE( controlB.waitUntilScheduled( 1U ) );
+
+    UTF_REQUIRE( controlA.completeNext() );
+
+    UTF_REQUIRE( contextA.recorder -> waitForEventCount( ExecutionQueueNotify::TaskDiscarded, 1U ) );
+    UTF_REQUIRE( contextB.recorder -> waitForEventCount( ExecutionQueueNotify::TaskDiscarded, 1U ) );
+
+    contextA.recorder -> setHook( ExecutionQueueNotificationRecorder::event_hook_t() );
+
+    UTF_REQUIRE( ! nestedCompletionFailed.load() );
+    UTF_REQUIRE( ! contextA.recorder -> hookFailed() );
+    UTF_REQUIRE( ! contextB.recorder -> hookFailed() );
+}
+
 UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueAllTasksCompletedObserverSelectionTests )
 {
     using namespace bl;

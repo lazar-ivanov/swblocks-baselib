@@ -94,6 +94,16 @@ def safe_print(message):
     with print_lock:
         print(message)
 
+def make_walk_error_handler():
+    """Return (onerror, errors) for os.walk(): reports unreadable directories and collects them."""
+    errors = []
+
+    def onerror(error):
+        errors.append(error)
+        print(f"[ERROR] Cannot scan directory: {error.filename} ({error.strerror})")
+
+    return onerror, errors
+
 def format_size(size_bytes):
     """Format size in bytes to human-readable format."""
     for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
@@ -818,7 +828,8 @@ def command_upload(args, s3_client=None):
 
     Returns:
         int: EXIT_SUCCESS if every file uploaded/skipped/dry-ran cleanly,
-             EXIT_FAILURE if the local folder is unusable or any file failed
+             EXIT_FAILURE if the local folder is unusable, any file failed,
+             or a directory could not be scanned
     """
     # Create S3 client using command-line arguments
     # Note: boto3 uses 'aws_access_key_id' and 'aws_secret_access_key' parameter names
@@ -843,7 +854,8 @@ def command_upload(args, s3_client=None):
     print(f"Scanning files in {args.local_folder}...")
 
     # 1. Walk through the folder structure
-    for root, dirs, files in os.walk(args.local_folder):
+    on_walk_error, scan_errors = make_walk_error_handler()
+    for root, dirs, files in os.walk(args.local_folder, onerror=on_walk_error):
         # Skip hidden directories unless --allow-hidden-files is set
         if not args.allow_hidden_files:
             # Modify dirs in-place to prevent os.walk from descending into hidden directories
@@ -914,6 +926,7 @@ def command_upload(args, s3_client=None):
         print(f"Files that would be uploaded: {upload_count}")
         print(f"Files that would be skipped: {skip_count}")
         print(f"Failed: {failure_count}")
+        print(f"Directories not scanned: {len(scan_errors)}")
         print(f"Total upload size: {format_size(total_upload_size_bytes)}")
         print(f"Upload speed: {format_speed(total_upload_size_bytes, elapsed_time)} ({format_size(total_upload_size_bytes)} in {format_duration(elapsed_time)})")
         print("\nNo files were actually uploaded (dry-run mode)")
@@ -923,10 +936,11 @@ def command_upload(args, s3_client=None):
         print(f"Files uploaded: {upload_count}")
         print(f"Files skipped (already exist): {skip_count}")
         print(f"Failed: {failure_count}")
+        print(f"Directories not scanned: {len(scan_errors)}")
         print(f"Total uploaded size: {format_size(total_upload_size_bytes)}")
         print(f"Upload speed: {format_speed(total_upload_size_bytes, elapsed_time)} ({format_size(total_upload_size_bytes)} in {format_duration(elapsed_time)})")
 
-    return EXIT_FAILURE if failure_count else EXIT_SUCCESS
+    return EXIT_FAILURE if failure_count or scan_errors else EXIT_SUCCESS
 
 def command_list(args, s3_client=None):
     """
@@ -1018,8 +1032,9 @@ def command_verify(args, s3_client=None):
 
     Returns:
         int: EXIT_SUCCESS if every file verified as matching,
-             EXIT_FAILURE if the local folder is unusable or any file
-             differed, was not uploaded, or errored
+             EXIT_FAILURE if the local folder is unusable, any file
+             differed, was not uploaded, or errored, or a directory
+             could not be scanned
     """
 
     # Create S3 client using command-line arguments
@@ -1040,7 +1055,8 @@ def command_verify(args, s3_client=None):
     print(f"Scanning files in {args.local_folder}...")
 
     # Walk through the folder structure
-    for root, dirs, files in os.walk(args.local_folder):
+    on_walk_error, scan_errors = make_walk_error_handler()
+    for root, dirs, files in os.walk(args.local_folder, onerror=on_walk_error):
         # Skip hidden directories unless --allow-hidden-files is set
         if not args.allow_hidden_files:
             # Modify dirs in-place to prevent os.walk from descending into hidden directories
@@ -1119,10 +1135,11 @@ def command_verify(args, s3_client=None):
     print(f"Different (mismatch): {different_count}")
     print(f"Not uploaded to S3: {not_uploaded_count}")
     print(f"Errors: {error_count}")
+    print(f"Directories not scanned: {len(scan_errors)}")
     print(f"Verify speed: {format_speed(total_verified_size_bytes, elapsed_time)} ({format_size(total_verified_size_bytes)} in {format_duration(elapsed_time)})")
 
-    # Fail if any files are missing, mismatched, or errored
-    if different_count > 0 or not_uploaded_count > 0 or error_count > 0:
+    # Fail if any files are missing, mismatched, or errored, or a directory was not scanned
+    if different_count > 0 or not_uploaded_count > 0 or error_count > 0 or scan_errors:
         return EXIT_FAILURE
     return EXIT_SUCCESS
 

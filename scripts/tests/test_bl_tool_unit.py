@@ -31,6 +31,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import bl_tool
 
+RUNNING_AS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
+
+
+def _deny_scandir_for(monkeypatch, denied):
+    """Make os.scandir raise PermissionError for one directory; os.walk then calls onerror."""
+    original = os.scandir
+
+    def fake_scandir(path=".", *args, **kwargs):
+        if os.path.normpath(str(path)) == os.path.normpath(str(denied)):
+            raise PermissionError(13, "Permission denied", str(path))
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "scandir", fake_scandir)
+
 
 class TestFormatting:
     """Test format_size() and format_speed() functions."""
@@ -632,6 +646,62 @@ class TestCommandHash:
         captured = capsys.readouterr()
         assert "[ERROR]" in captured.out
         assert "Failed to stat" in captured.out
+
+    def test_command_hash_unreadable_directory_fails(self, dir_with_files, capsys, monkeypatch):
+        """Test command_hash fails when a directory in the tree cannot be read."""
+        import argparse
+
+        _deny_scandir_for(monkeypatch, dir_with_files / "subdir")
+
+        args = argparse.Namespace(
+            path=str(dir_with_files),
+            expected_hash=None,
+            exclude_paths=False,
+            use_sha1=False,
+            allow_hidden_files=False,
+            max_threads=4,
+            dry_run=False,
+            verbose=False
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            bl_tool.command_hash(args)
+
+        # Should exit with error rather than silently omit the directory
+        assert exc_info.value.code == 1
+
+        captured = capsys.readouterr()
+        assert "[ERROR] Cannot read directory" in captured.out
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX directory permissions are not portable to Windows")
+    @pytest.mark.skipif(RUNNING_AS_ROOT, reason="root bypasses directory permissions")
+    def test_command_hash_unreadable_directory_real_permissions(self, dir_with_files, capsys):
+        """Test command_hash fails on a directory made unreadable via chmod."""
+        import argparse
+
+        subdir = dir_with_files / "subdir"
+        subdir.chmod(0o000)
+        try:
+            args = argparse.Namespace(
+                path=str(dir_with_files),
+                expected_hash=None,
+                exclude_paths=False,
+                use_sha1=False,
+                allow_hidden_files=False,
+                max_threads=4,
+                dry_run=False,
+                verbose=False
+            )
+
+            with pytest.raises(SystemExit) as exc_info:
+                bl_tool.command_hash(args)
+
+            assert exc_info.value.code == 1
+
+            captured = capsys.readouterr()
+            assert "[ERROR] Cannot read directory" in captured.out
+        finally:
+            subdir.chmod(0o700)
 
 
 class TestExcludePaths:
