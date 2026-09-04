@@ -34,26 +34,6 @@ namespace bl
 {
     namespace crypto
     {
-        /**
-         * @brief The minimum TLS protocol version which will be negotiated
-         *
-         * Tls12 is the default and the only value which is not a legacy opt-in; both of the
-         * legacy values permit protocol versions with known weaknesses and exist solely for
-         * interoperability with peers which have not been upgraded yet
-         *
-         * The value must be set before crypto::CryptoBase::init() is called because the
-         * process-global client context is created once during initialization; server contexts
-         * are created per call to createAsioSslServerContext() and will pick up the value
-         * which is current at the time of the call
-         */
-
-        enum class TlsMinimumVersion
-        {
-            Tls12,
-            Tls11Legacy,
-            Tls10Legacy,
-        };
-
         namespace detail
         {
             /**
@@ -81,7 +61,6 @@ namespace bl
 
                 static std::map< std::string, std::string >     g_untrustedEndpointsInfo;
                 static os::mutex                                g_untrustedEndpointsInfoLock;
-                static TlsMinimumVersion                        g_tlsMinimumVersion;
                 static bool                                     g_allowUntrustedCertificates;
 
                 static void initRandomEngine()
@@ -265,47 +244,26 @@ namespace bl
                     auto options = ::SSL_CTX_get_options( nativeSslContext );
 
                     /*
-                     * Disable the non-secure protocols; by default the minimum protocol version
-                     * which will be negotiated is TLS 1.2 and both TLS 1.0 and TLS 1.1 are only
-                     * available via the explicit legacy opt-in (see TlsMinimumVersion)
+                     * Disable the non-secure protocols; the minimum protocol version which will
+                     * be negotiated is TLS 1.2 on every version of OpenSSL we support and there
+                     * is deliberately no way to lower it - TLS 1.0 and TLS 1.1 have known
+                     * weaknesses and a peer which cannot speak TLS 1.2 needs to be upgraded
+                     * rather than accommodated; see the decision record in
+                     * notes/plans/issues/tls-legacy-protocol-opt-in-removal-decision.md
                      *
                      * Note that we also allow for all bug workarounds via SSL_OP_ALL; on the
                      * OpenSSL versions we support this only enables interoperability workarounds
                      * and the historically dangerous members of it have become no-ops
-                     *
-                     * Two things about SSL_OP_ALL are worth knowing when the legacy opt-ins are
-                     * used, as neither matters at a TLS 1.2 floor:
-                     *
-                     * -- it includes SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS, which disables the 1/n-1
-                     *    record splitting countermeasure against the BEAST attack on TLS 1.0
-                     *
-                     * -- on OpenSSL versions before 3.0 it also included SSL_OP_LEGACY_SERVER_CONNECT,
-                     *    which permits connecting to servers which do not support the RFC 5746
-                     *    renegotiation indication extension
                      */
 
-                    options |= ( SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_ALL | SSL_OP_NO_TICKET );
-
-                    int minProtoVersion = TLS1_2_VERSION;
-                    bool isLegacyProtocolRequested = false;
-
-                    switch( g_tlsMinimumVersion )
-                    {
-                        case TlsMinimumVersion::Tls10Legacy:
-                            minProtoVersion = TLS1_VERSION;
-                            isLegacyProtocolRequested = true;
-                            break;
-
-                        case TlsMinimumVersion::Tls11Legacy:
-                            options |= SSL_OP_NO_TLSv1;
-                            minProtoVersion = TLS1_1_VERSION;
-                            isLegacyProtocolRequested = true;
-                            break;
-
-                        default:
-                            options |= ( SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1 );
-                            break;
-                    }
+                    options |= (
+                        SSL_OP_NO_SSLv2 |
+                        SSL_OP_NO_SSLv3 |
+                        SSL_OP_NO_TLSv1 |
+                        SSL_OP_NO_TLSv1_1 |
+                        SSL_OP_ALL |
+                        SSL_OP_NO_TICKET
+                        );
 
                     /*
                      * Ignore the return value because it is the new bitmask
@@ -326,37 +284,38 @@ namespace bl
                      */
 
                     BL_CHK_CRYPTO_API_NM(
-                        ::SSL_CTX_set_min_proto_version( nativeSslContext, minProtoVersion )
+                        ::SSL_CTX_set_min_proto_version( nativeSslContext, TLS1_2_VERSION )
                         );
 
-                    if( isLegacyProtocolRequested )
-                    {
-                        /*
-                         * The protocol floor alone is not sufficient to make TLS 1.0 or TLS 1.1
-                         * reachable on a modern OpenSSL
-                         *
-                         * OpenSSL applies a security level on top of the configured protocol
-                         * range and from OpenSSL 3.x the default level prohibits every protocol
-                         * version below TLS 1.2, so a context which asks for the older versions
-                         * and leaves the security level alone rejects them with 'unsupported
-                         * protocol' regardless of what the floor says - verified against
-                         * OpenSSL 3.5.4, where a TLS 1.1 handshake fails at level 1 and above
-                         * and succeeds only at level 0
-                         *
-                         * An opt-in which silently does not do what it says is worse than no
-                         * opt-in at all, so the security level is lowered here as part of it
-                         *
-                         * This is deliberately scoped to the legacy opt-in and it is the reason
-                         * that opt-in is described as permitting known weaknesses rather than
-                         * merely as permitting an older protocol version - it also relaxes the
-                         * minimum key sizes and permits SHA-1 in certificate signatures
-                         */
+                    /*
+                     * The security level is pinned explicitly rather than left at whatever the
+                     * linked OpenSSL was compiled with (OPENSSL_TLS_SECURITY_LEVEL, which is 1
+                     * upstream but which some distributions raise), so that the floor is a
+                     * property of this library rather than of the particular build of OpenSSL
+                     *
+                     * Level 2 requires 112 bits of security: RSA, DSA and DH keys below 2048
+                     * bits and ECC keys below 224 bits are refused, both in the handshake and
+                     * in certificate chain verification (the level is copied into the X.509
+                     * auth level), as are RC4 and SSL 3.0, and compression is disabled; on
+                     * OpenSSL 3.x it also refuses SHA-1 signatures. Level 3 would refuse
+                     * 2048-bit RSA keys, which are still the deployed norm, so level 2 is the
+                     * highest one which is usable
+                     *
+                     * Note that the level is applied before the server's own key and certificate
+                     * are loaded, so a server certificate which is below the floor is refused
+                     * when the context is created (i.e. at server startup) rather than at the
+                     * first handshake
+                     *
+                     * Note also that a '@SECLEVEL=' token in a cipher list overrides this call,
+                     * so the cipher list below must never carry one
+                     */
 
-                        ( void ) ::SSL_CTX_set_security_level( nativeSslContext, 0 );
-                    }
-#else
-                    BL_UNUSED( minProtoVersion );
-                    BL_UNUSED( isLegacyProtocolRequested );
+                    ::SSL_CTX_set_security_level( nativeSslContext, 2 );
+
+                    BL_CHK_CRYPTO_API(
+                        2 == ::SSL_CTX_get_security_level( nativeSslContext ),
+                        "The OpenSSL security level could not be set"
+                        );
 #endif
 
                     /*
@@ -618,11 +577,6 @@ namespace bl
                     }
                 }
 
-                static void tlsMinimumVersion( SAA_in const TlsMinimumVersion minimumVersion )
-                {
-                    g_tlsMinimumVersion = minimumVersion;
-                }
-
                 static bool allowUntrustedCertificates() NOEXCEPT
                 {
                     return g_allowUntrustedCertificates;
@@ -638,8 +592,6 @@ namespace bl
             BL_DEFINE_STATIC_MEMBER( CryptoInitT, os::mutex*, g_locks ) = nullptr;
             BL_DEFINE_STATIC_MEMBER( CryptoInitT, int, g_lockCount ) = 0;
             BL_DEFINE_STATIC_MEMBER( CryptoInitT, int, g_sessionIdContext ) = 42;
-            BL_DEFINE_STATIC_MEMBER( CryptoInitT, TlsMinimumVersion, g_tlsMinimumVersion ) =
-                TlsMinimumVersion::Tls12;
             BL_DEFINE_STATIC_MEMBER( CryptoInitT, bool, g_allowUntrustedCertificates ) = false;
 
             template
@@ -819,28 +771,6 @@ namespace bl
             static void clearUntrustedEndpointInfo( SAA_in const std::string& endpointId )
             {
                 detail::CryptoInit::clearUntrustedEndpointInfo( endpointId );
-            }
-
-            static void tlsMinimumVersion( SAA_in const TlsMinimumVersion minimumVersion )
-            {
-                detail::CryptoInit::tlsMinimumVersion( minimumVersion );
-            }
-
-            /**
-             * @brief Deprecated - use tlsMinimumVersion() instead
-             *
-             * isEnableTlsV10( true ) is equivalent to tlsMinimumVersion( Tls10Legacy ) and is
-             * retained so existing callers keep compiling and keep their behavior
-             *
-             * Note that isEnableTlsV10( false ) now selects the TLS 1.2 floor rather than the
-             * TLS 1.1 floor which it used to select - that is the point of the change
-             */
-
-            static void isEnableTlsV10( SAA_in const bool isEnableTlsV10 )
-            {
-                detail::CryptoInit::tlsMinimumVersion(
-                    isEnableTlsV10 ? TlsMinimumVersion::Tls10Legacy : TlsMinimumVersion::Tls12
-                    );
             }
         };
 

@@ -29,7 +29,7 @@ Only `F-07` is shared. Where a deferral record exists it is cited under its `F-`
 | CXX-03 | High | **Closed** | `JsonSecuritySerializationImpl.h:444-490` |
 | CXX-04 | High | **Closed** | `BoostAsioCompat.h:252-266,300-320` |
 | CXX-05 | High | **Closed** | `UuidBoostImports.h` (`d60a046`) |
-| CXX-06 | High | **Closed** — TLS floor, cipher policy, key/cert checks, explicit key protection, fail-closed certificate trust | `CryptoBase.h` (`TlsMinimumVersion`), `TestTlsProtocolPolicy.h` |
+| CXX-06 | High | **Closed** — TLS floor, cipher policy, key/cert checks, explicit key protection, fail-closed certificate trust; the legacy opt-in originally added here was later removed, see `tls-legacy-protocol-opt-in-removal-decision.md` | `CryptoBase.h`, `TestTlsProtocolPolicy.h` |
 | CXX-07 | Medium | **Closed** — no user code runs under `m_lock` any more | `execution-queue-notification-delivery-plan.md` (CXX-07 section) |
 | CXX-08 | Medium | **Closed** — `rawUtf8` documented and backends aligned; numeric policy unified | `JsonSpiritImpl.h` (`checkedInt` / `checkedUInt64`), `TestJsonAbstraction.h` |
 | CXX-09 | Medium | **Closed** — decay fixed; shim documented as internal | `BoostAsioCompat.h`, `residual-cxx-findings-deferral.md` item 1 |

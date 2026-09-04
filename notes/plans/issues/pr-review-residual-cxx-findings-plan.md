@@ -184,6 +184,11 @@ alone.
 
 ### B1. TLS 1.2 protocol floor with a named legacy opt-in (~1d)
 
+> **Superseded (2026-09-04).** The legacy opt-in described below (`TlsMinimumVersion`, the
+> `isEnableTlsV10()` forwarder and the security level 0 it implied) was removed after review finding
+> H-3; the floor is now fixed at TLS 1.2 with the OpenSSL security level pinned to 2. See
+> `notes/plans/issues/tls-legacy-protocol-opt-in-removal-decision.md`.
+
 **Change.** In `src/include/baselib/crypto/CryptoBase.h`:
 
 - New `enum class TlsMinimumVersion { Tls12, Tls11Legacy, Tls10Legacy }` at `crypto` namespace scope.

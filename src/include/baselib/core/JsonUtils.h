@@ -190,6 +190,11 @@ namespace bl
          * same string by a conformant parser, so it was never a mode worth preserving. Note
          * that a document which was written by an older build in that mode and which contains
          * non-ASCII text will not read back correctly on either backend now
+         *
+         * The control characters U+0000 to U+001F, on the other hand, are always emitted as
+         * JSON escapes on both backends, as RFC 8259 section 7 requires, using the short forms
+         * where the grammar defines one and the six character form with lowercase hex digits
+         * otherwise; the two backends produce identical bytes for the same string
          */
 
         template

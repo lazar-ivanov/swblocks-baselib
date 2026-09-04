@@ -600,8 +600,9 @@ namespace bl
              * @brief Rejects an imported RSA key which does not meet the minimum policy
              *
              * The modulus size floor applies on every version of OpenSSL; the structural key
-             * checks are only available from OpenSSL 1.1.1 onwards, so on the older versions
-             * the modulus size is the only thing which is verified
+             * checks are only available from OpenSSL 1.1.1 onwards (and the public one only
+             * from OpenSSL 3.0), so on the older versions the modulus size is the only thing
+             * which is verified
              *
              * Note that ::RSA_size is used rather than ::RSA_bits because the latter does not
              * exist before OpenSSL 1.1.0
@@ -628,14 +629,32 @@ namespace bl
 
 #if OPENSSL_VERSION_NUMBER >= 0x10101000L
                 /*
-                 * ::EVP_PKEY_public_check and ::EVP_PKEY_private_check were introduced in
-                 * OpenSSL 1.1.1
+                 * ::EVP_PKEY_check and ::EVP_PKEY_public_check were introduced in OpenSSL 1.1.1
+                 * and ::EVP_PKEY_private_check in OpenSSL 3.0
                  *
-                 * Note that the public check also enforces a policy on the public exponent
+                 * On OpenSSL 3.x the public check also enforces a policy on the public exponent
                  * (it must lie between 2^16 and 2^256), so a key with a small exponent such as
                  * 3 is rejected here; that is intentional and matches the reasoning already
                  * recorded on RsaKeyT::RSA_KEY_EXPONENT_DEFAULT
+                 *
+                 * OpenSSL 1.1.1 has no RSA implementation of the public key check (the generic
+                 * ::EVP_PKEY_public_check reports the operation as unsupported for the key
+                 * type), so at the PublicOnly depth the modulus size floor above is the only
+                 * thing which is verified there; ::EVP_PKEY_check is the full RSA key check on
+                 * that version, which requires the private components and which is what the
+                 * Full depth maps to
+                 *
+                 * The result is compared against 1 explicitly because these functions return a
+                 * negative value when the operation is not supported for the key type, which a
+                 * plain truthiness check would accept as success
                  */
+
+#if OPENSSL_VERSION_NUMBER < 0x30000000L
+                if( KeyCheckDepth::Full != depth )
+                {
+                    return;
+                }
+#endif
 
                 const auto pkey = rsaKey -> evpKey();
 
@@ -645,11 +664,16 @@ namespace bl
 
                 BL_CHK_CRYPTO_API_NM( ctx );
 
-                BL_CHK_CRYPTO_API_NM(
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+                const int checkResult =
                     KeyCheckDepth::Full == depth
                         ? ::EVP_PKEY_private_check( ctx.get() )
-                        : ::EVP_PKEY_public_check( ctx.get() )
-                    );
+                        : ::EVP_PKEY_public_check( ctx.get() );
+#else
+                const int checkResult = ::EVP_PKEY_check( ctx.get() );
+#endif
+
+                BL_CHK_CRYPTO_API_NM( 1 == checkResult );
 #else
                 BL_UNUSED( depth );
 #endif

@@ -1482,6 +1482,96 @@ UTF_AUTO_TEST_CASE( JsonSerializeStreamAlsoEmitsRawUtf8 )
         );
 }
 
+UTF_AUTO_TEST_CASE( JsonSerializeEscapesControlCharacters )
+{
+    utest::json::logImplementation();
+
+    /*
+     * RFC 8259 section 7 requires the control characters U+0000 to U+001F to be escaped inside
+     * a string literal; a serializer which copies them verbatim produces text which a
+     * conformant parser rejects. json-spirit's writer does exactly that in the raw UTF-8 mode
+     * the library uses, so this is asserted on the exact bytes, on both backends, for an object
+     * key as well as for a value
+     *
+     * The expected text uses the short escape forms where JSON defines one and the six
+     * character form with lowercase hex digits otherwise, which is what Boost.JSON emits, so
+     * the two backends are byte identical; DEL (0x7F) and everything above it are not control
+     * characters in the sense of the RFC and pass through raw
+     */
+
+    const std::string key( "k\x01" );
+
+    const std::string text(
+        "\x00\x01\x08\x09\x0a\x0c\x0d\x1b\x1f\x7f" "Caf\xC3\xA9",
+        15
+        );
+
+    const auto unicodeEscape = []( SAA_in const char* hexDigits ) -> std::string
+    {
+        return std::string( "\\u" ) + hexDigits;
+    };
+
+    const std::string expected =
+        "{\"k" + unicodeEscape( "0001" ) + "\":\"" +
+        unicodeEscape( "0000" ) + unicodeEscape( "0001" ) +
+        "\\b\\t\\n\\f\\r" +
+        unicodeEscape( "001b" ) + unicodeEscape( "001f" ) +
+        "\x7f" "Caf\xC3\xA9\"}";
+
+    bl::json::object obj;
+    obj.emplace( key, text );
+
+    const auto value = bl::json::value( std::move( obj ) );
+
+    const auto compact = bl::json::saveToString( value, false /* prettyPrint */, false /* rawUtf8 */ );
+
+    UTF_REQUIRE_EQUAL( compact, expected );
+
+    /*
+     * The hex case is pinned in both directions, so that a backend which emits the escape with
+     * uppercase digits (json-spirit's own non-raw mode does) is caught as well
+     */
+
+    UTF_REQUIRE( compact.find( unicodeEscape( "001b" ) ) != std::string::npos );
+    UTF_REQUIRE( compact.find( unicodeEscape( "001B" ) ) == std::string::npos );
+
+    std::ostringstream stream;
+    bl::json::saveToStream( value, stream, false /* prettyPrint */, false /* rawUtf8 */ );
+
+    UTF_REQUIRE_EQUAL( stream.str(), expected );
+
+    /*
+     * Pretty printed output adds whitespace outside of the literals only, so the literal
+     * content must be escaped identically; the exact layout differs between the backends and
+     * is deliberately not asserted here
+     */
+
+    const auto pretty = bl::json::saveToString( value, true /* prettyPrint */, false /* rawUtf8 */ );
+
+    for( const char ch : text )
+    {
+        if( static_cast< unsigned char >( ch ) < 0x20U && '\n' != ch )
+        {
+            UTF_REQUIRE( pretty.find( ch ) == std::string::npos );
+        }
+    }
+
+    UTF_REQUIRE( pretty.find( unicodeEscape( "0000" ) ) != std::string::npos );
+    UTF_REQUIRE( pretty.find( unicodeEscape( "001b" ) ) != std::string::npos );
+
+    /*
+     * ... and the value survives a round trip through the parser unchanged
+     */
+
+    for( const auto& jsonText : { compact, stream.str(), pretty } )
+    {
+        const auto reparsed = bl::json::readFromString( jsonText );
+
+        UTF_REQUIRE_EQUAL( reparsed.as_object().size(), 1U );
+        UTF_REQUIRE_EQUAL( bl::json::get_str( reparsed.as_object().at( key ) ), text );
+    }
+}
+
 /************************************************************************
  * Numeric conversion policy (CXX-08)
  */

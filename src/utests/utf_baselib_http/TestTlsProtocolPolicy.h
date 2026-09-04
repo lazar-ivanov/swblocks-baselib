@@ -25,9 +25,9 @@
  * Tests for the TLS protocol version policy configured by
  * bl::crypto::detail::CryptoInitT::initNativeSslContext
  *
- * Note that these tests deliberately do not live in utf_baselib_security, because that test
- * binary enables the TLS 1.0 legacy opt-in for the whole process in its main file, so the
- * default policy is not observable there
+ * The policy is fixed and process wide - there is no opt-in which lowers it - so what is
+ * asserted here is what every consumer of the library gets; see the decision record in
+ * notes/plans/issues/tls-legacy-protocol-opt-in-removal-decision.md
  *
  * The handshake is driven over an OpenSSL BIO pair rather than over a socket; that keeps the
  * assertion focused on the SSL_CTX policy with nothing else in the path and avoids needing a
@@ -285,36 +285,58 @@ UTF_AUTO_TEST_CASE( TlsProtocolPolicy_Tls11IsRefusedUnderTheDefaultPolicy )
     UTF_REQUIRE( ! tryHandshake( tls11Client.get(), serverContext -> native_handle() ) );
 }
 
-UTF_AUTO_TEST_CASE( TlsProtocolPolicy_Tls11IsPermittedUnderTheLegacyOptIn )
+UTF_AUTO_TEST_CASE( TlsProtocolPolicy_Tls10IsRefusedUnderTheDefaultPolicy )
 {
     using namespace utest::tlspolicy;
 
-    const auto tls11Client = createSingleVersionClientContext( TLS1_1_VERSION );
+    const auto serverContext = createServerContext();
 
-    if( ! tls11Client )
+    const auto tls10Client = createSingleVersionClientContext( TLS1_VERSION );
+
+    if( ! tls10Client )
     {
         UTF_WARNING_MESSAGE(
             BL_MSG()
-                << "The linked OpenSSL cannot offer TLS 1.1; the legacy opt-in cannot be tested"
+                << "The linked OpenSSL cannot offer TLS 1.0; the negative case is vacuous"
             );
 
         return;
     }
 
-    bl::crypto::CryptoBase::tlsMinimumVersion( bl::crypto::TlsMinimumVersion::Tls11Legacy );
+    UTF_REQUIRE( ! tryHandshake( tls10Client.get(), serverContext -> native_handle() ) );
+}
 
-    BL_SCOPE_EXIT(
-        {
-            bl::crypto::CryptoBase::tlsMinimumVersion( bl::crypto::TlsMinimumVersion::Tls12 );
-        }
-        );
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+
+UTF_AUTO_TEST_CASE( TlsProtocolPolicy_FloorAndSecurityLevelArePinned )
+{
+    using namespace utest::tlspolicy;
 
     /*
-     * A new server context is required because the protocol policy is applied in
-     * initNativeSslContext, which runs once per createAsioSslServerContext call
+     * The protocol floor and the security level are the two settings which decide what the
+     * library will negotiate and which certificates it will accept; both are queried back from
+     * the contexts rather than inferred from handshakes, so a future change which lowers either
+     * of them fails here directly rather than through some handshake which unexpectedly succeeds
+     *
+     * Both the process global client context and a freshly created server context are checked,
+     * because they are initialized through the same code path and a regression in either one
+     * is a regression for every connection of that role
+     *
+     * Note that SSL_CTX_get_min_proto_version is a macro over SSL_CTX_ctrl and therefore it
+     * must not be qualified with the global namespace operator
      */
 
-    const auto legacyServerContext = createServerContext();
+    const auto serverContext = createServerContext();
 
-    UTF_REQUIRE( tryHandshake( tls11Client.get(), legacyServerContext -> native_handle() ) );
+    auto& clientContext = bl::crypto::CryptoBase::getAsioSslContext();
+
+    ::SSL_CTX* const contexts[] = { clientContext.native_handle(), serverContext -> native_handle() };
+
+    for( ::SSL_CTX* const ctx : contexts )
+    {
+        UTF_REQUIRE_EQUAL( static_cast< int >( SSL_CTX_get_min_proto_version( ctx ) ), TLS1_2_VERSION );
+        UTF_REQUIRE_EQUAL( ::SSL_CTX_get_security_level( ctx ), 2 );
+    }
 }
+
+#endif // OPENSSL_VERSION_NUMBER >= 0x10100000L

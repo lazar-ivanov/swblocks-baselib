@@ -14,9 +14,6 @@
  * limitations under the License.
  */
 
-#include <baselib/crypto/CryptoBase.h>
-#define UTF_TEST_APP_INIT_PHASE1_INIT bl::crypto::CryptoBase::isEnableTlsV10( true );
-
 #define UTF_TEST_MODULE utf_baselib_security
 #include <utests/baselib/UtfMain.h>
 

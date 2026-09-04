@@ -747,6 +747,92 @@ namespace bl
                         );
                 }
 
+                /**
+                 * @brief Escapes the C0 control characters which json-spirit leaves in place
+                 *
+                 * json-spirit's writer escapes only the quote, the backslash and the five
+                 * characters which have a short escape form (\b \f \n \r \t); with raw_utf8
+                 * every other byte, including U+0000 to U+001F, is copied into the output
+                 * verbatim, which RFC 8259 section 7 forbids and which a conformant parser
+                 * (Boost.JSON included) rejects as a syntax error. The library offers no option
+                 * which escapes those but not the bytes above 0x7F, and escaping them in the
+                 * strings before they are written does not work either because the writer
+                 * would then escape the backslash of the escape
+                 *
+                 * The writer's output is therefore post-processed instead. The scan is exact
+                 * because the output grammar is simple: outside of a string literal the writer
+                 * emits only structural characters, digits, the three literals and pretty print
+                 * whitespace, and inside of one the only escapes it ever emits are two bytes
+                 * long, so the byte after a backslash is always part of the escape and a quote
+                 * which is not preceded by a backslash always ends the literal
+                 *
+                 * The escapes are emitted with lowercase hex digits, which is what Boost.JSON
+                 * emits, so both backends produce identical bytes for the same value
+                 */
+
+                static std::string escapeControlCharacters( SAA_in const std::string& jsonText )
+                {
+                    static const char hexDigits[] = "0123456789abcdef";
+
+                    std::string result;
+                    result.reserve( jsonText.size() );
+
+                    bool insideLiteral = false;
+
+                    for( std::size_t i = 0U; i < jsonText.size(); ++i )
+                    {
+                        const char ch = jsonText[ i ];
+
+                        if( ! insideLiteral )
+                        {
+                            if( '"' == ch )
+                            {
+                                insideLiteral = true;
+                            }
+
+                            result += ch;
+
+                            continue;
+                        }
+
+                        if( '\\' == ch )
+                        {
+                            result += ch;
+
+                            if( i + 1U < jsonText.size() )
+                            {
+                                result += jsonText[ ++i ];
+                            }
+
+                            continue;
+                        }
+
+                        if( '"' == ch )
+                        {
+                            insideLiteral = false;
+
+                            result += ch;
+
+                            continue;
+                        }
+
+                        const auto byte = static_cast< unsigned char >( ch );
+
+                        if( byte < 0x20U )
+                        {
+                            result += "\\u00";
+                            result += hexDigits[ byte >> 4 ];
+                            result += hexDigits[ byte & 0x0FU ];
+
+                            continue;
+                        }
+
+                        result += ch;
+                    }
+
+                    return result;
+                }
+
                 static std::string saveToString(
                     SAA_in          const value&                              val,
                     SAA_in          const bool                                prettyPrint,
@@ -791,6 +877,10 @@ namespace bl
                      * encoded in UTF-8, which is what the Boost.JSON backend always emits, so
                      * emitting it here as well is both correct and what makes the two backends
                      * agree
+                     *
+                     * Note that raw_utf8 also disables the escaping of the control characters
+                     * below 0x20, which the JSON grammar requires, so the writer's output is
+                     * post-processed by escapeControlCharacters(); see the note on it above
                      */
 
                     BL_UNUSED( rawUtf8 );
@@ -799,7 +889,7 @@ namespace bl
                         ( prettyPrint ? json_spirit::pretty_print : json_spirit::none ) |
                         json_spirit::raw_utf8;
 
-                    return write_string( val, options );
+                    return escapeControlCharacters( write_string( val, options ) );
                 }
 
                 static std::string saveToString(
@@ -835,45 +925,13 @@ namespace bl
                     )
                 {
                     /*
-                     * As on the saveToString path, canonicalize needs no work on this backend
-                     * because Object_type is a std::map and its keys are already ordered, but the
-                     * prettyPrint exclusion is still enforced so that both backends reject the
-                     * same call
+                     * Delegated to saveToString so that the two paths cannot drift apart - the
+                     * option handling, the canonicalize / prettyPrint exclusion and the control
+                     * character escaping are all applied in exactly one place (the Boost.JSON
+                     * backend delegates the same way)
                      */
 
-                    if( canonicalize && prettyPrint )
-                    {
-                        BL_THROW(
-                            ArgumentException(),
-                            "Cannot use both prettyPrint and canonicalize options together"
-                            );
-                    }
-
-                    /*
-                     * Note that json_spirit::raw_utf8 is requested unconditionally and the
-                     * rawUtf8 parameter is deliberately not honored
-                     *
-                     * With that option off json-spirit escapes every byte above 0x7F
-                     * individually as \u00XX, deciding byte by byte via iswprint(), which has
-                     * three problems: the output is locale dependent; a multi-byte UTF-8
-                     * sequence is emitted as one escape per byte, so a conformant parser reads
-                     * back a different string than was written (U+00E9 becomes the two
-                     * characters U+00C3 U+00A9); and it therefore does not round trip outside
-                     * of json-spirit itself
-                     *
-                     * RFC 8259 section 8.1 requires JSON exchanged between systems to be
-                     * encoded in UTF-8, which is what the Boost.JSON backend always emits, so
-                     * emitting it here as well is both correct and what makes the two backends
-                     * agree
-                     */
-
-                    BL_UNUSED( rawUtf8 );
-
-                    const int options =
-                        ( prettyPrint ? json_spirit::pretty_print : json_spirit::none ) |
-                        json_spirit::raw_utf8;
-
-                    write_stream( val, output, options );
+                    output << saveToString( val, prettyPrint, rawUtf8, canonicalize );
                 }
 
                 static void remapIncorrectValueTypeException(

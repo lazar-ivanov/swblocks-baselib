@@ -237,8 +237,9 @@ namespace bl
              *
              * Note that the rawUTF8 parameter of this function and of the getDocAs*JsonString
              * wrappers below is retained for source compatibility and has no effect - string
-             * content is always emitted as raw UTF-8 on both backends; see the note on rawUtf8
-             * in baselib/core/JsonUtils.h
+             * content is always emitted as raw UTF-8 on both backends, with the control
+             * characters below 0x20 always escaped; see the note on rawUtf8 in
+             * baselib/core/JsonUtils.h
              *
              *
              * ON THE 'canonicalize' PARAMETER - a decision, not an oversight

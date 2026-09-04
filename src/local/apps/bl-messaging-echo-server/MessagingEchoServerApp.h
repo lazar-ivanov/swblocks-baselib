@@ -249,13 +249,6 @@ namespace bl
             {
                 Logging::setLevel( Logging::LL_DEBUG, true /* global */ );
 
-                /*
-                 * Relax the protocol to TLS 1.0 for allowing the gateway to use
-                 * authorization servers that might not yet support TLS 1.1 and TLS 1.2
-                 */
-
-                crypto::CryptoBase::isEnableTlsV10( true );
-
                 MessagingEchoServerAppImpl app;
 
                 return app.main( argc, argv );

@@ -165,3 +165,57 @@ again would loosen name verification below what RFC 6125 allows - the opposite o
 `::X509_check_host()` bought. **A deployment using such a certificate needs a reissued certificate**
 with either an explicit SAN per host or a single leftmost wildcard. Asserted by
 `TlsPeerVerification_MultiLabelWildcardsDoNotMatch`.
+
+---
+
+## 6. TLS floor fixed at TLS 1.2, OpenSSL security level pinned to 2, legacy opt-in removed
+
+**Presents as:** a compile error for callers of the removed API; a runtime behaviour change
+(handshake failure, or server startup failure) for peers and certificates below the floor.
+
+`src/include/baselib/crypto/CryptoBase.h`
+
+| | Before | After |
+|---|---|---|
+| Minimum protocol | TLS 1.1 by default; TLS 1.0 via `isEnableTlsV10( true )` | **TLS 1.2**, on every supported OpenSSL, not configurable |
+| OpenSSL security level (1.1.0+) | whatever the linked OpenSSL was compiled with (1 upstream) | **2**: RSA/DSA/DH >= 2048 bits, ECC >= 224 bits, no RC4, no SSL 3.0, no compression; no SHA-1 signatures on 3.x |
+| `CryptoBase::isEnableTlsV10( bool )` | present | **removed** |
+| `bl-messaging-broker`, `bl-messaging-http-gateway`, `bl-messaging-echo-server` | relaxed the floor to TLS 1.0 unconditionally at startup | no longer touch the policy |
+
+Note for readers of the intermediate state of this branch: the `TlsMinimumVersion` enum and
+`tlsMinimumVersion()` setter which briefly replaced `isEnableTlsV10()` are gone as well; while they
+existed, the legacy values also dropped the security level to 0, which accepted MD5-signed and
+sub-1024-bit certificates on every connection of the process.
+
+**Who is affected:**
+
+- code calling `isEnableTlsV10()` - delete the call;
+- deployments whose peers cannot negotiate TLS 1.2 - the peer needs upgrading, there is no library
+  option;
+- deployments whose certificate chains carry keys below 2048 bits (or SHA-1 signatures on OpenSSL
+  3.x) - clients fail chain verification at handshake; a **server** with such a certificate of its
+  own fails at startup, in `createAsioSslServerContext`, because the level is applied before the
+  key and certificate are loaded.
+
+Asserted by `TestTlsProtocolPolicy.h` in `utf_baselib_http`. See
+`notes/plans/issues/tls-legacy-protocol-opt-in-removal-decision.md`.
+
+---
+
+## 7. json-spirit backend now escapes control characters in strings
+
+**Presents as:** an interop / data change, visible only in the serialized bytes.
+
+`src/include/baselib/core/detail/JsonSpiritImpl.h`
+
+On builds using json-spirit (devenv2-6, or `BL_USE_JSON_SPIRIT=1`), the raw UTF-8 output mode
+introduced on this branch copied the control characters U+0000-U+001F into string literals verbatim,
+which RFC 8259 forbids and which Boost.JSON (and every conformant parser) rejects. They are now
+escaped: `\b \t \n \f \r` in their short forms and the others as six-character escapes with lowercase
+hex digits, which is byte-identical to what the Boost.JSON backend emits. `master` escaped them too,
+but with uppercase hex digits; the lowercase form was chosen so the two backends agree, and no
+in-repo consumer compares or persists the text (item 4).
+
+**Who is affected:** nobody negatively; a devenv2-6 node's messages containing such characters are
+parseable again by a devenv7 peer. Asserted by `JsonSerializeEscapesControlCharacters` in
+`utf_baselib_data`, on both backends.

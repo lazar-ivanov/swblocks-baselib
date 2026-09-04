@@ -90,7 +90,11 @@ counterpart, and devenv2–6 select it automatically. It is not legacy debt.
 - The intersection property above is verified, not assumed.
 - The two backends' known divergences are individually recorded rather than latent: duplicate keys
   in `json-duplicate-key-contract.md`; `rawUtf8` and numeric policy closed by aligning the backends
-  (`pr-review-residual-cxx-findings-plan.md`, CXX-08); number and string formatting deferred with
+  (`pr-review-residual-cxx-findings-plan.md`, CXX-08) - note that the `rawUtf8` alignment itself
+  regressed control character escaping on json-spirit (review finding H-3's sibling H-2 in
+  `pr_review_analysis_fable51.md`), which is exactly the kind of same-backend-invisible defect this
+  check exists for; fixed by `escapeControlCharacters()` in `JsonSpiritImpl.h` and asserted on both
+  backends by `JsonSerializeEscapesControlCharacters`; number and string formatting deferred with
   F-11; parse depth documented in `JsonUtils.h`.
 - The prerequisites for running the check are already present in every devenv7 distribution, so the
   barrier is remembering to run it, not being able to.

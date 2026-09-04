@@ -265,13 +265,6 @@ namespace bl
             {
                 Logging::setLevel( Logging::LL_DEBUG, true /* global */ );
 
-                /*
-                 * Relax the protocol to TLS 1.0 for allowing the broker to use
-                 * authorization servers that might not yet support TLS 1.1
-                 */
-
-                crypto::CryptoBase::isEnableTlsV10( true );
-
                 MessagingBrokerAppImpl app;
 
                 return app.main( argc, argv );

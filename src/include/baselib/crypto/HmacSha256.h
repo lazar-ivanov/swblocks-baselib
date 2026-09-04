@@ -141,43 +141,34 @@ namespace bl
                     digestLength = static_cast< unsigned int >( macLength );
 #else
                     /*
-                     * OpenSSL 1.1.x: HMAC_CTX can be stack-allocated
+                     * OpenSSL < 3.0: the one-shot ::HMAC() has the same signature on every
+                     * version of OpenSSL we support, whereas the HMAC_CTX interface changed
+                     * shape in 1.1.0 (the context became opaque and HMAC_CTX_init/cleanup were
+                     * replaced by HMAC_CTX_new/free), so the one-shot form is used to keep this
+                     * branch version independent
+                     *
+                     * ::HMAC() returns nullptr on failure and stores the digest length in the
+                     * out parameter on success
                      */
-                    ::HMAC_CTX ctx;
-
-                    ( void ) ::HMAC_CTX_init( &ctx );
-
-                    BL_SCOPE_EXIT(
-                        {
-                            ( void ) ::HMAC_CTX_cleanup( &ctx );
-                        }
-                        );
 
                     BL_CHK_CRYPTO_API_NM(
-                        ::HMAC_Init_ex(
-                            &ctx,
+                        ::HMAC(
+                            ::EVP_sha256(),
                             key.c_str(),
                             static_cast< int >( key.length() ),
-                            EVP_sha256(),
-                            nullptr
-                            )
-                        );
-
-                    BL_CHK_CRYPTO_API_NM(
-                        ::HMAC_Update(
-                            &ctx,
                             reinterpret_cast< const unsigned char* >( message.c_str() ),
-                            message.length()
-                            )
-                        );
-
-                    BL_CHK_CRYPTO_API_NM(
-                        ::HMAC_Final(
-                            &ctx,
+                            message.length(),
                             messageDigest,
                             &digestLength
                             )
                         );
+
+                    /*
+                     * HMAC-SHA-256 is 32 bytes by definition; anything else means the digest was
+                     * not the one requested
+                     */
+
+                    BL_CHK_CRYPTO_API_NM( digestLength == sizeof( messageDigest ) );
 #endif
 
                     cpp::SafeOutputStringStream stream;
