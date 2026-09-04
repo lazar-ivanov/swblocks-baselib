@@ -128,8 +128,15 @@ a release note should say these hashes are process-local.
 | F-13 — S3 credentials on the command line | [plan record](notes/plans/issues/medium-severity-findings-f11-f17-plan.md) | still `required=True`; `--account-id` still unread. ~1–2 days, own commit |
 | F-18 items 1–2 | [deferral record](notes/plans/issues/public-header-hygiene-deferral.md) | `-Woverloaded-virtual` scope; `BOOST_ASIO_DISABLE_STD_CHRONO` ODR hazard |
 | `download-sources.ps1` parameter mismatch | now tracked in the [F-02 record](scripts/devenv7/docs/supply-chain-verification-deferral.md) | was an untracked aside; promoted to a deferred item so it stops resurfacing |
-| Windows devenv7 verification | — | required for Correction 1's gates, `OSImplWindows.h`, and the real `cl.exe` half of F-15 |
 | Release notes | — | PEM formats (PKCS#1 → SPKI / PKCS#8), mandatory `NotifyDelivery`, deleted `Manifest`/`Platform` move assignment, process-local JSON hashes |
+
+**Windows devenv7 verification is now closed** (2026-09-03). Correction 1's two `msvc-default.mk`
+gates, `OSImplWindows.h`'s `<cstring>` addition and the real `cl.exe` half of F-15 were all verified
+on the ARM64 Windows devenv7 host — see
+[Bundle D — Windows verification results](pr-review-opus5-residual-findings-plan.md). It corrects
+one row of the table under **Verification performed** below: `JavaVirtualMachine.h` **does** compile
+standalone on Windows under both `cl.exe` and `clang-cl`, so the `fs::normalize` gap recorded there
+is specific to the non-Windows include graph rather than universal.
 
 F-18 item 5 was **rejected as stated and rescoped**: of 97 `git diff --check` failures, 17 are
 Markdown hard line breaks, 16 are unshipped `notes/`, 16 are cosmetic EOF blanks. The gate is
@@ -155,4 +162,6 @@ and the standalone TU compiles prove the self-containment property directly, whi
 not.
 
 **Not verified here:** anything Windows-only — Correction 1's gates, `OSImplWindows.h`, and F-15
-against real `cl.exe` code-page output.
+against real `cl.exe` code-page output. **All three were verified on 2026-09-03** on the ARM64
+Windows devenv7 host; see
+[Bundle D — Windows verification results](pr-review-opus5-residual-findings-plan.md).

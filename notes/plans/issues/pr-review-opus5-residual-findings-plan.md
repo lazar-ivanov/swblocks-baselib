@@ -994,6 +994,159 @@ than holding four configurations at once; the host was at 95% with 1.9 GB free w
 switch of JSON backend additionally requires a clean tree, since dependency tracking keys on sources
 rather than on flags.
 
+# Bundle D — Windows verification results (2026-09-03)
+
+Executed on the ARM64 Windows devenv7 host. Nothing was implemented here - Bundles A, B and C were
+already committed on `lazari2` and verified on Linux only. This bundle is the Windows half of that
+verification plus the three items (D-2, D-3, D-4) that had never been checkable on any other
+platform. **No source file was changed**; the only edits are the documentation corrections listed at
+the end.
+
+## Environment
+
+| | |
+|---|---|
+| Host | Windows 11 Pro 10.0.26200, ARM64 (Parallels VM), `NUMBER_OF_PROCESSORS=2` |
+| Dist | `dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86` |
+| Toolchains | `vc143` (MSVC 14.38.33130), `ccl16` (clang-cl) |
+| Boost / OpenSSL / WinSDK / Python | 1.90.0 / 3.5.4 / 10.0.22621.0 / 3.14.2 |
+
+## The build and test matrix
+
+Per `AGENTS.md:64-77` - focused builds of the affected test modules only, `-j1`, both toolchains,
+both variants. No full-repo build was run. Tests were batched at `-j4`, within the five-module
+allowance.
+
+| Config | Build | `baselib` | `data` | `tasks` | `security` | `messaging` | `http` | `io` | Test exit |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---|
+| `vc143` debug | 7/7, 5m11s | 146 | 79 | 50 | 25 | 27 | 21 | 20 | 0 |
+| `ccl16` debug | 7/7, 4m30s | 146 | 79 | 50 | 25 | 27 | 21 | 20 | 0 |
+| `vc143` release | 7/7, 9m39s | 146 | 79 | 50 | 25 | 27 | 21 | 20 | 0 |
+| `ccl16` release | 7/7, 10m27s | 146 | 79 | 50 | 25 | 27 | 21 | 20 | 0 |
+| **Linux reference** | | 146 | 79 | 50 | 25 | 27 | 21 | 20 | |
+
+**28/28 builds clean at `-WX`, 28/28 test units pass, zero failures, every count identical to Linux.**
+Identical counts across all four Windows configurations *and* across platforms show no test was
+silently compiled out under a different toolchain, variant or OS.
+
+Two further builds beyond the matrix:
+
+| Extra check | Result |
+|---|---|
+| `utf_baselib_messaging` at `ARCH=x64` and `ARCH=x86`, both toolchains | 4/4 clean - the D-1 assertion holds in context on all three architectures |
+| `utf_baselib_data VARIANT=release BL_USE_JSON_SPIRIT=1` (clean tree) | ok, **75 cases**, no errors - the same 79-minus-4 split Linux produced |
+
+## D-1 - `CommandBlock` is 72 bytes on Windows, on every architecture
+
+The priority item, and it passes. Rather than rely only on the `static_assert` firing during a
+build, a standalone TU was compiled that forces the compiler to **print** the sizes in a diagnostic,
+so the numbers are measured rather than inferred:
+
+| Config | `sizeof( CommandBlock )` | `sizeof( DataHeader )` | `alignof( uuid )` |
+|---|---:|---:|---:|
+| a64 / x64 / x86, `cl.exe` | **72** | 28 | 1 |
+| a64 / x64 / x86, `clang-cl` | **72** | 28 | 1 |
+| **negative control**, both toolchains | **80** | 32 | 8 |
+
+`BOOST_UUID_DISABLE_ALIGNMENT` is confirmed defined at the point of use, and `BOOST_VERSION` is
+109000 there. The negative control is a TU that includes `<boost/uuid/uuid.hpp>` *before* baselib, so
+the macro arrives too late - it reproduces **exactly** the 80/32/8 that Linux measured. The hazard is
+therefore real on Windows too, and identically so; the guard is what prevents it. **A Windows peer
+and a Linux peer agree on the wire format.**
+
+## D-2, D-3, D-4 - the three never-verified items
+
+| Item | Method | Result |
+|---|---|---|
+| **D-2** F-14's flipped gates | `make -p -n` dumps, both toolchains | `BL_DEVENV_IS_LEGACY` empty; PATH picks Python **3.14.2** with no 2.7 anywhere; `-DBOOST_ASIO_DISABLE_DEPRECATED_MSG` present in `CPPFLAGS`. Both `msvc-default.mk` gates (`:267`, `:428`) resolve as intended |
+| **D-3** `OSImplWindows.h` self-containment | standalone TU, `cl.exe` **and** `clang-cl`, `-WX` | passes. Five neighbouring headers also pass - see the finding below |
+| **D-4** F-15 against real `cl.exe` | real compile through `scripts/cl.py -M`, include path `café_inc`, three code pages | `.d` bytes round-trip losslessly in all three cases - see the finding below |
+
+## Findings from doing it
+
+**`JavaVirtualMachine.h` compiles standalone on Windows - the recorded gap is not universal.**
+The `pr-review-gpt56sol-f01-f18-status.md` verification table records this header as failing a
+standalone TU compile on a pre-existing `fs::normalize` gap, confirmed on pristine `HEAD`. On Windows
+it compiles clean under **both** `cl.exe` and `clang-cl`, because `fs::normalize` arrives through
+`OSImplWindows.h`. The gap is specific to the non-Windows include graph. All six headers checked -
+`OSImplWindows.h`, `OSImplPlatformCommon.h`, `HmacSha256.h`, `TlsPeerVerification.h`, `Pinger.h`,
+`JavaVirtualMachine.h` - pass standalone on Windows under both toolchains.
+
+**Real `cl.exe` emits dependency paths in the active console code page, and F-15's fix is what makes
+that survivable.** Compiling through the wrapper with a non-ASCII include directory:
+
+| `chcp` | bytes emitted for `é` | valid UTF-8? |
+|---|---|---|
+| 65001 | `C3 A9` | yes |
+| 1252 | `E9` | **no** |
+| 437 (the Windows default) | `82` | **no** |
+
+In two of the three the byte stream is not valid UTF-8, so a UTF-8 decode would have produced
+`U+FFFD` and written a `.d` edge naming a file that does not exist. The latin-1 decode plus binary
+write preserved the exact bytes in every case. **This is the first time the fix has been exercised
+against real code-page output rather than a mock.**
+
+**But byte-exactness alone does not make the edge usable, and that is worth knowing.** Feeding each
+generated path back to MSYS `make` via `$(realpath ...)`, only the CP-65001 form resolves; the 1252
+and 437 forms do not, because MSYS interprets paths as UTF-8. So F-15 is **necessary and strictly an
+improvement** - the bytes are preserved and recoverable rather than destroyed - but a non-ASCII
+dependency path still will not produce a working `make` edge unless the compiler emitted UTF-8. This
+is not a regression and not a defect in the change; it is a limit of the surrounding toolchain, and
+it is invisible in practice because every path in this repository is ASCII. Recorded so it is not
+rediscovered as a bug.
+
+**The `os::copy` shim's `#error` tripwire does not fire on Windows.** `BL_FS_COPY_DIRECTORY_SHIM_REQUIRED`
+was probed directly and resolves **enabled**, with `BOOST_VERSION` = 109000 usable at that point. The
+S-I include-graph concern does not materialise on the platform where the shim's LFN path handling
+matters most.
+
+**Windows devenv7 does ship json-spirit, so the dual-backend build is runnable here.**
+`.../json-spirit/4.08/source` exists in the dist and `BL_USE_JSON_SPIRIT=1` resolves to it, sets
+`-DBL_USE_JSON_SPIRIT` and drops `boost_json` from `LDLIBS`. The build and run succeed with 75 cases.
+Any note that this configuration is Linux/macOS-only is wrong for this dist.
+
+**The Python suite passes on Windows; the recorded `test_cl_functional.py` failure is stale.**
+**551 passed, 23 skipped**, against 572 passed / 2 skipped on Linux - the same 574 tests collected on
+both, with the 21 extra skips all legitimate platform guards (symlinks, FIFOs, POSIX permissions,
+non-UTF-8 filenames). `test_cl_functional.py` alone is 16 passed, 6 skipped, **0 failed**: the
+`cl.bat` resolution problem recorded in `scripts/devenv7/AGENTS.md` was fixed by the `which()` call
+in `cl.py`. `make pytest-install` still cannot run against the embeddable dist interpreter; the
+`.venv` used here was provisioned by the documented full-CPython procedure.
+
+**D-8's make flag semantics behave identically on Windows.** `BL_USE_JSON_SPIRIT=0` links
+`boost_json` with no `-DBL_USE_JSON_SPIRIT`; `NO_BOOST_LOCALE_LIB=0` links `boost_locale` with no
+`-DBL_NO_BOOST_LOCALE_LIB`; `BL_USE_JSON_SPIRIT=yes` stops the build with
+`projects/make/3rd/boost/common.mk:72: *** BL_USE_JSON_SPIRIT must be 0, 1 or unset - got 'yes'.`
+
+**D-5's guard is exercised for real.** On Windows both pattern accessors return
+`g_patternAvgRttWindows`, so `&alternate != &primary` is the branch that actually changes behaviour
+there - the only platform where it does. `Tasks_PingerAutoTests` drove real `ping.exe` and parsed
+live round-trip times (`yahoo.com`, 47-92 ms) in every configuration.
+
+## No failures to report
+
+Every build and every test unit passed. There was **no** environment-caused failure of the kind the
+Linux run hit - disk stayed between 12 and 22 GB free throughout, because each configuration's build
+trees were deleted before the next began. Peak usage was ~3 GB per debug tree and ~1.2 GB per release
+tree.
+
+## Documentation corrected by this bundle
+
+| File | Change |
+|---|---|
+| this file | the "Bundle D - not implementable here - blocked" record retired; totals row now reads done |
+| `pr-review-gpt56sol-f01-f18-status.md` | "Windows devenv7 verification" moved out of **Still open**; the `JavaVirtualMachine.h` row and the "Not verified here" note corrected |
+| `scripts/devenv7/AGENTS.md` | the stale "Known Windows-only failures" claim replaced with the actual expected counts |
+
+## Not verified here
+
+`utf_baselib_rest` (Bundle B built it on Linux; not in this bundle's seven modules), the
+`ARCH=x64`/`x86` **test runs** (those modules were built, not executed - the a64 host runs x64 and
+x86 binaries under emulation, which would measure the emulator as much as the code), and anything
+requiring devenv2-6 on Windows.
+
+---
+
 # Execution bundles
 
 Bundled by **verifiability**, not by subsystem or urgency. Each bundle is a unit of work that can be
@@ -1038,22 +1191,23 @@ taken silently" — unprovable in a single configuration. Both need resolution a
 (devenv6), `gcc1110` (devenv5) and `gcc492` (devenv2) alongside devenv7. **Run the two slices in one
 campaign**; the campaign is most of the cost.
 
-## Bundle D — not implementable here — blocked
+## Bundle D — Windows devenv7 — **executed 2026-09-03**
 
 | Verification | Item |
 |---|---|
 | V-8 | R-20's Windows verification — F-14's flipped gates, `OSImplWindows.h`'s `<cstring>` addition, and the real `cl.exe` half of F-15 |
 
-**Do not attempt this bundle from this checkout.** It requires a Windows devenv7 machine, and the
-whole point of the item is that the change must be *verified* there rather than assumed. It stays in
-the plan as a tracked hand-off, not as work to be scheduled here.
+This bundle required a Windows devenv7 machine, and the whole point of the item was that the change
+must be *verified* there rather than assumed. It was carried out on the ARM64 Windows 11 devenv7
+host and additionally absorbed the Windows half of Bundles A, B and C, which had been verified on
+Linux only. Results are in **Bundle D — Windows verification results** below.
 
 | Bundle | Days | Environment | Status |
 |---|---:|---|---|
 | **A** | ~7.3 | this machine | ready |
 | **B** | ~1.5 | this machine + a new IP-SAN fixture | ready |
 | **C** | ~1.0 | multi-devenv toolchains | ready |
-| **D** | — | Windows devenv7 | **blocked — leave alone** |
+| **D** | — | Windows devenv7 | **done — 2026-09-03** |
 
 ---
 

@@ -461,10 +461,16 @@ make pytest-install PYTHON="$SCRATCH/python-full/tools/python.exe"
    `.venv/Scripts/python.exe -m pip install --only-binary=cryptography cryptography`
 5. Run `make pytest` normally afterwards — it uses `.venv` directly and needs no override.
 
-**Known Windows-only failures:** `test_cl_functional.py` fails because its mock compiler is written
-as `cl.bat`, and Windows `CreateProcess` appends only `.exe` (never `.bat`) when resolving a bare
-name, so `scripts/cl.py` never launches the mock. These tests pass on Linux/macOS, where the mock
-is an extension-less executable script.
+**Expected Windows results:** the suite passes — **551 passed, 23 skipped** as of 2026-09-03, against
+572 passed / 2 skipped on Linux. The same 574 tests are collected on both; the 21 extra skips are
+platform guards for symlinks, FIFOs, POSIX permissions and non-UTF-8 filenames. A *failure* is not
+expected on Windows, so treat one as a real regression.
+
+`test_cl_functional.py` used to fail here because its mock compiler is written as `cl.bat` and
+Windows `CreateProcess` appends only `.exe` (never `.bat`) when resolving a bare name. That is fixed
+— `scripts/cl.py` resolves the compiler with `which()` before spawning — and the file now reports
+16 passed, 6 skipped. The 6 skips are a different, legitimate reason: those cases drive byte-level
+compiler output through a Unix shell.
 
 ---
 
