@@ -41,15 +41,19 @@ namespace bl
              * typedefs the old name to the new one so existing code keeps compiling.
              *
              * The two are NOT the same implementation. host_name_verification delegates to
-             * OpenSSL's ::X509_check_host(), which is a genuine improvement - it handles
-             * subjectAltName correctly, ignores the common name when a SAN is present as RFC 6125
-             * requires, and rejects embedded NUL bytes in names.
+             * OpenSSL's ::X509_check_host() and ::X509_check_ip_asc(), which is a genuine
+             * improvement - it handles subjectAltName correctly, ignores the common name when a
+             * SAN is present as RFC 6125 requires, and rejects embedded NUL bytes in names.
              *
-             * But ::X509_check_host() does NOT match IP addresses; that needs ::X509_check_ip().
-             * So a peer addressed by IP literal against a certificate carrying that IP in an
-             * iPAddress SAN verified under the old implementation and stopped verifying under the
-             * new one, silently, with nothing but a handshake failure to show for it. This class
-             * restores that case without giving up any of the improvement.
+             * ::X509_check_host() itself does NOT match IP addresses; that needs
+             * ::X509_check_ip(). Boost's host_name_verification (1.89 and later, verified on
+             * 1.90) recognizes an address literal with ip::make_address and dispatches to
+             * ::X509_check_ip_asc() for it, so on the Boost versions where the typedef above is
+             * active a peer addressed by IP literal does verify through Boost as well. This class
+             * exists so that the dispatch, the matching flags and the RFC 6125 rule below are
+             * owned by this library and identical across every supported Boost (devenv2 to 7)
+             * rather than being a property of whichever Asio matcher a build happens to pick up,
+             * and so that they can be asserted by the tests in utf_baselib_http.
              *
              * HOW THE DISPATCH WORKS
              *
@@ -123,13 +127,22 @@ namespace bl
                      * CA/Browser Forum baseline requirements define a wildcard as a whole leftmost
                      * label and public CAs do not issue anything else, so nothing legitimate is
                      * lost and the matching rule becomes the same one BoringSSL and Go apply
+                     *
+                     * X509_CHECK_FLAG_NEVER_CHECK_SUBJECT disables the fallback to the subject
+                     * common name for a certificate which carries no dNSName entry at all. The
+                     * common name is untyped free text and was never a defined host identity; the
+                     * CA/Browser Forum has required a subjectAltName on every server certificate
+                     * since 2017 and browsers have ignored the common name since then, so with the
+                     * fallback on this library would accept a certificate shape every browser
+                     * refuses. The certificate must carry the name it is used for as a SAN; a
+                     * privately issued certificate with a common name only needs to be reissued
                      */
 
                     return 1 == ::X509_check_host(
                         certificate,
                         peerName.c_str(),
                         peerName.size(),
-                        X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS    /* flags */,
+                        X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS | X509_CHECK_FLAG_NEVER_CHECK_SUBJECT,
                         nullptr                                 /* peername */
                         );
                 }

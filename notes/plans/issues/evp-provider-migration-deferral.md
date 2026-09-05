@@ -119,7 +119,10 @@ exist only because the stored type is `::RSA` and disappear with item 1. The one
 after phase 0, `RSA_size` in `chkRsaKeyIsAcceptable` (the minimum-modulus check, B8), was replaced
 by `EVP_PKEY_bits( evpKey() )` under review finding L-11 of
 `notes/reviews/major/update_2025/v1/pr_review_analysis_fable51.md`, which returns the inventory to
-the 19 direct calls recorded above.
+the 19 direct calls recorded above. The public exponent policy added on 2026-09-05
+(`chkPublicExponentIsAcceptable()` in the same file) reads the exponent through
+`EVP_PKEY_get_bn_param( OSSL_PKEY_PARAM_RSA_E )` on 3.x and through the structure member on the 1.x
+branch, exactly as the JWK export already does, so the count is unchanged.
 
 ---
 

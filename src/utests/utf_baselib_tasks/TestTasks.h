@@ -2324,6 +2324,57 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueAllTasksCompletedAdmissionTests )
  * forms a completion candidate - but nothing asserted it, so a refactor which added a candidate
  * check to any of them would have broken a documented contract silently. These cases close that
  */
+UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueAllTasksCompletedSurvivesRemovedAdmissionTest )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    /*
+     * A completion candidate is formed when task A completes and is validated only after A's
+     * TaskReady callback has returned. Inside that callback a task B is admitted without being
+     * scheduled and is then cancelled while still pending, so by the time the candidate is
+     * validated the queue is empty again but the work generation has moved on. B never
+     * completes, so no other completion can ever report that the queue drained; the candidate
+     * must be delivered rather than dropped as stale. Cancelling B from inside the callback is
+     * allowed: callbacks are invoked outside the queue lock
+     */
+
+    ExecutionQueueNotificationTestContext context( ExecutionQueue::OptionKeepNone );
+    ExecutionQueueCompletionControl controlA;
+    ExecutionQueueCompletionControl controlB;
+
+    const auto taskA = om::qi< Task >( createControlledCompletionTask( controlA ) );
+    const auto taskB = om::qi< Task >( createControlledCompletionTask( controlB ) );
+
+    context.recorder -> setHook(
+        [ & ](
+            SAA_in              const ExecutionQueueNotify::EventId         eventId,
+            SAA_in_opt          const om::ObjPtrCopyable< Task >&           task
+            ) -> void
+        {
+            if( ExecutionQueueNotify::TaskReady == eventId && om::areEqual( task, taskA ) )
+            {
+                context.eq -> push_back( taskB, true /* dontSchedule */ );
+                context.eq -> cancel( taskB, false /* wait */ );
+            }
+        }
+        );
+
+    context.eq -> push_back( taskA );
+
+    UTF_REQUIRE( controlA.waitUntilScheduled( 1U ) );
+    UTF_REQUIRE( controlA.completeNext() );
+
+    UTF_REQUIRE( context.recorder -> waitForEventCount( ExecutionQueueNotify::AllTasksCompleted, 1U ) );
+    UTF_REQUIRE( ! context.recorder -> hookFailed() );
+
+    /*
+     * B was never scheduled, so its completion control never received a callback
+     */
+
+    UTF_REQUIRE( ! controlB.completeNext() );
+}
+
 UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueAllTasksCompletedNotGeneratedByCancelOrFlushTests )
 {
     using namespace bl;

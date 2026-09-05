@@ -373,5 +373,67 @@ UTF_AUTO_TEST_CASE( TlsProtocolPolicy_HardeningOptionsArePinned )
 #ifdef SSL_OP_NO_RENEGOTIATION
         UTF_REQUIRE( 0 != ( options & SSL_OP_NO_RENEGOTIATION ) );
 #endif
+
+        /*
+         * The protocol denial bits and the session ticket refusal are pinned as well; note
+         * that SSL_OP_NO_SSLv2 is defined as zero on OpenSSL 1.1.0 and later (SSLv2 support
+         * is gone), which is why it is not asserted here
+         */
+
+        UTF_REQUIRE( 0 != ( options & SSL_OP_NO_SSLv3 ) );
+        UTF_REQUIRE( 0 != ( options & SSL_OP_NO_TLSv1 ) );
+        UTF_REQUIRE( 0 != ( options & SSL_OP_NO_TLSv1_1 ) );
+        UTF_REQUIRE( 0 != ( options & SSL_OP_NO_TICKET ) );
     }
 }
+
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+
+UTF_AUTO_TEST_CASE( TlsProtocolPolicy_CipherSuitesAreAeadOnly )
+{
+    using namespace utest::tlspolicy;
+
+    /*
+     * Every suite the contexts offer for TLS 1.2 (and the TLS 1.3 suites, which are always
+     * AEAD) must be an AEAD suite with an ephemeral key exchange: the cipher list in
+     * CryptoBase.h spells that with aliases, and this is the assertion that no alias
+     * resolves to a CBC-with-HMAC suite or to a static RSA key exchange on the OpenSSL
+     * which was linked. ::SSL_CIPHER_is_aead and ::SSL_CTX_get_ciphers exist from 1.1.0;
+     * the sk_SSL_CIPHER_* accessors are macros on the older versions and must not be
+     * qualified with the global namespace operator
+     */
+
+    const auto serverContext = createServerContext();
+
+    auto& clientContext = bl::crypto::CryptoBase::getAsioSslContext();
+
+    ::SSL_CTX* const contexts[] = { clientContext.native_handle(), serverContext -> native_handle() };
+
+    for( ::SSL_CTX* const ctx : contexts )
+    {
+        STACK_OF( SSL_CIPHER )* const ciphers = ::SSL_CTX_get_ciphers( ctx );
+
+        UTF_REQUIRE( nullptr != ciphers );
+
+        const int count = sk_SSL_CIPHER_num( ciphers );
+
+        UTF_REQUIRE( count > 0 );
+
+        for( int i = 0; i < count; ++i )
+        {
+            const ::SSL_CIPHER* const cipher = sk_SSL_CIPHER_value( ciphers, i );
+
+            UTF_REQUIRE( nullptr != cipher );
+
+            const std::string name( ::SSL_CIPHER_get_name( cipher ) );
+
+            UTF_MESSAGE( "Offered cipher suite: " + name );
+
+            UTF_REQUIRE( 1 == ::SSL_CIPHER_is_aead( cipher ) );
+            UTF_REQUIRE( NID_kx_rsa != ::SSL_CIPHER_get_kx_nid( cipher ) );
+            UTF_REQUIRE( NID_auth_null != ::SSL_CIPHER_get_auth_nid( cipher ) );
+        }
+    }
+}
+
+#endif // OPENSSL_VERSION_NUMBER >= 0x10100000L

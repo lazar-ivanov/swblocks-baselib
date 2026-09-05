@@ -2066,4 +2066,156 @@ UTF_AUTO_TEST_CASE( JsonSerializeToStreamCanonical )
         );
 }
 
+UTF_AUTO_TEST_CASE( JsonParseDoublesAreCorrectlyRounded )
+{
+    utest::json::logImplementation();
+
+    /*
+     * A double literal must parse to the value every conformant parser produces, i.e. the
+     * correctly rounded one, which is what std::strtod returns. Boost.JSON does so only in its
+     * precise number mode, which the backend sets explicitly; json-spirit's Spirit.Classic
+     * parser accumulates the digits in floating point and is documented in JsonUtils.h as
+     * accurate to within a few ULPs, so on that backend the comparison is tolerant
+     */
+
+    const char* const literals[] =
+    {
+        "0.1",
+        "1e23",
+        "2.2250738585072011e-308",
+        "9007199254740993.0",
+        "3.141592653589793238462643383279",
+        "1.7976931348623157e308",
+    };
+
+    for( const char* const literal : literals )
+    {
+        const std::string text = std::string( "{\"d\":" ) + literal + "}";
+
+        const auto parsed = bl::json::readFromString( text );
+
+        const double actual = bl::json::value_to< double >( parsed.as_object().at( "d" ) );
+        const double expected = std::strtod( literal, nullptr );
+
+        UTF_MESSAGE( std::string( "Literal " ) + literal );
+
+#if !defined( BL_USE_JSON_SPIRIT )
+        UTF_REQUIRE_EQUAL( actual, expected );
+#else
+        UTF_REQUIRE(
+            std::fabs( actual - expected ) <=
+                8 * std::numeric_limits< double >::epsilon() * std::fabs( expected )
+            );
+#endif
+    }
+}
+
+UTF_AUTO_TEST_CASE( JsonSerializeRejectsNonFiniteDoubles )
+{
+    utest::json::logImplementation();
+
+    /*
+     * JSON has no representation for an infinity or a NaN, and the two backends would each
+     * emit something different and wrong (the text 'inf' on json-spirit, an out-of-range
+     * literal or null on Boost.JSON), so serialization refuses them on both, anywhere in the
+     * tree, through every entry point
+     */
+
+    bl::json::object obj;
+    obj.emplace( "finite", 1.5 );
+
+    UTF_REQUIRE_NO_THROW( bl::json::saveToString( obj, false /* prettyPrint */, false /* rawUtf8 */ ) );
+
+    obj.emplace( "inf", std::numeric_limits< double >::infinity() );
+
+    UTF_REQUIRE_THROW(
+        bl::json::saveToString( obj, false /* prettyPrint */, false /* rawUtf8 */ ),
+        bl::JsonException
+        );
+
+    UTF_REQUIRE_THROW(
+        bl::json::saveToString( bl::json::value( obj ), true /* prettyPrint */, false /* rawUtf8 */ ),
+        bl::JsonException
+        );
+
+    UTF_REQUIRE_THROW(
+        bl::json::saveToString( obj, false /* prettyPrint */, false /* rawUtf8 */, true /* canonicalize */ ),
+        bl::JsonException
+        );
+
+    {
+        std::ostringstream os;
+
+        UTF_REQUIRE_THROW(
+            bl::json::saveToStream( bl::json::value( obj ), os, false /* prettyPrint */, false /* rawUtf8 */ ),
+            bl::JsonException
+            );
+    }
+
+    /*
+     * Nested inside an array inside an object, and a NaN rather than an infinity
+     */
+
+    bl::json::array arr;
+    arr.emplace_back( 1.0 );
+    arr.emplace_back( std::numeric_limits< double >::quiet_NaN() );
+
+    bl::json::object nested;
+    nested.emplace( "values", arr );
+
+    UTF_REQUIRE_THROW(
+        bl::json::saveToString( nested, false /* prettyPrint */, false /* rawUtf8 */ ),
+        bl::JsonException
+        );
+
+    /*
+     * A literal which overflows on parse is backend-defined (it may be rejected at parse
+     * time or stored as an infinity), but it must never come back out as invalid JSON
+     */
+
+    try
+    {
+        const auto parsed = bl::json::readFromString( R"({"d":1e400})" );
+
+        UTF_REQUIRE_THROW(
+            bl::json::saveToString( parsed, false /* prettyPrint */, false /* rawUtf8 */ ),
+            bl::JsonException
+            );
+    }
+    catch( bl::JsonException& )
+    {
+        UTF_MESSAGE( "The overflowing literal was rejected at parse time" );
+    }
+}
+
+UTF_AUTO_TEST_CASE( JsonNumericSmallUint64ReadsAsInt64 )
+{
+    utest::json::logImplementation();
+
+    /*
+     * A value constructed in memory from a std::uint64_t is stored with the unsigned kind
+     * whatever its magnitude (a parsed document only produces that kind above INT64_MAX);
+     * reading it as a signed 64-bit integer must succeed when it fits and be refused when it
+     * does not, identically on both backends. The unsigned property macros serialize this way,
+     * so a document built by one model and loaded by another which declares the same property
+     * as signed depends on it
+     */
+
+    bl::json::object obj;
+    obj.emplace( "small", std::uint64_t( 5 ) );
+    obj.emplace( "max", static_cast< std::uint64_t >( std::numeric_limits< std::int64_t >::max() ) );
+    obj.emplace( "big", static_cast< std::uint64_t >( std::numeric_limits< std::int64_t >::max() ) + 1U );
+
+    UTF_REQUIRE_EQUAL( bl::json::value_to< std::int64_t >( obj.at( "small" ) ), 5 );
+    UTF_REQUIRE_EQUAL( bl::json::get_int64( obj.at( "small" ) ), 5 );
+
+    UTF_REQUIRE_EQUAL(
+        bl::json::value_to< std::int64_t >( obj.at( "max" ) ),
+        std::numeric_limits< std::int64_t >::max()
+        );
+
+    UTF_REQUIRE_THROW( bl::json::value_to< std::int64_t >( obj.at( "big" ) ), std::exception );
+    UTF_REQUIRE_THROW( bl::json::get_int64( obj.at( "big" ) ), std::exception );
+}
+
 #endif /* __UTEST_TESTJSONABSTRACTION_H_ */

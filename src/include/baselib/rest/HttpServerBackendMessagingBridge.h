@@ -529,7 +529,20 @@ namespace bl
                     SAA_in_opt          const std::exception_ptr&               eptr
                     )
                 {
-                    ( void ) completeRequestInternal( false /* discardInfo */, conversationId, dataBlock, eptr );
+                    /*
+                     * ignoreIfDisposed: a response can arrive while dispose() is draining the
+                     * messaging backend (see the note there), after the requests map has been
+                     * taken over; such a completion must unwind quietly, as closeRequest() does,
+                     * rather than fail the dispatch task with an exception
+                     */
+
+                    ( void ) completeRequestInternal(
+                        false /* discardInfo */,
+                        conversationId,
+                        dataBlock,
+                        eptr,
+                        true /* ignoreIfDisposed */
+                        );
                 }
 
                 void scheduleForCancel( SAA_in const uuid_t& conversationId ) NOEXCEPT

@@ -22,6 +22,12 @@
 #include <baselib/core/StringUtils.h>
 #include <baselib/core/BaseIncludes.h>
 
+#include <openssl/pkcs12.h>
+
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+#include <openssl/core_names.h>
+#endif
+
 namespace bl
 {
     namespace security
@@ -252,17 +258,56 @@ namespace bl
                 BL_CHK_CRYPTO_API_NM( pkey );
                 BL_CHK_CRYPTO_API_NM( ::EVP_PKEY_set1_RSA( pkey.get(), &rsaKey -> get() ) );
 
-                BL_CHK_CRYPTO_API_NM(
-                    ::PEM_write_bio_PrivateKey(
-                        buffer.get(),
-                        pkey.get(),
-                        isEncrypted ? ::EVP_aes_256_cbc() : nullptr             /* AES-256 encryption */,
-                        nullptr                                                 /* Key data */,
-                        0                                                       /* Key length */,
-                        nullptr                                                 /* Password callback */,
-                        isEncrypted ? const_cast< char* >( password.c_str() ) : nullptr
-                        )
-                    );
+                if( isEncrypted )
+                {
+                    /*
+                     * The encrypted form is built explicitly rather than through
+                     * ::PEM_write_bio_PrivateKey with a cipher, because that path applies
+                     * OpenSSL's default PBKDF2 iteration count; see PKCS8_PBKDF2_ITERATIONS. The
+                     * result is the same PBES2 / PBKDF2 / AES-256-CBC PKCS#8 envelope
+                     * ('-----BEGIN ENCRYPTED PRIVATE KEY-----'), with a random salt and, on
+                     * OpenSSL 1.1.0 and later, HMAC-SHA256 as the PBKDF2 pseudo-random function
+                     */
+
+                    ::PKCS8_PRIV_KEY_INFO* keyInfo = nullptr;
+
+                    BL_CHK_CRYPTO_API_NM( keyInfo = ::EVP_PKEY2PKCS8( pkey.get() ) );
+
+                    BL_SCOPE_EXIT( { ::PKCS8_PRIV_KEY_INFO_free( keyInfo ); } );
+
+                    ::X509_SIG* encryptedKeyInfo = nullptr;
+
+                    BL_CHK_CRYPTO_API_NM(
+                        encryptedKeyInfo = ::PKCS8_encrypt(
+                            -1                                                  /* pbe_nid: PBES2 with the cipher */,
+                            ::EVP_aes_256_cbc(),
+                            password.c_str(),
+                            static_cast< int >( password.size() ),
+                            nullptr                                             /* salt: generated */,
+                            0                                                   /* salt length: default */,
+                            PKCS8_PBKDF2_ITERATIONS,
+                            keyInfo
+                            )
+                        );
+
+                    BL_SCOPE_EXIT( { ::X509_SIG_free( encryptedKeyInfo ); } );
+
+                    BL_CHK_CRYPTO_API_NM( ::PEM_write_bio_PKCS8( buffer.get(), encryptedKeyInfo ) );
+                }
+                else
+                {
+                    BL_CHK_CRYPTO_API_NM(
+                        ::PEM_write_bio_PrivateKey(
+                            buffer.get(),
+                            pkey.get(),
+                            nullptr                                             /* No encryption */,
+                            nullptr                                             /* Key data */,
+                            0                                                   /* Key length */,
+                            nullptr                                             /* Password callback */,
+                            nullptr                                             /* Password */
+                            )
+                        );
+                }
 
                 return getBufferAsString( buffer );
             }
@@ -590,6 +635,20 @@ namespace bl
              * which always carry them
              */
 
+            /*
+             * The PBKDF2 iteration count for an encrypted private key export. OpenSSL's own
+             * default (PKCS5_DEFAULT_ITER) is 2048, which dates from PKCS#5 v2.0 in 2000 and
+             * leaves a leaked key file open to offline guessing at a few thousand hashes per
+             * candidate; 600 000 is the current OWASP recommendation for PBKDF2-HMAC-SHA256 and
+             * costs well under a second per export on current hardware. Readers are unaffected:
+             * the count is carried in the PBES2 parameters of the file
+             */
+
+            enum : int
+            {
+                PKCS8_PBKDF2_ITERATIONS = 600000
+            };
+
             enum class KeyCheckDepth
             {
                 PublicOnly,
@@ -634,6 +693,52 @@ namespace bl
              * 2041-2047 bit modulus up to 2048, and ::RSA_bits does not exist before 1.1.0
              */
 
+            static void chkPublicExponentIsAcceptable(
+                SAA_in          const om::ObjPtr< crypto::RsaKey >&                         rsaKey,
+                SAA_in          const crypto::evppkey_ptr_t&                                pkey
+                )
+            {
+                /*
+                 * The public exponent policy is enforced here, explicitly, on every version of
+                 * OpenSSL: it must be odd and larger than 2^16. A small exponent such as 3 is
+                 * what enables the Coppersmith and Bleichenbacher families of attacks against
+                 * sloppy PKCS#1 v1.5 verifiers, which is the reasoning recorded on
+                 * RsaKeyT::RSA_KEY_EXPONENT_DEFAULT for the keys this library generates; a key it
+                 * imports has to meet the same bar. Note that OpenSSL's own ::EVP_PKEY_public_check
+                 * bounds the exponent only when built as a FIPS module - the default provider
+                 * accepts any odd exponent above 1 - so relying on it would enforce nothing on
+                 * the builds this library ships with
+                 */
+
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+                BL_UNUSED( rsaKey );
+
+                ::BIGNUM* exponentRaw = nullptr;
+
+                BL_CHK_CRYPTO_API_NM(
+                    ::EVP_PKEY_get_bn_param( pkey.get(), OSSL_PKEY_PARAM_RSA_E, &exponentRaw )
+                    );
+
+                const auto exponent = crypto::bignum_ptr_t::attach( exponentRaw );
+
+                const ::BIGNUM* e = exponent.get();
+#else
+                BL_UNUSED( pkey );
+
+                const ::BIGNUM* e = rsaKey -> get().e;
+#endif
+
+                BL_CHK_CRYPTO_API_NM( e );
+
+                BL_CHK_T(
+                    false,
+                    BN_is_odd( e ) && ::BN_num_bits( e ) > 16,
+                    SecurityException(),
+                    BL_MSG()
+                        << "The RSA public exponent must be an odd number larger than 2^16"
+                    );
+            }
+
             static void chkRsaKeyIsAcceptable(
                 SAA_in          const om::ObjPtr< crypto::RsaKey >&                         rsaKey,
                 SAA_in          const KeyCheckDepth                                         depth
@@ -655,22 +760,27 @@ namespace bl
                         << " bits"
                     );
 
+                chkPublicExponentIsAcceptable( rsaKey, pkey );
+
 #if OPENSSL_VERSION_NUMBER >= 0x10101000L
                 /*
                  * ::EVP_PKEY_check and ::EVP_PKEY_public_check were introduced in OpenSSL 1.1.1
-                 * and ::EVP_PKEY_private_check in OpenSSL 3.0
                  *
-                 * On OpenSSL 3.x the public check also enforces a policy on the public exponent
-                 * (it must lie between 2^16 and 2^256), so a key with a small exponent such as
-                 * 3 is rejected here; that is intentional and matches the reasoning already
-                 * recorded on RsaKeyT::RSA_KEY_EXPONENT_DEFAULT
+                 * The Full depth maps to ::EVP_PKEY_check on every version, deliberately. On
+                 * OpenSSL 3.x it selects the whole key pair and runs the full RSA consistency
+                 * check (p and q prime, n = p * q, d * e = 1 modulo lambda(n), and the CRT
+                 * parameters consistent with them), which is also what it does on 1.1.1 through
+                 * ::RSA_check_key_ex. ::EVP_PKEY_private_check, which 3.0 added, is NOT that
+                 * check for RSA: it selects the private key alone and verifies only that
+                 * 1 <= d < n, so a key whose CRT parameters were corrupted or forged would pass
+                 * it and then produce wrong signatures. The full check needs the factors, which
+                 * every PEM private key carries; the JWK loader, where they are optional, uses
+                 * the PublicOnly depth for that reason
                  *
                  * OpenSSL 1.1.1 has no RSA implementation of the public key check (the generic
                  * ::EVP_PKEY_public_check reports the operation as unsupported for the key
-                 * type), so at the PublicOnly depth the modulus size floor above is the only
-                 * thing which is verified there; ::EVP_PKEY_check is the full RSA key check on
-                 * that version, which requires the private components and which is what the
-                 * Full depth maps to
+                 * type), so at the PublicOnly depth the modulus size floor and the exponent
+                 * policy above are the only things which are verified there
                  *
                  * The result is compared against 1 explicitly because these functions return a
                  * negative value when the operation is not supported for the key type, which a
@@ -690,14 +800,10 @@ namespace bl
 
                 BL_CHK_CRYPTO_API_NM( ctx );
 
-#if OPENSSL_VERSION_NUMBER >= 0x30000000L
                 const int checkResult =
                     KeyCheckDepth::Full == depth
-                        ? ::EVP_PKEY_private_check( ctx.get() )
+                        ? ::EVP_PKEY_check( ctx.get() )
                         : ::EVP_PKEY_public_check( ctx.get() );
-#else
-                const int checkResult = ::EVP_PKEY_check( ctx.get() );
-#endif
 
                 BL_CHK_CRYPTO_API_NM( 1 == checkResult );
 #else

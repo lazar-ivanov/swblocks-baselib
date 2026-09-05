@@ -184,7 +184,12 @@ namespace bl
              * late. Concretely: a thread which completes the last task, forms a candidate, and then
              * enters a slow callback can find, when it finally re-acquires the lock, that another
              * thread has already admitted, executed and published a newer generation - and its own
-             * candidate is then dropped, even though a distinct batch really did drain.
+             * candidate is then dropped, even though a distinct batch really did drain. Conversely,
+             * work which was admitted after the candidate formed and then removed without ever
+             * completing (cancelled or flushed while still pending) does not suppress it: if the
+             * queue is empty again when the candidate is validated, no newer completion has formed
+             * a candidate of its own and nothing newer has been published, the candidate is
+             * delivered, since it is the only event which can report that drain.
              *
              * This is correct under the point-in-time semantics above, and it is the price of not
              * holding a lock across user code. But it means the event MUST NOT be used as a

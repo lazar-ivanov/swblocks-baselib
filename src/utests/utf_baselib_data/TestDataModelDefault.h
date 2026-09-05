@@ -690,3 +690,63 @@ UTF_AUTO_TEST_CASE( CoreDataModelCanonicalNestedCollectionsTests )
         json::saveToString( json::value( fromMap ), false /* prettyPrint */, false /* rawUtf8 */, true /* canonicalize */ )
         );
 }
+
+UTF_AUTO_TEST_CASE( DataModelLoadRequiresObjectAtTopLevel )
+{
+    using namespace bl;
+    using namespace bl::dm;
+    using namespace utest::dm;
+
+    typedef DataModelUtils dmu;
+
+    /*
+     * A syntactically valid document whose top level is not an object is refused with a
+     * JsonException which says so, on both backends, rather than surfacing as the backend's
+     * own conversion error
+     */
+
+    const char* const documents[] = { "[1,2,3]", "42", "\"text\"", "null", "true" };
+
+    for( const char* const document : documents )
+    {
+        UTF_REQUIRE_THROW_MESSAGE(
+            dmu::loadFromJsonText< ContainedTestObject >( document ),
+            JsonException,
+            "must be an object at the top level"
+            );
+    }
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        dmu::loadFromJsonValue< ContainedTestObject >( json::readFromString( "[1]" ) ),
+        JsonException,
+        "must be an object at the top level"
+        );
+
+    UTF_REQUIRE_NO_THROW( dmu::loadFromJsonText< ContainedTestObject >( "{}" ) );
+}
+
+UTF_AUTO_TEST_CASE( DataModelNullComplexCollectionsMeanAbsent )
+{
+    using namespace bl;
+    using namespace bl::dm;
+    using namespace utest::dm;
+
+    typedef DataModelUtils dmu;
+
+    /*
+     * A null in place of any complex property, including the complex map, means "absent", the
+     * same as for every other property kind; it must not reach the backend's object accessor
+     */
+
+    const auto obj = dmu::loadFromJsonText< TestObject >(
+        R"({"complex":null,"complexVector":null,"complexMap":null,"userData":null,"numbers":null})"
+        );
+
+    UTF_REQUIRE( ! obj -> complex() );
+    UTF_REQUIRE( obj -> complexVector().empty() );
+    UTF_REQUIRE( obj -> complexMap().empty() );
+    UTF_REQUIRE( obj -> userData().empty() );
+    UTF_REQUIRE( obj -> numbers().empty() );
+
+    UTF_REQUIRE_NO_THROW( dmu::getDocAsPrettyJsonString( obj ) );
+}

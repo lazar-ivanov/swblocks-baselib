@@ -30,6 +30,8 @@
 #include <openssl/ssl.h>
 #include <openssl/x509_vfy.h>
 
+#include <atomic>
+
 namespace bl
 {
     namespace crypto
@@ -61,7 +63,7 @@ namespace bl
 
                 static std::map< std::string, std::string >     g_untrustedEndpointsInfo;
                 static os::mutex                                g_untrustedEndpointsInfoLock;
-                static bool                                     g_allowUntrustedCertificates;
+                static std::atomic< bool >                      g_allowUntrustedCertificates;
 
                 static void initRandomEngine()
                 {
@@ -79,10 +81,12 @@ namespace bl
                     BL_CHK_CRYPTO_API_NM( ::RAND_status() );
                 }
 
-#if OPENSSL_VERSION_NUMBER < 0x30000000L
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
                 /*
-                 * Locking callback is only needed for OpenSSL < 3.x
-                 * OpenSSL 3.x+ handles threading internally
+                 * The locking callback is only needed for OpenSSL 1.0.x (devenv2): from 1.1.0
+                 * onwards OpenSSL locks internally, CRYPTO_num_locks() is a compatibility macro
+                 * which expands to 1 and CRYPTO_set_locking_callback() to nothing, so
+                 * installing one there would allocate a mutex nothing ever uses
                  */
                 static void callbackLocking(
                     SAA_in              int                                     mode,
@@ -357,12 +361,16 @@ namespace bl
 #endif
 
                     /*
-                     * Enable only forward-secret ciphers with a modern bulk cipher for the
-                     * protocols up to and including TLS 1.2
+                     * Enable only forward-secret AEAD suites (ephemeral ECDH or DH key exchange
+                     * with AES-GCM) for the protocols up to and including TLS 1.2; the CBC
+                     * suites with an HMAC are deliberately not offered, so a peer cannot steer a
+                     * connection to a MAC-then-encrypt construction. EECDH and EDH are the
+                     * aliases which spell that on every supported version of OpenSSL
                      *
                      * Note that the 3DES suites which used to be part of this list have been
                      * removed and are now also denied explicitly, so that no future alias can
-                     * reintroduce them silently
+                     * reintroduce them silently; the same is asserted for every remaining suite
+                     * by TlsProtocolPolicy_CipherSuitesAreAeadOnly in utf_baselib_http
                      *
                      * Note also that only cipher aliases are used here and never individual
                      * cipher names, so that the policy resolves identically on every version of
@@ -384,7 +392,7 @@ namespace bl
                     BL_CHK_CRYPTO_API_NM(
                         ::SSL_CTX_set_cipher_list(
                             nativeSslContext,
-                            "ECDH+AESGCM:DH+AESGCM:ECDH+AES256:DH+AES256:ECDH+AES128:DH+AES:"
+                            "EECDH+AESGCM:EDH+AESGCM:"
                             "!aNULL:!eNULL:!kRSA:!PSK:!SRP:!MD5:!RC4:!3DES:!DES:!EXPORT"
                             )
                         );
@@ -402,19 +410,28 @@ namespace bl
                      * Threading is handled automatically; no manual locking callbacks needed.
                      * Use OPENSSL_init_ssl() if explicit initialization is required.
                      *
-                     * Note that unlike ::SSL_library_init(), which is documented to always return 1
-                     * and whose return value is therefore correctly discarded on the 1.1.x branch
-                     * below, ::OPENSSL_init_ssl() returns 0 on failure. It must be checked, or a
-                     * failed initialization proceeds silently into initRandomEngine() and into
-                     * context creation, where the eventual error is far from its cause
+                     * ::OPENSSL_init_ssl() returns 0 on failure and must be checked, or a failed
+                     * initialization proceeds silently into initRandomEngine() and into context
+                     * creation, where the eventual error is far from its cause
                      */
 
                     BL_CHK_CRYPTO_API_NM( ::OPENSSL_init_ssl( 0, nullptr ) );
 
                     initRandomEngine();
+#elif OPENSSL_VERSION_NUMBER >= 0x10100000L
+                    /*
+                     * OpenSSL 1.1.x: SSL_library_init() is a compatibility macro over
+                     * ::OPENSSL_init_ssl( 0, NULL ), which returns 0 on failure exactly as on the
+                     * 3.x branch above, so its result is checked for the same reason; the
+                     * "always returns 1" documentation applies to 1.0.x only
+                     */
+
+                    BL_CHK_CRYPTO_API_NM( ::SSL_library_init() );
+
+                    initRandomEngine();
 #else
                     /*
-                     * OpenSSL 1.1.x: According to the OpenSSL docs (https://www.openssl.org/docs/ssl/SSL_library_init.html)
+                     * OpenSSL 1.0.x: According to the OpenSSL docs (https://www.openssl.org/docs/ssl/SSL_library_init.html)
                      * ::SSL_library_init() always returns 1, so the return value should not be checked
                      */
 
@@ -630,7 +647,7 @@ namespace bl
             BL_DEFINE_STATIC_MEMBER( CryptoInitT, os::mutex*, g_locks ) = nullptr;
             BL_DEFINE_STATIC_MEMBER( CryptoInitT, int, g_lockCount ) = 0;
             BL_DEFINE_STATIC_MEMBER( CryptoInitT, int, g_sessionIdContext ) = 42;
-            BL_DEFINE_STATIC_MEMBER( CryptoInitT, bool, g_allowUntrustedCertificates ) = false;
+            BL_DEFINE_STATIC_MEMBER( CryptoInitT, std::atomic< bool >, g_allowUntrustedCertificates )( false );
 
             template
             <

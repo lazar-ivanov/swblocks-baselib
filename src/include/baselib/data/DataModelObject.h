@@ -62,6 +62,13 @@ namespace bl
             {
                 auto rootValue = json::readFromString( json );
 
+                BL_CHK_T(
+                    false,
+                    rootValue.is_object(),
+                    JsonException(),
+                    "The JSON document must be an object at the top level"
+                    );
+
                 m_doc = std::move( rootValue.as_object() );
             }
 
@@ -428,6 +435,13 @@ namespace bl
             >
             static auto loadFromJsonValue( SAA_in const json::value& jsonValue ) -> om::ObjPtr< T >
             {
+                BL_CHK_T(
+                    false,
+                    jsonValue.is_object(),
+                    JsonException(),
+                    "The JSON document must be an object at the top level"
+                    );
+
                 return loadFromJsonObject< T >( jsonValue.as_object() );
             }
 
@@ -438,6 +452,19 @@ namespace bl
             static auto loadFromJsonText( SAA_in const std::string& jsonText ) -> om::ObjPtr< T >
             {
                 auto rootValue = json::readFromString( jsonText );
+
+                /*
+                 * A syntactically valid document whose top level is an array or a scalar would
+                 * otherwise surface as the backend's own conversion error, with a message which
+                 * names neither the document nor what was expected
+                 */
+
+                BL_CHK_T(
+                    false,
+                    rootValue.is_object(),
+                    JsonException(),
+                    "The JSON document must be an object at the top level"
+                    );
 
                 return loadFromJsonObject< T >( std::move( rootValue.as_object() ) );
             }

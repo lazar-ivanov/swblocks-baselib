@@ -114,6 +114,27 @@ namespace bl
                 BL_CHK_CRYPTO_API_NM( ::EVP_PKEY_keygen_init( ctx ) > 0 );
                 BL_CHK_CRYPTO_API_NM( ::EVP_PKEY_CTX_set_rsa_keygen_bits( ctx, RSA_KEY_SIZE_DEFAULT ) > 0 );
 
+                /*
+                 * The public exponent is set explicitly rather than left at the provider's default,
+                 * so that RSA_KEY_EXPONENT_DEFAULT governs key generation on this branch as it does
+                 * on the 1.x branch below and a change of the OpenSSL default cannot go unnoticed
+                 */
+
+                bignum_ptr_t exponent = nullptr;
+
+                BL_CHK_CRYPTO_API_NM(
+                    exponent = bignum_ptr_t::attach( ::BN_new() )
+                    );
+
+                BL_CHK_CRYPTO_API_NM(
+                    ::BN_set_word(
+                        exponent.get(),
+                        RSA_KEY_EXPONENT_DEFAULT
+                        ) == 1
+                    );
+
+                BL_CHK_CRYPTO_API_NM( ::EVP_PKEY_CTX_set1_rsa_keygen_pubexp( ctx, exponent.get() ) > 0 );
+
                 EVP_PKEY* pkeyRaw = nullptr;
                 BL_CHK_CRYPTO_API_NM( ::EVP_PKEY_keygen( ctx, &pkeyRaw ) > 0 );
                 auto pkey = evppkey_ptr_t::attach( pkeyRaw );

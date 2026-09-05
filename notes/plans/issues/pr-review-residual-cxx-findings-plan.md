@@ -362,6 +362,18 @@ the modulus floor is the only check).
 requires `p` and `q`, and would silently start rejecting such keys. PEM inputs always carry the
 factors, so the full check is safe only on that path.
 
+> **Correction (2026-09-05, deep-dive review of the C++ changes).** Two statements above are wrong
+> against the OpenSSL 3.5.4 sources. `EVP_PKEY_private_check` for RSA selects the private key alone
+> and checks only that `1 <= d < n` (`rsa_kmgmt.c:404-409`, `rsa_sp800_56b_check.c:356-361`); it
+> needs neither `p` nor `q` and runs no primality test, so it was a near-vacuous check. The full
+> pair validation is `EVP_PKEY_check`, which selects the key pair and does need the factors, and it
+> is now what the `Full` depth calls on 3.x as well as on 1.1.1 (the conclusion that the JWK loader
+> must use `PublicOnly` stands, for that reason). And `EVP_PKEY_public_check` bounds the public
+> exponent only in a FIPS build (`rsa_sp800_56b_check.c:225-236`); the default provider accepts any
+> odd `e > 1`, so the `e = 3` rejection described below never happened. The exponent policy is now
+> enforced explicitly by `chkPublicExponentIsAcceptable()` on every OpenSSL version. Both are
+> asserted by new fixtures in `TestPemKeyFormats.h`.
+
 Two behaviour changes to record in the commit message: `EVP_PKEY_public_check` on 3.x rejects public
 exponents outside `2^16 < e < 2^256`, so keys with `e = 3` stop loading (desirable — the code already
 argues for `RSA_F4` at `RsaKey.h:53-60` — but it *is* a break); and `private_check` runs primality

@@ -139,6 +139,20 @@ namespace bl
          * See notes/plans/issues/json-duplicate-key-contract.md for the full record.
          *
          *
+         * DOUBLE PRECISION, backend-defined
+         *
+         * The Boost.JSON backend parses a double as the correctly rounded value of its literal
+         * (number_precision::precise, set explicitly in detail::JsonUtilsImpl::parseOptions);
+         * that is what every conformant parser produces and what this library's own serializer
+         * inverts, so a document which passes through unchanged re-serializes to the same
+         * bytes. The json-spirit backend uses Spirit.Classic's real number parser, which
+         * accumulates digits in floating point and can land a few ULPs away from the correctly
+         * rounded value for literals with many significant digits. A consumer which needs the
+         * exact value of a long literal on that backend has to carry it as a string.
+         *
+         * A value which is not finite (an infinity or a NaN) cannot be serialized on either
+         * backend - see the note on the serialization functions below.
+         *
          * MAXIMUM NESTING DEPTH, also backend-defined
          *
          * The Boost.JSON backend rejects a document nested more than 512 objects or arrays deep,
@@ -196,6 +210,13 @@ namespace bl
          * JSON escapes on both backends, as RFC 8259 section 7 requires, using the short forms
          * where the grammar defines one and the six character form with lowercase hex digits
          * otherwise; the two backends produce identical bytes for the same string
+         *
+         * A double which is not finite is refused with a JsonException on both backends: JSON
+         * has no representation for an infinity or a NaN (RFC 8259 section 6), json-spirit
+         * would write the text 'inf' or 'nan', which no parser accepts, and Boost.JSON would
+         * write an out-of-range literal or null, silently changing the value. Such a value can
+         * only arise in memory or from a literal which overflowed on parse (1e400), and
+         * refusing it at serialization is what keeps every emitted document valid
          */
 
         template
@@ -217,9 +238,12 @@ namespace bl
          *
          * The canonicalize parameter has the same meaning and the same restriction as on
          * saveToString above - it sorts object keys and it cannot be combined with prettyPrint, so
-         * canonical output through this function is always compact. That is the shape the case
-         * which needs it wants: hashing or signing a large document without first materializing it
-         * as a std::string. See the note on getJsonString() in baselib/data/DataModelObject.h
+         * canonical output through this function is always compact. The parameter exists for
+         * parity with saveToString; note that both backends currently implement this function by
+         * serializing to a std::string and writing that to the stream, so it does not (yet) avoid
+         * materializing the document - genuinely streaming output is recorded as deferred (R-4 in
+         * notes/plans/issues/pr-review-opus5-residual-findings-plan.md). See the note on
+         * getJsonString() in baselib/data/DataModelObject.h
          */
 
         template

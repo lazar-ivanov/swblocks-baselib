@@ -18,6 +18,7 @@
 
 #include <baselib/crypto/ErrorHandling.h>
 #include <baselib/crypto/RsaKey.h>
+#include <baselib/core/SerializationUtils.h>
 
 #include <baselib/core/BaseIncludes.h>
 
@@ -99,6 +100,32 @@ namespace utest
         static auto ecPublicKeyFixture() -> std::string
         {
             return TestUtils::loadDataFile( "test-ec-public-key.pem" );
+        }
+
+        static auto inconsistentPrivateKeyFixture() -> std::string
+        {
+            /*
+             * test-private-key.pem with one bit of its 'exponent1' (d mod (p - 1)) CRT
+             * parameter flipped and re-encoded as PKCS#1; it parses, its modulus and public
+             * exponent are those of the original key, and 'openssl rsa -check' reports
+             * "dmp1 not congruent to d"
+             */
+
+            return TestUtils::loadDataFile( "test-private-key-inconsistent.pem" );
+        }
+
+        static auto smallExponentPrivateKeyFixture() -> std::string
+        {
+            /*
+             * A 2048-bit key generated with the public exponent 3 (openssl genrsa -3)
+             */
+
+            return TestUtils::loadDataFile( "test-private-key-e3.pem" );
+        }
+
+        static auto smallExponentPublicKeyFixture() -> std::string
+        {
+            return TestUtils::loadDataFile( "test-public-key-e3.pem" );
         }
 
         static auto getModulus( SAA_in const bl::om::ObjPtr< bl::crypto::RsaKey >& rsaKey ) -> std::string
@@ -399,4 +426,131 @@ UTF_AUTO_TEST_CASE( PemKeyFormats_NonRsaKeysAreRejected )
         );
 
     UTF_CHECK( LocalTestPemKeyFormatsHelpers::isErrorQueueClean() );
+}
+
+#if OPENSSL_VERSION_NUMBER >= 0x10101000L
+
+UTF_AUTO_TEST_CASE( PemKeyFormats_InconsistentPrivateKeyIsRejected )
+{
+    using namespace utest;
+
+    /*
+     * A private key whose CRT parameters do not agree with its modulus, exponents and factors
+     * parses, has an acceptable modulus and exponent, and is not a valid key pair: it would
+     * sign wrongly. The full key check refuses it - ::EVP_PKEY_check, which on OpenSSL 3.x
+     * validates the whole pair rather than merely that 1 <= d < n, and ::RSA_check_key_ex on
+     * 1.1.1. The check exists from OpenSSL 1.1.1, so the case is not built below that
+     */
+
+    UTF_REQUIRE_THROW(
+        bl::security::JsonSecuritySerialization::loadPrivateKeyFromPemString(
+            LocalTestPemKeyFormatsHelpers::inconsistentPrivateKeyFixture()
+            ),
+        bl::SystemException
+        );
+
+    /*
+     * A failure must not poison subsequent operations
+     */
+
+    UTF_CHECK_NO_THROW(
+        bl::security::JsonSecuritySerialization::loadPrivateKeyFromPemString(
+            LocalTestPemKeyFormatsHelpers::legacyPrivateKeyFixture()
+            )
+        );
+}
+
+#endif // OPENSSL_VERSION_NUMBER >= 0x10101000L
+
+UTF_AUTO_TEST_CASE( PemKeyFormats_SmallPublicExponentIsRejected )
+{
+    using namespace utest;
+
+    /*
+     * A key with the public exponent 3 is refused on every version of OpenSSL, as a policy
+     * rejection which names the reason and leaves the error queue clean; OpenSSL's own public
+     * key check bounds the exponent only in a FIPS build, so this is the library's check
+     */
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        bl::security::JsonSecuritySerialization::loadPrivateKeyFromPemString(
+            LocalTestPemKeyFormatsHelpers::smallExponentPrivateKeyFixture()
+            ),
+        bl::SecurityException,
+        "public exponent"
+        );
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        bl::security::JsonSecuritySerialization::loadPublicKeyFromPemString(
+            LocalTestPemKeyFormatsHelpers::smallExponentPublicKeyFixture()
+            ),
+        bl::SecurityException,
+        "public exponent"
+        );
+
+    UTF_CHECK( LocalTestPemKeyFormatsHelpers::isErrorQueueClean() );
+}
+
+UTF_AUTO_TEST_CASE( PemKeyFormats_EncryptedExportUsesStrongKeyDerivation )
+{
+    using namespace utest;
+
+    /*
+     * The PBKDF2 iteration count of an encrypted export is pinned. OpenSSL's default of 2048
+     * is what ::PEM_write_bio_PrivateKey applies; the library builds the PBES2 envelope itself
+     * with PKCS8_PBKDF2_ITERATIONS (600000). The count is an INTEGER inside the PBKDF2
+     * parameters, so its DER encoding (02 03 09 27 c0) must appear in the decoded body and the
+     * encoding of the default (02 02 08 00) must not
+     */
+
+    const auto rsaKey = bl::crypto::RsaKey::createInstance();
+    rsaKey -> generate();
+
+    const auto encryptedPem = bl::security::JsonSecuritySerialization::getPrivateKeyAsPemString(
+        rsaKey,
+        bl::security::KeyProtection::Encrypted,
+        "1234"
+        );
+
+    UTF_REQUIRE(
+        encryptedPem.find( "-----BEGIN ENCRYPTED PRIVATE KEY-----" ) == LocalTestPemKeyFormatsHelpers::labelPos
+        );
+
+    std::string base64;
+    std::istringstream is( encryptedPem );
+    std::string line;
+
+    while( std::getline( is, line ) )
+    {
+        if( line.empty() || 0 == line.compare( 0, 5, "-----" ) )
+        {
+            continue;
+        }
+
+        base64 += line;
+    }
+
+    const auto der = bl::SerializationUtils::base64DecodeVector( base64 );
+
+    const unsigned char pinnedCount[] = { 0x02, 0x03, 0x09, 0x27, 0xC0 };
+    const unsigned char defaultCount[] = { 0x02, 0x02, 0x08, 0x00 };
+
+    UTF_REQUIRE(
+        der.end() != std::search( der.begin(), der.end(), pinnedCount, pinnedCount + sizeof( pinnedCount ) )
+        );
+
+    UTF_REQUIRE(
+        der.end() == std::search( der.begin(), der.end(), defaultCount, defaultCount + sizeof( defaultCount ) )
+        );
+
+    /*
+     * And the key still reads back with the password
+     */
+
+    UTF_CHECK_EQUAL(
+        LocalTestPemKeyFormatsHelpers::getPrivateExponent(
+            bl::security::JsonSecuritySerialization::loadPrivateKeyFromPemString( encryptedPem, "1234" )
+            ),
+        LocalTestPemKeyFormatsHelpers::getPrivateExponent( rsaKey )
+        );
 }

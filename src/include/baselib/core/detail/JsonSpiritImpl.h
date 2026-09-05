@@ -66,6 +66,7 @@
 #include <string>
 #include <cstdint>
 #include <limits>
+#include <cmath>
 
 /*
  * JSON accessor macros for json-spirit
@@ -219,14 +220,20 @@ namespace bl
             std::int64_t as_int64() const
             {
                 /*
-                 * json-spirit's get_int64() silently wraps a value it stores as uint64 (i.e. one
-                 * above INT64_MAX) to a negative number; boost::json::value::as_int64() refuses
-                 * that kind, so refuse it here too - this is the int64 half of the numeric policy
-                 * described in namespace detail below (value_to< std::int64_t >() and get_int64()
-                 * both route through this accessor)
+                 * json-spirit's get_int64() silently wraps a value it stores as uint64 to a
+                 * negative number when it is above INT64_MAX; boost::json's value_to< int64 >
+                 * refuses exactly that range and accepts a uint64 kind which fits, so the same
+                 * rule applies here - this is the int64 half of the numeric policy described in
+                 * namespace detail below (value_to< std::int64_t >() and get_int64() both route
+                 * through this accessor). Note that the kind alone is not the criterion: a value
+                 * constructed in memory from a std::uint64_t is stored as uint64 whatever its
+                 * magnitude, while a parsed document only produces that kind above INT64_MAX
                  */
 
-                if( is_uint64() )
+                if(
+                    is_uint64() &&
+                    get_uint64() > static_cast< std::uint64_t >( std::numeric_limits< std::int64_t >::max() )
+                    )
                 {
                     BL_THROW(
                         JsonException(),
@@ -862,6 +869,46 @@ namespace bl
                     return result;
                 }
 
+                /**
+                 * @brief Refuses a value tree which holds a double that is not finite
+                 *
+                 * json-spirit writes a double through an ostream, so an infinity or a NaN would
+                 * come out as the text 'inf' or 'nan', which is not JSON and which no parser
+                 * accepts; the tree is checked before anything is written, one linear pass like
+                 * the serialization itself. The Boost.JSON backend applies the same rule
+                 */
+
+                static void chkNoNonFiniteDoubles( SAA_in const value& val )
+                {
+                    if( val.is_object() )
+                    {
+                        for( const auto& kvp : val.as_object() )
+                        {
+                            chkNoNonFiniteDoubles( kvp.second );
+                        }
+                    }
+                    else if( val.is_array() )
+                    {
+                        for( const auto& elem : val.as_array() )
+                        {
+                            chkNoNonFiniteDoubles( elem );
+                        }
+                    }
+                    else if( val.is_double() )
+                    {
+                        if( ! std::isfinite( val.as_double() ) )
+                        {
+                            BL_THROW(
+                                JsonException(),
+                                BL_MSG()
+                                    << "A JSON document cannot carry a double which is not finite ("
+                                    << val.as_double()
+                                    << ")"
+                                );
+                        }
+                    }
+                }
+
                 static std::string saveToString(
                     SAA_in          const value&                              val,
                     SAA_in          const bool                                prettyPrint,
@@ -913,6 +960,8 @@ namespace bl
                      */
 
                     BL_UNUSED( rawUtf8 );
+
+                    chkNoNonFiniteDoubles( val );
 
                     const int options =
                         ( prettyPrint ? json_spirit::pretty_print : json_spirit::none ) |

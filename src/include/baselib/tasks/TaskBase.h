@@ -1039,6 +1039,14 @@ namespace bl
 
             /**
              * @brief Sets the continuation callback for this task
+             *
+             * The callback is invoked from Task::continuationTask() when this task completes,
+             * on the completing thread and while the owning execution queue holds its internal
+             * (non-recursive) lock - the continuation has to be admitted atomically with the
+             * completion. It must therefore never call any method of the owning queue (not even
+             * the accessors size(), hasReady(), hasPending() or hasExecuting(), which take that
+             * lock as well) and must not block; it should do no more than decide which task, if
+             * any, to return. Same rule as scheduleTask() above
              */
 
             void setContinuationCallback( SAA_in ContinuationCallback&& continuationCallback ) NOEXCEPT

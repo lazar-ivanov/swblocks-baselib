@@ -34,6 +34,14 @@ build still load. `PEM_read_bio_PrivateKey` already accepted PKCS#1, PKCS#8 and 
 than OpenSSL — a PKCS#1-only parser will not read the new public keys. Keys already at rest are
 unaffected.
 
+**Key derivation and import checks (2026-09-05).** An encrypted private key export now derives its
+key with 600 000 PBKDF2 iterations instead of OpenSSL's default of 2 048 (PBES2, AES-256-CBC,
+HMAC-SHA256 on OpenSSL 1.1.0+); readers need no change, the count travels in the file, and an
+export takes a fraction of a second longer. On import, every loader now refuses a key whose public
+exponent is even or not larger than 2^16 (a `SecurityException`, on every OpenSSL version), and the
+PEM private key loader runs the full key pair check (`EVP_PKEY_check`) on OpenSSL 3.x as it already
+did on 1.1.1, so a key with corrupted or forged CRT parameters is refused rather than loaded.
+
 See `notes/plans/issues/openssl3-pem-key-format-compatibility-plan.md`.
 
 ---
@@ -131,20 +139,26 @@ to `host_name_verification`. These are **not the same implementation**:
 | subjectAltName | partial | correct |
 | CN when a SAN is present | consulted | **ignored**, per RFC 6125 |
 | Embedded NUL in names | accepted | **rejected** |
-| **IP addresses** | matched | not matched - see 5a |
+| **IP addresses** | matched | matched, by Boost 1.89+ and by this library's own dispatch - see 5a |
 | **Multi-label wildcards** | matched | **not matched** - see 5b |
 
 The first three rows are a genuine security improvement and are the reason not to revert this.
 
-### 5a. IP address literals - FIXED
+### 5a. IP address literals - handled by this library on every Boost
 
-A deployment connecting to a peer **by IP address** against a certificate carrying that IP in an
-iPAddress SAN stopped verifying, with no diagnostic beyond a handshake failure.
+**Correction (2026-09-05).** An earlier revision of this note, and the review finding it answered,
+stated that `host_name_verification` cannot match IP address literals, so that a peer addressed by
+IP had stopped verifying. That was wrong for every Boost version on which the typedef is active:
+Boost 1.89 and later (verified against the 1.90 sources) recognize an address literal with
+`ip::make_address` and call `::X509_check_ip_asc()` for it. No deployment was failing for that
+reason.
 
-**This is fixed.** `src/include/baselib/crypto/TlsPeerVerification.h` dispatches on whether the peer
-name is an address literal and uses `::X509_check_ip_asc()` for that case, keeping
-`::X509_check_host()` for everything else. `AsioSslStreamWrapper.h` calls it in place of the bound
-verifier. Covered by `TestTlsPeerVerification.h` in `utf_baselib_http`.
+What is true is that `src/include/baselib/crypto/TlsPeerVerification.h` now owns the dispatch: it
+decides whether the peer name is an address literal through `::X509_check_ip_asc()` itself and uses
+`::X509_check_host()` for everything else, so the matching rules are identical across devenv2-7
+rather than a property of whichever Asio matcher a build picks up, and they are asserted directly by
+`TestTlsPeerVerification.h` in `utf_baselib_http`. `AsioSslStreamWrapper.h` calls it in place of the
+bound verifier.
 
 Note for anyone reviewing that code: when the peer name is an address literal the IP result is
 **final** and must not fall through to the DNS matcher. RFC 6125 section 6.4 is explicit that an
@@ -175,6 +189,21 @@ baseline requirements define a wildcard as a whole leftmost label and public CAs
 partial one, so only a privately issued certificate can be affected; such a certificate needs to be
 reissued with a whole-label wildcard or an explicit SAN. Asserted by
 `TlsPeerVerification_PartialWildcardsDoNotMatch`.
+
+### 5d. Common name fallback - disabled, by decision (2026-09-05)
+
+`::X509_check_host()` is now also called with `X509_CHECK_FLAG_NEVER_CHECK_SUBJECT`. Without it,
+OpenSSL matches the peer name against the subject common name when the certificate carries no
+dNSName subjectAltName at all (when a SAN is present the common name was already ignored, per
+RFC 6125). The common name is untyped free text and was never a defined host identity; the
+CA/Browser Forum baseline requirements have required a subjectAltName on every server certificate
+since 2017 and browsers have ignored the common name since then. Boost's own matcher still falls
+back to the common name, so this is stricter than the Asio behaviour on every version.
+
+**Presents as:** a handshake failure against a server certificate which carries no subjectAltName.
+Public CAs have not issued such certificates for years, so only a privately issued certificate can
+be affected; it needs to be reissued with the host name as a dNSName SAN. Asserted by
+`TlsPeerVerification_CommonNameIsNeverConsulted`.
 
 ---
 
@@ -209,6 +238,18 @@ sub-1024-bit certificates on every connection of the process.
 
 Asserted by `TestTlsProtocolPolicy.h` in `utf_baselib_http`. See
 `notes/plans/issues/tls-legacy-protocol-opt-in-removal-decision.md`.
+
+**Cipher suites (2026-09-05).** The TLS 1.2 cipher list is now AEAD-only: ephemeral ECDH or DH key
+exchange with AES-GCM (`EECDH+AESGCM:EDH+AESGCM`, plus the explicit denials). The previous list
+also admitted the AES-CBC suites with SHA-1, SHA-256 and SHA-384 HMACs, which a server could steer a
+client to; those are gone. TLS 1.3 suites are unaffected (they are always AEAD and are left at the
+OpenSSL default). **Presents as:** a handshake failure against a TLS 1.2 peer which offers no
+AES-GCM suite. Asserted by `TlsProtocolPolicy_CipherSuitesAreAeadOnly`, which checks every suite
+the contexts offer with `SSL_CIPHER_is_aead`.
+
+**Server name indication (2026-09-05).** A client no longer sends the SNI extension when the host it
+connects to is an IP address literal (RFC 6066 section 3 forbids a literal there and a strict server
+may abort); peer verification of an IP-addressed server is unaffected, it uses the iPAddress SAN.
 
 ---
 
@@ -286,6 +327,18 @@ Canonicalization (`getObjectHashCanonical`, `saveToString( …, canonicalize = t
 bytewise on both backends but does not normalize number text, so it removes the first difference
 only. This is the concrete reason behind item 4: a hash or a byte comparison of the text is only
 meaningful between processes built with the same backend.
+
+**Double values, not only their text (2026-09-05).** The Boost.JSON backend parses a double as the
+correctly rounded value of its literal (`number_precision::precise`, set explicitly; Boost's default
+mode can be one ULP off for literals with more than 17 significant digits, and then a document
+passed through unchanged would re-serialize to a different literal). The json-spirit backend uses
+Spirit.Classic's floating point accumulation and can be a few ULPs off for such literals; a consumer
+which needs the exact value of a long literal on devenv2-6 has to carry it as a string. And a double
+which is not finite is now refused with a `JsonException` at serialization on both backends: JSON has
+no representation for it, json-spirit used to write the text `inf`/`nan` (invalid JSON) and
+Boost.JSON an out-of-range literal or `null`. Such a value can only arise in memory or from a literal
+which overflowed on parse (`1e400`). Asserted by `JsonParseDoublesAreCorrectlyRounded` and
+`JsonSerializeRejectsNonFiniteDoubles`.
 
 **Who is affected:** anyone comparing serialized documents textually, or persisting the text as a
 canonical form. No consumer in this repository does either (traced in the review's §7.1).

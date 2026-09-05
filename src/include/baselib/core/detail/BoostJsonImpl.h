@@ -32,6 +32,7 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <cmath>
 #include <sstream>
 #include <vector>
 
@@ -134,6 +135,32 @@ namespace bl
 
         inline std::int64_t get_int64( SAA_in const value& v )
         {
+            /*
+             * A value constructed in memory from a std::uint64_t has the unsigned kind whatever
+             * its magnitude (the parser only produces that kind above INT64_MAX), and
+             * boost::json::value::as_int64() refuses the kind rather than the magnitude; a value
+             * which fits is accepted here, as value_to< std::int64_t > and the json-spirit backend
+             * accept it, and one which does not is refused as out of range
+             */
+
+            if( v.is_uint64() )
+            {
+                const auto val = v.as_uint64();
+
+                if( val > static_cast< std::uint64_t >( std::numeric_limits< std::int64_t >::max() ) )
+                {
+                    BL_THROW(
+                        JsonException(),
+                        BL_MSG()
+                            << "JSON integer value '"
+                            << val
+                            << "' is out of range for the requested integer type"
+                        );
+                }
+
+                return static_cast< std::int64_t >( val );
+            }
+
             return v.as_int64();
         }
 
@@ -303,6 +330,18 @@ namespace bl
 
                     options.max_depth = MAX_PARSE_DEPTH;
 
+                    /*
+                     * Boost.JSON's default number mode is 'imprecise': a double is computed as
+                     * mantissa times a power of ten with two roundings, so a literal with more
+                     * than 17 significant digits can land one ULP away from the correctly
+                     * rounded value every other parser (and this library's own serializer, which
+                     * emits the shortest round-trip text) would produce. A payload passed through
+                     * unchanged would then re-serialize as a different literal and hash
+                     * differently on each hop. The precise mode is correctly rounded
+                     */
+
+                    options.numbers = boost::json::number_precision::precise;
+
                     return options;
                 }
 
@@ -443,6 +482,51 @@ namespace bl
                  * attached to it - see notes/plans/issues/medium-severity-findings-f11-f17-plan.md
                  * (F-11)
                  */
+
+                /**
+                 * @brief Refuses a value tree which holds a double that is not finite
+                 *
+                 * JSON has no representation for an infinity or a NaN; Boost.JSON's serializer
+                 * would emit an out-of-range literal or null in their place, which silently
+                 * changes the value, so they are refused before anything is written. This is
+                 * one linear pass over the tree, like the serialization which follows it
+                 */
+
+                static void chkNoNonFiniteDoubles( SAA_in const value& val )
+                {
+                    switch( val.kind() )
+                    {
+                        case kind::object:
+                            for( const auto& kvp : val.as_object() )
+                            {
+                                chkNoNonFiniteDoubles( kvp.value() );
+                            }
+                            break;
+
+                        case kind::array:
+                            for( const auto& elem : val.as_array() )
+                            {
+                                chkNoNonFiniteDoubles( elem );
+                            }
+                            break;
+
+                        case kind::double_:
+                            if( ! std::isfinite( val.as_double() ) )
+                            {
+                                BL_THROW(
+                                    JsonException(),
+                                    BL_MSG()
+                                        << "A JSON document cannot carry a double which is not finite ("
+                                        << val.as_double()
+                                        << ")"
+                                    );
+                            }
+                            break;
+
+                        default:
+                            break;
+                    }
+                }
 
                 static value canonicalizeValue( SAA_in const value& val )
                 {
@@ -667,6 +751,8 @@ namespace bl
                             "Cannot use both prettyPrint and canonicalize options together"
                             );
                     }
+
+                    chkNoNonFiniteDoubles( val );
 
                     if( canonicalize )
                     {

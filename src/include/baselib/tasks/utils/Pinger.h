@@ -426,9 +426,13 @@ namespace bl
                 }
 
                 /*
-                 * Darwin case
+                 * Darwin case; the two Linux summary forms are accepted as well, mirroring the
+                 * fallback matchAverageRoundTripTime() applies to the round trip time line
                  */
-                return cpp::contains( line, "1 packets transmitted, 1 packets received, 0.0% packet loss" );
+                return
+                    cpp::contains( line, "1 packets transmitted, 1 packets received, 0.0% packet loss" ) ||
+                    cpp::contains( line, "1 packets transmitted, 1 received, 0% packet loss" ) ||
+                    cpp::contains( line, "1 packets transmitted, 1 packets received, 0% packet loss" );
             }
 
             static const str::regex& getPatternAvgRtt() NOEXCEPT

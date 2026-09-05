@@ -229,6 +229,7 @@ namespace bl
             std::size_t                                                             m_readyCount;
             std::uint64_t                                                           m_activeWorkGeneration;
             std::uint64_t                                                           m_lastPublishedGeneration;
+            std::uint64_t                                                           m_lastCandidateGeneration;
             tasks_queue_t                                                           m_pending;
             tasks_queue_t                                                           m_executing;
             tasks_queue_t                                                           m_ready;
@@ -271,6 +272,7 @@ namespace bl
                 m_readyCount( 0U ),
                 m_activeWorkGeneration( 0U ),
                 m_lastPublishedGeneration( 0U ),
+                m_lastCandidateGeneration( 0U ),
                 m_eventsMask( 0 ),
                 m_notifyDelivery( ExecutionQueueNotify::DeliveryConcurrent ),
                 m_notifyOwner( std::thread::id() ),
@@ -312,6 +314,8 @@ namespace bl
                 SAA_out                 bool&                                       serializeNotify
                 ) const
             {
+                serializeNotify = false;
+
                 cpp::void_callback_noexcept_t onNotify;
 
                 if( m_notifyCB && ( m_eventsMask & eventId ) )
@@ -357,9 +361,10 @@ namespace bl
              *
              * Note this is the only place where the queue invokes observer code with a queue
              * mutex held, and it holds only m_lockNotify; maxReadyOrExecuting() is sampled once
-             * by setNotifyCallback(), outside the lock. Two other kinds of user code do run
+             * by setNotifyCallback(), outside the lock. Three other kinds of user code do run
              * under m_lock and are documented as such at their contracts: Task::scheduleTask()
-             * overrides (see TaskBase.h) and the scanQueue() callback (see ExecutionQueue.h).
+             * overrides and continuation callbacks (see TaskBase.h) and the scanQueue() callback
+             * (see ExecutionQueue.h); none of them may call back into the owning queue.
              *
              * The mutex is deliberately non-recursive. onReady() CAN be re-entered on the same
              * thread: a serialized callback which synchronously completes another task of this
@@ -400,9 +405,17 @@ namespace bl
 
                     m_notifyOwner.store( std::this_thread::get_id() );
 
-                    onNotify();
+                    /*
+                     * The owner id is cleared on every exit path, and while the lock is still
+                     * held: onNotify() is noexcept, but under the limited C++11 support of the
+                     * oldest MSVC that spelling is throw(), which does not stop propagation, and a
+                     * stale owner id would abort the *next* serialized delivery on this thread
+                     * rather than the one which violated the contract
+                     */
 
-                    m_notifyOwner.store( std::thread::id() );
+                    BL_SCOPE_EXIT( { m_notifyOwner.store( std::thread::id() ); } );
+
+                    onNotify();
 
                     return;
                 }
@@ -562,6 +575,13 @@ namespace bl
 
                         allTasksCompletedCandidate = true;
                         allTasksCompletedCandidateGeneration = m_activeWorkGeneration;
+
+                        /*
+                         * Remembered so that validation below can tell a candidate which a
+                         * newer completion has superseded from one which is still the latest
+                         */
+
+                        m_lastCandidateGeneration = m_activeWorkGeneration;
                     }
                 }
                 /*
@@ -585,11 +605,24 @@ namespace bl
                 {
                     BL_MUTEX_GUARD( m_lock );
 
+                    /*
+                     * The candidate is published when the queue is still (or again) empty, no
+                     * newer completion candidate has formed since (m_lastCandidateGeneration: a
+                     * newer completion carries its own candidate, which supersedes this one - see
+                     * EVENT COLLAPSING on ExecutionQueueNotify::onEvent()) and nothing newer has
+                     * been published. It is deliberately not required that m_activeWorkGeneration
+                     * still equal the candidate: work admitted after the candidate formed and then
+                     * removed without completing (a pending task cancelled or flushed before it
+                     * was scheduled) produces no completion and no candidate of its own, so this
+                     * candidate is the only event which can report that the queue drained, and
+                     * dropping it would lose the final AllTasksCompleted
+                     */
+
                     if(
                         m_pending.empty() &&
                         m_executing.empty() &&
-                        m_activeWorkGeneration == allTasksCompletedCandidateGeneration &&
-                        m_lastPublishedGeneration != allTasksCompletedCandidateGeneration
+                        m_lastCandidateGeneration == allTasksCompletedCandidateGeneration &&
+                        m_lastPublishedGeneration < allTasksCompletedCandidateGeneration
                         )
                     {
                         m_lastPublishedGeneration = allTasksCompletedCandidateGeneration;

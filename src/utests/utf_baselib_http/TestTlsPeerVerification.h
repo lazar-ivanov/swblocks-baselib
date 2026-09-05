@@ -29,6 +29,7 @@
 #include <utests/baselib/UtfArgsParser.h>
 
 #include <openssl/pem.h>
+#include <openssl/x509v3.h>
 
 /*
  * Tests for bl::crypto::TlsPeerVerification
@@ -84,6 +85,35 @@ namespace utest
                 certificate.get(),
                 peerName
                 );
+        }
+
+        /*
+         * Adds a subjectAltName extension to a certificate produced by
+         * X509Cert::createSelfSignedX509Cert (which emits a common name only) and re-signs it
+         * with its key, so the tests can build the SAN-bearing shapes public CAs issue without
+         * carrying fixture files for each of them
+         */
+
+        inline void addSubjectAltName(
+            SAA_in          const bl::crypto::x509cert_ptr_t&   certificate,
+            SAA_in          const bl::crypto::evppkey_ptr_t&    key,
+            SAA_in          const std::string&                  subjectAltName
+            )
+        {
+            ::X509_EXTENSION* const extension = ::X509V3_EXT_conf_nid(
+                nullptr                                         /* conf */,
+                nullptr                                         /* ctx */,
+                NID_subject_alt_name,
+                const_cast< char* >( subjectAltName.c_str() )
+                );
+
+            BL_CHK_CRYPTO_API_NM( extension );
+
+            BL_SCOPE_EXIT( { ::X509_EXTENSION_free( extension ); } );
+
+            BL_CHK_CRYPTO_API_NM( ::X509_add_ext( certificate.get(), extension, -1 /* append */ ) );
+
+            BL_CHK_CRYPTO_API_NM( ::X509_sign( certificate.get(), key.get(), ::EVP_sha256() ) );
         }
 
     } // tlspeer
@@ -297,9 +327,9 @@ UTF_AUTO_TEST_CASE( TlsPeerVerification_PartialWildcardsDoNotMatch )
     /*
      * A wildcard which is only part of the leftmost label ('f*.example.test') is refused, while
      * the whole-label form ('*.example.test') keeps matching exactly one label. The certificates
-     * are generated here with a common name only: with no subjectAltName present
-     * ::X509_check_host() falls back to the common name, which is all this needs, and no
-     * fixture file has to carry a shape which public CAs do not issue
+     * are generated here and given their wildcard as a dNSName subjectAltName, which is the
+     * shape a CA issues; the common name is set to an unrelated name so that a match can only
+     * come from the SAN
      */
 
     const auto key = X509Cert::createPrivateKey();
@@ -308,19 +338,23 @@ UTF_AUTO_TEST_CASE( TlsPeerVerification_PartialWildcardsDoNotMatch )
         key,
         "US"                    /* country */,
         "My Company Ltd"        /* organization */,
-        "f*.example.test"       /* commonName */,
+        "unrelated.test"        /* commonName */,
         1                       /* serial */,
         1                       /* daysValid */
         );
+
+    utest::tlspeer::addSubjectAltName( partial, key, "DNS:f*.example.test" );
 
     const auto whole = X509Cert::createSelfSignedX509Cert(
         key,
         "US"                    /* country */,
         "My Company Ltd"        /* organization */,
-        "*.example.test"        /* commonName */,
+        "unrelated.test"        /* commonName */,
         2                       /* serial */,
         1                       /* daysValid */
         );
+
+    utest::tlspeer::addSubjectAltName( whole, key, "DNS:*.example.test" );
 
     /*
      * The first assertion is the one which holds only with X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS
@@ -332,6 +366,39 @@ UTF_AUTO_TEST_CASE( TlsPeerVerification_PartialWildcardsDoNotMatch )
     UTF_REQUIRE( utest::tlspeer::matches( whole, "foo.example.test" ) );
     UTF_REQUIRE( ! utest::tlspeer::matches( whole, "a.b.example.test" ) );
     UTF_REQUIRE( ! utest::tlspeer::matches( whole, "example.test" ) );
+}
+
+UTF_AUTO_TEST_CASE( TlsPeerVerification_CommonNameIsNeverConsulted )
+{
+    using namespace bl;
+    using namespace bl::crypto;
+    using namespace bl::crypto::detail;
+
+    /*
+     * The subject common name is not a host identity. ::X509_check_host() would fall back to it
+     * for a certificate which carries no dNSName entry at all, unless
+     * X509_CHECK_FLAG_NEVER_CHECK_SUBJECT is set - and it is set, so a certificate with a
+     * common name only matches nothing, and the same certificate matches its name once that
+     * name is present as a subjectAltName, while the common name stays ignored
+     */
+
+    const auto key = X509Cert::createPrivateKey();
+
+    const auto certificate = X509Cert::createSelfSignedX509Cert(
+        key,
+        "US"                    /* country */,
+        "My Company Ltd"        /* organization */,
+        "cn.example.test"       /* commonName */,
+        3                       /* serial */,
+        1                       /* daysValid */
+        );
+
+    UTF_REQUIRE( ! utest::tlspeer::matches( certificate, "cn.example.test" ) );
+
+    utest::tlspeer::addSubjectAltName( certificate, key, "DNS:san.example.test" );
+
+    UTF_REQUIRE( utest::tlspeer::matches( certificate, "san.example.test" ) );
+    UTF_REQUIRE( ! utest::tlspeer::matches( certificate, "cn.example.test" ) );
 }
 
 #endif /* __UTEST_TESTTLSPEERVERIFICATION_H_ */

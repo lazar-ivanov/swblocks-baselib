@@ -732,7 +732,7 @@ template \
     { \
         const auto pos = map.find( #nameArg ); \
         \
-        if( pos == map.end() ) \
+        if( pos == map.end() || BL_JSON_ITER_VALUE( pos ).is_null() ) \
         { \
             return; \
         } \
@@ -893,7 +893,7 @@ template \
                 \
                 for( const auto& pair : m_unmapped ) \
                 { \
-                    if( bl::cpp::contains( doc, std::string( BL_JSON_PAIR_KEY( pair ) ) ) ) \
+                    if( bl::cpp::contains( doc, BL_JSON_PAIR_KEY( pair ) ) ) \
                     { \
                         BL_LOG( \
                             bl::Logging::debug(), \
@@ -906,7 +906,7 @@ template \
                         BL_ASSERT( true ); \
                     } \
                     \
-                    doc.emplace( std::string( BL_JSON_PAIR_KEY( pair ) ), BL_JSON_PAIR_VALUE( pair ) ); \
+                    doc.emplace( BL_JSON_PAIR_KEY( pair ), BL_JSON_PAIR_VALUE( pair ) ); \
                 } \
             } \
             \
@@ -918,7 +918,7 @@ template \
                 { \
                     if( ! context.containsProcessedProperty( std::string( BL_JSON_PAIR_KEY( pair ) ) ) ) \
                     { \
-                        m_unmapped.emplace( std::string( BL_JSON_PAIR_KEY( pair ) ), BL_JSON_PAIR_VALUE( pair ) ); \
+                        m_unmapped.emplace( BL_JSON_PAIR_KEY( pair ), BL_JSON_PAIR_VALUE( pair ) ); \
                     } \
                 } \
             } \
