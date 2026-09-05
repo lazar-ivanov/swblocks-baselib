@@ -1,4 +1,4 @@
-ifeq ($(TOOLCHAIN),vc143)
+ifneq (,$(filter vc143 ccl16,$(TOOLCHAIN)))
 # Cross-compilation support for x64 target
 # Prepend Llvm x64 bin directory if using clang-cl
 ifdef BL_USE_CLANG_CL

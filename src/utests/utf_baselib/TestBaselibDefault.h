@@ -3925,8 +3925,6 @@ UTF_AUTO_TEST_CASE( BaseLib_EndpointSelectorImplTests )
     const auto cb = [ &hosts ]( SAA_in const bl::om::ObjPtr< bl::EndpointSelectorImpl >& selector ) -> void
     {
         {
-            bl::time::time_duration timeout;
-
             UTF_REQUIRE_EQUAL( selector -> count(), 4U );
 
             const auto iterator = selector -> createIterator();
@@ -7674,6 +7672,75 @@ UTF_AUTO_TEST_CASE( BaseLib_OSRegistryValueTest )
         bl::os::getRegistryValue( "Software\\foo", "bar" ),
         bl::UnexpectedException
         );
+
+    #if defined( _WIN32 )
+    {
+        /*
+         * A key and a value whose names contain a non-ASCII character are created through
+         * the wide registry API and must be found back through the UTF-8 helpers: a
+         * byte-widened name would look up a different, nonexistent key or value. A name
+         * which is not valid UTF-8 must be rejected rather than converted silently (the
+         * lone 0xE9 byte below, byte-widened, would have matched the value just created)
+         */
+
+        const std::string keyName =
+            "Software\\swblocks-baselib-utf-\xC3\xA9-" + bl::uuids::uuid2string( bl::uuids::create() );
+        const std::string valueName = "value-\xC3\xA9";
+        const std::string data = "data-\xC3\xBC";
+
+        bl::cpp::wstring_convert_t conv;
+
+        const std::wstring wkeyName = conv.from_bytes( keyName );
+        const std::wstring wvalueName = conv.from_bytes( valueName );
+        const std::wstring wdata = conv.from_bytes( data );
+
+        HKEY hkey = nullptr;
+
+        UTF_REQUIRE_EQUAL(
+            ERROR_SUCCESS,
+            ::RegCreateKeyExW(
+                HKEY_CURRENT_USER               /* hKey */,
+                wkeyName.c_str()                /* lpSubKey */,
+                0                               /* Reserved */,
+                nullptr                         /* lpClass */,
+                REG_OPTION_VOLATILE             /* dwOptions */,
+                KEY_WRITE                       /* samDesired */,
+                nullptr                         /* lpSecurityAttributes */,
+                &hkey                           /* phkResult */,
+                nullptr                         /* lpdwDisposition */
+                )
+            );
+
+        BL_SCOPE_EXIT(
+            {
+                ::RegCloseKey( hkey );
+                ::RegDeleteKeyW( HKEY_CURRENT_USER, wkeyName.c_str() );
+            }
+            );
+
+        UTF_REQUIRE_EQUAL(
+            ERROR_SUCCESS,
+            ::RegSetValueExW(
+                hkey                                                        /* hKey */,
+                wvalueName.c_str()                                          /* lpValueName */,
+                0                                                           /* Reserved */,
+                REG_SZ                                                      /* dwType */,
+                reinterpret_cast< const BYTE* >( wdata.c_str() )            /* lpData */,
+                static_cast< DWORD >( ( wdata.size() + 1 ) * sizeof( wchar_t ) )   /* cbData */
+                )
+            );
+
+        UTF_REQUIRE_EQUAL(
+            data,
+            bl::os::getRegistryValue( keyName, valueName, true /* currentUser */ )
+            );
+
+        UTF_CHECK_THROW(
+            bl::os::tryGetRegistryValue( keyName, "value-\xE9" /* not UTF-8 */, true /* currentUser */ ),
+            bl::SystemException
+            );
+    }
+    #endif
 
     /*
      * Don't run for 32bit process as the below registry entry won't exist

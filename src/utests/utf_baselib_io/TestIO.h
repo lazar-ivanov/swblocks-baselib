@@ -287,12 +287,22 @@ namespace
                                 class LocalClientConnection : public connection_base_t
                                 {
                                     /*
-                                     * Bring base class type into class scope for member initializer list.
-                                     * clang-cl does not find typedefs from enclosing function scope
-                                     * when resolving member initializer names.
+                                     * clang-cl does not resolve a typedef from the enclosing function
+                                     * scope when it is used as a member-initializer name, so the base
+                                     * class is named through this class-scope alias in the constructor
+                                     * below. clang does not count that member-initializer use as a use
+                                     * of the alias and would report it unused under -WX, so the warning
+                                     * is suppressed for just this declaration (cl.exe never sees the
+                                     * clang pragma); this replaces the former global -Wno-unused-local-typedef.
                                      */
-
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-local-typedef"
+#endif
                                     using base_type = connection_base_t;
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
                                 protected:
 

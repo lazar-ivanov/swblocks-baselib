@@ -5,14 +5,38 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "(Windows) Launch",
+            "name": "(Windows) Launch utf-baselib (debug)",
             "type": "cppvsdbg",
             "request": "launch",
-            "program": "C:\\git\\github\\swblocks-baselib\\bld\\win7-x64-vc14-debug\\utests\\utf_baselib\\utf-baselib.exe",
-            "args": [ "--log_level=message", "--run_test=BaseLib_DataEnsureAvailableTests" ],
+            "program": "${workspaceFolder}\\bld\\win-a64-vc143-debug\\utests\\utf_baselib\\utf-baselib.exe",
+            "args": [ "--log_level=message", "--run_test=BaseLib_URIEncodeDecodeTests" ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],
+            "externalConsole": true
+        },
+        {
+            "name": "(Windows) Launch bl-tool (debug)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}\\bld\\win-a64-vc143-debug\\apps\\bl-tool\\bl-tool.exe",
+            "args": [ "http", "request", "-s", "-h", "en.wikipedia.org", "--path", "/wiki/Probability_theory" ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": true
+        },
+        {
+            "name": "(Windows) Launch utf-baselib-jni (debug)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}\\bld\\win-a64-vc143-debug\\utests\\utf_baselib_jni\\utf-baselib-jni.exe",
+            "args": [ "--log_level=message", "--run_test=Jni_CreateJniEnvironments" ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                { "name": "JAVA_HOME", "value": "${env:USERPROFILE}\\swblocks\\dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86\\openjdk\\25\\a64" }
+            ],
             "externalConsole": true
         }
     ]

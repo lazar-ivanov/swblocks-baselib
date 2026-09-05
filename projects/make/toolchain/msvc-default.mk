@@ -38,10 +38,10 @@ endif
 ifeq ($(TOOLCHAIN),vc143)
 MSVC                := $(DIST_ROOT_DEPS3)/toolchain-msvc/vc143/BuildTools
 MSVCRTTAG           := Microsoft.VC143.CRT
-# Dynamically detect MSVC compiler version
-MSVCVERSIONTAG      := $(firstword $(notdir $(wildcard $(MSVC)/VC/Tools/MSVC/*)))
-# Dynamically detect Windows SDK version
-WINSDK10VERSIONTAG  := $(firstword $(notdir $(wildcard $(WINSDK10)/Include/*)))
+# Dynamically detect MSVC compiler version (the newest, as vs-detector.ps1 selects it)
+MSVCVERSIONTAG      := $(lastword $(sort $(notdir $(wildcard $(MSVC)/VC/Tools/MSVC/*))))
+# Dynamically detect Windows SDK version (the newest, as vs-detector.ps1 selects it)
+WINSDK10VERSIONTAG  := $(lastword $(sort $(notdir $(wildcard $(WINSDK10)/Include/*))))
 # Set host architecture tag based on detected architecture
 ifeq ($(BL_WIN_ARCH_IS_ARM64),1)
 MSVCHOSTARCHTAG     := Hostarm64
@@ -50,6 +50,8 @@ MSVCHOSTARCHTAG     := Hostx64
 else
 MSVCHOSTARCHTAG     := Hostx86
 endif
+$(info Building with MSVCVERSIONTAG = $(MSVCVERSIONTAG))
+$(info Building with WINSDK10VERSIONTAG = $(WINSDK10VERSIONTAG))
 $(info Building with MSVCHOSTARCHTAG = $(MSVCHOSTARCHTAG))
 endif
 
@@ -61,10 +63,10 @@ ifeq ($(TOOLCHAIN),ccl16)
 BL_USE_CLANG_CL     := 1
 MSVC                := $(DIST_ROOT_DEPS3)/toolchain-msvc/vc143/BuildTools
 MSVCRTTAG           := Microsoft.VC143.CRT
-# Dynamically detect MSVC compiler version
-MSVCVERSIONTAG      := $(firstword $(notdir $(wildcard $(MSVC)/VC/Tools/MSVC/*)))
-# Dynamically detect Windows SDK version
-WINSDK10VERSIONTAG  := $(firstword $(notdir $(wildcard $(WINSDK10)/Include/*)))
+# Dynamically detect MSVC compiler version (the newest, as vs-detector.ps1 selects it)
+MSVCVERSIONTAG      := $(lastword $(sort $(notdir $(wildcard $(MSVC)/VC/Tools/MSVC/*))))
+# Dynamically detect Windows SDK version (the newest, as vs-detector.ps1 selects it)
+WINSDK10VERSIONTAG  := $(lastword $(sort $(notdir $(wildcard $(WINSDK10)/Include/*))))
 # Set host architecture tag based on detected architecture
 ifeq ($(BL_WIN_ARCH_IS_ARM64),1)
 MSVCHOSTARCHTAG     := Hostarm64
@@ -73,6 +75,8 @@ MSVCHOSTARCHTAG     := Hostx64
 else
 MSVCHOSTARCHTAG     := Hostx86
 endif
+$(info Building with MSVCVERSIONTAG = $(MSVCVERSIONTAG))
+$(info Building with WINSDK10VERSIONTAG = $(WINSDK10VERSIONTAG))
 $(info Building with MSVCHOSTARCHTAG = $(MSVCHOSTARCHTAG))
 endif
 
@@ -345,47 +349,20 @@ endif
 
 CXXFLAGS += -WX
 
-# clang-cl specific warning suppressions
-# clang-cl is much stricter than MSVC and treats Windows SDK header issues as errors
+# clang-cl warning suppressions
+#
+# The external headers (Windows SDK, MSVC, Boost, OpenSSL, JDK, json-spirit) are passed with
+# -imsvc in the include section below, which marks them as system headers so clang does not
+# report warnings from them. That removed the need for the long global -Wno-* list that used
+# to live here, which also masked the same warning classes in the project's own code under -WX.
+# Only the two Microsoft-extension suppressions are kept: they cover deliberate idioms MSVC
+# accepts in the project's own code (for example the function-pointer cast in the shared-library
+# loader) and are not about third-party headers, so -imsvc does not silence them.
 ifdef BL_USE_CLANG_CL
-# Windows SDK header compatibility
-# '/*' within block comment warnings (ntverp.h)
-CXXFLAGS += -Wno-comment
-# case-sensitive include path warnings (winsock2.h vs WinSock2.h)
-CXXFLAGS += -Wno-nonportable-include-path
-# pointer to smaller integer cast warnings (basetsd.h)
-CXXFLAGS += -Wno-void-pointer-to-int-cast
-# integer to pointer cast warnings (basetsd.h)
-CXXFLAGS += -Wno-int-to-void-pointer-cast
-# unrecognized ARM64 intrinsic warnings (winnt.h)
-CXXFLAGS += -Wno-ignored-pragma-intrinsic
-# __declspec(no_init_all) not supported warnings (winnt.h)
-CXXFLAGS += -Wno-ignored-attributes
-# #pragma prefast warnings (winnt.h)
-CXXFLAGS += -Wno-unknown-pragmas
-# pragma pack alignment warnings (winnt.h, pshpack*.h)
-CXXFLAGS += -Wno-pragma-pack
-# deprecated API warnings (winsock2.h, ws2def.h)
-CXXFLAGS += -Wno-deprecated-declarations
-# Code-level warnings for Boost and project code
-# unused variable warnings (Boost.Test, project code)
-CXXFLAGS += -Wno-unused-variable
-# variable set but not used warnings (Boost.Test)
-CXXFLAGS += -Wno-unused-but-set-variable
-# unused private field warnings (Boost.Asio)
-CXXFLAGS += -Wno-unused-private-field
-# function-to-object pointer cast warnings (Microsoft extension)
+# function-to-object pointer cast (Microsoft extension)
 CXXFLAGS += -Wno-microsoft-cast
-# unqualified lookup into dependent base class (Microsoft extension)
+# unqualified lookup into a dependent base class (Microsoft extension)
 CXXFLAGS += -Wno-microsoft-template
-# struct initialization brace warnings
-CXXFLAGS += -Wno-missing-braces
-# string literal to non-const pointer warnings (security.h)
-CXXFLAGS += -Wno-writable-strings
-# type alias used only in member initializer list (clang doesn't count as usage)
-CXXFLAGS += -Wno-unused-local-typedef
-# macro redefinition conflicts between clang intrinsics and Windows SDK (xmmintrin.h vs winnt.h)
-CXXFLAGS += -Wno-macro-redefined
 endif
 
 #
@@ -438,7 +415,31 @@ CPPFLAGS += -DWINDOWS_LEAN_AND_MEAN
 CPPFLAGS += -DNOMINMAX
 CPPFLAGS += -DSECURITY_WIN32
 CPPFLAGS += -D_SECURE_SCL=0
+
+ifdef BL_USE_CLANG_CL
+#
+# The project's own include directories are passed with -I and everything else (the MSVC and
+# Windows SDK headers and the distribution's Boost, OpenSSL, JDK and json-spirit headers) with
+# -imsvc, clang-cl's system include option, so that -WX and the warning flags above apply to
+# the project's headers only. The two are told apart by whether the path is absolute, the rule
+# gcc-default.mk applies on the other platforms: the project directories derive from TOPDIR,
+# which is relative when make is run from the repository root, while every external include
+# is an absolute path. The check makes that assumption explicit rather than letting an absolute
+# TOPDIR silently move the project's headers into -imsvc and mute every warning in them.
+#
+# -imsvc takes its directory as a separate argument on purpose: MSYS converts a bare /c/...
+# argument to a Windows path for the compiler, but not one joined to an option it does not know
+#
+ifneq (, $(filter /%,$(TOPDIR)))
+$(error make must be run from the repository root so that TOPDIR is relative (TOPDIR=$(TOPDIR)); \
+the -I/-imsvc split of the include paths relies on the project directories being relative)
+endif
+CPPFLAGS += \
+  $(patsubst %,-I%,$(filter-out /%,$(INCLUDE))) \
+  $(patsubst %,-imsvc %,$(filter /%,$(INCLUDE)))
+else
 CPPFLAGS += $(INCLUDE:%=-I%)
+endif
 
 LD        = link
 LDFLAGS  += -nologo

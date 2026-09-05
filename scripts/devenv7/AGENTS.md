@@ -418,7 +418,7 @@ Starting with devenv7, Windows builds of `utf_baselib_jni` are fully supported a
 
 ### JNI Lessons Learned (All Resolved)
 
-1. **PATH must be exported:** Without `export PATH` in makefiles, test executables fail with error code 200 because `LoadLibrary()` can't find `jvm.dll`. Fixed in `projects/make/3rd/jdk/common.mk` and `projects/make/toolchain/msvc-default.mk`.
+1. **JVM load no longer requires the JDK on `PATH`:** `os::loadLibrary()` loads `jvm.dll` by its absolute `JAVA_HOME` path with `LOAD_WITH_ALTERED_SEARCH_PATH`, so `jvm.dll` and its dependents resolve from the JDK directory instead of `PATH`. Verified 2026-09-04 (ccl16, a64): with the JDK absent from `PATH` and only `JAVA_HOME` set, `Jni_CreateJniEnvironments` passes (11/11). The makefiles still prepend the JDK `bin` to an exported `PATH` (`projects/make/3rd/jdk/common.mk`, `projects/make/toolchain/msvc-default.mk`) because gradle and the java tests invoke `java` directly; the historical error-code-200 failure was from `LoadLibraryExW` being called without the altered-search-path flag.
 
 2. **Path normalization on Windows:** `JAVA_HOME` from MSYS/Cygwin contains forward slashes, but Boost.Filesystem appends with backslashes, creating mixed separators that break `fs::exists()`. Fixed by normalizing `JAVA_HOME` with `fs::normalize()` before constructing paths. See `JavaVirtualMachine.h:195-197`.
 
@@ -461,10 +461,16 @@ make pytest-install PYTHON="$SCRATCH/python-full/tools/python.exe"
    `.venv/Scripts/python.exe -m pip install --only-binary=cryptography cryptography`
 5. Run `make pytest` normally afterwards — it uses `.venv` directly and needs no override.
 
-**Expected Windows results:** the suite passes — **551 passed, 23 skipped** as of 2026-09-03, against
-572 passed / 2 skipped on Linux. The same 574 tests are collected on both; the 21 extra skips are
-platform guards for symlinks, FIFOs, POSIX permissions and non-UTF-8 filenames. A *failure* is not
-expected on Windows, so treat one as a real regression.
+**Expected Windows results:** the suite passes — **565 passed, 30 skipped** as of 2026-09-04, against
+593 passed / 2 skipped on Linux. The same 595 tests are collected on both; the 28 extra skips are
+platform guards for symlinks, FIFOs, POSIX permissions and non-UTF-8 filenames, plus the tree-entry
+policy and chmod-walk cases that need POSIX semantics. A *failure* is not expected on Windows, so
+treat one as a real regression.
+
+The `.venv` created by this procedure is only valid while its base interpreter exists: `pyvenv.cfg`
+records `home = <scratch>/python-full/tools`, and Windows venvs do not copy the standard library, so
+deleting that scratch directory breaks the venv (`Fatal Python error: Failed to import encodings`).
+Re-run the steps above when that happens; nothing in the repository needs to change.
 
 `test_cl_functional.py` used to fail here because its mock compiler is written as `cl.bat` and
 Windows `CreateProcess` appends only `.exe` (never `.bat`) when resolving a bare name. That is fixed
