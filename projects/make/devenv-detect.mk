@@ -266,6 +266,14 @@ $(info Building with OpenSSL 3.5+; BL_DEVENV_OPENSSL_VERSION = $(BL_DEVENV_OPENS
 endif
 endif
 
+# The version pins above are declared per devenv on purpose (a new devenv must declare its own),
+# so a devenv which reaches this point without a block of its own would silently inherit the
+# devenv2 defaults above and an empty BL_DEVENV_PYTHON_VERSION; fail loudly instead
+ifeq (, $(filter devenv2 devenv3 devenv4 devenv5 devenv6 devenv7,$(DEVENV_VERSION_TAG)))
+$(error $(DEVENV_VERSION_TAG) has no version pins declared in devenv-detect.mk; add a block \
+declaring its Boost, OpenSSL and Python versions next to the devenv7 one)
+endif
+
 ifeq ($(DEVENV_VERSION_TAG),devenv3)
 CPPFLAGS += -DBL_DEVENV_VERSION=3
 endif
@@ -286,8 +294,10 @@ ifeq ($(DEVENV_VERSION_TAG),devenv7)
 CPPFLAGS += -DBL_DEVENV_VERSION=7
 endif
 
-# For devenv7, Boost directories include the variant suffix (e.g., -debug, -release) like OpenSSL and others
-ifeq ($(DEVENV_VERSION_TAG),devenv7)
+# For devenv7+, Boost directories include the variant suffix (e.g., -debug, -release) like OpenSSL and
+# others; this must agree with the BOOSTDIR selection in 3rd/boost/common.mk, which keys on the same
+# legacy predicate
+ifeq (, $(BL_DEVENV_IS_LEGACY))
 BL_EXPECTED_BOOSTDIR = $(DIST_ROOT_DEPS3)/boost/$(BL_DEVENV_BOOST_VERSION)/$(PLAT)
 else
 BL_EXPECTED_BOOSTDIR = $(DIST_ROOT_DEPS3)/boost/$(BL_DEVENV_BOOST_VERSION)/$(PLAT:%-$(VARIANT)=%)

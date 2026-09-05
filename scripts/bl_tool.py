@@ -133,23 +133,35 @@ def encode_length(value):
 
 def is_reparse_link(path):
     """
-    Check whether a path is a symlink or a Windows junction.
+    Check whether a path is a symlink, a Windows junction or another reparse point.
 
-    Path.is_symlink() reports False for junctions, so they are tested separately.
-    os.path.isjunction() requires Python 3.12, hence the guarded lookup.
+    Path.is_symlink() reports False for junctions, so they are tested separately, and
+    os.path.isjunction() only exists from Python 3.12, so on older interpreters the check
+    falls through to the reparse point attribute of the lstat() result rather than failing
+    open. This is the same fail-closed shape as is_hostile_reparse() in s3_manage.py; it is
+    duplicated here because this tool deliberately has no dependencies.
 
     Args:
         path (Path): Path to check
 
     Returns:
-        bool: True if the path is a symlink or a junction
+        bool: True if the path is a symlink, a junction or another reparse point
     """
     if path.is_symlink():
         return True
 
     isjunction = getattr(os.path, 'isjunction', None)
+    if isjunction is not None and isjunction(path):
+        return True
 
-    return isjunction is not None and isjunction(path)
+    try:
+        entry_stat = os.lstat(path)
+    except OSError:
+        return False
+
+    file_attributes = getattr(entry_stat, 'st_file_attributes', 0)
+    reparse_flag = getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400)
+    return bool(file_attributes & reparse_flag)
 
 
 def fail_on_link(path):

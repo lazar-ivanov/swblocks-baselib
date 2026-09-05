@@ -1114,6 +1114,37 @@ UTF_AUTO_TEST_CASE( JsonRoundTrip )
     utest::json::verifyRoundTrip( R"({"array":[1,"two",true,null]})" );
     utest::json::verifyRoundTrip( R"({})" );
     utest::json::verifyRoundTrip( R"([])" );
+
+    /*
+     * Doubles: the serialized text differs between the backends (see the release note on
+     * serialized text) and is deliberately not pinned, but the value must survive a round trip
+     * exactly and the text must be stable from the second pass on, which is what
+     * verifyRoundTrip checks
+     */
+
+    utest::json::verifyRoundTrip( R"({"d":0.1})" );
+    utest::json::verifyRoundTrip( R"({"d":1e300})" );
+    utest::json::verifyRoundTrip( R"({"d":-2.5e-5})" );
+    utest::json::verifyRoundTrip( R"({"d":9007199254740993.0})" );
+
+    /*
+     * And a text independent fidelity check: a double stored, saved, re-parsed and read back
+     * compares equal on both backends. -0.0 is excluded on purpose: json-spirit writes it as -0,
+     * which reads back as the integer 0
+     */
+
+    const double values[] = { 0.1, 1e300, 9007199254740992.0, -2.5e-5, 1.0 / 3.0 };
+
+    for( const double d : values )
+    {
+        bl::json::object obj;
+        obj[ "d" ] = d;
+
+        const auto text = bl::json::saveToString( bl::json::value( obj ) );
+        const auto reparsed = bl::json::readFromString( text );
+
+        UTF_REQUIRE_EQUAL( bl::json::get_real( reparsed.as_object().at( "d" ) ), d );
+    }
 }
 
 /********************************************************************************************
@@ -1610,6 +1641,31 @@ UTF_AUTO_TEST_CASE( JsonNumericNegativeToUnsignedIsRejected )
     UTF_REQUIRE_EQUAL( bl::json::value_to< std::int64_t >( v ), -1 );
 }
 
+UTF_AUTO_TEST_CASE( JsonNumericDoubleIntoIntegralIsRejected )
+{
+    utest::json::logImplementation();
+
+    /*
+     * A JSON number which is stored as a double is never read as an integral type, not even
+     * when the conversion would be exact: json-spirit stores 3.0 as a real and refuses it in its
+     * integer getters, and the Boost.JSON backend applies the same rule in bl::json::value_to
+     * (Boost.JSON's own value_to accepts an exact double), so the numeric policy is the same on
+     * both backends and agrees with get_int(). The widening direction stays allowed, see
+     * JsonNumericIntegerReadsAsDouble
+     */
+
+    const auto parsed = bl::json::readFromString( R"({"whole":3.0,"fraction":3.5,"integer":3})" );
+    const auto& obj = parsed.as_object();
+
+    UTF_REQUIRE_THROW( bl::json::value_to< int >( obj.at( "whole" ) ), std::exception );
+    UTF_REQUIRE_THROW( bl::json::value_to< std::int64_t >( obj.at( "whole" ) ), std::exception );
+    UTF_REQUIRE_THROW( bl::json::value_to< std::uint64_t >( obj.at( "whole" ) ), std::exception );
+    UTF_REQUIRE_THROW( bl::json::value_to< int >( obj.at( "fraction" ) ), std::exception );
+
+    UTF_REQUIRE_EQUAL( bl::json::value_to< int >( obj.at( "integer" ) ), 3 );
+    UTF_REQUIRE_EQUAL( bl::json::value_to< double >( obj.at( "integer" ) ), 3.0 );
+}
+
 UTF_AUTO_TEST_CASE( JsonNumericOutOfRangeIntIsRejected )
 {
     utest::json::logImplementation();
@@ -1777,21 +1833,45 @@ UTF_AUTO_TEST_CASE( JsonParseDepthWithinLimitIsAccepted )
     UTF_REQUIRE_EQUAL( bl::json::get_int64( current ), 1 );
 }
 
-#if !defined( BL_USE_JSON_SPIRIT )
+/*
+ * The four cases below are documented divergences between the backends (see the contract notes
+ * in baselib/core/JsonUtils.h and the release note on serialized text). Each case asserts the
+ * Boost.JSON behaviour on the default backend and the json-spirit behaviour under
+ * BL_USE_JSON_SPIRIT, so that a change on either side is noticed rather than hidden by a
+ * conditional which simply skips the case
+ */
 
 UTF_AUTO_TEST_CASE( JsonParseDepthBeyondLimitIsRejected )
 {
     utest::json::logImplementation();
 
+#if !defined( BL_USE_JSON_SPIRIT )
     /*
-     * Boost.JSON backend only - json-spirit applies no depth limit at all and is deliberately
-     * left that way; see the contract note in baselib/core/JsonUtils.h
+     * Boost.JSON backend: 600 levels exceed the configured limit of 512 and are rejected
      */
 
     UTF_REQUIRE_THROW(
         bl::json::readFromString( makeNestedJsonText( 600U ) ),
         bl::JsonException
         );
+#else
+    /*
+     * json-spirit applies no depth limit at all and is deliberately left that way; see the
+     * contract note in baselib/core/JsonUtils.h - the same document parses and walks
+     */
+
+    auto current = bl::json::readFromString( makeNestedJsonText( 600U ) );
+    std::size_t levels = 0U;
+
+    while( current.is_object() )
+    {
+        current = current.as_object().at( "n" );
+        ++levels;
+    }
+
+    UTF_REQUIRE_EQUAL( levels, 600U );
+    UTF_REQUIRE_EQUAL( bl::json::get_int64( current ), 1 );
+#endif
 }
 
 UTF_AUTO_TEST_CASE( JsonParseTrailingDataIsRejected )
@@ -1800,10 +1880,11 @@ UTF_AUTO_TEST_CASE( JsonParseTrailingDataIsRejected )
 
     /*
      * J-9 - trailing content after a complete document. Boost.JSON reports extra_data; json-spirit
-     * stops at the end of the first value and ignores the remainder, so this is asserted on the
-     * default backend only and the divergence is what the contract note records
+     * stops at the end of the first value and ignores the remainder, which is the divergence the
+     * contract note records
      */
 
+#if !defined( BL_USE_JSON_SPIRIT )
     UTF_REQUIRE_THROW(
         bl::json::readFromString( R"({"a":1} {"b":2})" ),
         bl::JsonException
@@ -1813,6 +1894,18 @@ UTF_AUTO_TEST_CASE( JsonParseTrailingDataIsRejected )
         bl::json::readFromString( R"([1,2,3]garbage)" ),
         bl::JsonException
         );
+#else
+    const auto first = bl::json::readFromString( R"({"a":1} {"b":2})" );
+
+    UTF_REQUIRE( first.is_object() );
+    UTF_REQUIRE_EQUAL( first.as_object().size(), 1U );
+    UTF_REQUIRE_EQUAL( bl::json::get_int64( first.as_object().at( "a" ) ), 1 );
+
+    const auto array = bl::json::readFromString( R"([1,2,3]garbage)" );
+
+    UTF_REQUIRE( array.is_array() );
+    UTF_REQUIRE_EQUAL( array.as_array().size(), 3U );
+#endif
 }
 
 UTF_AUTO_TEST_CASE( JsonParseInvalidUtf8IsRejected )
@@ -1821,8 +1914,7 @@ UTF_AUTO_TEST_CASE( JsonParseInvalidUtf8IsRejected )
 
     /*
      * J-3 - an invalid UTF-8 sequence inside a string literal. Boost.JSON validates the encoding
-     * and rejects it; json-spirit passes the bytes through untouched, so this too is asserted on
-     * the default backend only
+     * and rejects it; json-spirit passes the bytes through untouched
      */
 
     std::string text( "{\"s\":\"" );
@@ -1832,7 +1924,16 @@ UTF_AUTO_TEST_CASE( JsonParseInvalidUtf8IsRejected )
 
     text += "\"}";
 
+#if !defined( BL_USE_JSON_SPIRIT )
     UTF_REQUIRE_THROW( bl::json::readFromString( text ), bl::JsonException );
+#else
+    const auto parsed = bl::json::readFromString( text );
+    const auto s = bl::json::value_to< std::string >( parsed.as_object().at( "s" ) );
+
+    UTF_REQUIRE_EQUAL( s.size(), 2U );
+    UTF_REQUIRE_EQUAL( static_cast< unsigned >( static_cast< unsigned char >( s[ 0 ] ) ), 0xC3U );
+    UTF_REQUIRE_EQUAL( static_cast< unsigned >( static_cast< unsigned char >( s[ 1 ] ) ), 0x28U );
+#endif
 }
 
 UTF_AUTO_TEST_CASE( JsonPrettyPrintEmptyContainers )
@@ -1840,11 +1941,12 @@ UTF_AUTO_TEST_CASE( JsonPrettyPrintEmptyContainers )
     utest::json::logImplementation();
 
     /*
-     * An empty object and an empty array pretty print as {} and [] rather than as a brace, a
-     * blank line and a closing brace, which is what the json-spirit backend produces for the
-     * same values
+     * An empty object and an empty array pretty print as {} and [] on Boost.JSON, and as a
+     * brace, a newline and the closing brace on json-spirit; neither backend ever emits a blank
+     * line
      */
 
+#if !defined( BL_USE_JSON_SPIRIT )
     UTF_REQUIRE_EQUAL(
         bl::json::saveToString( bl::json::value( bl::json::object() ), true /* prettyPrint */ ),
         std::string( "{}" )
@@ -1854,6 +1956,17 @@ UTF_AUTO_TEST_CASE( JsonPrettyPrintEmptyContainers )
         bl::json::saveToString( bl::json::value( bl::json::array() ), true /* prettyPrint */ ),
         std::string( "[]" )
         );
+#else
+    UTF_REQUIRE_EQUAL(
+        bl::json::saveToString( bl::json::value( bl::json::object() ), true /* prettyPrint */ ),
+        std::string( "{\n}" )
+        );
+
+    UTF_REQUIRE_EQUAL(
+        bl::json::saveToString( bl::json::value( bl::json::array() ), true /* prettyPrint */ ),
+        std::string( "[\n]" )
+        );
+#endif
 
     /*
      * And nested inside a non-empty parent, where the indentation of the closing brace matters
@@ -1864,11 +1977,42 @@ UTF_AUTO_TEST_CASE( JsonPrettyPrintEmptyContainers )
 
     const auto pretty = bl::json::saveToString( bl::json::value( outer ), true /* prettyPrint */ );
 
+#if !defined( BL_USE_JSON_SPIRIT )
     UTF_REQUIRE( pretty.find( "{}" ) != std::string::npos );
+#else
+    UTF_REQUIRE( pretty.find( "{\n    }" ) != std::string::npos );
+#endif
+
     UTF_REQUIRE( pretty.find( "\n\n" ) == std::string::npos );
 }
 
-#endif /* !BL_USE_JSON_SPIRIT */
+UTF_AUTO_TEST_CASE( JsonParseDuplicateKeysAreBackendDefined )
+{
+    utest::json::logImplementation();
+
+    /*
+     * Duplicate member names are not a supported input shape and the behaviour is backend
+     * defined (see baselib/core/JsonUtils.h and notes/plans/issues/json-duplicate-key-contract.md):
+     * Boost.JSON keeps the last member, json-spirit rejects the document. Neither behaviour may
+     * be relied upon by a caller; this pins the documented divergence so that a change on either
+     * side is noticed
+     */
+
+    const std::string text( R"({"a":1,"a":2})" );
+
+#if !defined( BL_USE_JSON_SPIRIT )
+    const auto parsed = bl::json::readFromString( text );
+
+    UTF_REQUIRE_EQUAL( parsed.as_object().size(), 1U );
+    UTF_REQUIRE_EQUAL( bl::json::get_int64( parsed.as_object().at( "a" ) ), 2 );
+#else
+    UTF_REQUIRE_THROW_MESSAGE(
+        bl::json::readFromString( text ),
+        bl::UserMessageException,
+        "Duplicate entry encountered for property with name 'a'"
+        );
+#endif
+}
 
 UTF_AUTO_TEST_CASE( JsonSerializeToStreamCanonical )
 {

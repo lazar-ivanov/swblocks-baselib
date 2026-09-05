@@ -3025,6 +3025,47 @@ class TestCommandList:
         assert re.search(timestamp_pattern, captured.out) is not None
 
     @mock_aws
+    def test_list_paths_only_rejects_keys_with_control_characters(self, temp_file, capsys):
+        """A key carrying a newline stays off stdout, is reported on stderr, and fails the command."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        s3_client.create_bucket(Bucket='test-bucket')
+        s3_client.upload_file(str(temp_file), 'test-bucket', 'good.txt')
+        s3_client.put_object(Bucket='test-bucket', Key='bad\nname.txt', Body=b'x')
+
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'prefix': None,
+            'max_keys': None,
+            'paths_only': True
+        })()
+
+        exit_code = s3_manage.command_list(args, s3_client=s3_client)
+
+        assert exit_code == s3_manage.EXIT_FAILURE
+        captured = capsys.readouterr()
+        assert captured.out.strip().split('\n') == ['good.txt']
+        assert "[ERROR] 'bad\\nname.txt' - key contains control characters" in captured.err
+
+    @mock_aws
+    def test_list_paths_only_errors_go_to_stderr(self, capsys):
+        """A listing failure in --paths-only mode leaves stdout empty for the shell consumer."""
+        s3_client = boto3.client('s3', region_name='us-east-1')
+
+        args = type('Args', (), {
+            'bucket_name': 'no-such-bucket',
+            'prefix': None,
+            'max_keys': None,
+            'paths_only': True
+        })()
+
+        exit_code = s3_manage.command_list(args, s3_client=s3_client)
+
+        assert exit_code == s3_manage.EXIT_FAILURE
+        captured = capsys.readouterr()
+        assert captured.out == ''
+        assert 'Error listing bucket' in captured.err
+
+    @mock_aws
     def test_list_paths_only_single_file(self, temp_file, capsys):
         """Test --paths-only outputs only file paths, one per line."""
         s3_client = boto3.client('s3', region_name='us-east-1')
@@ -5077,6 +5118,114 @@ class TestWalkErrors:
         captured = capsys.readouterr()
         assert f'[ERROR] Cannot scan directory: {bad_dir}' in captured.out
         assert 'Directories not scanned: 1' in captured.out
+
+
+# ====================================================================================
+# Tree entry policy
+#
+# Symbolic links, junctions, other reparse points and non-regular files are rejected by
+# command_upload / command_verify with a report and EXIT_FAILURE, the same policy as
+# bl_tool.collect_tree(), while the rest of the tree is still processed.
+# ====================================================================================
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Symlinks and FIFOs may not be supported on Windows")
+class TestTreeEntryPolicy:
+    """Test that linked and non-regular entries fail command_upload / command_verify."""
+
+    @staticmethod
+    def _upload_args(folder):
+        # dry_run + force: upload_worker never touches the client, so a sentinel suffices
+        return type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(folder),
+            'dry_run': True,
+            'force': True,
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+    @staticmethod
+    def _tree(temp_dir):
+        target = temp_dir / 'target'
+        target.mkdir()
+        (target / 'secret.txt').write_text('outside the tree')
+        tree = temp_dir / 'tree'
+        tree.mkdir()
+        (tree / 'good.txt').write_text('good')
+        return target, tree
+
+    def test_upload_rejects_symlinked_file(self, temp_dir, capsys):
+        """A linked file is not published by content; the sibling is still processed."""
+        target, tree = self._tree(temp_dir)
+        (tree / 'link.txt').symlink_to(target / 'secret.txt')
+
+        exit_code = s3_manage.command_upload(self._upload_args(tree), s3_client=object())
+        assert exit_code == s3_manage.EXIT_FAILURE
+
+        captured = capsys.readouterr()
+        assert f"[ERROR] Rejected entry: {tree / 'link.txt'} (symbolic link, junction or reparse point)" in captured.out
+        assert 'Entries rejected: 1' in captured.out
+        assert '[DRY-RUN]  good.txt' in captured.out
+        assert '[DRY-RUN]  link.txt' not in captured.out
+
+    def test_upload_rejects_symlinked_directory(self, temp_dir, capsys):
+        """A linked directory is reported rather than silently skipped, and is not descended into."""
+        target, tree = self._tree(temp_dir)
+        (tree / 'linkdir').symlink_to(target)
+
+        exit_code = s3_manage.command_upload(self._upload_args(tree), s3_client=object())
+        assert exit_code == s3_manage.EXIT_FAILURE
+
+        captured = capsys.readouterr()
+        assert f"[ERROR] Rejected entry: {tree / 'linkdir'} (symbolic link, junction or reparse point)" in captured.out
+        assert 'secret.txt' not in captured.out
+        assert 'Entries rejected: 1' in captured.out
+
+    def test_upload_rejects_dangling_symlink(self, temp_dir, capsys):
+        """A dangling link is rejected like any other link instead of crashing in getsize()."""
+        _, tree = self._tree(temp_dir)
+        (tree / 'dangling').symlink_to(tree / 'nonexistent')
+
+        exit_code = s3_manage.command_upload(self._upload_args(tree), s3_client=object())
+        assert exit_code == s3_manage.EXIT_FAILURE
+
+        captured = capsys.readouterr()
+        assert f"[ERROR] Rejected entry: {tree / 'dangling'} (symbolic link, junction or reparse point)" in captured.out
+
+    def test_upload_rejects_fifo(self, temp_dir, capsys):
+        """A FIFO is rejected instead of blocking the upload forever in open()."""
+        _, tree = self._tree(temp_dir)
+        os.mkfifo(str(tree / 'pipe'))
+
+        exit_code = s3_manage.command_upload(self._upload_args(tree), s3_client=object())
+        assert exit_code == s3_manage.EXIT_FAILURE
+
+        captured = capsys.readouterr()
+        assert f"[ERROR] Rejected entry: {tree / 'pipe'} (not a regular file)" in captured.out
+
+    def test_verify_rejects_symlinked_file(self, temp_dir, capsys):
+        """verify applies the same policy as upload."""
+        target = temp_dir / 'target'
+        target.mkdir()
+        (target / 'secret.txt').write_text('outside the tree')
+        tree = temp_dir / 'tree'
+        tree.mkdir()
+        (tree / 'link.txt').symlink_to(target / 'secret.txt')
+
+        # No file survives the walk, so verify_worker (and the client) is never used
+        args = type('Args', (), {
+            'bucket_name': 'test-bucket',
+            'local_folder': str(tree),
+            'max_threads': 2,
+            'allow_hidden_files': False
+        })()
+
+        exit_code = s3_manage.command_verify(args, s3_client=object())
+        assert exit_code == s3_manage.EXIT_FAILURE
+
+        captured = capsys.readouterr()
+        assert f"[ERROR] Rejected entry: {tree / 'link.txt'} (symbolic link, junction or reparse point)" in captured.out
+        assert 'Entries rejected: 1' in captured.out
 
 
 # ====================================================================================

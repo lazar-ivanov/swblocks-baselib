@@ -141,8 +141,10 @@ namespace test
             /*
              * This is from following file: "certs/test-server-ip-cert.pem"
              *
-             * A self-signed certificate used only by the TlsPeerVerification tests. Its SAN set
-             * is chosen so one certificate covers every branch of the peer-name match:
+             * A self-signed certificate used by the TlsPeerVerification tests and, together with
+             * its key below, as the untrusted server certificate of the TlsHandshake tests (its
+             * issuer is not a registered root, so a chain built from it fails verification). Its
+             * SAN set is chosen so one certificate covers every branch of the peer-name match:
              *
              *   IP:127.0.0.1     - an address literal which matches
              *   IP:::1           - the same for IPv6
@@ -179,6 +181,47 @@ namespace test
                 "dRSJbSYWHUkyJDXZi0Vc/iDHncVkero+u32OgBWHoHN+gJVWQ+eGbBy5Ze7rwXsj\n"
                 "CrymOjILEw==\n"
                 "-----END CERTIFICATE-----\n";
+        }
+
+        static auto getIpAddressServerKey() -> const char*
+        {
+            /*
+             * This is from following file: "certs/test-server-ip-key.pem"
+             *
+             * The private key of getIpAddressServerCertificate() above, so that a test server
+             * can present that certificate; it is a test-only key which is checked in next to
+             * the certificate
+             */
+
+            return
+                "-----BEGIN PRIVATE KEY-----\n"
+                "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCyz+GMNicd3gzh\n"
+                "5RS88oxyu7+T8mg+8sDoQdelgwhRF2FsiwoZKMjTIvHr9pthElaus+ILVZw+mzjV\n"
+                "FnnDIeE5M0tT6cyaO4pBS5hwKhU0+TyW11hC69HdKq1h8vIFn3+UJlOYVMGxfgvl\n"
+                "1sAoDgEqnA5kfrMQXUSqghZAho7WcuBgZjNSm8dyzqfQcXN9yunI9CZivMJfITGv\n"
+                "pSvtpBL0Ez23ytiTQUlJ1XPNNYs8dP2F7UBmlKvWXmgMm1LrH7SP3Sg8mY90mLBH\n"
+                "fLkWeexBN2Deup194qmzb7tYjcx+/Lc7ui3jLryeEG3cAWRQKI2Ft7ADCZLJMbyJ\n"
+                "IYtZruMBAgMBAAECggEABqYuR+13lOe96OSA2enXCSksHY9FCxoxzDEumKv/sixB\n"
+                "ZizhakAW/6rr/g9Ehd6NtJ9hx3QehEF3Yo0caAIpgtwCcBNglVejc3whJgKamUav\n"
+                "VxiY4pwsSKIeombLUyQ0NUkbkK2OKlB6lsheit7CclgtPNVtSS1+sSx3MV0PkK/S\n"
+                "86orUFfdZxcUVnHno0Zo5Os6PHCxeh4h4i4p+5XR4mmAUZayi54bySVcvPMg/LD7\n"
+                "LWveDgNzXI/rYPU9g97IWfSjTXFHtMnp+1rpIiB4InrSpoKoOj0Tz/RRNpHe+Kdw\n"
+                "4eLka3EvYgmz0Mtk3gEcQKUmlTcoFMHf+JA5Px84wQKBgQDg07OCwGwwOCrHdYlr\n"
+                "xb3qz/yiWW7al3yYiSM+G5f8aYMhXs98cKEfPAdifaky5xrLqvt1PaPdD1cQ9A0S\n"
+                "eUwGh/x7PCuuJRvU/5uITtEiW8CekbyvEuYwvoA47i6h0FyqzZq2jB1dqlr3RRNx\n"
+                "s8H4AFq1E0Ke/4ukiHDK2f+NiQKBgQDLmt3dyuSCOW8ZBocq/vPfNrjJTB8rB6hh\n"
+                "O4MRP2wNRdJRmNlPfxqAeyS+ZU6VfWDuekvfwv3mM54xtkWCZxSuRLN6dy0nyjkF\n"
+                "KpUwq8Iuvzsu/VV2ke08PHWINHlEQixV0uMIKkEUqQLl/hBVayLNOL3PTbd6rWVO\n"
+                "5XZ4gVEDuQKBgQC85UHirnd3wAk5UmimcxrRKfSyFwALitG1eytwKFD3U1NIe1dK\n"
+                "z3qgOphdyQSa7w9VZZAmfiaqOhRF+zbseZtFtYWNqQ1uIGGVATmVOdt+yaY51Gq6\n"
+                "kd9zvusOahgl/mGNZHgDvg+CPfp13MSseIKVMv8DOm50FnMmRzi1RpnvOQKBgCet\n"
+                "Bx0oY30o+ghTaFWtlxJhVIMNjWlSNbK06SacSE8R0xlJgtdl+mEdHhzoGvcwlooC\n"
+                "VPTGx7lrR6GCVmtB8RrAkoUD4k3Fr3TdRnNUlSOM6liOz2+qoiNB2Nlw+Eyf5InY\n"
+                "7ZryuPnwsXrmFoK+vOpm6z4Rc/a5AWvtdTeoY4QpAoGAGZbI0qVzq2OGCcK4mE2X\n"
+                "yei5iSzLHJVs2z3MOGwzfrX3hvcD2AgsYampdf8ErRrv+x/pMrrmc0xQuIBmDrfa\n"
+                "3N36N69HvjIxqMk3DpRA4IlXC8Aon6Y57jtCC2uXK85e6mlywK5IgG41vwA7bgMm\n"
+                "Nc9BcVL6R34c8uRIi4bstTE=\n"
+                "-----END PRIVATE KEY-----\n";
         }
     };
 

@@ -120,7 +120,8 @@ namespace bl
             {
                 bool ok = false;
 
-                BL_WARN_NOEXCEPT_BEGIN()
+                try
+                {
 
                 const int depth = ::X509_STORE_CTX_get_error_depth( ctx.native_handle() );
 
@@ -165,6 +166,18 @@ namespace bl
                     else
                     {
                         m_verifyFailed = true;
+
+#ifdef X509_V_ERR_HOSTNAME_MISMATCH
+                        /*
+                         * The name check is this library's, not OpenSSL's, so the store carries
+                         * no error for it; the code OpenSSL itself uses for the same outcome is
+                         * recorded so that the error info fields are meaningful for this case too
+                         */
+
+                        m_lastVerifyError = X509_V_ERR_HOSTNAME_MISMATCH;
+                        m_lastVerifyErrorString = ::X509_verify_cert_error_string( m_lastVerifyError );
+#endif
+
                         m_lastVerifyErrorMessage =
                             "Peer verification failed due to the subject name not matching the host name";
 
@@ -235,7 +248,37 @@ namespace bl
                         );
                 }
 
-                BL_WARN_NOEXCEPT_END( "AsioSslStreamWrapperT<...>::verifyCertificate" )
+                }
+                catch( std::exception& e )
+                {
+                    /*
+                     * The verify context accessors above can only fail on a corrupted context,
+                     * but that is still a verification failure and it is reported as one: the
+                     * fields below are what enhanceException() attaches to the handshake error,
+                     * so without them the caller would see a bare handshake failure with no
+                     * indication that verification was involved. The code is the one OpenSSL
+                     * documents for failures raised by the application's own callback
+                     */
+
+                    ok = false;
+                    m_verifyFailed = true;
+                    m_lastVerifyError = X509_V_ERR_APPLICATION_VERIFICATION;
+                    m_lastVerifyErrorString = ::X509_verify_cert_error_string( m_lastVerifyError );
+                    m_lastVerifyErrorMessage =
+                        resolveMessage(
+                            BL_MSG()
+                                << "Exception in the certificate verify callback: "
+                                << e.what()
+                            );
+
+                    BL_LOG_MULTILINE(
+                        Logging::warning(),
+                        BL_MSG()
+                            << "AsioSslStreamWrapperT<...>::verifyCertificate"
+                            << ": NOEXCEPT block threw an exception, details:\n"
+                            << eh::diagnostic_information( e )
+                        );
+                }
 
                 /*
                  * By default a certificate which could not be verified fails the handshake

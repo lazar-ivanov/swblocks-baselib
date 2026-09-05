@@ -336,7 +336,11 @@ namespace utest
             static void startHttpServerAndExecuteCallback(
                 SAA_in          const bl::cpp::void_callback_t&                                         callback,
                 SAA_in_opt      bl::om::ObjPtr< bl::httpserver::ServerBackendProcessing >&&             backend = nullptr,
-                SAA_in_opt      const bl::om::ObjPtr< TaskControlTokenRW >&                             controlToken = nullptr
+                SAA_in_opt      const bl::om::ObjPtr< TaskControlTokenRW >&                             controlToken = nullptr,
+                SAA_in_opt      const std::string&                                                      privateKeyPem =
+                    test::UtfCrypto::getDefaultServerKey(),
+                SAA_in_opt      const std::string&                                                      certificatePem =
+                    test::UtfCrypto::getDefaultServerCertificate()
                 )
             {
                 using namespace bl;
@@ -355,8 +359,8 @@ namespace utest
                         controlToken,
                         "0.0.0.0"                                           /* host */,
                         test::UtfArgsParser::port(),
-                        test::UtfCrypto::getDefaultServerKey()              /* privateKeyPem */,
-                        test::UtfCrypto::getDefaultServerCertificate()      /* certificatePem */
+                        privateKeyPem,
+                        certificatePem
                         );
 
                     utest::TestTaskUtils::startAcceptorAndExecuteCallback( callback, acceptor );

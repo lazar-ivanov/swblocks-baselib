@@ -9,8 +9,9 @@ Test certificates (certs/)
   test-server-cert.pem   server certificate signed by the root, extensions from [ v3_req ] in
                          certs/openssl.conf (CA:FALSE, keyUsage, SAN)
   openssl.conf           request config; [ v3_req ] / [alt_names] define the server extensions
-  test-server-ip-*.pem   self-signed certificate used only by the TlsPeerVerification tests;
-                         see certs/ip-openssl.conf for how it was generated
+  test-server-ip-*.pem   self-signed certificate used by the TlsPeerVerification tests and,
+                         with its key, as the untrusted server certificate of the TlsHandshake
+                         tests; see certs/ip-openssl.conf for how it was generated
   CAs/                   public root CAs
 
 Procedure

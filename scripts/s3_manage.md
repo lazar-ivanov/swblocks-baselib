@@ -35,7 +35,7 @@ All five commands share the same exit code contract, so `command || exit 1` is s
 | Code | Meaning |
 |------|---------|
 | `0` | Every requested operation succeeded (or there was nothing to do, e.g. an empty bucket/folder) |
-| `1` | At least one file/object failed, was missing, differed, or the input (bucket, local folder, URL prefix) was unusable, or a directory could not be scanned |
+| `1` | At least one file/object failed, was missing, differed, or the input (bucket, local folder, URL prefix) was unusable, a directory could not be scanned, or an entry of the local folder was rejected (symbolic link, junction, reparse point or non-regular file) |
 | `2` | Command-line usage error (invalid/missing arguments, from argparse) |
 
 ## Commands
@@ -83,6 +83,7 @@ python scripts/s3_manage.py upload \
 - **Summary Statistics**: Shows upload counts, skip counts, failure counts, total upload size, and upload speed
 - **Speed Measurement**: Automatically calculates and displays upload speed with auto-adapting units (B/s, KB/s, MB/s, GB/s, TB/s)
 - **CI/CD Friendly**: Returns exit code 1 if the local folder is missing/unusable or any file fails to upload, 0 for success
+- **No Links**: Symbolic links (to files or directories, dangling ones included), Windows junctions, other reparse points and non-regular files (FIFOs, sockets, devices) are rejected with an `[ERROR] Rejected entry` line, the rest of the tree is still processed, and the command exits 1; this is the same policy `bl_tool.py hash` applies, so the two tools agree on what a tree contains
 
 #### Output Format
 
@@ -179,7 +180,8 @@ python scripts/s3_manage.py list \
   --bucket-name <bucket> \
   --endpoint-url <url> \
   [--prefix <prefix>] \
-  [--max-keys <n>]
+  [--max-keys <n>] \
+  [--paths-only]
 ```
 
 #### Arguments
@@ -188,11 +190,13 @@ python scripts/s3_manage.py list \
 |----------|----------|---------|-------------|
 | `--prefix PREFIX` | No | - | Filter objects by prefix (e.g., "folder/subfolder/") |
 | `--max-keys N` | No | - | Maximum number of objects to list (paginate) |
+| `--paths-only` | No | - | Output only the object keys, one per line, with no header, summary or other columns |
 
 #### Features
 
 - **Prefix Filtering**: List only objects matching a specific prefix (folder path)
 - **Pagination Support**: Limit results with `--max-keys` for quick inspection
+- **Machine-Readable Mode**: With `--paths-only`, stdout carries exactly one key per line for a shell consumer and every diagnostic goes to stderr; a key containing a control character (a newline, for example) is never printed, is reported on stderr in `repr()` form, and makes the command exit 1
 - **Human-Readable Sizes**: File sizes displayed in B, KB, MB, GB, TB, PB
 - **Aggregate Statistics**: Shows total object count and total storage size
 - **Columnar Output**: Aligned columns for easy reading
@@ -311,6 +315,7 @@ python scripts/s3_manage.py verify \
 - **Hidden File Filtering**: By default, skips hidden files and directories (starting with `.`)
 - **Detailed Status Reporting**: Four verification states (VERIFIED, DIFFERENT, NOT UPLOADED, ERROR)
 - **CI/CD Friendly**: Returns exit code 1 if any file is DIFFERENT, NOT UPLOADED, or ERROR (see Verification States below), or if the local folder is missing/unusable; 0 for success
+- **No Links**: Symbolic links, junctions, other reparse points and non-regular files are rejected exactly as by `upload` (an `[ERROR] Rejected entry` line and exit code 1), so a tree which uploads also verifies
 - **Comprehensive Summary**: Shows counts for all verification categories and verify speed
 - **Speed Measurement**: Automatically calculates and displays verification speed based on all processed files with auto-adapting units (B/s, KB/s, MB/s, GB/s, TB/s)
 
@@ -473,6 +478,7 @@ python scripts/s3_manage.py indexupload \
 - **Clickable Links**: All file paths are hyperlinked using the provided URL prefix
 - **Aggregate Statistics**: Shows total object count and total storage size
 - **Self-Exclusion**: Automatically excludes `index.html` and `index.md` from generated lists
+- **Bucket-Root Destination**: The generated files are always written to `index.html` and `index.md` at the bucket root and replace any index already there; `--prefix` only restricts which objects are listed in them
 - **Prefix Filtering**: Generate indexes for specific subdirectories
 - **Automatic Pagination**: Handles buckets with thousands of objects
 - **UTC Timestamps**: Includes generation timestamp in both formats
@@ -708,7 +714,7 @@ A validated trailing-slash key is skipped as a folder marker only when its liste
 1. If the file **doesn't exist locally**: Download through `download_fileobj` to a unique `.s3dl-` temporary file → Verify size/ETag → Atomically publish → Report status
 2. If the file **exists locally**: Verify only (don't re-download even if different)
 
-Temporary files use mode `0o600` on POSIX. A failed download, verification, or publish removes the temporary file and does not create the final destination. Operational per-key errors and `[DIFFERENT]` results continue processing safe sibling keys.
+Temporary files use mode `0o600` on POSIX, and the published file keeps that mode, so a downloaded tree is private to the user who ran the command; loosen the permissions afterwards if the tree is meant to be shared. A failed download, verification, or publish removes the temporary file and does not create the final destination. Operational per-key errors and `[DIFFERENT]` results continue processing safe sibling keys.
 
 **This prevents:**
 - S3 keys escaping the selected download root

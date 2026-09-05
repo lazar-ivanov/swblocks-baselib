@@ -166,6 +166,16 @@ again would loosen name verification below what RFC 6125 allows - the opposite o
 with either an explicit SAN per host or a single leftmost wildcard. Asserted by
 `TlsPeerVerification_MultiLabelWildcardsDoNotMatch`.
 
+### 5c. Partial wildcards - no longer matched, by decision
+
+`::X509_check_host()` is now called with `X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS`, so a wildcard which
+is only part of the leftmost label (`f*.example.com`) matches nothing; the whole-label form
+(`*.example.com`) is unaffected. RFC 6125 tolerates the partial form, but the CA/Browser Forum
+baseline requirements define a wildcard as a whole leftmost label and public CAs do not issue the
+partial one, so only a privately issued certificate can be affected; such a certificate needs to be
+reissued with a whole-label wildcard or an explicit SAN. Asserted by
+`TlsPeerVerification_PartialWildcardsDoNotMatch`.
+
 ---
 
 ## 6. TLS floor fixed at TLS 1.2, OpenSSL security level pinned to 2, legacy opt-in removed

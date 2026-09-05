@@ -131,9 +131,11 @@ interface should abort the script is a decision that needs a real binfmt_misc mo
 4. Add `set -o pipefail` to the 19 build scripts, which already carry `-e` and `-u` and are the
    lower-risk half of this work.
 
-**Related deferred script defects.** Eleven further defects in the devenv7 build and install
+**Related deferred script defects.** Twenty-one further defects in the devenv7 build and install
 scripts (download failure handling, Windows batch expansion and quoting, `wmic`, floating Docker base
-images, macOS Boost architecture tagging, non-fatal Windows OpenSSL tests) are recorded, with the
-same "record, do not fix blind" rationale, under "Deferred defects in the devenv7 deployment
-scripts" in `scripts/devenv7/docs/supply-chain-verification-deferral.md`. Whoever picks up either
-record should read both.
+images, macOS Boost architecture tagging, non-fatal Windows OpenSSL tests, a predictable temp file,
+the qemu/Rosetta binfmt ordering, HTTPS-only redirects, distribution detection, the x86 ABI flags,
+the macOS OS tag map, the Gradle layout, the clang OpenSSL visibility and two documentation sites)
+are recorded, with the same "record, do not fix blind" rationale, under "Deferred defects in the
+devenv7 deployment scripts" in `scripts/devenv7/docs/supply-chain-verification-deferral.md`. Whoever
+picks up either record should read both.

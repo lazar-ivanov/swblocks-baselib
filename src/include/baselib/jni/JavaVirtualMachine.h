@@ -53,10 +53,10 @@ namespace bl
             static this_type*                                           g_instance;
 
             static cpp::ScalarTypeIniter< bool >                        g_javaVMDestroyed;
+            static cpp::ScalarTypeIniter< bool >                        g_javaVMCreateAttempted;
             static os::mutex                                            g_lock;
             static JavaVirtualMachineConfig                             g_jvmConfig;
 
-            os::library_ref                                             m_jvmLibrary;
             JavaVM*                                                     m_javaVM;
 
             JavaVirtualMachineT()
@@ -74,7 +74,14 @@ namespace bl
                         << jvmLibraryPath
                     );
 
-                m_jvmLibrary = os::loadLibrary( jvmLibraryPath );
+                /*
+                 * The library handle is released rather than kept: the JVM library can never be
+                 * unloaded once a JVM has been created in the process (see the class comment),
+                 * so it must not be closed by a throwing constructor or by the destructor
+                 * either; plugin libraries are kept loaded the same way in Manifest.h
+                 */
+
+                auto jvmLibrary = os::loadLibrary( jvmLibraryPath );
 
                 BL_LOG(
                     Logging::debug(),
@@ -82,7 +89,9 @@ namespace bl
                         << "JVM library loaded successfully, getting JNI_CreateJavaVM address"
                     );
 
-                const auto procAddress = os::getProcAddress( m_jvmLibrary, "JNI_CreateJavaVM" );
+                const auto procAddress = os::getProcAddress( jvmLibrary, "JNI_CreateJavaVM" );
+
+                ( void ) jvmLibrary.release();
 
                 const auto jniCreateJavaVM =
                     reinterpret_cast< jint ( JNICALL* )( JavaVM**, void**, void *) >( procAddress );
@@ -124,6 +133,17 @@ namespace bl
                 JNIEnv* jniEnv;
                 JavaVM* javaVM;
 
+                /*
+                 * HotSpot supports one JVM per process and permits a second JNI_CreateJavaVM only
+                 * after a failure in its argument parsing; every other outcome, success or
+                 * failure, makes a retry unsupported, so the attempt is latched here (before the
+                 * call, so that a failure inside it counts) and instance() refuses a second one.
+                 * The failures above this point (JAVA_HOME, the library path, the entry point)
+                 * happened before anything was created and remain retryable
+                 */
+
+                g_javaVMCreateAttempted = true;
+
                 const jint jniErrorCode = jniCreateJavaVM(
                     &javaVM,
                     ( void** )&jniEnv,
@@ -148,18 +168,34 @@ namespace bl
                  * Detach the thread that created JavaVM so that JavaVM can be destroyed from any thread.
                  */
 
+                const jint detachErrorCode = m_javaVM -> DetachCurrentThread();
+
+                if( JNI_OK != detachErrorCode )
+                {
+                    /*
+                     * The JVM exists at this point and the destructor never runs for a throwing
+                     * constructor, so it is destroyed here - the creating thread is still
+                     * attached, which is what DestroyJavaVM() requires - and the process is
+                     * marked as having had its JVM destroyed, which is the truth
+                     */
+
+                    ( void ) m_javaVM -> DestroyJavaVM();
+                    m_javaVM = nullptr;
+
+                    g_javaVMDestroyed = true;
+                }
+
                 BL_CHK_T(
                     false,
-                    m_javaVM -> DetachCurrentThread() == JNI_OK,
+                    JNI_OK == detachErrorCode,
                     JavaException(),
                     BL_MSG()
                         << "Failed to detach jni thread from JVM. ErrorCode "
-                        << jniErrorCode
+                        << detachErrorCode
                         << " ["
-                        << jniErrorMessage( jniErrorCode )
+                        << jniErrorMessage( detachErrorCode )
                         << "]"
                     );
-
             }
 
             static std::string getJvmPathFromJavaHome()
@@ -359,6 +395,13 @@ namespace bl
                         "JavaVM has already been destroyed"
                         );
 
+                    BL_CHK_T(
+                        true,
+                        g_javaVMCreateAttempted,
+                        JavaException(),
+                        "JavaVM creation has already been attempted in this process and it cannot be retried"
+                        );
+
                     g_instance = new JavaVirtualMachineT();
 
                     JniEnvironment::setJavaVM( g_instance -> getJavaVM() );
@@ -409,6 +452,7 @@ namespace bl
         typedef JavaVirtualMachineT<> JavaVirtualMachine;
 
         BL_DEFINE_STATIC_MEMBER( JavaVirtualMachineT, cpp::ScalarTypeIniter< bool >,    g_javaVMDestroyed );
+        BL_DEFINE_STATIC_MEMBER( JavaVirtualMachineT, cpp::ScalarTypeIniter< bool >,    g_javaVMCreateAttempted );
         BL_DEFINE_STATIC_MEMBER( JavaVirtualMachineT, os::mutex,                        g_lock );
         BL_DEFINE_STATIC_MEMBER( JavaVirtualMachineT, JavaVirtualMachineConfig,         g_jvmConfig );
 

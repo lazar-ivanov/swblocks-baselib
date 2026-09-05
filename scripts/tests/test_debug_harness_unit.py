@@ -32,6 +32,24 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import debug_harness
 
 
+# ========== Test Unknown Platform ==========
+
+class TestUnknownPlatform:
+    """handle_failure() must not replace the child's exit code with a KeyError on an unknown platform."""
+
+    def test_handle_failure_skips_unknown_platform(self, monkeypatch, capsys):
+        """An unconfigured platform is reported on stderr and the debugger step is skipped."""
+        monkeypatch.setattr(debug_harness, 'platform', 'freebsd14')
+        monkeypatch.setattr(debug_harness, 'argv', ['debug_harness.py', '/tmp/tests/utf-baselib'])
+        monkeypatch.setattr(debug_harness, 'stderr', sys.stderr)
+        proc = type('Proc', (), {'pid': 4242, 'returncode': 3})()
+
+        debug_harness.handle_failure(proc)
+
+        captured = capsys.readouterr()
+        assert 'no crash dump configuration for platform freebsd14' in captured.err
+
+
 # ========== Test Platform Configuration ==========
 
 class TestPlatformConfiguration:

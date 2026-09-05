@@ -1530,6 +1530,158 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueThrottleFromObserverTest )
     UTF_REQUIRE_EQUAL( 1U, queryCountAfterScheduling );
 }
 
+UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueRaisedThrottleLimitAdmitsPendingTasksTest )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    /*
+     * A limit which is raised through setThrottleLimit() must admit the pending tasks at once
+     * rather than at the next unrelated push, pop or completion. Nothing is pushed after the
+     * limit is raised, so the padding done by the setter itself is the only thing which can
+     * start the remaining tasks.
+     */
+
+    const std::size_t tasksCount = 3U;
+
+    const om::ObjPtrDisposable< ExecutionQueue > eq(
+        ExecutionQueueImpl::createInstance< ExecutionQueue >( ExecutionQueue::OptionKeepNone )
+        );
+
+    eq -> setThrottleLimit( 1U );
+
+    ExecutionQueueCompletionControl control;
+
+    for( std::size_t i = 0U; i < tasksCount; ++i )
+    {
+        eq -> push_back( om::qi< Task >( createControlledCompletionTask( control ) ) );
+    }
+
+    const bool oneScheduled = control.waitUntilScheduled( 1U );
+
+    /*
+     * Snapshots first and assertions at the very end, for the reason given in
+     * Tasks_ExecutionQueueThrottleFromObserverTest
+     */
+
+    const auto pendingBefore = eq -> getQueueSize( ExecutionQueue::Pending );
+
+    eq -> setThrottleLimit( tasksCount );
+
+    const bool allScheduled = control.waitUntilScheduled( tasksCount );
+
+    const auto pendingAfter = eq -> getQueueSize( ExecutionQueue::Pending );
+    const auto executingAfter = eq -> getQueueSize( ExecutionQueue::Executing );
+
+    for( std::size_t completed = 0U; completed < tasksCount; ++completed )
+    {
+        if( ! control.completeNext() )
+        {
+            break;
+        }
+    }
+
+    const bool allReturned = control.waitUntilReturned( tasksCount );
+
+    if( allReturned )
+    {
+        eq -> flush();
+    }
+    else
+    {
+        eq -> cancelAll( true /* wait */ );
+    }
+
+    UTF_REQUIRE( oneScheduled );
+    UTF_REQUIRE_EQUAL( tasksCount - 1U, pendingBefore );
+    UTF_REQUIRE( allScheduled );
+    UTF_REQUIRE_EQUAL( 0U, pendingAfter );
+    UTF_REQUIRE_EQUAL( tasksCount, executingAfter );
+    UTF_REQUIRE( allReturned );
+}
+
+UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueReregisteredObserverLimitAdmitsPendingTasksTest )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    /*
+     * The observer limit is sampled once per registration ("register again to install a
+     * different limit"), so re-registering with a larger limit must admit the pending tasks
+     * at once, exactly like setThrottleLimit() does
+     */
+
+    const std::size_t tasksCount = 3U;
+
+    const auto observer = ExecutionQueueThrottleObserverImpl::createInstance();
+    observer -> setLimit( 1U );
+
+    const auto notifyProxy = om::ProxyImpl::createInstance< om::Proxy >();
+    notifyProxy -> connect( static_cast< ExecutionQueueNotify* >( observer.get() ) );
+
+    BL_SCOPE_EXIT( { notifyProxy -> disconnect(); } );
+
+    const om::ObjPtrDisposable< ExecutionQueue > eq(
+        ExecutionQueueImpl::createInstance< ExecutionQueue >( ExecutionQueue::OptionKeepNone )
+        );
+
+    eq -> setNotifyCallback(
+        om::copy( notifyProxy ),
+        ExecutionQueueNotify::DeliveryConcurrent,
+        ExecutionQueueNotify::AllEvents
+        );
+
+    ExecutionQueueCompletionControl control;
+
+    for( std::size_t i = 0U; i < tasksCount; ++i )
+    {
+        eq -> push_back( om::qi< Task >( createControlledCompletionTask( control ) ) );
+    }
+
+    const bool oneScheduled = control.waitUntilScheduled( 1U );
+
+    const auto pendingBefore = eq -> getQueueSize( ExecutionQueue::Pending );
+
+    observer -> setLimit( tasksCount );
+
+    eq -> setNotifyCallback(
+        om::copy( notifyProxy ),
+        ExecutionQueueNotify::DeliveryConcurrent,
+        ExecutionQueueNotify::AllEvents
+        );
+
+    const bool allScheduled = control.waitUntilScheduled( tasksCount );
+
+    const auto pendingAfter = eq -> getQueueSize( ExecutionQueue::Pending );
+    const auto queryCountAfterReregistration = observer -> queryCount();
+
+    for( std::size_t completed = 0U; completed < tasksCount; ++completed )
+    {
+        if( ! control.completeNext() )
+        {
+            break;
+        }
+    }
+
+    const bool allReturned = control.waitUntilReturned( tasksCount );
+
+    if( allReturned )
+    {
+        eq -> flush();
+    }
+    else
+    {
+        eq -> cancelAll( true /* wait */ );
+    }
+
+    UTF_REQUIRE( oneScheduled );
+    UTF_REQUIRE_EQUAL( tasksCount - 1U, pendingBefore );
+    UTF_REQUIRE( allScheduled );
+    UTF_REQUIRE_EQUAL( 0U, pendingAfter );
+    UTF_REQUIRE_EQUAL( 2U, queryCountAfterReregistration );
+    UTF_REQUIRE( allReturned );
+}
+
 UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueNotificationConcurrentDeliveryTest )
 {
     using namespace bl;
@@ -1799,6 +1951,14 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueAllTasksCompletedObserverSelectionTests 
         newProxy -> connect( static_cast< ExecutionQueueNotify* >( newRecorder.get() ) );
 
         ExecutionQueueNotificationTestContext context( ExecutionQueue::OptionKeepNone );
+
+        /*
+         * Disconnected on every exit path: a failing UTF_REQUIRE below would otherwise reach
+         * the proxy destructor still connected, which aborts and masks the real failure
+         */
+
+        BL_SCOPE_EXIT( { newProxy -> disconnect(); } );
+
         ExecutionQueueCompletionControl control;
         const auto task = om::qi< Task >( createControlledCompletionTask( control ) );
 
@@ -1832,8 +1992,6 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueAllTasksCompletedObserverSelectionTests 
             newRecorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
             );
         UTF_REQUIRE( ! context.recorder -> hookFailed() );
-
-        newProxy -> disconnect();
     }
 
     {
@@ -1867,6 +2025,8 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueAllTasksCompletedObserverSelectionTests 
         const auto newProxy = om::ProxyImpl::createInstance< om::Proxy >();
         newProxy -> connect( static_cast< ExecutionQueueNotify* >( newRecorder.get() ) );
 
+        BL_SCOPE_EXIT( { newProxy -> disconnect(); } );
+
         context.eq -> setNotifyCallback(
             om::copy( newProxy ),
             ExecutionQueueNotify::DeliveryConcurrent,
@@ -1890,8 +2050,6 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueAllTasksCompletedObserverSelectionTests 
             newRecorder -> eventCount( ExecutionQueueNotify::AllTasksCompleted )
             );
         UTF_REQUIRE( ! context.recorder -> hookFailed() );
-
-        newProxy -> disconnect();
     }
 }
 

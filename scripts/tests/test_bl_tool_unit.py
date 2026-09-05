@@ -46,6 +46,37 @@ def _deny_scandir_for(monkeypatch, denied):
     monkeypatch.setattr(os, "scandir", fake_scandir)
 
 
+class TestReparseLinkDetection:
+    """Test is_reparse_link() fails closed on Windows reparse points below Python 3.12."""
+
+    @staticmethod
+    def _fake_lstat(attributes):
+        return type('Stat', (), {'st_mode': bl_tool.stat.S_IFDIR,
+                                 'st_file_attributes': attributes})()
+
+    def test_reparse_attribute_is_rejected_without_isjunction(self, temp_dir, monkeypatch):
+        """A reparse point is detected from the lstat attributes when os.path.isjunction is absent."""
+        path = temp_dir / "junction"
+        path.mkdir()
+        monkeypatch.delattr(bl_tool.os.path, 'isjunction', raising=False)
+        monkeypatch.setattr(bl_tool.os, 'lstat', lambda p: self._fake_lstat(0x400))
+
+        assert bl_tool.is_reparse_link(path) is True
+
+    def test_plain_directory_is_accepted_without_isjunction(self, temp_dir, monkeypatch):
+        """A directory without the reparse attribute is accepted on the same interpreter."""
+        path = temp_dir / "plain"
+        path.mkdir()
+        monkeypatch.delattr(bl_tool.os.path, 'isjunction', raising=False)
+        monkeypatch.setattr(bl_tool.os, 'lstat', lambda p: self._fake_lstat(0))
+
+        assert bl_tool.is_reparse_link(path) is False
+
+    def test_missing_path_is_not_a_link(self, temp_dir):
+        """An entry which vanished before the check is reported as not a link, not as an error."""
+        assert bl_tool.is_reparse_link(temp_dir / "gone") is False
+
+
 class TestFormatting:
     """Test format_size() and format_speed() functions."""
 

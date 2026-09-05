@@ -68,6 +68,51 @@ UTF_FIXTURE_TEST_CASE( TestManifestRead, ManifestFixture )
     UTF_CHECK_EQUAL( manifest -> platform() -> toolchain(), "msvc12" );
 }
 
+UTF_FIXTURE_TEST_CASE( TestManifestUnsupportedVersionIsRejected, ManifestFixture )
+{
+    using namespace bl;
+    using namespace bl::loader;
+    using namespace utest;
+
+    /*
+     * A manifest which declares a version this reader does not know is refused rather than
+     * read as if it were version 1 with its unknown properties ignored
+     */
+
+    const auto output = ( m_dir.path() / "plugin.mf" ).string();
+    const auto platform = Platform::get( "linux", "x64", "gcc48" );
+
+    ManifestFactory::write(
+        ManifestFactory::create( m_plugin.path(), bl::om::copy( platform ) ),
+        cpp::copy( output )
+        );
+
+    UTF_CHECK_NO_THROW( ManifestFactory::read( output ) );
+
+    json::value value;
+
+    {
+        bl::fs::SafeInputFileStreamWrapper inputFile( output );
+        auto& is = inputFile.stream();
+
+        value = json::readFromStream( is );
+    }
+
+    auto json = cpp::copy( value.as_object() );
+    json[ "manifestVersion" ] = 2;
+
+    const auto outputV2 = ( m_dir.path() / "plugin-v2.mf" ).string();
+
+    {
+        bl::fs::SafeOutputFileStreamWrapper outputFile( outputV2 );
+        auto& os = outputFile.stream();
+
+        json::saveToStream( json::value( json ), os, true /* prettyPrint */ );
+    }
+
+    UTF_REQUIRE_THROW( ManifestFactory::read( outputV2 ), bl::UnexpectedException );
+}
+
 UTF_FIXTURE_TEST_CASE( TestManifestWrite, ManifestFixture )
 {
     using namespace bl;

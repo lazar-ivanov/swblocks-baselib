@@ -81,6 +81,26 @@ namespace utest
             return "Password1";
         }
 
+        static auto rsa2047PrivateKeyFixture() -> std::string
+        {
+            /*
+             * A 2047-bit modulus: one bit below the floor, but 256 bytes long, so a floor
+             * computed from the size in whole bytes would have accepted it
+             */
+
+            return TestUtils::loadDataFile( "test-private-key-2047.pem" );
+        }
+
+        static auto ecPrivateKeyFixture() -> std::string
+        {
+            return TestUtils::loadDataFile( "test-ec-private-key.pem" );
+        }
+
+        static auto ecPublicKeyFixture() -> std::string
+        {
+            return TestUtils::loadDataFile( "test-ec-public-key.pem" );
+        }
+
         static auto getModulus( SAA_in const bl::om::ObjPtr< bl::crypto::RsaKey >& rsaKey ) -> std::string
         {
             return bl::security::JsonSecuritySerialization::getPublicKeyAsJsonObject( rsaKey ) -> modulus();
@@ -328,4 +348,55 @@ UTF_AUTO_TEST_CASE( PemKeyFormats_MalformedPemThrows )
             LocalTestPemKeyFormatsHelpers::legacyPublicKeyFixture()
             )
         );
+}
+
+UTF_AUTO_TEST_CASE( PemKeyFormats_ModulusBelowMinimumIsRejected )
+{
+    using namespace utest;
+
+    /*
+     * The minimum modulus size is enforced on the exact bit length: a 2047-bit key is one
+     * bit short of the floor, yet it is 256 bytes long, so this is the regression test for the
+     * floor being computed from the byte length and rounding up to 2048. The rejection is a
+     * policy decision, so it is a SecurityException and it leaves the OpenSSL error queue
+     * clean; the same helper guards all four loaders, so one fixture covers them
+     */
+
+    UTF_REQUIRE_THROW(
+        bl::security::JsonSecuritySerialization::loadPrivateKeyFromPemString(
+            LocalTestPemKeyFormatsHelpers::rsa2047PrivateKeyFixture()
+            ),
+        bl::SecurityException
+        );
+
+    UTF_CHECK( LocalTestPemKeyFormatsHelpers::isErrorQueueClean() );
+}
+
+UTF_AUTO_TEST_CASE( PemKeyFormats_NonRsaKeysAreRejected )
+{
+    using namespace utest;
+
+    /*
+     * A well-formed key of another type (here an EC key, which every supported OpenSSL can
+     * read as PKCS#8 and as SubjectPublicKeyInfo) is a policy rejection which names the key
+     * type, not an OpenSSL failure with an empty error queue
+     */
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        bl::security::JsonSecuritySerialization::loadPrivateKeyFromPemString(
+            LocalTestPemKeyFormatsHelpers::ecPrivateKeyFixture()
+            ),
+        bl::SecurityException,
+        "The PEM key is not an RSA key"
+        );
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        bl::security::JsonSecuritySerialization::loadPublicKeyFromPemString(
+            LocalTestPemKeyFormatsHelpers::ecPublicKeyFixture()
+            ),
+        bl::SecurityException,
+        "The PEM key is not an RSA key"
+        );
+
+    UTF_CHECK( LocalTestPemKeyFormatsHelpers::isErrorQueueClean() );
 }

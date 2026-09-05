@@ -14,7 +14,10 @@
 #
 # Platform support:
 #   - Linux: devenv7+, clang2010+ (all tools supported)
-#   - macOS: devenv6+, clang1700+ (MSAN and clang-tidy NOT supported)
+#   - macOS: devenv7+, clang1700+ (sanitizers only; MSAN, scan-build and clang-tidy are NOT
+#     supported: the compiler is the one provided by the OS, so there is no TOOLCHAIN_ROOT
+#     from which the analysis binaries could be located)
+#   - Windows: not supported
 #
 # IMPORTANT: ASAN, MSAN, and TSAN are mutually exclusive.
 #            UBSAN can be combined with any of them.
@@ -31,8 +34,8 @@
 ###############################################################################
 
 #
-# Validation: These features work on Linux (devenv7+/clang2010+) and macOS (devenv6+/clang1700+)
-# Note: MSAN and clang-tidy are NOT supported on macOS
+# Validation: These features work on Linux (devenv7+/clang2010+) and macOS (devenv7+/clang1700+)
+# Note: MSAN, scan-build and clang-tidy are NOT supported on macOS; nothing is supported on Windows
 #
 
 # Check if any analysis tool is requested
@@ -47,23 +50,20 @@ ifneq (, $(BL_CLANG_ENABLE_RA_MSAN))
 $(error MSAN (BL_CLANG_ENABLE_RA_MSAN) is not supported on macOS. Use ASAN instead.)
 endif
 
-# clang-tidy is not supported on macOS
+# The static analysis tools are not supported on macOS: the compiler is the one provided by
+# the OS (see gcc-default.mk), so TOOLCHAIN_ROOT is not defined there and the scan-build and
+# clang-tidy binaries below cannot be located
 ifneq (, $(BL_CLANG_ENABLE_SA_TIDY))
-$(error clang-tidy (BL_CLANG_ENABLE_SA_TIDY) is not supported on macOS. Use scan-build instead.)
+$(error clang-tidy (BL_CLANG_ENABLE_SA_TIDY) is not supported on macOS.)
+endif
+ifneq (, $(BL_CLANG_ENABLE_SA_SCAN))
+$(error scan-build (BL_CLANG_ENABLE_SA_SCAN) is not supported on macOS.)
 endif
 
-# Validate devenv version is 6 or higher for macOS
-ifeq ($(DEVENV_VERSION_TAG),devenv2)
-$(error Clang analysis tools require devenv6 or higher on macOS. Current devenv: $(DEVENV_VERSION_TAG))
-endif
-ifeq ($(DEVENV_VERSION_TAG),devenv3)
-$(error Clang analysis tools require devenv6 or higher on macOS. Current devenv: $(DEVENV_VERSION_TAG))
-endif
-ifeq ($(DEVENV_VERSION_TAG),devenv4)
-$(error Clang analysis tools require devenv6 or higher on macOS. Current devenv: $(DEVENV_VERSION_TAG))
-endif
-ifeq ($(DEVENV_VERSION_TAG),devenv5)
-$(error Clang analysis tools require devenv6 or higher on macOS. Current devenv: $(DEVENV_VERSION_TAG))
+# Validate devenv version is 7 or higher for macOS; the toolchain check below admits only the
+# devenv7 toolchains, so an older devenv could never have passed it anyway
+ifneq (, $(BL_DEVENV_IS_LEGACY))
+$(error Clang analysis tools require devenv7 or higher on macOS. Current devenv: $(DEVENV_VERSION_TAG))
 endif
 
 # Validate toolchain is clang1700 or higher for macOS
@@ -72,6 +72,10 @@ ifneq ($(TOOLCHAIN),clang2010)
 $(error Clang analysis tools require clang1700 (Clang 17.0.0) or higher on macOS. Current toolchain: $(TOOLCHAIN))
 endif
 endif
+
+else ifeq (win, $(findstring win, $(OS)))
+
+$(error Clang analysis tools are not supported on Windows)
 
 else
 # Linux-specific validation
@@ -106,22 +110,20 @@ endif # Any analysis tool requested
 # Conflict Detection for Mutually Exclusive Sanitizers
 ###############################################################################
 
-# Count how many of ASAN/MSAN/TSAN are enabled
-BL_SANITIZER_COUNT := 0
-ifneq (, $(BL_CLANG_ENABLE_RA_ASAN))
-BL_SANITIZER_COUNT := $(shell expr $(BL_SANITIZER_COUNT) + 1)
-endif
-ifneq (, $(BL_CLANG_ENABLE_RA_MSAN))
-BL_SANITIZER_COUNT := $(shell expr $(BL_SANITIZER_COUNT) + 1)
-endif
-ifneq (, $(BL_CLANG_ENABLE_RA_TSAN))
-BL_SANITIZER_COUNT := $(shell expr $(BL_SANITIZER_COUNT) + 1)
-endif
+# Collect the names of the ASAN/MSAN/TSAN sanitizers which are enabled
+#
+# Note that this is computed with make functions only: this file is included on every
+# invocation of make on every platform, so a $(shell) here would fork a shell for every
+# build even when no analysis tool is requested
+BL_SANITIZERS_ENABLED := $(strip \
+    $(if $(BL_CLANG_ENABLE_RA_ASAN),ASAN) \
+    $(if $(BL_CLANG_ENABLE_RA_MSAN),MSAN) \
+    $(if $(BL_CLANG_ENABLE_RA_TSAN),TSAN))
 
 # Error if more than one is enabled
-ifeq ($(shell test $(BL_SANITIZER_COUNT) -gt 1; echo $$?),0)
+ifneq (, $(filter-out 0 1,$(words $(BL_SANITIZERS_ENABLED))))
 $(error ASAN, MSAN, and TSAN are mutually exclusive. Only one can be enabled at a time. \
-Currently enabled: $(if $(BL_CLANG_ENABLE_RA_ASAN),ASAN )$(if $(BL_CLANG_ENABLE_RA_MSAN),MSAN )$(if $(BL_CLANG_ENABLE_RA_TSAN),TSAN))
+Currently enabled: $(BL_SANITIZERS_ENABLED))
 endif
 
 ###############################################################################
@@ -150,7 +152,12 @@ CXXFLAGS += -fno-optimize-sibling-calls
 # Adjust optimization level if BL_CLANG_ENABLE_RA_FORCE_O1 is set
 ifneq (, $(BL_CLANG_ENABLE_RA_FORCE_O1))
 $(info Forcing optimization level to -O1 for better diagnostics)
-CXXFLAGS := $(filter-out -O0 -O1 -O2 -O3,$(CXXFLAGS))
+# The variant's own -O flag is deliberately left in place: both GCC and Clang honor the last
+# -O option on the command line and this file is included after the variant makefiles, so
+# appending is sufficient. It must not be replaced by a simply expanded assignment
+# (CXXFLAGS := ...): that would expand the -MJ$(BLDDIR)/$(@F).json flag added by the
+# clang-tidy support below at parse time, where $(@F) is empty, and every object would then
+# write the same compilation database fragment
 CXXFLAGS += -O1
 endif
 
@@ -187,7 +194,12 @@ CXXFLAGS += -fno-optimize-sibling-calls
 # Adjust optimization level if BL_CLANG_ENABLE_RA_FORCE_O1 is set
 ifneq (, $(BL_CLANG_ENABLE_RA_FORCE_O1))
 $(info Forcing optimization level to -O1 for better diagnostics)
-CXXFLAGS := $(filter-out -O0 -O1 -O2 -O3,$(CXXFLAGS))
+# The variant's own -O flag is deliberately left in place: both GCC and Clang honor the last
+# -O option on the command line and this file is included after the variant makefiles, so
+# appending is sufficient. It must not be replaced by a simply expanded assignment
+# (CXXFLAGS := ...): that would expand the -MJ$(BLDDIR)/$(@F).json flag added by the
+# clang-tidy support below at parse time, where $(@F) is empty, and every object would then
+# write the same compilation database fragment
 CXXFLAGS += -O1
 endif
 
@@ -221,7 +233,12 @@ CXXFLAGS += -fno-omit-frame-pointer
 # Adjust optimization level if BL_CLANG_ENABLE_RA_FORCE_O1 is set
 ifneq (, $(BL_CLANG_ENABLE_RA_FORCE_O1))
 $(info Forcing optimization level to -O1 for better diagnostics)
-CXXFLAGS := $(filter-out -O0 -O1 -O2 -O3,$(CXXFLAGS))
+# The variant's own -O flag is deliberately left in place: both GCC and Clang honor the last
+# -O option on the command line and this file is included after the variant makefiles, so
+# appending is sufficient. It must not be replaced by a simply expanded assignment
+# (CXXFLAGS := ...): that would expand the -MJ$(BLDDIR)/$(@F).json flag added by the
+# clang-tidy support below at parse time, where $(@F) is empty, and every object would then
+# write the same compilation database fragment
 CXXFLAGS += -O1
 endif
 
@@ -263,7 +280,12 @@ ifeq (, $(BL_CLANG_ENABLE_RA_ASAN)$(BL_CLANG_ENABLE_RA_MSAN)$(BL_CLANG_ENABLE_RA
 CXXFLAGS += -fno-omit-frame-pointer
 ifneq (, $(BL_CLANG_ENABLE_RA_FORCE_O1))
 $(info Forcing optimization level to -O1 for better diagnostics)
-CXXFLAGS := $(filter-out -O0 -O1 -O2 -O3,$(CXXFLAGS))
+# The variant's own -O flag is deliberately left in place: both GCC and Clang honor the last
+# -O option on the command line and this file is included after the variant makefiles, so
+# appending is sufficient. It must not be replaced by a simply expanded assignment
+# (CXXFLAGS := ...): that would expand the -MJ$(BLDDIR)/$(@F).json flag added by the
+# clang-tidy support below at parse time, where $(@F) is empty, and every object would then
+# write the same compilation database fragment
 CXXFLAGS += -O1
 endif
 endif

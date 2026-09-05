@@ -63,11 +63,19 @@ cfg = {
 cfg['linux'] = cfg['linux2']
 
 def handle_failure(proc):
+  # a platform without a debugger configuration cannot produce a crash dump analysis; say
+  # so and let the child's exit code through rather than replacing it with a KeyError
+  config = cfg.get(platform)
+  if config is None:
+    print('!' * 5, 'no crash dump configuration for platform', platform,
+          '- skipping the debugger', file=stderr)
+    return
+
   # setup parameters
   testdir = dirname(argv[1])
   params = { 'testdir': testdir, 'testname': basename(argv[1]),
              'testfile': argv[1], 'pid': proc.pid }
-  dumpfile = cfg[platform]['dumpfile'] % params
+  dumpfile = config['dumpfile'] % params
   params['dumpfile'] = dumpfile
 
   # locate dumpfile
@@ -75,7 +83,7 @@ def handle_failure(proc):
     print('!' * 5, 'crash dump file', dumpfile, 'found')
 
     # replace formatting strings in debugger command line
-    debugger = [a % params for a in cfg[platform]['debugger']]
+    debugger = [a % params for a in config['debugger']]
 
     # run debugger to dump stack trace to stdout
     call(debugger)

@@ -31,6 +31,8 @@ Test Strategy:
 """
 
 import pytest
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -40,6 +42,54 @@ from io import StringIO
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import cl
+
+
+# ========== Test include note parsing and dependency path escaping ==========
+
+class TestIncludeNoteParsing:
+    """Test the parsing of the compiler's include notes and the make escaping of the paths."""
+
+    def test_parse_include_note_keeps_spaces_in_path(self):
+        """A header path containing spaces is returned whole, not truncated to its last word."""
+        line = 'Note: including file:  C:\\Users\\John Doe\\project\\header.h'
+        assert cl.parse_include_note(line) == 'C:\\Users\\John Doe\\project\\header.h'
+
+    def test_parse_include_note_strips_indentation(self):
+        """Nested includes are indented further; only the surrounding whitespace is removed."""
+        line = 'Note: including file:        C:\\sdk\\include\\windows.h'
+        assert cl.parse_include_note(line) == 'C:\\sdk\\include\\windows.h'
+
+    def test_parse_include_note_ignores_other_lines(self):
+        """Lines which are not include notes are reported as such."""
+        assert cl.parse_include_note('main.cpp') is None
+        assert cl.parse_include_note('warning C4101: unreferenced local variable') is None
+
+    def test_escape_dependency_path_escapes_spaces(self):
+        """Spaces are escaped for make; paths without spaces are unchanged."""
+        assert cl.escape_dependency_path('C:\\My Documents\\file.h') == 'C:\\My\\ Documents\\file.h'
+        assert cl.escape_dependency_path('C:\\plain\\file.h') == 'C:\\plain\\file.h'
+
+    @pytest.mark.skipif(shutil.which('make') is None, reason="GNU make is not available")
+    def test_generated_dependency_file_with_spaces_is_accepted_by_make(self, temp_dir):
+        """A .d file written with escaped spaces parses in make as one prerequisite per path."""
+        header_dir = temp_dir / 'My Documents'
+        header_dir.mkdir()
+        header = header_dir / 'file.h'
+        header.write_text('')
+        target = str(temp_dir / 'main.obj')
+        depfile = temp_dir / 'main.d'
+
+        with open(depfile, 'wb') as f:
+            f.write(cl._encode_dependency_text('%s: \\\n' % (cl.escape_dependency_path(target),)))
+            f.write(cl._encode_dependency_text(' %s \\\n' % (cl.escape_dependency_path(str(header)),)))
+            f.write(b'\n\n')
+            f.write(cl._encode_dependency_text('%s:\n' % (cl.escape_dependency_path(str(header)),)))
+
+        result = subprocess.run(['make', '-n', '-f', str(depfile)],
+                                capture_output=True, text=True)
+
+        assert result.returncode == 0, result.stderr
+        assert 'No rule to make target' not in result.stderr
 
 
 # ========== Test PassThroughOptionParser ==========

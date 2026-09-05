@@ -18,6 +18,7 @@
 #define __UTEST_TESTTLSPEERVERIFICATION_H_
 
 #include <baselib/crypto/TlsPeerVerification.h>
+#include <baselib/crypto/X509Cert.h>
 #include <baselib/crypto/OpenSSLTypes.h>
 #include <baselib/crypto/ErrorHandling.h>
 
@@ -286,5 +287,51 @@ UTF_AUTO_TEST_CASE( TlsPeerVerification_CallbackFormFailsClosedWithoutPreverific
 }
 
 #endif /* OPENSSL_VERSION_NUMBER >= 0x10100000L */
+
+UTF_AUTO_TEST_CASE( TlsPeerVerification_PartialWildcardsDoNotMatch )
+{
+    using namespace bl;
+    using namespace bl::crypto;
+    using namespace bl::crypto::detail;
+
+    /*
+     * A wildcard which is only part of the leftmost label ('f*.example.test') is refused, while
+     * the whole-label form ('*.example.test') keeps matching exactly one label. The certificates
+     * are generated here with a common name only: with no subjectAltName present
+     * ::X509_check_host() falls back to the common name, which is all this needs, and no
+     * fixture file has to carry a shape which public CAs do not issue
+     */
+
+    const auto key = X509Cert::createPrivateKey();
+
+    const auto partial = X509Cert::createSelfSignedX509Cert(
+        key,
+        "US"                    /* country */,
+        "My Company Ltd"        /* organization */,
+        "f*.example.test"       /* commonName */,
+        1                       /* serial */,
+        1                       /* daysValid */
+        );
+
+    const auto whole = X509Cert::createSelfSignedX509Cert(
+        key,
+        "US"                    /* country */,
+        "My Company Ltd"        /* organization */,
+        "*.example.test"        /* commonName */,
+        2                       /* serial */,
+        1                       /* daysValid */
+        );
+
+    /*
+     * The first assertion is the one which holds only with X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS
+     */
+
+    UTF_REQUIRE( ! utest::tlspeer::matches( partial, "foo.example.test" ) );
+    UTF_REQUIRE( ! utest::tlspeer::matches( partial, "f.example.test" ) );
+
+    UTF_REQUIRE( utest::tlspeer::matches( whole, "foo.example.test" ) );
+    UTF_REQUIRE( ! utest::tlspeer::matches( whole, "a.b.example.test" ) );
+    UTF_REQUIRE( ! utest::tlspeer::matches( whole, "example.test" ) );
+}
 
 #endif /* __UTEST_TESTTLSPEERVERIFICATION_H_ */

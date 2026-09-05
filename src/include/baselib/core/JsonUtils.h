@@ -157,7 +157,8 @@ namespace bl
          * and accepted here. Nothing which parses today stops parsing.
          *
          * The json-spirit backend is deliberately left unbounded rather than being made to match.
-         * It is selected only on devenv2-6 and by explicit opt-in, the two backends are never
+         * It is selected automatically on devenv2-6 and only by explicit opt-in
+         * (BL_USE_JSON_SPIRIT=1) on devenv7 and later, the two backends are never
          * loaded into the same process, and adding a depth counter to it would mean modifying a
          * third-party parser to defend a configuration which is not the default. An application
          * which parses untrusted input on that backend should bound the document size before
@@ -261,6 +262,46 @@ namespace bl
             )
         {
             detail::JsonUtilsImpl::remapIncorrectValueTypeException( e, eptr, context, userException );
+        }
+
+        /**
+         * @brief Re-throws a JsonException with the given context appended to its message
+         *
+         * This is the counterpart of remapIncorrectValueTypeException() for the exceptions which
+         * the library's own checked accessors throw: bl::JsonException derives from
+         * std::exception, not from std::runtime_error, so the catch clause which funnels a
+         * backend's native conversion errors does not see them. The original exception is nested
+         * and its user friendly flag is preserved, so the type and the presentation a caller
+         * sees do not change, only the message gains the context
+         */
+
+        inline void rethrowWithContext(
+            SAA_in      const JsonException&                e,
+            SAA_in      const std::exception_ptr&           eptr,
+            SAA_in      const std::string&                  context
+            )
+        {
+            const std::string message = resolveMessage(
+                BL_MSG()
+                    << e.what()
+                    << " for "
+                    << context
+                );
+
+            if( eh::isUserFriendly( e ) )
+            {
+                BL_THROW_USER_FRIENDLY(
+                    JsonException()
+                        << eh::errinfo_nested_exception_ptr( eptr ),
+                    message
+                    );
+            }
+
+            BL_THROW(
+                JsonException()
+                    << eh::errinfo_nested_exception_ptr( eptr ),
+                message
+                );
         }
 
     } // json

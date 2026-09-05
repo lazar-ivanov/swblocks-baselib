@@ -253,7 +253,7 @@ make -k -j4 ARCH=x64
 
 #### Unified CRT and Optimization Strategy
 
-Both debug and release use `--release` flag, `-DNDEBUG`, and release CRT (`/MD`). Only difference: debug uses `-Od -Ob0`, release uses `-O2 -Ob1 -Ot -Oi`. This simplifies deployment (no debug CRT dependencies).
+Both debug and release use the `--release` flag and `-DNDEBUG`. The script passes no CRT flag: OpenSSL's own Windows targets select the static CRT (`/MT /Zl`) for `no-shared` builds (`Configurations/10-main.conf`), which matches the `-MT` the project links with. Only difference between the variants: debug uses `-Od -Ob0`, release uses `-O2 -Ob1 -Ot -Oi`. This simplifies deployment (no debug CRT dependencies).
 
 #### Debug Information Strategy
 
@@ -402,8 +402,8 @@ Starting with devenv7, Windows builds of `utf_baselib_jni` are fully supported a
 
 **JDK directory structure (devenv7):**
 - **Windows:** `${DIST_ROOT_DEPS3}/openjdk/25/{arch}/bin/server/jvm.dll` (arch-specific: `a64`, `x64`)
-- **Linux:** `${DIST_ROOT_DEPS3}/openjdk/25/default/lib/server/libjvm.so`
-- **macOS:** `${DIST_ROOT_DEPS3}/openjdk/25/default/lib/server/libjvm.dylib`
+- **Linux:** `${DIST_ROOT_DEPS3}/openjdk/25/{arch}/lib/server/libjvm.so`
+- **macOS:** `${DIST_ROOT_DEPS3}/openjdk/25/{arch}/lib/server/libjvm.dylib`
 - x86 is not supported (no JDK 25 available for this architecture)
 
 **JVM runtime loading:** The JVM is loaded dynamically via `LoadLibrary()` (Windows) or `dlopen()` (Unix). Code in `src/include/baselib/jni/JavaVirtualMachine.h` checks multiple path candidates for backward compatibility across JDK 8, 9-24, and 25+.

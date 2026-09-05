@@ -42,8 +42,13 @@
  * Gated on the OpenSSL version only: the condition is a property of the OpenSSL headers, and
  * BL_DEVENV_VERSION is defined only by the project makefiles (an external consumer would
  * otherwise silently lose the shim)
+ *
+ * The upper bound exists because the overload is needed only by the private OpenSSL 1.1.x
+ * header (internal/refcount.h, reached through crypto/rsa/rsa_local.h below), which is not
+ * included on OpenSSL 3.x at all, so on 3.x the overload would merely be an unreferenced
+ * definition of a reserved intrinsic name
  */
-#if defined( _WIN32 ) && OPENSSL_VERSION_NUMBER >= 0x1010104fL
+#if defined( _WIN32 ) && OPENSSL_VERSION_NUMBER >= 0x1010104fL && OPENSSL_VERSION_NUMBER < 0x30000000L
 namespace
 {
     /*

@@ -256,15 +256,35 @@ shifts a line number cited elsewhere in this record, because no script has been 
 | 10 | M-17 (a) | `windows/internal/common.ps1:548` | `Start-Process -FilePath "tar" -ArgumentList @("-xf", $ArchivePath, "-C", $DestinationPath)` passes the elements unquoted, so a `%USERPROFILE%` containing a space (`C:\Users\First Last`) breaks every non-`.7z.exe` extraction. `download-tools.ps1:888` uses the opposite convention — elements pre-wrapped in literal quotes — which Windows PowerShell 5.1 can double up; the two cannot both be right, and only a Windows host can tell which | — | settle one quoting convention for `Start-Process -ArgumentList` and apply it to both sites |
 | 11 | M-17 (b) | `windows/build-openssl-windows.bat:596-597, 620-621` | `--prefix=%OPENSSL_ROOT_PATH%\out` and `--openssldir=…` are unquoted; the default `DIST_ROOT` (`:74`) is under `%USERPROFILE%`, so a profile path with a space splits into extra `Configure` arguments and the failure lands inside `log_bootstrap.log` | the Unix scripts quote (`linux/build-openssl-linux.sh:542-544`) | `--prefix="%OPENSSL_ROOT_PATH%\out"`, likewise `--openssldir` |
 
+The Low and Informational findings of the same review which fall in these scripts (L-23 … L-29, and
+the script halves of L-30, I-16 and I-17; assessed in
+`notes/plans/issues/pr-review-fable51-residual-findings-status.md`) are recorded here for the same
+reason and under the same trigger:
+
+| # | Finding | Location | Symptom | Rule / precedent | Fix when picked up |
+|---|---|---|---|---|---|
+| 12 | L-23 | `windows/build-env-all-windows.bat:278` | `DIST_ROOT` is set unconditionally, silently discarding the parsed `-dist-root` option | `build-msvc-toolchain.bat:343-346` guards the same assignment with `DIST_ROOT_PROVIDED` | the same guard |
+| 13 | L-24 | `macos/build-boost-macos.sh:180, 215` | a sed script is written with `cat >` to the predictable path `/tmp/jamfile_patch.sed` and then executed with `sed -f` (CWE-377): a local user can pre-create the path as a symlink or race its contents to inject Jam code | the JSON-Spirit installers already use `mktemp` + `trap` | `mktemp` + `trap` |
+| 14 | L-25 | `docker/ubuntu/docker-install.sh:2`; `rosetta/*/rosetta-binfmt.service`; `rosetta/*/register-rosetta.sh` | `qemu-user-static` + `binfmt-support` register a handler for the same x86-64 ELF magic as Rosetta and the unit orders only after `network.target`, so which interpreter wins after a reboot is registration-order dependent; `build-gcc-linux.sh:122` only checks that the `rosetta` entry exists; `register-rosetta.sh` waits for the Parallels share with no `TimeoutStartSec=` | reproducibility | order the unit after `binfmt-support` (or do not install qemu on a Rosetta host); add a timeout; check which handler is active, not merely registered |
+| 15 | L-26 | every `curl -L`, `wget` and `Invoke-WebRequest` download site (the tables above) | HTTPS to HTTP redirects are followed; `aka.ms` and the Adoptium `latest` endpoint are redirectors | supply-chain scope step 1 | `--proto '=https' --proto-redir '=https'` (curl), `--https-only` (wget), and the PowerShell equivalent |
+| 16 | L-27 | `linux/check-prerequisites.sh:56` | accepts `rhel|rocky|almalinux|centos`, while every build and install script accepts only `ID` = `ubuntu` or `rhel`, so a Rocky host passes the check and fails at the first build step; `ID_LIKE` is consulted nowhere | consistency | consult `ID_LIKE` in the build scripts as well, or narrow the check |
+| 17 | L-28 | `linux/build-boost-linux.sh:342` | Boost is built without `-D_FILE_OFFSET_BITS=64` while the consumers compile with it (`gcc-default.mk`), and `address-model=64` is unconditional; harmless on 64-bit, an `off_t` / `struct stat` ABI mismatch on the x86 path the scripts nominally support | ABI parity | pass the define; derive `address-model` from the architecture |
+| 18 | L-29 | `macos/*.sh` | macOS 14 is mapped to `d24`, while `projects/make/platform.mk:180-187` maps Darwin 23 to `d22` / devenv6 only, so a devenv7 dist built on macOS 14 is unusable on the machine which built it | a dist must be consumable where it was built | align the OS tag map with `platform.mk` |
+| 19 | L-30 (installer half) | `linux/install-gradle-linux.sh:105-108`, `macos/install-gradle-macos.sh:74-77` versus `windows/internal/download-tools.ps1:737` | the Unix installers create `gradle/latest/default` while the Windows one creates `gradle/<version>/default`; `projects/make/3rd/gradle/latest.mk` now tolerates both by selecting on the presence of the launcher | one layout per tool | pick one layout for all three platforms |
+| 20 | I-16 (OpenSSL half) | `linux/build-openssl-linux.sh:515-525` | the clang build of OpenSSL is configured without `-fvisibility=hidden`, unlike the gcc build, so the export surface of anything linking it differs by toolchain | toolchain parity | add the flag to the clang `CFLAGS` |
+| 21 | I-17 (script docs) | `windows/build-msvc-toolchain.bat:59-60, 88-89`; `windows/internal/toolchain-setup.ps1:488-490` | the help text still advertises the pre-downgrade Perl default and a cache directory the script no longer uses; the generated `ci-init-env.mk` hard-codes the `/c/Users/` prefix (only `$(USERNAME)` is parameterised), which breaks profiles on another drive or under a domain directory | docs match code; the Unix generators use `${HOME}` | correct the help text; derive the prefix from `%USERPROFILE%` |
+
 ### Scope when picked up
 
-1. Apply items 2-6, 9, 10 and 11 on a Windows devenv7 host and run one Boost + OpenSSL
+1. Apply items 2-6, 9, 10, 11, 12 and 21 on a Windows devenv7 host and run one Boost + OpenSSL
    provisioning for each target architecture; this is the same run the `download-sources.ps1`
    defect above is waiting for, so do them together.
-2. Apply items 1 and 8 on a macOS host (item 8 needs an Intel Mac, or at least an inspection of
-   the produced library names) and run one Boost provisioning.
-3. Apply item 7 and rebuild the Ubuntu image; confirm `build-env-all.sh` produces a `ub24` dist.
-4. Update the line-number tables in this record afterwards.
+2. Apply items 1, 8, 13, 18 and 19 on a macOS host (item 8 needs an Intel Mac, or at least an
+   inspection of the produced library names) and run one Boost provisioning.
+3. Apply items 7, 14, 16, 17, 19 and 20 on Linux and rebuild the Ubuntu image; confirm
+   `build-env-all.sh` produces a `ub24` dist.
+4. Apply item 15 on all three platforms as part of scope step 1 of the checksum work above.
+5. Update the line-number tables in this record afterwards.
 
 ---
 

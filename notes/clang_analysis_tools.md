@@ -12,10 +12,15 @@ This document describes the Clang static and dynamic analysis tools integration 
 
 ### macOS
 - **Platform**: macOS (Darwin)
-- **DevEnv**: devenv6 or higher
+- **DevEnv**: devenv7 or higher
 - **Toolchain**: clang1700 (Clang 17.0.0) or higher
-- **Supported tools**: ASAN, TSAN, UBSAN, scan-build
-- **⚠️ Not supported on macOS**: MSAN, clang-tidy
+- **Supported tools**: ASAN, TSAN, UBSAN
+- **⚠️ Not supported on macOS**: MSAN, scan-build, clang-tidy. On macOS the compiler is the
+  one provided by the OS, so there is no toolchain root from which the `scan-build` and
+  `clang-tidy` binaries could be located.
+
+### Windows
+- Not supported.
 
 Attempting to use unsupported features will result in a build error.
 
@@ -214,10 +219,11 @@ make: *** MSAN (BL_CLANG_ENABLE_RA_MSAN) is not supported on macOS. Use ASAN ins
 ### clang-tidy on macOS Error
 
 ```
-make: *** clang-tidy (BL_CLANG_ENABLE_SA_TIDY) is not supported on macOS. Use scan-build instead.
+make: *** clang-tidy (BL_CLANG_ENABLE_SA_TIDY) is not supported on macOS.
 ```
 
-**Solution**: clang-tidy is Linux-only. Use scan-build on macOS for static analysis.
+**Solution**: clang-tidy is Linux-only, as is scan-build (`BL_CLANG_ENABLE_SA_SCAN` fails the same
+way on macOS). Run the static analysis on a Linux devenv7 host.
 
 ### DevEnv Version Error (Linux)
 
@@ -230,10 +236,10 @@ make: *** Clang analysis tools require devenv7 or higher on Linux. Current deven
 ### DevEnv Version Error (macOS)
 
 ```
-make: *** Clang analysis tools require devenv6 or higher on macOS. Current devenv: devenv5
+make: *** Clang analysis tools require devenv7 or higher on macOS. Current devenv: devenv5
 ```
 
-**Solution**: Upgrade to devenv6 or higher on macOS.
+**Solution**: Upgrade to devenv7 or higher on macOS.
 
 ### Toolchain Error (Linux)
 
@@ -310,7 +316,8 @@ Currently enabled: ASAN MSAN
 The Clang analysis tools support is implemented in:
 - `projects/make/toolchain/clang-analysis.mk`
 
-This file is automatically included by `gcc-default.mk` after all compiler and linker flags are set.
+This file is automatically included by `projects/make/common.mk` after all toolchain and variant
+makefiles, so that it can override the optimization flags they set.
 
 ### Compiler Flags Added
 

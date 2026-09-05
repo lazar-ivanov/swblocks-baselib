@@ -831,6 +831,14 @@ namespace bl
              * @brief Schedules the task to start execution. Note that function should assume the
              * task lock is held and should never attempt to execute synchronously and call
              * notifyReady().
+             *
+             * The lock of the owning execution queue is held as well, because the queue schedules
+             * from under it (see padExecutingQueueNothrow() in ExecutionQueueImpl.h, which is
+             * reached from push_back(), from the completion path and from the throttle setters),
+             * so this function must not call any method of the queue it is passed and must not
+             * block waiting for another task of that queue - see the lock ordering passage in the
+             * header comment of this file. Initiate the asynchronous work (post to the thread
+             * pool, start the I/O) and return.
              */
 
             virtual void scheduleTask( SAA_in const std::shared_ptr< ExecutionQueue >& eq ) = 0;

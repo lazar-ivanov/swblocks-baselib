@@ -326,6 +326,26 @@ namespace bl
                 auto json = cpp::copy( value.as_object() );
 
                 const auto manifestVersion = json::value_to< std::uint64_t >( getRequiredProperty( json, g_manifestVersion ) );
+
+                /*
+                 * Only version 1 has ever been written; a manifest with a newer version would be
+                 * read as if it were version 1 and its unknown properties ignored, so it is
+                 * refused here before any other property is interpreted
+                 */
+
+                BL_CHK_T_USER_FRIENDLY(
+                    false,
+                    manifestVersion == g_manifestVersionId,
+                    UnexpectedException(),
+                    BL_MSG()
+                        << "Unsupported manifest version "
+                        << manifestVersion
+                        << " (expected "
+                        << g_manifestVersionId
+                        << ") in manifest file "
+                        << filePath
+                    );
+
                 const auto serveridStr = json::value_to< std::string >( getRequiredProperty( json, g_serverId ) );
                 const auto versionMajor = ( std::size_t ) json::value_to< std::uint64_t >( getRequiredProperty( json, g_versionMajor ) );
                 const auto versionMinor = ( std::size_t ) json::value_to< std::uint64_t >( getRequiredProperty( json, g_versionMinor ) );
@@ -353,8 +373,6 @@ namespace bl
 
                 const auto cppCompatIdStr = json::value_to< std::string >( getRequiredProperty( json, g_cppCompatibilityId ) );
                 auto cppCompatId = uuids::string2uuid( cppCompatIdStr );
-
-                BL_UNUSED( manifestVersion );
 
                 om::ObjPtr< Manifest > manifest;
 

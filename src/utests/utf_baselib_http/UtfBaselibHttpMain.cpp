@@ -21,3 +21,4 @@
 #include "TestHttpServer.h"
 #include "TestTlsProtocolPolicy.h"
 #include "TestTlsPeerVerification.h"
+#include "TestTlsHandshakeVerification.h"

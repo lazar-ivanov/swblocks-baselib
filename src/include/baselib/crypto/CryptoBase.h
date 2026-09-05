@@ -193,17 +193,25 @@ namespace bl
                  * suite which can be negotiated below TLS 1.3
                  *
                  * ::SSL_CTX_set_cipher_list returns zero when nothing matched and its return
-                 * value is checked at the call site, but from OpenSSL 1.1.1 onwards it returns
-                 * success as long as any TLS 1.3 cipher suite is configured, even when the list
-                 * selected no TLS 1.2 suite at all
+                 * value is checked at the call site. From OpenSSL 1.1.1 onwards a cipher list
+                 * and the TLS 1.3 suites are configured separately, and this check is defence in
+                 * depth against a version which reports success as long as any TLS 1.3 suite is
+                 * configured even when the list selected no TLS 1.2 suite at all: the 1.1.1w and
+                 * 3.x sources already fail the call in that case (they count the TLS 1.2 suites
+                 * separately), but that could not be established for every 1.1.1 letter release
                  *
-                 * Without this check an OpenSSL built without the relevant algorithms would
-                 * silently become TLS 1.3 only and would then fail every TLS 1.2 peer at
+                 * Without this check such an OpenSSL, built without the relevant algorithms,
+                 * would silently become TLS 1.3 only and would then fail every TLS 1.2 peer at
                  * handshake time rather than failing loudly here at configuration time
+                 *
+                 * Before OpenSSL 1.1.0 there is no ::SSL_CTX_get_ciphers and no TLS 1.3, so
+                 * ::SSL_CTX_set_cipher_list returning zero when nothing matched, which the call
+                 * site checks, is the whole check there
                  */
 
                 static void chkUsableCipherSuitesAvailable( SAA_inout ::SSL_CTX* nativeSslContext )
                 {
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
                     const auto* ciphers = ::SSL_CTX_get_ciphers( nativeSslContext );
 
                     BL_CHK_CRYPTO_API_NM( ciphers );
@@ -237,6 +245,9 @@ namespace bl
                         usableCount > 0,
                         "No usable TLS cipher suites are configured"
                         );
+#else
+                    BL_UNUSED( nativeSslContext );
+#endif
                 }
 
                 static void initNativeSslContext( SAA_inout ::SSL_CTX* nativeSslContext )
@@ -254,6 +265,16 @@ namespace bl
                      * Note that we also allow for all bug workarounds via SSL_OP_ALL; on the
                      * OpenSSL versions we support this only enables interoperability workarounds
                      * and the historically dangerous members of it have become no-ops
+                     *
+                     * TLS compression is refused explicitly (CRIME): OpenSSL 1.1.0+ refuses it by
+                     * default and the security level below refuses it as well, so on those
+                     * versions this only pins the policy, but a 1.0.2 build with zlib support
+                     * would otherwise still offer it
+                     *
+                     * The server's own preference order is made authoritative, so that the cipher
+                     * list below (AEAD suites first) decides the suite rather than the order in
+                     * which the client happened to list them; the bit has no effect on the client
+                     * role or on TLS 1.3, where the server always chooses
                      */
 
                     options |= (
@@ -262,8 +283,25 @@ namespace bl
                         SSL_OP_NO_TLSv1 |
                         SSL_OP_NO_TLSv1_1 |
                         SSL_OP_ALL |
-                        SSL_OP_NO_TICKET
+                        SSL_OP_NO_TICKET |
+                        SSL_OP_NO_COMPRESSION |
+                        SSL_OP_CIPHER_SERVER_PREFERENCE
                         );
+
+#ifdef SSL_OP_NO_RENEGOTIATION
+                    /*
+                     * Neither this library nor Boost.Asio ever initiates a renegotiation and
+                     * TLS 1.3 has none, so refusing it costs nothing: on the server role it
+                     * removes client initiated renegotiation storms as a denial of service
+                     * vector and on the client role it turns a server's HelloRequest into a
+                     * no_renegotiation alert (a TLS 1.2 server which renegotiates in order to
+                     * demand a client certificate would fail, but this library never presents
+                     * one, so such a server fails today as well). The option exists from OpenSSL
+                     * 1.1.0h onwards, which is why it is tested by name rather than by version
+                     */
+
+                    options |= SSL_OP_NO_RENEGOTIATION;
+#endif
 
                     /*
                      * Ignore the return value because it is the new bitmask

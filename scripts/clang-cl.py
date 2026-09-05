@@ -92,6 +92,23 @@ def _encode_dependency_text(text):
   except UnicodeError:
     return text.encode(getfilesystemencoding(), 'replace')
 
+# prefix of the include notes emitted with -showIncludes (cl.exe and clang-cl.exe agree)
+INCLUDE_NOTE_PREFIX = 'Note: including file:'
+
+# Extract the header path from an include note, or None for any other line
+# The path may itself contain spaces (a profile directory such as C:\Users\John Doe), so
+# everything after the prefix is the path and only the surrounding whitespace is removed;
+# splitting on whitespace would keep only the last word of such a path
+def parse_include_note(line):
+  if not line.startswith(INCLUDE_NOTE_PREFIX):
+    return None
+  return line[len(INCLUDE_NOTE_PREFIX):].strip()
+
+# Escape a path for use as a make target or prerequisite
+# make splits a prerequisite list on whitespace unless the space is escaped with a backslash
+def escape_dependency_path(path):
+  return path.replace(' ', '\\ ')
+
 parser = PassThroughOptionParser()
 parser.add_option('-M',
           action='callback',
@@ -120,6 +137,11 @@ if __name__ == '__main__':
   compiler = splitext(basename(argv[0]))[0]
   # pass the resolved path: on Windows CreateProcess appends only '.exe' to a bare
   # name, so a compiler provided as .bat or .cmd is unreachable without resolving it
+  # (the test harness drives this wrapper through a cl.bat shim); which() honors the
+  # PATHEXT order, so a real cl.exe on the PATH always wins over a shim, and a batch
+  # shim re-parses its arguments through cmd.exe, which is acceptable only because every
+  # argument originates from the makefiles and the source tree, never from an untrusted
+  # party
   resolved = which(compiler)
   args.insert(0, resolved if resolved else compiler)
 
@@ -134,9 +156,9 @@ if __name__ == '__main__':
     else:
       line = raw_line
     line = line.rstrip()
-    if line.startswith('Note: including file:'):
-      dep = line.split()[-1]
-      if dep not in deps:
+    dep = parse_include_note(line)
+    if dep is not None:
+      if dep and dep not in deps:
         deps.append(dep)
     else:
       print(line, file=stdout)
@@ -144,15 +166,16 @@ if __name__ == '__main__':
 
   # if successful, write the dependency file
   # the file is written in binary mode so the dependency paths are emitted as the exact
-  # bytes the compiler produced
+  # bytes the compiler produced; spaces are escaped so that make reads each path as one
+  # target or prerequisite
   if p.returncode == 0 and options.dependencies:
     f = open('%s.d' % splitext(options.target)[0], 'wb')
-    f.write(_encode_dependency_text('%s: \\\n' % (options.target,)))
+    f.write(_encode_dependency_text('%s: \\\n' % (escape_dependency_path(options.target),)))
     for dep in deps:
-      f.write(_encode_dependency_text(' %s \\\n' % (dep,)))
+      f.write(_encode_dependency_text(' %s \\\n' % (escape_dependency_path(dep),)))
     f.write(b'\n\n')
     for dep in deps:
-      f.write(_encode_dependency_text('%s:\n' % (dep,)))
+      f.write(_encode_dependency_text('%s:\n' % (escape_dependency_path(dep),)))
     f.close()
 
   exit(p.returncode)

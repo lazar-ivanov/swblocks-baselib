@@ -124,7 +124,10 @@ namespace bl
              *
              * This call also samples the observer's ExecutionQueueNotify::maxReadyOrExecuting()
              * throttle limit, once, and caches it for the lifetime of the registration; register
-             * again to install a different limit.
+             * again to install a different limit, which takes effect immediately (a raised limit
+             * admits the pending tasks before this call returns). Re-registering also rebinds
+             * the delivery policy per callback, not per queue - see
+             * ExecutionQueueNotify::NotifyDelivery.
              */
 
             virtual void setNotifyCallback(
@@ -184,6 +187,15 @@ namespace bl
             virtual om::ObjPtr< Task > pop( SAA_in const bool wait = true ) = 0;
 
             virtual om::ObjPtr< Task > top( SAA_in const bool wait = true ) = 0;
+
+            /**
+             * @brief Invokes cbTasks for every task currently in the given queue
+             *
+             * The callback runs under the execution queue's internal (non-recursive) lock: it
+             * must not call any method of this execution queue, must not block, and must not
+             * complete or cancel a task synchronously. It is intended for inspection only, e.g.
+             * the shutdown assertions in AsyncExecutorImpl.
+             */
 
             virtual void scanQueue(
                 SAA_in                  const QueueId                               queueId,

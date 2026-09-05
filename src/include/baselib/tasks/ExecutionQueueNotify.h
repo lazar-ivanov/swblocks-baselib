@@ -73,6 +73,11 @@ namespace bl
              * -- cover maxReadyOrExecuting(), which is sampled once at registration time
              * -- act as a notification drain barrier, so AllTasksCompleted still does not imply
              *    that earlier callbacks have returned
+             * -- survive re-registration: the policy is captured per callback, under the queue
+             *    lock, at the moment the callback is bound, so when setNotifyCallback() switches
+             *    a queue from DeliverySerialized to DeliveryConcurrent a serialized callback
+             *    bound before the switch may still be in flight while the callbacks bound after
+             *    it are delivered concurrently with it
              *
              * ORDERING: DeliverySerialized guarantees exclusion, NOT order. Completing threads
              * contend for an internal mutex whose acquisition order is unspecified, so the delivery

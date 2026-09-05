@@ -128,6 +128,70 @@ namespace utest
 
 } // utest
 
+UTF_AUTO_TEST_CASE( DataModelPropertyErrorsCarryPropertyContext )
+{
+    using namespace bl;
+    using namespace bl::dm;
+    using namespace utest::dm;
+
+    typedef DataModelUtils dmu;
+
+    /*
+     * Whatever a property deserializer throws - the backend's own conversion error (a
+     * std::runtime_error on both backends) or the JsonException of the library's checked
+     * accessors - surfaces as a JsonException whose message names the property
+     */
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        dmu::loadFromJsonText< ContainedTestObject >( R"({"intValue":3000000000})" ),
+        JsonException,
+        "property 'intValue'"
+        );
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        dmu::loadFromJsonText< ContainedTestObject >( R"({"uint64Value":-1})" ),
+        JsonException,
+        "property 'uint64Value'"
+        );
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        dmu::loadFromJsonText< ContainedTestObject >( R"({"intValue":"abc"})" ),
+        JsonException,
+        "property 'intValue'"
+        );
+
+    /*
+     * An exact double into an integer property is refused on both backends (see
+     * JsonNumericDoubleIntoIntegralIsRejected), with the property named as well
+     */
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        dmu::loadFromJsonText< ContainedTestObject >( R"({"intValue":3.0})" ),
+        JsonException,
+        "property 'intValue'"
+        );
+
+    /*
+     * A kind mismatch is reported in readable words and marked as user friendly; the raw
+     * library text (which on Boost.JSON reads like 'not a string [boost.json:N]') is nested
+     * rather than shown
+     */
+
+    UTF_CHECK_EXCEPTION(
+        dmu::loadFromJsonText< ContainedTestObject >( R"({"strValue":42})" ),
+        JsonException,
+        []( SAA_in const JsonException& e ) -> bool
+        {
+            const std::string message( e.what() );
+
+            return
+                eh::isUserFriendly( e ) &&
+                cpp::contains( message, "property 'strValue'" ) &&
+                ! cpp::contains( message, "boost.json" );
+        }
+        );
+}
+
 UTF_AUTO_TEST_CASE( CoreDataModelTests )
 {
     using namespace bl;

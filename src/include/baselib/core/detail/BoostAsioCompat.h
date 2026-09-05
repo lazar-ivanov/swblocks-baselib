@@ -378,12 +378,22 @@ typedef basic_resolver_compat<icmp> icmp_resolver;
  * Boost 1.89+ removed the single-iterator overload of async_connect.
  * This wrapper allows calling async_connect with a single iterator
  * (representing the start of a range) by creating a range from iterator to end.
+ *
+ * The constraint is the one the removed overload carried: without it this overload is
+ * also viable for the modern range form async_connect( socket, results, handler ), where
+ * Boost's own overload taking `const EndpointSequence&` is viable as well, and partial
+ * ordering cannot separate the two, so that call becomes ambiguous. A resolver results
+ * object is an endpoint sequence (it has begin()/end()) while a resolver iterator is not,
+ * which is exactly the distinction is_endpoint_sequence draws.
  */
 template <typename Protocol, typename Executor, typename Iterator, typename ConnectToken>
 inline auto async_connect(
     basic_socket<Protocol, Executor>& s,
     Iterator begin,
-    ConnectToken&& token)
+    ConnectToken&& token,
+    constraint_t<
+      !is_endpoint_sequence<Iterator>::value
+    > = 0)
     -> decltype(boost::asio::async_connect(s, begin, begin, std::forward<ConnectToken>(token)))
 {
     /*

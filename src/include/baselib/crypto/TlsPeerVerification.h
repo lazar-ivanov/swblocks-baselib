@@ -115,12 +115,22 @@ namespace bl
                         return 1 == ipResult;
                     }
 
+                    /*
+                     * X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS refuses the 'f*.example.com' shapes,
+                     * where the wildcard is only part of the leftmost label; OpenSSL already
+                     * refuses a wildcard which is not in the leftmost label, or which has text on
+                     * both sides. RFC 6125 section 6.4.3 tolerates the partial form, but the
+                     * CA/Browser Forum baseline requirements define a wildcard as a whole leftmost
+                     * label and public CAs do not issue anything else, so nothing legitimate is
+                     * lost and the matching rule becomes the same one BoringSSL and Go apply
+                     */
+
                     return 1 == ::X509_check_host(
                         certificate,
                         peerName.c_str(),
                         peerName.size(),
-                        0U          /* flags */,
-                        nullptr     /* peername */
+                        X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS    /* flags */,
+                        nullptr                                 /* peername */
                         );
                 }
 

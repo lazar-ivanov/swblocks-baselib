@@ -731,10 +731,14 @@ namespace bl
                         {
                             /*
                              * This is the dump callback which will be called in case of an error
+                             *
+                             * The rejected document is dumped at trace level only: it is whatever
+                             * arrived on the wire and may carry credentials, so it must not reach
+                             * a log which is enabled in normal operation
                              */
 
                             BL_LOG_MULTILINE(
-                                Logging::debug(),
+                                Logging::trace(),
                                 BL_MSG()
                                     << "Invalid JSON string:\n"
                                     << ( input.size() < MAX_DUMP_STRING_LENGTH ?

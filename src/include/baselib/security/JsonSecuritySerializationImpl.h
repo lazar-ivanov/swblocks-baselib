@@ -460,7 +460,7 @@ namespace bl
                     );
 
                 BL_CHK_CRYPTO_API_NM( pkeyPtr );
-                BL_CHK_CRYPTO_API_NM( ::EVP_PKEY_base_id( pkeyPtr.get() ) == EVP_PKEY_RSA );
+                chkPemKeyIsRsa( pkeyPtr );
 
                 auto rsa = crypto::rsakey_ptr_t::attach( ::EVP_PKEY_get1_RSA( pkeyPtr.get() ) );
                 BL_CHK_CRYPTO_API_NM( rsa );
@@ -537,7 +537,7 @@ namespace bl
 
                     if( pkeyPtr )
                     {
-                        BL_CHK_CRYPTO_API_NM( ::EVP_PKEY_base_id( pkeyPtr.get() ) == EVP_PKEY_RSA );
+                        chkPemKeyIsRsa( pkeyPtr );
 
                         rsa = crypto::rsakey_ptr_t::attach( ::EVP_PKEY_get1_RSA( pkeyPtr.get() ) );
                     }
@@ -597,6 +597,30 @@ namespace bl
             };
 
             /**
+             * @brief Rejects a well-formed PEM key which is not an RSA key
+             *
+             * This is a policy rejection rather than an OpenSSL failure, so it reports the key
+             * type it found instead of an empty OpenSSL error queue; ::EVP_PKEY_base_id and
+             * ::OBJ_nid2sn exist on every version of OpenSSL we support
+             */
+
+            static void chkPemKeyIsRsa( SAA_in const crypto::evppkey_ptr_t& pkey )
+            {
+                const int keyType = ::EVP_PKEY_base_id( pkey.get() );
+                const char* keyTypeName = ::OBJ_nid2sn( keyType );
+
+                BL_CHK_T(
+                    false,
+                    EVP_PKEY_RSA == keyType,
+                    SecurityException(),
+                    BL_MSG()
+                        << "The PEM key is not an RSA key; [keyType="
+                        << ( keyTypeName ? keyTypeName : "unknown" )
+                        << "]"
+                    );
+            }
+
+            /**
              * @brief Rejects an imported RSA key which does not meet the minimum policy
              *
              * The modulus size floor applies on every version of OpenSSL; the structural key
@@ -604,8 +628,10 @@ namespace bl
              * from OpenSSL 3.0), so on the older versions the modulus size is the only thing
              * which is verified
              *
-             * Note that ::RSA_size is used rather than ::RSA_bits because the latter does not
-             * exist before OpenSSL 1.1.0
+             * Note that the modulus size is taken from ::EVP_PKEY_bits, which is the exact bit
+             * length of the modulus (BN_num_bits) on every version of OpenSSL we support;
+             * ::RSA_size, which was used before, is the size in whole bytes and rounds a
+             * 2041-2047 bit modulus up to 2048, and ::RSA_bits does not exist before 1.1.0
              */
 
             static void chkRsaKeyIsAcceptable(
@@ -613,7 +639,9 @@ namespace bl
                 SAA_in          const KeyCheckDepth                                         depth
                 )
             {
-                const auto modulusBits = ::RSA_size( &rsaKey -> get() ) * 8;
+                const auto pkey = rsaKey -> evpKey();
+
+                const int modulusBits = ::EVP_PKEY_bits( pkey.get() );
 
                 BL_CHK_T(
                     false,
@@ -655,8 +683,6 @@ namespace bl
                     return;
                 }
 #endif
-
-                const auto pkey = rsaKey -> evpKey();
 
                 const auto ctx = crypto::evppkeyctx_ptr_t::attach(
                     ::EVP_PKEY_CTX_new( pkey.get(), nullptr )

@@ -189,11 +189,65 @@ namespace bl
         /*
          * Template accessor for type-safe value extraction
          *
-         * Uses boost::json::value_to<T>() which supports arithmetic types,
-         * bool, std::string, and other common types out of the box.
+         * Forwards to boost::json::value_to<T>(), which supports arithmetic types, bool,
+         * std::string, and other common types out of the box, with one policy added on top: an
+         * integral C++ type is never filled from a JSON number which is stored as a double, not
+         * even when the conversion would be exact (3.0 into an int). Boost.JSON's own
+         * to_number() accepts that; json-spirit stores 3.0 as a real and its integer getters
+         * refuse it, and get_int() above refuses it on this backend as well, so this keeps the
+         * numeric policy identical between the two backends and within this one - see the
+         * matching note in JsonSpiritImpl.h. The rejection is reported as Boost.JSON's own
+         * not_integer error, so that it takes the same path as every other kind mismatch.
          */
 
-        using boost::json::value_to;
+        namespace detail
+        {
+            template
+            <
+                typename T
+            >
+            inline void checkIntegralKind(
+                SAA_in          const value&                            v,
+                SAA_in          std::true_type                          /* integral, non-bool */
+                )
+            {
+                if( v.is_double() )
+                {
+                    throw boost::system::system_error(
+                        boost::system::error_code( boost::json::error::not_integer )
+                        );
+                }
+            }
+
+            template
+            <
+                typename T
+            >
+            inline void checkIntegralKind(
+                SAA_in          const value&                            /* v */,
+                SAA_in          std::false_type                         /* not integral */
+                ) NOEXCEPT
+            {
+            }
+
+        } // detail
+
+        template
+        <
+            typename T
+        >
+        inline T value_to( SAA_in const value& v )
+        {
+            detail::checkIntegralKind< T >(
+                v,
+                std::integral_constant<
+                    bool,
+                    std::is_integral< T >::value && ! std::is_same< T, bool >::value
+                    >()
+                );
+
+            return boost::json::value_to< T >( v );
+        }
 
         namespace detail
         {
@@ -273,8 +327,14 @@ namespace bl
                     }
                     catch( const boost::system::system_error& e )
                     {
+                        /*
+                         * The rejected document is dumped at trace level only: it is whatever
+                         * arrived on the wire and may carry credentials, so it must not reach a
+                         * log which is enabled in normal operation
+                         */
+
                         BL_LOG_MULTILINE(
-                            Logging::debug(),
+                            Logging::trace(),
                             BL_MSG()
                                 << "Invalid JSON string:\n"
                                 << ( input.size() < MAX_DUMP_STRING_LENGTH ?
@@ -658,6 +718,58 @@ namespace bl
                     output << saveToString( val, prettyPrint, rawUtf8, canonicalize );
                 }
 
+                /**
+                 * @brief Returns a readable description for the Boost.JSON conversion errors
+                 * which the accessors above and the data model layer can produce, or nullptr
+                 * for anything else
+                 *
+                 * Boost.JSON reports a type mismatch as a boost::system::system_error (which
+                 * derives from std::runtime_error) carrying a boost::json::error code, and its
+                 * own text ("value is not a std::int64_t number [boost.json:9]") is written for
+                 * a developer, not for the user of an application; only the codes recognized
+                 * here are rewritten and marked as user friendly, the raw text stays available
+                 * in the nested exception
+                 */
+
+                static const char* friendlyConversionText( SAA_in const std::runtime_error& e ) NOEXCEPT
+                {
+                    static const struct
+                    {
+                        boost::json::error                  code;
+                        const char*                         text;
+                    }
+                    table[] =
+                    {
+                        { boost::json::error::not_number,       "expected a number" },
+                        { boost::json::error::not_double,       "expected a number" },
+                        { boost::json::error::not_integer,      "expected an integer" },
+                        { boost::json::error::not_int64,        "expected an integer" },
+                        { boost::json::error::not_uint64,       "expected an unsigned integer" },
+                        { boost::json::error::not_exact,        "number is out of range or not exact for the requested type" },
+                        { boost::json::error::not_string,       "expected a string" },
+                        { boost::json::error::not_bool,         "expected a boolean" },
+                        { boost::json::error::not_object,       "expected an object" },
+                        { boost::json::error::not_array,        "expected an array" },
+                        { boost::json::error::not_null,         "expected null" },
+                        { boost::json::error::size_mismatch,    "array size does not match the expected size" },
+                    };
+
+                    const auto* systemError = dynamic_cast< const boost::system::system_error* >( &e );
+
+                    if( systemError )
+                    {
+                        for( const auto& entry : table )
+                        {
+                            if( systemError -> code() == entry.code )
+                            {
+                                return entry.text;
+                            }
+                        }
+                    }
+
+                    return nullptr;
+                }
+
                 static void remapIncorrectValueTypeException(
                     SAA_in      const std::runtime_error&           e,
                     SAA_in      const std::exception_ptr&           eptr,
@@ -666,14 +778,18 @@ namespace bl
                     )
                 {
                     /*
-                     * Boost.JSON throws std::invalid_argument for type mismatches.
-                     * Re-throw with more context.
+                     * Re-throw with more context; the message is marked as user friendly only
+                     * when the error is one of the recognized conversion errors, for which a
+                     * readable text is substituted (see friendlyConversionText above), and the
+                     * original exception is nested either way
                      */
+
+                    const char* friendlyText = friendlyConversionText( e );
 
                     const std::string message = resolveMessage(
                         BL_MSG()
                             << "JSON parsing error: "
-                            << e.what()
+                            << ( friendlyText ? friendlyText : e.what() )
                             << " for "
                             << context
                         );
@@ -686,9 +802,17 @@ namespace bl
                             message
                             );
                     }
-                    else
+                    else if( friendlyText )
                     {
                         BL_THROW_USER_FRIENDLY(
+                            JsonException()
+                                << eh::errinfo_nested_exception_ptr( eptr ),
+                            message
+                            );
+                    }
+                    else
+                    {
+                        BL_THROW(
                             JsonException()
                                 << eh::errinfo_nested_exception_ptr( eptr ),
                             message

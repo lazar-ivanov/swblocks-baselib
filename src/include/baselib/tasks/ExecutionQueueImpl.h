@@ -1192,6 +1192,14 @@ namespace bl
                 BL_MUTEX_GUARD( m_lock );
 
                 m_maxExecuting = maxExecuting;
+
+                /*
+                 * A raised limit admits the pending tasks now rather than at the next unrelated
+                 * push, pop or completion; a lowered one needs nothing here, because the
+                 * padding stops at the limit and it is enforced on the completion path
+                 */
+
+                padExecutingQueueNothrow();
             }
 
             virtual void setOptions( SAA_in const unsigned options = OptionKeepFailed ) OVERRIDE
@@ -1210,9 +1218,11 @@ namespace bl
                 /*
                  * The observer's throttle limit is sampled here, exactly once per registration
                  * and before m_lock is taken, rather than being re-queried from the scheduling
-                 * path. That keeps the user virtual off the scheduling critical section
-                 * entirely - no user code runs under m_lock - and removes a proxy lock
-                 * acquisition plus a virtual call per scheduled task.
+                 * path. That keeps the observer virtual off the scheduling critical section
+                 * entirely - no observer code runs under m_lock - and removes a proxy lock
+                 * acquisition plus a virtual call per scheduled task. (Task::scheduleTask()
+                 * overrides do run under m_lock, from here as from every push_back(); that is
+                 * part of the task contract documented in TaskBase.h.)
                  */
 
                 std::size_t maxReadyOrExecuting = 0U;
@@ -1233,6 +1243,14 @@ namespace bl
                 m_notifyDelivery = delivery;
                 m_eventsMask = eventsMask;
                 m_maxReadyOrExecuting = maxReadyOrExecuting;
+
+                /*
+                 * The sampled limit takes effect now: "register again to install a different
+                 * limit" means the pending tasks are admitted by this call, not by the next
+                 * unrelated push, pop or completion (see setThrottleLimit())
+                 */
+
+                padExecutingQueueNothrow();
             }
 
             virtual ThreadPool* getLocalThreadPool() const NOEXCEPT OVERRIDE

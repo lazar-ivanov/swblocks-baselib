@@ -6263,7 +6263,7 @@ UTF_AUTO_TEST_CASE( BaseLib_Utf8ToIso88591SimpleTests )
     UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC1\xBF" ) ), bl::ArgumentException );
 
     /* Test invalid continuation bytes */
-    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC2\x00" ) ), bl::ArgumentException ); /* NULL as continuation */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC2\x00", 2 ) ), bl::ArgumentException ); /* NULL as continuation (explicit length: the literal would otherwise stop at the NUL) */
     UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC2\x7F" ) ), bl::ArgumentException ); /* ASCII as continuation */
     UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC2\xC0" ) ), bl::ArgumentException ); /* Start byte as continuation */
     UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC3\xFF" ) ), bl::ArgumentException ); /* Invalid continuation */

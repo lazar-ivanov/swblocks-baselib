@@ -857,6 +857,19 @@ template \
         { \
             name ## Deserialize( context.deserializationDoc(), context ); \
         } \
+        catch( bl::JsonException& e ) \
+        { \
+            /* the library's own checked accessors: not a std::runtime_error, see below */ \
+            bl::json::rethrowWithContext( \
+                e, \
+                std::current_exception(), \
+                ( BL_MSG() \
+                    <<"property '" \
+                    << #name \
+                    << "'" \
+                ).text() \
+                ); \
+        } \
         catch( std::runtime_error& e ) \
         { \
             bl::json::remapIncorrectValueTypeException( \

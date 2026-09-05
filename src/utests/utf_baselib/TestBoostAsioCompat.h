@@ -136,7 +136,20 @@ UTF_AUTO_TEST_CASE( BoostAsioCompat_ResolverProtocolConstraintSync )
 
     const auto endpointsV4 = utest_asio_compat::resolveQuery( resolver, queryV4, ec );
 
-    UTF_REQUIRE( ! ec );
+    /*
+     * The query constructors default to address_configured, which glibc implements as
+     * AI_ADDRCONFIG and which ignores loopback, so on a host with no configured non-loopback
+     * IPv4 address this resolve fails and there is nothing to verify (the same shape as the
+     * IPv6 branch below)
+     */
+
+    if( ec )
+    {
+        UTF_MESSAGE( "No configured IPv4 address on this host (address_configured); skipping the checks" );
+
+        return;
+    }
+
     UTF_REQUIRE( 0U != utest_asio_compat::countEndpoints( endpointsV4 ) );
 
     utest_asio_compat::checkAllEndpointsAreV4( endpointsV4 );
@@ -198,7 +211,14 @@ UTF_AUTO_TEST_CASE( BoostAsioCompat_ResolverProtocolConstraintAsync )
     ioService.run();
 
     UTF_REQUIRE( completed );
-    UTF_REQUIRE( ! ec );
+
+    if( ec )
+    {
+        UTF_MESSAGE( "No configured IPv4 address on this host (address_configured); skipping the checks" );
+
+        return;
+    }
+
     UTF_CHECK( 0U != count );
 }
 
@@ -294,7 +314,13 @@ UTF_AUTO_TEST_CASE( BoostAsioCompat_ResolverPassiveDefaultFlags )
 
     auto endpoints = utest_asio_compat::resolveQuery( resolver, passiveQuery, ec );
 
-    UTF_REQUIRE( ! ec );
+    if( ec )
+    {
+        UTF_MESSAGE( "No configured IPv4 address on this host (address_configured); skipping the checks" );
+
+        return;
+    }
+
     UTF_REQUIRE( 0U != utest_asio_compat::countEndpoints( endpoints ) );
 
     {
@@ -314,7 +340,13 @@ UTF_AUTO_TEST_CASE( BoostAsioCompat_ResolverPassiveDefaultFlags )
 
     endpoints = utest_asio_compat::resolveQuery( resolver, nonPassiveQuery, ec );
 
-    UTF_REQUIRE( ! ec );
+    if( ec )
+    {
+        UTF_MESSAGE( "No configured IPv4 address on this host (address_configured); skipping the checks" );
+
+        return;
+    }
+
     UTF_REQUIRE( 0U != utest_asio_compat::countEndpoints( endpoints ) );
 
     {
@@ -393,6 +425,122 @@ UTF_AUTO_TEST_CASE( BoostAsioCompat_ResolverIcmpProtocolConstraint )
 
     utest_asio_compat::checkAllEndpointsAreV4( endpoints );
 }
+
+UTF_AUTO_TEST_CASE( BoostAsioCompat_AsyncConnectIteratorForm )
+{
+    using namespace bl;
+
+    typedef asio::ip::tcp_resolver resolver_t;
+
+    /*
+     * The single iterator form is the one used by TcpBaseTasks.h. Boost 1.89+ removed it and
+     * the compatibility overload in BoostAsioCompat.h reinstates it; on the older versions
+     * this exercises Boost's own overload. A listening loopback acceptor on an ephemeral
+     * port is enough for a connect to succeed: the kernel completes the connection into the
+     * backlog without accept() being called. Loopback is always configured, so unlike the
+     * localhost resolves above this needs no skip.
+     */
+
+    asio::io_service ioService;
+
+    asio::ip::tcp::acceptor acceptor(
+        ioService,
+        asio::ip::tcp::endpoint( asio::ip::address_v4::loopback(), 0 /* ephemeral port */ )
+        );
+
+    resolver_t resolver( ioService );
+    eh::error_code ec;
+
+    const resolver_t::query query(
+        "127.0.0.1"                                         /* host_name */,
+        std::to_string( acceptor.local_endpoint().port() )  /* service_name */,
+        asio::ip::resolver_query_base::numeric_host         /* flags */
+        );
+
+    const auto endpoints = utest_asio_compat::resolveQuery( resolver, query, ec );
+
+    UTF_REQUIRE( ! ec );
+
+    asio::ip::tcp::socket socket( ioService );
+
+    bool completed = false;
+    eh::error_code connectEc;
+
+    asio::async_connect(
+        socket,
+        endpoints,
+        [ & ]( SAA_in const eh::error_code& code, SAA_in resolver_t::iterator /* connected */ ) -> void
+        {
+            completed = true;
+            connectEc = code;
+        }
+        );
+
+    ioService.run();
+
+    UTF_REQUIRE( completed );
+    UTF_REQUIRE( ! connectEc );
+    UTF_CHECK( socket.is_open() );
+}
+
+#if BOOST_VERSION >= 106600
+
+UTF_AUTO_TEST_CASE( BoostAsioCompat_AsyncConnectRangeForm )
+{
+    using namespace bl;
+
+    typedef asio::ip::tcp_resolver resolver_t;
+
+    /*
+     * The modern range form, with the resolver results passed directly. On Boost 1.89+ this
+     * is the compile time regression test for the compatibility overload above: without its
+     * is_endpoint_sequence constraint this call is ambiguous between that overload and
+     * Boost's own
+     */
+
+    asio::io_service ioService;
+
+    asio::ip::tcp::acceptor acceptor(
+        ioService,
+        asio::ip::tcp::endpoint( asio::ip::address_v4::loopback(), 0 /* ephemeral port */ )
+        );
+
+    resolver_t resolver( ioService );
+    eh::error_code ec;
+
+    const resolver_t::query query(
+        "127.0.0.1"                                         /* host_name */,
+        std::to_string( acceptor.local_endpoint().port() )  /* service_name */,
+        asio::ip::resolver_query_base::numeric_host         /* flags */
+        );
+
+    const auto results = resolver.resolve( query, ec );
+
+    UTF_REQUIRE( ! ec );
+
+    asio::ip::tcp::socket socket( ioService );
+
+    bool completed = false;
+    eh::error_code connectEc;
+
+    asio::async_connect(
+        socket,
+        results,
+        [ & ]( SAA_in const eh::error_code& code, SAA_in const asio::ip::tcp::endpoint& /* connected */ ) -> void
+        {
+            completed = true;
+            connectEc = code;
+        }
+        );
+
+    ioService.run();
+
+    UTF_REQUIRE( completed );
+    UTF_REQUIRE( ! connectEc );
+    UTF_CHECK( socket.is_open() );
+}
+
+#endif // BOOST_VERSION >= 106600
 
 #if BOOST_VERSION >= 108900
 
@@ -515,7 +663,17 @@ UTF_AUTO_TEST_CASE( BoostAsioCompat_ResolverAsyncHandlerIsStoredByValue )
     bool completed = false;
     eh::error_code ec;
 
-    const resolver_t::query query( asio::ip::tcp::v4(), "localhost", "80" );
+    /*
+     * Only the handler storage is under test here, so the query is made environment
+     * independent: numeric_host on a loopback literal never consults the resolver
+     * configuration of the host
+     */
+
+    const resolver_t::query query(
+        "127.0.0.1"                                         /* host_name */,
+        "80"                                                /* service_name */,
+        asio::ip::resolver_query_base::numeric_host         /* flags */
+        );
 
     /*
      * The handler is deliberately a named local, i.e. an lvalue

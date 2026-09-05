@@ -29,7 +29,7 @@ import time
 import unicodedata
 import html
 import urllib.parse
-from botocore.exceptions import ClientError, NoCredentialsError
+from botocore.exceptions import ClientError
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Configuration will be provided via command-line arguments
@@ -103,6 +103,39 @@ def make_walk_error_handler():
         print(f"[ERROR] Cannot scan directory: {error.filename} ({error.strerror})")
 
     return onerror, errors
+
+def classify_tree_entry(path):
+    """
+    Return the reason a local tree entry must be rejected by upload/verify, or None to accept it.
+
+    Symbolic links (to files or to directories, dangling ones included), junctions, other
+    reparse points and non-regular files are rejected, which is the policy bl_tool.py applies
+    to the same tree: os.walk() does not descend into a linked directory, so its contents
+    would otherwise be silently omitted, and a linked file would be published by content,
+    including content which lives outside the local folder.
+    """
+    try:
+        st = os.lstat(path)
+    except OSError as exc:
+        return f"cannot be examined ({exc.strerror})"
+    if is_hostile_reparse(path, st):
+        return "symbolic link, junction or reparse point"
+    if not stat.S_ISDIR(st.st_mode) and not stat.S_ISREG(st.st_mode):
+        return "not a regular file"
+    return None
+
+def reject_tree_entry(path, rejected_entries):
+    """Report and record an entry which classify_tree_entry() rejects; returns True when rejected."""
+    reason = classify_tree_entry(path)
+    if reason is None:
+        return False
+    rejected_entries.append(path)
+    print(f"[ERROR] Rejected entry: {path} ({reason})")
+    return True
+
+def has_control_characters(text):
+    """Return True when the text contains a C0 control character or DEL."""
+    return any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in text)
 
 def format_size(size_bytes):
     """Format size in bytes to human-readable format."""
@@ -855,11 +888,15 @@ def command_upload(args, s3_client=None):
 
     # 1. Walk through the folder structure
     on_walk_error, scan_errors = make_walk_error_handler()
+    rejected_entries = []
     for root, dirs, files in os.walk(args.local_folder, onerror=on_walk_error):
         # Skip hidden directories unless --allow-hidden-files is set
         if not args.allow_hidden_files:
             # Modify dirs in-place to prevent os.walk from descending into hidden directories
             dirs[:] = [d for d in dirs if not d.startswith('.')]
+
+        # Reject linked directories, which os.walk() would otherwise skip silently
+        dirs[:] = [d for d in dirs if not reject_tree_entry(os.path.join(root, d), rejected_entries)]
 
         for filename in files:
             # Skip hidden files unless --allow-hidden-files is set
@@ -867,6 +904,11 @@ def command_upload(args, s3_client=None):
                 continue
 
             local_path = os.path.join(root, filename)
+
+            # Reject linked and non-regular files (a dangling link is caught here as well,
+            # before os.path.getsize() below could fail on it)
+            if reject_tree_entry(local_path, rejected_entries):
+                continue
 
             # Create the "Key" (path inside the bucket)
             relative_path = os.path.relpath(local_path, args.local_folder)
@@ -927,6 +969,7 @@ def command_upload(args, s3_client=None):
         print(f"Files that would be skipped: {skip_count}")
         print(f"Failed: {failure_count}")
         print(f"Directories not scanned: {len(scan_errors)}")
+        print(f"Entries rejected: {len(rejected_entries)}")
         print(f"Total upload size: {format_size(total_upload_size_bytes)}")
         print(f"Upload speed: {format_speed(total_upload_size_bytes, elapsed_time)} ({format_size(total_upload_size_bytes)} in {format_duration(elapsed_time)})")
         print("\nNo files were actually uploaded (dry-run mode)")
@@ -937,10 +980,11 @@ def command_upload(args, s3_client=None):
         print(f"Files skipped (already exist): {skip_count}")
         print(f"Failed: {failure_count}")
         print(f"Directories not scanned: {len(scan_errors)}")
+        print(f"Entries rejected: {len(rejected_entries)}")
         print(f"Total uploaded size: {format_size(total_upload_size_bytes)}")
         print(f"Upload speed: {format_speed(total_upload_size_bytes, elapsed_time)} ({format_size(total_upload_size_bytes)} in {format_duration(elapsed_time)})")
 
-    return EXIT_FAILURE if failure_count or scan_errors else EXIT_SUCCESS
+    return EXIT_FAILURE if failure_count or scan_errors or rejected_entries else EXIT_SUCCESS
 
 def command_list(args, s3_client=None):
     """
@@ -964,10 +1008,15 @@ def command_list(args, s3_client=None):
             aws_secret_access_key=args.secret_key
         )
 
+    # In --paths-only mode stdout is a machine readable stream (one key per line) for a shell
+    # consumer, so diagnostics go to stderr there and a key which would corrupt the stream
+    # is reported instead of printed
+    paths_only = getattr(args, 'paths_only', False)
+    diagnostics = sys.stderr if paths_only else sys.stdout
+    hostile_keys = 0
+
     # List objects
     try:
-        paths_only = getattr(args, 'paths_only', False)
-
         if not paths_only:
             print(f"Listing objects in bucket: {args.bucket_name}")
             if args.prefix:
@@ -987,6 +1036,12 @@ def command_list(args, s3_client=None):
             size_bytes = obj['Size']
 
             if paths_only:
+                # A key carrying a newline or another control character cannot be emitted as
+                # one line; repr() keeps the terminal intact and the command fails at the end
+                if has_control_characters(key):
+                    print(f"[ERROR] {key!r} - key contains control characters", file=diagnostics)
+                    hostile_keys += 1
+                    continue
                 print(key)
             else:
                 last_modified = obj['LastModified'].strftime('%Y-%m-%d %H:%M:%S %Z')
@@ -1012,15 +1067,15 @@ def command_list(args, s3_client=None):
             print("-" * 107)
             print(f"Total: {total_objects} objects, {format_size(total_size)}")
 
-        return EXIT_SUCCESS
+        return EXIT_FAILURE if hostile_keys else EXIT_SUCCESS
 
     except ClientError as e:
         error_code = e.response['Error']['Code']
         error_msg = e.response['Error']['Message']
-        print(f"Error listing bucket: {error_code} - {error_msg}")
+        print(f"Error listing bucket: {error_code} - {error_msg}", file=diagnostics)
         return EXIT_FAILURE
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print(f"Error: {str(e)}", file=diagnostics)
         return EXIT_FAILURE
 
 def command_verify(args, s3_client=None):
@@ -1056,11 +1111,15 @@ def command_verify(args, s3_client=None):
 
     # Walk through the folder structure
     on_walk_error, scan_errors = make_walk_error_handler()
+    rejected_entries = []
     for root, dirs, files in os.walk(args.local_folder, onerror=on_walk_error):
         # Skip hidden directories unless --allow-hidden-files is set
         if not args.allow_hidden_files:
             # Modify dirs in-place to prevent os.walk from descending into hidden directories
             dirs[:] = [d for d in dirs if not d.startswith('.')]
+
+        # Reject linked directories, which os.walk() would otherwise skip silently
+        dirs[:] = [d for d in dirs if not reject_tree_entry(os.path.join(root, d), rejected_entries)]
 
         for filename in files:
             # Skip hidden files unless --allow-hidden-files is set
@@ -1068,6 +1127,10 @@ def command_verify(args, s3_client=None):
                 continue
 
             local_path = os.path.join(root, filename)
+
+            # Reject linked and non-regular files, the same policy as upload
+            if reject_tree_entry(local_path, rejected_entries):
+                continue
 
             # Create the "Key" (path inside the bucket)
             relative_path = os.path.relpath(local_path, args.local_folder)
@@ -1136,10 +1199,12 @@ def command_verify(args, s3_client=None):
     print(f"Not uploaded to S3: {not_uploaded_count}")
     print(f"Errors: {error_count}")
     print(f"Directories not scanned: {len(scan_errors)}")
+    print(f"Entries rejected: {len(rejected_entries)}")
     print(f"Verify speed: {format_speed(total_verified_size_bytes, elapsed_time)} ({format_size(total_verified_size_bytes)} in {format_duration(elapsed_time)})")
 
-    # Fail if any files are missing, mismatched, or errored, or a directory was not scanned
-    if different_count > 0 or not_uploaded_count > 0 or error_count > 0 or scan_errors:
+    # Fail if any files are missing, mismatched, or errored, a directory was not scanned, or
+    # an entry was rejected
+    if different_count > 0 or not_uploaded_count > 0 or error_count > 0 or scan_errors or rejected_entries:
         return EXIT_FAILURE
     return EXIT_SUCCESS
 

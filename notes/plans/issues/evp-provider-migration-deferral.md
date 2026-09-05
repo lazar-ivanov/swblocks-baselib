@@ -110,6 +110,17 @@ It is additive, breaks nothing, and it gave the CXX-06 key-validation work
 **Standing rule for the interim: no new `RSA_*` call site is to be added.** New code uses
 `evpKey()`. Every `RSA_*` site added now is one that has to be rewritten later.
 
+**Baseline the rule counts from (2026-09-04).** The `RSA_get0_key` / `RSA_get0_factors` /
+`RSA_get0_crt_params` and `RSA_set0_key` / `RSA_set0_factors` / `RSA_set0_crt_params` sites in
+`JsonSecuritySerializationImpl.h` are the OpenSSL 3.x half of item 4 above, i.e. the accessor
+replacement for the direct `rsa_st` member access of the 1.x branch, and predate the rule, as do the
+`EVP_PKEY_set1_RSA` / `EVP_PKEY_get1_RSA` bridge calls in the same file and in `RsaKey.h`, which
+exist only because the stored type is `::RSA` and disappear with item 1. The one `RSA_*` site added
+after phase 0, `RSA_size` in `chkRsaKeyIsAcceptable` (the minimum-modulus check, B8), was replaced
+by `EVP_PKEY_bits( evpKey() )` under review finding L-11 of
+`notes/reviews/major/update_2025/v1/pr_review_analysis_fable51.md`, which returns the inventory to
+the 19 direct calls recorded above.
+
 ---
 
 ## Interop contracts which must not drift during the migration

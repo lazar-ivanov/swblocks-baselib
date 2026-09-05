@@ -340,3 +340,38 @@ UTF_AUTO_TEST_CASE( TlsProtocolPolicy_FloorAndSecurityLevelArePinned )
 }
 
 #endif // OPENSSL_VERSION_NUMBER >= 0x10100000L
+
+UTF_AUTO_TEST_CASE( TlsProtocolPolicy_HardeningOptionsArePinned )
+{
+    using namespace utest::tlspolicy;
+
+    /*
+     * The option bits which harden the contexts beyond the protocol floor are queried back the
+     * same way as the floor and the security level: compression is refused (CRIME), the server's
+     * cipher preference order is authoritative, and renegotiation is refused wherever the option
+     * exists. Note that OpenSSL 1.1.0+ refuses compression by default, so on those versions that
+     * bit is a pin, whereas SSL_OP_NO_RENEGOTIATION is never set by default and its assertion is
+     * the real proof
+     *
+     * SSL_CTX_get_options is a macro over SSL_CTX_ctrl on the older versions and must not be
+     * qualified with the global namespace operator
+     */
+
+    const auto serverContext = createServerContext();
+
+    auto& clientContext = bl::crypto::CryptoBase::getAsioSslContext();
+
+    ::SSL_CTX* const contexts[] = { clientContext.native_handle(), serverContext -> native_handle() };
+
+    for( ::SSL_CTX* const ctx : contexts )
+    {
+        const auto options = SSL_CTX_get_options( ctx );
+
+        UTF_REQUIRE( 0 != ( options & SSL_OP_NO_COMPRESSION ) );
+        UTF_REQUIRE( 0 != ( options & SSL_OP_CIPHER_SERVER_PREFERENCE ) );
+
+#ifdef SSL_OP_NO_RENEGOTIATION
+        UTF_REQUIRE( 0 != ( options & SSL_OP_NO_RENEGOTIATION ) );
+#endif
+    }
+}

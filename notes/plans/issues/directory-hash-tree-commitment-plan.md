@@ -93,6 +93,11 @@ hashed bytes are already `/`-separated.
   descending. Use a small `is_reparse_link(path)` helper: `Path.is_symlink()` or `os.path.isjunction` when
   present (3.12+; the project venv is 3.12.3) via `getattr(os.path, 'isjunction', None)` so older
   interpreters degrade rather than crash.
+  **Superseded (2026-09-04):** that degrade-on-older-interpreters form failed *open* on junctions
+  below 3.12, which `s3-download-escape-plan.md` forbids; `is_reparse_link` now falls through to
+  the `st_file_attributes` reparse flag of an `lstat()`, the same fail-closed shape as
+  `s3_manage.is_hostile_reparse` (review finding L-17 in
+  `notes/reviews/major/update_2025/v1/pr_review_analysis_fable51.md`).
 - Replace `file_path.is_symlink()` with a single `os.lstat`, checking `stat.S_ISLNK` (symlink → existing
   error) and `stat.S_ISREG` (non-regular → new error naming the FIFO/socket/device). One syscall replaces
   two and closes the blocking-`open()` hole.
