@@ -16,6 +16,10 @@ residual of that review, in `notes/plans/issues/pr-review-fable51-residual-findi
 **Status:** Deferred to the next Windows build session (a devenv7 Windows host with the `vc143`
 and `ccl16` toolchains); every item below is applied and validated there in one pass.
 
+**How to pick this up:** `windows-only-residual-findings-instructions.md`, next to this file, is
+the step-by-step instruction for a Claude Code session on that host (rules, order, verification
+per item, and which records to update afterwards).
+
 The development checkout has no Windows host and there is no CI. The makefile items change what
 the Windows toolchain is told to do, the code item changes how the JVM is loaded, and none of them
 can be exercised or even compiled here. The same "record, do not fix blind" rule the deployment
