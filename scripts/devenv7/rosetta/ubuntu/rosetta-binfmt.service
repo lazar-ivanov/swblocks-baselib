@@ -1,0 +1,12 @@
+[Unit]
+Description=Register Rosetta for x86_64 Emulation
+After=network.target local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/register-rosetta.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+

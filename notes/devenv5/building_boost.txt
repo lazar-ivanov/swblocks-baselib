@@ -91,6 +91,14 @@ for x64 or a64 with clang and libc++:
 
 ./b2 --prefix=./bld --stagedir=./bld/stage --build-dir=./bld/int -j16 --build-type=complete --layout=tagged runtime-debugging=off debug-symbols=on address-model=64 cxxflags="-stdlib=libc++ -std=c++11 -fPIC" linkflags="-stdlib=libc++ -std=c++11 -fPIC" --without-python --without-iostreams boost.locale.icu=off boost.locale.iconv=on install > ./build.log
 
+for x64 or a64 with clang and libc++ (new):
+
+./b2 --prefix=./bld --stagedir=./bld/stage --build-dir=./bld/int -j16 --build-type=complete --layout=tagged runtime-debugging=off debug-symbols=on address-model=64 cxxstd=11 stdlib=libc++ cxxflags="-fPIC" linkflags="-fPIC" --without-python --without-iostreams boost.locale.icu=off boost.locale.iconv=on install > ./build.log
+
+./b2 --build-dir=./bld/int --with-locale --layout=tagged runtime-debugging=off debug-symbols=on address-model=64 cxxstd=11 stdlib=libc++ runtime-link=static -d+2 --reconfigure -a --debug-building > ./build.log
+./b2 --build-dir=./bld/int --with-locale --layout=tagged runtime-debugging=off debug-symbols=on address-model=64 cxxstd=11 stdlib=libc++ runtime-link=shared -d+2 --reconfigure -a --debug-building > ./build.log
+./b2 --build-dir=./bld/int --with-locale --layout=tagged runtime-debugging=off debug-symbols=on address-model=64 cxxstd=11 stdlib=libc++ runtime-link=static variant=shared -d+2 --reconfigure -a --debug-building > ./build.log
+
 for x86:
 
 ./b2 --prefix=./bld --stagedir=./bld/stage --build-dir=./bld/int -j16 --build-type=complete --layout=tagged runtime-debugging=off debug-symbols=on address-model=32 cxxflags="-std=c++11 -fPIC" linkflags="-std=c++11 -fPIC" --without-python --without-iostreams boost.locale.icu=off boost.locale.iconv=on install > ./build.log

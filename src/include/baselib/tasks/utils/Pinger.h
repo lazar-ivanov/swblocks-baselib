@@ -215,7 +215,9 @@ namespace bl
         {
         private:
 
-            static const str::regex                             g_patternAvgRtt;
+            static const str::regex                             g_patternAvgRttWindows;
+            static const str::regex                             g_patternAvgRttLinux;
+            static const str::regex                             g_patternAvgRttDarwin;
 
         protected:
 
@@ -389,6 +391,15 @@ namespace bl
             1 packets transmitted, 1 received, 0% packet loss, time 3005ms
             rtt min/avg/max/mdev = 2.069/2.161/2.324/0.105 ms
 
+            On Linux (newer versions):
+            ---------------------------------------------------------
+
+            64 bytes from 169.70.41.12: icmp_req=1 ttl=57 time=2.08 ms
+
+            --- <$host> statistics ---
+            1 packets transmitted, 1 packets received, 0% packet loss, time 3005ms
+            rtt min/avg/max/mdev = 2.069/2.161/2.324/0.105 ms
+
             On Darwin:
             ---------------------------------------------------------
 
@@ -402,17 +413,38 @@ namespace bl
 
             static bool matchPacketsArrived( SAA_in const std::string& line )
             {
-                return cpp::contains(
-                    line,
-                    os::onWindows() ?
-                        "Packets: Sent = 1, Received = 1, Lost = 0" :
-                        (
-                            os::onLinux() ?
-                                "1 packets transmitted, 1 received, 0% packet loss"
-                                :
-                                "1 packets transmitted, 1 packets received, 0.0% packet loss"
-                        )
-                    );
+                if( os::onWindows() )
+                {
+                    return cpp::contains( line, "Packets: Sent = 1, Received = 1, Lost = 0" );
+                }
+
+                if( os::onLinux() )
+                {
+                    return
+                        cpp::contains( line, "1 packets transmitted, 1 received, 0% packet loss" ) ||
+                        cpp::contains( line, "1 packets transmitted, 1 packets received, 0% packet loss" );
+                }
+
+                /*
+                 * Darwin case; the two Linux summary forms are accepted as well, mirroring the
+                 * fallback matchAverageRoundTripTime() applies to the round trip time line
+                 */
+                return
+                    cpp::contains( line, "1 packets transmitted, 1 packets received, 0.0% packet loss" ) ||
+                    cpp::contains( line, "1 packets transmitted, 1 received, 0% packet loss" ) ||
+                    cpp::contains( line, "1 packets transmitted, 1 packets received, 0% packet loss" );
+            }
+
+            static const str::regex& getPatternAvgRtt() NOEXCEPT
+            {
+                return os::onWindows() ? g_patternAvgRttWindows :
+                    os::onLinux() ? g_patternAvgRttLinux : g_patternAvgRttDarwin;
+            }
+
+            static const str::regex& getPatternAvgRttAlt() NOEXCEPT
+            {
+                return os::onWindows() ? g_patternAvgRttWindows :
+                    os::onLinux() ? g_patternAvgRttDarwin : g_patternAvgRttLinux;
             }
 
             static bool matchAverageRoundTripTime(
@@ -420,31 +452,59 @@ namespace bl
                 SAA_out             double*                     roundTripTimeMs
                 )
             {
-                str::smatch results;
-
-                if( str::regex_search( line, results, g_patternAvgRtt ) )
+                const auto cbMatch = [ & ]( SAA_in const str::regex& pattern ) -> bool
                 {
-                    const auto& expression = results[ os::onWindows() ? 1 : 2 ];
+                    str::smatch results;
 
-                    if( expression.matched )
+                    if( str::regex_search( line, results, pattern ) )
                     {
-                        *roundTripTimeMs = utils::lexical_cast< double >( expression.str() );
-                        return true;
+                        const auto& expression = results[ os::onWindows() ? 1 : 2 ];
+
+                        if( expression.matched )
+                        {
+                            *roundTripTimeMs = utils::lexical_cast< double >( expression.str() );
+                            return true;
+                        }
                     }
+
+                    return false;
+                };
+
+                const auto& primary = getPatternAvgRtt();
+
+                if( cbMatch( primary ) )
+                {
+                    return true;
+                }
+
+                /*
+                 * On Windows both accessors resolve to g_patternAvgRttWindows, so without this
+                 * check the same input would be matched twice against an identical pattern; the
+                 * alternate is only a distinct pattern on Linux and Darwin, where each of the two
+                 * platforms can encounter the other's ping output format
+                 */
+
+                const auto& alternate = getPatternAvgRttAlt();
+
+                if( &alternate != &primary && cbMatch( alternate ) )
+                {
+                    return true;
                 }
 
                 return false;
             }
         };
 
-        BL_DEFINE_STATIC_MEMBER( ProcessPingerTaskT, const str::regex, g_patternAvgRtt )(
-            os::onWindows() ? "Average = ([^m]+)ms.*" :
-                (
-                    os::onLinux() ?
-                        "rtt min/avg/max/mdev = ([^/]+)/([^/]+)/.*"
-                        :
-                        "round-trip min/avg/max/stddev = ([^/]+)/([^/]+)/.*"
-                )
+        BL_DEFINE_STATIC_MEMBER( ProcessPingerTaskT, const str::regex, g_patternAvgRttWindows )(
+            "Average = ([^m]+)ms.*"
+            );
+
+        BL_DEFINE_STATIC_MEMBER( ProcessPingerTaskT, const str::regex, g_patternAvgRttLinux )(
+            "rtt min/avg/max/mdev = ([^/]+)/([^/]+)/.*"
+            );
+
+        BL_DEFINE_STATIC_MEMBER( ProcessPingerTaskT, const str::regex, g_patternAvgRttDarwin )(
+            "round-trip min/avg/max/stddev = ([^/]+)/([^/]+)/.*"
             );
 
         typedef om::ObjectImpl< ProcessPingerTaskT<> > ProcessPingerTaskImpl;
@@ -468,6 +528,7 @@ namespace bl
         private:
 
             typedef asio::ip::icmp                              icmp;
+            typedef asio::ip::icmp_resolver                     icmp_resolver_type;
             typedef PingerTask                                  base_type;
             typedef IcmpPingerTaskT                             this_type;
 
@@ -475,7 +536,7 @@ namespace bl
             const std::uint16_t                                 m_sequenceNumber;
 
             cpp::SafeUniquePtr< icmp::socket >                  m_socket;
-            cpp::SafeUniquePtr< icmp::resolver >                m_resolver;
+            cpp::SafeUniquePtr< icmp_resolver_type >            m_resolver;
             icmp::endpoint                                      m_destination;
             cpp::SafeUniquePtr< asio::deadline_timer >          m_timer;
 
@@ -534,9 +595,9 @@ namespace bl
                  * Resolve the host address asynchronously
                  */
 
-                m_resolver.reset( new icmp::resolver( aioService ) );
+                m_resolver.reset( new icmp_resolver_type( aioService ) );
 
-                icmp::resolver::query query( icmp::v4(), m_host, str::empty() /* service */ );
+                icmp_resolver_type::query query( icmp::v4(), m_host, str::empty() /* service */ );
 
                 m_resolver -> async_resolve(
                     query,
@@ -553,7 +614,7 @@ namespace bl
 
             void onResolved(
                 SAA_in                  const eh::error_code&                           ec,
-                SAA_in                  const icmp::resolver::iterator                  endpoints
+                SAA_in                  typename icmp_resolver_type::iterator           endpoints
                 ) NOEXCEPT
             {
                 BL_TASKS_HANDLER_BEGIN()

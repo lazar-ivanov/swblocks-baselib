@@ -101,6 +101,7 @@ namespace bl
 
                     m_eqChildTasks -> setNotifyCallback(
                         om::copy( m_notifyCB ),
+                        tasks::ExecutionQueueNotify::DeliveryConcurrent /* delivery */,
                         tasks::ExecutionQueueNotify::AllTasksCompleted /* eventsMask */
                         );
 
@@ -192,6 +193,13 @@ namespace bl
 
                                 if( pushReadyTask( task ) )
                                 {
+                                    /*
+                                     * The task popped here is necessarily the one top() returned
+                                     * above -- concurrent task completion appends at the *back*
+                                     * of the ready queue so the front is stable, and this is the
+                                     * only thread which pops from this queue
+                                     */
+
                                     BL_VERIFY( task == m_eqChildTasks -> pop( false /* wait */ ) );
                                 }
                                 else

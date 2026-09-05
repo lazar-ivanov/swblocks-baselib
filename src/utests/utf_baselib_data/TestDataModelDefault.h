@@ -128,6 +128,70 @@ namespace utest
 
 } // utest
 
+UTF_AUTO_TEST_CASE( DataModelPropertyErrorsCarryPropertyContext )
+{
+    using namespace bl;
+    using namespace bl::dm;
+    using namespace utest::dm;
+
+    typedef DataModelUtils dmu;
+
+    /*
+     * Whatever a property deserializer throws - the backend's own conversion error (a
+     * std::runtime_error on both backends) or the JsonException of the library's checked
+     * accessors - surfaces as a JsonException whose message names the property
+     */
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        dmu::loadFromJsonText< ContainedTestObject >( R"({"intValue":3000000000})" ),
+        JsonException,
+        "property 'intValue'"
+        );
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        dmu::loadFromJsonText< ContainedTestObject >( R"({"uint64Value":-1})" ),
+        JsonException,
+        "property 'uint64Value'"
+        );
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        dmu::loadFromJsonText< ContainedTestObject >( R"({"intValue":"abc"})" ),
+        JsonException,
+        "property 'intValue'"
+        );
+
+    /*
+     * An exact double into an integer property is refused on both backends (see
+     * JsonNumericDoubleIntoIntegralIsRejected), with the property named as well
+     */
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        dmu::loadFromJsonText< ContainedTestObject >( R"({"intValue":3.0})" ),
+        JsonException,
+        "property 'intValue'"
+        );
+
+    /*
+     * A kind mismatch is reported in readable words and marked as user friendly; the raw
+     * library text (which on Boost.JSON reads like 'not a string [boost.json:N]') is nested
+     * rather than shown
+     */
+
+    UTF_CHECK_EXCEPTION(
+        dmu::loadFromJsonText< ContainedTestObject >( R"({"strValue":42})" ),
+        JsonException,
+        []( SAA_in const JsonException& e ) -> bool
+        {
+            const std::string message( e.what() );
+
+            return
+                eh::isUserFriendly( e ) &&
+                cpp::contains( message, "property 'strValue'" ) &&
+                ! cpp::contains( message, "boost.json" );
+        }
+        );
+}
+
 UTF_AUTO_TEST_CASE( CoreDataModelTests )
 {
     using namespace bl;
@@ -188,7 +252,10 @@ UTF_AUTO_TEST_CASE( CoreDataModelTests )
         UTF_REQUIRE_EQUAL( testObj -> strings()[ 1 ], "bar" );
 
         UTF_REQUIRE( ! testObj -> custom().is_null() );
-        UTF_REQUIRE_EQUAL( testObj -> custom().get_obj().at( "name" ).get_str(), "value" );
+        {
+            const auto& s = testObj -> custom().as_object().at( "name" ).as_string();
+            UTF_REQUIRE_EQUAL( std::string( s.c_str(), s.size() ), "value" );
+        }
 
         const auto& complexObj = testObj -> complex();
 
@@ -527,9 +594,12 @@ UTF_AUTO_TEST_CASE( CoreDataModelTests )
             }
 
             {
-                const auto jsonObj = dmu::getJsonObject( testObj );
+                auto jsonObj = dmu::getJsonObject( testObj );
 
-                UTF_REQUIRE_EQUAL( jsonObj.at( "unmappedName" ), std::string( "unmappedValue" ) );
+                {
+                    const auto& s = jsonObj.at( "unmappedName" ).as_string();
+                    UTF_REQUIRE_EQUAL( std::string( s.c_str(), s.size() ), "unmappedValue" );
+                }
 
                 testObj = dmu::loadFromJsonObject< TestObject >( std::move( jsonObj ) );
 
@@ -539,3 +609,144 @@ UTF_AUTO_TEST_CASE( CoreDataModelTests )
     }
 }
 
+
+UTF_AUTO_TEST_CASE( CoreDataModelCanonicalNestedCollectionsTests )
+{
+    using namespace bl;
+    using namespace bl::dm;
+    using namespace utest::dm;
+
+    /*
+     * Canonicalization must reach the children of the complex vector and map properties, not
+     * just a complex property which hangs directly off the model
+     *
+     * Canonical serialization emits every property including the ones which were never set, so
+     * that two objects with the same logical content serialize identically regardless of which
+     * properties happen to have been assigned. Before the canonicalize flag was forwarded
+     * through the collection macros, a child inside a vector or a map was serialized
+     * non-canonically and silently dropped its unset properties, so the same child produced
+     * different output depending only on where it was attached
+     */
+
+    const auto makePartiallyPopulatedChild = []() -> om::ObjPtr< ContainedTestObject >
+    {
+        auto child = ContainedTestObject::createInstance();
+
+        /*
+         * Note that boolValue, intValue and uint64Value are deliberately left unset
+         */
+
+        child -> strValue( "same content everywhere" );
+
+        return child;
+    };
+
+    auto testObj = TestObject::createInstance();
+
+    testObj -> complexLvalue() = makePartiallyPopulatedChild();
+    testObj -> complexVectorLvalue().push_back( makePartiallyPopulatedChild() );
+    testObj -> complexMapLvalue().emplace( "key", makePartiallyPopulatedChild() );
+
+    const auto canonicalText =
+        DataModelUtils::getJsonString( testObj, false /* prettyPrint */, true /* canonicalize */ );
+
+    const auto canonical = json::readFromString( canonicalText );
+
+    UTF_REQUIRE( canonical.is_object() );
+
+    const auto& root = canonical.as_object();
+
+    const auto& direct = root.at( "complex" ).as_object();
+    const auto& fromVector = root.at( "complexVector" ).as_array().at( 0 ).as_object();
+    const auto& fromMap = root.at( "complexMap" ).as_object().at( "key" ).as_object();
+
+    /*
+     * All four properties of the child must be present in every one of the three positions
+     */
+
+    UTF_REQUIRE_EQUAL( direct.size(), 4U );
+    UTF_REQUIRE_EQUAL( fromVector.size(), direct.size() );
+    UTF_REQUIRE_EQUAL( fromMap.size(), direct.size() );
+
+    for( const auto& name : { "strValue", "boolValue", "intValue", "uint64Value" } )
+    {
+        UTF_REQUIRE( direct.contains( name ) );
+        UTF_REQUIRE( fromVector.contains( name ) );
+        UTF_REQUIRE( fromMap.contains( name ) );
+    }
+
+    /*
+     * The same child content must therefore serialize to exactly the same bytes wherever it is
+     * attached
+     */
+
+    UTF_REQUIRE_EQUAL(
+        json::saveToString( json::value( direct ), false /* prettyPrint */, false /* rawUtf8 */, true /* canonicalize */ ),
+        json::saveToString( json::value( fromVector ), false /* prettyPrint */, false /* rawUtf8 */, true /* canonicalize */ )
+        );
+
+    UTF_REQUIRE_EQUAL(
+        json::saveToString( json::value( direct ), false /* prettyPrint */, false /* rawUtf8 */, true /* canonicalize */ ),
+        json::saveToString( json::value( fromMap ), false /* prettyPrint */, false /* rawUtf8 */, true /* canonicalize */ )
+        );
+}
+
+UTF_AUTO_TEST_CASE( DataModelLoadRequiresObjectAtTopLevel )
+{
+    using namespace bl;
+    using namespace bl::dm;
+    using namespace utest::dm;
+
+    typedef DataModelUtils dmu;
+
+    /*
+     * A syntactically valid document whose top level is not an object is refused with a
+     * JsonException which says so, on both backends, rather than surfacing as the backend's
+     * own conversion error
+     */
+
+    const char* const documents[] = { "[1,2,3]", "42", "\"text\"", "null", "true" };
+
+    for( const char* const document : documents )
+    {
+        UTF_REQUIRE_THROW_MESSAGE(
+            dmu::loadFromJsonText< ContainedTestObject >( document ),
+            JsonException,
+            "must be an object at the top level"
+            );
+    }
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        dmu::loadFromJsonValue< ContainedTestObject >( json::readFromString( "[1]" ) ),
+        JsonException,
+        "must be an object at the top level"
+        );
+
+    UTF_REQUIRE_NO_THROW( dmu::loadFromJsonText< ContainedTestObject >( "{}" ) );
+}
+
+UTF_AUTO_TEST_CASE( DataModelNullComplexCollectionsMeanAbsent )
+{
+    using namespace bl;
+    using namespace bl::dm;
+    using namespace utest::dm;
+
+    typedef DataModelUtils dmu;
+
+    /*
+     * A null in place of any complex property, including the complex map, means "absent", the
+     * same as for every other property kind; it must not reach the backend's object accessor
+     */
+
+    const auto obj = dmu::loadFromJsonText< TestObject >(
+        R"({"complex":null,"complexVector":null,"complexMap":null,"userData":null,"numbers":null})"
+        );
+
+    UTF_REQUIRE( ! obj -> complex() );
+    UTF_REQUIRE( obj -> complexVector().empty() );
+    UTF_REQUIRE( obj -> complexMap().empty() );
+    UTF_REQUIRE( obj -> userData().empty() );
+    UTF_REQUIRE( obj -> numbers().empty() );
+
+    UTF_REQUIRE_NO_THROW( dmu::getDocAsPrettyJsonString( obj ) );
+}

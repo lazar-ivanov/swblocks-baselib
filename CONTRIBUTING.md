@@ -3,7 +3,7 @@
 
 Thank you for your interest in contributing to swblocks-baselib!
 
-This page describes the details for the most recent versions of compiler toolchains and library dependencies (devenv4). You can see [CONTRIBUTING.DEVENV3.md](CONTRIBUTING.DEVENV3.md) file for details on the previous version of the supported development environments (devenv3).
+This page describes the details for the most recent versions of compiler toolchains and library dependencies (devenv7). You can see [CONTRIBUTING.DEVENV4.md](CONTRIBUTING.DEVENV4.md) file for details on the previous version of the supported development environments (devenv4).
 
 swblocks-baselib is built on and intended for open source and we fully intend to accept public contributions in the near future. Until then, feel free to file issues and open pull requests, but note that we won't be merging them until the necessary processes are in place.
 
@@ -15,143 +15,236 @@ In order to be able to make changes to the library code and contribute these bac
 
 ## Development environment and build system
 
-The library development environment is based on GNU make, but it has somewhat sophisticated structure and implementation that is [declarative and build-by-convention](https://docs.gradle.org/current/userguide/overview.html) and of course also avoids the [pitfalls of recursive make](https://www.google.com/#q=recursive+make+considered+harmful). The development environment and the build system assumes certain structure of dependencies and how they are built. This structure and its assumptions are embedded in the make files and the steps to build and prepare the external dependencies are described in the various notes files (under notes folder in the root). As mentioned in the [README.md](README.md) file the swblocks-baselib library and its development environment and build system has very limited dependencies, namely C++11 compliant compiler and toolchain (e.g. recent versions of Clang, GCC or VC++), Boost, OpenSSL and lastly a small JSON parser library which is header files only and does not need to be built (JSON Spirit 4.08), so preparing the dependencies for the development environment is relatively easy, but it is not automated (you have to follow the instructions in the notes files).
+The library development environment is based on GNU make, but it has somewhat sophisticated structure and implementation that is [declarative and build-by-convention](https://docs.gradle.org/current/userguide/overview.html) and of course also avoids the [pitfalls of recursive make](https://www.google.com/#q=recursive+make+considered+harmful). The development environment and the build system assumes certain structure of dependencies and how they are built. This structure and its assumptions are embedded in the make files and the steps to build and prepare the external dependencies are described in the various notes files (under notes folder in the root). As mentioned in the [README.md](README.md) file the swblocks-baselib library and its development environment and build system has very limited dependencies, namely a C++ compliant compiler and toolchain (e.g. recent versions of Clang, GCC or VC++), Boost (including Boost.JSON which is the default JSON library) and OpenSSL. Optionally, JSON Spirit 4.08 can be used instead of Boost.JSON by setting `BL_USE_JSON_SPIRIT=1` (see the JSON library selection section below). Preparing the dependencies for the development environment is relatively easy, but it is not automated (you have to follow the instructions in the notes files).
 
 The development environment and build system has a minimal notion of versioning to facilitate evolution without having to break the world, but it generally requires "forced upgrade" model where older versions are quickly depreciated and the users / clients of the library are expected to upgrade and move forward. That applies to both the development environment and the code itself. The code of course is changed carefully with backward compatibility in mind and older versions of the development environment or dependencies are not explicitly broken or not supported, but they might be, so if you are a user of the library and you can't upgrade easily at some point you might not be able to pick up the latest version of swblocks-baselib library and might have to stay on older version - btw, the model is very similar to the way Boost is versioned and how backward compatibility is maintained there.
 
-A development environment version is a notion of collection of specific versions of compiler toolchains + a collection of compatible versions of the 3rd party dependencies. Currently swblocks-baselib library officially supports three development environment versions - devenv4 (latest) and [devenv3](CONTRIBUTING.DEVENV3.md) and devenv2 (older versions) with the devenv2 environment of course to be eventually depreciated in the future. Here are the collections of the compiler toolchains versions and the 3rd party dependencies versions in the most recent development environment (for older environment see [CONTRIBUTING.DEVENV3.md](CONTRIBUTING.DEVENV3.md) file):
+A development environment version is a notion of collection of specific versions of compiler toolchains + a collection of compatible versions of the 3rd party dependencies. Currently swblocks-baselib library officially supports two development environment versions - devenv7 (latest) and [devenv4](CONTRIBUTING.DEVENV4.md) (older) with the devenv4 environment of course to be eventually depreciated in the future. Here are the collections of the compiler toolchains versions and the 3rd party dependencies versions in the most recent development environment (for older environment see [CONTRIBUTING.DEVENV4.md](CONTRIBUTING.DEVENV4.md) file):
 
-* **devenv4**
+* **devenv7**
   * Operating Systems
-    * Darwin / macOS platforms
-      * 17.x / macOS High Sierra (with Clang 10.00 or later)
-      * 18.x / macOS Mojave (with Clang 10.00 or later)
-      * 19.x / macOS Catalina (with Clang 10.00 or later)
+    * Darwin / macOS platforms (ARM64 only)
+      * Darwin 24 / macOS Sequoia
+      * Darwin 25 / macOS Tahoe
     * Linux platforms
-      * RedHat 6 (rhel6)
-      * RedHat 7 (rhel7)
-      * RedHat 8 (rhel8)
-      * Ubuntu x64 18.04 (ub18)
-      * Ubuntu x86 18.04 (ub18)
-      * Ubuntu x64 20.04 (ub18) - temporarily enabled with the ub18 binaries
+      * RHEL 9 (a64, x64)
+      * RHEL 10 (a64)
+      * Ubuntu 24.04 LTS (a64, x64)
+      * Linux Mint 22.x based on Ubuntu 24.04 LTS (a64, x64)
+      * Pop!_OS 24.04 LTS based on Ubuntu 24.04 LTS (a64, x64)
+      * Elementary OS 8.x based on Ubuntu 24.04 LTS (a64, x64)
     * Windows platforms
-      * Windows 7 both x86 and x64
-      * Windows 8.x both x86 and x64
-      * Windows 10 both x86 and x64
+      * Windows 10+ (a64, x64, x86) — ARM64 (a64) is a notable new capability
   * Compilers
-    * GCC 8.3.0 for all supported Linux platforms
-    * Clang 8.0.1 for all supported Linux platforms
-    * Apple Clang 10.00 or later for Darwin / macOS platforms
-    * Microsoft vc14.1 Visual C++ 2017 for Windows platforms
-  * C++11 standard library implementations
+    * GCC 15.2.0 for all supported Linux platforms
+    * Clang 20.1.0 for all supported Linux platforms
+    * Apple Clang 17.0.0 for Darwin / macOS platforms
+    * Microsoft vc143 Visual C++ 2022 (VC 17.08) for Windows platforms
+    * Clang-CL ccl16 for Windows platforms (new — see Clang-CL section below)
+  * C++ standard library implementations
     * libc++ with Clang for Darwin / macOS and Linux platforms
-    * libstdc++ with GCC and Clang for Linux platforms
-    * msvcrt for vc14.1 for Windows platforms
-  * Boost 1.72
-  * OpenSSL 1.1.1d
-  * JSON Spirit 4.08
+    * libstdc++ with GCC for Linux platforms
+    * msvcrt for vc143 for Windows platforms
+  * Boost 1.90.0 (with Boost.JSON as the default JSON library)
+  * OpenSSL 3.5.4 (optionally OpenSSL 1.1.1w via BL_USE_OPENSSL_1X=1)
+  * JSON Spirit 4.08 (optional, not enabled by default — see JSON library selection below)
+
+### Clang-CL (ccl16) toolchain on Windows
+
+devenv7 introduces Clang-CL support on Windows as an alternative compiler. Clang-CL (ccl16) uses the clang-cl.exe front-end with the MSVC standard library and linker, providing Clang diagnostics and optimizations while maintaining full ABI compatibility with MSVC-built code. Clang-CL is included in the devenv7 Windows distributions and no additional download is needed.
+
+To build with Clang-CL, pass the TOOLCHAIN parameter to make:
+
+```make
+make -k -j4 TOOLCHAIN=ccl16
+make -k -j4 TOOLCHAIN=ccl16 VARIANT=release
+make -k -j4 TOOLCHAIN=ccl16 ARCH=x64
+```
+
+Clang-CL supports all target architectures: a64 (ARM64), x64 and x86. It uses the same MSVC installation, Windows SDK and pre-built libraries (Boost, OpenSSL) as the vc143 toolchain.
+
+### JSON library selection
+
+devenv7 uses Boost.JSON as the default JSON library. Boost.JSON is included in Boost 1.90.0 and is linked automatically when building with devenv7.
+
+To use JSON Spirit instead of Boost.JSON (e.g. for backward compatibility with older code), pass the BL_USE_JSON_SPIRIT flag:
+
+```make
+make -k -j4 BL_USE_JSON_SPIRIT=1
+```
+
+The JSON library abstraction layer in the codebase allows transparent switching between Boost.JSON and JSON Spirit. Existing code that uses the bl::json types works unchanged with either library.
+
+### Cross-compilation
+
+Each devenv7 Windows distribution includes support for all target architectures (a64, x64, x86) via cross-compilation. By default, the build targets the host architecture. To cross-compile for a different architecture, use the ARCH parameter:
+
+```make
+make -k -j4 ARCH=x64
+make -k -j4 ARCH=a64
+make -k -j4 ARCH=x86
+```
 
 ## Development environment distributions and links
 
-In addition to the code dependencies of the library itself (compiler toolchain, Boost, OpenSSL, JSON spirit) the development environment also has few additional dependencies such as GNU make (e.g. via msys on Windows), git, python, etc, plus some optional such as Eclipse CDT (to use C++ indexer and IDE). The "binary blob" that contains the pre-built versions of the development environment with all code dependencies plus the additional and optional such is called "devenv distribution". Some popular combinations of devenv distributions were prebuilt and uploaded on Google drive, so they can be downloaded directly and facilitate the development and ease of use of the swblocks-baselib library. Here is the list of the currently supported devenv distributions with the link of where to download them from (more will be coming in the future):
+In addition to the code dependencies of the library itself (compiler toolchain, Boost, OpenSSL) the development environment also has few additional dependencies such as GNU make (e.g. via MSYS2 on Windows), Git, Python, etc. The "binary blob" that contains the pre-built versions of the development environment with all code dependencies plus the additional tools is called "devenv distribution". Pre-built devenv distributions are available for download from storage.swblocks.net and are the recommended way to get started with the swblocks-baselib library. You can also browse the full list of available distributions at the [distribution index page](http://storage.swblocks.net/index.html). Here is the list of the currently supported devenv distributions:
 
-* **devenv4** for Windows x64 only (Win7 - Win10, including latest Win10 updates, SDK 8.1 and 10), vc14.1 (VS 2017) can be downloaded from [here](https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-windows-Hostx64-x64-only.zip); or from command line:  
-wget https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-windows-Hostx64-x64-only.zip
-* **devenv4** for Windows x86 only (Win7 - Win10, including latest Win10 updates, SDK 8.1 and 10), vc14.1 (VS 2017) can be downloaded from [here](https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-windows-Hostx64-x86-only.zip); or from command line:  
-wget https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-windows-Hostx64-x86-only.zip
-* **devenv4** for Windows both x64 and x86 (Win7 - Win10, including latest Win10 updates, SDK 8.1 and 10), vc14.1 (VS 2017) can be downloaded from [here](https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-windows-Hostx64-x64-and-x86.zip); or from command line:  
-wget https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-windows-Hostx64-x64-and-x86.zip
-* **devenv4** for Darwin / macOS (17.x or later / macOS High Sierra or later), clang 10.00, libc++ can be downloaded [here](https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-darwin-17.tar.gz); or from command line:  
-wget https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-darwin-17.tar.gz
-* **devenv4** for Ubuntu x64 18.04 LTS with GCC 8.3.0 and Clang 8.0.1 can be downloaded [here](https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-ub18-gcc830-clang801.tar.gz); or from command line:  
-wget https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-ub18-gcc830-clang801.tar.gz
-* **devenv4** for Ubuntu x86 18.04 LTS with GCC 8.3.0 and Clang 8.0.1 can be downloaded [here](hhttps://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-ub18-x86-gcc830-clang801.tar.gz); or from command line:  
-wget https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-ub18-x86-gcc830-clang801.tar.gz
-* **devenv4** for RedHat 6 / CentOS 6 with GCC 8.3.0 and Clang 8.0.1 can be downloaded [here](https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-rhel6-gcc830-clang801.tar.gz); or from command line:  
-wget https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-rhel6-gcc830-clang801.tar.gz
-* **devenv4** for RedHat 7 / CentOS 6 with GCC 8.3.0 and Clang 8.0.1 can be downloaded [here](https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-rhel7-gcc830-clang801.tar.gz); or from command line:  
-wget https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-rhel7-gcc830-clang801.tar.gz
-* **devenv4** for RedHat 8 / CentOS 8 with GCC 8.3.0 and Clang 8.0.1 can be downloaded [here](https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-rhel8-gcc830-clang801.tar.gz); or from command line:  
-wget https://storage.googleapis.com/swblocks-dist/devenv/4/dist-devenv4-rhel8-gcc830-clang801.tar.gz
+### macOS distributions
 
-Here are the links to the original source and binary dependencies needed to build new development environment images for new platforms. Instructions about how to do this are in the devenv4 notes files.
+* **devenv7** for macOS Darwin 24 (Sequoia), ARM64 can be downloaded from [here](https://storage.swblocks.net/devenv/7/macos/darwin24/a64/dist-devenv7-darwin-24-a64.tar.gz); or from command line:
+wget https://storage.swblocks.net/devenv/7/macos/darwin24/a64/dist-devenv7-darwin-24-a64.tar.gz
+* **devenv7** for macOS Darwin 25, ARM64 can be downloaded from [here](https://storage.swblocks.net/devenv/7/macos/darwin25/a64/dist-devenv7-darwin-25-a64.tar.gz); or from command line:
+wget https://storage.swblocks.net/devenv/7/macos/darwin25/a64/dist-devenv7-darwin-25-a64.tar.gz
 
-* **devenv4** source code for the libraries and compiler toolchains can be downloaded [here](hhttps://storage.googleapis.com/swblocks-dist/devenv/4/source-dependencies.tar.gz); or from command line:  
-wget https://storage.googleapis.com/swblocks-dist/devenv/4/source-dependencies.tar.gz
-* **devenv4** binary dependencies for Windows can be downloaded [here](https://storage.googleapis.com/swblocks-dist/devenv/4/windows-binary-dependencies.zip); or from command line:  
-wget https://storage.googleapis.com/swblocks-dist/devenv/4/windows-binary-dependencies.zip
+### Linux distributions
 
-All links above are either .zip file (for Windows) or a .gz tar file for Darwin / macOS and Linux. Once they are downloaded they can be extracted into some location (e.g. **c:\\swblocks** for Windows or **/Users/userid/swblocks** for Darwin and Linux) and then once you clone the swblocks-baselib library from github in order to use it you simply need to create a small .mk file in **projects/make** folder called **ci-init-env.mk** and point the 3 _DIST_ roots to the place where you have extracted the development environment blob.
+The combined distributions (with both GCC and Clang) are recommended as they include both compilers and allow building with either toolchain. Single-compiler variants (GCC-only or Clang-only) are also available for a smaller footprint when only one compiler is needed.
 
-E.g. if you have extracted the development environment into **c:\\swblocks** then the **projects/make/ci-init-env.mk** can look the following way for Windows:
+**RHEL 10 (a64):**
+
+* **devenv7** for RHEL 10 a64 with GCC 15.2.0 and Clang 20.1.0 (recommended) can be downloaded from [here](https://storage.swblocks.net/devenv/7/rhel/rhel10/a64/dist-devenv7-rhel10-gcc1520-clang2010-a64.tar.gz); or from command line:
+wget https://storage.swblocks.net/devenv/7/rhel/rhel10/a64/dist-devenv7-rhel10-gcc1520-clang2010-a64.tar.gz
+* GCC-only variant: [dist-devenv7-rhel10-gcc1520-a64.tar.gz](https://storage.swblocks.net/devenv/7/rhel/rhel10/a64/dist-devenv7-rhel10-gcc1520-a64.tar.gz)
+* Clang-only variant: [dist-devenv7-rhel10-clang2010-a64.tar.gz](https://storage.swblocks.net/devenv/7/rhel/rhel10/a64/dist-devenv7-rhel10-clang2010-a64.tar.gz)
+
+**RHEL 9 (a64):**
+
+* **devenv7** for RHEL 9 a64 with GCC 15.2.0 and Clang 20.1.0 (recommended) can be downloaded from [here](https://storage.swblocks.net/devenv/7/rhel/rhel9/a64/dist-devenv7-rhel9-gcc1520-clang2010-a64.tar.gz); or from command line:
+wget https://storage.swblocks.net/devenv/7/rhel/rhel9/a64/dist-devenv7-rhel9-gcc1520-clang2010-a64.tar.gz
+* GCC-only variant: [dist-devenv7-rhel9-gcc1520-a64.tar.gz](https://storage.swblocks.net/devenv/7/rhel/rhel9/a64/dist-devenv7-rhel9-gcc1520-a64.tar.gz)
+* Clang-only variant: [dist-devenv7-rhel9-clang2010-a64.tar.gz](https://storage.swblocks.net/devenv/7/rhel/rhel9/a64/dist-devenv7-rhel9-clang2010-a64.tar.gz)
+
+**RHEL 9 (x64):**
+
+* **devenv7** for RHEL 9 x64 with GCC 15.2.0 and Clang 20.1.0 (recommended) can be downloaded from [here](https://storage.swblocks.net/devenv/7/rhel/rhel9/x64/dist-devenv7-rhel9-gcc1520-clang2010-x64.tar.gz); or from command line:
+wget https://storage.swblocks.net/devenv/7/rhel/rhel9/x64/dist-devenv7-rhel9-gcc1520-clang2010-x64.tar.gz
+* GCC-only variant: [dist-devenv7-rhel9-gcc1520-x64.tar.gz](https://storage.swblocks.net/devenv/7/rhel/rhel9/x64/dist-devenv7-rhel9-gcc1520-x64.tar.gz)
+* Clang-only variant: [dist-devenv7-rhel9-clang2010-x64.tar.gz](https://storage.swblocks.net/devenv/7/rhel/rhel9/x64/dist-devenv7-rhel9-clang2010-x64.tar.gz)
+
+**Ubuntu 24.04 / Linux Mint 22.x / Pop!_OS 24.04 / Elementary OS 8.x (a64):**
+
+* **devenv7** for Ubuntu 24.04 a64 (also used for Linux Mint 22.x, Pop!_OS 24.04 and Elementary OS 8.x) with GCC 15.2.0 and Clang 20.1.0 (recommended) can be downloaded from [here](https://storage.swblocks.net/devenv/7/ubuntu/ub24/a64/dist-devenv7-ub24-gcc1520-clang2010-a64.tar.gz); or from command line:
+wget https://storage.swblocks.net/devenv/7/ubuntu/ub24/a64/dist-devenv7-ub24-gcc1520-clang2010-a64.tar.gz
+* GCC-only variant: [dist-devenv7-ub24-gcc1520-a64.tar.gz](https://storage.swblocks.net/devenv/7/ubuntu/ub24/a64/dist-devenv7-ub24-gcc1520-a64.tar.gz)
+* Clang-only variant: [dist-devenv7-ub24-clang2010-a64.tar.gz](https://storage.swblocks.net/devenv/7/ubuntu/ub24/a64/dist-devenv7-ub24-clang2010-a64.tar.gz)
+
+**Ubuntu 24.04 / Linux Mint 22.x / Pop!_OS 24.04 / Elementary OS 8.x (x64):**
+
+* **devenv7** for Ubuntu 24.04 x64 (also used for Linux Mint 22.x, Pop!_OS 24.04 and Elementary OS 8.x) with GCC 15.2.0 and Clang 20.1.0 (recommended) can be downloaded from [here](https://storage.swblocks.net/devenv/7/ubuntu/ub24/x64/dist-devenv7-ub24-gcc1520-clang2010-x64.tar.gz); or from command line:
+wget https://storage.swblocks.net/devenv/7/ubuntu/ub24/x64/dist-devenv7-ub24-gcc1520-clang2010-x64.tar.gz
+* GCC-only variant: [dist-devenv7-ub24-gcc1520-x64.tar.gz](https://storage.swblocks.net/devenv/7/ubuntu/ub24/x64/dist-devenv7-ub24-gcc1520-x64.tar.gz)
+* Clang-only variant: [dist-devenv7-ub24-clang2010-x64.tar.gz](https://storage.swblocks.net/devenv/7/ubuntu/ub24/x64/dist-devenv7-ub24-clang2010-x64.tar.gz)
+
+### Windows distributions
+
+Windows distributions use the VS2022 vc143 (VC 17.08) compiler toolchain and Windows SDK 10. Each distribution is organized by host architecture and includes support for all target architectures (a64, x64, x86) via cross-compilation. ARM64 (a64) is a notable new capability for Windows in devenv7.
+
+* **devenv7** for Windows, host ARM64 (a64), targets a64+x64+x86, vc143 (VS 2022) can be downloaded from [here](https://storage.swblocks.net/devenv/7/windows/vs2022-vc143-17.08/dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86.zip); or from command line:
+wget https://storage.swblocks.net/devenv/7/windows/vs2022-vc143-17.08/dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86.zip
+* **devenv7** for Windows, host x64, targets a64+x64+x86, vc143 (VS 2022) can be downloaded from [here](https://storage.swblocks.net/devenv/7/windows/vs2022-vc143-17.08/dist-devenv7-windows-hostarch-x64-targets-a64-x64-x86.zip); or from command line:
+wget https://storage.swblocks.net/devenv/7/windows/vs2022-vc143-17.08/dist-devenv7-windows-hostarch-x64-targets-a64-x64-x86.zip
+* **devenv7** for Windows, host x86, targets a64+x64+x86, vc143 (VS 2022) can be downloaded from [here](https://storage.swblocks.net/devenv/7/windows/vs2022-vc143-17.08/dist-devenv7-windows-hostarch-x86-targets-a64-x64-x86.zip); or from command line:
+wget https://storage.swblocks.net/devenv/7/windows/vs2022-vc143-17.08/dist-devenv7-windows-hostarch-x86-targets-a64-x64-x86.zip
+
+The following Windows downloads are optional and only needed for rebuilding or updating the development environment:
+
+* **Downloads cache** archives contain the downloaded source and binary packages and are distributed separately for convenience, so the user can rebuild or update the environment without having to download the packages again:
+  * Host a64: [dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86-downloads-cache.zip](https://storage.swblocks.net/devenv/7/windows/vs2022-vc143-17.08/dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86-downloads-cache.zip)
+  * Host x64: [dist-devenv7-windows-hostarch-x64-targets-a64-x64-x86-downloads-cache.zip](https://storage.swblocks.net/devenv/7/windows/vs2022-vc143-17.08/dist-devenv7-windows-hostarch-x64-targets-a64-x64-x86-downloads-cache.zip)
+  * Host x86: [dist-devenv7-windows-hostarch-x86-targets-a64-x64-x86-downloads-cache.zip](https://storage.swblocks.net/devenv/7/windows/vs2022-vc143-17.08/dist-devenv7-windows-hostarch-x86-targets-a64-x64-x86-downloads-cache.zip)
+* **MSVC compiler toolchain package** contains the VS2022 vc143 VC 17.08 compiler toolchain and Windows SDK and is also optional and only available for convenience when one needs to rebuild or update the devenv7 Windows environment: [msvc-toolchain-17.08-and-sdk.zip](https://storage.swblocks.net/devenv/7/windows/vs2022-vc143-17.08/msvc-toolchain-17.08-and-sdk.zip)
+
+## Setting up the development environment
+
+All links above are either .zip file (for Windows) or a .gz tar file for Darwin / macOS and Linux. The paths in the archives are structured so that they can be extracted directly with the home directory as root on all platforms. Once extracted, the distribution will be located under **$(HOME)/swblocks** on Darwin / macOS and Linux, or **c:\\Users\\username\\swblocks** on Windows respectively. Each distribution archive includes a pre-generated **projects/make/ci-init-env.mk** file with the correct paths. If you extract the distribution with the home directory as root, you can simply copy this generated **ci-init-env.mk** file directly into your **projects/make** folder in the swblocks-baselib repository clone and it will work without any modifications. If you extract the distribution to a different location, you will need to adjust the paths in **ci-init-env.mk** accordingly.
+
+The **ci-init-env.mk** file points the 3 _DIST_ roots to the place where you have extracted the development environment distribution.
+
+E.g. if you have extracted the development environment into **%USERPROFILE%\\swblocks** then the **projects/make/ci-init-env.mk** can look the following way for Windows:
 
 ```make
 # initialize the important env roots
 
-DIST_ROOT_DEPS1 = /c/swblocks/dist-devenv4-windows
-DIST_ROOT_DEPS2 = /c/swblocks/dist-devenv4-windows
-DIST_ROOT_DEPS3 = /c/swblocks/dist-devenv4-windows
+DIST_ROOT_DEPS1 = /c/Users/$(USERNAME)/swblocks/dist-devenv7-windows-hostarch-x64-targets-a64-x64-x86
+DIST_ROOT_DEPS2 = /c/Users/$(USERNAME)/swblocks/dist-devenv7-windows-hostarch-x64-targets-a64-x64-x86
+DIST_ROOT_DEPS3 = /c/Users/$(USERNAME)/swblocks/dist-devenv7-windows-hostarch-x64-targets-a64-x64-x86
 ```
 
-Note that on Windows you should use UNIX style paths since we use GNU make (via msys)
+Note that on Windows you should use UNIX style paths since we use GNU make (via MSYS2)
 
-E.g. **projects/make/ci-init-env.mk** can look the following way for Darwin (or you can adjust for Linux):
+E.g. **projects/make/ci-init-env.mk** can look the following way for Darwin / macOS:
 
 ```make
 # initialize the important env roots
 
-DIST_ROOT_DEPS1 = /Users/userid/swblocks/dist-devenv4-darwin-17
-DIST_ROOT_DEPS2 = /Users/userid/swblocks/dist-devenv4-darwin-17
-DIST_ROOT_DEPS3 = /Users/userid/swblocks/dist-devenv4-darwin-17
+DIST_ROOT_DEPS1 = $(HOME)/swblocks/dist-devenv7-darwin-24-a64
+DIST_ROOT_DEPS2 = $(HOME)/swblocks/dist-devenv7-darwin-24-a64
+DIST_ROOT_DEPS3 = $(HOME)/swblocks/dist-devenv7-darwin-24-a64
 ```
 
-An additional step which applies **only** to Windows is to add few entries to the Path environment variable associated with your account permanently as these tools are necessary to build, run tests and use the development environment in general, but by default are not available on Windows. On Linux / UNIX / Darwin these are typically available, or can be made available, in the OS, so this step is not necessary on these platforms. Here is the list of entries which need to be added to the path assuming the location where you have extracted the development environment distribution is **c:\\swblocks** (preferably in this order):
+E.g. **projects/make/ci-init-env.mk** can look the following way for Linux:
+
+```make
+# initialize the important env roots
+
+DIST_ROOT_DEPS1 = $(HOME)/swblocks/dist-devenv7-ub24-gcc1520-clang2010-x64
+DIST_ROOT_DEPS2 = $(HOME)/swblocks/dist-devenv7-ub24-gcc1520-clang2010-x64
+DIST_ROOT_DEPS3 = $(HOME)/swblocks/dist-devenv7-ub24-gcc1520-clang2010-x64
+```
+
+### Windows environment setup
+
+An additional step which applies **only** to Windows is to configure the environment so that the necessary tools (GNU make, Git, Python, etc.) are available. On Linux / UNIX / Darwin these are typically available, or can be made available, in the OS, so this step is not necessary on these platforms.
+
+**Recommended approach: setup-env scripts**
+
+The recommended way to configure the Windows development environment is to use the setup-env scripts that are auto-generated as part of the distribution. Open a Command Prompt and run:
 
 ```
-c:\swblocks\dist-devenv4-windows\msys2\latest\msys64\usr\bin
-c:\swblocks\dist-devenv4-windows\git\latest\default\bin
-c:\swblocks\dist-devenv4-windows\python\2.7-latest\default
+call %USERPROFILE%\swblocks\dist-devenv7-windows-hostarch-x64-targets-a64-x64-x86\scripts\ci\setup-env-x64.bat
+```
+
+This sets up all necessary PATH entries, compiler paths and environment variables for the specified target architecture. Three variants are available for each architecture (where {arch} is a64, x64, or x86):
+
+* **setup-env-{arch}.bat** — Full environment: MSVC compiler, Windows SDK, Clang-CL, debuggers, Jom, NASM, Git, Python, MSYS2, plus INCLUDE/LIB/LIBPATH for the target architecture.
+* **setup-env-nomsvc-{arch}.bat** — No MSVC compiler: debuggers, Jom, NASM (x64/x86 only), Git, Python, MSYS2. No compiler, SDK, or INCLUDE/LIB/LIBPATH paths. Useful when you only need the tools but not the compiler (the makefiles configure compiler paths automatically during builds).
+* **setup-env-minimal-{arch}.bat** — Minimal: Git and MSYS2 only. Useful for running make and git commands only.
+
+**Alternative approach: manual PATH entries**
+
+Alternatively, you can manually add the following entries to the Path environment variable associated with your account permanently. These are the essential tools needed to build and run tests. Assuming the distribution is extracted to **%USERPROFILE%\\swblocks** (preferably in this order):
+
+```
+%USERPROFILE%\swblocks\dist-devenv7-windows-hostarch-x64-targets-a64-x64-x86\msys2\20251213\msys64\usr\bin
+%USERPROFILE%\swblocks\dist-devenv7-windows-hostarch-x64-targets-a64-x64-x86\git\2.48.1\default\bin
+%USERPROFILE%\swblocks\dist-devenv7-windows-hostarch-x64-targets-a64-x64-x86\python\3.14.2\default
 ```
 
 If you are using WinDbg for debugging on Windows you can also optionally add the following entry to the Path associated with your account:
 
 ```
-c:\swblocks\dist-devenv4-windows\winsdk\10\default\Debuggers\x64
+%USERPROFILE%\swblocks\dist-devenv7-windows-hostarch-x64-targets-a64-x64-x86\winsdk\10\default\Debuggers\x64
 ```
 
-Once you create unpack the development environment distribution and create the **projects/make/ci-init-env.mk** as per above you can now build the code run tests by specifying the targets, etc. The unit test targets start with **utf_baselib** prefix (e.g. utf_baselib, utf_baselib_data) and the respective test targets start with **test_utf_baselib**. The other targets are the respective binary names and there are special targets too, just type make help for more information.
+Note: The setup-env scripts (above) are the recommended approach as they also configure the MSVC compiler toolchain paths, which the makefiles handle automatically during builds but which are needed for interactive compiler use.
+
+### Building and running tests
+
+Once you unpack the development environment distribution and create the **projects/make/ci-init-env.mk** as per above you can now build the code and run tests by specifying the targets, etc. The unit test targets start with **utf_baselib** prefix (e.g. utf_baselib, utf_baselib_data) and the respective test targets start with **test_utf_baselib**. The other targets are the respective binary names and there are special targets too, just type make help for more information.
 
 Here are some examples e.g.:
 
 ```make
+make -k -j4
+make -k -j4 VARIANT=release
+make -k -j4 TOOLCHAIN=ccl16
+make -k -j4 ARCH=x64
 make utf_baselib
 make test_utf_baselib_data
-make -k -j6
-make -k -j6 && make -k -j8 test
+make -k -j4 && make -k -j4 test
 make help
-make -k -j6 && make -k -j8 test && make install
+make -k -j4 && make -k -j4 test && make install
 ```
-
-## IDE support and Eclipse CDT indexer
-
-The Eclipse CDT indexer is an excellent tool and probably one of the best such that exist to vastly improve productivity of C++ developers. swblocks-baselib comes with a small python script that generates eclipse project files for the various targets, so Eclipse can be used with the CDT indexer for development. The script doesn't take any arguments hence can be simply executed like this:
-
-```
-$ python scripts/generate-eclipse-project-config.py
-```
-
-At this point the eclipse projects will be generated in **bld/makeeclipse** location and you can simply copy/move them in more permanent location (e.g. if you use the **CI_ENV_ROOT** environment variable to control the development environment configuration then the expected location to move them to would be **$CI_ENV_ROOT/projects/makeeclipse**) and then of course start using them by importing them in an Eclipse workspace.
-
-Note also that each time you import or open the projects for the first time in an Eclipse workspace you may get something like the following errors on Windows:
-
-```
-Program "g++" not found in PATH	<my-target> ...
-Program "gcc" not found in PATH	<my-target> ...
-```
-
-These errors can simply be ignored (deleted once). They won't show up again until you re-open and / or re-import the project again.
-
-Note also that it is highly recommended (and actually some parts actually required - e.g. style and formatting, line ending, etc) that configure your Eclipse workspace according to the instructions in **notes\\eclipse_workspace.txt**.
 
 ## Using GitHub and creating pull requests
 

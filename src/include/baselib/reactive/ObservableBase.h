@@ -221,6 +221,19 @@ namespace bl
 
         /**
          * @brief class ObservableBase
+         *
+         * Threading model: an observable *is* a timer task. Its entire event loop runs inside
+         * TimerTaskBaseT::onTimer(), which holds the inherited TaskBase::m_lock for the whole
+         * duration of run() via BL_TASKS_HANDLER_BEGIN(). Every other entry point which touches
+         * the same state -- dispose(), subscribe(), unsubscribe(), requestCancel(),
+         * dispatchException() and setThrottleLimit() -- acquires that same lock.
+         *
+         * What this means in practice is that all subscription state, and every observe-then-act
+         * sequence against a subscription events queue, is serialized on a single logical thread.
+         * The only agent which can mutate those events queues concurrently is the queue's own
+         * task completion processing, whose effect is bounded and directional as described in
+         * the observer notes in ExecutionQueue.h. Those two properties together are what makes
+         * the queue state checks throughout this class safe despite spanning several calls.
          */
         template
         <
@@ -393,6 +406,12 @@ namespace bl
                         {
                             /*
                              * We have a failed task
+                             *
+                             * Note: hasReady() and pop() are two separate calls, but the pair is
+                             * safe here -- we hold the task lock, this is the only pop() on this
+                             * queue, and concurrent task completion can only *add* to the ready
+                             * queue. hasReady() == true is therefore stable and pop() cannot
+                             * return nullptr.
                              */
 
                             const auto failedTask = subscription -> eventsQueue -> pop( false /* wait */ );
@@ -690,6 +709,13 @@ namespace bl
                         /*
                          * We have a throttle limit and some of the event queues are full.
                          * Reject the request and notify the caller it should wait and retry
+                         *
+                         * Note: this check and the push_back( ... ) further down are in the same
+                         * function under the same task lock, and size() can only decrease
+                         * concurrently, so the check is conservative -- at worst we reject an
+                         * event which would have fit and the caller retries. This assumes no
+                         * task in the events queue uses a non-self continuation (see the note on
+                         * size() in ExecutionQueue.h), which holds for the tasks pushed there.
                          */
 
                         return false;

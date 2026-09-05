@@ -58,6 +58,42 @@ namespace bl
 
             typedef cpp::function< void ( SAA_in const om::ObjPtr< Task >& task ) > task_callback_type;
 
+            /**
+             * @brief Point-in-time observers of the queue state
+             *
+             * Each of these is individually synchronized, so a single call is always safe and
+             * returns a consistent value. The queue lock is released before the call returns,
+             * however, which means the value is a snapshot -- a *sequence* of observer calls is
+             * not atomic and the state may change between any two of them.
+             *
+             * What can change concurrently is bounded and directional. Tasks complete on thread
+             * pool threads and are processed by the queue itself, which can only:
+             *
+             * -- remove entries from the pending and executing queues
+             * -- append completed entries at the *back* of the ready queue
+             * -- push a *continuation* to the front of the pending queue, when a completing task
+             *    returns a task other than itself from Task::continuationTask() (or via
+             *    setContinuationCallback); this is the one way an entry is added without a caller
+             *    of push_back() or push_front(), and it makes size() grow on a completion thread
+             *
+             * For a queue whose tasks do not use such non-self continuations, nothing is ever
+             * added to the pending queue except by a caller of push_back() or push_front(), and
+             * callers may rely on the following (a site which depends on this must say so, since
+             * the property is a convention of the tasks pushed, not of the queue):
+             *
+             * -- ready entries are removed only by callers (pop, flush, wait, cancelAll) and
+             *    never by task completion, so where a single thread owns the popping
+             *    hasReady() == true is stable until that thread itself acts
+             * -- size() can only decrease concurrently
+             * -- under that same condition the front of the ready queue is stable too, since
+             *    completions append at the back
+             * -- isEmpty() == false is *not* stable; the queue can drain to empty at any moment
+             *
+             * Where a single atomic check-and-retrieve is required prefer pop( false ) or
+             * top( false ), which do both under one lock acquisition, over hasReady() followed
+             * by pop().
+             */
+
             virtual bool isEmpty() const NOEXCEPT = 0;
 
             virtual bool hasReady() const NOEXCEPT = 0;
@@ -72,8 +108,31 @@ namespace bl
 
             virtual void setOptions( SAA_in const unsigned options = OptionKeepFailed ) = 0;
 
+            /**
+             * @brief Sets the notification callback and its delivery policy
+             *
+             * The delivery parameter is mandatory by design. Callbacks used to be serialized by
+             * the queue and are not any more by default, and that change is invisible at runtime,
+             * so every call site is required to state which behavior it wants rather than inherit
+             * one silently. Pass ExecutionQueueNotify::DeliveryConcurrent for the current default
+             * behavior, or ExecutionQueueNotify::DeliverySerialized for mutually exclusive
+             * callbacks.
+             *
+             * Read the NotifyDelivery enumeration before choosing DeliverySerialized -- it carries
+             * a deadlock restriction and a thread pool starvation hazard. See also
+             * ExecutionQueueNotify::onEvent() for the callback concurrency and ordering contract.
+             *
+             * This call also samples the observer's ExecutionQueueNotify::maxReadyOrExecuting()
+             * throttle limit, once, and caches it for the lifetime of the registration; register
+             * again to install a different limit, which takes effect immediately (a raised limit
+             * admits the pending tasks before this call returns). Re-registering also rebinds
+             * the delivery policy per callback, not per queue - see
+             * ExecutionQueueNotify::NotifyDelivery.
+             */
+
             virtual void setNotifyCallback(
                 SAA_in                  om::ObjPtr< om::Proxy >&&                   notifyCB,
+                SAA_in                  const ExecutionQueueNotify::NotifyDelivery  delivery,
                 SAA_in                  const unsigned                              eventsMask = ExecutionQueueNotify::AllEvents
                 ) = 0;
 
@@ -128,6 +187,15 @@ namespace bl
             virtual om::ObjPtr< Task > pop( SAA_in const bool wait = true ) = 0;
 
             virtual om::ObjPtr< Task > top( SAA_in const bool wait = true ) = 0;
+
+            /**
+             * @brief Invokes cbTasks for every task currently in the given queue
+             *
+             * The callback runs under the execution queue's internal (non-recursive) lock: it
+             * must not call any method of this execution queue, must not block, and must not
+             * complete or cancel a task synchronously. It is intended for inspection only, e.g.
+             * the shutdown assertions in AsyncExecutorImpl.
+             */
 
             virtual void scanQueue(
                 SAA_in                  const QueueId                               queueId,
@@ -302,6 +370,14 @@ namespace bl
                     }
                 }
             }
+
+            /**
+             * @brief Counts the entries currently in one of the queues
+             *
+             * Note: this acquires the queue lock separately from size() (via scanQueue), so an
+             * expression such as size() == getQueueSize( Ready ) compares two independent
+             * snapshots rather than one consistent view; see the observer notes above.
+             */
 
             std::size_t getQueueSize( SAA_in const QueueId queueId ) NOEXCEPT
             {

@@ -22,6 +22,7 @@
 #include <baselib/core/BaseIncludes.h>
 
 #include <cstddef>
+#include <cstring>
 
 namespace bl
 {

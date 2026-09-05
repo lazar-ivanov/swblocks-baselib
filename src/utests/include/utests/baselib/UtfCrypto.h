@@ -43,25 +43,27 @@ namespace test
 
             return
                 "-----BEGIN CERTIFICATE-----\n"
-                "MIIDaDCCAlACCQDWlKTpe/DKXjANBgkqhkiG9w0BAQsFADB2MQswCQYDVQQGEwJV\n"
-                "UzERMA8GA1UECAwITmV3IFlvcmsxDDAKBgNVBAcMA05ZQzEXMBUGA1UECgwOTXkg\n"
-                "Q29tcGFueSBMdGQxLTArBgNVBAMMJE15IENvbXBhbnkgTHRkIFRlc3QgUm9vdCBD\n"
-                "ZXJ0aWZpY2F0ZTAeFw0xNzEwMjAwMzUwNDFaFw0yNzA4MjkwMzUwNDFaMHYxCzAJ\n"
-                "BgNVBAYTAlVTMREwDwYDVQQIDAhOZXcgWW9yazEMMAoGA1UEBwwDTllDMRcwFQYD\n"
-                "VQQKDA5NeSBDb21wYW55IEx0ZDEtMCsGA1UEAwwkTXkgQ29tcGFueSBMdGQgVGVz\n"
-                "dCBSb290IENlcnRpZmljYXRlMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKC\n"
-                "AQEAslipXTEu/Tf2YsVx50D1bZRbksk+6jl0LVyJtjuhlcJS+SwWXEH03prTXoYu\n"
-                "+ocEzVvhkA+gmwpt0tqwewdbip42JCT7mrALn82VngTLuwX99jKsBvkzM0NlwK6F\n"
-                "++d6yb561Aq84jTumL33tCh83TdOPI5x3giAx8fVNh2Mt8dhj9DgLXnwyMQTeluG\n"
-                "ABruWna9gUPlYOeZzBrqaio+nSFFTw7shE6lPltTCb/0LRNPhGWhBUqy0JioRseP\n"
-                "VAvbOKffW8veV5WnUTFdP8yBh0dWt4rA3bQIjJK4M6SEx2FJ2xc7D2yVED3uzV5G\n"
-                "BF3Fm/8syl6lctpGOmSZtAUxbQIDAQABMA0GCSqGSIb3DQEBCwUAA4IBAQBS2x4n\n"
-                "xVyLM8gPhBgufheSfcv04XZDSDGnMFXyNYBiRmWjoR11jHhRt6z8Chc+08yuPxM1\n"
-                "JnYbczf3MRQVIwLnPaU83C9hNvyx8Haneavb2csHnbVV43Lqxt58hARL1h+loOxs\n"
-                "Ef/4eWspyTl6Gne0dwF7nvaASRjGUDJkIsAFPnGD045UH6OLKl4p8zlHblW4B1es\n"
-                "j2ebkKwTGJYKIcO7dZHcxtosZsJ8sRHKKlFyIDSKzVDrdRFTnPRR06zTBZ83KfYy\n"
-                "p5mWNQQHsQp0wtUTLdYWjMnJBvo1JtAKeYv76ZoBvYcJiJWlnjYCtRq5hOD5Y6ct\n"
-                "X7k2o4k7mtEpT5+B\n"
+                "MIIDvjCCAqagAwIBAgIUWXcRaor9MG9nfIMDD1gPLzZZ/XcwDQYJKoZIhvcNAQEL\n"
+                "BQAwdjELMAkGA1UEBhMCVVMxETAPBgNVBAgMCE5ldyBZb3JrMQwwCgYDVQQHDANO\n"
+                "WUMxFzAVBgNVBAoMDk15IENvbXBhbnkgTHRkMS0wKwYDVQQDDCRNeSBDb21wYW55\n"
+                "IEx0ZCBUZXN0IFJvb3QgQ2VydGlmaWNhdGUwIBcNMjYwOTA0MTg0MDU4WhgPMjA1\n"
+                "NDAxMjAxODQwNThaMHYxCzAJBgNVBAYTAlVTMREwDwYDVQQIDAhOZXcgWW9yazEM\n"
+                "MAoGA1UEBwwDTllDMRcwFQYDVQQKDA5NeSBDb21wYW55IEx0ZDEtMCsGA1UEAwwk\n"
+                "TXkgQ29tcGFueSBMdGQgVGVzdCBSb290IENlcnRpZmljYXRlMIIBIjANBgkqhkiG\n"
+                "9w0BAQEFAAOCAQ8AMIIBCgKCAQEAslipXTEu/Tf2YsVx50D1bZRbksk+6jl0LVyJ\n"
+                "tjuhlcJS+SwWXEH03prTXoYu+ocEzVvhkA+gmwpt0tqwewdbip42JCT7mrALn82V\n"
+                "ngTLuwX99jKsBvkzM0NlwK6F++d6yb561Aq84jTumL33tCh83TdOPI5x3giAx8fV\n"
+                "Nh2Mt8dhj9DgLXnwyMQTeluGABruWna9gUPlYOeZzBrqaio+nSFFTw7shE6lPltT\n"
+                "Cb/0LRNPhGWhBUqy0JioRsePVAvbOKffW8veV5WnUTFdP8yBh0dWt4rA3bQIjJK4\n"
+                "M6SEx2FJ2xc7D2yVED3uzV5GBF3Fm/8syl6lctpGOmSZtAUxbQIDAQABo0IwQDAP\n"
+                "BgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwIBBjAdBgNVHQ4EFgQUW9GmcDax\n"
+                "aG4VJTmrnJ96nEyNzbQwDQYJKoZIhvcNAQELBQADggEBAFnuJ1aDCopdkckZ0RDJ\n"
+                "+uL7Pee8o+u9ayrLVV1aWkwgNeLbNeGMbcII5OxO3RNpgJzQxxF/UjJCr1p+zCPm\n"
+                "x7QGvCuglQFUh7k4NOQ7HuU6kjB9aXKR64OpPLoYmdrQ5xExD9pnmLomBAOGaKTv\n"
+                "YblZR5Ii/3o/J/fYRjCFCRT6MaMQAaFViJt9w5qQi/tqJ4hpvJPt5JlXeu0dCvMz\n"
+                "stYkxhG7Q2SlVpR2ssoVMI7iBjPFJTxUIiB0on59AvbGbe/DLHkHQkqwHFoeSubl\n"
+                "U4ihavTKD9xNfSbuJ0SHN8Ek0NlJppA44lZot84mXJwUYdW1B5koiXFpYF9XH4Oa\n"
+                "k+E=\n"
                 "-----END CERTIFICATE-----\n";
         }
 
@@ -110,27 +112,116 @@ namespace test
 
             return
                 "-----BEGIN CERTIFICATE-----\n"
-                "MIIDlzCCAn+gAwIBAgIBATANBgkqhkiG9w0BAQsFADB2MQswCQYDVQQGEwJVUzER\n"
+                "MIID2zCCAsOgAwIBAgIBATANBgkqhkiG9w0BAQsFADB2MQswCQYDVQQGEwJVUzER\n"
                 "MA8GA1UECAwITmV3IFlvcmsxDDAKBgNVBAcMA05ZQzEXMBUGA1UECgwOTXkgQ29t\n"
                 "cGFueSBMdGQxLTArBgNVBAMMJE15IENvbXBhbnkgTHRkIFRlc3QgUm9vdCBDZXJ0\n"
-                "aWZpY2F0ZTAeFw0xNzEwMjAwMzUyMzRaFw0yNzA4MjkwMzUyMzRaMGMxCzAJBgNV\n"
-                "BAYTAlVTMREwDwYDVQQIDAhOZXcgWW9yazEMMAoGA1UEBwwDTllDMRcwFQYDVQQK\n"
-                "DA5NeSBDb21wYW55IEx0ZDEaMBgGA1UEAwwRKi4qLm15Y29tcGFueS5jb20wggEi\n"
-                "MA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDF04YyIhEtTecw51Xy9Z9kyVsd\n"
-                "S7Tr19fTsUVCaFJiDL7KfR9loVSQzlvT/M1xZhePkZISZzQ0Ixi+CTLwF+SzSSCD\n"
-                "81KjDHqeRcuRetJgz4afnAq9QsgtET7cIeVyBk6sz+CheBJmOyiiTDfgZBaPjN1t\n"
-                "VqTN4Hz+whavXeXw0kTqrEPuR1ba0kbCjyU3jjFg75iu1nfwEo+KkizgBSbBdWre\n"
-                "iZJQf25q5c9yrPqBe/WSx2/QZfYs24Nehm2jCAUZyk0bh4cr4aRJQoFUzpAo15Vl\n"
-                "8kD2msUJnS5Y5a9wc/8u1Q3OJotvJ2AN45g0xGyqSwCjIiXnBFeT/estF/VPAgMB\n"
-                "AAGjQzBBMAkGA1UdEwQCMAAwCwYDVR0PBAQDAgXgMCcGA1UdEQQgMB6CESouKi5t\n"
-                "eWNvbXBhbnkuY29tgglsb2NhbGhvc3QwDQYJKoZIhvcNAQELBQADggEBAC2ewdhS\n"
-                "ZN7SOABj+X/ISgmOouo9sewyL0X5OGR+mbmTwTDMTqJciDD38TLGv6Y842xK2zz0\n"
-                "y6ham7T4gsWyJ+nkvdAj+st92JOj7ToLRiVRQXyq9jKSd4i4k//30zJ1x5jbZ8Gm\n"
-                "RbJG38Lh1YC+yMpGekQ+MLoThMR0AqCiFN71bfgobWjRltiAfSX1T6liryAZxTis\n"
-                "KtfHPQA83pLPP+IOJK4ntzVZ0QEgoEb9oXKGQyRBMaEYgFEvEuG7yxoBgzDz6hlA\n"
-                "zk1qQnfoZVIurDq5N+g2hyeWJY/Uo+IkOoeB+EC4LXFav7bvPI7MBSCseie7IC8E\n"
-                "fK6Vl0UXcuz5VIU=\n"
+                "aWZpY2F0ZTAgFw0yNjA5MDQxODQwNThaGA8yMDU0MDEyMDE4NDA1OFowYzELMAkG\n"
+                "A1UEBhMCVVMxETAPBgNVBAgMCE5ldyBZb3JrMQwwCgYDVQQHDANOWUMxFzAVBgNV\n"
+                "BAoMDk15IENvbXBhbnkgTHRkMRowGAYDVQQDDBEqLioubXljb21wYW55LmNvbTCC\n"
+                "ASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAMXThjIiES1N5zDnVfL1n2TJ\n"
+                "Wx1LtOvX19OxRUJoUmIMvsp9H2WhVJDOW9P8zXFmF4+RkhJnNDQjGL4JMvAX5LNJ\n"
+                "IIPzUqMMep5Fy5F60mDPhp+cCr1CyC0RPtwh5XIGTqzP4KF4EmY7KKJMN+BkFo+M\n"
+                "3W1WpM3gfP7CFq9d5fDSROqsQ+5HVtrSRsKPJTeOMWDvmK7Wd/ASj4qSLOAFJsF1\n"
+                "at6JklB/bmrlz3Ks+oF79ZLHb9Bl9izbg16GbaMIBRnKTRuHhyvhpElCgVTOkCjX\n"
+                "lWXyQPaaxQmdLljlr3Bz/y7VDc4mi28nYA3jmDTEbKpLAKMiJecEV5P96y0X9U8C\n"
+                "AwEAAaOBhDCBgTAJBgNVHRMEAjAAMAsGA1UdDwQEAwIF4DAnBgNVHREEIDAeghEq\n"
+                "LioubXljb21wYW55LmNvbYIJbG9jYWxob3N0MB0GA1UdDgQWBBSDhf4X1OVVG2+6\n"
+                "VNF93hZ1hzg/lTAfBgNVHSMEGDAWgBRb0aZwNrFobhUlOaucn3qcTI3NtDANBgkq\n"
+                "hkiG9w0BAQsFAAOCAQEAE4P/+5q3i+b3mD3kbXO5mc2ftyl1tiJcNoia3+KvITFD\n"
+                "qPQeoPh1kWn3lvthBgUbJmLvWQunfih5e3cQbCRUy7Gy0k0UWo2J/B2FKk1gwR5X\n"
+                "GNRf/QCnpt+WAN1P0J9OUzijK8iLIp4tiymok8a2EEiNEWMhWRZVqjS5S4w0A5HS\n"
+                "Yyp0594JlLnhDHrbqevbG2LZ8kadPlKtLfWwgiFX9KgAGqL/hKFoj2G9r72jV/rt\n"
+                "02JQYU/bPV1EBFzdf8cljxU8NLMr4CIaBcr9cN3ohyZTWd7+F/wnjKI5ciN2TA+Y\n"
+                "dUnBKzg4ai3JlLIBxUK8CF1jXh3yidz3WWQ4uVsQNQ==\n"
                 "-----END CERTIFICATE-----\n";
+        }
+
+        static auto getIpAddressServerCertificate() -> const char*
+        {
+            /*
+             * This is from following file: "certs/test-server-ip-cert.pem"
+             *
+             * A self-signed certificate used by the TlsPeerVerification tests and, together with
+             * its key below, as the untrusted server certificate of the TlsHandshake tests (its
+             * issuer is not a registered root, so a chain built from it fails verification). Its
+             * SAN set is chosen so one certificate covers every branch of the peer-name match:
+             *
+             *   IP:127.0.0.1     - an address literal which matches
+             *   IP:::1           - the same for IPv6
+             *   DNS:10.11.12.13  - a DNS entry which LOOKS like an address, so that asking for
+             *                      10.11.12.13 exercises the RFC 6125 rule that a literal must
+             *                      not be matched against DNS names; ::X509_check_host() returns
+             *                      1 for it and the match must still be refused
+             *   DNS:example.test - an ordinary DNS name which matches
+             *
+             * See certs/ip-openssl.conf for how it was generated.
+             */
+
+            return
+                "-----BEGIN CERTIFICATE-----\n"
+                "MIIDwzCCAqugAwIBAgIUUGav9VKl88PqHSRyWLErX2NYdPwwDQYJKoZIhvcNAQEL\n"
+                "BQAwXjELMAkGA1UEBhMCVVMxETAPBgNVBAgMCE5ldyBZb3JrMQwwCgYDVQQHDANO\n"
+                "WUMxFzAVBgNVBAoMDk15IENvbXBhbnkgTHRkMRUwEwYDVQQDDAxleGFtcGxlLnRl\n"
+                "c3QwIBcNMjYwOTAzMjEzNzQ1WhgPMjA1NDAxMTkyMTM3NDVaMF4xCzAJBgNVBAYT\n"
+                "AlVTMREwDwYDVQQIDAhOZXcgWW9yazEMMAoGA1UEBwwDTllDMRcwFQYDVQQKDA5N\n"
+                "eSBDb21wYW55IEx0ZDEVMBMGA1UEAwwMZXhhbXBsZS50ZXN0MIIBIjANBgkqhkiG\n"
+                "9w0BAQEFAAOCAQ8AMIIBCgKCAQEAss/hjDYnHd4M4eUUvPKMcru/k/JoPvLA6EHX\n"
+                "pYMIURdhbIsKGSjI0yLx6/abYRJWrrPiC1WcPps41RZ5wyHhOTNLU+nMmjuKQUuY\n"
+                "cCoVNPk8ltdYQuvR3SqtYfLyBZ9/lCZTmFTBsX4L5dbAKA4BKpwOZH6zEF1EqoIW\n"
+                "QIaO1nLgYGYzUpvHcs6n0HFzfcrpyPQmYrzCXyExr6Ur7aQS9BM9t8rYk0FJSdVz\n"
+                "zTWLPHT9he1AZpSr1l5oDJtS6x+0j90oPJmPdJiwR3y5FnnsQTdg3rqdfeKps2+7\n"
+                "WI3Mfvy3O7ot4y68nhBt3AFkUCiNhbewAwmSyTG8iSGLWa7jAQIDAQABo3cwdTAJ\n"
+                "BgNVHRMEAjAAMAsGA1UdDwQEAwIF4DA8BgNVHREENTAzggxleGFtcGxlLnRlc3SC\n"
+                "CzEwLjExLjEyLjEzhwR/AAABhxAAAAAAAAAAAAAAAAAAAAABMB0GA1UdDgQWBBQE\n"
+                "cDdvpxq64qvuCtoOR7p5xYA5TDANBgkqhkiG9w0BAQsFAAOCAQEANC2kH5xA00MB\n"
+                "aKo2kQRrIP38/xoYg12HlmLFk17bfnakFGJwTliM6sRmimcFQ+6d0XEkHks6GIgy\n"
+                "YTNqXMQTxAd92hzf914VablTNp+R+m/o5JCfzZro6PTj4mGuohCPQA+4YrGZxUvX\n"
+                "aO094WVlUr/pZb3Jwh2HMzBAZGmCP18TEG19ovvG1pLcl3B/+oHAoeiyCbhusvZ4\n"
+                "LyjUAa+tzoheBB2cR5cV6exIdIEAfLyxNPpkqfVMieq1hqwXX/VlEr0Te9efYr2z\n"
+                "dRSJbSYWHUkyJDXZi0Vc/iDHncVkero+u32OgBWHoHN+gJVWQ+eGbBy5Ze7rwXsj\n"
+                "CrymOjILEw==\n"
+                "-----END CERTIFICATE-----\n";
+        }
+
+        static auto getIpAddressServerKey() -> const char*
+        {
+            /*
+             * This is from following file: "certs/test-server-ip-key.pem"
+             *
+             * The private key of getIpAddressServerCertificate() above, so that a test server
+             * can present that certificate; it is a test-only key which is checked in next to
+             * the certificate
+             */
+
+            return
+                "-----BEGIN PRIVATE KEY-----\n"
+                "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCyz+GMNicd3gzh\n"
+                "5RS88oxyu7+T8mg+8sDoQdelgwhRF2FsiwoZKMjTIvHr9pthElaus+ILVZw+mzjV\n"
+                "FnnDIeE5M0tT6cyaO4pBS5hwKhU0+TyW11hC69HdKq1h8vIFn3+UJlOYVMGxfgvl\n"
+                "1sAoDgEqnA5kfrMQXUSqghZAho7WcuBgZjNSm8dyzqfQcXN9yunI9CZivMJfITGv\n"
+                "pSvtpBL0Ez23ytiTQUlJ1XPNNYs8dP2F7UBmlKvWXmgMm1LrH7SP3Sg8mY90mLBH\n"
+                "fLkWeexBN2Deup194qmzb7tYjcx+/Lc7ui3jLryeEG3cAWRQKI2Ft7ADCZLJMbyJ\n"
+                "IYtZruMBAgMBAAECggEABqYuR+13lOe96OSA2enXCSksHY9FCxoxzDEumKv/sixB\n"
+                "ZizhakAW/6rr/g9Ehd6NtJ9hx3QehEF3Yo0caAIpgtwCcBNglVejc3whJgKamUav\n"
+                "VxiY4pwsSKIeombLUyQ0NUkbkK2OKlB6lsheit7CclgtPNVtSS1+sSx3MV0PkK/S\n"
+                "86orUFfdZxcUVnHno0Zo5Os6PHCxeh4h4i4p+5XR4mmAUZayi54bySVcvPMg/LD7\n"
+                "LWveDgNzXI/rYPU9g97IWfSjTXFHtMnp+1rpIiB4InrSpoKoOj0Tz/RRNpHe+Kdw\n"
+                "4eLka3EvYgmz0Mtk3gEcQKUmlTcoFMHf+JA5Px84wQKBgQDg07OCwGwwOCrHdYlr\n"
+                "xb3qz/yiWW7al3yYiSM+G5f8aYMhXs98cKEfPAdifaky5xrLqvt1PaPdD1cQ9A0S\n"
+                "eUwGh/x7PCuuJRvU/5uITtEiW8CekbyvEuYwvoA47i6h0FyqzZq2jB1dqlr3RRNx\n"
+                "s8H4AFq1E0Ke/4ukiHDK2f+NiQKBgQDLmt3dyuSCOW8ZBocq/vPfNrjJTB8rB6hh\n"
+                "O4MRP2wNRdJRmNlPfxqAeyS+ZU6VfWDuekvfwv3mM54xtkWCZxSuRLN6dy0nyjkF\n"
+                "KpUwq8Iuvzsu/VV2ke08PHWINHlEQixV0uMIKkEUqQLl/hBVayLNOL3PTbd6rWVO\n"
+                "5XZ4gVEDuQKBgQC85UHirnd3wAk5UmimcxrRKfSyFwALitG1eytwKFD3U1NIe1dK\n"
+                "z3qgOphdyQSa7w9VZZAmfiaqOhRF+zbseZtFtYWNqQ1uIGGVATmVOdt+yaY51Gq6\n"
+                "kd9zvusOahgl/mGNZHgDvg+CPfp13MSseIKVMv8DOm50FnMmRzi1RpnvOQKBgCet\n"
+                "Bx0oY30o+ghTaFWtlxJhVIMNjWlSNbK06SacSE8R0xlJgtdl+mEdHhzoGvcwlooC\n"
+                "VPTGx7lrR6GCVmtB8RrAkoUD4k3Fr3TdRnNUlSOM6liOz2+qoiNB2Nlw+Eyf5InY\n"
+                "7ZryuPnwsXrmFoK+vOpm6z4Rc/a5AWvtdTeoY4QpAoGAGZbI0qVzq2OGCcK4mE2X\n"
+                "yei5iSzLHJVs2z3MOGwzfrX3hvcD2AgsYampdf8ErRrv+x/pMrrmc0xQuIBmDrfa\n"
+                "3N36N69HvjIxqMk3DpRA4IlXC8Aon6Y57jtCC2uXK85e6mlywK5IgG41vwA7bgMm\n"
+                "Nc9BcVL6R34c8uRIi4bstTE=\n"
+                "-----END PRIVATE KEY-----\n";
         }
     };
 

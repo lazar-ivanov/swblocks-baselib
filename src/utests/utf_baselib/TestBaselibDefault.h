@@ -534,7 +534,10 @@ UTF_AUTO_TEST_CASE( BaseLib_TestErrorHandling )
 
             const auto msg = e.what();
             UTF_MESSAGE( msg );
-            UTF_CHECK_EQUAL( "This is test exception 42 ; 1.2: Permission denied", msg );
+            UTF_CHECK(
+                std::string( msg ) == "This is test exception 42 ; 1.2: Permission denied" ||
+                std::string( msg ) == "This is test exception 42 ; 1.2: Permission denied [generic:13]"
+                );
 
             const auto details = e.details();
             UTF_MESSAGE( details );
@@ -594,7 +597,10 @@ UTF_AUTO_TEST_CASE( BaseLib_TestErrorHandling )
         {
             const auto msg = e.what();
             UTF_MESSAGE( msg );
-            UTF_CHECK_EQUAL( "This one should throw: 42: Permission denied", msg );
+            UTF_CHECK(
+                std::string( msg ) == "This one should throw: 42: Permission denied" ||
+                std::string( msg ) == "This one should throw: 42: Permission denied [generic:13]"
+                );
 
             const auto details = e.details();
             UTF_MESSAGE( details );
@@ -1517,7 +1523,7 @@ UTF_AUTO_TEST_CASE( BaseLib_OSSharedLibTests )
             }
             else
             {
-                UTF_REQUIRE( *ec == EACCES || *ec == ENOTSUP );
+                UTF_REQUIRE( *ec == EACCES || *ec == ENOTSUP || *ec == ENOENT );
             }
 
             const auto str = e.message();
@@ -1533,7 +1539,10 @@ UTF_AUTO_TEST_CASE( BaseLib_OSSharedLibTests )
 
             if( bl::os::onDarwin() )
             {
-                UTF_REQUIRE( str -> find( "image not found" ) != std::string::npos );
+                UTF_REQUIRE(
+                    str -> find( "image not found" ) != std::string::npos ||
+                    str -> find( "Shared library 'libunknown.so' cannot be loaded" ) != std::string::npos
+                    );
             }
             else
             {
@@ -2387,6 +2396,17 @@ UTF_AUTO_TEST_CASE( BaseLib_OSLongFileNamesWindowsTests )
     bl::fs::TmpDir tmpDir;
     const auto& tmpPath = tmpDir.path();
 
+    #if defined( BL_DEVENV_VERSION ) && BL_DEVENV_VERSION > 5
+    /*
+     * The function path::is_complete was depreciated in boost 1.84 when c++17 is enabled
+     * When c++17 is enabled path::is_absolute() should be used instead
+     */
+    #if defined( __GNUC__ ) || defined( __clang__ )
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    #endif
+    #endif
+
     {
         bl::fs::path path( "c:\\" );
 
@@ -2485,6 +2505,11 @@ UTF_AUTO_TEST_CASE( BaseLib_OSLongFileNamesWindowsTests )
                 << path.root_directory()
             );
     }
+    #if defined( BL_DEVENV_VERSION ) && BL_DEVENV_VERSION > 5
+    #if defined( __GNUC__ ) || defined( __clang__ )
+    #pragma GCC diagnostic pop
+    #endif
+    #endif
 
     {
         bl::fs::path path( tmpPath );
@@ -3900,8 +3925,6 @@ UTF_AUTO_TEST_CASE( BaseLib_EndpointSelectorImplTests )
     const auto cb = [ &hosts ]( SAA_in const bl::om::ObjPtr< bl::EndpointSelectorImpl >& selector ) -> void
     {
         {
-            bl::time::time_duration timeout;
-
             UTF_REQUIRE_EQUAL( selector -> count(), 4U );
 
             const auto iterator = selector -> createIterator();
@@ -4322,6 +4345,92 @@ UTF_AUTO_TEST_CASE( FsUtils_JunctionsTests )
     }
 
     UTF_REQUIRE( ! bl::fs::exists( tmpPath ) );
+}
+
+UTF_AUTO_TEST_CASE( FsUtils_TestCopyErrorCodeOverload )
+{
+    bl::fs::TmpDir tmpDir;
+
+    const auto restrictedDir = tmpDir.path() / "restricted";
+    const auto sourcePath = restrictedDir / "source.txt";
+    const auto targetPath = tmpDir.path() / "target.txt";
+
+    bl::fs::safeMkdirs( restrictedDir );
+
+    {
+        const auto file = bl::os::fopen( sourcePath, "wb" );
+    }
+
+    /*
+     * Make the parent directory inaccessible, so obtaining the status of the source path
+     * fails with a real error
+     *
+     * Note that a merely missing path is not an error for the filesystem status APIs, so
+     * it would not exercise the non-throwing contract of the error code overload here
+     */
+
+    bl::fs::permissions( restrictedDir, bl::fs::perms::no_perms );
+
+    bool statusQueryThrows = false;
+
+    try
+    {
+        ( void ) bl::fs::is_directory( sourcePath );
+    }
+    catch( std::exception& )
+    {
+        statusQueryThrows = true;
+    }
+
+    bl::eh::error_code ec;
+    bool copyWithErrorCodeThrows = false;
+
+    if( statusQueryThrows )
+    {
+        try
+        {
+            bl::fs::copy( sourcePath, targetPath, ec );
+        }
+        catch( std::exception& )
+        {
+            copyWithErrorCodeThrows = true;
+        }
+    }
+
+    /*
+     * Restore the permissions before checking the results, so the temporary directory
+     * can always be cleaned up
+     */
+
+    bl::fs::permissions( restrictedDir, bl::fs::perms::owner_all );
+
+    if( statusQueryThrows )
+    {
+        /*
+         * The platform enforces the restriction, so the error code overload must have
+         * reported the failure via 'ec' instead of throwing
+         */
+
+        UTF_REQUIRE( ! copyWithErrorCodeThrows );
+        UTF_REQUIRE( ec );
+        UTF_REQUIRE( ! bl::fs::path_exists( targetPath ) );
+    }
+
+    /*
+     * The error code overload must also succeed and leave 'ec' clear for a valid source
+     */
+
+    const auto validSourcePath = tmpDir.path() / "source-dir";
+    const auto validTargetPath = tmpDir.path() / "target-dir";
+
+    bl::fs::safeMkdirs( validSourcePath );
+
+    ec.clear();
+
+    UTF_CHECK_NO_THROW( bl::fs::copy( validSourcePath, validTargetPath, ec ) );
+
+    UTF_REQUIRE( ! ec );
+    UTF_REQUIRE( bl::fs::is_directory( validTargetPath ) );
 }
 
 UTF_AUTO_TEST_CASE( FsUtils_TestSafeRemove )
@@ -6085,6 +6194,193 @@ UTF_AUTO_TEST_CASE( BaseLib_Base64UrlTests )
 }
 
 /************************************************************************
+ * str::utf8ToIso88591Simple tests
+ */
+
+UTF_AUTO_TEST_CASE( BaseLib_Utf8ToIso88591SimpleTests )
+{
+    using namespace bl::str;
+    /*
+     * Test utf8ToIso88591Simple:
+     *
+     * 1. ASCII only string
+     * 2. UTF-8 string with ASCII only characters
+     * 3. Invalid UTF-8 character sequence
+     * 4. UTF-8 string with non-ASCII characters
+     */
+
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "Hello, world!" ) ), std::string( "Hello, world!" ) );
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC2\xA2" ) ), std::string( "\xA2" ) );
+
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC2\x70" ) ), bl::ArgumentException );
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC2\xA2\xC2" ) ), bl::ArgumentException );
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xF0\x9F\x98\x81" ) ), bl::ArgumentException );
+
+    /*
+     * Additional comprehensive tests
+     */
+
+    /* Test empty string */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "" ) ), std::string( "" ) );
+
+    /* Test boundary characters */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\x7F" ) ), std::string( "\x7F" ) ); /* Highest ASCII */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC2\x80" ) ), std::string( "\x80" ) ); /* Lowest extended */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC2\xBF" ) ), std::string( "\xBF" ) ); /* End of 0xC2 range */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC3\x80" ) ), std::string( "\xC0" ) ); /* Start of 0xC3 range */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC3\xBF" ) ), std::string( "\xFF" ) ); /* Highest ISO-8859-1 */
+
+    /* Test common ISO-8859-1 extended characters */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC2\xA0" ) ), std::string( "\xA0" ) ); /* Non-breaking space */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC2\xA3" ) ), std::string( "\xA3" ) ); /* Pound sign £ */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC2\xA9" ) ), std::string( "\xA9" ) ); /* Copyright © */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC2\xAE" ) ), std::string( "\xAE" ) ); /* Registered ® */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC2\xB0" ) ), std::string( "\xB0" ) ); /* Degree ° */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC3\x80" ) ), std::string( "\xC0" ) ); /* À */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC3\xA9" ) ), std::string( "\xE9" ) ); /* é */
+    UTF_CHECK_EQUAL( utf8ToIso88591Simple( std::string( "\xC3\xB1" ) ), std::string( "\xF1" ) ); /* ñ */
+
+    /* Test mixed ASCII and extended characters */
+    {
+        const std::string utf8Input = std::string( "Hello " ) + std::string( "\xC2\xA9" ) + std::string( " 2025" );
+        const std::string iso88591Expected = std::string( "Hello " ) + std::string( "\xA9" ) + std::string( " 2025" );
+        UTF_CHECK_EQUAL( utf8ToIso88591Simple( utf8Input ), iso88591Expected );
+    }
+    {
+        const std::string utf8Input = std::string( "\xC3\xA9" ) + std::string( "cole" );
+        const std::string iso88591Expected = std::string( "\xE9" ) + std::string( "cole" );
+        UTF_CHECK_EQUAL( utf8ToIso88591Simple( utf8Input ), iso88591Expected );
+    }
+
+    /* Test invalid UTF-8 start bytes (0x80-0xBF are continuation bytes, invalid as start) */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\x80" ) ), bl::ArgumentException );
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xBF" ) ), bl::ArgumentException );
+
+    /* Test invalid UTF-8 overlong encodings (0xC0-0xC1 can encode ASCII as 2 bytes, which is invalid) */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC0\x80" ) ), bl::ArgumentException );
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC1\xBF" ) ), bl::ArgumentException );
+
+    /* Test invalid continuation bytes */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC2\x00", 2 ) ), bl::ArgumentException ); /* NULL as continuation (explicit length: the literal would otherwise stop at the NUL) */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC2\x7F" ) ), bl::ArgumentException ); /* ASCII as continuation */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC2\xC0" ) ), bl::ArgumentException ); /* Start byte as continuation */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC3\xFF" ) ), bl::ArgumentException ); /* Invalid continuation */
+
+    /* Test incomplete UTF-8 sequences at end of string */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "Hello\xC2" ) ), bl::ArgumentException );
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "Hello\xC3" ) ), bl::ArgumentException );
+
+    /* Test 3-byte UTF-8 sequences (outside ISO-8859-1 range) */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xE2\x82\xAC" ) ), bl::ArgumentException ); /* Euro sign € */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xE4\xB8\xAD" ) ), bl::ArgumentException ); /* Chinese character */
+
+    /* Test 4-byte UTF-8 sequences (outside ISO-8859-1 range) */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xF0\x9F\x98\x80" ) ), bl::ArgumentException ); /* Emoji 😀 */
+
+    /* Test characters just outside ISO-8859-1 range */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC4\x80" ) ), bl::ArgumentException ); /* Ā (0x100) */
+    UTF_REQUIRE_THROW( utf8ToIso88591Simple( std::string( "\xC5\x93" ) ), bl::ArgumentException ); /* œ (0x153) */
+
+    /* Test mixed valid and invalid sequences */
+    {
+        const std::string invalidInput = std::string( "Hello " ) + std::string( "\xC2\xA9" ) +
+                                         std::string( " World " ) + std::string( "\xF0\x9F\x98\x81" );
+        UTF_REQUIRE_THROW( utf8ToIso88591Simple( invalidInput ), bl::ArgumentException );
+    }
+
+    /*
+     * Compare utf8ToIso88591Simple against Boost.Locale to verify compatibility
+     * The simple implementation should produce identical results to:
+     * bl::str::from_utf( content, "ISO-8859-1", str::method_type::stop )
+     */
+
+    /* Test ASCII string matches Boost.Locale */
+    {
+        const std::string input = "Hello, world!";
+        const std::string simpleResult = utf8ToIso88591Simple( input );
+        const std::string localeResult = str::from_utf( input, "ISO-8859-1", str::method_type::stop );
+        UTF_CHECK_EQUAL( simpleResult, localeResult );
+    }
+
+    /* Test all valid ISO-8859-1 extended characters match Boost.Locale */
+    {
+        /* Test range 0x80-0xBF (UTF-8: 0xC2 0x80 to 0xC2 0xBF) */
+        for( unsigned char ch = 0x80; ch <= 0xBF; ++ch )
+        {
+            const std::string utf8Input = std::string( "\xC2" ) + std::string( 1, static_cast< char >( ch ) );
+            const std::string simpleResult = utf8ToIso88591Simple( utf8Input );
+            const std::string localeResult = str::from_utf( utf8Input, "ISO-8859-1", str::method_type::stop );
+            UTF_CHECK_EQUAL( simpleResult, localeResult );
+        }
+
+        /* Test range 0xC0-0xFF (UTF-8: 0xC3 0x80 to 0xC3 0xBF) */
+        for( unsigned char ch = 0x80; ch <= 0xBF; ++ch )
+        {
+            const std::string utf8Input = std::string( "\xC3" ) + std::string( 1, static_cast< char >( ch ) );
+            const std::string simpleResult = utf8ToIso88591Simple( utf8Input );
+            const std::string localeResult = str::from_utf( utf8Input, "ISO-8859-1", str::method_type::stop );
+            UTF_CHECK_EQUAL( simpleResult, localeResult );
+        }
+    }
+
+    /* Test mixed content matches Boost.Locale */
+    {
+        const std::string input = std::string( "Hello " ) + std::string( "\xC2\xA9" ) +
+                                  std::string( " 2025 " ) + std::string( "\xC3\xA9" ) +
+                                  std::string( "cole" );
+        const std::string simpleResult = utf8ToIso88591Simple( input );
+        const std::string localeResult = str::from_utf( input, "ISO-8859-1", str::method_type::stop );
+        UTF_CHECK_EQUAL( simpleResult, localeResult );
+    }
+
+    /* Test that both implementations throw on invalid UTF-8 */
+    {
+        const std::string invalidUtf8 = std::string( "\xC2\x70" ); /* Invalid continuation byte */
+        UTF_REQUIRE_THROW( utf8ToIso88591Simple( invalidUtf8 ), bl::ArgumentException );
+        UTF_REQUIRE_THROW( str::from_utf( invalidUtf8, "ISO-8859-1", str::method_type::stop ), std::exception );
+    }
+
+    /* Test that both implementations throw on out-of-range characters */
+    {
+        const std::string outOfRange = std::string( "\xE2\x82\xAC" ); /* Euro sign € (U+20AC) */
+        UTF_REQUIRE_THROW( utf8ToIso88591Simple( outOfRange ), bl::ArgumentException );
+        UTF_REQUIRE_THROW( str::from_utf( outOfRange, "ISO-8859-1", str::method_type::stop ), std::exception );
+    }
+}
+
+#if defined( BL_DEVENV_VERSION ) && BL_DEVENV_VERSION < 6
+// TODO: Re-enable the dependency on Boost.Locale when it is fixed
+/*
+ * The dependency on Boost.Locale is removed fror devenv 5 and above
+ */
+
+/************************************************************************
+ * bl::str::from_utf tests
+ */
+
+UTF_AUTO_TEST_CASE( BaseLib_StringUtilsFromUtfTests )
+{
+    /*
+     * Test bl::str::from_utf:
+     *
+     * 1. ASCII only string
+     * 2. UTF-8 string with ASCII only characters
+     * 3. Invalid UTF-8 character sequence
+     * 4. UTF-8 string with non-ASCII characters
+     */
+
+    UTF_CHECK_EQUAL( bl::str::from_utf( std::string( "Hello, world!" ), "ISO-8859-1", bl::str::method_type::stop ), std::string( "Hello, world!" ) );
+    UTF_CHECK_EQUAL( bl::str::from_utf( std::string( "\xC2\xA2" ), "ISO-8859-1", bl::str::method_type::stop ), std::string( "\xA2" ) );
+
+    /*
+    UTF_REQUIRE_THROW( bl::str::from_utf( std::string( "\xC2\x70" ), "ISO-8859-1", str::method_type::stop ), bl::ArgumentException );
+    UTF_REQUIRE_THROW( bl::str::from_utf( std::string( "\xC2\xA2\xC2" ), "ISO-8859-1", str::method_type::stop ), bl::ArgumentException );
+    UTF_REQUIRE_THROW( bl::str::from_utf( std::string( "\xF0\x9F\x98\x81" ), "ISO-8859-1", str::method_type::stop ), bl::ArgumentException );
+    */
+}
+#endif /* #if defined( BL_DEVENV_VERSION ) && BL_DEVENV_VERSION < 6 */
+
+/************************************************************************
  * URI encoding / decoding tests
  */
 
@@ -7376,6 +7672,75 @@ UTF_AUTO_TEST_CASE( BaseLib_OSRegistryValueTest )
         bl::os::getRegistryValue( "Software\\foo", "bar" ),
         bl::UnexpectedException
         );
+
+    #if defined( _WIN32 )
+    {
+        /*
+         * A key and a value whose names contain a non-ASCII character are created through
+         * the wide registry API and must be found back through the UTF-8 helpers: a
+         * byte-widened name would look up a different, nonexistent key or value. A name
+         * which is not valid UTF-8 must be rejected rather than converted silently (the
+         * lone 0xE9 byte below, byte-widened, would have matched the value just created)
+         */
+
+        const std::string keyName =
+            "Software\\swblocks-baselib-utf-\xC3\xA9-" + bl::uuids::uuid2string( bl::uuids::create() );
+        const std::string valueName = "value-\xC3\xA9";
+        const std::string data = "data-\xC3\xBC";
+
+        bl::cpp::wstring_convert_t conv;
+
+        const std::wstring wkeyName = conv.from_bytes( keyName );
+        const std::wstring wvalueName = conv.from_bytes( valueName );
+        const std::wstring wdata = conv.from_bytes( data );
+
+        HKEY hkey = nullptr;
+
+        UTF_REQUIRE_EQUAL(
+            ERROR_SUCCESS,
+            ::RegCreateKeyExW(
+                HKEY_CURRENT_USER               /* hKey */,
+                wkeyName.c_str()                /* lpSubKey */,
+                0                               /* Reserved */,
+                nullptr                         /* lpClass */,
+                REG_OPTION_VOLATILE             /* dwOptions */,
+                KEY_WRITE                       /* samDesired */,
+                nullptr                         /* lpSecurityAttributes */,
+                &hkey                           /* phkResult */,
+                nullptr                         /* lpdwDisposition */
+                )
+            );
+
+        BL_SCOPE_EXIT(
+            {
+                ::RegCloseKey( hkey );
+                ::RegDeleteKeyW( HKEY_CURRENT_USER, wkeyName.c_str() );
+            }
+            );
+
+        UTF_REQUIRE_EQUAL(
+            ERROR_SUCCESS,
+            ::RegSetValueExW(
+                hkey                                                        /* hKey */,
+                wvalueName.c_str()                                          /* lpValueName */,
+                0                                                           /* Reserved */,
+                REG_SZ                                                      /* dwType */,
+                reinterpret_cast< const BYTE* >( wdata.c_str() )            /* lpData */,
+                static_cast< DWORD >( ( wdata.size() + 1 ) * sizeof( wchar_t ) )   /* cbData */
+                )
+            );
+
+        UTF_REQUIRE_EQUAL(
+            data,
+            bl::os::getRegistryValue( keyName, valueName, true /* currentUser */ )
+            );
+
+        UTF_CHECK_THROW(
+            bl::os::tryGetRegistryValue( keyName, "value-\xE9" /* not UTF-8 */, true /* currentUser */ ),
+            bl::SystemException
+            );
+    }
+    #endif
 
     /*
      * Don't run for 32bit process as the below registry entry won't exist

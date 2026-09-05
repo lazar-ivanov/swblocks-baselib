@@ -26,6 +26,8 @@
 #include <baselib/core/ObjModel.h>
 #include <baselib/core/BaseIncludes.h>
 
+#include <cstring>
+
 namespace bl
 {
     namespace jni
@@ -51,10 +53,10 @@ namespace bl
             static this_type*                                           g_instance;
 
             static cpp::ScalarTypeIniter< bool >                        g_javaVMDestroyed;
+            static cpp::ScalarTypeIniter< bool >                        g_javaVMCreateAttempted;
             static os::mutex                                            g_lock;
             static JavaVirtualMachineConfig                             g_jvmConfig;
 
-            os::library_ref                                             m_jvmLibrary;
             JavaVM*                                                     m_javaVM;
 
             JavaVirtualMachineT()
@@ -65,9 +67,31 @@ namespace bl
                     ? g_jvmConfig.getLibraryPath()
                     : getJvmPathFromJavaHome();
 
-                m_jvmLibrary = os::loadLibrary( jvmLibraryPath );
+                BL_LOG(
+                    Logging::debug(),
+                    BL_MSG()
+                        << "Loading JVM library from: "
+                        << jvmLibraryPath
+                    );
 
-                const auto procAddress = os::getProcAddress( m_jvmLibrary, "JNI_CreateJavaVM" );
+                /*
+                 * The library handle is released rather than kept: the JVM library can never be
+                 * unloaded once a JVM has been created in the process (see the class comment),
+                 * so it must not be closed by a throwing constructor or by the destructor
+                 * either; plugin libraries are kept loaded the same way in Manifest.h
+                 */
+
+                auto jvmLibrary = os::loadLibrary( jvmLibraryPath );
+
+                BL_LOG(
+                    Logging::debug(),
+                    BL_MSG()
+                        << "JVM library loaded successfully, getting JNI_CreateJavaVM address"
+                    );
+
+                const auto procAddress = os::getProcAddress( jvmLibrary, "JNI_CreateJavaVM" );
+
+                ( void ) jvmLibrary.release();
 
                 const auto jniCreateJavaVM =
                     reinterpret_cast< jint ( JNICALL* )( JavaVM**, void**, void *) >( procAddress );
@@ -109,6 +133,17 @@ namespace bl
                 JNIEnv* jniEnv;
                 JavaVM* javaVM;
 
+                /*
+                 * HotSpot supports one JVM per process and permits a second JNI_CreateJavaVM only
+                 * after a failure in its argument parsing; every other outcome, success or
+                 * failure, makes a retry unsupported, so the attempt is latched here (before the
+                 * call, so that a failure inside it counts) and instance() refuses a second one.
+                 * The failures above this point (JAVA_HOME, the library path, the entry point)
+                 * happened before anything was created and remain retryable
+                 */
+
+                g_javaVMCreateAttempted = true;
+
                 const jint jniErrorCode = jniCreateJavaVM(
                     &javaVM,
                     ( void** )&jniEnv,
@@ -133,18 +168,34 @@ namespace bl
                  * Detach the thread that created JavaVM so that JavaVM can be destroyed from any thread.
                  */
 
+                const jint detachErrorCode = m_javaVM -> DetachCurrentThread();
+
+                if( JNI_OK != detachErrorCode )
+                {
+                    /*
+                     * The JVM exists at this point and the destructor never runs for a throwing
+                     * constructor, so it is destroyed here - the creating thread is still
+                     * attached, which is what DestroyJavaVM() requires - and the process is
+                     * marked as having had its JVM destroyed, which is the truth
+                     */
+
+                    ( void ) m_javaVM -> DestroyJavaVM();
+                    m_javaVM = nullptr;
+
+                    g_javaVMDestroyed = true;
+                }
+
                 BL_CHK_T(
                     false,
-                    m_javaVM -> DetachCurrentThread() == JNI_OK,
+                    JNI_OK == detachErrorCode,
                     JavaException(),
                     BL_MSG()
                         << "Failed to detach jni thread from JVM. ErrorCode "
-                        << jniErrorCode
+                        << detachErrorCode
                         << " ["
-                        << jniErrorMessage( jniErrorCode )
+                        << jniErrorMessage( detachErrorCode )
                         << "]"
                     );
-
             }
 
             static std::string getJvmPathFromJavaHome()
@@ -166,36 +217,112 @@ namespace bl
                         << "'"
                     );
 
-                fs::path jvmPath( *javaHome );
+                /*
+                 * JDK 9+ uses lib/server structure
+                 * JDK 8 and earlier use jre/lib/<arch>/server structure
+                 * On macOS, JDK 9+ uses .dylib extension instead of .so
+                 */
+                std::vector< fs::path > jvmPathCandidates;
+
+                /*
+                 * On Windows, normalize the JAVA_HOME path to ensure consistent separators.
+                 * This is critical because JAVA_HOME may come from environment with forward slashes,
+                 * but boost::filesystem uses backslashes on Windows, causing mixed separators
+                 * which breaks fs::exists() checks.
+                 */
+                const fs::path javaHomeBase = os::onWindows()
+                    ? fs::normalize( fs::path( *javaHome ) )
+                    : fs::path( *javaHome );
 
                 if( os::onWindows() )
                 {
-                    jvmPath += "/jre/bin/server/jvm.dll";
+                    jvmPathCandidates.push_back( javaHomeBase / "bin" / "server" / "jvm.dll" );
+                    jvmPathCandidates.push_back( javaHomeBase / "jre" / "bin" / "server" / "jvm.dll" );
                 }
-                else
+                else if( os::onDarwin() )
                 {
+                    /* macOS JDK 9+ structure */
+                    jvmPathCandidates.push_back( javaHomeBase / "lib" / "server" / "libjvm.dylib" );
+                    /* macOS JDK 8 structure */
                     if( os::on32BitPlatform() )
                     {
-                        jvmPath += "/jre/lib/i386/server/libjvm.so";
+                        jvmPathCandidates.push_back( javaHomeBase / "jre" / "lib" / "i386" / "server" / "libjvm.dylib" );
                     }
                     else
                     {
-                        jvmPath +=
-                            BuildInfo::arch == "a64" ?
-                                "/jre/lib/aarch64/server/libjvm.so"
-                                :
-                                "/jre/lib/amd64/server/libjvm.so";
+                        const auto archDir = BuildInfo::arch == "a64" ? "aarch64" : "amd64";
+                        jvmPathCandidates.push_back( javaHomeBase / "jre" / "lib" / archDir / "server" / "libjvm.dylib" );
+                    }
+                }
+                else
+                {
+                    /* Linux JDK 25+ structure - no arch subdirectory */
+                    jvmPathCandidates.push_back( javaHomeBase / "lib" / "server" / "libjvm.so" );
+
+                    /* Linux JDK 9-24 structure - with arch subdirectory */
+                    if( os::on32BitPlatform() )
+                    {
+                        jvmPathCandidates.push_back( javaHomeBase / "lib" / "i386" / "server" / "libjvm.so" );
+                    }
+                    else
+                    {
+                        const auto archDir = BuildInfo::arch == "a64" ? "aarch64" : "amd64";
+                        jvmPathCandidates.push_back( javaHomeBase / "lib" / archDir / "server" / "libjvm.so" );
+                    }
+                    /* Linux JDK 8 structure */
+                    if( os::on32BitPlatform() )
+                    {
+                        jvmPathCandidates.push_back( javaHomeBase / "jre" / "lib" / "i386" / "server" / "libjvm.so" );
+                    }
+                    else
+                    {
+                        const auto archDir = BuildInfo::arch == "a64" ? "aarch64" : "amd64";
+                        jvmPathCandidates.push_back( javaHomeBase / "jre" / "lib" / archDir / "server" / "libjvm.so" );
                     }
                 }
 
-                jvmPath = fs::normalize( jvmPath );
+                fs::path jvmPath;
+                for( const auto& candidate : jvmPathCandidates )
+                {
+                    BL_LOG(
+                        Logging::debug(),
+                        BL_MSG()
+                            << "Checking JVM path candidate: "
+                            << fs::normalizePathParameterForPrint( candidate )
+                            << " (exists: "
+                            << ( fs::exists( candidate ) ? "yes" : "no" )
+                            << ")"
+                        );
+
+                    if( fs::exists( candidate ) )
+                    {
+                        jvmPath = candidate;
+                        break;
+                    }
+                }
 
                 BL_CHK_T_USER_FRIENDLY(
                     false,
-                    fs::exists( jvmPath ),
+                    ! jvmPath.empty(),
                     JavaException(),
                     BL_MSG()
-                        << "Path doesn't exist "
+                        << "Could not find JVM library in JAVA_HOME: "
+                        << *javaHome
+                    );
+
+                BL_LOG(
+                    Logging::debug(),
+                    BL_MSG()
+                        << "Found JVM at: "
+                        << fs::normalizePathParameterForPrint( jvmPath )
+                    );
+
+                jvmPath = fs::normalize( jvmPath );
+
+                BL_LOG(
+                    Logging::debug(),
+                    BL_MSG()
+                        << "Normalized JVM path: "
                         << fs::normalizePathParameterForPrint( jvmPath )
                     );
 
@@ -268,6 +395,13 @@ namespace bl
                         "JavaVM has already been destroyed"
                         );
 
+                    BL_CHK_T(
+                        true,
+                        g_javaVMCreateAttempted,
+                        JavaException(),
+                        "JavaVM creation has already been attempted in this process and it cannot be retried"
+                        );
+
                     g_instance = new JavaVirtualMachineT();
 
                     JniEnvironment::setJavaVM( g_instance -> getJavaVM() );
@@ -318,6 +452,7 @@ namespace bl
         typedef JavaVirtualMachineT<> JavaVirtualMachine;
 
         BL_DEFINE_STATIC_MEMBER( JavaVirtualMachineT, cpp::ScalarTypeIniter< bool >,    g_javaVMDestroyed );
+        BL_DEFINE_STATIC_MEMBER( JavaVirtualMachineT, cpp::ScalarTypeIniter< bool >,    g_javaVMCreateAttempted );
         BL_DEFINE_STATIC_MEMBER( JavaVirtualMachineT, os::mutex,                        g_lock );
         BL_DEFINE_STATIC_MEMBER( JavaVirtualMachineT, JavaVirtualMachineConfig,         g_jvmConfig );
 

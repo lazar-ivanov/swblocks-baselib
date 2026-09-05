@@ -44,8 +44,7 @@ namespace bl
         protected:
 
             const bool                                          m_isSerialization;
-            json::Object                                        m_serializationDoc;
-            json::Object                                        m_deserializationDoc;
+            json::object                                        m_doc;
             cpp::ScalarTypeIniter< bool >                       m_detectUnknownProperties;
             std::unordered_set< std::string >                   m_processedProperties;
 
@@ -63,14 +62,21 @@ namespace bl
             {
                 auto rootValue = json::readFromString( json );
 
-                m_deserializationDoc.swap( rootValue.get_obj() );
+                BL_CHK_T(
+                    false,
+                    rootValue.is_object(),
+                    JsonException(),
+                    "The JSON document must be an object at the top level"
+                    );
+
+                m_doc = std::move( rootValue.as_object() );
             }
 
-            SerializationContextBaseT( SAA_inout json::Object&& object ) NOEXCEPT
+            SerializationContextBaseT( SAA_inout json::object&& object ) NOEXCEPT
                 :
-                m_isSerialization( false )
+                m_isSerialization( false ),
+                m_doc( std::move( object ) )
             {
-                m_deserializationDoc.swap( object );
             }
 
             bool detectUnknownProperties() const NOEXCEPT
@@ -88,18 +94,18 @@ namespace bl
                 return m_isSerialization;
             }
 
-            json::Object& serializationDoc() NOEXCEPT
+            json::object& serializationDoc() NOEXCEPT
             {
                 BL_ASSERT( isSerialization() );
 
-                return m_serializationDoc;
+                return m_doc;
             }
 
-            json::Object& deserializationDoc() NOEXCEPT
+            json::object& deserializationDoc() NOEXCEPT
             {
                 BL_ASSERT( ! isSerialization() );
 
-                return m_deserializationDoc;
+                return m_doc;
             }
 
             void addProcessedProperty( SAA_in std::string&& name )
@@ -142,7 +148,7 @@ namespace bl
         protected:
 
             cpp::ScalarTypeIniter< bool >                                                       m_readOnly;
-            json::Object                                                                        m_unmapped;
+            json::object                                                                        m_unmapped;
 
             void readOnlyPropertyUpdateViolation()
             {
@@ -185,12 +191,12 @@ namespace bl
                 m_readOnly = readOnly;
             }
 
-            auto unmapped() const NOEXCEPT -> const json::Object&
+            auto unmapped() const NOEXCEPT -> const json::object&
             {
                 return m_unmapped;
             }
 
-            auto unmappedLvalue() NOEXCEPT -> json::Object&
+            auto unmappedLvalue() NOEXCEPT -> json::object&
             {
                 return m_unmapped;
             }
@@ -224,7 +230,7 @@ namespace bl
                 SAA_in              const om::ObjPtr< T >&                          dataObject,
                 SAA_in_opt          const bool                                      canonicalize = false
                 )
-                -> json::Object
+                -> json::object
             {
                 SerializationContextBase context;
 
@@ -232,6 +238,58 @@ namespace bl
 
                 return std::move( context.serializationDoc() );
             }
+
+            /**
+             * @brief Serializes a data model object into a JSON string
+             *
+             * Note that the rawUTF8 parameter of this function and of the getDocAs*JsonString
+             * wrappers below is retained for source compatibility and has no effect - string
+             * content is always emitted as raw UTF-8 on both backends, with the control
+             * characters below 0x20 always escaped; see the note on rawUtf8 in
+             * baselib/core/JsonUtils.h
+             *
+             *
+             * ON THE 'canonicalize' PARAMETER - a decision, not an oversight
+             *
+             * This single flag is forwarded to two different layers, where it means two different
+             * things:
+             *
+             * -- to the data model, via getJsonObject() -> serializeProperties(): emit properties
+             *    even when unset, and - less obviously - suppress the required-property check; see
+             *    the note above BL_DM_DECLARE_SCALAR_SERIALIZATION in
+             *    baselib/data/DataModelObjectDefs.h
+             *
+             * -- to the serializer, via json::saveToString(): sort object keys, and refuse to also
+             *    pretty print
+             *
+             * Reviews have repeatedly flagged this as a conflated parameter which should be split
+             * into something like emitUnsetProperties + sortKeys. The DECISION IS TO KEEP IT AS IT
+             * IS, for three reasons:
+             *
+             * 1) no caller wants the two meanings separated. getObjectHashCanonical() wants both
+             *    on; getObjectHash( canonicalize = false ), getDocAsPrettyJsonString() and
+             *    getDocAsPackedJsonString() want both off. Splitting would add a knob which nothing
+             *    turns
+             *
+             * 2) "canonical form" - sorted keys AND every property emitted - is a single coherent
+             *    concept, so one flag expressing it is reasonable even though the two behaviours are
+             *    implemented in different layers
+             *
+             * 3) no compatible migration exists. A split parameter would occupy the same positional
+             *    slot as the current one, so getJsonString( obj, true, true ) would compile under
+             *    both spellings and mean different things - producing different bytes and a
+             *    different hash. That is exactly the failure mode which the deleted integral
+             *    saveToStream() overload in baselib/core/JsonUtils.h was introduced to prevent, and
+             *    reintroducing it here to stage a rename would be a regression
+             *
+             * Performance note for anyone reconsidering the default: canonical serialization costs
+             * roughly 5.5x non-canonical on Boost.JSON and roughly 1.0x on json-spirit, because
+             * canonicalizeValue() rebuilds the whole value tree while std::map is already ordered -
+             * see notes/performance/json-library-performance-comparison.md
+             *
+             * See also the note on getObjectHash() below, which records the separate and already
+             * accepted limitation that these hashes are process local
+             */
 
             template
             <
@@ -245,9 +303,9 @@ namespace bl
                 )
                 -> std::string
             {
-                const auto jsonObject = getJsonObject( dataObject, canonicalize );
+                auto jsonObject = getJsonObject( dataObject, canonicalize );
 
-                return json::saveToString( jsonObject, prettyPrint, rawUTF8 );
+                return json::saveToString( json::value( std::move( jsonObject ) ), prettyPrint, rawUTF8, canonicalize );
             }
 
             template
@@ -276,6 +334,27 @@ namespace bl
                 return getJsonString( dataObject, false /* prettyPrint */, false /* canonicalize */, rawUTF8 );
             }
 
+            /**
+             * @brief Computes a hash over the serialized form of a data model object
+             *
+             * Note that canonicalize defaults to false, in which case the hash is taken over the
+             * serialization in property declaration and insertion order rather than over a
+             * normalized form; getObjectHashCanonical() below is the form which should be
+             * preferred and it is the only one used inside this library
+             *
+             * The canonical form is a project specific stable ordering and is NOT RFC 8785 /
+             * JCS - see the comment on canonicalizeValue() in
+             * baselib/core/detail/BoostJsonImpl.h
+             *
+             * Neither form is stable across a change of JSON backend for a document which
+             * contains non-ASCII text or numbers whose shortest representation differs between
+             * the two serializers, so a hash produced here must not be persisted, used as a
+             * cache key across processes built differently, or fed into a signature which
+             * another build has to reproduce, unless the backend is pinned. This is a known and
+             * accepted limitation - see notes/plans/issues/medium-severity-findings-f11-f17-plan.md
+             * (F-11) - and it is not re-litigated by review findings against this file
+             */
+
             template
             <
                 typename T
@@ -287,7 +366,7 @@ namespace bl
                 )
                 -> std::string
             {
-                const auto canonicalizedProperties =
+                const auto serializedProperties =
                     getJsonString< T >( dataObject, false /* prettyPrint */, canonicalize );
 
                 /*
@@ -302,7 +381,7 @@ namespace bl
                     hasher.update( salt.c_str(), salt.size() );
                 }
 
-                hasher.update( canonicalizedProperties.c_str(), canonicalizedProperties.size() );
+                hasher.update( serializedProperties.c_str(), serializedProperties.size() );
 
                 hasher.finalize();
 
@@ -330,11 +409,11 @@ namespace bl
             <
                 typename T
             >
-            static auto loadFromJsonObject( SAA_in json::Object&& jsonObject ) -> om::ObjPtr< T >
+            static auto loadFromJsonObject( SAA_in json::object&& jsonObject ) -> om::ObjPtr< T >
             {
                 SerializationContextBase context( std::move( jsonObject ) );
 
-                auto dataObject = T::template createInstance();
+                auto dataObject = T::template createInstance<>();
 
                 dataObject -> serializeProperties( context );
 
@@ -345,7 +424,7 @@ namespace bl
             <
                 typename T
             >
-            static auto loadFromJsonObject( SAA_in const json::Object& jsonObject ) -> om::ObjPtr< T >
+            static auto loadFromJsonObject( SAA_in const json::object& jsonObject ) -> om::ObjPtr< T >
             {
                 return loadFromJsonObject< T >( cpp::copy( jsonObject ) );
             }
@@ -354,9 +433,16 @@ namespace bl
             <
                 typename T
             >
-            static auto loadFromJsonValue( SAA_in const json::Value& jsonValue ) -> om::ObjPtr< T >
+            static auto loadFromJsonValue( SAA_in const json::value& jsonValue ) -> om::ObjPtr< T >
             {
-                return loadFromJsonObject< T >( jsonValue.get_obj() );
+                BL_CHK_T(
+                    false,
+                    jsonValue.is_object(),
+                    JsonException(),
+                    "The JSON document must be an object at the top level"
+                    );
+
+                return loadFromJsonObject< T >( jsonValue.as_object() );
             }
 
             template
@@ -365,7 +451,22 @@ namespace bl
             >
             static auto loadFromJsonText( SAA_in const std::string& jsonText ) -> om::ObjPtr< T >
             {
-                return loadFromJsonValue< T >( json::readFromString( jsonText ) );
+                auto rootValue = json::readFromString( jsonText );
+
+                /*
+                 * A syntactically valid document whose top level is an array or a scalar would
+                 * otherwise surface as the backend's own conversion error, with a message which
+                 * names neither the document nor what was expected
+                 */
+
+                BL_CHK_T(
+                    false,
+                    rootValue.is_object(),
+                    JsonException(),
+                    "The JSON document must be an object at the top level"
+                    );
+
+                return loadFromJsonObject< T >( std::move( rootValue.as_object() ) );
             }
 
             template

@@ -130,8 +130,27 @@ namespace bltool
                             );
                     }
 
+                    /*
+                     * At this point an empty password provably means that the caller did not
+                     * ask for encryption, because the check above rejects a request to encrypt
+                     * without one
+                     */
+
+                    const auto isEncrypted = ! passwordResolved.empty();
+
+                    if( ! isEncrypted )
+                    {
+                        BL_LOG(
+                            Logging::warning(),
+                            BL_MSG()
+                                << "The private key is being exported unencrypted; pass --encrypt "
+                                << "or --password to protect it"
+                            );
+                    }
+
                     return JsonSecuritySerialization::getPrivateKeyAsPemString(
                         rsaKey,
+                        isEncrypted ? KeyProtection::Encrypted : KeyProtection::PlaintextExplicit,
                         passwordResolved.getAsNonSecureString()
                         );
                 }

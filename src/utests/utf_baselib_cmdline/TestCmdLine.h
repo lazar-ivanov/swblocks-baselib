@@ -89,9 +89,10 @@ namespace
         if( typeid( char ) == type || typeid( signed char ) == type || typeid( unsigned char ) == type )
         {
             unsigned char ch = bl::cpp::any_cast< char >( value );
-            char buffer[16];
-            sprintf( buffer, std::iscntrl( ch ) ? "'\\x%02X'" : "'%c'", ch );
-            return buffer;
+            std::ostringstream oss;
+            oss << std::hex << std::uppercase << std::setfill( '0' ) << std::setw( 2 );
+            oss << static_cast< unsigned >( ch );
+            return oss.str();
         }
 
         if( typeid( bool ) == type )

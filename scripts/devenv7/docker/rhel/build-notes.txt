@@ -1,0 +1,95 @@
+docker ps
+docker exec -u root -it <container-id> bash
+
+---------------------------------- building the image manually ----------------------------------
+
+# 1. Start the interactive container with the required mount
+
+# For rhel9 start with this:
+docker run -it --name temp_builder \
+  --platform linux/amd64 \
+  -v /media/psf/RosettaLinux:/media/psf/RosettaLinux:z \
+  registry.access.redhat.com/ubi9/ubi:latest /bin/bash
+
+# For rhel10 start with this:
+docker run -it --name temp_builder \
+  --platform linux/amd64 \
+  -v /media/psf/RosettaLinux:/media/psf/RosettaLinux:z \
+  registry.access.redhat.com/ubi10/ubi:latest /bin/bash
+
+OR
+
+# if the temp builder was already started and not deleted yet you can connect to it:
+docker start temp_builder
+docker exec -it temp_builder /bin/bash
+docker stop temp_builder
+
+subscription-manager register --username <your_username> --password <your_password> --auto-attach
+
+subscription-manager repos --enable codeready-builder-for-rhel-9-x86_64-rpms
+OR
+subscription-manager repos --enable=codeready-builder-for-rhel-9-x86_64-rpms
+OR
+dnf config-manager --set-enabled codeready-builder-for-rhel-9-x86_64-rpms
+
+# 2. INSIDE THE CONTAINER, paste your DNF command, --allowerasing flag is important:
+dnf -y update && \
+    dnf install -y --allowerasing \
+      gcc \
+      gcc-c++ \
+      make \
+      sudo \
+      wget \
+      zlib-devel \
+      gmp-devel \
+      mpfr-devel \
+      libmpc-devel \
+      flex \
+      bison \
+      texinfo \
+      libzstd-devel \
+      perl \
+      perl-devel \
+      perl-interpreter \
+      perl-FindBin \
+      perl-IPC-Cmd \
+      perl-podlators \
+      perl-Time-Piece \
+      perl-Test-Simple \
+      perl-Test-Harness \
+      bzip2 \
+      diffutils \
+      procps-ng \
+      xz \
+      zip \
+      unzip \
+      python3 \
+      iputils \
+      libxml2-devel \
+      cmake \
+      gdb \
+      git \
+      curl \
+      vim-enhanced \
+      ca-certificates \
+      ninja-build \
+      libedit-devel \
+      swig \
+      perl-Text-Template \
+    && dnf clean all
+
+
+# Unregister to not waste the subscription slot
+subscription-manager unregister
+subscription-manager clean
+
+# 3. Exit the container
+exit
+
+# 4. Commit the container to an image
+docker commit temp_builder rhel-dev
+
+# 5. Clean up
+docker rm temp_builder
+
+

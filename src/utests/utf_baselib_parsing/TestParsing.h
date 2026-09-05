@@ -195,8 +195,7 @@ UTF_AUTO_TEST_CASE( BaseLib_ParsingGetTokens )
 
             if( ! extensions.empty() )
             {
-                const auto pathw = it -> path().native();
-                const std::string path( pathw.begin(), pathw.end() );
+                const auto path = it -> path().string();
 
                 const auto pos = path.rfind( '.' );
                 if( std::string::npos == pos )

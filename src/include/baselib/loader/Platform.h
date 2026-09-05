@@ -68,14 +68,26 @@ namespace bl
             {
             }
 
-            PlatformIdentityT& operator= ( SAA_in PlatformIdentityT&& other )
-            {
-                m_os = std::move( other.m_os );
-                m_architecture = std::move( other.m_architecture );
-                m_toolchain = std::move( other.m_toolchain );
-
-                return *this;
-            }
+            /*
+             * Move assignment operator is deleted because this class has const members.
+             * GCC 15+ enforces that you cannot assign to const members in template bodies.
+             *
+             * This is a source compatibility break for code outside this repository which
+             * assigned to an instance of this type; the break is accepted rather than fixed.
+             * No caller in this repository assigns one, the copy operations were already
+             * deleted by BL_DECLARE_OBJECT_IMPL_DEFAULT, and the type is a value object which
+             * is constructed once and then only read, so the operation it loses is one it
+             * never usefully had.
+             *
+             * Note that the move constructor above does not actually move: every member is
+             * const, so each std::move() binds to the copy constructor of std::string. Making
+             * the members non-const would restore both a real move and a working move
+             * assignment, and would bring this type in line with the rest of the codebase,
+             * which suppresses copying and moving through BL_NO_COPY / BL_NO_COPY_OR_MOVE
+             * rather than by making members const. That redesign is deliberately out of scope
+             * here - see notes/plans/issues/residual-cxx-findings-deferral.md, item 3
+             */
+            PlatformIdentityT& operator= ( SAA_in PlatformIdentityT&& other ) = delete;
 
             PlatformIdentityT(
                 SAA_in      std::string&&                       os,

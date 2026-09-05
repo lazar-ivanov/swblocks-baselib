@@ -76,7 +76,7 @@ namespace bl
                 )
                 -> om::ObjPtr< connection_establisher_t >
             {
-                auto connection = connection_establisher_t::template createInstance( cpp::copy( host ), port );
+                auto connection = connection_establisher_t::template createInstance<>( cpp::copy( host ), port );
 
                 const auto task = om::qi< tasks::Task >( connection );
 
@@ -163,7 +163,7 @@ namespace bl
                 }
 
                 auto receiverState =
-                    receiver_state_t::template createInstance( dataBlocksPool, asyncWrapper );
+                    receiver_state_t::template createInstance<>( dataBlocksPool, asyncWrapper );
 
                 auto guard = BL_SCOPE_GUARD(
                     {
@@ -179,7 +179,7 @@ namespace bl
 
                 if( inboundConnection )
                 {
-                    sender = sender_connection_t::template createInstance(
+                    sender = sender_connection_t::template createInstance<>(
                         notify_callback_t(),
                         inboundConnection -> detachStream(),
                         dataBlocksPool,
@@ -191,7 +191,7 @@ namespace bl
 
                 if( outboundConnection )
                 {
-                    receiver = receiver_connection_t::template createInstance( receiverState, peerId );
+                    receiver = receiver_connection_t::template createInstance<>( receiverState, peerId );
                     receiver -> attachStream( outboundConnection -> detachStream() );
 
                     eq -> push_back( om::qi< Task >( receiver ) );
@@ -242,7 +242,7 @@ namespace bl
                 )
                 -> om::ObjPtr< async_wrapper_t >
             {
-                return async_wrapper_t::template createInstance(
+                return async_wrapper_t::template createInstance<>(
                     om::copy( backend ) /* writeBackend */,
                     om::copy( backend ) /* readBackend */,
                     threadsCount,

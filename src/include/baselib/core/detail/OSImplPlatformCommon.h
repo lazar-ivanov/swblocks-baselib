@@ -1027,7 +1027,9 @@ namespace bl
                 using boost::filesystem::copy;
                 using boost::filesystem::copy_file;
                 using boost::filesystem::copy_symlink;
+                #if BOOST_VERSION < 107400
                 using boost::filesystem::copy_directory;
+                #endif
                 using boost::filesystem::space;
                 using boost::filesystem::status;
                 using boost::filesystem::symlink_status;
@@ -1061,7 +1063,14 @@ namespace bl
 
                     if( ! path.empty() )
                     {
-                        if( false == path.is_absolute() || path.root_path() == g_lfnRootPath )
+                        const auto pathStr = path.string();
+
+                        /*
+                         * Use string-based check instead of root_path() comparison
+                         * for Boost 1.89+ compatibility, as root_path() behavior changed
+                         */
+
+                        if( false == path.is_absolute() || str::starts_with( pathStr, g_lfnPrefix ) )
                         {
                             /*
                              * Relative paths and paths that are already prefixes
@@ -1101,8 +1110,19 @@ namespace bl
                 {
                     bfs::path result;
 
-                    if( path.root_path() != g_lfnRootPath )
+                    const auto pathStr = path.string();
+
+                    /*
+                     * Use string-based check instead of root_path() comparison
+                     * for Boost 1.89+ compatibility, as root_path() behavior changed
+                     */
+
+                    if( ! str::starts_with( pathStr, g_lfnPrefix ) )
                     {
+                        /*
+                         * The path doesn't have LFN prefix, return as-is
+                         */
+
                         path.swap( result );
                     }
                     else
@@ -1110,10 +1130,6 @@ namespace bl
                         /*
                          * The path is prefixed, let's remove the prefix
                          */
-
-                        const auto pathStr = path.string();
-
-                        BL_ASSERT( str::starts_with( pathStr, g_lfnPrefix ) );
 
                         if( str::starts_with( pathStr, g_lfnUncPrefix ) )
                         {
@@ -1314,6 +1330,17 @@ namespace bl
             }
 
             #endif // defined( _WIN32 )
+
+            /*
+             * Boost 1.89+ removed is_complete() method
+             * Provide compatibility wrapper using is_absolute()
+             */
+#if BOOST_VERSION >= 108900
+            bool is_complete() const
+            {
+                return this->is_absolute();
+            }
+#endif
         };
 
         template
@@ -1407,6 +1434,17 @@ namespace bl
                 base_type( std::forward< Source >( src ) ).swap( *this );
                 return *this;
             }
+
+            /*
+             * Boost 1.89+ removed is_complete() method
+             * Provide compatibility wrapper using is_absolute()
+             */
+#if BOOST_VERSION >= 108900
+            bool is_complete() const
+            {
+                return this->is_absolute();
+            }
+#endif
         };
 
         typedef PathImplT< os::isWindows > PathType;
@@ -1923,6 +1961,34 @@ namespace bl
             detail::bfs::resize_file( path, size, ec );
         }
 
+/*
+ * fs::copy directory shim - Boost version gate
+ *
+ * Boost 1.84 changed fs::copy() for directories: it now copies the directory's CONTENT into the
+ * target rather than creating the directory itself. The shim below restores the older meaning by
+ * routing a directory source to create_directory().
+ *
+ * The gate keys on BOOST_VERSION only. It used to also fire on BL_DEVENV_VERSION > 5, which was
+ * wrong: the thing whose behavior changed is Boost, not the development environment, and BOOSTDIR
+ * is overridable (see projects/make/3rd/boost/common.mk), so a devenv6 or devenv7 build pinned to
+ * an older Boost took the new code path while fs::copy() still had its old semantics.
+ *
+ * For every default configuration the two conditions agree - devenv6 pins Boost 1.84.0 and devenv7
+ * pins 1.90.0 - so dropping the devenv disjunct is a no-op for every supported build and a fix only
+ * for the overridden case.
+ *
+ * BOOST_VERSION must be usable here or the gate silently evaluates to false and the shim disappears,
+ * which is the failure mode F-16 was filed about in UuidBoostImports.h. It is supplied by
+ * OSBoostImports.h at the top of this file; the guard below makes that a build error rather than a
+ * silent behavior change if the include graph ever changes.
+ */
+
+#if !defined( BOOST_VERSION ) || 0 == BOOST_VERSION
+#error BOOST_VERSION must be defined before the fs::copy directory shim gates below
+#endif
+
+#define BL_FS_COPY_DIRECTORY_SHIM_REQUIRED  ( ( BOOST_VERSION / 100 ) >= 1084 )
+
         /*
          * fs::copy
          */
@@ -1932,6 +1998,20 @@ namespace bl
             SAA_in          const path&                 targetPath
             )
         {
+            #if BL_FS_COPY_DIRECTORY_SHIM_REQUIRED
+            /*
+             * The behavior of the copy function has changed for directories now it attempts
+             * to copy the directory content to the target directory instead of copying the
+             * directory itself
+             */
+
+            if( is_directory( sourcePath ) )
+            {
+                detail::bfs::create_directory( targetPath, sourcePath );
+                return;
+            }
+            #endif
+
             detail::bfs::copy( sourcePath, targetPath );
         }
 
@@ -1941,6 +2021,29 @@ namespace bl
             SAA_out         eh::error_code&             ec
             )
         {
+            #if BL_FS_COPY_DIRECTORY_SHIM_REQUIRED
+            /*
+             * The behavior of the copy function has changed for directories now it attempts
+             * to copy the directory content to the target directory instead of copying the
+             * directory itself
+             *
+             * Note that we must use the non-throwing overload of is_directory here, so an
+             * invalid or inaccessible source path is reported via 'ec' as the contract of
+             * this overload requires (instead of throwing)
+             */
+
+            if( is_directory( sourcePath, ec ) )
+            {
+                detail::bfs::create_directory( targetPath, sourcePath, ec );
+                return;
+            }
+
+            if( ec )
+            {
+                return;
+            }
+            #endif
+
             detail::bfs::copy( sourcePath, targetPath, ec );
         }
 
@@ -1995,7 +2098,16 @@ namespace bl
             SAA_in          const path&                 targetPath
             )
         {
+            /*
+             * copy_directory is deprecated in the new boost versions and create_directory
+             * should be used instead
+             */
+
+            #if BOOST_VERSION >= 107400
+            detail::bfs::create_directory( targetPath, sourcePath );
+            #else
             detail::bfs::copy_directory( sourcePath, targetPath );
+            #endif
         }
 
         inline void copy_directory(
@@ -2004,7 +2116,16 @@ namespace bl
             SAA_out         eh::error_code&             ec
             )
         {
+            /*
+             * copy_directory is deprecated in the new boost versions and create_directory
+             * should be used instead
+             */
+
+            #if BOOST_VERSION >= 107400
+            detail::bfs::create_directory( targetPath, sourcePath, ec );
+            #else
             detail::bfs::copy_directory( sourcePath, targetPath, ec );
+            #endif
         }
 
         /*

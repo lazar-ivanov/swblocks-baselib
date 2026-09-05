@@ -68,6 +68,7 @@
 
 #include <utility>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
@@ -628,6 +629,66 @@ namespace bl
                     return exception;
                 }
 
+                /**
+                 * @brief Converts UTF-8 text to UTF-16 for the wide Windows APIs
+                 *
+                 * The iterator-range std::wstring constructor widens each byte on its own,
+                 * which is wrong for any non-ASCII UTF-8 text; MB_ERR_INVALID_CHARS makes
+                 * malformed input fail instead of being silently replaced
+                 */
+
+                static std::wstring utf8ToUtf16( SAA_in const std::string& text )
+                {
+                    std::wstring result;
+
+                    if( text.empty() )
+                    {
+                        return result;
+                    }
+
+                    BL_CHK_ARG( text.size() <= ( std::size_t ) std::numeric_limits< int >::max(), text );
+
+                    const auto size = ( int ) text.size();
+
+                    const auto length = ::MultiByteToWideChar(
+                        CP_UTF8                                 /* CodePage */,
+                        MB_ERR_INVALID_CHARS                    /* dwFlags */,
+                        text.c_str()                            /* lpMultiByteStr */,
+                        size                                    /* cbMultiByte */,
+                        nullptr                                 /* lpWideCharStr */,
+                        0                                       /* cchWideChar */
+                        );
+
+                    BL_CHK_T(
+                        false,
+                        length > 0,
+                        createException( "MultiByteToWideChar" /* locationOrAPI */ ),
+                        BL_MSG()
+                            << "Cannot convert text to UTF-16"
+                        );
+
+                    result.resize( length );
+
+                    const auto converted = ::MultiByteToWideChar(
+                        CP_UTF8                                 /* CodePage */,
+                        MB_ERR_INVALID_CHARS                    /* dwFlags */,
+                        text.c_str()                            /* lpMultiByteStr */,
+                        size                                    /* cbMultiByte */,
+                        &result[ 0 ]                            /* lpWideCharStr */,
+                        length                                  /* cchWideChar */
+                        );
+
+                    BL_CHK_T(
+                        false,
+                        converted == length,
+                        createException( "MultiByteToWideChar" /* locationOrAPI */ ),
+                        BL_MSG()
+                            << "Cannot convert text to UTF-16"
+                        );
+
+                    return result;
+                }
+
                 static ::errno_t putenvWrapper(
                     SAA_in          const char*                                 name,
                     SAA_in          const char*                                 value,
@@ -939,9 +1000,18 @@ namespace bl
 
                 static library_handle_t loadLibrary( SAA_in const std::string& name )
                 {
-                    std::wstring wname( name.begin(), name.end() );
+                    const auto wname = utf8ToUtf16( name );
 
-                    const auto h = ::LoadLibraryExW( wname.c_str(), NULL, 0 );
+                    /*
+                     * For an absolute path the dependents of the library are resolved from its
+                     * own directory first (LOAD_WITH_ALTERED_SEARCH_PATH) instead of from the
+                     * process directory and PATH; the flag is undefined for a relative name,
+                     * so such names (e.g. "kernel32.dll") keep the default search order
+                     */
+
+                    const DWORD flags = fs::path( name ).is_absolute() ? LOAD_WITH_ALTERED_SEARCH_PATH : 0;
+
+                    const auto h = ::LoadLibraryExW( wname.c_str(), NULL, flags );
 
                     BL_CHK_T(
                         false,
@@ -1407,7 +1477,7 @@ namespace bl
                     {
                         if( isInJob )
                         {
-                            JOBOBJECT_BASIC_LIMIT_INFORMATION info = { 0 };
+                            JOBOBJECT_BASIC_LIMIT_INFORMATION info = {};
 
                             BL_CHK_BOOL_WINAPI(
                                 ::QueryInformationJobObject(
@@ -1445,7 +1515,7 @@ namespace bl
 
                             processJobHandle -> setJobHandle( jobHandle );
 
-                            JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli = { 0 };
+                            JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli = {};
 
                             jeli.BasicLimitInformation.LimitFlags =
                                 JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
@@ -3059,7 +3129,7 @@ namespace bl
 
                     auto status = ::AcquireCredentialsHandleW(
                         NULL,
-                        NEGOSSP_NAME_W,
+                        const_cast< LPWSTR >( NEGOSSP_NAME_W )          /* pszPackage (not modified by the API) */,
                         SECPKG_CRED_OUTBOUND,
                         NULL,
                         NULL,
@@ -3468,7 +3538,7 @@ namespace bl
                     const auto openKeyErrorCode =
                         RegOpenKeyExW(
                             locationCode                                      /* hKey */,
-                            std::wstring( key.begin(), key.end() ).c_str()    /* lpSubKey */,
+                            utf8ToUtf16( key ).c_str()                        /* lpSubKey */,
                             0                                                 /* ulOptions */,
                             KEY_QUERY_VALUE                                   /* samDesired */,
                             &regKeyHandle                                     /* phkResult */
@@ -3498,7 +3568,7 @@ namespace bl
                         RegGetValueW(
                             regKeyHandle                                       /* hKey */,
                             NULL,                                              /* lpSubKey */
-                            std::wstring( name.begin(), name.end() ).c_str()   /* lpValue */,
+                            utf8ToUtf16( name ).c_str()                        /* lpValue */,
                             RRF_RT_REG_SZ                                      /* dwFlags */,
                             NULL                                               /* pdwType */,
                             ( BYTE* )buffer                                    /* pvData */,

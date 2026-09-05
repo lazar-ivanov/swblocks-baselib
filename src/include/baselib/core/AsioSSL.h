@@ -28,6 +28,11 @@
 #include <boost/asio/ssl.hpp>
 #include <baselib/core/detail/BoostIncludeGuardPop.h>
 
+/*
+ * Include SSL compatibility layer after SSL headers are included
+ */
+#include <baselib/core/detail/AsioSslCompat.h>
+
 #include <baselib/core/OS.h>
 #include <baselib/core/BaseIncludes.h>
 

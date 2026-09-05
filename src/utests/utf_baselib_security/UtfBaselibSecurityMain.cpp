@@ -14,15 +14,14 @@
  * limitations under the License.
  */
 
-#include <baselib/crypto/CryptoBase.h>
-#define UTF_TEST_APP_INIT_PHASE1_INIT bl::crypto::CryptoBase::isEnableTlsV10( true );
-
 #define UTF_TEST_MODULE utf_baselib_security
 #include <utests/baselib/UtfMain.h>
 
 #include "TestHashUtils.h"
+#include "TestHmacSha256.h"
 #include "TestBignumBase64Url.h"
 #include "TestRsaSignVerify.h"
 #include "TestCryptoUtils.h"
+#include "TestPemKeyFormats.h"
 #include "TestAuthorizationCacheImpl.h"
 #include "TestAuthorizationCacheRestImpl.h"

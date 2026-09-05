@@ -123,7 +123,8 @@ UTF_AUTO_TEST_CASE( Jni_CreateJniEnvironments )
     const auto createJniEnvironment = []( SAA_in const bool detachJniEnvAfterTest )
     {
         const auto& environment = JniEnvironment::instance();
-        UTF_REQUIRE_EQUAL( environment.getVersion(), JNI_VERSION_1_8 );
+        /* JDK 9+ may return version >= JNI_VERSION_9 (0x00090000) */
+        UTF_REQUIRE( environment.getVersion() >= JNI_VERSION_1_8 );
 
         if( detachJniEnvAfterTest )
         {
@@ -193,10 +194,39 @@ UTF_AUTO_TEST_CASE( Jni_JavaExceptions )
 
     const auto& environment = JniEnvironment::instance();
 
+    /*
+     * The thread name recorded on a JavaException is the Java name of the thread which raised
+     * it, i.e. whatever the JVM assigned when this thread was attached (the thread which created
+     * the JVM is detached again by the JavaVirtualMachine constructor, so even that one is
+     * re-attached later under a fresh "Thread-N" name), so the expected value is captured here
+     * and compared for equality rather than assumed
+     */
+
+    const std::string expectedThreadName = [ &environment ]() -> std::string
+    {
+        const auto threadClass = environment.findJavaClass( "java/lang/Thread" );
+
+        const auto currentThreadMethod =
+            environment.getStaticMethodID( threadClass.get(), "currentThread", "()Ljava/lang/Thread;" );
+
+        const auto getNameMethod =
+            environment.getMethodID( threadClass.get(), "getName", "()Ljava/lang/String;" );
+
+        const auto currentThread =
+            environment.callStaticObjectMethod< jobject >( threadClass.get(), currentThreadMethod );
+
+        const auto threadName =
+            environment.callObjectMethod< jstring >( currentThread.get(), getNameMethod );
+
+        return environment.javaStringToCString( threadName );
+    }();
+
+    UTF_REQUIRE( ! expectedThreadName.empty() );
+
     UTF_CHECK_EXCEPTION(
         ( void ) environment.findJavaClass( "no/such/class" ),
         JavaException,
-        []( SAA_in const JavaException& e ) -> bool
+        [ &expectedThreadName ]( SAA_in const JavaException& e ) -> bool
         {
             BL_LOG_MULTILINE(
                 Logging::debug(),
@@ -226,7 +256,7 @@ UTF_AUTO_TEST_CASE( Jni_JavaExceptions )
 
             const auto* threadPtr = eh::get_error_info< eh::errinfo_original_thread_name >( e );
 
-            if( ! threadPtr || *threadPtr != "Thread-1" )
+            if( ! threadPtr || *threadPtr != expectedThreadName )
             {
                 return false;
             }

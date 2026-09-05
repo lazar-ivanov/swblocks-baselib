@@ -68,19 +68,28 @@ UTF_FIXTURE_TEST_CASE( TestManifestRead, ManifestFixture )
     UTF_CHECK_EQUAL( manifest -> platform() -> toolchain(), "msvc12" );
 }
 
-UTF_FIXTURE_TEST_CASE( TestManifestWrite, ManifestFixture )
+UTF_FIXTURE_TEST_CASE( TestManifestUnsupportedVersionIsRejected, ManifestFixture )
 {
     using namespace bl;
     using namespace bl::loader;
     using namespace utest;
 
-    auto output = ( m_dir.path() / "plugin.mf" ).string();
-    auto platform = Platform::get( "linux", "x64", "gcc48" );
-    auto manifest = ManifestFactory::create( m_plugin.path(), std::move( platform ) );
+    /*
+     * A manifest which declares a version this reader does not know is refused rather than
+     * read as if it were version 1 with its unknown properties ignored
+     */
 
-    ManifestFactory::write( std::move( manifest ), std::move( output ) );
+    const auto output = ( m_dir.path() / "plugin.mf" ).string();
+    const auto platform = Platform::get( "linux", "x64", "gcc48" );
 
-    json::Value value;
+    ManifestFactory::write(
+        ManifestFactory::create( m_plugin.path(), bl::om::copy( platform ) ),
+        cpp::copy( output )
+        );
+
+    UTF_CHECK_NO_THROW( ManifestFactory::read( output ) );
+
+    json::value value;
 
     {
         bl::fs::SafeInputFileStreamWrapper inputFile( output );
@@ -89,28 +98,85 @@ UTF_FIXTURE_TEST_CASE( TestManifestWrite, ManifestFixture )
         value = json::readFromStream( is );
     }
 
-    auto json = value.get_obj();
+    auto json = cpp::copy( value.as_object() );
+    json[ "manifestVersion" ] = 2;
 
-    UTF_CHECK_EQUAL( json[ "manifestVersion" ].get_int(), 1 );
-    UTF_CHECK_EQUAL( json[ "serverId" ].get_str(), "8e213524-8c75-4622-8273-6a5eeaa26250" );
-    UTF_CHECK_EQUAL( json[ "versionMajor" ].get_int(), 1 );
-    UTF_CHECK_EQUAL( json[ "versionMinor" ].get_int(), 2 );
+    const auto outputV2 = ( m_dir.path() / "plugin-v2.mf" ).string();
 
-    const auto clsids = json[ "classIds" ].get_array();
+    {
+        bl::fs::SafeOutputFileStreamWrapper outputFile( outputV2 );
+        auto& os = outputFile.stream();
+
+        json::saveToStream( json::value( json ), os, true /* prettyPrint */ );
+    }
+
+    UTF_REQUIRE_THROW( ManifestFactory::read( outputV2 ), bl::UnexpectedException );
+}
+
+UTF_FIXTURE_TEST_CASE( TestManifestWrite, ManifestFixture )
+{
+    using namespace bl;
+    using namespace bl::loader;
+    using namespace utest;
+
+    const auto output = ( m_dir.path() / "plugin.mf" ).string();
+    const auto platform = Platform::get( "linux", "x64", "gcc48" );
+    const auto manifest = ManifestFactory::create( m_plugin.path(), bl::om::copy( platform ) );
+
+    ManifestFactory::write( bl::om::copy( manifest ), cpp::copy( output ) );
+
+    json::value value;
+
+    {
+        bl::fs::SafeInputFileStreamWrapper inputFile( output );
+        auto& is = inputFile.stream();
+
+        value = json::readFromStream( is );
+    }
+
+    const auto& json = value.as_object();
+
+    UTF_CHECK_EQUAL( json.at( "manifestVersion" ).as_int64(), 1 );
+    UTF_CHECK_EQUAL( bl::json::value_to< std::string >( json.at( "serverId" ) ), "8e213524-8c75-4622-8273-6a5eeaa26250" );
+    UTF_CHECK_EQUAL( json.at( "versionMajor" ).as_int64(), 1 );
+    UTF_CHECK_EQUAL( json.at( "versionMinor" ).as_int64(), 2 );
+
+    const auto& clsids = json.at( "classIds" ).as_array();
 
     UTF_CHECK_EQUAL( clsids.size(), 2U );
-    UTF_CHECK( std::find( clsids.begin(), clsids.end(), "3fd48332-db97-42bd-9cf6-f6a332895d92" ) != clsids.end() );
-    UTF_CHECK( std::find( clsids.begin(), clsids.end(), "c76d0949-92a2-4925-8c9f-890f05484474" ) != clsids.end() );
 
-    UTF_CHECK_EQUAL( json[ "pluginClassId" ].get_str(), "3fd48332-db97-42bd-9cf6-f6a332895d92" );
-    UTF_CHECK_EQUAL( json[ "pluginName" ].get_str(), std::string( "calculator" ) );
-    UTF_CHECK_EQUAL( json[ "pluginDescription" ].get_str(), "Simple calculator plug-in" );
-    UTF_CHECK_EQUAL( json[ "isClientPlugin" ].get_bool(), false );
-    UTF_CHECK_EQUAL( json[ "isServerPlugin" ].get_bool(), true );
+    /*
+     * Check if clsids contains the expected values by iterating
+     */
 
-    UTF_CHECK_EQUAL( json[ "os" ].get_str(), "linux" );
-    UTF_CHECK_EQUAL( json[ "architecture" ].get_str(), "x64" );
-    UTF_CHECK_EQUAL( json[ "toolchain" ].get_str(), "gcc48" );
+    bool foundClsid1 = false;
+    bool foundClsid2 = false;
+
+    for( const auto& clsid : clsids )
+    {
+        auto clsidStr = bl::json::value_to< std::string >( clsid );
+        if( clsidStr == "3fd48332-db97-42bd-9cf6-f6a332895d92" )
+        {
+            foundClsid1 = true;
+        }
+        if( clsidStr == "c76d0949-92a2-4925-8c9f-890f05484474" )
+        {
+            foundClsid2 = true;
+        }
+    }
+
+    UTF_CHECK( foundClsid1 );
+    UTF_CHECK( foundClsid2 );
+
+    UTF_CHECK_EQUAL( bl::json::value_to< std::string >( json.at( "pluginClassId" ) ), "3fd48332-db97-42bd-9cf6-f6a332895d92" );
+    UTF_CHECK_EQUAL( bl::json::value_to< std::string >( json.at( "pluginName" ) ), std::string( "calculator" ) );
+    UTF_CHECK_EQUAL( bl::json::value_to< std::string >( json.at( "pluginDescription" ) ), "Simple calculator plug-in" );
+    UTF_CHECK_EQUAL( json.at( "isClientPlugin" ).as_bool(), false );
+    UTF_CHECK_EQUAL( json.at( "isServerPlugin" ).as_bool(), true );
+
+    UTF_CHECK_EQUAL( bl::json::value_to< std::string >( json.at( "os" ) ), "linux" );
+    UTF_CHECK_EQUAL( bl::json::value_to< std::string >( json.at( "architecture" ) ), "x64" );
+    UTF_CHECK_EQUAL( bl::json::value_to< std::string >( json.at( "toolchain" ) ), "gcc48" );
 }
 
 UTF_AUTO_TEST_CASE( TestToolchainMatch )

@@ -180,7 +180,10 @@ UTF_AUTO_TEST_CASE( ErrorToJsonTests )
     catch( SystemException& e )
     {
         UTF_REQUIRE_EQUAL( e.fullTypeName(), "bl::SystemException" );
-        UTF_REQUIRE_EQUAL( e.what(), "It's a what() prefix: Permission denied" );
+        UTF_REQUIRE(
+            std::string( e.what() ) == "It's a what() prefix: Permission denied" ||
+            std::string( e.what() ) == "It's a what() prefix: Permission denied [generic:13]"
+            );
 
         UTEST_PROPERTY_REQUIRE_EQUAL( errinfo_message, "It's a message" )
         UTEST_PROPERTY_REQUIRE_EQUAL( errinfo_category_name, "generic" )
@@ -436,7 +439,7 @@ UTF_AUTO_TEST_CASE( ServerErrorHelpersTests )
     UTF_REQUIRE( pos != std::string::npos );
     UTF_REQUIRE( posEnd != std::string::npos );
 
-    exceptionProperties = exceptionProperties.substr( pos - 1U, posEnd - pos + 2U );
+    exceptionProperties = exceptionProperties.substr( pos, posEnd - pos + 1U );
 
     const auto properties =
         dm::DataModelUtils::loadFromJsonText< dm::ExceptionProperties >( exceptionProperties );

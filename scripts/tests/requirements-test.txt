@@ -1,0 +1,5 @@
+pytest>=7.4.0           # Test framework
+pytest-cov>=4.1.0       # Coverage reporting
+pytest-timeout>=2.1.0   # Test timeout protection
+pytest-xdist>=3.3.0     # Parallel test execution (optional)
+moto[s3]>=5.0.0         # AWS S3 mocking (mock_aws was introduced in moto 5)

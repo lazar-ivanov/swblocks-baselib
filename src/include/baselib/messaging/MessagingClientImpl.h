@@ -299,7 +299,7 @@ namespace bl
                             }
 
                             connectorTask =
-                                connection_establisher_t::template createInstance(
+                                connection_establisher_t::template createInstance<>(
                                     cpp::copy( host ),
                                     port,
                                     false /* logExceptions */
@@ -382,7 +382,7 @@ namespace bl
                                     )
                                 )
                             {
-                                m_sender = sender_connection_t::template createInstance(
+                                m_sender = sender_connection_t::template createInstance<>(
                                     notify_callback_t(),
                                     m_senderConnector -> detachStream(),
                                     m_dataBlocksPool,
@@ -431,7 +431,7 @@ namespace bl
                                     )
                                 )
                             {
-                                m_receiver = receiver_connection_t::template createInstance( m_receiverState, m_peerId );
+                                m_receiver = receiver_connection_t::template createInstance<>( m_receiverState, m_peerId );
                                 m_receiver -> attachStream( m_receiverConnector -> detachStream() );
 
                                 m_eqConnections -> push_back( om::qi< Task >( m_receiver ) );

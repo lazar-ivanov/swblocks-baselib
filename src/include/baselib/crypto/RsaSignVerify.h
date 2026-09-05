@@ -117,14 +117,19 @@ namespace bl
 
                 const auto* digest = hashCalculator.digest();
 
-                typedef std::basic_string< unsigned char > ustring_t;
-                const auto signature = SerializationUtils::base64UrlDecodeT< ustring_t >( signatureBase64Url );
+                /*
+                 * Note that the decoded signature is a byte buffer and not text, so it is held
+                 * in a vector rather than in a std::basic_string< unsigned char >, which would
+                 * require a std::char_traits specialization for a fundamental type
+                 */
+
+                const auto signature = SerializationUtils::base64UrlDecodeVector( signatureBase64Url );
 
                 return ::RSA_verify(
                     static_cast< int >( hashCalculator.id() ),
                     digest,
                     static_cast< int >( hashCalculator.digestSize() ),
-                    signature.c_str(),
+                    signature.data(),
                     static_cast< int >( signature.size() ),
                     &rsaKey -> get()
                     ) == 1;

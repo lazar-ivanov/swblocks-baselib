@@ -21,6 +21,15 @@ include $(MKDIR)/platform.mk
 
 include $(MKDIR)/devenv-detect.mk
 
+# Apply architecture compatibility fixes
+# Must come after devenv-detect.mk so DEVENV_VERSION_TAG is available
+# Must come before toolchain includes so ARCH is finalized before toolchain config
+include $(MKDIR)/arch-compat.mk
+
+# Capture finalized ARCH value after any compatibility downgrades
+# This must come after arch-compat.mk to ensure downgraded ARCH is captured
+BL_PROP_ARCH := $(ARCH)
+
 # ======================================================================================
 # The CI environment is expected to initialize some common roots (e.g. dist root for
 # 3rd party tools and 3rd party deps etc)
@@ -77,22 +86,42 @@ endif
 $(info Building with DEVENV_VERSION_TAG = $(DEVENV_VERSION_TAG))
 $(info Building with CI_ENV_ROOT = $(CI_ENV_ROOT))
 $(info Building with OS = $(OS))
-$(info Building with ARCH = $(ARCH))
+$(info Building with ARCH = $(ARCH)$(if $(BL_ARCH_DOWNGRADE_APPLIED), (downgraded from a64),))
 $(info Building with TOOLCHAIN = $(TOOLCHAIN))
 $(info Building with VARIANT = $(VARIANT))
 
-# so we can use the proper jdk when invoking Java tests
-ifeq ($(DEVENV_VERSION_TAG),devenv3)
-include $(MKDIR)/3rd/jdk/1.8.mk
+# Use native date format with numeric timezone offset on Windows to avoid MSYS2 SAPST issue
+# Format matches macOS but uses %z (numeric offset) instead of %Z (timezone abbreviation)
+ifeq (win, $(findstring win, $(OS)))
+  DATE_COMMAND := date '+%a %b %e %H:%M:%S %z %Y'
 else
-include $(MKDIR)/3rd/jdk/common.mk
+  DATE_COMMAND := date
+endif
+
+# Exclude boost_locale library for devenv6 (use simple UTF-8 to ISO-8859-1 converter)
+ifeq ($(DEVENV_VERSION_TAG),devenv6)
+NO_BOOST_LOCALE_LIB = 1
 endif
 
 # for python script wrappers (windows compiler, debug harness)
+ifeq ($(DEVENV_VERSION_TAG),devenv6)
+# python3 is the default in devenv6
+PYTHON = python3
+else
+ifeq (, $(BL_DEVENV_IS_LEGACY))
+# devenv7+ uses python3 on Linux, but python.exe on Windows
+ifeq ($(OS),win)
+PYTHON = python
+else
+PYTHON = python3
+endif
+else
 ifeq ($(DEVENV_VERSION_TAG),devenv3)
 include $(MKDIR)/3rd/python/2.7-latest.mk
 else
 include $(MKDIR)/3rd/python/2.7.5.mk
+endif
+endif
 endif
 
 # add git to the path for systems where it's external
@@ -123,11 +152,20 @@ EMPTY    :=
 SPACE    := $(EMPTY) $(EMPTY)
 
 # common variables and flags
-LIBPATH  := $(subst $(if $(findstring ;,$(LIBPATH)),;,:), ,$(LIBPATH))
-INCLUDE  := $(subst $(if $(findstring ;,$(INCLUDE)),;,:), ,$(INCLUDE))
+# Ignore LIB, LIBPATH, and INCLUDE from environment - makefiles set these explicitly
+LIBPATH  :=
+INCLUDE  :=
 INCLUDE  += $(SRCDIR)/versioning
 INCLUDE  += $(SRCDIR)/include
 INCLUDE  += $(SRCDIR)/utests/include
+
+# so we can use the proper jdk when invoking Java tests
+# must be included AFTER the INCLUDE := reset above so JDK paths are preserved
+ifeq ($(DEVENV_VERSION_TAG),devenv3)
+include $(MKDIR)/3rd/jdk/1.8.mk
+else
+include $(MKDIR)/3rd/jdk/common.mk
+endif
 
 CPPFLAGS += -DBL_BUILD_PLATFORM=$(BL_PROP_PLAT)
 CPPFLAGS += -DBL_BUILD_VARIANT=$(VARIANT)
@@ -152,13 +190,76 @@ BUILD_RELEASE_DATE = $(shell awk '/^\#define *BL_PLUGINS_RELEASE_DATE/ \
 VERSION         = $(BUILD_RELEASE_DATE)-build-$(BUILD_ID)
 
 # -u (unbuffered stdout/err) would help investigating hanging tests
+# on macOS the default max open files limit is 256, which is not enough
+# ulimit doesn't work properly on Windows (MSYS2), so skip it there
+# Check for any Windows OS (win, win7, etc.) using findstring
+ifeq ($(findstring win,$(OS)),)
+# Non-Windows: use ulimit
+DEBUG_HARNESS   = ulimit -n 4096 ; $(PYTHON) -u $(TOPDIR)scripts/debug_harness.py
+else
+# Windows: skip ulimit
 DEBUG_HARNESS   = $(PYTHON) -u $(TOPDIR)scripts/debug_harness.py
+endif
 ASAN_SYMBOLIZE  = $(TOPDIR)scripts/addr2line_symbolizer.sh
 UTF_FLAGS        += --log_level=test_suite
 UTF_FLAGS        += --catch_system_errors=no
 UTF_FLAGS        += --build_info=yes
 
 UTF_LOGS_DIR   ?= $(BLDDIR)/utflogs
+
+# Application Verifier support (Windows only)
+# Usage: make test BL_APP_VERIFIER_ENABLED=1 [BL_APP_VERIFIER_CHECKS="..."] [BL_APP_VERIFIER_PAGE_HEAP=Light]
+# Heaps is always enabled regardless of BL_APP_VERIFIER_CHECKS
+# BL_APP_VERIFIER_PAGE_HEAP: Full (default) or Light
+# BL_APP_VERIFIER_PAGE_HEAP_BACKWARD: set to 1 to enable underflow detection (Heaps.Backward=true)
+# BL_APP_VERIFIER_JVM_BINARIES: space-separated list of exe names that use the JVM platform
+#   (page heap is restricted to the exe itself via Heaps.Dlls to avoid known JVM false positives)
+BL_APP_VERIFIER_CHECKS   ?= Handles Locks Memory
+BL_APP_VERIFIER_PAGE_HEAP ?= Full
+BL_APP_VERIFIER_JVM_BINARIES ?= utf-baselib-jni.exe
+
+# Imply BL_APP_VERIFIER_ENABLED if any BL_APP_VERIFIER_* macro is explicitly passed
+ifeq ($(origin BL_APP_VERIFIER_CHECKS),command line)
+  BL_APP_VERIFIER_ENABLED ?= 1
+endif
+ifeq ($(origin BL_APP_VERIFIER_PAGE_HEAP),command line)
+  BL_APP_VERIFIER_ENABLED ?= 1
+endif
+ifdef BL_APP_VERIFIER_PAGE_HEAP_BACKWARD
+  BL_APP_VERIFIER_ENABLED ?= 1
+endif
+
+ifdef BL_APP_VERIFIER_ENABLED
+  ifeq ($(findstring win,$(OS)),)
+    $(error BL_APP_VERIFIER_ENABLED is only supported on Windows)
+  endif
+  # Check for Administrator privileges (net session fails if not elevated)
+  BL_ADMIN_CHECK := $(shell net session > /dev/null 2>&1 && echo 1 || echo 0)
+  ifneq ($(BL_ADMIN_CHECK),1)
+    $(error BL_APP_VERIFIER_ENABLED requires an elevated Administrator command prompt)
+  endif
+  # Build the -with property list for the appverif -enable command
+  ifeq ($(BL_APP_VERIFIER_PAGE_HEAP),Light)
+    BL_APP_VERIFIER_PROPS = Heaps.Full=false
+  else
+    BL_APP_VERIFIER_PROPS = Heaps.Full=true
+  endif
+  ifdef BL_APP_VERIFIER_PAGE_HEAP_BACKWARD
+    BL_APP_VERIFIER_PROPS += Heaps.Backward=true
+  endif
+  # JVM binaries: light page heap, Heaps.Dlls restriction, no Locks/Handles (known JVM false positives)
+  BL_APP_VERIFIER_JVM_PROPS = Heaps.Full=false
+  ifdef BL_APP_VERIFIER_PAGE_HEAP_BACKWARD
+    BL_APP_VERIFIER_JVM_PROPS += Heaps.Backward=true
+  endif
+  BL_APP_VERIFIER_JVM_CHECKS = $(filter-out Locks Handles Memory,$(BL_APP_VERIFIER_CHECKS))
+  BL_APP_VERIFIER_MSG = (with app verifier enabled)
+  $(info Building with BL_APP_VERIFIER_ENABLED = $(BL_APP_VERIFIER_ENABLED))
+  $(info Building with BL_APP_VERIFIER_CHECKS = Heaps $(BL_APP_VERIFIER_CHECKS))
+  $(info Building with BL_APP_VERIFIER_PAGE_HEAP = $(BL_APP_VERIFIER_PAGE_HEAP))
+  $(info Building with BL_APP_VERIFIER_PAGE_HEAP_BACKWARD = $(BL_APP_VERIFIER_PAGE_HEAP_BACKWARD))
+  $(info Building with BL_APP_VERIFIER_JVM_BINARIES = $(BL_APP_VERIFIER_JVM_BINARIES))
+endif
 
 # targets
 APPS        := $(patsubst $(SRCDIR)/apps/%, %, $(wildcard $(SRCDIR)/apps/*))
@@ -203,6 +304,13 @@ endif
 -include $(MKDIR)/toolchain/$(TOOLCHAIN)-$(ARCH).mk
 -include $(MKDIR)/toolchain/$(TOOLCHAIN)-$(VARIANT).mk
 -include $(MKDIR)/toolchain/$(TOOLCHAIN)-$(ARCH)-$(VARIANT).mk
+
+###############################################################################
+# Include Clang analysis tools support (sanitizers, scan-build, clang-tidy)
+# This must be included AFTER all toolchain and variant-specific makefiles
+# so that we can override optimization flags set by variant makefiles
+###############################################################################
+-include $(MKDIR)/toolchain/clang-analysis.mk
 
 # common dependencies
 include $(MKDIR)/3rd/boost/common.mk
@@ -411,8 +519,20 @@ define TEMPLATE
     test_$(1)_begin: | mktmppath mkutflogspath $(1)
 	$$(info $$(HR))
 	@echo $$(HR) > $$(UTF_LOGS_DIR)/$(1).log
-	$$(info Starting $(1) at $$(shell date))
-	@echo Starting $(1) at $$(shell date) >>$$(UTF_LOGS_DIR)/$(1).log
+	$$(info Starting $(1) $$(BL_APP_VERIFIER_MSG) at $$(shell $(DATE_COMMAND)))
+	@echo "Starting $(1) $$(BL_APP_VERIFIER_MSG) at $$(shell $(DATE_COMMAND))" >>$$(UTF_LOGS_DIR)/$(1).log
+    ifdef BL_APP_VERIFIER_ENABLED
+      ifeq (,$$(findstring $$(SOEXT), $$($(1)_ARTIFACT)))
+        ifneq (,$$(findstring $$(notdir $$($(1)_ARTIFACT)),$$(BL_APP_VERIFIER_JVM_BINARIES)))
+	$$(info appverif enable command: appverif -enable Heaps $$(BL_APP_VERIFIER_JVM_CHECKS) -for $$(notdir $$($(1)_ARTIFACT)) -with $$(BL_APP_VERIFIER_JVM_PROPS) Heaps.Dlls=$$(notdir $$($(1)_ARTIFACT)))
+	@appverif -enable Heaps $$(BL_APP_VERIFIER_JVM_CHECKS) -for $$(notdir $$($(1)_ARTIFACT)) -with $$(BL_APP_VERIFIER_JVM_PROPS) Heaps.Dlls=$$(notdir $$($(1)_ARTIFACT)) > /dev/null
+        else
+	$$(info appverif enable command: appverif -enable Heaps $$(BL_APP_VERIFIER_CHECKS) -for $$(notdir $$($(1)_ARTIFACT)) -with $$(BL_APP_VERIFIER_PROPS))
+	@appverif -enable Heaps $$(BL_APP_VERIFIER_CHECKS) -for $$(notdir $$($(1)_ARTIFACT)) -with $$(BL_APP_VERIFIER_PROPS) > /dev/null
+        endif
+	$$(info appverif cleanup command: appverif -delete settings -for $$(notdir $$($(1)_ARTIFACT)))
+      endif
+    endif
 	$$(info $$(HR))
 	@echo $$(HR) >>$$(UTF_LOGS_DIR)/$(1).log
 
@@ -425,6 +545,15 @@ define TEMPLATE
 		echo -e "\n*** Memory errors detected"; \
 	fi
         else
+          ifdef BL_APP_VERIFIER_ENABLED
+            ifeq (utf_baselib,$$(findstring utf_baselib, $$($(1)_ARTIFACT)))
+	@rc=0; BL_ANALYSIS_TESTING=1 $$(DEBUG_HARNESS) $$($(1)_ARTIFACT) $$(UTF_FLAGS) >>$$(UTF_LOGS_DIR)/$(1).log || rc=$$$$?; appverif -delete settings -for $$(notdir $$($(1)_ARTIFACT)) > /dev/null 2>&1; exit $$$$rc
+            else ifeq (utf_shared,$$(findstring utf_shared, $$($(1)_ARTIFACT)))
+	@rc=0; BL_ANALYSIS_TESTING=1 $$(DEBUG_HARNESS) $$($(1)_ARTIFACT) $$(UTF_FLAGS) >>$$(UTF_LOGS_DIR)/$(1).log || rc=$$$$?; appverif -delete settings -for $$(notdir $$($(1)_ARTIFACT)) > /dev/null 2>&1; exit $$$$rc
+            else
+	@rc=0; BL_ANALYSIS_TESTING=1 $$(DEBUG_HARNESS) $$($(1)_ARTIFACT) $$(UTF_FLAGS) $$(UTF_FLAGS_EXTRA) >>$$(UTF_LOGS_DIR)/$(1).log || rc=$$$$?; appverif -delete settings -for $$(notdir $$($(1)_ARTIFACT)) > /dev/null 2>&1; exit $$$$rc
+            endif
+          else
             ifeq (utf_baselib,$$(findstring utf_baselib, $$($(1)_ARTIFACT)))
 	@$$(DEBUG_HARNESS) $$($(1)_ARTIFACT) $$(UTF_FLAGS) >>$$(UTF_LOGS_DIR)/$(1).log
             else ifeq (utf_shared,$$(findstring utf_shared, $$($(1)_ARTIFACT)))
@@ -432,14 +561,15 @@ define TEMPLATE
             else
 	@$$(DEBUG_HARNESS) $$($(1)_ARTIFACT) $$(UTF_FLAGS) $$(UTF_FLAGS_EXTRA) >>$$(UTF_LOGS_DIR)/$(1).log
             endif
+          endif
         endif
       endif
 
     test_$(1)_end: test_$(1)_run
 	$$(info $$(HR))
 	@echo $$(HR) >>$$(UTF_LOGS_DIR)/$(1).log
-	$$(info Completed $(1) at $$(shell date))
-	@echo Completed $(1) at $$(shell date) >>$$(UTF_LOGS_DIR)/$(1).log
+	$$(info Completed $(1) $$(BL_APP_VERIFIER_MSG) at $$(shell $(DATE_COMMAND)))
+	@echo "Completed $(1) $$(BL_APP_VERIFIER_MSG) at $$(shell $(DATE_COMMAND))" >>$$(UTF_LOGS_DIR)/$(1).log
 	$$(info $$(HR))
 	@echo $$(HR) >>$$(UTF_LOGS_DIR)/$(1).log
 
@@ -477,3 +607,6 @@ endif
 -include $(CI_ENV_MKDIR)/msi.mk
 -include $(CI_ENV_MKDIR)/deb.mk
 -include $(CI_ENV_MKDIR)/postbuild.mk
+
+# include Python testing targets
+-include $(MKDIR)/python-tests.mk

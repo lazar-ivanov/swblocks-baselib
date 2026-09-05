@@ -362,7 +362,7 @@ namespace utest
                                 isQuietMode
                                 );
 
-                        const bool isCustomCallback = callback;
+                        const bool isCustomCallback = static_cast< bool >( callback );
 
                         if( ! callback )
                         {

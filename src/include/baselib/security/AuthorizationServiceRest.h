@@ -39,6 +39,8 @@
 #include <baselib/core/EnumUtils.h>
 #include <baselib/core/BaseIncludes.h>
 
+#include <cstring>
+
 namespace bl
 {
     namespace security

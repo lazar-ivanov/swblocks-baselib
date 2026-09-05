@@ -212,6 +212,12 @@ namespace bl
                  * or we have not started all packaging tasks yet; note that
                  * if the derived class chooses to start all the packaging tasks
                  * in advance (e.g. in createSeedingTask) this check is still valid
+                 *
+                 * Note: size() is a point-in-time snapshot, but it can only decrease
+                 * concurrently, so this admission check is conservative -- at worst we take the
+                 * slower waitForReadyWorkerTask( ... ) path when we did not have to. This
+                 * assumes no worker task uses a non-self continuation (see the note on size()
+                 * in ExecutionQueue.h), which holds for the tasks pushed to m_eqWorkerTasks
                  */
 
                 if( m_eqWorkerTasks -> size() < base_type::m_tasksPoolSize )

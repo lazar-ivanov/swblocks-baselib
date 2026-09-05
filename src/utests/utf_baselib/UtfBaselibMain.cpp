@@ -32,6 +32,7 @@ using namespace bl;
 #include "TestTimeZoneData.h"
 #include "TestTransaction.h"
 #include "TestNetUtils.h"
+#include "TestBoostAsioCompat.h"
 #include "TestWatchdog.h"
 
 /*

@@ -831,6 +831,14 @@ namespace bl
              * @brief Schedules the task to start execution. Note that function should assume the
              * task lock is held and should never attempt to execute synchronously and call
              * notifyReady().
+             *
+             * The lock of the owning execution queue is held as well, because the queue schedules
+             * from under it (see padExecutingQueueNothrow() in ExecutionQueueImpl.h, which is
+             * reached from push_back(), from the completion path and from the throttle setters),
+             * so this function must not call any method of the queue it is passed and must not
+             * block waiting for another task of that queue - see the lock ordering passage in the
+             * header comment of this file. Initiate the asynchronous work (post to the thread
+             * pool, start the I/O) and return.
              */
 
             virtual void scheduleTask( SAA_in const std::shared_ptr< ExecutionQueue >& eq ) = 0;
@@ -1031,6 +1039,14 @@ namespace bl
 
             /**
              * @brief Sets the continuation callback for this task
+             *
+             * The callback is invoked from Task::continuationTask() when this task completes,
+             * on the completing thread and while the owning execution queue holds its internal
+             * (non-recursive) lock - the continuation has to be admitted atomically with the
+             * completion. It must therefore never call any method of the owning queue (not even
+             * the accessors size(), hasReady(), hasPending() or hasExecuting(), which take that
+             * lock as well) and must not block; it should do no more than decide which task, if
+             * any, to return. Same rule as scheduleTask() above
              */
 
             void setContinuationCallback( SAA_in ContinuationCallback&& continuationCallback ) NOEXCEPT

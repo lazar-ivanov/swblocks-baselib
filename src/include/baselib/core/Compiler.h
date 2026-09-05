@@ -22,7 +22,35 @@
 
 #include <utility>
 #include <type_traits>
+#include <cstring>
 
+/*
+ * GCC 15+ warns about overloaded virtual functions being hidden.
+ * BL_VARIADIC_CREATE_INSTANCE creates a static template factory method
+ * createInstance<Args...>() which intentionally has the same name as
+ * virtual createInstance methods in some interfaces (e.g., Factory).
+ * These serve different purposes (static factory vs interface method)
+ * and the name collision is intentional design, not an error.
+ */
+
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
+#pragma GCC diagnostic ignored "-Woverloaded-virtual"
+#endif
+
+/**
+ * @brief Main function linkage declaration
+ *
+ * GCC 15+ and Clang 20+ with -Wpedantic warn about 'extern "C"' on main function.
+ * While the C++11 standard specifies main should not have explicit linkage,
+ * some platforms historically required it. This macro provides backward
+ * compatibility while avoiding the warning on modern compilers.
+ */
+
+#if (defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15) || (defined(__clang__) && __clang_major__ >= 20)
+#define BL_MAIN_LINKAGE_DECL
+#else
+#define BL_MAIN_LINKAGE_DECL extern "C"
+#endif
 
 #define BL_VARIADIC_CTOR( className, base_type, visibility ) \
     visibility: \
@@ -59,6 +87,44 @@
 #define BL_ENCAPSULATE_CREATE_INSTANCE( T, className, base_type, this_type ) \
     BL_VARIADIC_CTOR( className, base_type, protected ) \
     BL_VARIADIC_CREATE_INSTANCE( T, this_type, public ) \
+
+/**
+ * @brief Safe memset for non-trivial types (suppresses GCC 15+ warnings)
+ *
+ * GCC 15+ warns about using memset on non-trivial types. This provides
+ * a surgical way to suppress this warning for specific uses where memset
+ * is intentional and safe (e.g., zero-initializing uuid_t)
+ */
+
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
+
+namespace bl
+{
+    namespace detail
+    {
+        /**
+         * @brief Helper function to perform memset with warning suppression
+         */
+
+        inline void safeMemsetImpl( void* ptr, int value, std::size_t size )
+        {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wclass-memaccess"
+            std::memset( ptr, value, size );
+#pragma GCC diagnostic pop
+        }
+    }
+}
+
+#define BL_SAFE_MEMSET( ptr, value, size ) \
+    bl::detail::safeMemsetImpl( ptr, value, size )
+
+#else
+
+#define BL_SAFE_MEMSET( ptr, value, size ) \
+    std::memset( ptr, value, size )
+
+#endif
 
 #endif /* __BL_COMPILER_H_ */
 

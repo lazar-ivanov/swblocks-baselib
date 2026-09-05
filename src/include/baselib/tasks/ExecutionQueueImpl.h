@@ -29,6 +29,9 @@
 #include <baselib/core/Pool.h>
 #include <baselib/core/BaseIncludes.h>
 
+#include <atomic>
+#include <cstdint>
+#include <thread>
 #include <unordered_map>
 #include <type_traits>
 
@@ -209,25 +212,47 @@ namespace bl
             typedef ExecutionQueueImplT< E >                                        this_type;
             typedef std::unordered_map< Task*, TaskInfo* >                          tasks_map_t;
 
-            ThreadPool*                                                             m_localThreadPool;
+            std::atomic< ThreadPool* >                                              m_localThreadPool;
+
+            /*
+             * The two throttle limits. Both are plain configuration values read under m_lock:
+             * m_maxExecuting is pushed by setThrottleLimit(), and m_maxReadyOrExecuting is
+             * sampled once from the observer by setNotifyCallback(). Zero means no limit.
+             */
 
             std::size_t                                                             m_maxExecuting;
+            std::size_t                                                             m_maxReadyOrExecuting;
             unsigned                                                                m_options;
             bool                                                                    m_shutdown;
 
             std::size_t                                                             m_executingCount;
             std::size_t                                                             m_readyCount;
+            std::uint64_t                                                           m_activeWorkGeneration;
+            std::uint64_t                                                           m_lastPublishedGeneration;
+            std::uint64_t                                                           m_lastCandidateGeneration;
             tasks_queue_t                                                           m_pending;
             tasks_queue_t                                                           m_executing;
             tasks_queue_t                                                           m_ready;
             tasks_map_t                                                             m_allTasks;
 
             mutable os::mutex                                                       m_lock;
-            os::mutex                                                               m_lockEvents;
             os::condition_variable                                                  m_cvReady;
 
             om::ObjPtr< om::Proxy >                                                 m_notifyCB;
             unsigned                                                                m_eventsMask;
+            ExecutionQueueNotify::NotifyDelivery                                    m_notifyDelivery;
+
+            /*
+             * LOCK ORDERING: m_lockNotify is strictly OUTER to m_lock - see invokeNotifyCB()
+             *
+             * m_notifyOwner is the id of the thread currently inside a serialized callback, or
+             * the default (no thread) id. It is written only while m_lockNotify is held and is
+             * read before acquiring it, so it must be atomic - see invokeNotifyCB()
+             */
+
+            os::mutex                                                               m_lockNotify;
+            std::atomic< std::thread::id >                                          m_notifyOwner;
+
             om::ObjPtr< om::Proxy >                                                 m_observerThis;
             om::ObjPtr< taskinfo_pool_t >                                           m_taskInfoPool;
 
@@ -240,11 +265,17 @@ namespace bl
                 :
                 m_localThreadPool( nullptr ),
                 m_maxExecuting( maxExecuting ),
+                m_maxReadyOrExecuting( 0U ),
                 m_options( options ),
                 m_shutdown( false ),
                 m_executingCount( 0U ),
                 m_readyCount( 0U ),
+                m_activeWorkGeneration( 0U ),
+                m_lastPublishedGeneration( 0U ),
+                m_lastCandidateGeneration( 0U ),
                 m_eventsMask( 0 ),
+                m_notifyDelivery( ExecutionQueueNotify::DeliveryConcurrent ),
+                m_notifyOwner( std::thread::id() ),
                 m_taskInfoPool( taskinfo_pool_t::template createInstance< taskinfo_pool_t >() )
             {
                 m_observerThis = om::ProxyImpl::createInstance< om::Proxy >();
@@ -277,26 +308,14 @@ namespace bl
                 return m_readyCount + m_executingCount;
             }
 
-            std::size_t getMaxReadyOrExecuting() const NOEXCEPT
-            {
-                if( m_notifyCB )
-                {
-                    const auto notifyCB = m_notifyCB -> tryAcquireRef< ExecutionQueueNotify >();
-
-                    if( notifyCB )
-                    {
-                        return notifyCB -> maxReadyOrExecuting();
-                    }
-                }
-
-                return 0U;
-            }
-
             cpp::void_callback_noexcept_t getEventNotifyCB(
                 SAA_in                  const ExecutionQueueNotify::EventId         eventId,
-                SAA_in_opt              const om::ObjPtrCopyable< Task >&           task
+                SAA_in_opt              const om::ObjPtrCopyable< Task >&           task,
+                SAA_out                 bool&                                       serializeNotify
                 ) const
             {
+                serializeNotify = false;
+
                 cpp::void_callback_noexcept_t onNotify;
 
                 if( m_notifyCB && ( m_eventsMask & eventId ) )
@@ -312,10 +331,96 @@ namespace bl
                             eventId,
                             task
                             );
+
+                        /*
+                         * The delivery policy travels with the registration and is captured here,
+                         * under the same m_lock scope which resolved the observer, so a concurrent
+                         * setNotifyCallback() cannot change the policy for a callback which was
+                         * already bound
+                         *
+                         * Note this assignment is inside the block which already gates the bind
+                         * above, so queues with no connected observer pay nothing for it
+                         */
+
+                        serializeNotify =
+                            ( ExecutionQueueNotify::DeliverySerialized == m_notifyDelivery );
                     }
                 }
 
                 return onNotify;
+            }
+
+            /**
+             * @brief Invokes a notification callback, honoring the registered delivery policy
+             *
+             * LOCK ORDERING: m_lockNotify is acquired ONLY here, and this is called only from
+             * onReady() after every m_lock guard has been released. No code path may acquire
+             * m_lockNotify while holding m_lock. The reverse edge (m_lockNotify -> m_lock)
+             * exists and is intentional: an observer callback may legitimately re-enter the
+             * execution queue.
+             *
+             * Note this is the only place where the queue invokes observer code with a queue
+             * mutex held, and it holds only m_lockNotify; maxReadyOrExecuting() is sampled once
+             * by setNotifyCallback(), outside the lock. Three other kinds of user code do run
+             * under m_lock and are documented as such at their contracts: Task::scheduleTask()
+             * overrides and continuation callbacks (see TaskBase.h) and the scanQueue() callback
+             * (see ExecutionQueue.h); none of them may call back into the owning queue.
+             *
+             * The mutex is deliberately non-recursive. onReady() CAN be re-entered on the same
+             * thread: a serialized callback which synchronously completes another task of this
+             * queue (ExternalCompletionTask::markCompleted() -> notifyReady() -> cbReady() ->
+             * onReadyObserver() -> onReady()) arrives here again while already holding
+             * m_lockNotify. That is a documented contract violation (see
+             * ExecutionQueueNotify::NotifyDelivery) and is detected via m_notifyOwner and
+             * reported with BL_RT_ASSERT rather than silently permitted; a recursive mutex would
+             * let the nested callback observe the observer's state mid-update, which is
+             * precisely what DeliverySerialized exists to prevent.
+             */
+
+            void invokeNotifyCB(
+                SAA_in                  const bool                                  serializeNotify,
+                SAA_in                  const cpp::void_callback_noexcept_t&        onNotify
+                ) NOEXCEPT
+            {
+                if( serializeNotify )
+                {
+                    /*
+                     * If this thread is already inside a serialized callback of this queue then
+                     * the callback has synchronously completed another task of the same queue,
+                     * which is a documented contract violation; locking m_lockNotify again would
+                     * deadlock, so fail loudly instead. Reading m_notifyOwner before the lock is
+                     * safe: a value equal to this thread's id can only have been stored by this
+                     * thread. Completing a task of a *different* queue is fine, since each queue
+                     * has its own notification mutex and owner
+                     */
+
+                    BL_RT_ASSERT(
+                        m_notifyOwner.load() != std::this_thread::get_id(),
+                        "ExecutionQueueNotify::onEvent() under DeliverySerialized re-entered the "
+                        "same execution queue on the same thread: a task of this queue was "
+                        "completed synchronously from inside the callback"
+                        );
+
+                    BL_MUTEX_GUARD( m_lockNotify );
+
+                    m_notifyOwner.store( std::this_thread::get_id() );
+
+                    /*
+                     * The owner id is cleared on every exit path, and while the lock is still
+                     * held: onNotify() is noexcept, but under the limited C++11 support of the
+                     * oldest MSVC that spelling is throw(), which does not stop propagation, and a
+                     * stale owner id would abort the *next* serialized delivery on this thread
+                     * rather than the one which violated the contract
+                     */
+
+                    BL_SCOPE_EXIT( { m_notifyOwner.store( std::thread::id() ); } );
+
+                    onNotify();
+
+                    return;
+                }
+
+                onNotify();
             }
 
             static void onReadyObserver(
@@ -366,8 +471,10 @@ namespace bl
             {
                 cpp::void_callback_noexcept_t onNotify;
                 cpp::void_callback_noexcept_t onNotifyAllCompleted;
-
-                BL_MUTEX_GUARD( m_lockEvents );
+                bool serializeNotify = false;
+                bool serializeNotifyAllCompleted = false;
+                bool allTasksCompletedCandidate = false;
+                std::uint64_t allTasksCompletedCandidateGeneration = 0U;
 
                 {
                     BL_MUTEX_GUARD( m_lock );
@@ -401,6 +508,7 @@ namespace bl
                             if( om::areEqual( continuationTask, task ) )
                             {
                                 moveExecutingTaskToPendingQueue( taskInfo );
+                                ++m_activeWorkGeneration;
                                 padExecutingQueueNothrow();
 
                                 continuationIsSelf = true;
@@ -439,58 +547,133 @@ namespace bl
                         {
                             moveTaskToReadyQueue( taskInfo );
 
-                            onNotify = getEventNotifyCB( ExecutionQueueNotify::TaskReady, task );
+                            onNotify = getEventNotifyCB(
+                                ExecutionQueueNotify::TaskReady,
+                                task,
+                                serializeNotify
+                                );
                         }
                         else
                         {
                             unlinkAndDestroy( taskInfo );
 
-                            onNotify = getEventNotifyCB( ExecutionQueueNotify::TaskDiscarded, task );
+                            onNotify = getEventNotifyCB(
+                                ExecutionQueueNotify::TaskDiscarded,
+                                task,
+                                serializeNotify
+                                );
                         }
 
                         padExecutingQueueNothrow();
 
                         m_cvReady.notify_all();
                     }
-                }
-
-                if( onNotify )
-                {
-                    onNotify();
-                }
-
-                {
-                    BL_MUTEX_GUARD( m_lock );
 
                     if( m_pending.empty() && m_executing.empty() )
                     {
                         BL_ASSERT( 0U == m_executingCount );
 
+                        allTasksCompletedCandidate = true;
+                        allTasksCompletedCandidateGeneration = m_activeWorkGeneration;
+
+                        /*
+                         * Remembered so that validation below can tell a candidate which a
+                         * newer completion has superseded from one which is still the latest
+                         */
+
+                        m_lastCandidateGeneration = m_activeWorkGeneration;
+                    }
+                }
+                /*
+                 * IMPORTANT: Callbacks are invoked outside of m_lock to prevent deadlock
+                 * if the callbacks attempt to call back into the ExecutionQueue (e.g., push_back,
+                 * flush, wait, etc.). Callbacks from the same queue may execute concurrently
+                 * with each other and with queue operations, so observers must be thread-safe.
+                 *
+                 * An observer registered with ExecutionQueueNotify::DeliverySerialized instead has
+                 * its callbacks delivered under m_lockNotify; see invokeNotifyCB(). Note the state
+                 * transition above and its m_cvReady.notify_all() have already completed by this
+                 * point, so a serialized callback which blocks cannot stall other completions.
+                 */
+
+                if( onNotify )
+                {
+                    invokeNotifyCB( serializeNotify, onNotify );
+                }
+
+                if( allTasksCompletedCandidate )
+                {
+                    BL_MUTEX_GUARD( m_lock );
+
+                    /*
+                     * The candidate is published when the queue is still (or again) empty, no
+                     * newer completion candidate has formed since (m_lastCandidateGeneration: a
+                     * newer completion carries its own candidate, which supersedes this one - see
+                     * EVENT COLLAPSING on ExecutionQueueNotify::onEvent()) and nothing newer has
+                     * been published. It is deliberately not required that m_activeWorkGeneration
+                     * still equal the candidate: work admitted after the candidate formed and then
+                     * removed without completing (a pending task cancelled or flushed before it
+                     * was scheduled) produces no completion and no candidate of its own, so this
+                     * candidate is the only event which can report that the queue drained, and
+                     * dropping it would lose the final AllTasksCompleted
+                     */
+
+                    if(
+                        m_pending.empty() &&
+                        m_executing.empty() &&
+                        m_lastCandidateGeneration == allTasksCompletedCandidateGeneration &&
+                        m_lastPublishedGeneration < allTasksCompletedCandidateGeneration
+                        )
+                    {
+                        m_lastPublishedGeneration = allTasksCompletedCandidateGeneration;
+
                         onNotifyAllCompleted = getEventNotifyCB(
                             ExecutionQueueNotify::AllTasksCompleted,
-                            om::ObjPtrCopyable< Task >::acquireRef( nullptr )
+                            om::ObjPtrCopyable< Task >::acquireRef( nullptr ),
+                            serializeNotifyAllCompleted
                             );
                     }
                 }
 
                 if( onNotifyAllCompleted )
                 {
-                    onNotifyAllCompleted();
+                    invokeNotifyCB( serializeNotifyAllCompleted, onNotifyAllCompleted );
                 }
             }
 
             void padExecutingQueueNothrow() NOEXCEPT
             {
+                /*
+                 * LOCK ORDERING & DEADLOCK PREVENTION:
+                 *
+                 * This function is called while holding m_lock and calls task->scheduleNothrow()
+                 * which acquires task->m_lock, creating the lock order: queue->m_lock → task->m_lock.
+                 * This is PERMITTED per the documented lock ordering - see the "order in which the
+                 * locks should always be acquired" passage in the header comment of TaskBase.h.
+                 *
+                 * CRITICAL: To prevent deadlock, task implementations MUST NEVER call back into
+                 * this execution queue (e.g., push_back, wait, flush) while holding task->m_lock.
+                 * This requirement is documented in the same header comment in TaskBase.h, in the
+                 * passage beginning "Task code which holds the task lock should *never* make calls
+                 * back into the execution queue which owns the task".
+                 *
+                 * Violating this creates a circular wait deadlock:
+                 *   Thread A: task->m_lock → queue->m_lock [BLOCKED waiting for queue lock]
+                 *   Thread B: queue->m_lock → task->m_lock [BLOCKED waiting for task lock]
+                 *
+                 * Task developers: Always release your task lock before calling queue methods.
+                 * Use the notifyReady() helper which handles lock release correctly.
+                 */
+
                 BL_NOEXCEPT_BEGIN()
 
                 while( ! m_pending.empty() )
                 {
-                    const auto maxReadyOrExecuting = getMaxReadyOrExecuting();
                     const auto readyOrExecuting = getReadyOrExecuting();
 
                     if(
                         ( m_maxExecuting && m_executingCount >= m_maxExecuting ) ||
-                        ( maxReadyOrExecuting && readyOrExecuting >= maxReadyOrExecuting )
+                        ( m_maxReadyOrExecuting && readyOrExecuting >= m_maxReadyOrExecuting )
                         )
                     {
                         /*
@@ -558,6 +741,7 @@ namespace bl
                         inserter_t::insert( m_pending, *taskInfo );
 
                         --m_readyCount;
+                        ++m_activeWorkGeneration;
                     }
                 }
                 else
@@ -584,6 +768,10 @@ namespace bl
                     if( dontSchedule )
                     {
                         ++m_readyCount;
+                    }
+                    else
+                    {
+                        ++m_activeWorkGeneration;
                     }
                 }
 
@@ -1006,27 +1194,31 @@ namespace bl
 
             virtual bool isEmpty() const NOEXCEPT OVERRIDE
             {
-                BL_MUTEX_GUARD( const_cast< this_type* >( this ) -> m_lock );
+                BL_MUTEX_GUARD( m_lock );
                 return isEmptyInternal();
             }
 
             virtual bool hasReady() const NOEXCEPT OVERRIDE
             {
+                BL_MUTEX_GUARD( m_lock );
                 return ( ! m_ready.empty() );
             }
 
             virtual bool hasExecuting() const NOEXCEPT OVERRIDE
             {
+                BL_MUTEX_GUARD( m_lock );
                 return ( ! m_executing.empty() );
             }
 
             virtual bool hasPending() const NOEXCEPT OVERRIDE
             {
+                BL_MUTEX_GUARD( m_lock );
                 return ( ! m_pending.empty() );
             }
 
             virtual std::size_t size() const NOEXCEPT OVERRIDE
             {
+                BL_MUTEX_GUARD( m_lock );
                 return m_allTasks.size();
             }
 
@@ -1035,32 +1227,75 @@ namespace bl
                 BL_MUTEX_GUARD( m_lock );
 
                 m_maxExecuting = maxExecuting;
+
+                /*
+                 * A raised limit admits the pending tasks now rather than at the next unrelated
+                 * push, pop or completion; a lowered one needs nothing here, because the
+                 * padding stops at the limit and it is enforced on the completion path
+                 */
+
+                padExecutingQueueNothrow();
             }
 
             virtual void setOptions( SAA_in const unsigned options = OptionKeepFailed ) OVERRIDE
             {
+                BL_MUTEX_GUARD( m_lock );
+
                 m_options = options;
             }
 
             virtual void setNotifyCallback(
                 SAA_in                  om::ObjPtr< om::Proxy >&&                   notifyCB,
+                SAA_in                  const ExecutionQueueNotify::NotifyDelivery  delivery,
                 SAA_in                  const unsigned                              eventsMask = ExecutionQueueNotify::AllEvents
                 ) OVERRIDE
             {
+                /*
+                 * The observer's throttle limit is sampled here, exactly once per registration
+                 * and before m_lock is taken, rather than being re-queried from the scheduling
+                 * path. That keeps the observer virtual off the scheduling critical section
+                 * entirely - no observer code runs under m_lock - and removes a proxy lock
+                 * acquisition plus a virtual call per scheduled task. (Task::scheduleTask()
+                 * overrides do run under m_lock, from here as from every push_back(); that is
+                 * part of the task contract documented in TaskBase.h.)
+                 */
+
+                std::size_t maxReadyOrExecuting = 0U;
+
+                if( notifyCB )
+                {
+                    const auto observer = notifyCB -> tryAcquireRef< ExecutionQueueNotify >();
+
+                    if( observer )
+                    {
+                        maxReadyOrExecuting = observer -> maxReadyOrExecuting();
+                    }
+                }
+
                 BL_MUTEX_GUARD( m_lock );
 
                 m_notifyCB = std::move( notifyCB );
+                m_notifyDelivery = delivery;
                 m_eventsMask = eventsMask;
+                m_maxReadyOrExecuting = maxReadyOrExecuting;
+
+                /*
+                 * The sampled limit takes effect now: "register again to install a different
+                 * limit" means the pending tasks are admitted by this call, not by the next
+                 * unrelated push, pop or completion (see setThrottleLimit())
+                 */
+
+                padExecutingQueueNothrow();
             }
 
             virtual ThreadPool* getLocalThreadPool() const NOEXCEPT OVERRIDE
             {
-                return m_localThreadPool;
+                return m_localThreadPool.load();
             }
 
             virtual void setLocalThreadPool( SAA_inout ThreadPool* threadPool ) NOEXCEPT OVERRIDE
             {
-                m_localThreadPool = threadPool;
+                m_localThreadPool.store( threadPool );
             }
 
             virtual om::ObjPtr< Task > push_back(

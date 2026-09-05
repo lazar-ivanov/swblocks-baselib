@@ -38,7 +38,17 @@
  * and convoluted code to deal with the different versions of the code)
  */
 
-#if defined( _WIN32 ) && BL_DEVENV_VERSION >= 4 && OPENSSL_VERSION_NUMBER >= 0x1010104fL
+/*
+ * Gated on the OpenSSL version only: the condition is a property of the OpenSSL headers, and
+ * BL_DEVENV_VERSION is defined only by the project makefiles (an external consumer would
+ * otherwise silently lose the shim)
+ *
+ * The upper bound exists because the overload is needed only by the private OpenSSL 1.1.x
+ * header (internal/refcount.h, reached through crypto/rsa/rsa_local.h below), which is not
+ * included on OpenSSL 3.x at all, so on 3.x the overload would merely be an unreferenced
+ * definition of a reserved intrinsic name
+ */
+#if defined( _WIN32 ) && OPENSSL_VERSION_NUMBER >= 0x1010104fL && OPENSSL_VERSION_NUMBER < 0x30000000L
 namespace
 {
     /*
@@ -60,10 +70,19 @@ namespace
 }
 #endif
 
-#if OPENSSL_VERSION_NUMBER >= 0x101010bfL
-#include <crypto/rsa/rsa_local.h>
+/*
+ * OpenSSL 3.x+ has made RSA structure completely opaque and internal headers
+ * are not available. The code should use only public accessor functions like
+ * RSA_get0_key(), RSA_get0_factors(), etc.
+ *
+ * For OpenSSL 1.1.x, we include the internal headers to access RSA internals.
+ */
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+    /* OpenSSL 3.x+: RSA is fully opaque, no internal headers available */
+#elif OPENSSL_VERSION_NUMBER >= 0x101010bfL
+    #include <crypto/rsa/rsa_local.h>
 #elif OPENSSL_VERSION_NUMBER >= 0x1010004fL
-#include <crypto/rsa/rsa_locl.h>
+    #include <crypto/rsa/rsa_locl.h>
 #endif
 
 namespace bl
@@ -133,6 +152,16 @@ namespace bl
                 }
             };
 
+            class EvpPkeyCtxDeleter
+            {
+            public:
+
+                void operator ()( SAA_in ::EVP_PKEY_CTX* ctx ) const NOEXCEPT
+                {
+                    ( void ) ::EVP_PKEY_CTX_free( ctx );
+                }
+            };
+
         } // detail
 
         typedef cpp::SafeUniquePtr< ::BIGNUM, detail::BigNumDeleter >                   bignum_ptr_t;
@@ -140,6 +169,7 @@ namespace bl
         typedef cpp::SafeUniquePtr< ::RSA, detail::RsaDeleter >                         rsakey_ptr_t;
         typedef cpp::SafeUniquePtr< ::X509, detail::X509CertDeleter >                   x509cert_ptr_t;
         typedef cpp::SafeUniquePtr< ::EVP_PKEY, detail::EvpPkeyDeleter >                evppkey_ptr_t;
+        typedef cpp::SafeUniquePtr< ::EVP_PKEY_CTX, detail::EvpPkeyCtxDeleter >         evppkeyctx_ptr_t;
         typedef cpp::SafeUniquePtr< char[], detail::OpenSslFree >                       openssl_string_ptr_t;
 
     } // crypto

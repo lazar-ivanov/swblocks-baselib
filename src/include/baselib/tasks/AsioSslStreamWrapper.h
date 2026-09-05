@@ -18,6 +18,7 @@
 #define __BL_BASELIB_TASKS_ASIOSSLSTREAMWRAPPER_H_
 
 #include <baselib/crypto/CryptoBase.h>
+#include <baselib/crypto/TlsPeerVerification.h>
 
 #include <baselib/core/AsioSSL.h>
 #include <baselib/core/BaseIncludes.h>
@@ -119,7 +120,8 @@ namespace bl
             {
                 bool ok = false;
 
-                BL_WARN_NOEXCEPT_BEGIN()
+                try
+                {
 
                 const int depth = ::X509_STORE_CTX_get_error_depth( ctx.native_handle() );
 
@@ -146,22 +148,43 @@ namespace bl
                      *
                      * Note that this will only match the certificate at the end of the
                      * chain (i.e. when depth = 0)
+                     *
+                     * Note also that the bound 'rfc2818' object is deliberately NOT used for the
+                     * match. On Boost 1.89+ that name is a typedef for host_name_verification,
+                     * which delegates to ::X509_check_host() and therefore cannot match an IP
+                     * address literal - see baselib/crypto/TlsPeerVerification.h. It is retained in
+                     * the signature so this remains a source compatible change for anyone who has
+                     * overridden the callback, and so the object's lifetime keeps working as before
                      */
 
-                    if( rfc2818( preVerified, ctx ) )
+                    BL_UNUSED( rfc2818 );
+
+                    if( crypto::TlsPeerVerification::verifyPeerName( preVerified, m_hostName, ctx ) )
                     {
                         ok = true;
                     }
                     else
                     {
                         m_verifyFailed = true;
+
+#ifdef X509_V_ERR_HOSTNAME_MISMATCH
+                        /*
+                         * The name check is this library's, not OpenSSL's, so the store carries
+                         * no error for it; the code OpenSSL itself uses for the same outcome is
+                         * recorded so that the error info fields are meaningful for this case too
+                         */
+
+                        m_lastVerifyError = X509_V_ERR_HOSTNAME_MISMATCH;
+                        m_lastVerifyErrorString = ::X509_verify_cert_error_string( m_lastVerifyError );
+#endif
+
                         m_lastVerifyErrorMessage =
-                            "RFC2818 verification failed due to the subject name not matching the host name";
+                            "Peer verification failed due to the subject name not matching the host name";
 
                         BL_LOG(
                             Logging::trace(),
                             BL_MSG()
-                                << "RFC2818 verification of subject name '"
+                                << "Peer verification of subject name '"
                                 << m_lastVerifySubjectName
                                 << "' has failed for host name '"
                                 << m_hostName
@@ -225,15 +248,45 @@ namespace bl
                         );
                 }
 
-                BL_WARN_NOEXCEPT_END( "AsioSslStreamWrapperT<...>::verifyCertificate" )
+                }
+                catch( std::exception& e )
+                {
+                    /*
+                     * The verify context accessors above can only fail on a corrupted context,
+                     * but that is still a verification failure and it is reported as one: the
+                     * fields below are what enhanceException() attaches to the handshake error,
+                     * so without them the caller would see a bare handshake failure with no
+                     * indication that verification was involved. The code is the one OpenSSL
+                     * documents for failures raised by the application's own callback
+                     */
+
+                    ok = false;
+                    m_verifyFailed = true;
+                    m_lastVerifyError = X509_V_ERR_APPLICATION_VERIFICATION;
+                    m_lastVerifyErrorString = ::X509_verify_cert_error_string( m_lastVerifyError );
+                    m_lastVerifyErrorMessage =
+                        resolveMessage(
+                            BL_MSG()
+                                << "Exception in the certificate verify callback: "
+                                << e.what()
+                            );
+
+                    BL_LOG_MULTILINE(
+                        Logging::warning(),
+                        BL_MSG()
+                            << "AsioSslStreamWrapperT<...>::verifyCertificate"
+                            << ": NOEXCEPT block threw an exception, details:\n"
+                            << eh::diagnostic_information( e )
+                        );
+                }
 
                 /*
-                 * We check allowUntrustedCertificates() and return true in this case
-                 * as we don't want to block on expired certificate or other such
-                 * certificate issues
+                 * By default a certificate which could not be verified fails the handshake
                  *
-                 * The caller code will check for untrusted certificate issues and they
-                 * will report a loud warning to the user, prompt the user, etc
+                 * crypto::CryptoBase::allowUntrustedCertificates( true ) restores the previous
+                 * behavior, in which the failure is only recorded in the untrusted endpoints map
+                 * and logged, so that an application which wants to treat it as a soft error and
+                 * prompt the user can do so; see the comment on that method
                  */
 
                 return ( ok || allowUntrustedCertificates() );
@@ -415,7 +468,24 @@ namespace bl
                  * stream and do the SSL handshake
                  */
 
-                getStream().set_verify_mode( asio::ssl::verify_peer );
+                /*
+                 * Peer verification is requested for the client role only
+                 *
+                 * In the server role asio::ssl::verify_peer means 'request a client certificate'
+                 * and the verify callback then decides whether a certificate which was supplied
+                 * is acceptable; this library has never authenticated clients by certificate -
+                 * the callback used to return true unconditionally - so requesting one and
+                 * accepting whatever arrives is equivalent to not requesting one at all, and
+                 * once the callback fails closed the two stop being equivalent: a client which
+                 * volunteers a certificate the server cannot chain would be rejected
+                 *
+                 * Mutual TLS is a separate feature and would need an explicit policy, a trust
+                 * anchor set for client certificates and a way to surface the client identity
+                 */
+
+                getStream().set_verify_mode(
+                    m_isServer ? asio::ssl::verify_none : asio::ssl::verify_peer
+                    );
 
                 /*
                  * Clear the last verify error info state in case the object has been reused

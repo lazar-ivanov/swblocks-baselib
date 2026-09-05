@@ -31,6 +31,7 @@
 #include <baselib/core/BaseIncludes.h>
 
 #include <cmath>
+#include <cstring>
 #include <queue>
 
 namespace bl

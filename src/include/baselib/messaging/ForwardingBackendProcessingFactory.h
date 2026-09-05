@@ -126,7 +126,7 @@ namespace bl
                             }
 
                             auto inboundConnection =
-                                connection_establisher_t::template createInstance(
+                                connection_establisher_t::template createInstance<>(
                                     cpp::copy( host ),
                                     inboundPort,
                                     false /* logExceptions */
@@ -135,7 +135,7 @@ namespace bl
                             const os::port_t outboundPort = inboundPort + 1U;
 
                             auto outboundConnection =
-                                connection_establisher_t::template createInstance(
+                                connection_establisher_t::template createInstance<>(
                                     cpp::copy( host ),
                                     outboundPort,
                                     false /* logExceptions */

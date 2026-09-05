@@ -53,7 +53,7 @@ namespace utest
             SAA_in              const std::string&                              expectedSecureIdentity1,
             SAA_in_opt          bl::om::ObjPtr< ServerBackendProcessing >&&     backend = nullptr,
             SAA_in_opt          bl::om::ObjPtr< SERVICE >&&                     authorizationService =
-                SERVICE::template createInstance()
+                SERVICE::template createInstance<>()
             )
         {
             using namespace bl;
@@ -117,7 +117,7 @@ namespace utest
             SAA_in              const std::string&                              expectedSecureIdentity2,
             SAA_in_opt          bl::om::ObjPtr< ServerBackendProcessing >&&     backend = nullptr,
             SAA_in_opt          bl::om::ObjPtr< SERVICE >&&                     authorizationService =
-                SERVICE::template createInstance()
+                SERVICE::template createInstance<>()
             )
         {
             using namespace bl;

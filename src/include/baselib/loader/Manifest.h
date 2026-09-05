@@ -84,23 +84,21 @@ namespace bl
             {
             }
 
-            ManifestT& operator =( SAA_in ManifestT&& other )
-            {
-                m_serverId = other.m_serverId;
-                m_versionMajor = other.m_versionMajor;
-                m_versionMinor = other.m_versionMinor;
-                m_versionPatch = other.m_versionPatch;
-                m_classIds = std::move( other.m_classIds );
-                m_pluginClassId = other.m_pluginClassId;
-                m_pluginName = std::move( other.m_pluginName );
-                m_pluginDescription = std::move( other.m_pluginDescription );
-                m_isClientPlugin = other.m_isClientPlugin;
-                m_isServerPlugin = other.m_isServerPlugin;
-                m_platform = std::move( other.m_platform );
-                m_cppCompatibilityId = other.m_cppCompatibilityId;
-
-                return *this;
-            }
+            /*
+             * Move assignment operator is deleted because this class has const members.
+             * GCC 15+ enforces that you cannot assign to const members in template bodies.
+             *
+             * This is a source compatibility break for code outside this repository which
+             * assigned to an instance of this type; the break is accepted rather than fixed,
+             * for the same reasons recorded on PlatformIdentityT in Platform.h.
+             *
+             * Note that this type is only partly immutable - m_classIds, m_pluginName,
+             * m_pluginDescription and m_platform are not const - so the const members are the
+             * reason the operation cannot be generated rather than evidence that assignment
+             * would be meaningless here. See
+             * notes/plans/issues/residual-cxx-findings-deferral.md, item 3
+             */
+            ManifestT& operator =( SAA_in ManifestT&& other ) = delete;
 
             ManifestT(
                 SAA_in      const om::serverid_t&                                   serverId,
@@ -317,7 +315,7 @@ namespace bl
 
             static om::ObjPtr< Manifest > read( SAA_in const fs::path& filePath )
             {
-                json::Value value;
+                json::value value;
 
                 {
                     fs::SafeInputFileStreamWrapper file( filePath );
@@ -325,14 +323,34 @@ namespace bl
                     value = json::readFromStream( is );
                 }
 
-                auto json = value.get_obj();
+                auto json = cpp::copy( value.as_object() );
 
-                const auto manifestVersion = getRequiredProperty( json, g_manifestVersion ).get_uint64();
-                const auto serveridStr = getRequiredProperty( json, g_serverId ).get_str();
-                const auto versionMajor = ( std::size_t ) getRequiredProperty( json, g_versionMajor ).get_uint64();
-                const auto versionMinor = ( std::size_t ) getRequiredProperty( json, g_versionMinor ).get_uint64();
-                const auto versionPatch = ( std::size_t ) getRequiredProperty( json, g_versionPatch ).get_uint64();
-                const auto clsidsArr = getRequiredProperty( json, g_classIds ).get_array();
+                const auto manifestVersion = json::value_to< std::uint64_t >( getRequiredProperty( json, g_manifestVersion ) );
+
+                /*
+                 * Only version 1 has ever been written; a manifest with a newer version would be
+                 * read as if it were version 1 and its unknown properties ignored, so it is
+                 * refused here before any other property is interpreted
+                 */
+
+                BL_CHK_T_USER_FRIENDLY(
+                    false,
+                    manifestVersion == g_manifestVersionId,
+                    UnexpectedException(),
+                    BL_MSG()
+                        << "Unsupported manifest version "
+                        << manifestVersion
+                        << " (expected "
+                        << g_manifestVersionId
+                        << ") in manifest file "
+                        << filePath
+                    );
+
+                const auto serveridStr = json::value_to< std::string >( getRequiredProperty( json, g_serverId ) );
+                const auto versionMajor = ( std::size_t ) json::value_to< std::uint64_t >( getRequiredProperty( json, g_versionMajor ) );
+                const auto versionMinor = ( std::size_t ) json::value_to< std::uint64_t >( getRequiredProperty( json, g_versionMinor ) );
+                const auto versionPatch = ( std::size_t ) json::value_to< std::uint64_t >( getRequiredProperty( json, g_versionPatch ) );
+                const auto clsidsArr = getRequiredProperty( json, g_classIds ).as_array();
 
                 const auto serverid = uuids::string2uuid( serveridStr );
 
@@ -340,12 +358,12 @@ namespace bl
 
                 for( const auto& clsidStr : clsidsArr )
                 {
-                    clsids.insert( uuids::string2uuid( clsidStr.get_str() ) );
+                    clsids.insert( uuids::string2uuid( json::value_to< std::string >( clsidStr ) ) );
                 }
 
-                auto os = getRequiredProperty( json, g_os ).get_str();
-                auto arch = getRequiredProperty( json, g_architecture ).get_str();
-                auto toolchain = getRequiredProperty( json, g_toolchain ).get_str();
+                auto os = json::value_to< std::string >( getRequiredProperty( json, g_os ) );
+                auto arch = json::value_to< std::string >( getRequiredProperty( json, g_architecture ) );
+                auto toolchain = json::value_to< std::string >( getRequiredProperty( json, g_toolchain ) );
 
                 auto platform = Platform::get(
                     std::move( os ),
@@ -353,19 +371,17 @@ namespace bl
                     std::move( toolchain )
                     );
 
-                const auto cppCompatIdStr = getRequiredProperty( json, g_cppCompatibilityId ).get_str();
+                const auto cppCompatIdStr = json::value_to< std::string >( getRequiredProperty( json, g_cppCompatibilityId ) );
                 auto cppCompatId = uuids::string2uuid( cppCompatIdStr );
-
-                BL_UNUSED( manifestVersion );
 
                 om::ObjPtr< Manifest > manifest;
 
-                const auto pluginClassIdVal = json[ g_pluginClassId ];
-                const auto pluginClassId = uuids::string2uuid( pluginClassIdVal.get_str() );
-                auto pluginName = getRequiredProperty( json, g_pluginName ).get_str();
-                auto pluginDesc = getRequiredProperty( json, g_pluginDescription ).get_str();
-                const auto isClient = getRequiredProperty( json, g_isClientPlugin ).get_bool();
-                const auto isServer = getRequiredProperty( json, g_isServerPlugin ).get_bool();
+                const auto pluginClassIdVal = getRequiredProperty( json, g_pluginClassId );
+                const auto pluginClassId = uuids::string2uuid( json::value_to< std::string >( pluginClassIdVal ) );
+                auto pluginName = json::value_to< std::string >( getRequiredProperty( json, g_pluginName ) );
+                auto pluginDesc = json::value_to< std::string >( getRequiredProperty( json, g_pluginDescription ) );
+                const auto isClient = getRequiredProperty( json, g_isClientPlugin ).as_bool();
+                const auto isServer = getRequiredProperty( json, g_isServerPlugin ).as_bool();
 
                 manifest = Manifest::createInstance(
                     serverid,
@@ -411,13 +427,13 @@ namespace bl
                 SAA_in      fs::path&&                                              output
                 )
             {
-                json::Object json;
+                json::object json;
 
-                json::Array clsids;
+                json::array clsids;
 
                 for( const auto& clsid : manifest -> classIds() )
                 {
-                    clsids.push_back( uuids::uuid2string( clsid ) );
+                    clsids.push_back( json::value( uuids::uuid2string( clsid ) ) );
                 }
 
                 /*
@@ -446,22 +462,22 @@ namespace bl
                 {
                     fs::SafeOutputFileStreamWrapper file( output );
                     auto& os = file.stream();
-                    json::saveToStream( json::Value( json ), os, json::OutputOptions::pretty_print );
+                    json::saveToStream( json, os, true /* prettyPrint */ );
                 }
             }
 
         private:
 
-            static const json::Value& getRequiredProperty(
-                SAA_in      json::Object&               doc,
+            static json::value getRequiredProperty(
+                SAA_in      const json::object&         doc,
                 SAA_in      const std::string&          property
                 )
             {
-                const auto& val = doc[ property ];
+                auto pos = doc.find( property );
 
                 BL_CHK_T_USER_FRIENDLY(
                     true,
-                    val.is_null(),
+                    pos == doc.end() || BL_JSON_ITER_VALUE( pos ).is_null(),
                     UnexpectedException(),
                     BL_MSG()
                         << "Manifest does not contain required property '"
@@ -469,7 +485,7 @@ namespace bl
                         << "'"
                     );
 
-                return val;
+                return BL_JSON_ITER_VALUE( pos );
             }
 
             static void registerPlugin(
@@ -607,6 +623,7 @@ namespace bl
         >
         const std::string
         ManifestFactoryT< E >::g_isServerPlugin = "isServerPlugin";
+
         template
         <
             typename E

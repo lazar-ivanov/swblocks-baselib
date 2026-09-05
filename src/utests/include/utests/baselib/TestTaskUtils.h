@@ -666,7 +666,7 @@ namespace utest
             using namespace bl;
             using namespace tasks;
 
-            const auto acceptor = Acceptor::template createInstance(
+            const auto acceptor = Acceptor::template createInstance<>(
                 controlToken,
                 dataBlocksPool,
                 std::forward< std::string >( host ),

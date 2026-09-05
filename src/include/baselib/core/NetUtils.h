@@ -168,10 +168,10 @@ namespace bl
                     using namespace asio::ip;
 
                     asio::io_service ioService;
-                    tcp::resolver resolver( ioService );
+                    asio::ip::tcp_resolver resolver( ioService );
                     eh::error_code ec;
 
-                    tcp::resolver::query query(
+                    asio::ip::tcp_resolver::query query(
                         hostName                            /* host_name */,
                         str::empty()                        /* service_name */,
                         resolver_query_base::canonical_name /* flags */
@@ -195,6 +195,36 @@ namespace bl
                      * Even if the getaddrinfo function succeeds, the host name may be empty.
                      */
 
+/*
+ * The gate keys on BOOST_VERSION, not BL_DEVENV_VERSION: the thing which changed is Boost's
+ * resolver API, BOOSTDIR is overridable, and BL_DEVENV_VERSION is only ever defined by the
+ * project makefiles - an external consumer without it would otherwise take the legacy branch
+ * against a modern Boost, where results_type derives privately from the iterator and does not
+ * compile. BOOST_VERSION arrives via OS.h / OSBoostImports.h above; the guard makes a change of
+ * that include graph a build error rather than a silently wrong branch.
+ */
+#if !defined( BOOST_VERSION ) || 0 == BOOST_VERSION
+#error BOOST_VERSION must be defined before the resolver results gate in NetUtils.h
+#endif
+
+#if BOOST_VERSION >= 106600
+                    /*
+                     * Boost 1.66+ (devenv4+): resolver::resolve() returns results_type with begin()/end()
+                     */
+                    BL_CHK_USER_FRIENDLY(
+                        true,
+                        endpoints == end || endpoints.begin() -> host_name().empty(),
+                        BL_MSG()
+                            << "Host '"
+                            << hostName
+                            << "' has no canonical name"
+                        );
+
+                    return endpoints.begin() -> host_name();
+#else
+                    /*
+                     * Boost ≤1.63 (devenv2-3): resolver::resolve() returns iterator directly
+                     */
                     BL_CHK_USER_FRIENDLY(
                         true,
                         endpoints == end || endpoints -> host_name().empty(),
@@ -205,6 +235,7 @@ namespace bl
                         );
 
                     return endpoints -> host_name();
+#endif
                 }
             };
 

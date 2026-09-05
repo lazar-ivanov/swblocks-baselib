@@ -888,6 +888,31 @@ namespace bl
                     return fs::detail::WinLfnUtils::chk2RemovePrefix( std::move( pathAbsolute ) ).string();
                 }
 
+                /**
+                 * @brief Recursively copies a directory tree
+                 *
+                 * Note the handling of entries which are neither a regular file nor a
+                 * directory: they are skipped SILENTLY - there is no report, no counter and no
+                 * error - so a caller cannot distinguish a complete copy from a partial one
+                 *
+                 * Note also that fs::is_regular_file and fs::is_directory below FOLLOW symbolic
+                 * links, so what is actually skipped is narrower than 'symbolic links':
+                 *
+                 * -- a link to a regular file IS copied, dereferenced, as a regular file, so
+                 *    the copy holds the content and not the link
+                 *
+                 * -- a link to a directory creates an EMPTY directory in the target, because
+                 *    fs::recursive_directory_iterator does not descend into linked directories
+                 *
+                 * -- a dangling link, a FIFO, a socket and a device node are dropped
+                 *
+                 * That behaviour is a safe default - it never follows a link out of the source
+                 * tree - but it is not a policy the caller can choose or observe. Giving the
+                 * caller a policy and a skipped-entry report is a deliberate deferral rather
+                 * than an oversight; see notes/plans/issues/residual-cxx-findings-deferral.md,
+                 * item 2, before relying on this for a backup or a deployment
+                 */
+
                 static void copyDirectoryWithContents(
                     SAA_in      const fs::path&             sourceDir,
                     SAA_in      const fs::path&             targetDir
@@ -916,10 +941,13 @@ namespace bl
                             str::empty()
                             );
 
-                        fs::copy(
-                            sourcePath,
-                            targetDir / fs::path( sourcePathStr ).relative_path()
-                            );
+                        if( fs::is_regular_file( sourcePath ) || fs::is_directory( sourcePath ) )
+                        {
+                            fs::copy(
+                                sourcePath,
+                                targetDir / fs::path( sourcePathStr ).relative_path()
+                                );
+                        }
                     }
 
                     g.dismiss();

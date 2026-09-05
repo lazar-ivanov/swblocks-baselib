@@ -18,384 +18,206 @@
 #define __BL_JSONUTILS_H_
 
 /*
- * Below define is used by the Boost Spirit headers to make the parser thread safe
+ * JSON library abstraction layer
+ *
+ * By default uses Boost.JSON library with direct typedefs (zero overhead).
+ * Define BL_USE_JSON_SPIRIT to use json-spirit instead via compatibility wrappers.
+ *
+ *
+ * LINK REQUIREMENT
+ *
+ * The default backend is NOT header-only. Boost.JSON is a compiled library and including this
+ * header on the default path creates a link dependency on boost_json; the project makefiles add it
+ * in projects/make/3rd/boost/common.mk. A consumer who includes this header from their own build
+ * system and does not link boost_json gets unresolved symbols with nothing pointing at the cause,
+ * which is why it is stated here.
+ *
+ * Building with BL_USE_JSON_SPIRIT selects json-spirit, which is header-only and adds no link
+ * dependency. Note that Boost dropped BOOST_JSON_STANDALONE in 1.81, so there is no header-only
+ * mode of the default backend to select instead.
+ *
+ *
+ * THE PORTABLE SUBSET
+ *
+ * The two backends do not present the same API, and only their intersection is safe to use in code
+ * which must build both ways - which is all shared production code in this library. Repository-wide
+ * verification confirms the current code stays inside it; nothing enforces that mechanically, so it
+ * is written down here.
+ *
+ * Available on Boost.JSON ONLY - do not use in shared code:
+ *
+ * -- value::kind(), is_number(), is_primitive(), is_structured()
+ * -- object::if_contains(), object::reserve()
+ * -- any directly qualified boost::json:: name
+ *
+ * Available on json-spirit ONLY - do not use in shared code:
+ *
+ * -- json::ValueType and the member-style getters get_str(), get_obj(), get_array(), get_int(),
+ *    get_value< T >()
+ *
+ * Same spelling, different meaning - do not rely on either:
+ *
+ * -- as_string() returns const std::string& on json-spirit and boost::json::string& on Boost.JSON,
+ *    so there is no common usable type. Portable code must write
+ *    std::string( s.c_str(), s.size() ), as the tests do, or use json::value_to< std::string >()
+ * -- is_int64() is true for unsigned values on json-spirit, which stores both in int_type, but is
+ *    strictly kind::int64 on Boost.JSON
+ *
+ * Use the BL_JSON_ITER_VALUE, BL_JSON_PAIR_KEY and BL_JSON_PAIR_VALUE macros for iteration, since
+ * the iterator and pair shapes differ between the backends.
+ *
+ * The json-spirit backend has no continuous verification - see
+ * notes/plans/issues/json-backend-verification-decision.md for the prescribed manual check and why
+ * it is manual.
  */
 
 #include <baselib/core/StringUtils.h>
-#include <baselib/core/Utils.h>
 
-#include <iostream>
+#ifdef BL_USE_JSON_SPIRIT
 
-#define BOOST_SPIRIT_THREADSAFE
+/*
+ * json-spirit implementation using template wrapper classes
+ *
+ * Include the implementation header which provides template wrapper classes
+ * that inherit from STL containers and json_spirit::Value_impl, adding
+ * Boost.JSON-compatible interface methods.
+ */
 
-#include <json_spirit/json_spirit_reader_template.h>
-#include <json_spirit/json_spirit_writer_template.h>
+#include <baselib/core/detail/JsonSpiritImpl.h>
+
+#else /* !BL_USE_JSON_SPIRIT - default to Boost.JSON */
+
+/*
+ * Boost.JSON implementation (default)
+ *
+ * Include the implementation header which provides direct typedefs to
+ * native Boost.JSON types for zero-overhead access.
+ */
+
+#include <baselib/core/detail/BoostJsonImpl.h>
+
+#endif /* BL_USE_JSON_SPIRIT */
 
 namespace bl
 {
     namespace json
     {
         /*
-         * We only import the types we need (below)
+         * Public interface functions
          *
-         * We are going to use map based implementation of Object, so the properties
-         * are always ordered alphabetically and output is naturally 'canonicalized'
+         * These functions are shared between both implementations and
+         * delegate to the appropriate detail::JsonUtils implementation.
          */
 
-        typedef json_spirit::Output_options                         OutputOptions;
-        typedef json_spirit::Value_type                             ValueType;
+        /**
+         * @brief Parses a JSON document from a string
+         *
+         * Duplicate object keys - i.e. an object which contains the same member name more than
+         * once - are not a supported input shape and the behavior for such a document is
+         * BACKEND-DEFINED:
+         *
+         * -- Boost.JSON, the default backend, keeps the last of the equal members and discards
+         *    the earlier ones
+         *
+         * -- json-spirit, selected by building with BL_USE_JSON_SPIRIT, rejects the document
+         *    and throws bl::UserMessageException
+         *
+         * The Boost.JSON behavior is the one this library documents and it is what RFC 8259
+         * permits: it says object member names SHOULD be unique and leaves the handling of
+         * documents where they are not to the implementation, which is why parsers disagree.
+         * Last-value-wins is what JavaScript, Python and Go do, and RFC 7515 and RFC 7519
+         * explicitly allow it for JOSE and JWT. Detecting duplicates is not free - it requires
+         * the parser to track the member names it has already seen for every object - which is
+         * why Boost.JSON does not offer it even as an option.
+         *
+         * Do not rely on either behavior. A document with duplicate member names may be read
+         * differently by this library and by a peer written against a different parser, so an
+         * application for which that difference is security relevant must reject such documents
+         * before it hands them here, or must build against the json-spirit backend, which
+         * remains supported (see CONTRIBUTING.md) and rejects them during parsing.
+         *
+         * See notes/plans/issues/json-duplicate-key-contract.md for the full record.
+         *
+         *
+         * DOUBLE PRECISION, backend-defined
+         *
+         * The Boost.JSON backend parses a double as the correctly rounded value of its literal
+         * (number_precision::precise, set explicitly in detail::JsonUtilsImpl::parseOptions);
+         * that is what every conformant parser produces and what this library's own serializer
+         * inverts, so a document which passes through unchanged re-serializes to the same
+         * bytes. The json-spirit backend uses Spirit.Classic's real number parser, which
+         * accumulates digits in floating point and can land a few ULPs away from the correctly
+         * rounded value for literals with many significant digits. A consumer which needs the
+         * exact value of a long literal on that backend has to carry it as a string.
+         *
+         * A value which is not finite (an infinity or a NaN) cannot be serialized on either
+         * backend - see the note on the serialization functions below.
+         *
+         * MAXIMUM NESTING DEPTH, also backend-defined
+         *
+         * The Boost.JSON backend rejects a document nested more than 512 objects or arrays deep,
+         * set explicitly as detail::JsonUtilsImpl::MAX_PARSE_DEPTH. The json-spirit backend applies
+         * no limit at all.
+         *
+         * The limit exists because a parser with no bound on recursion depth will exhaust the stack
+         * on a hostile document, and 512 was chosen because this library carries opaque payloads
+         * whose depth it does not control - BrokerProtocol::passThroughUserData and
+         * FunctionInputData::arguments hold whatever a caller put there - while its own data models
+         * nest around five levels. It is far above any legitimate document this library produces
+         * and far below anything that threatens the stack.
+         *
+         * Note that Boost.JSON's own default is 32, so setting this RAISES the limit: every
+         * document between 33 and 512 levels deep is rejected by an unconfigured Boost.JSON build
+         * and accepted here. Nothing which parses today stops parsing.
+         *
+         * The json-spirit backend is deliberately left unbounded rather than being made to match.
+         * It is selected automatically on devenv2-6 and only by explicit opt-in
+         * (BL_USE_JSON_SPIRIT=1) on devenv7 and later, the two backends are never
+         * loaded into the same process, and adding a depth counter to it would mean modifying a
+         * third-party parser to defend a configuration which is not the default. An application
+         * which parses untrusted input on that backend should bound the document size before
+         * calling here.
+         */
 
-        namespace detail
+        inline json::value readFromString( SAA_in const std::string& input )
         {
-            struct ConfigMap
-            {
-                typedef std::string                                 String_type;
-                typedef json_spirit::Value_impl< ConfigMap >        Value_type;
-                typedef std::vector< Value_type >                   Array_type;
-                typedef std::map< String_type, Value_type >         Object_type;
-                typedef std::pair< String_type, Value_type >        Pair_type;
-
-                static Value_type& add( Object_type& obj, const String_type& name, const Value_type& value )
-                {
-                    auto pair = obj.emplace( name, value );
-
-                    if( ! pair.second )
-                    {
-                        BL_THROW_USER(
-                            BL_MSG()
-                                << "Duplicate entry encountered for property with name '"
-                                << name
-                                << "' while parsing a JSON object"
-                            );
-                    }
-
-                    return pair.first -> second;
-                }
-
-                static String_type get_name( const Pair_type& pair )
-                {
-                    return pair.first;
-                }
-
-                static Value_type get_value( const Pair_type& pair )
-                {
-                    return pair.second;
-                }
-            };
-
-        } // detail
-
-        typedef detail::ConfigMap::Value_type                       Value;
-        typedef detail::ConfigMap::Object_type                      Object;
-        typedef detail::ConfigMap::Array_type                       Array;
-
-        namespace detail
-        {
-            /*
-             * These don't need to be exposed directly due to error handling issues,
-             * but the readFromString and writeToString wrappers should be used instead
-             */
-
-            using json_spirit::Error_position;
-
-            using json_spirit::read_string_or_throw;
-            using json_spirit::read_string;
-            using json_spirit::write_string;
-
-            using json_spirit::read_stream_or_throw;
-            using json_spirit::read_stream;
-            using json_spirit::write_stream;
-
-        } // detail
-
-        namespace detail
-        {
-            /**
-             * @brief class JsonUtils - JSON utility code
-             */
-
-            template
-            <
-                typename E = void
-            >
-            class JsonUtilsT
-            {
-                BL_DECLARE_STATIC( JsonUtilsT )
-
-            private:
-
-                enum
-                {
-                    MAX_DUMP_STRING_LENGTH = 1024
-                };
-
-                static os::mutex                                                        g_lock;
-                static const str::regex                                                 g_valueTypeRegex;
-
-                typedef cpp::function< void ( SAA_inout json::Value& rootValue ) >      read_callback_t;
-                typedef cpp::function< bool ( SAA_inout json::Value& rootValue ) >      fast_read_callback_t;
-
-                static json::Value readWrapper(
-                    SAA_in                  const read_callback_t&                      callback,
-                    SAA_in                  const fast_read_callback_t&                 fastCallback,
-                    SAA_in_opt              const cpp::void_callback_t&                 dumpCallback = cpp::void_callback_t()
-                    )
-                {
-                    /*
-                     * As per:
-                     * http://www.codeproject.com/Articles/20027/JSON-Spirit-A-C-JSON-Parser-Generator-Implemented
-                     *
-                     * The fast callback is ~ 3x faster, but does not throw an
-                     * exception with the error info, so we need to call the slow
-                     * callback when there is an error parsing to get the error information
-                     */
-
-                    json::Value rootValue;
-
-                    if( fastCallback( rootValue ) )
-                    {
-                        return rootValue;
-                    }
-
-                    /*
-                     * Even though defining BOOST_SPIRIT_THREADSAFE should make the parser
-                     * thread safe, there is still a bug exposed when JSON parsing from
-                     * multiple threads using the "slow" callback, hence a lock is used
-                     */
-
-                    BL_MUTEX_GUARD( g_lock );
-
-                    try
-                    {
-                        rootValue = json::Value();
-
-                        callback( rootValue );
-                    }
-                    catch( detail::Error_position& e )
-                    {
-                        if( dumpCallback )
-                        {
-                            dumpCallback();
-                        }
-
-                        /*
-                         * The JSON spirit throws Error_position structure in case of
-                         * parsing error, convert it to regular exception type
-                         */
-
-                        BL_THROW(
-                            JsonException()
-                                << eh::errinfo_parser_line( e.line_ )
-                                << eh::errinfo_parser_column( e.column_ )
-                                << eh::errinfo_parser_reason( e.reason_ )
-                                ,
-                            BL_MSG()
-                                << "JSON parser error at line: "
-                                << e.line_
-                                << ", column: "
-                                << e.column_
-                                << ", reason: '"
-                                << e.reason_
-                                << "'"
-                            );
-                    }
-                    catch( std::runtime_error& e )
-                    {
-                        remapIncorrectValueTypeException( e, std::current_exception(), "JSON string" );
-                    }
-
-                    /*
-                     * If we are here then something is very wrong because the callback
-                     * call above is expected to produce the same result as fastCallback
-                     * (i.e. to fail), but throw an exception instead and the catch blocks
-                     * are also expected to throw / re-throw
-                     */
-
-                    BL_RIP_MSG( "JSON parsing callback is expected to throw" );
-
-                    return rootValue;
-                }
-
-            public:
-
-                static json::Value readFromString( SAA_in const std::string& input )
-                {
-                    return readWrapper(
-                        cpp::bind( &detail::read_string_or_throw< std::string, json::Value >, cpp::cref( input ), _1 ),
-                        cpp::bind( &detail::read_string< std::string, json::Value >, cpp::cref( input ), _1 ), /* fast CB */
-                        [ &input ]() -> void
-                        {
-                            /*
-                             * This is the dump callback which will be called in case of an error
-                             */
-
-                            BL_LOG_MULTILINE(
-                                Logging::debug(),
-                                BL_MSG()
-                                    << "Invalid JSON string:\n"
-                                    << ( input.size() < MAX_DUMP_STRING_LENGTH ?
-                                            input :
-                                            input.substr( 0, MAX_DUMP_STRING_LENGTH ) + "..."
-                                            )
-                                );
-                        }
-                        );
-                }
-
-                template
-                <
-                    typename STREAM
-                >
-                static json::Value readFromStream( SAA_inout STREAM& input )
-                {
-                    input.exceptions( std::ios::badbit );
-
-                    return readWrapper(
-                        cpp::bind( &detail::read_stream_or_throw< STREAM, json::Value >, cpp::ref( input ), _1 ),
-                        cpp::bind( &detail::read_stream< STREAM, json::Value >, cpp::ref( input ), _1 ), /* fast CB */
-                        []() -> void
-                        {
-                            /*
-                             * This is the dump callback which will be called in case of an error
-                             */
-
-                            BL_LOG(
-                                Logging::debug(),
-                                BL_MSG()
-                                    << "Invalid JSON blob parsed from stream"
-                                );
-                        }
-                        );
-                }
-
-                static std::string saveToString(
-                    SAA_in          const json::Value&                      value,
-                    SAA_in          const unsigned int                      options
-                    )
-                {
-                    return detail::write_string( value, options );
-                }
-
-                static std::string saveToString(
-                    SAA_in          const json::Object&                     rootObject,
-                    SAA_in          const unsigned int                      options
-                    )
-                {
-                    return saveToString( json::Value( rootObject ), options );
-                }
-
-                static std::string saveToString(
-                    SAA_in          const json::Array&                      array,
-                    SAA_in          const unsigned int                      options
-                    )
-                {
-                    return saveToString( json::Value( array ), options );
-                }
-
-                template
-                <
-                    typename STREAM
-                >
-                static void saveToStream(
-                    SAA_in          const json::Value&                      value,
-                    SAA_inout       STREAM&                                 output,
-                    SAA_in          const unsigned int                      options
-                    )
-                {
-                    detail::write_stream( value, output, options );
-                }
-
-                static void remapIncorrectValueTypeException(
-                    SAA_in      const std::runtime_error&           e,
-                    SAA_in      const std::exception_ptr&           eptr,
-                    SAA_in      const std::string&                  context,
-                    SAA_in_opt  const bool                          userException = false
-                    )
-                {
-                    /*
-                     * JSON Spirit parser throws cryptic "value type is X not Y" exception
-                     * when the requested type from a getter doesn't match the underlying
-                     * variant value - see check_type() in json_spirit_value.h.
-                     * Translate this to more informational exception here.
-                     */
-
-                    bool isUserFriendly = false;
-                    std::string message;
-                    str::cmatch results;
-
-                    if( str::regex_match( e.what(), results, g_valueTypeRegex ) )
-                    {
-                        const std::string actualTypeStr = results[ 2 ];
-                        const std::string expectedTypeStr = results[ 1 ];
-
-                        message = resolveMessage(
-                            BL_MSG()
-                                << "JSON parsing error: expected value type is '"
-                                << expectedTypeStr
-                                << "' while actual type is '"
-                                << actualTypeStr
-                                << "' for "
-                                << context
-                            );
-
-                        isUserFriendly = true;
-                    }
-                    else
-                    {
-                        message = e.what();
-                    }
-
-                    if( userException )
-                    {
-                        BL_THROW(
-                            UserMessageException()
-                                << eh::errinfo_nested_exception_ptr( eptr ),
-                            message
-                            );
-                    }
-                    else
-                    {
-                        if( isUserFriendly )
-                        {
-                            BL_THROW_USER_FRIENDLY(
-                                JsonException()
-                                    << eh::errinfo_nested_exception_ptr( eptr ),
-                                message
-                                );
-                        }
-                        else
-                        {
-                            BL_THROW(
-                                JsonException()
-                                    << eh::errinfo_nested_exception_ptr( eptr ),
-                                message
-                                );
-                        }
-                    }
-
-                    throw e;
-                }
-            };
-
-            BL_DEFINE_STATIC_MEMBER( JsonUtilsT, os::mutex, g_lock );
-            BL_DEFINE_STATIC_MEMBER( JsonUtilsT, const str::regex, g_valueTypeRegex )( "get_value< (\\w+) > called on (\\w+) Value" );
-
-            typedef JsonUtilsT<> JsonUtils;
-        }
-
-        inline json::Value readFromString( SAA_in const std::string& input )
-        {
-            return detail::JsonUtils::readFromString( input );
+            return detail::JsonUtilsImpl::readFromString( input );
         }
 
         template
         <
             typename STREAM
         >
-        inline json::Value readFromStream( SAA_in STREAM& input )
+        inline json::value readFromStream( SAA_in STREAM& input )
         {
-            return detail::JsonUtils::readFromStream< STREAM >( input );
+            return detail::JsonUtilsImpl::readFromStream< STREAM >( input );
         }
+
+        /*
+         * Note on the rawUtf8 parameter of the serialization functions below
+         *
+         * It is retained for source compatibility and it has NO effect - string content is
+         * always emitted as raw UTF-8, as RFC 8259 section 8.1 requires of JSON exchanged
+         * between systems, on both backends
+         *
+         * It used to select json-spirit's non-raw mode, which escapes each byte above 0x7F
+         * separately as \u00XX; that output is locale dependent and is not read back as the
+         * same string by a conformant parser, so it was never a mode worth preserving. Note
+         * that a document which was written by an older build in that mode and which contains
+         * non-ASCII text will not read back correctly on either backend now
+         *
+         * The control characters U+0000 to U+001F, on the other hand, are always emitted as
+         * JSON escapes on both backends, as RFC 8259 section 7 requires, using the short forms
+         * where the grammar defines one and the six character form with lowercase hex digits
+         * otherwise; the two backends produce identical bytes for the same string
+         *
+         * A double which is not finite is refused with a JsonException on both backends: JSON
+         * has no representation for an infinity or a NaN (RFC 8259 section 6), json-spirit
+         * would write the text 'inf' or 'nan', which no parser accepts, and Boost.JSON would
+         * write an out-of-range literal or null, silently changing the value. Such a value can
+         * only arise in memory or from a literal which overflowed on parse (1e400), and
+         * refusing it at serialization is what keeps every emitted document valid
+         */
 
         template
         <
@@ -404,27 +226,57 @@ namespace bl
         inline std::string saveToString(
             SAA_in          const T&                                json,
             SAA_in_opt      const bool                              prettyPrint = false,
-            SAA_in_opt      const bool                              rawUTF8 = false
+            SAA_in_opt      const bool                              rawUtf8 = false,
+            SAA_in_opt      const bool                              canonicalize = false
             )
         {
-            return detail::JsonUtils::saveToString(
-                json,
-                ( prettyPrint ? OutputOptions::pretty_print : 0 ) | ( rawUTF8 ? OutputOptions::raw_utf8 : 0 )
-                );
+            return detail::JsonUtilsImpl::saveToString( json, prettyPrint, rawUtf8, canonicalize );
         }
+
+        /**
+         * @brief Serializes a JSON value directly into a stream
+         *
+         * The canonicalize parameter has the same meaning and the same restriction as on
+         * saveToString above - it sorts object keys and it cannot be combined with prettyPrint, so
+         * canonical output through this function is always compact. The parameter exists for
+         * parity with saveToString; note that both backends currently implement this function by
+         * serializing to a std::string and writing that to the stream, so it does not (yet) avoid
+         * materializing the document - genuinely streaming output is recorded as deferred (R-4 in
+         * notes/plans/issues/pr-review-opus5-residual-findings-plan.md). See the note on
+         * getJsonString() in baselib/data/DataModelObject.h
+         */
 
         template
         <
             typename STREAM
         >
         inline void saveToStream(
-            SAA_in          const json::Value&                      value,
+            SAA_in          const json::value&                      val,
             SAA_inout       STREAM&                                 output,
-            SAA_in          const unsigned int                      options
+            SAA_in_opt      const bool                              prettyPrint = false,
+            SAA_in_opt      const bool                              rawUtf8 = false,
+            SAA_in_opt      const bool                              canonicalize = false
             )
         {
-            detail::JsonUtils::saveToStream( value, output, options );
+            detail::JsonUtilsImpl::saveToStream( val, output, prettyPrint, rawUtf8, canonicalize );
         }
+
+        /*
+         * The third argument of saveToStream used to be an OutputOptions bitmask and
+         * it is now a bool; deleting the integral overload ensures that old call sites
+         * which pass an option value fail to compile instead of silently binding the
+         * option value to the 'prettyPrint' argument
+         */
+
+        template
+        <
+            typename STREAM
+        >
+        inline void saveToStream(
+            SAA_in          const json::value&                      val,
+            SAA_inout       STREAM&                                 output,
+            SAA_in          const unsigned int                      options
+            ) = delete;
 
         inline static void remapIncorrectValueTypeException(
             SAA_in      const std::runtime_error&           e,
@@ -433,12 +285,78 @@ namespace bl
             SAA_in_opt  const bool                          userException = false
             )
         {
-            detail::JsonUtils::remapIncorrectValueTypeException( e, eptr, context, userException );
+            detail::JsonUtilsImpl::remapIncorrectValueTypeException( e, eptr, context, userException );
+        }
+
+        /**
+         * @brief Re-throws a JsonException with the given context appended to its message
+         *
+         * This is the counterpart of remapIncorrectValueTypeException() for the exceptions which
+         * the library's own checked accessors throw: bl::JsonException derives from
+         * std::exception, not from std::runtime_error, so the catch clause which funnels a
+         * backend's native conversion errors does not see them. The original exception is nested
+         * and its user friendly flag is preserved, so the type and the presentation a caller
+         * sees do not change, only the message gains the context
+         */
+
+        inline void rethrowWithContext(
+            SAA_in      const JsonException&                e,
+            SAA_in      const std::exception_ptr&           eptr,
+            SAA_in      const std::string&                  context
+            )
+        {
+            const std::string message = resolveMessage(
+                BL_MSG()
+                    << e.what()
+                    << " for "
+                    << context
+                );
+
+            if( eh::isUserFriendly( e ) )
+            {
+                BL_THROW_USER_FRIENDLY(
+                    JsonException()
+                        << eh::errinfo_nested_exception_ptr( eptr ),
+                    message
+                    );
+            }
+
+            BL_THROW(
+                JsonException()
+                    << eh::errinfo_nested_exception_ptr( eptr ),
+                message
+                );
         }
 
     } // json
 
+    /*
+     * Overload of str::joinQuoteFormattedKeys for json::object
+     * Uses BL_JSON_PAIR_KEY macro to handle the difference between
+     * json-spirit (.first) and Boost.JSON (.key())
+     */
+
+    namespace str
+    {
+        inline std::string joinQuoteFormattedKeys(
+            SAA_in      const json::object&                         map,
+            SAA_in_opt  const std::string&                          separator       = detail::StringUtils::g_defaultSeparator,
+            SAA_in_opt  const std::string&                          lastSeparator   = detail::StringUtils::g_defaultLastSeparator
+            )
+        {
+            std::vector< std::string > keys;
+            keys.reserve( map.size() );
+
+            for( const auto& pair : map )
+            {
+                keys.emplace_back( std::string( BL_JSON_PAIR_KEY( pair ) ) );
+            }
+
+            return detail::StringUtils::joinFormatted< std::string >( keys, separator, lastSeparator, &quoteFormatter< std::string > );
+        }
+
+    } // str
+
 } // bl
 
 #endif /* __BL_JSONUTILS_H_ */
-

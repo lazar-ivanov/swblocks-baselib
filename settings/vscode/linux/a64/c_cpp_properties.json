@@ -1,57 +1,73 @@
 {
     "configurations": [
         {
-            "name": "Linux-Clang-1201-libstdc++",
+            "name": "Linux-Clang-2010-libc++",
             "includePath": [
-                "${env:HOME}/swblocks/dist-devenv5-ub20-gcc1110-clang1201-arm/toolchain-clang/12.0.1/ub20-a64-clang1201-release/lib/clang/12.0.1/include",
-                "${env:HOME}/swblocks/dist-devenv5-ub20-gcc1110-clang1201-arm/toolchain-gcc/11.1.0/ub20-a64-gcc1110-release/lib/gcc/aarm64-unknown-linux-gnu/11.1.0/include",
-                "${env:HOME}/swblocks/dist-devenv5-ub20-gcc1110-clang1201-arm/toolchain-gcc/11.1.0/ub20-a64-gcc1110-release/lib/gcc/aarm64-unknown-linux-gnu/11.1.0/include-fixed",
-                "${env:HOME}/swblocks/dist-devenv5-ub20-gcc1110-clang1201-arm/toolchain-gcc/11.1.0/ub20-a64-gcc1110-release/include/c++/11.1.0",
-                "${env:HOME}/swblocks/dist-devenv5-ub20-gcc1110-clang1201-arm/toolchain-gcc/11.1.0/ub20-a64-gcc1110-release/include/c++/11.1.0/aarm64-unknown-linux-gnu",
+                "${workspaceFolder}/src/versioning",
+                "${workspaceFolder}/src/include",
+                "${workspaceFolder}/src/local",
+                "${workspaceFolder}/src/utests/include",
+                "${env:HOME}/swblocks/dist-devenv7-ub24-gcc1520-clang2010-a64/openjdk/25/a64/include",
+                "${env:HOME}/swblocks/dist-devenv7-ub24-gcc1520-clang2010-a64/openjdk/25/a64/include/linux",
+                "${env:HOME}/swblocks/dist-devenv7-ub24-gcc1520-clang2010-a64/boost/1.90.0/ub24-a64-clang2010-debug/include",
+                "${env:HOME}/swblocks/dist-devenv7-ub24-gcc1520-clang2010-a64/openssl/3.5.4/source",
+                "${env:HOME}/swblocks/dist-devenv7-ub24-gcc1520-clang2010-a64/openssl/3.5.4/source/include",
+                "${env:HOME}/swblocks/dist-devenv7-ub24-gcc1520-clang2010-a64/openssl/3.5.4/ub24-a64-clang2010-debug/include",
+                "${env:HOME}/swblocks/dist-devenv7-ub24-gcc1520-clang2010-a64/json-spirit/4.08/source",
+                "${env:HOME}/swblocks/dist-devenv7-ub24-gcc1520-clang2010-a64/toolchain-clang/20.1.0/ub24-a64-clang2010-release/include/c++/v1",
+                "${env:HOME}/swblocks/dist-devenv7-ub24-gcc1520-clang2010-a64/toolchain-clang/20.1.0/ub24-a64-clang2010-release/lib/clang/20/include",
                 "/usr/local/include",
-                "/usr/include",
-                "${env:HOME}/dev/github/swblocks-baselib/src/versioning",
-                "${env:HOME}/dev/github/swblocks-baselib/src/include",
-                "${env:HOME}/dev/github/swblocks-baselib/src/local",
-                "${env:HOME}/dev/github/swblocks-baselib/src/utests/include",
-                "${env:HOME}/swblocks/dist-devenv5-ub20-gcc1110-clang1201-arm/jdk/open-jdk/8/ub20-a64/include",
-                "${env:HOME}/swblocks/dist-devenv5-ub20-gcc1110-clang1201-arm/jdk/open-jdk/8/ub20-a64/include/linux",
-                "${env:HOME}/swblocks/dist-devenv5-ub20-gcc1110-clang1201-arm/boost/1.75.0/ub20-a64-gcc1110/include",
-                "${env:HOME}/swblocks/dist-devenv5-ub20-gcc1110-clang1201-arm/openssl/1.1.1k/source-linux/include",
-                "${env:HOME}/swblocks/dist-devenv5-ub20-gcc1110-clang1201-arm/openssl/1.1.1k/source-linux",
-                "${env:HOME}/swblocks/dist-devenv5-ub20-gcc1110-clang1201-arm/openssl/1.1.1k/ub20-a64-clang1201-release/include",
-                "${env:HOME}/swblocks/dist-devenv5-ub20-gcc1110-clang1201-arm/json-spirit/4.08/source"
+                "/usr/include/aarch64-linux-gnu",
+                "/usr/include"
                 ],
-            "defines": [],
-            "compilerPath": "${env:HOME}/swblocks/dist-devenv5-ub20-gcc1110-clang1201-arm/toolchain-clang/12.0.1/ub20-a64-clang1201-release/bin/clang",
+            "defines": [
+                "BL_DEVENV_VERSION=7",
+                "OPENSSL_API_COMPAT=0x10100000L",
+                "BOOST_ALL_NO_LIB",
+                "BOOST_BIND_GLOBAL_PLACEHOLDERS",
+                "_FILE_OFFSET_BITS=64"
+                ],
+            "compilerPath": "${env:HOME}/swblocks/dist-devenv7-ub24-gcc1520-clang2010-a64/toolchain-clang/20.1.0/ub24-a64-clang2010-release/bin/clang++",
+            "compilerArgs": [
+                "-stdlib=libc++"
+                ],
             "cStandard": "c11",
             "cppStandard": "c++11",
-            "intelliSenseMode": "clang-arm64"
+            "intelliSenseMode": "linux-clang-arm64"
         },
         {
-            "name": "Linux-Clang-1201-libc++",
+            "name": "Linux-GCC-1520",
             "includePath": [
-                "${env:HOME}/swblocks/dist-devenv5-ub20-gcc1110-clang1201-arm/toolchain-clang/12.0.1/ub20-a64-clang1201-release/include/c++/v1",
-                "${env:HOME}/swblocks/dist-devenv5-ub20-gcc1110-clang1201-arm/toolchain-clang/12.0.1/ub20-a64-clang1201-release/lib/clang/12.0.1/include",
+                "${workspaceFolder}/src/versioning",
+                "${workspaceFolder}/src/include",
+                "${workspaceFolder}/src/local",
+                "${workspaceFolder}/src/utests/include",
+                "${env:HOME}/swblocks/dist-devenv7-ub24-gcc1520-clang2010-a64/openjdk/25/a64/include",
+                "${env:HOME}/swblocks/dist-devenv7-ub24-gcc1520-clang2010-a64/openjdk/25/a64/include/linux",
+                "${env:HOME}/swblocks/dist-devenv7-ub24-gcc1520-clang2010-a64/boost/1.90.0/ub24-a64-gcc1520-debug/include",
+                "${env:HOME}/swblocks/dist-devenv7-ub24-gcc1520-clang2010-a64/openssl/3.5.4/source",
+                "${env:HOME}/swblocks/dist-devenv7-ub24-gcc1520-clang2010-a64/openssl/3.5.4/source/include",
+                "${env:HOME}/swblocks/dist-devenv7-ub24-gcc1520-clang2010-a64/openssl/3.5.4/ub24-a64-gcc1520-debug/include",
+                "${env:HOME}/swblocks/dist-devenv7-ub24-gcc1520-clang2010-a64/json-spirit/4.08/source",
+                "${env:HOME}/swblocks/dist-devenv7-ub24-gcc1520-clang2010-a64/toolchain-gcc/15.2.0/ub24-a64-gcc1520-release/include/c++/15.2.0",
+                "${env:HOME}/swblocks/dist-devenv7-ub24-gcc1520-clang2010-a64/toolchain-gcc/15.2.0/ub24-a64-gcc1520-release/include/c++/15.2.0/aarch64-unknown-linux-gnu",
+                "${env:HOME}/swblocks/dist-devenv7-ub24-gcc1520-clang2010-a64/toolchain-gcc/15.2.0/ub24-a64-gcc1520-release/lib/gcc/aarch64-unknown-linux-gnu/15.2.0/include",
+                "${env:HOME}/swblocks/dist-devenv7-ub24-gcc1520-clang2010-a64/toolchain-gcc/15.2.0/ub24-a64-gcc1520-release/lib/gcc/aarch64-unknown-linux-gnu/15.2.0/include-fixed",
                 "/usr/local/include",
-                "/usr/include",
-                "${env:HOME}/dev/github/swblocks-baselib/src/versioning",
-                "${env:HOME}/dev/github/swblocks-baselib/src/include",
-                "${env:HOME}/dev/github/swblocks-baselib/src/local",
-                "${env:HOME}/dev/github/swblocks-baselib/src/utests/include",
-                "${env:HOME}/swblocks/dist-devenv5-ub20-gcc1110-clang1201-arm/jdk/open-jdk/8/ub20-a64/include",
-                "${env:HOME}/swblocks/dist-devenv5-ub20-gcc1110-clang1201-arm/jdk/open-jdk/8/ub20-a64/include/linux",
-                "${env:HOME}/swblocks/dist-devenv5-ub20-gcc1110-clang1201-arm/boost/1.75.0/ub20-a64-gcc1110/include",
-                "${env:HOME}/swblocks/dist-devenv5-ub20-gcc1110-clang1201-arm/openssl/1.1.1k/source-linux/include",
-                "${env:HOME}/swblocks/dist-devenv5-ub20-gcc1110-clang1201-arm/openssl/1.1.1k/source-linux",
-                "${env:HOME}/swblocks/dist-devenv5-ub20-gcc1110-clang1201-arm/openssl/1.1.1k/ub20-a64-clang1201-release/include",
-                "${env:HOME}/swblocks/dist-devenv5-ub20-gcc1110-clang1201-arm/json-spirit/4.08/source"
+                "/usr/include/aarch64-linux-gnu",
+                "/usr/include"
                 ],
-            "defines": [],
-            "compilerPath": "${env:HOME}/swblocks/dist-devenv5-ub20-gcc1110-clang1201-arm/toolchain-clang/12.0.1/ub20-a64-clang1201-release/bin/clang",
+            "defines": [
+                "BL_DEVENV_VERSION=7",
+                "OPENSSL_API_COMPAT=0x10100000L",
+                "BOOST_ALL_NO_LIB",
+                "BOOST_BIND_GLOBAL_PLACEHOLDERS",
+                "_FILE_OFFSET_BITS=64"
+                ],
+            "compilerPath": "${env:HOME}/swblocks/dist-devenv7-ub24-gcc1520-clang2010-a64/toolchain-gcc/15.2.0/ub24-a64-gcc1520-release/bin/g++",
             "cStandard": "c11",
             "cppStandard": "c++11",
-            "intelliSenseMode": "clang-arm64"
+            "intelliSenseMode": "linux-gcc-arm64"
         }
     ],
     "version": 4

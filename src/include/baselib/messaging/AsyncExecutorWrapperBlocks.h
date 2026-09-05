@@ -23,6 +23,8 @@
 
 #include <baselib/async/AsyncExecutorWrapperBase.h>
 
+#include <cstring>
+
 namespace bl
 {
     namespace detail
@@ -483,7 +485,7 @@ namespace bl
 
             if( ! operationState )
             {
-                operationState = T::template createInstance();
+                operationState = T::template createInstance<>();
             }
 
             operationState -> impl( om::copy( impl() ) );

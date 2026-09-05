@@ -26,9 +26,27 @@
 
 #include <baselib/core/detail/BoostIncludeGuardPush.h>
 
+#define BOOST_ASIO_DISABLE_STD_CHRONO
 #include <boost/thread.hpp>
+
+/*
+ * GCC 15+ produces false positive -Wuninitialized warnings in optimized builds
+ * when analyzing Boost.Asio bind_executor template code with shared_ptr.
+ * Suppress this warning only when including Boost.Asio headers.
+ */
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wuninitialized"
+#endif
+
 #include <boost/asio.hpp>
 #include <boost/asio/detail/socket_ops.hpp>
+#include <boost/asio/deadline_timer.hpp>
+
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
+#pragma GCC diagnostic pop
+#endif
+
 #include <boost/filesystem.hpp>
 #include <boost/filesystem/detail/utf8_codecvt_facet.hpp>
 #include <boost/interprocess/sync/scoped_lock.hpp>
@@ -41,6 +59,12 @@
 #include <boost/iostreams/concepts.hpp>
 
 #include <baselib/core/detail/BoostIncludeGuardPop.h>
+
+/*
+ * Include Boost.Asio compatibility layer
+ * This must come after Boost headers are included
+ */
+#include <baselib/core/detail/BoostAsioCompat.h>
 
 #include <iosfwd>
 #include <mutex>

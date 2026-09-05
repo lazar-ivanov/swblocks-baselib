@@ -153,9 +153,28 @@ namespace bl
                 
                 if( ! m_serverContext )
                 {
-                    BL_CHK_CRYPTO_API_NM(
-                        ::SSL_set_tlsext_host_name( m_sslStream -> getStream().native_handle(), hostName.c_str() )
-                        );
+                    /*
+                     * The server name indication is sent for a DNS name only. RFC 6066 section 3
+                     * forbids an address literal in the extension; OpenSSL does not check that,
+                     * and a strict peer may abort the handshake, so a host which parses as an
+                     * address gets no SNI (verification of the peer name is unaffected: it uses
+                     * the iPAddress SAN entries, see TlsPeerVerification)
+                     */
+
+                    eh::error_code ec;
+
+#if BOOST_VERSION >= 106600
+                    ( void ) asio::ip::make_address( hostName, ec );
+#else
+                    ( void ) asio::ip::address::from_string( hostName, ec );
+#endif
+
+                    if( ec )
+                    {
+                        BL_CHK_CRYPTO_API_NM(
+                            ::SSL_set_tlsext_host_name( m_sslStream -> getStream().native_handle(), hostName.c_str() )
+                            );
+                    }
                 }
             }
 

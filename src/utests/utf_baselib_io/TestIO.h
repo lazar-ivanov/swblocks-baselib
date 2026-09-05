@@ -101,7 +101,7 @@ namespace
             const auto backendImpl = BackendImplTestImpl::createInstance();
 
             const auto asyncWrapper = om::lockDisposable(
-                async_wrapper_t::template createInstance(
+                async_wrapper_t::template createInstance<>(
                     om::qi< backend_interface_t >( backendImpl ) /* writeBackend */,
                     om::qi< backend_interface_t >( backendImpl ) /* readBackend */,
                     test::UtfArgsParser::threadsCount(),
@@ -112,7 +112,7 @@ namespace
                 );
 
             {
-                const auto acceptor = Acceptor::template createInstance(
+                const auto acceptor = Acceptor::template createInstance<>(
                     controlToken,
                     dataBlocksPool,
                     "localhost",
@@ -163,7 +163,7 @@ namespace
                 const auto backendImpl = BackendImplTestImpl::createInstance();
 
                 const auto backend = om::lockDisposable(
-                    async_wrapper_t::template createInstance(
+                    async_wrapper_t::template createInstance<>(
                         om::qi< backend_interface_t >( backendImpl ) /* writeBackend */,
                         om::qi< backend_interface_t >( backendImpl ) /* readBackend */,
                         test::UtfArgsParser::threadsCount(),
@@ -281,28 +281,37 @@ namespace
                              */
 
                             {
-                                /*
-                                 * TODO: clang 3.9.1 seems to have an issue and complains that this is
-                                 * unused local type if the connection_base_t is defined inside the
-                                 * local class as base_type
-                                 *
-                                 * This seems to be for now an acceptable workaround, but once the
-                                 * compiler issue is fixed we can change the code again
-                                 */
-
                                 typedef TcpBlockTransferClientConnectionT< typename Acceptor::stream_t >
                                     connection_base_t;
 
                                 class LocalClientConnection : public connection_base_t
                                 {
+                                    /*
+                                     * clang-cl does not resolve a typedef from the enclosing function
+                                     * scope when it is used as a member-initializer name, so the base
+                                     * class is named through this class-scope alias in the constructor
+                                     * below. clang does not count that member-initializer use as a use
+                                     * of the alias and would report it unused under -WX, so the warning
+                                     * is suppressed for just this declaration (cl.exe never sees the
+                                     * clang pragma); this replaces the former global -Wno-unused-local-typedef.
+                                     */
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-local-typedef"
+#endif
+                                    using base_type = connection_base_t;
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
                                 protected:
 
                                     LocalClientConnection(
                                         SAA_in const om::ObjPtr< data::datablocks_pool_type >& dataBlocksPool
                                         )
                                         :
-                                        connection_base_t(
-                                            connection_base_t::CommandId::NoCommand,
+                                        base_type(
+                                            base_type::CommandId::NoCommand,
                                             uuids::create() /* peerId */,
                                             dataBlocksPool
                                         )
@@ -317,12 +326,6 @@ namespace
                                         SAA_in_opt              const eh::error_code*                           ec
                                         )
                                     {
-                                        /*
-                                         * TODO: Compiler workaround
-                                         * "base_type::" should work below (MSVC and GCC accept it)
-                                         * but it fails for Clang3.5 which requires "this ->"
-                                         */
-
                                         UTF_REQUIRE( this -> isExpectedException( eptr, exception, ec ) );
                                     }
                                 };
@@ -1378,7 +1381,7 @@ namespace
                     );
 
                 {
-                    const auto acceptor = Acceptor::template createInstance(
+                    const auto acceptor = Acceptor::template createInstance<>(
                         controlToken,
                         dataBlocksPool,
                         "localhost",
@@ -1516,7 +1519,7 @@ namespace
                 const auto backendImpl = BackendImplTestImpl::createInstance();
 
                 const auto backend = om::lockDisposable(
-                    AsyncWrapper::template createInstance(
+                    AsyncWrapper::template createInstance<>(
                         om::qi< backend_interface_t >( backendImpl ) /* writeBackend */,
                         om::qi< backend_interface_t >( backendImpl ) /* readBackend */,
                         test::UtfArgsParser::threadsCount(),
@@ -1678,7 +1681,7 @@ namespace
                                     for( std::size_t i = 0U; i < maxConnections; ++i )
                                     {
                                         const auto connector =
-                                            Connector::template createInstance( "localhost", 28100 );
+                                            Connector::template createInstance<>( "localhost", 28100 );
 
                                         const auto taskConnector = om::qi< tasks::Task >( connector );
                                         eqLocal -> push_back( taskConnector );
@@ -1708,7 +1711,7 @@ namespace
                                      * associated with the acceptor - see UTF_REQUIRE_EQUAL check below)
                                      */
 
-                                    os::sleep( time::seconds( heartbeatIntervalInSeconds ) + time::seconds( 2L ) );
+                                    os::sleep( time::seconds( heartbeatIntervalInSeconds ) + time::seconds( 5L ) );
 
                                     UTF_REQUIRE_EQUAL( acceptor -> activeEndpoints().size(), 0U );
                                 }

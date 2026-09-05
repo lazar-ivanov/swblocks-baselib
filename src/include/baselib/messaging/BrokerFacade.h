@@ -109,7 +109,7 @@ namespace bl
                         );
 
                     const auto asyncWrapper = om::lockDisposable(
-                        ASYNCWRAPPER::template createInstance(
+                        ASYNCWRAPPER::template createInstance<>(
                             om::copy( dispatchingBackend )                                      /* writeBackend */,
                             nullptr                                                             /* readBackend */,
                             threadsCount,
@@ -119,7 +119,7 @@ namespace bl
                             )
                         );
 
-                    const auto acceptor = ACCEPTOR::template createInstance(
+                    const auto acceptor = ACCEPTOR::template createInstance<>(
                         om::copy( controlToken ),
                         dataBlocksPool,
                         cpp::copy( g_anyNetworkInterfaceAddress ),
