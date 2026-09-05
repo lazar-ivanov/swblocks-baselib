@@ -1447,6 +1447,44 @@ namespace bl
                                 << entriesCompleted
                             );
                     }
+
+                    if(
+                        false == base_type::m_stopRequested &&
+                        ( entriesInProgress || entriesCount != entriesCompleted )
+                        )
+                    {
+                        /*
+                         * The input has completed and every worker task is done, but the
+                         * target is not complete: some chunks never arrived or some entries
+                         * were never created. Reporting success here would publish a partial
+                         * tree, so close the files still open for the incomplete entries,
+                         * discard the staging directory and fail the unit
+                         *
+                         * A stop request is excluded: the shutdown path reports the
+                         * cancellation itself and the staging directory is discarded by
+                         * the failure branch above once the unit is failing
+                         */
+
+                        for( const auto& pair : m_entriesInProgress )
+                        {
+                            pair.second -> filePtr.reset();
+                        }
+
+                        fs::safeDeletePathNothrow( m_targetTmpDir );
+                        m_targetTmpDir.clear();
+
+                        BL_THROW_USER_FRIENDLY(
+                            UnexpectedException(),
+                            BL_MSG()
+                                << "The unpackaged content is incomplete; "
+                                << entriesInProgress
+                                << " entries have missing chunks and "
+                                << entriesCompleted
+                                << " of "
+                                << entriesCount
+                                << " entries were created"
+                            );
+                    }
                 }
 
                 return flushed;

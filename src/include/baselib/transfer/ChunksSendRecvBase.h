@@ -682,6 +682,50 @@ namespace bl
                 base_type::m_eqWorkerTasks -> push_back( om::qi< Task >( transfer ) );
             }
 
+            bool hasPostponedDataChunks()
+            {
+                BL_MUTEX_GUARD( m_postponedDataChunksLock );
+
+                return ! m_postponedDataChunks.empty();
+            }
+
+            bool tryRearmPostponedChunk( SAA_in const om::ObjPtr< tasks::Task >& taskTransfer )
+            {
+                /*
+                 * A chunk postponed by scheduleAuthenticationTask() is normally picked up when the
+                 * next chunk is scheduled, but nothing more is scheduled once the input has
+                 * completed. The unwind loops call this after popping a successful task, so a
+                 * re-authenticated connection retransmits (or re-requests) the postponed chunk
+                 * instead of the chunk being silently dropped
+                 *
+                 * The task must be re-armed before the session flush is requested because the
+                 * flush must come after all data has been transferred
+                 */
+
+                BL_MUTEX_GUARD( m_postponedDataChunksLock );
+
+                if( m_postponedDataChunks.empty() )
+                {
+                    return false;
+                }
+
+                const auto transfer = chk2ReturnChunkInThePool( taskTransfer );
+
+                auto& postponedDataChunk = m_postponedDataChunks.front();
+
+                transfer -> setCommandInfo(
+                    getCommandId(),
+                    postponedDataChunk.first,
+                    om::copy( postponedDataChunk.second )
+                    );
+
+                m_postponedDataChunks.pop();
+
+                base_type::m_eqWorkerTasks -> push_back( taskTransfer );
+
+                return true;
+            }
+
         public:
 
             void enablePeerSessionsTracking() NOEXCEPT

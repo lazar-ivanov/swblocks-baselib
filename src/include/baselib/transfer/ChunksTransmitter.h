@@ -205,6 +205,16 @@ namespace bl
                     {
                         BL_VERIFY( base_type::m_eqWorkerTasks -> pop( false /* wait */ ) );
 
+                        if( false == force && base_type::tryRearmPostponedChunk( taskTransfer ) )
+                        {
+                            /*
+                             * A chunk postponed for re-authentication was re-armed on this
+                             * task and is being transmitted now
+                             */
+
+                            continue;
+                        }
+
                         if(
                             base_type::m_peerId != uuids::nil() &&
                             base_type::m_eqWorkerTasks -> isEmpty() &&
@@ -246,11 +256,21 @@ namespace bl
                     break;
                 }
 
-                if( ! m_fsmd -> isFinalized() )
+                if(
+                    false == force &&
+                    base_type::m_eqWorkerTasks -> isEmpty() &&
+                    false == base_type::hasPostponedDataChunks() &&
+                    ! m_fsmd -> isFinalized()
+                    )
                 {
                     /*
-                     * At this point we know that the session is flushed, so we can commit
-                     * the data in the filesystem metadata store
+                     * At this point we know that all chunks have been transmitted and the
+                     * session is flushed, so we can commit the data in the filesystem
+                     * metadata store
+                     *
+                     * A forced (failing) unwind or an unwind with tasks still in flight must
+                     * not commit: the metadata would reference chunks which never reached
+                     * the server and the object would be locked for a retry
                      */
 
                     m_fsmd -> finalize();

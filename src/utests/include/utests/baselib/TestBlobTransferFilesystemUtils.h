@@ -72,10 +72,60 @@ namespace utest
                 );
         }
 
+        static void executeFilesystemTransferTestsWithFaults(
+            SAA_in                  const bl::cpp::void_callback_t&                                 cbTransferTest,
+            SAA_in                  const bl::om::ObjPtrCopyable< bl::tasks::TaskControlTokenRW >&  controlToken,
+            SAA_in                  const bl::om::ObjPtrCopyable< bl::transfer::SendRecvContext >&  context,
+            SAA_in                  const unsigned short                                            blobServerPort,
+            SAA_in                  const std::size_t                                               threadsCount,
+            SAA_in                  const std::size_t                                               maxConcurrentTasks,
+            SAA_in                  const utest::PipelineFaultOptions&                              faultOptions
+            )
+        {
+            wrapFilesystemDataStorage(
+                bl::cpp::bind(
+                    &TestBlobTransferUtils::executeTransferTestsWithFaults,
+                    cbTransferTest,
+                    _1,
+                    controlToken,
+                    context,
+                    blobServerPort,
+                    threadsCount,
+                    maxConcurrentTasks,
+                    faultOptions
+                    )
+                );
+        }
+
     public:
 
         typedef TestBlobTransferUtils                                                               base_type;
         typedef base_type::CancelType                                                               CancelType;
+
+        static void filesPackagerTestsWithFaultsWrap(
+            SAA_in                  const unsigned short                                                blobServerPort,
+            SAA_in                  const bl::om::ObjPtrCopyable< FilesystemMetadataStore >&            metadataStore,
+            SAA_in                  const CancelType                                                    cancelType,
+            SAA_in                  const base_type::PipelineFaultOptions&                              faultOptions
+            )
+        {
+            filesPackagerTestsWrapInternal(
+                bl::cpp::bind(
+                    &executeFilesystemTransferTestsWithFaults,
+                    _1      /* cbTransferTest */,
+                    _2      /* controlToken */,
+                    _3      /* context */,
+                    _4      /* blobServerPort */,
+                    0U      /* threadsCount */,
+                    0U      /* maxConcurrentTasks */,
+                    faultOptions
+                    ),
+                blobServerPort,
+                metadataStore,
+                cancelType,
+                faultOptions
+                );
+        }
 
         static void filesPackagerTestsWrap(
             SAA_in                  const unsigned short                                                blobServerPort,
@@ -83,19 +133,11 @@ namespace utest
             SAA_in                  const CancelType                                                    cancelType
             )
         {
-            filesPackagerTestsWrapInternal(
-                bl::cpp::bind(
-                    &executeFilesystemTransferTests,
-                    _1      /* cbTransferTest */,
-                    _2      /* controlToken */,
-                    _3      /* context */,
-                    _4      /* blobServerPort */,
-                    0U      /* threadsCount */,
-                    0U      /* maxConcurrentTasks */
-                    ),
+            filesPackagerTestsWithFaultsWrap(
                 blobServerPort,
                 metadataStore,
-                cancelType
+                cancelType,
+                base_type::PipelineFaultOptions()
                 );
         }
 

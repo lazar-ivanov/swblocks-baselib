@@ -1037,9 +1037,15 @@ namespace bl
                 cpp::ScalarTypeIniter< vector_t::size_type >                                currentPos;
             };
 
+            struct ConnectionInfo
+            {
+                bl::uuid_t                                                                  peerId;
+                std::string                                                                 remoteAddress;
+            };
+
             helper_t                                                                        m_helper;
             std::unordered_map< bl::uuid_t, PeerInfo >                                      m_peersInfo;
-            std::unordered_map< om::ObjPtr< queue_t >, bl::uuid_t >                         m_connections2PeerId;
+            std::unordered_map< om::ObjPtr< queue_t >, ConnectionInfo >                     m_connections2PeerId;
             os::mutex                                                                       m_lock;
 
             PeerInfo& getPeerInfo( SAA_in const bl::uuid_t& remotePeerId )
@@ -1073,7 +1079,7 @@ namespace bl
 
                 BL_CHK(
                     false,
-                    pos -> second == remotePeerId,
+                    pos -> second.peerId == remotePeerId,
                     BL_MSG()
                         << "Attempting to operate on a queue with unexpected peerId "
                         << remotePeerId
@@ -1094,7 +1100,8 @@ namespace bl
 
             void registerQueue(
                 SAA_in                  const bl::uuid_t&                                   remotePeerId,
-                SAA_in                  om::ObjPtr< queue_t >&&                             queue
+                SAA_in                  om::ObjPtr< queue_t >&&                             queue,
+                SAA_in_opt              const std::string&                                  remoteAddress = str::empty()
                 )
             {
                 BL_MUTEX_GUARD( m_lock );
@@ -1117,47 +1124,71 @@ namespace bl
                 auto& activeQueues = peerInfo.activeQueues;
 
                 /*
-                 * All active connections are now going to be requested to do heartbeat and confirm
-                 * that they are alive by moving them into the unconfirmed list and making this
-                 * single connection being registered to be the only one for a short period of time
+                 * All active connections are requested to do heartbeat and confirm that they are
+                 * alive. The ones registered from the same remote address as this registration
+                 * (a cooperative multi-connection peer on one host, or an unknown address) are
+                 * moved into the unconfirmed list, making this single connection being registered
+                 * the only one for a short period of time; we assume they will confirm themselves
+                 * quickly and join the active list which is being iterated in round robin fashion
                  *
-                 * We assume the other connections will confirm themselves quickly and join the
-                 * active list which is being iterated in round robin fashion
+                 * Active connections registered from a different remote address stay active: the
+                 * peer id is self-declared by the remote (the outbound port has no transport level
+                 * authentication), so a registration from another host must not be able to take
+                 * over the delivery for that peer id; a stale connection is still removed once its
+                 * heartbeat fails. See notes/plans/issues/broker-outbound-peer-identity-deferral.md
                  */
 
-                while( ! activeQueues.empty() )
-                {
-                    auto& localQueue = activeQueues.back();
+                vector_t retainedQueues;
 
+                for( auto& localQueue : activeQueues )
+                {
                     localQueue -> requestHeartbeat();
 
-                    const auto pair = m_helper.insert( peerInfo.unconfirmedQueues, std::move( localQueue ) );
+                    const auto& localAddress = m_connections2PeerId.at( localQueue ).remoteAddress;
 
-                    BL_CHK(
-                        false,
-                        pair.second,
-                        BL_MSG()
-                            << "A queue is already registered in the unconfirmed list"
-                        );
+                    if( remoteAddress.empty() || localAddress.empty() || remoteAddress == localAddress )
+                    {
+                        const auto pair = m_helper.insert( peerInfo.unconfirmedQueues, std::move( localQueue ) );
 
-                    BL_ASSERT( nullptr == localQueue );
+                        BL_CHK(
+                            false,
+                            pair.second,
+                            BL_MSG()
+                                << "A queue is already registered in the unconfirmed list"
+                            );
 
-                    activeQueues.erase( activeQueues.end() - 1 );
+                        BL_ASSERT( nullptr == localQueue );
+                    }
+                    else
+                    {
+                        /*
+                         * The relative order is preserved, so retainedQueues stays sorted
+                         */
+
+                        retainedQueues.push_back( std::move( localQueue ) );
+                    }
                 }
 
-                BL_ASSERT( activeQueues.empty() );
+                activeQueues.swap( retainedQueues );
 
                 peerInfo.currentPos = 0;
+
+                const auto queueCopy = om::copy( queue );
 
                 BL_VERIFY( m_helper.insert( activeQueues, om::copy( queue ) ).second );
 
                 auto g = BL_SCOPE_GUARD(
                     {
-                        activeQueues.clear();
+                        m_helper.erase( activeQueues, queueCopy );
                     }
                     );
 
-                BL_VERIFY( m_connections2PeerId.emplace( std::move( queue ), remotePeerId ).second );
+                ConnectionInfo connectionInfo;
+
+                connectionInfo.peerId = remotePeerId;
+                connectionInfo.remoteAddress = remoteAddress;
+
+                BL_VERIFY( m_connections2PeerId.emplace( std::move( queue ), std::move( connectionInfo ) ).second );
 
                 g.dismiss();
             }
@@ -1901,6 +1932,7 @@ namespace bl
                 SAA_in_opt          const om::ObjPtrCopyable< om::Proxy >                       hostServices,
                 SAA_in_opt          const om::ObjPtrCopyable< om::Proxy >                       executionServices,
                 SAA_in              const om::ObjPtrCopyable< backend_state_t >                 backendState,
+                SAA_in              const std::string                                           remoteAddress,
                 SAA_in              const NotifyEventId                                         evendId,
                 SAA_in              const om::ObjPtr< queue_t >&                                queue
                 )
@@ -1918,7 +1950,7 @@ namespace bl
                         break;
 
                     case NotifyEventId::Register:
-                        backendState -> registerQueue( remotePeerId, om::copy( queue ) );
+                        backendState -> registerQueue( remotePeerId, om::copy( queue ), remoteAddress );
                         break;
 
                     case NotifyEventId::Confirm:
@@ -1983,12 +2015,39 @@ namespace bl
 
             virtual om::ObjPtr< Task > createConnection( SAA_inout typename STREAM::stream_ref&& connectedStream ) OVERRIDE
             {
+                /*
+                 * The remote address tells the backend state which host a registration comes
+                 * from (see TcpBlockServerOutgoingBackendState::registerQueue()); it is captured
+                 * here because the connection task does not keep the remote endpoint
+                 */
+
+                std::string remoteAddress;
+
+                try
+                {
+                    remoteAddress = connectedStream -> lowest_layer().remote_endpoint().address().to_string();
+                }
+                catch( eh::system_error& e )
+                {
+                    if( asio::error::not_connected != e.code() )
+                    {
+                        throw;
+                    }
+
+                    /*
+                     * The other side has closed the socket already; the address stays unknown
+                     * and the registration (if it ever happens) is treated as coming from the
+                     * same host
+                     */
+                }
+
                 return connection_t::template createInstance< Task >(
                     cpp::bind(
                         &this_type::notifyCallback,
                         om::ObjPtrCopyable< om::Proxy >( base_type::m_hostServices ),
                         om::ObjPtrCopyable< om::Proxy >( base_type::m_executionServices ),
                         om::ObjPtrCopyable< backend_state_t >::acquireRef( m_backendState.get() ),
+                        std::move( remoteAddress ),
                         _1,
                         _2
                         ),

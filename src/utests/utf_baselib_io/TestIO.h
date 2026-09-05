@@ -50,6 +50,9 @@
 #include <utests/baselib/UtfCrypto.h>
 #include <utests/baselib/Utf.h>
 
+#include <atomic>
+#include <set>
+
 /************************************************************************
  * I/O code tests
  */
@@ -2283,6 +2286,201 @@ UTF_AUTO_TEST_CASE( IO_SslSimpleConnectAndTransmitDataMessageDispatcherOutgoingT
         ssl_connector_t,                                                    /* Connector */
         bl::tasks::TcpSslBlockServerMessageDispatcher::async_wrapper_t      /* AsyncWrapper */
         >();
+}
+
+namespace
+{
+    /**
+     * @brief A message block completion queue mock which only counts the heartbeat requests
+     */
+
+    template
+    <
+        typename E = void
+    >
+    class HeartbeatCountingQueueT : public bl::messaging::MessageBlockCompletionQueue
+    {
+        BL_DECLARE_OBJECT_IMPL_ONEIFACE( HeartbeatCountingQueueT, bl::messaging::MessageBlockCompletionQueue )
+
+    protected:
+
+        std::atomic< std::size_t >                                                  m_heartbeatsRequested;
+
+        HeartbeatCountingQueueT()
+            :
+            m_heartbeatsRequested( 0U )
+        {
+        }
+
+    public:
+
+        std::size_t heartbeatsRequested() const NOEXCEPT
+        {
+            return m_heartbeatsRequested;
+        }
+
+        virtual void requestHeartbeat() OVERRIDE
+        {
+            ++m_heartbeatsRequested;
+        }
+
+        virtual bool tryScheduleBlock(
+            SAA_in                  const bl::uuid_t&                                   targetPeerId,
+            SAA_in                  bl::om::ObjPtr< bl::data::DataBlock >&&             dataBlock,
+            SAA_in                  CompletionCallback&&                                callback
+            ) OVERRIDE
+        {
+            BL_UNUSED( targetPeerId );
+            BL_UNUSED( dataBlock );
+            BL_UNUSED( callback );
+
+            return true;
+        }
+    };
+
+    typedef bl::om::ObjectImpl< HeartbeatCountingQueueT<> > HeartbeatCountingQueue;
+}
+
+UTF_AUTO_TEST_CASE( IO_OutgoingBackendStateRegistrationTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace bl::messaging;
+
+    /*
+     * Registration policy of the outbound (delivery) queues, see
+     * TcpBlockServerOutgoingBackendState::registerQueue():
+     *
+     * - a registration for a peer id demotes the active queues registered from the same
+     *   remote address to the unconfirmed list until they confirm by heartbeat (cooperative
+     *   multi-connection from one host)
+     *
+     * - active queues registered from a different remote address stay active (they are
+     *   still asked to heartbeat), so a registration from another host cannot take over
+     *   delivery for the peer id
+     *
+     * - a registration with an unknown address behaves like the same host
+     */
+
+    typedef std::set< MessageBlockCompletionQueue* > queues_set_t;
+
+    const auto backendState = TcpBlockServerOutgoingBackendState::createInstance();
+    const auto peerId = uuids::create();
+
+    const auto q1Impl = HeartbeatCountingQueue::createInstance();
+    const auto q2Impl = HeartbeatCountingQueue::createInstance();
+    const auto q3Impl = HeartbeatCountingQueue::createInstance();
+    const auto q4Impl = HeartbeatCountingQueue::createInstance();
+
+    const auto q1 = om::qi< MessageBlockCompletionQueue >( q1Impl );
+    const auto q2 = om::qi< MessageBlockCompletionQueue >( q2Impl );
+    const auto q3 = om::qi< MessageBlockCompletionQueue >( q3Impl );
+    const auto q4 = om::qi< MessageBlockCompletionQueue >( q4Impl );
+
+    const auto collectActiveQueues = [ & ]() -> queues_set_t
+    {
+        /*
+         * tryGetQueue() rotates over the active queues only; enough calls visit all of them
+         */
+
+        queues_set_t result;
+
+        for( std::size_t i = 0U; i < 16U; ++i )
+        {
+            const auto queue = backendState -> tryGetQueue( peerId );
+
+            if( queue )
+            {
+                result.insert( queue.get() );
+            }
+        }
+
+        return result;
+    };
+
+    const auto requireActive = [ & ]( SAA_in const queues_set_t& expected ) -> void
+    {
+        const auto active = collectActiveQueues();
+
+        UTF_REQUIRE_EQUAL( active.size(), expected.size() );
+
+        for( const auto& queue : expected )
+        {
+            UTF_REQUIRE( active.count( queue ) );
+        }
+    };
+
+    /*
+     * First registration from host A
+     */
+
+    backendState -> registerQueue( peerId, om::copy( q1 ), "10.0.0.1" );
+
+    requireActive( queues_set_t( { q1.get() } ) );
+    UTF_REQUIRE_EQUAL( q1Impl -> heartbeatsRequested(), 0U );
+
+    /*
+     * A registration for the same peer id from host B: q1 must stay active (probed by a
+     * heartbeat) and q2 joins the rotation
+     */
+
+    backendState -> registerQueue( peerId, om::copy( q2 ), "10.0.0.2" );
+
+    requireActive( queues_set_t( { q1.get(), q2.get() } ) );
+    UTF_REQUIRE_EQUAL( q1Impl -> heartbeatsRequested(), 1U );
+    UTF_REQUIRE_EQUAL( q2Impl -> heartbeatsRequested(), 0U );
+
+    /*
+     * A registration from host A again: q1 (same host) is demoted until it confirms,
+     * q2 (other host) stays active; both are asked to heartbeat
+     */
+
+    backendState -> registerQueue( peerId, om::copy( q3 ), "10.0.0.1" );
+
+    requireActive( queues_set_t( { q2.get(), q3.get() } ) );
+    UTF_REQUIRE_EQUAL( q1Impl -> heartbeatsRequested(), 2U );
+    UTF_REQUIRE_EQUAL( q2Impl -> heartbeatsRequested(), 1U );
+    UTF_REQUIRE_EQUAL( q3Impl -> heartbeatsRequested(), 0U );
+
+    /*
+     * q1 confirms and rejoins the rotation
+     */
+
+    backendState -> confirmQueue( peerId, q1 );
+
+    requireActive( queues_set_t( { q1.get(), q2.get(), q3.get() } ) );
+
+    UTF_REQUIRE_THROW( backendState -> confirmQueue( peerId, q1 ), UnexpectedException );
+
+    /*
+     * A registration with an unknown address behaves like the legacy code: every active
+     * queue is demoted until it confirms
+     */
+
+    backendState -> registerQueue( peerId, om::copy( q4 ), str::empty() );
+
+    requireActive( queues_set_t( { q4.get() } ) );
+
+    backendState -> confirmQueue( peerId, q1 );
+    backendState -> confirmQueue( peerId, q2 );
+    backendState -> confirmQueue( peerId, q3 );
+
+    requireActive( queues_set_t( { q1.get(), q2.get(), q3.get(), q4.get() } ) );
+
+    /*
+     * Unregistering removes the queue from the rotation and from the accounting
+     */
+
+    UTF_REQUIRE_EQUAL( backendState -> activeTasksCount(), 4U );
+
+    backendState -> unregisterQueue( peerId, q2 );
+
+    requireActive( queues_set_t( { q1.get(), q3.get(), q4.get() } ) );
+    UTF_REQUIRE_EQUAL( backendState -> activeTasksCount(), 3U );
+    UTF_REQUIRE( backendState -> getAllActiveQueuesIds().count( peerId ) );
+
+    UTF_REQUIRE_THROW( backendState -> unregisterQueue( peerId, q2 ), UnexpectedException );
+    UTF_REQUIRE_THROW( backendState -> registerQueue( peerId, om::copy( q1 ), "10.0.0.1" ), UnexpectedException );
 }
 
 UTF_AUTO_TEST_CASE( IO_SimplePerfTests )
