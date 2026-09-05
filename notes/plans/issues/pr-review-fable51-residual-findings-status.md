@@ -24,7 +24,7 @@ assessment plan lists in its §1) are not repeated here.
 |---|---|---|---|
 | M-9 compat `async_connect` unconstrained | **Fixed**: `constraint_t<!is_endpoint_sequence<Iterator>>` on the reinstated overload, the constraint Boost ≤ 1.88 carried | `core/detail/BoostAsioCompat.h` | `BoostAsioCompat_AsyncConnectIteratorForm`, `BoostAsioCompat_AsyncConnectRangeForm` (the range form is the compile-time regression test) |
 | M-18 clang-tidy fragment name collapses under `FORCE_O1` | **Fixed**: the `CXXFLAGS :=` filter-out is gone; `-O1` is appended (the last `-O` wins) and the file says why `:=` is forbidden | `projects/make/toolchain/clang-analysis.mk` | `make -n` shows one `-MJ<object>.o.json` per object; real UBSAN + tidy build of `utf_baselib_utils` |
-| M-19 clang-cl global `-Wno-*` under `-WX` | **Fixed** (2026-09-04, Windows session): external headers passed with `-imsvc` in the `ccl16` branch, fourteen of the sixteen `-Wno-*` removed, the four project warnings they masked fixed | `projects/make/toolchain/msvc-default.mk`; `core/detail/OSImplWindows.h`, `utf_baselib/TestBaselibDefault.h`, `utf_baselib_io/TestIO.h`; `windows-only-residual-findings-deferral.md` outcome 1 | clean `-WX` `ccl16` builds of all 21 targets in all six architecture/variant combinations |
+| M-19 clang-cl global `-Wno-*` under `-WX` | **Fixed** (2026-09-04, Windows session): external headers passed with `-imsvc` in the `ccl16` branch, sixteen of the eighteen `-Wno-*` removed, the four project warnings they masked fixed | `projects/make/toolchain/msvc-default.mk`; `core/detail/OSImplWindows.h`, `utf_baselib/TestBaselibDefault.h`, `utf_baselib_io/TestIO.h`; `windows-only-residual-findings-deferral.md` outcome 1 | clean `-WX` `ccl16` builds of all 21 targets in all six architecture/variant combinations |
 | M-20 scan-build on macOS unreachable | **Fixed** (truthfully): scan-build and clang-tidy are refused on macOS with an explicit error, devenv7+ is required there, Windows is refused outright; docs aligned | `clang-analysis.mk`, `notes/clang_analysis_tools.md` | read-through (no macOS host) |
 | L-1 throttle setters do not pad | **Fixed**: both setters call `padExecutingQueueNothrow()` | `tasks/ExecutionQueueImpl.h` | `Tasks_ExecutionQueueRaisedThrottleLimitAdmitsPendingTasksTest`, `Tasks_ExecutionQueueReregisteredObserverLimitAdmitsPendingTasksTest` |
 | L-2 user code under `m_lock` undocumented | **Fixed** (comments): `scheduleTask()` and `scanQueue()` contracts | `tasks/TaskBase.h`, `tasks/ExecutionQueue.h` | compile-proof |
@@ -65,7 +65,7 @@ assessment plan lists in its §1) are not repeated here.
 | I-14 `python-tests.mk` cwd-relative, 2.7 `venv` | **Fixed**: anchored on `TOPDIR` / `TOPDIRABS`; `pytest-install` refuses an interpreter below 3.6 with a clear message | `projects/make/python-tests.mk` | `make pytest-check` from the root and via `make -f ../Makefile` from `scripts/`; `PYTHON=false` errors as intended |
 | I-15 unconditional `$(shell)`; "on Linux" text | **Fixed**: pure-make sanitizer counting (zero forks, verified with `strace`); Windows refused explicitly so the Linux branch is really Linux | `clang-analysis.mk` | `make -n` with 0, 1 and 2 sanitizer flags |
 | I-16 version script dropped for lld; clang OpenSSL visibility | **Fixed** (makefile half): the version script is applied under lld with `--undefined-version` (lld ≥ 16 otherwise rejects a script naming symbols an executable does not define, which is what "stricter" meant); the plugin export surface is now the two entry points on both toolchains. The OpenSSL half is recorded | `projects/make/toolchain/gcc-default.mk`; deferral row 20 | `utf_baselib_loader` build and run; `nm -D` on the plugin |
-| I-17 documentation drift, editor settings | **Fixed**: the JDK path lines and the OpenSSL CRT sentence in `scripts/devenv7/AGENTS.md`, the include-site sentence in `notes/clang_analysis_tools.md`; `settings/vscode/linux/a64` refreshed to the devenv7 layout with `${workspaceFolder}`; **the Windows settings were rewritten on 2026-09-04** in three configurations (msvc-arm64, msvc-x64, clang-arm64) with `launch.json` moved to the devenv7 build tree and normalised to LF; the x64 and macOS settings and the two script sites stay recorded, as they belong to their own platforms | as named; `windows-only-residual-findings-deferral.md` outcome 7; deferral row 21 | `ls` of every path in the a64 file; every `includePath`/`compilerPath` in the Windows file checked to exist, both files parse |
+| I-17 documentation drift, editor settings | **Fixed**: the JDK path lines and the OpenSSL CRT sentence in `scripts/devenv7/AGENTS.md`, the include-site sentence in `notes/clang_analysis_tools.md`; `settings/vscode/linux/a64/c_cpp_properties.json` refreshed to the devenv7 layout with `${workspaceFolder}` (the sibling `launch.json` was missed in this round and refreshed on 2026-09-05, see the addendum); **the Windows settings were rewritten on 2026-09-04** in three configurations (msvc-arm64, msvc-x64, clang-arm64) with `launch.json` moved to the devenv7 build tree and normalised to LF; the x64 and macOS settings and the two script sites stay recorded, as they belong to their own platforms | as named; `windows-only-residual-findings-deferral.md` outcome 7; deferral row 21 | `ls` of every path in the a64 file; every `includePath`/`compilerPath` in the Windows file checked to exist, both files parse |
 | I-18 `DISTROOT` never defined | **Fixed**: the rule that actually applied (absolute → `-isystem`, relative → `-I`) is written out, and an absolute `TOPDIR` is refused with an explanation (it would silently mute every warning in the project's own headers) | `projects/make/toolchain/gcc-default.mk` | compile lines byte-identical before/after; `make -f <abs>/Makefile` from another directory hits the guard |
 
 ---
@@ -125,3 +125,72 @@ stays unverified there); macOS; OpenSSL 1.0.2; JDK 8. The Windows deployment-scr
 (`scripts/devenv7/docs/supply-chain-verification-deferral.md`) were **not** picked up in this
 session: they need a provisioning run into a scratch dist root, which was not authorised, so those
 scripts are untouched.
+
+---
+
+## Addendum: closure audit of 2026-09-05
+
+Every one of the 75 findings was re-checked against the code at `7b80980` (not against the records
+above). All three Highs and 70 of the 75 dispositions hold exactly. The rest is listed here so it
+does not resurface, with what was done about it.
+
+| Residual | Disposition (2026-09-05) |
+|---|---|
+| L-16: two byte-widening `std::wstring( name.begin(), name.end() )` sites survived (`OSImplWindows.h:2806` `RobustNamedMutex`, `:3396` `GetNamedSecurityInfoW`) | **Recorded**: `windows-only-residual-findings-deferral.md` item 9; not edited blind |
+| M-1: the comment at `ExecutionQueueImpl.h:358-360` still said no user code runs under `m_lock`, contradicting the L-2 contracts; the same sentence in `execution-queue-notification-delivery-breaking-change.md` ("This closes CXX-07") | **Fixed** (comments): both now say observer code is lock-free and name the two documented exceptions (`scheduleTask()`, `scanQueue()`) |
+| L-3: a third proxy site, `Tasks_ExecutionQueueThrottleFromObserverTest`, still had a `UTF_REQUIRE` between proxy creation and a plain `disconnect()` | **Fixed**: `BL_SCOPE_EXIT`, same shape as the two sites above |
+| L-5: `BoostJsonImpl.h` pretty-print comments claimed the empty-container output matches json-spirit; `JsonPrettyPrintEmptyContainers` pins the opposite | **Fixed** (comments): both state the divergence and point at the test |
+| I-17: `settings/vscode/linux/a64/launch.json` was not refreshed (devenv5 build paths, user-specific repo path, JDK 8 `JAVA_HOME`); the row above claimed the whole directory | **Fixed**: `${workspaceFolder}/bld/ub24-a64-clang2010-*`, `openjdk/25/a64`; the row corrected |
+| Record inaccuracies: M-19 row said fourteen of sixteen `-Wno-*` (sixteen of eighteen); `TestJsonAbstraction.h` header said "four cases" (five); release note §8 code references stale and silent on the 1024-bit VeriSign root at level 2 (the TLS decision record has it); the H-1..H-3 plan pointed at its own prescription as the run record | **Fixed** (text) |
+| Verification gap: the review's §10 asked for a TSan run of the ExecutionQueue notification tests and no record reported one | **Run**, see below |
+| `notes/reviews/` is untracked in git while every record here points into it | **Open**, for the maintainer |
+
+Noted, not changed: `devenv-detect.mk:204` (`win7` → `win`) is a layout gate on the `devenv7`
+literal, classified as a deliberate per-version block in `medium-severity-findings-f11-f17-plan.md`;
+`bl_tool.is_reparse_link` returns `False` on `OSError` where `s3_manage.is_hostile_reparse` raises
+(deliberate, pinned by `test_bl_tool_unit.py`, and closed by the re-`lstat` in `collect_tree`);
+`g_rfc2818VerifyCallback` bypasses the `preVerified` gate by design and pre-exists on `master`.
+
+### TSan run (clang2010 debug, `BL_CLANG_ENABLE_RA_TSAN=1 BL_CLANG_ENABLE_RA_FORCE_O1=1`)
+
+`utf_baselib_tasks`: all 53 cases pass ("No errors detected"); ThreadSanitizer reported **257
+warnings**, none of them in any ExecutionQueue notification, throttle, disposal or admission test
+case:
+
+- **255 lock-order-inversion reports**, all from `Tasks_FilesPackagerUnitTests` (154),
+  `Tasks_ExternalCompletionTaskTests` (101) and `Tasks_ProcessingUnitWithObserverTests` (2), all
+  the same two-mutex cycle between two *task* locks (`TaskBase::m_lock` of an `AsyncExecutor`
+  `ExecutorTask` and of a completion `SimpleTask`): one thread holds the executor task's lock inside
+  `scheduleNothrow()` (called from `padExecutingQueueNothrow()` under the queue lock,
+  `ExecutionQueueImpl.h:661/745/767`) and, through `postCompletionCallback()` →
+  `m_completionTasksQueue -> push_back()` (`AsyncExecutorImpl.h:374, 536, 1085`), takes the
+  completion task's lock while scheduling it; the other thread executes that completion task under
+  its own lock and its callback takes the executor task's lock. The two acquisitions are in
+  different phases of the same task (scheduling versus execution), which the queue lock serializes,
+  so a real deadlock needs the same task to be in both phases at once. The structure is identical on
+  `master` (`padExecutingQueueNothrow()` calling `scheduleNothrow()` under `m_lock`,
+  `push_back()` holding `m_lock`, and the three `AsyncExecutorImpl.h` sites are unchanged), so this
+  is pre-existing and not touched by any finding of this review; it is the "not required to be
+  TSan-clean" class the delivery plan anticipated. Whether it should be silenced by a lock-order
+  annotation or restructured is a separate decision.
+- **2 data-race reports** inside Boost.Filesystem's `readdir` path (`libs/filesystem/src/directory.cpp`,
+  `path_traits.hpp`) between two concurrent `ScanDirectoryTask` instances in
+  `Tasks_FilesPackagerUnitTests`, each holding a different task lock and iterating its own
+  directory; the reported address is the `DIR` buffer, so this is either glibc-internal locking
+  TSan cannot see or heap-address reuse across `closedir`/`opendir`. Third-party, not in any code
+  this review touched, not determined further.
+
+Log kept for this round only (scratch, not committed); rerun with the flags above to reproduce.
+
+### Verification of this round
+
+| Build (`-j1`, clang2010 debug) | Result |
+|---|---|
+| `utf_baselib_tasks` TSan + `-O1` | build ok; 53 cases, no errors; TSan reports as above |
+| `utf_baselib_tasks` (sanitizer objects removed first) | build ok; 53 cases, no errors, `Tasks_ExecutionQueueThrottleFromObserverTest` passes |
+| `utf_baselib_data` | build ok; 83 cases, no errors, `JsonPrettyPrintEmptyContainers` passes |
+| `git diff --check` | clean |
+| `launch.json` paths | build-tree paths follow `PLAT`; `openjdk/25/a64/bin/java` exists on the dist |
+
+Not run: gcc, release, json-spirit (comment-only changes in `BoostJsonImpl.h` and the tasks header;
+the test edit is in one case of one module), Windows, macOS.

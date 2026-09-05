@@ -1834,7 +1834,7 @@ UTF_AUTO_TEST_CASE( JsonParseDepthWithinLimitIsAccepted )
 }
 
 /*
- * The four cases below are documented divergences between the backends (see the contract notes
+ * The five cases below are documented divergences between the backends (see the contract notes
  * in baselib/core/JsonUtils.h and the release note on serialized text). Each case asserts the
  * Boost.JSON behaviour on the default backend and the json-spirit behaviour under
  * BL_USE_JSON_SPIRIT, so that a change on either side is noticed rather than hidden by a

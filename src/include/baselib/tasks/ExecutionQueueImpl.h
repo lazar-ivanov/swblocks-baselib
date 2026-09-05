@@ -355,9 +355,11 @@ namespace bl
              * exists and is intentional: an observer callback may legitimately re-enter the
              * execution queue.
              *
-             * Note this is the only place where the queue invokes user code with a queue mutex
-             * held, and it holds only m_lockNotify. No user code runs under m_lock at all -
-             * maxReadyOrExecuting() is sampled once by setNotifyCallback(), outside the lock.
+             * Note this is the only place where the queue invokes observer code with a queue
+             * mutex held, and it holds only m_lockNotify; maxReadyOrExecuting() is sampled once
+             * by setNotifyCallback(), outside the lock. Two other kinds of user code do run
+             * under m_lock and are documented as such at their contracts: Task::scheduleTask()
+             * overrides (see TaskBase.h) and the scanQueue() callback (see ExecutionQueue.h).
              *
              * The mutex is deliberately non-recursive. onReady() CAN be re-entered on the same
              * thread: a serialized callback which synchronously completes another task of this

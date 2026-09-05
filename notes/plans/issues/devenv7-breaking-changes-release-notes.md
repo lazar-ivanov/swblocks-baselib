@@ -236,7 +236,7 @@ parseable again by a devenv7 peer. Asserted by `JsonSerializeEscapesControlChara
 
 **Presents as:** a runtime behaviour change. Silent until a client handshake fails.
 
-`src/include/baselib/crypto/CryptoBase.h:595`, `:717-751`
+`src/include/baselib/crypto/CryptoBase.h:633`, `:774-790`
 
 `CryptoBase::allowUntrustedCertificates()` now defaults to **false**. On `master` it was `true`,
 and because the "report it and let the user continue" half of that design was never implemented,
@@ -247,10 +247,13 @@ connection. It is now enforced: a client whose peer chain does not verify fails 
 What the chain is verified against is the important part. Trust anchors are **only** the roots
 bundled in `TrustedRoots.h` plus whatever the application passes to `registerTrustedRoot()`; the
 platform certificate store is **deliberately not consulted on any operating system** (the
-`set_default_verify_paths` TODO at `CryptoBase.h:400-406`). The default bundled set is three roots
+`set_default_verify_paths` TODO at `CryptoBase.h:439-444`). The default bundled set is three roots
 (VeriSign Class 3, VeriSign Class 3 G5, Entrust G2) and `initAdditionalCommonTrustedRoots()` opts in
 four more (DigiCert Global, DigiCert High Assurance EV, GeoTrust Primary, and GeoTrust Global, which
-expired in May 2022). Most public endpoints are therefore not trusted out of the box.
+expired in May 2022). Most public endpoints are therefore not trusted out of the box. Note also that
+the security level 2 pinned by item 6 refuses the 1024-bit VeriSign Class 3 root as a chain anchor
+(`X509_V_ERR_CA_KEY_TOO_SMALL`), so on OpenSSL 1.1.0+ the effective default set is the two 2048-bit
+roots; see the trust-store paragraph of the TLS decision record.
 
 **Who is affected:** every client of this library that connects to an endpoint whose issuing root is
 not in that set. It connected on `master`; it fails now.

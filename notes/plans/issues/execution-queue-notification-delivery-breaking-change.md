@@ -139,7 +139,10 @@ the scheduling path, **once per scheduled task**. It is now sampled **exactly on
 `setNotifyCallback()`, before the lock is taken, and the value is cached for the lifetime of that
 registration.
 
-This closes CXX-07: no user code runs under `m_lock` any more.
+This closes CXX-07: no *observer* code runs under `m_lock` any more. (Correction, 2026-09-05: two
+other kinds of user code still do, by design, and are documented at their contracts rather than
+here: `Task::scheduleTask()` overrides, invoked from `padExecutingQueueNothrow()` under `m_lock`
+(see `TaskBase.h`), and the `scanQueue()` callback (see `ExecutionQueue.h`).)
 
 **Why it was safe to change:** every implementation in the tree returns a compile-time constant —
 `0` (`ExecutionQueueNotifyBase.h:44`), `1024` (`FanoutTasksObservable.h:294`), `256`

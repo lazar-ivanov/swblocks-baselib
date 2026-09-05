@@ -1,7 +1,7 @@
 # Plan: merge-gate items 1-3 (H-1, H-2, H-3) from the Fable 5.1 PR review
 
 **Date:** 2026-09-04  
-**Status:** implemented and verified on `lazari2` (2026-09-04); see the Verification section for the matrix that was run
+**Status:** implemented and verified on `lazari2` (2026-09-04, commit `2da162a`). The Verification section below is the prescribed matrix; the results of the runs that were made (OpenSSL 3.5.4 and 1.1.1w, gcc and clang) are recorded in the verification table of `pr-review-fable51-residual-findings-status.md`
 
 Source: `notes/reviews/major/update_2025/v1/pr_review_analysis_fable51.md`, section 11 items 1-3 and section 3 (H-1..H-3).
 

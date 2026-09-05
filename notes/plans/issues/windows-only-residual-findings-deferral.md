@@ -59,6 +59,18 @@ Host: ARM64 Windows 11, `dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86`.
 
 ---
 
+## Residual found by the closure audit (2026-09-05)
+
+The audit of the review's closure (every finding re-checked against the code from the Linux
+checkout) found one Windows-only leftover of item 4, recorded here under the same rule as the
+original items: it cannot be compiled or exercised from this checkout.
+
+| # | Finding | Location | What is wrong | Fix when picked up | How to validate |
+|---|---|---|---|---|---|
+| 9 | L-16 (residual) | `src/include/baselib/core/detail/OSImplWindows.h:2806` (`RobustNamedMutex`, name passed to `::CreateMutexW`), `:3396` (`::GetNamedSecurityInfoW`) | two `std::wstring( name.begin(), name.end() )` byte-widening sites survived item 4, which converted only the three sites the review named. The mutex site turns a non-ASCII UTF-8 name into a different kernel object name, so two processes agreeing on the UTF-8 name would not share the mutex; the security-info site is a double conversion (`fs::path::string()` narrows the native wide path, then it is byte-widened back). ASCII names are unaffected. The two `srcDirPath.native()` / `dstDirPath.native()` widenings at `:3280` and `:3307` are copies of an already wide string and are not part of this | `utf8ToUtf16()` at both sites; at `:3396` pass `pathPreferred.native()` directly instead of narrowing and widening | `utf_baselib` on Windows: a named mutex test with a non-ASCII name shared between two `RobustNamedMutex` instances, and the file security tests under a non-ASCII directory |
+
+---
+
 ## What limited the exposure while this was open
 
 - Items 1-3 changed nothing about what shipped: they concerned which warnings the Windows build
@@ -77,8 +89,9 @@ ships, not a no-op. Both toolchains build and test clean against it.
 
 ## Conditions to revisit
 
-- **Closed 2026-09-04**; the trigger fired and the outcome is recorded above. The remaining gap is
-  the OpenSSL 1.1.1w side of item 8, which needs a dist that carries `openssl/1.1.1w`.
+- **Closed 2026-09-04**; the trigger fired and the outcome is recorded above. The remaining gaps are
+  the OpenSSL 1.1.1w side of item 8, which needs a dist that carries `openssl/1.1.1w`, and the
+  L-16 residual (item 9, found 2026-09-05), which waits for the next Windows session.
 - A third Windows SDK or a second MSVC toolset appears in a dist: the selection is now "newest by
   lexicographic sort", matching `vs-detector.ps1`, and the chosen versions are printed in the build
   log, so a mismatch should be visible rather than silent.

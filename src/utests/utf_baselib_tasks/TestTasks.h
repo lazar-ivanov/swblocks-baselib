@@ -1448,6 +1448,13 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueThrottleFromObserverTest )
         ExecutionQueueImpl::createInstance< ExecutionQueue >( ExecutionQueue::OptionKeepNone )
         );
 
+    /*
+     * Disconnected on every exit path: a failing UTF_REQUIRE below would otherwise reach the
+     * proxy destructor still connected, which aborts and masks the real failure
+     */
+
+    BL_SCOPE_EXIT( { notifyProxy -> disconnect(); } );
+
     eq -> setNotifyCallback(
         om::copy( notifyProxy ),
         ExecutionQueueNotify::DeliveryConcurrent,
@@ -1505,8 +1512,6 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueThrottleFromObserverTest )
     {
         eq -> cancelAll( true /* wait */ );
     }
-
-    notifyProxy -> disconnect();
 
     UTF_REQUIRE( initiallyScheduled );
     UTF_REQUIRE( firstCompleted );

@@ -519,8 +519,11 @@ namespace bl
 
                                 /*
                                  * An empty object is emitted as {} rather than as an open brace, a
-                                 * blank line and a close brace, so the output matches what the
-                                 * json-spirit backend produces for the same value
+                                 * blank line and a close brace. Note that this is one of the
+                                 * documented pretty print divergences between the backends:
+                                 * json-spirit emits an open brace, a newline and a close brace for
+                                 * the same value (see JsonPrettyPrintEmptyContainers in
+                                 * utf_baselib_data, which pins both spellings)
                                  */
 
                                 if( obj.empty() )
@@ -559,7 +562,8 @@ namespace bl
 
                                 /*
                                  * As for the empty object above - [] rather than an open bracket, a
-                                 * blank line and a close bracket
+                                 * blank line and a close bracket, and likewise a divergence from
+                                 * json-spirit
                                  */
 
                                 if( arr.empty() )

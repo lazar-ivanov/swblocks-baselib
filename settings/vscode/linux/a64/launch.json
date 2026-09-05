@@ -11,7 +11,7 @@
             "name": "(lldb) Launch bl-tool (debug)",
             "type": "lldb",
             "request": "launch",
-            "program": "${env:HOME}/dev/github/swblocks-baselib/bld/ub20-a64-clang1201-debug/apps/bl-tool/bl-tool",
+            "program": "${workspaceFolder}/bld/ub24-a64-clang2010-debug/apps/bl-tool/bl-tool",
             "args": [ "http", "request", "-s", "-h", "en.wikipedia.org", "--path", "/wiki/Probability_theory" ],
             "cwd": "${workspaceFolder}"
         },
@@ -19,7 +19,7 @@
             "name": "(lldb) Launch bl-tool (release)",
             "type": "lldb",
             "request": "launch",
-            "program": "${env:HOME}/dev/github/swblocks-baselib/bld/ub20-a64-clang1201-release/apps/bl-tool/bl-tool",
+            "program": "${workspaceFolder}/bld/ub24-a64-clang2010-release/apps/bl-tool/bl-tool",
             "args": [ "http", "request", "-s", "-h", "en.wikipedia.org", "--path", "/wiki/Probability_theory" ],
             "cwd": "${workspaceFolder}"
         },
@@ -27,7 +27,7 @@
             "name": "(lldb) Launch utf-baselib (debug)",
             "type": "lldb",
             "request": "launch",
-            "program": "${env:HOME}/dev/github/swblocks-baselib/bld/ub20-a64-clang1201-debug/utests/utf_baselib/utf-baselib",
+            "program": "${workspaceFolder}/bld/ub24-a64-clang2010-debug/utests/utf_baselib/utf-baselib",
             "args": [ "--log_level=message", "--run_test=BaseLib_URIEncodeDecodeTests" ],
             "cwd": "${workspaceFolder}"
         },
@@ -35,7 +35,7 @@
             "name": "(lldb) Launch utf-baselib-tasks (debug)",
             "type": "lldb",
             "request": "launch",
-            "program": "${env:HOME}/dev/github/swblocks-baselib/bld/ub20-a64-clang1201-debug/utests/utf_baselib_tasks/utf-baselib-tasks",
+            "program": "${workspaceFolder}/bld/ub24-a64-clang2010-debug/utests/utf_baselib_tasks/utf-baselib-tasks",
             "args": [ "--log_level=message", "--run_test=Tasks_PingerAutoAddInvalidHostTests", "--", "--bl-logging-level=6"],
             "cwd": "${workspaceFolder}"
         },
@@ -43,10 +43,10 @@
             "name": "(lldb) Launch utf-baselib-jni (debug)",
             "type": "lldb",
             "request": "launch",
-            "program": "${env:HOME}/dev/github/swblocks-baselib/bld/ub20-a64-clang1201-debug/utests/utf_baselib_jni/utf-baselib-jni",
+            "program": "${workspaceFolder}/bld/ub24-a64-clang2010-debug/utests/utf_baselib_jni/utf-baselib-jni",
             "args": [ "--log_level=message", "--run_test=Jni_CreateJniEnvironments" ],
             "env": {
-                "JAVA_HOME" : "${env:HOME}/swblocks/dist-devenv5-ub20-gcc1110-clang1201-arm/jdk/open-jdk/8/ub20-a64"
+                "JAVA_HOME" : "${env:HOME}/swblocks/dist-devenv7-ub24-gcc1520-clang2010-a64/openjdk/25/a64"
             },
             "cwd": "${workspaceFolder}"
         }
