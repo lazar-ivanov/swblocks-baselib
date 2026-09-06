@@ -911,6 +911,50 @@ namespace bl
                     ::_exit( 1 );
                 }
 
+                /*
+                 * Marks every descriptor from 'fromFd' upward close-on-exec with a single
+                 * system call: close_range( fromFd, ~0U, CLOSE_RANGE_CLOEXEC ), available on
+                 * Linux 5.11 and newer. Returns false when the kernel does not support it
+                 * (ENOSYS on kernels older than 5.9, EINVAL on 5.9 and 5.10 which have the
+                 * call but not the flag) or on any other platform, in which case the caller
+                 * falls back to marking the descriptors one by one
+                 *
+                 * The raw syscall form is used on purpose: the glibc wrapper exists only from
+                 * glibc 2.34 and the flag / syscall number may be missing from older headers,
+                 * while the number (436) has been the same on every Linux architecture since
+                 * the call was added. The selection is made at run time, so one binary behaves
+                 * correctly on every kernel it may run on
+                 *
+                 * Note: this must remain async-signal-safe (it is called in the forked child)
+                 */
+
+                static bool tryMarkAllCloseOnExecNothrow( SAA_in const int fromFd ) NOEXCEPT
+                {
+#ifdef __linux__
+#ifdef __NR_close_range
+                    const long closeRangeSyscall = __NR_close_range;
+#else
+                    const long closeRangeSyscall = 436L;
+#endif
+#ifdef CLOSE_RANGE_CLOEXEC
+                    const unsigned int closeRangeCloexec = CLOSE_RANGE_CLOEXEC;
+#else
+                    const unsigned int closeRangeCloexec = ( 1U << 2 );
+#endif
+
+                    return 0 == ::syscall(
+                        closeRangeSyscall,
+                        static_cast< unsigned int >( fromFd ),
+                        ~0U,
+                        closeRangeCloexec
+                        );
+#else
+                    BL_UNUSED( fromFd );
+
+                    return false;
+#endif
+                }
+
                 static void execChildProcessNothrow( SAA_in const ChildExecInfo& info ) NOEXCEPT
                 {
                     /*
@@ -978,12 +1022,25 @@ namespace bl
                      * close-on-exec to hide them from the new program
                      *
                      * http://www.gnu.org/software/libc/manual/html_node/Descriptors-and-Streams.html
+                     *
+                     * The one-by-one loop below costs one fcntl call per possible descriptor
+                     * up to the soft RLIMIT_NOFILE (about a million calls and 130-280 ms per
+                     * spawn under a 1048576 limit, which containers and services commonly
+                     * have), so it is only the fallback for kernels without close_range
                      */
 
-                    for( int fd = info.maxFd; --fd > STDERR_FILENO; )
+                    if( ! tryMarkAllCloseOnExecNothrow( STDERR_FILENO + 1 ) )
                     {
-                        tryMakeFileDescriptorPrivate( fd );
+                        for( int fd = info.maxFd; --fd > STDERR_FILENO; )
+                        {
+                            tryMakeFileDescriptorPrivate( fd );
+                        }
                     }
+
+                    /*
+                     * The comm pipe must be close-on-exec for the "EOF means success"
+                     * protocol with the parent, so it is verified explicitly either way
+                     */
 
                     if( ! tryMakeFileDescriptorPrivate( info.fdComm ) )
                     {

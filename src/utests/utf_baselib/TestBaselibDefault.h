@@ -1977,6 +1977,152 @@ UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessExecFailureWhileLoggingTests )
     }
 }
 
+UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessDescriptorLimitTests )
+{
+    /*
+     * The close-on-exec sweep in the child must not cost time proportional to the soft
+     * descriptor limit; raise the soft limit to the hard limit for the duration of the
+     * test and require the spawns to stay fast
+     */
+
+    struct ::rlimit limits = {};
+
+    UTF_REQUIRE_EQUAL( 0, ::getrlimit( RLIMIT_NOFILE, &limits ) );
+
+    const ::rlim_t targetLimit = std::min< ::rlim_t >( limits.rlim_max, 1048576U );
+
+    if( targetLimit < 65536U )
+    {
+        UTF_MESSAGE( "The hard descriptor limit is too low for this test to be meaningful; skipping" );
+
+        return;
+    }
+
+    struct ::rlimit raisedLimits = limits;
+    raisedLimits.rlim_cur = targetLimit;
+
+    UTF_REQUIRE_EQUAL( 0, ::setrlimit( RLIMIT_NOFILE, &raisedLimits ) );
+
+    BL_SCOPE_EXIT(
+        {
+            ::setrlimit( RLIMIT_NOFILE, &limits );
+        }
+        );
+
+    UTF_REQUIRE( static_cast< ::rlim_t >( ::getdtablesize() ) == targetLimit );
+
+    const std::size_t spawnCount = 5U;
+
+    const auto start = bl::time::microsec_clock::universal_time();
+
+    for( std::size_t i = 0U; i < spawnCount; ++i )
+    {
+        const auto proc = bl::os::createProcess( "true", bl::os::ProcessCreateFlags::WaitToFinish );
+        UTF_REQUIRE( proc );
+    }
+
+    const auto elapsed = bl::time::microsec_clock::universal_time() - start;
+
+    UTF_MESSAGE(
+        BL_MSG()
+            << "Average spawn time with soft descriptor limit "
+            << targetLimit
+            << " is "
+            << ( elapsed.total_milliseconds() / spawnCount )
+            << " ms"
+        );
+
+    UTF_CHECK( elapsed < bl::time::milliseconds( 20 * spawnCount ) );
+}
+
+UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessDescriptorHygieneTests )
+{
+    /*
+     * No descriptor other than the standard ones may leak into the child, including
+     * descriptors which are not close-on-exec and one being opened by another thread
+     * at the time of the spawn
+     */
+
+    std::vector< int > fds;
+
+    BL_SCOPE_EXIT(
+        {
+            for( const int fd : fds )
+            {
+                ::close( fd );
+            }
+        }
+        );
+
+    for( std::size_t i = 0U; i < 10U; ++i )
+    {
+        const int fd = ::open( "/dev/null", O_RDWR );
+        UTF_REQUIRE( -1 != fd );
+
+        fds.push_back( fd );
+    }
+
+    std::atomic< bool > stopOpening( false );
+
+    bl::os::thread opener(
+        [ &stopOpening ]() -> void
+        {
+            while( ! stopOpening )
+            {
+                const int fd = ::open( "/dev/null", O_RDWR );
+
+                if( -1 != fd )
+                {
+                    ::close( fd );
+                }
+            }
+        }
+        );
+
+    BL_SCOPE_EXIT(
+        {
+            stopOpening = true;
+            opener.join();
+        }
+        );
+
+    std::string line;
+
+    const auto callbackIos = [ & ](
+        SAA_in              const bl::os::process_handle_t  process,
+        SAA_in_opt          std::istream*                   out,
+        SAA_in_opt          std::istream*                   err,
+        SAA_in_opt          std::ostream*                   in
+        ) -> void
+    {
+        UTF_REQUIRE( process );
+        UTF_REQUIRE( out );
+        UTF_REQUIRE( ! err );
+        UTF_REQUIRE( ! in );
+
+        std::getline( *out, line );
+    };
+
+    for( std::size_t i = 0U; i < 5U; ++i )
+    {
+        line.clear();
+
+        const auto proc = bl::os::createProcess(
+            "bash -c \"ls /proc/self/fd | wc -l\"",
+            bl::os::ProcessCreateFlags::RedirectStdout | bl::os::ProcessCreateFlags::WaitToFinish,
+            callbackIos
+            );
+
+        UTF_REQUIRE( proc );
+
+        /*
+         * 0, 1, 2 and the directory descriptor 'ls' itself opens
+         */
+
+        UTF_CHECK_EQUAL( line, std::string( "4" ) );
+    }
+}
+
 #endif // ! defined( _WIN32 )
 
 #if defined( _WIN32 )
