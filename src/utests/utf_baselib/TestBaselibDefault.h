@@ -1707,6 +1707,278 @@ UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessTests2 )
     }
 }
 
+#if ! defined( _WIN32 )
+
+namespace
+{
+    std::string readWholeFile( SAA_in const bl::fs::path& path )
+    {
+        std::ifstream is( path.string() );
+
+        std::string text;
+        std::string line;
+
+        while( std::getline( is, line ) )
+        {
+            text += line;
+            text += '\n';
+        }
+
+        return text;
+    }
+}
+
+UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessDetachedStdioTests )
+{
+    /*
+     * A detached child must start with the standard descriptors attached to /dev/null
+     * (not closed) and a detached child with redirection must deliver its output to
+     * the callback
+     */
+
+    bl::fs::TmpDir tmpDir;
+
+    const auto outputFile = tmpDir.path() / "detached_stdio.txt";
+
+    {
+        std::vector< std::string > args;
+        args.push_back( "bash" );
+        args.push_back( "-c" );
+        /*
+         * Note: fd 1 is duplicated into fd 3 before it gets redirected to the output file
+         */
+
+        args.push_back(
+            "exec 3>&1; readlink /proc/self/fd/0 /proc/self/fd/3 /proc/self/fd/2 > " + outputFile.string()
+            );
+
+        const auto proc = bl::os::createProcess( args, bl::os::ProcessCreateFlags::DetachProcess );
+        UTF_REQUIRE( proc );
+
+        UTF_CHECK_EQUAL( 0, bl::os::tryAwaitTermination( proc ) );
+
+        UTF_CHECK_EQUAL( readWholeFile( outputFile ), std::string( "/dev/null\n/dev/null\n/dev/null\n" ) );
+    }
+
+    {
+        std::string line;
+
+        const auto callbackIos = [ & ](
+            SAA_in              const bl::os::process_handle_t  process,
+            SAA_in_opt          std::istream*                   out,
+            SAA_in_opt          std::istream*                   err,
+            SAA_in_opt          std::ostream*                   in
+            ) -> void
+        {
+            UTF_REQUIRE( process );
+            UTF_REQUIRE( out );
+            UTF_REQUIRE( ! err );
+            UTF_REQUIRE( ! in );
+
+            std::getline( *out, line );
+        };
+
+        const auto proc = bl::os::createProcess(
+            "bash -c \"echo hello\"",
+            bl::os::ProcessCreateFlags::DetachProcess | bl::os::ProcessCreateFlags::RedirectStdout,
+            callbackIos
+            );
+
+        UTF_REQUIRE( proc );
+
+        UTF_CHECK_EQUAL( line, std::string( "hello" ) );
+        UTF_CHECK_EQUAL( 0, bl::os::tryAwaitTermination( proc ) );
+    }
+}
+
+UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessDetachedReleaseTests )
+{
+    /*
+     * Releasing the handle of a running detached child must not stall and the
+     * abandoned child must be reaped by a subsequent process creation once it
+     * exits (i.e. no zombies accumulate in a long running parent)
+     */
+
+    std::uint64_t pid = 0U;
+
+    const auto start = bl::time::microsec_clock::universal_time();
+
+    {
+        const auto proc = bl::os::createProcess( "sleep 30", bl::os::ProcessCreateFlags::DetachProcess );
+        UTF_REQUIRE( proc );
+
+        pid = bl::os::getPid( proc );
+        UTF_REQUIRE( pid );
+    }
+
+    const auto elapsed = bl::time::microsec_clock::universal_time() - start;
+
+    UTF_CHECK( elapsed < bl::time::seconds( 1 ) );
+
+    UTF_REQUIRE_EQUAL( 0, ::kill( static_cast< ::pid_t >( pid ), SIGKILL ) );
+
+    const auto cbIsStillOurChild = [ & ]() -> bool
+    {
+        const auto statusFile = bl::fs::path( "/proc" ) / std::to_string( pid ) / "status";
+
+        if( ! bl::fs::exists( statusFile ) )
+        {
+            return false;
+        }
+
+        const std::string ppidLine = "PPid:\t" + std::to_string( bl::os::getPid() ) + "\n";
+
+        return std::string::npos != readWholeFile( statusFile ).find( ppidLine );
+    };
+
+    bool reaped = false;
+
+    for( std::size_t i = 0U; i < 50U && ! reaped; ++i )
+    {
+        bl::os::sleep( bl::time::milliseconds( 100 ) );
+
+        const auto proc = bl::os::createProcess( "true" );
+        UTF_REQUIRE_EQUAL( 0, bl::os::tryAwaitTermination( proc ) );
+
+        reaped = ! cbIsStillOurChild();
+    }
+
+    UTF_CHECK( reaped );
+}
+
+UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessExecFailureWhileLoggingTests )
+{
+    /*
+     * An exec failure must be reported to the parent with the original errno and the
+     * child must exit even when other threads hold the logging lock at the time of the
+     * fork (the child inherits the locked state and must never touch the lock)
+     */
+
+    const auto cbCheckExecFailure = [](
+        SAA_in          const std::string&                      command,
+        SAA_in          const bl::os::ProcessCreateFlags        flags,
+        SAA_in          const int                               errnoExpected
+        ) -> void
+    {
+        try
+        {
+            bl::os::createProcess( command, flags );
+            UTF_FAIL( "os::createProcess must throw" );
+        }
+        catch( bl::SystemException& e )
+        {
+            const auto* ec = bl::eh::get_error_info< bl::eh::errinfo_errno >( e );
+            UTF_REQUIRE( nullptr != ec );
+            UTF_CHECK_EQUAL( errnoExpected, *ec );
+        }
+    };
+
+    bl::fs::TmpDir tmpDir;
+
+    cbCheckExecFailure( "doesnotexistproc", bl::os::ProcessCreateFlags::NoRedirect, ENOENT );
+    cbCheckExecFailure( tmpDir.path().string(), bl::os::ProcessCreateFlags::NoRedirect, EACCES );
+
+    const auto cbNoopLineLogger = [](
+        SAA_in      const std::string&                          prefix,
+        SAA_in      const std::string&                          text,
+        SAA_in      const bool                                  enableTimestamp,
+        SAA_in      const bl::Logging::Level                    level
+        ) -> void
+    {
+        BL_UNUSED( prefix );
+        BL_UNUSED( text );
+        BL_UNUSED( enableTimestamp );
+        BL_UNUSED( level );
+    };
+
+    std::atomic< bool > stopLogging( false );
+    std::vector< bl::os::thread > loggers;
+
+    const auto cbStopLogging = [ & ]() -> void
+    {
+        stopLogging = true;
+
+        for( auto& logger : loggers )
+        {
+            if( logger.joinable() )
+            {
+                logger.join();
+            }
+        }
+    };
+
+    BL_SCOPE_EXIT(
+        {
+            cbStopLogging();
+        }
+        );
+
+    {
+        bl::Logging::LineLoggerPusher pusher( cbNoopLineLogger );
+
+        for( std::size_t i = 0U; i < 4U; ++i )
+        {
+            loggers.emplace_back(
+                [ &stopLogging ]() -> void
+                {
+                    while( ! stopLogging )
+                    {
+                        BL_LOG( bl::Logging::debug(), "spawn while logging stress" );
+                    }
+                }
+                );
+        }
+
+        for( std::size_t i = 0U; i < 20U; ++i )
+        {
+            const auto start = bl::time::microsec_clock::universal_time();
+
+            cbCheckExecFailure( "doesnotexistproc", bl::os::ProcessCreateFlags::NoRedirect, ENOENT );
+            cbCheckExecFailure( "doesnotexistproc", bl::os::ProcessCreateFlags::DetachProcess, ENOENT );
+
+            const auto elapsed = bl::time::microsec_clock::universal_time() - start;
+
+            UTF_REQUIRE( elapsed < bl::time::seconds( 1 ) );
+        }
+
+        cbStopLogging();
+    }
+
+    /*
+     * No child process may be left behind (a child stuck after a failed exec would
+     * still be a child of this process); the last child may still be exiting, so
+     * allow a short grace period
+     */
+
+    const auto until = bl::time::microsec_clock::universal_time() + bl::time::seconds( 5 );
+
+    for( ;; )
+    {
+        int status = 0;
+
+        const auto rc = ::waitpid( -1, &status, WNOHANG );
+
+        if( rc > 0 )
+        {
+            continue;
+        }
+
+        if( 0 == rc && bl::time::microsec_clock::universal_time() < until )
+        {
+            bl::os::sleep( bl::time::milliseconds( 10 ) );
+
+            continue;
+        }
+
+        UTF_CHECK_EQUAL( -1, rc );
+        UTF_CHECK_EQUAL( ECHILD, errno );
+
+        break;
+    }
+}
+
+#endif // ! defined( _WIN32 )
+
 UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessRedirectedTests )
 {
     if( bl::os::onWindows() && test::UtfArgsParser::isAnalysisEnabled() )

@@ -162,6 +162,56 @@ namespace bl
 
                 static const char*                  g_procSelfExeSymlink;
 
+                /*
+                 * The pids of detached child processes which were still running when their
+                 * handles were released; they are reaped opportunistically (see
+                 * reapAbandonedProcessesNothrow), so they don't accumulate as zombies
+                 */
+
+                static mutex                        g_abandonedPidsLock;
+                static std::vector< pid_t >         g_abandonedPids;
+
+                static void rememberAbandonedProcess( SAA_in const pid_t pid )
+                {
+                    BL_MUTEX_GUARD( g_abandonedPidsLock );
+
+                    g_abandonedPids.push_back( pid );
+                }
+
+                static void reapAbandonedProcessesNothrow() NOEXCEPT
+                {
+                    BL_NOEXCEPT_BEGIN()
+
+                    BL_MUTEX_GUARD( g_abandonedPidsLock );
+
+                    for( auto pos = g_abandonedPids.begin(); pos != g_abandonedPids.end(); )
+                    {
+                        int status = 0;
+
+                        const auto rc = ::waitpid( *pos, &status, WNOHANG );
+
+                        if( 0 == rc || ( -1 == rc && EINTR == errno ) )
+                        {
+                            /*
+                             * The process is still running (or the call was interrupted)
+                             */
+
+                            ++pos;
+
+                            continue;
+                        }
+
+                        /*
+                         * The process was reaped (rc == pid) or it is no longer our
+                         * child (e.g. ECHILD) - in both cases forget about it
+                         */
+
+                        pos = g_abandonedPids.erase( pos );
+                    }
+
+                    BL_NOEXCEPT_END()
+                }
+
                 class EncapsulatedPidHandle FINAL
                 {
                     BL_NO_COPY( EncapsulatedPidHandle )
@@ -235,19 +285,33 @@ namespace bl
                     {
                         BL_NOEXCEPT_BEGIN()
 
+                        reapAbandonedProcessesNothrow();
+
+                        if( ! m_terminateOnDestruction )
+                        {
+                            /*
+                             * A detached process is not waited on; reap it if it has already
+                             * exited and otherwise remember it, so it gets reaped later
+                             */
+
+                            if( 0 != m_pid && ! tryTimedAwaitTermination( 0 /* timeoutMs */ ) )
+                            {
+                                rememberAbandonedProcess( m_pid );
+                            }
+
+                            return;
+                        }
+
                         if( tryTimedAwaitTermination( 2000 /* timeoutMs */ ) )
                         {
                             return;
                         }
 
-                        if( m_terminateOnDestruction )
-                        {
-                            terminateProcess( false /* force */, true /* includeSubprocesses */ );
+                        terminateProcess( false /* force */, true /* includeSubprocesses */ );
 
-                            if( ! tryTimedAwaitTermination( 2000 /* timeoutMs */ ) )
-                            {
-                                terminateProcess( true /* force */, true /* includeSubprocesses */ );
-                            }
+                        if( ! tryTimedAwaitTermination( 2000 /* timeoutMs */ ) )
+                        {
+                            terminateProcess( true /* force */, true /* includeSubprocesses */ );
                         }
 
                         BL_NOEXCEPT_END()
@@ -759,6 +823,180 @@ namespace bl
                     fd.release();
 
                     return result;
+                }
+
+                /*
+                 * The information the child process needs after the fork; all of it is
+                 * prepared by the parent before the fork (see execChildProcessNothrow)
+                 */
+
+                struct ChildExecInfo
+                {
+                    const char*         path;
+                    char* const*        argv;
+                    int                 fdStdin;
+                    int                 fdStdout;
+                    int                 fdStderr;
+                    int                 fdDevNull;
+                    int                 fdComm;
+                    int                 maxFd;
+                    bool                setParentDeathSignal;
+                };
+
+                /*
+                 * The record written by the child process to the parent when it fails
+                 * before or during the exec call
+                 */
+
+                struct ChildExecFailure
+                {
+                    int                 step;
+                    int                 errorCode;
+                };
+
+                enum ChildExecStep : int
+                {
+                    ChildExecStepDup2       = 1,
+                    ChildExecStepSetsid     = 2,
+                    ChildExecStepPrctl      = 3,
+                    ChildExecStepFcntl      = 4,
+                    ChildExecStepExec       = 5,
+                };
+
+                static const char* childExecStepName( SAA_in const int step ) NOEXCEPT
+                {
+                    switch( step )
+                    {
+                        case ChildExecStepDup2:     return "dup2";
+                        case ChildExecStepSetsid:   return "setsid";
+                        case ChildExecStepPrctl:    return "prctl";
+                        case ChildExecStepFcntl:    return "fcntl";
+                        case ChildExecStepExec:     return "exec";
+                    }
+
+                    return "unknown step";
+                }
+
+                static void childExecFailNothrow(
+                    SAA_in          const ChildExecInfo&                        info,
+                    SAA_in          const int                                   step
+                    ) NOEXCEPT
+                {
+                    ChildExecFailure failure;
+
+                    failure.step = step;
+                    failure.errorCode = errno;
+
+                    const char* buffer = reinterpret_cast< const char* >( &failure );
+
+                    std::size_t written = 0U;
+
+                    while( written < sizeof( failure ) )
+                    {
+                        const auto rc = ::write( info.fdComm, buffer + written, sizeof( failure ) - written );
+
+                        if( -1 == rc )
+                        {
+                            if( EINTR == errno )
+                            {
+                                continue;
+                            }
+
+                            break;
+                        }
+
+                        written += static_cast< std::size_t >( rc );
+                    }
+
+                    ::_exit( 1 );
+                }
+
+                static void execChildProcessNothrow( SAA_in const ChildExecInfo& info ) NOEXCEPT
+                {
+                    /*
+                     * After a fork in a multi-threaded process only async-signal-safe calls can
+                     * be made safely: the other threads do not exist in the child process, but
+                     * the locks they were holding at the time of the fork (e.g. the logging
+                     * lock) are copied in their locked state, so anything which needs them
+                     * deadlocks forever in the child
+                     *
+                     * This is why nothing here allocates, logs, throws or uses streams; all the
+                     * data is prepared by the parent before the fork and on failure the step
+                     * and errno are written to the parent with a raw write and the child exits
+                     * immediately with _exit
+                     *
+                     * See the following web page for more details:
+                     *
+                     * http://programmers.stackexchange.com/questions/206963/which-child-process-will-inherit-threads-of-parent-process
+                     */
+
+                    /*
+                     * Override the standard I/O descriptors before anything else; a detached
+                     * process gets /dev/null for the ones which are not redirected
+                     */
+
+                    const int fdStdio[ 3 ] = { info.fdStdin, info.fdStdout, info.fdStderr };
+
+                    for( int fd = 0; fd < 3; ++fd )
+                    {
+                        const int fdSource = ( -1 != fdStdio[ fd ] ) ? fdStdio[ fd ] : info.fdDevNull;
+
+                        if( -1 != fdSource && -1 == ::dup2( fdSource, fd ) )
+                        {
+                            childExecFailNothrow( info, ChildExecStepDup2 );
+                        }
+                    }
+
+                    /*
+                     * In child, divorce from parent session
+                     */
+
+                    if( -1 == ::setsid() )
+                    {
+                        childExecFailNothrow( info, ChildExecStepSetsid );
+                    }
+
+#ifdef __linux__
+                    /*
+                     * The ::prctl API is only available on Linux and according to this stack overflow thread it is
+                     * not easy to implement equivalent functionality on non-Linux POSIX compatible platform
+                     *
+                     * http://stackoverflow.com/questions/284325/how-to-make-child-process-die-after-parent-exits/17589555#17589555
+                     *
+                     * PR_SET_PDEATHSIG makes sure that the signal SIGKILL will be sent to the child process
+                     * when the parent dies (not requested for detached processes)
+                     */
+
+                    if( info.setParentDeathSignal && -1 == ::prctl( PR_SET_PDEATHSIG, SIGKILL ) )
+                    {
+                        childExecFailNothrow( info, ChildExecStepPrctl );
+                    }
+#endif
+
+                    /*
+                     * Mark all open file descriptors other than the standard ones as
+                     * close-on-exec to hide them from the new program
+                     *
+                     * http://www.gnu.org/software/libc/manual/html_node/Descriptors-and-Streams.html
+                     */
+
+                    for( int fd = info.maxFd; --fd > STDERR_FILENO; )
+                    {
+                        tryMakeFileDescriptorPrivate( fd );
+                    }
+
+                    if( ! tryMakeFileDescriptorPrivate( info.fdComm ) )
+                    {
+                        childExecFailNothrow( info, ChildExecStepFcntl );
+                    }
+
+                    /*
+                     * Execute the new process
+                     */
+
+                    ::execvp( info.path, info.argv );
+
+                    childExecFailNothrow( info, ChildExecStepExec );
                 }
 
             public:
@@ -1282,6 +1520,51 @@ namespace bl
 
                     stdio_pipe_t parentChildCommPipe = createPipe();
 
+                    /*
+                     * Detached processes get their standard descriptors attached to /dev/null
+                     * (unless they are redirected); the descriptor is opened before the fork
+                     * because the child can't safely do anything but a few system calls
+                     */
+
+                    fd_ref devNullFd;
+
+                    if( detachProcess )
+                    {
+                        devNullFd.reset( ::open( "/dev/null", O_RDWR ) );
+
+                        BL_CHK_ERRNO(
+                            -1,
+                            devNullFd.get(),
+                            BL_MSG()
+                                << "Cannot open /dev/null"
+                            );
+                    }
+
+                    /*
+                     * Everything the child needs must be prepared before the fork (see the
+                     * comment in execChildProcessNothrow)
+                     */
+
+                    ChildExecInfo childInfo;
+
+                    childInfo.path = path.c_str();
+                    childInfo.argv = &argv[ 0 ];
+                    childInfo.fdStdin = inPipe.first ? inPipe.first.get() : -1;
+                    childInfo.fdStdout = outPipe.second ? outPipe.second.get() : -1;
+                    childInfo.fdStderr = -1;
+
+                    if( flagsRedirect & ProcessCreateFlags::RedirectStderr )
+                    {
+                        childInfo.fdStderr = errPipe.second ? errPipe.second.get() : outPipe.second.get();
+                    }
+
+                    childInfo.fdDevNull = devNullFd ? devNullFd.get() : -1;
+                    childInfo.fdComm = parentChildCommPipe.second.get();
+                    childInfo.maxFd = ::getdtablesize();
+                    childInfo.setParentDeathSignal = ! detachProcess;
+
+                    reapAbandonedProcessesNothrow();
+
                     const auto pid = ::fork();
 
                     BL_CHK_T(
@@ -1295,213 +1578,11 @@ namespace bl
                     if( pid == 0 )
                     {
                         /*
-                         * Child Process
+                         * Child Process - it either replaces itself with the new program
+                         * or exits (see execChildProcessNothrow)
                          */
 
-                        /*
-                         * Apparently the only safe thing to do after ::fork() API is
-                         * to call exec and replace the process completely or call _exit
-                         *
-                         * If an error occurs in the child process code after ::fork
-                         * call, but before we replace the process with exec then we
-                         * must call _exit and terminate the process immediately
-                         *
-                         * See the following web page for one of the reasons why:
-                         *
-                         * http://programmers.stackexchange.com/questions/206963/which-child-process-will-inherit-threads-of-parent-process
-                         */
-
-                        try
-                        {
-                            {
-                                /*
-                                 * Since we are going to replace the child process with execvp
-                                 * which we are never going to return from, the first thing we
-                                 * must do in the child process is create a scope to clean up
-                                 * appropriately the inherited handles and anything else in the
-                                 * local scope which needs to be cleaned up
-                                 */
-
-                                BL_SCOPE_EXIT(
-                                    {
-                                        cbCloseObjects();
-                                    }
-                                    );
-
-                                /*
-                                 * Override the standard I/O descriptors before we do
-                                 * anything else
-                                 */
-
-                                if( flagsRedirect & ProcessCreateFlags::RedirectStdout )
-                                {
-                                    BL_ASSERT( outPipe.second.get() );
-
-                                    BL_CHK_ERRNO(
-                                        -1,
-                                        ::dup2( outPipe.second.get(), STDOUT_FILENO ),
-                                        BL_MSG()
-                                            << "Cannot replace STDOUT file descriptor"
-                                        );
-                                }
-
-                                if( flagsRedirect & ProcessCreateFlags::RedirectStderr )
-                                {
-                                    const int fderr =
-                                        errPipe.second ?
-                                        errPipe.second.get() :
-                                        outPipe.second.get();
-
-                                    BL_ASSERT( fderr );
-
-                                    BL_CHK_ERRNO(
-                                        -1,
-                                        ::dup2( fderr, STDERR_FILENO ),
-                                        BL_MSG()
-                                            << "Cannot replace STDERR file descriptor"
-                                        );
-                                }
-
-                                if( flagsRedirect & ProcessCreateFlags::RedirectStdin )
-                                {
-                                    BL_ASSERT( inPipe.first.get() );
-
-                                    BL_CHK_ERRNO(
-                                        -1,
-                                        ::dup2( inPipe.first.get(), STDIN_FILENO ),
-                                        BL_MSG()
-                                            << "Cannot replace STDIN file descriptor"
-                                        );
-                                }
-                            }
-
-                            /*
-                             * In child, divorce from parent session
-                             */
-
-                            BL_CHK_ERRNO(
-                                -1,
-                                ::setsid(),
-                                BL_MSG()
-                                    << "Setsid failed, unable to create a new process"
-                                );
-#ifdef __linux__
-                            /*
-                             * The ::prctl API is only available on Linux and according to this stack overflow thread it is
-                             * not easy to implement equivalent functionality on non-Linux POSIX compatible platform
-                             *
-                             * We ill figure out how to deal with this later as it is not essential functinality
-                             *
-                             * http://stackoverflow.com/questions/284325/how-to-make-child-process-die-after-parent-exits/17589555#17589555
-                             */
-
-                            if( ! detachProcess )
-                            {
-                                /*
-                                 * As suggested in 'http://stackoverflow.com/questions/284325/how-to-make-child-process-die-after-parent-exits'
-                                 * prctl will make sure that the signal SIGKILL will be sent to the child process when the parent dies.
-                                 *
-                                 * 'man 2 prctl'
-                                 * PR_SET_PDEATHSIG (since Linux 2.1.57)
-                                 * Set the parent process death signal of the calling process to arg2 (either a signal value in the range 1..maxsig, or 0 to clear).
-                                 * This is the signal that the calling process will get when its parent dies. This value is cleared for the child of a fork(2)
-                                 */
-
-                                BL_CHK_ERRNO(
-                                    -1,
-                                    ::prctl( PR_SET_PDEATHSIG, SIGKILL ),
-                                    BL_MSG()
-                                        << "prctl failed, unable to force the parent lifetime to the child process"
-                                    );
-                            }
-#endif
-
-                            /*
-                             * For detached processes, we need to close all file descriptors.
-                             *
-                             * For the rest, we leave stdin, stdout, and stderr open.
-                             *
-                             * http://www.gnu.org/software/libc/manual/html_node/Descriptors-and-Streams.html
-                             */
-
-                            const int fileDescriptorThreshold = detachProcess ? -1 : STDERR_FILENO;
-
-                            /*
-                             * HACK: mark all open file handles as close-on-exec to hide them from the child process
-                             */
-
-                            for( int fd = ::getdtablesize(); --fd > fileDescriptorThreshold; )
-                            {
-                                tryMakeFileDescriptorPrivate( fd );
-                            }
-
-                            parentChildCommPipe.first.reset();
-                            makeFileDescriptorPrivate( parentChildCommPipe.second.get() );
-
-                            const auto commFilePtr =
-                                convert2StdioFile( parentChildCommPipe.second, false /* readOnly */ );
-                            const auto commStream = fileptr2ostream( commFilePtr.get() );
-
-                            /*
-                             * Execute the new process
-                             */
-
-                            const auto execResult = ::execvp( path.c_str(), &argv[ 0 ] );
-
-                            if( -1 == execResult )
-                            {
-                                *commStream << errno;
-
-                                BL_THROW(
-                                    createException( "exec", errno, path ),
-                                    BL_MSG()
-                                        << "exec failed"
-                                    );
-                            }
-                        }
-                        catch( std::exception& e )
-                        {
-                            BL_LOG_MULTILINE(
-                                Logging::debug(),
-                                BL_MSG()
-                                    << "\nUnhandled exception was encountered in child process:\n"
-                                    << eh::diagnostic_information( e )
-                                );
-                        }
-                        catch( ... )
-                        {
-                            BL_LOG_MULTILINE(
-                                Logging::debug(),
-                                BL_MSG()
-                                    << "Unexpected error occurred in child process"
-                                );
-                        }
-
-                        /*
-                         * If we are here then apparently only safe thing to do
-                         * is to call _exit - see comment at the beginning of
-                         * the try block
-                         *
-                         * The top handler after fork always returns 1 exit code
-                         * to indicate an error
-                         *
-                         * Note that 1 can be a genuine exit code returned by the
-                         * process itself and we can't distinguish this case from
-                         * errors which have occurred post fork and before exec
-                         *
-                         * In the cases where the caller wants to handle these
-                         * errors it should redirect the output and parse it
-                         *
-                         * There is no better way to handle these errors on Linux
-                         * and we can't really communicate the error efficiently
-                         * to the calling process without inventing some
-                         * sophisticated mechanism to transport the exception info
-                         * with pipes, etc, but then the question is how do you
-                         * handle errors which occur while trying to do this
-                         * sophisticated error handling
-                         */
-
-                        ::_exit( 1 );
+                        execChildProcessNothrow( childInfo );
                     }
 
                     /*
@@ -1515,24 +1596,62 @@ namespace bl
 
                         const auto g = BL_SCOPE_GUARD( parentChildCommPipe.first.reset(); );
 
-                        const auto commFilePtr =
-                            convert2StdioFile( parentChildCommPipe.first, true /* readOnly */ );
-                        const auto commStream = fileptr2istream( commFilePtr.get() );
+                        /*
+                         * Read the failure record from the child (if any); EOF without
+                         * a record means that the exec has succeeded
+                         */
 
-                        std::string childErrorCode;
+                        ChildExecFailure failure = { 0, 0 };
 
-                        std::getline( *commStream, childErrorCode );
+                        std::size_t bytesRead = 0U;
 
-                        if( ! childErrorCode.empty() )
+                        while( bytesRead < sizeof( failure ) )
                         {
-                            const int errorCode = std::atoi( childErrorCode.c_str() );
+                            const auto rc = ::read(
+                                parentChildCommPipe.first.get(),
+                                reinterpret_cast< char* >( &failure ) + bytesRead,
+                                sizeof( failure ) - bytesRead
+                                );
+
+                            if( -1 == rc )
+                            {
+                                if( EINTR == errno )
+                                {
+                                    continue;
+                                }
+
+                                BL_THROW(
+                                    createException( "read", errno ),
+                                    BL_MSG()
+                                        << "Cannot read the child process status"
+                                    );
+                            }
+
+                            if( 0 == rc )
+                            {
+                                break;
+                            }
+
+                            bytesRead += static_cast< std::size_t >( rc );
+                        }
+
+                        if( bytesRead )
+                        {
+                            BL_CHK(
+                                false,
+                                sizeof( failure ) == bytesRead,
+                                BL_MSG()
+                                    << "Malformed child process status"
+                                );
 
                             BL_THROW(
-                                createException( "createProcess" /* locationOrAPI */, errorCode, path ),
+                                createException( "createProcess" /* locationOrAPI */, failure.errorCode, path ),
                                 BL_MSG()
                                     << "Cannot create process with command line '"
                                     << str::join( commandArguments, " " )
-                                    << "'"
+                                    << "'; "
+                                    << childExecStepName( failure.step )
+                                    << " failed in the child process"
                                 );
                         }
                     }
@@ -2700,6 +2819,8 @@ namespace bl
             };
 
             BL_DEFINE_STATIC_MEMBER( OSImplT, const char*, g_procSelfExeSymlink ) = "/proc/self/exe";
+            BL_DEFINE_STATIC_MEMBER( OSImplT, mutex, g_abandonedPidsLock );
+            BL_DEFINE_STATIC_MEMBER( OSImplT, std::vector< pid_t >, g_abandonedPids );
 
             typedef OSImplT<> OSImpl;
 

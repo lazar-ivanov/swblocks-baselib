@@ -2408,7 +2408,343 @@ namespace
 
     typedef bl::om::ObjectImpl< TestConversationProcessingTimeouts > TestConversationProcessingTimeoutsImpl;
 
+    /*
+     * A test object dispatcher which records the messages pushed for sending; each send
+     * is completed asynchronously when the test calls completePendingSend() (completing
+     * a send from within the push itself is not allowed by the external completion task
+     * contract); the first 'm_failNextSends' pushes are failed with a retryable broker
+     * error
+     */
+
+    class TestRecordingObjectDispatch : public bl::messaging::MessagingClientObjectDispatch
+    {
+        BL_DECLARE_OBJECT_IMPL_ONEIFACE_DISPOSABLE(
+            TestRecordingObjectDispatch,
+            bl::messaging::MessagingClientObjectDispatch
+            )
+
+    public:
+
+        typedef bl::messaging::BrokerProtocol                                   BrokerProtocol;
+        typedef bl::messaging::Payload                                          Payload;
+
+        std::vector< bl::om::ObjPtr< BrokerProtocol > >                         m_sent;
+        bl::cpp::ScalarTypeIniter< std::size_t >                                m_pushCount;
+        bl::cpp::ScalarTypeIniter< std::size_t >                                m_failNextSends;
+
+    protected:
+
+        bl::os::mutex                                                           m_dispatchLock;
+        bl::tasks::CompletionCallback                                           m_pendingCompletion;
+        std::exception_ptr                                                      m_pendingError;
+
+        TestRecordingObjectDispatch()
+        {
+        }
+
+    public:
+
+        virtual void dispose() NOEXCEPT OVERRIDE
+        {
+        }
+
+        virtual void pushMessage(
+            SAA_in                  const bl::uuid_t&                           targetPeerId,
+            SAA_in                  const bl::om::ObjPtr< BrokerProtocol >&     brokerProtocol,
+            SAA_in_opt              const bl::om::ObjPtr< Payload >&            payload,
+            SAA_in_opt              bl::tasks::CompletionCallback&&             completionCallback =
+                bl::tasks::CompletionCallback()
+            ) OVERRIDE
+        {
+            BL_UNUSED( targetPeerId );
+            BL_UNUSED( payload );
+
+            BL_MUTEX_GUARD( m_dispatchLock );
+
+            UTF_REQUIRE( completionCallback );
+            UTF_REQUIRE( ! m_pendingCompletion );
+
+            ++m_pushCount.lvalue();
+
+            if( m_failNextSends )
+            {
+                --m_failNextSends.lvalue();
+
+                m_pendingError = BL_MAKE_EXCEPTION_PTR(
+                    bl::ServerErrorException()
+                        << bl::eh::errinfo_error_code(
+                            bl::eh::errc::make_error_code( bl::messaging::BrokerErrorCodes::TargetPeerQueueFull )
+                            ),
+                    "Simulated retryable send failure"
+                    );
+            }
+            else
+            {
+                m_pendingError = nullptr;
+
+                m_sent.push_back( bl::om::copy( brokerProtocol ) );
+            }
+
+            m_pendingCompletion = BL_PARAM_FWD( completionCallback );
+        }
+
+        virtual bool isConnected() const NOEXCEPT OVERRIDE
+        {
+            return true;
+        }
+
+        bool completePendingSend()
+        {
+            bl::tasks::CompletionCallback completionCallback;
+            std::exception_ptr eptr;
+
+            {
+                BL_MUTEX_GUARD( m_dispatchLock );
+
+                if( ! m_pendingCompletion )
+                {
+                    return false;
+                }
+
+                completionCallback.swap( m_pendingCompletion );
+                eptr = m_pendingError;
+                m_pendingError = nullptr;
+            }
+
+            completionCallback( eptr );
+
+            return true;
+        }
+    };
+
+    typedef bl::om::ObjectImpl< TestRecordingObjectDispatch > TestRecordingObjectDispatchImpl;
+
 } // __unnamed
+
+UTF_AUTO_TEST_CASE( IO_MessagingMessageProcessingOutboundQueueTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace bl::messaging;
+
+    typedef bl::messaging::ConversationProcessingBaseImpl<>::payload_t payload_t;
+
+    /*
+     * Deterministic test for the outbound message queue of the conversation processing
+     * state machine (no broker involved): a message which was requested to be sent, but
+     * was not yet picked up for sending, must not be lost when another message arrives
+     * and gets acknowledged in the meantime; acknowledgments are sent ahead of the other
+     * messages and a retried send doesn't disturb the order
+     */
+
+    scheduleAndExecuteInParallel(
+        [ & ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+        {
+            const auto peerId = uuids::create();
+            const auto remotePeerId = uuids::create();
+            const auto conversationId = uuids::create();
+
+            const auto cookiesText = utest::TestMessagingUtils::getTokenData();
+
+            const auto requestPayload = AsyncRpcPolicyDefault::castToBasePayload(
+                bl::dm::DataModelUtils::loadFromFile< payload_t >(
+                    utest::TestUtils::resolveDataFilePath( "async_rpc_request.json" )
+                    )
+                );
+
+            const auto cbCreateRequest = [ & ]( SAA_in const uuid_t& messageId ) -> om::ObjPtr< BrokerProtocol >
+            {
+                auto brokerProtocol = utest::TestMessagingUtils::createBrokerProtocolMessage(
+                    MessageType::AsyncRpcDispatch,
+                    conversationId,
+                    cookiesText,
+                    messageId
+                    );
+
+                brokerProtocol -> sourcePeerId( uuids::uuid2string( remotePeerId ) );
+
+                /*
+                 * Request messages must be authenticated (normally the broker stamps the principal)
+                 */
+
+                brokerProtocol -> principalIdentityInfo() -> securityPrincipal(
+                    dm::messaging::SecurityPrincipal::createInstance()
+                    );
+
+                return brokerProtocol;
+            };
+
+            const auto cbIsAck = []( SAA_in const om::ObjPtr< BrokerProtocol >& brokerProtocol ) -> bool
+            {
+                return MessageType::AsyncRpcAcknowledgment == MessageType::toEnum( brokerProtocol -> messageType() );
+            };
+
+            const auto cbCreateProcessor = [ & ]( SAA_in const om::ObjPtr< TestRecordingObjectDispatchImpl >& dispatcher )
+                -> om::ObjPtr< TestConversationProcessingImpl >
+            {
+                return TestConversationProcessingImpl::createInstance(
+                    false /* isSender */,
+                    peerId,
+                    remotePeerId,
+                    conversationId,
+                    om::qi< MessagingClientObjectDispatch >( dispatcher ),
+                    std::string() /* authenticationCookies */
+                    );
+            };
+
+            /*
+             * Runs the sends which are pending (retrying the ones which fail with a
+             * retryable error) and returns the number of sends which succeeded
+             */
+
+            const auto cbRunPendingSends = [ & ](
+                SAA_in          const om::ObjPtr< TestConversationProcessingImpl >&     processor,
+                SAA_in          const om::ObjPtr< TestRecordingObjectDispatchImpl >&    dispatcher
+                )
+                -> std::size_t
+            {
+                std::size_t count = 0U;
+
+                for( ;; )
+                {
+                    const auto task = processor -> tryPopProcessingTask();
+
+                    if( ! task )
+                    {
+                        break;
+                    }
+
+                    eq -> push_back( task );
+
+                    /*
+                     * The send is completed once the task has been scheduled and has pushed
+                     * the message into the dispatcher
+                     */
+
+                    while( ! dispatcher -> completePendingSend() )
+                    {
+                        os::sleep( time::milliseconds( 10 ) );
+                    }
+
+                    eq -> wait( task );
+
+                    if( task -> isFailed() )
+                    {
+                        UTF_REQUIRE( processor -> retryProcessingTask( task -> exception() ) );
+
+                        continue;
+                    }
+
+                    ++count;
+                }
+
+                return count;
+            };
+
+            {
+                const auto dispatcher = TestRecordingObjectDispatchImpl::createInstance();
+                const auto processor = cbCreateProcessor( dispatcher );
+
+                const auto requestMessageId = uuids::create();
+
+                /*
+                 * The request arrives and gets acknowledged
+                 */
+
+                processor -> pushMessage( peerId, cbCreateRequest( requestMessageId ), requestPayload );
+
+                UTF_REQUIRE( 1U == cbRunPendingSends( processor, dispatcher ) );
+                UTF_REQUIRE( 1U == dispatcher -> m_sent.size() );
+                UTF_REQUIRE( cbIsAck( dispatcher -> m_sent[ 0 ] ) );
+                UTF_REQUIRE_EQUAL( uuids::uuid2string( requestMessageId ), dispatcher -> m_sent[ 0 ] -> messageId() );
+
+                /*
+                 * The request is processed (the test processor needs 4 ticks) and the response
+                 * is requested to be sent, but it is not picked up for sending yet
+                 */
+
+                for( std::size_t i = 0U; i < 4U; ++i )
+                {
+                    processor -> onProcessing();
+                }
+
+                UTF_REQUIRE( 1U == dispatcher -> m_sent.size() );
+
+                /*
+                 * A duplicate delivery of the request arrives before the response is picked
+                 * up for sending (this used to overwrite and lose the response); the first
+                 * send is failed with a retryable error to verify that the retry doesn't
+                 * disturb the order
+                 */
+
+                processor -> pushMessage( peerId, cbCreateRequest( requestMessageId ), requestPayload );
+
+                dispatcher -> m_failNextSends = 1U;
+
+                UTF_REQUIRE( 2U == cbRunPendingSends( processor, dispatcher ) );
+                UTF_REQUIRE( 4U == dispatcher -> m_pushCount );
+                UTF_REQUIRE( 3U == dispatcher -> m_sent.size() );
+
+                /*
+                 * The acknowledgment of the duplicate goes ahead of the response
+                 */
+
+                UTF_REQUIRE( cbIsAck( dispatcher -> m_sent[ 1 ] ) );
+                UTF_REQUIRE_EQUAL( uuids::uuid2string( requestMessageId ), dispatcher -> m_sent[ 1 ] -> messageId() );
+
+                UTF_REQUIRE( ! cbIsAck( dispatcher -> m_sent[ 2 ] ) );
+                UTF_REQUIRE_EQUAL( uuids::uuid2string( conversationId ), dispatcher -> m_sent[ 2 ] -> conversationId() );
+
+                /*
+                 * The duplicate itself is still rejected by the state machine (the acknowledgment
+                 * for the response is expected, but a different message was received)
+                 */
+
+                UTF_CHECK_THROW( processor -> onProcessing(), SystemException );
+            }
+
+            {
+                /*
+                 * The outbound queue is bounded: with the response queued and not yet picked up,
+                 * acknowledging more inbound messages than the queue can hold must fail with
+                 * TargetPeerQueueFull for the outbound queue
+                 */
+
+                const auto dispatcher = TestRecordingObjectDispatchImpl::createInstance();
+                const auto processor = cbCreateProcessor( dispatcher );
+
+                processor -> pushMessage( peerId, cbCreateRequest( uuids::create() ), requestPayload );
+
+                UTF_REQUIRE( 1U == cbRunPendingSends( processor, dispatcher ) );
+
+                for( std::size_t i = 0U; i < 4U; ++i )
+                {
+                    processor -> onProcessing();
+                }
+
+                try
+                {
+                    for( std::size_t i = 0U; i < 40U; ++i )
+                    {
+                        processor -> pushMessage( peerId, cbCreateRequest( uuids::create() ), requestPayload );
+                    }
+
+                    UTF_FAIL( "pushMessage must throw when the outbound queue is full" );
+                }
+                catch( SystemException& e )
+                {
+                    const auto* ec = eh::get_error_info< eh::errinfo_error_code >( e );
+                    UTF_REQUIRE( nullptr != ec );
+                    UTF_CHECK( eh::errc::make_error_code( BrokerErrorCodes::TargetPeerQueueFull ) == *ec );
+
+                    const auto* message = eh::get_error_info< eh::errinfo_message >( e );
+                    UTF_REQUIRE( nullptr != message );
+                    UTF_CHECK( std::string::npos != message -> find( "outbound queue" ) );
+                }
+            }
+        }
+        );
+}
 
 UTF_AUTO_TEST_CASE( IO_MessagingMessageProcessingTests )
 {

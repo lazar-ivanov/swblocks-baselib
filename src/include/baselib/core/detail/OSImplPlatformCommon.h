@@ -120,6 +120,13 @@ namespace bl
             RedirectStderr              = 1 << 4,
             RedirectStdin               = 1 << 5,
 
+            /*
+             * A detached process is not terminated when its handle is released (the handle
+             * remains waitable while it is held); on UNIX its standard descriptors which are
+             * not redirected are attached to /dev/null and the redirected ones are valid only
+             * for the lifetime of the redirect callback (the pipes are closed when it returns)
+             */
+
             DetachProcess               = 1 << 6,
 
             RedirectOut                 = RedirectStdout | RedirectStderr,
