@@ -71,6 +71,56 @@ original items: it cannot be compiled or exercised from this checkout.
 
 ---
 
+## O-3/O-4 Windows verification (2026-09-05)
+
+Review findings O-3 (detached children: closed standard descriptors, dead `Detach|Redirect`
+redirects, zombies, 2 s stall on handle release) and O-4 (non-async-signal-safe code in the forked
+child) were fixed on 2026-09-05 in the UNIX spawn path only (`OSImplUNIX.h`, commit `a4833d2`).
+The Windows path (`OSImplWindows.h`: `OSImplT::createProcess` and `EncapsulatedProcessJobHandle`)
+was assessed from the Linux checkout as needing no change. This section records the confirmation
+on the same host as the outcome above (ARM64 Windows 11,
+`dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86`, MSVC 14.38.33130, clang-cl 16.0.5).
+
+**How it was picked up:** `windows-process-spawn-o3-o4-instructions.md`, next to this file
+(completed; kept as the record of what was checked and how).
+
+**Outcome: the assessment holds. No change to `OSImplWindows.h` and no change to the
+`DetachProcess` comment in `OSImplPlatformCommon.h`.** One test-only change was made: a Windows
+counterpart of the guarded UNIX tests, `BaseLib_OSCreateProcessDetachedWindowsTests` in
+`src/utests/utf_baselib/TestBaselibDefault.h` (inside `#if defined( _WIN32 )`, directly after the
+UNIX block), so the parity the comment claims is pinned by a test on both platforms
+(commit `e02eb07`).
+
+| # | Claim from the Linux assessment | How it was confirmed | Result |
+|---|---|---|---|
+| 1 | O-4 does not apply: `CreateProcessW` runs no parent code in the child | reading only (`OSImplWindows.h:1538-1585`: the only work between creation and `ResumeThread` is `AssignProcessToJobObject`, in the parent) | confirmed |
+| 2 | a detached, non-redirected child starts with usable standard handles (those of its own hidden console); the POSIX fd-reuse hazard has no counterpart | new test: `cmd.exe /c "ver 3<&0 4>&1 5>&2 >nul && echo hello>file"` under `DetachProcess`. Each `>&N` / `<&N` duplication fails and breaks the `&&` chain when handle N is invalid (checked by hand with `4>&7`: exit 1, no file), so the file exists only if all three standard handles are valid. Also `cmd.exe /c "echo hello"` detached without redirect | confirmed: exit 0, file contains `hello`; exit 0 |
+| 3 | `DetachProcess \| RedirectStdout` delivers the output to the callback for the callback's lifetime | new test: the ios callback reads `hello` from `cmd.exe /c "echo hello"`, then `tryAwaitTermination` returns 0 | confirmed |
+| 4 | no zombies: the process object goes away with its last handle | reading only; the new test additionally shows `OpenProcess` by pid succeeding after the handle release and the process gone after `TerminateProcess` plus wait | confirmed |
+| 5 | releasing the handle of a running detached child neither stalls nor terminates it | new test: `ping -n 31 127.0.0.1` detached, handle released, `elapsed < 1 s` (the whole case runs in 120-440 ms); then `OpenProcess( PROCESS_TERMINATE \| SYNCHRONIZE )` on the pid succeeds, `WaitForSingleObject( h, 0 )` returns `WAIT_TIMEOUT` (still running), and the child is terminated through that handle | confirmed |
+| 6 | a detached handle stays waitable | existing `BaseLib_OSCreateProcessTests` Windows block (`cmd.exe /c exit 0` detached, `tryAwaitTermination` == 0) | passed |
+| 7 | parent-death kill through the job object (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`; detached children break away) | existing `BaseLib_OSTerminateProcessTree` and `BaseLib_OSTryAwaitTerminationTests` | passed |
+
+**Builds (all `-k -j1`, zero warnings under `-WX`):** `utf_baselib` on a64 and x64 with `vc143`
+and `ccl16`, debug and release (8 builds), plus x86 debug with both toolchains (2);
+`utf_baselib_messaging` debug on a64 and x64 with both toolchains (4). The three UNIX-only test
+cases compile out on every one of them and the shared `DetachProcess` comment compiles in.
+
+**Tests:** on all 10 `utf_baselib` binaries, `BaseLib_OSCreateProcess*` (the two existing cases,
+the two redirected cases and the new one), `BaseLib_OSTryAwaitTerminationTests` and
+`BaseLib_OSTerminateProcessTree`: 79/79 assertions, 20/20 of them in the new case. On all 4
+`utf_baselib_messaging` binaries, `IO_MessagingMessageProcessingOutboundQueueTests` (new, R-5) and
+the four existing `IO_MessagingMessageProcessing*` cases: 50/50 assertions. The x64 and x86
+binaries ran under emulation on the ARM64 host. `tasklist` showed no `cmd.exe` or `ping.exe` left
+behind by the probes.
+
+**Record update done from the Linux checkout (2026-09-05):** the O-3 and O-4 "Decided" entries in
+`notes/reviews/major/update_2026/whole-library-cxx-review-fable51-decisions.md` now carry
+"Windows verified on 2026-09-05"; that tree is not tracked in git and did not exist on the
+Windows checkout, so the Windows session could not add the line itself.
+
+---
+
 ## What limited the exposure while this was open
 
 - Items 1-3 changed nothing about what shipped: they concerned which warnings the Windows build
