@@ -1979,6 +1979,134 @@ UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessExecFailureWhileLoggingTests )
 
 #endif // ! defined( _WIN32 )
 
+#if defined( _WIN32 )
+
+UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessDetachedWindowsTests )
+{
+    if( test::UtfArgsParser::isAnalysisEnabled() )
+    {
+        /*
+         * See the note in BaseLib_OSCreateProcessTests about CreateProcess and the
+         * application verifier
+         */
+
+        return;
+    }
+
+    /*
+     * The Windows counterpart of the detached process tests above: a detached child
+     * which is not redirected must start with usable standard handles (the ones of
+     * its own hidden console), a detached child with redirection must deliver its
+     * output to the callback and releasing the handle of a running detached child
+     * must return promptly without terminating it (there are no zombies to reap on
+     * Windows; the process object goes away with its last handle)
+     */
+
+    bl::fs::TmpDir tmpDir;
+
+    const auto outputFile = tmpDir.path() / "detached_stdio.txt";
+
+    {
+        /*
+         * Each of the handle duplications below fails (and breaks the && chain) if the
+         * respective standard handle of the child is not valid, so the file is written
+         * only if all three standard handles are usable
+         */
+
+        const auto proc = bl::os::createProcess(
+            "cmd.exe /c \"ver 3<&0 4>&1 5>&2 >nul && echo hello>\"" + outputFile.string() + "\"\"",
+            bl::os::ProcessCreateFlags::DetachProcess
+            );
+
+        UTF_REQUIRE( proc );
+
+        UTF_CHECK_EQUAL( 0, bl::os::tryAwaitTermination( proc ) );
+
+        UTF_REQUIRE( bl::fs::exists( outputFile ) );
+        UTF_CHECK_EQUAL( bl::str::trim_copy( bl::encoding::readTextFile( outputFile ) ), std::string( "hello" ) );
+    }
+
+    {
+        const auto proc = bl::os::createProcess( "cmd.exe /c \"echo hello\"", bl::os::ProcessCreateFlags::DetachProcess );
+        UTF_REQUIRE( proc );
+
+        UTF_CHECK_EQUAL( 0, bl::os::tryAwaitTermination( proc ) );
+    }
+
+    {
+        std::string line;
+
+        const auto callbackIos = [ & ](
+            SAA_in              const bl::os::process_handle_t  process,
+            SAA_in_opt          std::istream*                   out,
+            SAA_in_opt          std::istream*                   err,
+            SAA_in_opt          std::ostream*                   in
+            ) -> void
+        {
+            UTF_REQUIRE( process );
+            UTF_REQUIRE( out );
+            UTF_REQUIRE( ! err );
+            UTF_REQUIRE( ! in );
+
+            std::getline( *out, line );
+        };
+
+        const auto proc = bl::os::createProcess(
+            "cmd.exe /c \"echo hello\"",
+            bl::os::ProcessCreateFlags::DetachProcess | bl::os::ProcessCreateFlags::RedirectStdout,
+            callbackIos
+            );
+
+        UTF_REQUIRE( proc );
+
+        UTF_CHECK_EQUAL( bl::str::trim_copy( line ), std::string( "hello" ) );
+        UTF_CHECK_EQUAL( 0, bl::os::tryAwaitTermination( proc ) );
+    }
+
+    std::uint64_t pid = 0U;
+
+    const auto start = bl::time::microsec_clock::universal_time();
+
+    {
+        const auto proc = bl::os::createProcess( "ping -n 31 127.0.0.1", bl::os::ProcessCreateFlags::DetachProcess );
+        UTF_REQUIRE( proc );
+
+        pid = bl::os::getPid( proc );
+        UTF_REQUIRE( pid );
+    }
+
+    const auto elapsed = bl::time::microsec_clock::universal_time() - start;
+
+    UTF_CHECK( elapsed < bl::time::seconds( 1 ) );
+
+    {
+        const auto handle = ::OpenProcess(
+            PROCESS_TERMINATE | SYNCHRONIZE,
+            FALSE /* bInheritHandle */,
+            static_cast< DWORD >( pid )
+            );
+
+        UTF_REQUIRE( NULL != handle );
+
+        BL_SCOPE_EXIT(
+            {
+                ::CloseHandle( handle );
+            }
+            );
+
+        /*
+         * The detached child must have survived the release of its handle
+         */
+
+        UTF_CHECK( WAIT_TIMEOUT == ::WaitForSingleObject( handle, 0 /* dwMilliseconds */ ) );
+
+        UTF_REQUIRE( ::TerminateProcess( handle, 1 /* uExitCode */ ) );
+        UTF_REQUIRE( WAIT_OBJECT_0 == ::WaitForSingleObject( handle, 10000 /* dwMilliseconds */ ) );
+    }
+}
+
+#endif // defined( _WIN32 )
+
 UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessRedirectedTests )
 {
     if( bl::os::onWindows() && test::UtfArgsParser::isAnalysisEnabled() )
