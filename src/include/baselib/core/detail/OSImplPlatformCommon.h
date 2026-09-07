@@ -43,13 +43,13 @@
  * https://developers.redhat.com/blog/2017/03/10/wimplicit-fallthrough-in-gcc-7
  */
 #if !defined( __clang__ ) && defined( __GNUC__ )
-#if ( __cplusplus == 201103L || __cplusplus == 201402L )
+#if ( __cplusplus >= 201703L )
+/* C++17 and above */
+#define BL_IMPLICIT_FALLTHROUGH [[fallthrough]];
+#elif ( __cplusplus >= 201103L )
 /* C++11 or C++14 */
 #define BL_IMPLICIT_FALLTHROUGH [[gnu::fallthrough]];
-#elif ( __cplusplus == 201703L )
-/* C++17 */
-#define BL_IMPLICIT_FALLTHROUGH [[fallthrough]];
-else
+#else
 #error "Unsupported C++ version"
 #endif
 #else
@@ -236,12 +236,50 @@ namespace bl
 
                 void checkStream()
                 {
-                    const auto errNo = std::ferror( m_fileptr );
+                    /*
+                     * Note that std::ferror returns a flag and not an error code, so the real
+                     * cause has to come from errno; when it is not available the generic
+                     * io_error is reported instead of the flag value (which glibc returns as
+                     * 1, i.e. EPERM, for every stream failure)
+                     */
 
-                    if( errNo )
+                    if( std::ferror( m_fileptr ) )
                     {
-                        BL_CHK_EC_NM( eh::error_code( errNo, eh::generic_category() ) );
+                        const auto errorCode = errno;
+
+                        BL_CHK_EC_NM(
+                            errorCode ?
+                                eh::error_code( errorCode, eh::generic_category() )
+                                :
+                                eh::errc::make_error_code( eh::errc::io_error )
+                            );
                     }
+                }
+
+                /*
+                 * The 64 bit seek / tell primitives for a raw stdio stream
+                 */
+
+                static bool trySeekFile(
+                    SAA_inout       std::FILE*                          fileptr,
+                    SAA_in          const ios::stream_offset            offset,
+                    SAA_in          const int                           origin
+                    ) NOEXCEPT
+                {
+#if defined( _WIN32 )
+                    return 0 == ::_fseeki64( fileptr, static_cast< std::int64_t >( offset ), origin );
+#else
+                    return 0 == ::fseeko( fileptr, static_cast< ::off_t >( offset ), origin );
+#endif
+                }
+
+                static std::int64_t tellFile( SAA_inout std::FILE* fileptr ) NOEXCEPT
+                {
+#if defined( _WIN32 )
+                    return ::_ftelli64( fileptr );
+#else
+                    return static_cast< std::int64_t >( ::ftello( fileptr ) );
+#endif
                 }
 
                 stdio_file_device_base( SAA_inout std::FILE* fileptr )
@@ -298,7 +336,13 @@ namespace bl
                             break;
                     }
 
-                    if( std::fseek( m_fileptr, numbers::safeCoerceTo< long >( offset ), localDirection ) )
+                    /*
+                     * Note that the 64 bit variants are used here - std::fseek and std::ftell
+                     * take and return a long, which is 32 bit on Windows, so a file backed
+                     * stream beyond 2 GiB would throw or truncate there
+                     */
+
+                    if( ! trySeekFile( m_fileptr, offset, localDirection ) )
                     {
                         checkStream();
 
@@ -316,7 +360,7 @@ namespace bl
                            );
                     }
 
-                    const auto newPos = std::ftell( m_fileptr );
+                    const auto newPos = tellFile( m_fileptr );
 
                     if( newPos < 0 )
                     {

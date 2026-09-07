@@ -175,7 +175,7 @@ namespace bl
                                  * so we don't need to keep popping here.
                                  */
 
-                                m_exception = task -> exception();
+                                setExceptionInternal( task -> exception() );
                                 BL_ASSERT( m_exception );
 
                                 break;

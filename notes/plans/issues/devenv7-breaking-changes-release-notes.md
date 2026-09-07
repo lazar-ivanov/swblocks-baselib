@@ -369,3 +369,152 @@ a build error (`#error`), and a `static_assert` pins the alignment where the typ
 `<boost/uuid.hpp>`) before the first baselib header. Fix: include the baselib headers first, or
 define `BOOST_UUID_DISABLE_ALIGNMENT` globally in the build. A build that fails here was already
 producing mismatched object layouts.
+
+---
+
+## 11. Whole-library C++ review (2026-09): six user-visible changes
+
+**Source:** `notes/reviews/major/update_2026/whole-library-cxx-review-fable51.md`, implemented in
+stages 3-10 on 2026-09-06/07. Everything else in that review is an internal correctness or
+robustness fix with no observable contract change; these six are the ones a consumer must be told
+about.
+
+### 11.1 Authorization template variables are escaped by default (S-2)
+
+**Presents as:** a data / interop change on the wire between the broker and its authorization
+service. Silent unless a token carries a reserved character.
+
+`security/AuthorizationServiceRest.h`, `core/StringTemplateResolver.h`,
+`data/models/ServicesConfig.h`
+
+The token text substituted into `urlPathTemplate` and `requestTemplate` used to be spliced in
+verbatim, so a token containing `"`, `,` or `}` could add or override fields in the JSON body the
+broker sends under its own TLS identity, and one containing a space, `?`, `#` or `/../` could
+change the request line. `resolve()` now takes an optional escaper callback, and the REST
+authorization service supplies one: **percent-encoding for the URL path template and JSON escaping
+for the JSON body.** Tokens containing CR, LF or NUL are rejected up front with a
+`SecurityException` instead of being sent.
+
+**Who is affected:** deployments whose authorization tokens contain characters outside the
+unreserved URI set, *and* whose authorization service was (knowingly or not) relying on receiving
+them raw. The service now receives `%2F` where it used to receive `/`.
+
+**Opt-out:** the new `escapeTemplateVariables` boolean on `AuthorizationServiceRestConfig`. It
+defaults to **true** (escape) and, when the property is absent from the configuration, escaping is
+on — an existing configuration file gets the new behaviour. Set it to `false` to restore the old
+byte-for-byte substitution.
+
+### 11.2 HTTP server connection timeouts and a connection cap are now on by default (N-2, M-8)
+
+**Presents as:** a runtime behaviour change. Connections that used to be held open forever are now
+closed.
+
+`httpserver/HttpServer.h`, `tasks/TcpBaseTasks.h`, `tasks/TcpSslBaseTasks.h`,
+`messaging/AsyncExecutorWrapperBlocks.h`
+
+| | Before | After |
+|---|---|---|
+| Receive / send inactivity (HTTP server) | none | **60 s** (`DEFAULT_CONNECTION_TIMEOUT_IN_SECONDS`), settable with `setConnectionTimeout` |
+| TLS handshake and TLS shutdown (every TLS server) | none | **60 s** |
+| Concurrent connections (every TCP server) | unbounded | derived cap, ceiling **4096** (`MAX_CONNECTIONS_CEILING`) |
+| Outstanding allocated blocks (blob server) | unbounded | capped; over the cap the peer is answered `no_buffer_space` |
+
+The connection cap is `min( 4096, soft descriptor limit / 2, 0.8 × physical RAM / per-connection
+footprint )`; the effective value is logged once at startup. An explicitly configured value wins,
+and **0 means unbounded**, which restores the old behaviour exactly. The blob server deliberately
+has **no** idle timer: auto-push connections are legitimately idle up to their 30 s heartbeat.
+
+**Who is affected:** clients that keep an HTTP connection open with no traffic for more than a
+minute, servers fronting more than 4096 concurrent connections, and any deployment that sized its
+host for unbounded blob-server buffering. The two new helpers behind the derived cap,
+`os::getPhysicalMemorySize()` and `os::getFileDescriptorSoftLimit()`, are tested on UNIX only; on
+Windows the descriptor term reports "not applicable" and the cap falls back to the RAM term and the
+ceiling (`notes/plans/issues/windows-only-residual-findings-deferral.md`, item 14).
+
+### 11.3 Request header names are normalized to lower case (N-4)
+
+**Presents as:** a source / behaviour change for anyone reading `headers()` off a parsed request.
+
+`httpserver/detail/ParserHelpers.h`
+
+The server-side request parser now lower-cases every header name before storing it, so
+`headers().at( "Host" )` no longer finds the entry — use `"host"`. HTTP header names are
+case-insensitive by RFC, and the map was previously keyed by whatever case the client happened to
+send, which meant a lookup could succeed or fail depending on the client. The parser also now
+rejects whitespace before the colon, allows empty values, and caps the request URI at 8192 bytes;
+a request carrying `Transfer-Encoding` is rejected (the server implements `Content-Length` framing
+only).
+
+**Who is affected:** in-tree, `HttpServerHelpers.h` and two tests were updated. Any consumer
+indexing the header map with a capitalized name gets a `std::out_of_range` (or an end iterator) at
+runtime; there is no compile error. Fix: lower-case the key.
+
+### 11.4 Six `cpp::function` typedefs lost their `NOEXCEPT` specification (O-9)
+
+**Presents as:** a compile-time change for a consumer that names one of these types explicitly.
+
+`core/CPP.h` (×2), `core/ErrorHandling.h`, `core/ObjModel.h`, `tasks/TaskBase.h`,
+`core/AsioSslStreamWrapper.h`, `core/AsyncOperation.h`
+
+A `noexcept` specification inside a *type-id* is ill-formed in C++11 and C++14, and in C++17 it
+becomes part of the function type — so the same header would have declared different types
+depending on the language level the consumer compiles with. The specification was removed from all
+six typedefs. The `noexcept` contract of those callbacks is unchanged; it is enforced where it
+always was, by the `BL_NOEXCEPT_BEGIN` / `BL_NOEXCEPT_END` macros in the implementations.
+
+**Who is affected:** a consumer that spelled one of these function types out by hand with
+`noexcept` and assigned it across. Compile-proofed on every test module in this repository.
+
+### 11.5 JOSE and JWT array-valued claims changed accessor type (T-10)
+
+**Presents as:** a compile error.
+
+`data/models/Jose.h`, `data/models/Jwt.h`, `data/DataModelObjectDefs.h`
+
+RFC 7515/7517 define these as arrays, and the models declared them as single strings, so a
+compliant document either failed to parse or silently kept one element:
+
+| Property | Before | After |
+|---|---|---|
+| `x5c` (`x509CertificateChain`), `key_ops` (`keyOperations`), `crit` (`critical`) | `std::string` | `std::vector< std::string >` |
+| `aud` (`audience`, four claim-set models) | `std::string` | `std::vector< std::string >` |
+| `zip` | required | optional |
+
+`aud` uses a new `BL_DM_DECLARE_STRING_OR_ARRAY_ALTERNATE_PROPERTY` macro: it accepts **either** a
+single string or an array on the wire, and serializes back as a single string when the vector holds
+exactly one element, so a document that used the scalar form round-trips unchanged. `x5c`,
+`key_ops` and `crit` accept the array form only, which is what the RFCs specify.
+
+**Who is affected:** any consumer calling those accessors. Fix: index the vector, or use
+`.front()`.
+
+### 11.6 HTTP status lines and error bodies (N-9)
+
+**Presents as:** a wire change on error responses.
+
+`http/Globals.h`, `httpserver/Response.h`, `httpserver/HttpServer.h`,
+`rest/HttpServerBackendMessagingBridge.h`, `httpserver/ServerBackendProcessingImplDefault.h`,
+`data/eh/ServerErrorHelpers.h`
+
+- **Status lines are now truthful.** 429 and 504 gained their cases, and any other code is emitted
+  numerically with a generic reason phrase for its class (`getStatusLine`, `genericReasonPhrase`).
+  Previously every code without an explicit case was sent as `HTTP/1.0 500 Internal Server Error`
+  while the JSON body and `Response::status()` carried the real value — status line, response
+  status and body could disagree.
+- **Backend failures no longer all report 400.** A processing failure now maps to 500, and a
+  timeout to 504.
+- **A status a remote backend supplies is validated** to 100..599 and replaced with 502 otherwise,
+  instead of being `static_cast` through.
+- **HTTP error bodies are redacted.** `getRedactedServerErrorAsJson` blanks
+  `exceptionFullDump`, `fileName`, `fileOpenMode`, `functionName`, `taskInfo`, `hostName`,
+  `serviceName`, `endpointAddress`, `httpUrl`, `httpRedirectUrl`, `externalCommandOutput` and
+  `parserFile` before the error leaves over HTTP. **The full detail is unchanged in the server
+  logs.**
+- `Response` now rejects a custom header whose name or value is malformed, or which would override
+  `Content-Type`, `Content-Length`, `Transfer-Encoding` or `Connection`.
+
+**Who is affected:** clients that parsed the reason phrase rather than the numeric code; anything
+that scraped `exceptionFullDump` or the file/function fields out of an HTTP error body for
+diagnostics — those consumers must read the server log instead. Deployments of an *internal*
+trusted service that relied on the full dump over HTTP have no opt-out flag; say so if one is
+requested.

@@ -124,14 +124,21 @@ UTF_AUTO_TEST_CASE( TestISOTimeFormat )
     ptime utcTime3( from_iso_string( utcTimeStr3 ) );
     ptime utcTime4( from_iso_string( utcTimeStr4 ) );
 
+    /*
+     * Note that the fractional part is always emitted - including for a whole number of
+     * seconds, where Boost omits it - so the result always matches regexLocalTimeISO()
+     */
+
     localTime = getLocalTimeISO( utcTime2 );
-    UTF_CHECK( localTime.size() == 25U );
+    UTF_CHECK( localTime.size() == 32U );
+    UTF_CHECK( bl::str::regex_match( localTime, results, regex ) );
 
     localTime = getLocalTimeISO( utcTime3 );
     UTF_CHECK( localTime.size() == 32U );
 
     localTime = getLocalTimeISO( utcTime4 );
-    UTF_CHECK( localTime.size() == 25U );
+    UTF_CHECK( localTime.size() == 32U );
+    UTF_CHECK( bl::str::regex_match( localTime, results, regex ) );
 
     if( test::UtfArgsParser::isClient() )
     {

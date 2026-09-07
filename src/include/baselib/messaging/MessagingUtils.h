@@ -231,7 +231,26 @@ namespace bl
 
                 const auto protocolDataOffset = data -> offset1();
 
-                if( protocolDataOffset + jsonString.size() > data -> capacity() )
+                BL_CHK_T(
+                    false,
+                    protocolDataOffset <= data -> size(),
+                    BufferTooSmallException(),
+                    BL_MSG()
+                        << "The protocol data offset "
+                        << protocolDataOffset
+                        << " is past the end of a data block of size "
+                        << data -> size()
+                    );
+
+                /*
+                 * Note that the check below is written so it can't wrap for a large
+                 * JSON string or a large offset
+                 */
+
+                if(
+                    jsonString.size() > data -> capacity() ||
+                    protocolDataOffset > data -> capacity() - jsonString.size()
+                    )
                 {
                     BL_THROW_SERVER_ERROR(
                         BrokerErrorCodes::ProtocolValidationFailed,
@@ -440,6 +459,22 @@ namespace bl
                 )
                 -> std::pair< om::ObjPtr< BrokerProtocol >, om::ObjPtr< Payload > /* optional */ >
             {
+                /*
+                 * The offset comes from the wire; it must never be past the end of the block
+                 * as the iterators below would then be invalid
+                 */
+
+                BL_CHK_T(
+                    false,
+                    dataBlock -> offset1() <= dataBlock -> size(),
+                    BufferTooSmallException(),
+                    BL_MSG()
+                        << "The protocol data offset "
+                        << dataBlock -> offset1()
+                        << " is past the end of a data block of size "
+                        << dataBlock -> size()
+                    );
+
                 const std::string protocolDataString(
                     dataBlock -> begin() + dataBlock -> offset1(),
                     dataBlock -> begin() + dataBlock -> size()
@@ -611,7 +646,14 @@ namespace bl
 
             DispatchList                                                                m_targets;
             std::size_t                                                                 m_targetIndex;
-            os::mutex                                                                   m_indexLock;
+
+            /*
+             * The lock protects both the rotating index and m_targets itself - dispose()
+             * clears the list while invokeImpl( ... ) and isConnected() may be iterating it
+             * from a timer of the bridge
+             */
+
+            mutable os::mutex                                                           m_indexLock;
 
             RotatingMessagingClientDispatchBaseT(
                 SAA_in                  const ClientsList&                              clients,
@@ -648,10 +690,10 @@ namespace bl
 
                 DISPATCH* result = nullptr;
 
-                const auto size = m_targets.size();
-
                 {
                     BL_MUTEX_GUARD( m_indexLock );
+
+                    const auto size = m_targets.size();
 
                     for( std::size_t n = 0; n < size; ++n )
                     {
@@ -693,18 +735,26 @@ namespace bl
             {
                 BL_NOEXCEPT_BEGIN()
 
-                for( const auto& target : m_targets )
+                DispatchList targets;
+
+                {
+                    BL_MUTEX_GUARD( m_indexLock );
+
+                    m_targets.swap( targets );
+                }
+
+                for( const auto& target : targets )
                 {
                     target -> dispose();
                 }
-
-                m_targets.clear();
 
                 BL_NOEXCEPT_END()
             }
 
             bool isConnected() const NOEXCEPT OVERRIDE
             {
+                BL_MUTEX_GUARD( m_indexLock );
+
                 for( const auto& target : m_targets )
                 {
                     if( target -> isConnected() )

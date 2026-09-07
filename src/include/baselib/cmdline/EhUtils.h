@@ -104,6 +104,21 @@ namespace bl
 
                     const auto filePath = fs::temp_directory_path() / fileName;
 
+                    /*
+                     * The dump carries the full diagnostic information of the exception -
+                     * URLs, request and response bodies - and the temporary directory is
+                     * shared with every other user of the machine, so the file is created
+                     * with owner only access before it is written
+                     */
+
+                    BL_CHK(
+                        false,
+                        os::createNewFilePrivate( filePath ),
+                        BL_MSG()
+                            << "Cannot create the error details file "
+                            << fs::normalizePathParameterForPrint( filePath )
+                        );
+
                     encoding::writeTextFile(
                         filePath,
                         resolveMessage(

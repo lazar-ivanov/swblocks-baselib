@@ -52,7 +52,7 @@ namespace bl
                     );
 
                 const auto encryptedSize = ::RSA_public_encrypt(
-                    static_cast< int >( message.size() ),
+                    toIntSize( message.size() ),
                     const_cast< unsigned char* >(
                         reinterpret_cast< const unsigned char* >( message.c_str() )
                         ),
@@ -94,7 +94,7 @@ namespace bl
 
                 const auto decryptedSize =
                     RSA_private_decrypt(
-                        static_cast< int >( message.size() ),
+                        toIntSize( message.size() ),
                         const_cast< unsigned char* >(
                         reinterpret_cast< const unsigned char* >( message.c_str() )
                         ),
@@ -116,10 +116,6 @@ namespace bl
                 )
                 -> std::string
             {
-                std::unique_ptr< unsigned char[] > outputBuffer(
-                    new unsigned char[ ::RSA_size( &rsaKey -> get() ) ]
-                    );
-
                 const auto decodedMessage = SerializationUtils::base64UrlDecodeString( message );
 
                 unsigned outputSize = 0u;

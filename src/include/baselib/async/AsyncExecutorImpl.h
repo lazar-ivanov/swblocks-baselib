@@ -166,6 +166,7 @@ namespace bl
                 cpp::ScalarTypeIniter< std::uint16_t >                                  m_callsExpected;
                 std::atomic< std::uint32_t >                                            m_remainingToExecute;
                 cpp::ScalarTypeIniter< bool >                                           m_stopped;
+                cpp::ScalarTypeIniter< bool >                                           m_cancelPending;
                 AsyncOperation::callback_t                                              m_callback;
                 om::ObjPtr< tasks::Task >                                               m_operationStateTaskInProgress;
                 os::mutex                                                               m_executeLock;
@@ -240,6 +241,26 @@ namespace bl
                         }
 
                         stopped = m_stopped;
+
+                        if( m_cancelPending )
+                        {
+                            /*
+                             * A cancellation was requested while the operation state task was
+                             * in progress, so the terminating call must be scheduled here - it
+                             * will be executed only after the callback below has returned as
+                             * m_executeLock is held for the entire duration of this call
+                             *
+                             * Note that the captured 'stopped' value above is deliberately the
+                             * one from before this point, so the result delivered to the callback
+                             * is unchanged (the operation state task was cancelled itself and it
+                             * reports the cancellation through its own exception)
+                             */
+
+                            m_cancelPending = false;
+                            m_stopped = true;
+
+                            scheduleAsyncCall( false /* increment */ );
+                        }
                     }
                     else
                     {
@@ -573,6 +594,21 @@ namespace bl
 
                         if( m_operationStateTaskInProgress )
                         {
+                            /*
+                             * The terminating call can't be scheduled here because the operation
+                             * state task is still in progress, so we remember that a cancellation
+                             * was requested and onExecute below will schedule the terminating call
+                             * itself after it has delivered the callback
+                             *
+                             * Relying on a second cancellation call is not sufficient - the async
+                             * operation resets its task pointer in resetState() on the cancel path,
+                             * so that second call may never arrive and the task would then be left
+                             * running in the executing queue, holding one of the concurrency slots
+                             * until the executor is disposed
+                             */
+
+                            m_cancelPending = true;
+
                             task2Cancel = om::copy( m_operationStateTaskInProgress );
                         }
                         else
@@ -650,6 +686,7 @@ namespace bl
                 {
                     m_operationState.reset();
                     m_stopped = false;
+                    m_cancelPending = false;
                     m_callsExpected = 2U;
                     m_remainingToExecute = 1U;
                     m_operationStateTaskInProgress = nullptr;
@@ -709,7 +746,7 @@ namespace bl
                 async_executor_t&                                                       m_asyncExecutor;
                 om::ObjPtr< AsyncOperationState >                                       m_operationState;
                 om::ObjPtr< ExecutorTaskImpl >                                          m_task;
-                os::mutex                                                               m_lock;
+                mutable os::mutex                                                       m_lock;
                 cpp::ScalarTypeIniter< bool >                                           m_freed;
                 cpp::ScalarTypeIniter< bool >                                           m_active;
 
@@ -775,6 +812,20 @@ namespace bl
                 auto task() const NOEXCEPT -> const om::ObjPtr< ExecutorTaskImpl >&
                 {
                     return m_task;
+                }
+
+                /**
+                 * @brief Returns a copy of the task object under the operation lock
+                 *
+                 * The task pointer can be reset concurrently from cancel() / resetState(),
+                 * so it must never be read (or dereferenced) without holding the lock
+                 */
+
+                auto taskCopy() const NOEXCEPT -> om::ObjPtr< ExecutorTaskImpl >
+                {
+                    BL_MUTEX_GUARD( m_lock );
+
+                    return om::copy( m_task );
                 }
 
                 void task( SAA_in om::ObjPtr< ExecutorTaskImpl >&& task ) NOEXCEPT
@@ -981,7 +1032,9 @@ namespace bl
                         );
                 }
 
-                if( operationImpl -> task() )
+                const auto existingTask = operationImpl -> taskCopy();
+
+                if( existingTask )
                 {
                     /*
                      * The valid scenario here is that this is a continuation of an
@@ -993,9 +1046,9 @@ namespace bl
                      * on the task directly
                      */
 
-                    operationImpl -> task() -> ensureNoCallsPending();
+                    existingTask -> ensureNoCallsPending();
 
-                    operationImpl -> task() -> requestNewAsyncCall( BL_PARAM_FWD( callback ) );
+                    existingTask -> requestNewAsyncCall( BL_PARAM_FWD( callback ) );
 
                     return;
                 }
@@ -1160,7 +1213,9 @@ namespace bl
 
                 auto operationImpl = om::qi< ExecutorAsyncOperationImpl >( operation );
 
-                if( operationImpl -> task() )
+                const auto existingTask = operationImpl -> taskCopy();
+
+                if( existingTask )
                 {
                     /*
                      * When operation is being released it must not have any outstanding
@@ -1180,7 +1235,7 @@ namespace bl
                      * cancellation (in which case you get asio::error::operation_aborted)
                      */
 
-                    operationImpl -> task() -> ensureNoCallsPending();
+                    existingTask -> ensureNoCallsPending();
                 }
 
                 operationImpl -> resetState();

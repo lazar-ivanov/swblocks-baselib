@@ -28,6 +28,8 @@
 #include <baselib/core/TimeUtils.h>
 #include <baselib/core/BaseIncludes.h>
 
+#include <memory>
+#include <thread>
 #include <unordered_map>
 
 namespace bl
@@ -102,6 +104,55 @@ namespace bl
              * @brief class ObserverDisposer
              */
 
+            /*
+             * The id of the thread which is currently invoking the observer callbacks of a
+             * subscription (or a default constructed id when no callback is executing)
+             *
+             * It is held through a shared pointer, so an invoker task which is executing can
+             * always update it even if the subscription it belongs to is being removed
+             */
+
+            typedef std::shared_ptr< std::atomic< std::thread::id > >                          invoking_thread_ptr_t;
+
+            inline auto createInvokingThreadHolder() -> invoking_thread_ptr_t
+            {
+                return std::make_shared< std::atomic< std::thread::id > >( std::thread::id() );
+            }
+
+            /**
+             * @brief Marks the calling thread as the one invoking the observer callbacks of a
+             * subscription for the duration of the scope
+             */
+
+            class InvokingThreadMarker
+            {
+                BL_NO_COPY_OR_MOVE( InvokingThreadMarker )
+
+            private:
+
+                const invoking_thread_ptr_t                                                     m_invokingThread;
+
+            public:
+
+                InvokingThreadMarker( SAA_in const invoking_thread_ptr_t& invokingThread ) NOEXCEPT
+                    :
+                    m_invokingThread( invokingThread )
+                {
+                    if( m_invokingThread )
+                    {
+                        m_invokingThread -> store( std::this_thread::get_id() );
+                    }
+                }
+
+                ~InvokingThreadMarker() NOEXCEPT
+                {
+                    if( m_invokingThread )
+                    {
+                        m_invokingThread -> store( std::thread::id() );
+                    }
+                }
+            };
+
             template
             <
                 typename E = void
@@ -115,14 +166,18 @@ namespace bl
 
                 const om::ObjPtr< Observer >                                                        m_observer;
                 const std::shared_ptr< cpp::any >                                                   m_value;
+                const invoking_thread_ptr_t                                                         m_invokingThread;
 
                 ObserverNextInvokerT(
                     SAA_in              const om::ObjPtr< Observer >&                               observer,
-                    SAA_in              const std::shared_ptr< cpp::any >&                          value
+                    SAA_in              const std::shared_ptr< cpp::any >&                          value,
+                    SAA_in_opt          const invoking_thread_ptr_t&                                invokingThread
+                        = invoking_thread_ptr_t()
                     )
                     :
                     m_observer( om::copy( observer ) ),
-                    m_value( value )
+                    m_value( value ),
+                    m_invokingThread( invokingThread )
                 {
                 }
 
@@ -130,6 +185,8 @@ namespace bl
 
                 virtual time::time_duration run() OVERRIDE
                 {
+                    const InvokingThreadMarker marker( m_invokingThread );
+
                     if( isCanceled() || m_observer -> onNext( *m_value ) )
                     {
                         /*
@@ -178,8 +235,15 @@ namespace bl
 
                     if( ! m_onCompletedCalled )
                     {
-                        m_observer -> onCompleted();
+                        /*
+                         * The flag is set before the call is made - if onCompleted() throws
+                         * (the callers catch and log) the observer must not be notified a
+                         * second time by the disposal path
+                         */
+
                         m_onCompletedCalled = true;
+
+                        m_observer -> onCompleted();
                     }
                 }
             };
@@ -206,6 +270,13 @@ namespace bl
                 om::ObjPtr< detail::SingletonOnCompleteExecuteImpl >                singleOnComplete;
                 cpp::ScalarTypeIniter< bool >                                       disposing;
                 cpp::ScalarTypeIniter< bool >                                       completedScheduled;
+
+                /*
+                 * The thread which is currently executing an observer callback of this
+                 * subscription, used to detect re-entrant unsubscribe / dispose calls
+                 */
+
+                invoking_thread_ptr_t                                               invokingThread;
 
                 /*
                  * The events queue for this observer
@@ -527,9 +598,14 @@ namespace bl
                 }
             }
 
-            void notifyObserverComplete( SAA_in const copyable_oncomplete_t& onCompleteSingleton ) NOEXCEPT
+            void notifyObserverComplete(
+                SAA_in              const copyable_oncomplete_t&                                onCompleteSingleton,
+                SAA_in_opt          const detail::invoking_thread_ptr_t&                        invokingThread
+                ) NOEXCEPT
             {
                 BL_WARN_NOEXCEPT_BEGIN()
+
+                const detail::InvokingThreadMarker marker( invokingThread );
 
                 onCompleteSingleton -> callOnCompleted();
 
@@ -558,11 +634,23 @@ namespace bl
                             {
                                 subscription -> eventsQueue -> forceFlushNoThrow( false /* wait */ );
 
+                                /*
+                                 * Note that the completion is (re-)scheduled here even when it
+                                 * was scheduled before - the flush above discards the events
+                                 * which were pending, including a completion which had been
+                                 * scheduled by the disposal path, so the observer would never
+                                 * be notified otherwise
+                                 *
+                                 * Delivering it twice is not possible: the singleton holder
+                                 * calls the observer at most once
+                                 */
+
                                 subscription -> eventsQueue -> push_back(
                                     cpp::bind(
                                         &this_type::notifyObserverComplete,
                                         copyable_this_type_t::acquireRef( this ),
-                                        copyable_oncomplete_t::acquireRef( subscription -> singleOnComplete.get() )
+                                        copyable_oncomplete_t::acquireRef( subscription -> singleOnComplete.get() ),
+                                        subscription -> invokingThread
                                         )
                                     );
 
@@ -743,7 +831,8 @@ namespace bl
 
                         const auto nextInvoker = detail::ObserverNextInvokerImpl::createInstance< Task >(
                             subscription -> observer,
-                            sharedValue
+                            sharedValue,
+                            subscription -> invokingThread
                             );
 
                         subscription -> eventsQueue -> push_back( nextInvoker );
@@ -755,10 +844,13 @@ namespace bl
 
             void notifyObserverError(
                 SAA_in              const om::ObjPtrCopyable< Observer >&                       observer,
-                SAA_in              const std::exception_ptr&                                   eptr
+                SAA_in              const std::exception_ptr&                                   eptr,
+                SAA_in_opt          const detail::invoking_thread_ptr_t&                        invokingThread
                 ) NOEXCEPT
             {
                 BL_WARN_NOEXCEPT_BEGIN()
+
+                const detail::InvokingThreadMarker marker( invokingThread );
 
                 observer -> onError( eptr );
 
@@ -803,7 +895,8 @@ namespace bl
                                 &this_type::notifyObserverError,
                                 copyable_this_type_t::acquireRef( this ),
                                 om::ObjPtrCopyable< Observer >( subscription -> observer ),
-                                eptr
+                                eptr,
+                                subscription -> invokingThread
                                 )
                             );
                     }
@@ -838,7 +931,8 @@ namespace bl
                             cpp::bind(
                                 &this_type::notifyObserverComplete,
                                 copyable_this_type_t::acquireRef( this ),
-                                copyable_oncomplete_t::acquireRef( subscription -> singleOnComplete.get() )
+                                copyable_oncomplete_t::acquireRef( subscription -> singleOnComplete.get() ),
+                                subscription -> invokingThread
                                 )
                             );
 
@@ -929,7 +1023,7 @@ namespace bl
                 {
                     if( nullptr == m_exception )
                     {
-                        m_exception = eptr;
+                        setExceptionInternal( eptr );
                     }
                 }
 
@@ -1043,7 +1137,7 @@ namespace bl
                      * appropriate exception
                      */
 
-                    m_exception = eptr;
+                    setExceptionInternal( eptr );
 
                     notifyOnErrorNothrow( m_exception );
 
@@ -1065,6 +1159,11 @@ namespace bl
             {
                 const auto pos = m_subscriptions.find( subscriptionId );
 
+                if( pos != m_subscriptions.end() )
+                {
+                    chkNotCalledFromObserverCallback( pos -> second, "unsubscribe" );
+                }
+
                 if( pos != m_subscriptions.end() && chk2DisposeExecutionQueue( pos -> second, wait ) )
                 {
                     m_subscriptions.erase( pos );
@@ -1073,6 +1172,37 @@ namespace bl
                 }
 
                 return false;
+            }
+
+            /**
+             * @brief Verifies that the caller is not an observer callback of this subscription
+             *
+             * Unsubscribing (or disposing the observable) from inside onNext / onCompleted /
+             * onError would wait for the very task which is making the call, i.e. it would
+             * deadlock; the contract is that these calls must be made from another thread
+             * (see the note on the class above)
+             */
+
+            static void chkNotCalledFromObserverCallback(
+                SAA_in              const cpp::SafeUniquePtr< detail::SubscriptionInfo >&       subscription,
+                SAA_in              const char*                                                 operation
+                ) NOEXCEPT
+            {
+                if(
+                    subscription &&
+                    subscription -> invokingThread &&
+                    subscription -> invokingThread -> load() == std::this_thread::get_id()
+                    )
+                {
+                    BL_UNUSED( operation );
+
+                    BL_RT_ASSERT(
+                        false,
+                        "An observable can't be unsubscribed or disposed from within an "
+                        "observer callback (onNext, onCompleted or onError) of its own "
+                        "subscription - that would deadlock"
+                        );
+                }
             }
 
         public:
@@ -1089,6 +1219,11 @@ namespace bl
                 {
                     {
                         BL_MUTEX_GUARD( m_lock );
+
+                        for( const auto& pair : m_subscriptions )
+                        {
+                            chkNotCalledFromObserverCallback( pair.second, "dispose" );
+                        }
 
                         if( tryDisposeInternal( true /* calledExternally */ ) )
                         {
@@ -1125,6 +1260,7 @@ namespace bl
                 info -> singleOnComplete =
                         detail::SingletonOnCompleteExecuteImpl::createInstance( observer );
                 info -> subscriptionId = subscriptionId;
+                info -> invokingThread = detail::createInvokingThreadHolder();
 
                 const auto sharedThis = std::shared_ptr< ObservableBase >( om::getSharedPtr< Observable >( this ), this );
 

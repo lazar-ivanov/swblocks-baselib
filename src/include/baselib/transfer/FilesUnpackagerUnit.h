@@ -57,6 +57,21 @@ namespace bl
                 SuaSilentCreateFile,
             };
 
+            /**
+             * @brief What kind of symlink targets are accepted from a package
+             *
+             * The targets are recorded verbatim by the packager, so a package can carry an
+             * absolute target or one which points outside of the tree; the default keeps the
+             * behaviour unchanged (such links are created as they are)
+             */
+
+            enum SymlinkTargetPolicy
+            {
+                StpAllow,
+                StpRelativeOnly,
+                StpContained,
+            };
+
         protected:
 
             typedef FilesUnpackagerUnitT< STREAM >                                          unpackager_t;
@@ -853,7 +868,13 @@ namespace bl
                             {
                                 verifyEntryOnlyTask();
 
-                                if( verifySymlinkIsSupported( fullPath ) )
+                                if(
+                                    verifySymlinkIsSupported( fullPath ) &&
+                                    m_unpackager.chkSymlinkTargetAllowed(
+                                        m_entry -> info.targetPath -> value(),
+                                        fullPath
+                                        )
+                                    )
                                 {
                                     eh::error_code ec;
 
@@ -997,10 +1018,12 @@ namespace bl
             typedef om::ObjectImpl< IoOperationTaskT<> >                                    io_operation_t;
 
             const SymlinkUnsupportedAction                                                  m_symlinksUnsupportedAction;
+            const SymlinkTargetPolicy                                                       m_symlinkTargetPolicy;
             const om::ObjPtr< data::FilesystemMetadataRO >                                  m_fsmd;
             fs::path                                                                        m_targetTmpDir;
             om::ObjPtr< scheduler_t >                                                       m_scheduler;
             cpp::ScalarTypeIniter< std::uint64_t >                                          m_dirsAndSymlinksTotal;
+            std::atomic< std::uint64_t >                                                    m_symlinksIgnored;
 
             std::unordered_map< uuid_t, om::ObjPtr< entry_obj_t > >                         m_entriesInProgress;
             std::unordered_set< uuid_t >                                                    m_entriesCompleted;
@@ -1009,12 +1032,15 @@ namespace bl
                 SAA_in              const SymlinkUnsupportedAction                          symlinksUnsupportedAction,
                 SAA_in              const om::ObjPtr< SendRecvContextImpl< STREAM > >&      context,
                 SAA_in              const om::ObjPtr< data::FilesystemMetadataRO >&         fsmd,
-                SAA_in              fs::path&&                                              targetDir
+                SAA_in              fs::path&&                                              targetDir,
+                SAA_in_opt          const SymlinkTargetPolicy                               symlinkTargetPolicy = StpAllow
                 )
                 :
                 base_type( context, "success:Files_Unpackager" /* taskName */ ),
                 m_symlinksUnsupportedAction( symlinksUnsupportedAction ),
-                m_fsmd( om::copy( fsmd ) )
+                m_symlinkTargetPolicy( symlinkTargetPolicy ),
+                m_fsmd( om::copy( fsmd ) ),
+                m_symlinksIgnored( 0U )
             {
                 BL_CHK_USER_FRIENDLY(
                     false,
@@ -1035,6 +1061,94 @@ namespace bl
                 g.dismiss();
 
                 m_targetTmpDir.swap( targetTmpDir );
+            }
+
+            /**
+             * @brief Verifies that the target of a symlink is allowed by the configured policy
+             *
+             * Returns false when the link must be skipped (which is counted in the statistics);
+             * under the default policy every target is accepted, which is the behaviour the
+             * unpackager always had
+             */
+
+            bool chkSymlinkTargetAllowed(
+                SAA_in              const fs::path&                                         targetPath,
+                SAA_in              const fs::path&                                         symlinkPath
+                )
+            {
+                if( StpAllow == m_symlinkTargetPolicy )
+                {
+                    return true;
+                }
+
+                const auto reject = [ & ]( SAA_in const char* reason ) -> bool
+                {
+                    ++m_symlinksIgnored;
+
+                    BL_LOG(
+                        Logging::warning(),
+                        BL_MSG()
+                            << "Ignoring the symlink '"
+                            << symlinkPath
+                            << "' pointing to '"
+                            << targetPath
+                            << "' - "
+                            << reason
+                        );
+
+                    return false;
+                };
+
+                if( ! targetPath.root_path().empty() )
+                {
+                    return reject( "the target is an absolute path" );
+                }
+
+                if( StpRelativeOnly == m_symlinkTargetPolicy )
+                {
+                    return true;
+                }
+
+                /*
+                 * StpContained: the target must resolve (lexically, without touching the
+                 * filesystem) to a path inside the directory which is being unpacked
+                 */
+
+                auto resolved = symlinkPath.parent_path();
+
+                for( const auto& element : targetPath )
+                {
+                    const auto& name = element.string();
+
+                    if( "." == name )
+                    {
+                        continue;
+                    }
+
+                    if( ".." == name )
+                    {
+                        if( resolved == m_targetTmpDir || resolved.parent_path().empty() )
+                        {
+                            return reject( "the target escapes the directory being unpacked" );
+                        }
+
+                        resolved = resolved.parent_path();
+
+                        continue;
+                    }
+
+                    resolved /= name;
+                }
+
+                const auto resolvedText = resolved.string();
+                const auto rootText = m_targetTmpDir.string();
+
+                if( resolvedText.size() < rootText.size() || 0 != resolvedText.compare( 0, rootText.size(), rootText ) )
+                {
+                    return reject( "the target escapes the directory being unpacked" );
+                }
+
+                return true;
             }
 
             void dumpInProgressEntries()
@@ -1283,6 +1397,8 @@ namespace bl
                         << m_dirsAndSymlinksTotal
                         << "\n    totalEntriesCompleted: "
                         << m_entriesCompleted.size()
+                        << "\n    symlinksIgnored: "
+                        << m_symlinksIgnored.load()
                     );
             }
 

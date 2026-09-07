@@ -98,6 +98,8 @@ namespace bl
             static jmethodID                                    g_byteBufferOrder;
             static jmethodID                                    g_byteBufferIsDirect;
             static jmethodID                                    g_byteBufferArray;
+            static jmethodID                                    g_byteBufferArrayOffset;
+            static jmethodID                                    g_byteBufferIsReadOnly;
             static jobject                                      g_nativeByteOrder;
 
             JNIEnv*                                             m_jniEnv;
@@ -369,6 +371,8 @@ namespace bl
                 g_byteBufferOrder = getMethodID( byteBufferClass.get(), "order", "(Ljava/nio/ByteOrder;)Ljava/nio/ByteBuffer;" );
                 g_byteBufferIsDirect = getMethodID( byteBufferClass.get(), "isDirect", "()Z" );
                 g_byteBufferArray = getMethodID( byteBufferClass.get(), "array", "()[B" );
+                g_byteBufferArrayOffset = getMethodID( byteBufferClass.get(), "arrayOffset", "()I" );
+                g_byteBufferIsReadOnly = getMethodID( byteBufferClass.get(), "isReadOnly", "()Z" );
 
                 const auto byteOrderClass = findJavaClass( "java/nio/ByteOrder" );
                 const auto byteOrderNativeOrder = getStaticMethodID( byteOrderClass.get(), "nativeOrder", "()Ljava/nio/ByteOrder;" );
@@ -856,6 +860,31 @@ namespace bl
                     );
             }
 
+            /**
+             * @brief The offset of the first element of the buffer within its backing array
+             *
+             * A buffer obtained through ByteBuffer::slice( ... ) does not start at the
+             * beginning of the array which array() returns
+             */
+
+            jint getByteBufferArrayOffset( SAA_in const jobject byteBuffer ) const
+            {
+                return callIntMethod(
+                    byteBuffer,
+                    g_byteBufferArrayOffset
+                    );
+            }
+
+            bool isReadOnlyByteBuffer( SAA_in const jobject byteBuffer ) const
+            {
+                const auto result = callBooleanMethod(
+                    byteBuffer,
+                    g_byteBufferIsReadOnly
+                    );
+
+                return result != 0;
+            }
+
             jsize getArrayLength( SAA_in const jarray array ) const
             {
                 const auto size = m_jniEnv -> GetArrayLength( array );
@@ -951,6 +980,8 @@ namespace bl
         BL_DEFINE_STATIC_MEMBER( JniEnvironmentT, jmethodID,                                    g_byteBufferOrder ) = nullptr;
         BL_DEFINE_STATIC_MEMBER( JniEnvironmentT, jmethodID,                                    g_byteBufferIsDirect ) = nullptr;
         BL_DEFINE_STATIC_MEMBER( JniEnvironmentT, jmethodID,                                    g_byteBufferArray ) = nullptr;
+        BL_DEFINE_STATIC_MEMBER( JniEnvironmentT, jmethodID,                                    g_byteBufferArrayOffset ) = nullptr;
+        BL_DEFINE_STATIC_MEMBER( JniEnvironmentT, jmethodID,                                    g_byteBufferIsReadOnly ) = nullptr;
 
         BL_DEFINE_STATIC_MEMBER( JniEnvironmentT, jobject,                                      g_nativeByteOrder ) = nullptr;
 

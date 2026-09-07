@@ -267,3 +267,64 @@ UTF_AUTO_TEST_CASE( TestFilesystemMetadataInMemoryImpl )
         }
     }
 }
+
+UTF_AUTO_TEST_CASE( TestFilesystemMetadataEntryPathValidation )
+{
+    using namespace bl;
+
+    /*
+     * The metadata can be deserialized from an artifact produced by a remote peer, and every
+     * consumer joins the relative path of an entry onto the directory it unpacks into - so a
+     * path which is absolute or which contains a parent directory reference must be rejected
+     * when the entry is created
+     */
+
+    typedef bl::data::FilesystemMetadataInMemoryImpl fsmd_t;
+
+    const auto createEntryWithPath = []( SAA_in const std::string& relPath ) -> void
+    {
+        const auto fsmd = fsmd_t::createInstance< bl::data::FilesystemMetadataWO >();
+
+        fsmd_t::EntryInfo entry;
+
+        entry.size = 4321U;
+        entry.type = fsmd_t::File;
+        entry.relPath = bl::bo::path::createInstance();
+
+        bl::fs::path path( relPath );
+        entry.relPath -> lvalue().swap( path );
+
+        ( void ) fsmd -> createEntry( std::move( entry ) );
+    };
+
+    /*
+     * An ordinary relative path is accepted, including one with a name which is legal on
+     * UNIX but not on Windows
+     */
+
+    UTF_REQUIRE_NO_THROW( createEntryWithPath( "foo/bar/baz.txt" ) );
+    UTF_REQUIRE_NO_THROW( createEntryWithPath( "foo/DirNameWith\"quotes\" /baz.txt" ) );
+
+    UTF_REQUIRE_THROW( createEntryWithPath( "" ), bl::UnexpectedException );
+    UTF_REQUIRE_THROW( createEntryWithPath( "../../.ssh/authorized_keys" ), bl::UnexpectedException );
+    UTF_REQUIRE_THROW( createEntryWithPath( "foo/../../etc/passwd" ), bl::UnexpectedException );
+    UTF_REQUIRE_THROW( createEntryWithPath( "/etc/passwd" ), bl::UnexpectedException );
+
+    {
+        /*
+         * A symlink entry must carry a target
+         */
+
+        const auto fsmd = fsmd_t::createInstance< bl::data::FilesystemMetadataWO >();
+
+        fsmd_t::EntryInfo entry;
+
+        entry.type = fsmd_t::Symlink;
+        entry.relPath = bl::bo::path::createInstance();
+
+        bl::fs::path path( "foo/link" );
+        entry.relPath -> lvalue().swap( path );
+
+        UTF_REQUIRE_THROW( fsmd -> createEntry( std::move( entry ) ), bl::UnexpectedException );
+    }
+}

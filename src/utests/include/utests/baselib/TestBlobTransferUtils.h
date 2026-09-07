@@ -1492,6 +1492,19 @@ namespace utest
                     )
                 );
 
+            /*
+             * The callback above holds a strong reference to the acceptor, while the acceptor
+             * owns the storage which owns the callback, so the reference cycle must be broken
+             * explicitly - otherwise the acceptor, its connection tasks and the whole storage
+             * graph outlive the test
+             */
+
+            BL_SCOPE_EXIT(
+                {
+                    faultStorage -> dropCallback( cpp::void_callback_t() );
+                }
+                );
+
             TestTaskUtils::startAcceptorAndExecuteCallback( cbTransferTest, acceptor );
         }
 

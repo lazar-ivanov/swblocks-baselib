@@ -365,11 +365,11 @@ namespace bl
                 }
                 else if( exceptionType == "bl::InvalidDataFormatException" )
                 {
-                    return exceptionFromProperties( exceptionProperties, errorCategory, XmlException() );
-                }
-                else if( exceptionType == "bl::UserMessageException" )
-                {
-                    return exceptionFromProperties( exceptionProperties, errorCategory, UserMessageException() );
+                    return exceptionFromProperties(
+                        exceptionProperties,
+                        errorCategory,
+                        InvalidDataFormatException()
+                        );
                 }
                 else if( exceptionType == "bl::UserMessageException" )
                 {
@@ -420,6 +420,54 @@ namespace bl
                 -> std::string
             {
                 return DataModelUtils::getDocAsPrettyJsonString( createServerErrorObject( eptr, exceptionCallback ) );
+            }
+
+            /**
+             * @brief Same as getServerErrorAsJson( ... ) above, but with the properties which
+             * disclose the internals of the server removed
+             *
+             * The full diagnostic information is intended for trusted internal services and it
+             * stays in the server logs; a response which can reach an untrusted client must not
+             * carry the exception dump, the source file / function names, the task information
+             * or the addresses of the server side endpoints
+             */
+
+            static auto getRedactedServerErrorAsJson(
+                SAA_in      const std::exception_ptr&                   eptr,
+                SAA_in_opt  const eh::void_exception_callback_t&        exceptionCallback = defaultEhCallback()
+                )
+                -> std::string
+            {
+                const auto errorJson = createServerErrorObject( eptr, exceptionCallback );
+
+                const auto& result = errorJson -> result();
+
+                /*
+                 * The dump property is required by the model, so it can't simply be emptied
+                 */
+
+                result -> exceptionFullDump( std::string( "<redacted>" ) );
+
+                const auto& properties = result -> exceptionProperties();
+
+                if( properties )
+                {
+                    properties -> fileName( str::empty() );
+                    properties -> fileOpenMode( str::empty() );
+                    properties -> functionName( str::empty() );
+                    properties -> taskInfo( str::empty() );
+                    properties -> hostName( str::empty() );
+                    properties -> serviceName( str::empty() );
+                    properties -> endpointAddress( str::empty() );
+                    properties -> httpUrl( str::empty() );
+                    properties -> httpRedirectUrl( str::empty() );
+                    properties -> externalCommandOutput( str::empty() );
+                    properties -> parserFile( str::empty() );
+
+                    properties -> endpointPortReset();
+                }
+
+                return DataModelUtils::getDocAsPrettyJsonString( errorJson );
             }
         };
 

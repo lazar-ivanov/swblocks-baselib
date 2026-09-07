@@ -28,7 +28,10 @@
 #endif
 #include <baselib/core/detail/BoostIncludeGuardPop.h>
 
+#include <algorithm>
 #include <climits>
+#include <functional>
+#include <iterator>
 
 namespace bl
 {
@@ -70,7 +73,7 @@ namespace bl
                 UniformRandomNumberGenerator::state_size * UniformRandomNumberGenerator::word_size;
 
             random_device randomSource;
-            unsigned data[ ( urngStateSizeInBits - 1 ) / sizeof( unsigned ) + 1 ];
+            unsigned data[ ( urngStateSizeInBits - 1 ) / ( sizeof( unsigned ) * CHAR_BIT ) + 1 ];
 
             std::generate( std::begin( data ), std::end( data ), std::ref( randomSource ) );
             seed_seq seedBytes( std::begin( data ), std::end( data ) );

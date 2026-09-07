@@ -294,7 +294,7 @@ namespace bl
              * Exception hooks
              */
 
-            typedef cpp::function< void ( SAA_in const BaseException& ) NOEXCEPT > ThrowExceptionHook;
+            typedef cpp::function< void ( SAA_in const BaseException& ) > ThrowExceptionHook;
 
             template
             <
@@ -318,11 +318,23 @@ namespace bl
                 {
                     BL_NOEXCEPT_BEGIN()
 
-                    BL_MUTEX_GUARD( g_lock );
+                    /*
+                     * The hook is copied out under the lock and invoked outside of it - the
+                     * hook itself may construct exceptions (every BL_EXCEPTION comes through
+                     * here), which would re-enter this non-recursive lock on the same thread
+                     */
 
-                    if( g_throwHook )
+                    ThrowExceptionHook throwHook;
+
                     {
-                        g_throwHook( static_cast< const BaseException& >( exception ) );
+                        BL_MUTEX_GUARD( g_lock );
+
+                        throwHook = g_throwHook;
+                    }
+
+                    if( throwHook )
+                    {
+                        throwHook( static_cast< const BaseException& >( exception ) );
                     }
 
                     BL_NOEXCEPT_END()

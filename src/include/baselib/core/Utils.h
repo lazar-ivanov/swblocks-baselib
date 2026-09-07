@@ -304,6 +304,11 @@ namespace bl
                 m_durationThresholdInSeconds( std::move( other.m_durationThresholdInSeconds ) ),
                 m_startTime( std::move( other.m_startTime ) )
             {
+                /*
+                 * The moved from timer must not log the completion a second time
+                 */
+
+                other.m_canceled = true;
             }
 
             ExecutionTimerT& operator =( SAA_in ExecutionTimerT&& other )
@@ -312,6 +317,10 @@ namespace bl
                 m_channel = std::move( other.m_channel );
                 m_durationThresholdInSeconds = std::move( other.m_durationThresholdInSeconds );
                 m_startTime = std::move( other.m_startTime );
+
+                m_canceled = other.m_canceled;
+                other.m_canceled = true;
+
                 return *this;
             }
 
@@ -428,6 +437,18 @@ namespace bl
                         if( cbOnError )
                         {
                             return cbOnError();
+                        }
+
+                        /*
+                         * There is no error callback to produce a value from - the original
+                         * exception must be re-thrown rather than replaced with an unrelated
+                         * one by returnIfVoid( ... ) below (which is only reachable for a
+                         * non-void RETURN)
+                         */
+
+                        if( ! std::is_same< void, RETURN >::value )
+                        {
+                            throw;
                         }
                     }
 

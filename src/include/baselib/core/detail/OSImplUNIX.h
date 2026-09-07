@@ -157,8 +157,50 @@ namespace bl
 
                 enum
                 {
-                    GET_PASSWD_BUFFER_LENGTH = 512
+                    GET_PASSWD_BUFFER_LENGTH = 512,
+
+                    /*
+                     * The buffer of the getpw*_r calls is grown up to this size when the
+                     * entry does not fit (they answer ERANGE in that case)
+                     */
+
+                    GET_PASSWD_BUFFER_MAX_LENGTH = 64 * 1024,
                 };
+
+                /**
+                 * @brief Invokes a getpw*_r style call, growing the buffer while it answers ERANGE
+                 *
+                 * The returned value is the errno of the call (zero on success) and *not* -1,
+                 * which is what these functions document; the buffer is owned by the caller
+                 * because the returned entry points into it
+                 */
+
+                template
+                <
+                    typename CALLBACK
+                >
+                static int callWithPasswdBuffer(
+                    SAA_in          const CALLBACK&                     callback,
+                    SAA_inout       std::vector< char >&                buffer
+                    )
+                {
+                    if( buffer.empty() )
+                    {
+                        buffer.resize( GET_PASSWD_BUFFER_LENGTH );
+                    }
+
+                    for( ;; )
+                    {
+                        const int rc = callback( &buffer[ 0 ], buffer.size() );
+
+                        if( ERANGE != rc || buffer.size() >= GET_PASSWD_BUFFER_MAX_LENGTH )
+                        {
+                            return rc;
+                        }
+
+                        buffer.resize( 2U * buffer.size() );
+                    }
+                }
 
                 static const char*                  g_procSelfExeSymlink;
 
@@ -230,11 +272,41 @@ namespace bl
 
                 public:
 
+                    /**
+                     * @brief Sends a signal to the process (or to its group)
+                     *
+                     * Note that the internal callers below already hold the lock and have
+                     * verified the pid, so they call sendSignalNoLock( ... ) directly
+                     */
+
                     void sendSignal(
                         SAA_in    const int     signal,
                         SAA_in    const bool    includeSubprocesses
                         )
                     {
+                        BL_MUTEX_GUARD( m_lock );
+
+                        if( 0 == m_pid )
+                        {
+                            /*
+                             * The process has terminated and has been waited on already -
+                             * signalling pid 0 would send the signal to the process group of
+                             * the caller (i.e. to ourselves)
+                             */
+
+                            return;
+                        }
+
+                        sendSignalNoLock( signal, includeSubprocesses );
+                    }
+
+                    void sendSignalNoLock(
+                        SAA_in    const int     signal,
+                        SAA_in    const bool    includeSubprocesses
+                        )
+                    {
+                        BL_ASSERT( 0 != m_pid );
+
                         const auto rc = ::kill(
                             includeSubprocesses ? -m_pid : m_pid,
                             signal
@@ -632,7 +704,7 @@ namespace bl
                             return;
                         }
 
-                        sendSignal( force ? SIGKILL : SIGTERM, includeSubprocesses );
+                        sendSignalNoLock( force ? SIGKILL : SIGTERM, includeSubprocesses );
                     }
 
                     void sendProcessStopEvent( SAA_in const bool includeSubprocesses )
@@ -646,7 +718,7 @@ namespace bl
                                 << "Attempting to send stop signal to a process which has been terminated already"
                             );
 
-                        sendSignal( SIGINT, includeSubprocesses );
+                        sendSignalNoLock( SIGINT, includeSubprocesses );
                     }
                 };
 
@@ -800,6 +872,39 @@ namespace bl
                     return pipe;
                 }
 
+                /**
+                 * @brief Closes the stream which writes into the standard input of a child
+                 *
+                 * Flushing (or closing) the write end of a pipe whose reader has exited fails
+                 * with EPIPE, which is an ordinary outcome for a child that finished before
+                 * its input was fully written; the default stdio deleter is NOEXCEPT and RIPs
+                 * on any failure, so it must not be the one which closes this stream
+                 *
+                 * Note that the process must ignore SIGPIPE for the write to return EPIPE at
+                 * all - see the note on os::createProcess in OS.h
+                 */
+
+                static void closeChildStdinNothrow( SAA_inout stdio_file_ptr& filePtr ) NOEXCEPT
+                {
+                    BL_NOEXCEPT_BEGIN()
+
+                    auto* const rawFilePtr = filePtr.release();
+
+                    if( nullptr == rawFilePtr )
+                    {
+                        return;
+                    }
+
+                    errno = 0;
+
+                    if( 0 != std::fclose( rawFilePtr ) && EPIPE != errno )
+                    {
+                        BL_RIP_MSG( "Cannot close the standard input stream of a child process" );
+                    }
+
+                    BL_NOEXCEPT_END()
+                }
+
                 static stdio_file_ptr convert2StdioFile(
                     SAA_inout           fd_ref&                                 fd,
                     SAA_in              const bool                              readOnly
@@ -841,6 +946,13 @@ namespace bl
                     int                 fdComm;
                     int                 maxFd;
                     bool                setParentDeathSignal;
+
+                    /*
+                     * The pid of the parent captured before the fork, so the child can verify
+                     * that the parent is still the same one after PR_SET_PDEATHSIG was armed
+                     */
+
+                    ::pid_t             parentPid;
                 };
 
                 /*
@@ -1011,9 +1123,25 @@ namespace bl
                      * when the parent dies (not requested for detached processes)
                      */
 
-                    if( info.setParentDeathSignal && -1 == ::prctl( PR_SET_PDEATHSIG, SIGKILL ) )
+                    if( info.setParentDeathSignal )
                     {
-                        childExecFailNothrow( info, ChildExecStepPrctl );
+                        if( -1 == ::prctl( PR_SET_PDEATHSIG, SIGKILL ) )
+                        {
+                            childExecFailNothrow( info, ChildExecStepPrctl );
+                        }
+
+                        /*
+                         * The parent may have died between the fork and the prctl call above,
+                         * in which case the death signal was already missed - the child must
+                         * not continue as an orphan in that case
+                         *
+                         * Note that ::getppid and ::_exit are both async-signal-safe
+                         */
+
+                        if( ::getppid() != info.parentPid )
+                        {
+                            ::_exit( 1 );
+                        }
                     }
 #endif
 
@@ -1368,19 +1496,35 @@ namespace bl
 
                     try
                     {
-                        str::escaped_list_separator< char > els( "\\", " ", "\"\'");
+                        /*
+                         * Note that the tab is a separator too and that empty tokens (which
+                         * adjacent separators produce) are skipped - they would otherwise
+                         * become empty argv entries
+                         */
+
+                        str::escaped_list_separator< char > els( "\\", " \t", "\"\'");
                         str::tokenizer< str::escaped_list_separator< char > > tokens( commandLine, els );
 
                         for( const auto& arg : tokens )
                         {
+                            if( arg.empty() )
+                            {
+                                continue;
+                            }
+
                             args.emplace_back( arg );
                         }
                     }
                     catch( str::escaped_list_error& e )
                     {
+                        /*
+                         * Note that the command line itself must not be attached to the
+                         * exception - it may carry credentials
+                         */
+
                         BL_THROW(
                             ArgumentException()
-                                << eh::errinfo_string_value( commandLine ),
+                                << eh::errinfo_string_value( args.empty() ? str::empty() : args.front() ),
                             BL_MSG()
                                 << "Invalid command line: "
                                 << e.what()
@@ -1434,7 +1578,8 @@ namespace bl
 
                         outFilePtr.reset();
                         errFilePtr.reset();
-                        inFilePtr.reset();
+
+                        closeChildStdinNothrow( inFilePtr );
 
                         outPipe.first.reset();
                         outPipe.second.reset();
@@ -1550,14 +1695,16 @@ namespace bl
                     pidHandle.reset( new EncapsulatedPidHandle( ! detachProcess /* terminateOnDestruction */ ) );
 
                     /*
-                     * Get the user and group IDs before we fork to avoid forking and then having a problem getting these values.
+                     * Note that the identity switch is performed by 'su' (see the command line
+                     * built below), so the user and group ids are not needed here - the lookup
+                     * is still made to verify that the user exists before the fork
                      */
-
-                    auto userID = ( ::uid_t ) -1;
-                    auto groupID = ( ::gid_t ) -1;
 
                     if( ! userName.empty() )
                     {
+                        auto userID = ( ::uid_t ) -1;
+                        auto groupID = ( ::gid_t ) -1;
+
                         getUserCredentials( userName, userID, groupID );
 
                         BL_CHK_T_USER_FRIENDLY(
@@ -1619,6 +1766,7 @@ namespace bl
                     childInfo.fdComm = parentChildCommPipe.second.get();
                     childInfo.maxFd = ::getdtablesize();
                     childInfo.setParentDeathSignal = ! detachProcess;
+                    childInfo.parentPid = ::getpid();
 
                     reapAbandonedProcessesNothrow();
 
@@ -1791,32 +1939,32 @@ namespace bl
                     SAA_in          const std::string&                          value
                     )
                 {
+                    /*
+                     * The argument is wrapped in single quotes, which is the only complete
+                     * quoting for a POSIX shell - inside them every character is literal, so
+                     * the only thing which has to be escaped is the single quote itself (by
+                     * closing the quoted section, emitting an escaped quote and re-opening it)
+                     *
+                     * Escaping a list of metacharacters instead would leave '$', backtick,
+                     * '*', '?', '[', '{', '~', '#', '!', '=' and newline to be interpreted by
+                     * the shell of the target user
+                     */
+
+                    str << '\'';
+
                     for( const char c : value )
                     {
-                        switch( c )
+                        if( '\'' == c )
                         {
-                            /*
-                             * Quote all shell metacharacters
-                             */
+                            str << "'\\''";
 
-                            case ' ':
-                            case '\t':
-                            case '\'':
-                            case '\"':
-                            case '\\':
-                            case '|':
-                            case '&':
-                            case ';':
-                            case '(':
-                            case ')':
-                            case '<':
-                            case '>':
-                                str << '\\';
-                                break;
+                            continue;
                         }
 
                         str << c;
                     }
+
+                    str << '\'';
                 }
 
                 template
@@ -1868,6 +2016,40 @@ namespace bl
                 }
 
                 /*****************************************************
+                 * System resources information
+                 */
+
+                static std::uint64_t getPhysicalMemorySize()
+                {
+                    const auto pages = ::sysconf( _SC_PHYS_PAGES );
+                    const auto pageSize = ::sysconf( _SC_PAGESIZE );
+
+                    if( pages <= 0 || pageSize <= 0 )
+                    {
+                        return 0U;
+                    }
+
+                    return static_cast< std::uint64_t >( pages ) * static_cast< std::uint64_t >( pageSize );
+                }
+
+                static std::uint64_t getFileDescriptorSoftLimit()
+                {
+                    struct rlimit limit;
+
+                    if( 0 != ::getrlimit( RLIMIT_NOFILE, &limit ) )
+                    {
+                        return 0U;
+                    }
+
+                    if( RLIM_INFINITY == limit.rlim_cur )
+                    {
+                        return 0U;
+                    }
+
+                    return static_cast< std::uint64_t >( limit.rlim_cur );
+                }
+
+                /*****************************************************
                  * File I/O support
                  */
 
@@ -1909,8 +2091,18 @@ namespace bl
                     SAA_in          const stdio_file_ptr&               fileptr
                     )
                 {
-                    const auto pos = ftello( fileptr.get() );
-                    BL_CHK_ERRNO_NM( numbers::safeCoerceTo< off_t >( -1 ), pos );
+                    /*
+                     * The call must be made inside the macro - it clears errno before it
+                     * evaluates the expression, so evaluating ftello outside of it would
+                     * report a failure with error code 0 ("Success")
+                     */
+
+                    off_t pos;
+
+                    BL_CHK_ERRNO_NM(
+                        numbers::safeCoerceTo< off_t >( -1 ),
+                        ( pos = ftello( fileptr.get() ) )
+                        );
 
                     return numbers::safeCoerceTo< std::uint64_t >( pos );
                 }
@@ -2009,17 +2201,20 @@ namespace bl
                 {
                     ::passwd pw;
                     ::passwd *result = nullptr;
-                    char buffer[ GET_PASSWD_BUFFER_LENGTH ];
+                    std::vector< char > buffer;
 
-                    BL_CHK_ERRNO_USER_FRIENDLY(
-                        -1,
-                        ::getpwuid_r(
-                            ::geteuid(),
-                            &pw,
-                            buffer,
-                            BL_ARRAY_SIZE( buffer ),
-                            &result
-                            ),
+                    const auto rc = callWithPasswdBuffer(
+                        [ &pw, &result ]( SAA_in char* data, SAA_in const std::size_t size ) -> int
+                        {
+                            return ::getpwuid_r( ::geteuid(), &pw, data, size, &result );
+                        },
+                        buffer
+                        );
+
+                    BL_CHK_T_USER_FRIENDLY(
+                        false,
+                        0 == rc,
+                        createException( "getpwuid_r", rc ),
                         BL_MSG()
                             << "Cannot obtain user login name"
                         );
@@ -2056,17 +2251,20 @@ namespace bl
                 {
                     ::passwd pw;
                     ::passwd *result = nullptr;
-                    char buffer[ GET_PASSWD_BUFFER_LENGTH ];
+                    std::vector< char > buffer;
 
-                    BL_CHK_ERRNO_USER_FRIENDLY(
-                        -1,
-                        ::getpwnam_r(
-                            userName.c_str(),
-                            &pw,
-                            buffer,
-                            BL_ARRAY_SIZE( buffer ),
-                            &result
-                            ),
+                    const auto rc = callWithPasswdBuffer(
+                        [ &pw, &result, &userName ]( SAA_in char* data, SAA_in const std::size_t size ) -> int
+                        {
+                            return ::getpwnam_r( userName.c_str(), &pw, data, size, &result );
+                        },
+                        buffer
+                        );
+
+                    BL_CHK_T_USER_FRIENDLY(
+                        false,
+                        0 == rc,
+                        createException( "getpwnam_r", rc ),
                         BL_MSG()
                             << "Cannot obtain password entry for user '"
                             << userName
@@ -2108,17 +2306,20 @@ namespace bl
 
                     ::passwd pw;
                     ::passwd *result = nullptr;
-                    char buffer[ GET_PASSWD_BUFFER_LENGTH ];
+                    std::vector< char > buffer;
 
-                    BL_CHK_ERRNO(
-                        -1,
-                        ::getpwuid_r(
-                            fileStatus.st_uid,
-                            &pw,
-                            buffer,
-                            BL_ARRAY_SIZE( buffer ),
-                            &result
-                            ),
+                    const auto rc = callWithPasswdBuffer(
+                        [ &pw, &result, &fileStatus ]( SAA_in char* data, SAA_in const std::size_t size ) -> int
+                        {
+                            return ::getpwuid_r( fileStatus.st_uid, &pw, data, size, &result );
+                        },
+                        buffer
+                        );
+
+                    BL_CHK_T(
+                        false,
+                        0 == rc,
+                        createException( "getpwuid_r", rc ),
                         BL_MSG()
                             << "Cannot get user name for UID "
                             << fileStatus.st_uid
@@ -2349,7 +2550,21 @@ namespace bl
                         op_op.sem_flg = ( noUndo ? 0 : SEM_UNDO );
                         op_op.sem_op = value;
 
-                        chkOp( 0 == ::semop( id, &op_op, 1 ), "semop" );
+                        /*
+                         * semop is restartable - a signal delivered while waiting on the
+                         * semaphore (e.g. through asio::signal_set) must not make the lock
+                         * operation fail
+                         */
+
+                        int rc;
+
+                        do
+                        {
+                            rc = ::semop( id, &op_op, 1 );
+                        }
+                        while( -1 == rc && EINTR == errno );
+
+                        chkOp( 0 == rc, "semop" );
                     }
 
                     static int semOpenOrCreate(
@@ -2396,18 +2611,29 @@ namespace bl
                         return semid;
                     }
 
+                    /**
+                     * @brief The default permissions of the semaphore
+                     *
+                     * Note that the default is owner only - a world writable semaphore can be
+                     * incremented by any local user, which both breaks the exclusion it is
+                     * there to provide and allows a denial of service on it
+                     */
+
                     static int defaultPermissions()
                     {
-                        return ( S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH );
+                        return ( S_IRUSR | S_IWUSR );
                     }
 
                 public:
 
                     typedef ipc::scoped_lock< RobustNamedMutex > Guard;
 
-                    RobustNamedMutex( SAA_in const std::string& name )
+                    RobustNamedMutex(
+                        SAA_in          const std::string&              name,
+                        SAA_in_opt      const int                       permissions = defaultPermissions()
+                        )
                         :
-                        m_semaphoreId( semOpenOrCreate( name, defaultPermissions() ) )
+                        m_semaphoreId( semOpenOrCreate( name, permissions ) )
                     {
                     }
 
@@ -2832,6 +3058,29 @@ namespace bl
                         ::close( fd );
                         return true;
                      }
+                }
+
+                /**
+                 * @brief Same as createNewFile( ... ) above, but the file is only accessible
+                 * to the owner (mode 0600)
+                 */
+
+                static bool createNewFilePrivate( SAA_in const fs::path& path )
+                {
+                    const int fd = ::open(
+                        path.string().c_str(),
+                        O_WRONLY | O_CREAT | O_EXCL,
+                        S_IRUSR | S_IWUSR
+                        );
+
+                    if( fd == -1 )
+                    {
+                        return false;
+                    }
+
+                    ::close( fd );
+
+                    return true;
                 }
 
                 static bool isFileInUseError( SAA_in const eh::error_code& ec )

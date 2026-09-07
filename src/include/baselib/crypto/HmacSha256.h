@@ -155,7 +155,7 @@ namespace bl
                         ::HMAC(
                             ::EVP_sha256(),
                             key.c_str(),
-                            static_cast< int >( key.length() ),
+                            toIntSize( key.length() ),
                             reinterpret_cast< const unsigned char* >( message.c_str() ),
                             message.length(),
                             messageDigest,

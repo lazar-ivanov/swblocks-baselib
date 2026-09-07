@@ -99,6 +99,8 @@ namespace bl
 
                 static void completionCallbackDefault( SAA_in_opt const std::exception_ptr& eptr ) NOEXCEPT
                 {
+                    BL_NOEXCEPT_BEGIN()
+
                     if( eptr )
                     {
                         /*
@@ -131,6 +133,8 @@ namespace bl
                                 << eh::diagnostic_information( eptr )
                             );
                     }
+
+                    BL_NOEXCEPT_END()
                 }
 
             protected:
@@ -623,7 +627,7 @@ namespace bl
 
                 typedef om::ObjectImpl< SharedState >                                       SharedStateImpl;
 
-                os::mutex                                                                   m_lock;
+                mutable os::mutex                                                           m_lock;
                 cpp::ScalarTypeIniter< bool >                                               m_preConnected;
                 om::ObjPtrDisposable< SharedStateImpl >                                     m_state;
                 tasks::SimpleTimer                                                          m_reconnectTimer;
@@ -698,6 +702,13 @@ namespace bl
                     m_state -> completionCallback( BL_PARAM_FWD( completionCallback ) );
                 }
 
+                auto stateCopy() const NOEXCEPT -> om::ObjPtr< SharedStateImpl >
+                {
+                    BL_MUTEX_GUARD( m_lock );
+
+                    return om::copy( m_state );
+                }
+
                 virtual void dispose() NOEXCEPT OVERRIDE
                 {
                     BL_NOEXCEPT_BEGIN()
@@ -737,24 +748,41 @@ namespace bl
                     m_state -> pushBlock( targetPeerId, dataBlock, BL_PARAM_FWD( completionCallback ) );
                 }
 
+                /*
+                 * Note that the accessors below are polled from timers while dispose() can
+                 * run concurrently, so the state must be copied out under the lock and a safe
+                 * default returned once the object has been disposed
+                 */
+
                 virtual bool isConnected() const NOEXCEPT OVERRIDE
                 {
-                    return m_state -> isConnected();
+                    const auto state = stateCopy();
+
+                    return state ? state -> isConnected() : false;
                 }
 
                 virtual uuid_t channelId() const NOEXCEPT OVERRIDE
                 {
-                    return m_state -> channelId();
+                    const auto state = stateCopy();
+
+                    return state ? state -> channelId() : uuids::nil();
                 }
 
                 virtual bool isNoCopyDataBlocks() const NOEXCEPT OVERRIDE
                 {
-                    return m_state -> isNoCopyDataBlocks();
+                    const auto state = stateCopy();
+
+                    return state ? state -> isNoCopyDataBlocks() : false;
                 }
 
                 virtual void isNoCopyDataBlocks( SAA_in bool isNoCopyDataBlocks ) NOEXCEPT OVERRIDE
                 {
-                    m_state -> isNoCopyDataBlocks( isNoCopyDataBlocks );
+                    const auto state = stateCopy();
+
+                    if( state )
+                    {
+                        state -> isNoCopyDataBlocks( isNoCopyDataBlocks );
+                    }
                 }
             };
 

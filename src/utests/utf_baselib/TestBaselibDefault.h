@@ -1791,6 +1791,27 @@ UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessDetachedStdioTests )
     }
 }
 
+UTF_AUTO_TEST_CASE( BaseLib_OSSendSignalAfterTerminationTests )
+{
+    /*
+     * Sending a signal through a handle whose process has already been waited on must be a
+     * no-op - the pid of such a handle is zero and ::kill( 0, ... ) / ::kill( -0, ... ) would
+     * signal the process group of the caller, i.e. the test process itself
+     *
+     * If this regresses the test process is terminated by the SIGTERM below
+     */
+
+    const auto proc = bl::os::createProcess( "true" );
+
+    UTF_REQUIRE( proc );
+    UTF_REQUIRE_EQUAL( 0, bl::os::tryAwaitTermination( proc ) );
+
+    bl::os::sendSignal( proc.get(), SIGTERM, false /* includeSubprocesses */ );
+    bl::os::sendSignal( proc.get(), SIGTERM, true /* includeSubprocesses */ );
+
+    UTF_REQUIRE( true );
+}
+
 UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessDetachedReleaseTests )
 {
     /*
@@ -6630,13 +6651,18 @@ UTF_AUTO_TEST_CASE( BaseLib_Base64EncodingTests )
 
     UTF_REQUIRE( ! encodedString.empty() );
 
-    UTF_REQUIRE_THROW_MESSAGE(
+    /*
+     * Note that the input is validated before it is handed to the Boost iterators, so an
+     * invalid character is reported as a bl::ArgumentException (and the rejected input is
+     * deliberately not embedded in the exception)
+     */
+
+    UTF_REQUIRE_THROW(
         bl::SerializationUtils::decodeFromBase64StringToFile(
             "invalidBase64String%",
             outputPath
             ),
-        std::exception,
-        "attempt to decode a value not in base64 char set"
+        bl::ArgumentException
         );
 
     UTF_REQUIRE( ! fs::path_exists( outputPath ) );
@@ -6946,6 +6972,44 @@ UTF_AUTO_TEST_CASE( BaseLib_URIEncodeDecodeTests )
         const std::string input( "\"Aardvarks lurk, OK? And they lurk in /dev/null!\"" );
 
         UTF_CHECK_EQUAL( uriDecode( uriEncode( input ) ), input );
+    }
+
+    {
+        /*
+         * Every byte value must round-trip - the lookup tables are indexed with the
+         * character, so on a platform where char is signed the bytes from 0x80 to 0xFF
+         * would index before the tables and the emitted hex digits would be garbage
+         */
+
+        std::string input;
+
+        for( unsigned int i = 1U; i < 256U; ++i )
+        {
+            input.push_back( static_cast< char >( static_cast< unsigned char >( i ) ) );
+        }
+
+        const auto encoded = uriEncode( input );
+
+        for( const auto ch : encoded )
+        {
+            const auto value = static_cast< unsigned char >( ch );
+
+            UTF_REQUIRE( value >= 0x20U && value < 0x7FU );
+        }
+
+        UTF_REQUIRE_EQUAL( uriDecode( encoded ), input );
+
+        const auto encodedUnsafeOnly = uriEncodeUnsafeOnly( input );
+
+        UTF_REQUIRE_EQUAL( uriDecode( encodedUnsafeOnly ), input );
+
+        /*
+         * Inputs which are too short to hold an escape sequence must be returned as they are
+         */
+
+        UTF_REQUIRE_EQUAL( uriDecode( "" ), "" );
+        UTF_REQUIRE_EQUAL( uriDecode( "a" ), "a" );
+        UTF_REQUIRE_EQUAL( uriDecode( "%4" ), "%4" );
     }
 
     {

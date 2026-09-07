@@ -109,8 +109,21 @@ namespace bl
 
             cpp::SafeOutputStringStream out;
 
+            /*
+             * Note that to_iso_extended_string( ... ) omits the fractional part when it is
+             * zero (i.e. once in every 10^6 calls with microsecond resolution), which the
+             * validation regex of this format rejects - so it is emitted explicitly here
+             */
+
+            auto localTimeText = to_iso_extended_string( localTime );
+
+            if( std::string::npos == localTimeText.find( '.' ) )
+            {
+                localTimeText += ".000000";
+            }
+
             out
-                << to_iso_extended_string( localTime )
+                << localTimeText
                 << ( timeZoneOffset.is_negative() ? '-' : '+' )
                 << std::setw( 2 )
                 << std::setfill( fillChar )

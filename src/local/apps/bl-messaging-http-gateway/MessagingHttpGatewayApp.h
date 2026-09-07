@@ -199,7 +199,7 @@ namespace bl
                             << "\nSecurity token type default: "
                             << cmdLine.m_tokenTypeDefault.getValue( "<empty>" /* defaultValue */ )
                             << "\nSecurity token data default: "
-                            << cmdLine.m_tokenDataDefault.getValue( "<empty>" /* defaultValue */ )
+                            << ( cmdLine.m_tokenDataDefault.hasValue() ? "<set>" : "<empty>" )
                             << "\nRequest timeout in seconds: "
                             << cmdLine.m_requestTimeoutInSeconds.getValue( 0L )
                             << "\nNumber of connections: "

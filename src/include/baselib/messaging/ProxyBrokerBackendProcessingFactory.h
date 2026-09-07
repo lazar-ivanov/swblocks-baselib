@@ -332,28 +332,40 @@ namespace bl
                         return std::max< std::size_t >( deltaToLog, counter_object_t::MIN_DELTA_DEFAULT );
                     }
 
+                    /**
+                     * @brief Disposes the shared state
+                     *
+                     * Note that the lock must NOT be held when this is called - flushing the
+                     * tasks queue waits for the associate message continuations, whose bodies
+                     * take that very lock (which would be a circular wait); the flag is the
+                     * idempotency guard and it is flipped under the lock first, so a
+                     * continuation which runs concurrently returns early instead
+                     */
+
                     void disposeInternal() NOEXCEPT
                     {
                         BL_NOEXCEPT_BEGIN()
 
-                        /*
-                         * disposeInternal() is protected API and it does not hold the lock
-                         *
-                         * It is expected that it will be called when the lock is already held
-                         */
-
-                        if( m_isDisposed )
                         {
-                            return;
+                            BL_MUTEX_GUARD( m_lock );
+
+                            if( m_isDisposed )
+                            {
+                                return;
+                            }
+
+                            m_isDisposed = true;
                         }
 
                         m_eqTasks -> forceFlushNoThrow();
 
-                        base_type::disposeInternal( false /* markAsDisposed */ );
+                        {
+                            BL_MUTEX_GUARD( m_lock );
+
+                            base_type::disposeInternal( false /* markAsDisposed */ );
+                        }
 
                         m_eqTasks -> dispose();
-
-                        m_isDisposed = true;
 
                         BL_NOEXCEPT_END()
                     }
@@ -434,6 +446,15 @@ namespace bl
                         }
 
                         BL_MUTEX_GUARD( m_lock );
+
+                        if( m_isDisposed )
+                        {
+                            /*
+                             * The shared state is being disposed - there is nothing to record
+                             */
+
+                            return;
+                        }
 
                         auto& clientState = m_clientsState[ peerId ];
 
@@ -1003,8 +1024,6 @@ namespace bl
                     virtual void dispose() NOEXCEPT OVERRIDE
                     {
                         BL_NOEXCEPT_BEGIN()
-
-                        BL_MUTEX_GUARD( m_lock );
 
                         disposeInternal();
 

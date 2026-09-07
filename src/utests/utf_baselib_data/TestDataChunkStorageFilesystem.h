@@ -450,3 +450,68 @@ UTF_AUTO_TEST_CASE( TestDataChunkStorageFilesystemSingleFile )
         "DataChunkStorageFilesystemSingleFile tests"
         );
 }
+
+UTF_AUTO_TEST_CASE( TestDataChunkStorageSingleFileDeleteAndReopen )
+{
+    using namespace bl;
+    using namespace bl::data;
+
+    /*
+     * A chunk which is removed must stay removed after the storage is disposed and opened
+     * again - with the file opened in append mode the delete marker which removeChunk( ... )
+     * rewrites in place was appended instead, so the deletion was lost and the stray header
+     * made the storage impossible to open at all
+     */
+
+    fs::TmpDir tempDir;
+
+    const std::string testData( "This is test data" );
+
+    const auto dataBlock = DataBlock::createInstance( 128 );
+
+    std::memcpy( dataBlock -> begin(), testData.c_str(), testData.size() );
+
+    dataBlock -> setSize( testData.size() );
+    dataBlock -> setOffset1( 0U );
+
+    const auto sessionId = uuids::create();
+
+    const auto chunkIdKept = uuids::create();
+    const auto chunkIdRemoved = uuids::create();
+
+    {
+        const auto storage = om::lockDisposable(
+            DataChunkStorageFilesystemSingleFile::createInstance< DataChunkStorage >(
+                cpp::copy( tempDir.path() ) /* rootPath */
+                )
+            );
+
+        storage -> save( sessionId, chunkIdKept, dataBlock );
+        storage -> save( sessionId, chunkIdRemoved, dataBlock );
+
+        storage -> remove( sessionId, chunkIdRemoved );
+    }
+
+    {
+        /*
+         * Opening the storage again must succeed and the removed chunk must be gone
+         */
+
+        const auto storage = om::lockDisposable(
+            DataChunkStorageFilesystemSingleFile::createInstance< DataChunkStorage >(
+                cpp::copy( tempDir.path() ) /* rootPath */
+                )
+            );
+
+        const auto loaded = DataBlock::createInstance( 128 );
+
+        storage -> load( sessionId, chunkIdKept, loaded );
+
+        UTF_REQUIRE_EQUAL( loaded -> size(), testData.size() );
+
+        UTF_REQUIRE_THROW(
+            storage -> load( sessionId, chunkIdRemoved, loaded ),
+            bl::ServerErrorException
+            );
+    }
+}

@@ -1681,6 +1681,37 @@ namespace bl
                 }
 
                 /*****************************************************
+                 * System resources information
+                 */
+
+                static std::uint64_t getPhysicalMemorySize()
+                {
+                    MEMORYSTATUSEX status;
+
+                    std::memset( &status, 0, sizeof( status ) );
+
+                    status.dwLength = sizeof( status );
+
+                    if( ! ::GlobalMemoryStatusEx( &status ) )
+                    {
+                        return 0U;
+                    }
+
+                    return static_cast< std::uint64_t >( status.ullTotalPhys );
+                }
+
+                static std::uint64_t getFileDescriptorSoftLimit()
+                {
+                    /*
+                     * There is no equivalent of the descriptor soft limit on Windows - the
+                     * handle count is bounded by the available kernel memory only, so zero
+                     * ('not applicable') is returned here
+                     */
+
+                    return 0U;
+                }
+
+                /*****************************************************
                  * File I/O support
                  */
 
@@ -2801,8 +2832,24 @@ namespace bl
 
                     typedef ipc::scoped_lock< RobustNamedMutex > Guard;
 
-                    RobustNamedMutex( SAA_in const std::string& name )
+                    /*
+                     * The permissions parameter exists for interface parity with the UNIX
+                     * implementation; a Windows named mutex uses the default security
+                     * descriptor of the process instead
+                     */
+
+                    static int defaultPermissions() NOEXCEPT
                     {
+                        return 0;
+                    }
+
+                    RobustNamedMutex(
+                        SAA_in          const std::string&              name,
+                        SAA_in_opt      const int                       permissions = defaultPermissions()
+                        )
+                    {
+                        BL_UNUSED( permissions );
+
                         std::wstring wname( name.begin(), name.end() );
 
                         const auto rawHandle =
@@ -3644,6 +3691,39 @@ namespace bl
                         ::CloseHandle( fileHandle );
                         return true;
                     }
+                }
+
+                /**
+                 * @brief Same as createNewFile( ... ) above, but the file is not shared while
+                 * it is being created
+                 *
+                 * Note that a Windows file inherits the ACL of its directory - restricting it
+                 * to the owner requires an explicit DACL, which is listed for a Windows host
+                 * in the residual findings handoff
+                 */
+
+                static bool createNewFilePrivate( SAA_in const fs::path& path )
+                {
+                    const auto pwzFileName = path.native().c_str();
+
+                    const auto fileHandle = ::CreateFileW(
+                            pwzFileName,
+                            FILE_WRITE_ATTRIBUTES,                                      /* dwDesiredAccess */
+                            0U                                                          /* dwShareMode - no sharing */,
+                            NULL,                                                       /* lpSecurityAttributes */
+                            CREATE_NEW                                                  /* dwCreationDisposition */,
+                            FILE_ATTRIBUTE_NORMAL,                                      /* dwFlagsAndAttributes */
+                            NULL                                                        /* hTemplateFile */
+                            );
+
+                    if( INVALID_HANDLE_VALUE == fileHandle )
+                    {
+                        return false;
+                    }
+
+                    ::CloseHandle( fileHandle );
+
+                    return true;
                 }
 
                 static bool isFileInUseError( SAA_in const eh::error_code& ec )

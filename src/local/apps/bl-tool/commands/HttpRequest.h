@@ -173,6 +173,17 @@ namespace bltool
 
                         taskImpl -> isExpectUtf8Content( true );
 
+                        if( m_cookies.hasValue() || m_headers.hasValue() )
+                        {
+                            /*
+                             * The request carries credentials (cookies or custom headers), so
+                             * the exception dumps of this task must not contain the URL, the
+                             * request or the response
+                             */
+
+                            taskImpl -> isSecureMode( true );
+                        }
+
                         eq -> push_back( om::qi< Task >( taskImpl ) );
                         eq -> flush();
 

@@ -957,19 +957,23 @@ namespace bl
                         << size
                         );
 
-                if( m_operationBlockType.value() == BlockTransferDefs::BlockType::TransferOnly )
+                if( m_operationBlockType.value() == BlockTransferDefs::BlockType::TransferOnly && 0U == size )
                 {
                     /*
-                     * Since there won't be load operation in this case (to set the size correctly)
-                     * we need to set it here to something and we are going to set it to max value
-                     * - i.e. m_operationState -> data() -> capacity()
+                     * This is the load (GET) path of a transfer only block - since there won't be
+                     * a load operation to set the size correctly we set it to the maximum value
+                     * here - i.e. m_operationState -> data() -> capacity()
+                     *
+                     * Note that the override must not be applied when a size was announced by the
+                     * peer (the PUT path): the server would then wait for capacity() bytes while
+                     * the client sends only the size it announced and both sides would hang
                      */
 
                     m_operationState -> data() -> setSize( m_operationState -> data() -> capacity() );
                 }
                 else
                 {
-                    m_operationState -> data() -> setSize( size );
+                    m_operationState -> data() -> setSizeChecked( size );
                 }
 
                 postAllocCallback();
@@ -1432,7 +1436,15 @@ namespace bl
 
                     case BlockTransferDefs::BlockType::Normal:
                         operationId = OperationId::Put;
-                        m_operationState -> data() -> setOffset1( m_operationProtocolDataSize );
+
+                        /*
+                         * The protocol data offset comes from the command block of the peer,
+                         * so it must be validated against the size of the received block -
+                         * every consumer computes size() - offset1() and an offset past the
+                         * end of the block makes that expression wrap
+                         */
+
+                        m_operationState -> data() -> setOffset1Checked( m_operationProtocolDataSize );
                         break;
 
                     case BlockTransferDefs::BlockType::Authentication:
@@ -1515,10 +1527,18 @@ namespace bl
                 /*
                  * In case of reconnection we need to re-negotiate the client version
                  * and start a new session
+                 *
+                 * The state which belongs to the previous session must be reset too -
+                 * otherwise the new client would inherit the authenticated flag, the peer
+                 * id and the current chunk id of the previous one
                  */
 
                 m_clientProtocolVersion = 0U;
                 m_connectedSessionId = uuids::create();
+
+                m_isClientAuthenticated = false;
+                base_type::m_remotePeerId = uuids::nil();
+                base_type::m_chunkId = uuids::nil();
             }
 
             virtual auto onTaskStoppedNothrow(

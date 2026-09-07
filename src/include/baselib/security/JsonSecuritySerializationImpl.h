@@ -282,7 +282,7 @@ namespace bl
                             -1                                                  /* pbe_nid: PBES2 with the cipher */,
                             ::EVP_aes_256_cbc(),
                             password.c_str(),
-                            static_cast< int >( password.size() ),
+                            crypto::toIntSize( password.size() ),
                             nullptr                                             /* salt: generated */,
                             0                                                   /* salt length: default */,
                             PKCS8_PBKDF2_ITERATIONS,
@@ -617,10 +617,25 @@ namespace bl
             {
                 const int length = BIO_pending( buffer.get() );
 
-                std::string text;
-                text.resize( length, '\0' );
+                /*
+                 * BIO_pending returns a negative value on failure and BIO_read can return
+                 * fewer bytes than requested, so both have to be verified
+                 */
 
-                BL_CHK_CRYPTO_API_NM( ::BIO_read( buffer.get(), const_cast< char* >( text.data() ), length ) );
+                BL_CHK_ARG( length >= 0, length );
+
+                std::string text;
+
+                if( 0 == length )
+                {
+                    return text;
+                }
+
+                text.resize( static_cast< std::size_t >( length ) );
+
+                const int bytesRead = ::BIO_read( buffer.get(), &text[ 0 ], length );
+
+                BL_CHK_ARG( bytesRead == length, bytesRead );
 
                 return text;
             }
@@ -816,7 +831,7 @@ namespace bl
                 auto buffer = crypto::bio_ptr_t::attach(
                     ::BIO_new_mem_buf(
                         const_cast< char* >( pemKeyText.c_str() ),
-                        static_cast< int >( pemKeyText.size() )
+                        crypto::toIntSize( pemKeyText.size() )
                         )
                     );
 

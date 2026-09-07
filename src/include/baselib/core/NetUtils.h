@@ -139,6 +139,32 @@ namespace bl
                     return "<unknown_host_name>:<unknown_port>";
                 }
 
+                /**
+                 * @brief Returns the remote endpoint id of a connected socket without retrying
+                 *
+                 * Unlike safeRemoteEndpointId( ... ) above this never sleeps and never throws
+                 * a system error, so it can be called from a context which must not block
+                 * (e.g. a task continuation, which runs while the execution queue lock is held)
+                 */
+
+                template
+                <
+                    typename T
+                >
+                static std::string remoteEndpointIdNoWait( SAA_in const T& socket )
+                {
+                    eh::error_code ec;
+
+                    const auto remoteEndpoint = socket.remote_endpoint( ec );
+
+                    if( ec )
+                    {
+                        return "<unknown>";
+                    }
+
+                    return formatEndpointId( remoteEndpoint );
+                }
+
                 template
                 <
                     typename T
@@ -250,6 +276,15 @@ namespace bl
         inline std::string safeRemoteEndpointId( SAA_in const T& socket )
         {
             return detail::NetUtils::safeRemoteEndpointId< T >( socket );
+        }
+
+        template
+        <
+            typename T
+        >
+        inline std::string remoteEndpointIdNoWait( SAA_in const T& socket )
+        {
+            return detail::NetUtils::remoteEndpointIdNoWait< T >( socket );
         }
 
         template

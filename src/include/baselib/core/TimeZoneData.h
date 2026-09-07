@@ -21,6 +21,7 @@
 #include <baselib/core/StringUtils.h>
 #include <baselib/core/OS.h>
 
+#include <mutex>
 #include <unordered_map>
 
 #if defined( _WIN32 )
@@ -57,10 +58,25 @@ namespace bl
             static const std::string                                    g_lastWeekOfMonth;
 
             static bool                                                 g_initialized;
+            static std::once_flag                                       g_initOnce;
 
         public:
 
+            /**
+             * @brief Initializes the time zone maps exactly once
+             *
+             * The maps are mutated here, so the initialization must not race with another
+             * thread which is already performing it (or reading the maps afterwards)
+             */
+
             static void init()
+            {
+                std::call_once( g_initOnce, &initInternal );
+            }
+
+        private:
+
+            static void initInternal()
             {
                 if( g_initialized )
                 {
@@ -132,6 +148,8 @@ namespace bl
 
                 g_initialized = true;
             }
+
+        public:
 
             static void loadTimeZonePriorityMap()
             {
@@ -378,6 +396,23 @@ namespace bl
                                 std::vector< std::string > zoneDefFields;
                                 str::split( zoneDefFields, line, str::is_equal_to( '"' ) );
 
+                                if( zoneDefFields.size() < 2U )
+                                {
+                                    /*
+                                     * The value is not quoted (e.g. ZONE=America/New_York),
+                                     * which is valid - there is nothing to extract here
+                                     */
+
+                                    BL_LOG(
+                                        Logging::warning(),
+                                        BL_MSG()
+                                            << "Unable to determine machine time zone from the "
+                                            << "'/etc/sysconfig/clock' file: the ZONE value is not quoted"
+                                        );
+
+                                    return str::empty();
+                                }
+
                                 if( validateTimeZone( zoneDefFields[ 1 ] ) )
                                 {
                                     return zoneDefFields[ 1 ];
@@ -458,6 +493,12 @@ namespace bl
             typename E
         >
         bool TimeZoneDataT< E >::g_initialized( false );
+
+        template
+        <
+            typename E
+        >
+        std::once_flag TimeZoneDataT< E >::g_initOnce;
 
         template
         <

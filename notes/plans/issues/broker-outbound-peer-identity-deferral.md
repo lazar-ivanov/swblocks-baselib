@@ -11,8 +11,8 @@ the peer id derived from the client certificate.
 `notes/reviews/major/update_2026/whole-library-cxx-review-fable51-decisions.md`.
 
 **Related findings:** M-4 (association messages from unauthenticated peers) and M-15
-(`sourcePeerId` filled only when empty) in the same review; both remain separate decisions and
-are not addressed by this record.
+(`sourcePeerId` filled only when empty) in the same review; both were deferred with the mutual-TLS
+item on 2026-09-06 and are recorded in the last section of this document.
 
 **Prior decision this defers against:** the server role does not verify client certificates
 (`verify_none`), decision B6 in `notes/plans/issues/pr-review-residual-cxx-findings-plan.md:297-320`.
@@ -145,3 +145,46 @@ Any of the following reopens item 3 as a merge-gate item:
   `IO_SslSimpleConnectAndTransmitDataMessageDispatcherOutgoingTests`, `IO_MessagingClientTests`
   and `IO_MessagingMultiplexingTests` (several connections under one fixed peer id from one host,
   uniform distribution asserted) cover the unchanged cooperative behaviour end to end.
+
+---
+
+## M-4 and the `sourcePeerId` fill-only note: deferred with the mutual-TLS item (2026-09-07)
+
+**Decision (binding, 2026-09-06, decision 1 of the remaining-work handoff):** M-4 and the
+`sourcePeerId` fill-only note carried inside M-3 are **deferred with item 3 above** (mutual TLS on
+the outbound port with the peer id derived from the client certificate). Record only; no code was
+written for either in the 2026-09-06/07 implementation of the review.
+
+### Why they belong here rather than in a fix of their own
+
+M-4's central rule is `sourcePeerId == m_sourcePeerId`, i.e. a peer may route only to *itself*.
+That rule is only worth what the connection's own id is worth, and today the id is self-declared
+on both ports (this record, "How the outbound port identifies a peer today"). Landing the check
+against an unauthenticated id would move the spoofing one hop - an attacker declares the victim's
+id at connect time and then passes the `sourcePeerId` check trivially - while breaking any
+deployment whose proxy does not authenticate. Once the deferred fix binds the peer id to a client
+certificate, M-4's rule and the `sourcePeerId` note both reduce to "compare against the
+authenticated identity" and are enforced against the same thing.
+
+### The two findings, for the session that picks this up
+
+| Finding | Location | What is wrong | Fix when picked up | How to validate |
+|---|---|---|---|---|
+| M-4 | `messaging/BrokerBackendProcessing.h:312-394` (both ids taken from the client JSON; the association is stored when the target is not directly connected), `:398-423` (backend-only messages skip the principal/token check entirely), `:48-75` (`PeerIdRoutingCacheT` has no size bound and no expiry) | any client on the inbound port can map `victimTarget -> attackerPhysicalPeer` for every peer behind a proxy, so `Dispatch` delivers the victim's messages to the attacker; can dissociate any proxied peer (denial of service); and can insert unlimited unique keys (memory exhaustion). The design intent of `:330-340` is only the stale-association race from the *trusted* proxy | require an authorized principal before `Process` for association messages (`principalIdentityInfo` mandatory); accept only `sourcePeerId == m_sourcePeerId`, now the certificate-derived id; cap `m_routingTable` (per-source cap) and evict on `peerDisconnectedNotify`. ~40 lines | 6 units of `utf_baselib_messaging` plus a proxy configuration that authenticates: association from an unauthenticated peer refused; association with a foreign `sourcePeerId` refused; the routing table stops growing at the cap and is emptied for a peer on disconnect |
+| M-3 `sourcePeerId` fill-only note (the full plan's M-15) | `messaging/MessagingUtils.h:213-217` | `sourcePeerId` is filled in only when the incoming message left it empty, so a peer that sets it explicitly keeps whatever value it chose; the broker then stamps its authorized principal on a message carrying a foreign source id | overwrite unconditionally with the connection's authenticated id (or reject a mismatch), together with M-4's rule so both use one identity | the same 6 units, plus a client that sets `sourcePeerId` to a foreign id and must be rejected (or corrected) rather than forwarded |
+
+### Interim exposure
+
+Unchanged from "What option (b) does not protect against" and the trust assumption above: the
+inbound and outbound ports must be reachable only by hosts trusted to declare their own peer id.
+M-4 adds two consequences to that assumption which option (b) does not touch - proxy routes for
+*any* peer can be redirected or removed by any peer that can reach the inbound port, and the
+routing table is unbounded. R-6 (implemented 2026-09-06) caps a different table
+(`m_requestsInFlight` in the REST bridge) and deliberately left its optional `sourcePeerId` check
+out for this same reason.
+
+### Revisit conditions
+
+The conditions listed under "Revisit conditions" above govern these two as well; the second of
+them ("the M-4 decision requires an authorized principal for association messages") is now
+answered: it does, and that is why M-4 waits here.

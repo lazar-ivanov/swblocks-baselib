@@ -90,7 +90,11 @@ namespace bl
             BL_DM_DEFINE_CLASS_BEGIN( X509ParametersBase )
 
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509Url, "x5u" )
-                BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509CertificateChain, "x5c" )
+                /*
+                  * Note that "x5c" is an array of certificates (RFC 7517 section 4.7)
+                  */
+
+                BL_DM_DECLARE_SIMPLE_VECTOR_ALTERNATE_PROPERTY( x509CertificateChain, x5c, std::string, get_string )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509CertificateSha1Thumbprint, "x5t" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509CertificateSha256Thumbprint, "x5t#S256" )
 
@@ -115,7 +119,11 @@ namespace bl
             BL_DM_DEFINE_CLASS_BEGIN( CryptoCommonBase )
 
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509Url, "x5u" )
-                BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509CertificateChain, "x5c" )
+                /*
+                  * Note that "x5c" is an array of certificates (RFC 7517 section 4.7)
+                  */
+
+                BL_DM_DECLARE_SIMPLE_VECTOR_ALTERNATE_PROPERTY( x509CertificateChain, x5c, std::string, get_string )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509CertificateSha1Thumbprint, "x5t" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509CertificateSha256Thumbprint, "x5t#S256" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( algorithm, "alg" )
@@ -146,14 +154,22 @@ namespace bl
             BL_DM_DEFINE_CLASS_BEGIN( KeyBase )
 
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509Url, "x5u" )
-                BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509CertificateChain, "x5c" )
+                /*
+                  * Note that "x5c" is an array of certificates (RFC 7517 section 4.7)
+                  */
+
+                BL_DM_DECLARE_SIMPLE_VECTOR_ALTERNATE_PROPERTY( x509CertificateChain, x5c, std::string, get_string )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509CertificateSha1Thumbprint, "x5t" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509CertificateSha256Thumbprint, "x5t#S256" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( algorithm, "alg" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( keyId, "kid" )
                 BL_DM_DECLARE_STRING_ALTERNATE_REQUIRED_PROPERTY( keyType, "kty" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( publicKeyUse, "use" )
-                BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( keyOperations, "key_ops" )
+                /*
+                  * Note that "key_ops" is an array of operations (RFC 7517 section 4.3)
+                  */
+
+                BL_DM_DECLARE_SIMPLE_VECTOR_ALTERNATE_PROPERTY( keyOperations, key_ops, std::string, get_string )
 
                 BL_DM_PROPERTIES_IMPL_BEGIN()
                     BL_DM_IMPL_PROPERTY( x509Url )
@@ -186,14 +202,22 @@ namespace bl
             BL_DM_DEFINE_CLASS_BEGIN( RsaPublicKey )
 
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509Url, "x5u" )
-                BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509CertificateChain, "x5c" )
+                /*
+                  * Note that "x5c" is an array of certificates (RFC 7517 section 4.7)
+                  */
+
+                BL_DM_DECLARE_SIMPLE_VECTOR_ALTERNATE_PROPERTY( x509CertificateChain, x5c, std::string, get_string )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509CertificateSha1Thumbprint, "x5t" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509CertificateSha256Thumbprint, "x5t#S256" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( algorithm, "alg" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( keyId, "kid" )
                 BL_DM_DECLARE_STRING_ALTERNATE_REQUIRED_PROPERTY( keyType, "kty" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( publicKeyUse, "use" )
-                BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( keyOperations, "key_ops" )
+                /*
+                  * Note that "key_ops" is an array of operations (RFC 7517 section 4.3)
+                  */
+
+                BL_DM_DECLARE_SIMPLE_VECTOR_ALTERNATE_PROPERTY( keyOperations, key_ops, std::string, get_string )
                 BL_DM_DECLARE_STRING_ALTERNATE_REQUIRED_PROPERTY( modulus, "n" )
                 BL_DM_DECLARE_STRING_ALTERNATE_REQUIRED_PROPERTY( exponent, "e" )
 
@@ -254,14 +278,22 @@ namespace bl
             BL_DM_DEFINE_CLASS_BEGIN( RsaPrivateKey )
 
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509Url, "x5u" )
-                BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509CertificateChain, "x5c" )
+                /*
+                  * Note that "x5c" is an array of certificates (RFC 7517 section 4.7)
+                  */
+
+                BL_DM_DECLARE_SIMPLE_VECTOR_ALTERNATE_PROPERTY( x509CertificateChain, x5c, std::string, get_string )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509CertificateSha1Thumbprint, "x5t" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509CertificateSha256Thumbprint, "x5t#S256" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( algorithm, "alg" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( keyId, "kid" )
                 BL_DM_DECLARE_STRING_ALTERNATE_REQUIRED_PROPERTY( keyType, "kty" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( publicKeyUse, "use" )
-                BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( keyOperations, "key_ops" )
+                /*
+                  * Note that "key_ops" is an array of operations (RFC 7517 section 4.3)
+                  */
+
+                BL_DM_DECLARE_SIMPLE_VECTOR_ALTERNATE_PROPERTY( keyOperations, key_ops, std::string, get_string )
                 BL_DM_DECLARE_STRING_ALTERNATE_REQUIRED_PROPERTY( modulus, "n" )
                 BL_DM_DECLARE_STRING_ALTERNATE_REQUIRED_PROPERTY( exponent, "e" )
                 BL_DM_DECLARE_STRING_ALTERNATE_REQUIRED_PROPERTY( privateExponent, "d" )
@@ -353,7 +385,11 @@ namespace bl
             BL_DM_DEFINE_CLASS_BEGIN( HeaderBase )
 
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509Url, "x5u" )
-                BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509CertificateChain, "x5c" )
+                /*
+                  * Note that "x5c" is an array of certificates (RFC 7517 section 4.7)
+                  */
+
+                BL_DM_DECLARE_SIMPLE_VECTOR_ALTERNATE_PROPERTY( x509CertificateChain, x5c, std::string, get_string )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509CertificateSha1Thumbprint, "x5t" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509CertificateSha256Thumbprint, "x5t#S256" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( algorithm, "alg" )
@@ -362,7 +398,11 @@ namespace bl
                 BL_DM_DECLARE_COMPLEX_PROPERTY( key, bl::dm::jose::RsaPublicKey )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( headerType, "typ" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( contentType, "cty" )
-                BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( critical, "crit" )
+                /*
+                  * Note that "crit" is an array of header parameter names (RFC 7515 section 4.1.11)
+                  */
+
+                BL_DM_DECLARE_SIMPLE_VECTOR_ALTERNATE_PROPERTY( critical, crit, std::string, get_string )
 
                 BL_DM_PROPERTIES_IMPL_BEGIN()
                     BL_DM_IMPL_PROPERTY( x509Url )
@@ -399,7 +439,11 @@ namespace bl
             BL_DM_DEFINE_CLASS_BEGIN( SigningHeader )
 
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509Url, "x5u" )
-                BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509CertificateChain, "x5c" )
+                /*
+                  * Note that "x5c" is an array of certificates (RFC 7517 section 4.7)
+                  */
+
+                BL_DM_DECLARE_SIMPLE_VECTOR_ALTERNATE_PROPERTY( x509CertificateChain, x5c, std::string, get_string )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509CertificateSha1Thumbprint, "x5t" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509CertificateSha256Thumbprint, "x5t#S256" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( algorithm, "alg" )
@@ -408,7 +452,11 @@ namespace bl
                 BL_DM_DECLARE_COMPLEX_PROPERTY( key, bl::dm::jose::RsaPublicKey )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( headerType, "typ" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( contentType, "cty" )
-                BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( critical, "crit" )
+                /*
+                  * Note that "crit" is an array of header parameter names (RFC 7515 section 4.1.11)
+                  */
+
+                BL_DM_DECLARE_SIMPLE_VECTOR_ALTERNATE_PROPERTY( critical, crit, std::string, get_string )
 
                 BL_DM_PROPERTIES_IMPL_BEGIN()
                     BL_DM_IMPL_PROPERTY( x509Url )
@@ -445,7 +493,11 @@ namespace bl
             BL_DM_DEFINE_CLASS_BEGIN( EncryptionHeader )
 
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509Url, "x5u" )
-                BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509CertificateChain, "x5c" )
+                /*
+                  * Note that "x5c" is an array of certificates (RFC 7517 section 4.7)
+                  */
+
+                BL_DM_DECLARE_SIMPLE_VECTOR_ALTERNATE_PROPERTY( x509CertificateChain, x5c, std::string, get_string )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509CertificateSha1Thumbprint, "x5t" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( x509CertificateSha256Thumbprint, "x5t#S256" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( algorithm, "alg" )
@@ -454,9 +506,17 @@ namespace bl
                 BL_DM_DECLARE_COMPLEX_PROPERTY( key, bl::dm::jose::RsaPublicKey )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( headerType, "typ" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( contentType, "cty" )
-                BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( critical, "crit" )
+                /*
+                  * Note that "crit" is an array of header parameter names (RFC 7515 section 4.1.11)
+                  */
+
+                BL_DM_DECLARE_SIMPLE_VECTOR_ALTERNATE_PROPERTY( critical, crit, std::string, get_string )
                 BL_DM_DECLARE_STRING_ALTERNATE_REQUIRED_PROPERTY( encryptionAlgorithm, "enc" )
-                BL_DM_DECLARE_STRING_ALTERNATE_REQUIRED_PROPERTY( compressionAlgorithm, "zip" )
+                /*
+                  * Note that "zip" is optional (RFC 7516 section 4.1.3)
+                  */
+
+                BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( compressionAlgorithm, "zip" )
 
                 BL_DM_PROPERTIES_IMPL_BEGIN()
                     BL_DM_IMPL_PROPERTY( x509Url )

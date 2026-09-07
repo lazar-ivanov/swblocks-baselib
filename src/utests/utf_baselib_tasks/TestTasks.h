@@ -3088,6 +3088,146 @@ namespace
 
 } // __unnamed
 
+namespace
+{
+    /*
+     * The value of the --unique-id argument which arms the re-entrant unsubscribe helper
+     * case below; the helper is a no-op unless it is passed, so it can't abort the normal
+     * runs of the module
+     */
+
+    const char* const g_reentrantUnsubscribeId = "reentrant-unsubscribe";
+
+    /**
+     * @brief An observer which disposes its own subscription from within onNext
+     */
+
+    template
+    <
+        typename E = void
+    >
+    class SelfUnsubscribingObserverT : public bl::reactive::ObserverBase
+    {
+        BL_CTR_DEFAULT( SelfUnsubscribingObserverT, protected )
+        BL_DECLARE_OBJECT_IMPL_NO_DESTRUCTOR( SelfUnsubscribingObserverT )
+
+    protected:
+
+        bl::om::ObjPtr< bl::om::Disposable >                                m_subscription;
+
+    public:
+
+        void subscription( SAA_in bl::om::ObjPtr< bl::om::Disposable >&& subscription ) NOEXCEPT
+        {
+            m_subscription = BL_PARAM_FWD( subscription );
+        }
+
+        virtual bool onNext( SAA_in const bl::cpp::any& /* value */ ) OVERRIDE
+        {
+            if( m_subscription )
+            {
+                /*
+                 * This is the forbidden operation - it must abort the process
+                 */
+
+                const auto subscription = std::move( m_subscription );
+
+                subscription -> dispose();
+            }
+
+            return true;
+        }
+    };
+
+    typedef bl::om::ObjectImpl< SelfUnsubscribingObserverT<> > SelfUnsubscribingObserverImpl;
+
+} // __unnamed
+
+UTF_AUTO_TEST_CASE( Tasks_ReactiveUnsubscribeFromCallbackHelper )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    /*
+     * This case is a helper for Tasks_ReactiveUnsubscribeFromCallbackTests below - it is a
+     * no-op unless the environment variable which the parent process sets is present, as it
+     * is expected to abort the process
+     */
+
+    if( test::UtfArgsParser::uniqueId() != g_reentrantUnsubscribeId )
+    {
+        UTF_REQUIRE( true );
+
+        return;
+    }
+
+    scheduleAndExecuteInParallel(
+        []( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+        {
+            /*
+             * Note that the observable has to be held through a shared pointer - the
+             * disposer returned by subscribe( ... ) keeps a weak reference to it
+             */
+
+            const auto observableImpl = om::getSharedPtr(
+                MonotonicCounterObservableImpl::createInstance()
+                );
+
+            const auto observable = om::qi< reactive::Observable >( observableImpl );
+
+            const auto observerImpl = SelfUnsubscribingObserverImpl::createInstance();
+
+            observerImpl -> subscription(
+                observable -> subscribe( om::qi< reactive::Observer >( observerImpl ) )
+                );
+
+            const auto task = om::qi< Task >( observable.get() );
+
+            eq -> push_back( task );
+
+            eq -> flush( false /* discardPending */, true /* nothrowIfFailed */ );
+        });
+}
+
+UTF_AUTO_TEST_CASE( Tasks_ReactiveUnsubscribeFromCallbackTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    /*
+     * Unsubscribing from within an observer callback would wait for the very task which is
+     * making the call, i.e. it deadlocks; the contract forbids it and it is enforced with a
+     * BL_RT_ASSERT, which aborts the process - so the helper case above has to be executed
+     * in a child process
+     */
+
+    std::vector< std::string > cmdLine;
+
+    cmdLine.push_back( os::getCurrentExecutablePath() );
+    cmdLine.push_back( "--run_test=Tasks_ReactiveUnsubscribeFromCallbackHelper" );
+    cmdLine.push_back( "--catch_system_errors=no" );
+
+    /*
+     * The custom module arguments must be separated from the Boost.Test ones
+     */
+
+    cmdLine.push_back( "--" );
+    cmdLine.push_back( resolveMessage( BL_MSG() << "--unique-id=" << g_reentrantUnsubscribeId ) );
+
+    const auto processRef = os::createProcess( cmdLine );
+
+    const auto exitCode = os::tryAwaitTermination( processRef, 60 * 1000 /* timeoutMs */ );
+
+    BL_LOG(
+        Logging::debug(),
+        BL_MSG()
+            << "The re-entrant unsubscribe helper exited with code "
+            << exitCode
+        );
+
+    UTF_REQUIRE( 0 != exitCode );
+}
+
 UTF_AUTO_TEST_CASE( Tasks_ReactiveTests )
 {
     BL_LOG_MULTILINE( bl::Logging::debug(), BL_MSG() << "*** Default tests\n" );
@@ -3396,6 +3536,62 @@ UTF_AUTO_TEST_CASE( Tasks_SimpleTimerTaskTests )
             eq -> flush();
 
             UTF_CHECK( checker -> isCanceled() );
+        });
+}
+
+UTF_AUTO_TEST_CASE( Tasks_TimerTaskRunNowAndWakeUpTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    scheduleAndExecuteInParallel(
+        []( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+        {
+            std::atomic< long > counter( 0L );
+
+            /*
+             * The timer period below is very long, so the callback is expected to be
+             * invoked exactly once when the task starts and then exactly once per
+             * runNow() / wakeUp() request
+             *
+             * Note that if these requests were to re-arm the timer instead of simply
+             * cancelling the armed wait then more than one wait handler would be left
+             * in flight and each of them would cancel the wait armed by the previous
+             * one, so the callback would execute back-to-back in a tight loop
+             */
+
+            const auto task = SimpleTimerTask::createInstance(
+                [ &counter ]() -> bool
+                {
+                    ++counter;
+
+                    return true;
+                },
+                time::seconds( 10 )                                     /* duration */,
+                time::time_duration()                                   /* initDelay */
+                );
+
+            eq -> push_back( om::qi< Task >( task ) );
+
+            os::sleep( time::milliseconds( 300 ) );
+
+            UTF_REQUIRE_EQUAL( counter.load(), 1L );
+
+            task -> runNow();
+
+            os::sleep( time::milliseconds( 300 ) );
+
+            UTF_REQUIRE_EQUAL( counter.load(), 2L );
+
+            task -> wakeUp();
+
+            os::sleep( time::milliseconds( 300 ) );
+
+            UTF_REQUIRE_EQUAL( counter.load(), 3L );
+
+            task -> requestCancel();
+
+            eq -> flush();
         });
 }
 
@@ -4548,6 +4744,68 @@ UTF_AUTO_TEST_CASE( Tasks_LambdaCapture )
             j = 999;
         }
         );
+}
+
+UTF_AUTO_TEST_CASE( Tasks_RetryableWrapperTaskCancelStressTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    /*
+     * The wrapper task replaces the wrapped task from its continuation callback while
+     * a concurrent requestCancel() may be forwarding a call to the very same task, so
+     * the decision and the replacement must be made under the wrapper task lock
+     */
+
+    for( std::size_t i = 0U; i < 20U; ++i )
+    {
+        const auto eq = om::lockDisposable(
+            ExecutionQueueImpl::createInstance< ExecutionQueue >( ExecutionQueue::OptionKeepNone )
+            );
+
+        const auto taskImpl = RetryableWrapperTask::createInstance(
+            []() -> om::ObjPtr< Task >
+            {
+                return om::qi< Task >(
+                    SimpleTaskImpl::createInstance(
+                        []() -> void
+                        {
+                            BL_THROW(
+                                bl::UnexpectedException(),
+                                BL_MSG()
+                                    << "Consistent error"
+                                );
+                        }
+                        )
+                    );
+            },
+            20U                                             /* maxRetryCount */,
+            time::milliseconds( 1 )                         /* retryTimeout */
+            );
+
+        const auto task = om::qi< Task >( taskImpl );
+
+        eq -> push_back( task );
+
+        os::thread cancelThread(
+            [ &task ]() -> void
+            {
+                for( std::size_t j = 0U; j < 200U; ++j )
+                {
+                    task -> requestCancel();
+                }
+            }
+            );
+
+        cancelThread.join();
+
+        eq -> flush(
+            false                                           /* discardPending */,
+            true                                            /* nothrowIfFailed */
+            );
+
+        UTF_REQUIRE( task -> isFailed() );
+    }
 }
 
 UTF_AUTO_TEST_CASE( Tasks_RetryableWrapperTaskTests )

@@ -132,10 +132,17 @@ namespace bl
                 BL_ASSERT( om::areEqual( defaultTP, threadPool.get() ) );
             }
 
+            /*
+             * Note that the default pointer must be cleared before the object is
+             * released, as otherwise a concurrent getDefault() call may attempt to
+             * add a reference to already freed memory
+             */
+
             threadPool -> dispose();
-            threadPool.reset();
 
             setDefault( nullptr, id );
+
+            threadPool.reset();
 
             BL_NOEXCEPT_END()
         }

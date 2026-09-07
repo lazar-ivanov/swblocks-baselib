@@ -96,6 +96,13 @@ namespace bl
             m_checkingInterval( checkingInterval ),
             m_checkingIntervalInMicros( static_cast< std::uint64_t >( m_checkingInterval.total_microseconds() ) )
         {
+            BL_CHK(
+                0U,
+                m_checkingIntervalInMicros,
+                BL_MSG()
+                    << "The watchdog checking interval must be greater than zero"
+                );
+
             /*
              * Atomics require explicit initialization
              * Setting them all to std::numeric_limits< std::unit64_t >::max()
@@ -162,6 +169,13 @@ namespace bl
             SAA_in      const time::time_duration&        extension
             )
         {
+            BL_CHK(
+                true,
+                extension.is_negative(),
+                BL_MSG()
+                    << "The watchdog expiration extension must not be negative"
+                );
+
             const auto monitorIndex = setupMonitor( name );
             m_expirations[ monitorIndex ] = timeDurationInCheckingIntervals( extension ) + 1;
         }

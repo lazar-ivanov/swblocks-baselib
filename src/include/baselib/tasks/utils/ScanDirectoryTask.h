@@ -81,6 +81,7 @@ namespace bl
             virtual void onExecute() NOEXCEPT OVERRIDE
             {
                 std::vector< fs::path > dirsToScan;
+                bool scanSucceeded = false;
 
                 const auto cbControl = om::copy( m_cbControl );
                 const auto eq = m_eq;
@@ -156,6 +157,8 @@ namespace bl
                             }
                         }
 
+                        scanSucceeded = true;
+
                         m_eq.reset();
                     }
                     catch( std::exception& )
@@ -166,6 +169,17 @@ namespace bl
                     }
 
                     BL_TASKS_HANDLER_END_NOTREADY()
+                }
+
+                if( ! scanSucceeded )
+                {
+                    /*
+                     * The scan of this directory has failed and the task was notified
+                     * as ready already, so the scanners for the directories which were
+                     * seen before the failure must not be scheduled
+                     */
+
+                    return;
                 }
 
                 BL_TASKS_HANDLER_BEGIN_NOLOCK()

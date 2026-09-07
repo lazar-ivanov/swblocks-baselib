@@ -264,6 +264,24 @@ namespace bl
             return detail::ErrorHandling::getException( message, firstEC );
         }
 
+        /**
+         * @brief Coerces a size into the 'int' the OpenSSL APIs take
+         *
+         * The OpenSSL primitives take signed int lengths; passing a size which does not fit
+         * would make them see a negative length (e.g. RSA_private_decrypt would reach
+         * BN_bin2bn with it), so the conversion is checked here
+         */
+
+        inline int toIntSize( SAA_in const std::size_t size )
+        {
+            BL_CHK_ARG(
+                size <= static_cast< std::size_t >( std::numeric_limits< int >::max() ),
+                size
+                );
+
+            return static_cast< int >( size );
+        }
+
     } // crypto
 
 } // bl

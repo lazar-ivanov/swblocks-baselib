@@ -79,6 +79,25 @@ namespace bl
                 TIMEOUT_CANCEL_REQUESTS_TIMER_IN_MILLISECONDS = 200L,
             };
 
+            enum : long
+            {
+                /*
+                 * How long an entry created by an inbound message alone (i.e. one no wait
+                 * task has registered for) is held before it is pruned
+                 */
+
+                TIMEOUT_UNREGISTERED_REQUEST_IN_SECONDS = 30L,
+            };
+
+            enum : std::size_t
+            {
+                /*
+                 * The maximum number of requests which can be tracked at once
+                 */
+
+                MAX_REQUESTS_IN_FLIGHT = 16384U,
+            };
+
             static const std::string                                            g_healthCheckUri;
             static const std::string                                            g_healthCheckTaskName;
 
@@ -100,6 +119,15 @@ namespace bl
                     om::ObjPtr< data::DataBlock >                               response;
                     time::ptime                                                 utcRegisteredAt;
 
+                    /*
+                     * Set when a wait task has registered for this conversation id; an entry
+                     * which was created by an inbound message alone (a message for a
+                     * conversation which is not in flight, or a late response to a request
+                     * which has timed out already) is only held for a short grace period
+                     */
+
+                    cpp::ScalarTypeIniter< bool >                               isRegistered;
+
                     Info( SAA_inout Info&& other ) NOEXCEPT
                     {
                         swap( BL_PARAM_FWD( other ) );
@@ -117,6 +145,7 @@ namespace bl
                         callback.swap( other.callback );
                         response.swap( other.response );
                         std::swap( utcRegisteredAt, other.utcRegisteredAt );
+                        std::swap( isRegistered.lvalue(), other.isRegistered.lvalue() );
                     }
 
                 };
@@ -244,13 +273,18 @@ namespace bl
                 std::vector< uuid_t /* conversationId */ >                      m_scheduledForCancel;
                 requests_map_t                                                  m_requestsInFlight;
                 os::mutex                                                       m_lock;
-                cpp::ScalarTypeIniter< bool >                                   m_isDisposed;
+                /*
+                 * Note that the flag is read without the lock from the health check and from
+                 * the completion paths, so it must be atomic
+                 */
+
+                std::atomic< bool >                                             m_isDisposed;
 
                 void chkIfDisposed()
                 {
                     BL_CHK_T(
                         true,
-                        m_isDisposed.value(),
+                        m_isDisposed.load(),
                         UnexpectedException(),
                         BL_MSG()
                             << "The backend shared state was disposed already"
@@ -306,11 +340,23 @@ namespace bl
 
                     BL_MUTEX_GUARD( m_lock );
 
+                    const auto unregisteredTimeout = time::seconds( TIMEOUT_UNREGISTERED_REQUEST_IN_SECONDS );
+
                     for( auto& pair : m_requestsInFlight )
                     {
                         const auto elapsed = time::microsec_clock::universal_time() - pair.second.utcRegisteredAt;
 
-                        if( elapsed > m_requestTimeout )
+                        /*
+                         * An entry which no wait task has registered for was created by an
+                         * inbound message alone; holding it for the full request timeout lets
+                         * any peer grow the map by one data block per message, so it is only
+                         * given a short grace period for the wait task to show up
+                         */
+
+                        const auto& timeout =
+                            pair.second.isRegistered ? m_requestTimeout : unregisteredTimeout;
+
+                        if( elapsed > timeout )
                         {
                             expiredRequests.emplace( pair.first, std::move( pair.second ) );
                         }
@@ -348,6 +394,30 @@ namespace bl
                         }
 
                         chkIfDisposed();
+
+                        if(
+                            m_requestsInFlight.size() >= MAX_REQUESTS_IN_FLIGHT &&
+                            m_requestsInFlight.find( conversationId ) == m_requestsInFlight.end()
+                            )
+                        {
+                            /*
+                             * The map is at its cap and this message would create a new entry -
+                             * an unknown conversation id can't be allowed to displace the
+                             * requests which are actually in flight
+                             */
+
+                            BL_LOG(
+                                Logging::debug(),
+                                BL_MSG()
+                                    << "Discarding a message for conversation id "
+                                    << conversationId
+                                    << " - the maximum number of tracked requests ("
+                                    << static_cast< std::size_t >( MAX_REQUESTS_IN_FLIGHT )
+                                    << ") has been reached"
+                                );
+
+                            return result;
+                        }
 
                         auto pair = m_requestsInFlight.emplace( conversationId, Info() );
 
@@ -416,7 +486,8 @@ namespace bl
                     m_requestTimeout( requestTimeout ),
                     m_serverAuthenticationRequired( serverAuthenticationRequired ),
                     m_expectedSecurityId( str::to_lower_copy( expectedSecurityId ) ),
-                    m_logUnauthorizedMessages( logUnauthorizedMessages )
+                    m_logUnauthorizedMessages( logUnauthorizedMessages ),
+                    m_isDisposed( false )
                 {
                     BL_LOG(
                         Logging::debug(),
@@ -519,6 +590,7 @@ namespace bl
 
                     info.callback = onReady;
                     info.utcRegisteredAt = time::microsec_clock::universal_time();
+                    info.isRegistered = true;
 
                     return true;
                 }
@@ -622,7 +694,7 @@ namespace bl
                         }
                     }
 
-                    return time::seconds( TIMEOUT_CANCEL_REQUESTS_TIMER_IN_MILLISECONDS );
+                    return time::milliseconds( TIMEOUT_CANCEL_REQUESTS_TIMER_IN_MILLISECONDS );
                 }
 
                 void processIncomingMessage( SAA_in const om::ObjPtrCopyable< data::DataBlock >& data )
@@ -958,14 +1030,36 @@ namespace bl
                     {
                         if( responseMetadata -> httpStatusCode() )
                         {
-                            httpStatusCode = static_cast< HttpStatusCode >( responseMetadata -> httpStatusCode() );
+                            const auto remoteStatusCode = responseMetadata -> httpStatusCode();
+
+                            /*
+                             * The status code comes from a remote peer, so a value which is
+                             * not a valid HTTP status code must not be forwarded verbatim -
+                             * it is reported as a bad gateway instead
+                             */
+
+                            if( remoteStatusCode < 100 || remoteStatusCode > 599 )
+                            {
+                                BL_LOG(
+                                    Logging::debug(),
+                                    BL_MSG()
+                                        << "The remote peer returned an invalid HTTP status code "
+                                        << remoteStatusCode
+                                    );
+
+                                httpStatusCode = http::Parameters::HTTP_SERVER_ERROR_BAD_GATEWAY;
+                            }
+                            else
+                            {
+                                httpStatusCode = static_cast< HttpStatusCode >( remoteStatusCode );
+                            }
                         }
 
                         contentType = responseMetadata -> contentType();
 
                         for( const auto& headerInfo : responseMetadata -> headers() )
                         {
-                            if( headerInfo.first /* name */ == bl::http::HttpHeader::g_contentType )
+                            if( str::iequals( headerInfo.first /* name */, bl::http::HttpHeader::g_contentType ) )
                             {
                                 BL_CHK(
                                     false,
@@ -1012,7 +1106,7 @@ namespace bl
             const format_eh_response_callback_t                                 m_ehFormatCallback;
 
             os::mutex                                                           m_lock;
-            cpp::ScalarTypeIniter< bool >                                       m_isDisposed;
+            std::atomic< bool >                                                 m_isDisposed;
             tasks::SimpleTimer                                                  m_timer;
             tasks::SimpleTimer                                                  m_cancelRequestsTimer;
 
@@ -1052,6 +1146,7 @@ namespace bl
                         )
                     ),
                 m_ehFormatCallback( BL_PARAM_FWD( ehFormatCallback ) ),
+                m_isDisposed( false ),
                 m_timer(
                     cpp::bind(
                         &shared_state_t::onTimer,
@@ -1116,7 +1211,7 @@ namespace bl
             {
                 BL_CHK_T(
                     true,
-                    m_isDisposed.value(),
+                    m_isDisposed.load(),
                     UnexpectedException(),
                     BL_MSG()
                         << "The backend was disposed already"

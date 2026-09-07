@@ -131,19 +131,33 @@ namespace bl
                 disposeInternal();
             }
 
+            /**
+             * @brief Disposes the object
+             *
+             * Note that the dispose lock must NOT be held when this is called - flushing the
+             * processing queue waits for the tasks which are executing, and the body of such
+             * a task takes that very lock (which would be a circular wait); the flag is the
+             * idempotency guard and it is flipped under the lock by dispose() below, so a
+             * request which is being scheduled concurrently fails fast instead
+             */
+
             void disposeInternal() NOEXCEPT
             {
                 BL_NOEXCEPT_BEGIN()
 
-                if( m_isDisposed )
                 {
-                    return;
+                    BL_MUTEX_GUARD( m_disposeLock );
+
+                    if( m_isDisposed )
+                    {
+                        return;
+                    }
+
+                    m_isDisposed = true;
                 }
 
                 m_eqProcessingQueue -> forceFlushNoThrow();
                 m_eqProcessingQueue -> dispose();
-
-                m_isDisposed = true;
 
                 BL_NOEXCEPT_END()
             }
@@ -509,8 +523,6 @@ namespace bl
             virtual void dispose() NOEXCEPT OVERRIDE
             {
                 BL_NOEXCEPT_BEGIN()
-
-                BL_MUTEX_GUARD( m_disposeLock );
 
                 disposeInternal();
 

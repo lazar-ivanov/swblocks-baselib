@@ -479,6 +479,98 @@ template \
     BL_DM_DECLARE_PROPERTY_TO_STRING( name ) \
     private: \
 
+/*
+ * A property whose JSON representation is either a single string or an array of strings
+ * (e.g. the "aud" claim of a JWT, RFC 7519 section 4.1.3)
+ *
+ * The value is always held as a vector; it is serialized as a single string when it holds
+ * exactly one element, so a document which used the scalar form round-trips unchanged
+ */
+
+#define BL_DM_DECLARE_STRING_OR_ARRAY_ALTERNATE_PROPERTY( name, jsonProp ) \
+    private: \
+    std::vector< std::string > m_ ## name; \
+    \
+    void name ## Serialize( \
+        SAA_out         bl::json::object&                               object, \
+        SAA_in          const bool                                      canonicalize \
+        ) \
+    { \
+        if( false == canonicalize && m_ ## name.empty() ) \
+        { \
+            return; \
+        } \
+        \
+        if( 1U == m_ ## name.size() ) \
+        { \
+            object.emplace( jsonProp, bl::json::value( m_ ## name.front() ) ); \
+            \
+            return; \
+        } \
+        \
+        bl::json::array items; \
+        \
+        for( const auto& item : m_ ## name ) \
+        { \
+            items.push_back( bl::json::value( item ) ); \
+        } \
+        \
+        object.emplace( jsonProp, std::move( items ) ); \
+    } \
+    \
+    void name ## Deserialize( \
+        SAA_in          const bl::json::object&                         map, \
+        SAA_inout       BL_DM_SERIALIZATION_CONTEXT_IMPL&               context \
+        ) \
+    { \
+        const auto pos = map.find( jsonProp ); \
+        \
+        if( pos == map.end() || BL_JSON_ITER_VALUE( pos ).is_null() ) \
+        { \
+            return; \
+        } \
+        \
+        std::vector< std::string > temp; \
+        \
+        const auto& value = BL_JSON_ITER_VALUE( pos ); \
+        \
+        if( value.is_string() ) \
+        { \
+            temp.push_back( bl::json::value_to< std::string >( value ) ); \
+        } \
+        else \
+        { \
+            for( const auto& item : value.as_array() ) \
+            { \
+                temp.push_back( bl::json::value_to< std::string >( item ) ); \
+            } \
+        } \
+        \
+        m_ ## name .swap( temp ); \
+        \
+        context.addProcessedProperty( jsonProp ); \
+    } \
+    \
+    public: \
+    const std::vector< std::string >& name() const NOEXCEPT \
+    { \
+        return m_ ## name; \
+    } \
+    \
+    std::vector< std::string >& name ## Lvalue() \
+    { \
+        BL_DM_DEFINE_CHECK_READ_ONLY(); \
+        return m_ ## name; \
+    } \
+    \
+    void name( SAA_in std::vector< std::string >&& value ) \
+    { \
+        BL_DM_DEFINE_CHECK_READ_ONLY(); \
+        m_ ## name.swap( value ); \
+    } \
+    BL_DM_DECLARE_PROPERTY_TO_STRING( name ) \
+    private: \
+
 #define BL_DM_DECLARE_SIMPLE_VECTOR_PROPERTY( name, type, jsonGetter ) \
     BL_DM_DECLARE_SIMPLE_CONTAINER_PROPERTY( name, name, type, jsonGetter, std::vector, push_back ) \
 

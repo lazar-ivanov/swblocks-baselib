@@ -36,6 +36,60 @@
  *
  */
 
+UTF_AUTO_TEST_CASE( Tasks_ThreadPoolResizeAndDisposeTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    BL_LOG_MULTILINE( Logging::debug(), BL_MSG() << "\n******************************** Starting test: Tasks_ThreadPoolResizeAndDisposeTests ********************************\n" );
+
+    /*
+     * Two concurrent callers growing the pool must both return - the readiness
+     * handshake must not be lost when the ready count passes the target of the
+     * caller which is waiting for it
+     *
+     * Disposing the pool while it is being grown must not corrupt the threads
+     * vector and the pool must stay usable (and idempotent to dispose) after that
+     */
+
+    for( std::size_t i = 0U; i < 10U; ++i )
+    {
+        const auto tp = ThreadPoolImpl::createInstance< ThreadPool >(
+            os::AbstractPriority::Normal,
+            2U /* threadsCount */
+            );
+
+        {
+            const auto disposeLock = om::lockDisposable( tp );
+
+            os::thread resizeThread1(
+                [ &tp ]() -> void
+                {
+                    tp -> resize( 8U );
+                }
+                );
+
+            os::thread resizeThread2(
+                [ &tp ]() -> void
+                {
+                    tp -> resize( 12U );
+                }
+                );
+
+            resizeThread1.join();
+            resizeThread2.join();
+
+            UTF_REQUIRE_EQUAL( 12U, tp -> size() );
+        }
+
+        /*
+         * The pool was disposed by the lock above; disposing it again must be a nop
+         */
+
+        tp -> dispose();
+    }
+}
+
 UTF_AUTO_TEST_CASE( Tasks_BasicTests )
 {
     using namespace bl;

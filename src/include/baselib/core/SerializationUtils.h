@@ -137,7 +137,35 @@ namespace bl
                 ++paddingCharactersCount;
             }
 
-            const auto end = encoded.begin() + ( encoded.size() - paddingCharactersCount );
+            /*
+             * The input has to be validated before it is handed to the Boost iterators:
+             * at most two padding characters are legal, a data length of 1 modulo 4 can't
+             * be produced by the encoder and it would make the transform read past the end
+             * of the string, and an invalid character throws a Boost exception which is
+             * not a BaseException (so the error reporting of the callers degrades)
+             */
+
+            BL_CHK_ARG( paddingCharactersCount <= 2U, encoded.size() );
+
+            const auto dataSize = encoded.size() - paddingCharactersCount;
+
+            BL_CHK_ARG( 1U != ( dataSize % 4U ), encoded.size() );
+
+            const auto end = encoded.begin() + dataSize;
+
+            for( auto i = encoded.begin(); i != end; ++i )
+            {
+                const auto ch = *i;
+
+                const bool isValid =
+                    ( ch >= 'A' && ch <= 'Z' ) ||
+                    ( ch >= 'a' && ch <= 'z' ) ||
+                    ( ch >= '0' && ch <= '9' ) ||
+                    '+' == ch ||
+                    '/' == ch;
+
+                BL_CHK_ARG( isValid, encoded.size() );
+            }
 
             return T(
                 serial::from_base64_iterator_t( encoded.begin() ),
@@ -255,9 +283,14 @@ namespace bl
                     break;
 
                 case 1:
+                    /*
+                     * Note that the input must not be embedded in the exception - it is
+                     * attacker supplied and it travels back to the client through
+                     * ExceptionProperties::stringValue
+                     */
+
                     BL_THROW(
-                        ArgumentException()
-                            << eh::errinfo_string_value( encoded ),
+                        ArgumentException(),
                         BL_MSG()
                             << "Invalid base64url encoded string"
                         );
@@ -382,6 +415,12 @@ namespace bl
                 decodedString.end(),
                 std::ostream_iterator< char >( os )
                 );
+
+            /*
+             * The caller must not be told the file was written when the write failed
+             */
+
+            file.flushAndCheck();
         }
     };
 

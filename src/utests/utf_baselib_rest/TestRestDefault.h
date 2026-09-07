@@ -171,10 +171,16 @@ UTF_AUTO_TEST_CASE( RestServiceSslBackendAssortedTests )
                             UTF_REQUIRE_EQUAL( requestMetadata -> method(), "GET" );
                             UTF_REQUIRE_EQUAL( requestMetadata -> urlPath(), "/requestMetadata" );
 
-                            UTF_REQUIRE( ! requestMetadata -> headers().at( "Host" ).empty() );
-                            UTF_REQUIRE_EQUAL( requestMetadata -> headers().at( "Accept" ), "*/*" );
-                            UTF_REQUIRE_EQUAL( requestMetadata -> headers().at( "Connection" ), "close" );
-                            UTF_REQUIRE_EQUAL( requestMetadata -> headers().at( "Cookie" ), cookies );
+                            /*
+                             * Note that the HTTP server parser normalizes the request header
+                             * names to lower case, so the metadata forwarded to the backend
+                             * carries them in lower case too
+                             */
+
+                            UTF_REQUIRE( ! requestMetadata -> headers().at( "host" ).empty() );
+                            UTF_REQUIRE_EQUAL( requestMetadata -> headers().at( "accept" ), "*/*" );
+                            UTF_REQUIRE_EQUAL( requestMetadata -> headers().at( "connection" ), "close" );
+                            UTF_REQUIRE_EQUAL( requestMetadata -> headers().at( "cookie" ), cookies );
                         }
 
                         {

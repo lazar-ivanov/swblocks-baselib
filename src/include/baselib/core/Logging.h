@@ -108,12 +108,12 @@ namespace bl
 
         class Channel;
 
-        static Channel& notify()   { return g_notify; }
-        static Channel& error()    { return g_error; }
-        static Channel& warning()  { return g_warning; }
-        static Channel& info()     { return g_info; }
-        static Channel& debug()    { return g_debug; }
-        static Channel& trace()    { return g_trace; }
+        static Channel& notify()   { return notifyChannel(); }
+        static Channel& error()    { return errorChannel(); }
+        static Channel& warning()  { return warningChannel(); }
+        static Channel& info()     { return infoChannel(); }
+        static Channel& debug()    { return debugChannel(); }
+        static Channel& trace()    { return traceChannel(); }
 
         typedef cpp::function
             <
@@ -130,18 +130,78 @@ namespace bl
 
         typedef std::array< Channel*, LL_LAST > channels_t;
 
-        static Channel g_notify;
-        static Channel g_error;
-        static Channel g_warning;
-        static Channel g_info;
-        static Channel g_debug;
-        static Channel g_trace;
+        /*
+         * Note that the channels, the line logger and the level to channel map are function
+         * local statics and not static data members - the initialization order of static data
+         * members of a class template across translation units is unspecified, so a BL_LOG
+         * from another translation unit's static initializer (or during static destruction)
+         * would otherwise use objects which are not constructed yet
+         */
 
-        static Level g_level;
+        static Channel& notifyChannel()
+        {
+            static Channel channel( LL_NOTIFY, "" );
+
+            return channel;
+        }
+
+        static Channel& errorChannel()
+        {
+            static Channel channel( LL_ERROR, "ERROR: " );
+
+            return channel;
+        }
+
+        static Channel& warningChannel()
+        {
+            static Channel channel( LL_WARNING, "WARNING: " );
+
+            return channel;
+        }
+
+        static Channel& infoChannel()
+        {
+            static Channel channel( LL_INFO, "INFO: " );
+
+            return channel;
+        }
+
+        static Channel& debugChannel()
+        {
+            static Channel channel( LL_DEBUG, "DEBUG: " );
+
+            return channel;
+        }
+
+        static Channel& traceChannel()
+        {
+            static Channel channel( LL_TRACE, "TRACE: " );
+
+            return channel;
+        }
+
+        static line_logger_t& lineLoggerRef()
+        {
+            static line_logger_t lineLogger( getDefaultLineLogger() );
+
+            return lineLogger;
+        }
+
+        static channels_t& level2ChannelRef()
+        {
+            static channels_t channels( getChannels() );
+
+            return channels;
+        }
+
+        /*
+         * Note that the global level is written by setGlobalLevel / LevelPusher while it is
+         * read by isEnabled() from any thread, so it must be atomic
+         */
+
+        static std::atomic< int > g_level;
 
         static os::mutex g_lock;
-        static line_logger_t g_lineLogger;
-        static channels_t g_level2Channel;
 
         static const std::string g_noneLabel;
         static const std::string g_notifyLabel;
@@ -239,7 +299,10 @@ namespace bl
         static Level getLevel()
         {
             const int level = tlsData().logging.level;
-            return ( LL_DEFAULT == level ? g_level : safeCastLevelNoThrow( level ) );
+
+            return
+                LL_DEFAULT == level ?
+                    safeCastLevelNoThrow( g_level.load() ) : safeCastLevelNoThrow( level );
         }
 
         static int setGlobalLevel( SAA_in_opt const int level = LL_DEFAULT ) NOEXCEPT
@@ -266,8 +329,8 @@ namespace bl
         {
             BL_MUTEX_GUARD( g_lock );
 
-            const line_logger_t prev = g_lineLogger;
-            g_lineLogger = lineLogger;
+            const line_logger_t prev = lineLoggerRef();
+            lineLoggerRef() = lineLogger;
             return prev;
         }
 
@@ -357,7 +420,7 @@ namespace bl
                     << "' was specified"
                 );
 
-            return *g_level2Channel[ level ];
+            return *level2ChannelRef()[ level ];
         }
 
         static std::string logLevelToString( SAA_in const Level logLevel )
@@ -432,7 +495,7 @@ namespace bl
             {
                 BL_NOEXCEPT_BEGIN()
 
-                return ( g_lineLogger && m_level <= getLevel() );
+                return ( lineLoggerRef() && m_level <= getLevel() );
 
                 BL_NOEXCEPT_END()
 
@@ -456,7 +519,7 @@ namespace bl
                 {
                     BL_MUTEX_GUARD( g_lock );
 
-                    g_lineLogger(
+                    lineLoggerRef()(
                         m_prefix,
                         resolveMessage( std::forward< T >( msg ) ),
                         isVerboseModeEnabled() /* enableTimestamp */,
@@ -491,7 +554,7 @@ namespace bl
                     {
                         std::getline( is, line );
 
-                        g_lineLogger(
+                        lineLoggerRef()(
                             m_prefix,
                             line,
                             isVerboseModeEnabled() /* enableTimestamp */,
@@ -563,22 +626,14 @@ namespace bl
             {
                 BL_MUTEX_GUARD( g_lock );
 
-                g_lineLogger.swap( m_prev );
+                lineLoggerRef().swap( m_prev );
             }
         };
     };
 
-    BL_DEFINE_STATIC_MEMBER( LoggingT, typename LoggingT< TCLASS >::Channel, g_notify )             ( LoggingT< TCLASS >::LL_NOTIFY, "" );
-    BL_DEFINE_STATIC_MEMBER( LoggingT, typename LoggingT< TCLASS >::Channel, g_error )              ( LoggingT< TCLASS >::LL_ERROR, "ERROR: " );
-    BL_DEFINE_STATIC_MEMBER( LoggingT, typename LoggingT< TCLASS >::Channel, g_warning )            ( LoggingT< TCLASS >::LL_WARNING, "WARNING: " );
-    BL_DEFINE_STATIC_MEMBER( LoggingT, typename LoggingT< TCLASS >::Channel, g_info )               ( LoggingT< TCLASS >::LL_INFO, "INFO: " );
-    BL_DEFINE_STATIC_MEMBER( LoggingT, typename LoggingT< TCLASS >::Channel, g_debug )              ( LoggingT< TCLASS >::LL_DEBUG, "DEBUG: " );
-    BL_DEFINE_STATIC_MEMBER( LoggingT, typename LoggingT< TCLASS >::Channel, g_trace )              ( LoggingT< TCLASS >::LL_TRACE, "TRACE: " );
 
-    BL_DEFINE_STATIC_MEMBER( LoggingT, typename LoggingT< TCLASS >::Level, g_level )                = LoggingT< TCLASS >::LL_INFO;
+    BL_DEFINE_STATIC_MEMBER( LoggingT, std::atomic< int >, g_level )                                ( LoggingT< TCLASS >::LL_INFO );
     BL_DEFINE_STATIC_MEMBER( LoggingT, os::mutex, g_lock );
-    BL_DEFINE_STATIC_MEMBER( LoggingT, typename LoggingT< TCLASS >::line_logger_t, g_lineLogger )   = LoggingT< TCLASS >::getDefaultLineLogger();
-    BL_DEFINE_STATIC_MEMBER( LoggingT, typename LoggingT< TCLASS >::channels_t, g_level2Channel )   = LoggingT< TCLASS >::getChannels();
 
     BL_DEFINE_STATIC_CONST_STRING ( LoggingT, g_noneLabel )                                         = "none";
     BL_DEFINE_STATIC_CONST_STRING ( LoggingT, g_notifyLabel )                                       = "notify";

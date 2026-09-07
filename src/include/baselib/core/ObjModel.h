@@ -484,7 +484,7 @@ namespace bl
             }
         };
 
-        typedef cpp::function < void () NOEXCEPT > onzerorefs_callback_t;
+        typedef cpp::function < void () > onzerorefs_callback_t;
 
         /********************************************************
          * Private implementation helpers

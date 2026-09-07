@@ -137,7 +137,13 @@ namespace utest
 
                 m_responseHeaders.clear();
 
-                const auto pos = m_request -> headers().find( http::HttpHeader::g_userAgent );
+                /*
+                 * Note that the parser normalizes the header names to lower case
+                 */
+
+                const auto pos = m_request -> headers().find(
+                    bl::str::to_lower_copy( http::HttpHeader::g_userAgent )
+                    );
 
                 if( pos != m_request -> headers().end() )
                 {

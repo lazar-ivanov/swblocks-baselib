@@ -45,6 +45,55 @@
 namespace utest
 {
     /**
+     * @brief A simple manually reset signal with a bounded wait, so a test can
+     * synchronize with a callback or with a task which is executing
+     */
+
+    class AsyncTestSignal
+    {
+        BL_NO_COPY_OR_MOVE( AsyncTestSignal )
+
+    private:
+
+        bl::os::mutex                   m_lock;
+        bl::os::condition_variable      m_cv;
+        bool                            m_signaled;
+
+    public:
+
+        AsyncTestSignal()
+            :
+            m_signaled( false )
+        {
+        }
+
+        void signal() NOEXCEPT
+        {
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                m_signaled = true;
+            }
+
+            m_cv.notify_all();
+        }
+
+        bool wait()
+        {
+            bl::os::mutex_unique_lock guard( m_lock );
+
+            return m_cv.wait_for(
+                guard,
+                bl::os::chrono::seconds( 10 ),
+                [ this ]() -> bool
+                {
+                    return m_signaled;
+                }
+                );
+        }
+    };
+
+    /**
      * @brief Common base async task
      */
 

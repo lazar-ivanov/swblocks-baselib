@@ -214,11 +214,32 @@ namespace bl
 
         public:
 
+            /**
+             * @brief An optional hook which escapes the value of a variable before it is
+             * substituted into the template
+             *
+             * The values may be attacker controlled (e.g. an authentication token), so a
+             * caller which builds a structured document out of a template - a URL, a JSON
+             * body - has to encode them for that structure
+             */
+
+            typedef cpp::function
+            <
+                std::string (
+                    SAA_in      const std::string&                  name,
+                    SAA_in      const std::string&                  value
+                    )
+            >
+            escaper_callback_t;
+
             template
             <
                 typename MAP = std::unordered_map< std::string, std::string >
             >
-            auto resolve( SAA_in const MAP& variables ) const -> std::string
+            auto resolve(
+                SAA_in          const MAP&                          variables,
+                SAA_in_opt      const escaper_callback_t&           escaper = escaper_callback_t()
+                ) const -> std::string
             {
                 cpp::SafeOutputStringStream result;
                 cpp::SafeOutputStringStream block;
@@ -280,7 +301,7 @@ namespace bl
 
                         if( posValue != variables.cend() )
                         {
-                            block << posValue -> second;
+                            block << ( escaper ? escaper( name, posValue -> second ) : posValue -> second );
                         }
                         else
                         {

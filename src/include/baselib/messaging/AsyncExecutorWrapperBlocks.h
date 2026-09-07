@@ -62,6 +62,18 @@ namespace bl
             datablock_callback_t                                                            m_serverStateCallback;
             std::size_t                                                                     m_blockCapacity;
 
+            /*
+             * The number of blocks which are currently allocated to operations and the
+             * maximum which will be allowed (zero means unbounded)
+             *
+             * A block of the full capacity is allocated before the payload of a request has
+             * arrived, so without a cap every idle connection which announced a transfer can
+             * pin a block indefinitely
+             */
+
+            mutable std::atomic< std::size_t >                                              m_outstandingBlocks;
+            cpp::ScalarTypeIniter< std::size_t >                                            m_maxOutstandingBlocks;
+
             AsyncSharedStateBlocksT(
                 SAA_in              om::ObjPtr< data::datablocks_pool_type >&&              dataBlocksPool,
                 SAA_in_opt          om::ObjPtr< tasks::TaskControlToken >&&                 controlToken = nullptr,
@@ -73,7 +85,8 @@ namespace bl
                 :
                 base_type( BL_PARAM_FWD( controlToken ) ),
                 m_dataBlocksPool( BL_PARAM_FWD( dataBlocksPool ) ),
-                m_blockCapacity( data::DataBlock::defaultCapacity() )
+                m_blockCapacity( data::DataBlock::defaultCapacity() ),
+                m_outstandingBlocks( 0U )
             {
                 authenticationCallback.swap( m_authenticationCallback );
                 serverStateCallback.swap( m_serverStateCallback );
@@ -116,8 +129,34 @@ namespace bl
                 m_blockCapacity = blockCapacity;
             }
 
+            auto maxOutstandingBlocks() const NOEXCEPT -> std::size_t
+            {
+                return m_maxOutstandingBlocks;
+            }
+
+            void maxOutstandingBlocks( SAA_in const std::size_t maxOutstandingBlocks ) NOEXCEPT
+            {
+                m_maxOutstandingBlocks = maxOutstandingBlocks;
+            }
+
+            auto outstandingBlocks() const NOEXCEPT -> std::size_t
+            {
+                return m_outstandingBlocks.load();
+            }
+
             auto allocateBlock() const -> om::ObjPtr< data::DataBlock >
             {
+                if( m_maxOutstandingBlocks && m_outstandingBlocks.load() >= m_maxOutstandingBlocks.value() )
+                {
+                    BL_THROW_EC(
+                        eh::errc::make_error_code( eh::errc::no_buffer_space ),
+                        BL_MSG()
+                            << "The maximum number of outstanding data blocks ("
+                            << m_maxOutstandingBlocks.value()
+                            << ") has been reached"
+                        );
+                }
+
                 auto newBlock = m_dataBlocksPool -> tryGet();
 
                 if( ! newBlock )
@@ -128,6 +167,8 @@ namespace bl
                 BL_ASSERT( newBlock -> capacity() == m_blockCapacity );
 
                 newBlock -> reset();
+
+                ++m_outstandingBlocks;
 
                 return newBlock;
             }
@@ -142,6 +183,21 @@ namespace bl
                 block -> reset();
 
                 m_dataBlocksPool -> put( BL_PARAM_FWD( block ) );
+
+                /*
+                 * The compare exchange loop below is there only to ensure the counter can
+                 * never underflow if a block which was not obtained from allocateBlock( ... )
+                 * is released through here
+                 */
+
+                auto outstanding = m_outstandingBlocks.load();
+
+                while(
+                    0U != outstanding &&
+                    ! m_outstandingBlocks.compare_exchange_weak( outstanding, outstanding - 1U )
+                    )
+                {
+                }
 
                 BL_NOEXCEPT_END()
             }

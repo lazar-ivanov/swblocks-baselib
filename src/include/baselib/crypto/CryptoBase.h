@@ -153,7 +153,7 @@ namespace bl
                     const auto buffer = bio_ptr_t::attach(
                         ::BIO_new_mem_buf(
                             const_cast< char* >( pemKeyText.c_str() ),
-                            static_cast< int >( pemKeyText.size() )
+                            toIntSize( pemKeyText.size() )
                             )
                         );
 
@@ -525,6 +525,25 @@ namespace bl
                             reinterpret_cast< const unsigned char * >( &g_sessionIdContext ),
                             sizeof( g_sessionIdContext )
                             )
+                        );
+
+                    /*
+                     * The private key must never be loaded through the default password
+                     * callback of asio - it prompts on the terminal, which makes a daemon
+                     * either block on /dev/tty or fail with an unrelated error; an encrypted
+                     * key is rejected right here instead
+                     */
+
+                    context -> set_password_callback(
+                        []( SAA_in const std::size_t /* size */, SAA_in const asio::ssl::context::password_purpose /* purpose */ )
+                            -> std::string
+                        {
+                            BL_THROW(
+                                SecurityException(),
+                                BL_MSG()
+                                    << "The private key of the server is encrypted, which is not supported"
+                                );
+                        }
                         );
 
                     context -> use_private_key(

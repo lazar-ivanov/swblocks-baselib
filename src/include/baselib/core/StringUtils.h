@@ -144,6 +144,30 @@ namespace bl
                 static const char                                       g_dec2Hex[];
                 static const char                                       g_hex2Dec[];
 
+                /*
+                 * The tables above are indexed with an unsigned char, so each of them must
+                 * have an entry for every possible byte value; the sizes are verified in
+                 * chkTableSizes() below, which is instantiated by the URI helpers
+                 */
+
+                static void chkTableSizes() NOEXCEPT
+                {
+                    static_assert(
+                        sizeof( g_safeChars ) == 256U,
+                        "The URI safe characters table must have 256 entries"
+                        );
+
+                    static_assert(
+                        sizeof( g_unsafeChars ) == 256U,
+                        "The URI unsafe characters table must have 256 entries"
+                        );
+
+                    static_assert(
+                        sizeof( g_hex2Dec ) == 256U,
+                        "The hexadecimal to decimal table must have 256 entries"
+                        );
+                }
+
             public:
 
                 static const std::string                                g_emptyString;
@@ -161,6 +185,8 @@ namespace bl
                     SAA_in      const std::string&                      excludedChars
                     )
                 {
+                    chkTableSizes();
+
                     const char*             pSrc    = uri.c_str();
                     const std::size_t       srcLength = uri.length();
 
@@ -170,8 +196,16 @@ namespace bl
 
                     for( ; pSrc < srcEnd; ++pSrc )
                     {
+                        /*
+                         * Note that the tables must always be indexed through an unsigned
+                         * char - a plain char is signed on most platforms, so any byte above
+                         * 0x7F would index before the table
+                         */
+
+                        const unsigned char ch = static_cast< unsigned char >( *pSrc );
+
                         if(
-                            g_safeChars[ static_cast< int >( *pSrc ) ] ||
+                            g_safeChars[ ch ] ||
                             excludedChars.find( *pSrc ) != std::string::npos
                             )
                         {
@@ -184,8 +218,8 @@ namespace bl
                              */
 
                             *pEnd++ = '%';
-                            *pEnd++ = g_dec2Hex[ *pSrc >> 4 ];
-                            *pEnd++ = g_dec2Hex[ *pSrc & 0x0F ];
+                            *pEnd++ = g_dec2Hex[ ch >> 4 ];
+                            *pEnd++ = g_dec2Hex[ ch & 0x0F ];
                         }
                     }
 
@@ -197,6 +231,8 @@ namespace bl
                     SAA_in_opt  const bool                              escapePercent = false
                     )
                 {
+                    chkTableSizes();
+
                     const char*             pSrc    = uri.c_str();
                     const std::size_t       srcLength = uri.length();
 
@@ -206,7 +242,9 @@ namespace bl
 
                     for( ; pSrc < srcEnd; ++pSrc )
                     {
-                        if( g_unsafeChars[ static_cast< int >( *pSrc ) ] )
+                        const unsigned char ch = static_cast< unsigned char >( *pSrc );
+
+                        if( g_unsafeChars[ ch ] )
                         {
                             if( '%' != *pSrc || escapePercent )
                             {
@@ -215,8 +253,8 @@ namespace bl
                                  */
 
                                 *pEnd++ = '%';
-                                *pEnd++ = g_dec2Hex[ *pSrc >> 4 ];
-                                *pEnd++ = g_dec2Hex[ *pSrc & 0x0F ];
+                                *pEnd++ = g_dec2Hex[ ch >> 4 ];
+                                *pEnd++ = g_dec2Hex[ ch & 0x0F ];
 
                                 continue;
                             }
@@ -237,9 +275,21 @@ namespace bl
                      * http://www.ietf.org/rfc/rfc1630.txt
                      */
 
+                    chkTableSizes();
+
                     const char*             pSrc    = uri.c_str();
                     const std::size_t       srcLength = uri.length();
                     const char* const       srcEnd = pSrc + srcLength;
+
+                    if( srcLength < 3U )
+                    {
+                        /*
+                         * Nothing can be decoded out of fewer than three characters and
+                         * srcEnd - 2 below would not be a valid pointer
+                         */
+
+                        return uri;
+                    }
 
                     /*
                      * last decodable '%' ( if any )
@@ -255,8 +305,12 @@ namespace bl
                         if( *pSrc == '%' )
                         {
                             char dec1, dec2;
-                            if( static_cast< char >( -1 ) != ( dec1 = g_hex2Dec[ static_cast< int >( *( pSrc + 1 ) ) ] ) &&
-                                static_cast< char >( -1 ) != ( dec2 = g_hex2Dec[ static_cast< int >( *( pSrc + 2 ) ) ] ) )
+                            if(
+                                static_cast< char >( -1 ) !=
+                                    ( dec1 = g_hex2Dec[ static_cast< unsigned char >( *( pSrc + 1 ) ) ] ) &&
+                                static_cast< char >( -1 ) !=
+                                    ( dec2 = g_hex2Dec[ static_cast< unsigned char >( *( pSrc + 2 ) ) ] )
+                                )
                             {
 
                                 /*
@@ -513,11 +567,18 @@ namespace bl
                             }
                         }
 
-                        const auto uiValue = static_cast< std::uint64_t >( value );
+                        /*
+                         * The range must be verified before the cast - converting a negative
+                         * (or a NaN / out of range) double into an unsigned integer is
+                         * undefined behavior
+                         */
 
-                        if( value >= 0 && uiValue <= std::numeric_limits< std::uint64_t >::max() )
+                        if(
+                            value >= 0.0 &&
+                            value <= static_cast< double >( std::numeric_limits< std::uint64_t >::max() )
+                            )
                         {
-                            return uiValue;
+                            return static_cast< std::uint64_t >( value );
                         }
                     }
 
@@ -1161,7 +1222,12 @@ namespace bl
 
             if( separatorLength > ( endPos - startPos ) )
             {
-                result.push_back( text );
+                /*
+                 * The separator can't fit in the requested range - the range itself is the
+                 * only element (returning the whole text would ignore startPos / endPos)
+                 */
+
+                result.push_back( text.substr( startPos, endPos - startPos ) );
 
                 return result;
             }
@@ -1172,7 +1238,12 @@ namespace bl
             {
                 const auto pos = text.find( separator, currentPos );
 
-                if( pos != std::string::npos && pos < endPos )
+                /*
+                 * The separator must fit entirely within the range - a separator which
+                 * straddles endPos would make the split read past it
+                 */
+
+                if( pos != std::string::npos && ( pos + separatorLength ) <= endPos )
                 {
                     result.push_back( text.substr( currentPos, pos - currentPos ) );
 

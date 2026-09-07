@@ -186,6 +186,32 @@ namespace bl
                     }
 
                     {
+                        /*
+                         * Chunked transfer encoding is not implemented by this server and a
+                         * request carrying it must never be treated as a body-less request -
+                         * the framing would then disagree with any intermediary which does
+                         * implement it (RFC 7230 section 3.3.3)
+                         */
+
+                        const auto posTransferEncoding = std::find_if(
+                            m_context.m_headers.begin(),
+                            m_context.m_headers.end(),
+                            []( SAA_in const std::pair<std::string, std::string>& pair ) -> bool
+                            {
+                                return bl::str::iequals( pair.first, HttpHeader::g_transferEncoding );
+                            }
+                            );
+
+                        if( posTransferEncoding != m_context.m_headers.end() )
+                        {
+                            return ParserHelpers::serverError(
+                                BL_MSG()
+                                    << "The Transfer-Encoding header is not supported"
+                                );
+                        }
+                    }
+
+                    {
                         const auto pos = std::find_if(
                             m_context.m_headers.begin(),
                             m_context.m_headers.end(),

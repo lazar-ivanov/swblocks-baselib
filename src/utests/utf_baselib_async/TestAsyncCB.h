@@ -626,3 +626,118 @@ UTF_AUTO_TEST_CASE( AsyncCB_CancelTests )
     AsyncTestTaskAsyncFastStartImpl::executePerfTests< AsyncTestTaskAsyncFastStartImpl >( true /* testCancel */ );
 }
 
+
+UTF_AUTO_TEST_CASE( AsyncCB_CancelWithOperationTaskInProgressTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace asynccb;
+
+    /*
+     * An async operation which is cancelled while its operation state task is still
+     * in progress must release its executor concurrency slot once that task completes
+     *
+     * The operation drops its task pointer on the cancel path, so the second (terminating)
+     * cancellation call the executor task is waiting for can never arrive; if the task is
+     * left running in the workers queue then, after maxConcurrentTasks such cancellations,
+     * no new async operation can ever start executing
+     *
+     * The executor below is created with maxConcurrentTasks = 1, so a single leaked slot
+     * is enough to stall the second operation
+     */
+
+    utest::AsyncTestSignal operationTaskStarted;
+    utest::AsyncTestSignal releaseOperationTask;
+    utest::AsyncTestSignal firstCallbackCalled;
+    utest::AsyncTestSignal secondCallbackCalled;
+
+    cpp::ScalarTypeIniter< bool > secondOperationExecuted;
+
+    const auto wrapperImpl = AsyncExecutorWrapperCallbackImpl::createInstance(
+        4U                                          /* threadsCount */,
+        om::ObjPtr< TaskControlToken >()            /* controlToken */,
+        1U                                          /* maxConcurrentTasks */
+        );
+
+    {
+        const auto& asyncExecutor = wrapperImpl -> asyncExecutor();
+
+        auto operation1 = asyncExecutor -> createOperation(
+            wrapperImpl -> createOperationState(
+                []() -> void
+                {
+                    /*
+                     * Never called - this operation state models its execution as a task
+                     */
+
+                    UTF_FAIL( "The operation state callback must not be called" );
+                },
+                [ &operationTaskStarted, &releaseOperationTask ]() -> om::ObjPtr< Task >
+                {
+                    return SimpleTaskImpl::createInstance< Task >(
+                        [ &operationTaskStarted, &releaseOperationTask ]() -> void
+                        {
+                            operationTaskStarted.signal();
+
+                            ( void ) releaseOperationTask.wait();
+                        }
+                        );
+                }
+                )
+            );
+
+        asyncExecutor -> asyncBegin(
+            operation1,
+            [ &firstCallbackCalled ]( SAA_in const AsyncOperation::Result& result ) NOEXCEPT -> void
+            {
+                BL_UNUSED( result );
+
+                firstCallbackCalled.signal();
+            }
+            );
+
+        UTF_REQUIRE( operationTaskStarted.wait() );
+
+        /*
+         * Cancel while the operation state task is in progress
+         */
+
+        operation1 -> cancel();
+
+        releaseOperationTask.signal();
+
+        UTF_REQUIRE( firstCallbackCalled.wait() );
+
+        asyncExecutor -> releaseOperation( operation1 );
+
+        /*
+         * The concurrency slot must have been released, so the second operation
+         * must be able to execute and call its callback
+         */
+
+        auto operation2 = asyncExecutor -> createOperation(
+            wrapperImpl -> createOperationState(
+                [ &secondOperationExecuted ]() -> void
+                {
+                    secondOperationExecuted = true;
+                },
+                AsyncOperationState::create_task_callback_t()
+                )
+            );
+
+        asyncExecutor -> asyncBegin(
+            operation2,
+            [ &secondCallbackCalled ]( SAA_in const AsyncOperation::Result& result ) NOEXCEPT -> void
+            {
+                BL_UNUSED( result );
+
+                secondCallbackCalled.signal();
+            }
+            );
+
+        UTF_REQUIRE( secondCallbackCalled.wait() );
+        UTF_REQUIRE( secondOperationExecuted.value() );
+
+        asyncExecutor -> releaseOperation( operation2 );
+    }
+}

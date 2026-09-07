@@ -90,8 +90,18 @@ namespace bl
                         const auto status = m_entry.symlink_status();
                         const auto& path = m_entry.path();
 
-                        m_info.lastModified = fs::last_write_time( path );
-                        m_info.timeCreated = os::onWindows() ? fs::safeGetFileCreateTime( path ) : 0;
+                        /*
+                         * Note that the timestamps are only obtained for entries which are not
+                         * symlinks - these calls follow the link, so a dangling one would throw
+                         * and fail the whole packaging run; the unpackager can't restore the
+                         * timestamp of a link anyway
+                         */
+
+                        if( ! fs::is_symlink( status ) )
+                        {
+                            m_info.lastModified = fs::last_write_time( path );
+                            m_info.timeCreated = os::onWindows() ? fs::safeGetFileCreateTime( path ) : 0;
+                        }
 
                         m_info.relPath = bo::path::createInstance();
                         BL_VERIFY( fs::getRelativePath( path, m_entryTask -> rootPath(), m_info.relPath -> lvalue() ) );

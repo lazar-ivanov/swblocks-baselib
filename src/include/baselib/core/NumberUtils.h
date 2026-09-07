@@ -35,6 +35,96 @@ namespace bl
         >
         class NumberCoerceHelper;
 
+        /**
+         * @brief Verifies that a value from a signed source is not below the minimum of the
+         * target type
+         *
+         * The size based specializations below only ever check the upper bound, so without
+         * this a negative value coerced into an unsigned (or a narrower signed) type would
+         * wrap with nothing but a debug assert
+         */
+
+        template
+        <
+            typename T,
+            typename U
+        >
+        inline void chkNumberLowerBound(
+            SAA_in              const U                                 /* value */,
+            SAA_in              const cpp::void_callback_t&             /* ehCallback */,
+            SAA_in              const std::false_type                   /* isSignedSource */
+            )
+        {
+            /*
+             * The source type is unsigned - there is no lower bound to violate
+             */
+        }
+
+        template
+        <
+            typename T,
+            typename U
+        >
+        inline void chkNumberLowerBound(
+            SAA_in              const U                                 value,
+            SAA_in              const cpp::void_callback_t&             ehCallback,
+            SAA_in              const std::true_type                    /* isSignedSource */
+            )
+        {
+            bool isBelowMinimum = false;
+
+            if( ! std::is_signed< T >::value )
+            {
+                isBelowMinimum = ( value < static_cast< U >( 0 ) );
+            }
+            else if( sizeof( T ) < sizeof( U ) )
+            {
+                isBelowMinimum = ( value < static_cast< U >( std::numeric_limits< T >::min() ) );
+            }
+
+            if( ! isBelowMinimum )
+            {
+                return;
+            }
+
+            if( ehCallback )
+            {
+                ehCallback();
+
+                return;
+            }
+
+            BL_THROW(
+                NumberCoerceException(),
+                BL_MSG()
+                    << "Cannot coerce number "
+                    << static_cast< std::int64_t >( value )
+                    << " into a numeric type of size "
+                    << sizeof( T )
+                    << " (in bytes) which is "
+                    << ( std::is_signed< T >::value ? "signed" : "unsigned" )
+                    << " and can hold a minimum value of "
+                    << static_cast< std::int64_t >( std::numeric_limits< T >::min() )
+                );
+        }
+
+        template
+        <
+            typename T,
+            typename U
+        >
+        inline void chkNumberLowerBound(
+            SAA_in              const U                                 value,
+            SAA_in              const cpp::void_callback_t&             ehCallback
+            )
+        {
+            chkNumberLowerBound< T, U >(
+                value,
+                ehCallback,
+                typename std::is_signed< U >::type()
+                );
+        }
+
         template
         <
         >
@@ -52,9 +142,9 @@ namespace bl
                  SAA_in             const cpp::void_callback_t&             ehCallback
                 )
             {
-                BL_UNUSED( ehCallback );
-
                 static_assert( ( sizeof( T ) >= sizeof( U ) ), "sizeof T must be greater or equal to sizeof U" );
+
+                chkNumberLowerBound< T, U >( value, ehCallback );
 
                 BL_ASSERT( static_cast< U >( static_cast< T >( value ) ) == value );
 
@@ -80,6 +170,8 @@ namespace bl
                 )
             {
                 static_assert( sizeof( T ) <= sizeof( U ), "sizeof T must be less or equal to sizeof U" );
+
+                chkNumberLowerBound< T, U >( value, ehCallback );
 
                 if( value > static_cast< U >( std::numeric_limits< T >::max() ) )
                 {

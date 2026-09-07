@@ -311,6 +311,12 @@ UTF_AUTO_TEST_CASE( BaseLib_ParserHelpersParseHeader )
     const std::string headerName    = "Authorization";
     const std::string value         = "AUTHZ token=\"ABC1234567-x____8B\"";
 
+    /*
+     * The parser normalizes the header names to lower case
+     */
+
+    const std::string normalizedName = bl::str::to_lower_copy( headerName );
+
     {
         /*
          * Test with a valid header (a space after the name-value separator)
@@ -340,7 +346,7 @@ UTF_AUTO_TEST_CASE( BaseLib_ParserHelpersParseHeader )
         UTF_REQUIRE_EQUAL( result.first, HttpParserResult::PARSED );
         UTF_REQUIRE( result.second == nullptr );
         UTF_REQUIRE_EQUAL( context.m_headers.size(), 1U );
-        UTF_REQUIRE_EQUAL( context.m_headers.find( headerName ) -> second, value );
+        UTF_REQUIRE_EQUAL( context.m_headers.find( normalizedName ) -> second, value );
     }
 
     {
@@ -371,7 +377,7 @@ UTF_AUTO_TEST_CASE( BaseLib_ParserHelpersParseHeader )
         UTF_REQUIRE_EQUAL( result.first, HttpParserResult::PARSED );
         UTF_REQUIRE( result.second == nullptr );
         UTF_REQUIRE_EQUAL( context.m_headers.size(), 1U );
-        UTF_REQUIRE_EQUAL( context.m_headers.find( headerName ) -> second, value );
+        UTF_REQUIRE_EQUAL( context.m_headers.find( normalizedName ) -> second, value );
     }
 
     {
@@ -396,10 +402,10 @@ UTF_AUTO_TEST_CASE( BaseLib_ParserHelpersParseHeader )
 
         httpserver::detail::Context context;
 
-        context.m_headers[ headerName ] = value;
+        context.m_headers[ normalizedName ] = value;
 
         UTF_REQUIRE_EQUAL( context.m_headers.size(), 1U );
-        UTF_REQUIRE_EQUAL( context.m_headers.find( headerName ) -> second, value );
+        UTF_REQUIRE_EQUAL( context.m_headers.find( normalizedName ) -> second, value );
 
         context.m_buffer.append( begin, end );
 
@@ -529,6 +535,193 @@ UTF_AUTO_TEST_CASE( BaseLib_ParserHelpersParseHeader )
 
         UTF_REQUIRE_EQUAL( result.first, HttpParserResult::PARSING_ERROR );
         UTF_REQUIRE( result.second != nullptr );
+    }
+}
+
+UTF_AUTO_TEST_CASE( BaseLib_ParserHeaderStrictnessTest )
+{
+    using namespace bl;
+
+    typedef httpserver::Parser                          Parser;
+
+    typedef httpserver::detail::HttpParserResult        HttpParserResult;
+
+    const auto parseRequest = []( SAA_in const std::string& request ) -> httpserver::detail::ServerResult
+    {
+        const auto parser = Parser::createInstance();
+
+        const auto* begin = request.c_str();
+
+        return parser -> parse( begin, begin + request.length() );
+    };
+
+    {
+        /*
+         * Two Content-Length headers which differ only in case must be rejected - which
+         * of the two would win would otherwise depend on the iteration order of the map
+         */
+
+        const auto result = parseRequest(
+            "POST /path HTTP/1.0\r\nContent-Length: 5\r\ncontent-length: 100\r\n\r\nabcde"
+            );
+
+        UTF_REQUIRE_EQUAL( result.first, HttpParserResult::PARSING_ERROR );
+        UTF_REQUIRE( result.second != nullptr );
+    }
+
+    {
+        /*
+         * Chunked transfer encoding is not implemented and must not be ignored
+         */
+
+        const auto result = parseRequest(
+            "POST /path HTTP/1.0\r\nTransfer-Encoding: chunked\r\n\r\n"
+            );
+
+        UTF_REQUIRE_EQUAL( result.first, HttpParserResult::PARSING_ERROR );
+        UTF_REQUIRE( result.second != nullptr );
+    }
+
+    {
+        /*
+         * White space before the header name or before the colon must be rejected
+         */
+
+        const auto result = parseRequest(
+            "POST /path HTTP/1.0\r\n Content-Length: 0\r\n\r\n"
+            );
+
+        UTF_REQUIRE_EQUAL( result.first, HttpParserResult::PARSING_ERROR );
+        UTF_REQUIRE( result.second != nullptr );
+    }
+
+    {
+        const auto result = parseRequest(
+            "POST /path HTTP/1.0\r\nContent-Length : 0\r\n\r\n"
+            );
+
+        UTF_REQUIRE_EQUAL( result.first, HttpParserResult::PARSING_ERROR );
+        UTF_REQUIRE( result.second != nullptr );
+    }
+
+    {
+        /*
+         * A control character in a header value must be rejected - an LF tolerant
+         * intermediary would read it as two headers
+         */
+
+        const auto result = parseRequest(
+            "POST /path HTTP/1.0\r\nX-Custom: a\rContent-Length: 10\r\n\r\n"
+            );
+
+        UTF_REQUIRE_EQUAL( result.first, HttpParserResult::PARSING_ERROR );
+        UTF_REQUIRE( result.second != nullptr );
+    }
+
+    {
+        /*
+         * An empty header value is legal and the header names are normalized to lower case
+         */
+
+        const auto parser = Parser::createInstance();
+
+        const std::string request = "GET /path HTTP/1.0\r\nX-Empty:\r\nX-Upper-Case: value\r\n\r\n";
+
+        const auto* begin = request.c_str();
+
+        const auto result = parser -> parse( begin, begin + request.length() );
+
+        UTF_REQUIRE_EQUAL( result.first, HttpParserResult::PARSED );
+        UTF_REQUIRE( result.second == nullptr );
+
+        const auto httpRequest = parser -> buildRequest();
+
+        const auto& headers = httpRequest -> headers();
+
+        const auto posEmpty = headers.find( "x-empty" );
+
+        UTF_REQUIRE( posEmpty != headers.end() );
+        UTF_REQUIRE( posEmpty -> second.empty() );
+
+        const auto posUpperCase = headers.find( "x-upper-case" );
+
+        UTF_REQUIRE( posUpperCase != headers.end() );
+        UTF_REQUIRE_EQUAL( posUpperCase -> second, "value" );
+    }
+}
+
+UTF_AUTO_TEST_CASE( BaseLib_ResponseHeaderValidationTest )
+{
+    using namespace bl;
+
+    typedef http::Parameters::HttpStatusCode        StatusCode;
+    typedef httpserver::Response                    Response;
+
+    const auto createResponse = []( SAA_in http::HeadersMap&& customHeaders ) -> void
+    {
+        ( void ) Response::createInstance(
+            StatusCode::HTTP_SUCCESS_OK,
+            std::string( "content" ),
+            std::string(),
+            std::move( customHeaders )
+            );
+    };
+
+    {
+        /*
+         * A header value which carries CRLF would split the response
+         */
+
+        http::HeadersMap headers;
+
+        headers.emplace( "X-Custom", "value\r\nSet-Cookie: injected=1" );
+
+        UTF_REQUIRE_THROW( createResponse( std::move( headers ) ), bl::UnexpectedException );
+    }
+
+    {
+        /*
+         * A framing header in a different case would be emitted next to the generated one
+         */
+
+        http::HeadersMap headers;
+
+        headers.emplace( "content-length", "1000" );
+
+        UTF_REQUIRE_THROW( createResponse( std::move( headers ) ), bl::UnexpectedException );
+    }
+
+    {
+        http::HeadersMap headers;
+
+        headers.emplace( "CONNECTION", "keep-alive" );
+
+        UTF_REQUIRE_THROW( createResponse( std::move( headers ) ), bl::UnexpectedException );
+    }
+
+    {
+        /*
+         * An invalid header name must be rejected as well
+         */
+
+        http::HeadersMap headers;
+
+        headers.emplace( "X Custom", "value" );
+
+        UTF_REQUIRE_THROW( createResponse( std::move( headers ) ), bl::UnexpectedException );
+    }
+
+    {
+        /*
+         * A status code which has no canonical reason phrase must still be emitted as is
+         */
+
+        const auto response = Response::createInstance(
+            static_cast< StatusCode >( 418U ),
+            std::string( "content" )
+            );
+
+        UTF_REQUIRE( 0U == response -> getSerialized().find( "HTTP/1.0 418 Client Error\r\n" ) );
     }
 }
 
@@ -861,6 +1054,266 @@ UTF_AUTO_TEST_CASE( BaseLib_ParserTest )
 
         UTF_REQUIRE_THROW( parser -> parse( begin, end ), bl::UnexpectedException );
     }
+}
+
+namespace
+{
+    /**
+     * @brief Opens a plain TCP connection to the test server and lets the test drive it
+     */
+
+    class RawTestConnection
+    {
+        BL_NO_COPY_OR_MOVE( RawTestConnection )
+
+    private:
+
+        bl::asio::io_service                    m_ioService;
+        bl::asio::ip::tcp::socket               m_socket;
+
+    public:
+
+        RawTestConnection()
+            :
+            m_socket( m_ioService )
+        {
+        }
+
+        void connect()
+        {
+            const bl::asio::ip::tcp::endpoint endpoint(
+                #if ( ( BOOST_VERSION / 100 ) >= 1066 )
+                bl::asio::ip::make_address( "127.0.0.1" ),
+                #else
+                bl::asio::ip::address::from_string( "127.0.0.1" ),
+                #endif
+                test::UtfArgsParser::port()
+                );
+
+            m_socket.connect( endpoint );
+        }
+
+        void write( SAA_in const std::string& data )
+        {
+            bl::asio::write( m_socket, bl::asio::buffer( data.c_str(), data.size() ) );
+        }
+
+        /**
+         * @brief Waits until the server closes the connection and returns true if it did
+         */
+
+        bool waitUntilClosed( SAA_in const bl::time::time_duration& timeout )
+        {
+            const auto started = bl::time::microsec_clock::universal_time();
+
+            for( ;; )
+            {
+                bl::eh::error_code ec;
+
+                char buffer[ 64 ];
+
+                const auto size = m_socket.read_some( bl::asio::buffer( buffer, sizeof( buffer ) ), ec );
+
+                BL_UNUSED( size );
+
+                if( ec )
+                {
+                    return true;
+                }
+
+                if( ( bl::time::microsec_clock::universal_time() - started ) > timeout )
+                {
+                    return false;
+                }
+            }
+        }
+
+        bool isOpen() const NOEXCEPT
+        {
+            return m_socket.is_open();
+        }
+    };
+
+} // __unnamed
+
+UTF_AUTO_TEST_CASE( BaseLib_HttpServerDerivedConnectionCapTest )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    typedef httpserver::HttpServer                                          server_t;
+
+    /*
+     * The derived cap is the minimum of the fixed ceiling, half of the descriptor soft
+     * limit and the number of connections which fit in 80% of the physical memory
+     */
+
+    UTF_REQUIRE_EQUAL(
+        server_t::getDerivedMaxConnections(
+            1024U * 1024U       /* memoryFootprint */,
+            64ULL * 1024U * 1024U * 1024U /* physicalMemorySize */,
+            1048576U            /* fileDescriptorSoftLimit */
+            ),
+        4096U
+        );
+
+    UTF_REQUIRE_EQUAL(
+        server_t::getDerivedMaxConnections(
+            1024U * 1024U       /* memoryFootprint */,
+            64ULL * 1024U * 1024U * 1024U /* physicalMemorySize */,
+            1024U               /* fileDescriptorSoftLimit */
+            ),
+        512U
+        );
+
+    UTF_REQUIRE_EQUAL(
+        server_t::getDerivedMaxConnections(
+            16ULL * 1024U * 1024U /* memoryFootprint */,
+            1024ULL * 1024U * 1024U /* physicalMemorySize */,
+            1048576U            /* fileDescriptorSoftLimit */
+            ),
+        51U
+        );
+
+    /*
+     * Unknown terms are simply skipped and the result is never zero
+     */
+
+    UTF_REQUIRE_EQUAL(
+        server_t::getDerivedMaxConnections( 1024U * 1024U, 0U, 0U ),
+        4096U
+        );
+
+    UTF_REQUIRE_EQUAL(
+        server_t::getDerivedMaxConnections( 1024ULL * 1024U * 1024U * 1024U, 1024U, 0U ),
+        1U
+        );
+}
+
+UTF_AUTO_TEST_CASE( BaseLib_HttpServerConnectionTimeoutAndCapTest )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest::http;
+
+    test::MachineGlobalTestLock lock;
+
+    const auto backend =
+        ServerBackendProcessingImplTest::createInstance< httpserver::ServerBackendProcessing >();
+
+    const om::ObjPtr< TaskControlTokenRW > controlToken;
+
+    const auto acceptor = httpserver::HttpServer::createInstance<>(
+        om::copy( backend ),
+        controlToken,
+        "0.0.0.0"                                       /* host */,
+        test::UtfArgsParser::port(),
+        test::UtfCrypto::getDefaultServerKey(),
+        test::UtfCrypto::getDefaultServerCertificate()
+        );
+
+    /*
+     * A short inactivity timeout and a cap of two connections
+     */
+
+    acceptor -> setConnectionTimeout( time::seconds( 3 ) );
+    acceptor -> setMaxConnections( 2U );
+
+    utest::TestTaskUtils::startAcceptorAndExecuteCallback(
+        [ & ]() -> void
+        {
+            UTF_REQUIRE_EQUAL( acceptor -> getMaxConnections(), 2U );
+
+            {
+                /*
+                 * A client which sends half a request and then stops must have its
+                 * connection cancelled once the inactivity timeout expires
+                 */
+
+                RawTestConnection connection;
+
+                connection.connect();
+                connection.write( "GET /path HTTP/1.0\r\nHost: localhost\r\n" );
+
+                UTF_REQUIRE( connection.waitUntilClosed( time::seconds( 30 ) ) );
+            }
+
+            {
+                /*
+                 * The third concurrent connection must be refused (closed immediately)
+                 * while the first two stay open
+                 */
+
+                RawTestConnection connection1;
+                RawTestConnection connection2;
+                RawTestConnection connection3;
+
+                connection1.connect();
+                connection1.write( "GET /path HTTP/1.0\r\n" );
+
+                connection2.connect();
+                connection2.write( "GET /path HTTP/1.0\r\n" );
+
+                os::sleep( time::milliseconds( 500 ) );
+
+                connection3.connect();
+
+                UTF_REQUIRE( connection3.waitUntilClosed( time::seconds( 10 ) ) );
+            }
+        },
+        acceptor
+        );
+}
+
+UTF_AUTO_TEST_CASE( BaseLib_HttpServerCancelBeforeStartTest )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest::http;
+
+    /*
+     * A server task which is cancelled before it has started executing unwinds through
+     * onTaskStoppedNothrow() before its execution queues and its notification callback
+     * have been created, so the unwind must tolerate all of them being null
+     */
+
+    scheduleAndExecuteInParallel(
+        []( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+        {
+            const om::ObjPtr< TaskControlTokenRW > controlToken;
+
+            const auto acceptor = httpserver::HttpServer::createInstance<>(
+                ServerBackendProcessingImplTest::createInstance< httpserver::ServerBackendProcessing >(),
+                controlToken,
+                "0.0.0.0"                                       /* host */,
+                test::UtfArgsParser::port(),
+                test::UtfCrypto::getDefaultServerKey(),
+                test::UtfCrypto::getDefaultServerCertificate()
+                );
+
+            const auto task = om::qi< Task >( acceptor );
+
+            task -> requestCancel();
+
+            eq -> push_back( task );
+
+            eq -> flush(
+                false                                           /* discardPending */,
+                true                                            /* nothrowIfFailed */
+                );
+
+            UTF_REQUIRE( task -> isFailed() );
+
+            /*
+             * The queue is configured to keep the failed tasks, so the task has to be
+             * popped here to leave the queue empty
+             */
+
+            const auto failedTask = eq -> pop( false /* wait */ );
+
+            UTF_REQUIRE( om::areEqual( task, failedTask ) );
+            UTF_REQUIRE( eq -> isEmpty() );
+        });
 }
 
 UTF_AUTO_TEST_CASE( BaseLib_HttpServerImplTest )

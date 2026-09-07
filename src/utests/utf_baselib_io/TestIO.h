@@ -2483,6 +2483,111 @@ UTF_AUTO_TEST_CASE( IO_OutgoingBackendStateRegistrationTests )
     UTF_REQUIRE_THROW( backendState -> registerQueue( peerId, om::copy( q1 ), "10.0.0.1" ), UnexpectedException );
 }
 
+namespace
+{
+    /**
+     * @brief A message block completion queue mock which calls back into the backend state
+     * from within requestHeartbeat()
+     */
+
+    template
+    <
+        typename E = void
+    >
+    class ReentrantHeartbeatQueueT : public bl::messaging::MessageBlockCompletionQueue
+    {
+        BL_DECLARE_OBJECT_IMPL_ONEIFACE( ReentrantHeartbeatQueueT, bl::messaging::MessageBlockCompletionQueue )
+
+    protected:
+
+        bl::cpp::void_callback_t                                                    m_onHeartbeat;
+
+        ReentrantHeartbeatQueueT()
+        {
+        }
+
+    public:
+
+        void onHeartbeat( SAA_in bl::cpp::void_callback_t&& onHeartbeat ) NOEXCEPT
+        {
+            onHeartbeat.swap( m_onHeartbeat );
+        }
+
+        virtual void requestHeartbeat() OVERRIDE
+        {
+            if( m_onHeartbeat )
+            {
+                m_onHeartbeat();
+            }
+        }
+
+        virtual bool tryScheduleBlock(
+            SAA_in                  const bl::uuid_t&                                   targetPeerId,
+            SAA_in                  bl::om::ObjPtr< bl::data::DataBlock >&&             dataBlock,
+            SAA_in                  CompletionCallback&&                                callback
+            ) OVERRIDE
+        {
+            BL_UNUSED( targetPeerId );
+            BL_UNUSED( dataBlock );
+            BL_UNUSED( callback );
+
+            return true;
+        }
+    };
+
+    typedef bl::om::ObjectImpl< ReentrantHeartbeatQueueT<> > ReentrantHeartbeatQueue;
+}
+
+UTF_AUTO_TEST_CASE( IO_OutgoingBackendStateHeartbeatOutsideLockTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace bl::messaging;
+
+    /*
+     * The heartbeat requests which registerQueue() issues must be made after its lock has
+     * been released - requestHeartbeat() takes the lock of a connection task, and a task
+     * which is terminating concurrently holds that very lock while it unregisters itself
+     * from the backend state (an ABBA inversion which freezes the whole outbound path)
+     *
+     * The mock below closes the same cycle in a single thread: its heartbeat handler calls
+     * back into the backend state, which self-deadlocks on the non-recursive lock unless the
+     * heartbeats are issued outside of it
+     */
+
+    const auto backendState = TcpBlockServerOutgoingBackendState::createInstance();
+    const auto peerId = uuids::create();
+
+    const auto q1Impl = ReentrantHeartbeatQueue::createInstance();
+    const auto q2Impl = HeartbeatCountingQueue::createInstance();
+
+    const auto q1 = om::qi< MessageBlockCompletionQueue >( q1Impl );
+    const auto q2 = om::qi< MessageBlockCompletionQueue >( q2Impl );
+
+    backendState -> registerQueue( peerId, om::copy( q1 ), "10.0.0.1" );
+
+    q1Impl -> onHeartbeat(
+        [ & ]() -> void
+        {
+            backendState -> unregisterQueue( peerId, q1 );
+        }
+        );
+
+    backendState -> registerQueue( peerId, om::copy( q2 ), "10.0.0.1" );
+
+    /*
+     * The re-entrant queue unregistered itself from within the heartbeat request, so only
+     * the newly registered one is left
+     */
+
+    UTF_REQUIRE_EQUAL( backendState -> activeTasksCount(), 1U );
+
+    const auto queue = backendState -> tryGetQueue( peerId );
+
+    UTF_REQUIRE( queue );
+    UTF_REQUIRE( om::areEqual( queue, q2 ) );
+}
+
 UTF_AUTO_TEST_CASE( IO_SimplePerfTests )
 {
     using namespace test;

@@ -99,7 +99,7 @@ namespace bl
                     auto ip = path.begin();
                     auto ir = root.begin();
 
-                    while( *ip == *ir && ip != path.end() && ir != root.end() )
+                    while( ip != path.end() && ir != root.end() && *ip == *ir )
                     {
                         ++ip;
                         ++ir;

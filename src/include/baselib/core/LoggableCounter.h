@@ -83,7 +83,8 @@ namespace bl
             m_name( BL_PARAM_FWD( name ) ),
             m_minDeltaToLog( minDeltaToLog ),
             m_loggingChannel( loggingChannel ),
-            m_counter( 0 )
+            m_counter( 0 ),
+            m_lastLoggedCounter( 0 )
         {
             m_callback = callback ?
                 BL_PARAM_FWD( callback )

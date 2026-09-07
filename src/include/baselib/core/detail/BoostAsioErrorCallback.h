@@ -97,7 +97,12 @@ namespace bl
             }
             else
             {
-                boost::system::system_error e( ec, location );
+                /*
+                 * Note that the location can be null (asio's throw_error( ec ) overload passes
+                 * nullptr) and std::runtime_error must never be constructed from a null pointer
+                 */
+
+                boost::system::system_error e( ec, location ? location : "asio" );
                 boost::throw_exception( e );
             }
         }

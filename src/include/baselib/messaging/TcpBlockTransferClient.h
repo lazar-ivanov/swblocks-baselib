@@ -1093,6 +1093,17 @@ namespace bl
                     m_helper.erase( peerInfo.unconfirmedQueues, queue );
 
                     m_connections2PeerId.erase( pos );
+
+                    if( peerInfo.activeQueues.empty() && peerInfo.unconfirmedQueues.empty() )
+                    {
+                        /*
+                         * The last connection of this peer is gone - the entry must be erased,
+                         * as otherwise every peer id ever seen stays in the map forever and is
+                         * iterated by getAllActiveQueuesIds( ... )
+                         */
+
+                        m_peersInfo.erase( remotePeerId );
+                    }
                 }
             }
 
@@ -1104,93 +1115,115 @@ namespace bl
                 SAA_in_opt              const std::string&                                  remoteAddress = str::empty()
                 )
             {
-                BL_MUTEX_GUARD( m_lock );
-
-                BL_CHK(
-                    false,
-                    remotePeerId != uuids::nil(),
-                    BL_MSG()
-                        << "A queue cannot be registered because the remote peer id is not available"
-                    );
-
-                BL_CHK(
-                    true,
-                    cpp::contains( m_connections2PeerId, queue ),
-                    BL_MSG()
-                        << "A queue is attempting to register in the backend twice"
-                    );
-
-                auto& peerInfo = m_peersInfo[ remotePeerId ];
-                auto& activeQueues = peerInfo.activeQueues;
-
                 /*
-                 * All active connections are requested to do heartbeat and confirm that they are
-                 * alive. The ones registered from the same remote address as this registration
-                 * (a cooperative multi-connection peer on one host, or an unknown address) are
-                 * moved into the unconfirmed list, making this single connection being registered
-                 * the only one for a short period of time; we assume they will confirm themselves
-                 * quickly and join the active list which is being iterated in round robin fashion
-                 *
-                 * Active connections registered from a different remote address stay active: the
-                 * peer id is self-declared by the remote (the outbound port has no transport level
-                 * authentication), so a registration from another host must not be able to take
-                 * over the delivery for that peer id; a stale connection is still removed once its
-                 * heartbeat fails. See notes/plans/issues/broker-outbound-peer-identity-deferral.md
+                 * The heartbeat requests are collected here and issued after the lock below
+                 * has been released - requestHeartbeat() acquires the lock of the connection
+                 * task, which is the lock a connection terminating concurrently holds while
+                 * it calls unregisterQueue( ... ) into this very lock (an ABBA inversion which
+                 * would freeze the whole outbound path of the broker)
                  */
 
-                vector_t retainedQueues;
+                vector_t queuesToHeartbeat;
 
-                for( auto& localQueue : activeQueues )
                 {
-                    localQueue -> requestHeartbeat();
+                    BL_MUTEX_GUARD( m_lock );
 
-                    const auto& localAddress = m_connections2PeerId.at( localQueue ).remoteAddress;
+                    BL_CHK(
+                        false,
+                        remotePeerId != uuids::nil(),
+                        BL_MSG()
+                            << "A queue cannot be registered because the remote peer id is not available"
+                        );
 
-                    if( remoteAddress.empty() || localAddress.empty() || remoteAddress == localAddress )
+                    BL_CHK(
+                        true,
+                        cpp::contains( m_connections2PeerId, queue ),
+                        BL_MSG()
+                            << "A queue is attempting to register in the backend twice"
+                        );
+
+                    auto& peerInfo = m_peersInfo[ remotePeerId ];
+                    auto& activeQueues = peerInfo.activeQueues;
+
+                    /*
+                     * All active connections are requested to do heartbeat and confirm that they are
+                     * alive. The ones registered from the same remote address as this registration
+                     * (a cooperative multi-connection peer on one host, or an unknown address) are
+                     * moved into the unconfirmed list, making this single connection being registered
+                     * the only one for a short period of time; we assume they will confirm themselves
+                     * quickly and join the active list which is being iterated in round robin fashion
+                     *
+                     * Active connections registered from a different remote address stay active: the
+                     * peer id is self-declared by the remote (the outbound port has no transport level
+                     * authentication), so a registration from another host must not be able to take
+                     * over the delivery for that peer id; a stale connection is still removed once its
+                     * heartbeat fails. See notes/plans/issues/broker-outbound-peer-identity-deferral.md
+                     */
+
+                    vector_t retainedQueues;
+
+                    for( auto& localQueue : activeQueues )
                     {
-                        const auto pair = m_helper.insert( peerInfo.unconfirmedQueues, std::move( localQueue ) );
+                        queuesToHeartbeat.push_back( om::copy( localQueue ) );
 
-                        BL_CHK(
-                            false,
-                            pair.second,
-                            BL_MSG()
-                                << "A queue is already registered in the unconfirmed list"
-                            );
+                        const auto& localAddress = m_connections2PeerId.at( localQueue ).remoteAddress;
 
-                        BL_ASSERT( nullptr == localQueue );
+                        if( remoteAddress.empty() || localAddress.empty() || remoteAddress == localAddress )
+                        {
+                            const auto pair = m_helper.insert( peerInfo.unconfirmedQueues, std::move( localQueue ) );
+
+                            BL_CHK(
+                                false,
+                                pair.second,
+                                BL_MSG()
+                                    << "A queue is already registered in the unconfirmed list"
+                                );
+
+                            BL_ASSERT( nullptr == localQueue );
+                        }
+                        else
+                        {
+                            /*
+                             * The relative order is preserved, so retainedQueues stays sorted
+                             */
+
+                            retainedQueues.push_back( std::move( localQueue ) );
+                        }
                     }
-                    else
-                    {
-                        /*
-                         * The relative order is preserved, so retainedQueues stays sorted
-                         */
 
-                        retainedQueues.push_back( std::move( localQueue ) );
-                    }
+                    activeQueues.swap( retainedQueues );
+
+                    peerInfo.currentPos = 0;
+
+                    const auto queueCopy = om::copy( queue );
+
+                    BL_VERIFY( m_helper.insert( activeQueues, om::copy( queue ) ).second );
+
+                    auto g = BL_SCOPE_GUARD(
+                        {
+                            m_helper.erase( activeQueues, queueCopy );
+                        }
+                        );
+
+                    ConnectionInfo connectionInfo;
+
+                    connectionInfo.peerId = remotePeerId;
+                    connectionInfo.remoteAddress = remoteAddress;
+
+                    BL_VERIFY( m_connections2PeerId.emplace( std::move( queue ), std::move( connectionInfo ) ).second );
+
+                    g.dismiss();
                 }
 
-                activeQueues.swap( retainedQueues );
+                /*
+                 * The heartbeat requests are issued only after the lock has been released
+                 * (see the note above)
+                 */
 
-                peerInfo.currentPos = 0;
-
-                const auto queueCopy = om::copy( queue );
-
-                BL_VERIFY( m_helper.insert( activeQueues, om::copy( queue ) ).second );
-
-                auto g = BL_SCOPE_GUARD(
-                    {
-                        m_helper.erase( activeQueues, queueCopy );
-                    }
-                    );
-
-                ConnectionInfo connectionInfo;
-
-                connectionInfo.peerId = remotePeerId;
-                connectionInfo.remoteAddress = remoteAddress;
-
-                BL_VERIFY( m_connections2PeerId.emplace( std::move( queue ), std::move( connectionInfo ) ).second );
-
-                g.dismiss();
+                for( const auto& localQueue : queuesToHeartbeat )
+                {
+                    localQueue -> requestHeartbeat();
+                }
             }
 
             void confirmQueue(
@@ -1380,6 +1413,14 @@ namespace bl
             std::exception_ptr                                                              m_originalException;
             cpp::ScalarTypeIniter< bool >                                                   m_taskTerminated;
 
+            /*
+             * Set together with m_taskTerminated when the connection is terminating but the
+             * protocol shutdown (e.g. the SSL one) still has to be executed - the task is
+             * rescheduled exactly once more for it
+             */
+
+            cpp::ScalarTypeIniter< bool >                                                   m_protocolShutdownInProgress;
+
             TcpBlockTransferClientAutoPushConnectionT(
                 SAA_in_opt              notify_callback_t&&                                 notifyCallback,
                 SAA_in                  typename STREAM::stream_ref&&                       connectedStream,
@@ -1482,7 +1523,16 @@ namespace bl
                 SAA_in                  cpp::void_callback_noexcept_t&&             callbackReady
                 ) NOEXCEPT OVERRIDE
             {
-                if( m_taskTerminated )
+                if( m_protocolShutdownInProgress )
+                {
+                    /*
+                     * This is the last scheduling of the task - the one which executes the
+                     * protocol shutdown of a connection which is terminating
+                     */
+
+                    m_protocolShutdownInProgress = false;
+                }
+                else if( m_taskTerminated )
                 {
                     BL_RIP_MSG( "This task can't be rescheduled after it has been terminated" );
                 }
@@ -1524,6 +1574,15 @@ namespace bl
                 cpp::circular_buffer< DataBlockInfo > queueNotify( BLOCK_QUEUE_SIZE );
 
                 bool safeToContinue = true;
+
+                /*
+                 * The registry notifications are recorded here and dispatched after the task
+                 * lock has been released - the registry takes its own lock and calls back into
+                 * the connection tasks (requestHeartbeat), so calling it while the task lock is
+                 * held is an ABBA inversion with a concurrent registration for the same peer id
+                 */
+
+                std::vector< NotifyEventId > notifyEvents;
 
                 {
                     BL_MUTEX_GUARD( m_lock );
@@ -1574,7 +1633,7 @@ namespace bl
                             {
                                 if( m_notifyCallback )
                                 {
-                                    m_notifyCallback( NotifyEventId::Unregister, om::copyAs< queue_t >( this ) );
+                                    notifyEvents.push_back( NotifyEventId::Unregister );
                                 }
 
                                 m_activated = false;
@@ -1612,7 +1671,25 @@ namespace bl
 
                                 m_wrappedTask = om::copy( m_connectionTask );
 
-                                return om::copyAs< Task >( this );
+                                /*
+                                 * The connection is terminating - the protocol shutdown is all
+                                 * that is left to do, so no new blocks must be accepted from
+                                 * here on (this branch returns without reaching the
+                                 * 'safeToContinue' handling below)
+                                 */
+
+                                m_taskTerminated = true;
+                                m_protocolShutdownInProgress = true;
+
+                                /*
+                                 * The task continues with the protocol shutdown only; break
+                                 * out of the block instead of returning here, so the registry
+                                 * notifications recorded above are dispatched after the task
+                                 * lock has been released (safeToContinue stays true, so the
+                                 * same continuation is returned at the end)
+                                 */
+
+                                break;
                             }
                             else
                             {
@@ -1685,7 +1762,7 @@ namespace bl
                                 {
                                     if( m_notifyCallback )
                                     {
-                                        m_notifyCallback( NotifyEventId::Register, om::copyAs< queue_t >( this ) );
+                                        notifyEvents.push_back( NotifyEventId::Register );
                                     }
 
                                     m_activated = true;
@@ -1695,7 +1772,7 @@ namespace bl
                                 {
                                     if( m_notifyCallback )
                                     {
-                                        m_notifyCallback( NotifyEventId::Confirm, om::copyAs< queue_t >( this ) );
+                                        notifyEvents.push_back( NotifyEventId::Confirm );
                                     }
 
                                     m_heartbeatWasRequested = false;
@@ -1757,6 +1834,11 @@ namespace bl
                 /*
                  * Callbacks are always called outside of holding any locks
                  */
+
+                for( const auto eventId : notifyEvents )
+                {
+                    m_notifyCallback( eventId, om::copyAs< queue_t >( this ) );
+                }
 
                 if( ! queueNotify.empty() )
                 {

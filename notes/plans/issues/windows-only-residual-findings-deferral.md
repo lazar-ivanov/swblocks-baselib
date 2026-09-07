@@ -146,9 +146,49 @@ ships, not a no-op. Both toolchains build and test clean against it.
   lexicographic sort", matching `vs-detector.ps1`, and the chosen versions are printed in the build
   log, so a mismatch should be visible rather than silent.
 
+**Note on the 1.1.1w gap (2026-09-07).** The Linux dist *does* carry `openssl/1.1.1w`, and the
+stage-10 attempt to build `utf_baselib_http` and `utf_baselib_security` with `BL_USE_OPENSSL_1X=1`
+was made from this checkout. It fails before reaching any of the reviewed code, with
+`-Werror,-Wdeprecated-declarations` on `RSA_free` (`crypto/OpenSSLTypes.h:131`), `SHA512_*` /
+`SHA384_*` (`crypto/HashCalculator.h:54-122`), `RSA_new` and `EVP_PKEY_get1_RSA` /
+`EVP_PKEY_set1_RSA` (`crypto/RsaKey.h:88-194`) and further sites. None of those files was touched by
+the review implementation, so this is the tree's pre-existing state, not a regression: the
+`OPENSSL_API_COMPAT=0x10100000L` the makefiles pass silences the 3.x deprecations against the 3.5.4
+headers, and the 1.1.1w configuration does not get the equivalent treatment. **The 1.1.1w side of
+item 8 therefore needs the build restored before it can be verified on any platform**, which is a
+separate piece of work from acquiring a Windows dist that carries 1.1.1w.
+
 ## References
 
 - Review: `notes/reviews/major/update_2025/v1/pr_review_analysis_fable51.md` (M-19, L-33, L-34,
   L-16, L-17, L-20, I-17)
 - Per-round status record: `notes/plans/issues/pr-review-fable51-residual-findings-status.md`
 - Deployment-script deferrals: `scripts/devenv7/docs/supply-chain-verification-deferral.md`
+
+---
+
+## Whole-library C++ review, 2026-09-06/07: items 10-14
+
+The whole-library review recorded in `notes/reviews/major/update_2026/whole-library-cxx-review-fable51.md`
+was implemented from this Linux checkout in stages 3-10. Its Windows-only section (W-1..W-4) was
+established by *reading* `OSImplWindows.h`; none of it can be compiled here. Item 14 is the
+converse case: code that was **written** here for the Windows half of a fix whose UNIX half is
+tested, and which therefore ships unverified on Windows.
+
+The step-by-step handoff for a Windows session is
+`notes/plans/issues/whole-library-windows-residuals-instructions.md`, next to this file. (Note that
+the two instruction files the sections above cite - `windows-only-residual-findings-instructions.md`
+and its O-3/O-4 companion - are not present in this checkout; `notes/reviews/` is untracked and the
+handoffs were consumed by the sessions that ran them.)
+
+| # | Finding | Location | What is wrong | Fix when picked up | How to validate |
+|---|---|---|---|---|---|
+| 10 | W-1 (Medium) | `src/include/baselib/core/detail/OSImplWindows.h:1636-1656`, the `createProcess( vector )` overload | the argv-to-command-line quoting does not implement the CRT rules: it quotes only when the argument contains a space, doubles **every** backslash inside quotes, and escapes `"` unconditionally. So an empty argument vanishes (every later `argv` index shifts), an argument containing a tab is split in the child, an argument containing `"` but no space merges with its neighbours, and `C:\dir x\f` arrives as `C:\\dir x\\f` | the documented algorithm: quote when the argument is empty or contains space, tab, `"` or newline; before a `"` emit `2n+1` backslashes, before the closing quote `2n`, otherwise `n` | round-trip through a child that prints its `argv` - the scaffold is at `src/utests/utf_baselib/TestBaselibDefault.h:1577`. Cases: empty argument, embedded tab, embedded quote without a space, a trailing backslash before the closing quote, a path with single backslashes |
+| 11 | W-2 (Medium) | `OSImplWindows.h:1443-1444`, the `createProcess( commandLine )` overload | `std::copy` byte-widens the UTF-8 command line into `WCHAR`, so any non-ASCII byte reaches `CreateProcessW` as mojibake. Same class as item 4 / item 9 but a different idiom, which is why it survived both | `utf8ToUtf16( commandLine )` (the helper added by item 4, `OSImplWindows.h:640`) into a writable NUL-terminated buffer, since `CreateProcessW` may modify the command line in place | a child launched by command line with a non-ASCII argument prints it back unchanged; the existing `BaseLib_OSCreateProcess*` cases stay green |
+| 12 | W-3 (Medium) | `OSImplWindows.h:3530-3565` (`tryGetRegistryValue`), deleter at `:227-242` | the `HKEY` is attached to the RAII holder before `RegOpenKeyExW` is checked, so on the ordinary "key not found" path an **indeterminate** handle is read (UB) and, when it is non-null, `RegCloseKey( garbage )` fails inside a `NOEXCEPT` deleter and RIPs the process. The `location` text passed to the exception tests the constant `HKEY_CURRENT_USER` instead of the `currentUser` parameter, so it always says `HKEY_CURRENT_USER` | initialise the `HKEY` to `NULL`, attach only on `ERROR_SUCCESS`, and use `currentUser ? ... : ...` for the location text | `BaseLib_OSRegistryValueTest` extended with a lookup of a key that does not exist (must return "not found", not abort) and one under `HKEY_LOCAL_MACHINE` whose failure message names the right hive |
+| 13 | W-4 (Low-Medium, four independent sub-items) | `OSImplWindows.h:1555-1585`; `:2047-2053`; `:1687-1708`, `:898-939`, `:1536-1548`; `:2361-2384`, `:2457` and `:546-551` | (a) `pi.hThread` is closed only on the `assignNewJob` path, so every spawn that is already in a job or detached leaks a thread handle. (b) `LSA_UNICODE_STRING::Buffer` is treated as NUL-terminated and non-NULL; it is neither by contract. (c) `_wfopen` handles are inheritable (no `N` mode flag) and `bInheritHandles=TRUE` inherits *every* inheritable handle, so two concurrent `createProcess` calls cross-inherit each other's pipe ends and a reader sees EOF only when the *other* child exits. (d) `createJunction` strips the last character of the print name unconditionally - correct only with the LFN prefix, and `back()` on an empty string is UB; `tryTimedAwaitTermination` compares the wait result rather than `ec` against `STILL_ACTIVE`, so that check is dead | (a) attach `pi.hThread` to a holder unconditionally. (b) `std::wstring( Buffer, Length / sizeof( WCHAR ) )` with a NULL check. (c) the `N` flag on `_wfopen`, and `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` - compatible with the `STARTUPINFOEXW` already used. (d) validate `to.is_absolute()` and build the print name from the path rather than by trimming; compare `ec` | (a) handle count of the parent (`GetProcessHandleCount`) stable across 100 detached spawns. (b) exercised by the existing user/SID paths. (c) **two threads each spawning a redirected child concurrently**: each must read only its own child's output and see EOF when *its* child exits. (d) `createJunction` to a relative path must be rejected; a junction created with a plain absolute path reads back with its full print name |
+| 14 | N-2 / S-5 / O-7 Windows halves (written here, unverified) | `OSImplWindows.h:1687-1701` (`getPhysicalMemorySize`), `:1703-1711` (`getFileDescriptorSoftLimit`), `:3705-3727` (`createNewFilePrivate`), `:2841-2869` (`RobustNamedMutex` permissions parameter) | these four were added from this checkout as the Windows counterparts of UNIX code that is tested here, and compile only on Windows. `getPhysicalMemorySize` returns `ullTotalPhys` from `GlobalMemoryStatusEx` and `0` on failure; `getFileDescriptorSoftLimit` returns `0` ("not applicable" - Windows bounds handles by kernel memory, not by a per-process soft limit), which makes the derived connection cap fall back to the RAM term and the 4096 ceiling; `createNewFilePrivate` uses `CREATE_NEW` with `dwShareMode = 0`, which gives exclusive *sharing* during creation but **not** a restrictive DACL - a Windows file inherits its directory's ACL, so the S-5 "not readable by other local users" property is **not** delivered on Windows; `RobustNamedMutex` gained the `permissions` parameter for signature parity and ignores it (`BL_UNUSED`), `defaultPermissions()` returning 0 | compile and sanity-check the first two; for `createNewFilePrivate`, decide whether to build an explicit DACL (owner + SYSTEM + Administrators) via `InitializeSecurityDescriptor`/`SetSecurityDescriptorDacl` into `lpSecurityAttributes`, or to record the weaker Windows guarantee in the S-5 decision entry. No change is expected for `RobustNamedMutex` | `GlobalMemoryStatusEx` value sanity (non-zero, within a factor of two of Task Manager) and the derived cap logged once by `HttpServer` on Windows with the RAM term active; `createNewFilePrivate` returns false for an existing file and true otherwise, and - if the DACL is added - a second local user cannot open the file; `utf_baselib` `BaseLib_OS*` and `utf_baselib_http` green on `vc143` and `ccl16`, debug and release |
+
+**Also open from the same review, and not Windows-only:** the OpenSSL 1.1.1w build required for
+S-6/S-7 could not be run from this checkout either, for a reason that is not platform-specific -
+see the 2026-09-07 note under "Conditions to revisit" above.

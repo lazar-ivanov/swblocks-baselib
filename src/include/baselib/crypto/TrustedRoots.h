@@ -40,6 +40,14 @@ namespace bl
             private:
 
                 static std::set< std::string >                          g_trustedRoots;
+
+                /*
+                 * The set is mutated by registerTrustedRoot( ... ) and read while the SSL
+                 * contexts are created (which happens on the connection paths), so it must
+                 * be guarded and copied out rather than handed out by reference
+                 */
+
+                static os::mutex                                        g_trustedRootsLock;
                 static cpp::void_callback_noexcept_t                    g_initGlobalTrustedRootsCallback;
 
             public:
@@ -297,14 +305,18 @@ namespace bl
                     }
                 }
 
-                static auto trustedRoots() NOEXCEPT -> const std::set< std::string >&
+                static auto trustedRoots() -> std::set< std::string >
                 {
+                    BL_MUTEX_GUARD( g_trustedRootsLock );
+
                     return g_trustedRoots;
                 }
 
                 static void registerTrustedRoot( SAA_in std::string&& certificatePemText ) NOEXCEPT
                 {
                     BL_NOEXCEPT_BEGIN()
+
+                    BL_MUTEX_GUARD( g_trustedRootsLock );
 
                     g_trustedRoots.emplace( BL_PARAM_FWD( certificatePemText ) );
 
@@ -325,14 +337,15 @@ namespace bl
             typedef TrustedRootsT<> TrustedRoots;
 
             BL_DEFINE_STATIC_MEMBER( TrustedRootsT, std::set< std::string >, g_trustedRoots );
+            BL_DEFINE_STATIC_MEMBER( TrustedRootsT, os::mutex, g_trustedRootsLock );
             BL_DEFINE_STATIC_MEMBER( TrustedRootsT, cpp::void_callback_noexcept_t, g_initGlobalTrustedRootsCallback ) =
                 &TrustedRootsT< TCLASS >::initDefaultGlobalTrustedRoots;
 
         } // detail
 
-        inline auto trustedRoots() NOEXCEPT -> const std::set< std::string >&
+        inline auto trustedRoots() -> std::set< std::string >
         {
-            const auto& roots = detail::TrustedRoots::trustedRoots();
+            auto roots = detail::TrustedRoots::trustedRoots();
 
             if( roots.empty() )
             {

@@ -64,6 +64,15 @@ namespace bl
                 isProtocolHandshakeNeeded = true
             };
 
+            enum : long
+            {
+                /*
+                 * The default deadline for the TLS handshake and for the TLS shutdown
+                 */
+
+                DEFAULT_PROTOCOL_TIMEOUT_IN_SECONDS = 60L,
+            };
+
         protected:
 
             static const eh::error_code                                                 g_sslErrorShortRead;
@@ -74,12 +83,76 @@ namespace bl
             cpp::SafeUniquePtr< asio::ssl::context >                                    m_serverContext;
             cpp::ScalarTypeIniter< bool >                                               m_isHandshakeCompleted;
 
+            /*
+             * The deadline for the TLS handshake and for the TLS shutdown; a peer which
+             * never sends its ClientHello (or never answers with close_notify) would
+             * otherwise hold the connection task forever
+             */
+
+            cpp::SafeUniquePtr< asio::deadline_timer >                                  m_protocolTimer;
+            time::time_duration                                                         m_protocolTimeout;
+
             TcpSslSocketAsyncBaseT( SAA_in_opt std::string&& taskName = std::string() )
+                :
+                m_protocolTimeout( time::seconds( DEFAULT_PROTOCOL_TIMEOUT_IN_SECONDS ) )
             {
                 if( base_type::m_name.empty() )
                 {
                     base_type::m_name = BL_PARAM_FWD( taskName );
                 }
+            }
+
+            /**
+             * @brief Arms the deadline for the protocol operation which is about to start
+             */
+
+            void scheduleProtocolTimer()
+            {
+                if( m_protocolTimeout.is_special() || m_protocolTimeout.total_milliseconds() <= 0 )
+                {
+                    return;
+                }
+
+                if( ! m_protocolTimer )
+                {
+                    m_protocolTimer.reset(
+                        new asio::deadline_timer(
+                            ThreadPoolDefault::getDefault( getThreadPoolId() ) -> aioService()
+                            )
+                        );
+                }
+
+                m_protocolTimer -> expires_from_now( m_protocolTimeout );
+
+                m_protocolTimer -> async_wait(
+                    cpp::bind(
+                        &this_type::onProtocolTimer,
+                        om::ObjPtrCopyable< this_type >::acquireRef( this ),
+                        asio::placeholders::error
+                        )
+                    );
+            }
+
+            void onProtocolTimer( SAA_in const eh::error_code& ec ) NOEXCEPT
+            {
+                BL_NOEXCEPT_BEGIN()
+
+                BL_MUTEX_GUARD( base_type::m_lock );
+
+                if( ! ec && Task::Running == base_type::m_state )
+                {
+                    BL_LOG(
+                        Logging::debug(),
+                        BL_MSG()
+                            << "Cancelling a TLS connection which did not complete its handshake "
+                            << "or its shutdown within "
+                            << m_protocolTimeout
+                        );
+
+                    base_type::requestCancelInternal();
+                }
+
+                BL_NOEXCEPT_END()
             }
 
             /*
@@ -244,6 +317,8 @@ namespace bl
 
                 if( ! hasHandshakeCompletedSuccessfully() )
                 {
+                    scheduleProtocolTimer();
+
                     beginProtocolHandshake(
                         []() NOEXCEPT -> bool
                         {
@@ -260,6 +335,8 @@ namespace bl
 
                 if( isShutdownNeeded() && ! wasShutdownInvoked() )
                 {
+                    scheduleProtocolTimer();
+
                     beginProtocolShutdown( nullptr /* eptrIn */ );
 
                     return;
@@ -393,6 +470,8 @@ namespace bl
                  * later on when the protocol shutdown has completed
                  */
 
+                scheduleProtocolTimer();
+
                 beginProtocolShutdown( eptrIn );
 
                 return true;
@@ -405,6 +484,17 @@ namespace bl
                 -> std::exception_ptr OVERRIDE
             {
                 BL_NOEXCEPT_BEGIN()
+
+                if( m_protocolTimer )
+                {
+                    /*
+                     * Note that the timer must be cancelled here and not when a protocol
+                     * operation completes - the shutdown runs as the finish continuation of
+                     * the task, i.e. while the task is still Running
+                     */
+
+                    m_protocolTimer -> cancel();
+                }
 
                 if( m_isCloseStreamOnTaskFinish && m_sslStream )
                 {
@@ -544,9 +634,39 @@ namespace bl
                 return hasHandshakeCompletedSuccessfully() && ! wasShutdownInvoked();
             }
 
+            /**
+             * @brief Sets the deadline for the TLS handshake and for the TLS shutdown
+             *
+             * A zero or special duration disables it
+             */
+
+            void setProtocolTimeout( SAA_in const time::time_duration& protocolTimeout ) NOEXCEPT
+            {
+                m_protocolTimeout = protocolTimeout;
+            }
+
+            const time::time_duration& getProtocolTimeout() const NOEXCEPT
+            {
+                return m_protocolTimeout;
+            }
+
             std::string safeRemoteEndpointId() const
             {
                 return net::safeRemoteEndpointId( getSocket() );
+            }
+
+            /**
+             * @brief Same as safeRemoteEndpointId() above, but it never retries and never blocks
+             */
+
+            std::string remoteEndpointIdNoWait() const
+            {
+                if( ! isSocketCreated() )
+                {
+                    return "<unknown>";
+                }
+
+                return net::remoteEndpointIdNoWait( getSocket() );
             }
 
             void attachStream( SAA_in stream_ref&& stream ) NOEXCEPT

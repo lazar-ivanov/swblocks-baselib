@@ -93,7 +93,7 @@ namespace bl
                     BL_MUTEX_GUARD( base_type::m_lock );
 
                     base_type::m_state = base_type::Completed;
-                    base_type::m_exception = exception;
+                    base_type::setExceptionInternal( exception );
 
                     BL_NOEXCEPT_END()
                 }
