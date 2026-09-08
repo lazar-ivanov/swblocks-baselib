@@ -6585,6 +6585,103 @@ UTF_AUTO_TEST_CASE( BaseLib_Base64Tests )
 
         {
             /*
+             * Malformed input must be rejected before it is handed to the Boost iterators
+             *
+             * A data length of 1 modulo 4 can't be produced by the encoder and it would
+             * make the transform read past the end of the string
+             */
+
+            UTF_REQUIRE_THROW(
+                bl::SerializationUtils::base64DecodeString( "TG9yZ" ),
+                bl::ArgumentException
+                );
+
+            UTF_REQUIRE_THROW(
+                bl::SerializationUtils::base64DecodeString( "TG9yZ=" ),
+                bl::ArgumentException
+                );
+
+            /*
+             * At most two padding characters are legal
+             */
+
+            UTF_REQUIRE_THROW(
+                bl::SerializationUtils::base64DecodeString( "YQ===" ),
+                bl::ArgumentException
+                );
+
+            UTF_REQUIRE_THROW(
+                bl::SerializationUtils::base64DecodeString( "====" ),
+                bl::ArgumentException
+                );
+
+            /*
+             * Characters outside of the base64 alphabet - note that '=' only counts as
+             * padding when it is trailing, so here it is rejected as an invalid character
+             */
+
+            UTF_REQUIRE_THROW(
+                bl::SerializationUtils::base64DecodeString( "TG=y" ),
+                bl::ArgumentException
+                );
+
+            UTF_REQUIRE_THROW(
+                bl::SerializationUtils::base64DecodeString( "TG9\n" ),
+                bl::ArgumentException
+                );
+
+            /*
+             * The base64url alphabet must not be accepted by the base64 decoder
+             */
+
+            UTF_REQUIRE_THROW(
+                bl::SerializationUtils::base64DecodeString( "TG-y" ),
+                bl::ArgumentException
+                );
+
+            UTF_REQUIRE_THROW(
+                bl::SerializationUtils::base64DecodeString( "TG_y" ),
+                bl::ArgumentException
+                );
+
+            /*
+             * The validation lives in the template and not in the std::string wrapper, so
+             * decoding into a vector of bytes must fail in exactly the same way
+             */
+
+            UTF_REQUIRE_THROW(
+                bl::SerializationUtils::base64DecodeVector( "TG9yZ" ),
+                bl::ArgumentException
+                );
+
+            /*
+             * Positive control to ensure the accepted alphabet can't be narrowed later -
+             * '+' is 62 (111110) and '/' is 63 (111111), so the first octet is 0xFB
+             */
+
+            UTF_REQUIRE_EQUAL(
+                bl::SerializationUtils::base64DecodeString( "+/==" ),
+                std::string( "\xFB" )
+                );
+
+            /*
+             * The rejected input must never be echoed back in the exception
+             */
+
+            try
+            {
+                bl::SerializationUtils::base64DecodeString( "TG9yZ" );
+                UTF_FAIL( BL_MSG() << "base64DecodeString must throw" );
+            }
+            catch( bl::ArgumentException& e )
+            {
+                UTF_REQUIRE( ! bl::eh::get_error_info< bl::eh::errinfo_string_value >( e ) );
+                UTF_REQUIRE( ! bl::cpp::contains( std::string( e.what() ), "TG9yZ" ) );
+            }
+        }
+
+        {
+            /*
              * Test to ensure we can deal with encoding zeros in std::string
              */
 
@@ -7321,6 +7418,88 @@ UTF_AUTO_TEST_CASE( BaseLib_SafeCoerceToTests )
     UTF_REQUIRE_EQUAL(
         numbers::safeCoerceTo< std::int32_t >( static_cast< std::uint32_t >( std::numeric_limits< std::int32_t >::max() ) ),
         std::numeric_limits< std::int32_t >::max()
+        );
+
+    /*
+     * All the assertions above only ever coerce non-negative values, so the lower bound
+     * check is entered but never violated - the assertions below cover the four dispatch
+     * corners where a negative source must be rejected instead of silently wrapping
+     */
+
+    /*
+     * Equal sizes (signed -> unsigned), i.e. NumberCoerceHelper< false >
+     */
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        numbers::safeCoerceTo< std::uint32_t >( static_cast< std::int32_t >( -1 ) ),
+        NumberCoerceException,
+        "Cannot coerce number -1 into a numeric type of size 4 (in bytes) "
+        "which is unsigned and can hold a minimum value of 0"
+        );
+
+    /*
+     * Widening into an unsigned type - this is the pattern used by os::detail::ftell
+     * when it coerces a negative off_t into std::uint64_t
+     */
+
+    UTF_REQUIRE_THROW(
+        numbers::safeCoerceTo< std::uint64_t >( static_cast< std::int32_t >( -1 ) ),
+        NumberCoerceException
+        );
+
+    /*
+     * Narrowing into an unsigned type, i.e. NumberCoerceHelper< true > - this also proves
+     * the lower bound check runs before the maximum value check, because -1 does not
+     * exceed the maximum of std::uint8_t and would otherwise wrap into 255
+     */
+
+    UTF_REQUIRE_THROW(
+        numbers::safeCoerceTo< std::uint8_t >( static_cast< std::int16_t >( -1 ) ),
+        NumberCoerceException
+        );
+
+    /*
+     * Narrowing into a signed type which is below its minimum value
+     */
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        numbers::safeCoerceTo< std::int8_t >( static_cast< std::int32_t >( -200 ) ),
+        NumberCoerceException,
+        "can hold a minimum value of -128"
+        );
+
+    /*
+     * The boundaries which must be accepted - the exact minimum value and zero
+     */
+
+    UTF_REQUIRE_EQUAL(
+        numbers::safeCoerceTo< std::int8_t >( static_cast< std::int32_t >( -128 ) ),
+        static_cast< std::int8_t >( -128 )
+        );
+
+    UTF_REQUIRE_EQUAL(
+        numbers::safeCoerceTo< std::uint32_t >( static_cast< std::int32_t >( 0 ) ),
+        0U
+        );
+
+    /*
+     * Widening signed -> signed must not throw - os::detail::ftell depends on this when
+     * it evaluates numbers::safeCoerceTo< off_t >( -1 ) as the expected error value
+     */
+
+    UTF_REQUIRE_EQUAL(
+        numbers::safeCoerceTo< std::int64_t >( static_cast< std::int32_t >( -1 ) ),
+        static_cast< std::int64_t >( -1 )
+        );
+
+    /*
+     * A lower bound violation must also be routed through the error handling callback
+     */
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        numbers::safeCoerceTo< std::uint32_t >( static_cast< std::int32_t >( -1 ), ehCallback ),
+        ArgumentException,
+        "This is custom special message"
         );
 }
 
