@@ -5543,213 +5543,389 @@ UTF_AUTO_TEST_CASE( IO_MessagingConversationTaskCancelTests )
         );
 }
 
-UTF_AUTO_TEST_CASE( IO_MessagingMessageProcessingTests )
+namespace
 {
-    using namespace bl;
-    using namespace bl::tasks;
-    using namespace bl::messaging;
+    /**
+     * @brief The request / response conversation round trip between two messaging clients over
+     * a real broker
+     *
+     * It is shared by IO_MessagingMessageProcessingTests and by
+     * IO_MessagingSecretsNeverReachTheLogTests so that the log oracle of the latter can never
+     * drift away from the round trip it is meant to observe
+     *
+     * When 'receivedPrincipal' is provided it receives the security principal the broker
+     * stamped on the request, as it was seen by the receiving side
+     */
 
-    typedef bl::messaging::ConversationProcessingBaseImpl<>::payload_t payload_t;
-
-    const auto callbackTests = []() -> void
+    void messageProcessingRoundTrip(
+        SAA_inout_opt   bl::om::ObjPtr< bl::messaging::SecurityPrincipal >*     receivedPrincipal = nullptr
+        )
     {
-        scheduleAndExecuteInParallel(
-            [ & ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
-            {
-                const auto dataBlocksPool = data::datablocks_pool_type::createInstance();
+        using namespace bl;
+        using namespace bl::tasks;
+        using namespace bl::messaging;
 
-                const auto targetPeerId1 = uuids::create();
-                const auto targetPeerId2 = uuids::create();
+        typedef bl::messaging::ConversationProcessingBaseImpl<>::payload_t payload_t;
 
-                const auto cookiesText = utest::TestMessagingUtils::getTokenData();
+        const auto callbackTests = [ receivedPrincipal ]() -> void
+        {
+            scheduleAndExecuteInParallel(
+                [ & ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+                {
+                    const auto dataBlocksPool = data::datablocks_pool_type::createInstance();
 
-                const om::ObjPtrCopyable< om::Proxy > client1Sink =
-                    om::ProxyImpl::createInstance< om::Proxy >( true /* strongRef */ );
+                    const auto targetPeerId1 = uuids::create();
+                    const auto targetPeerId2 = uuids::create();
 
-                const auto dispatchAssertions = std::make_shared< utest::DeferredAssertions >();
+                    const auto cookiesText = utest::TestMessagingUtils::getTokenData();
 
-                const auto incomingObjectChannel1 = bl::om::lockDisposable(
-                    MessagingClientObjectDispatchFromCallback::createInstance(
-                        cpp::bind(
-                            &utest::TestMessagingUtils::dispatchCallback,
-                            client1Sink,
-                            targetPeerId1 /* targetPeerIdExpected */,
-                            dispatchAssertions,
-                            _1,
-                            _2,
-                            _3
+                    const om::ObjPtrCopyable< om::Proxy > client1Sink =
+                        om::ProxyImpl::createInstance< om::Proxy >( true /* strongRef */ );
+
+                    const auto dispatchAssertions = std::make_shared< utest::DeferredAssertions >();
+
+                    const auto incomingObjectChannel1 = bl::om::lockDisposable(
+                        MessagingClientObjectDispatchFromCallback::createInstance(
+                            cpp::bind(
+                                &utest::TestMessagingUtils::dispatchCallback,
+                                client1Sink,
+                                targetPeerId1 /* targetPeerIdExpected */,
+                                dispatchAssertions,
+                                _1,
+                                _2,
+                                _3
+                                )
                             )
-                        )
-                    );
-
-                const om::ObjPtrCopyable< om::Proxy > client2Sink =
-                    om::ProxyImpl::createInstance< om::Proxy >( true /* strongRef */ );
-
-                const auto incomingObjectChannel2 = bl::om::lockDisposable(
-                    MessagingClientObjectDispatchFromCallback::createInstance(
-                        cpp::bind(
-                            &utest::TestMessagingUtils::dispatchCallback,
-                            client2Sink,
-                            targetPeerId2 /* targetPeerIdExpected */,
-                            dispatchAssertions,
-                            _1,
-                            _2,
-                            _3
-                            )
-                        )
-                    );
-
-                auto connections1 = MessagingClientFactorySsl::createEstablishedConnections(
-                    "localhost"                                             /* host */,
-                    test::UtfArgsParser::port()                             /* inboundPort */,
-                    test::UtfArgsParser::port() + 1                         /* outboundPort */
-                    );
-
-                auto connections2 = MessagingClientFactorySsl::createEstablishedConnections(
-                    "localhost"                                             /* host */,
-                    test::UtfArgsParser::port()                             /* inboundPort */,
-                    test::UtfArgsParser::port() + 1                         /* outboundPort */
-                    );
-
-                const auto client1 = bl::om::lockDisposable(
-                    MessagingClientObjectFactory::createFromObjectDispatchTcp(
-                        om::qi< MessagingClientObjectDispatch >( incomingObjectChannel1 ),
-                        dataBlocksPool,
-                        targetPeerId1,
-                        "localhost"                                         /* host */,
-                        test::UtfArgsParser::port()                         /* inboundPort */,
-                        test::UtfArgsParser::port() + 1                     /* outboundPort */,
-                        std::move( connections1.first )                     /* inboundConnection */,
-                        std::move( connections1.second )                    /* outboundConnection */
-                        )
-                    );
-
-                const auto client2 = bl::om::lockDisposable(
-                    MessagingClientObjectFactory::createFromObjectDispatchTcp(
-                        om::qi< MessagingClientObjectDispatch >( incomingObjectChannel2 ),
-                        dataBlocksPool,
-                        targetPeerId2,
-                        "localhost"                                         /* host */,
-                        test::UtfArgsParser::port()                         /* inboundPort */,
-                        test::UtfArgsParser::port() + 1                     /* outboundPort */,
-                        std::move( connections2.first )                     /* inboundConnection */,
-                        std::move( connections2.second )                    /* outboundConnection */
-                        )
-                    );
-
-                typedef TestConversationProcessingImpl::MessageInfo MessageInfo;
-
-                /*
-                 * Create and place an initial seed message to be passed by the sender
-                 */
-
-                const auto conversationId = uuids::create();
-
-                MessageInfo seedMessage;
-
-                seedMessage.brokerProtocol = utest::TestMessagingUtils::createBrokerProtocolMessage(
-                    MessageType::AsyncRpcDispatch,
-                    conversationId,
-                    cookiesText
-                    );
-
-                seedMessage.payload = bl::dm::DataModelUtils::loadFromFile< payload_t >(
-                    utest::TestUtils::resolveDataFilePath( "async_rpc_request.json" )
-                    );
-
-                /*
-                 * First test the baseline / success scenario... (i.e. a real request /
-                 * response conversation)
-                 *
-                 * task1 will be the logical sender / initiator task and task2 will be the
-                 * logical receiver / processing task
-                 */
-
-                typedef om::ObjectImpl
-                <
-                    ConversationProcessingTaskT< TestConversationProcessingImpl >
-                >
-                processing_task_t;
-
-                auto processor1 = TestConversationProcessingImpl::createInstance(
-                    true /* isSender */,
-                    targetPeerId1                                           /* peerId (self) */,
-                    targetPeerId2                                           /* targetPeerId (the target) */,
-                    conversationId,
-                    om::copy( client1 -> outgoingObjectChannel() )          /* objectDispatcher */,
-                    cpp::copy( cookiesText )                                /* authenticationCookies */,
-                    cpp::copy( seedMessage )
-                    );
-
-                auto processor2 = TestConversationProcessingImpl::createInstance(
-                    false /* isSender */,
-                    targetPeerId2                                           /* peerId (self) */,
-                    targetPeerId1                                           /* targetPeerId (the target) */,
-                    conversationId,
-                    om::copy( client2 -> outgoingObjectChannel() )          /* objectDispatcher */,
-                    ""                                                      /* authenticationCookies */
-                    );
-
-                const auto task1 = processing_task_t::createInstance< Task >( bl::om::copy( processor1 ) );
-                const auto task2 = processing_task_t::createInstance< Task >( std::move( processor2 ) );
-
-                BL_SCOPE_EXIT(
-                    {
-                        client1Sink -> disconnect();
-                        client2Sink -> disconnect();
-                    }
-                    );
-
-                client1Sink -> connect( task1.get() );
-                client2Sink -> connect( task2.get() );
-
-                eq -> push_back( task1 );
-                eq -> push_back( task2 );
-
-                /*
-                 * Now post an initial message to task1 and wait for the conversation
-                 * to finish with the exchange of back and forth messages
-                 */
-
-                eq -> wait( task2 );
-                eq -> waitForSuccess( task1 );
-
-                const auto response = processor1 -> getResponse();
-
-                UTF_REQUIRE( response );
-                UTF_CHECK_EQUAL( response -> hasStarted(), true );
-
-                const auto payload = bl::dm::DataModelUtils::loadFromFile< AsyncRpcPayload >(
-                    utest::TestUtils::resolveDataFilePath( "async_rpc_response.json" )
-                    );
-
-                const auto expectedResponse =
-                    bl::dm::DataModelUtils::castTo< utest::dm::TestAsyncResponse >(
-                        payload -> asyncRpcResponse()
                         );
 
-                UTF_CHECK_EQUAL( response -> finalPath(), expectedResponse -> finalPath() );
+                    const om::ObjPtrCopyable< om::Proxy > client2Sink =
+                        om::ProxyImpl::createInstance< om::Proxy >( true /* strongRef */ );
 
-                dispatchAssertions -> requireNone();
-            }
+                    /*
+                     * The security principal exactly as it arrived on the receiving side - the
+                     * broker stamps it on the request once it has authorized the authentication
+                     * token, so observing it here is what tells a caller that the principal was
+                     * still on the message after it had been logged
+                     *
+                     * It is recorded on a dispatch thread and handed to the caller further below,
+                     * on the main test thread
+                     */
+
+                    const auto principalLock = std::make_shared< bl::os::mutex >();
+
+                    const auto principalSlot =
+                        std::make_shared< bl::om::ObjPtr< SecurityPrincipal > >();
+
+                    const auto incomingObjectChannel2 = bl::om::lockDisposable(
+                        MessagingClientObjectDispatchFromCallback::createInstance(
+                            [ = ](
+                                SAA_in              const bl::uuid_t&                               targetPeerId,
+                                SAA_in              const bl::om::ObjPtr< BrokerProtocol >&         brokerProtocol,
+                                SAA_in_opt          const bl::om::ObjPtr< Payload >&                payload
+                                )
+                                -> void
+                            {
+                                const auto& identityInfo = brokerProtocol -> principalIdentityInfo();
+
+                                if( identityInfo && identityInfo -> securityPrincipal() )
+                                {
+                                    BL_MUTEX_GUARD( *principalLock );
+
+                                    *principalSlot = om::copy( identityInfo -> securityPrincipal() );
+                                }
+
+                                utest::TestMessagingUtils::dispatchCallback(
+                                    client2Sink,
+                                    targetPeerId2   /* targetPeerIdExpected */,
+                                    dispatchAssertions,
+                                    targetPeerId,
+                                    brokerProtocol,
+                                    payload
+                                    );
+                            }
+                            )
+                        );
+
+                    auto connections1 = MessagingClientFactorySsl::createEstablishedConnections(
+                        "localhost"                                             /* host */,
+                        test::UtfArgsParser::port()                             /* inboundPort */,
+                        test::UtfArgsParser::port() + 1                         /* outboundPort */
+                        );
+
+                    auto connections2 = MessagingClientFactorySsl::createEstablishedConnections(
+                        "localhost"                                             /* host */,
+                        test::UtfArgsParser::port()                             /* inboundPort */,
+                        test::UtfArgsParser::port() + 1                         /* outboundPort */
+                        );
+
+                    const auto client1 = bl::om::lockDisposable(
+                        MessagingClientObjectFactory::createFromObjectDispatchTcp(
+                            om::qi< MessagingClientObjectDispatch >( incomingObjectChannel1 ),
+                            dataBlocksPool,
+                            targetPeerId1,
+                            "localhost"                                         /* host */,
+                            test::UtfArgsParser::port()                         /* inboundPort */,
+                            test::UtfArgsParser::port() + 1                     /* outboundPort */,
+                            std::move( connections1.first )                     /* inboundConnection */,
+                            std::move( connections1.second )                    /* outboundConnection */
+                            )
+                        );
+
+                    const auto client2 = bl::om::lockDisposable(
+                        MessagingClientObjectFactory::createFromObjectDispatchTcp(
+                            om::qi< MessagingClientObjectDispatch >( incomingObjectChannel2 ),
+                            dataBlocksPool,
+                            targetPeerId2,
+                            "localhost"                                         /* host */,
+                            test::UtfArgsParser::port()                         /* inboundPort */,
+                            test::UtfArgsParser::port() + 1                     /* outboundPort */,
+                            std::move( connections2.first )                     /* inboundConnection */,
+                            std::move( connections2.second )                    /* outboundConnection */
+                            )
+                        );
+
+                    typedef TestConversationProcessingImpl::MessageInfo MessageInfo;
+
+                    /*
+                     * Create and place an initial seed message to be passed by the sender
+                     */
+
+                    const auto conversationId = uuids::create();
+
+                    MessageInfo seedMessage;
+
+                    seedMessage.brokerProtocol = utest::TestMessagingUtils::createBrokerProtocolMessage(
+                        MessageType::AsyncRpcDispatch,
+                        conversationId,
+                        cookiesText
+                        );
+
+                    seedMessage.payload = bl::dm::DataModelUtils::loadFromFile< payload_t >(
+                        utest::TestUtils::resolveDataFilePath( "async_rpc_request.json" )
+                        );
+
+                    /*
+                     * First test the baseline / success scenario... (i.e. a real request /
+                     * response conversation)
+                     *
+                     * task1 will be the logical sender / initiator task and task2 will be the
+                     * logical receiver / processing task
+                     */
+
+                    typedef om::ObjectImpl
+                    <
+                        ConversationProcessingTaskT< TestConversationProcessingImpl >
+                    >
+                    processing_task_t;
+
+                    auto processor1 = TestConversationProcessingImpl::createInstance(
+                        true /* isSender */,
+                        targetPeerId1                                           /* peerId (self) */,
+                        targetPeerId2                                           /* targetPeerId (the target) */,
+                        conversationId,
+                        om::copy( client1 -> outgoingObjectChannel() )          /* objectDispatcher */,
+                        cpp::copy( cookiesText )                                /* authenticationCookies */,
+                        cpp::copy( seedMessage )
+                        );
+
+                    auto processor2 = TestConversationProcessingImpl::createInstance(
+                        false /* isSender */,
+                        targetPeerId2                                           /* peerId (self) */,
+                        targetPeerId1                                           /* targetPeerId (the target) */,
+                        conversationId,
+                        om::copy( client2 -> outgoingObjectChannel() )          /* objectDispatcher */,
+                        ""                                                      /* authenticationCookies */
+                        );
+
+                    const auto task1 = processing_task_t::createInstance< Task >( bl::om::copy( processor1 ) );
+                    const auto task2 = processing_task_t::createInstance< Task >( std::move( processor2 ) );
+
+                    BL_SCOPE_EXIT(
+                        {
+                            client1Sink -> disconnect();
+                            client2Sink -> disconnect();
+                        }
+                        );
+
+                    client1Sink -> connect( task1.get() );
+                    client2Sink -> connect( task2.get() );
+
+                    eq -> push_back( task1 );
+                    eq -> push_back( task2 );
+
+                    /*
+                     * Now post an initial message to task1 and wait for the conversation
+                     * to finish with the exchange of back and forth messages
+                     */
+
+                    eq -> wait( task2 );
+                    eq -> waitForSuccess( task1 );
+
+                    const auto response = processor1 -> getResponse();
+
+                    UTF_REQUIRE( response );
+                    UTF_CHECK_EQUAL( response -> hasStarted(), true );
+
+                    const auto payload = bl::dm::DataModelUtils::loadFromFile< AsyncRpcPayload >(
+                        utest::TestUtils::resolveDataFilePath( "async_rpc_response.json" )
+                        );
+
+                    const auto expectedResponse =
+                        bl::dm::DataModelUtils::castTo< utest::dm::TestAsyncResponse >(
+                            payload -> asyncRpcResponse()
+                            );
+
+                    UTF_CHECK_EQUAL( response -> finalPath(), expectedResponse -> finalPath() );
+
+                    dispatchAssertions -> requireNone();
+
+                    if( receivedPrincipal )
+                    {
+                        BL_MUTEX_GUARD( *principalLock );
+
+                        *receivedPrincipal = om::copy( *principalSlot );
+                    }
+                }
+                );
+        };
+
+        test::MachineGlobalTestLock lock;
+
+        const auto processingBackend = bl::om::lockDisposable(
+            utest::TestMessagingUtils::createTestMessagingBackend()
             );
-    };
 
-    test::MachineGlobalTestLock lock;
+        bl::messaging::BrokerFacade::execute(
+            processingBackend,
+            test::UtfCrypto::getDefaultServerKey()              /* privateKeyPem */,
+            test::UtfCrypto::getDefaultServerCertificate()      /* certificatePem */,
+            test::UtfArgsParser::port()                         /* inboundPort */,
+            test::UtfArgsParser::port() + 1                     /* outboundPort */,
+            test::UtfArgsParser::threadsCount(),
+            0U                                                  /* maxConcurrentTasks */,
+            callbackTests
+            );
+    }
 
-    const auto processingBackend = bl::om::lockDisposable(
-        utest::TestMessagingUtils::createTestMessagingBackend()
-        );
+} // __unnamed
 
-    bl::messaging::BrokerFacade::execute(
-        processingBackend,
-        test::UtfCrypto::getDefaultServerKey()              /* privateKeyPem */,
-        test::UtfCrypto::getDefaultServerCertificate()      /* certificatePem */,
-        test::UtfArgsParser::port()                         /* inboundPort */,
-        test::UtfArgsParser::port() + 1                     /* outboundPort */,
-        test::UtfArgsParser::threadsCount(),
-        0U                                                  /* maxConcurrentTasks */,
-        callbackTests
+UTF_AUTO_TEST_CASE( IO_MessagingMessageProcessingTests )
+{
+    messageProcessingRoundTrip();
+}
+
+UTF_AUTO_TEST_CASE( IO_MessagingSecretsNeverReachTheLogTests )
+{
+    using namespace bl;
+    using namespace bl::messaging;
+
+    /*
+     * Redaction of credentials in this library is spread over several independent, function
+     * level mechanisms - the BrokerProtocol ostream operator swaps the principal identity info
+     * out before it pretty prints, the payload operators print only null vs. non null and the
+     * HTTP client substitutes "[REDACTED]" in secure mode. Whether a credential stays out of
+     * the log is however a property of their composition, which no per function assertion can
+     * observe
+     *
+     * This case is that stream level oracle - it captures everything the library logs while a
+     * real conversation which carries a credential travels client -> broker -> server and back,
+     * and then searches the whole of the captured text for the credential
+     */
+
+    const auto& secret = utest::TestMessagingUtils::getTokenData();
+
+    UTF_REQUIRE( ! secret.empty() );
+
+    const auto levelBefore = Logging::getLevel();
+
+    om::ObjPtr< SecurityPrincipal > receivedPrincipal;
+
+    cpp::SafeOutputStringStream roundTripCapture;
+
+    {
+        /*
+         * The level has to be pushed globally - the one and only site in the repository which
+         * uses the redacting operator is on the trace tier and it runs on worker threads, which
+         * have no TLS override of their own
+         */
+
+        Logging::LineLoggerPusher pushLogger( Logging::getDefaultLineLogger( roundTripCapture ) );
+        Logging::LevelPusher pushLevel( Logging::LL_TRACE, true /* global */ );
+
+        messageProcessingRoundTrip( &receivedPrincipal );
+    }
+
+    /*
+     * The negative control - the very same secret, logged through the very same mechanism into
+     * a separate capture, has to be found by the very same search
+     *
+     * Without it every absence assertion below would pass just as happily against an empty
+     * string, which is exactly the way a redaction oracle silently stops being one
+     */
+
+    cpp::SafeOutputStringStream canaryCapture;
+
+    {
+        Logging::LineLoggerPusher pushLogger( Logging::getDefaultLineLogger( canaryCapture ) );
+        Logging::LevelPusher pushLevel( Logging::LL_TRACE, true /* global */ );
+
+        BL_LOG(
+            Logging::trace(),
+            BL_MSG()
+                << "canary-"
+                << secret
+            );
+    }
+
+    /*
+     * Neither pusher may leak its level into the rest of the module
+     */
+
+    UTF_REQUIRE_EQUAL( ( int ) levelBefore, ( int ) Logging::getLevel() );
+
+    const auto canaryText = canaryCapture.str();
+
+    UTF_REQUIRE( cpp::contains( canaryText, "canary-" + secret ) );
+    UTF_REQUIRE( std::string::npos != canaryText.find( secret ) );
+
+    const auto text = roundTripCapture.str();
+
+    UTF_REQUIRE( ! text.empty() );
+
+    /*
+     * The oracle is not vacuous - the round trip did log the very documents which carry the
+     * credential, so a search over the captured text is a search over the right text
+     */
+
+    UTF_REQUIRE( cpp::contains( text, "Sending" ) );
+    UTF_REQUIRE( cpp::contains( text, "conversationId" ) );
+    UTF_REQUIRE( cpp::contains( text, "AsyncRpcDispatch" ) );
+
+    /*
+     * The payload was never dumped - only the placeholder operator reached the log
+     */
+
+    UTF_REQUIRE( cpp::contains( text, "<non null generic async RPC payload>" ) );
+
+    /*
+     * ... and neither the credential nor the container which carries it ever reached it
+     */
+
+    UTF_REQUIRE( std::string::npos == text.find( secret ) );
+    UTF_REQUIRE( std::string::npos == text.find( "principalIdentityInfo" ) );
+    UTF_REQUIRE( std::string::npos == text.find( "authenticationToken" ) );
+
+    /*
+     * The message still carried its principal after having been logged - the swap out in the
+     * BrokerProtocol operator is undone by its BL_SCOPE_EXIT, so the broker was still able to
+     * authorize the request and stamp its own principal on it
+     */
+
+    UTF_REQUIRE( receivedPrincipal );
+
+    UTF_REQUIRE_EQUAL(
+        bl::str::to_lower_copy( receivedPrincipal -> sid() ),
+        utest::DummyAuthorizationCache::dummySid()
         );
 }
 
@@ -8297,6 +8473,20 @@ UTF_AUTO_TEST_CASE( IO_MessagingProxyBackendTests )
                     )
                 );
 
+            /*
+             * The number of TargetPeerNotFound retries each of the two directions required
+             *
+             * When the proxy is asked to forward a message over an outbound channel it has not
+             * announced to the real broker yet it prefixes the dispatch task with an associate
+             * message task, precisely so the real broker's routing cache learns the target peer
+             * before the message arrives. Without that prefix the messages would still all be
+             * delivered - the proxy re-announces the peer on a 5s timer anyway - and the only
+             * observable difference would be the retries these counters record
+             */
+
+            std::size_t retriesFirst = 0U;
+            std::size_t retriesSecond = 0U;
+
             utils_t::executeMessagingTests(
                 incomingObjectChannel,
                 [ & ](
@@ -8484,7 +8674,7 @@ UTF_AUTO_TEST_CASE( IO_MessagingProxyBackendTests )
                                         )
                                     );
 
-                                utils_t::flushQueueWithRetriesOnTargetPeerNotFound( eqLocal );
+                                utils_t::flushQueueWithRetriesOnTargetPeerNotFound( eqLocal, &retriesFirst );
 
                                 BL_LOG(
                                     Logging::debug(),
@@ -8516,7 +8706,7 @@ UTF_AUTO_TEST_CASE( IO_MessagingProxyBackendTests )
                                         )
                                     );
 
-                                utils_t::flushQueueWithRetriesOnTargetPeerNotFound( eqLocal );
+                                utils_t::flushQueueWithRetriesOnTargetPeerNotFound( eqLocal, &retriesSecond );
 
                                 BL_LOG(
                                     Logging::debug(),
@@ -8532,6 +8722,31 @@ UTF_AUTO_TEST_CASE( IO_MessagingProxyBackendTests )
                 );
 
             dispatchAssertions -> requireNone();
+
+            BL_LOG(
+                Logging::debug(),
+                BL_MSG()
+                    << "TargetPeerNotFound retries: client1 -> client2: "
+                    << retriesFirst
+                    << "; client2 -> client1: "
+                    << retriesSecond
+                );
+
+            /*
+             * The reverse direction message is the one the associate message prefix guarantees -
+             * by the time client2 sends to client1 the proxy has already associated client1 with
+             * the proxy peer id on the real broker, so it must never need a retry
+             */
+
+            UTF_REQUIRE_EQUAL( 0U, retriesSecond );
+
+            /*
+             * The very first message may legitimately race the initial connection handshake, so
+             * this one is a check rather than a requirement - the counts are logged above so that
+             * any drift is visible even when it stays within the bound
+             */
+
+            UTF_CHECK( retriesFirst <= 1U );
         };
 
         const auto executeTests = [ brokerInboundPort ](
@@ -8744,6 +8959,14 @@ UTF_AUTO_TEST_CASE( IO_MessagingProxyBackendTests )
 
                                 const auto vectorsSize = proxyClients.size();
 
+                                /*
+                                 * The TargetPeerNotFound retries accumulated over both bulk
+                                 * blocks below - see the comment on the counters in
+                                 * sendSingleMessageTests for what these are pinning
+                                 */
+
+                                std::size_t retriesBulk = 0U;
+
                                 {
                                     BL_LOG(
                                         Logging::debug(),
@@ -8802,11 +9025,14 @@ UTF_AUTO_TEST_CASE( IO_MessagingProxyBackendTests )
 
                                         if( 0U == i )
                                         {
-                                            utils_t::flushQueueWithRetriesOnTargetPeerNotFound( eqLocal );
+                                            utils_t::flushQueueWithRetriesOnTargetPeerNotFound(
+                                                eqLocal,
+                                                &retriesBulk
+                                                );
                                         }
                                     }
 
-                                    utils_t::flushQueueWithRetriesOnTargetPeerNotFound( eqLocal );
+                                    utils_t::flushQueueWithRetriesOnTargetPeerNotFound( eqLocal, &retriesBulk );
 
                                     /*
                                      * Verify that all messages were delivered successfully and the
@@ -8814,6 +9040,21 @@ UTF_AUTO_TEST_CASE( IO_MessagingProxyBackendTests )
                                      */
 
                                     UTF_REQUIRE_EQUAL( noOfMessagesDelivered, noOfBlocks );
+
+                                    BL_LOG(
+                                        Logging::debug(),
+                                        BL_MSG()
+                                            << "TargetPeerNotFound retries so far: "
+                                            << retriesBulk
+                                        );
+
+                                    /*
+                                     * A loose bound which still fails loudly if the associate
+                                     * message prefix disappears - a regression yields roughly one
+                                     * retry per message, i.e. 10 * vectorsSize of them
+                                     */
+
+                                    UTF_CHECK( retriesBulk <= vectorsSize );
                                 }
 
                                 {
@@ -8899,11 +9140,14 @@ UTF_AUTO_TEST_CASE( IO_MessagingProxyBackendTests )
 
                                         if( 0U == i )
                                         {
-                                            utils_t::flushQueueWithRetriesOnTargetPeerNotFound( eqLocal );
+                                            utils_t::flushQueueWithRetriesOnTargetPeerNotFound(
+                                                eqLocal,
+                                                &retriesBulk
+                                                );
                                         }
                                     }
 
-                                    utils_t::flushQueueWithRetriesOnTargetPeerNotFound( eqLocal );
+                                    utils_t::flushQueueWithRetriesOnTargetPeerNotFound( eqLocal, &retriesBulk );
 
                                     /*
                                      * Verify that all messages were delivered successfully and the
@@ -8911,6 +9155,21 @@ UTF_AUTO_TEST_CASE( IO_MessagingProxyBackendTests )
                                      */
 
                                     UTF_REQUIRE_EQUAL( noOfMessagesDelivered, noOfBlocks );
+
+                                    BL_LOG(
+                                        Logging::debug(),
+                                        BL_MSG()
+                                            << "TargetPeerNotFound retries so far: "
+                                            << retriesBulk
+                                        );
+
+                                    /*
+                                     * A loose bound which still fails loudly if the associate
+                                     * message prefix disappears - a regression yields roughly one
+                                     * retry per message, i.e. 10 * vectorsSize of them
+                                     */
+
+                                    UTF_CHECK( retriesBulk <= vectorsSize );
                                 }
                             }
                             );

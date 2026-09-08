@@ -863,7 +863,19 @@ namespace utest
                 );
         }
 
-        static void flushQueueWithRetriesOnTargetPeerNotFound( SAA_in const bl::om::ObjPtr< ExecutionQueue >& eq )
+        /*
+         * The optional 'totalRetries' out parameter accumulates the number of TargetPeerNotFound
+         * retries performed across all the tasks flushed by this call - it lets a test assert that
+         * a mechanism which exists to eliminate the TargetPeerNotFound race (such as the proxy
+         * associate message prefix) actually does so, instead of the retries silently hiding it
+         *
+         * It is defaulted so that every existing call site is unaffected
+         */
+
+        static void flushQueueWithRetriesOnTargetPeerNotFound(
+            SAA_in              const bl::om::ObjPtr< ExecutionQueue >&         eq,
+            SAA_inout_opt       std::size_t*                                    totalRetries = nullptr
+            )
         {
             using namespace bl;
             using namespace bl::tasks;
@@ -912,6 +924,11 @@ namespace utest
                         }
 
                         ++retryCount;
+
+                        if( totalRetries )
+                        {
+                            ++( *totalRetries );
+                        }
 
                         os::sleep( time::milliseconds( 200L ) );
 

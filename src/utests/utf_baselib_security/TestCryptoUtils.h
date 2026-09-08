@@ -21,6 +21,8 @@
 
 #include <baselib/data/models/Jose.h>
 
+#include <baselib/data/eh/ServerErrorHelpers.h>
+
 #include <baselib/core/BaseIncludes.h>
 
 #include <utests/baselib/Utf.h>
@@ -30,6 +32,40 @@
 
 #include <openssl/err.h>
 #include <openssl/pem.h>
+
+namespace
+{
+    /**
+     * @brief A memory BIO over a buffer which holds no certificate
+     *
+     * Handing it to ::PEM_read_bio_X509() is a deterministic OpenSSL failure - it pushes at
+     * least one entry ('no start line') onto the error queue on every version we support -
+     * which is the single point of failure injection shared by the crypto error handling
+     * cases below, so that the two can never disagree about how the error is produced
+     */
+
+    auto createNotACertificateBio() -> bl::crypto::bio_ptr_t
+    {
+        /*
+         * ::BIO_new_mem_buf() does not copy the buffer it is handed, so the text has to
+         * outlive every BIO created over it
+         */
+
+        static const std::string g_notACertificate( "not a certificate" );
+
+        auto buffer = bl::crypto::bio_ptr_t::attach(
+            ::BIO_new_mem_buf(
+                const_cast< char* >( g_notACertificate.c_str() ),
+                bl::crypto::toIntSize( g_notACertificate.size() )
+                )
+            );
+
+        UTF_REQUIRE( buffer );
+
+        return buffer;
+    }
+
+} // __unnamed
 
 UTF_AUTO_TEST_CASE( CryptoUtils_InitSsl )
 {
@@ -244,16 +280,7 @@ UTF_AUTO_TEST_CASE( CryptoErrorHandling_ExceptionCarriesOpenSslReasonAndDrainsQu
 
     const auto failOnce = []() -> void
     {
-        const std::string notACertificate( "not a certificate" );
-
-        const auto buffer = crypto::bio_ptr_t::attach(
-            ::BIO_new_mem_buf(
-                const_cast< char* >( notACertificate.c_str() ),
-                crypto::toIntSize( notACertificate.size() )
-                )
-            );
-
-        UTF_REQUIRE( buffer );
+        const auto buffer = createNotACertificateBio();
 
         UTF_REQUIRE(
             nullptr == ::PEM_read_bio_X509(
@@ -326,6 +353,125 @@ UTF_AUTO_TEST_CASE( CryptoErrorHandling_ExceptionCarriesOpenSslReasonAndDrainsQu
     UTF_REQUIRE( cpp::contains( eh::diagnostic_information( exception ), "Nested exception" ) );
 
     UTF_REQUIRE( 0 == crypto::detail::getFirstError().value() );
+}
+
+UTF_AUTO_TEST_CASE( CryptoErrorHandling_OpenSslCategoryDoesNotSurviveServerErrorRoundTrip )
+{
+    using namespace bl;
+
+    ( void ) ::ERR_clear_error();
+
+    /*
+     * A real, library produced OpenSSL failure - crypto::getException() gives it an error code
+     * which lives in CryptoErrorCategory, whose name() is the literal "OpenSSL"
+     */
+
+    std::exception_ptr eptr;
+
+    {
+        const auto buffer = createNotACertificateBio();
+
+        UTF_REQUIRE_EXCEPTION(
+            BL_CHK_CRYPTO_API_NM(
+                ::PEM_read_bio_X509(
+                    buffer.get(),
+                    nullptr             /* X509 certificate out pointer (**) */,
+                    nullptr             /* Password callback */,
+                    nullptr             /* Password bytes */
+                    )
+                ),
+            SystemException,
+            [ &eptr ]( SAA_in const SystemException& e ) -> bool
+            {
+                eptr = std::current_exception();
+
+                const auto* categoryName = eh::get_error_info< eh::errinfo_category_name >( e );
+
+                return nullptr != categoryName && std::string( "OpenSSL" ) == *categoryName;
+            }
+            );
+    }
+
+    UTF_REQUIRE( eptr );
+
+    /*
+     * The category name reaches the wire document verbatim - this is what ties the crypto
+     * error category to the ServerError schema
+     */
+
+    const auto json = dm::ServerErrorHelpers::createServerErrorObject( eptr );
+
+    UTF_REQUIRE( json -> result() );
+    UTF_REQUIRE( json -> result() -> exceptionProperties() );
+
+    UTF_REQUIRE_EQUAL( json -> result() -> exceptionType(), std::string( "bl::SystemException" ) );
+
+    UTF_REQUIRE_EQUAL(
+        json -> result() -> exceptionProperties() -> categoryName(),
+        std::string( "OpenSSL" )
+        );
+
+    /*
+     * Because the OpenSSL category is neither eh::system_category() nor eh::generic_category(),
+     * SystemException::create attaches neither errinfo_errno nor errinfo_system_code - so
+     * errNo is simply absent and systemCode carries nothing beyond the value already derived
+     * from errinfo_error_code, i.e. neither of the two fields which updateHttpStatusFromException
+     * and CmdLineAppBase key on says anything meaningful about this failure
+     *
+     * The reason value itself is deliberately not pinned - it differs across OpenSSL 1.1.x
+     * and 3.x - only that it is non zero
+     */
+
+    UTF_REQUIRE( ! json -> result() -> exceptionProperties() -> errNoIsSet() );
+
+    UTF_REQUIRE( json -> result() -> exceptionProperties() -> errorCodeIsSet() );
+    UTF_REQUIRE( 0 != json -> result() -> exceptionProperties() -> errorCode() );
+
+    UTF_REQUIRE_EQUAL(
+        json -> result() -> exceptionProperties() -> systemCode(),
+        json -> result() -> exceptionProperties() -> errorCode()
+        );
+
+    /*
+     * This assertion pins a defect rather than a desirable behavior
+     *
+     * createExceptionFromObject() inspects categoryName before it dispatches on exceptionType,
+     * and its chain only knows "generic", "system" and the empty string - so a peer which is
+     * handed a perfectly well formed server error document describing a TLS failure gets an
+     * ArgumentException naming an internal category instead of the real error. The reachability
+     * is not hypothetical: EhUtils::asioErrorCallback re-tags every asio SSL error into the
+     * OpenSSL category and is installed process wide by CmdLineAppBase::main and by Utf.h
+     *
+     * The fix is to teach the chain the "OpenSSL" category (or to stop copying a category name
+     * which is neither generic nor system into the document); when it lands, this assertion has
+     * to flip to a successful round trip
+     */
+
+    UTF_REQUIRE_EXCEPTION(
+        ( void ) dm::ServerErrorHelpers::createExceptionFromObject( json ),
+        ArgumentException,
+        []( SAA_in const ArgumentException& e ) -> bool
+        {
+            return std::string( "Unknown error category: 'OpenSSL'" ) == e.what();
+        }
+        );
+
+    /*
+     * The positive control - the document itself round trips through JSON text without loss,
+     * so the failure above is unambiguously in the category dispatch and not in serialization
+     */
+
+    UTF_REQUIRE_NO_THROW(
+        ( void ) dm::DataModelUtils::loadFromJsonText< dm::ServerErrorJson >(
+            dm::ServerErrorHelpers::getServerErrorAsJson( eptr )
+            )
+        );
+
+    /*
+     * Leave the process global error queue clean for the next case
+     */
+
+    ( void ) ::ERR_clear_error();
 }
 
 UTF_AUTO_TEST_CASE( CryptoUtils_TrustedRootRegistrationOrdering )
