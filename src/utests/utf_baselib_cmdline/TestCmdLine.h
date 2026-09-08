@@ -17,6 +17,8 @@
 #include <baselib/cmdline/CmdLineBase.h>
 #include <baselib/cmdline/GlobalOptions.h>
 
+#include <baselib/messaging/server/BaseServerCmdLine.h>
+
 #include <baselib/core/Utils.h>
 
 #include <utests/baselib/Utf.h>
@@ -1778,4 +1780,219 @@ UTF_AUTO_TEST_CASE( CmdLine_DryRunNotApplicableHidesParentOption )
     UTF_CHECK( ! bl::cpp::contains( plainHelp, "--debug" ) );
 
     UTF_MESSAGE( "***************** end CmdLine_DryRunNotApplicableHidesParentOption tests *****************\n" );
+}
+
+namespace
+{
+    /**
+     * The only instantiation of bl::cmdline::BoolSwitchOrMultiStringOption anywhere in the
+     * repository - the typedef is published by Option.h but has no consumer in production,
+     * in bl-tool or in any other test, so this is the one place where the template body of
+     * Option< std::vector< std::string >, SwitchImpl< std::vector< std::string >, true > >
+     * is instantiated and compiled
+     */
+
+    class BoolSwitchOrMultiStringCmdLine : public bl::cmdline::CmdLineBase
+    {
+    public:
+
+        bl::cmdline::BoolSwitchOrMultiStringOption      m_flag;
+
+        BoolSwitchOrMultiStringCmdLine()
+            :
+            bl::cmdline::CmdLineBase( "BoolSwitchOrMultiStringOption command line options" ),
+            m_flag  ( "flag,f",         "A switch or a list" )
+        {
+            addOption( m_flag );
+        }
+    };
+
+} // __unnamed
+
+UTF_AUTO_TEST_CASE( CmdLine_BoolSwitchOrMultiStringOption )
+{
+    UTF_MESSAGE( "***************** CmdLine_BoolSwitchOrMultiStringOption tests *****************\n" );
+
+    /*
+     * Option::getSemantic() hands the semantic to IMPL::decorateSemantic() last, and for
+     * SwitchImpl that is 'return semantic -> zero_tokens()', which sets both min_tokens and
+     * max_tokens to zero. The std::vector< std::string > value type does not change that -
+     * the multitoken() call in getSemantic() is gated on isMultiValue(), which reads the
+     * option FLAGS rather than the value type, so for a plain declaration it never runs
+     *
+     * What the typedef actually is, therefore, is a valueless switch whose vector always
+     * stays empty and which cannot carry a value at all - any token following --flag is left
+     * over as a positional argument, and this parser declares none
+     *
+     * TODO: that makes the published typedef unusable under its own name; the decision to
+     * fix or delete it is recorded in
+     * notes/plans/issues/cmdline-boolswitch-or-multistring-option-deferral.md. The
+     * assertions below record what it does today, not what it ought to do
+     */
+
+    UTF_MESSAGE( "* the option is absent" );
+
+    {
+        BoolSwitchOrMultiStringCmdLine cmdln;
+
+        UTF_REQUIRE_NO_THROW( cmdln.parseCommandLine( "" ) );
+
+        UTF_CHECK( ! cmdln.m_flag.hasValue() );
+        UTF_CHECK( cmdln.m_flag.getValue().empty() );
+    }
+
+    UTF_MESSAGE( "* the option is present without a value" );
+
+    {
+        BoolSwitchOrMultiStringCmdLine cmdln;
+
+        UTF_REQUIRE_NO_THROW( cmdln.parseCommandLine( "--flag" ) );
+
+        /*
+         * The notifier fired - so the switch is observable - even though zero_tokens() means
+         * that no token was consumed and the vector was left empty
+         */
+
+        UTF_CHECK( cmdln.m_flag.hasValue() );
+        UTF_CHECK( cmdln.m_flag.getValue().empty() );
+    }
+
+    UTF_MESSAGE( "* the option is present with one value" );
+
+    {
+        BoolSwitchOrMultiStringCmdLine cmdln;
+
+        UTF_REQUIRE_THROW(
+            cmdln.parseCommandLine( "--flag a" ),
+            bl::po::too_many_positional_options_error
+            );
+    }
+
+    UTF_MESSAGE( "* the option is present with two values" );
+
+    {
+        BoolSwitchOrMultiStringCmdLine cmdln;
+
+        UTF_REQUIRE_THROW(
+            cmdln.parseCommandLine( "--flag a b" ),
+            bl::po::too_many_positional_options_error
+            );
+    }
+
+    UTF_MESSAGE( "***************** end CmdLine_BoolSwitchOrMultiStringOption tests *****************\n" );
+}
+
+UTF_AUTO_TEST_CASE( CmdLine_BaseServerCmdLineJvmGating )
+{
+    UTF_MESSAGE( "***************** CmdLine_BaseServerCmdLineJvmGating tests *****************\n" );
+
+    /*
+     * BaseServerCmdLineT declares m_jarBasePath with cmdline::Required, but it registers that
+     * option - and m_jvmDebugPort - only when the enableJvm constructor argument is true, so
+     * for a server built with enableJvm == false the Required marker is inert and
+     * --jar-base-path is simply an unknown option
+     *
+     * bl-messaging-echo-server is built with enableJvm = false, and moving m_jarBasePath out
+     * of the gate would make it refuse to start without --jar-base-path
+     *
+     * NOTE: every sub-block below gets its own freshly constructed parser instance because a
+     * CmdLineBase instance is single-use - see CmdLine_ParserInstanceIsSingleUse
+     */
+
+    const std::string peerAndBrokers(
+        "--peer-id 11111111-2222-3333-4444-555555555555 --broker-endpoints host:29300"
+        );
+
+    UTF_MESSAGE( "* enableJvm == false: the JVM options are not registered" );
+
+    {
+        bl::messaging::BaseServerCmdLine cmdlNoJvm( "test-server", false /* enableJvm */ );
+
+        UTF_MESSAGE( cmdlNoJvm.helpMessage() );
+
+        UTF_REQUIRE_NO_THROW( cmdlNoJvm.parseCommandLine( peerAndBrokers ) );
+
+        /*
+         * The documented default of --connections
+         */
+
+        UTF_REQUIRE_EQUAL( 16U, cmdlNoJvm.m_connections.getValue() );
+    }
+
+    {
+        bl::messaging::BaseServerCmdLine cmdlNoJvm( "test-server", false /* enableJvm */ );
+
+        UTF_REQUIRE_THROW(
+            cmdlNoJvm.parseCommandLine( peerAndBrokers + " --jar-base-path /opt/jars" ),
+            bl::po::unknown_option
+            );
+    }
+
+    UTF_MESSAGE( "* enableJvm == true: --jar-base-path is registered and required" );
+
+    {
+        bl::messaging::BaseServerCmdLine cmdlJvm( "test-server", true /* enableJvm */ );
+
+        UTF_MESSAGE( cmdlJvm.helpMessage() );
+
+        /*
+         * CmdLineBase::checkRequiredOptions() reports missing required options as a
+         * bl::UserMessageException rather than as bl::po::required_option - see
+         * CmdLine_MissingRequiredOptionsMessage
+         */
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            cmdlJvm.parseCommandLine( peerAndBrokers ),
+            bl::UserMessageException,
+            "the option '--jar-base-path' is required but missing"
+            );
+    }
+
+    {
+        bl::messaging::BaseServerCmdLine cmdlJvm( "test-server", true /* enableJvm */ );
+
+        UTF_REQUIRE_NO_THROW( cmdlJvm.parseCommandLine( peerAndBrokers + " --jar-base-path /opt/jars" ) );
+
+        UTF_REQUIRE_EQUAL( 0U, cmdlJvm.m_jvmDebugPort.getValue() );
+    }
+
+    UTF_MESSAGE( "* --peer-id is required in both shapes" );
+
+    {
+        bl::messaging::BaseServerCmdLine cmdlNoJvm( "test-server", false /* enableJvm */ );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            cmdlNoJvm.parseCommandLine( "--broker-endpoints host:29300" ),
+            bl::UserMessageException,
+            "the option '--peer-id' is required but missing"
+            );
+    }
+
+    {
+        bl::messaging::BaseServerCmdLine cmdlJvm( "test-server", true /* enableJvm */ );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            cmdlJvm.parseCommandLine( "--broker-endpoints host:29300 --jar-base-path /opt/jars" ),
+            bl::UserMessageException,
+            "the option '--peer-id' is required but missing"
+            );
+    }
+
+    UTF_MESSAGE( "* --broker-endpoints accepts more than one value" );
+
+    {
+        bl::messaging::BaseServerCmdLine cmdlNoJvm( "test-server", false /* enableJvm */ );
+
+        UTF_REQUIRE_NO_THROW(
+            cmdlNoJvm.parseCommandLine(
+                "--peer-id 11111111-2222-3333-4444-555555555555 --broker-endpoints a:1 b:2"
+                )
+            );
+
+        UTF_REQUIRE_EQUAL( 2U, cmdlNoJvm.m_brokerEndpoints.getValue().size() );
+        UTF_CHECK_EQUAL( cmdlNoJvm.m_brokerEndpoints.getValue()[ 0 ], "a:1" );
+        UTF_CHECK_EQUAL( cmdlNoJvm.m_brokerEndpoints.getValue()[ 1 ], "b:2" );
+    }
+
+    UTF_MESSAGE( "***************** end CmdLine_BaseServerCmdLineJvmGating tests *****************\n" );
 }

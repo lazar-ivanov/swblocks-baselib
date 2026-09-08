@@ -6001,6 +6001,22 @@ UTF_AUTO_TEST_CASE( Tasks_RetryableWrapperTaskTests )
         );
 
     UTF_CHECK_EQUAL( executedTimestamps.size(), maxRetryCount );
+
+    /*
+     * ... and the back-off itself: RetryableWrapperTaskT::continuationTask() inserts a
+     * SimpleTimerTask carrying the configured retryTimeout between two consecutive attempts,
+     * so the recorded timestamps must be at least that far apart
+     *
+     * Only the LOWER bound is asserted, and with a generous tolerance of half the timeout, so
+     * that a loaded machine cannot fail it - while a regression which passed zero as the
+     * timer's initDelay / duration, turning the retry into a tight loop against a failing
+     * remote endpoint, still would
+     */
+
+    for( std::size_t i = 1U; i < executedTimestamps.size(); ++i )
+    {
+        UTF_CHECK( ( executedTimestamps[ i ] - executedTimestamps[ i - 1U ] ) >= ( retryTimeout / 2 ) );
+    }
 }
 
 UTF_AUTO_TEST_CASE( Tasks_ShutdownContinuationTests )

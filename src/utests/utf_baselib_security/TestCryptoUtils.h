@@ -960,3 +960,123 @@ UTF_AUTO_TEST_CASE( CryptoUtils_AllBundledTrustedRootsAreLoadable )
 
     UTF_CHECK( 0 == crypto::detail::getFirstError().value() );
 }
+
+UTF_AUTO_TEST_CASE( CryptoUtils_UntrustedEndpointsBookkeeping )
+{
+    using namespace bl;
+
+    /*
+     * The untrusted endpoints map and the allowUntrustedCertificates() flag are process
+     * global state in detail::CryptoInitT, driven end to end by AsioSslStreamWrapper around a
+     * real handshake. This case is the complement of that integration - it drives the
+     * accessors directly, with no network and no server, so that the map's own semantics are
+     * pinned independently of any handshake
+     *
+     * The endpoint id is one no other case uses, so this case is order independent; note that
+     * hasUntrustedEndpoints() is deliberately NOT asserted to be false on entry, because a
+     * manual run of TestAuthorizationCacheRestImpl may have populated the map already
+     */
+
+    UTF_REQUIRE( ! crypto::CryptoBase::allowUntrustedCertificates() );
+
+    {
+        /*
+         * The flag is what every SSL client path consults and it defaults to fail closed, so
+         * it has to be restored even if an assertion below throws - other cases in this
+         * binary depend on it being false
+         */
+
+        struct AllowUntrustedGuard
+        {
+            AllowUntrustedGuard()
+            {
+                crypto::CryptoBase::allowUntrustedCertificates( true );
+            }
+
+            ~AllowUntrustedGuard()
+            {
+                crypto::CryptoBase::allowUntrustedCertificates( false );
+            }
+        };
+
+        const AllowUntrustedGuard guard;
+
+        UTF_REQUIRE( crypto::CryptoBase::allowUntrustedCertificates() );
+    }
+
+    UTF_REQUIRE( ! crypto::CryptoBase::allowUntrustedCertificates() );
+
+    /*
+     * setUntrustedEndpointInfo() logs at WARNING level whenever it actually inserts, and the
+     * test harness turns every warning level log emitted during a case into a test failure
+     * ( UtfMain.h's line logger ), so the level is lowered for the remainder of the case
+     */
+
+    const Logging::LevelPusher pushLevel( Logging::LL_ERROR, true /* global */ );
+
+    /*
+     * setUntrustedEndpointInfo() takes both of its parameters by rvalue reference
+     */
+
+    const std::string endpointId( "w17-endpoint:0" );
+
+    crypto::CryptoBase::setUntrustedEndpointInfo( cpp::copy( endpointId ), std::string( "first reason" ) );
+
+    UTF_REQUIRE( crypto::CryptoBase::hasUntrustedEndpoints() );
+
+    UTF_REQUIRE_EQUAL( crypto::CryptoBase::getUntrustedEndpointsInfo().at( endpointId ), "first reason" );
+
+    /*
+     * The key assertion of this case: setUntrustedEndpointInfo() uses map::emplace(), which
+     * does nothing when the key is already present, so a second and DIFFERENT reason for the
+     * same endpoint is silently discarded and the FIRST one is what every consumer of
+     * getUntrustedEndpointsInfo() keeps reporting until the entry is cleared
+     *
+     * Switching emplace() to operator [] - the natural looking 'fix' - would flip this to
+     * last-writer-wins and change what applications report about untrusted peers; the end to
+     * end handshake coverage cannot tell the two apart because it only ever records one
+     * reason per endpoint
+     */
+
+    const auto sizeBefore = crypto::CryptoBase::getUntrustedEndpointsInfo().size();
+
+    crypto::CryptoBase::setUntrustedEndpointInfo( cpp::copy( endpointId ), std::string( "second reason" ) );
+
+    {
+        const auto info = crypto::CryptoBase::getUntrustedEndpointsInfo();
+
+        UTF_REQUIRE_EQUAL( info.at( endpointId ), "first reason" );
+        UTF_REQUIRE_EQUAL( info.size(), sizeBefore );
+    }
+
+    /*
+     * getUntrustedEndpointsInfo() copies the map under the lock, so mutating what it returned
+     * cannot reach the shared state
+     */
+
+    {
+        auto info = crypto::CryptoBase::getUntrustedEndpointsInfo();
+
+        info.clear();
+
+        UTF_REQUIRE( info.empty() );
+    }
+
+    UTF_REQUIRE( crypto::CryptoBase::getUntrustedEndpointsInfo().count( endpointId ) );
+
+    crypto::CryptoBase::clearUntrustedEndpointInfo( endpointId );
+
+    UTF_REQUIRE( ! crypto::CryptoBase::getUntrustedEndpointsInfo().count( endpointId ) );
+
+    /*
+     * Clearing the same id a second time, and clearing an id which was never registered, are
+     * both no-ops rather than errors
+     */
+
+    const auto sizeAfterClear = crypto::CryptoBase::getUntrustedEndpointsInfo().size();
+
+    UTF_REQUIRE_NO_THROW( crypto::CryptoBase::clearUntrustedEndpointInfo( endpointId ) );
+    UTF_REQUIRE_NO_THROW( crypto::CryptoBase::clearUntrustedEndpointInfo( "never-registered" ) );
+
+    UTF_REQUIRE_EQUAL( crypto::CryptoBase::getUntrustedEndpointsInfo().size(), sizeAfterClear );
+}

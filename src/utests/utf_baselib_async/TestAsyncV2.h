@@ -511,8 +511,7 @@ namespace asyncv2
                                         }
                                         catch( bl::eh::system_error& e )
                                         {
-                                            BL_UNUSED( e );
-                                            BL_ASSERT( bl::asio::error::operation_aborted == e.code() );
+                                            UTF_REQUIRE( bl::asio::error::operation_aborted == e.code() );
                                         }
 
                                         ++canceledTests;
@@ -526,6 +525,23 @@ namespace asyncv2
                                         << canceledTests
                                         << " async tasks"
                                     );
+
+                                /*
+                                 * The 2 s sleep above leaves plenty of the 10K x 4-5 randomised
+                                 * async calls still in flight, so cancelAll() must have failed at
+                                 * least one of them - otherwise a cancellation path which silently
+                                 * stopped cancelling would leave this branch green, because the
+                                 * client tasks are cancelled by their own execution queue no
+                                 * matter what the executor does
+                                 *
+                                 * The BL_ASSERT( eq -> isEmpty() ) below is deliberately left
+                                 * alone - it sits outside this branch and also guards the
+                                 * flushAndDiscardReady() path shared with the non-cancel cases
+                                 */
+
+                                UTF_REQUIRE( canceledTests > 0U );
+
+                                UTF_REQUIRE( eq -> isEmpty() );
                             }
                             else
                             {

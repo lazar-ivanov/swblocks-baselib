@@ -616,6 +616,70 @@ UTF_AUTO_TEST_CASE( CoreDataModelTests )
 
         {
             /*
+             * readOnly( true ) is SHALLOW
+             *
+             * BL_DM_DEFINE_CHECK_READ_ONLY() is emitted only in the owning object's setters,
+             * *Lvalue() accessors and *Reset() methods, and the complex property getters return
+             * a const reference to a container of om::ObjPtr< T > whose POINTEES are non-const -
+             * so a caller can reach through a frozen parent and mutate a child model freely.
+             * readOnly( true ) does not propagate the flag to children
+             *
+             * This records the CURRENT behaviour rather than a guarantee. The only production
+             * user of the flag is AuthorizationServiceRest::create ( AuthorizationServiceRest.h
+             * :250 and :282 ), whose safety rests on the config it freezes never being reached
+             * through in this way. Anyone who deepens the guarantee has to edit the assertions
+             * below deliberately
+             *
+             * A separate instance is used because testObj is reused by the unmapped() sub-block
+             * below, which calls populateTestObject() and verifyTestObject() and therefore
+             * requires exactly two complexVector elements and two complexMap entries
+             */
+
+            const auto obj = TestObject::createInstance();
+
+            {
+                const auto child1 = ContainedTestObject::createInstance();
+                child1 -> strValue( "nested-1" );
+
+                const auto child2 = ContainedTestObject::createInstance();
+                child2 -> strValue( "nested-2" );
+
+                const auto child3 = ContainedTestObject::createInstance();
+                child3 -> strValue( "nested-3" );
+
+                obj -> complexLvalue() = om::copy( child1 );
+                obj -> complexVectorLvalue().push_back( om::copy( child2 ) );
+                obj -> complexMapLvalue().emplace( "child3", om::copy( child3 ) );
+            }
+
+            obj -> readOnly( true );
+
+            /*
+             * The owning object is guarded ...
+             */
+
+            UTF_REQUIRE_THROW_MESSAGE(
+                obj -> complexLvalue(),
+                UnexpectedException,
+                "Trying to modify a read only object"
+                );
+
+            /*
+             * ... and none of its children are
+             */
+
+            UTF_REQUIRE_NO_THROW( obj -> complex() -> strValue( "changed-1" ) );
+            UTF_REQUIRE_EQUAL( obj -> complex() -> strValue(), "changed-1" );
+
+            UTF_REQUIRE_NO_THROW( obj -> complexVector()[ 0 ] -> strValue( "changed-2" ) );
+            UTF_REQUIRE_EQUAL( obj -> complexVector()[ 0 ] -> strValue(), "changed-2" );
+
+            UTF_REQUIRE_NO_THROW( obj -> complexMap().begin() -> second -> strValue( "changed-3" ) );
+            UTF_REQUIRE_EQUAL( obj -> complexMap().begin() -> second -> strValue(), "changed-3" );
+        }
+
+        {
+            /*
              * unmapped() behavior tests
              */
 

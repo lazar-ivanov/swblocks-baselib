@@ -2816,4 +2816,82 @@ UTF_AUTO_TEST_CASE( JsonNumericSmallUint64ReadsAsInt64 )
         );
 }
 
+UTF_AUTO_TEST_CASE( JsonObjectJoinQuoteFormattedKeys )
+{
+    utest::json::logImplementation();
+
+    /*
+     * The json::object overload of str::joinQuoteFormattedKeys ( JsonUtils.h ) shadows the
+     * generic MAP template ( StringUtils.h ), which uses pair.first and therefore does not
+     * compile against boost::json::object
+     *
+     * This case covers only what the overload itself contributes - the key extraction through
+     * BL_JSON_PAIR_KEY, the json::string_view -> std::string conversion, and the empty object.
+     * The separator / lastSeparator semantics of joinFormattedImpl are already pinned by
+     * BaseLib_StringUtilsJoinFormattedTests and are deliberately not duplicated here
+     *
+     * The keys are inserted in alphabetical order so that Boost.JSON's insertion order and
+     * json-spirit's std::map ordering agree - for unsorted insertion the two backends would
+     * emit the keys in a different order and no single expected string would fit both
+     */
+
+    bl::json::object three;
+    three.emplace( "alpha", "a" );
+    three.emplace( "beta", "b" );
+    three.emplace( "gamma", "c" );
+
+    UTF_REQUIRE_EQUAL(
+        bl::str::joinQuoteFormattedKeys( three ),
+        std::string( "'alpha', 'beta' and 'gamma'" )
+        );
+
+    UTF_REQUIRE_EQUAL(
+        bl::str::joinQuoteFormattedKeys( three, "|", "|" ),
+        std::string( "'alpha'|'beta'|'gamma'" )
+        );
+
+    bl::json::object two;
+    two.emplace( "alpha", "a" );
+    two.emplace( "beta", "b" );
+
+    UTF_REQUIRE_EQUAL(
+        bl::str::joinQuoteFormattedKeys( two ),
+        std::string( "'alpha' and 'beta'" )
+        );
+
+    bl::json::object one;
+    one.emplace( "alpha", "a" );
+
+    UTF_REQUIRE_EQUAL( bl::str::joinQuoteFormattedKeys( one ), std::string( "'alpha'" ) );
+
+    /*
+     * The empty object is the only path through the overload which never reaches
+     * BL_JSON_PAIR_KEY at all
+     */
+
+    const bl::json::object empty;
+
+    UTF_REQUIRE_EQUAL( bl::str::joinQuoteFormattedKeys( empty ), std::string( "" ) );
+
+    /*
+     * A key is copied out verbatim and only wrapped in quotes - it is neither escaped nor
+     * validated, so an embedded apostrophe and a non-ASCII UTF-8 byte sequence both survive
+     * the conversion unchanged. Each is put in a single key object so that the assertion does
+     * not depend on how the two backends order such a key against the others
+     */
+
+    bl::json::object quoted;
+    quoted.emplace( "it's", "a" );
+
+    UTF_REQUIRE_EQUAL( bl::str::joinQuoteFormattedKeys( quoted ), std::string( "'it's'" ) );
+
+    bl::json::object nonAscii;
+    nonAscii.emplace( "Caf\xC3\xA9", "a" );
+
+    UTF_REQUIRE_EQUAL(
+        bl::str::joinQuoteFormattedKeys( nonAscii ),
+        std::string( "'Caf\xC3\xA9'" )
+        );
+}
+
 #endif /* __UTEST_TESTJSONABSTRACTION_H_ */
