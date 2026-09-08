@@ -16,6 +16,240 @@
 
 #include <utests/baselib/HttpServerHelpers.h>
 
+namespace
+{
+    /**
+     * @brief A one-shot canned-response raw TCP server for the HTTP client tests
+     *
+     * The real bl::httpserver::HttpServer is correct by construction - it derives
+     * Content-Length from the body it holds, validates every custom header and always
+     * emits a well formed status line - so it cannot produce the inputs the client's
+     * defensive guards exist for. This responder serves a byte exact response instead,
+     * on an ephemeral loopback port so no test needs a fixed port or a global lock
+     */
+
+    class RawHttpResponder
+    {
+        BL_NO_COPY_OR_MOVE( RawHttpResponder )
+
+    private:
+
+        bl::asio::io_service                    m_ioService;
+        bl::asio::ip::tcp::acceptor             m_acceptor;
+        const unsigned short                    m_port;
+        const std::string                       m_response;
+        const bl::time::time_duration           m_delayBeforeResponse;
+        const std::size_t                       m_chunkSize;
+        const bl::time::time_duration           m_delayBetweenChunks;
+        std::atomic< bool >                     m_stopRequested;
+        mutable bl::os::mutex                   m_lock;
+        std::string                             m_request;
+        bl::cpp::SafeUniquePtr< bl::os::thread > m_thread;
+
+    public:
+
+        explicit RawHttpResponder(
+            SAA_in          std::string&&                       response,
+            SAA_in_opt      const bl::time::time_duration&      delayBeforeResponse = bl::time::milliseconds( 0 ),
+            SAA_in_opt      const std::size_t                   chunkSize = 0U /* 0 = write the response in one go */,
+            SAA_in_opt      const bl::time::time_duration&      delayBetweenChunks = bl::time::milliseconds( 0 )
+            )
+            :
+            m_acceptor(
+                m_ioService,
+                bl::asio::ip::tcp::endpoint( bl::asio::ip::address_v4::loopback(), 0 /* ephemeral port */ )
+                ),
+            m_port( m_acceptor.local_endpoint().port() ),
+            m_response( BL_PARAM_FWD( response ) ),
+            m_delayBeforeResponse( delayBeforeResponse ),
+            m_chunkSize( chunkSize ),
+            m_delayBetweenChunks( delayBetweenChunks ),
+            m_stopRequested( false )
+        {
+            /*
+             * The acceptor constructor above has already bound and started listening, so a
+             * client which connects before the worker reaches accept() lands in the backlog
+             */
+
+            m_thread.reset( new bl::os::thread( bl::cpp::bind( &RawHttpResponder::run, this ) ) );
+        }
+
+        ~RawHttpResponder() NOEXCEPT
+        {
+            BL_NOEXCEPT_BEGIN()
+
+            m_stopRequested = true;
+
+            /*
+             * Closing the acceptor does not reliably wake a worker which is already blocked
+             * in accept(), so unblock it with one throwaway loopback connection while the
+             * acceptor is still open and only then join - the acceptor is closed afterwards
+             * by its own destructor. Without this a case which never connects would hang
+             */
+
+            {
+                bl::eh::error_code ec;
+
+                bl::asio::io_service ioService;
+                bl::asio::ip::tcp::socket socket( ioService );
+
+                socket.connect(
+                    bl::asio::ip::tcp::endpoint( bl::asio::ip::address_v4::loopback(), m_port ),
+                    ec
+                    );
+
+                socket.close( ec );
+            }
+
+            bl::os::safeThreadJoin( *m_thread );
+
+            BL_NOEXCEPT_END()
+        }
+
+        unsigned short port() const NOEXCEPT
+        {
+            return m_port;
+        }
+
+        std::string lastRequest() const
+        {
+            BL_MUTEX_GUARD( m_lock );
+
+            return m_request;
+        }
+
+        /**
+         * @brief Assembles a raw response out of a status line, a list of headers and a body,
+         * so the cases below read as data rather than as string concatenation
+         */
+
+        static std::string makeResponse(
+            SAA_in          const std::string&                  statusLine,
+            SAA_in          const std::vector< std::string >&   headers,
+            SAA_in          const std::string&                  body
+            )
+        {
+            bl::cpp::SafeOutputStringStream oss;
+
+            oss << statusLine << "\r\n";
+
+            for( const auto& header : headers )
+            {
+                oss << header << "\r\n";
+            }
+
+            oss << "\r\n" << body;
+
+            return oss.str();
+        }
+
+    private:
+
+        /**
+         * @brief Sleeps in small slices and returns false if a shutdown was requested meanwhile
+         *
+         * The destructor joins the worker, so a long uninterruptible sleep here would make
+         * every case which configures a delay pay for it in full
+         */
+
+        bool sleepUnlessStopping( SAA_in const bl::time::time_duration& duration )
+        {
+            if( duration.total_milliseconds() > 0 )
+            {
+                bl::os::interruptibleSleep(
+                    bl::cpp::copy( duration ),
+                    bl::time::milliseconds( 250 ),
+                    [ this ]() -> bool
+                    {
+                        return m_stopRequested;
+                    }
+                    );
+            }
+
+            return ! m_stopRequested;
+        }
+
+        void run()
+        {
+            BL_NOEXCEPT_BEGIN()
+
+            bl::eh::error_code ec;
+
+            bl::asio::ip::tcp::socket socket( m_ioService );
+
+            m_acceptor.accept( socket, ec );
+
+            if( ec )
+            {
+                return;
+            }
+
+            {
+                bl::asio::streambuf buffer( 64U * 1024U );
+
+                bl::asio::read_until( socket, buffer, "\r\n\r\n", ec );
+
+                if( buffer.size() > 0 )
+                {
+                    /*
+                     * The capture idiom and the non-empty guard are the production ones from
+                     * SimpleHttpTask.h - inserting an empty streambuf would set failbit, which
+                     * cpp::SafeOutputStringStream turns into an exception
+                     */
+
+                    bl::cpp::SafeOutputStringStream oss;
+
+                    oss << &buffer;
+
+                    BL_MUTEX_GUARD( m_lock );
+
+                    m_request = oss.str();
+                }
+            }
+
+            if( ec || ! sleepUnlessStopping( m_delayBeforeResponse ) )
+            {
+                return;
+            }
+
+            if( 0U == m_chunkSize )
+            {
+                bl::asio::write( socket, bl::asio::buffer( m_response ), ec );
+            }
+            else
+            {
+                for( std::size_t offset = 0U; offset < m_response.size(); offset += m_chunkSize )
+                {
+                    if( 0U != offset && ! sleepUnlessStopping( m_delayBetweenChunks ) )
+                    {
+                        break;
+                    }
+
+                    bl::asio::write(
+                        socket,
+                        bl::asio::buffer(
+                            m_response.c_str() + offset,
+                            std::min( m_chunkSize, m_response.size() - offset )
+                            ),
+                        ec
+                        );
+
+                    if( ec )
+                    {
+                        break;
+                    }
+                }
+            }
+
+            socket.shutdown( bl::asio::ip::tcp::socket::shutdown_both, ec );
+            socket.close( ec );
+
+            BL_NOEXCEPT_END()
+        }
+    };
+
+} // __unnamed
+
 UTF_AUTO_TEST_CASE( Client_SimpleHttpTests )
 {
     using namespace bl;
@@ -289,6 +523,232 @@ UTF_AUTO_TEST_CASE( Client_SimpleHttpTests )
                 });
         }
         );
+}
+
+UTF_AUTO_TEST_CASE( Client_SimpleHttpTruncatedResponseTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    BL_LOG_MULTILINE(
+        Logging::debug(),
+        BL_MSG()
+            << "\n******************************** Starting test: Client_SimpleHttpTruncatedResponseTests ********************************\n"
+        );
+
+    /*
+     * Each sub-block below delivers exactly these ten body bytes and then closes the
+     * connection - what varies is only the length the server announces for them.
+     *
+     * The tasks are given an explicit timeout because the default for GET is 30 minutes;
+     * a loopback exchange which does not complete within a minute means a broken fixture
+     * and should fail the test rather than hang it
+     */
+
+    const std::string body( "0123456789" );
+
+    /*
+     * (1) A body which stops short of the announced Content-Length must be rejected
+     */
+
+    {
+        RawHttpResponder responder(
+            RawHttpResponder::makeResponse(
+                "HTTP/1.0 200 OK",
+                { "Content-Type: text/plain", "Content-Length: 100" },
+                body
+                )
+            );
+
+        UTF_REQUIRE( 0U != responder.port() );
+
+        scheduleAndExecuteInParallel(
+            [ &responder ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+            {
+                eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+                const auto taskImpl = SimpleHttpGetTaskImpl::createInstance(
+                    std::string( "127.0.0.1" ),
+                    responder.port(),
+                    "/probe"
+                    );
+
+                taskImpl -> setTimeout( time::seconds( 60 ) );
+
+                const auto task = om::qi< Task >( taskImpl );
+
+                eq -> push_back( task );
+
+                UTF_REQUIRE_THROW_MESSAGE(
+                    eq -> waitForSuccess( task ),
+                    bl::UnexpectedException,
+                    "The HTTP response was truncated"
+                    );
+
+                UTF_REQUIRE( taskImpl -> isFailed() );
+
+                /*
+                 * The status line was parsed before the body was found to be short, and the
+                 * short body is not handed to the caller as if it were the whole response
+                 */
+
+                UTF_REQUIRE_EQUAL( 200U, taskImpl -> getHttpStatus() );
+                UTF_REQUIRE( taskImpl -> getResponse().empty() );
+
+                /*
+                 * waitForSuccess() unlinks the task it waited on, so the flush at the end of
+                 * scheduleAndExecuteInParallel does not rethrow what was just asserted here
+                 */
+
+                UTF_REQUIRE( eq -> isEmpty() );
+            });
+
+        /*
+         * The only direct check anywhere that initRequest() emits the request line it claims
+         */
+
+        UTF_REQUIRE( 0U == responder.lastRequest().find( "GET /probe HTTP/1.0\r\n" ) );
+    }
+
+    /*
+     * (2) A body which matches the announced Content-Length exactly is accepted
+     */
+
+    {
+        RawHttpResponder responder(
+            RawHttpResponder::makeResponse(
+                "HTTP/1.0 200 OK",
+                { "Content-Type: text/plain", "Content-Length: 10" },
+                body
+                )
+            );
+
+        scheduleAndExecuteInParallel(
+            [ &responder ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+            {
+                eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+                const auto taskImpl = SimpleHttpGetTaskImpl::createInstance(
+                    std::string( "127.0.0.1" ),
+                    responder.port(),
+                    "/probe"
+                    );
+
+                taskImpl -> setTimeout( time::seconds( 60 ) );
+
+                const auto task = om::qi< Task >( taskImpl );
+
+                eq -> push_back( task );
+
+                UTF_REQUIRE_NO_THROW( eq -> waitForSuccess( task ) );
+
+                UTF_REQUIRE_EQUAL( taskImpl -> getResponse().size(), 10U );
+
+                UTF_REQUIRE( eq -> isEmpty() );
+            });
+    }
+
+    /*
+     * (3) When nothing is announced the m_responseLength sentinel keeps the check off by
+     *     design - a length-less HTTP/1.0 response which simply ends at EOF is complete
+     */
+
+    {
+        RawHttpResponder responder(
+            RawHttpResponder::makeResponse(
+                "HTTP/1.0 200 OK",
+                { "Content-Type: text/plain" },
+                body
+                )
+            );
+
+        scheduleAndExecuteInParallel(
+            [ &responder ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+            {
+                eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+                const auto taskImpl = SimpleHttpGetTaskImpl::createInstance(
+                    std::string( "127.0.0.1" ),
+                    responder.port(),
+                    "/probe"
+                    );
+
+                taskImpl -> setTimeout( time::seconds( 60 ) );
+
+                const auto task = om::qi< Task >( taskImpl );
+
+                eq -> push_back( task );
+
+                UTF_REQUIRE_NO_THROW( eq -> waitForSuccess( task ) );
+
+                UTF_REQUIRE_EQUAL( taskImpl -> getResponse().size(), 10U );
+
+                UTF_REQUIRE( eq -> isEmpty() );
+            });
+    }
+
+    /*
+     * (4) The guard is an inequality, so a body which overruns the announced
+     *     Content-Length is rejected just the same
+     */
+
+    {
+        RawHttpResponder responder(
+            RawHttpResponder::makeResponse(
+                "HTTP/1.0 200 OK",
+                { "Content-Type: text/plain", "Content-Length: 5" },
+                body
+                )
+            );
+
+        scheduleAndExecuteInParallel(
+            [ &responder ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+            {
+                eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+                const auto taskImpl = SimpleHttpGetTaskImpl::createInstance(
+                    std::string( "127.0.0.1" ),
+                    responder.port(),
+                    "/probe"
+                    );
+
+                taskImpl -> setTimeout( time::seconds( 60 ) );
+
+                const auto task = om::qi< Task >( taskImpl );
+
+                eq -> push_back( task );
+
+                UTF_REQUIRE_THROW_MESSAGE(
+                    eq -> waitForSuccess( task ),
+                    bl::UnexpectedException,
+                    "The HTTP response was truncated"
+                    );
+
+                UTF_REQUIRE( taskImpl -> isFailed() );
+                UTF_REQUIRE( taskImpl -> getResponse().empty() );
+
+                /*
+                 * The message must name both the ten bytes which arrived and the five which
+                 * were announced, i.e. the counts were compared and not merely bounded
+                 */
+
+                try
+                {
+                    cpp::safeRethrowException( taskImpl -> exception() );
+
+                    UTF_FAIL( "An over-long HTTP response must be rejected" );
+                }
+                catch( bl::UnexpectedException& e )
+                {
+                    const std::string message( e.what() );
+
+                    UTF_REQUIRE( cpp::contains( message, "10" ) );
+                    UTF_REQUIRE( cpp::contains( message, "5" ) );
+                }
+
+                UTF_REQUIRE( eq -> isEmpty() );
+            });
+    }
 }
 
 UTF_AUTO_TEST_CASE( Client_SimpleHttpTimeoutTests )
