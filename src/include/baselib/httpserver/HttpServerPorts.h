@@ -17,6 +17,7 @@
 #ifndef __BL_HTTPSERVER_HTTPSERVERPORTS_H_
 #define __BL_HTTPSERVER_HTTPSERVERPORTS_H_
 
+#include <baselib/core/OS.h>
 #include <baselib/core/BaseIncludes.h>
 
 namespace bl

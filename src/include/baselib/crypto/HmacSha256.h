@@ -17,6 +17,8 @@
 #ifndef __BL_CRYPTO_HMACSHA256_H_
 #define __BL_CRYPTO_HMACSHA256_H_
 
+#include <baselib/crypto/ErrorHandling.h>
+
 #include <baselib/core/CPP.h>
 #include <baselib/core/ErrorHandling.h>
 #include <baselib/core/SerializationUtils.h>

@@ -17,6 +17,10 @@
 #ifndef __BL_JNI_JVMHELPERS_H_
 #define __BL_JNI_JVMHELPERS_H_
 
+#include <baselib/core/FsUtils.h>
+#include <baselib/core/MessageBuffer.h>
+#include <baselib/core/OS.h>
+#include <baselib/core/StringUtils.h>
 #include <baselib/core/BaseIncludes.h>
 
 namespace bl

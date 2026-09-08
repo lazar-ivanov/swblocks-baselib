@@ -17,6 +17,8 @@
 #ifndef __BL_LOADER_VERSION_H_
 #define __BL_LOADER_VERSION_H_
 
+#include <baselib/core/StringUtils.h>
+#include <baselib/core/Utils.h>
 #include <baselib/core/BaseIncludes.h>
 
 namespace bl
