@@ -1145,3 +1145,457 @@ UTF_AUTO_TEST_CASE( BlobTransfer_FilesPackagerInMemoryProxyTests )
         );
 }
 
+
+/************************************************************************
+ * chk2ScheduleChunk's two corruption guards for the unpackager unit
+ *
+ * The receiver never sends a chunk twice and a zero-chunk entry never has a chunk id
+ * pointing at it, so neither guard has ever fired - they are the unpackager's only defence
+ * against a malformed package or a duplicating transport, and they are exactly the kind of
+ * check which gets 'simplified away' during a refactoring. No blob server and no machine
+ * global test lock are needed
+ */
+
+namespace
+{
+    /**
+     * @brief A read only metadata decorator which resolves one nominated chunk id to a
+     * different entry than the one it was created against, and which can hide one entry from
+     * the scheduler's enumeration
+     *
+     * FilesystemMetadataInMemoryImpl derives queryChunksCount() from the chunks which were
+     * actually created against an entry, so a chunk id which resolves to an entry with zero
+     * chunks cannot be built with it at all - which is precisely what makes the second
+     * BL_CHK in chk2ScheduleChunk a *corruption* guard: only a malformed package can produce
+     * that shape
+     *
+     * Hiding the entry from queryAllEntries() is what makes the second guard reachable
+     * deterministically: a zero-chunk File entry which the scheduler does enumerate is
+     * created and finalized straight away, and the arriving chunk would then trip the *first*
+     * guard instead - the two are checked in that order
+     *
+     * Note that UuidIteratorImpl does not copy the vector it is handed, so the filtered entry
+     * list is held by this object, which the unit keeps alive for its whole lifetime
+     */
+
+    template
+    <
+        typename E = void
+    >
+    class RemappedChunkMetadataT : public bl::data::FilesystemMetadataRO
+    {
+        BL_DECLARE_OBJECT_IMPL_ONEIFACE( RemappedChunkMetadataT, bl::data::FilesystemMetadataRO )
+
+    protected:
+
+        const bl::om::ObjPtr< bl::data::FilesystemMetadataRO >                       m_inner;
+        const bl::uuid_t                                                             m_chunkId;
+        const bl::uuid_t                                                             m_entryId;
+        std::vector< bl::uuid_t >                                                    m_visibleEntries;
+
+        RemappedChunkMetadataT(
+            SAA_in          bl::om::ObjPtr< bl::data::FilesystemMetadataRO >&&        inner,
+            SAA_in          const bl::uuid_t&                                         chunkId,
+            SAA_in          const bl::uuid_t&                                         entryId
+            )
+            :
+            m_inner( BL_PARAM_FWD( inner ) ),
+            m_chunkId( chunkId ),
+            m_entryId( entryId )
+        {
+            const auto entries = m_inner -> queryAllEntries();
+
+            while( entries -> hasCurrent() )
+            {
+                if( entries -> current() != m_entryId )
+                {
+                    m_visibleEntries.push_back( entries -> current() );
+                }
+
+                entries -> loadNext();
+            }
+        }
+
+    public:
+
+        virtual bl::om::ObjPtr< bl::UuidIterator > queryAllEntries() OVERRIDE
+        {
+            return bl::UuidIteratorImpl::createInstance< bl::UuidIterator >( m_visibleEntries );
+        }
+
+        virtual bl::om::ObjPtr< bl::UuidIterator > queryAllChunks() OVERRIDE
+        {
+            return m_inner -> queryAllChunks();
+        }
+
+        virtual std::size_t queryEntriesCount() OVERRIDE
+        {
+            return m_visibleEntries.size();
+        }
+
+        virtual bl::om::ObjPtr< bl::UuidIterator > queryChunks( SAA_in const bl::uuid_t& entryId ) OVERRIDE
+        {
+            return m_inner -> queryChunks( entryId );
+        }
+
+        virtual std::size_t queryChunksCount( SAA_in const bl::uuid_t& entryId ) OVERRIDE
+        {
+            return m_inner -> queryChunksCount( entryId );
+        }
+
+        virtual bl::uuid_t queryEntryId( SAA_in const bl::uuid_t& chunkId ) OVERRIDE
+        {
+            return chunkId == m_chunkId ? m_entryId : m_inner -> queryEntryId( chunkId );
+        }
+
+        virtual EntryInfo loadEntryInfo( SAA_in const bl::uuid_t& entryId ) OVERRIDE
+        {
+            return m_inner -> loadEntryInfo( entryId );
+        }
+
+        virtual ChunkInfo loadChunkInfo( SAA_in const bl::uuid_t& chunkId ) OVERRIDE
+        {
+            return m_inner -> loadChunkInfo( chunkId );
+        }
+    };
+
+    typedef bl::om::ObjectImpl< RemappedChunkMetadataT<> > RemappedChunkMetadata;
+
+    /**
+     * @brief One single chunk file entry plus the chunk which belongs to it
+     */
+
+    struct LateChunkFile
+    {
+        bl::uuid_t                                                                   chunkId;
+        bl::om::ObjPtr< bl::data::DataBlock >                                        block;
+    };
+
+    /**
+     * @brief The hand built package both sub-blocks feed
+     *
+     * It is one directory plus 'noOfFiles' single chunk files; the caller nominates how many,
+     * because the first sub-block needs enough legitimate work to cycle the unpackager's
+     * fixed worker pool (see the comment in the case below)
+     */
+
+    void buildLateChunkPackage(
+        SAA_out         bl::om::ObjPtr< bl::data::FilesystemMetadataRO >&            fsmdRO,
+        SAA_out         std::vector< LateChunkFile >&                                files,
+        SAA_out         bl::uuid_t&                                                  emptyEntryId,
+        SAA_in          const std::size_t                                            noOfFiles,
+        SAA_in          const std::size_t                                            chunkSize
+        )
+    {
+        using namespace bl;
+
+        typedef data::FilesystemMetadata                                             fsmd_t;
+        typedef utest::TestBlobTransferUtils                                         utils_t;
+
+        const auto now = std::time( nullptr );
+        BL_CHK_ERRNO_NM( ( std::time_t )( -1 ), now );
+
+        const auto fsmdWO =
+            data::FilesystemMetadataInMemoryImpl::createInstance< data::FilesystemMetadataWO >();
+
+        utils_t::createEntry( fsmdWO, fsmd_t::Directory, "d", fs::path() /* targetPath */, 0U /* size */, now );
+
+        for( std::size_t i = 0U; i < noOfFiles; ++i )
+        {
+            const auto name = resolveMessage( BL_MSG() << "d/f" << i << ".bin" );
+
+            const auto entryId = utils_t::createEntry(
+                fsmdWO,
+                fsmd_t::File,
+                name,
+                fs::path()                                          /* targetPath */,
+                chunkSize,
+                now
+                );
+
+            auto block = createChunkData( 0U /* pos */, chunkSize );
+
+            fsmd_t::ChunkInfo chunkInfo;
+
+            chunkInfo.pos = 0U;
+            chunkInfo.size = static_cast< std::uint32_t >( chunkSize );
+            chunkInfo.checksum = computeChunkChecksum( block );
+
+            const std::uint32_t chunkChecksumValue = chunkInfo.checksum;
+
+            cs::crc_32_type fileCrc;
+
+            fileCrc.process_bytes( &chunkChecksumValue, sizeof( chunkChecksumValue ) );
+
+            LateChunkFile file;
+
+            file.chunkId = fsmdWO -> createChunk( entryId, std::move( chunkInfo ) );
+            file.block = std::move( block );
+
+            files.push_back( std::move( file ) );
+
+            fsmdWO -> associateChecksum( entryId, fileCrc.checksum() );
+        }
+
+        /*
+         * A second File entry which legitimately has size zero and no chunks at all
+         */
+
+        emptyEntryId = utils_t::createEntry(
+            fsmdWO,
+            fsmd_t::File,
+            "d/empty.bin",
+            fs::path()                                              /* targetPath */,
+            0U                                                      /* size */,
+            now
+            );
+
+        fsmdWO -> finalize();
+
+        fsmdRO = om::qi< data::FilesystemMetadataRO >( fsmdWO );
+    }
+
+    /**
+     * @brief Blocks until the unpackager unit's first loop iteration has created the package
+     * directories, which is the only proof available that its worker queue exists -
+     * onChunkArrived() does not verify that the unit has been started
+     */
+
+    void waitForUnpackagerStaging( SAA_in const bl::fs::path& staging )
+    {
+        using namespace bl;
+
+        const std::size_t maxWaitIterations = 500U;
+
+        std::size_t waited = 0U;
+
+        for( ; waited < maxWaitIterations; ++waited )
+        {
+            if( fs::exists( staging / "d" ) )
+            {
+                return;
+            }
+
+            os::sleep( time::milliseconds( 20 ) );
+        }
+
+        UTF_FAIL( "The unpackager unit did not create the package directories in time" );
+    }
+
+    /**
+     * @brief Pushes one chunk into a bound input connector, retrying while the unit has no
+     * idle worker task
+     */
+
+    void feedChunk(
+        SAA_in          const bl::om::ObjPtr< bl::reactive::Observer >&              input,
+        SAA_in          const bl::uuid_t&                                            chunkId,
+        SAA_in          const bl::om::ObjPtr< bl::data::DataBlock >&                 block
+        )
+    {
+        using namespace bl;
+
+        data::DataChunkBlock chunkBlock;
+
+        chunkBlock.chunkId = chunkId;
+        chunkBlock.data = block;
+
+        while( ! input -> onNext( cpp::any( chunkBlock ) ) )
+        {
+            os::sleep( time::milliseconds( 20 ) );
+        }
+    }
+}
+
+UTF_AUTO_TEST_CASE( BlobTransfer_UnpackagerRejectsLateChunksTests )
+{
+    using namespace bl;
+
+    typedef utest::TestBlobTransferUtils                                             utils_t;
+
+    const std::size_t chunkSize = 1024U;
+
+    {
+        /*
+         * (1) The same chunk arrives twice
+         *
+         * A single chunk entry is finalized as soon as its only chunk has been written, and
+         * processTopReadyTask() then moves its id into m_entriesCompleted - any further chunk
+         * for it is a duplicating transport and must be rejected rather than silently
+         * rewriting a finished file
+         *
+         * The bookkeeping is only done for the *top* ready task of a fixed worker pool
+         * (FixedWorkerPoolUnitBase::DEFAULT_POOL_SIZE is 16 and every worker starts out
+         * ready), so 'the file is on disk with the right size' does not yet mean 'the entry
+         * has been finalized' - the pool has to cycle first. Feeding a package of 24
+         * legitimate single chunk files past a 16 deep pool is what guarantees it, and it is
+         * why this sub-block does not simply feed one chunk twice
+         */
+
+        const std::size_t noOfFiles = 96U;
+
+        om::ObjPtr< data::FilesystemMetadataRO > fsmdRO;
+        std::vector< LateChunkFile > files;
+        uuid_t emptyEntryId = uuids::nil();
+
+        buildLateChunkPackage( fsmdRO, files, emptyEntryId, noOfFiles, chunkSize );
+
+        /*
+         * The duplicate feed must use a fresh DataBlock - processTopReadyTask() returns the
+         * first one to the pool, so reusing it would race the pool
+         */
+
+        const auto duplicateBlock = createChunkData( 0U /* pos */, chunkSize );
+
+        fs::path staging;
+
+        om::ObjPtr< utils_t::unpackager_unit_t > unitRef;
+
+        const utils_t::unpackager_feed_callback_t feedCallback =
+            [ & ]( SAA_inout utils_t::unpackager_unit_t& unit ) -> void
+            {
+                /*
+                 * The unit is kept alive past runStandaloneUnpackager( ... ) so that its
+                 * targetTmpDir() can still be read after the failure
+                 */
+
+                unitRef = om::copy( &unit );
+
+                staging = unit.targetTmpDir();
+
+                UTF_REQUIRE( ! staging.empty() );
+
+                waitForUnpackagerStaging( staging );
+
+                const auto input = unit.bindInputConnector< utils_t::unpackager_unit_t >(
+                    &utils_t::unpackager_unit_t::onChunkArrived,
+                    &utils_t::unpackager_unit_t::onInputCompleted
+                    );
+
+                for( const auto& file : files )
+                {
+                    feedChunk( input, file.chunkId, file.block );
+                }
+
+                /*
+                 * The first file is written out long before the last one is fed
+                 */
+
+                const fs::path filePath = staging / "d" / "f0.bin";
+
+                const std::size_t maxWaitIterations = 500U;
+
+                std::size_t waited = 0U;
+
+                for( ; waited < maxWaitIterations; ++waited )
+                {
+                    if(
+                        fs::path_exists( filePath ) &&
+                        fs::file_size( filePath ) == static_cast< std::uint64_t >( chunkSize )
+                        )
+                    {
+                        break;
+                    }
+
+                    os::sleep( time::milliseconds( 20 ) );
+                }
+
+                if( maxWaitIterations == waited )
+                {
+                    UTF_FAIL( "The unpackager unit did not write out the first chunk in time" );
+                }
+
+                feedChunk( input, files.front().chunkId, duplicateBlock );
+
+                input -> onCompleted();
+            };
+
+        const fs::TmpDir tmpDir;
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            utils_t::runStandaloneUnpackager(
+                fsmdRO,
+                tmpDir.path() / "out"                       /* targetDir */,
+                unpackager_unit_t::StpAllow,
+                feedCallback
+                ),
+            UnexpectedException,
+            "Chunk has arrived for an entry which has been finalized"
+            );
+
+        /*
+         * flushAllPendingTasks() discards the staging directory when the unit fails, so
+         * nothing partial is ever left behind
+         */
+
+        UTF_REQUIRE( unitRef );
+        UTF_REQUIRE( unitRef -> targetTmpDir().empty() );
+
+        UTF_REQUIRE( ! staging.empty() );
+        UTF_REQUIRE( ! fs::path_exists( staging ) );
+    }
+
+    {
+        /*
+         * (2) A chunk arrives for an entry which the package says has no chunks at all
+         */
+
+        om::ObjPtr< data::FilesystemMetadataRO > fsmdRO;
+        std::vector< LateChunkFile > files;
+        uuid_t emptyEntryId = uuids::nil();
+
+        buildLateChunkPackage( fsmdRO, files, emptyEntryId, 1U /* noOfFiles */, chunkSize );
+
+        const auto fsmdRemapped = om::qi< data::FilesystemMetadataRO >(
+            RemappedChunkMetadata::createInstance(
+                std::move( fsmdRO ),
+                files.front().chunkId,
+                emptyEntryId
+                )
+            );
+
+        fs::path staging;
+
+        om::ObjPtr< utils_t::unpackager_unit_t > unitRef;
+
+        const utils_t::unpackager_feed_callback_t feedCallback =
+            [ & ]( SAA_inout utils_t::unpackager_unit_t& unit ) -> void
+            {
+                unitRef = om::copy( &unit );
+
+                staging = unit.targetTmpDir();
+
+                UTF_REQUIRE( ! staging.empty() );
+
+                waitForUnpackagerStaging( staging );
+
+                const auto input = unit.bindInputConnector< utils_t::unpackager_unit_t >(
+                    &utils_t::unpackager_unit_t::onChunkArrived,
+                    &utils_t::unpackager_unit_t::onInputCompleted
+                    );
+
+                feedChunk( input, files.front().chunkId, files.front().block );
+
+                input -> onCompleted();
+            };
+
+        const fs::TmpDir tmpDir;
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            utils_t::runStandaloneUnpackager(
+                fsmdRemapped,
+                tmpDir.path() / "out"                       /* targetDir */,
+                unpackager_unit_t::StpAllow,
+                feedCallback
+                ),
+            UnexpectedException,
+            "Chunk has arrived for an entry which is expected to have zero chunks"
+            );
+
+        UTF_REQUIRE( unitRef );
+        UTF_REQUIRE( unitRef -> targetTmpDir().empty() );
+
+        UTF_REQUIRE( ! staging.empty() );
+        UTF_REQUIRE( ! fs::path_exists( staging ) );
+    }
+}

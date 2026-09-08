@@ -65,6 +65,95 @@ namespace
         return buffer;
     }
 
+    /**
+     * @brief Parses a PEM encoded certificate back through a memory BIO
+     *
+     * This is what makes the exact length read inside X509Cert.h's bioBufferToString()
+     * load bearing - a truncated PEM does not parse
+     */
+
+    auto parseCertificateFromPem( SAA_in const std::string& pem ) -> bl::crypto::x509cert_ptr_t
+    {
+        const auto buffer = bl::crypto::bio_ptr_t::attach(
+            ::BIO_new_mem_buf( const_cast< char* >( pem.c_str() ), bl::crypto::toIntSize( pem.size() ) )
+            );
+
+        UTF_REQUIRE( buffer );
+
+        return bl::crypto::x509cert_ptr_t::attach(
+            ::PEM_read_bio_X509(
+                buffer.get(),
+                nullptr     /* X509 certificate out pointer */,
+                nullptr     /* password callback */,
+                nullptr     /* password bytes */
+                )
+            );
+    }
+
+    /**
+     * @brief Parses a trusted root exactly the way CryptoBase::loadTrustedRootFromPem() does
+     */
+
+    auto parseTrustedRootFromPem( SAA_in const std::string& pem ) -> bl::crypto::x509cert_ptr_t
+    {
+        const auto buffer = bl::crypto::bio_ptr_t::attach(
+            ::BIO_new_mem_buf( const_cast< char* >( pem.c_str() ), bl::crypto::toIntSize( pem.size() ) )
+            );
+
+        UTF_REQUIRE( buffer );
+
+        return bl::crypto::x509cert_ptr_t::attach(
+            ::PEM_read_bio_X509_AUX(
+                buffer.get(),
+                nullptr     /* X509 certificate out pointer */,
+                nullptr     /* password callback */,
+                nullptr     /* password bytes */
+                )
+            );
+    }
+
+    /**
+     * @brief The subject of a certificate as one line of text
+     */
+
+    std::string certificateSubjectAsText( SAA_in const bl::crypto::x509cert_ptr_t& certificate )
+    {
+        ::X509_NAME* const subject = ::X509_get_subject_name( certificate.get() );
+
+        UTF_REQUIRE( nullptr != subject );
+
+        char text[ 512 ];
+
+        const char* const result = ::X509_NAME_oneline( subject, text, static_cast< int >( sizeof( text ) ) );
+
+        UTF_REQUIRE( nullptr != result );
+
+        return std::string( result );
+    }
+
+    /*
+     * The mutable notBefore / notAfter accessors, version gated exactly the way X509Cert.h
+     * gates the ones it uses to *set* them
+     */
+
+    ::ASN1_TIME* certificateNotBefore( SAA_in const bl::crypto::x509cert_ptr_t& certificate )
+    {
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+        return ::X509_getm_notBefore( certificate.get() );
+#else
+        return X509_get_notBefore( certificate.get() );
+#endif
+    }
+
+    ::ASN1_TIME* certificateNotAfter( SAA_in const bl::crypto::x509cert_ptr_t& certificate )
+    {
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+        return ::X509_getm_notAfter( certificate.get() );
+#else
+        return X509_get_notAfter( certificate.get() );
+#endif
+    }
+
 } // __unnamed
 
 UTF_AUTO_TEST_CASE( CryptoUtils_InitSsl )
@@ -113,6 +202,239 @@ UTF_AUTO_TEST_CASE( CryptoUtils_X509tests )
     const auto x509certPem = bl::crypto::geX509CertAsPemString( x509cert );
 
     UTF_REQUIRE( x509certPem.find( "-----BEGIN CERTIFICATE-----" ) != std::string::npos );
+
+    /*
+     * Nothing above asserts that anything which was asked for actually reached the
+     * certificate - a validitySeconds() which returned 0, a serial which never landed, or a
+     * subject / issuer mix up would all still emit a string carrying the PEM banner
+     *
+     * Parsing the emitted PEM back is also what makes bioBufferToString()'s exact length
+     * read load bearing: a truncated PEM does not parse
+     */
+
+    const auto parsed = parseCertificateFromPem( x509certPem );
+
+    UTF_REQUIRE( nullptr != parsed );
+
+    /*
+     * version3 is set as the numeric value 2 (X.509 versions are zero based)
+     */
+
+    UTF_REQUIRE_EQUAL( ::X509_get_version( parsed.get() ), 2L );
+
+    UTF_REQUIRE_EQUAL(
+        ::ASN1_INTEGER_get( ::X509_get_serialNumber( parsed.get() ) ),
+        static_cast< long >( serial )
+        );
+
+    {
+        ::X509_NAME* const subject = ::X509_get_subject_name( parsed.get() );
+
+        UTF_REQUIRE( nullptr != subject );
+
+        const auto textByNid = [ &subject ]( SAA_in const int nid ) -> std::string
+        {
+            char text[ 256 ];
+
+            const int length = ::X509_NAME_get_text_by_NID( subject, nid, text, static_cast< int >( sizeof( text ) ) );
+
+            UTF_REQUIRE( length > 0 );
+
+            return std::string( text, static_cast< std::size_t >( length ) );
+        };
+
+        UTF_REQUIRE_EQUAL( textByNid( NID_commonName ), commonName );
+        UTF_REQUIRE_EQUAL( textByNid( NID_countryName ), country );
+        UTF_REQUIRE_EQUAL( textByNid( NID_organizationName ), organization );
+
+        /*
+         * The subject is used as the issuer as well - a mix up here would break
+         * ::X509_check_host() matching for every consumer of this helper
+         */
+
+        UTF_REQUIRE_EQUAL( 0, ::X509_NAME_cmp( subject, ::X509_get_issuer_name( parsed.get() ) ) );
+    }
+
+    {
+        ::ASN1_TIME* const notBefore = certificateNotBefore( parsed );
+        ::ASN1_TIME* const notAfter = certificateNotAfter( parsed );
+
+        UTF_REQUIRE( nullptr != notBefore );
+        UTF_REQUIRE( nullptr != notAfter );
+
+        UTF_REQUIRE( ::X509_cmp_current_time( notBefore ) < 0 );
+        UTF_REQUIRE( ::X509_cmp_current_time( notAfter ) > 0 );
+
+        /*
+         * ... and the real assertion: daysValid must reach the certificate. The window is
+         * bracketed to within a day, which catches a validitySeconds() returning 0, a wrong
+         * unit, or a truncated int product - all of which the banner check above cannot see
+         */
+
+        const long secondsPerDay = 60L * 60L * 24L;
+
+        std::time_t almost = ::time( nullptr ) + ( daysValid - 1 ) * secondsPerDay;
+        std::time_t beyond = ::time( nullptr ) + ( daysValid + 1 ) * secondsPerDay;
+
+        UTF_REQUIRE( ::X509_cmp_time( notAfter, &almost ) > 0 );
+        UTF_REQUIRE( ::X509_cmp_time( notAfter, &beyond ) < 0 );
+    }
+
+    /*
+     * The certificate is self signed with the very key which was handed in
+     */
+
+    UTF_REQUIRE_EQUAL( 1, ::X509_verify( parsed.get(), evpPkey.get() ) );
+
+    /*
+     * ... and the emitted PEM key parses back too
+     */
+
+    UTF_REQUIRE( ! evpPkeyPem.empty() );
+
+    {
+        const auto buffer = bl::crypto::bio_ptr_t::attach(
+            ::BIO_new_mem_buf(
+                const_cast< char* >( evpPkeyPem.c_str() ),
+                bl::crypto::toIntSize( evpPkeyPem.size() )
+                )
+            );
+
+        UTF_REQUIRE( buffer );
+
+        const auto parsedKey = bl::crypto::evppkey_ptr_t::attach(
+            ::PEM_read_bio_PrivateKey(
+                buffer.get(),
+                nullptr     /* EVP_PKEY out pointer */,
+                nullptr     /* password callback */,
+                nullptr     /* password bytes */
+                )
+            );
+
+        UTF_REQUIRE( parsedKey );
+    }
+}
+
+UTF_AUTO_TEST_CASE( CryptoUtils_X509ValidityBounds )
+{
+    /*
+     * detail::validitySeconds()'s two BL_CHK_ARG guards have never been executed
+     *
+     * Note that only the negative case is portable: the overflow guard divides
+     * std::numeric_limits< long >::max() by 86400, which is ~1.07e14 on LP64 (so it is
+     * unreachable from an int there) but 24855 on Windows LLP64 - a large daysValid
+     * therefore succeeds on Linux and throws on Windows, and no portable assertion can pin
+     * the upper bound until the arithmetic uses a fixed width type
+     */
+
+    const auto evpPkey = bl::crypto::createPrivateKey();
+
+    UTF_REQUIRE( evpPkey );
+
+    /*
+     * The case asserts that an argument rejection leaves the OpenSSL error queue untouched,
+     * which is a statement about the delta - so it has to start from a clean queue
+     */
+
+    ( void ) ::ERR_clear_error();
+
+    UTF_REQUIRE_THROW(
+        bl::crypto::createSelfSignedX509Cert( evpPkey, "US", "MyOrg", "localhost", 1, -1 /* daysValid */ ),
+        bl::ArgumentException
+        );
+
+    UTF_CHECK( 0 == bl::crypto::detail::getFirstError().value() );
+
+    /*
+     * The guard is 'daysValid >= 0', so zero must succeed and produce a certificate whose
+     * validity window collapses onto its notBefore
+     */
+
+    const std::time_t before = ::time( nullptr );
+
+    const auto x509cert =
+        bl::crypto::createSelfSignedX509Cert( evpPkey, "US", "MyOrg", "localhost", 2, 0 /* daysValid */ );
+
+    const std::time_t after = ::time( nullptr );
+
+    UTF_REQUIRE( x509cert );
+
+    const auto parsed = parseCertificateFromPem( bl::crypto::geX509CertAsPemString( x509cert ) );
+
+    UTF_REQUIRE( nullptr != parsed );
+
+    ::ASN1_TIME* const notBefore = certificateNotBefore( parsed );
+    ::ASN1_TIME* const notAfter = certificateNotAfter( parsed );
+
+    /*
+     * ::X509_gmtime_adj is called twice, with two separate ::time( nullptr ) reads, so an
+     * exact equality assertion would be a race across a second boundary - both bounds are
+     * bracketed into the (tiny) wall clock window of the call, widened by two seconds, which
+     * still fails loudly for any non zero validity period
+     */
+
+    std::time_t lowerBound = before - 2;
+    std::time_t upperBound = after + 2;
+
+    UTF_REQUIRE( ::X509_cmp_time( notBefore, &lowerBound ) > 0 );
+    UTF_REQUIRE( ::X509_cmp_time( notBefore, &upperBound ) < 0 );
+
+    UTF_REQUIRE( ::X509_cmp_time( notAfter, &lowerBound ) > 0 );
+    UTF_REQUIRE( ::X509_cmp_time( notAfter, &upperBound ) < 0 );
+
+    UTF_CHECK( 0 == bl::crypto::detail::getFirstError().value() );
+}
+
+UTF_AUTO_TEST_CASE( CryptoUtils_ToIntSizeBoundary )
+{
+    using namespace bl;
+
+    /*
+     * crypto::toIntSize() exists so that an oversized buffer cannot reach an OpenSSL
+     * primitive as a *negative* length (::RSA_private_decrypt and thence ::BN_bin2bn would
+     * then read out of bounds). Every call site in the suite passes a small size, so the
+     * guard has never evaluated to false anywhere and an inverted or removed bound would
+     * only ever show up as a heap overrun inside OpenSSL
+     */
+
+    ( void ) ::ERR_clear_error();
+
+    UTF_REQUIRE_EQUAL( crypto::toIntSize( 0U ), 0 );
+    UTF_REQUIRE_EQUAL( crypto::toIntSize( 1U ), 1 );
+
+    /*
+     * The bound is inclusive
+     */
+
+    UTF_REQUIRE_EQUAL(
+        crypto::toIntSize( static_cast< std::size_t >( std::numeric_limits< int >::max() ) ),
+        std::numeric_limits< int >::max()
+        );
+
+    /*
+     * The over-boundary rows exist only where std::size_t is wider than int; the test is a
+     * runtime 'if' rather than a preprocessor guard, so a 32 bit build still type checks the
+     * code and the compiler folds the branch away
+     */
+
+    if( sizeof( std::size_t ) > sizeof( int ) )
+    {
+        UTF_REQUIRE_THROW(
+            crypto::toIntSize( static_cast< std::size_t >( std::numeric_limits< int >::max() ) + 1U ),
+            bl::ArgumentException
+            );
+
+        UTF_REQUIRE_THROW(
+            crypto::toIntSize( std::numeric_limits< std::size_t >::max() ),
+            bl::ArgumentException
+            );
+    }
+
+    /*
+     * An argument rejection must not have touched the OpenSSL error queue
+     */
+
+    UTF_CHECK( 0 == crypto::detail::getFirstError().value() );
 }
 
 UTF_AUTO_TEST_CASE( RsaEncryption_encryptAsBase64Tests )
@@ -564,4 +886,77 @@ UTF_AUTO_TEST_CASE( CryptoUtils_TrustedRootRegistrationOrdering )
     UTF_REQUIRE_EQUAL( serverAfter, serverBefore + 1 );
 
 #endif // OPENSSL_VERSION_NUMBER >= 0x10100000L
+}
+
+UTF_AUTO_TEST_CASE( CryptoUtils_AllBundledTrustedRootsAreLoadable )
+{
+    using namespace bl;
+
+    /*
+     * initDefaultGlobalTrustedRoots() registers three roots and is the default callback, so
+     * those three are PEM parsed at every process start through
+     * loadAllKnownCertificateAuthorities(). initAdditionalCommonTrustedRoots() registers four
+     * more and is reached only through initAllGlobalTrustedRoots(), which only bl-tool
+     * installs - so a truncated, reflowed or duplicated blob among those four would break
+     * every SSL context creation in bl-tool (i.e. all of its HTTP commands) and nothing in
+     * the repository would notice
+     *
+     * NOTE: this case must stay declared AFTER CryptoUtils_TrustedRootRegistrationOrdering -
+     * it permanently adds four roots to the process global set, which would break that
+     * case's 'before.size() + 1U' arithmetic. Boost.Test runs the cases of a file in
+     * declaration order, so the declaration order is the whole of the constraint
+     */
+
+    UTF_REQUIRE( crypto::initGlobalTrustedRootsCallback() );
+
+    const auto before = crypto::trustedRoots().size();
+
+    crypto::detail::TrustedRoots::initAllGlobalTrustedRoots();
+
+    /*
+     * All four additional roots are distinct strings and none of them duplicates one of the
+     * three defaults which are already registered
+     */
+
+    UTF_REQUIRE_EQUAL( crypto::trustedRoots().size(), before + 4U );
+
+    for( const auto& pem : crypto::trustedRoots() )
+    {
+        const auto certificate = parseTrustedRootFromPem( pem );
+
+        const auto subject = certificate ? certificateSubjectAsText( certificate ) : std::string();
+
+        UTF_MESSAGE( "Trusted root: " + subject );
+
+        UTF_REQUIRE( certificate );
+
+        UTF_REQUIRE( ! subject.empty() );
+
+        /*
+         * The bundled set is deliberately not required to be v3 throughout: the original
+         * 'VeriSign Class 3 Public Primary Certification Authority' root is a v1 certificate
+         * (::X509_get_version returns 0 for it), and v1 and v3 are the only versions a real
+         * root set carries
+         */
+
+        const auto version = ::X509_get_version( certificate.get() );
+
+        UTF_REQUIRE( 0L == version || 2L == version );
+    }
+
+    /*
+     * The integration assertion - creating a server context loads the whole set through
+     * loadAllKnownCertificateAuthorities(), which is also where the duplicate certificate
+     * landmine lives: ::X509_STORE_add_cert() fails with CERT_ALREADY_IN_HASH_TABLE when two
+     * distinct PEM strings in the set encode the same certificate
+     */
+
+    UTF_REQUIRE_NO_THROW(
+        ( void ) crypto::CryptoBase::createAsioSslServerContext(
+            test::UtfCrypto::getDefaultServerKey()              /* privateKeyPem */,
+            test::UtfCrypto::getDefaultServerCertificate()      /* certificatePem */
+            )
+        );
+
+    UTF_CHECK( 0 == crypto::detail::getFirstError().value() );
 }

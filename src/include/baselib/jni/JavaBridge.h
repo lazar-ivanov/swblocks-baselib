@@ -349,6 +349,26 @@ namespace bl
                     &nativeCb,
                     1 /* nMethods */ );
 
+                if( 0 != jniErrorCode && JNI_TRUE == jniEnv -> ExceptionCheck() )
+                {
+                    /*
+                     * Per the JNI specification ::RegisterNatives raises a pending Java
+                     * exception (a NoSuchMethodError when the named method does not exist or
+                     * is not native) in addition to returning a non-zero error code
+                     *
+                     * The C++ exception thrown below carries the diagnosis, so the pending
+                     * Java exception must be cleared here rather than left behind: with an
+                     * exception pending the next JNI call made on this thread is undefined
+                     * behaviour, and fatal under CheckJNI ('JNI call made with exception
+                     * pending'), which would take down a process far away from the cause
+                     *
+                     * ::ExceptionCheck and ::ExceptionClear are among the few JNI functions
+                     * which are legal to call while an exception is pending
+                     */
+
+                    jniEnv -> ExceptionClear();
+                }
+
                 BL_CHK_T(
                     false,
                     jniErrorCode == 0,

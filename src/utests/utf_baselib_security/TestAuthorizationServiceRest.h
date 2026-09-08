@@ -655,3 +655,144 @@ UTF_AUTO_TEST_CASE( AuthorizationServiceRest_TokenShapeTests )
             );
     }
 }
+
+UTF_AUTO_TEST_CASE( AuthorizationServiceRest_ResponseParsingGuards )
+{
+    using namespace bl;
+    using namespace bl::security;
+
+    /*
+     * extractSecurityPrincipal() normalises the response by erasing every '\r' and then
+     * applies four config driven validations, each of which raises a user friendly
+     * SecurityException. All four are reachable through the *configuration*, which is
+     * operator supplied data, and none of them has ever been executed - the single config
+     * fixture has well formed one group and two group regexes and every response in the
+     * suite is '\n' delimited
+     */
+
+    const std::string tokenText( "tokenId=tokenId1;tokenProperty1=tokenPropertyValue1" );
+
+    /*
+     * (1) A CRLF delimited response parses identically to an LF one - real HTTP servers emit
+     * CRLF
+     */
+
+    {
+        const auto config = loadConfig();
+
+        config -> readOnly( false );
+
+        const auto principal = extractFromResponse(
+            AuthorizationServiceRest::create( om::copy( config ) ),
+            tokenText,
+            "Status::2\r\nStatusMessage::ok\r\nSid::ID_CRLF\r\n::tokenId::tokenA\r\n"
+            );
+
+        UTF_REQUIRE_EQUAL( principal -> secureIdentity(), std::string( "ID_CRLF" ) );
+    }
+
+    /*
+     * (2) ... and the erase is *not* subsumed by the per line str::trim: a '\r' which sits in
+     * the middle of a value is removed too
+     *
+     * This is the assertion which survives if someone deletes the erase believing that
+     * str::trim covers it - with a CRLF-only response the deletion would be invisible
+     */
+
+    {
+        const auto config = loadConfig();
+
+        config -> readOnly( false );
+
+        const auto principal = extractFromResponse(
+            AuthorizationServiceRest::create( om::copy( config ) ),
+            tokenText,
+            "Status::2\nSid::ID_A\rB\n"
+            );
+
+        UTF_REQUIRE_EQUAL( principal -> secureIdentity(), std::string( "ID_AB" ) );
+    }
+
+    /*
+     * (3) A configured unique property regex with no capturing group at all
+     */
+
+    {
+        const auto config = loadConfig();
+
+        config -> readOnly( false );
+        config -> regexSid( "Sid\\:\\:.+" );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            extractFromResponse(
+                AuthorizationServiceRest::create( om::copy( config ) ),
+                tokenText,
+                "Status::2\nSid::ID_NO_GROUP\n"
+                ),
+            SecurityException,
+            "Regular expression pattern in the authorization config is expected to have one group only"
+            );
+    }
+
+    /*
+     * (4) A configured token property regex with one capturing group instead of two
+     */
+
+    {
+        const auto config = loadConfig();
+
+        config -> readOnly( false );
+        config -> regexUpdatedTokenProperty( "\\:\\:(.+)" );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            extractFromResponse(
+                AuthorizationServiceRest::create( om::copy( config ) ),
+                tokenText,
+                "Status::2\nSid::ID_ONE_GROUP\n::tokenId::tokenA\n"
+                ),
+            SecurityException,
+            "Regular expression pattern for token property in authorization config "
+            "is expected to have exactly two groups"
+            );
+    }
+
+    /*
+     * (5) and (6) - the two non-empty guards. The stock config captures with '(.+)', so a
+     * match always yields at least one character and neither guard can fire with it; a config
+     * which captures with '(.*)' reaches both
+     */
+
+    {
+        const auto config = loadConfig();
+
+        config -> readOnly( false );
+        config -> regexUpdatedTokenProperty( "\\:\\:(.*)\\:\\:(.*)" );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            extractFromResponse(
+                AuthorizationServiceRest::create( om::copy( config ) ),
+                tokenText,
+                "Status::2\nSid::ID_EMPTY_NAME\n::::value\n"
+                ),
+            SecurityException,
+            "Token property name parsed from authorization response can't be empty"
+            );
+    }
+
+    {
+        const auto config = loadConfig();
+
+        config -> readOnly( false );
+        config -> regexUpdatedTokenProperty( "\\:\\:(.*)\\:\\:(.*)" );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            extractFromResponse(
+                AuthorizationServiceRest::create( om::copy( config ) ),
+                tokenText,
+                "Status::2\nSid::ID_EMPTY_VALUE\n::name::\n"
+                ),
+            SecurityException,
+            "Token property value parsed from authorization response can't be empty"
+            );
+    }
+}

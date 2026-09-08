@@ -805,8 +805,105 @@ namespace
                                     UTF_REQUIRE( blockIsValid );
                                 };
 
+                                if( BlockTransferDefs::BlockType::TransferOnly == blockType )
+                                {
+                                    /*
+                                     * A TransferOnly PUT announces its chunk size, so the server's
+                                     * 'no load operation to set the size' override in
+                                     * onChunkAllocated() must not be applied on this path - if it
+                                     * were, the server would wait for capacity() bytes while the
+                                     * peer sends only the size it announced and both sides would
+                                     * hang
+                                     *
+                                     * The full capacity block the rest of this lambda sends cannot
+                                     * tell the two branches apart, because its size *is* its
+                                     * capacity; a partial block can
+                                     */
+
+                                    const auto smallBlock = data::DataBlock::get( dataBlocksPool );
+
+                                    smallBlock -> setSize( 1024U );
+
+                                    UTF_REQUIRE( smallBlock -> size() < smallBlock -> capacity() );
+
+                                    const auto blocksTransferredBefore = transfer -> noOfBlocksTransferred();
+
+                                    transfer -> setCommandInfo(
+                                        connection_t::CommandId::SendChunk,
+                                        uuids::create() /* chunkId - forced to chunkIdDefault() for a non-Normal block */,
+                                        om::copy( smallBlock ),
+                                        blockType
+                                        );
+
+                                    eq -> push_back( taskTransfer );
+
+                                    /*
+                                     * The regression signature is a hang, so this must be a bounded
+                                     * wait - eq -> waitForSuccess( ... ) would block forever and the
+                                     * whole test module would time out with no diagnostic
+                                     */
+
+                                    const std::size_t maxWaitInSeconds = 30U;
+
+                                    std::size_t waited = 0U;
+
+                                    for( ; waited < maxWaitInSeconds; ++waited )
+                                    {
+                                        if( tasks::Task::Completed == taskTransfer -> getState() )
+                                        {
+                                            break;
+                                        }
+
+                                        os::sleep( time::seconds( 1 ) );
+                                    }
+
+                                    if( tasks::Task::Completed != taskTransfer -> getState() )
+                                    {
+                                        taskTransfer -> requestCancel();
+                                        eq -> wait( taskTransfer );
+
+                                        UTF_FAIL(
+                                            "TransferOnly PUT of a partial block did not complete - "
+                                            "the server overrode the announced chunk size"
+                                            );
+                                    }
+
+                                    if( taskTransfer -> isFailed() )
+                                    {
+                                        cpp::safeRethrowException( taskTransfer -> exception() );
+                                    }
+
+                                    UTF_REQUIRE( ! taskTransfer -> isFailed() );
+
+                                    /*
+                                     * A TransferOnly PUT is a SecureDiscard - it must never reach
+                                     * the storage backend - but the client does count it as a
+                                     * transferred block (unlike an Authentication one)
+                                     */
+
+                                    UTF_REQUIRE_EQUAL( 0U, backendImpl -> saveCalls() );
+
+                                    UTF_REQUIRE_EQUAL(
+                                        transfer -> noOfBlocksTransferred(),
+                                        blocksTransferredBefore + 1U
+                                        );
+
+                                    /*
+                                     * Release the partial block and restore the state the rest of
+                                     * this lambda expects - the full capacity block attached at
+                                     * the top of it
+                                     */
+
+                                    transfer -> detachChunkData();
+                                    transfer -> setChunkData( backendImpl -> getData() );
+                                }
+
                                 /*
                                  * Send the data twice in a row and then request flush
+                                 *
+                                 * For the TransferOnly configuration the first send below also
+                                 * proves that the stream is still in sync after the partial one
+                                 * above
                                  */
 
                                 transfer -> setCommandId( connection_t::CommandId::SendChunk );
@@ -6132,6 +6229,18 @@ UTF_AUTO_TEST_CASE( IO_MessagingClientBlockDispatchLocalTests )
 
         UTF_REQUIRE_EQUAL( callsCount.load(), noOfBlocks );
     }
+
+    /*
+     * MessagingClientBlockDispatchFromCallbackT::isNoCopyDataBlocks() hard returns false, so
+     * every producer which pushes into such a channel must copy the data block first - that
+     * is the other half of the invariant IO_DataBlockCrossPoolCapacityTests pins
+     *
+     * Note that the matching setter must NOT be called from a test - it is a BL_RIP_MSG(...),
+     * i.e. os::fastAbort(), so calling it would take the whole test module down instead of
+     * failing a case
+     */
+
+    UTF_REQUIRE( ! receiver -> isNoCopyDataBlocks() );
 }
 
 UTF_AUTO_TEST_CASE( IO_MessagingClientTests )
@@ -6296,6 +6405,46 @@ UTF_AUTO_TEST_CASE( IO_MessagingClientTests )
         0U                                                  /* maxConcurrentTasks */,
         callbackTests
         );
+}
+
+namespace
+{
+    /**
+     * @brief A test local error category which impersonates the modern ASIO SSL stream
+     * category by name
+     *
+     * TcpSslSocketAsyncBase::isExpectedSslErrorCode() identifies that category by the string
+     * "asio.ssl.stream" on purpose rather than by referencing asio::ssl::error::stream_truncated,
+     * so that baselib builds against the whole supported ASIO / OpenSSL range - reproducing
+     * the string here is what lets the test cover the modern accepted form without
+     * reintroducing into the test exactly the dependency the production code avoids
+     */
+
+    class FakeSslStreamCategory : public bl::eh::error_category
+    {
+    public:
+
+        virtual const char* name() const NOEXCEPT OVERRIDE
+        {
+            return "asio.ssl.stream";
+        }
+
+        virtual std::string message( int ) const OVERRIDE
+        {
+            return "fake";
+        }
+    };
+
+    /*
+     * Boost.System requires error categories to have static storage duration
+     */
+
+    const bl::eh::error_category& fakeSslStreamCategory()
+    {
+        static const FakeSslStreamCategory g_fakeSslStreamCategory;
+
+        return g_fakeSslStreamCategory;
+    }
 }
 
 UTF_AUTO_TEST_CASE( IO_MessagingBackendProcessingHelpers )
@@ -7044,5 +7193,250 @@ UTF_AUTO_TEST_CASE( IO_MessagingBackendProcessingHelpers )
 
     testExpectedSocketException( true /* isCancelExpected */ );
     testExpectedSocketException( false /* isCancelExpected */ );
+
+    /*
+     * Test TcpSslSocketAsyncBase::isExpectedSslErrorCode / ::isExpectedSslException /
+     * ::isExpectedProtocolException
+     *
+     * Two forms are accepted on purpose - the modern one (a code whose category is named
+     * "asio.ssl.stream" and whose value is 1, i.e. asio::ssl::error::stream_truncated) and
+     * the legacy one (g_sslErrorShortRead). Losing either turns an abrupt TLS close into a
+     * hard failure on one half of the supported toolchain matrix, and widening the
+     * comparison to any SSL category code would swallow genuine SSL errors as 'expected'
+     */
+
+    {
+        /*
+         * (1) The modern form - the category is matched by name and the value must be
+         * exactly 1
+         */
+
+        const eh::error_code ecStreamTruncated( 1, fakeSslStreamCategory() );
+        const eh::error_code ecStreamOther( 2, fakeSslStreamCategory() );
+
+        UTF_REQUIRE( TcpSslSocketAsyncBase::isExpectedSslErrorCode( ecStreamTruncated ) );
+        UTF_REQUIRE( ! TcpSslSocketAsyncBase::isExpectedSslErrorCode( ecStreamOther ) );
+
+        /*
+         * (2) The legacy form - rebuilt here exactly the way the protected
+         * g_sslErrorShortRead member is built in TcpSslBaseTasks.h; SSL_R_SHORT_READ is
+         * guaranteed to be defined because that header #defines it when OpenSSL does not
+         */
+
+        const eh::error_code ecShortRead(
+            static_cast< int >( ERR_PACK( ERR_LIB_SSL, 0, SSL_R_SHORT_READ ) ),
+            asio::error::get_ssl_category()
+            );
+
+        UTF_REQUIRE( TcpSslSocketAsyncBase::isExpectedSslErrorCode( ecShortRead ) );
+
+        /*
+         * (3) The negatives, including an SSL category code which is not the short read one -
+         * that row is what pins that the legacy form compares the whole error code and not
+         * just the category
+         */
+
+        const eh::error_code ecSslOther(
+            static_cast< int >( ERR_PACK( ERR_LIB_SSL, 0, SSL_R_SHORT_READ ) ) + 1,
+            asio::error::get_ssl_category()
+            );
+
+        UTF_REQUIRE( ! TcpSslSocketAsyncBase::isExpectedSslErrorCode( eh::error_code() ) );
+
+        UTF_REQUIRE(
+            ! TcpSslSocketAsyncBase::isExpectedSslErrorCode(
+                asio::error::make_error_code( asio::error::eof )
+                )
+            );
+
+        UTF_REQUIRE(
+            ! TcpSslSocketAsyncBase::isExpectedSslErrorCode(
+                asio::error::make_error_code( asio::error::operation_aborted )
+                )
+            );
+
+        UTF_REQUIRE(
+            ! TcpSslSocketAsyncBase::isExpectedSslErrorCode(
+                asio::error::make_error_code( asio::error::connection_reset )
+                )
+            );
+
+        UTF_REQUIRE( ! TcpSslSocketAsyncBase::isExpectedSslErrorCode( ecSslOther ) );
+
+        /*
+         * (4) The two exception forms - the exception_ptr and the exception itself are both
+         * BL_UNUSED in the implementation, so only the error code decides
+         */
+
+        const UnexpectedException sslException;
+        const auto sslExceptionPtr = std::make_exception_ptr( sslException );
+
+        UTF_REQUIRE(
+            ! TcpSslSocketAsyncBase::isExpectedSslException( sslExceptionPtr, sslException, nullptr /* ec */ )
+            );
+
+        UTF_REQUIRE(
+            TcpSslSocketAsyncBase::isExpectedSslException( sslExceptionPtr, sslException, &ecShortRead )
+            );
+
+        UTF_REQUIRE(
+            ! TcpSslSocketAsyncBase::isExpectedSslException( sslExceptionPtr, sslException, &ecSslOther )
+            );
+
+        /*
+         * ... and isExpectedProtocolException just forwards to isExpectedSslException
+         */
+
+        UTF_REQUIRE(
+            ! TcpSslSocketAsyncBase::isExpectedProtocolException( sslExceptionPtr, sslException, nullptr /* ec */ )
+            );
+
+        UTF_REQUIRE(
+            TcpSslSocketAsyncBase::isExpectedProtocolException( sslExceptionPtr, sslException, &ecShortRead )
+            );
+
+        UTF_REQUIRE(
+            ! TcpSslSocketAsyncBase::isExpectedProtocolException( sslExceptionPtr, sslException, &ecSslOther )
+            );
+    }
 }
 
+UTF_AUTO_TEST_CASE( IO_ConnectorFailureEndpointErrorInfoTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    /*
+     * TcpConnectionEstablisherBase::enhanceException attaches the host and the service names
+     * from m_query and the endpoint address and port from m_endpoint, which onResolved()
+     * assigns *before* the connect is attempted; data/eh/ServerErrorHelpers.h consumes all
+     * four, so a regression which dropped any of them - or which moved the m_endpoint
+     * assignment after the connect, leaving the address and the port empty on exactly the
+     * failures which need them - silently degrades every connection failure diagnostic
+     *
+     * The machine global lock is taken so no other module is listening on the test port;
+     * nothing is started here, so the port stays closed and the connect is refused
+     * immediately on both Linux and Windows - no timeout tuning is needed
+     */
+
+    test::MachineGlobalTestLock lock;
+
+    const std::string host( "127.0.0.1" );
+
+    const auto port = test::UtfArgsParser::port();
+
+    om::ObjPtr< Task > task;
+
+    tasks::scheduleAndExecuteInParallel(
+        [ & ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+        {
+            const auto connector = connector_t::createInstance( cpp::copy( host ), port );
+
+            eq -> push_back( om::qi< Task >( connector ) );
+
+            /*
+             * pop() waits for the task and removes it from the queue, so the flush which
+             * scheduleAndExecuteInParallel performs on the way out has nothing to rethrow
+             */
+
+            task = eq -> pop( true /* wait */ );
+        }
+        );
+
+    UTF_REQUIRE( task );
+    UTF_REQUIRE( task -> isFailed() );
+
+    try
+    {
+        cpp::safeRethrowException( task -> exception() );
+
+        UTF_FAIL( "Connecting to a closed port is expected to throw" );
+    }
+    catch( bl::eh::exception& e )
+    {
+        BL_LOG_MULTILINE(
+            Logging::debug(),
+            BL_MSG()
+                << "Expected connection failure:\n"
+                << eh::diagnostic_information( e )
+            );
+
+        const auto* hostName = eh::get_error_info< eh::errinfo_host_name >( e );
+
+        UTF_REQUIRE( hostName );
+        UTF_REQUIRE_EQUAL( *hostName, host );
+
+        const auto* serviceName = eh::get_error_info< eh::errinfo_service_name >( e );
+
+        UTF_REQUIRE( serviceName );
+        UTF_REQUIRE_EQUAL( *serviceName, utils::lexical_cast< std::string >( port ) );
+
+        /*
+         * The address and the port come from m_endpoint, which the resolve step has already
+         * populated by the time the connect can fail
+         */
+
+        const auto* endpointAddress = eh::get_error_info< eh::errinfo_endpoint_address >( e );
+
+        UTF_REQUIRE( endpointAddress );
+        UTF_REQUIRE_EQUAL( *endpointAddress, host );
+
+        const auto* endpointPort = eh::get_error_info< eh::errinfo_endpoint_port >( e );
+
+        UTF_REQUIRE( endpointPort );
+        UTF_REQUIRE_EQUAL( *endpointPort, port );
+    }
+
+    UTF_REQUIRE( task -> isFailed() );
+}
+
+UTF_AUTO_TEST_CASE( IO_DataBlockCrossPoolCapacityTests )
+{
+    using namespace bl;
+
+    /*
+     * data::DataBlock::get( pool, capacity ) honours the requested capacity only on a pool
+     * miss - on a pool hit the pooled block is handed back as is and the argument is
+     * discarded. data::DataBlock::copy( block, pool ) forwards block -> capacity() as that
+     * argument, so a copy into a pool of *smaller* blocks throws BufferTooSmallException out
+     * of write()
+     *
+     * That is the mechanism behind the process wide invariant which
+     * ForwardingBackendSharedState's constructor enforces by setting
+     * isNoCopyDataBlocks( true ) on every client channel it owns, and which
+     * AsyncExecutorWrapperBlocks.h only checks through a BL_ASSERT - i.e. not at all in a
+     * release build, where the same mistake is either a dropped message at an arbitrary
+     * later point or a pool which slowly accumulates wrong capacity blocks
+     */
+
+    const auto poolSmall = data::datablocks_pool_type::createInstance();
+
+    poolSmall -> put( data::DataBlock::createInstance( 4096U /* capacity */ ) );
+
+    const auto big = data::DataBlock::createInstance( 64U * 1024U /* capacity */ );
+
+    big -> setSize( 8192U );
+
+    UTF_REQUIRE( big -> size() > 4096U );
+
+    /*
+     * The copy asks for 64 KiB, the pool hands back the 4 KiB block it holds and the
+     * subsequent write() no longer fits - this is the assertion which pins get()'s capacity
+     * discarding behaviour, which is otherwise invisible
+     */
+
+    UTF_REQUIRE_THROW( data::DataBlock::copy( big, poolSmall ), bl::BufferTooSmallException );
+
+    /*
+     * The control - with an empty pool the requested capacity *is* honoured, which states
+     * plainly that it is honoured only on a pool miss
+     */
+
+    const auto poolEmpty = data::datablocks_pool_type::createInstance();
+
+    const auto copied = data::DataBlock::copy( big, poolEmpty );
+
+    UTF_REQUIRE( copied );
+    UTF_REQUIRE_EQUAL( copied -> capacity(), big -> capacity() );
+    UTF_REQUIRE_EQUAL( copied -> size(), big -> size() );
+}

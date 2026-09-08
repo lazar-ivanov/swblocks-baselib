@@ -803,9 +803,42 @@ namespace utest
             }
         }
 
-        static void verifyUniformMessageDistribution( SAA_in const clients_list_t& clients )
+        /**
+         * @brief Verifies that every client channel was used and that the message
+         * distribution over the channels is uniform
+         *
+         * The min / max computation used to be dead weight with respect to the outcome of the
+         * test: the helper exists to detect a load balancing regression in the messaging
+         * client's channel selection, and a regression which funnelled 95% of the traffic
+         * through one connection - or which stopped incrementing the counters in one of the
+         * two directions - would still leave every client above the per client floor below
+         *
+         * The bounds are calibrated rather than guessed. An instrumented release run of
+         * utf_baselib_messaging reported 'receivedLower=19; receivedUpper=21; sentLower=20;
+         * sentUpper=20' at the demultiplexing call site and '50 / 50 / 55 / 55' at the
+         * multiplexing one - i.e. an observed spread of at most 2 and an observed skew ratio
+         * of at most 21 / 19. The defaults sit comfortably above both, so a healthy heartbeat
+         * cannot turn them into a flaky failure
+         *
+         * The two extra parameters are defaulted so that any other call site keeps compiling
+         * and behaving exactly as before
+         */
+
+        static void verifyUniformMessageDistribution(
+            SAA_in                  const clients_list_t&                           clients,
+            SAA_in_opt              const std::uint64_t                             expectedPerClient = 0U,
+            SAA_in_opt              const std::uint64_t                             tolerance = 4U,
+            SAA_in_opt              const std::uint64_t                             maxSkewFactor = 8U
+            )
         {
             using namespace bl;
+
+            /*
+             * An empty clients list would leave all four bounds at their initial values and
+             * make every assertion below vacuously true
+             */
+
+            UTF_REQUIRE( ! clients.empty() );
 
             /*
              * Verify that all channels dispatched at least 2 messages or more
@@ -861,6 +894,45 @@ namespace utest
                     << "; sentUpper="
                     << sentUpper
                 );
+
+            /*
+             * The assertions are placed after the log line above, so a failure is always
+             * preceded by the four printed bounds
+             */
+
+            UTF_REQUIRE( receivedLower > 0U && sentLower > 0U );
+
+            if( clients.size() >= 2U )
+            {
+                /*
+                 * The bounded skew half - a single client has no spread at all
+                 */
+
+                UTF_REQUIRE( receivedUpper <= receivedLower * maxSkewFactor );
+                UTF_REQUIRE( sentUpper <= sentLower * maxSkewFactor );
+
+                if( expectedPerClient )
+                {
+                    /*
+                     * ... and the spread, which is what 'uniform' actually means; the
+                     * tolerance absorbs the association and heartbeat blocks which ride on
+                     * the same connections
+                     */
+
+                    UTF_REQUIRE( sentUpper - sentLower <= tolerance );
+                    UTF_REQUIRE( receivedUpper - receivedLower <= tolerance );
+                }
+            }
+
+            if( expectedPerClient )
+            {
+                /*
+                 * The absolute floor half
+                 */
+
+                UTF_REQUIRE( sentLower >= expectedPerClient );
+                UTF_REQUIRE( receivedLower >= expectedPerClient );
+            }
         }
 
         /*

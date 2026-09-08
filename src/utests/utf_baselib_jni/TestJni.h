@@ -1373,4 +1373,259 @@ UTF_AUTO_TEST_CASE( Jni_JvmHelpers )
 
     UTF_REQUIRE( deps.find( fs::normalizePathCliParameter( ( libsDir / depLibName1 ).string() ) ) != deps.end() );
     UTF_REQUIRE( deps.find( fs::normalizePathCliParameter( ( libsDir / depLibName2 ).string() ) ) != deps.end() );
+
+    /*
+     * (a) The exclusion half of the '.jar' filter has never run - every file the block above
+     * creates is a JAR, so a filter regression which admitted every file in 'lib' would pass
+     *
+     * A real dependency directory carries .pom, .sha1 and .txt artefacts, and dragging those
+     * onto the class path is exactly the regression this asserts against
+     */
+
+    encoding::writeTextFile( libsDir / "notes.txt", "test-content" );
+    encoding::writeTextFile( libsDir / "readme", "test-content" );
+
+    /*
+     * ... and str::ends_with is case sensitive, so an upper case extension is excluded too;
+     * pinning that here makes a future switch to a case insensitive compare a deliberate
+     * change rather than an accidental one
+     */
+
+    const auto depLibNameUpperCase = "dep3.JAR";
+
+    encoding::writeTextFile( libsDir / depLibNameUpperCase, "test-content" );
+
+    const auto classPathWithNonJars = jni::JvmHelpers::buildClassPath( rootDir, mainLibName );
+
+    const auto listWithNonJars = str::splitString( classPathWithNonJars, pathVarSeparator );
+
+    UTF_REQUIRE_EQUAL( listWithNonJars.size(), 3U );
+
+    UTF_REQUIRE_EQUAL(
+        listWithNonJars[ 0 ],
+        fs::normalizePathCliParameter( ( rootDir / mainLibName ).string() )
+        );
+
+    {
+        std::unordered_set< std::string > depsWithNonJars;
+
+        depsWithNonJars.emplace( listWithNonJars[ 1 ] );
+        depsWithNonJars.emplace( listWithNonJars[ 2 ] );
+
+        UTF_REQUIRE(
+            depsWithNonJars.find( fs::normalizePathCliParameter( ( libsDir / depLibName1 ).string() ) ) !=
+                depsWithNonJars.end()
+            );
+
+        UTF_REQUIRE(
+            depsWithNonJars.find( fs::normalizePathCliParameter( ( libsDir / depLibName2 ).string() ) ) !=
+                depsWithNonJars.end()
+            );
+
+        UTF_REQUIRE(
+            depsWithNonJars.find( fs::normalizePathCliParameter( ( libsDir / depLibNameUpperCase ).string() ) ) ==
+                depsWithNonJars.end()
+            );
+    }
+
+    /*
+     * (b) The missing main JAR check has never fired, so neither its message nor its
+     * exception type is pinned - dropping the check would defer the failure to a
+     * NoClassDefFoundError inside the JVM, far from the cause
+     */
+
+    {
+        fs::TmpDir emptyDir;
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            jni::JvmHelpers::buildClassPath( emptyDir.path(), "missing.jar" ),
+            bl::UnexpectedException,
+            "Cannot find required JAR file"
+            );
+    }
+
+    /*
+     * Note: the third behaviour this helper has - a base directory with no 'lib' subdirectory,
+     * i.e. the ordinary case of a dependency-less JAR - is deliberately NOT pinned here. Today
+     * fs::directory_iterator( dependenciesPath ) is the throwing boost constructor, so such a
+     * call raises a raw boost::filesystem::filesystem_error rather than a baselib exception or
+     * an empty dependency list, and which of the two is intended is a maintainer decision
+     * rather than a test decision
+     */
+}
+
+UTF_AUTO_TEST_CASE( Jni_DirectByteBufferStateTransitions )
+{
+    using namespace bl;
+    using namespace bl::jni;
+
+    /*
+     * Every Jni_JavaBridge* dispatch drives prepareForWrite() -> prepareForJavaRead() and
+     * prepareForWrite() -> prepareForJavaWrite() -> prepareForRead(), and the payloads read
+     * back on either side do prove the common paths - but no test has ever read the Java side
+     * position or limit (getByteBufferPosition() has no caller anywhere in the repository),
+     * and prepareForJavaWrite()'s append branch is dead in every current path because
+     * dispatch() always calls prepareForWrite() immediately before it
+     */
+
+    const auto& environment = JniEnvironment::instance();
+
+    const DirectByteBuffer buffer( 128U );
+
+    const auto javaBuffer = buffer.getJavaBuffer().get();
+
+    UTF_REQUIRE( environment.isDirectByteBuffer( javaBuffer ) );
+
+    /*
+     * createDirectByteBuffer() sizes the Java view from capacity() and not from size()
+     */
+
+    UTF_REQUIRE_EQUAL( environment.getByteBufferCapacity( javaBuffer ), 128 );
+    UTF_REQUIRE_EQUAL( buffer.getBuffer() -> capacity(), 128U );
+
+    /*
+     * prepareForWrite() resets the DataBlock and touches Java not at all
+     */
+
+    buffer.prepareForWrite();
+
+    UTF_REQUIRE_EQUAL( buffer.getBuffer() -> size(), 0U );
+    UTF_REQUIRE_EQUAL( buffer.getBuffer() -> offset1(), 0U );
+
+    /*
+     * Seven bytes - an int32 length prefix plus three characters
+     */
+
+    buffer.getBuffer() -> write( std::string( "abc" ) );
+
+    UTF_REQUIRE_EQUAL( buffer.getBuffer() -> size(), 7U );
+
+    /*
+     * prepareForJavaRead() positions Java at the start and limits it to the size which was
+     * written - a regression which set the position instead of the limit would let Java read
+     * zero bytes, which today shows up as a confusing empty payload three layers away rather
+     * than as a failing unit test
+     */
+
+    buffer.prepareForJavaRead();
+
+    UTF_REQUIRE_EQUAL( environment.getByteBufferPosition( javaBuffer ), 0 );
+    UTF_REQUIRE_EQUAL( environment.getByteBufferLimit( javaBuffer ), 7 );
+
+    /*
+     * prepareForJavaWrite() clears the buffer - which restores the full limit - and then, only
+     * when the block size is non zero, positions Java to append; that is the dead branch
+     */
+
+    buffer.prepareForJavaWrite();
+
+    UTF_REQUIRE_EQUAL( environment.getByteBufferPosition( javaBuffer ), 7 );
+    UTF_REQUIRE_EQUAL( environment.getByteBufferLimit( javaBuffer ), 128 );
+
+    /*
+     * prepareForRead() flips the Java buffer and then applies offset1 *before* size
+     */
+
+    buffer.prepareForRead();
+
+    UTF_REQUIRE_EQUAL( buffer.getBuffer() -> size(), 7U );
+    UTF_REQUIRE_EQUAL( buffer.getBuffer() -> offset1(), 0U );
+
+    {
+        std::string text;
+
+        buffer.getBuffer() -> read( &text );
+
+        UTF_REQUIRE_EQUAL( text, std::string( "abc" ) );
+    }
+
+    /*
+     * The non zero offset1 form. The sequencing below is binding: a prepareForRead( 4U )
+     * written directly after the call above would yield size() == 0, because flip() uses the
+     * *Java* position, which the preceding prepareForRead() left at 0 - a prepareForJavaWrite()
+     * has to run in between and advance it, or the sub-block means nothing
+     */
+
+    buffer.prepareForWrite();
+    buffer.getBuffer() -> write( std::string( "abc" ) );
+
+    buffer.prepareForJavaWrite();
+
+    buffer.prepareForRead( 4U );
+
+    UTF_REQUIRE_EQUAL( buffer.getBuffer() -> offset1(), 4U );
+    UTF_REQUIRE_EQUAL( buffer.getBuffer() -> size(), 7U );
+
+    /*
+     * DirectByteBuffer( 0 ) is a 1 MB buffer and not an empty one - DataBlock::calculateCapacity
+     * replaces a zero capacity with DataBlock::defaultCapacity(), and
+     * JavaBridgeRestHelper::shutdown() depends on that
+     */
+
+    const DirectByteBuffer defaulted( 0U );
+
+    UTF_REQUIRE_EQUAL(
+        environment.getByteBufferCapacity( defaulted.getJavaBuffer().get() ),
+        numbers::safeCoerceTo< jint >( data::DataBlock::defaultCapacity() )
+        );
+}
+
+UTF_AUTO_TEST_CASE( Jni_JavaBridgeRegisterNativesFailure )
+{
+    using namespace bl;
+    using namespace bl::jni;
+
+    /*
+     * registerCallback()'s only error path has never been executed - every JavaBridge the
+     * suite constructs registers successfully
+     *
+     * JavaBridgeCallback has both the getInstance() and the three-argument dispatch( ... )
+     * the constructor needs, so prepareJavaClassData() succeeds and only ::RegisterNatives
+     * fails. Per the JNI specification ::RegisterNatives raises a pending NoSuchMethodError
+     * when the named method does not exist or is not native - and this case originally caught
+     * registerCallback() leaving that exception pending on the JNI thread while the C++
+     * exception propagated, which is why registerCallback() now clears it explicitly
+     *
+     * With the fixture's setCheckJni( true ) a pending exception makes the *next* JNI call on
+     * this thread fatal, so the ExceptionCheck / ExceptionClear pair below must be the first
+     * JNI interaction after the constructor throws - do not reorder another JNI call in
+     * between or a regression of that fix would kill the whole utf_baselib_jni binary instead
+     * of failing this case
+     */
+
+    const auto& environment = JniEnvironment::instance();
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        JavaBridge( "org/swblocks/baselib/test/JavaBridgeCallback", "noSuchNativeMethod" ),
+        JavaException,
+        "Call to RegisterNatives failed"
+        );
+
+    /*
+     * ::ExceptionCheck and ::ExceptionClear are two of the very few JNI functions which are
+     * legal to call while an exception is pending
+     */
+
+    const bool hadPendingException = ( environment.getRawPtr() -> ExceptionCheck() == JNI_TRUE );
+
+    if( hadPendingException )
+    {
+        environment.getRawPtr() -> ExceptionClear();
+    }
+
+    /*
+     * The failure path must not leave a poisoned JNI thread behind
+     *
+     * CHECK and not REQUIRE so that a regression of the clear in registerCallback() reports
+     * this fact and still lets the case continue to the assertion below, which is the one
+     * which would otherwise be fatal under CheckJNI
+     */
+
+    UTF_CHECK( ! hadPendingException );
+
+    /*
+     * After the explicit clear the very next JNI call on the same thread still succeeds
+     */
+
+    UTF_REQUIRE_NO_THROW( ( void ) environment.findJavaClass( "java/lang/String" ) );
 }

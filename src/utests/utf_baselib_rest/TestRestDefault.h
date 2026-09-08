@@ -465,6 +465,76 @@ UTF_AUTO_TEST_CASE( RestServiceSslBackendAssortedTests )
                     }
 
                     /*
+                     * The same request, but carrying a Content-Type header and no body at all
+                     *
+                     * The HTTP server normalises every request header name to lower case in
+                     * ParserHelpers.h ( str::to_lower( name ) - a request smuggling and duplicate
+                     * Content-Length defence ) and prepareMessageDataBlock copies
+                     * request -> headers() verbatim into the request metadata, whereas
+                     * EchoServerProcessingContext.h looks the header up by the exact key
+                     * http::HttpHeader::g_contentType ( "Content-Type" ) - so through the gateway
+                     * that find() never succeeds and the whole block it guards, including the arm
+                     * which turns 'a content type but no content' into a 400, is unreachable
+                     *
+                     * This request is therefore a 200 and NOT a 400 - do not 'fix' the assertion
+                     * below. Whether the echo server ought to do a case insensitive lookup is a
+                     * product decision; pinning today's behaviour is what makes that decision
+                     * visible rather than accidental, and what makes a future change to the
+                     * server side normalisation fail loudly here instead of silently activating
+                     * a dormant 400
+                     */
+
+                    {
+                        auto taskImpl = utest::TestRestUtils::executeHttpRequest(
+                            eq,
+                            httpPort,
+                            false                                       /* allowFailure */,
+                            http::HttpHeader::g_contentTypeJsonUtf8     /* contentType */,
+                            std::string()                               /* content */,
+                            "/requestMetadata"                          /* urlPath */,
+                            "GET"                                       /* action */
+                            );
+
+                        UTF_REQUIRE( ! taskImpl -> isFailed() );
+
+                        UTF_REQUIRE_EQUAL(
+                            taskImpl -> getHttpStatus(),
+                            http::Parameters::HTTP_SUCCESS_OK
+                            );
+
+                        const auto& response = taskImpl -> getResponse();
+
+                        UTF_REQUIRE( ! response.empty() );
+
+                        const auto brokerProtocol =
+                            dm::DataModelUtils::loadFromJsonText< BrokerProtocol >( response );
+
+                        UTF_REQUIRE( brokerProtocol );
+
+                        const auto& passThroughUserData = brokerProtocol -> passThroughUserData();
+                        UTF_REQUIRE( passThroughUserData );
+
+                        const auto payload =
+                            dm::DataModelUtils::castTo< dm::http::HttpRequestMetadataPayload >(
+                                passThroughUserData
+                                );
+
+                        const auto& requestMetadata = payload -> httpRequestMetadata();
+                        UTF_REQUIRE( requestMetadata );
+
+                        /*
+                         * The direct, positive statement of the normalisation contract
+                         */
+
+                        UTF_REQUIRE_EQUAL( requestMetadata -> headers().count( "content-type" ), 1U );
+
+                        UTF_REQUIRE_EQUAL(
+                            requestMetadata -> headers().count( http::HttpHeader::g_contentType ),
+                            0U
+                            );
+                    }
+
+                    /*
                      * Get the response metadata and verify it is what is expected
                      */
 
@@ -2937,4 +3007,186 @@ UTF_AUTO_TEST_CASE( RestServiceSslBackendHttpOnlyTests )
         true                                        /* isQuietMode */
         );
 
+}
+
+UTF_AUTO_TEST_CASE( RestServerProcessingContextDisposeTests )
+{
+    using namespace bl;
+    using namespace bl::messaging;
+
+    /*
+     * The context is an om::Disposable which a forwarding backend holds through an om::Proxy
+     * and which may still be handed blocks while shutdown runs; 'fail fast instead of
+     * touching a disposed queue' is the contract which makes that safe
+     *
+     * Every existing test wraps the context in om::lockDisposable, so dispose() runs exactly
+     * once, at scope exit, when nothing is in flight - so neither the idempotency of
+     * disposeInternal() nor either chkIfDisposed() call site has ever been asserted. A
+     * regression which moved the flag assignment after the flush, or which dropped
+     * chkIfDisposed() from createDispatchTask(), would push a task onto a disposed
+     * ExecutionQueue during shutdown - an assert in debug and undefined behaviour in release,
+     * on a path which only fires under load
+     *
+     * No broker, no HTTP server and no machine global lock are involved
+     */
+
+    const auto dataBlocksPool = data::datablocks_pool_type::createInstance();
+
+    const auto backendReference = om::ProxyImpl::createInstance< om::Proxy >( false /* strongRef */ );
+
+    const auto context = echo::EchoServerProcessingContext::createInstance(
+        true                                                            /* isQuietMode */,
+        0UL                                                             /* maxProcessingDelayInMicroseconds */,
+        false                                                           /* isGraphQLServer */,
+        false                                                           /* isAuthnticationAlwaysRequired */,
+        std::string()                                                   /* requiredContentType */,
+        om::copy( dataBlocksPool ),
+        om::copy( backendReference ),
+        cpp::copy( utest::DummyAuthorizationCache::dummyTokenType() )   /* tokenType */,
+        std::string()                                                   /* tokenData */
+        );
+
+    const auto block = data::DataBlock::get( dataBlocksPool );
+
+    {
+        /*
+         * Before disposal a dispatch task is created normally; it is deliberately not run,
+         * because the proxy has no backend connected
+         */
+
+        const auto task = context -> createDispatchTask( uuids::create(), block );
+
+        UTF_REQUIRE( task );
+    }
+
+    UTF_REQUIRE_EQUAL( 0UL, context -> messagesProcessed() );
+
+    /*
+     * ... and disposal is idempotent
+     */
+
+    context -> dispose();
+    context -> dispose();
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        context -> createDispatchTask( uuids::create(), block ),
+        UnexpectedException,
+        "The server processing context was disposed already"
+        );
+
+    /*
+     * Nothing was ever processed - which is what distinguishes 'the task was created' from
+     * 'the task ran'
+     */
+
+    UTF_REQUIRE_EQUAL( 0UL, context -> messagesProcessed() );
+}
+
+UTF_AUTO_TEST_CASE( EchoServerContentTypeHeaderLookupTests )
+{
+    using namespace bl;
+    using namespace bl::messaging;
+
+    /*
+     * The other half of the finding which RestServiceSslBackendAssortedTests pins at the
+     * gateway level: the exact key find() in EchoServerProcessingContext *can* succeed, but
+     * only for a producer which is not the HTTP gateway, because the gateway lower cases every
+     * request header name
+     *
+     * The contrast between the two blocks below is the finding - the same request, spelled
+     * two ways, takes two different paths and yields two different HTTP statuses
+     *
+     * Note that both blocks depend on isQuietMode == false: the whole block is nested inside
+     * 'if( ! m_isQuietMode )', so moving the context to quiet mode would turn the first one
+     * into a 200 as well - a logging flag deciding an HTTP status
+     */
+
+    const auto dataBlocksPool = data::datablocks_pool_type::createInstance();
+
+    const auto backendReference = om::ProxyImpl::createInstance< om::Proxy >( false /* strongRef */ );
+
+    const auto context = om::lockDisposable(
+        echo::EchoServerProcessingContext::createInstance(
+            false                                                           /* isQuietMode */,
+            0UL                                                             /* maxProcessingDelayInMicroseconds */,
+            false                                                           /* isGraphQLServer */,
+            false                                                           /* isAuthnticationAlwaysRequired */,
+            std::string()                                                   /* requiredContentType */,
+            om::copy( dataBlocksPool ),
+            om::copy( backendReference ),
+            cpp::copy( utest::DummyAuthorizationCache::dummyTokenType() )   /* tokenType */,
+            std::string()                                                   /* tokenData */
+            )
+        );
+
+    /*
+     * HttpResponseMetadata::httpStatusCode is an int property, so the status is compared as
+     * an int rather than as http::Parameters::HttpStatusCode
+     */
+
+    const auto processWithContentTypeKey =
+        [ & ]( SAA_in const std::string& contentTypeHeaderName ) -> int
+    {
+        const auto requestMetadata = dm::http::HttpRequestMetadata::createInstance();
+
+        requestMetadata -> method( "GET" );
+        requestMetadata -> urlPath( "/foo/bar" );
+
+        requestMetadata -> headersLvalue()[ contentTypeHeaderName ] =
+            http::HttpHeader::g_contentTypeJsonUtf8;
+
+        const auto requestMetadataPayload = dm::http::HttpRequestMetadataPayload::createInstance();
+
+        requestMetadataPayload -> httpRequestMetadata( om::copy( requestMetadata ) );
+
+        const auto brokerProtocol = MessagingUtils::createBrokerProtocolMessage(
+            MessageType::AsyncRpcDispatch,
+            uuids::create()                                                 /* conversationId */,
+            cpp::copy( utest::DummyAuthorizationCache::dummyTokenType() )   /* tokenType */,
+            cpp::copy( utest::DummyAuthorizationCache::dummyTokenData() )   /* tokenData */
+            );
+
+        brokerProtocol -> targetPeerId( uuids::uuid2string( uuids::create() ) );
+
+        brokerProtocol -> passThroughUserData(
+            dm::DataModelUtils::castTo< bl::dm::Payload >( requestMetadataPayload )
+            );
+
+        /*
+         * offset1() stays at zero - i.e. a content type header was announced, but no content
+         * was sent at all
+         */
+
+        const auto block = data::DataBlock::get( dataBlocksPool );
+
+        UTF_REQUIRE_EQUAL( 0U, block -> offset1() );
+
+        const auto responseMetadata = context -> processingSync(
+            brokerProtocol,
+            om::ObjPtrCopyable< data::DataBlock >( block )
+            );
+
+        UTF_REQUIRE( responseMetadata );
+
+        return responseMetadata -> httpStatusCode();
+    };
+
+    /*
+     * The exact, non normalised key - which only a non gateway producer can create. This is
+     * the dormant arm being executed for the first time
+     */
+
+    UTF_REQUIRE_EQUAL(
+        processWithContentTypeKey( http::HttpHeader::g_contentType ),
+        static_cast< int >( http::Parameters::HTTP_CLIENT_ERROR_BAD_REQUEST )
+        );
+
+    /*
+     * ... and the shape the gateway actually produces takes the other path
+     */
+
+    UTF_REQUIRE_EQUAL(
+        processWithContentTypeKey( "content-type" ),
+        static_cast< int >( http::Parameters::HTTP_SUCCESS_OK )
+        );
 }

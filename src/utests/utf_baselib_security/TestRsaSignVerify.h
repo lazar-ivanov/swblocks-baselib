@@ -164,3 +164,118 @@ UTF_AUTO_TEST_CASE( TestRsaSignVerifyNegative )
         std::exception
         );
 }
+
+UTF_AUTO_TEST_CASE( TestRsaSignVerifyDegenerateSignatures )
+{
+    /*
+     * tryVerify() is documented as returning true or false and pointing the caller at
+     * bl::crypto::getException for the reason, but its very first action is
+     * SerializationUtils::base64UrlDecodeVector( signatureBase64Url ), which throws a
+     * bl::ArgumentException for an input whose length is 1 modulo 4, which carries more than
+     * two '=' characters, or which contains any character outside the base64 alphabet - so
+     * for a malformed (i.e. attacker controlled) signature the 'try' form *throws*
+     *
+     * TestRsaSignVerifyNegative corrupts the signature by swapping two adjacent characters,
+     * which keeps it valid base64url of the same length, so only the 'well formed but wrong'
+     * branch has ever been exercised
+     */
+
+    const auto rsaKey = bl::security::JsonSecuritySerialization::loadPrivateKeyFromPemString(
+        utest::LocalTestRsaSignVerifyHelpers::createEncryptedPemKeyAsText( "1234" /* password */ ),
+        "1234" /* password */
+        );
+
+    /*
+     * Generating an RSA key is slow, so the second key is generated once and reused for both
+     * the wrong key rows and the error queue rows
+     */
+
+    const auto otherKey = bl::security::JsonSecuritySerialization::loadPrivateKeyFromPemString(
+        utest::LocalTestRsaSignVerifyHelpers::createEncryptedPemKeyAsText( "1234" /* password */ ),
+        "1234" /* password */
+        );
+
+    const std::string message( "C++ is a wonderful language!" );
+
+    const auto signatureBase64Url = bl::crypto::RsaSignVerify::signAsBase64Url( rsaKey, message );
+
+    UTF_REQUIRE( signatureBase64Url.size() > 4U );
+
+    /*
+     * (1) An empty signature decodes to an empty vector and ::RSA_verify fails cleanly
+     */
+
+    UTF_REQUIRE( ! bl::crypto::RsaSignVerify::tryVerify( rsaKey, message, bl::str::empty() ) );
+
+    /*
+     * (2) A truncated signature - dropping four characters keeps the length legal, so this
+     * one still goes through the decoder and comes back as a plain false
+     */
+
+    UTF_REQUIRE(
+        ! bl::crypto::RsaSignVerify::tryVerify(
+            rsaKey,
+            message,
+            signatureBase64Url.substr( 0U, signatureBase64Url.size() - 4U )
+            )
+        );
+
+    /*
+     * (3) Not base64url at all, and a length which is 1 modulo 4 - this is the assertion
+     * which documents the real contract; if tryVerify is subsequently made total, this is
+     * the place which has to record the change
+     */
+
+    UTF_REQUIRE_THROW(
+        bl::crypto::RsaSignVerify::tryVerify( rsaKey, message, "!!!!" ),
+        bl::ArgumentException
+        );
+
+    UTF_REQUIRE_THROW(
+        bl::crypto::RsaSignVerify::tryVerify( rsaKey, message, std::string( "AQABA" ) ),
+        bl::ArgumentException
+        );
+
+    /*
+     * (4) The wrong key - the 'try' form returns false and the checked form throws
+     */
+
+    UTF_REQUIRE( ! bl::crypto::RsaSignVerify::tryVerify( otherKey, message, signatureBase64Url ) );
+
+    UTF_REQUIRE_THROW(
+        bl::crypto::RsaSignVerify::verify( otherKey, message, signatureBase64Url ),
+        bl::SystemException
+        );
+
+    /*
+     * (5) The error queue contract - nothing drains the queue after a false return (that is
+     * by design, per the doc comment), so the reason stays retrievable, and retrieving it
+     * through bl::crypto::getException is what cleans the queue up
+     */
+
+    ( void ) ::ERR_clear_error();
+
+    UTF_REQUIRE( ! bl::crypto::RsaSignVerify::tryVerify( otherKey, message, signatureBase64Url ) );
+
+    UTF_REQUIRE( 0 != bl::crypto::detail::getFirstError().value() );
+
+    ( void ) bl::crypto::getException( "verification failed" );
+
+    UTF_REQUIRE( 0 == bl::crypto::detail::getFirstError().value() );
+
+    /*
+     * (6) A tampered message rather than a tampered signature
+     */
+
+    UTF_REQUIRE( ! bl::crypto::RsaSignVerify::tryVerify( rsaKey, message + "!", signatureBase64Url ) );
+
+    UTF_REQUIRE( 0 != bl::crypto::detail::getFirstError().value() );
+
+    /*
+     * (7) ... and the queue is drained again, so nothing bleeds into the next case
+     */
+
+    ( void ) bl::crypto::getException( "verification failed" );
+
+    UTF_CHECK( 0 == bl::crypto::detail::getFirstError().value() );
+}
