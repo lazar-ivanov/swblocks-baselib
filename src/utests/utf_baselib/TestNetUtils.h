@@ -55,6 +55,103 @@ UTF_AUTO_TEST_CASE( NetUtils_tryParseEndpointTest )
     UTF_CHECK( bl::net::tryParseEndpoint( "host:65535", host, port ) );
     UTF_CHECK_EQUAL( host, "host" );
     UTF_CHECK_EQUAL( port, 65535 );
+
+    /*
+     * DOCUMENTED DEFECT - the port is parsed with std::stoul( ... ) and the consumed
+     * length out-parameter is never requested, so std::stoul's permissive grammar leaks
+     * straight through: leading whitespace is skipped, a sign is accepted and everything
+     * after the digits is silently ignored
+     *
+     * tryParseEndpoint( ... ) is the parser for operator supplied endpoints
+     * ( MessagingUtils.h and ForwardingBackendProcessingFactory.h feed it configuration
+     * strings ), so each of the four shapes below is a configuration validation hole which
+     * surfaces as a connection to the wrong port rather than as an error
+     *
+     * The one line fix is to pass a std::size_t out-parameter to std::stoul and require
+     * that it consumed the whole port substring. The block below pins what the code does
+     * TODAY so that, when the parser is tightened, this is the single place where the
+     * expectations flip - and until then it proves nobody widened the acceptance further
+     *
+     * Note also that std::out_of_range is NOT caught by the catch( std::invalid_argument& )
+     * below the std::stoul call - it is unreachable today only because the port substring
+     * is capped at 5 characters ( the "host:123456" guard above ), i.e. at most 99999,
+     * which always fits an unsigned long. Removing that length gate without adding an
+     * out_of_range catch would turn a malformed configuration into an uncaught exception
+     */
+
+    UTF_CHECK( bl::net::tryParseEndpoint( "host:12ab", host, port ) );
+    UTF_CHECK_EQUAL( host, "host" );
+    UTF_CHECK_EQUAL( port, 12 );
+
+    UTF_CHECK( bl::net::tryParseEndpoint( "host:+80", host, port ) );
+    UTF_CHECK_EQUAL( host, "host" );
+    UTF_CHECK_EQUAL( port, 80 );
+
+    UTF_CHECK( bl::net::tryParseEndpoint( "host: 80", host, port ) );
+    UTF_CHECK_EQUAL( host, "host" );
+    UTF_CHECK_EQUAL( port, 80 );
+
+    UTF_CHECK( bl::net::tryParseEndpoint( "host:0x10", host, port ) );
+    UTF_CHECK_EQUAL( host, "host" );
+    UTF_CHECK_EQUAL( port, 0 );
+}
+
+UTF_AUTO_TEST_CASE( NetUtils_RemoteEndpointIdTests )
+{
+    /*
+     * The "host:port" shape is what every endpoint id in the logs and in MessagingUtils /
+     * ForwardingBackendProcessingFactory is built from
+     */
+
+    UTF_CHECK_EQUAL( bl::net::formatEndpointId( "host", 8080 ), std::string( "host:8080" ) );
+
+    bl::asio::io_service ioService;
+
+    /*
+     * remoteEndpointIdNoWait( ... ) exists precisely so it can be called from a context
+     * which must not block or throw - e.g. a task continuation, which runs while the
+     * execution queue lock is held - so the "never throws on a bad socket" contract is the
+     * load bearing assertion here; a socket which was never opened is the cheapest way to
+     * make socket.remote_endpoint( ec ) fail deterministically
+     */
+
+    bl::net::tcp::socket unopened( ioService );
+
+    std::string unopenedId;
+
+    UTF_REQUIRE_NO_THROW( unopenedId = bl::net::remoteEndpointIdNoWait( unopened ) );
+
+    UTF_CHECK_EQUAL( std::string( "<unknown>" ), unopenedId );
+
+    /*
+     * A loopback round trip - no external DNS, no sleeps, no fixed ports and nothing
+     * asynchronous, so no io_service::run() is required. The templated
+     * formatEndpointId( endpoint ) overload is exercised through the call below
+     */
+
+    bl::net::tcp::acceptor acceptor(
+        ioService,
+        bl::net::tcp::endpoint( bl::asio::ip::address_v4::loopback(), 0 /* ephemeral port */ )
+        );
+
+    const auto port = acceptor.local_endpoint().port();
+
+    bl::net::tcp::socket client( ioService );
+
+    client.connect( bl::net::tcp::endpoint( bl::asio::ip::address_v4::loopback(), port ) );
+
+    bl::net::tcp::socket peer( ioService );
+
+    acceptor.accept( peer );
+
+    UTF_CHECK_EQUAL(
+        bl::net::remoteEndpointIdNoWait( client ),
+        bl::net::formatEndpointId( "127.0.0.1", port )
+        );
+
+    client.close();
+    peer.close();
+    acceptor.close();
 }
 
 UTF_AUTO_TEST_CASE( NetUtils_IcmpHeaderTests )

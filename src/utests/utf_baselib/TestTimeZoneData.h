@@ -20,6 +20,9 @@
 #include <baselib/core/TimeZoneData.h>
 #include <baselib/core/TimeUtils.h>
 
+#include <cstdint>
+#include <ctime>
+
 static void logTestName( SAA_in const std::string& name )
 {
     BL_LOG_MULTILINE(
@@ -71,6 +74,165 @@ UTF_AUTO_TEST_CASE( TestTimeZoneData )
     logTestName( "Timezone offset check - Non-Daylight saving timezone" );
 
     UTF_CHECK_EQUAL( TimeZoneData::getTimeZoneOffset( "IST" ), "IST+05:30:00" );
+
+    logTestName( "Timezone abbreviation priority resolution" );
+
+    /*
+     * The rows of g_timeZoneData are walked in order and the STD abbreviation of a row is
+     * only registered when no row has claimed it yet - so without g_timeZonePriorityMap
+     * and the 'continue' which enforces it, 'CST' would resolve to America/Belize and
+     * 'EST' to America/Cayman ( both of which precede America/Chicago and
+     * America/New_York in the table and carry NO daylight saving rules ), 'PST' to
+     * America/Dawson and 'CET' to Africa/Algiers
+     *
+     * Comparing against the full POSIX spec is what makes this falsifiable: the
+     * Central American rows produce "CST-06:00:00" / "EST-05:00:00" with no DST tail
+     */
+
+    UTF_REQUIRE_EQUAL(
+        TimeZoneData::getTimeZoneOffset( "CST" ),
+        "CST-06:00:00CDT+01:00:00,M3.2.0/+02:00:00,M11.1.0/+02:00:00"
+        );
+
+    UTF_REQUIRE_EQUAL(
+        TimeZoneData::getTimeZoneOffset( "EST" ),
+        "EST-05:00:00EDT+01:00:00,M3.2.0/+02:00:00,M11.1.0/+02:00:00"
+        );
+
+    UTF_REQUIRE_EQUAL(
+        TimeZoneData::getTimeZoneOffset( "PST" ),
+        TimeZoneData::getTimeZoneOffset( "America/Los_Angeles" )
+        );
+
+    UTF_REQUIRE_EQUAL(
+        TimeZoneData::getTimeZoneOffset( "CET" ),
+        TimeZoneData::getTimeZoneOffset( "Europe/Paris" )
+        );
+
+    logTestName( "Timezone DST abbreviation keys" );
+
+    /*
+     * The DST abbreviation of a row gets its own key, but only for the row which also won
+     * the STD abbreviation - so these keys disappear together with the priority handling
+     */
+
+    UTF_REQUIRE( TimeZoneData::validateTimeZone( "BST" ) );
+    UTF_REQUIRE( TimeZoneData::validateTimeZone( "EDT" ) );
+    UTF_REQUIRE( TimeZoneData::validateTimeZone( "CDT" ) );
+
+    UTF_REQUIRE_EQUAL(
+        TimeZoneData::getTimeZoneOffset( "BST" ),
+        TimeZoneData::getTimeZoneOffset( "GMT" )
+        );
+
+    UTF_REQUIRE_EQUAL(
+        TimeZoneData::getTimeZoneOffset( "EDT" ),
+        TimeZoneData::getTimeZoneOffset( "EST" )
+        );
+
+    logTestName( "Timezone space substituted alias keys" );
+
+    /*
+     * Every Olson id which carries an underscore is also registered with the underscore
+     * replaced by a space
+     */
+
+    UTF_REQUIRE( TimeZoneData::validateTimeZone( "America/New York" ) );
+
+    UTF_REQUIRE_EQUAL(
+        TimeZoneData::getTimeZoneOffset( "America/New York" ),
+        TimeZoneData::getTimeZoneOffset( "America/New_York" )
+        );
+
+    UTF_REQUIRE( ! TimeZoneData::getTimeZoneDataMap().empty() );
+}
+
+UTF_AUTO_TEST_CASE( TestWindowsToOlsonMappingConsistency )
+{
+    using namespace bl;
+    using namespace bl::time;
+
+    TimeZoneData::init();
+
+    /*
+     * getOlsonFromWindows( ... ) is NOT gated on _WIN32, so this consistency check runs
+     * everywhere. getDefaultTimeZone() on Windows returns its result WITHOUT validating
+     * it, so a Windows -> Olson row whose target is missing from the Olson table produces
+     * a non-empty time zone name for which validateTimeZone() is false and
+     * getTimeZoneOffset() throws
+     *
+     * TimeZoneDataT exposes no accessor for g_windows2OlsonData, so the names below are
+     * spelled out here rather than enumerated - this test cannot be exhaustive over the
+     * table, but it does fail loudly the moment a fifth broken mapping is added
+     */
+
+    const char* const healthy[] =
+    {
+        "Eastern Standard Time",
+        "GMT Standard Time",
+        "India Standard Time",
+        "AUS Eastern Standard Time",
+        "Newfoundland Standard Time",
+        "UTC"
+    };
+
+    for( std::size_t i = 0U; i < BL_ARRAY_SIZE( healthy ); ++i )
+    {
+        const auto olson = TimeZoneData::getOlsonFromWindows( healthy[ i ] );
+
+        UTF_REQUIRE( ! olson.empty() );
+        UTF_REQUIRE( TimeZoneData::validateTimeZone( olson ) );
+    }
+
+    UTF_REQUIRE_EQUAL( TimeZoneData::getOlsonFromWindows( "Eastern Standard Time" ), "America/New_York" );
+    UTF_REQUIRE_EQUAL( TimeZoneData::getOlsonFromWindows( "GMT Standard Time" ), "Europe/London" );
+    UTF_REQUIRE_EQUAL( TimeZoneData::getOlsonFromWindows( "India Standard Time" ), "Asia/Calcutta" );
+    UTF_REQUIRE_EQUAL( TimeZoneData::getOlsonFromWindows( "AUS Eastern Standard Time" ), "Australia/Sydney" );
+    UTF_REQUIRE_EQUAL( TimeZoneData::getOlsonFromWindows( "Newfoundland Standard Time" ), "America/St_Johns" );
+    UTF_REQUIRE_EQUAL( TimeZoneData::getOlsonFromWindows( "UTC" ), "Etc/GMT" );
+
+    /*
+     * PRODUCTION DATA DEFECT - quarantined mappings
+     *
+     * These four rows of g_windows2OlsonData in baselib/core/TimeZoneData.h:
+     *
+     *     :948  "Dateline Standard Time,Etc/GMT+12"
+     *     :1012 "UTC-02,Etc/GMT+2"
+     *     :1013 "UTC-11,Etc/GMT+11"
+     *     :1014 "UTC+12,Etc/GMT-12"
+     *
+     * name Olson zones which do NOT exist in g_timeZoneData - its only Etc/ row is
+     * "Etc/GMT" ( :810 ). On a machine configured with one of these Windows zones
+     * getDefaultTimeZone() therefore returns a name which validateTimeZone() rejects and
+     * getTimeZoneOffset() throws on
+     *
+     * The current ( broken ) behaviour is pinned here rather than fixed, because the fix
+     * is a production data change - either add the four Etc/GMT+/-N rows to
+     * g_timeZoneData or drop the four mappings. When that lands, move these four names
+     * into the healthy list above
+     */
+
+    const char* const quarantined[] =
+    {
+        "Dateline Standard Time",
+        "UTC-02",
+        "UTC-11",
+        "UTC+12"
+    };
+
+    for( std::size_t i = 0U; i < BL_ARRAY_SIZE( quarantined ); ++i )
+    {
+        const auto olson = TimeZoneData::getOlsonFromWindows( quarantined[ i ] );
+
+        UTF_REQUIRE( ! olson.empty() );
+        UTF_REQUIRE( ! TimeZoneData::validateTimeZone( olson ) );
+    }
+
+    /*
+     * The miss case must return the empty string and not a garbage non-empty one
+     */
+
+    UTF_REQUIRE( TimeZoneData::getOlsonFromWindows( "No Such Standard Time" ).empty() );
 }
 
 UTF_AUTO_TEST_CASE( TestTimeZoneOffsetIsValidPosixSpec )
@@ -276,6 +438,58 @@ UTF_AUTO_TEST_CASE( TestISOTimeFormat )
     localTime = getLocalTimeISO( utcTime4 );
     UTF_CHECK( localTime.size() == 32U );
     UTF_CHECK( bl::str::regex_match( localTime, results, regex ) );
+
+    /*
+     * Everything Unix timestamp shaped in the library derives from g_epoch, so its value
+     * is pinned here and cross checked against the C library
+     */
+
+    UTF_REQUIRE_EQUAL( bl::time::epoch(), bl::time::ptime( bl::time::date( 1970, 1, 1 ) ) );
+
+    const auto secondsSinceEpoch =
+        static_cast< std::int64_t >( bl::time::durationSinceEpochUtcInSeconds() );
+
+    const auto secondsFromCLibrary = static_cast< std::int64_t >( std::time( nullptr ) );
+
+    UTF_REQUIRE( ( secondsSinceEpoch - secondsFromCLibrary ) <= 5 );
+    UTF_REQUIRE( ( secondsFromCLibrary - secondsSinceEpoch ) <= 5 );
+
+    /*
+     * getLocalTimeISO( ... ) guards only is_special() before handing the value to
+     * c_local_adjustor< ptime >::utc_to_local( ... ), which throws std::out_of_range for
+     * ANY non-special ptime before the epoch - and not at the epoch itself. Note that
+     * ptime( min_date_time ) is NOT special, it is 1400-Jan-01, so it takes the throwing
+     * path rather than the empty string path
+     *
+     * The exact position of that cliff is worth pinning because getCurrentLocalTimeISO()
+     * is called from inside BL_THROW_* ( core/ErrorHandling.h ) and from the logger
+     * ( core/Logging.h ) - a shift would make exception construction and logging
+     * themselves throw
+     */
+
+    UTF_REQUIRE_NO_THROW( bl::time::getLocalTimeISO( bl::time::epoch() ) );
+
+    localTime = bl::time::getLocalTimeISO( bl::time::epoch() );
+
+    UTF_CHECK( bl::str::regex_match( localTime, results, regex ) );
+    UTF_CHECK( localTime.size() == 32U );
+
+    UTF_REQUIRE_THROW(
+        bl::time::getLocalTimeISO( bl::time::epoch() - bl::time::seconds( 1 ) ),
+        std::out_of_range
+        );
+
+    UTF_REQUIRE_THROW(
+        bl::time::getLocalTimeISO( bl::time::ptime( bl::time::min_date_time ) ),
+        std::out_of_range
+        );
+
+    /*
+     * The remaining two special values - only not_a_date_time is covered above
+     */
+
+    UTF_REQUIRE( bl::time::getLocalTimeISO( bl::time::ptime( bl::time::pos_infin ) ).empty() );
+    UTF_REQUIRE( bl::time::getLocalTimeISO( bl::time::ptime( bl::time::neg_infin ) ).empty() );
 
     if( test::UtfArgsParser::isClient() )
     {

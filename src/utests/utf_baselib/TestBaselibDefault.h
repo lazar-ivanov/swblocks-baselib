@@ -2875,6 +2875,44 @@ UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessRedirectedMergedTests )
     UTF_REQUIRE( 0 == exitCode );
 
     UTF_REQUIRE( 2U <= lines.size() );
+
+    if( bl::os::onUNIX() )
+    {
+        /*
+         * ProcessCreateFlags::CloseStdin - the script above never reads its standard
+         * input, so the EOF property of that flag is not exercised by it
+         *
+         * With RedirectStdin | CloseStdin the parent creates the pipe and immediately
+         * resets the write end, so no writable end survives anywhere and the child's very
+         * first read returns EOF. Dropping that reset, or reordering the post-fork
+         * inPipe.first.reset() so that a writable end survives in the parent, turns every
+         * createRedirectedProcess*AndWait( ... ) call over a stdin reading command into an
+         * unrecoverable deadlock: the child blocks on read while the parent blocks in
+         * WaitToFinish
+         *
+         * NOTE THAT A REGRESSION HERE MANIFESTS AS A HANG, not as a failed assertion
+         *
+         * The block is UNIX only because it runs bash; it also inherits the Windows
+         * analysis skip at the top of this case
+         */
+
+        lines.clear();
+
+        const auto stdinProcessRef = bl::os::createRedirectedProcessMergeOutputAndWait(
+            std::vector< std::string >
+            {
+                "bash",
+                "-c",
+                "if read line; then echo GOT; else echo EOF; fi"
+            },
+            cbRedirectedIos
+            );
+
+        UTF_REQUIRE( ! lines.empty() );
+        UTF_CHECK_EQUAL( std::string( "EOF" ), lines.front() );
+
+        UTF_CHECK_EQUAL( 0, bl::os::tryAwaitTermination( stdinProcessRef ) );
+    }
 }
 
 /************************************************************************
@@ -3455,6 +3493,56 @@ UTF_AUTO_TEST_CASE( BaseLib_OSLargeFileSupportTests )
 
         const auto newPos = bl::os::ftell( fileptr );
         UTF_REQUIRE( ( pos + BL_ARRAY_SIZE( buffer ) ) == newPos );
+    }
+
+    /*
+     * Everything above goes through os::fseek / os::ftell, which are the OSImplWindows
+     * wrappers - they bypass the Boost device entirely. The same 5 GiB offset is walked
+     * again below through fs::SafeInputFileStreamWrapper, i.e. through
+     * stdio_file_device_base::trySeekFile / ::tellFile / ::seek, which are what backs
+     * every SafeInputFileStreamWrapper in the library
+     *
+     * On Windows std::fseek / std::ftell take and return a 32 bit long, which is exactly
+     * why the device calls _fseeki64 / _ftelli64; replacing them would silently wrap here
+     *
+     * The file is sparse, so a filesystem without sparse file support would make this
+     * expensive rather than wrong - the guard degrades to a skip in that case
+     */
+
+    if( bl::fs::file_size( largeFilePath ) != ( pos + BL_ARRAY_SIZE( pattern ) ) )
+    {
+        UTF_MESSAGE(
+            "Skipping the 64 bit device seek assertions - the sparse file was not created at its full size"
+            );
+    }
+    else
+    {
+        bl::fs::SafeInputFileStreamWrapper large( largeFilePath );
+
+        auto& is = large.stream();
+
+        is.seekg( 0, std::ios::end );
+
+        UTF_REQUIRE_EQUAL(
+            static_cast< std::int64_t >( pos ) + static_cast< std::int64_t >( BL_ARRAY_SIZE( pattern ) ),
+            static_cast< std::int64_t >( is.tellg() )
+            );
+
+        std::memset( buffer, 0, BL_ARRAY_SIZE( buffer ) );
+
+        is.seekg( static_cast< std::streamoff >( pos ), std::ios::beg );
+        is.read( reinterpret_cast< char* >( buffer ), BL_ARRAY_SIZE( buffer ) );
+
+        UTF_REQUIRE( ! is.fail() );
+        UTF_REQUIRE( 0 == ::memcmp( buffer, pattern, BL_ARRAY_SIZE( buffer ) ) );
+
+        std::memset( buffer, 0, BL_ARRAY_SIZE( buffer ) );
+
+        is.seekg( -static_cast< std::streamoff >( BL_ARRAY_SIZE( pattern ) ), std::ios::end );
+        is.read( reinterpret_cast< char* >( buffer ), BL_ARRAY_SIZE( buffer ) );
+
+        UTF_REQUIRE( ! is.fail() );
+        UTF_REQUIRE( 0 == ::memcmp( buffer, pattern, BL_ARRAY_SIZE( buffer ) ) );
     }
 }
 
@@ -4417,6 +4505,131 @@ UTF_AUTO_TEST_CASE( BaseLib_PathUtilsTests )
         UTF_REQUIRE( bl::fs::getRelativePath( pathNormalizeForOS( "c:\\foo\\bar\\baz" ), pathNormalizeForOS( "c:/foo/bar/" ), relPath, true /* allowNonStrictRoot */ ) );
         UTF_REQUIRE( relPath.is_relative() );
         UTF_REQUIRE_EQUAL( relPath.string(), "baz" );
+    }
+
+    {
+        /*
+         * 'path' is a strict PREFIX of 'root', i.e. the path iterator runs out first
+         *
+         * The walk condition is "ip != path.end() && ir != root.end() && *ip == *ir" - the
+         * end checks deliberately precede the dereference, and this is the shape which
+         * makes the difference: reordering them back to dereference-before-end-check is
+         * undefined behaviour for exactly this input
+         */
+
+        bl::fs::path relPath;
+
+        UTF_REQUIRE(
+            ! bl::fs::getRelativePath(
+                pathNormalizeForOS( "c:\\foo" ),
+                pathNormalizeForOS( "c:\\foo\\bar\\baz" ),
+                relPath,
+                true /* allowNonStrictRoot */
+                )
+            );
+
+        UTF_REQUIRE( relPath.is_relative() );
+        UTF_REQUIRE_EQUAL( relPath.string(), pathNormalizeForOS( "..\\.." ) );
+    }
+
+    {
+        bl::fs::path relPath( "keepme" );
+
+        UTF_REQUIRE(
+            ! bl::fs::getRelativePath(
+                pathNormalizeForOS( "c:\\foo" ),
+                pathNormalizeForOS( "c:\\foo\\bar\\baz" ),
+                relPath
+                )
+            );
+
+        UTF_REQUIRE_EQUAL( relPath.string(), "keepme" );
+    }
+
+    {
+        /*
+         * The argument preconditions - getRelativePath walks two iterators and is only
+         * meaningful for absolute paths, so a relative or empty argument must be rejected
+         * before the walk rather than producing a nonsense relative path
+         *
+         * An empty root reaches ensureAbsolute( ... ) first, so its exception carries the
+         * "must be absolute" message rather than "cannot be empty" - which is why only the
+         * type is asserted for the getRelativePath calls and the messages are pinned on
+         * the two ensure* helpers directly ( nothing else in the repository calls them )
+         */
+
+        bl::fs::path relPath;
+
+        UTF_REQUIRE_THROW(
+            bl::fs::getRelativePath( "relative/path", pathNormalizeForOS( "c:\\foo" ), relPath ),
+            bl::ArgumentException
+            );
+
+        UTF_REQUIRE_THROW(
+            bl::fs::getRelativePath( pathNormalizeForOS( "c:\\foo" ), "relative/root", relPath ),
+            bl::ArgumentException
+            );
+
+        UTF_REQUIRE_THROW(
+            bl::fs::getRelativePath( pathNormalizeForOS( "c:\\foo" ), bl::fs::path(), relPath ),
+            bl::ArgumentException
+            );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            bl::fs::ensureAbsolute( "relative/path" ),
+            bl::ArgumentException,
+            "must be absolute"
+            );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            bl::fs::ensureNotEmpty( bl::fs::path() ),
+            bl::ArgumentException,
+            "cannot be empty"
+            );
+    }
+
+    {
+        /*
+         * The trailing separator dot filter is applied to 'root' ONLY, so a trailing
+         * separator on 'path' survives into the result while one on 'root' does not -
+         * contrast the "c:\foo\bar\baz" over "c:\foo\bar\" block above, which yields
+         * "baz" and not ".\baz"
+         *
+         * If this is judged a defect rather than a contract, the fix is a production
+         * change ( filter the dots on 'ip' too ) and this assertion becomes its regression
+         * test
+         */
+
+        bl::fs::path relPath;
+
+        const auto isPrefix =
+            bl::fs::getRelativePath(
+                pathNormalizeForOS( "c:\\foo\\bar\\" ),
+                pathNormalizeForOS( "c:\\foo\\bar" ),
+                relPath
+                );
+
+        UTF_REQUIRE( isPrefix );
+        UTF_CHECK_EQUAL( relPath.string(), "." );
+    }
+
+    {
+        /*
+         * The mirrored case - with a trailing separator on both sides the two dot elements
+         * cancel out in the walk itself and the result is empty
+         */
+
+        bl::fs::path relPath;
+
+        const auto isPrefix =
+            bl::fs::getRelativePath(
+                pathNormalizeForOS( "c:\\foo\\bar\\" ),
+                pathNormalizeForOS( "c:\\foo\\bar\\" ),
+                relPath
+                );
+
+        UTF_REQUIRE( isPrefix );
+        UTF_CHECK_EQUAL( relPath.string(), "" );
     }
 
     {
@@ -5659,6 +5872,13 @@ UTF_AUTO_TEST_CASE( FsUtils_TestNormalize )
             );
 
         UTF_REQUIRE( bl::fs::normalize( "/../etc/passwd" ).is_absolute() );
+
+        /*
+         * normalizePathCliParameter( ... ) resolves ".." through normalize( ... ); there
+         * is no LFN prefix to remove on this platform
+         */
+
+        UTF_REQUIRE_EQUAL( bl::fs::normalizePathCliParameter( "/a/b/../c" ), std::string( "/a/c" ) );
     }
 
     if( bl::os::onWindows() )
@@ -5753,6 +5973,44 @@ UTF_AUTO_TEST_CASE( FsUtils_TestNormalize )
             );
 
         UTF_REQUIRE( bl::fs::normalize( "C:\\..\\Windows" ).is_absolute() );
+
+        /*
+         * bl::fs::path adds the \\?\ LFN prefix in its constructor on Windows, and
+         * normalizePathCliParameter( ... ) exists precisely to take it back off again -
+         * it is what JvmHelpers uses to build the JVM class path and the -D options, so a
+         * change which stopped removing the prefix would hand the JVM \\?\C:\... and it
+         * would fail to load
+         */
+
+        const auto lfnInput = bl::fs::path( "c:\\some\\dir" ).string();
+
+        UTF_REQUIRE( 0 == lfnInput.find( "\\\\?\\" ) );
+
+        const auto lfnResult = bl::fs::normalizePathCliParameter( lfnInput );
+
+        UTF_REQUIRE( 0 != lfnResult.find( "\\\\?\\" ) );
+        UTF_REQUIRE( bl::str::iends_with( lfnResult, "some\\dir" ) );
+    }
+
+    /*
+     * normalizePathCliParameter( ... ) ground truth - every existing assertion about this
+     * function ( utf_baselib_jni/TestJni.h:753/765/766 ) computes its expectation by
+     * calling the function under test, so it holds for ANY implementation, including one
+     * which returns the empty string
+     */
+
+    UTF_REQUIRE_EQUAL( bl::fs::normalizePathCliParameter( std::string() ), std::string() );
+
+    {
+        const auto cwd = bl::fs::current_path();
+
+        const auto resolved = bl::fs::normalizePathCliParameter( "some/relative/leaf" );
+
+        UTF_REQUIRE( bl::fs::path( resolved ).is_absolute() );
+
+        UTF_REQUIRE(
+            bl::fs::normalize( cwd / "some" / "relative" / "leaf" ).compare( bl::fs::path( resolved ) ) == 0
+            );
     }
 }
 
@@ -7647,6 +7905,69 @@ UTF_AUTO_TEST_CASE( BaseLib_Base64EncodingTests )
             true /* ignoreName */
             )
         );
+
+    {
+        /*
+         * The maxSize check is "fileSize < maxSize", i.e. a STRICT less-than, so a file of
+         * exactly maxSize bytes is rejected. The extreme maxSize == 1 assertion above
+         * cannot tell that apart from an implementation which always rejects whenever a
+         * maxSize is supplied, nor from a flipped comparison; a 10 byte file tested at
+         * both 10 and 11 can
+         *
+         * Note also that the is.read( ... ) below the check is not followed by a gcount()
+         * assertion, so a short read would silently base64 encode uninitialised heap
+         * memory - that is not deterministically testable here, but it is worth knowing
+         */
+
+        bl::fs::TmpDir boundaryTmpDir;
+
+        const auto& boundaryPath = boundaryTmpDir.path();
+
+        const auto sized = boundaryPath / "sized.bin";
+
+        utest::TestFsUtils::createDummyFile( sized, 10U );
+
+        std::size_t sizedFileSize = 0U;
+
+        UTF_REQUIRE_THROW(
+            bl::SerializationUtils::encodeFromFileToBase64String( sized, &sizedFileSize, 10U ),
+            bl::UnexpectedException
+            );
+
+        UTF_REQUIRE_NO_THROW(
+            bl::SerializationUtils::encodeFromFileToBase64String( sized, &sizedFileSize, 11U )
+            );
+
+        UTF_REQUIRE_EQUAL( sizedFileSize, 10U );
+
+        /*
+         * The zero length round trip - the encoded form of an empty file is the empty
+         * string, and decoding it must still create the parent directory and the ( empty )
+         * output file rather than skipping the write altogether
+         */
+
+        const auto empty = boundaryPath / "empty.bin";
+
+        utest::TestFsUtils::createDummyFile( empty, 0U );
+
+        std::size_t emptyFileSize = 1U;
+
+        UTF_REQUIRE_EQUAL(
+            bl::SerializationUtils::encodeFromFileToBase64String( empty, &emptyFileSize ),
+            std::string()
+            );
+
+        UTF_REQUIRE_EQUAL( emptyFileSize, 0U );
+
+        const auto emptyCopy = boundaryPath / "out" / "empty-copy.bin";
+
+        UTF_REQUIRE( ! bl::fs::path_exists( emptyCopy.parent_path() ) );
+
+        bl::SerializationUtils::decodeFromBase64StringToFile( std::string(), emptyCopy );
+
+        UTF_REQUIRE( bl::fs::path_exists( emptyCopy ) );
+        UTF_REQUIRE_EQUAL( bl::fs::file_size( emptyCopy ), 0U );
+    }
 }
 
 /************************************************************************
@@ -9867,6 +10188,59 @@ UTF_AUTO_TEST_CASE( BaseLib_OSRegistryValueTest )
             bl::os::tryGetRegistryValue( keyName, "value-\xE9" /* not UTF-8 */, true /* currentUser */ ),
             bl::SystemException
             );
+
+        /*
+         * PINNED LIMIT - tryGetRegistryValue( ... ) reads into a fixed WCHAR buffer[ 1024 ]
+         * ( OSImplWindows.h:3585 ), so a REG_SZ longer than 1023 characters makes
+         * RegGetValueW return ERROR_MORE_DATA and the function throws rather than growing
+         * the buffer and retrying
+         *
+         * 1023 characters is therefore the documented maximum today. The value of pinning
+         * it is that a partial read - i.e. a silent truncation - would be a very different
+         * and much worse failure mode; if the buffer is ever made growable this is the
+         * single place which flips to an equality check against the written value
+         */
+
+        const std::string longValueName = "long-value";
+        const std::wstring wlongValueName = conv.from_bytes( longValueName );
+        const std::wstring wlongData( 2000U, L'x' );
+
+        UTF_REQUIRE_EQUAL(
+            ERROR_SUCCESS,
+            ::RegSetValueExW(
+                hkey                                                            /* hKey */,
+                wlongValueName.c_str()                                          /* lpValueName */,
+                0                                                               /* Reserved */,
+                REG_SZ                                                          /* dwType */,
+                reinterpret_cast< const BYTE* >( wlongData.c_str() )            /* lpData */,
+                static_cast< DWORD >( ( wlongData.size() + 1 ) * sizeof( wchar_t ) ) /* cbData */
+                )
+            );
+
+        UTF_REQUIRE_THROW(
+            bl::os::getRegistryValue( keyName, longValueName, true /* currentUser */ ),
+            bl::SystemException
+            );
+
+        /*
+         * PRODUCTION DEFECT - NOT COVERED HERE
+         *
+         * OSImplWindows.h:3590 reads
+         *
+         *     const auto location = HKEY_CURRENT_USER ? "HKEY_CURRENT_USER" : "HKEY_LOCAL_MACHINE";
+         *
+         * i.e. it tests a non-null CONSTANT rather than the currentUser argument which the
+         * line immediately above it uses ( :3588 ), so 'location' is always
+         * "HKEY_CURRENT_USER" and every HKLM diagnostic names the wrong hive - which sends
+         * the reader of a support ticket to the wrong place. The one token fix is to test
+         * 'currentUser' instead
+         *
+         * No assertion is added for it here: reaching that diagnostic under HKLM requires
+         * an open or a value read which fails with something OTHER than
+         * ERROR_FILE_NOT_FOUND ( which is returned as nullptr rather than thrown ), and
+         * there is no way to produce one deterministically without administrator rights or
+         * assumptions about machine specific registry content
+         */
     }
     #endif
 

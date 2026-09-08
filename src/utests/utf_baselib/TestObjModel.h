@@ -300,12 +300,22 @@ UTF_AUTO_TEST_CASE( ObjModel_InterfaceDefinitionsTests )
     UTF_CHECK( ids.insert( uuids::uuid2string( FilesystemMetadataWO::iid() ) ).second );
 }
 
+namespace
+{
+    /*
+     * The on-zero-refs callback is invoked from a destructor and is stored in a process
+     * global std::function, so it must never capture anything whose lifetime is shorter
+     * than the process - hence the file scope counter rather than a stack local
+     */
+
+    std::atomic< long > g_onZeroRefsCount( 0L );
+
+} // __unnamed
+
 UTF_AUTO_TEST_CASE( ObjModel_BasicTests )
 {
     using namespace bl;
     using namespace bl::data;
-
-    bool calledOnZeroRefs = false;
 
     /*
      * Depending on what the order of execution of tests is there
@@ -331,14 +341,28 @@ UTF_AUTO_TEST_CASE( ObjModel_BasicTests )
         ++retries;
     }
 
-    const auto cbOnZeroRefs = [ &calledOnZeroRefs ]() -> void
+    const auto cbOnZeroRefs = []() -> void
     {
-        calledOnZeroRefs = true;
+        ++g_onZeroRefsCount;
     };
+
+    /*
+     * The callback is process global, so it must be cleared on EVERY exit path from this
+     * case - the exceptional one included. Re-installing it from a catch handler and
+     * rethrowing (which is what this case used to do) leaves it armed for the rest of the
+     * process, to be invoked by the next object count transition to zero
+     */
+
+    BL_SCOPE_EXIT(
+        {
+            bl::om::setOnZeroRefsCallback();
+        }
+        );
+
+    const auto callbacksBefore = g_onZeroRefsCount.load();
 
     om::setOnZeroRefsCallback( cbOnZeroRefs );
 
-    try
     {
         {
             auto o1 = MyObjSimple::createInstance( 42 );
@@ -450,20 +474,52 @@ UTF_AUTO_TEST_CASE( ObjModel_BasicTests )
                 UTF_CHECK( om::areEqual( o2.get(), i1.get() ) );
             }
         }
+    }
 
-        om::setOnZeroRefsCallback();
-    }
-    catch( std::exception& )
-    {
-        om::setOnZeroRefsCallback( cbOnZeroRefs );
-        throw;
-    }
+    UTF_REQUIRE( g_onZeroRefsCount.load() > callbacksBefore );
 
     /*
-     * Make sure we end up with zero object refs (i.e. where we started)
+     * Make sure we end up with zero object refs (i.e. where we started) - the boolean
+     * alone only says that SOME transition to zero happened, which any unrelated object
+     * destruction elsewhere in the process could have produced
      */
 
-    UTF_CHECK( calledOnZeroRefs );
+    UTF_REQUIRE_EQUAL( 0L, om::outstandingObjectRefs() );
+
+    /*
+     * A self contained block for the clear path of setOnZeroRefsCallback( ... ) - its
+     * default argument swaps in a default constructed onzerorefs_callback_t, and nothing
+     * asserted that this really disarms the callback
+     *
+     * Note that the second assertion cannot be perturbed by another thread: with the
+     * callback cleared, nothing anywhere can increment the counter
+     */
+
+    {
+        om::setOnZeroRefsCallback( cbOnZeroRefs );
+
+        const auto beforeCreate = g_onZeroRefsCount.load();
+
+        {
+            const auto o = MyObjSimple::createInstance( 42 );
+
+            UTF_REQUIRE( o );
+        }
+
+        UTF_REQUIRE( g_onZeroRefsCount.load() > beforeCreate );
+
+        om::setOnZeroRefsCallback();
+
+        const auto afterClear = g_onZeroRefsCount.load();
+
+        {
+            const auto o = MyObjSimple::createInstance( 42 );
+
+            UTF_REQUIRE( o );
+        }
+
+        UTF_REQUIRE_EQUAL( afterClear, g_onZeroRefsCount.load() );
+    }
 }
 
 UTF_AUTO_TEST_CASE( ObjModel_FactoryTests )
@@ -654,6 +710,179 @@ UTF_AUTO_TEST_CASE( ObjModel_GlobalApiTests )
     }
 
     UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
+}
+
+/************************************************************************
+ * om::detail::LoaderImplT::reset() contract
+ */
+
+namespace
+{
+    /*
+     * A minimal om::Resolver - none of its methods is ever invoked here. It exists only so
+     * that the loader really has a resolver installed before reset() is called: asserting
+     * that getResolver() is null afterwards is not falsifiable otherwise, because
+     * utf_baselib never registers a resolver of its own
+     */
+
+    template
+    <
+        typename E = void
+    >
+    class TestResolverT :
+        public bl::cpp::noncopyable,
+        public bl::om::Resolver
+    {
+        BL_QITBL_DECLARE( bl::om::Resolver )
+
+    public:
+
+        virtual int resolveServer(
+            SAA_in          const bl::om::clsid_t&                  clsid,
+            SAA_out         bl::om::serverid_t&                     serverid
+            ) NOEXCEPT OVERRIDE
+        {
+            BL_UNUSED( clsid );
+            BL_UNUSED( serverid );
+
+            return -1;
+        }
+
+        virtual int getFactory(
+            SAA_in          const bl::om::serverid_t&               serverid,
+            SAA_out         bl::om::objref_t&                       factory,
+            SAA_in          const bool                              onlyIfLoaded = false
+            ) NOEXCEPT OVERRIDE
+        {
+            BL_UNUSED( serverid );
+            BL_UNUSED( factory );
+            BL_UNUSED( onlyIfLoaded );
+
+            return -1;
+        }
+
+        virtual int registerHost() NOEXCEPT OVERRIDE
+        {
+            return -1;
+        }
+
+        virtual int getCoreServices( SAA_out_opt bl::om::objref_t& coreServices ) NOEXCEPT OVERRIDE
+        {
+            BL_UNUSED( coreServices );
+
+            return -1;
+        }
+
+        virtual int setCoreServices( SAA_in_opt bl::om::objref_t coreServices ) NOEXCEPT OVERRIDE
+        {
+            BL_UNUSED( coreServices );
+
+            return -1;
+        }
+    };
+
+    typedef bl::om::ObjectImpl< TestResolverT<> > TestResolverImpl;
+
+} // __unnamed
+
+UTF_AUTO_TEST_CASE( ObjModel_LoaderResetTests )
+{
+    using namespace bl;
+
+    /*
+     * SNAPSHOT FIRST - utf_baselib's UTF_GLOBAL_FIXTURE ( UtfLoaderInit.h ) registers
+     * clsids::MyObjectImpl() into the PROCESS GLOBAL loader for the whole module, and
+     * reset() throws away every registration made through om::registerClass. Without the
+     * restore below this case would break every later case which resolves that clsid, as
+     * well as the fixture's own unregisterClass() at process shutdown
+     *
+     * The restore tolerates both states - the registration is gone on the happy path but
+     * may still be present if an assertion above the reset() throws
+     */
+
+    BL_SCOPE_EXIT(
+        {
+            bl::om::detail::GlobalInit::getLoader() -> setResolver( nullptr );
+
+            try
+            {
+                bl::om::unregisterClass( clsids::MyObjectImpl() );
+            }
+            catch( std::exception& )
+            {
+                /*
+                 * Already gone - which is the expected state after reset()
+                 */
+            }
+
+            bl::om::registerClass(
+                clsids::MyObjectImpl(),
+                &bl::om::SimpleFactoryImpl< utest::MyObjectImpl >::createInstance
+                );
+        }
+        );
+
+    const auto resolver = TestResolverImpl::createInstance();
+
+    om::detail::GlobalInit::getLoader() -> setResolver( resolver.get() );
+
+    UTF_REQUIRE( nullptr != om::detail::GlobalInit::getLoader() -> getResolver() );
+
+    const om::clsid_t clsid = uuids::create();
+
+    om::registerClass( clsid, &om::SimpleFactoryImpl< CountedImpl >::createInstance );
+
+    {
+        const auto instance = om::createInstance< utest::MyInterface1 >( clsid );
+
+        UTF_REQUIRE( instance );
+    }
+
+    om::detail::GlobalInit::getLoader() -> reset();
+
+    /*
+     * A brand new default factory means every registration is gone, and with the resolver
+     * cleared too the lookup ends in the "cannot be resolved, no resolver registered"
+     * ClassNotFoundException path
+     */
+
+    UTF_REQUIRE_THROW( om::createInstance< utest::MyInterface1 >( clsid ), ClassNotFoundException );
+
+    UTF_REQUIRE( nullptr == om::detail::GlobalInit::getLoader() -> getResolver() );
+
+    /*
+     * The SAME clsid must be registrable again - this is exactly what TestPluginT's
+     * destructor buys the utf_baselib_loader module: without it the second case which
+     * loads the same plug-in would fail with a duplicate clsid UnexpectedException
+     */
+
+    UTF_REQUIRE_NO_THROW(
+        om::registerClass( clsid, &om::SimpleFactoryImpl< CountedImpl >::createInstance )
+        );
+
+    {
+        const auto instance = om::createInstance< utest::MyInterface1 >( clsid );
+
+        UTF_REQUIRE( instance );
+    }
+
+    om::unregisterClass( clsid );
+
+    UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
+}
+
+UTF_AUTO_TEST_CASE( ObjModel_LoaderResetRestoredModuleStateTests )
+{
+    using namespace bl;
+
+    /*
+     * The positive control for ObjModel_LoaderResetTests above - the module's global
+     * registration must have survived it
+     */
+
+    const auto instance = om::createInstance< utest::MyInterface1 >( clsids::MyObjectImpl() );
+
+    UTF_REQUIRE( instance );
 }
 
 UTF_AUTO_TEST_CASE( ObjModel_MyObjectImplTests )
@@ -1437,17 +1666,345 @@ namespace
 
     typedef bl::om::ObjectImpl< FooDisposable > FooDisposableImpl;
 
+    /*
+     * A production shaped disposable service - unlike FooDisposable above, whose IDENTITY
+     * interface is om::Disposable itself ( so the tryQI< Disposable > inside
+     * ObjPtrDisposable::reset() can never fail there ), this one has a DOMAIN interface as
+     * its identity and reaches Disposable only through the extra QI table entry which
+     * BL_QITBL_DECLARE_DISPOSABLE emits
+     *
+     * The dispose count and the live instance count are what every assertion below is
+     * expressed in; the dispose() body deliberately contains no UTF_* macro, because it
+     * runs from a destructor
+     */
+
+    long g_fooSvcLive = 0L;
+
+    template
+    <
+        typename E = void
+    >
+    class FooSvcT :
+        public bl::cpp::noncopyable,
+        public utest::MyInterface1,
+        public bl::om::Disposable
+    {
+        BL_QITBL_DECLARE_DISPOSABLE( utest::MyInterface1 )
+
+    private:
+
+        long m_disposeCount;
+        bool m_throwOnDispose;
+
+    protected:
+
+        FooSvcT()
+            :
+            m_disposeCount( 0L ),
+            m_throwOnDispose( false )
+        {
+            ++g_fooSvcLive;
+        }
+
+        ~FooSvcT() NOEXCEPT
+        {
+            --g_fooSvcLive;
+        }
+
+    public:
+
+        long disposeCount() const NOEXCEPT
+        {
+            return m_disposeCount;
+        }
+
+        void throwOnDispose( SAA_in const bool value ) NOEXCEPT
+        {
+            m_throwOnDispose = value;
+        }
+
+        virtual long getValue() OVERRIDE
+        {
+            return m_disposeCount;
+        }
+
+        virtual void dispose() OVERRIDE
+        {
+            ++m_disposeCount;
+
+            if( m_throwOnDispose )
+            {
+                BL_THROW(
+                    bl::UnexpectedException(),
+                    BL_MSG()
+                        << "dispose-failure-marker"
+                    );
+            }
+        }
+    };
+
+    typedef bl::om::ObjectImpl< FooSvcT<> > FooSvcImpl;
+
 } // __unnamed
 
 UTF_AUTO_TEST_CASE( ObjModel_ObjPtrDisposableTests )
 {
     using namespace bl;
 
-    auto obj = om::lockDisposable( FooDisposableImpl::createInstance() );
+    /*
+     * The original coverage - kept as is. Note that its real check was FooDisposable's
+     * BL_RT_ASSERT destructor, which calls os::fastAbort() and therefore KILLS the process
+     * instead of failing the case; everything below is expressed as ordinary assertions
+     */
 
-    obj = om::lockDisposable( FooDisposableImpl::createInstance() );
-    obj -> dispose();
+    {
+        auto obj = om::lockDisposable( FooDisposableImpl::createInstance() );
 
-    UTF_REQUIRE( obj -> isDisposed() );
+        obj = om::lockDisposable( FooDisposableImpl::createInstance() );
+        obj -> dispose();
+
+        UTF_REQUIRE( obj -> isDisposed() );
+    }
+
+    UTF_REQUIRE_EQUAL( 0L, g_fooSvcLive );
+
+    /*
+     * (2) Scope exit - the destructor routes through reset()
+     */
+
+    {
+        om::ObjPtr< FooSvcImpl > keepAlive;
+
+        {
+            const auto d = om::lockDisposable( FooSvcImpl::createInstance() );
+
+            keepAlive = om::copy( d.get() );
+
+            UTF_REQUIRE_EQUAL( 1L, g_fooSvcLive );
+            UTF_REQUIRE_EQUAL( 0L, keepAlive -> disposeCount() );
+        }
+
+        /*
+         * Exactly once, and through a QI which had to walk to a non identity entry
+         */
+
+        UTF_REQUIRE_EQUAL( 1L, keepAlive -> disposeCount() );
+    }
+
+    UTF_REQUIRE_EQUAL( 0L, g_fooSvcLive );
+
+    /*
+     * (3) An explicit reset() on a live pointer
+     */
+
+    {
+        om::ObjPtr< FooSvcImpl > keepAlive;
+
+        auto d = om::lockDisposable( FooSvcImpl::createInstance() );
+
+        keepAlive = om::copy( d.get() );
+
+        d.reset();
+
+        UTF_REQUIRE( ! d );
+        UTF_REQUIRE_EQUAL( 1L, keepAlive -> disposeCount() );
+    }
+
+    UTF_REQUIRE_EQUAL( 0L, g_fooSvcLive );
+
+    /*
+     * (4) reset( other ) - the OLD object is disposed, the new one is not
+     *
+     * REVIEW ITEM: reset( T* ) and operator =( T* ) are public and ATTACH WITHOUT an
+     * addRef, unlike ObjPtr, whose equivalent is protected precisely to prevent this
+     * ( ObjModel.h:123 vs :898-910 ) - so the reference has to be handed over explicitly
+     * with release(), otherwise it would be released twice
+     */
+
+    {
+        om::ObjPtr< FooSvcImpl > oldKeepAlive;
+        om::ObjPtr< FooSvcImpl > newKeepAlive;
+
+        auto d = om::lockDisposable( FooSvcImpl::createInstance() );
+
+        oldKeepAlive = om::copy( d.get() );
+
+        {
+            auto newOne = FooSvcImpl::createInstance();
+
+            newKeepAlive = om::copy( newOne.get() );
+
+            d.reset( newOne.release() );
+        }
+
+        UTF_REQUIRE_EQUAL( 1L, oldKeepAlive -> disposeCount() );
+        UTF_REQUIRE_EQUAL( 0L, newKeepAlive -> disposeCount() );
+        UTF_REQUIRE( om::areEqual( d.get(), newKeepAlive.get() ) );
+    }
+
+    UTF_REQUIRE_EQUAL( 0L, g_fooSvcLive );
+
+    /*
+     * (5) Move assignment from another ObjPtrDisposable
+     */
+
+    {
+        om::ObjPtr< FooSvcImpl > previous;
+        om::ObjPtr< FooSvcImpl > incoming;
+
+        auto d = om::lockDisposable( FooSvcImpl::createInstance() );
+
+        previous = om::copy( d.get() );
+
+        auto other = om::lockDisposable( FooSvcImpl::createInstance() );
+
+        incoming = om::copy( other.get() );
+
+        d = std::move( other );
+
+        UTF_REQUIRE_EQUAL( 1L, previous -> disposeCount() );
+        UTF_REQUIRE_EQUAL( 0L, incoming -> disposeCount() );
+        UTF_REQUIRE( ! other );
+    }
+
+    UTF_REQUIRE_EQUAL( 0L, g_fooSvcLive );
+
+    /*
+     * (6) Move assignment from a plain om::ObjPtr< T >&& - the base_type&& overload
+     */
+
+    {
+        om::ObjPtr< FooSvcImpl > previous;
+        om::ObjPtr< FooSvcImpl > incoming;
+
+        auto d = om::lockDisposable( FooSvcImpl::createInstance() );
+
+        previous = om::copy( d.get() );
+
+        auto plain = FooSvcImpl::createInstance();
+
+        incoming = om::copy( plain.get() );
+
+        d = std::move( plain );
+
+        UTF_REQUIRE_EQUAL( 1L, previous -> disposeCount() );
+        UTF_REQUIRE_EQUAL( 0L, incoming -> disposeCount() );
+        UTF_REQUIRE( ! plain );
+    }
+
+    UTF_REQUIRE_EQUAL( 0L, g_fooSvcLive );
+
+    /*
+     * (7) detachAsObjPtr() deliberately does NOT dispose - messaging's
+     * MessagingClientFactory, ForwardingBackendProcessingImpl and
+     * ProxyBrokerBackendProcessingFactory all hand backends off through it, and a
+     * detachAsObjPtr() which disposed would tear every one of them down
+     */
+
+    {
+        auto d = om::lockDisposable( FooSvcImpl::createInstance() );
+
+        const auto detached = d.detachAsObjPtr();
+
+        UTF_REQUIRE( ! d );
+        UTF_REQUIRE( detached );
+        UTF_REQUIRE_EQUAL( 0L, detached -> disposeCount() );
+        UTF_REQUIRE_EQUAL( 1L, g_fooSvcLive );
+    }
+
+    /*
+     * Destroying the returned ObjPtr released the object without ever disposing it
+     */
+
+    UTF_REQUIRE_EQUAL( 0L, g_fooSvcLive );
+
+    /*
+     * (8) d = nullptr - the ASYMMETRY. This overload comes from BL_CTR_COPY_DEFAULT_T
+     * ( BaseDefs.h:209-222 ) and forwards straight to ObjPtr::operator =( nullptr ), so
+     * it does NOT route through reset() and the reference is released WITHOUT dispose()
+     *
+     * This contradicts the class's own documentation ( "This smart pointer will invoke
+     * dispose() when it goes out of scope" ). Today's behaviour is pinned here rather
+     * than changed - flagged to the owner instead
+     *
+     * The object is kept alive through an independent ObjPtr so the assertion does not
+     * depend on the aborting BL_RT_ASSERT path of a never-disposed object
+     */
+
+    {
+        const auto keepAlive = FooSvcImpl::createInstance();
+
+        om::ObjPtrDisposable< FooSvcImpl > d( om::lockDisposable( keepAlive ) );
+
+        UTF_REQUIRE( d );
+
+        d = nullptr;
+
+        UTF_REQUIRE( ! d );
+        UTF_REQUIRE_EQUAL( 0L, keepAlive -> disposeCount() );
+        UTF_REQUIRE_EQUAL( 1L, g_fooSvcLive );
+    }
+
+    UTF_REQUIRE_EQUAL( 0L, g_fooSvcLive );
+
+    /*
+     * (9) The null pointer form yields an empty ObjPtrDisposable and disposes nothing
+     */
+
+    {
+        const auto d = om::lockDisposable( static_cast< FooSvcImpl* >( nullptr ) );
+
+        UTF_REQUIRE( ! d );
+        UTF_REQUIRE_EQUAL( 0L, g_fooSvcLive );
+    }
+
+    /*
+     * (10) A throwing dispose() must be logged as a warning and swallowed
+     *
+     * reset() wraps the dispose in BL_WARN_NOEXCEPT_BEGIN/END - replacing that with
+     * BL_NOEXCEPT_* would turn this logged warning into a process abort at every call
+     * site, and letting the exception escape would terminate the process from a destructor
+     */
+
+    {
+        cpp::SafeOutputStringStream os;
+
+        const Logging::line_logger_t ll(
+            cpp::bind(
+                &Logging::defaultLineLoggerWithLock, _1, _2, _3, _4, true /* addNewLine */, cpp::ref( os )
+                )
+            );
+
+        Logging::LineLoggerPusher pushLogger( ll );
+
+        Logging::LevelPusher pushLevel( Logging::LL_WARNING, true /* global */ );
+
+        {
+            const auto svc = FooSvcImpl::createInstance();
+
+            svc -> throwOnDispose( true );
+
+            {
+                const auto d = om::lockDisposable( svc );
+
+                BL_UNUSED( d );
+            }
+
+            /*
+             * Control reached here, i.e. the exception did not escape and the process was
+             * not aborted; the reference was still released by reset()
+             */
+
+            UTF_REQUIRE_EQUAL( 1L, svc -> disposeCount() );
+        }
+
+        const auto text = os.str();
+
+        UTF_REQUIRE( cpp::contains( text, std::string( "ObjPtrDisposable::~ObjPtrDisposable()" ) ) );
+        UTF_REQUIRE( cpp::contains( text, std::string( "NOEXCEPT block threw an exception" ) ) );
+        UTF_REQUIRE( cpp::contains( text, std::string( "dispose-failure-marker" ) ) );
+    }
+
+    UTF_REQUIRE_EQUAL( 0L, g_fooSvcLive );
 }
 

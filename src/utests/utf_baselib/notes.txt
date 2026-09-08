@@ -118,3 +118,4 @@
 --log_level=message --run_test=TestTransaction5
 --log_level=message --run_test=TestTimeZoneData
 --log_level=message --run_test=NetUtils_TryParseEndpointTest
+--log_level=message --run_test=BaseLib_DataBlockPoolAndCopyTests
