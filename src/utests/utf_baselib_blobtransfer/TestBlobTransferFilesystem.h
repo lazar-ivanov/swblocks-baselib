@@ -229,6 +229,170 @@ UTF_AUTO_TEST_CASE( BlobTransfer_FilesPackagerInMemoryDropWithSessionsFailsUploa
     UTF_REQUIRE_EQUAL( faultOptions.counters -> savesForwarded.load(), std::size_t( 0 ) );
 }
 
+/************************************************************************
+ * Symlink target policy tests for the unpackager unit
+ *
+ * The symlink targets are recorded verbatim by the packager, so a package can carry a
+ * target which escapes the tree being unpacked; the policy is the only defence against
+ * that. These tests need no blob server and transfer no chunks - the metadata is built
+ * by hand and the unpackager unit is driven standalone, so they must not acquire the
+ * machine global test lock
+ */
+
+namespace
+{
+    typedef bl::transfer::FilesUnpackagerUnit                                       unpackager_unit_t;
+
+    bl::om::ObjPtr< bl::data::FilesystemMetadataRO > createSymlinkTargetPolicyMetadata()
+    {
+        using namespace bl;
+
+        typedef data::FilesystemMetadata                                            fsmd_t;
+        typedef utest::TestBlobTransferUtils                                        utils_t;
+
+        const auto now = std::time( nullptr );
+        BL_CHK_ERRNO_NM( ( std::time_t )( -1 ), now );
+
+        const auto fsmdWO =
+            data::FilesystemMetadataInMemoryImpl::createInstance< data::FilesystemMetadataWO >();
+
+        utils_t::createEntry( fsmdWO, fsmd_t::Directory, "d", fs::path() /* targetPath */, 0U /* size */, now );
+        utils_t::createEntry( fsmdWO, fsmd_t::Directory, "d/sub", fs::path(), 0U, now );
+
+        /*
+         * Two targets which resolve inside the tree being unpacked, one which escapes it
+         * via '..' and one which is absolute
+         *
+         * Note that the traversal can only be placed in the target path - the metadata
+         * object itself rejects a relative path containing '..'
+         */
+
+        utils_t::createEntry( fsmdWO, fsmd_t::Symlink, "d/okRelative", "sub", 0U, now );
+        utils_t::createEntry( fsmdWO, fsmd_t::Symlink, "d/okDotDot", "../d/sub", 0U, now );
+        utils_t::createEntry( fsmdWO, fsmd_t::Symlink, "d/escapes", "../../outside", 0U, now );
+        utils_t::createEntry( fsmdWO, fsmd_t::Symlink, "d/absolute", "/etc/passwd", 0U, now );
+
+        fsmdWO -> finalize();
+
+        return om::qi< data::FilesystemMetadataRO >( fsmdWO );
+    }
+
+    void chkSymlinkTargetPolicy(
+        SAA_in          const unpackager_unit_t::SymlinkTargetPolicy                symlinkTargetPolicy,
+        SAA_in          const bool                                                  escapingLinkExpected,
+        SAA_in          const bool                                                  absoluteLinkExpected
+        )
+    {
+        using namespace bl;
+
+        /*
+         * The one line warning the unit logs for each link it rejects is expected here and
+         * it is emitted from the worker threads, so the level has to be pushed globally
+         */
+
+        const Logging::LevelPusher pushLevel( Logging::LL_ERROR, true /* global */ );
+
+        const fs::TmpDir tmpDir;
+
+        const auto targetDir = tmpDir.path() / "out";
+
+        const auto fsmdRO = createSymlinkTargetPolicyMetadata();
+
+        if( ! os::onUNIX() )
+        {
+            /*
+             * Symlinks are not supported on Windows, so with SuaError the unit fails before
+             * the target policy is ever consulted
+             */
+
+            UTF_REQUIRE_THROW(
+                utest::TestBlobTransferUtils::runStandaloneUnpackager(
+                    fsmdRO,
+                    targetDir,
+                    symlinkTargetPolicy
+                    ),
+                NotSupportedException
+                );
+
+            return;
+        }
+
+        const auto staging = utest::TestBlobTransferUtils::runStandaloneUnpackager(
+            fsmdRO,
+            targetDir,
+            symlinkTargetPolicy
+            );
+
+        /*
+         * A rejected link is not an error - the unit must have completed successfully and
+         * it must have kept its staging directory
+         */
+
+        UTF_REQUIRE( ! staging.empty() );
+
+        UTF_REQUIRE( fs::is_symlink( fs::symlink_status( staging / "d/okRelative" ) ) );
+        UTF_REQUIRE( fs::is_symlink( fs::symlink_status( staging / "d/okDotDot" ) ) );
+
+        /*
+         * The target is recorded verbatim
+         */
+
+        UTF_REQUIRE_EQUAL( fs::read_symlink( staging / "d/okRelative" ), fs::path( "sub" ) );
+
+        if( escapingLinkExpected )
+        {
+            UTF_REQUIRE( fs::is_symlink( fs::symlink_status( staging / "d/escapes" ) ) );
+        }
+        else
+        {
+            UTF_REQUIRE( ! fs::path_exists( staging / "d/escapes" ) );
+        }
+
+        if( absoluteLinkExpected )
+        {
+            UTF_REQUIRE( fs::is_symlink( fs::symlink_status( staging / "d/absolute" ) ) );
+        }
+        else
+        {
+            UTF_REQUIRE( ! fs::path_exists( staging / "d/absolute" ) );
+        }
+    }
+}
+
+UTF_AUTO_TEST_CASE( BlobTransfer_UnpackagerSymlinkTargetPolicyTests )
+{
+    /*
+     * StpContained: only the targets which resolve inside the tree being unpacked survive
+     */
+
+    chkSymlinkTargetPolicy(
+        unpackager_unit_t::StpContained,
+        false /* escapingLinkExpected */,
+        false /* absoluteLinkExpected */
+        );
+
+    /*
+     * StpRelativeOnly: only the absolute target is rejected
+     */
+
+    chkSymlinkTargetPolicy(
+        unpackager_unit_t::StpRelativeOnly,
+        true /* escapingLinkExpected */,
+        false /* absoluteLinkExpected */
+        );
+
+    /*
+     * StpAllow is the default and it must keep creating every link, which is the
+     * behaviour the unpackager always had
+     */
+
+    chkSymlinkTargetPolicy(
+        unpackager_unit_t::StpAllow,
+        true /* escapingLinkExpected */,
+        true /* absoluteLinkExpected */
+        );
+}
+
 UTF_AUTO_TEST_CASE( BlobTransfer_StartBlobServer )
 {
     utest::TestBlobTransferFilesystemUtilsImpl::startBlobServer();

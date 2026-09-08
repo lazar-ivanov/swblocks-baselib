@@ -630,6 +630,17 @@ namespace utest
 
         typedef bl::data::DataChunkStorage                                                      DataChunkStorage;
 
+        /*
+         * The callback which feeds chunks into a standalone unpackager unit - see
+         * runStandaloneUnpackager( ... ) below
+         */
+
+        typedef bl::cpp::function
+        <
+            void ( SAA_inout bl::transfer::FilesUnpackagerUnit& unit )
+        >
+        unpackager_feed_callback_t;
+
     protected:
 
         typedef bl::cpp::function
@@ -1383,6 +1394,43 @@ namespace utest
 
                     UTF_REQUIRE_EQUAL( e.code(), bl::asio::error::operation_aborted );
                 }
+                catch( bl::UnexpectedException& e )
+                {
+                    /*
+                     * A cancel which lands in the middle of a transfer stops the chunks
+                     * receiver, and a stopped observable notifies its subscribers with
+                     * onCompleted (see ObservableBase::run()), so the unpackager's input is
+                     * disconnected while its tree is still incomplete
+                     *
+                     * Whether the unit sees its own stop request by then is a race: the stop
+                     * is recorded by ObservableBase::requestCancel() under the very task lock
+                     * which FilesUnpackagerUnit::flushAllPendingTasks() holds while it runs,
+                     * so a cancel which is still in flight cannot be observed there and the
+                     * unit reports the incomplete content instead of the cancellation. The
+                     * unit cannot do better - the reactive base deliberately keeps the task
+                     * level cancel state private to it, and a completed input carries no
+                     * indication that it was aborted rather than finished
+                     *
+                     * Both are legitimate reports of an interrupted transfer - the unit fails
+                     * and discards its staging directory either way - so the incomplete
+                     * content report is accepted here explicitly instead of by luck. The
+                     * message is verified, so any other UnexpectedException still fails; the
+                     * incomplete tree itself is pinned deterministically by
+                     * BlobTransfer_FilesPackagerInMemoryWithheldChunkTests
+                     */
+
+                    BL_LOG_MULTILINE(
+                        bl::Logging::debug(),
+                        BL_MSG()
+                            << "Expected bl::UnexpectedException exception:\n"
+                            << bl::eh::diagnostic_information( e )
+                        );
+
+                    const std::string* message = e.message();
+
+                    UTF_REQUIRE( message );
+                    UTF_REQUIRE( std::string::npos != message -> find( "The unpackaged content is incomplete" ) );
+                }
             }
         }
 
@@ -1923,6 +1971,120 @@ namespace utest
             return bl::om::ObjPtrCopyable< FilesystemMetadataStore >(
                 FilesystemMetadataStoreInMemoryImpl::createInstance< FilesystemMetadataStore >()
                 );
+        }
+
+        /**
+         * @brief Creates a filesystem metadata entry of the requested type
+         *
+         * The paths are boxed objects which can only be filled in via swap, so the helper
+         * hides that idiom from the tests which build metadata by hand
+         */
+
+        static bl::uuid_t createEntry(
+            SAA_in              const bl::om::ObjPtr< bl::data::FilesystemMetadataWO >&         fsmdWO,
+            SAA_in              const bl::data::FilesystemMetadata::EntryType                   type,
+            SAA_in              const bl::fs::path&                                             relPath,
+            SAA_in_opt          const bl::fs::path&                                             targetPath = bl::fs::path(),
+            SAA_in_opt          const std::uint64_t                                             size = 0U,
+            SAA_in_opt          const std::time_t                                               lastModified = 0
+            )
+        {
+            using namespace bl;
+
+            data::FilesystemMetadata::EntryInfo info;
+
+            info.type = type;
+            info.size = size;
+            info.timeCreated = lastModified;
+            info.lastModified = lastModified;
+
+            auto relPathCopy = relPath;
+            info.relPath = bo::path::createInstance();
+            info.relPath -> lvalue().swap( relPathCopy );
+
+            if( ! targetPath.empty() )
+            {
+                auto targetPathCopy = targetPath;
+                info.targetPath = bo::path::createInstance();
+                info.targetPath -> lvalue().swap( targetPathCopy );
+            }
+
+            return fsmdWO -> createEntry( std::move( info ) );
+        }
+
+        /**
+         * @brief Runs the unpackager unit standalone - with no blob server and no chunks receiver
+         *
+         * The metadata is driven directly; the optional callback is invoked once the unit is
+         * scheduled, so the caller can push chunks into it before the input is marked as
+         * completed. The staging directory the unit has created is returned, so the caller can
+         * verify what was unpackaged into it (it lives under the parent of targetDir and it is
+         * not deleted when the unit succeeds)
+         */
+
+        static bl::fs::path runStandaloneUnpackager(
+            SAA_in              const bl::om::ObjPtr< bl::data::FilesystemMetadataRO >&         fsmdRO,
+            SAA_in              const bl::fs::path&                                             targetDir,
+            SAA_in_opt          const bl::transfer::FilesUnpackagerUnit::SymlinkTargetPolicy    symlinkTargetPolicy =
+                bl::transfer::FilesUnpackagerUnit::StpAllow,
+            SAA_in_opt          const unpackager_feed_callback_t&                               feedCallback =
+                unpackager_feed_callback_t()
+            )
+        {
+            using namespace bl;
+            using namespace bl::reactive;
+            using namespace bl::tasks;
+            using namespace bl::transfer;
+
+            typedef om::ObjectImpl
+                <
+                    ProcessingUnit< FilesUnpackagerUnit, Observable >,
+                    true /* enableSharedPtr */
+                > unit_unpackager_t;
+
+            const auto context = SendRecvContext::createInstance(
+                SimpleEndpointSelectorImpl::createInstance< EndpointSelector >(
+                    cpp::copy( test::UtfArgsParser::host() ),
+                    test::UtfArgsParser::port()
+                    )
+                );
+
+            const auto unit = unit_unpackager_t::createInstance(
+                unit_unpackager_t::SuaError,
+                context,
+                fsmdRO,
+                fs::path( targetDir ),
+                symlinkTargetPolicy
+                );
+
+            /*
+             * For the unpackager unit it is ok to have no subscribers
+             */
+
+            unit -> allowNoSubscribers( true );
+
+            scheduleAndExecuteInParallel(
+                [ & ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+                {
+                    eq -> push_back( om::qi< Task >( unit ) );
+
+                    if( feedCallback )
+                    {
+                        feedCallback( *unit );
+                    }
+
+                    /*
+                     * onInputCompleted() only sets the input disconnected flag under the
+                     * unit's lock, so it can be signalled directly from here
+                     */
+
+                    unit -> onInputCompleted();
+
+                    executeQueueAndCancelOnFailure( eq );
+                }
+                );
+
+            return unit -> targetTmpDir();
         }
 
         static void executeTheFilesPackagerAndTransmitterPipelineWithFaults(
