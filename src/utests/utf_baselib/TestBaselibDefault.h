@@ -3650,6 +3650,52 @@ UTF_AUTO_TEST_CASE( BaseLib_OSJunctionsTests )
         UTF_REQUIRE( bl::fs::exists( filePath ) );
 
         UTF_REQUIRE( bl::fs::exists( junctionDir ) );
+
+        /*
+         * REPARSE_BUFFER_SIZE_DEFAULT is sizeof( REPARSE_DATA_BUFFER ) + 4 * ( MAX_PATH + 2 ),
+         * i.e. it holds about 260 wide characters of target path, so a longer target takes
+         * the dynamicBuffer branch of createJunction and makes DeviceIoControl in
+         * getAndProcessReparseBuffer return ERROR_INSUFFICIENT_BUFFER / ERROR_MORE_DATA,
+         * which is what drives the doubling loop there
+         *
+         * Neither branch has ever executed in this suite - every other junction case uses
+         * a short TmpDir path
+         */
+
+        {
+            auto deepTarget = tmpPath / "deep-target";
+
+            for( std::size_t i = 0U; i < 12U; ++i )
+            {
+                deepTarget /= std::string( 30U, 'a' );
+            }
+
+            bl::fs::safeMkdirs( deepTarget );
+
+            /*
+             * Guards this case against a future TmpDir change which shortens the path
+             */
+
+            UTF_REQUIRE( deepTarget.wstring().size() > 260U );
+
+            const auto deepJunction = tmpPath / "deep-junction";
+
+            bl::fs::createDirectoryJunction( deepTarget, deepJunction );
+
+            UTF_REQUIRE( bl::fs::isDirectoryJunction( deepJunction ) );
+
+            /*
+             * Byte exact, which is what proves both the dynamic write buffer and the
+             * growing read loop are correct
+             */
+
+            UTF_REQUIRE_EQUAL( deepTarget, bl::fs::getDirectoryJunctionTarget( deepJunction ) );
+
+            bl::fs::deleteDirectoryJunction( deepJunction );
+
+            UTF_REQUIRE( bl::fs::is_directory( deepTarget ) );
+            UTF_REQUIRE( ! bl::fs::path_exists( deepJunction ) );
+        }
     }
 
     UTF_REQUIRE( ! bl::fs::exists( tmpPath ) );

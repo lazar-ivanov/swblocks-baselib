@@ -1392,7 +1392,14 @@ namespace bl
                              */
 
                             BL_ASSERT( outPipe.second.get() );
-                            BL_ASSERT( out );
+
+                            /*
+                             * What this branch needs is the merged pipe above; the ios
+                             * stream is only constructed when the ios callback was
+                             * supplied and the file callback is an equally legal choice
+                             */
+
+                            BL_ASSERT( ! callbackIos || out );
 
                             si.hStdError = outPipe.second.get();
                         }

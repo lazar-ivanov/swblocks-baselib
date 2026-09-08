@@ -31,6 +31,7 @@ using namespace bl;
 #include "TestBaselibDefault2.h"
 #include "TestBaselibDefault3.h"
 #include "TestBaselibDefault4.h"
+#include "TestBaselibDefault5.h"
 #include "TestObjModel.h"
 #include "TestTimeZoneData.h"
 #include "TestTransaction.h"
