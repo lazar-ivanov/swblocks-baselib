@@ -725,6 +725,83 @@ UTF_AUTO_TEST_CASE( BaseLib_ResponseHeaderValidationTest )
     }
 }
 
+UTF_AUTO_TEST_CASE( BaseLib_HttpServerStdErrorResponseRedactionTest )
+{
+    using namespace bl;
+    using namespace utest::http;
+
+    /*
+     * Every 400 / 500 / 504 the server emits is built by getStdErrorResponse and it goes out
+     * on the wire to a client which may be untrusted, so what it carries must be the redacted
+     * server error document - the source locations, the task information, the host and the
+     * service names and the addresses of the server side endpoints must not leak
+     *
+     * Each "must not be there" assertion is paired with the same lookup against the unredacted
+     * document, so that a needle which simply stopped being emitted at all can't make the
+     * negative half of the pair pass vacuously
+     */
+
+    const auto eptr = std::make_exception_ptr(
+        BL_EXCEPTION( HttpServerException(), "Bad client request" )
+            << eh::errinfo_file_name        ( "/secret/path/Foo.cpp" )
+            << eh::errinfo_function_name    ( "secretFunction" )
+            << eh::errinfo_task_info        ( "secret task info" )
+            << eh::errinfo_host_name        ( "internal-host-name" )
+            << eh::errinfo_service_name     ( "internal-service" )
+            << eh::errinfo_endpoint_address ( "10.1.2.3" )
+            << eh::errinfo_endpoint_port    ( 65001 )
+        );
+
+    const auto backend =
+        ServerBackendProcessingImplTest::createInstance< httpserver::ServerBackendProcessing >();
+
+    const auto response =
+        backend -> getStdErrorResponse( http::Parameters::HTTP_CLIENT_ERROR_BAD_REQUEST, eptr );
+
+    const auto full = dm::ServerErrorHelpers::getServerErrorAsJson( eptr );
+
+    const auto& content = response -> content();
+
+    UTF_REQUIRE_EQUAL( response -> status(), http::Parameters::HTTP_CLIENT_ERROR_BAD_REQUEST );
+    UTF_REQUIRE( 0U == response -> getSerialized().find( "HTTP/1.0 400 Bad Request\r\n" ) );
+
+    const char* const secrets[] =
+    {
+        "/secret/path/Foo.cpp",
+        "secretFunction",
+        "secret task info",
+        "internal-host-name",
+        "internal-service",
+        "10.1.2.3",
+        "65001",
+    };
+
+    for( const char* const secret : secrets )
+    {
+        UTF_REQUIRE( content.find( secret ) == std::string::npos );
+        UTF_REQUIRE( full.find( secret ) != std::string::npos );
+    }
+
+    UTF_REQUIRE( content.find( "<redacted>" ) != std::string::npos );
+    UTF_REQUIRE( content.find( "\"endpointPort\"" ) == std::string::npos );
+
+    /*
+     * The client must still be told what went wrong, so the message is deliberately kept
+     */
+
+    UTF_REQUIRE( content.find( "Bad client request" ) != std::string::npos );
+
+    UTF_REQUIRE_EQUAL(
+        response -> headers().at( http::HttpHeader::g_contentType ),
+        http::HttpHeader::g_contentTypeJsonUtf8
+        );
+
+    UTF_REQUIRE_EQUAL(
+        response -> headers().at( http::HttpHeader::g_contentLength ),
+        utils::lexical_cast< std::string >( content.size() )
+        );
+}
+
 UTF_AUTO_TEST_CASE( BaseLib_ParserTest )
 {
     using namespace bl;
@@ -1053,6 +1130,173 @@ UTF_AUTO_TEST_CASE( BaseLib_ParserTest )
         const auto parser = Parser::createInstance();
 
         UTF_REQUIRE_THROW( parser -> parse( begin, end ), bl::UnexpectedException );
+    }
+
+    {
+        /*
+         * Test the case when the headers and the whole body arrive in a single call
+         */
+
+        const std::string request =
+            "POST /path HTTP/1.0\r\n"
+            "Content-Length: 10\r\n\r\n"
+            "0123456789";
+
+        const auto buffer = request.c_str();
+
+        const char* begin = buffer;
+        const char* end = buffer + request.length();
+
+        const auto parser = Parser::createInstance();
+
+        const auto result = parser -> parse( begin, end );
+
+        UTF_REQUIRE_EQUAL( result.first, HttpParserResult::PARSED );
+        UTF_REQUIRE( result.second == nullptr );
+
+        const auto httpRequest = parser -> buildRequest();
+
+        UTF_REQUIRE_EQUAL( httpRequest -> method(), "POST" );
+        UTF_REQUIRE_EQUAL( httpRequest -> uri(), "/path" );
+        UTF_REQUIRE_EQUAL( httpRequest -> body(), "0123456789" );
+        UTF_REQUIRE_EQUAL( httpRequest -> headers().size(), 1U );
+    }
+
+    {
+        /*
+         * Test the case when the body arrives in parts - the parser must keep asking for more
+         * data until exactly the declared number of body bytes has accumulated
+         */
+
+        const std::string request =
+            "POST /path HTTP/1.0\r\n"
+            "Content-Length: 10\r\n\r\n"
+            "012";
+
+        const auto buffer = request.c_str();
+
+        const char* begin = buffer;
+        const char* end = buffer + request.length();
+
+        const auto parser = Parser::createInstance();
+
+        const auto result = parser -> parse( begin, end );
+
+        UTF_REQUIRE_EQUAL( result.first, HttpParserResult::MORE_DATA_REQUIRED );
+        UTF_REQUIRE( result.second == nullptr );
+
+        UTF_REQUIRE_THROW( parser -> buildRequest(), bl::UnexpectedException );
+
+        const std::string request2 = "345";
+
+        const auto buffer2 = request2.c_str();
+
+        const char* begin2 = buffer2;
+        const char* end2 = buffer2 + request2.length();
+
+        const auto result2 = parser -> parse( begin2, end2 );
+
+        UTF_REQUIRE_EQUAL( result2.first, HttpParserResult::MORE_DATA_REQUIRED );
+        UTF_REQUIRE( result2.second == nullptr );
+
+        const std::string request3 = "6789";
+
+        const auto buffer3 = request3.c_str();
+
+        const char* begin3 = buffer3;
+        const char* end3 = buffer3 + request3.length();
+
+        const auto result3 = parser -> parse( begin3, end3 );
+
+        UTF_REQUIRE_EQUAL( result3.first, HttpParserResult::PARSED );
+        UTF_REQUIRE( result3.second == nullptr );
+
+        UTF_REQUIRE_EQUAL( parser -> buildRequest() -> body(), "0123456789" );
+    }
+
+    {
+        /*
+         * Test the case when more body bytes arrive than the Content-Length header declares;
+         * rejecting them is the only thing which stops a second, smuggled request from being
+         * appended to the first one
+         */
+
+        const std::string request =
+            "POST /path HTTP/1.0\r\n"
+            "Content-Length: 5\r\n\r\n"
+            "0123456789";
+
+        const auto buffer = request.c_str();
+
+        const char* begin = buffer;
+        const char* end = buffer + request.length();
+
+        const auto parser = Parser::createInstance();
+
+        const auto result = parser -> parse( begin, end );
+
+        UTF_REQUIRE_EQUAL( result.first, HttpParserResult::PARSING_ERROR );
+        UTF_REQUIRE( result.second != nullptr );
+    }
+
+    {
+        /*
+         * Test the case when the body itself looks like a header - the sentinel terminates the
+         * headers and everything past it must stay in the body
+         */
+
+        const std::string request =
+            "GET /path HTTP/1.0\r\n"
+            "Content-Length: 13\r\n\r\n"
+            "X-Evil: bad\r\n";
+
+        const auto buffer = request.c_str();
+
+        const char* begin = buffer;
+        const char* end = buffer + request.length();
+
+        const auto parser = Parser::createInstance();
+
+        const auto result = parser -> parse( begin, end );
+
+        UTF_REQUIRE_EQUAL( result.first, HttpParserResult::PARSED );
+        UTF_REQUIRE( result.second == nullptr );
+
+        const auto httpRequest = parser -> buildRequest();
+
+        UTF_REQUIRE_EQUAL( httpRequest -> headers().size(), 1U );
+        UTF_REQUIRE( httpRequest -> headers().find( "x-evil" ) == httpRequest -> headers().end() );
+        UTF_REQUIRE_EQUAL( httpRequest -> body(), "X-Evil: bad\r\n" );
+    }
+
+    {
+        /*
+         * Test the case when the body carries a NUL - the framing is driven by Content-Length
+         * and must never be computed from the C string length of the buffer
+         */
+
+        std::string request =
+            "PUT /path HTTP/1.0\r\n"
+            "Content-Length: 5\r\n\r\n";
+
+        request.append( "a\0b\r\n", 5 );
+
+        const auto buffer = request.c_str();
+
+        const char* begin = buffer;
+        const char* end = buffer + request.length();
+
+        const auto parser = Parser::createInstance();
+
+        const auto result = parser -> parse( begin, end );
+
+        UTF_REQUIRE_EQUAL( result.first, HttpParserResult::PARSED );
+        UTF_REQUIRE( result.second == nullptr );
+
+        const auto httpRequest = parser -> buildRequest();
+
+        UTF_REQUIRE_EQUAL( httpRequest -> body().size(), 5U );
+        UTF_REQUIRE( httpRequest -> body() == std::string( "a\0b\r\n", 5 ) );
     }
 }
 
