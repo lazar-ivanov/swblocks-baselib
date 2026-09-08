@@ -15,6 +15,7 @@
  */
 
 #include <baselib/data/models/ErrorHandling.h>
+#include <baselib/data/models/Functions.h>
 #include <baselib/data/models/JsonMessaging.h>
 
 #include <utests/baselib/UtfBaseLibCommon.h>
@@ -1493,5 +1494,270 @@ UTF_AUTO_TEST_CASE( DataModelStringOrArrayPropertyTests )
             );
 
         UTF_REQUIRE_EQUAL( obj -> audienceLike().size(), 2U );
+    }
+}
+
+UTF_AUTO_TEST_CASE( DataModelUnmappedInteractionTests )
+{
+    using namespace bl;
+    using namespace bl::dm;
+    using namespace utest::dm;
+
+    typedef DataModelUtils dmu;
+
+    /*
+     * BL_DM_PROPERTIES_IMPL_HANDLE_UNMAPPED() is gated on ! isPartial() and it appends the
+     * unmapped entries with json::object::emplace, which does not overwrite - so a key which is
+     * both mapped and present in m_unmapped is emitted with its MAPPED value
+     *
+     * Both halves of that are load bearing: DataModelUtils::castTo< ... >() moves a document
+     * from a generic carrier to a concrete model through the unmapped bag and only works
+     * because bl::dm::Payload is non partial, while bl::dm::FunctionContext is the repository's
+     * only partial class and therefore silently drops everything it does not declare
+     */
+
+    {
+        /*
+         * The base default is partial and every generated model overrides it
+         */
+
+        UTF_REQUIRE( bl::dm::FunctionContext::isPartial() );
+        UTF_REQUIRE( ! bl::dm::Payload::isPartial() );
+        UTF_REQUIRE( ! TestObject::isPartial() );
+        UTF_REQUIRE( bl::dm::DataModelObject::isPartial() );
+    }
+
+    const std::string principalDocument = R"({"securityPrincipal":{"sid":"s1"},"extra":"x"})";
+
+    {
+        /*
+         * A partial class does not collect and does not re-emit the unknown properties
+         */
+
+        const auto fc = dmu::loadFromJsonText< bl::dm::FunctionContext >( principalDocument );
+
+        UTF_REQUIRE( fc -> securityPrincipal() );
+        UTF_REQUIRE_EQUAL( fc -> securityPrincipal() -> sid(), "s1" );
+        UTF_REQUIRE( fc -> unmapped().empty() );
+
+        UTF_REQUIRE( ! cpp::contains( dmu::getDocAsPackedJsonString( fc ), "extra" ) );
+    }
+
+    {
+        /*
+         * A non partial class preserves everything it does not declare, and that is exactly
+         * what the REST pass-through relies on - BrokerProtocol::passThroughUserData is a
+         * bl::dm::Payload which declares no property at all
+         */
+
+        const auto payload = dmu::loadFromJsonText< bl::dm::Payload >( principalDocument );
+
+        UTF_REQUIRE_EQUAL( payload -> unmapped().size(), 2U );
+
+        UTF_REQUIRE( cpp::contains( dmu::getDocAsPackedJsonString( payload ), "extra" ) );
+
+        UTF_REQUIRE_EQUAL(
+            dmu::castTo< bl::dm::FunctionContext >( payload ) -> securityPrincipal() -> sid(),
+            "s1"
+            );
+    }
+
+    {
+        /*
+         * A collision written through unmappedLvalue(): the mapped value wins on the way out
+         * and serialization must not mutate m_unmapped
+         */
+
+        const auto obj = TestObject::createInstance();
+
+        obj -> id( 7U );
+        obj -> unmappedLvalue().emplace( "id", 999 );
+
+        auto doc = dmu::getJsonObject( obj );
+
+        UTF_REQUIRE_EQUAL( json::value_to< std::uint64_t >( doc.at( "id" ) ), 7U );
+        UTF_REQUIRE_EQUAL( obj -> unmapped().size(), 1U );
+
+        /*
+         * A round trip through that document resolves the collision - "id" is now processed by
+         * the mapped deserializer, so it no longer lands in the unmapped bag
+         */
+
+        const auto reloaded = dmu::loadFromJsonObject< TestObject >( std::move( doc ) );
+
+        UTF_REQUIRE_EQUAL( reloaded -> id(), 7U );
+        UTF_REQUIRE( reloaded -> unmapped().empty() );
+    }
+
+    {
+        /*
+         * The second way of reaching a collision, and the one which is reachable from a peer
+         * document: no deserializer marks an explicit null as processed, so a mapped property
+         * whose value is null lands in m_unmapped as well
+         */
+
+        const auto o = dmu::loadFromJsonText< ContainedTestObject >( R"({"strValue":null,"intValue":3})" );
+
+        UTF_REQUIRE( o -> strValue().empty() );
+        UTF_REQUIRE_EQUAL( o -> intValue(), 3 );
+        UTF_REQUIRE_EQUAL( o -> unmapped().size(), 1U );
+
+        UTF_REQUIRE( cpp::contains( dmu::getDocAsPackedJsonString( o ), "\"strValue\":null" ) );
+
+        /*
+         * ... but the canonical form carries the MAPPED value, because canonicalize emits every
+         * property first and the unmapped emplace which follows cannot overwrite it
+         */
+
+        const auto canonical = dmu::getJsonString( o, false /* prettyPrint */, true /* canonicalize */ );
+
+        UTF_REQUIRE( cpp::contains( canonical, "\"strValue\":\"\"" ) );
+        UTF_REQUIRE( ! cpp::contains( canonical, "\"strValue\":null" ) );
+    }
+
+    {
+        /*
+         * unmappedLvalue() is the one Lvalue accessor which does not emit
+         * BL_DM_DEFINE_CHECK_READ_ONLY() - pinning today's behaviour, not endorsing it
+         */
+
+        const auto obj = TestObject::createInstance();
+
+        obj -> readOnly( true );
+
+        UTF_REQUIRE_NO_THROW( obj -> unmappedLvalue().emplace( "another", 1 ) );
+        UTF_REQUIRE_EQUAL( obj -> unmapped().size(), 1U );
+
+        /*
+         * ... while every other Lvalue accessor on the same object does check
+         */
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            obj -> strLvalue().clear(),
+            UnexpectedException,
+            "Trying to modify a read only object"
+            );
+    }
+}
+
+UTF_AUTO_TEST_CASE( DataModelDetectUnknownPropertiesTests )
+{
+    using namespace bl;
+    using namespace bl::dm;
+    using namespace utest::dm;
+
+    typedef DataModelUtils dmu;
+
+    /*
+     * SerializationContextBase::detectUnknownProperties() is a shipped public strict-parsing
+     * mode with no production caller. DataModelUtils::loadFrom*() build the context internally
+     * and never expose it, so the flag can only be reached by a caller which constructs the
+     * context itself and invokes serializeProperties() directly - which is what this case does
+     *
+     * Note that every sub-block deserializes into a FRESH object: deserializing twice into the
+     * same object leaves stale values behind and the assertions must not depend on those
+     */
+
+    const auto loadStrict = []( SAA_in const std::string& text ) -> om::ObjPtr< TestObject >
+    {
+        auto root = json::readFromString( text );
+
+        SerializationContextBase context( std::move( root.as_object() ) );
+        context.detectUnknownProperties( true );
+
+        auto obj = TestObject::createInstance();
+
+        obj -> serializeProperties( context );
+
+        return obj;
+    };
+
+    {
+        /*
+         * An unknown property at the top level
+         */
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            loadStrict( R"({"id":1,"bogus":2})" ),
+            UserMessageException,
+            "Unrecognized property 'bogus' found while parsing JSON document"
+            );
+    }
+
+    {
+        /*
+         * ... and nested inside each of the three complex property shapes, which propagate the
+         * flag into the child context one line at a time - each of those three lines is
+         * individually removable and only these three blocks notice
+         */
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            loadStrict( R"({"complex":{"strValue":"a","bogus":2}})" ),
+            UserMessageException,
+            "Unrecognized property 'bogus' found while parsing JSON document"
+            );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            loadStrict( R"({"complexVector":[{"strValue":"a","bogus":2}]})" ),
+            UserMessageException,
+            "Unrecognized property 'bogus' found while parsing JSON document"
+            );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            loadStrict( R"({"complexMap":{"k":{"strValue":"a","bogus":2}}})" ),
+            UserMessageException,
+            "Unrecognized property 'bogus' found while parsing JSON document"
+            );
+    }
+
+    {
+        /*
+         * The flag defaults to off, which is what every DataModelUtils entry point uses - the
+         * same four documents then simply retain the unknown property as unmapped
+         */
+
+        UTF_REQUIRE_NO_THROW( dmu::loadFromJsonText< TestObject >( R"({"id":1,"bogus":2})" ) );
+        UTF_REQUIRE_NO_THROW( dmu::loadFromJsonText< TestObject >( R"({"complex":{"strValue":"a","bogus":2}})" ) );
+        UTF_REQUIRE_NO_THROW( dmu::loadFromJsonText< TestObject >( R"({"complexVector":[{"strValue":"a","bogus":2}]})" ) );
+        UTF_REQUIRE_NO_THROW( dmu::loadFromJsonText< TestObject >( R"({"complexMap":{"k":{"strValue":"a","bogus":2}}})" ) );
+
+        const auto obj = dmu::loadFromJsonText< TestObject >( R"({"id":1,"bogus":2})" );
+
+        UTF_REQUIRE_EQUAL( obj -> unmapped().size(), 1U );
+    }
+
+    {
+        /*
+         * A clean document passes with the flag on, including a property whose JSON name is an
+         * alternate one - it is the alternate name and not the member name which is recorded as
+         * processed
+         */
+
+        om::ObjPtr< TestObject > obj;
+
+        UTF_REQUIRE_NO_THROW( obj = loadStrict( R"({"id":1,"json_str":"s"})" ) );
+
+        UTF_REQUIRE( obj );
+        UTF_REQUIRE_EQUAL( obj -> id(), 1U );
+        UTF_REQUIRE_EQUAL( obj -> str(), "s" );
+    }
+
+    {
+        /*
+         * The flag has no effect at all on a partial class - the check lives inside the
+         * HANDLE_UNMAPPED block, which is gated on ! isPartial()
+         */
+
+        auto root = json::readFromString( R"({"securityPrincipal":{"sid":"s1"},"bogus":2})" );
+
+        SerializationContextBase context( std::move( root.as_object() ) );
+        context.detectUnknownProperties( true );
+
+        const auto fc = bl::dm::FunctionContext::createInstance();
+
+        UTF_REQUIRE_NO_THROW( fc -> serializeProperties( context ) );
+
+        UTF_REQUIRE( fc -> securityPrincipal() );
+        UTF_REQUIRE_EQUAL( fc -> securityPrincipal() -> sid(), "s1" );
     }
 }

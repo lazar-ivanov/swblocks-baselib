@@ -2,6 +2,8 @@
 --log_level=message --run_test=ErrorToJsonTests
 --log_level=message --run_test=ServerErrorHelpersTests
 --log_level=message --run_test=TestFilesystemMetadataInMemoryImpl
+--log_level=message --run_test=TestFilesystemMetadataEntryPathValidation
+--log_level=message --run_test=TestFilesystemMetadataIteratorOutlivesStoreHandle
 --log_level=message --run_test=TestFilesystemMetadataRejectedMutationsLeaveStoreConsistent
 
 --log_level=message --run_test=TestDataChunkStorageFilesystemMultiFiles

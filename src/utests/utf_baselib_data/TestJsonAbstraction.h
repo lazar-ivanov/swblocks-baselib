@@ -2260,6 +2260,46 @@ UTF_AUTO_TEST_CASE( JsonParseDepthWithinLimitIsAccepted )
 
     UTF_REQUIRE_EQUAL( levels, 500U );
     UTF_REQUIRE_EQUAL( bl::json::get_int64( current ), 1 );
+
+    /*
+     * The parser is bounded at MAX_PARSE_DEPTH, but the three tree walks used on the way OUT -
+     * chkNoNonFiniteDoubles(), which runs on every saveToString() call, canonicalizeValue() and
+     * prettyPrintImpl() - are naive unbounded recursion with no depth check of their own. So a
+     * document this library is willing to ACCEPT must also be provably serializable, in all
+     * three modes, and must survive the full round trip
+     *
+     * Note that the failure mode here is a stack overflow, i.e. a process crash rather than a
+     * failed assertion - particularly on Windows, whose default stack is far smaller than
+     * Linux's. Raising MAX_PARSE_DEPTH without revisiting these three walks is exactly the
+     * change this block is meant to catch
+     */
+
+    const auto compact = bl::json::saveToString( parsed );
+
+    UTF_REQUIRE_EQUAL( compact, makeNestedJsonText( 500U ) );
+
+    /*
+     * One member per level, so sorting is the identity - which is what makes this a pure
+     * exercise of canonicalizeValue()'s recursion rather than of its ordering
+     */
+
+    const auto canonical = bl::json::saveToString(
+        parsed,
+        false           /* prettyPrint */,
+        false           /* rawUtf8 */,
+        true            /* canonicalize */
+        );
+
+    UTF_REQUIRE_EQUAL( canonical, makeNestedJsonText( 500U ) );
+
+    std::string pretty;
+
+    UTF_REQUIRE_NO_THROW( pretty = bl::json::saveToString( parsed, true /* prettyPrint */ ) );
+
+    UTF_REQUIRE( ! pretty.empty() );
+    UTF_REQUIRE_NO_THROW( ( void ) bl::json::readFromString( pretty ) );
+
+    utest::json::verifyDeepEqual( parsed, bl::json::readFromString( compact ) );
 }
 
 /*

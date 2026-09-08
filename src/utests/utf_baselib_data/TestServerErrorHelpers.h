@@ -15,6 +15,7 @@
  */
 
 #include <baselib/data/eh/ServerErrorHelpers.h>
+#include <baselib/messaging/GraphQLErrorHelpers.h>
 
 #include <utests/baselib/UtfBaseLibCommon.h>
 #include <utests/baselib/TestUtils.h>
@@ -310,6 +311,146 @@ UTF_AUTO_TEST_CASE( ErrorToJsonTests )
             );
     }
 
+    /*
+     * The "system" arm of the categoryName chain and the bl::SystemException guard
+     *
+     * Windows OS errors arrive as eh::system_category(), so if the "system" arm were lost every
+     * Windows-origin SystemException crossing the messaging boundary would be rejected at the
+     * receiving end with "Unknown error category: 'system'" - on Windows only, with no Linux CI
+     * signal at all. The guard is the only thing standing between a malformed peer document and
+     * a null dereference of *errorCategory further down
+     */
+
+    const auto makeSystemExceptionDocument = [](
+        SAA_in          const std::string&                          categoryName,
+        SAA_in          const bool                                  setErrorCode,
+        SAA_in          const std::string&                          exceptionMessage
+        )
+        -> om::ObjPtr< dm::ServerErrorJson >
+    {
+        auto serverErrorJson = dm::ServerErrorJson::createInstance();
+
+        serverErrorJson -> result( dm::ServerErrorResult::createInstance() );
+        serverErrorJson -> result() -> exceptionType( "bl::SystemException" );
+        serverErrorJson -> result() -> exceptionMessage( exceptionMessage );
+        serverErrorJson -> result() -> exceptionProperties( dm::ExceptionProperties::createInstance() );
+        serverErrorJson -> result() -> exceptionProperties() -> categoryName( categoryName );
+
+        if( setErrorCode )
+        {
+            serverErrorJson -> result() -> exceptionProperties() -> errorCode( 5 );
+        }
+
+        return serverErrorJson;
+    };
+
+    try
+    {
+        const auto exceptionPtr = dm::ServerErrorHelpers::createExceptionFromObject(
+            makeSystemExceptionDocument( "system", true /* setErrorCode */, "prefix: some system error" )
+            );
+
+        std::rethrow_exception( exceptionPtr );
+    }
+    catch( SystemException& e )
+    {
+        UTF_REQUIRE_EQUAL( e.fullTypeName(), "bl::SystemException" );
+
+        UTEST_PROPERTY_REQUIRE_EQUAL( errinfo_category_name, "system" )
+
+        const auto* ec = eh::get_error_info< eh::errinfo_error_code >( e );
+
+        UTF_REQUIRE( ec != nullptr );
+        UTF_REQUIRE( ec -> category() == eh::system_category() );
+        UTF_REQUIRE_EQUAL( ec -> value(), 5 );
+
+        /*
+         * A substring, because the trailing [category:value] form is Boost version dependent -
+         * the same workaround the generic SystemException block above uses
+         */
+
+        UTF_REQUIRE( cpp::contains( std::string( e.what() ), "prefix" ) );
+    }
+
+    try
+    {
+        /*
+         * An exceptionMessage with no ": " separator leaves whatPrefix empty rather than
+         * promoting the whole message to the prefix
+         */
+
+        const auto exceptionPtr = dm::ServerErrorHelpers::createExceptionFromObject(
+            makeSystemExceptionDocument( "system", true /* setErrorCode */, "no separator here" )
+            );
+
+        std::rethrow_exception( exceptionPtr );
+    }
+    catch( SystemException& e )
+    {
+        const std::string what( e.what() );
+
+        UTF_REQUIRE( ! what.empty() );
+        UTF_REQUIRE( std::string::npos == what.find( "no separator here" ) );
+    }
+
+    {
+        /*
+         * Both halves of the guard's || - no category, and a category but no error code
+         */
+
+        const auto requireGuardThrows = []( SAA_in const om::ObjPtr< dm::ServerErrorJson >& document ) -> void
+        {
+            UTF_REQUIRE_EXCEPTION(
+                ( void )dm::ServerErrorHelpers::createExceptionFromObject( document ),
+                ArgumentException,
+                []( SAA_in const ArgumentException& e ) -> bool
+                {
+                    return std::string(
+                        "errorCategory or errorCode properties are not set for SystemException"
+                        ) == e.what();
+                }
+                );
+        };
+
+        requireGuardThrows(
+            makeSystemExceptionDocument( bl::str::empty(), true /* setErrorCode */, "prefix: msg" )
+            );
+
+        requireGuardThrows(
+            makeSystemExceptionDocument( "generic", false /* setErrorCode */, "prefix: msg" )
+            );
+    }
+
+    try
+    {
+        /*
+         * A null category means the error-code block in exceptionFromProperties() is skipped
+         * ENTIRELY, even when errorCode is set - and errinfo_category_name is attached only
+         * inside that block, so it must be absent as well
+         */
+
+        auto serverErrorJson = dm::ServerErrorJson::createInstance();
+
+        serverErrorJson -> result( dm::ServerErrorResult::createInstance() );
+        serverErrorJson -> result() -> exceptionType( "bl::ArgumentException" );
+        serverErrorJson -> result() -> exceptionProperties( dm::ExceptionProperties::createInstance() );
+        serverErrorJson -> result() -> exceptionProperties() -> categoryName( bl::str::empty() );
+        serverErrorJson -> result() -> exceptionProperties() -> errorCode( 13 );
+        serverErrorJson -> result() -> exceptionProperties() -> message( "no-category" );
+
+        const auto exceptionPtr = dm::ServerErrorHelpers::createExceptionFromObject( serverErrorJson );
+
+        std::rethrow_exception( exceptionPtr );
+    }
+    catch( ArgumentException& e )
+    {
+        UTF_REQUIRE_EQUAL( e.fullTypeName(), "bl::ArgumentException" );
+        UTF_CHECK_EQUAL( e.what(), "no-category" );
+
+        UTF_REQUIRE( nullptr == eh::get_error_info< eh::errinfo_error_code >( e ) );
+        UTF_REQUIRE( nullptr == eh::get_error_info< eh::errinfo_category_name >( e ) );
+    }
+
 #undef UTEST_PROPERTY_REQUIRE_EQUAL
 }
 
@@ -494,6 +635,350 @@ UTF_AUTO_TEST_CASE( ErrorToJsonExceptionTypeMappingTests )
         roundTrippedTypes + fallThroughTypes + 1U /* SystemException, see ErrorToJsonTests */,
         24U
         );
+}
+
+UTF_AUTO_TEST_CASE( ErrorToJsonSystemCodeDerivationTests )
+{
+    using namespace bl;
+
+    /*
+     * populateExceptionResult() reads errinfo_error_code FIRST and, when it is present, writes
+     * exceptionProperties -> systemCode( errorCode -> value() ). The macro line further down
+     * then OVERWRITES systemCode from errinfo_system_code, but only when that errinfo is
+     * present. So an exception which carries only an error code silently arrives on the wire
+     * with systemCode holding the errc numeric value
+     *
+     * That is not a corner case: BL_THROW_SERVER_ERROR( errcondition, msg ) - the canonical way
+     * this library raises a coded server error - attaches errinfo_error_code and nothing else.
+     * Both existing cases in this file set errinfo_system_code explicitly as well, so the macro
+     * line always wins there and the derivation is invisible
+     */
+
+    const auto propertiesOf = []( SAA_in const std::exception_ptr& eptr )
+        -> om::ObjPtr< dm::ExceptionProperties >
+    {
+        const auto serverErrorJson = dm::ServerErrorHelpers::createServerErrorObject( eptr );
+
+        UTF_REQUIRE( serverErrorJson -> result() );
+        UTF_REQUIRE( serverErrorJson -> result() -> exceptionProperties() );
+
+        return om::copy( serverErrorJson -> result() -> exceptionProperties() );
+    };
+
+    const auto roundTrip = []( SAA_in const std::exception_ptr& eptr ) -> std::exception_ptr
+    {
+        return dm::ServerErrorHelpers::createExceptionFromObject(
+            dm::ServerErrorHelpers::createServerErrorObject( eptr )
+            );
+    };
+
+    {
+        /*
+         * 1. errinfo_error_code only - the derived path
+         */
+
+        std::exception_ptr eptr;
+
+        try
+        {
+            BL_THROW_SERVER_ERROR( eh::errc::permission_denied, "coded" );
+        }
+        catch( ServerErrorException& e )
+        {
+            /*
+             * The positive control for the asymmetry below: the exception as thrown carries no
+             * errinfo_system_code at all
+             */
+
+            UTF_REQUIRE( nullptr != eh::get_error_info< eh::errinfo_error_code >( e ) );
+            UTF_REQUIRE( nullptr == eh::get_error_info< eh::errinfo_system_code >( e ) );
+
+            eptr = std::current_exception();
+        }
+
+        UTF_REQUIRE( eptr );
+
+        const auto props = propertiesOf( eptr );
+
+        UTF_REQUIRE_EQUAL( props -> systemCode(), static_cast< int >( eh::errc::permission_denied ) );
+        UTF_REQUIRE( props -> errorCodeIsSet() );
+
+        try
+        {
+            cpp::safeRethrowException( roundTrip( eptr ) );
+
+            UTF_FAIL( "The round tripped exception must be thrown" );
+        }
+        catch( ServerErrorException& e )
+        {
+            /*
+             * ... and the round tripped copy has GAINED an errinfo the original never had.
+             * cmdline/CmdLineAppBase.h reads errinfo_system_code to compute a process exit
+             * code, so the original and its copy would exit with different codes
+             */
+
+            UTF_REQUIRE( nullptr != eh::get_error_info< eh::errinfo_system_code >( e ) );
+        }
+    }
+
+    {
+        /*
+         * 2. Both - the explicit errinfo_system_code wins over the derived value. This is the
+         * ORDERING assertion: moving the derivation after the macro block would silently
+         * corrupt the HTTP status of every exception which carries both
+         */
+
+        const auto eptr = BL_MAKE_EXCEPTION_PTR(
+            ServerErrorException()
+                << eh::errinfo_error_code( eh::errc::make_error_code( eh::errc::permission_denied ) )
+                << eh::errinfo_system_code( 400 ),
+            "both"
+            );
+
+        const auto props = propertiesOf( eptr );
+
+        UTF_REQUIRE_EQUAL( props -> systemCode(), 400 );
+        UTF_REQUIRE( props -> errorCodeIsSet() );
+    }
+
+    {
+        /*
+         * 3. errinfo_system_code only - nothing to derive from, and no error code is
+         * reconstructed on the way back
+         */
+
+        const auto eptr = BL_MAKE_EXCEPTION_PTR(
+            ServerErrorException() << eh::errinfo_system_code( 400 ),
+            "system code only"
+            );
+
+        const auto props = propertiesOf( eptr );
+
+        UTF_REQUIRE_EQUAL( props -> systemCode(), 400 );
+        UTF_REQUIRE( ! props -> errorCodeIsSet() );
+
+        try
+        {
+            cpp::safeRethrowException( roundTrip( eptr ) );
+
+            UTF_FAIL( "The round tripped exception must be thrown" );
+        }
+        catch( ServerErrorException& e )
+        {
+            UTF_REQUIRE( nullptr != eh::get_error_info< eh::errinfo_system_code >( e ) );
+            UTF_REQUIRE( nullptr == eh::get_error_info< eh::errinfo_error_code >( e ) );
+        }
+    }
+}
+
+UTF_AUTO_TEST_CASE( ErrorToJsonUnmappedErrorInfoTests )
+{
+    using namespace bl;
+
+    /*
+     * core/ErrorHandling.h declares 42 errinfo_* types (33 baselib typedefs plus 9 imported
+     * from Boost) and ServerErrorHelpers maps exactly 34 of them onto ExceptionProperties in a
+     * hand written macro list, mirrored in reverse in exceptionFromProperties(). There is no
+     * coupling of any kind - compiler, test or otherwise - between the declaration list and the
+     * serialisation list
+     *
+     * EIGHT declared errinfos therefore have NO wire representation, and three groups of them
+     * are attached by production code to exception types which ARE explicitly wire mapped:
+     *
+     *   errinfo_hint, errinfo_original_type, errinfo_original_thread_name,
+     *   errinfo_original_stack_trace          - jni/JniEnvironment.h, on bl::JavaException
+     *
+     *   errinfo_service_status, errinfo_service_status_category,
+     *   errinfo_service_status_message        - security/AuthorizationServiceRest.h,
+     *                                           on bl::SecurityException
+     *
+     *   errinfo_error_uuid                    - messaging/MessagingClientImpl.h and others, on
+     *                                           bl::NotSupportedException / bl::TimeoutException
+     *                                           and the storage exceptions
+     *
+     * A reviewer who adds a 35th mapping - or a 43rd errinfo - is expected to update this case
+     * deliberately rather than have the behaviour change silently. ErrorToJsonTests enumerates
+     * the 34 mapped ones, which is a complete blind spot for these eight, because the list
+     * under test IS the list under implementation
+     */
+
+    UTF_MESSAGE(
+        "errinfo_* types with no wire representation (8): errinfo_hint, errinfo_original_type, "
+        "errinfo_original_thread_name, errinfo_original_stack_trace, errinfo_service_status, "
+        "errinfo_service_status_category, errinfo_service_status_message, errinfo_error_uuid"
+        );
+
+    const auto stackTraceValue = std::string( "at Foo.bar(Foo.java:42)" );
+
+    /*
+     * A literal uuid rather than one of the BL_UUID_DECLARE'd values in
+     * messaging/BrokerErrorCodes.h - that header must not be pulled into utf_baselib_data
+     */
+
+    const auto errorUuid = uuids::string2uuid( "0f5a3d1e-9c74-4c1a-8f2d-6c9b1a7e35d0" );
+
+    const auto javaEptr = BL_MAKE_EXCEPTION_PTR(
+        JavaException()
+            << eh::errinfo_original_type( "java.lang.IllegalStateException" )
+            << eh::errinfo_original_thread_name( "utest-thread" )
+            << eh::errinfo_original_stack_trace( stackTraceValue )
+            << eh::errinfo_hint( "hint: ErrorToJsonUnmappedErrorInfoTests" )
+            << eh::errinfo_message( "java failure" ),
+        "java failure"
+        );
+
+    const auto securityEptr = BL_MAKE_EXCEPTION_PTR(
+        SecurityException()
+            << eh::errinfo_service_status( 401 )
+            << eh::errinfo_service_status_category( 7 )
+            << eh::errinfo_service_status_message( "token expired" )
+            << eh::errinfo_message( "authz failure" ),
+        "authz failure"
+        );
+
+    const auto timeoutEptr = BL_MAKE_EXCEPTION_PTR(
+        TimeoutException()
+            << eh::errinfo_error_uuid( errorUuid )
+            << eh::errinfo_message( "timeout failure" ),
+        "timeout failure"
+        );
+
+    /*
+     * Every "the unmapped half is gone" assertion below is paired with a positive control on
+     * the SOURCE exception, so it cannot silently become vacuous if a producer stops attaching
+     * the errinfo
+     */
+
+#define UTEST_REQUIRE_ERRINFO_DROPPED( errinfo, source, restored ) \
+        { \
+            UTF_REQUIRE( nullptr != eh::get_error_info< eh::errinfo >( source ) ); \
+            UTF_REQUIRE( nullptr == eh::get_error_info< eh::errinfo >( restored ) ); \
+        } \
+
+    {
+        try
+        {
+            cpp::safeRethrowException( javaEptr );
+
+            UTF_FAIL( "The source exception must be thrown" );
+        }
+        catch( JavaException& source )
+        {
+            const auto json = dm::ServerErrorHelpers::getServerErrorAsJson( javaEptr );
+
+            const auto parsed = dm::DataModelUtils::loadFromJsonText< dm::ServerErrorJson >( json );
+
+            UTF_REQUIRE( parsed -> result() );
+            UTF_REQUIRE( parsed -> result() -> exceptionProperties() );
+
+            UTF_REQUIRE_EQUAL( parsed -> result() -> exceptionType(), JavaException::fullTypeNameStatic() );
+            UTF_REQUIRE_EQUAL( parsed -> result() -> exceptionProperties() -> message(), "java failure" );
+
+            try
+            {
+                cpp::safeRethrowException(
+                    dm::ServerErrorHelpers::createExceptionFromObject( parsed )
+                    );
+
+                UTF_FAIL( "The restored exception must be thrown" );
+            }
+            catch( BaseExceptionDefault& restored )
+            {
+                UTF_REQUIRE_EQUAL( restored.fullTypeName(), JavaException::fullTypeNameStatic() );
+                UTF_REQUIRE_EQUAL( restored.what(), "java failure" );
+
+                UTEST_REQUIRE_ERRINFO_DROPPED( errinfo_original_type, source, restored )
+                UTEST_REQUIRE_ERRINFO_DROPPED( errinfo_original_thread_name, source, restored )
+                UTEST_REQUIRE_ERRINFO_DROPPED( errinfo_original_stack_trace, source, restored )
+                UTEST_REQUIRE_ERRINFO_DROPPED( errinfo_hint, source, restored )
+            }
+
+            /*
+             * The only surviving trace of the four JNI errinfos is inside exceptionFullDump,
+             * and getRedactedServerErrorAsJson() - the variant the default HTTP server backend
+             * returns to a client - replaces that whole field with "<redacted>"
+             */
+
+            UTF_REQUIRE(
+                std::string::npos != parsed -> result() -> exceptionFullDump().find( stackTraceValue )
+                );
+
+            UTF_REQUIRE(
+                std::string::npos ==
+                    dm::ServerErrorHelpers::getRedactedServerErrorAsJson( javaEptr ).find( stackTraceValue )
+                );
+        }
+    }
+
+    {
+        try
+        {
+            cpp::safeRethrowException( securityEptr );
+
+            UTF_FAIL( "The source exception must be thrown" );
+        }
+        catch( SecurityException& source )
+        {
+            const auto json = dm::ServerErrorHelpers::getServerErrorAsJson( securityEptr );
+
+            const auto parsed = dm::DataModelUtils::loadFromJsonText< dm::ServerErrorJson >( json );
+
+            UTF_REQUIRE_EQUAL( parsed -> result() -> exceptionType(), SecurityException::fullTypeNameStatic() );
+
+            try
+            {
+                cpp::safeRethrowException(
+                    dm::ServerErrorHelpers::createExceptionFromObject( parsed )
+                    );
+
+                UTF_FAIL( "The restored exception must be thrown" );
+            }
+            catch( BaseExceptionDefault& restored )
+            {
+                UTF_REQUIRE_EQUAL( restored.fullTypeName(), SecurityException::fullTypeNameStatic() );
+                UTF_REQUIRE_EQUAL( restored.what(), "authz failure" );
+
+                UTEST_REQUIRE_ERRINFO_DROPPED( errinfo_service_status, source, restored )
+                UTEST_REQUIRE_ERRINFO_DROPPED( errinfo_service_status_category, source, restored )
+                UTEST_REQUIRE_ERRINFO_DROPPED( errinfo_service_status_message, source, restored )
+            }
+        }
+    }
+
+    {
+        try
+        {
+            cpp::safeRethrowException( timeoutEptr );
+
+            UTF_FAIL( "The source exception must be thrown" );
+        }
+        catch( TimeoutException& source )
+        {
+            const auto json = dm::ServerErrorHelpers::getServerErrorAsJson( timeoutEptr );
+
+            const auto parsed = dm::DataModelUtils::loadFromJsonText< dm::ServerErrorJson >( json );
+
+            UTF_REQUIRE_EQUAL( parsed -> result() -> exceptionType(), TimeoutException::fullTypeNameStatic() );
+
+            try
+            {
+                cpp::safeRethrowException(
+                    dm::ServerErrorHelpers::createExceptionFromObject( parsed )
+                    );
+
+                UTF_FAIL( "The restored exception must be thrown" );
+            }
+            catch( BaseExceptionDefault& restored )
+            {
+                UTF_REQUIRE_EQUAL( restored.fullTypeName(), TimeoutException::fullTypeNameStatic() );
+                UTF_REQUIRE_EQUAL( restored.what(), "timeout failure" );
+
+                UTEST_REQUIRE_ERRINFO_DROPPED( errinfo_error_uuid, source, restored )
+            }
+        }
+    }
+
+#undef UTEST_REQUIRE_ERRINFO_DROPPED
 }
 
 UTF_AUTO_TEST_CASE( ServerErrorHelpersTests )
@@ -951,5 +1436,196 @@ UTF_AUTO_TEST_CASE( ServerErrorHelpersExceptionCallbackTests )
             );
 
         UTF_REQUIRE_EQUAL( callCount, 0 );
+    }
+}
+
+UTF_AUTO_TEST_CASE( ErrorToGraphQLTests )
+{
+    using namespace bl;
+
+    /*
+     * GraphQLErrorHelpers::getServerErrorAsGraphQL() is the ONLY renderer of error responses
+     * for GraphQL clients and nothing in the repository exercises it - the three
+     * BaseRestServerProcessingContext construction sites all pass isGraphQLServer == false
+     *
+     * The envelope carries exactly one GraphQLErrorMessage; errorType is the exception type and
+     * message is BrokerErrorCodes::tryGetExpectedErrorMessage() when that returns a non-empty
+     * string and the server's own message otherwise, with " (error code N)" appended whenever
+     * the code is not success
+     *
+     * Note that createServerErrorResultObject() sets message to e.what() ONLY when the
+     * exception is user friendly, and to BL_GENERIC_FRIENDLY_UNEXPECTED_MSG otherwise - so
+     * every message assertion below is written for a known polarity
+     */
+
+    const auto renderAsGraphQL = []( SAA_in const std::exception_ptr& eptr )
+        -> om::ObjPtr< dm::ServerErrorGraphQL >
+    {
+        const auto json = messaging::GraphQLErrorHelpers::getServerErrorAsGraphQL( eptr );
+
+        auto graphQL = dm::DataModelUtils::loadFromJsonText< dm::ServerErrorGraphQL >( json );
+
+        UTF_REQUIRE( graphQL );
+        UTF_REQUIRE_EQUAL( 1U, graphQL -> errors().size() );
+        UTF_REQUIRE( ! graphQL -> errors()[ 0 ] -> message().empty() );
+
+        return graphQL;
+    };
+
+    {
+        /*
+         * 1. The friendly substitution plus the numeric suffix - and the server's own message
+         *    must not reach the client
+         */
+
+        const auto eptr = BL_MAKE_EXCEPTION_PTR(
+            ServerErrorException()
+                << eh::errinfo_error_code(
+                    eh::errc::make_error_code( messaging::BrokerErrorCodes::TargetPeerNotFound )
+                    ),
+            "some internal detail"
+            );
+
+        const auto graphQL = renderAsGraphQL( eptr );
+
+        UTF_REQUIRE_EQUAL(
+            graphQL -> errors()[ 0 ] -> message(),
+            "The server is currently unavailable (error code 99)"
+            );
+
+        UTF_REQUIRE_EQUAL( graphQL -> errors()[ 0 ] -> errorType(), "bl::ServerErrorException" );
+
+        UTF_REQUIRE(
+            std::string::npos == graphQL -> errors()[ 0 ] -> message().find( "some internal detail" )
+            );
+    }
+
+    {
+        /*
+         * 2. No error code at all - errorCode() defaults to 0, i.e. eh::errc::success, so there
+         *    is nothing to substitute and no suffix is appended in EITHER polarity
+         */
+
+        {
+            const auto eptr = BL_MAKE_EXCEPTION_PTR( UnexpectedException(), "plain failure" );
+
+            const auto graphQL = renderAsGraphQL( eptr );
+
+            const auto& message = graphQL -> errors()[ 0 ] -> message();
+
+            UTF_REQUIRE_EQUAL( message, std::string( BL_GENERIC_FRIENDLY_UNEXPECTED_MSG ) );
+            UTF_REQUIRE( std::string::npos == message.find( "error code" ) );
+        }
+
+        {
+            const auto eptr = BL_MAKE_EXCEPTION_PTR(
+                UnexpectedException() << eh::errinfo_is_user_friendly( true ),
+                "plain failure"
+                );
+
+            const auto graphQL = renderAsGraphQL( eptr );
+
+            const auto& message = graphQL -> errors()[ 0 ] -> message();
+
+            UTF_REQUIRE_EQUAL( message, "plain failure" );
+            UTF_REQUIRE( std::string::npos == message.find( "error code" ) );
+        }
+    }
+
+    {
+        /*
+         * 3. An error code which has no friendly text - the server's message survives (subject
+         *    to the polarity) and the suffix IS appended
+         *
+         *    The two halves are asserted separately so the case is not tied to a platform errno
+         *    value - no_space_on_device is 28 on Linux
+         */
+
+        {
+            const auto eptr = BL_MAKE_EXCEPTION_PTR(
+                ServerErrorException()
+                    << eh::errinfo_error_code(
+                        eh::errc::make_error_code( eh::errc::no_space_on_device )
+                        ),
+                "disk failure"
+                );
+
+            const auto graphQL = renderAsGraphQL( eptr );
+
+            const auto& message = graphQL -> errors()[ 0 ] -> message();
+
+            UTF_REQUIRE_EQUAL( 0U, message.find( BL_GENERIC_FRIENDLY_UNEXPECTED_MSG ) );
+            UTF_REQUIRE( std::string::npos != message.find( "(error code " ) );
+        }
+
+        {
+            const auto eptr = BL_MAKE_EXCEPTION_PTR(
+                ServerErrorException()
+                    << eh::errinfo_error_code(
+                        eh::errc::make_error_code( eh::errc::no_space_on_device )
+                        )
+                    << eh::errinfo_is_user_friendly( true ),
+                "disk failure"
+                );
+
+            const auto graphQL = renderAsGraphQL( eptr );
+
+            const auto& message = graphQL -> errors()[ 0 ] -> message();
+
+            UTF_REQUIRE_EQUAL( 0U, message.find( "disk failure" ) );
+            UTF_REQUIRE( std::string::npos != message.find( "(error code " ) );
+        }
+    }
+
+    {
+        /*
+         * 4. The optional callback is forwarded all the way down to
+         *    createServerErrorResultObject()
+         */
+
+        bool invoked = false;
+
+        const eh::void_exception_callback_t cb = [ &invoked ]( SAA_inout std::exception& e ) -> void
+        {
+            BL_UNUSED( e );
+
+            invoked = true;
+        };
+
+        const auto eptr = BL_MAKE_EXCEPTION_PTR( UnexpectedException(), "callback probe" );
+
+        const auto json = messaging::GraphQLErrorHelpers::getServerErrorAsGraphQL( eptr, cb );
+
+        UTF_REQUIRE( ! json.empty() );
+        UTF_REQUIRE( invoked );
+    }
+
+    {
+        /*
+         * 5. The fully populated exception this file already builds for the JSON envelope - the
+         *    error code is permission_denied, i.e. BrokerErrorCodes::AuthorizationFailed, whose
+         *    friendly text is the error code's own message()
+         *
+         *    Asserted as halves rather than as the literal "Permission denied (error code 13)",
+         *    which is a platform dependent string
+         */
+
+        const eh::error_code errorCode( eh::errc::permission_denied, eh::generic_category() );
+
+        const auto eptr = utest::createDecoratedException(
+            ServerErrorException(),
+            "ErrorToGraphQLTests",
+            "message: ErrorToGraphQLTests",
+            errorCode
+            );
+
+        const auto graphQL = renderAsGraphQL( eptr );
+
+        UTF_REQUIRE_EQUAL( graphQL -> errors()[ 0 ] -> errorType(), "bl::ServerErrorException" );
+
+        const auto& message = graphQL -> errors()[ 0 ] -> message();
+
+        UTF_REQUIRE_EQUAL( 0U, message.find( errorCode.message() ) );
+        UTF_REQUIRE( std::string::npos != message.find( "(error code " ) );
     }
 }

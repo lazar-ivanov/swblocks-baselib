@@ -16,7 +16,9 @@
 
 #include <utests/baselib/TestTaskUtils.h>
 #include <utests/baselib/MachineGlobalTestLock.h>
+#include <utests/baselib/UtfCrypto.h>
 
+#include <baselib/messaging/BlobServerFacade.h>
 #include <baselib/messaging/TcpBlockServerMessageDispatcher.h>
 
 #include <baselib/core/BaseIncludes.h>
@@ -948,5 +950,253 @@ UTF_AUTO_TEST_CASE( Test_BlobServerFatalBackendErrorBlastRadius )
             );
 
         backendImpl -> assertions().requireNone();
+    }
+}
+
+UTF_AUTO_TEST_CASE( Test_BlobServerFacadeStartStop )
+{
+    using namespace bl;
+    using namespace bl::data;
+    using namespace bl::tasks;
+    using namespace bl::messaging;
+
+    UTF_MESSAGE(
+        "BlobServerFacade::startForSyncStorage() never runs in a normal CI run - both of its "
+        "call sites open with 'if( ! UtfArgsParser::isServer() ) return;' - and neither of them "
+        "ever supplies a key, a certificate or either callback, so SslBlobServerFacade is not "
+        "instantiated anywhere in the repository"
+        );
+
+    /*
+     * IMPORTANT: an EXPLICIT control token is passed in both sub-blocks below
+     *
+     * With controlTokenIn == nullptr the facade creates the token internally and never exposes
+     * it, so startAcceptor() blocks until that token - or an OS signal - cancels it and the
+     * case would hang forever. That defaulting arm is NOT testable through this entry point and
+     * is deliberately left uncovered; the dataBlocksPoolIn arm below is the one which stays
+     * coverable
+     *
+     * Both sub-blocks bind a port, so they hold the machine global lock and use different ports
+     */
+
+    const unsigned short portPlain = 28100U;
+    const unsigned short portSsl   = 28105U;
+
+    /*
+     * A bounded wait for the facade worker to return once the control token is cancelled - the
+     * regression this guards against is exactly that it does NOT return
+     */
+
+    const auto requireFacadeReturned = []( SAA_in const om::ObjPtr< Task >& serverTask ) -> void
+    {
+        const auto state = pollAcceptorState( serverTask, true /* waitForCompleted */ );
+
+        if( Task::Completed != state )
+        {
+            UTF_FAIL( "BlobServerFacade::startForSyncStorage() did not return after the control token was cancelled" );
+        }
+
+        UTF_REQUIRE( ! serverTask -> isFailed() );
+    };
+
+    {
+        /*
+         * (a) The plain TCP facade with dataBlocksPoolIn == nullptr - the defaulting arm - and a
+         *     non-empty isAuthenticationRequiredCallback, which is the only in-repo
+         *     instantiation point of TcpBlockServerDataChunkStorageImpl's
+         *     isauthenticationrequired_callback_t parameter
+         */
+
+        test::MachineGlobalTestLock lock;
+
+        const auto controlToken = SimpleTaskControlTokenImpl::createInstance< TaskControlTokenRW >();
+
+        const auto storage = om::lockDisposable( utest::BackendImplTestImpl::createInstance() );
+
+        std::atomic< std::size_t > isAuthRequiredCalls( 0U );
+
+        const auto isAuthenticationRequiredCallback =
+            [ &isAuthRequiredCalls ](
+                SAA_in      const BlockTransferDefs::BlockType                          blockType,
+                SAA_in      const std::uint16_t                                         cntrlCode
+                )
+                -> bool
+            {
+                BL_UNUSED( blockType );
+                BL_UNUSED( cntrlCode );
+
+                ++isAuthRequiredCalls;
+
+                return false;
+            };
+
+        const auto runServer = [ & ]() -> void
+        {
+            BlobServerFacade::startForSyncStorage(
+                test::UtfArgsParser::threadsCount(),
+                0U                                                  /* maxConcurrentTasks */,
+                om::copy< DataChunkStorage >( storage )             /* writeSyncStorage */,
+                om::copy< DataChunkStorage >( storage )             /* readSyncStorage */,
+                bl::str::empty()                                    /* privateKeyPem */,
+                bl::str::empty()                                    /* certificatePem */,
+                portPlain,
+                controlToken,
+                nullptr                                             /* dataBlocksPoolIn - the defaulting arm */,
+                AsyncDataChunkStorage::datablock_callback_t()       /* authenticationCallback */,
+                BlobServerFacade::isauthenticationrequired_callback_t( isAuthenticationRequiredCallback )
+                );
+        };
+
+        scheduleAndExecuteInParallel(
+            [ & ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+            {
+                eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+                const auto serverTask = SimpleTaskImpl::createInstance< Task >( cpp::copy( runServer ) );
+
+                eq -> push_back( serverTask );
+
+                BL_SCOPE_EXIT(
+                    {
+                        controlToken -> requestCancel();
+                    }
+                    );
+
+                utest::TestTaskUtils::waitForAcceptorReady( "localhost", portPlain );
+
+                {
+                    /*
+                     * Drive a real command through the acceptor - a bare connector connect sends
+                     * no command at all, and isAuthenticationRequiredCallback would then never
+                     * be invoked
+                     */
+
+                    const auto dataBlocksPool = datablocks_pool_type::createInstance();
+
+                    const auto eqClient = om::lockDisposable(
+                        ExecutionQueueImpl::createInstance( ExecutionQueue::OptionKeepAll )
+                        );
+
+                    const auto connector = connector_t::createInstance( std::string( "localhost" ), portPlain );
+
+                    const auto taskConnector = om::qi< Task >( connector.get() );
+                    eqClient -> push_back( taskConnector );
+                    eqClient -> waitForSuccess( taskConnector );
+
+                    const auto transfer = connection_t::createInstance(
+                        connection_t::CommandId::SendChunk,
+                        uuids::create()                             /* peerId */,
+                        dataBlocksPool
+                        );
+
+                    transfer -> attachStream( connector -> detachStream() );
+                    transfer -> setChunkData( om::copy( storage -> getData() ) );
+                    transfer -> setChunkId( uuids::create() );
+
+                    const auto taskTransfer = om::qi< Task >( transfer );
+
+                    eqClient -> push_back( taskTransfer );
+                    eqClient -> wait( taskTransfer );
+
+                    UTF_REQUIRE_EQUAL( Task::Completed, taskTransfer -> getState() );
+                    UTF_REQUIRE( ! taskTransfer -> isFailed() );
+
+                    eqClient -> forceFlushNoThrow();
+                }
+
+                /*
+                 * Only meaningful because a real command was driven above
+                 */
+
+                UTF_REQUIRE( isAuthRequiredCalls.load() > 0U );
+
+                controlToken -> requestCancel();
+
+                requireFacadeReturned( serverTask );
+
+                eq -> forceFlushNoThrow();
+            }
+            );
+
+        storage -> assertions().requireNone();
+    }
+
+    {
+        /*
+         * (b) The SSL facade - the first instantiation of the SslBlobServerFacade typedef in the
+         *     repository - with an explicit control token, an explicit data blocks pool, a real
+         *     key and certificate and a non-empty authenticationCallback
+         *
+         *     No command is driven here: there is no SSL block transfer client anywhere in the
+         *     test tree, so authenticationCallback is deliberately not expected to be invoked.
+         *     What this sub-block pins is that the typedef instantiates, that the acceptor binds
+         *     the port, and that startForSyncStorage() returns once the control token is
+         *     cancelled
+         */
+
+        test::MachineGlobalTestLock lock;
+
+        const auto controlToken = SimpleTaskControlTokenImpl::createInstance< TaskControlTokenRW >();
+
+        const auto storage = om::lockDisposable( utest::BackendImplTestImpl::createInstance() );
+
+        const auto dataBlocksPool = datablocks_pool_type::createInstance();
+
+        std::atomic< std::size_t > authenticationCalls( 0U );
+
+        const auto authenticationCallback =
+            [ &authenticationCalls ]( SAA_in const om::ObjPtr< DataBlock >& dataBlock ) -> void
+            {
+                BL_UNUSED( dataBlock );
+
+                ++authenticationCalls;
+            };
+
+        const auto runServer = [ & ]() -> void
+        {
+            SslBlobServerFacade::startForSyncStorage(
+                test::UtfArgsParser::threadsCount(),
+                0U                                                  /* maxConcurrentTasks */,
+                om::copy< DataChunkStorage >( storage )             /* writeSyncStorage */,
+                om::copy< DataChunkStorage >( storage )             /* readSyncStorage */,
+                test::UtfCrypto::getDefaultServerKey()              /* privateKeyPem */,
+                test::UtfCrypto::getDefaultServerCertificate()      /* certificatePem */,
+                portSsl,
+                controlToken,
+                om::copy( dataBlocksPool )                          /* dataBlocksPoolIn */,
+                AsyncDataChunkStorage::datablock_callback_t( authenticationCallback ),
+                SslBlobServerFacade::isauthenticationrequired_callback_t()
+                );
+        };
+
+        scheduleAndExecuteInParallel(
+            [ & ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+            {
+                eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+                const auto serverTask = SimpleTaskImpl::createInstance< Task >( cpp::copy( runServer ) );
+
+                eq -> push_back( serverTask );
+
+                BL_SCOPE_EXIT(
+                    {
+                        controlToken -> requestCancel();
+                    }
+                    );
+
+                /*
+                 * The readiness probe is a plain TCP connect, which is enough to prove the SSL
+                 * acceptor bound the port - the handshake happens after the TCP connect
+                 */
+
+                utest::TestTaskUtils::waitForAcceptorReady( "localhost", portSsl );
+
+                controlToken -> requestCancel();
+
+                requireFacadeReturned( serverTask );
+
+                eq -> forceFlushNoThrow();
+            }
+            );
     }
 }

@@ -328,6 +328,212 @@ UTF_AUTO_TEST_CASE( TestFilesystemMetadataEntryPathValidation )
 
         UTF_REQUIRE_THROW( fsmd -> createEntry( std::move( entry ) ), bl::UnexpectedException );
     }
+
+    {
+        /*
+         * chkEntryInfo() opens with
+         *
+         *     const auto& relPath = info.relPath ? info.relPath -> value() : fs::path();
+         *
+         * and the ternary is the only thing standing between a NULL relPath handle - which a
+         * remote peer's metadata can perfectly well carry - and a null dereference on the very
+         * next line. The branch is unreachable from createEntryWithPath() above, which always
+         * allocates a bo::path box, and unreachable on a finalized store, where chkUnlocked()
+         * throws before chkEntryInfo() is ever called; it needs a FRESH, unfinalized store and
+         * an entry whose relPath was left default constructed
+         */
+
+        const auto wo = fsmd_t::createInstance< bl::data::FilesystemMetadataWO >();
+
+        {
+            fsmd_t::EntryInfo info;
+
+            info.type = fsmd_t::File;
+
+            UTF_REQUIRE( ! info.relPath );
+
+            UTF_REQUIRE_THROW_MESSAGE(
+                wo -> createEntry( std::move( info ) ),
+                bl::UnexpectedException,
+                "The relative path of a filesystem metadata entry is empty"
+                );
+        }
+
+        {
+            /*
+             * The other arm of the ternary - a non null box which holds an empty path - must be
+             * rejected with the very same message, so the two arms cannot be collapsed silently
+             */
+
+            fsmd_t::EntryInfo info;
+
+            info.type = fsmd_t::File;
+            info.relPath = bl::bo::path::createInstance();
+
+            UTF_REQUIRE_THROW_MESSAGE(
+                wo -> createEntry( std::move( info ) ),
+                bl::UnexpectedException,
+                "The relative path of a filesystem metadata entry is empty"
+                );
+        }
+
+        /*
+         * The rejections must not have left the store in a state which refuses well formed
+         * entries afterwards
+         */
+
+        {
+            fsmd_t::EntryInfo info;
+
+            info.size    = 4321U;
+            info.type    = fsmd_t::File;
+            info.relPath = bl::bo::path::createInstance();
+
+            bl::fs::path path( "ok/path" );
+            info.relPath -> lvalue().swap( path );
+
+            UTF_REQUIRE_NO_THROW( ( void ) wo -> createEntry( std::move( info ) ) );
+        }
+
+        wo -> finalize();
+
+        UTF_REQUIRE_EQUAL(
+            om::qi< bl::data::FilesystemMetadataRO >( wo ) -> queryEntriesCount(),
+            1U
+            );
+    }
+}
+
+UTF_AUTO_TEST_CASE( TestFilesystemMetadataIteratorOutlivesStoreHandle )
+{
+    using namespace bl;
+
+    /*
+     * UuidIteratorImplT captures &data.front() and &data.front() + data.size() as raw pointers
+     * and holds them for its whole life. What keeps those pointers valid is the
+     * om::ObjPtr< om::Object > back-reference which all three factories pass -
+     * om::qi< om::Object >( static_cast< FilesystemMetadataRO* >( this ) ) - documented in the
+     * owner-contract comment on queryAllEntries()
+     *
+     * Dropping that second argument from all three createInstance() calls compiles cleanly and
+     * passes the rest of the suite, because every other test holds the store handle for at
+     * least as long as the iterators it obtained from it. The two production holders -
+     * FilesUnpackagerUnit::m_entriesIterator and ChunksReceiverDeleterBase::m_chunksIterator -
+     * each sit next to their own m_fsmd, so a regression here is a use-after-free inside a
+     * NOEXCEPT task handler
+     */
+
+    typedef bl::data::FilesystemMetadataInMemoryImpl fsmd_t;
+
+    om::ObjPtr< bl::UuidIterator > entriesIter;
+    om::ObjPtr< bl::UuidIterator > chunksIter;
+    om::ObjPtr< bl::UuidIterator > perEntryIter;
+    om::ObjPtr< bl::UuidIterator > emptyIter;
+
+    std::set< bl::uuid_t > expectedEntries;
+    std::set< bl::uuid_t > expectedChunks;
+
+    {
+        const auto wo = fsmd_t::createInstance< bl::data::FilesystemMetadataWO >();
+
+        const auto makeEntry = []( SAA_in const std::string& relPath ) -> fsmd_t::EntryInfo
+        {
+            fsmd_t::EntryInfo info;
+
+            info.size    = 4321U;
+            info.type    = fsmd_t::File;
+            info.relPath = bl::bo::path::createInstance();
+
+            bl::fs::path path( relPath );
+            info.relPath -> lvalue().swap( path );
+
+            return info;
+        };
+
+        const auto entryId1 = wo -> createEntry( makeEntry( "a/one.txt" ) );
+        const auto entryId2 = wo -> createEntry( makeEntry( "a/two.txt" ) );
+
+        UTF_REQUIRE( expectedEntries.insert( entryId1 ).second );
+        UTF_REQUIRE( expectedEntries.insert( entryId2 ).second );
+
+        fsmd_t::ChunkInfo chunk;
+        chunk.pos  = 0U;
+        chunk.size = 1234U;
+
+        UTF_REQUIRE( expectedChunks.insert( wo -> createChunk( entryId1, bl::cpp::copy( chunk ) ) ).second );
+        UTF_REQUIRE( expectedChunks.insert( wo -> createChunk( entryId1, bl::cpp::copy( chunk ) ) ).second );
+        UTF_REQUIRE( expectedChunks.insert( wo -> createChunk( entryId2, bl::cpp::copy( chunk ) ) ).second );
+        UTF_REQUIRE( expectedChunks.insert( wo -> createChunk( entryId2, bl::cpp::copy( chunk ) ) ).second );
+
+        wo -> finalize();
+
+        const auto ro = bl::om::qi< bl::data::FilesystemMetadataRO >( wo );
+
+        entriesIter  = ro -> queryAllEntries();
+        chunksIter   = ro -> queryAllChunks();
+        perEntryIter = ro -> queryChunks( entryId1 );
+
+        /*
+         * A finalized but EMPTY store yields an iterator whose begin / end pair is
+         * ( nullptr, nullptr ) - obtained here so that pair is walked without an owner too
+         */
+
+        const auto empty = fsmd_t::createInstance< bl::data::FilesystemMetadataWO >();
+        empty -> finalize();
+
+        emptyIter = bl::om::qi< bl::data::FilesystemMetadataRO >( empty ) -> queryAllEntries();
+    }
+
+    /*
+     * Both store handles are gone at this point - only the iterators keep the vectors alive
+     */
+
+    const auto collect = []( SAA_in const bl::om::ObjPtr< bl::UuidIterator >& iter )
+        -> std::set< bl::uuid_t >
+    {
+        std::set< bl::uuid_t > result;
+
+        for( ; iter -> hasCurrent(); iter -> loadNext() )
+        {
+            UTF_REQUIRE( result.insert( iter -> current() ).second );
+        }
+
+        return result;
+    };
+
+    UTF_REQUIRE( expectedEntries == collect( entriesIter ) );
+
+    /*
+     * reset() returns m_pos to the captured m_begin, so a second walk re-reads the very same
+     * memory - which is only safe because the store is still alive
+     */
+
+    entriesIter -> reset();
+
+    UTF_REQUIRE( expectedEntries == collect( entriesIter ) );
+
+    UTF_REQUIRE( expectedChunks == collect( chunksIter ) );
+
+    {
+        const auto perEntry = collect( perEntryIter );
+
+        UTF_REQUIRE_EQUAL( perEntry.size(), 2U );
+
+        for( const auto& chunkId : perEntry )
+        {
+            UTF_REQUIRE( bl::cpp::contains( expectedChunks, chunkId ) );
+        }
+    }
+
+    /*
+     * A cheap check that the END pointer is still the right one - loadNext() BL_CHKs
+     * m_pos != m_end once the iterator is exhausted
+     */
+
+    UTF_REQUIRE( ! entriesIter -> hasCurrent() );
+    UTF_REQUIRE_THROW( entriesIter -> loadNext(), bl::UnexpectedException );
+
+    UTF_REQUIRE( ! emptyIter -> hasCurrent() );
 }
 
 UTF_AUTO_TEST_CASE( TestFilesystemMetadataRejectedMutationsLeaveStoreConsistent )
