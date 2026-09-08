@@ -5090,6 +5090,37 @@ UTF_AUTO_TEST_CASE( Tasks_PingerMatchersTests )
             UTF_REQUIRE( ProcessPingerTaskImpl::matchAverageRoundTripTime( lineAverageRTT, &rtt ) );
             UTF_REQUIRE( numbers::floatingPointEqual( rtt, 6.933 ) );
         }
+
+        {
+            /*
+             * The cross platform fallback - the Darwin round trip time format is matched
+             * through getPatternAvgRttAlt(), and the second Linux packet summary alternative
+             * is accepted, but the Darwin packet summary form deliberately is not (the
+             * asymmetry is documented in matchPacketsArrived)
+             */
+
+            double rtt;
+
+            UTF_REQUIRE(
+                ProcessPingerTaskImpl::matchAverageRoundTripTime(
+                    "round-trip min/avg/max/stddev = 0.048/0.048/0.048/0.000 ms",
+                    &rtt
+                    )
+                );
+            UTF_REQUIRE( numbers::floatingPointEqual( rtt, 0.048 ) );
+
+            UTF_REQUIRE(
+                ProcessPingerTaskImpl::matchPacketsArrived(
+                    "1 packets transmitted, 1 packets received, 0% packet loss, time 3005ms"
+                    )
+                );
+
+            UTF_REQUIRE(
+                ! ProcessPingerTaskImpl::matchPacketsArrived(
+                    "1 packets transmitted, 1 packets received, 0.0% packet loss"
+                    )
+                );
+        }
     }
     else if( os::onDarwin() )
     {
@@ -5107,6 +5138,35 @@ UTF_AUTO_TEST_CASE( Tasks_PingerMatchersTests )
             UTF_REQUIRE( ProcessPingerTaskImpl::matchAverageRoundTripTime( lineAverageRTT, &rtt ) );
             UTF_REQUIRE( numbers::floatingPointEqual( rtt, 0.048 ) );
         }
+
+        {
+            /*
+             * The cross platform fallback - the Linux round trip time format is matched
+             * through getPatternAvgRttAlt() and both Linux packet summary forms are accepted
+             */
+
+            double rtt;
+
+            UTF_REQUIRE(
+                ProcessPingerTaskImpl::matchAverageRoundTripTime(
+                    "rtt min/avg/max/mdev = 2.125/2.347/2.637/0.204 ms",
+                    &rtt
+                    )
+                );
+            UTF_REQUIRE( numbers::floatingPointEqual( rtt, 2.347 ) );
+
+            UTF_REQUIRE(
+                ProcessPingerTaskImpl::matchPacketsArrived(
+                    "1 packets transmitted, 1 received, 0% packet loss, time 3003ms"
+                    )
+                );
+
+            UTF_REQUIRE(
+                ProcessPingerTaskImpl::matchPacketsArrived(
+                    "1 packets transmitted, 1 packets received, 0% packet loss"
+                    )
+                );
+        }
     }
     else
     {
@@ -5114,6 +5174,59 @@ UTF_AUTO_TEST_CASE( Tasks_PingerMatchersTests )
             NotSupportedException(),
             BL_MSG()
                 << "ProcessPingerTaskImpl: current platform is not supported"
+            );
+    }
+
+    /*
+     * All platforms - the negative direction of the packet summary matcher
+     */
+
+    UTF_REQUIRE(
+        ! ProcessPingerTaskImpl::matchPacketsArrived(
+            "1 packets transmitted, 0 received, 100% packet loss, time 0ms"
+            )
+        );
+
+    UTF_REQUIRE(
+        ! ProcessPingerTaskImpl::matchPacketsArrived(
+            "2 packets transmitted, 2 received, 0% packet loss"
+            )
+        );
+
+    {
+        /*
+         * ... and the out parameter contract - a line which matches no pattern must leave
+         * the round trip time untouched
+         */
+
+        double rtt = -1.0;
+
+        UTF_REQUIRE(
+            ! ProcessPingerTaskImpl::matchAverageRoundTripTime(
+                "64 bytes from 127.0.0.1: icmp_seq=1 ttl=64 time=0.031 ms",
+                &rtt
+                )
+            );
+        UTF_REQUIRE( numbers::floatingPointEqual( rtt, -1.0 ) );
+    }
+
+    /*
+     * The identity guard in matchAverageRoundTripTime: on Windows both accessors resolve to
+     * the same pattern object, so without '&alternate != &primary' the same input would be
+     * matched twice against an identical pattern; on the UNIX platforms they really differ,
+     * which is what makes the fallback above meaningful
+     */
+
+    if( os::onWindows() )
+    {
+        UTF_REQUIRE(
+            &ProcessPingerTaskImpl::getPatternAvgRtt() == &ProcessPingerTaskImpl::getPatternAvgRttAlt()
+            );
+    }
+    else
+    {
+        UTF_REQUIRE(
+            &ProcessPingerTaskImpl::getPatternAvgRtt() != &ProcessPingerTaskImpl::getPatternAvgRttAlt()
             );
     }
 }

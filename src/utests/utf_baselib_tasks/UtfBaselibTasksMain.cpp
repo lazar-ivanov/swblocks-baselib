@@ -23,3 +23,4 @@
 #include "TestTasks4.h"
 #include "TestTasks5.h"
 #include "TestTasks6.h"
+#include "TestTasks7.h"
