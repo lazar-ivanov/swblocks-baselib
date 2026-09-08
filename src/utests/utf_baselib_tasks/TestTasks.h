@@ -2924,7 +2924,8 @@ namespace
         typedef bl::reactive::ObserverBase base_type;
 
         bl::cpp::ScalarTypeIniter< std::size_t >            m_lastValue;
-        bl::cpp::ScalarTypeIniter< bool >                   m_onCompletedCalled;
+        bl::cpp::ScalarTypeIniter< std::size_t >            m_nextCount;
+        bl::cpp::ScalarTypeIniter< std::size_t >            m_completedCount;
 
         ~MonotonicCounterObserverT() NOEXCEPT
         {
@@ -2939,18 +2940,39 @@ namespace
 
         bool onCompletedCalled() const NOEXCEPT
         {
-            return m_onCompletedCalled;
+            return 0U != m_completedCount;
+        }
+
+        /**
+         * @brief The number of onNext( ... ) calls received, including the rejected ones
+         */
+
+        std::size_t nextCount() const NOEXCEPT
+        {
+            return m_nextCount;
+        }
+
+        /**
+         * @brief The number of onCompleted() calls - a counter rather than a flag, so that
+         * both 'exactly once' and 'never' are assertable
+         */
+
+        std::size_t completedCount() const NOEXCEPT
+        {
+            return m_completedCount;
         }
 
         virtual void onCompleted() OVERRIDE
         {
             base_type::onCompleted();
 
-            m_onCompletedCalled = true;
+            ++m_completedCount;
         }
 
         virtual bool onNext( SAA_in const bl::cpp::any& value ) OVERRIDE
         {
+            ++m_nextCount;
+
             if( 0 == ( std::rand() % 2 ) )
             {
                 /*
@@ -3031,6 +3053,10 @@ namespace
 
                 eq -> push_back( task );
 
+                std::size_t countAtDispose = 0U;
+                std::size_t countAfterDispose = 0U;
+                bool secondDisposeThrew = false;
+
                 if( DisconnectObserver == test || DisconnectObservable == test )
                 {
                     /*
@@ -3041,7 +3067,33 @@ namespace
 
                     if( DisconnectObserver == test )
                     {
+                        /*
+                         * dispose() unsubscribes through unsubscribeInternal( id, true ),
+                         * which force flushes the events queue *waiting* and only then
+                         * erases the subscription - so the count sampled right after it
+                         * returns is a stable ceiling, and because the erase happens before
+                         * any completion can be scheduled the observer is never completed
+                         */
+
+                        countAtDispose = observerImpl -> nextCount();
+
                         subscription -> dispose();
+
+                        countAfterDispose = observerImpl -> nextCount();
+
+                        try
+                        {
+                            /*
+                             * ObserverDisposerT::dispose() resets its weak reference to the
+                             * observable, so disposing a second time must be a no-op
+                             */
+
+                            subscription -> dispose();
+                        }
+                        catch( std::exception& )
+                        {
+                            secondDisposeThrew = true;
+                        }
                     }
                     else if( DisconnectObservable == test )
                     {
@@ -3063,7 +3115,17 @@ namespace
                     UTF_REQUIRE( e.code() == asio::error::operation_aborted );
                 }
 
-                if( DisconnectObserver != test )
+                if( DisconnectObserver == test )
+                {
+                    const auto nextCountAfterWait = observerImpl -> nextCount();
+                    const auto completedCountAfterWait = observerImpl -> completedCount();
+
+                    UTF_REQUIRE( countAtDispose > 0U );
+                    UTF_REQUIRE_EQUAL( nextCountAfterWait, countAfterDispose );
+                    UTF_REQUIRE_EQUAL( completedCountAfterWait, 0U );
+                    UTF_REQUIRE( ! secondDisposeThrew );
+                }
+                else
                 {
                     UTF_REQUIRE( observerImpl -> onCompletedCalled() );
                 }
@@ -3775,6 +3837,13 @@ namespace
 
         entries_map_t                                                       m_entries;
 
+        /*
+         * Every delivered entry path, in delivery order - this is what makes 'delivered
+         * exactly once' assertable against an independent walk of the tree
+         */
+
+        std::vector< bl::fs::path >                                         m_paths;
+
         bl::cpp::ScalarTypeIniter< std::size_t >                            m_filesCount;
         bl::cpp::ScalarTypeIniter< std::size_t >                            m_dirsCount;
         bl::cpp::ScalarTypeIniter< std::size_t >                            m_symlinksCount;
@@ -3783,7 +3852,49 @@ namespace
         bl::fs::path                                                        m_root;
         bl::cpp::ScalarTypeIniter< bool >                                   m_isVerbose;
 
+        /*
+         * logResults() is const - it is the shape which selects the bindInputConnector( ... )
+         * overload the processing unit tests bind - so the flag it sets has to be mutable
+         */
+
+        mutable bl::cpp::ScalarTypeIniter< bool >                           m_logResultsCalled;
+
     public:
+
+        const std::vector< bl::fs::path >& paths() const NOEXCEPT
+        {
+            return m_paths;
+        }
+
+        std::size_t entriesCount() const NOEXCEPT
+        {
+            return m_paths.size();
+        }
+
+        std::size_t filesCount() const NOEXCEPT
+        {
+            return m_filesCount;
+        }
+
+        std::size_t dirsCount() const NOEXCEPT
+        {
+            return m_dirsCount;
+        }
+
+        std::size_t symlinksCount() const NOEXCEPT
+        {
+            return m_symlinksCount;
+        }
+
+        std::size_t otherCount() const NOEXCEPT
+        {
+            return m_otherCount;
+        }
+
+        bool logResultsCalled() const NOEXCEPT
+        {
+            return m_logResultsCalled;
+        }
 
         void setOptions( SAA_in const bl::fs::path& root, SAA_in const bool isVerbose = false )
         {
@@ -3805,6 +3916,8 @@ namespace
             for( const auto& entry : scanner -> entries() )
             {
                 const auto status = entry.symlink_status();
+
+                m_paths.push_back( entry.path() );
 
                 if( ! m_root.empty() )
                 {
@@ -3852,6 +3965,8 @@ namespace
 
         void logResults() const
         {
+            m_logResultsCalled = true;
+
             BL_LOG_MULTILINE(
                 bl::Logging::debug(),
                 BL_MSG()
@@ -3939,28 +4054,84 @@ UTF_AUTO_TEST_CASE( Tasks_RecursiveDirectoryScannerTests )
 
     const auto t1 = bl::time::microsec_clock::universal_time();
 
+    std::vector< fs::path > actual;
+    std::vector< fs::path > actualThrottled;
+
+    std::size_t filesCount = 0U;
+    std::size_t dirsCount = 0U;
+    std::size_t symlinksCount = 0U;
+    std::size_t otherCount = 0U;
+    bool logResultsCalled = false;
+
+    const bool selfGeneratedTree = ( nullptr != tmpDir.get() );
+
     scheduleAndExecuteInParallel(
-        [ &root ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+        [
+            &root,
+            &actual,
+            &actualThrottled,
+            &filesCount,
+            &dirsCount,
+            &symlinksCount,
+            &otherCount,
+            &logResultsCalled,
+            &selfGeneratedTree
+        ](
+            SAA_in const om::ObjPtr< ExecutionQueue >& eq
+            ) -> void
         {
-            const auto controlToken =
-                test::UtfArgsParser::isRelaxedScanMode() ?
-                    utest::ScanningControlImpl::createInstance< DirectoryScannerControlToken >() :
-                    nullptr;
+            const auto cbScan = [ &root, &eq ]( SAA_in const std::size_t throttleLimit )
+                -> om::ObjPtr< RecursiveDirectoryScannerObserverImpl >
+            {
+                const auto controlToken =
+                    test::UtfArgsParser::isRelaxedScanMode() ?
+                        utest::ScanningControlImpl::createInstance< DirectoryScannerControlToken >() :
+                        nullptr;
 
-            const auto scanner = RecursiveDirectoryScannerImpl::createInstance(
-                root,
-                controlToken
-                );
+                const auto scanner = RecursiveDirectoryScannerImpl::createInstance(
+                    root,
+                    controlToken
+                    );
 
-            const auto scannerObserver = RecursiveDirectoryScannerObserverImpl::createInstance< reactive::Observer >();
+                if( throttleLimit )
+                {
+                    /*
+                     * A throttle limit of one forces the scanner through the hold-and-retry
+                     * path of flushAllPendingTasks() - it cannot hand over m_current until
+                     * the subscriber's events queue has drained the previous batch
+                     */
 
-            scanner -> subscribe( scannerObserver );
+                    scanner -> setThrottleLimit( throttleLimit );
+                }
 
-            const auto scannerTask = om::qi< Task >( scanner.get() );
-            eq -> push_back( scannerTask );
-            eq -> waitForSuccess( scannerTask );
+                const auto scannerObserver = RecursiveDirectoryScannerObserverImpl::createInstance< reactive::Observer >();
 
-            om::qi< RecursiveDirectoryScannerObserverImpl >( scannerObserver ) -> logResults();
+                scanner -> subscribe( scannerObserver );
+
+                const auto scannerTask = om::qi< Task >( scanner.get() );
+                eq -> push_back( scannerTask );
+                eq -> waitForSuccess( scannerTask );
+
+                auto analyzer = om::qi< RecursiveDirectoryScannerObserverImpl >( scannerObserver );
+
+                analyzer -> logResults();
+
+                return analyzer;
+            };
+
+            const auto analyzer = cbScan( 0U /* throttleLimit */ );
+
+            actual = analyzer -> paths();
+            filesCount = analyzer -> filesCount();
+            dirsCount = analyzer -> dirsCount();
+            symlinksCount = analyzer -> symlinksCount();
+            otherCount = analyzer -> otherCount();
+            logResultsCalled = analyzer -> logResultsCalled();
+
+            if( selfGeneratedTree )
+            {
+                actualThrottled = cbScan( 1U /* throttleLimit */ ) -> paths();
+            }
         });
 
     const auto duration = bl::time::microsec_clock::universal_time() - t1;
@@ -3976,6 +4147,85 @@ UTF_AUTO_TEST_CASE( Tasks_RecursiveDirectoryScannerTests )
             << durationInSeconds
             << " seconds"
         );
+
+    UTF_REQUIRE( ! actual.empty() );
+    UTF_REQUIRE( filesCount > 0U );
+    UTF_REQUIRE( dirsCount > 0U );
+    UTF_REQUIRE( logResultsCalled );
+
+    if( selfGeneratedTree )
+    {
+        /*
+         * The tree was generated by the test itself, so an independent oracle can be built
+         * from Boost's recursive directory iterator, which - exactly like ScanDirectoryTask -
+         * does not descend into linked directories
+         *
+         * Equal sizes prove that nothing was delivered twice and equal content proves that
+         * nothing was dropped; the throttled scan has to deliver exactly the same set
+         */
+
+        std::vector< fs::path > expected;
+
+        for( fs::recursive_directory_iterator it( root ), end; it != end; ++it )
+        {
+            expected.push_back( it -> path() );
+        }
+
+        std::sort( actual.begin(), actual.end() );
+        std::sort( actualThrottled.begin(), actualThrottled.end() );
+        std::sort( expected.begin(), expected.end() );
+
+        UTF_REQUIRE_EQUAL( actual.size(), expected.size() );
+        UTF_CHECK_EQUAL_COLLECTIONS( actual.begin(), actual.end(), expected.begin(), expected.end() );
+
+        UTF_REQUIRE_EQUAL( actualThrottled.size(), expected.size() );
+        UTF_CHECK_EQUAL_COLLECTIONS(
+            actualThrottled.begin(),
+            actualThrottled.end(),
+            expected.begin(),
+            expected.end()
+            );
+
+        if( os::onUNIX() )
+        {
+            /*
+             * TestFsUtils only creates the symlinks on UNIX; foo/linkToBar points at foo/bar,
+             * so the scanner must report the link itself exactly once and must never descend
+             * through it
+             */
+
+            const auto linkToBar = fs::path( root ) / "foo" / "linkToBar";
+            const auto linkToBarPrefix = linkToBar.string() + "/";
+
+            std::size_t linkToBarCount = 0U;
+            std::size_t underLinkToBarCount = 0U;
+
+            for( const auto& path : actual )
+            {
+                const auto pathString = path.string();
+
+                if( path == linkToBar )
+                {
+                    ++linkToBarCount;
+                }
+                else if( 0 == pathString.compare( 0U, linkToBarPrefix.size(), linkToBarPrefix ) )
+                {
+                    ++underLinkToBarCount;
+                }
+            }
+
+            UTF_REQUIRE_EQUAL( linkToBarCount, 1U );
+            UTF_REQUIRE_EQUAL( underLinkToBarCount, 0U );
+            UTF_REQUIRE( symlinksCount > 0U );
+        }
+
+        /*
+         * The generated tree only contains files, directories and symlinks
+         */
+
+        UTF_REQUIRE_EQUAL( otherCount, 0U );
+        UTF_REQUIRE_EQUAL( filesCount + dirsCount + symlinksCount, actual.size() );
+    }
 }
 
 /************************************************************************
@@ -4015,10 +4265,25 @@ namespace
 
         BL_LOG_MULTILINE( Logging::debug(), BL_MSG() << "*** Processing units directory scanner observable tests\n" );
 
+        std::size_t expectedEntriesCount = 0U;
+
+        if( tmpDir )
+        {
+            /*
+             * The exact count assertion is only meaningful for the tree the test generated
+             * itself - a user supplied --path root can change under the scan
+             */
+
+            for( fs::recursive_directory_iterator it( root ), end; it != end; ++it )
+            {
+                ++expectedEntriesCount;
+            }
+        }
+
         const auto t1 = bl::time::microsec_clock::universal_time();
 
         scheduleAndExecuteInParallel(
-            [ &root ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+            [ &root, &expectedEntriesCount ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
             {
                 const auto controlToken =
                     test::UtfArgsParser::isRelaxedScanMode() ?
@@ -4030,17 +4295,26 @@ namespace
                     controlToken
                     );
 
+                typedef om::ObjectImpl< ProcessingUnit< BASE, II > > unit_t;
+
+                /*
+                 * The unit is held past the subscription scope so its counters can be read
+                 * after the scan; the counted reference which bindInputConnectorImpl( ... )
+                 * takes is what would otherwise keep it alive
+                 */
+
+                const auto unit = unit_t::template createInstance< unit_t >();
+
                 {
-                    typedef om::ObjectImpl< ProcessingUnit< BASE, II > > unit_t;
-
-                    const auto unit = unit_t::template createInstance< unit_t >();
-
                     const auto isVerbose = test::UtfArgsParser::isVerboseMode();
 
-                    if( isVerbose )
-                    {
-                        unit -> setOptions( root, test::UtfArgsParser::isVerboseMode() );
-                    }
+                    /*
+                     * setOptions( ... ) is called unconditionally now - it is what populates
+                     * m_entries, whose per entry duplicate path BL_ASSERT is a debug only
+                     * check that no batch is ever delivered twice
+                     */
+
+                    unit -> setOptions( root, isVerbose );
 
                     scanner -> subscribe( unit -> bindInputConnector( &unit_t::onDataArrived, &unit_t::logResults ) );
                     scanner -> subscribe( unit -> bindInputConnector( &unit_t::onDummyDataArrivedConst ) );
@@ -4050,6 +4324,27 @@ namespace
                 const auto scannerTask = om::qi< Task >( scanner.get() );
                 eq -> push_back( scannerTask );
                 eq -> waitForSuccess( scannerTask );
+
+                const auto unitFilesCount = unit -> filesCount();
+                const auto unitDirsCount = unit -> dirsCount();
+                const auto unitEntriesCount = unit -> entriesCount();
+                const auto unitLogResultsCalled = unit -> logResultsCalled();
+
+                UTF_REQUIRE( unitFilesCount > 0U );
+                UTF_REQUIRE( unitDirsCount > 0U );
+
+                /*
+                 * logResults() is the completed callback bound through the
+                 * bindInputConnector( inputCB, completedCB ) overload - if it never ran the
+                 * unit was never told the input had completed
+                 */
+
+                UTF_REQUIRE( unitLogResultsCalled );
+
+                if( expectedEntriesCount )
+                {
+                    UTF_REQUIRE_EQUAL( unitEntriesCount, expectedEntriesCount );
+                }
             });
 
         const auto duration = bl::time::microsec_clock::universal_time() - t1;
@@ -4104,6 +4399,14 @@ namespace
         using namespace utest;
         using namespace fs;
 
+        /*
+         * The relative path of the file whose executable bit is set below - the fixed tree
+         * TestFsUtils builds has no executable file, and that header is a shared Stage 1
+         * fixture which must not be changed from here, so the bit is set locally
+         */
+
+        const fs::path executableFileRelPath = fs::path( "foo" ) / "bar" / "oneChunkFile.bin";
+
         cpp::SafeUniquePtr< TmpDir > tmpDir;
         fs::path root = test::UtfArgsParser::path();
 
@@ -4116,14 +4419,29 @@ namespace
             root = tmpDir -> path();
             TestFsUtils dummyCreator;
             dummyCreator.createDummyTestDir( root );
+
+            if( os::onUNIX() )
+            {
+                fs::permissions(
+                    root / executableFileRelPath,
+                    fs::perms::add_perms | fs::ExecutableFileMask
+                    );
+            }
         }
 
         BL_LOG_MULTILINE( Logging::debug(), BL_MSG() << "*** Files packager processing unit's observable tests\n" );
 
         const auto t1 = bl::time::microsec_clock::universal_time();
 
+        /*
+         * The metadata store is created here rather than inside the pipeline, so it can be
+         * read back and verified once the pipeline has drained and finalized it
+         */
+
+        const auto fsmd = createFSMD();
+
         scheduleAndExecuteInParallel(
-            [ &root, &contextIn, &host, &port ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+            [ &root, &contextIn, &host, &port, &fsmd ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
             {
                 const auto context = om::copy( contextIn.get() );
 
@@ -4140,8 +4458,6 @@ namespace
                     root,
                     controlToken
                     );
-
-                const auto fsmd = createFSMD();
 
                 /*
                  * Create the file packager unit
@@ -4223,6 +4539,264 @@ namespace
                 << durationInSeconds
                 << " seconds"
             );
+
+        if( ! tmpDir )
+        {
+            /*
+             * An externally supplied tree keeps the historical smoke test behaviour
+             */
+
+            return;
+        }
+
+        /*
+         * The packager is the sole author of the metadata which is persisted and shipped to
+         * other systems - the entry type, the Executable flag, sizes and timestamps, the
+         * relative path, the chunk tiling, the file level CRC-32 folded over the per chunk
+         * checksums and the file level digest folded over the per chunk digest strings
+         *
+         * None of that is verifiable through the transfer round trip, because the unpackager
+         * recomputes it exactly the same way, so it is verified here against an oracle which
+         * is computed independently from the bytes of the tree which was packaged
+         */
+
+        const auto fsmdRO = om::qi< FilesystemMetadataRO >( fsmd );
+
+        std::unordered_map< fs::path, uuid_t > entryIds;
+
+        {
+            const auto allEntries = fsmdRO -> queryAllEntries();
+
+            for( ; allEntries -> hasCurrent(); allEntries -> loadNext() )
+            {
+                const auto entryId = allEntries -> current();
+                const auto info = fsmdRO -> loadEntryInfo( entryId );
+
+                UTF_REQUIRE( info.relPath );
+
+                const auto& entryRelPath = info.relPath -> value();
+
+                UTF_REQUIRE( ! entryRelPath.empty() );
+                UTF_REQUIRE( entryRelPath.is_relative() );
+                UTF_REQUIRE( entryIds.find( entryRelPath ) == entryIds.end() );
+
+                entryIds[ entryRelPath ] = entryId;
+            }
+        }
+
+        std::size_t expectedCount = 0U;
+
+        for( fs::recursive_directory_iterator it( root ), end; it != end; ++it )
+        {
+            ++expectedCount;
+        }
+
+        UTF_REQUIRE_EQUAL( entryIds.size(), expectedCount );
+        UTF_REQUIRE_EQUAL( fsmdRO -> queryEntriesCount(), expectedCount );
+
+        const auto cbEntryId = [ &entryIds ]( SAA_in const fs::path& relPath ) -> uuid_t
+        {
+            const auto pos = entryIds.find( relPath );
+
+            UTF_REQUIRE( pos != entryIds.end() );
+
+            return pos -> second;
+        };
+
+        /*
+         * Recomputes the per chunk checksum and digest of a regular file from its bytes and
+         * verifies the chunk tiling, the entry level checksum and the entry level hash
+         */
+
+        const auto cbVerifyRegularFile = [ &fsmdRO, &root, &cbEntryId ](
+            SAA_in              const fs::path&                                     relPath,
+            SAA_in              const std::vector< std::uint32_t >&                 expectedChunkSizes
+            ) -> void
+        {
+            const auto entryId = cbEntryId( relPath );
+            const auto info = fsmdRO -> loadEntryInfo( entryId );
+
+            UTF_REQUIRE( FilesystemMetadata::File == info.type );
+            UTF_REQUIRE_EQUAL( fsmdRO -> queryChunksCount( entryId ), expectedChunkSizes.size() );
+
+            std::vector< FilesystemMetadata::ChunkInfo > chunkInfos;
+
+            {
+                const auto chunks = fsmdRO -> queryChunks( entryId );
+
+                for( ; chunks -> hasCurrent(); chunks -> loadNext() )
+                {
+                    chunkInfos.push_back( fsmdRO -> loadChunkInfo( chunks -> current() ) );
+                }
+            }
+
+            UTF_REQUIRE_EQUAL( chunkInfos.size(), expectedChunkSizes.size() );
+
+            const auto filePtr = os::fopen( root / relPath, "rb" );
+
+            cs::crc_32_type entryCrc;
+            hash::HashCalculatorDefault entryHash;
+
+            std::uint64_t pos = 0U;
+
+            for( std::size_t i = 0U; i < chunkInfos.size(); ++i )
+            {
+                const std::uint64_t chunkPos = chunkInfos[ i ].pos;
+                const std::uint32_t chunkSize = chunkInfos[ i ].size;
+                const std::uint32_t chunkChecksum = chunkInfos[ i ].checksum;
+
+                UTF_REQUIRE_EQUAL( chunkPos, pos );
+                UTF_REQUIRE_EQUAL( chunkSize, expectedChunkSizes[ i ] );
+                UTF_REQUIRE( chunkSize > 0U );
+
+                std::vector< char > buffer( chunkSize );
+
+                os::fread( filePtr, &buffer[ 0 ], buffer.size() );
+
+                cs::crc_32_type chunkCrc;
+                chunkCrc.process_bytes( &buffer[ 0 ], buffer.size() );
+
+                UTF_REQUIRE_EQUAL( chunkChecksum, chunkCrc.checksum() );
+
+                entryCrc.process_bytes( &chunkChecksum, sizeof( chunkChecksum ) );
+
+                hash::HashCalculatorDefault chunkHash;
+                chunkHash.update( &buffer[ 0 ], buffer.size() );
+                chunkHash.finalize();
+
+                const auto chunkDigest = chunkHash.digestStr();
+
+                entryHash.update( chunkDigest.c_str(), chunkDigest.size() );
+
+                pos += chunkSize;
+            }
+
+            const std::uint64_t entrySize = info.size;
+
+            UTF_REQUIRE_EQUAL( entrySize, pos );
+
+            entryHash.finalize();
+
+            const std::uint32_t entryChecksum = info.checksum;
+
+            UTF_REQUIRE( info.isChecksumSet );
+            UTF_REQUIRE_EQUAL( entryChecksum, entryCrc.checksum() );
+
+            UTF_REQUIRE( info.hash );
+            UTF_REQUIRE_EQUAL( info.hash -> value(), entryHash.digestStr() );
+        };
+
+        {
+            /*
+             * A directory has no chunks and no checksum
+             */
+
+            const auto entryId = cbEntryId( fs::path( "foo" ) / "emptyDirectory" );
+            const auto info = fsmdRO -> loadEntryInfo( entryId );
+
+            UTF_REQUIRE( FilesystemMetadata::Directory == info.type );
+            UTF_REQUIRE_EQUAL( fsmdRO -> queryChunksCount( entryId ), 0U );
+        }
+
+        {
+            /*
+             * FilesPackagerUnit::pushReadyTask returns before any chunk or checksum is
+             * created for a zero length file
+             */
+
+            const auto entryId = cbEntryId( fs::path( "foo" ) / "zeroSizeFile.bin" );
+            const auto info = fsmdRO -> loadEntryInfo( entryId );
+
+            const std::uint64_t entrySize = info.size;
+
+            UTF_REQUIRE( FilesystemMetadata::File == info.type );
+            UTF_REQUIRE_EQUAL( entrySize, 0U );
+            UTF_REQUIRE_EQUAL( fsmdRO -> queryChunksCount( entryId ), 0U );
+            UTF_REQUIRE( ! info.isChecksumSet );
+        }
+
+        {
+            /*
+             * A file which fits in a single data block
+             */
+
+            std::vector< std::uint32_t > expectedChunkSizes;
+
+            expectedChunkSizes.push_back( 20U * 1024U );
+
+            cbVerifyRegularFile( fs::path( "foo" ) / "bar" / "normalFile.bin", expectedChunkSizes );
+        }
+
+        {
+            /*
+             * The multi chunk file - its chunks must tile it exactly, two full data blocks
+             * and a partial one, and the entry level checksum and hash must be the fold of
+             * the per chunk ones in ascending file position order
+             */
+
+            const std::uint64_t blockCapacity = data::DataBlock::defaultCapacity();
+            const std::uint64_t fileSize = 2U * 1024U * 1024U + 12345U;
+
+            std::vector< std::uint32_t > expectedChunkSizes;
+
+            std::uint64_t bytesLeft = fileSize;
+
+            while( bytesLeft )
+            {
+                const std::uint64_t bytesToRead = ( bytesLeft <= blockCapacity ) ? bytesLeft : blockCapacity;
+
+                expectedChunkSizes.push_back( ( std::uint32_t ) bytesToRead );
+
+                bytesLeft -= bytesToRead;
+            }
+
+            UTF_REQUIRE_EQUAL( expectedChunkSizes.size(), 3U );
+
+            cbVerifyRegularFile( fs::path( "foo" ) / "bar" / "multiChunkFile.bin", expectedChunkSizes );
+        }
+
+        if( os::onUNIX() )
+        {
+            {
+                /*
+                 * The Executable flag comes from status.permissions() & fs::ExecutableFileMask
+                 */
+
+                const auto info = fsmdRO -> loadEntryInfo( cbEntryId( executableFileRelPath ) );
+
+                const std::uint32_t entryFlags = info.flags;
+
+                UTF_REQUIRE( FilesystemMetadata::File == info.type );
+                UTF_REQUIRE( 0U != ( entryFlags & ( std::uint32_t ) FilesystemMetadata::Executable ) );
+            }
+
+            {
+                /*
+                 * The timestamps of a symlink are deliberately not read - those calls follow
+                 * the link, so a dangling one would fail the whole packaging run
+                 */
+
+                const auto info = fsmdRO -> loadEntryInfo( cbEntryId( fs::path( "foo" ) / "linkToBar" ) );
+
+                const std::time_t lastModified = info.lastModified;
+
+                UTF_REQUIRE( FilesystemMetadata::Symlink == info.type );
+                UTF_REQUIRE( info.targetPath );
+                UTF_REQUIRE( ! info.targetPath -> value().empty() );
+                UTF_REQUIRE_EQUAL( lastModified, 0 );
+            }
+
+            {
+                const auto info = fsmdRO -> loadEntryInfo( cbEntryId( fs::path( "foo" ) / "danglingLink.bin" ) );
+
+                const std::time_t lastModified = info.lastModified;
+
+                UTF_REQUIRE( FilesystemMetadata::Symlink == info.type );
+                UTF_REQUIRE( info.targetPath );
+                UTF_REQUIRE_EQUAL( info.targetPath -> value().filename(), fs::path( "noSuchTarget.bin" ) );
+                UTF_REQUIRE_EQUAL( lastModified, 0 );
+            }
+        }
     }
 
 } // __unnamed
