@@ -132,7 +132,7 @@ namespace bl
             {
                 if( ! m_notifyCB )
                 {
-                    BL_ASSERT( m_eqChildTasks -> isEmpty() );
+                    BL_ASSERT( ! m_eqChildTasks || m_eqChildTasks -> isEmpty() );
 
                     return time::neg_infin;
                 }

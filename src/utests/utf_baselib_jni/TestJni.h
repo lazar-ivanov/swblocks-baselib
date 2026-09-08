@@ -596,6 +596,233 @@ UTF_AUTO_TEST_CASE( Jni_JavaBridgeCallback )
     }
 }
 
+UTF_AUTO_TEST_CASE( Jni_JavaBridgeIndirectByteBufferArrayOffset )
+{
+    using namespace bl;
+    using namespace bl::jni;
+
+    const auto& environment = JniEnvironment::instance();
+
+    JNIEnv* jniEnv = environment.getRawPtr();
+
+    const std::size_t arraySize = 256U;
+    const jint sliceOffset = 64;
+    const jint sliceCapacity = 192;
+
+    const auto byteBufferClass = environment.findJavaClass( "java/nio/ByteBuffer" );
+
+    const auto wrapMethod = environment.getStaticMethodID(
+        byteBufferClass.get(),
+        "wrap",
+        "([B)Ljava/nio/ByteBuffer;"
+        );
+
+    const auto sliceMethod = environment.getMethodID(
+        byteBufferClass.get(),
+        "slice",
+        "()Ljava/nio/ByteBuffer;"
+        );
+
+    /*
+     * ByteBuffer.wrap( ... ) always reports arrayOffset() == 0, so the only way to exercise the
+     * sliced buffer arithmetic in JavaBridgeT::javaCallback() with a non-neutral offset is a
+     * buffer obtained from slice( ... ) taken at a non-zero position
+     */
+
+    const auto createSlicedBuffer = [ & ](
+        SAA_out     LocalReference< jbyteArray >&           array,
+        SAA_out     LocalReference< jobject >&              slice
+        ) -> void
+    {
+        array = LocalReference< jbyteArray >::attach(
+            jniEnv -> NewByteArray( numbers::safeCoerceTo< jsize >( arraySize ) )
+            );
+
+        UTF_REQUIRE( array.get() != nullptr );
+
+        const auto wrapped = environment.callStaticObjectMethod< jobject >(
+            byteBufferClass.get(),
+            wrapMethod,
+            array.get()
+            );
+
+        environment.setByteBufferPosition( wrapped.get(), sliceOffset );
+
+        slice = environment.callObjectMethod< jobject >( wrapped.get(), sliceMethod );
+
+        UTF_REQUIRE( slice.get() != nullptr );
+    };
+
+    LocalReference< jbyteArray > inArray;
+    LocalReference< jobject > inSlice;
+
+    createSlicedBuffer( inArray, inSlice );
+
+    LocalReference< jbyteArray > outArray;
+    LocalReference< jobject > outSlice;
+
+    createSlicedBuffer( outArray, outSlice );
+
+    /*
+     * Fixture sanity - both slices are heap backed, start 64 bytes into their backing arrays,
+     * span the remaining 192 bytes and are writable
+     */
+
+    UTF_REQUIRE( ! environment.isDirectByteBuffer( inSlice.get() ) );
+    UTF_REQUIRE_EQUAL( environment.getByteBufferArrayOffset( inSlice.get() ), sliceOffset );
+    UTF_REQUIRE_EQUAL( environment.getByteBufferCapacity( inSlice.get() ), sliceCapacity );
+    UTF_REQUIRE( ! environment.isReadOnlyByteBuffer( inSlice.get() ) );
+
+    UTF_REQUIRE( ! environment.isDirectByteBuffer( outSlice.get() ) );
+    UTF_REQUIRE_EQUAL( environment.getByteBufferArrayOffset( outSlice.get() ), sliceOffset );
+    UTF_REQUIRE_EQUAL( environment.getByteBufferCapacity( outSlice.get() ), sliceCapacity );
+    UTF_REQUIRE( ! environment.isReadOnlyByteBuffer( outSlice.get() ) );
+
+    {
+        /*
+         * isReadOnlyByteBuffer() is the guard which rejects a buffer whose array() would throw
+         * ReadOnlyBufferException, so it must not be a stuck false or a synonym for isDirect()
+         */
+
+        const auto asReadOnlyMethod = environment.getMethodID(
+            byteBufferClass.get(),
+            "asReadOnlyBuffer",
+            "()Ljava/nio/ByteBuffer;"
+            );
+
+        const auto readOnly = environment.callObjectMethod< jobject >( inSlice.get(), asReadOnlyMethod );
+
+        UTF_REQUIRE( environment.isReadOnlyByteBuffer( readOnly.get() ) );
+    }
+
+    /*
+     * Seed the input through the same serializer the callback will read it with and leave the
+     * Java position at the end of the payload, so the flip( ... ) in prepareForRead() yields
+     * limit == size
+     */
+
+    const auto payload = data::DataBlock::createInstance( 64U );
+
+    payload -> setOffset1( 0U );
+    payload -> setSize( 0U );
+    payload -> write( std::string( "sliced" ) );
+
+    const auto payloadSize = payload -> size();
+
+    jniEnv -> SetByteArrayRegion(
+        inArray.get(),
+        sliceOffset,
+        numbers::safeCoerceTo< jsize >( payloadSize ),
+        reinterpret_cast< const jbyte* >( payload -> begin() )
+        );
+
+    environment.setByteBufferPosition( inSlice.get(), numbers::safeCoerceTo< jint >( payloadSize ) );
+
+    std::string seen;
+
+    /*
+     * Note: the callback must neither throw nor use UTF_REQUIRE_* - javaCallback() maps a failed
+     * callback onto a Java exception of type <buffer class>$JniException, and the class
+     * java.nio.HeapByteBuffer$JniException does not exist, so the JavaException raised by the
+     * lookup would escape BL_NOEXCEPT_END() and abort the process
+     */
+
+    JavaBridge::callback_t callback = [ &seen ](
+        SAA_in      const DirectByteBuffer&                 in,
+        SAA_out     DirectByteBuffer&                       out
+        ) -> void
+    {
+        in.getBuffer() -> read( &seen );
+
+        /*
+         * The input array is released with JNI_ABORT, so this write must never reach the
+         * Java heap
+         */
+
+        in.getBuffer() -> write( std::string( "discarded" ) );
+
+        out.getBuffer() -> write( std::string( "reply" ) );
+    };
+
+    JavaBridge::javaCallback(
+        jniEnv,
+        inSlice.get()                                       /* javaObject */,
+        inSlice.get()                                       /* inJavaBuffer */,
+        outSlice.get()                                      /* outJavaBuffer */,
+        reinterpret_cast< jlong >( &callback )
+        );
+
+    /*
+     * The input was read from elems + 64 and not from the beginning of the backing array
+     */
+
+    UTF_REQUIRE_EQUAL( seen, std::string( "sliced" ) );
+
+    const auto reply = data::DataBlock::createInstance( 64U );
+
+    reply -> setOffset1( 0U );
+    reply -> setSize( 0U );
+    reply -> write( std::string( "reply" ) );
+
+    const auto replySize = reply -> size();
+
+    UTF_REQUIRE_EQUAL( replySize, 9U );
+
+    std::vector< char > outRaw( arraySize );
+
+    jniEnv -> GetByteArrayRegion(
+        outArray.get(),
+        0                                                   /* start */,
+        numbers::safeCoerceTo< jsize >( arraySize ),
+        reinterpret_cast< jbyte* >( outRaw.data() )
+        );
+
+    /*
+     * The reply - an int32 length of 5 followed by "reply" - must sit at the beginning of the
+     * slice, i.e. at offset 64 of the backing array, and the 64 bytes in front of it must still
+     * be the zeros NewByteArray left there; that is the '+ outArrayOffset' arithmetic plus the
+     * mode 0 release which copies the reply back onto the Java heap
+     */
+
+    UTF_REQUIRE( std::equal( reply -> begin(), reply -> end(), outRaw.begin() + sliceOffset ) );
+
+    UTF_REQUIRE_EQUAL(
+        std::count( outRaw.begin(), outRaw.begin() + sliceOffset, '\0' ),
+        static_cast< std::ptrdiff_t >( sliceOffset )
+        );
+
+    /*
+     * prepareForJavaRead() must have left the Java view over exactly the reply
+     */
+
+    UTF_REQUIRE_EQUAL( environment.getByteBufferPosition( outSlice.get() ), 0 );
+
+    UTF_REQUIRE_EQUAL(
+        environment.getByteBufferLimit( outSlice.get() ),
+        numbers::safeCoerceTo< jint >( replySize )
+        );
+
+    /*
+     * The input array was released with JNI_ABORT, so it must still hold exactly what was seeded
+     * into it and nothing of what the callback wrote into the input buffer
+     */
+
+    std::vector< char > inRaw( arraySize );
+
+    jniEnv -> GetByteArrayRegion(
+        inArray.get(),
+        0                                                   /* start */,
+        numbers::safeCoerceTo< jsize >( arraySize ),
+        reinterpret_cast< jbyte* >( inRaw.data() )
+        );
+
+    std::vector< char > inExpected( arraySize, '\0' );
+
+    std::copy( payload -> begin(), payload -> end(), inExpected.begin() + sliceOffset );
+
+    UTF_REQUIRE( inRaw == inExpected );
+}
+
 UTF_AUTO_TEST_CASE( Jni_JavaBridgeRestHelper )
 {
     using namespace bl;
