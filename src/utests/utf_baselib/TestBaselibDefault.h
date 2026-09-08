@@ -847,6 +847,98 @@ UTF_AUTO_TEST_CASE( BaseLib_EhExceptionHooksTests )
         UTF_REQUIRE_EQUAL( throwHookInvoked2, false );
         #endif // BL_ENABLE_EXCEPTION_HOOKS
     }
+
+    /*
+     * A hook which itself constructs an exception must not deadlock - every BL_EXCEPTION
+     * goes through enableThrowHook, so a hook body which throws re-enters it on the same
+     * thread; the hook is copied out under g_lock and invoked outside of it precisely so
+     * that this can work
+     *
+     * Note the failure mode of a regression here is a HANG and not a failed assertion:
+     * os::mutex is a non-recursive std::mutex, so re-entering it on the same thread
+     * self-deadlocks rather than reporting an error - a CI timeout, not flakiness
+     *
+     * The hook only records what it sees - it is NOEXCEPT, so it must not assert
+     */
+
+    {
+        bool inHook = false;
+
+        std::atomic< int > outerInvocations( 0 );
+        std::atomic< int > nestedInvocations( 0 );
+
+        std::atomic< bool > sawMessage( false );
+        std::atomic< bool > sawTimeThrown( false );
+        std::atomic< bool > sawThrowFile( false );
+
+        const auto reentrantHook = [ & ](
+            SAA_in                  const BaseException&            exception
+            ) NOEXCEPT -> void
+        {
+            if( inHook )
+            {
+                ++nestedInvocations;
+
+                return;
+            }
+
+            inHook = true;
+
+            BL_SCOPE_EXIT( { inHook = false; } );
+
+            try
+            {
+                BL_THROW( UnexpectedException(), "hook-internal" );
+            }
+            catch( UnexpectedException& )
+            {
+            }
+
+            /*
+             * The hook must see the exception already decorated by BL_EXCEPTION_IMPL
+             */
+
+            sawMessage = ( nullptr != exception.message() );
+            sawTimeThrown = ( nullptr != exception.timeThrown() );
+            sawThrowFile = ( nullptr != eh::get_error_info< eh::throw_file >( exception ) );
+
+            ++outerInvocations;
+        };
+
+        {
+            BL_EXCEPTION_HOOKS_THROW_GUARD( cpp::bind< void >( reentrantHook, _1 ) );
+
+            throwAndCatchException();
+        }
+
+        #ifdef BL_ENABLE_EXCEPTION_HOOKS
+        UTF_REQUIRE_EQUAL( 1, outerInvocations.load() );
+        UTF_REQUIRE_EQUAL( 1, nestedInvocations.load() );
+
+        UTF_REQUIRE( sawMessage.load() );
+        UTF_REQUIRE( sawTimeThrown.load() );
+        UTF_REQUIRE( sawThrowFile.load() );
+        #else // BL_ENABLE_EXCEPTION_HOOKS
+        UTF_REQUIRE_EQUAL( 0, outerInvocations.load() );
+        UTF_REQUIRE_EQUAL( 0, nestedInvocations.load() );
+
+        UTF_REQUIRE( ! sawMessage.load() );
+        UTF_REQUIRE( ! sawTimeThrown.load() );
+        UTF_REQUIRE( ! sawThrowFile.load() );
+        #endif // BL_ENABLE_EXCEPTION_HOOKS
+
+        /*
+         * The guard restored the previous (empty) hook, so this must not invoke it again
+         */
+
+        throwAndCatchException();
+
+        #ifdef BL_ENABLE_EXCEPTION_HOOKS
+        UTF_REQUIRE_EQUAL( 1, outerInvocations.load() );
+        #else // BL_ENABLE_EXCEPTION_HOOKS
+        UTF_REQUIRE_EQUAL( 0, outerInvocations.load() );
+        #endif // BL_ENABLE_EXCEPTION_HOOKS
+    }
 }
 
 /************************************************************************
@@ -4710,6 +4802,76 @@ UTF_AUTO_TEST_CASE( BaseLib_TestScopeGuard )
         UTF_REQUIRE( called1 );
         UTF_REQUIRE( called2 );
     }
+
+    /*
+     * runNow() disables the guard before it invokes the callback, so the destructor
+     * which follows cannot run the callback a second time
+     */
+
+    {
+        int count = 0;
+
+        {
+            auto g = BL_SCOPE_GUARD( { ++count; } );
+
+            g.runNow();
+
+            UTF_REQUIRE_EQUAL( 1, count );
+        }
+
+        UTF_REQUIRE_EQUAL( 1, count );
+    }
+
+    /*
+     * The move constructor dismisses the source, so responsibility for the callback
+     * transfers exactly once - ScopeGuard::create returns by value, so every
+     * BL_SCOPE_GUARD goes through this path
+     */
+
+    {
+        int count = 0;
+
+        {
+            auto g1 = BL_SCOPE_GUARD( { ++count; } );
+
+            {
+                auto g2( std::move( g1 ) );
+
+                UTF_REQUIRE_EQUAL( 0, count );
+            }
+
+            UTF_REQUIRE_EQUAL( 1, count );
+        }
+
+        UTF_REQUIRE_EQUAL( 1, count );
+    }
+
+    /*
+     * Move assignment overwrites the target's callback without running it, so a cleanup
+     * the target was still holding is INTENTIONALLY dropped - the 'a' callback below
+     * never runs
+     *
+     * This is pinned here so that 'fixing' it cannot silently change the semantics at
+     * every call site
+     */
+
+    {
+        int a = 0;
+        int b = 0;
+
+        {
+            auto g1 = BL_SCOPE_GUARD( { ++a; } );
+            auto g2 = BL_SCOPE_GUARD( { ++b; } );
+
+            g1 = std::move( g2 );
+
+            UTF_REQUIRE_EQUAL( 0, a );
+            UTF_REQUIRE_EQUAL( 0, b );
+        }
+
+        UTF_REQUIRE_EQUAL( 0, a );
+        UTF_REQUIRE_EQUAL( 1, b );
+    }
 }
 
 /************************************************************************
@@ -5567,6 +5729,94 @@ UTF_AUTO_TEST_CASE( BaseLib_StringUtilsSplitTests )
         {
             const auto result = bl::str::splitString( str6, sep, 0U, str6.length() );
             UTF_REQUIRE_EQUAL( result.size(), 3U );
+        }
+
+        /*
+         * The cases below pin the RANGE handling of splitString - every assertion above
+         * checks element counts only, and neither of the two range fixes changes any of
+         * those counts
+         *
+         * httpserver/Parser.h splits an untrusted network buffer with an explicit
+         * endPos, so a token which is allowed to extend past it reads into the body of
+         * the request
+         *
+         * These inputs need their own literals - none of the strings above has a
+         * separator which crosses a useful endPos
+         */
+
+        {
+            /*
+             * The separator cannot fit in the requested window - the window itself is
+             * the only element, and not the whole text
+             */
+
+            const auto result =
+                bl::str::splitString( std::string( "left_abcd_right" ), std::string( "abcdef" ), 5U, 9U );
+
+            UTF_REQUIRE_EQUAL( result.size(), 1U );
+            UTF_CHECK_EQUAL( "abcd", result[ 0 ] );
+        }
+
+        {
+            /*
+             * The separator straddles endPos - it must not match, so the window is
+             * returned whole rather than split around a token which lies outside it
+             */
+
+            const auto result =
+                bl::str::splitString( std::string( "ab--cd" ), std::string( "--" ), 0U, 3U );
+
+            UTF_REQUIRE_EQUAL( result.size(), 1U );
+            UTF_CHECK_EQUAL( "ab-", result[ 0 ] );
+        }
+
+        {
+            /*
+             * The separator ends exactly at endPos - it must match and leave an empty
+             * trailing element
+             */
+
+            const auto result =
+                bl::str::splitString( std::string( "ab--cd" ), std::string( "--" ), 0U, 4U );
+
+            UTF_REQUIRE_EQUAL( result.size(), 2U );
+            UTF_CHECK_EQUAL( "ab", result[ 0 ] );
+            UTF_CHECK_EQUAL( "", result[ 1 ] );
+        }
+
+        {
+            /*
+             * Empty leading and trailing elements inside a window
+             */
+
+            const auto result =
+                bl::str::splitString( std::string( "xx--yy--zz" ), std::string( "--" ), 2U, 8U );
+
+            UTF_REQUIRE_EQUAL( result.size(), 3U );
+            UTF_CHECK_EQUAL( "", result[ 0 ] );
+            UTF_CHECK_EQUAL( "yy", result[ 1 ] );
+            UTF_CHECK_EQUAL( "", result[ 2 ] );
+        }
+
+        {
+            /*
+             * Content assertions for two of the size-only inputs above
+             */
+
+            const auto result = bl::str::splitString( str6, sep, 0U, str6.length() );
+
+            UTF_REQUIRE_EQUAL( result.size(), 3U );
+            UTF_CHECK_EQUAL( "left_", result[ 0 ] );
+            UTF_CHECK_EQUAL( "_middle_", result[ 1 ] );
+            UTF_CHECK_EQUAL( "_right", result[ 2 ] );
+        }
+
+        {
+            const auto result = bl::str::splitString( str3, sep, 4U, str3.length() );
+
+            UTF_REQUIRE_EQUAL( result.size(), 2U );
+            UTF_CHECK_EQUAL( "", result[ 0 ] );
+            UTF_CHECK_EQUAL( "", result[ 1 ] );
         }
     }
 }
@@ -6887,6 +7137,74 @@ UTF_AUTO_TEST_CASE( BaseLib_Base64UrlTests )
             const auto encoded = bl::SerializationUtils::base64UrlEncodeString( text );
             cbVerifyEncoded( encoded );
         }
+    }
+
+    /*
+     * The assertions below are deliberately outside the random buffer loop, so a failure
+     * names the offending input
+     *
+     * The loop above only ever feeds the output of base64UrlEncode, whose length is
+     * never 1 mod 4, so the rejection branch and the difference between the padding arms
+     * are never reached by it
+     */
+
+    {
+        /*
+         * A length of 1 mod 4 cannot be padded into valid base64 and must be rejected
+         */
+
+        const std::string bad( "TG9yZ" );
+        const std::string badLonger( "TG9yZW1wc" );
+
+        UTF_REQUIRE_EQUAL( 1U, bad.size() % 4U );
+        UTF_REQUIRE_EQUAL( 1U, badLonger.size() % 4U );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            bl::SerializationUtils::base64UrlDecodeString( bad ),
+            bl::ArgumentException,
+            "Invalid base64url encoded string"
+            );
+
+        UTF_REQUIRE_THROW( bl::SerializationUtils::base64UrlDecodeVector( bad ), bl::ArgumentException );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            bl::SerializationUtils::base64UrlDecodeString( badLonger ),
+            bl::ArgumentException,
+            "Invalid base64url encoded string"
+            );
+
+        UTF_REQUIRE_THROW( bl::SerializationUtils::base64UrlDecodeVector( badLonger ), bl::ArgumentException );
+
+        /*
+         * The input is attacker supplied and it travels back to the client through
+         * ExceptionProperties::stringValue, so it must not be attached to the exception
+         * and it must not appear in the message either
+         */
+
+        bool caught = false;
+
+        try
+        {
+            ( void ) bl::SerializationUtils::base64UrlDecodeString( bad );
+        }
+        catch( bl::ArgumentException& e )
+        {
+            caught = true;
+
+            UTF_REQUIRE( ! bl::eh::get_error_info< bl::eh::errinfo_string_value >( e ) );
+            UTF_REQUIRE( ! bl::cpp::contains( std::string( e.what() ), bad ) );
+        }
+
+        UTF_REQUIRE( caught );
+
+        /*
+         * The three padding arms of the switch must stay distinct - the round trip test
+         * above cannot tell them apart, because it only ever supplies encoder output
+         */
+
+        UTF_REQUIRE_EQUAL( bl::SerializationUtils::base64UrlDecodeString( "YQ" ), std::string( "a" ) );
+        UTF_REQUIRE_EQUAL( bl::SerializationUtils::base64UrlDecodeString( "YWE" ), std::string( "aa" ) );
+        UTF_REQUIRE_EQUAL( bl::SerializationUtils::base64UrlDecodeString( "YQ==" ), std::string( "a" ) );
     }
 }
 
