@@ -18,6 +18,7 @@
 #define __UTEST_TESTTASKUTILS_H_
 
 #include <utests/baselib/Utf.h>
+#include <utests/baselib/UtfConcurrent.h>
 
 #include <baselib/transfer/SendRecvContext.h>
 
@@ -90,6 +91,15 @@ namespace utest
 
         bl::uuid_t                                                          m_sourcePeerId;
         bl::uuid_t                                                          m_targetPeerId;
+
+        /*
+         * The storage interface below is invoked on thread pool worker threads, where a
+         * REQUIRE-level Boost.Test assertion would terminate the process instead of failing
+         * the test case, so the invariants are recorded here and asserted by the consumer
+         * on the main test thread via assertions().requireNone()
+         */
+
+        DeferredAssertions                                                  m_assertions;
 
     protected:
 
@@ -225,6 +235,11 @@ namespace utest
             return m_flushCalls;
         }
 
+        const DeferredAssertions& assertions() const NOEXCEPT
+        {
+            return m_assertions;
+        }
+
         const bl::uuid_t& sourcePeerId() const NOEXCEPT
         {
             return m_sourcePeerId;
@@ -259,7 +274,7 @@ namespace utest
 
             chkStorageDisabled();
 
-            UTF_REQUIRE( chunkId != bl::uuids::nil() );
+            UTF_RECORD( m_assertions, chunkId != bl::uuids::nil() );
 
             if( m_noisyMode )
             {
@@ -274,7 +289,7 @@ namespace utest
 
             ++m_loadCalls;
 
-            UTF_REQUIRE( m_data -> size() <= data -> capacity() );
+            UTF_RECORD( m_assertions, m_data -> size() <= data -> capacity() );
 
             ::memcpy( data -> pv(), m_data -> pv(), m_data -> size() );
             data -> setSize( m_data -> size() );
@@ -290,11 +305,11 @@ namespace utest
 
             chkStorageDisabled();
 
-            UTF_REQUIRE( chunkId != bl::uuids::nil() );
+            UTF_RECORD( m_assertions, chunkId != bl::uuids::nil() );
 
             if( ! m_expectRealData )
             {
-                UTF_REQUIRE_EQUAL( m_data -> size(), data -> size() );
+                UTF_RECORD( m_assertions, m_data -> size() == data -> size() );
 
                 verifyData( data );
             }
@@ -323,7 +338,7 @@ namespace utest
 
             chkStorageDisabled();
 
-            UTF_REQUIRE( chunkId != bl::uuids::nil() );
+            UTF_RECORD( m_assertions, chunkId != bl::uuids::nil() );
 
             if( m_noisyMode )
             {

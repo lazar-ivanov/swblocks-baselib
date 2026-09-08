@@ -69,6 +69,7 @@
 #include <utests/baselib/TestTaskUtils.h>
 #include <utests/baselib/UtfArgsParser.h>
 #include <utests/baselib/Utf.h>
+#include <utests/baselib/UtfConcurrent.h>
 #include <utests/baselib/TestFsUtils.h>
 
 /************************************************************************
@@ -592,49 +593,6 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueWaitNoPrioritizeTests )
 
 namespace
 {
-    class ExecutionQueueTestSignal
-    {
-        BL_NO_COPY_OR_MOVE( ExecutionQueueTestSignal )
-
-    private:
-
-        bl::os::mutex                   m_lock;
-        bl::os::condition_variable      m_cv;
-        bool                            m_signaled;
-
-    public:
-
-        ExecutionQueueTestSignal()
-            :
-            m_signaled( false )
-        {
-        }
-
-        void signal() NOEXCEPT
-        {
-            {
-                BL_MUTEX_GUARD( m_lock );
-                m_signaled = true;
-            }
-
-            m_cv.notify_all();
-        }
-
-        bool wait()
-        {
-            bl::os::mutex_unique_lock guard( m_lock );
-
-            return m_cv.wait_for(
-                guard,
-                bl::os::chrono::seconds( 10 ),
-                [ this ]() -> bool
-                {
-                    return m_signaled;
-                }
-                );
-        }
-    };
-
     class ExecutionQueueCompletionControl
     {
         BL_NO_COPY_OR_MOVE( ExecutionQueueCompletionControl )
@@ -1071,10 +1029,10 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueAllTasksCompletedObsoleteCandidateTest )
     ExecutionQueueNotificationTestContext context( ExecutionQueue::OptionKeepNone );
     ExecutionQueueCompletionControl controlA;
     ExecutionQueueCompletionControl controlB;
-    ExecutionQueueTestSignal callbackAEntered;
-    ExecutionQueueTestSignal callbackBEntered;
-    ExecutionQueueTestSignal releaseCallbackA;
-    ExecutionQueueTestSignal releaseCallbackB;
+    utest::TestSignal callbackAEntered;
+    utest::TestSignal callbackBEntered;
+    utest::TestSignal releaseCallbackA;
+    utest::TestSignal releaseCallbackB;
     std::atomic< bool > hookTimedOut( false );
     std::atomic< bool > completionAFailed( false );
     std::atomic< bool > completionBFailed( false );
@@ -1191,7 +1149,7 @@ namespace
 
         const auto controlA = std::make_shared< ExecutionQueueCompletionControl >();
         const auto controlB = std::make_shared< ExecutionQueueCompletionControl >();
-        const auto callbackAEntered = std::make_shared< ExecutionQueueTestSignal >();
+        const auto callbackAEntered = std::make_shared< utest::TestSignal >();
         const auto completionAFailed = std::make_shared< std::atomic< bool > >( false );
         const auto completionBFailed = std::make_shared< std::atomic< bool > >( false );
 
@@ -1708,9 +1666,9 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueNotificationConcurrentDeliveryTest )
     ExecutionQueueNotificationDepthProbe probe;
     ExecutionQueueCompletionControl controlA;
     ExecutionQueueCompletionControl controlB;
-    ExecutionQueueTestSignal callbackAEntered;
-    ExecutionQueueTestSignal callbackBEntered;
-    ExecutionQueueTestSignal releaseCallbackA;
+    utest::TestSignal callbackAEntered;
+    utest::TestSignal callbackBEntered;
+    utest::TestSignal releaseCallbackA;
 
     std::atomic< bool > completionAFailed( false );
     std::atomic< bool > completionBFailed( false );
@@ -2211,8 +2169,8 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueAllTasksCompletedAdmissionTests )
 
     {
         ExecutionQueueNotificationTestContext context( ExecutionQueue::OptionKeepNone );
-        ExecutionQueueTestSignal secondExecutionStarted;
-        ExecutionQueueTestSignal releaseSecondExecution;
+        utest::TestSignal secondExecutionStarted;
+        utest::TestSignal releaseSecondExecution;
         std::atomic< std::size_t > executions( 0U );
         std::atomic< bool > executionTimedOut( false );
         bool continuationReturned = false;

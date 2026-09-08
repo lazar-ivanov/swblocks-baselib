@@ -544,6 +544,8 @@ namespace
                                 UTF_REQUIRE( 0U == backendImpl -> removeCalls() );
                                 UTF_REQUIRE( 0U == backendImpl -> flushCalls() );
 
+                                backendImpl -> assertions().requireNone();
+
                                 if( isAuthenticationRequired )
                                 {
                                     authenticateBackend();
@@ -673,6 +675,8 @@ namespace
                                 UTF_REQUIRE( getExpected( 2U ) == backendImpl -> saveCalls() );
                                 UTF_REQUIRE( getExpected( 2U ) == backendImpl -> removeCalls() );
                                 UTF_REQUIRE( getExpected( 2U ) == backendImpl -> flushCalls() );
+
+                                backendImpl -> assertions().requireNone();
 
                                 UTF_REQUIRE_EQUAL( isAuthenticationRequired, isServerConnectionAuthenticated() );
                             };
@@ -816,6 +820,8 @@ namespace
                             UTF_REQUIRE( 0U == backendImpl -> saveCalls() );
                             UTF_REQUIRE( 0U == backendImpl -> removeCalls() );
                             UTF_REQUIRE( 0U == backendImpl -> flushCalls() );
+
+                            backendImpl -> assertions().requireNone();
 
                             /*
                              * Re-enable the backend layer and then test the normal block types again
@@ -2044,6 +2050,8 @@ namespace
                             os::sleep( time::seconds( 2 * heartbeatIntervalInSeconds ) );
 
                             UTF_REQUIRE_EQUAL( totalBlocksScheduled, backendImpl -> saveCalls() );
+
+                            backendImpl -> assertions().requireNone();
                         };
 
                         /*

@@ -17,6 +17,7 @@
 #include <baselib/async/AsyncExecutorWrapperCallback.h>
 
 #include <utests/baselib/TestAsyncCommon.h>
+#include <utests/baselib/UtfConcurrent.h>
 
 /*****************************************************************************************************************
  * Async executor implementation tests (for AsyncExecutorWrapperCallbackImpl)
@@ -740,4 +741,57 @@ UTF_AUTO_TEST_CASE( AsyncCB_CancelWithOperationTaskInProgressTests )
 
         asyncExecutor -> releaseOperation( operation2 );
     }
+}
+
+UTF_AUTO_TEST_CASE( AsyncCB_DeferredAssertionsRecorderTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    /*
+     * The deferred assertions recorder is what allows the storage and the dispatch
+     * invariants to be checked on thread pool worker threads without terminating the
+     * process, so the recorder itself must be both thread safe and non-throwing
+     *
+     * Eight tasks record 100 satisfied predicates each and exactly one of them also
+     * records a single violated predicate; the recorder is then asserted on the main
+     * test thread, after the tasks have been joined
+     */
+
+    utest::DeferredAssertions recorder;
+
+    const std::size_t noOfTasks = 8U;
+    const std::size_t noOfRecordsPerTask = 100U;
+
+    scheduleAndExecuteInParallel(
+        [ & ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+        {
+            eq -> setOptions( ExecutionQueue::OptionKeepNone );
+
+            for( std::size_t i = 0U; i < noOfTasks; ++i )
+            {
+                const bool recordViolation = ( 0U == i );
+
+                eq -> push_back(
+                    SimpleTaskImpl::createInstance< Task >(
+                        [ &recorder, recordViolation ]() -> void
+                        {
+                            for( std::size_t j = 0U; j < noOfRecordsPerTask; ++j )
+                            {
+                                UTF_RECORD( recorder, true );
+                            }
+
+                            if( recordViolation )
+                            {
+                                UTF_RECORD( recorder, false );
+                            }
+                        }
+                        )
+                    );
+            }
+        }
+        );
+
+    UTF_REQUIRE_EQUAL( recorder.failures(), 1U );
+    UTF_REQUIRE( cpp::contains( recorder.firstFailure(), "false" ) );
 }

@@ -901,12 +901,15 @@ UTF_AUTO_TEST_CASE( ProxyBrokerClientBasicTests )
     const om::ObjPtrCopyable< om::Proxy > clientSink =
         om::ProxyImpl::createInstance< om::Proxy >( true /* strongRef */ );
 
+    const auto dispatchAssertions = std::make_shared< utest::DeferredAssertions >();
+
     const auto incomingObjectChannel = om::lockDisposable(
         MessagingClientObjectDispatchFromCallback::createInstance< MessagingClientObjectDispatch >(
             cpp::bind(
                 &utest::TestMessagingUtils::dispatchCallback,
                 clientSink,
                 uuids::nil()    /* targetPeerIdExpected */,
+                dispatchAssertions,
                 _1              /* targetPeerId */,
                 _2              /* brokerProtocol */,
                 _3              /* payload */
@@ -1085,6 +1088,8 @@ UTF_AUTO_TEST_CASE( ProxyBrokerClientBasicTests )
             }
         }
         );
+
+    dispatchAssertions -> requireNone();
 }
 
 UTF_AUTO_TEST_CASE( BrokerClientTests )
@@ -1474,6 +1479,79 @@ UTF_AUTO_TEST_CASE( IO_MessagingUtilsTests )
 
         testAllScenarios();
     }
+}
+
+UTF_AUTO_TEST_CASE( MessagingUtils_TokenTypeConcurrencyTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace bl::messaging;
+
+    /*
+     * utest::TestMessagingUtils::createBrokerProtocolMessage() lazily initializes the static
+     * g_tokenType under g_tokenTypeLock, and the cached value must never be read outside of
+     * that guard - otherwise a thread copying the string races the thread assigning to it
+     *
+     * The window is only open while the cache is cold, which is what makes the race a rare
+     * and unreproducible failure rather than a reliable one, so this pins the concurrent
+     * path with 16 tasks constructing 50 messages each
+     */
+
+    const std::size_t noOfTasks = 16U;
+    const std::size_t noOfMessagesPerTask = 50U;
+
+    const auto& cookiesText = utest::TestMessagingUtils::getTokenData();
+
+    utest::DeferredAssertions assertions;
+
+    std::atomic< std::size_t > noOfMessagesCreated( 0U );
+
+    scheduleAndExecuteInParallel(
+        [ & ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+        {
+            eq -> setOptions( ExecutionQueue::OptionKeepNone );
+
+            for( std::size_t i = 0U; i < noOfTasks; ++i )
+            {
+                eq -> push_back(
+                    SimpleTaskImpl::createInstance< Task >(
+                        [ & ]() -> void
+                        {
+                            for( std::size_t j = 0U; j < noOfMessagesPerTask; ++j )
+                            {
+                                const auto brokerProtocol =
+                                    utest::TestMessagingUtils::createBrokerProtocolMessage(
+                                        MessageType::AsyncRpcDispatch,
+                                        uuids::create()                 /* conversationId */,
+                                        cookiesText
+                                        );
+
+                                const auto& principalIdentityInfo =
+                                    brokerProtocol -> principalIdentityInfo();
+
+                                UTF_RECORD( assertions, nullptr != principalIdentityInfo );
+
+                                if( principalIdentityInfo )
+                                {
+                                    UTF_RECORD(
+                                        assertions,
+                                        principalIdentityInfo -> authenticationToken() -> type() ==
+                                            utest::DummyAuthorizationCache::dummyTokenType()
+                                        );
+                                }
+
+                                ++noOfMessagesCreated;
+                            }
+                        }
+                        )
+                    );
+            }
+        }
+        );
+
+    assertions.requireNone();
+
+    UTF_REQUIRE_EQUAL( noOfMessagesCreated.load(), noOfTasks * noOfMessagesPerTask );
 }
 
 UTF_AUTO_TEST_CASE( IO_MessagingClientObjectDispatchLocalTests )
@@ -2769,12 +2847,15 @@ UTF_AUTO_TEST_CASE( IO_MessagingMessageProcessingTests )
                 const om::ObjPtrCopyable< om::Proxy > client1Sink =
                     om::ProxyImpl::createInstance< om::Proxy >( true /* strongRef */ );
 
+                const auto dispatchAssertions = std::make_shared< utest::DeferredAssertions >();
+
                 const auto incomingObjectChannel1 = bl::om::lockDisposable(
                     MessagingClientObjectDispatchFromCallback::createInstance(
                         cpp::bind(
                             &utest::TestMessagingUtils::dispatchCallback,
                             client1Sink,
                             targetPeerId1 /* targetPeerIdExpected */,
+                            dispatchAssertions,
                             _1,
                             _2,
                             _3
@@ -2791,6 +2872,7 @@ UTF_AUTO_TEST_CASE( IO_MessagingMessageProcessingTests )
                             &utest::TestMessagingUtils::dispatchCallback,
                             client2Sink,
                             targetPeerId2 /* targetPeerIdExpected */,
+                            dispatchAssertions,
                             _1,
                             _2,
                             _3
@@ -2928,6 +3010,8 @@ UTF_AUTO_TEST_CASE( IO_MessagingMessageProcessingTests )
                         );
 
                 UTF_CHECK_EQUAL( response -> finalPath(), expectedResponse -> finalPath() );
+
+                dispatchAssertions -> requireNone();
             }
             );
     };
@@ -2973,12 +3057,15 @@ UTF_AUTO_TEST_CASE( IO_MessagingMessageProcessingTestWrappers )
                 const om::ObjPtrCopyable< om::Proxy > client1Sink =
                     om::ProxyImpl::createInstance< om::Proxy >( true /* strongRef */ );
 
+                const auto dispatchAssertions = std::make_shared< utest::DeferredAssertions >();
+
                 const auto incomingObjectChannel1 = bl::om::lockDisposable(
                     MessagingClientObjectDispatchFromCallback::createInstance(
                         cpp::bind(
                             &utest::TestMessagingUtils::dispatchCallback,
                             client1Sink,
                             targetPeerId1,
+                            dispatchAssertions,
                             _1,
                             _2,
                             _3
@@ -2995,6 +3082,7 @@ UTF_AUTO_TEST_CASE( IO_MessagingMessageProcessingTestWrappers )
                             &utest::TestMessagingUtils::dispatchCallback,
                             client2Sink,
                             targetPeerId2,
+                            dispatchAssertions,
                             _1,
                             _2,
                             _3
@@ -3121,6 +3209,8 @@ UTF_AUTO_TEST_CASE( IO_MessagingMessageProcessingTestWrappers )
                 eq -> waitForSuccess( task1 );
 
                 UTF_CHECK_THROW( processor1 -> getResponse(), bl::UnexpectedException );
+
+                dispatchAssertions -> requireNone();
                 }
             );
     };
@@ -3166,12 +3256,15 @@ UTF_AUTO_TEST_CASE( IO_MessagingMessageProcessingTestAckTimeout )
                 const om::ObjPtrCopyable< om::Proxy > client1Sink =
                     om::ProxyImpl::createInstance< om::Proxy >( true /* strongRef */ );
 
+                const auto dispatchAssertions = std::make_shared< utest::DeferredAssertions >();
+
                 const auto incomingObjectChannel1 = bl::om::lockDisposable(
                     MessagingClientObjectDispatchFromCallback::createInstance(
                         cpp::bind(
                             &utest::TestMessagingUtils::dispatchCallback,
                             client1Sink,
                             targetPeerId1,
+                            dispatchAssertions,
                             _1,
                             _2,
                             _3
@@ -3188,6 +3281,7 @@ UTF_AUTO_TEST_CASE( IO_MessagingMessageProcessingTestAckTimeout )
                             &utest::TestMessagingUtils::dispatchCallback,
                             client2Sink,
                             targetPeerId2,
+                            dispatchAssertions,
                             _1,
                             _2,
                             _3
@@ -3340,6 +3434,8 @@ UTF_AUTO_TEST_CASE( IO_MessagingMessageProcessingTestAckTimeout )
                     TimeoutException,
                     "Messaging client did not receive acknowledgment within the specified interval"
                     );
+
+                dispatchAssertions -> requireNone();
             }
             );
     };
@@ -3385,12 +3481,15 @@ UTF_AUTO_TEST_CASE( IO_MessagingMessageProcessingTestMsgTimeout )
                 const om::ObjPtrCopyable< om::Proxy > client1Sink =
                     om::ProxyImpl::createInstance< om::Proxy >( true /* strongRef */ );
 
+                const auto dispatchAssertions = std::make_shared< utest::DeferredAssertions >();
+
                 const auto incomingObjectChannel1 = bl::om::lockDisposable(
                     MessagingClientObjectDispatchFromCallback::createInstance(
                         cpp::bind(
                             &utest::TestMessagingUtils::dispatchCallback,
                             client1Sink,
                             targetPeerId1,
+                            dispatchAssertions,
                             _1,
                             _2,
                             _3
@@ -3407,6 +3506,7 @@ UTF_AUTO_TEST_CASE( IO_MessagingMessageProcessingTestMsgTimeout )
                             &utest::TestMessagingUtils::dispatchCallback,
                             client2Sink,
                             targetPeerId2,
+                            dispatchAssertions,
                             _1,
                             _2,
                             _3
@@ -3559,6 +3659,8 @@ UTF_AUTO_TEST_CASE( IO_MessagingMessageProcessingTestMsgTimeout )
                     TimeoutException,
                     "Messaging client did not receive response within the specified interval"
                     );
+
+                dispatchAssertions -> requireNone();
             }
             );
     };
@@ -3644,12 +3746,15 @@ UTF_AUTO_TEST_CASE( IO_MessagingPerfTests )
     const om::ObjPtrCopyable< om::Proxy > clientSink =
         om::ProxyImpl::createInstance< om::Proxy >( true /* strongRef */ );
 
+    const auto dispatchAssertions = std::make_shared< utest::DeferredAssertions >();
+
     const auto incomingObjectChannel = om::lockDisposable(
         MessagingClientObjectDispatchFromCallback::createInstance< MessagingClientObjectDispatch >(
             cpp::bind(
                 &utest::TestMessagingUtils::dispatchCallback,
                 clientSink,
                 uuids::nil()    /* targetPeerIdExpected */,
+                dispatchAssertions,
                 _1              /* targetPeerId */,
                 _2              /* brokerProtocol */,
                 _3              /* payload */
@@ -3885,6 +3990,8 @@ UTF_AUTO_TEST_CASE( IO_MessagingPerfTests )
             }
         }
         );
+
+    dispatchAssertions -> requireNone();
 }
 
 UTF_AUTO_TEST_CASE( RotatingMessagingClientObjectDispatchTests )
@@ -4181,12 +4288,15 @@ UTF_AUTO_TEST_CASE( IO_MessagingDemultiplexingTests )
         const om::ObjPtrCopyable< om::Proxy > clientSink =
             om::ProxyImpl::createInstance< om::Proxy >( true /* strongRef */ );
 
+        const auto dispatchAssertions = std::make_shared< utest::DeferredAssertions >();
+
         const auto incomingObjectChannel = om::lockDisposable(
             MessagingClientObjectDispatchFromCallback::createInstance< MessagingClientObjectDispatch >(
                 cpp::bind(
                     &utest::TestMessagingUtils::dispatchCallback,
                     clientSink,
                     uuids::nil()    /* targetPeerIdExpected */,
+                    dispatchAssertions,
                     _1              /* targetPeerId */,
                     _2              /* brokerProtocol */,
                     _3              /* payload */
@@ -4345,6 +4455,8 @@ UTF_AUTO_TEST_CASE( IO_MessagingDemultiplexingTests )
                 }
             }
             );
+
+        dispatchAssertions -> requireNone();
     };
 
     test::MachineGlobalTestLock lock;
@@ -4407,12 +4519,15 @@ UTF_AUTO_TEST_CASE( IO_MessagingMultiplexingTests )
             const om::ObjPtrCopyable< om::Proxy > clientSink =
                 om::ProxyImpl::createInstance< om::Proxy >( true /* strongRef */ );
 
+            const auto dispatchAssertions = std::make_shared< utest::DeferredAssertions >();
+
             const auto incomingObjectChannel = om::lockDisposable(
                 MessagingClientObjectDispatchFromCallback::createInstance< MessagingClientObjectDispatch >(
                     cpp::bind(
                         &utest::TestMessagingUtils::dispatchCallback,
                         clientSink,
                         uuids::nil()    /* targetPeerIdExpected */,
+                        dispatchAssertions,
                         _1              /* targetPeerId */,
                         _2              /* brokerProtocol */,
                         _3              /* payload */
@@ -4778,6 +4893,8 @@ UTF_AUTO_TEST_CASE( IO_MessagingMultiplexingTests )
                     }
                 }
                 );
+
+            dispatchAssertions -> requireNone();
         };
 
         executeTests( 1U /* noOfConnections */, uuids::create() /* peerId */ );
@@ -4903,12 +5020,15 @@ UTF_AUTO_TEST_CASE( IO_MessagingProxyBackendTests )
             const om::ObjPtrCopyable< om::Proxy > clientSink =
                 om::ProxyImpl::createInstance< om::Proxy >( true /* strongRef */ );
 
+            const auto dispatchAssertions = std::make_shared< utest::DeferredAssertions >();
+
             const auto incomingObjectChannel = om::lockDisposable(
                 MessagingClientObjectDispatchFromCallback::createInstance< MessagingClientObjectDispatch >(
                     cpp::bind(
                         &utest::TestMessagingUtils::dispatchCallback,
                         clientSink,
                         uuids::nil()    /* targetPeerIdExpected */,
+                        dispatchAssertions,
                         _1              /* targetPeerId */,
                         _2              /* brokerProtocol */,
                         _3              /* payload */
@@ -5149,6 +5269,8 @@ UTF_AUTO_TEST_CASE( IO_MessagingProxyBackendTests )
                     }
                 }
                 );
+
+            dispatchAssertions -> requireNone();
         };
 
         const auto executeTests = [ brokerInboundPort ](
@@ -5205,12 +5327,15 @@ UTF_AUTO_TEST_CASE( IO_MessagingProxyBackendTests )
             const om::ObjPtrCopyable< om::Proxy > clientSink =
                 om::ProxyImpl::createInstance< om::Proxy >( true /* strongRef */ );
 
+            const auto dispatchAssertions = std::make_shared< utest::DeferredAssertions >();
+
             const auto incomingObjectChannel = om::lockDisposable(
                 MessagingClientObjectDispatchFromCallback::createInstance< MessagingClientObjectDispatch >(
                     cpp::bind(
                         &utest::TestMessagingUtils::dispatchCallback,
                         clientSink,
                         uuids::nil()    /* targetPeerIdExpected */,
+                        dispatchAssertions,
                         _1              /* targetPeerId */,
                         _2              /* brokerProtocol */,
                         _3              /* payload */
@@ -5531,6 +5656,8 @@ UTF_AUTO_TEST_CASE( IO_MessagingProxyBackendTests )
                     }
                 }
                 );
+
+            dispatchAssertions -> requireNone();
         };
 
         {
@@ -6186,12 +6313,15 @@ UTF_AUTO_TEST_CASE( IO_FlushQueueWithRetriesOnTargetPeerNotFoundTests )
             const om::ObjPtrCopyable< om::Proxy > clientSink =
                 om::ProxyImpl::createInstance< om::Proxy >( true /* strongRef */ );
 
+            const auto dispatchAssertions = std::make_shared< utest::DeferredAssertions >();
+
             const auto incomingObjectChannel = om::lockDisposable(
                 MessagingClientObjectDispatchFromCallback::createInstance< MessagingClientObjectDispatch >(
                     cpp::bind(
                         &utest::TestMessagingUtils::dispatchCallback,
                         clientSink,
                         uuids::nil()    /* targetPeerIdExpected */,
+                        dispatchAssertions,
                         _1              /* targetPeerId */,
                         _2              /* brokerProtocol */,
                         _3              /* payload */
@@ -6394,6 +6524,8 @@ UTF_AUTO_TEST_CASE( IO_FlushQueueWithRetriesOnTargetPeerNotFoundTests )
                     }
                 }
                 );
+
+            dispatchAssertions -> requireNone();
         };
 
         singleMessageWithRetriesTests(
