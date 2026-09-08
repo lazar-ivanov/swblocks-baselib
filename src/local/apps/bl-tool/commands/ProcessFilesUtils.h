@@ -317,6 +317,33 @@ namespace bltool
                             headerParsed = true;
                         }
                     }
+
+                    if( inFileHader )
+                    {
+                        /*
+                         * The header comment was never closed, so we can't tell where it
+                         * ends - write the original lines back instead of consuming the
+                         * entire file and leaving it empty
+                         */
+
+                        for( const auto& line : lines )
+                        {
+                            os << line << "\n";
+                        }
+                    }
+                    else if( ! licenseWritten )
+                    {
+                        /*
+                         * The file has no body (e.g. it only contains a header comment),
+                         * but the header comment must still be written - otherwise the
+                         * file would simply be truncated to zero bytes
+                         */
+
+                        if( ! headerCommentText.empty() )
+                        {
+                            os << headerCommentText;
+                        }
+                    }
                 }
             }
 
@@ -406,7 +433,13 @@ namespace bltool
 
                     if( inComment )
                     {
-                        for( std::size_t i = commentStartPos; i <= pos; ++i )
+                        /*
+                         * The comment was never closed - flush all the lines from
+                         * commentStartPos to the end of the file; note that 'pos' is
+                         * equal to 'count' here, so the bound must be exclusive
+                         */
+
+                        for( std::size_t i = commentStartPos; i < pos; ++i )
                         {
                             os << lines[ i ] << "\n";
                         }
@@ -547,7 +580,13 @@ namespace bltool
 
                     if( inComment )
                     {
-                        for( std::size_t i = commentStartPos; i <= pos; ++i )
+                        /*
+                         * The comment was never closed - flush all the lines from
+                         * commentStartPos to the end of the file; note that 'pos' is
+                         * equal to 'count' here, so the bound must be exclusive
+                         */
+
+                        for( std::size_t i = commentStartPos; i < pos; ++i )
                         {
                             os << lines[ i ] << "\n";
                         }

@@ -18,3 +18,4 @@
 #include <utests/baselib/UtfMain.h>
 
 #include "TestBlTool.h"
+#include "TestBlToolProcessFiles.h"
