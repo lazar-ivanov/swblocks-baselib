@@ -230,6 +230,87 @@ namespace utest
         >
         NoTokenAuthorizationCacheImpl;
 
+        /**
+         * @brief An authorization service mock which records the token bytes it was handed
+         *
+         * The principal it returns carries a fresh, distinct authentication token on every
+         * call, which is what makes the cache's token selection observable
+         */
+
+        template
+        <
+            typename E = void
+        >
+        class RecordingAuthorizationServiceImplT : public bl::om::ObjectDefaultBase
+        {
+            BL_CTR_DEFAULT( RecordingAuthorizationServiceImplT, protected )
+
+        private:
+
+            static const std::string                            g_tokenType;
+
+            std::vector< std::string >                          m_tokensSeen;
+            bl::cpp::ScalarTypeIniter< std::size_t >            m_counter;
+
+        public:
+
+            typedef bl::tasks::SimpleTaskImpl                   task_impl_t;
+
+            auto getTokenType() NOEXCEPT -> const std::string&
+            {
+                return g_tokenType;
+            }
+
+            /**
+             * @brief The token bytes which were presented to the service, in order
+             *
+             * No lock is needed - the cases which use this mock are single threaded (update
+             * schedules the no-op task on a private queue and waits for it before returning)
+             */
+
+            auto tokensSeen() const NOEXCEPT -> const std::vector< std::string >&
+            {
+                return m_tokensSeen;
+            }
+
+            auto createAuthorizationTask( SAA_in const bl::om::ObjPtr< bl::data::DataBlock >& authenticationToken )
+                -> bl::om::ObjPtr< bl::tasks::Task >
+            {
+                m_tokensSeen.emplace_back( authenticationToken -> begin(), authenticationToken -> end() );
+
+                return bl::om::qi< bl::tasks::Task >(
+                    task_impl_t::createInstance( []() -> void {} )
+                    );
+            }
+
+            auto extractSecurityPrincipal( SAA_in const bl::om::ObjPtr< bl::tasks::Task >& executedAuthorizationTask )
+                -> bl::om::ObjPtr< bl::security::SecurityPrincipal >
+            {
+                BL_UNUSED( executedAuthorizationTask );
+
+                return bl::security::SecurityPrincipal::createInstance(
+                    "sid"                                       /* secureIdentity */,
+                    "givenName"                                 /* givenName */,
+                    "familyName"                                /* familyName */,
+                    "user@host.com"                             /* email */,
+                    "type_0"                                    /* typeId */,
+                    bl::security::AuthorizationCache::createAuthenticationToken(
+                        bl::resolveMessage( BL_MSG() << "rotated-" << ++m_counter.lvalue() )
+                        )                                       /* authenticationToken */
+                    );
+            }
+        };
+
+        BL_DEFINE_STATIC_CONST_STRING( RecordingAuthorizationServiceImplT, g_tokenType ) = "recordingTokenType";
+
+        typedef bl::om::ObjectImpl< RecordingAuthorizationServiceImplT<> > RecordingAuthorizationServiceImpl;
+
+        typedef bl::om::ObjectImpl
+        <
+            bl::security::AuthorizationCacheImpl< RecordingAuthorizationServiceImpl >
+        >
+        RecordingAuthorizationCacheImpl;
+
     } // security
 
 } // utest
@@ -355,4 +436,206 @@ UTF_AUTO_TEST_CASE( AuthorizationCacheImplCapAndClockTests )
 
         UTF_REQUIRE( ! cache -> tryGetAuthorizedPrinciplal( token ) );
     }
+
+    {
+        /*
+         * A cache which has reached its cap must recover: the overflow branch sweeps the
+         * stale entries once and, if that made room, caches normally; only when the sweep
+         * frees nothing is the principal returned uncached
+         *
+         * The clock is moved by backdating the stored timestamps, so there are no sleeps
+         */
+
+        const std::size_t cappedEntries = 4U;
+
+        const auto cache = NoTokenAuthorizationCacheImpl::createInstance< AuthorizationCache >(
+            NoTokenAuthorizationServiceImpl::createInstance(),
+            time::hours( 1 )                                        /* freshnessInterval */,
+            cappedEntries
+            );
+
+        const auto cacheImpl = om::qi< NoTokenAuthorizationCacheImpl >( cache );
+
+        /*
+         * The one time warning about the cache being full is expected here
+         */
+
+        const Logging::LevelPusher pushLevel( Logging::LL_ERROR );
+
+        std::vector< om::ObjPtr< data::DataBlock > > tokens;
+
+        for( std::size_t i = 0U; i < 7U; ++i )
+        {
+            tokens.push_back(
+                AuthorizationCache::createAuthenticationToken(
+                    resolveMessage( BL_MSG() << "sweep-token-" << i )
+                    )
+                );
+        }
+
+        for( std::size_t i = 0U; i < cappedEntries; ++i )
+        {
+            UTF_REQUIRE( cache -> update( tokens[ i ] ) );
+        }
+
+        UTF_REQUIRE_EQUAL( cacheImpl -> size(), 4U );
+
+        /*
+         * Two of the four entries are made stale, so the sweep which the overflow branch runs
+         * has room to free
+         */
+
+        const auto backdate = [ & ]( SAA_in const std::size_t index ) -> void
+        {
+            cacheImpl -> setTimestampForTesting(
+                tokens[ index ],
+                time::microsec_clock::universal_time() - time::hours( 2 )
+                );
+        };
+
+        backdate( 0U );
+        backdate( 1U );
+
+        /*
+         * A new key at the cap - the sweep frees the two stale entries and the principal is
+         * then cached normally
+         */
+
+        UTF_REQUIRE( cache -> update( tokens[ 4 ] ) );
+
+        UTF_REQUIRE_EQUAL( cacheImpl -> size(), 3U );
+
+        UTF_REQUIRE( ! cache -> tryGetAuthorizedPrinciplal( tokens[ 0 ] ) );
+        UTF_REQUIRE( ! cache -> tryGetAuthorizedPrinciplal( tokens[ 1 ] ) );
+        UTF_REQUIRE( cache -> tryGetAuthorizedPrinciplal( tokens[ 2 ] ) );
+        UTF_REQUIRE( cache -> tryGetAuthorizedPrinciplal( tokens[ 4 ] ) );
+
+        /*
+         * Back to the cap
+         */
+
+        UTF_REQUIRE( cache -> update( tokens[ 5 ] ) );
+
+        UTF_REQUIRE_EQUAL( cacheImpl -> size(), 4U );
+
+        /*
+         * A new key at the cap with nothing stale to sweep - the authorization itself still
+         * succeeds, the caching of it is simply declined
+         */
+
+        UTF_REQUIRE( cache -> update( tokens[ 6 ] ) );
+
+        UTF_REQUIRE_EQUAL( cacheImpl -> size(), 4U );
+        UTF_REQUIRE( ! cache -> tryGetAuthorizedPrinciplal( tokens[ 6 ] ) );
+
+        /*
+         * An entry which is already in the cache skips the overflow branch entirely and is
+         * always refreshed, cap or no cap - it would come back null here if the branch had
+         * short circuited it
+         */
+
+        backdate( 2U );
+
+        UTF_REQUIRE( cache -> update( tokens[ 2 ] ) );
+
+        UTF_REQUIRE_EQUAL( cacheImpl -> size(), 4U );
+        UTF_REQUIRE( cache -> tryGetAuthorizedPrinciplal( tokens[ 2 ] ) );
+    }
+}
+
+UTF_AUTO_TEST_CASE( AuthorizationCacheImplTokenRotationTests )
+{
+    using namespace bl;
+    using namespace bl::security;
+    using namespace utest::security;
+
+    /*
+     * When the cache already holds an entry whose principal carries an authentication token
+     * the next authorization request is built out of THAT token rather than out of the one
+     * the caller presented - this is how a rotating credential is kept alive - while the
+     * cache key remains the hash of the caller's token, so the caller keeps hitting the same
+     * entry with the bytes it has
+     */
+
+    const auto tokenText = []( SAA_in const om::ObjPtr< data::DataBlock >& token ) -> std::string
+    {
+        return std::string( token -> begin(), token -> end() );
+    };
+
+    /*
+     * AuthorizationCacheImpl takes the service by rvalue, so the case has to retain its own
+     * reference in order to read back which tokens were presented to it
+     */
+
+    const auto service = RecordingAuthorizationServiceImpl::createInstance();
+
+    const auto cache = RecordingAuthorizationCacheImpl::createInstance< AuthorizationCache >(
+        om::copy( service ),
+        time::hours( 1 )                                        /* freshnessInterval */
+        );
+
+    const auto original = AuthorizationCache::createAuthenticationToken( "original-token" );
+
+    const auto principal1 = cache -> update( original );
+
+    UTF_REQUIRE( principal1 );
+    UTF_REQUIRE( principal1 -> authenticationToken() );
+
+    UTF_REQUIRE_EQUAL( service -> tokensSeen().size(), 1U );
+    UTF_REQUIRE_EQUAL( service -> tokensSeen().at( 0U ), std::string( "original-token" ) );
+    UTF_REQUIRE_EQUAL( tokenText( principal1 -> authenticationToken() ), std::string( "rotated-1" ) );
+
+    /*
+     * update( ... ) re-authorizes unconditionally - staleness plays no part in the selection -
+     * and this refresh must present the ROTATED credential, not the caller's
+     */
+
+    UTF_REQUIRE( cache -> update( original ) );
+
+    UTF_REQUIRE_EQUAL( service -> tokensSeen().size(), 2U );
+    UTF_REQUIRE_EQUAL( service -> tokensSeen().at( 1U ), std::string( "rotated-1" ) );
+
+    /*
+     * The entry is still keyed on the caller's token ...
+     */
+
+    const auto cached = cache -> tryGetAuthorizedPrinciplal( original );
+
+    UTF_REQUIRE( cached );
+    UTF_REQUIRE( cached -> authenticationToken() );
+    UTF_REQUIRE_EQUAL( tokenText( cached -> authenticationToken() ), std::string( "rotated-2" ) );
+
+    /*
+     * ... and not on the rotated one, so the rotation did not create a second entry
+     */
+
+    UTF_REQUIRE(
+        ! cache -> tryGetAuthorizedPrinciplal(
+            AuthorizationCache::createAuthenticationToken( "rotated-1" )
+            )
+        );
+
+    UTF_REQUIRE_EQUAL( om::qi< RecordingAuthorizationCacheImpl >( cache ) -> size(), 1U );
+
+    /*
+     * createAuthorizationTask( ... ) is the API the broker itself calls and it makes the very
+     * same selection
+     */
+
+    UTF_REQUIRE( cache -> createAuthorizationTask( original ) );
+
+    UTF_REQUIRE_EQUAL( service -> tokensSeen().size(), 3U );
+    UTF_REQUIRE_EQUAL( service -> tokensSeen().at( 2U ), std::string( "rotated-2" ) );
+
+    /*
+     * With no entry left there is nothing to rotate, so the token which the caller presented
+     * is the one which is used again
+     */
+
+    cache -> evict( original );
+
+    UTF_REQUIRE( cache -> createAuthorizationTask( original ) );
+
+    UTF_REQUIRE_EQUAL( service -> tokensSeen().size(), 4U );
+    UTF_REQUIRE_EQUAL( service -> tokensSeen().back(), std::string( "original-token" ) );
 }

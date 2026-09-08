@@ -18,6 +18,7 @@
 
 #include <baselib/crypto/ErrorHandling.h>
 #include <baselib/crypto/RsaKey.h>
+#include <baselib/crypto/RsaSignVerify.h>
 #include <baselib/core/SerializationUtils.h>
 
 #include <baselib/core/BaseIncludes.h>
@@ -322,6 +323,48 @@ UTF_AUTO_TEST_CASE( PemKeyFormats_EmittedFormatsAreSpkiAndPkcs8 )
         );
 
     /*
+     * The two combinations above are the only valid ones; the invariant closes both of the
+     * silent failure modes, so neither half of it can be relaxed without failing here
+     *
+     * Asking for encryption without a password is the one which used to write the key in the
+     * clear, which is exactly what the KeyProtection enum exists to prevent
+     */
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        bl::security::JsonSecuritySerialization::getPrivateKeyAsPemString(
+            rsaKey,
+            bl::security::KeyProtection::Encrypted
+            ),
+        bl::SecurityException,
+        "An encrypted private key requires a non-empty password"
+        );
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        bl::security::JsonSecuritySerialization::getPrivateKeyAsPemString(
+            rsaKey,
+            bl::security::KeyProtection::Encrypted,
+            bl::str::empty() /* password */
+            ),
+        bl::SecurityException,
+        "An encrypted private key requires a non-empty password"
+        );
+
+    /*
+     * And a password supplied together with an explicit request for plaintext would encrypt a
+     * key the caller has stated should be written in the clear
+     */
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        bl::security::JsonSecuritySerialization::getPrivateKeyAsPemString(
+            rsaKey,
+            bl::security::KeyProtection::PlaintextExplicit,
+            "1234" /* password */
+            ),
+        bl::SecurityException,
+        "A private key which is exported in the clear must not be given a password"
+        );
+
+    /*
      * Everything which was just written must read back as the same key
      */
 
@@ -553,4 +596,123 @@ UTF_AUTO_TEST_CASE( PemKeyFormats_EncryptedExportUsesStrongKeyDerivation )
             ),
         LocalTestPemKeyFormatsHelpers::getPrivateExponent( rsaKey )
         );
+}
+
+UTF_AUTO_TEST_CASE( PemKeyFormats_JwkRoundTripAndPolicyTests )
+{
+    using namespace utest;
+
+    const auto rsaKey = bl::crypto::RsaKey::createInstance();
+    rsaKey -> generate();
+
+    /*
+     * The JWK member names are the wire contract with other JOSE implementations, and the
+     * accessors the helpers use would keep working across a rename, so the packed document is
+     * inspected as text
+     */
+
+    const auto publicJwk = bl::security::JsonSecuritySerialization::getPublicKeyAsJsonObject( rsaKey );
+
+    UTF_REQUIRE_EQUAL( publicJwk -> keyType(), std::string( "RSA" ) );
+    UTF_REQUIRE_EQUAL( publicJwk -> algorithm(), std::string( "RS512" ) );
+    UTF_REQUIRE_EQUAL( publicJwk -> publicKeyUse(), std::string( "sig" ) );
+
+    const auto packed = bl::dm::DataModelUtils::getDocAsPackedJsonString( publicJwk );
+
+    UTF_REQUIRE( bl::cpp::contains( packed, "\"kty\":\"RSA\"" ) );
+    UTF_REQUIRE( bl::cpp::contains( packed, "\"alg\":\"RS512\"" ) );
+    UTF_REQUIRE( bl::cpp::contains( packed, "\"use\":\"sig\"" ) );
+    UTF_REQUIRE( bl::cpp::contains( packed, "\"n\":\"" ) );
+    UTF_REQUIRE( bl::cpp::contains( packed, "\"e\":\"" ) );
+
+    /*
+     * The public half round trips through the JSON string form
+     */
+
+    const auto reloadedPublic = bl::security::JsonSecuritySerialization::loadPublicKeyFromJsonString(
+        bl::security::JsonSecuritySerialization::getPublicKeyAsJsonString( rsaKey )
+        );
+
+    UTF_REQUIRE_EQUAL(
+        LocalTestPemKeyFormatsHelpers::getModulus( reloadedPublic ),
+        LocalTestPemKeyFormatsHelpers::getModulus( rsaKey )
+        );
+
+    UTF_REQUIRE_EQUAL(
+        LocalTestPemKeyFormatsHelpers::getExponent( reloadedPublic ),
+        LocalTestPemKeyFormatsHelpers::getExponent( rsaKey )
+        );
+
+    /*
+     * The private half round trips as well, and it is put to use rather than only compared
+     * component by component - a swapped or dropped CRT parameter produces a wrong signature
+     * under CRT while every component equality assertion still passes
+     */
+
+    const auto reloadedPrivate = bl::security::JsonSecuritySerialization::loadPrivateKeyFromJsonString(
+        bl::security::JsonSecuritySerialization::getPrivateKeyAsJsonString( rsaKey )
+        );
+
+    UTF_REQUIRE_EQUAL(
+        LocalTestPemKeyFormatsHelpers::getPrivateExponent( reloadedPrivate ),
+        LocalTestPemKeyFormatsHelpers::getPrivateExponent( rsaKey )
+        );
+
+    const std::string message( "the message which is signed" );
+
+    UTF_REQUIRE(
+        bl::crypto::RsaSignVerify::tryVerify(
+            reloadedPublic,
+            message,
+            bl::crypto::RsaSignVerify::signAsBase64Url( reloadedPrivate, message )
+            )
+        );
+
+    /*
+     * A JWK which carries only the modulus, the public exponent and the private exponent is a
+     * legal input - the factors and the CRT parameters are optional in this representation,
+     * which is why the loaders check only the public half; raising the check depth to Full
+     * would start rejecting exactly this document
+     *
+     * Note that the data object must not be read only - the loader writes 'kty' back into it
+     */
+
+    const auto minimalJwk = bl::dm::jose::RsaPrivateKey::createInstance();
+
+    minimalJwk -> keyType( "RSA" );
+    minimalJwk -> modulus( LocalTestPemKeyFormatsHelpers::getModulus( rsaKey ) );
+    minimalJwk -> exponent( LocalTestPemKeyFormatsHelpers::getExponent( rsaKey ) );
+    minimalJwk -> privateExponent( LocalTestPemKeyFormatsHelpers::getPrivateExponent( rsaKey ) );
+
+    const auto minimalKey =
+        bl::security::JsonSecuritySerialization::loadPrivateKeyFromJsonObject( minimalJwk );
+
+    UTF_REQUIRE(
+        bl::crypto::RsaSignVerify::tryVerify(
+            reloadedPublic,
+            message,
+            bl::crypto::RsaSignVerify::signAsBase64Url( minimalKey, message )
+            )
+        );
+
+    /*
+     * The public exponent policy floor is reached through the JWK path too - 'Aw' is the
+     * base64url encoding of 3, which is below the floor of 2^16
+     */
+
+    const auto smallExponentJwk = bl::dm::jose::RsaPublicKey::createInstance();
+
+    smallExponentJwk -> keyType( "RSA" );
+    smallExponentJwk -> modulus( LocalTestPemKeyFormatsHelpers::getModulus( rsaKey ) );
+    smallExponentJwk -> exponent( "Aw" );
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        bl::security::JsonSecuritySerialization::loadPublicKeyFromJsonString(
+            bl::dm::DataModelUtils::getDocAsPackedJsonString( smallExponentJwk )
+            ),
+        bl::SecurityException,
+        "public exponent"
+        );
+
+    UTF_CHECK( LocalTestPemKeyFormatsHelpers::isErrorQueueClean() );
 }

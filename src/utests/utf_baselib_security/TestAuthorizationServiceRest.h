@@ -320,3 +320,338 @@ UTF_AUTO_TEST_CASE( AuthorizationServiceRest_StatusCategoryGateTests )
         UTF_REQUIRE_EQUAL( principal -> secureIdentity(), std::string( "ID_5678" ) );
     }
 }
+
+UTF_AUTO_TEST_CASE( AuthorizationServiceRest_TokenTextRejectionTests )
+{
+    using namespace bl;
+    using namespace bl::security;
+
+    /*
+     * For a non-binary token every byte is screened and '\r', '\n' and '\0' are rejected
+     * before anything at all is built out of the token - before str::parsePropertiesList,
+     * before either template is resolved and before the HTTP task exists; these are the bytes
+     * which would break the HTTP request line and the JSON body under any encoding applied
+     * downstream of the screen
+     */
+
+    const auto stockService = []() -> om::ObjPtr< AuthorizationServiceRest >
+    {
+        return AuthorizationServiceRest::create( loadConfig() );
+    };
+
+    const std::string crlfToken( "tokenId=t1\r\n" );
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        pathAndContentFor( stockService(), crlfToken ),
+        SecurityException,
+        "The authentication token contains an invalid character"
+        );
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        pathAndContentFor( stockService(), "tokenId=t1\nHost: evil" ),
+        SecurityException,
+        "The authentication token contains an invalid character"
+        );
+
+    /*
+     * The explicit length constructor is required here - a NUL terminated literal would lose
+     * the byte long before it ever reached createAuthenticationToken( ... )
+     */
+
+    const std::string nulToken( "tokenId=t1\0x", 12U );
+
+    UTF_REQUIRE_EQUAL( nulToken.size(), 12U );
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        pathAndContentFor( stockService(), nulToken ),
+        SecurityException,
+        "The authentication token contains an invalid character"
+        );
+
+    /*
+     * The negative control - a token of the very same shape without any of the rejected bytes
+     * goes through, which is what makes the three assertions above attributable to the screen
+     */
+
+    UTF_CHECK_NO_THROW( pathAndContentFor( stockService(), "tokenId=t1;tokenProperty1=v" ) );
+
+    /*
+     * The screen is skipped for a binary token deliberately, because such a token is base64
+     * encoded on its way into the request; the very same CRLF bearing bytes are accepted here
+     */
+
+    {
+        auto config = loadConfig();
+
+        config -> readOnly( false );
+        config -> isTokenBinary( true );
+        config -> isTokenMultiProperties( false );
+        config -> urlPathTemplate( "/a?t={{$binaryToken}}" );
+
+        const auto service = AuthorizationServiceRest::create( om::copy( config ) );
+
+        std::pair< std::string, std::string > result;
+
+        UTF_CHECK_NO_THROW( result = pathAndContentFor( service, crlfToken ) );
+
+        UTF_REQUIRE_EQUAL(
+            result.first,
+            "/a?t=" + str::uriEncode(
+                SerializationUtils::base64Encode( crlfToken.c_str(), crlfToken.size() )
+                )
+            );
+
+        /*
+         * The CR and the LF really are in the token ...
+         */
+
+        UTF_REQUIRE( cpp::contains( crlfToken, std::string( "\r\n" ) ) );
+
+        /*
+         * ... they do not reach the request path ...
+         */
+
+        UTF_REQUIRE( std::string::npos == result.first.find( '\r' ) );
+        UTF_REQUIRE( std::string::npos == result.first.find( '\n' ) );
+
+        /*
+         * ... and nothing was dropped on the way, the encoding is what neutralised them
+         */
+
+        UTF_REQUIRE_EQUAL(
+            SerializationUtils::base64DecodeString( str::uriDecode( result.first.substr( 5U ) ) ),
+            crlfToken
+            );
+    }
+}
+
+/*
+ * The two responses below differ in every field, which is what makes a service instance that
+ * carried state across calls observable
+ */
+
+static const char* const g_principalResponseA =
+    "Status::2\nStatusCategory::5\nStatusMessage::ok\nSid::ID_1111\nGivenName::Ann\n"
+    "FamilyName::One\nEmail::ann@host\nTypeId::t1\n::tokenId::tokenA\n";
+
+static const char* const g_principalResponseB =
+    "Status::2\nStatusCategory::4\nStatusMessage::ok\nSid::ID_2222\nGivenName::Bob\n"
+    "FamilyName::Two\nEmail::bob@host\nTypeId::t2\n::tokenId::tokenB\n";
+
+UTF_AUTO_TEST_CASE( AuthorizationServiceRest_ExtractIsPerCallStateTests )
+{
+    using namespace bl;
+    using namespace bl::security;
+
+    /*
+     * A single service instance serves every authorization in a broker process, concurrently,
+     * so all of the mutable parsing state has to be per call; were the property map ever
+     * shared or cached across calls every extraction after the first would find the properties
+     * already found and would return the FIRST caller's principal - cross user authorization
+     * confusion which the suite would not notice
+     */
+
+    const auto service = AuthorizationServiceRest::create( loadConfig() );
+
+    const std::string tokenText( "tokenId=tokenId1;tokenProperty1=tokenPropertyValue1" );
+
+    const auto rotatedTokenText = []( SAA_in const om::ObjPtr< data::DataBlock >& token ) -> std::string
+    {
+        return std::string( token -> begin(), token -> end() );
+    };
+
+    const auto validateA = [ & ]( SAA_in const om::ObjPtr< SecurityPrincipal >& principal ) -> void
+    {
+        UTF_REQUIRE_EQUAL( principal -> secureIdentity(), std::string( "ID_1111" ) );
+        UTF_REQUIRE_EQUAL( principal -> givenName(), std::string( "Ann" ) );
+        UTF_REQUIRE_EQUAL( principal -> familyName(), std::string( "One" ) );
+        UTF_REQUIRE_EQUAL( principal -> email(), std::string( "ann@host" ) );
+        UTF_REQUIRE_EQUAL( principal -> typeId(), std::string( "t1" ) );
+
+        UTF_REQUIRE( principal -> authenticationToken() );
+
+        UTF_REQUIRE_EQUAL(
+            rotatedTokenText( principal -> authenticationToken() ),
+            std::string( "tokenId=tokenA" )
+            );
+    };
+
+    validateA( extractFromResponse( service, tokenText, g_principalResponseA ) );
+
+    /*
+     * The second response, on the very same instance - every field must be the second
+     * response's own
+     */
+
+    {
+        const auto principal = extractFromResponse( service, tokenText, g_principalResponseB );
+
+        UTF_REQUIRE_EQUAL( principal -> secureIdentity(), std::string( "ID_2222" ) );
+        UTF_REQUIRE_EQUAL( principal -> givenName(), std::string( "Bob" ) );
+        UTF_REQUIRE_EQUAL( principal -> familyName(), std::string( "Two" ) );
+        UTF_REQUIRE_EQUAL( principal -> email(), std::string( "bob@host" ) );
+        UTF_REQUIRE_EQUAL( principal -> typeId(), std::string( "t2" ) );
+
+        UTF_REQUIRE( principal -> authenticationToken() );
+
+        UTF_REQUIRE_EQUAL(
+            rotatedTokenText( principal -> authenticationToken() ),
+            std::string( "tokenId=tokenB" )
+            );
+    }
+
+    /*
+     * And back to the first response - the instance is stateless across calls in both
+     * directions, not merely in the forward one
+     */
+
+    validateA( extractFromResponse( service, tokenText, g_principalResponseA ) );
+
+    /*
+     * Within one response the FIRST match wins - the appended second 'Sid' line is skipped
+     * because the property has already been found
+     */
+
+    const auto principalWithTwoSids = extractFromResponse(
+        service,
+        tokenText,
+        std::string( g_principalResponseA ) + "Sid::ID_9999\n"
+        );
+
+    UTF_REQUIRE_EQUAL( principalWithTwoSids -> secureIdentity(), std::string( "ID_1111" ) );
+}
+
+UTF_AUTO_TEST_CASE( AuthorizationServiceRest_TokenShapeTests )
+{
+    using namespace bl;
+    using namespace bl::security;
+
+    /*
+     * The configuration selects one of three mutually exclusive token shapes; only the
+     * multi-properties one is reachable through the shared drivers, so the other two are
+     * exercised here
+     */
+
+    /*
+     * (1) The binary shape - the request carries base64( token bytes ) and the response's
+     * UpdatedBinaryToken is base64 decoded into a fresh data block, so the rotated token is
+     * arbitrary bytes, embedded NULs included
+     */
+
+    {
+        auto config = loadConfig();
+
+        config -> readOnly( false );
+        config -> isTokenBinary( true );
+        config -> isTokenMultiProperties( false );
+        config -> urlPathTemplate( "/authorize?t={{$binaryToken}}" );
+
+        const auto service = AuthorizationServiceRest::create( om::copy( config ) );
+
+        const std::string tokenBytes( "\x01\x00\xFE\xFF binary", 11U );
+        const std::string rotated( "\x00\x01\x02rot", 6U );
+
+        UTF_REQUIRE_EQUAL( tokenBytes.size(), 11U );
+        UTF_REQUIRE_EQUAL( rotated.size(), 6U );
+
+        const auto result = pathAndContentFor( service, tokenBytes );
+
+        /*
+         * Standard base64 emits '+', '/' and '=', which escapeForUrlPath percent encodes
+         */
+
+        UTF_REQUIRE_EQUAL(
+            result.first,
+            std::string( "/authorize?t=AQD%2B%2FyBiaW5hcnk%3D" )
+            );
+
+        UTF_REQUIRE_EQUAL(
+            result.first,
+            "/authorize?t=" + str::uriEncode(
+                SerializationUtils::base64Encode( tokenBytes.c_str(), tokenBytes.size() )
+                )
+            );
+
+        const auto principal = extractFromResponse(
+            service,
+            tokenBytes,
+            "Status::2\nSid::ID_B\nUpdatedBinaryToken::" +
+                SerializationUtils::base64Encode( rotated.c_str(), rotated.size() ) +
+                "\n"
+            );
+
+        UTF_REQUIRE_EQUAL( principal -> secureIdentity(), std::string( "ID_B" ) );
+
+        UTF_REQUIRE( principal -> authenticationToken() );
+
+        /*
+         * The embedded NUL survived and setSize( ... ) was given the decoded length - a
+         * reassembly through a std::string would have truncated at the first byte
+         */
+
+        UTF_REQUIRE_EQUAL( principal -> authenticationToken() -> size(), rotated.size() );
+
+        UTF_REQUIRE_EQUAL(
+            0,
+            std::memcmp(
+                principal -> authenticationToken() -> pv(),
+                rotated.c_str(),
+                rotated.size()
+                )
+            );
+    }
+
+    /*
+     * (2) The single text shape - the whole token is one variable and the response's
+     * UpdatedTextToken becomes the rotated token verbatim
+     */
+
+    {
+        auto config = loadConfig();
+
+        config -> readOnly( false );
+        config -> isTokenBinary( false );
+        config -> isTokenMultiProperties( false );
+        config -> urlPathTemplate( "/authorize?t={{$textToken}}" );
+
+        const auto service = AuthorizationServiceRest::create( om::copy( config ) );
+
+        const std::string tokenText( "opaque-token-value" );
+
+        const auto result = pathAndContentFor( service, tokenText );
+
+        /*
+         * The whole token is substituted (percent encoded - the hyphen is not in the set of
+         * characters str::uriEncode leaves alone) rather than exploded into properties
+         */
+
+        UTF_REQUIRE_EQUAL(
+            result.first,
+            std::string( "/authorize?t=opaque%2Dtoken%2Dvalue" )
+            );
+
+        /*
+         * The response carries a token property line as well; the token property branch is
+         * guarded by ( ! isTokenBinary() && isTokenMultiProperties() ), so it must not run
+         * here and the rotated token must reflect UpdatedTextToken only
+         */
+
+        const auto principal = extractFromResponse(
+            service,
+            tokenText,
+            "Status::2\nSid::ID_T\nUpdatedTextToken::next-token\n::tokenId::x\n"
+            );
+
+        UTF_REQUIRE_EQUAL( principal -> secureIdentity(), std::string( "ID_T" ) );
+
+        UTF_REQUIRE( principal -> authenticationToken() );
+
+        UTF_REQUIRE_EQUAL(
+            std::string(
+                principal -> authenticationToken() -> begin(),
+                principal -> authenticationToken() -> end()
+                ),
+            std::string( "next-token" )
+            );
+    }
+}
