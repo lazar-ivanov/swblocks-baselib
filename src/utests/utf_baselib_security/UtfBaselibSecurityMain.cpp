@@ -25,3 +25,4 @@
 #include "TestPemKeyFormats.h"
 #include "TestAuthorizationCacheImpl.h"
 #include "TestAuthorizationCacheRestImpl.h"
+#include "TestAuthorizationServiceRest.h"
