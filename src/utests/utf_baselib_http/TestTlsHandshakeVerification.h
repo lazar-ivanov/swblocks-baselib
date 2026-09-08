@@ -56,6 +56,7 @@ namespace utest
             std::string                                             errorString;
             std::string                                             message;
             std::string                                             subject;
+            std::string                                             url;
 
             VerifyInfo()
                 :
@@ -98,15 +99,114 @@ namespace utest
         };
 
         /**
+         * @brief Raises the global logging level to errors only for the duration of the scope
+         *
+         * Recording an endpoint whose certificate could not be verified is logged as a
+         * warning by design, and the test binaries route every warning to BOOST_ERROR
+         * (UtfMain.h:125), so a case which provokes one on purpose would otherwise fail on
+         * its own fixture. The level is global rather than thread local because the warning
+         * is emitted from the handshake handler, which runs on a thread pool thread
+         */
+
+        class SuppressExpectedWarningsScope
+        {
+            BL_NO_COPY_OR_MOVE( SuppressExpectedWarningsScope )
+
+        private:
+
+            const int                                               m_saved;
+
+        public:
+
+            SuppressExpectedWarningsScope()
+                :
+                m_saved( bl::Logging::setLevel( bl::Logging::LL_ERROR, true /* global */ ) )
+            {
+            }
+
+            ~SuppressExpectedWarningsScope() NOEXCEPT
+            {
+                BL_NOEXCEPT_BEGIN()
+
+                bl::Logging::setLevel( m_saved, true /* global */ );
+
+                BL_NOEXCEPT_END()
+            }
+        };
+
+        /**
+         * @brief The key under which the untrusted endpoints map records a peer
+         *
+         * This is AsioSslStreamWrapperT::endpointId(), i.e. the host name and the service
+         * name of the resolver query joined by a colon; operators consume it, so pinning it
+         * here is deliberate
+         */
+
+        inline std::string endpointIdOf( SAA_in const std::string& peerName )
+        {
+            return bl::resolveMessage(
+                BL_MSG()
+                    << peerName
+                    << ":"
+                    << test::UtfArgsParser::port()
+                );
+        }
+
+        /**
+         * @brief Fills 'info' from the untrusted endpoints entry of the given peer, if any
+         *
+         * The recorded message is exactly "SSL verify error: <code>; ['<text>']; [depth=<n>]",
+         * so the numeric verify error is recovered from its prefix
+         */
+
+        inline void readSoftFailedVerifyInfo(
+            SAA_in          const std::string&                      peerName,
+            SAA_out         VerifyInfo&                             info
+            )
+        {
+            using namespace bl;
+
+            const auto untrusted = crypto::CryptoBase::getUntrustedEndpointsInfo();
+
+            const auto pos = untrusted.find( endpointIdOf( peerName ) );
+
+            if( pos == untrusted.end() )
+            {
+                return;
+            }
+
+            info.present = true;
+            info.failed = true;
+            info.message = pos -> second;
+
+            const std::string prefix( "SSL verify error: " );
+
+            if( 0U == info.message.find( prefix ) )
+            {
+                const auto end = info.message.find( ';', prefix.size() );
+
+                if( end != std::string::npos )
+                {
+                    info.error = utils::lexical_cast< int >(
+                        info.message.substr( prefix.size(), end - prefix.size() )
+                        );
+                }
+            }
+        }
+
+        /**
          * @brief Performs one HTTPS GET against the local test server as the given peer name
          *
          * Returns true when the request succeeded; when it failed, the verification error info
-         * attached to the task exception (if any) is copied into 'info'
+         * attached to the task exception (if any) is copied into 'info'. When it succeeded only
+         * because untrusted certificates are allowed, 'info' is recovered from the untrusted
+         * endpoints map instead
          */
 
         inline bool attemptConnection(
             SAA_in          const std::string&                      peerName,
-            SAA_out         VerifyInfo&                             info
+            SAA_out         VerifyInfo&                             info,
+            SAA_in_opt      const bool                              allowUntrusted = false
             )
         {
             using namespace bl;
@@ -114,7 +214,7 @@ namespace utest
 
             RealVerifyCallbackScope realVerifyCallback;
 
-            UTF_REQUIRE( ! crypto::CryptoBase::allowUntrustedCertificates() );
+            UTF_REQUIRE( allowUntrusted == crypto::CryptoBase::allowUntrustedCertificates() );
 
             bool succeeded = false;
 
@@ -142,6 +242,15 @@ namespace utest
                     {
                         succeeded = true;
 
+                        /*
+                         * A handshake which only completed because untrusted certificates are
+                         * allowed leaves no exception behind, so the verification outcome can
+                         * only be read back from the untrusted endpoints map which
+                         * notifyOnSuccessfulHandshakeOrShutdown() wrote it into
+                         */
+
+                        readSoftFailedVerifyInfo( peerName, info );
+
                         return;
                     }
 
@@ -161,6 +270,18 @@ namespace utest
                                 << "':\n"
                                 << eh::diagnostic_information( e )
                             );
+
+                        /*
+                         * The URL is attached by chk2EnhanceException() on every enhanced task
+                         * exception, so it is read outside the verification specific block
+                         */
+
+                        const auto* url = eh::get_error_info< eh::errinfo_http_url >( e );
+
+                        if( url )
+                        {
+                            info.url = *url;
+                        }
 
                         const auto* failed = eh::get_error_info< eh::errinfo_ssl_is_verify_failed >( e );
 
@@ -247,6 +368,16 @@ UTF_AUTO_TEST_CASE( TlsHandshake_NameMismatchIsReportedThroughErrorInfo )
             UTF_REQUIRE_EQUAL( info.error, X509_V_ERR_HOSTNAME_MISMATCH );
             UTF_REQUIRE( ! info.errorString.empty() );
 #endif
+
+            /*
+             * SimpleHttpSslTaskT::getProtocol() is what puts the "https" scheme into the URL
+             * of every diagnostic built for an HTTPS request, and the task built above is a
+             * secure one, so its path must be redacted out of that URL as well. Neither fact
+             * is observable anywhere else in the suite
+             */
+
+            UTF_REQUIRE( 0U == info.url.find( "https://" ) );
+            UTF_REQUIRE( bl::cpp::contains( info.url, "[REDACTED]" ) );
         }
         );
 }
@@ -285,6 +416,132 @@ UTF_AUTO_TEST_CASE( TlsHandshake_UntrustedChainIsReportedThroughErrorInfo )
         test::UtfCrypto::getIpAddressServerKey()                /* privateKeyPem */,
         test::UtfCrypto::getIpAddressServerCertificate()        /* certificatePem */
         );
+}
+
+UTF_AUTO_TEST_CASE( TlsHandshake_AllowUntrustedRecordsAndClearsEndpointInfo )
+{
+    using namespace bl;
+    using namespace utest::tlshandshake;
+
+    /*
+     * The two cases above cover the fail closed default. This one covers the soft fail
+     * return of verifyCertificate() - "ok || allowUntrustedCertificates()" - and both arms
+     * of the bookkeeping notifyOnSuccessfulHandshakeOrShutdown() does on top of it: a chain
+     * which did not verify is recorded in the untrusted endpoints map, and one which did
+     * verify clears whatever was recorded for that endpoint before
+     */
+
+    /*
+     * Block A - the self signed IP certificate, which the case above proves fails closed,
+     * must now complete the handshake and be recorded as untrusted
+     */
+
+    utest::http::HttpServerHelpers::startHttpServerAndExecuteCallback< bl::httpserver::HttpSslServer >(
+        []() -> void
+        {
+            crypto::CryptoBase::allowUntrustedCertificates( true );
+
+            /*
+             * The flag is process global and attemptConnection() asserts on it, so restoring
+             * it is mandatory - without it every later case in this module would fail
+             */
+
+            BL_SCOPE_EXIT(
+                {
+                    crypto::CryptoBase::allowUntrustedCertificates( false );
+                }
+                );
+
+            /*
+             * Nothing may be recorded for the endpoint yet, otherwise the assertions below
+             * would pass on a stale entry rather than on the one this case provokes
+             */
+
+            {
+                const auto before = crypto::CryptoBase::getUntrustedEndpointsInfo();
+
+                UTF_REQUIRE( before.find( endpointIdOf( "127.0.0.1" ) ) == before.end() );
+            }
+
+            VerifyInfo info;
+
+            {
+                /*
+                 * Recording the soft failure below logs the expected warning
+                 */
+
+                SuppressExpectedWarningsScope suppressWarnings;
+
+                UTF_REQUIRE( attemptConnection( "127.0.0.1", info, true /* allowUntrusted */ ) );
+            }
+
+            /*
+             * The handshake succeeded, but the verification failure itself was still recorded
+             */
+
+            UTF_REQUIRE( info.present );
+            UTF_REQUIRE( info.failed );
+            UTF_REQUIRE_EQUAL( info.error, X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT );
+
+            const auto untrusted = crypto::CryptoBase::getUntrustedEndpointsInfo();
+
+            const auto pos = untrusted.find( endpointIdOf( "127.0.0.1" ) );
+
+            UTF_REQUIRE( pos != untrusted.end() );
+            UTF_REQUIRE( 0U == pos -> second.find( "SSL verify error: 18" ) );
+        },
+        nullptr                                                 /* backend */,
+        nullptr                                                 /* controlToken */,
+        test::UtfCrypto::getIpAddressServerKey()                /* privateKeyPem */,
+        test::UtfCrypto::getIpAddressServerCertificate()        /* certificatePem */
+        );
+
+    UTF_REQUIRE( ! crypto::CryptoBase::allowUntrustedCertificates() );
+
+    /*
+     * Block B - a connection which verifies cleanly must erase a stale entry, otherwise an
+     * endpoint which was once reported as untrusted would stay reported forever
+     */
+
+    {
+        /*
+         * Seeding the map logs the same expected warning as a real soft failure would
+         */
+
+        SuppressExpectedWarningsScope suppressWarnings;
+
+        crypto::CryptoBase::setUntrustedEndpointInfo(
+            endpointIdOf( "localhost" ),
+            std::string( "SSL verify error: 18; ['stale entry']; [depth=0]" )
+            );
+    }
+
+    {
+        const auto seeded = crypto::CryptoBase::getUntrustedEndpointsInfo();
+
+        UTF_REQUIRE( seeded.find( endpointIdOf( "localhost" ) ) != seeded.end() );
+    }
+
+    utest::http::HttpServerHelpers::startHttpServerAndExecuteCallback< bl::httpserver::HttpSslServer >(
+        []() -> void
+        {
+            VerifyInfo control;
+
+            UTF_REQUIRE( attemptConnection( "localhost", control ) );
+
+            const auto untrusted = crypto::CryptoBase::getUntrustedEndpointsInfo();
+
+            UTF_REQUIRE( untrusted.find( endpointIdOf( "localhost" ) ) == untrusted.end() );
+
+            /*
+             * Nothing was recorded for this endpoint, so the soft fail lookup found nothing
+             */
+
+            UTF_REQUIRE( ! control.present );
+        }
+        );
+
+    UTF_REQUIRE( ! crypto::CryptoBase::allowUntrustedCertificates() );
 }
 
 #endif /* __UTEST_TESTTLSHANDSHAKEVERIFICATION_H_ */

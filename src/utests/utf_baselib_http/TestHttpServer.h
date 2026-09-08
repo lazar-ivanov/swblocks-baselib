@@ -1343,11 +1343,133 @@ namespace
         }
 
         /**
+         * @brief Reads until the server closes the connection or until the timeout expires
+         *
+         * The read itself is deadline bounded - an async_read_some raced against a timer
+         * which cancels it - so a server which neither answers nor closes makes the caller
+         * fail on its own deadline instead of blocking forever inside read_some()
+         *
+         * Returns true if the peer closed within the timeout; whatever was received before
+         * that is appended to 'received' when it is not nullptr
+         */
+
+        bool readUntilClosedInternal(
+            SAA_in          const bl::time::time_duration&      timeout,
+            SAA_inout_opt   std::string*                        received
+            )
+        {
+            const auto started = bl::time::microsec_clock::universal_time();
+
+            for( ;; )
+            {
+                const auto elapsed = bl::time::microsec_clock::universal_time() - started;
+
+                if( elapsed >= timeout )
+                {
+                    return false;
+                }
+
+                char buffer[ 1024 ];
+
+                bl::eh::error_code readEc;
+                std::size_t bytesRead = 0U;
+
+                bl::asio::deadline_timer timer( m_ioService );
+
+                m_socket.async_read_some(
+                    bl::asio::buffer( buffer, sizeof( buffer ) ),
+                    [ &readEc, &bytesRead, &timer ](
+                        SAA_in      const bl::eh::error_code&   ec,
+                        SAA_in      const std::size_t           transferred
+                        ) -> void
+                    {
+                        readEc = ec;
+                        bytesRead = transferred;
+
+                        timer.cancel();
+                    }
+                    );
+
+                timer.expires_from_now( timeout - elapsed );
+
+                timer.async_wait(
+                    [ this ]( SAA_in const bl::eh::error_code& ec ) -> void
+                    {
+                        if( bl::asio::error::operation_aborted != ec )
+                        {
+                            bl::eh::error_code cancelEc;
+
+                            m_socket.cancel( cancelEc );
+                        }
+                    }
+                    );
+
+                #if ( ( BOOST_VERSION / 100 ) >= 1066 )
+                m_ioService.restart();
+                #else
+                m_ioService.reset();
+                #endif
+
+                m_ioService.run();
+
+                if( readEc )
+                {
+                    /*
+                     * operation_aborted means the deadline fired and cancelled the read, so
+                     * the connection is still open; anything else is the peer going away
+                     */
+
+                    return bl::asio::error::operation_aborted != readEc;
+                }
+
+                if( received )
+                {
+                    received -> append( buffer, bytesRead );
+                }
+            }
+        }
+
+        /**
          * @brief Waits until the server closes the connection and returns true if it did
          */
 
         bool waitUntilClosed( SAA_in const bl::time::time_duration& timeout )
         {
+            return readUntilClosedInternal( timeout, nullptr /* received */ );
+        }
+
+        /**
+         * @brief Reads whatever the server sends until it closes the connection
+         */
+
+        std::string readUntilClosed( SAA_in const bl::time::time_duration& timeout )
+        {
+            std::string received;
+
+            ( void ) readUntilClosedInternal( timeout, &received );
+
+            return received;
+        }
+
+        /**
+         * @brief Returns true if the connection was still open after the whole duration
+         *
+         * This is the form a negative expectation must use - it never waits longer than the
+         * duration it was given and it reports a peer which went away immediately
+         */
+
+        bool staysOpenFor( SAA_in const bl::time::time_duration& duration )
+        {
+            m_socket.non_blocking( true );
+
+            BL_SCOPE_EXIT(
+                {
+                    bl::eh::error_code ec;
+
+                    m_socket.non_blocking( false, ec );
+                }
+                );
+
             const auto started = bl::time::microsec_clock::universal_time();
 
             for( ;; )
@@ -1360,15 +1482,21 @@ namespace
 
                 BL_UNUSED( size );
 
-                if( ec )
+                if(
+                    ec &&
+                    bl::asio::error::would_block != ec &&
+                    bl::asio::error::try_again != ec
+                    )
+                {
+                    return false;
+                }
+
+                if( ( bl::time::microsec_clock::universal_time() - started ) > duration )
                 {
                     return true;
                 }
 
-                if( ( bl::time::microsec_clock::universal_time() - started ) > timeout )
-                {
-                    return false;
-                }
+                bl::os::sleep( bl::time::milliseconds( 100 ) );
             }
         }
 
@@ -1377,6 +1505,221 @@ namespace
             return m_socket.is_open();
         }
     };
+
+    /**
+     * @brief An HTTPS server whose connections get a short TLS handshake deadline
+     *
+     * setProtocolTimeout has no caller anywhere in the repository, so shortening the
+     * deadline this way is also the only exercise the setter gets
+     */
+
+    template
+    <
+        typename E = void
+    >
+    class TimeoutHttpSslServerT :
+        public bl::httpserver::HttpServerT< bl::tasks::TcpSslSocketAsyncBase >
+    {
+        BL_DECLARE_OBJECT_IMPL( TimeoutHttpSslServerT )
+
+    protected:
+
+        typedef bl::httpserver::HttpServerT< bl::tasks::TcpSslSocketAsyncBase >         base_type;
+
+        TimeoutHttpSslServerT(
+            SAA_in      bl::om::ObjPtr< bl::httpserver::ServerBackendProcessing >&&      backend,
+            SAA_in      const bl::om::ObjPtr< bl::tasks::TaskControlTokenRW >&           controlToken,
+            SAA_in      std::string&&                                                    host,
+            SAA_in      const unsigned short                                             port,
+            SAA_in      const std::string&                                               privateKeyPem,
+            SAA_in      const std::string&                                               certificatePem
+            )
+            :
+            base_type(
+                BL_PARAM_FWD( backend ),
+                controlToken,
+                BL_PARAM_FWD( host ),
+                port,
+                privateKeyPem,
+                certificatePem
+                )
+        {
+        }
+
+        virtual bl::om::ObjPtr< bl::tasks::Task > createProtocolHandshakeTask(
+            SAA_inout   bl::tasks::TcpSslSocketAsyncBase::stream_ref&&                   connectedStream
+            ) OVERRIDE
+        {
+            auto task = base_type::createProtocolHandshakeTask( BL_PARAM_FWD( connectedStream ) );
+
+            const auto handshakeTask =
+                bl::om::qi< bl::om::ObjectImpl< bl::tasks::TcpSslSocketAsyncBase > >( task );
+
+            handshakeTask -> setProtocolTimeout( bl::time::seconds( 3 ) );
+
+            return task;
+        }
+    };
+
+    typedef bl::om::ObjectImpl< TimeoutHttpSslServerT<> > TimeoutHttpSslServerImpl;
+
+    /**
+     * @brief A backend whose processing task fails in the four interesting ways
+     *
+     * The shared utest::http::TestHttpServerProcessingTask never throws - it always sets a
+     * status and returns - so the whole "the wrapped processing task failed" half of
+     * HttpServerConnection::continuationTask() is otherwise dead in this module
+     */
+
+    template
+    <
+        typename BACKENDSTATE
+    >
+    class TestFailingProcessingTask :
+        public bl::httpserver::HttpServerProcessingTaskDefault< BACKENDSTATE >
+    {
+        BL_DECLARE_OBJECT_IMPL( TestFailingProcessingTask )
+
+    protected:
+
+        typedef bl::httpserver::HttpServerProcessingTaskDefault< BACKENDSTATE >         base_type;
+
+        using base_type::m_request;
+
+        TestFailingProcessingTask(
+            SAA_in          bl::om::ObjPtr< bl::httpserver::Request >&&                  request,
+            SAA_in_opt      bl::om::ObjPtr< BACKENDSTATE >&&                             backendState = nullptr
+            )
+            :
+            base_type( BL_PARAM_FWD( request ), BL_PARAM_FWD( backendState ) )
+        {
+        }
+
+        virtual void requestProcessing() OVERRIDE
+        {
+            const auto& uri = m_request -> uri();
+
+            if( "/fail-aborted" == uri )
+            {
+                /*
+                 * This is exactly the shape rest::HttpServerBackendMessagingBridge produces
+                 * when it fails a conversation on its request timeout
+                 */
+
+                throw BL_EXCEPTION(
+                    bl::SystemException::create(
+                        bl::asio::error::operation_aborted,
+                        "Simulated backend cancellation"
+                        ),
+                    "Simulated backend cancellation"
+                    );
+            }
+
+            if( "/fail-timedout" == uri )
+            {
+                throw BL_EXCEPTION(
+                    bl::SystemException::create(
+                        bl::asio::error::timed_out,
+                        "Simulated backend timeout"
+                        ),
+                    "Simulated backend timeout"
+                    );
+            }
+
+            if( "/fail-eperm" == uri )
+            {
+                /*
+                 * A system_error carrying an unrelated code must NOT be mapped to a gateway
+                 * timeout - this is the sub-case which stops the mapper from being written
+                 * as "any system_error is a timeout"
+                 */
+
+                throw BL_EXCEPTION(
+                    bl::SystemException::create(
+                        bl::eh::errc::make_error_code( bl::eh::errc::permission_denied ),
+                        "Simulated backend permission failure"
+                        ),
+                    "Simulated backend permission failure"
+                    );
+            }
+
+            BL_THROW(
+                bl::UnexpectedException(),
+                BL_MSG()
+                    << "Simulated backend failure"
+                );
+        }
+    };
+
+    typedef bl::om::ObjectImpl
+    <
+        bl::httpserver::ServerBackendProcessingImplDefault
+        <
+            utest::http::DummyBackendStateImpl,
+            TestFailingProcessingTask
+        >
+    >
+    FailingBackendImpl;
+
+    /**
+     * @brief A backend which tries to smuggle a second header through a custom header value
+     */
+
+    template
+    <
+        typename BACKENDSTATE
+    >
+    class TestCustomHeaderProcessingTask :
+        public bl::httpserver::HttpServerProcessingTaskDefault< BACKENDSTATE >
+    {
+        BL_DECLARE_OBJECT_IMPL( TestCustomHeaderProcessingTask )
+
+    protected:
+
+        typedef bl::httpserver::HttpServerProcessingTaskDefault< BACKENDSTATE >         base_type;
+        typedef bl::http::Parameters::HttpStatusCode                                    HttpStatusCode;
+
+        using base_type::m_statusCode;
+        using base_type::m_request;
+        using base_type::m_response;
+        using base_type::m_responseHeaders;
+
+        TestCustomHeaderProcessingTask(
+            SAA_in          bl::om::ObjPtr< bl::httpserver::Request >&&                  request,
+            SAA_in_opt      bl::om::ObjPtr< BACKENDSTATE >&&                             backendState = nullptr
+            )
+            :
+            base_type( BL_PARAM_FWD( request ), BL_PARAM_FWD( backendState ) )
+        {
+        }
+
+        virtual void requestProcessing() OVERRIDE
+        {
+            m_responseHeaders.clear();
+
+            if( "/inject" == m_request -> uri() )
+            {
+                m_responseHeaders[ "X-Custom" ] = "value\r\nSet-Cookie: injected=1";
+                m_statusCode = HttpStatusCode::HTTP_SUCCESS_OK;
+
+                return;
+            }
+
+            m_responseHeaders[ "X-Custom" ] = "plain-value";
+            m_response = "ok";
+            m_statusCode = HttpStatusCode::HTTP_SUCCESS_OK;
+        }
+    };
+
+    typedef bl::om::ObjectImpl
+    <
+        bl::httpserver::ServerBackendProcessingImplDefault
+        <
+            utest::http::DummyBackendStateImpl,
+            TestCustomHeaderProcessingTask
+        >
+    >
+    CustomHeaderBackendImpl;
 
 } // __unnamed
 
@@ -1467,6 +1810,42 @@ UTF_AUTO_TEST_CASE( BaseLib_HttpServerConnectionTimeoutAndCapTest )
         [ & ]() -> void
         {
             UTF_REQUIRE_EQUAL( acceptor -> getMaxConnections(), 2U );
+            UTF_REQUIRE_EQUAL( acceptor -> getConnectionTimeout(), time::seconds( 3 ) );
+
+            {
+                /*
+                 * The deadline is an *inactivity* deadline, not a total request deadline -
+                 * scheduleRead() re-arms it before every read, so a client which keeps
+                 * sending is never interrupted however long its request takes. The drip
+                 * below feeds one body byte per second for eight seconds against a three
+                 * second deadline, so a regression which armed the timer once in
+                 * scheduleTask() instead would kill every slow or large upload at 60 s in
+                 * production while leaving the expiry sub-block below green
+                 */
+
+                RawTestConnection connection;
+
+                connection.connect();
+                connection.write( "PUT /request-uri HTTP/1.0\r\nContent-Length: 8\r\n\r\n" );
+
+                for( int i = 0; i < 8; ++i )
+                {
+                    connection.write( std::string( 1, static_cast< char >( '0' + i ) ) );
+
+                    os::sleep( time::seconds( 1 ) );
+                }
+
+                const auto response = connection.readUntilClosed( time::seconds( 30 ) );
+
+                UTF_REQUIRE( 0U == response.find( "HTTP/1.0 200 OK\r\n" ) );
+
+                /*
+                 * Which also proves end to end that the eight drip fed body bytes were all
+                 * accumulated before PARSED was reported
+                 */
+
+                UTF_REQUIRE( response.find( g_desiredResult ) != std::string::npos );
+            }
 
             {
                 /*
@@ -1508,6 +1887,285 @@ UTF_AUTO_TEST_CASE( BaseLib_HttpServerConnectionTimeoutAndCapTest )
         acceptor,
         test::UtfArgsParser::host()                     /* readinessHost */,
         test::UtfArgsParser::port()                     /* readinessPort */
+        );
+}
+
+UTF_AUTO_TEST_CASE( BaseLib_HttpServerConnectionTimeoutDisabledTest )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest::http;
+
+    test::MachineGlobalTestLock lock;
+
+    const auto backend =
+        ServerBackendProcessingImplTest::createInstance< httpserver::ServerBackendProcessing >();
+
+    const om::ObjPtr< TaskControlTokenRW > controlToken;
+
+    const auto acceptor = httpserver::HttpServer::createInstance<>(
+        om::copy( backend ),
+        controlToken,
+        "0.0.0.0"                                       /* host */,
+        test::UtfArgsParser::port(),
+        test::UtfCrypto::getDefaultServerKey(),
+        test::UtfCrypto::getDefaultServerCertificate()
+        );
+
+    /*
+     * scheduleTimer() returns before it arms anything when the duration is special or is not
+     * positive, so a zero timeout disables the deadline entirely. That is a documented API
+     * contract with no test at all, and dropping the guard would turn a zero duration - which
+     * is what every caller leaving the timeout on its time_duration() default has - into an
+     * immediate cancel of the connection
+     */
+
+    acceptor -> setConnectionTimeout( time::seconds( 0 ) );
+
+    UTF_REQUIRE_EQUAL( acceptor -> getConnectionTimeout(), time::seconds( 0 ) );
+
+    utest::TestTaskUtils::startAcceptorAndExecuteCallback(
+        [ & ]() -> void
+        {
+            RawTestConnection connection;
+
+            connection.connect();
+            connection.write( "GET /path HTTP/1.0\r\nHost: localhost\r\n" );
+
+            /*
+             * A negative expectation must be expressed with staysOpenFor, which never waits
+             * longer than the duration it was given
+             */
+
+            UTF_REQUIRE( connection.staysOpenFor( time::seconds( 8 ) ) );
+
+            UTF_REQUIRE( ! connection.waitUntilClosed( time::milliseconds( 500 ) ) );
+            UTF_REQUIRE( connection.isOpen() );
+        },
+        acceptor,
+        test::UtfArgsParser::host()                     /* readinessHost */,
+        test::UtfArgsParser::port()                     /* readinessPort */
+        );
+}
+
+UTF_AUTO_TEST_CASE( BaseLib_HttpSslServerProtocolHandshakeTimeoutTest )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest::http;
+
+    /*
+     * A peer which completes the TCP connect and then never sends its ClientHello would park
+     * a handshake task, an execution queue slot and a file descriptor for the lifetime of the
+     * server if the handshake deadline were not armed. The whole guard is dark today -
+     * setProtocolTimeout and getProtocolTimeout have zero callers repo wide
+     */
+
+    {
+        const auto probe = om::ObjectImpl< tasks::TcpSslSocketAsyncBase >::createInstance(
+            std::string( "t" )
+            );
+
+        UTF_REQUIRE_EQUAL(
+            probe -> getProtocolTimeout(),
+            time::seconds( tasks::TcpSslSocketAsyncBase::DEFAULT_PROTOCOL_TIMEOUT_IN_SECONDS )
+            );
+
+        probe -> setProtocolTimeout( time::seconds( 7 ) );
+
+        UTF_REQUIRE_EQUAL( probe -> getProtocolTimeout(), time::seconds( 7 ) );
+    }
+
+    test::MachineGlobalTestLock lock;
+
+    const auto backend =
+        ServerBackendProcessingImplTest::createInstance< httpserver::ServerBackendProcessing >();
+
+    const om::ObjPtr< TaskControlTokenRW > controlToken;
+
+    const auto acceptor = TimeoutHttpSslServerImpl::createInstance<>(
+        om::copy( backend ),
+        controlToken,
+        "0.0.0.0"                                       /* host */,
+        test::UtfArgsParser::port(),
+        test::UtfCrypto::getDefaultServerKey(),
+        test::UtfCrypto::getDefaultServerCertificate()
+        );
+
+    utest::TestTaskUtils::startAcceptorAndExecuteCallback(
+        [ & ]() -> void
+        {
+            RawTestConnection connection;
+
+            connection.connect();
+
+            /*
+             * Nothing is written, so the server side handshake never gets its ClientHello and
+             * only the deadline can tear it down. The acceptor shortened it to three seconds,
+             * so being closed well inside the thirty second ceiling is the assertion
+             */
+
+            UTF_REQUIRE( connection.waitUntilClosed( time::seconds( 30 ) ) );
+        },
+        acceptor,
+        test::UtfArgsParser::host()                     /* readinessHost */,
+        test::UtfArgsParser::port()                     /* readinessPort */
+        );
+}
+
+UTF_AUTO_TEST_CASE( BaseLib_HttpServerBackendFailureStatusTest )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest::http;
+
+    /*
+     * A failure of the processing stage is a failure of the server or of the backend behind
+     * it, not a bad request: continuationTask() maps a cancelled or a timed out backend to a
+     * gateway timeout and everything else to an internal server error. The shared test
+     * processing task never throws, so that whole half of continuationTask() is dead in this
+     * module - and collapsing the mapper to a single status, or losing its
+     * catch( eh::system_error& ) arm, would leave a REST gateway client unable to tell "the
+     * backend is broken" from "the backend was slow"
+     *
+     * All four requests share one server start so the acceptor warm up is paid once
+     */
+
+    HttpServerHelpers::startHttpServerAndExecuteCallback(
+        []() -> void
+        {
+            scheduleAndExecuteInParallel(
+                []( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+                {
+                    HttpServerHelpers::sendHttpRequestAndVerifyTheResult(
+                        eq,
+                        "/fail-plain"                                       /* uri */,
+                        "0123456789"                                        /* content */,
+                        true                                                /* exceptionExpected */,
+                        http::Parameters::HTTP_SERVER_ERROR_INTERNAL        /* statusCodeExpected */,
+                        "Simulated backend failure"                         /* contentExpected */
+                        );
+
+                    HttpServerHelpers::sendHttpRequestAndVerifyTheResult(
+                        eq,
+                        "/fail-aborted"                                     /* uri */,
+                        "0123456789"                                        /* content */,
+                        true                                                /* exceptionExpected */,
+                        http::Parameters::HTTP_SERVER_ERROR_GATEWAY_TIMEOUT /* statusCodeExpected */
+                        );
+
+                    HttpServerHelpers::sendHttpRequestAndVerifyTheResult(
+                        eq,
+                        "/fail-timedout"                                    /* uri */,
+                        "0123456789"                                        /* content */,
+                        true                                                /* exceptionExpected */,
+                        http::Parameters::HTTP_SERVER_ERROR_GATEWAY_TIMEOUT /* statusCodeExpected */
+                        );
+
+                    HttpServerHelpers::sendHttpRequestAndVerifyTheResult(
+                        eq,
+                        "/fail-eperm"                                       /* uri */,
+                        "0123456789"                                        /* content */,
+                        true                                                /* exceptionExpected */,
+                        http::Parameters::HTTP_SERVER_ERROR_INTERNAL        /* statusCodeExpected */
+                        );
+                });
+        },
+        FailingBackendImpl::createInstance< httpserver::ServerBackendProcessing >()
+        );
+}
+
+UTF_AUTO_TEST_CASE( BaseLib_HttpServerBackendResponseHeadersTest )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest::http;
+
+    /*
+     * chkCustomHeader is the only validation between a header a backend fills in through
+     * getResponseHeadersLvalue() and the socket. BaseLib_ResponseHeaderValidationTest proves
+     * it rejects a CRLF value on a directly constructed Response, but nothing connected that
+     * to a running server and nothing asserted what the client actually receives
+     *
+     * Both halves share one server start
+     */
+
+    HttpServerHelpers::startHttpServerAndExecuteCallback(
+        []() -> void
+        {
+            /*
+             * (a) The injected bytes must never reach the wire. Today the rejection
+             *     propagates out of continuationTask(), the execution queue attaches it to
+             *     the connection task as a normal task failure and no response is written at
+             *     all - so this asserts on the absence of the injected bytes rather than on a
+             *     status code, which is a product decision this test must not freeze
+             */
+
+            {
+                RawTestConnection connection;
+
+                connection.connect();
+                connection.write( "GET /inject HTTP/1.0\r\nHost: localhost\r\n\r\n" );
+
+                const auto started = time::microsec_clock::universal_time();
+
+                const auto bytes = connection.readUntilClosed( time::seconds( 30 ) );
+
+                const auto elapsed = time::microsec_clock::universal_time() - started;
+
+                UTF_REQUIRE( bytes.find( "injected=1" ) == std::string::npos );
+                UTF_REQUIRE( bytes.find( "Set-Cookie" ) == std::string::npos );
+
+                /*
+                 * The connection is dropped rather than left hanging - a hang here is the
+                 * regression, so returning only when the thirty second bound expired is a
+                 * failure and not a pass
+                 */
+
+                UTF_REQUIRE( elapsed < time::seconds( 20 ) );
+            }
+
+            /*
+             * (b) The acceptor was not wedged by the rejection and the connection slot was
+             *     released, and a legitimate backend header survives validation, serialization
+             *     and the client parse
+             */
+
+            scheduleAndExecuteInParallel(
+                []( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+                {
+                    eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+                    const auto taskImpl = SimpleHttpPutTaskImpl::createInstance(
+                        cpp::copy( test::UtfArgsParser::host() ),
+                        test::UtfArgsParser::port(),
+                        "/benign"                                       /* URI */,
+                        "0123456789"                                    /* content */
+                        );
+
+                    const auto task = om::qi< Task >( taskImpl );
+
+                    eq -> push_back( task );
+
+                    UTF_REQUIRE_NO_THROW( eq -> waitForSuccess( task, false /* cancel */ ) );
+
+                    UTF_REQUIRE_EQUAL( http::Parameters::HTTP_SUCCESS_OK, taskImpl -> getHttpStatus() );
+
+                    /*
+                     * doReadHeaders lower cases every non Set-Cookie header name before it
+                     * stores it, so the map must never be looked up with the original casing -
+                     * tryGetResponseHeader lower cases on behalf of the caller
+                     */
+
+                    const auto value = taskImpl -> tryGetResponseHeader( "X-Custom" );
+
+                    UTF_REQUIRE( value );
+                    UTF_REQUIRE_EQUAL( *value, "plain-value" );
+
+                    UTF_REQUIRE( eq -> isEmpty() );
+                });
+        },
+        CustomHeaderBackendImpl::createInstance< httpserver::ServerBackendProcessing >()
         );
 }
 

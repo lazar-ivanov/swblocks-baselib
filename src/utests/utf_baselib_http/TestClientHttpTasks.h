@@ -248,6 +248,62 @@ namespace
         }
     };
 
+    /**
+     * @brief A backend which echoes the request body back as the response body
+     *
+     * The shared utest::http::TestHttpServerProcessingTask never looks at the body it was
+     * sent, so a request whose body never left the client is indistinguishable from one
+     * which arrived intact. This backend is deliberately file local - the shared one is
+     * included by three test modules whose cases assert against its exact routing table
+     */
+
+    template
+    <
+        typename BACKENDSTATE
+    >
+    class EchoBodyProcessingTask :
+        public bl::httpserver::HttpServerProcessingTaskDefault< BACKENDSTATE >
+    {
+        BL_DECLARE_OBJECT_IMPL( EchoBodyProcessingTask )
+
+    protected:
+
+        typedef bl::httpserver::HttpServerProcessingTaskDefault< BACKENDSTATE >     base_type;
+        typedef bl::http::Parameters::HttpStatusCode                                HttpStatusCode;
+
+        using base_type::m_statusCode;
+        using base_type::m_request;
+        using base_type::m_response;
+        using base_type::m_responseHeaders;
+
+        EchoBodyProcessingTask(
+            SAA_in          bl::om::ObjPtr< bl::httpserver::Request >&&              request,
+            SAA_in_opt      bl::om::ObjPtr< BACKENDSTATE >&&                         backendState = nullptr
+            )
+            :
+            base_type( BL_PARAM_FWD( request ), BL_PARAM_FWD( backendState ) )
+        {
+        }
+
+        virtual void requestProcessing() OVERRIDE
+        {
+            m_response = m_request -> body();
+            m_statusCode = HttpStatusCode::HTTP_SUCCESS_OK;
+
+            m_responseHeaders.clear();
+        }
+    };
+
+    typedef bl::om::ObjectImpl
+    <
+        bl::httpserver::ServerBackendProcessingImplDefault
+        <
+            utest::http::DummyBackendStateImpl,
+            EchoBodyProcessingTask
+        >
+    >
+    EchoBackendImpl;
+
 } // __unnamed
 
 UTF_AUTO_TEST_CASE( Client_SimpleHttpTests )
@@ -751,83 +807,938 @@ UTF_AUTO_TEST_CASE( Client_SimpleHttpTruncatedResponseTests )
     }
 }
 
+UTF_AUTO_TEST_CASE( Client_SimpleHttpResponseSizeLimitTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    BL_LOG_MULTILINE(
+        Logging::debug(),
+        BL_MSG()
+            << "\n******************************** Starting test: Client_SimpleHttpResponseSizeLimitTests ********************************\n"
+        );
+
+    /*
+     * The client talks to servers it does not control, so it bounds both halves of what it
+     * will buffer: the status line plus the headers by the maximum_size of m_response, and
+     * the body by m_maxResponseSize. Neither bound is observed anywhere else - getMaxResponseSize
+     * and setMaxResponseSize have no caller at all in the repository
+     */
+
+    /*
+     * (1) The default body cap is what it claims to be and the setter round trips - this
+     *     needs no server at all
+     */
+
+    {
+        const auto taskImpl = SimpleHttpGetTaskImpl::createInstance(
+            std::string( "127.0.0.1" ),
+            static_cast< unsigned short >( 1U ),
+            "/probe"
+            );
+
+        UTF_REQUIRE_EQUAL( taskImpl -> getMaxResponseSize(), static_cast< std::size_t >( 1U ) << 26 );
+
+        taskImpl -> setMaxResponseSize( 4096U );
+
+        UTF_REQUIRE_EQUAL( taskImpl -> getMaxResponseSize(), static_cast< std::size_t >( 4096U ) );
+    }
+
+    /*
+     * (2) A body which exceeds the cap is rejected before it is handed to the caller
+     */
+
+    {
+        RawHttpResponder responder(
+            RawHttpResponder::makeResponse(
+                "HTTP/1.0 200 OK",
+                { "Content-Type: text/plain", "Content-Length: 4096" },
+                std::string( 4096U, 'x' )
+                )
+            );
+
+        scheduleAndExecuteInParallel(
+            [ &responder ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+            {
+                eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+                const auto taskImpl = SimpleHttpGetTaskImpl::createInstance(
+                    std::string( "127.0.0.1" ),
+                    responder.port(),
+                    "/probe"
+                    );
+
+                taskImpl -> setTimeout( time::seconds( 60 ) );
+                taskImpl -> setMaxResponseSize( 1024U );
+
+                const auto task = om::qi< Task >( taskImpl );
+
+                eq -> push_back( task );
+
+                UTF_REQUIRE_THROW_MESSAGE(
+                    eq -> waitForSuccess( task ),
+                    bl::UnexpectedException,
+                    "The HTTP response body is larger than the maximum of 1024 bytes"
+                    );
+
+                UTF_REQUIRE( taskImpl -> isFailed() );
+                UTF_REQUIRE( taskImpl -> getResponse().empty() );
+
+                /*
+                 * The cap is enforced with BL_CHK_USER_FRIENDLY, so the message may be shown
+                 * to an end user as it is; losing that flag would bury it behind the generic
+                 * "unexpected error" text
+                 */
+
+                try
+                {
+                    cpp::safeRethrowException( taskImpl -> exception() );
+
+                    UTF_FAIL( "An oversized HTTP response body must be rejected" );
+                }
+                catch( bl::UnexpectedException& e )
+                {
+                    UTF_REQUIRE( nullptr != eh::get_error_info< eh::errinfo_is_user_friendly >( e ) );
+                }
+
+                UTF_REQUIRE( eq -> isEmpty() );
+            });
+    }
+
+    /*
+     * (3) A server which never terminates its headers cannot make the client buffer without
+     *     limit - the bounded m_response makes async_read_until fail with not_found once the
+     *     65536 byte bound is reached. The 70 KiB below is comfortably past it and is sent
+     *     after the status line, which is parsed normally
+     */
+
+    {
+        RawHttpResponder responder(
+            std::string( "HTTP/1.0 200 OK\r\n" ) + std::string( 70U * 1024U, 'a' )
+            );
+
+        scheduleAndExecuteInParallel(
+            [ &responder ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+            {
+                eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+                const auto taskImpl = SimpleHttpGetTaskImpl::createInstance(
+                    std::string( "127.0.0.1" ),
+                    responder.port(),
+                    "/probe"
+                    );
+
+                taskImpl -> setTimeout( time::seconds( 60 ) );
+
+                const auto task = om::qi< Task >( taskImpl );
+
+                eq -> push_back( task );
+
+                ( void ) eq -> pop( true );
+
+                UTF_REQUIRE( taskImpl -> isFailed() );
+                UTF_REQUIRE( nullptr != taskImpl -> exception() );
+
+                try
+                {
+                    cpp::safeRethrowException( taskImpl -> exception() );
+
+                    UTF_FAIL( "An unterminated HTTP header block must be rejected" );
+                }
+                catch( eh::system_error& e )
+                {
+                    UTF_REQUIRE( e.code() == bl::asio::error::not_found );
+                }
+
+                /*
+                 * The status line was consumed before the header flood started
+                 */
+
+                UTF_REQUIRE_EQUAL( 200U, taskImpl -> getHttpStatus() );
+                UTF_REQUIRE( taskImpl -> getResponse().empty() );
+
+                UTF_REQUIRE( eq -> isEmpty() );
+            });
+    }
+}
+
+UTF_AUTO_TEST_CASE( Client_SimpleHttpContentLengthValidationTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    BL_LOG_MULTILINE(
+        Logging::debug(),
+        BL_MSG()
+            << "\n******************************** Starting test: Client_SimpleHttpContentLengthValidationTests ********************************\n"
+        );
+
+    /*
+     * std::stoul( "-1" ) returns SIZE_MAX by wraparound and std::stoul( "12abc" ) returns 12,
+     * so a Content-Length which is not a plain unsigned number must be rejected explicitly
+     * rather than cast. The two failure modes deliberately produce different exception types:
+     * the sign / emptiness guard goes through createException<>() and is enhanced, while a
+     * value the cast cannot consume throws bad_lexical_cast, which reaches the task through
+     * the catch( std::exception& ) arm and is not
+     */
+
+    const auto fnRunCase = [](
+        SAA_in      const std::string&      headerValue,
+        SAA_in      const bool              isUnexpectedException
+        )
+        -> void
+    {
+        RawHttpResponder responder(
+            RawHttpResponder::makeResponse(
+                "HTTP/1.0 200 OK",
+                {
+                    "Content-Type: text/plain",
+                    std::string( "Content-Length: " ) + headerValue
+                },
+                "abcdefghij"
+                )
+            );
+
+        scheduleAndExecuteInParallel(
+            [ &responder, &headerValue, isUnexpectedException ](
+                SAA_in const om::ObjPtr< ExecutionQueue >& eq
+                ) -> void
+            {
+                eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+                const auto taskImpl = SimpleHttpGetTaskImpl::createInstance(
+                    std::string( "127.0.0.1" ),
+                    responder.port(),
+                    "/probe"
+                    );
+
+                taskImpl -> setTimeout( time::seconds( 60 ) );
+
+                const auto task = om::qi< Task >( taskImpl );
+
+                eq -> push_back( task );
+
+                if( isUnexpectedException )
+                {
+                    UTF_REQUIRE_THROW_MESSAGE(
+                        eq -> waitForSuccess( task ),
+                        bl::UnexpectedException,
+                        "returned invalid response"
+                        );
+                }
+                else
+                {
+                    ( void ) eq -> pop( true );
+
+                    UTF_REQUIRE_THROW(
+                        cpp::safeRethrowException( taskImpl -> exception() ),
+                        utils::bad_lexical_cast
+                        );
+                }
+
+                UTF_REQUIRE( taskImpl -> isFailed() );
+                UTF_REQUIRE( nullptr != taskImpl -> exception() );
+                UTF_REQUIRE( taskImpl -> getResponse().empty() );
+
+                try
+                {
+                    cpp::safeRethrowException( taskImpl -> exception() );
+
+                    UTF_FAIL( "An invalid Content-Length header must be rejected" );
+                }
+                catch( std::exception& e )
+                {
+                    /*
+                     * Both paths end up enhanced, but for different reasons: the guard throws
+                     * through createException<>(), which calls chk2EnhanceException() itself,
+                     * while boost::lexical_cast raises its bad_lexical_cast through
+                     * boost::throw_exception() - so what is actually thrown is a
+                     * wrapexcept< bad_lexical_cast >, which IS a boost::exception and is
+                     * therefore picked up by the catch( bl::eh::exception& ) arm of
+                     * BL_TASKS_HANDLER_END_IMPL rather than by its catch( std::exception& ) one
+                     */
+
+                    UTF_REQUIRE( nullptr != eh::get_error_info< eh::errinfo_http_url >( e ) );
+
+                    const std::string message( e.what() );
+
+                    if( isUnexpectedException )
+                    {
+                        UTF_REQUIRE( cpp::contains( message, "returned invalid response" ) );
+
+                        if( ! headerValue.empty() )
+                        {
+                            /*
+                             * The offending value is echoed back, which is what makes a
+                             * misbehaving server diagnosable from the client side
+                             */
+
+                            UTF_REQUIRE( cpp::contains( message, headerValue ) );
+                        }
+                    }
+                    else
+                    {
+                        /*
+                         * The guard did not fire here - the cast is what rejected the value
+                         */
+
+                        UTF_REQUIRE( ! cpp::contains( message, "returned invalid response" ) );
+                    }
+                }
+
+                UTF_REQUIRE( eq -> isEmpty() );
+            });
+    };
+
+    /*
+     * A negative value, an explicitly signed value and an empty value are caught by the guard;
+     * trailing garbage and a value past std::size_t are caught by the cast
+     */
+
+    fnRunCase( "-1", true /* isUnexpectedException */ );
+    fnRunCase( "+10", true /* isUnexpectedException */ );
+    fnRunCase( str::empty(), true /* isUnexpectedException */ );
+    fnRunCase( "12abc", false /* isUnexpectedException */ );
+    fnRunCase( "99999999999999999999999", false /* isUnexpectedException */ );
+}
+
+UTF_AUTO_TEST_CASE( Client_SimpleHttpStatusLineParsingTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    BL_LOG_MULTILINE(
+        Logging::debug(),
+        BL_MSG()
+            << "\n******************************** Starting test: Client_SimpleHttpStatusLineParsingTests ********************************\n"
+        );
+
+    /*
+     * doReadStatus applies three guards to the status line - the version token must start with
+     * "HTTP/", the status must parse and be non-zero, and the reason phrase must be non-empty.
+     * The first one is what stops the client from parsing an SSH banner or any other TCP
+     * service as an HTTP response, which is the first thing that happens when a client is
+     * pointed at the wrong port
+     */
+
+    const auto fnRunInvalidCase = [](
+        SAA_in      const std::string&      rawResponse,
+        SAA_in      const std::string&      expectedInMessage
+        )
+        -> void
+    {
+        RawHttpResponder responder( cpp::copy( rawResponse ) );
+
+        scheduleAndExecuteInParallel(
+            [ &responder, &expectedInMessage ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+            {
+                eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+                const auto taskImpl = SimpleHttpGetTaskImpl::createInstance(
+                    std::string( "127.0.0.1" ),
+                    responder.port(),
+                    "/probe"
+                    );
+
+                taskImpl -> setTimeout( time::seconds( 60 ) );
+
+                const auto task = om::qi< Task >( taskImpl );
+
+                eq -> push_back( task );
+
+                UTF_REQUIRE_THROW_MESSAGE(
+                    eq -> waitForSuccess( task ),
+                    bl::UnexpectedException,
+                    "returned invalid response"
+                    );
+
+                /*
+                 * m_httpStatus is only assigned after all three guards pass
+                 */
+
+                UTF_REQUIRE_EQUAL(
+                    static_cast< unsigned int >( http::Parameters::HTTP_STATUS_UNDEFINED ),
+                    taskImpl -> getHttpStatus()
+                    );
+
+                if( ! expectedInMessage.empty() )
+                {
+                    try
+                    {
+                        cpp::safeRethrowException( taskImpl -> exception() );
+
+                        UTF_FAIL( "An invalid HTTP status line must be rejected" );
+                    }
+                    catch( bl::UnexpectedException& e )
+                    {
+                        UTF_REQUIRE( cpp::contains( std::string( e.what() ), expectedInMessage ) );
+                    }
+                }
+
+                UTF_REQUIRE( eq -> isEmpty() );
+            });
+    };
+
+    /*
+     * (1) Not HTTP at all - the offending token is reported so a wrong-port misconfiguration
+     *     is diagnosable
+     */
+
+    fnRunInvalidCase( "SSH-2.0-OpenSSH_9.6\r\n\r\n", "SSH-2.0-OpenSSH_9.6" );
+
+    /*
+     * (2) A zero status and (3) a status which does not parse both fail the second guard
+     */
+
+    fnRunInvalidCase( "HTTP/1.0 0 Zero\r\n\r\n", str::empty() );
+    fnRunInvalidCase( "HTTP/1.0 abc Bad\r\n\r\n", str::empty() );
+
+    /*
+     * (4) The line below deliberately ends the status line with a bare LF rather than CRLF.
+     *     async_read_until( ..., "\r\n" ) otherwise guarantees that std::getline leaves at
+     *     least a "\r" in the reason phrase, so this is the only way to reach the third
+     *     guard - do not "fix" the \n into \r\n, that would silently drop the coverage
+     */
+
+    fnRunInvalidCase( "HTTP/1.0 200\n\r\n\r\n", str::empty() );
+
+    /*
+     * (5) The version guard only checks the "HTTP/" prefix, so 1.1 is accepted
+     */
+
+    {
+        RawHttpResponder responder(
+            RawHttpResponder::makeResponse(
+                "HTTP/1.1 200 OK",
+                { "Content-Length: 2" },
+                "ok"
+                )
+            );
+
+        scheduleAndExecuteInParallel(
+            [ &responder ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+            {
+                eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+                const auto taskImpl = SimpleHttpGetTaskImpl::createInstance(
+                    std::string( "127.0.0.1" ),
+                    responder.port(),
+                    "/probe"
+                    );
+
+                taskImpl -> setTimeout( time::seconds( 60 ) );
+
+                const auto task = om::qi< Task >( taskImpl );
+
+                eq -> push_back( task );
+
+                UTF_REQUIRE_NO_THROW( eq -> waitForSuccess( task ) );
+
+                UTF_REQUIRE_EQUAL( 200U, taskImpl -> getHttpStatus() );
+                UTF_REQUIRE_EQUAL( taskImpl -> getResponse(), "ok" );
+
+                UTF_REQUIRE( eq -> isEmpty() );
+            });
+    }
+
+    /*
+     * (6) The status is not range checked to three digits - it is carried through as it is
+     *     and reaches errinfo_http_status_code. This documents the behavior rather than
+     *     endorsing it
+     */
+
+    {
+        RawHttpResponder responder(
+            RawHttpResponder::makeResponse(
+                "HTTP/1.0 99999 Weird",
+                { "Content-Length: 2" },
+                "ok"
+                )
+            );
+
+        scheduleAndExecuteInParallel(
+            [ &responder ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+            {
+                eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+                const auto taskImpl = SimpleHttpGetTaskImpl::createInstance(
+                    std::string( "127.0.0.1" ),
+                    responder.port(),
+                    "/probe"
+                    );
+
+                taskImpl -> setTimeout( time::seconds( 60 ) );
+
+                const auto task = om::qi< Task >( taskImpl );
+
+                eq -> push_back( task );
+
+                UTF_REQUIRE_THROW( eq -> waitForSuccess( task ), bl::HttpException );
+
+                UTF_REQUIRE_EQUAL( 99999U, taskImpl -> getHttpStatus() );
+
+                UTF_REQUIRE( eq -> isEmpty() );
+            });
+    }
+}
+
+UTF_AUTO_TEST_CASE( Client_SimpleHttpSecureModeRedactionTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    BL_LOG_MULTILINE(
+        Logging::debug(),
+        BL_MSG()
+            << "\n******************************** Starting test: Client_SimpleHttpSecureModeRedactionTests ********************************\n"
+        );
+
+    /*
+     * m_isSecureMode gates four independent redactions - the path inside createUrl(), the
+     * offending fragment inside chkHttpResponse(), and both the response header dump and the
+     * whole request details block inside chk2EnhanceException(). bl-tool turns secure mode on
+     * for exactly the requests which carry credentials, so inverting or dropping any of the
+     * four ternaries leaks a cookie bearing URL, the request body and the response body into
+     * a debug log. Every negative assertion below is paired with the same lookup against the
+     * non-secure form, so a needle which simply stopped being emitted cannot make it pass
+     */
+
+    struct RedactionInfo
+    {
+        unsigned short                                  port;
+        std::string                                     url;
+        std::string                                     what;
+        bool                                            hasDetails;
+        std::string                                     details;
+        bool                                            hasHeaders;
+        std::string                                     headers;
+
+        RedactionInfo()
+            :
+            port( 0U ),
+            hasDetails( false ),
+            hasHeaders( false )
+        {
+        }
+    };
+
+    const auto fnRunCase = [](
+        SAA_in      const std::string&      rawResponse,
+        SAA_in      const bool              isSecureMode
+        )
+        -> RedactionInfo
+    {
+        RedactionInfo result;
+
+        RawHttpResponder responder( cpp::copy( rawResponse ) );
+
+        result.port = responder.port();
+
+        scheduleAndExecuteInParallel(
+            [ &responder, isSecureMode, &result ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+            {
+                eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+                /*
+                 * A POST so that m_contentIn is non-empty and can be observed in the dump
+                 */
+
+                const auto taskImpl = SimpleHttpPostTaskImpl::createInstance(
+                    std::string( "127.0.0.1" ),
+                    responder.port(),
+                    "/secret-path",
+                    "secret-body"
+                    );
+
+                taskImpl -> setTimeout( time::seconds( 60 ) );
+
+                if( isSecureMode )
+                {
+                    taskImpl -> isSecureMode( true );
+                }
+
+                UTF_REQUIRE_EQUAL( taskImpl -> isSecureMode(), isSecureMode );
+
+                const auto task = om::qi< Task >( taskImpl );
+
+                eq -> push_back( task );
+
+                ( void ) eq -> pop( true );
+
+                UTF_REQUIRE( taskImpl -> isFailed() );
+                UTF_REQUIRE( nullptr != taskImpl -> exception() );
+
+                try
+                {
+                    cpp::safeRethrowException( taskImpl -> exception() );
+
+                    UTF_FAIL( "The request must fail so that an enhanced exception is built" );
+                }
+                catch( std::exception& e )
+                {
+                    result.what = e.what();
+
+                    const auto* url = eh::get_error_info< eh::errinfo_http_url >( e );
+
+                    UTF_REQUIRE( nullptr != url );
+
+                    result.url = *url;
+
+                    const auto* details = eh::get_error_info< eh::errinfo_http_request_details >( e );
+
+                    if( details )
+                    {
+                        result.hasDetails = true;
+                        result.details = *details;
+                    }
+
+                    const auto* headers = eh::get_error_info< eh::errinfo_http_response_headers >( e );
+
+                    if( headers )
+                    {
+                        result.hasHeaders = true;
+                        result.headers = *headers;
+                    }
+                }
+
+                UTF_REQUIRE( eq -> isEmpty() );
+            });
+
+        return result;
+    };
+
+    /*
+     * A malformed status line makes both chkHttpResponse() and chk2EnhanceException() run
+     */
+
+    const std::string malformedResponse( "NOT-HTTP garbage\r\n\r\n" );
+
+    /*
+     * A valid header block with a non-200 status, so that the exception is built only after
+     * doReadHeaders() has populated m_responseHeaders
+     */
+
+    const auto errorResponse = RawHttpResponder::makeResponse(
+        "HTTP/1.0 404 Not Found",
+        { "Content-Type: text/plain", "Content-Length: 5" },
+        "error"
+        );
+
+    /*
+     * (1) The non-secure control - everything is reported
+     */
+
+    {
+        const auto info = fnRunCase( malformedResponse, false /* isSecureMode */ );
+
+        UTF_REQUIRE_EQUAL(
+            info.url,
+            "http://127.0.0.1:" + utils::lexical_cast< std::string >( info.port ) + "/secret-path"
+            );
+
+        UTF_REQUIRE( info.hasDetails );
+        UTF_REQUIRE( cpp::contains( info.details, "HTTP action: POST" ) );
+        UTF_REQUIRE( cpp::contains( info.details, "/secret-path" ) );
+        UTF_REQUIRE( cpp::contains( info.details, "secret-body" ) );
+
+        UTF_REQUIRE( cpp::contains( info.what, "NOT-HTTP" ) );
+    }
+
+    /*
+     * (2) The same request in secure mode - the host and the port are deliberately kept, the
+     *     path, the request details and the offending response fragment are not
+     */
+
+    {
+        const auto info = fnRunCase( malformedResponse, true /* isSecureMode */ );
+
+        UTF_REQUIRE_EQUAL(
+            info.url,
+            "http://127.0.0.1:" + utils::lexical_cast< std::string >( info.port ) + "[REDACTED]"
+            );
+
+        UTF_REQUIRE( info.hasDetails );
+        UTF_REQUIRE_EQUAL( info.details, "[REDACTED]" );
+        UTF_REQUIRE( ! cpp::contains( info.details, "secret-body" ) );
+        UTF_REQUIRE( ! cpp::contains( info.details, "/secret-path" ) );
+
+        UTF_REQUIRE( ! cpp::contains( info.what, "NOT-HTTP" ) );
+        UTF_REQUIRE( cpp::contains( info.what, "[REDACTED]" ) );
+    }
+
+    /*
+     * (3) The response header dump. It is driven by errorResponseHeaderNamesLvalue(), a
+     *     process global which is empty by default and which has no caller anywhere in the
+     *     repository - so with it left alone no errinfo_http_response_headers is attached at
+     *     all in the non-secure case
+     */
+
+    {
+        const auto info = fnRunCase( errorResponse, false /* isSecureMode */ );
+
+        UTF_REQUIRE( ! info.hasHeaders );
+    }
+
+    {
+        UTF_REQUIRE( http::Parameters::errorResponseHeaderNamesLvalue().empty() );
+
+        http::Parameters::errorResponseHeaderNamesLvalue().push_back( "content-type" );
+
+        /*
+         * The vector is process global, so restoring it is mandatory - every later case in
+         * this binary shares it
+         */
+
+        BL_SCOPE_EXIT(
+            {
+                http::Parameters::errorResponseHeaderNamesLvalue().clear();
+            }
+            );
+
+        {
+            const auto info = fnRunCase( errorResponse, false /* isSecureMode */ );
+
+            UTF_REQUIRE( info.hasHeaders );
+            UTF_REQUIRE( cpp::contains( info.headers, "content-type: " ) );
+            UTF_REQUIRE( cpp::contains( info.headers, "text/plain" ) );
+        }
+
+        {
+            const auto info = fnRunCase( errorResponse, true /* isSecureMode */ );
+
+            UTF_REQUIRE( info.hasHeaders );
+            UTF_REQUIRE_EQUAL( info.headers, "[REDACTED]" );
+            UTF_REQUIRE( ! cpp::contains( info.headers, "text/plain" ) );
+        }
+    }
+
+    UTF_REQUIRE( http::Parameters::errorResponseHeaderNamesLvalue().empty() );
+}
+
 UTF_AUTO_TEST_CASE( Client_SimpleHttpTimeoutTests )
 {
     /*
-     * Manual HTTP timeout test case. Works on Linux only, unless you use a
-     * netcat or similar port for Windows. Follow these steps in order to run it:
+     * The same scenario can also be driven by hand against a netcat instance, which is what
+     * this case used to require before it was made unconditional. Works on Linux only, unless
+     * you use a netcat or similar port for Windows:
      * - Start local netcat instance and pass to it few headers required to be dumped as part of the exception:
      *     echo -e "HTTP/1.0 500 ERROR\r\nrequestId: 123\r\nVersion: 1.0\r\nline1\r\n\line2\r\n\r\n" | nc -l 4545 -q 10
-     * - Pass --is-client argument to the utest binary:
-     *     ./utf-baselib-http --log_level=message --run_test=Client_SimpleHttpTimeoutTests --is-client
-     * - After the test finished netcat instance will exit. Run another one to repeat the test
+     * - Point a SimpleHttpGetTaskImpl at localhost:4545
      */
 
     using namespace bl;
-    using namespace bl::data;
     using namespace bl::tasks;
-    using namespace bl::transfer;
 
-    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (manual run test)" );
-
-    utest::http::HttpServerHelpers::startHttpServerAndExecuteCallback(
-        []() -> void
-        {
-            BL_LOG_MULTILINE(
-                Logging::debug(),
-                BL_MSG()
-                    << "\n******************************** Starting test: Client_SimpleHttpTimeoutTests ********************************\n"
-                );
-
-            scheduleAndExecuteInParallel(
-                []( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
-                {
-                    eq -> setOptions( ExecutionQueue::OptionKeepAll );
-
-                    const auto stask = SimpleHttpGetTaskImpl::createInstance(
-                        "localhost",
-                        4545,
-                        "/invalid_page"
-                        );
-
-                    stask -> setTimeout( time::seconds( 5 ) );
-
-                    const auto task = om::qi< Task >( stask );
-                    UTF_REQUIRE_EQUAL( Task::Created, task -> getState() );
-
-                    eq -> push_back( task );
-                    const auto executedTask = eq -> pop( true );
-
-                    UTF_REQUIRE( executedTask );
-                    UTF_REQUIRE( om::areEqual( task, executedTask ) );
-                    UTF_REQUIRE_EQUAL( Task::Completed, task -> getState() );
-                    UTF_REQUIRE( eq -> isEmpty() );
-
-                    // Check the response code is not 200 the request has failed
-                    UTF_REQUIRE( stask -> isFailed() );
-                    UTF_REQUIRE( stask -> isTimedOut() );
-                    UTF_REQUIRE( nullptr != stask -> exception() );
-                    UTF_REQUIRE( 200 != stask -> getHttpStatus() );
-
-                    UTF_REQUIRE( ! stask -> getRemoteEndpointId().empty() );
-
-                    BL_LOG_MULTILINE( Logging::debug(), BL_MSG() << "\n******* begin HTTP task timeout exception ******* \n" );
-                    try
-                    {
-                        cpp::safeRethrowException( stask -> exception() );
-                    }
-                    catch( std::exception& e )
-                    {
-                        BL_LOG_MULTILINE( Logging::debug(), BL_MSG() << eh::diagnostic_information( e ) );
-
-                        const auto* headers = bl::eh::get_error_info< bl::eh::errinfo_http_response_headers >( e );
-                        UTF_REQUIRE( headers );
-                        UTF_REQUIRE( ! headers -> empty() );
-                    }
-                    BL_LOG_MULTILINE( Logging::debug(), BL_MSG() << "\n******* end HTTP task timeout exception ******* \n" );
-                });
-        }
+    BL_LOG_MULTILINE(
+        Logging::debug(),
+        BL_MSG()
+            << "\n******************************** Starting test: Client_SimpleHttpTimeoutTests ********************************\n"
         );
+
+    /*
+     * m_timeout is a whole request deadline - it is armed exactly once, from
+     * continueAfterConnected(), and is never re-armed by progress. It used to be re-armed at
+     * the end of doRequest, doReadStatus, doReadHeaders and doReadContent, which made it an
+     * inactivity deadline instead and let a drip feeding server hold a request open forever
+     *
+     * --timeout-in-seconds rewrites http::Parameters::timeoutInSecondsGet/Other globally, so
+     * every sub-case below sets the per-task timeout explicitly rather than relying on the
+     * default
+     */
+
+    /*
+     * (1) The deadline fires against a server which accepts the request and then stalls
+     */
+
+    {
+        RawHttpResponder responder(
+            RawHttpResponder::makeResponse(
+                "HTTP/1.0 200 OK",
+                { "Content-Type: text/plain", "Content-Length: 2" },
+                "ok"
+                ),
+            time::seconds( 6 )                              /* delayBeforeResponse */
+            );
+
+        scheduleAndExecuteInParallel(
+            [ &responder ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+            {
+                eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+                const auto taskImpl = SimpleHttpGetTaskImpl::createInstance(
+                    std::string( "127.0.0.1" ),
+                    responder.port(),
+                    "/probe"
+                    );
+
+                taskImpl -> setTimeout( time::seconds( 2 ) );
+
+                UTF_REQUIRE_EQUAL( taskImpl -> getTimeout(), time::seconds( 2 ) );
+
+                const auto task = om::qi< Task >( taskImpl );
+
+                eq -> push_back( task );
+
+                const auto started = time::microsec_clock::universal_time();
+
+                UTF_REQUIRE_THROW_MESSAGE(
+                    eq -> waitForSuccess( task ),
+                    bl::TimeoutException,
+                    "has timed out"
+                    );
+
+                const auto elapsed = time::microsec_clock::universal_time() - started;
+
+                /*
+                 * The responder does not answer for six seconds, so returning well before
+                 * that is only possible because the deadline fired
+                 */
+
+                UTF_REQUIRE( elapsed < time::seconds( 5 ) );
+
+                UTF_REQUIRE( taskImpl -> isTimedOut() );
+                UTF_REQUIRE( taskImpl -> isFailed() );
+
+                try
+                {
+                    cpp::safeRethrowException( taskImpl -> exception() );
+
+                    UTF_FAIL( "A stalled HTTP request must time out" );
+                }
+                catch( bl::TimeoutException& e )
+                {
+                    /*
+                     * errinfo_is_expected is what stops chk2DumpException from dumping every
+                     * routine timeout, and the cancellation which actually stopped the task is
+                     * chained rather than discarded
+                     */
+
+                    UTF_REQUIRE( nullptr != eh::get_error_info< eh::errinfo_is_expected >( e ) );
+                    UTF_REQUIRE( nullptr != eh::get_error_info< eh::errinfo_nested_exception_ptr >( e ) );
+
+                    UTF_REQUIRE( cpp::contains( std::string( e.what() ), "HTTP GET request to 'http://127.0.0.1:" ) );
+                }
+
+                UTF_REQUIRE( eq -> isEmpty() );
+            });
+    }
+
+    /*
+     * (2) The deadline is NOT re-armed by progress. The responder below hands over the whole
+     *     response one byte at a time, 40 ms apart, so the client is making progress through
+     *     every one of the four read handlers the whole time - and must still be interrupted
+     *     at its three second deadline. Delivering the 105 byte response takes the responder
+     *     at least 104 * 40 ms = 4.16 s, so a re-armed deadline would never fire and this
+     *     sub-case would complete successfully instead of timing out
+     */
+
+    {
+        RawHttpResponder responder(
+            RawHttpResponder::makeResponse(
+                "HTTP/1.0 200 OK",
+                { "Content-Type: text/plain", "Content-Length: 40" },
+                std::string( 40U, 'y' )
+                ),
+            time::milliseconds( 0 )                         /* delayBeforeResponse */,
+            1U                                              /* chunkSize */,
+            time::milliseconds( 40 )                        /* delayBetweenChunks */
+            );
+
+        scheduleAndExecuteInParallel(
+            [ &responder ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+            {
+                eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+                const auto taskImpl = SimpleHttpGetTaskImpl::createInstance(
+                    std::string( "127.0.0.1" ),
+                    responder.port(),
+                    "/probe"
+                    );
+
+                taskImpl -> setTimeout( time::seconds( 3 ) );
+
+                const auto task = om::qi< Task >( taskImpl );
+
+                eq -> push_back( task );
+
+                const auto started = time::microsec_clock::universal_time();
+
+                UTF_REQUIRE_THROW_MESSAGE(
+                    eq -> waitForSuccess( task ),
+                    bl::TimeoutException,
+                    "has timed out"
+                    );
+
+                const auto elapsed = time::microsec_clock::universal_time() - started;
+
+                UTF_REQUIRE( elapsed < time::seconds( 4 ) );
+
+                UTF_REQUIRE( taskImpl -> isTimedOut() );
+                UTF_REQUIRE( taskImpl -> isFailed() );
+
+                try
+                {
+                    cpp::safeRethrowException( taskImpl -> exception() );
+
+                    UTF_FAIL( "A drip fed HTTP request must still hit its whole request deadline" );
+                }
+                catch( bl::TimeoutException& e )
+                {
+                    UTF_REQUIRE( nullptr != eh::get_error_info< eh::errinfo_is_expected >( e ) );
+                    UTF_REQUIRE( nullptr != eh::get_error_info< eh::errinfo_nested_exception_ptr >( e ) );
+
+                    UTF_REQUIRE( cpp::contains( std::string( e.what() ), "HTTP GET request to 'http://127.0.0.1:" ) );
+                }
+
+                UTF_REQUIRE( eq -> isEmpty() );
+            });
+    }
+
+    /*
+     * (3) The positive control - the same drip pattern against a deadline which is generous
+     *     enough completes normally, so the two sub-cases above are not merely proving that
+     *     a dripped response can never be read
+     */
+
+    {
+        RawHttpResponder responder(
+            RawHttpResponder::makeResponse(
+                "HTTP/1.0 200 OK",
+                { "Content-Type: text/plain", "Content-Length: 40" },
+                std::string( 40U, 'y' )
+                ),
+            time::milliseconds( 0 )                         /* delayBeforeResponse */,
+            1U                                              /* chunkSize */,
+            time::milliseconds( 20 )                        /* delayBetweenChunks */
+            );
+
+        scheduleAndExecuteInParallel(
+            [ &responder ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+            {
+                eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+                const auto taskImpl = SimpleHttpGetTaskImpl::createInstance(
+                    std::string( "127.0.0.1" ),
+                    responder.port(),
+                    "/probe"
+                    );
+
+                taskImpl -> setTimeout( time::seconds( 20 ) );
+
+                UTF_REQUIRE_EQUAL( taskImpl -> getTimeout(), time::seconds( 20 ) );
+
+                const auto task = om::qi< Task >( taskImpl );
+
+                eq -> push_back( task );
+
+                UTF_REQUIRE_NO_THROW( eq -> waitForSuccess( task ) );
+
+                UTF_REQUIRE( ! taskImpl -> isTimedOut() );
+                UTF_REQUIRE_EQUAL( taskImpl -> getResponse().size(), 40U );
+
+                UTF_REQUIRE( eq -> isEmpty() );
+            });
+    }
 }
 
 UTF_AUTO_TEST_CASE( Client_SimpleHttpPerfTests )
@@ -912,6 +1823,43 @@ UTF_AUTO_TEST_CASE( Client_SimpleSecureHttpSslGetTests )
                 {
                     eq -> setOptions( ExecutionQueue::OptionKeepAll );
 
+                    /*
+                     * The secure task binds a str::SecureStringWrapper to the base class's own
+                     * m_contentIn buffer and assigns the caller's secure content into it, so
+                     * initRequest() emits it as the request body exactly as the plain task
+                     * would. Nothing observed that until now - the shared test backend never
+                     * looks at the body it was sent, so dropping the assignment (or reordering
+                     * the members so the wrapper binds to a buffer which is constructed after
+                     * it) would have sent an empty body for every secure request and left the
+                     * whole suite green. The file local echo backend closes that hole
+                     */
+
+                    {
+                        const bl::str::SecureStringWrapper content( "Hidden content" );
+
+                        const auto taskImpl = SimpleSecureHttpSslPutTaskImpl::createInstance(
+                            cpp::copy( test::UtfArgsParser::host() ),
+                            cpp::copy( test::UtfArgsParser::port() ),
+                            utest::http::g_requestUri,
+                            content
+                            );
+
+                        UTF_REQUIRE( taskImpl -> isSecureMode() );
+
+                        const auto task = om::qi< Task >( taskImpl );
+
+                        eq -> push_back( task );
+
+                        UTF_REQUIRE_NO_THROW( eq -> waitForSuccess( task ) );
+
+                        UTF_REQUIRE_EQUAL( http::Parameters::HTTP_SUCCESS_OK, taskImpl -> getHttpStatus() );
+
+                        UTF_REQUIRE_EQUAL( taskImpl -> getResponse(), "Hidden content" );
+                        UTF_REQUIRE_EQUAL( taskImpl -> getContent(), "Hidden content" );
+
+                        UTF_REQUIRE( eq -> isEmpty() );
+                    }
+
                     {
                         http::HeadersMap headers;
 
@@ -960,13 +1908,49 @@ UTF_AUTO_TEST_CASE( Client_SimpleSecureHttpSslGetTests )
                         const auto& response = stask -> getResponse();
 
                         UTF_REQUIRE( response.size() );
+
+                        /*
+                         * The GET-with-content form the header declares must carry its body too
+                         */
+
+                        UTF_REQUIRE_EQUAL( response, "Hidden content" );
+                        UTF_REQUIRE_EQUAL( stask -> getContent(), "Hidden content" );
+
                         BL_LOG_MULTILINE( Logging::debug(), BL_MSG() << "\n******* begin HTTP response ******* \n" );
                         BL_LOG_MULTILINE( Logging::debug(), BL_MSG() << response );
                         BL_LOG_MULTILINE( Logging::debug(), BL_MSG() << "\n******* end HTTP response ******* \n" );
                     }
 
+                    /*
+                     * The no-content verb pins the empty body form, so a regression which
+                     * started sending something would be caught as well
+                     */
+
+                    {
+                        const auto taskImpl = SimpleSecureHttpSslDeleteTaskImpl::createInstance(
+                            cpp::copy( test::UtfArgsParser::host() ),
+                            cpp::copy( test::UtfArgsParser::port() ),
+                            utest::http::g_requestUri
+                            );
+
+                        UTF_REQUIRE( taskImpl -> isSecureMode() );
+
+                        const auto task = om::qi< Task >( taskImpl );
+
+                        eq -> push_back( task );
+
+                        UTF_REQUIRE_NO_THROW( eq -> waitForSuccess( task ) );
+
+                        UTF_REQUIRE_EQUAL( http::Parameters::HTTP_SUCCESS_OK, taskImpl -> getHttpStatus() );
+
+                        UTF_REQUIRE_EQUAL( taskImpl -> getResponse(), str::empty() );
+                        UTF_REQUIRE( taskImpl -> getContent().empty() );
+
+                        UTF_REQUIRE( eq -> isEmpty() );
+                    }
                 });
-        }
+        },
+        EchoBackendImpl::createInstance< bl::httpserver::ServerBackendProcessing >()
         );
 }
 
