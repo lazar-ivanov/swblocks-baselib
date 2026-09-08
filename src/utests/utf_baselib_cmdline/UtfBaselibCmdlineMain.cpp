@@ -18,3 +18,5 @@
 #include <utests/baselib/UtfMain.h>
 
 #include "TestCmdLine.h"
+#include "TestCmdLineAppBase.h"
+#include "TestCmdLineEhUtils.h"

@@ -97,6 +97,19 @@ namespace
         }
     };
 
+    /**
+     * @brief A private tag type which gives JavaVirtualMachineT a completely fresh set of
+     * static members
+     *
+     * Every piece of JavaVirtualMachineT state is a template static, so a distinct tag
+     * yields a distinct singleton whose creation failures cannot touch the real
+     * JavaVirtualMachine typedef the global fixture owns
+     */
+
+    struct JvmCreateFailureTestTag;
+
+    typedef JavaVirtualMachineT< JvmCreateFailureTestTag > TestJvm;
+
     template
     <
         typename T
@@ -134,6 +147,39 @@ UTF_AUTO_TEST_CASE( Jni_CreateJniEnvironments )
 
     createJniEnvironment( false /* detachJniEnvAfterTest */ );
 
+    /*
+     * The attached thread count gates JavaVirtualMachine::destroy(), whose refusal is a
+     * BL_RIP_MSG in the global fixture destructor - i.e. long after every case has already
+     * reported success - so the arithmetic is asserted here instead
+     *
+     * The baseline is captured after the main thread has been attached above so the case
+     * stays independent of the order in which the cases in this module run
+     */
+
+    const std::int64_t baseline = JniEnvironment::getJniThreadCount();
+
+    UTF_REQUIRE( baseline >= 1 );
+
+    JniEnvironment::detach();
+
+    UTF_REQUIRE_EQUAL( JniEnvironment::getJniThreadCount(), baseline - 1 );
+
+    /*
+     * The second detach() must be a guarded no-op rather than a second decrement
+     */
+
+    JniEnvironment::detach();
+
+    UTF_REQUIRE_EQUAL( JniEnvironment::getJniThreadCount(), baseline - 1 );
+
+    /*
+     * ... and instance() must account for the environment it lazily re-creates
+     */
+
+    ( void ) JniEnvironment::instance();
+
+    UTF_REQUIRE_EQUAL( JniEnvironment::getJniThreadCount(), baseline );
+
     const int numThreads = 10;
 
     os::thread threads[ numThreads ];
@@ -146,6 +192,189 @@ UTF_AUTO_TEST_CASE( Jni_CreateJniEnvironments )
     for( int i = 0; i < numThreads; ++i )
     {
         threads[i].join();
+    }
+
+    /*
+     * Half of the threads above detached explicitly and half relied on the thread local
+     * storage cleanup which runs when the thread exits - both must have decremented
+     */
+
+    UTF_REQUIRE_EQUAL( JniEnvironment::getJniThreadCount(), baseline );
+}
+
+UTF_AUTO_TEST_CASE( Jni_JavaVirtualMachineCreateFailuresAreRetryable )
+{
+    using namespace bl;
+    using namespace bl::jni;
+
+    /*
+     * Every failure before JNI_CreateJavaVM leaves the create attempt unlatched, so the
+     * singleton stays retryable - a wrong JAVA_HOME or a JDK upgrade which moved libjvm
+     * must be a recoverable misconfiguration and not a permanently dead process
+     *
+     * The negative half of the contract - a retry after a real JNI_CreateJavaVM attempt
+     * is refused - is not reachable in process and is deliberately out of scope
+     */
+
+    const auto checkRetryable = [](
+        SAA_in          const std::exception&           e,
+        SAA_in          const std::string&              expectedFragment
+        )
+        -> bool
+    {
+        /*
+         * The full diagnostic information rather than what() alone, because os::loadLibrary
+         * reports the offending path through errinfo_message
+         */
+
+        const auto details = eh::diagnostic_information( e );
+
+        BL_LOG_MULTILINE(
+            Logging::debug(),
+            BL_MSG()
+                << "Expected exception:\n"
+                << details
+            );
+
+        /*
+         * The latch message is the exact symptom of a create attempt recorded before
+         * anything could have been created
+         */
+
+        return cpp::contains( details, expectedFragment ) &&
+            ! cpp::contains( details, "cannot be retried" );
+    };
+
+    const auto javaHomeOriginal = os::tryGetEnvironmentVariable( "JAVA_HOME" );
+
+    BL_SCOPE_EXIT(
+        {
+            if( javaHomeOriginal )
+            {
+                os::setEnvironmentVariable( "JAVA_HOME", *javaHomeOriginal );
+            }
+            else
+            {
+                os::unsetEnvironmentVariable( "JAVA_HOME" );
+            }
+        }
+        );
+
+    /*
+     * JAVA_HOME is not defined at all
+     */
+
+    {
+        os::unsetEnvironmentVariable( "JAVA_HOME" );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            ( void ) TestJvm::instance(),
+            JavaException,
+            "Environment variable JAVA_HOME is not defined"
+            );
+
+        UTF_CHECK_EXCEPTION(
+            ( void ) TestJvm::instance(),
+            JavaException,
+            [ &checkRetryable ]( SAA_in const JavaException& e ) -> bool
+            {
+                return checkRetryable( e, "Environment variable JAVA_HOME is not defined" );
+            }
+            );
+    }
+
+    fs::TmpDir tmpDir;
+
+    /*
+     * JAVA_HOME is defined but carries no JVM library
+     */
+
+    {
+        os::setEnvironmentVariable( "JAVA_HOME", tmpDir.path().string() );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            ( void ) TestJvm::instance(),
+            JavaException,
+            "Could not find JVM library in JAVA_HOME"
+            );
+
+        UTF_CHECK_EXCEPTION(
+            ( void ) TestJvm::instance(),
+            JavaException,
+            [ &checkRetryable ]( SAA_in const JavaException& e ) -> bool
+            {
+                return checkRetryable( e, "Could not find JVM library in JAVA_HOME" );
+            }
+            );
+    }
+
+    /*
+     * An explicitly configured library path which cannot be loaded
+     */
+
+    {
+        const auto libraryPath = ( tmpDir.path() / "no-such-jvm-library" ).string();
+
+        JavaVirtualMachineConfig config;
+        config.setLibraryPath( cpp::copy( libraryPath ) );
+
+        TestJvm::setConfig( std::move( config ) );
+
+        UTF_REQUIRE_EQUAL( TestJvm::getConfig().getLibraryPath(), libraryPath );
+
+        UTF_REQUIRE_THROW( ( void ) TestJvm::instance(), SystemException );
+
+        UTF_CHECK_EXCEPTION(
+            ( void ) TestJvm::instance(),
+            SystemException,
+            [ &checkRetryable ]( SAA_in const SystemException& e ) -> bool
+            {
+                return checkRetryable( e, "no-such-jvm-library" );
+            }
+            );
+
+        UTF_REQUIRE_EQUAL( TestJvm::getConfig().getLibraryPath(), libraryPath );
+    }
+
+    /*
+     * The option composition rules of JavaVirtualMachineConfig - an empty string property
+     * and a false boolean property are suppressed, the defaults survive, and the free form
+     * options are appended after all of the built-ins
+     */
+
+    {
+        JavaVirtualMachineConfig options;
+
+        options.setClassPath( "cp" );
+        options.setInitialHeapSize( std::string() );
+        options.setCheckJni( true );
+        options.addOption( "-Dbaselib.test=1" );
+
+        const auto list = options.getJavaVMOptions();
+
+        const auto containsOption = [ &list ]( SAA_in const std::string& value ) -> bool
+        {
+            return std::find( list.cbegin(), list.cend(), value ) != list.cend();
+        };
+
+        UTF_REQUIRE( containsOption( "-Djava.class.path=cp" ) );
+        UTF_REQUIRE( containsOption( "-Xcheck:jni" ) );
+
+        /*
+         * The default maximum heap size is still emitted while the explicitly emptied
+         * initial heap size is not - feeding HotSpot a bare '-Xms' would break every
+         * JNI enabled build at once, since ignoreUnrecognized is JNI_FALSE
+         */
+
+        UTF_REQUIRE( containsOption( "-Xmx4G" ) );
+
+        for( const auto& option : list )
+        {
+            UTF_REQUIRE( ! str::starts_with( option, "-Xms" ) );
+        }
+
+        UTF_REQUIRE( ! list.empty() );
+        UTF_REQUIRE_EQUAL( list.back(), "-Dbaselib.test=1" );
     }
 }
 
@@ -311,6 +540,95 @@ UTF_AUTO_TEST_CASE( Jni_JavaExceptions )
             const auto* hintPtr = eh::get_error_info< eh::errinfo_hint >( e );
 
             if( ! hintPtr || *hintPtr != "Static method 'foo' with signature '()Ljava/lang/Thread;' not found in class 'java.lang.Thread'" )
+            {
+                return false;
+            }
+
+            return true;
+        }
+        );
+
+    /*
+     * All of the checks above land in the branch where Throwable.getMessage() is non-null
+     *
+     * When it is null the exception shape changes completely - what() becomes the C++
+     * context plus the exception class name and no errinfo_hint is attached at all - and
+     * that is the branch which produces the operator visible diagnostic for the large
+     * number of Java exceptions which are thrown without a message
+     *
+     * Collections.emptyIterator().next() throws a message-less NoSuchElementException on
+     * every supported JDK
+     */
+
+    const auto collectionsClass = environment.findJavaClass( "java/util/Collections" );
+
+    const auto emptyIteratorMethod =
+        environment.getStaticMethodID( collectionsClass.get(), "emptyIterator", "()Ljava/util/Iterator;" );
+
+    const auto iterator =
+        environment.callStaticObjectMethod< jobject >( collectionsClass.get(), emptyIteratorMethod );
+
+    const auto iteratorClass = environment.findJavaClass( "java/util/Iterator" );
+
+    const auto nextMethod =
+        environment.getMethodID( iteratorClass.get(), "next", "()Ljava/lang/Object;" );
+
+    UTF_CHECK_EXCEPTION(
+        ( void ) environment.callObjectMethod< jobject >( iterator.get(), nextMethod ),
+        JavaException,
+        [ &expectedThreadName ]( SAA_in const JavaException& e ) -> bool
+        {
+            BL_LOG_MULTILINE(
+                Logging::debug(),
+                BL_MSG()
+                    << "Expected exception:\n"
+                    << eh::diagnostic_information( e )
+                );
+
+            if( e.what() != std::string( "Java method call failed; exception class: java.util.NoSuchElementException" ) )
+            {
+                return false;
+            }
+
+            /*
+             * The negative assertion which distinguishes the two branches - the C++
+             * context is folded into what() here instead of being attached as a hint
+             */
+
+            if( nullptr != eh::get_error_info< eh::errinfo_hint >( e ) )
+            {
+                return false;
+            }
+
+            const auto* typePtr = eh::get_error_info< eh::errinfo_original_type >( e );
+
+            if( ! typePtr || *typePtr != "java.util.NoSuchElementException" )
+            {
+                return false;
+            }
+
+            /*
+             * Throwable.toString() of a message-less throwable is the bare class name,
+             * which pins that toString() is still captured
+             */
+
+            const auto* stringPtr = eh::get_error_info< eh::errinfo_string_value >( e );
+
+            if( ! stringPtr || *stringPtr != "java.util.NoSuchElementException" )
+            {
+                return false;
+            }
+
+            const auto* stackPtr = eh::get_error_info< eh::errinfo_original_stack_trace >( e );
+
+            if( ! stackPtr || stackPtr -> empty() )
+            {
+                return false;
+            }
+
+            const auto* threadPtr = eh::get_error_info< eh::errinfo_original_thread_name >( e );
+
+            if( ! threadPtr || *threadPtr != expectedThreadName )
             {
                 return false;
             }
@@ -827,9 +1145,26 @@ UTF_AUTO_TEST_CASE( Jni_JavaBridgeRestHelper )
 {
     using namespace bl;
 
-    bool nativeCallbackCalled = false;
+    /*
+     * The Java test server echoes the input buffer back byte for byte, so the framing
+     * execute() and shutdown() put on the wire - the [request][context] order, the
+     * completeness of both strings and the state the result block is handed back in - can
+     * be asserted end to end
+     *
+     * Note that nothing is asserted inside the native callback: an exception escaping it
+     * is turned into a Java exception of a class which does not exist and would abort the
+     * process, so the callback only captures and the test thread does the asserting
+     */
 
-    const auto nativeCallback = [ &nativeCallbackCalled ](
+    std::size_t callbackCount = 0U;
+
+    std::string receivedPayload;
+    std::string receivedContext;
+
+    bool hadContext = false;
+    bool hadTrailingBytes = false;
+
+    const auto nativeCallback = [ & ](
         SAA_in      const jni::DirectByteBuffer&            input,
         SAA_out     jni::DirectByteBuffer&                  output
         )
@@ -838,20 +1173,26 @@ UTF_AUTO_TEST_CASE( Jni_JavaBridgeRestHelper )
 
         const auto& buffer = input.getBuffer();
 
-        std::string jsonPayload;
-        std::string jsonContext;
+        receivedPayload.clear();
+        receivedContext.clear();
 
-        buffer -> read( &jsonPayload );
+        buffer -> read( &receivedPayload );
 
-        if( buffer -> offset1() < buffer -> size() )
+        /*
+         * The context object is optional - e.g. the shutdown
+         * command does not provide context object
+         */
+
+        hadContext = ( buffer -> offset1() < buffer -> size() );
+
+        if( hadContext )
         {
-            /*
-             * The context object is optional - e.g. the shutdown
-             * command does not provide context object
-             */
-
-            buffer -> read( &jsonContext );
+            buffer -> read( &receivedContext );
         }
+
+        hadTrailingBytes = ( buffer -> offset1() != buffer -> size() );
+
+        ++callbackCount;
 
         BL_LOG_MULTILINE(
             Logging::debug(),
@@ -859,20 +1200,18 @@ UTF_AUTO_TEST_CASE( Jni_JavaBridgeRestHelper )
                 << "Output size: "
                 << buffer -> size()
                 << "\nPayload:\n"
-                << json::saveToString( json::readFromString( jsonPayload ), true /* prettyPrint */ )
+                << json::saveToString( json::readFromString( receivedPayload ), true /* prettyPrint */ )
             );
 
-        if( ! jsonContext.empty() )
+        if( ! receivedContext.empty() )
         {
             BL_LOG_MULTILINE(
                 Logging::debug(),
                 BL_MSG()
                     << "\nContext:\n"
-                    << json::saveToString( json::readFromString( jsonContext ), true /* prettyPrint */ )
+                    << json::saveToString( json::readFromString( receivedContext ), true /* prettyPrint */ )
                 );
         }
-
-        nativeCallbackCalled = true;
     };
 
     const auto restServerClassName = "org/swblocks/baselib/test/JavaBridgeRestTestServer";
@@ -884,60 +1223,103 @@ UTF_AUTO_TEST_CASE( Jni_JavaBridgeRestHelper )
         restServerNativeCallbackName
         );
 
+    const std::string payloadJson = "{ \"data\" : { }  }";
+
+    const auto payload = dm::DataModelUtils::loadFromJsonText< dm::Payload >( payloadJson );
+
+    const auto context = dm::FunctionContext::createInstance();
+    context -> securityPrincipalLvalue() = dm::messaging::SecurityPrincipal::createInstance();
+
+    context -> securityPrincipal() -> sid( "sid1234" );
+    context -> securityPrincipal() -> givenName( "First" );
+    context -> securityPrincipal() -> familyName( "Last" );
+    context -> securityPrincipal() -> email( "user@host.com" );
+
+    const auto request = dm::DataModelUtils::getDocAsPackedJsonString( payload );
+    const auto contextJson = dm::DataModelUtils::getDocAsPackedJsonString( context );
+
+    const auto output = data::DataBlock::createInstance( 1024 * 1024 /* capacity 1 MB */ );
+
+    UTF_REQUIRE_EQUAL( callbackCount, 0U );
+
     {
-        BL_SCOPE_EXIT( engine -> shutdown(); );
+        utils::ExecutionTimer timer(
+            "JavaBridgeRestHelper::execute: " + payloadJson,
+            Logging::debug()
+            );
 
-        const auto executeCallback = [ & ]() -> void
-        {
-            const std::string payloadJson = "{ \"data\" : { }  }";
-
-            utils::ExecutionTimer timer(
-                "JavaBridgeRestHelper::execute: " + payloadJson,
-                Logging::debug()
-                );
-
-            const auto payload = dm::DataModelUtils::loadFromJsonText< dm::Payload >( payloadJson );
-
-            const auto context = dm::FunctionContext::createInstance();
-            context -> securityPrincipalLvalue() = dm::messaging::SecurityPrincipal::createInstance();
-
-            context -> securityPrincipal() -> sid( "sid1234" );
-            context -> securityPrincipal() -> givenName( "First" );
-            context -> securityPrincipal() -> familyName( "Last" );
-            context -> securityPrincipal() -> email( "user@host.com" );
-
-            const auto output = data::DataBlock::createInstance( 1024 * 1024 /* capacity 1 MB */ );
-
-            engine -> execute(
-                context,
-                dm::DataModelUtils::getDocAsPackedJsonString( payload ),
-                output
-                );
-
-            const auto size = output -> size();
-
-            std::string jsonPayload;
-            std::string jsonContext;
-
-            output -> read( &jsonPayload );
-            output -> read( &jsonContext );
-
-            BL_LOG_MULTILINE(
-                Logging::debug(),
-                BL_MSG()
-                    << "Output size: "
-                    << size
-                    << "\nPayload:\n"
-                    << json::saveToString( json::readFromString( jsonPayload ), true /* prettyPrint */ )
-                    << "\nContext:\n"
-                    << json::saveToString( json::readFromString( jsonContext ), true /* prettyPrint */ )
-                );
-        };
-
-        UTF_REQUIRE( ! nativeCallbackCalled );
-        executeCallback();
-        UTF_REQUIRE( nativeCallbackCalled );
+        engine -> execute( context, request, output );
     }
+
+    UTF_REQUIRE_EQUAL( callbackCount, 1U );
+
+    /*
+     * The input frame carries the request first and the packed context second, and
+     * nothing else - swapping the two writes or dropping the context would leave both
+     * halves well formed JSON and would otherwise go unnoticed
+     */
+
+    UTF_REQUIRE_EQUAL( receivedPayload, request );
+    UTF_REQUIRE_EQUAL( receivedContext, contextJson );
+    UTF_REQUIRE( ! hadTrailingBytes );
+
+    /*
+     * The echoed result block is handed back positioned at its beginning and sized to
+     * exactly the two length prefixed strings
+     */
+
+    UTF_REQUIRE_EQUAL( output -> offset1(), 0U );
+
+    UTF_REQUIRE_EQUAL(
+        output -> size(),
+        2 * sizeof( std::int32_t ) + request.size() + contextJson.size()
+        );
+
+    std::string jsonPayload;
+    std::string jsonContext;
+
+    output -> read( &jsonPayload );
+    output -> read( &jsonContext );
+
+    UTF_REQUIRE_EQUAL( output -> offset1(), output -> size() );
+
+    UTF_REQUIRE_EQUAL( jsonPayload, request );
+    UTF_REQUIRE_EQUAL( jsonContext, contextJson );
+
+    BL_LOG_MULTILINE(
+        Logging::debug(),
+        BL_MSG()
+            << "Output size: "
+            << output -> size()
+            << "\nPayload:\n"
+            << json::saveToString( json::readFromString( jsonPayload ), true /* prettyPrint */ )
+            << "\nContext:\n"
+            << json::saveToString( json::readFromString( jsonContext ), true /* prettyPrint */ )
+        );
+
+    /*
+     * ... and the context survives the round trip semantically, which is independent of
+     * any change in the JSON key ordering
+     */
+
+    const auto echoed = dm::DataModelUtils::loadFromJsonText< dm::FunctionContext >( jsonContext );
+
+    UTF_REQUIRE( echoed -> securityPrincipal() );
+    UTF_REQUIRE_EQUAL( echoed -> securityPrincipal() -> sid(), "sid1234" );
+    UTF_REQUIRE_EQUAL( echoed -> securityPrincipal() -> email(), "user@host.com" );
+
+    /*
+     * The shutdown command sends only the well known shutdown JSON and attaches no
+     * context at all, so the input buffer is exhausted by the first read
+     */
+
+    engine -> shutdown();
+
+    UTF_REQUIRE_EQUAL( callbackCount, 2U );
+
+    UTF_REQUIRE_EQUAL( receivedPayload, std::string( "{\"shutdown\": true}" ) );
+    UTF_REQUIRE( ! hadContext );
+    UTF_REQUIRE( ! hadTrailingBytes );
 }
 
 UTF_AUTO_TEST_CASE( Jni_JvmHelpers )

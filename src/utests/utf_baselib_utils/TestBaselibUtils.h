@@ -188,6 +188,162 @@ UTF_AUTO_TEST_CASE( StringTemplateTests )
 }
 
 /************************************************************************
+ * StringTemplateResolver escaper callback tests
+ *
+ * The escaper hook exists to encode attacker controlled variable values into the
+ * structure the template builds - a URL path or a JSON body - so what has to be pinned
+ * is that it is invoked, invoked with the variable name and the raw value, invoked once
+ * per occurrence, and that the raw value never reaches the output
+ */
+
+UTF_AUTO_TEST_CASE( StringTemplateEscaperTests )
+{
+    using namespace bl;
+
+    typedef str::StringTemplateResolver                                     resolver_t;
+    typedef std::unordered_map< std::string, std::string >                  variables_list_t;
+
+    variables_list_t vars;
+
+    vars[ "var1" ] = "a&b";
+    vars[ "var2" ] = "c d";
+
+    std::vector< std::pair< std::string, std::string > > calls;
+
+    const resolver_t::escaper_callback_t escaper = [ &calls ](
+        SAA_in          const std::string&              name,
+        SAA_in          const std::string&              value
+        )
+        -> std::string
+    {
+        calls.emplace_back( name, value );
+
+        return str::uriEncode( value );
+    };
+
+    /*
+     * The basic case - every resolved value is passed through the hook, which receives
+     * the variable name and the raw value, and the encoded value is what is emitted
+     */
+
+    {
+        const auto resolver = resolver_t::createInstance(
+            std::string( "x={{var1}}&y={{var2}}" )                      /* templateText */,
+            false                                                       /* skipUndefined */
+            );
+
+        UTF_REQUIRE_EQUAL( resolver -> resolve( vars, escaper ), "x=a%26b&y=c%20d" );
+
+        UTF_REQUIRE_EQUAL( calls.size(), 2U );
+
+        UTF_REQUIRE_EQUAL( calls[ 0 ].first, "var1" );
+        UTF_REQUIRE_EQUAL( calls[ 0 ].second, "a&b" );
+
+        UTF_REQUIRE_EQUAL( calls[ 1 ].first, "var2" );
+        UTF_REQUIRE_EQUAL( calls[ 1 ].second, "c d" );
+
+        /*
+         * The one argument overload is what every existing caller uses and it must not
+         * escape anything nor invoke the hook
+         */
+
+        UTF_REQUIRE_EQUAL( resolver -> resolve( vars ), "x=a&b&y=c d" );
+
+        UTF_REQUIRE_EQUAL( calls.size(), 2U );
+    }
+
+    /*
+     * The hook is invoked once per occurrence, not once per variable
+     */
+
+    {
+        calls.clear();
+
+        const auto resolver = resolver_t::createInstance(
+            std::string( "{{var1}}{{var1}}" )                           /* templateText */,
+            false                                                       /* skipUndefined */
+            );
+
+        UTF_REQUIRE_EQUAL( resolver -> resolve( vars, escaper ), "a%26ba%26b" );
+
+        UTF_REQUIRE_EQUAL( calls.size(), 2U );
+
+        UTF_REQUIRE_EQUAL( calls[ 0 ].first, "var1" );
+        UTF_REQUIRE_EQUAL( calls[ 0 ].second, "a&b" );
+
+        UTF_REQUIRE_EQUAL( calls[ 1 ].first, "var1" );
+        UTF_REQUIRE_EQUAL( calls[ 1 ].second, "a&b" );
+    }
+
+    /*
+     * Literal template text and the explicit block marker '{{}}' are not passed through
+     * the hook - the literal '&' below survives unencoded
+     */
+
+    {
+        calls.clear();
+
+        const auto resolver = resolver_t::createInstance(
+            std::string( "lit&{{}}{{var1}}" )                           /* templateText */,
+            false                                                       /* skipUndefined */
+            );
+
+        UTF_REQUIRE_EQUAL( resolver -> resolve( vars, escaper ), "lit&a%26b" );
+
+        UTF_REQUIRE_EQUAL( calls.size(), 1U );
+
+        UTF_REQUIRE_EQUAL( calls[ 0 ].first, "var1" );
+    }
+
+    /*
+     * A block is discarded only after its earlier markers have been rendered, so the
+     * hook is invoked for values which never reach the output - which matters because
+     * the callback may have side effects, e.g. logging a secret
+     */
+
+    {
+        calls.clear();
+
+        const auto resolver = resolver_t::createInstance(
+            std::string( "{{var1}}{{}}{{var2}}-{{undef}}" )             /* templateText */,
+            true                                                        /* skipUndefined */
+            );
+
+        UTF_REQUIRE_EQUAL( resolver -> resolve( vars, escaper ), "a%26b" );
+
+        UTF_REQUIRE_EQUAL( calls.size(), 2U );
+
+        UTF_REQUIRE_EQUAL( calls[ 0 ].first, "var1" );
+        UTF_REQUIRE_EQUAL( calls[ 1 ].first, "var2" );
+    }
+
+    /*
+     * A throwing escaper propagates rather than silently emitting the raw value
+     */
+
+    {
+        const resolver_t::escaper_callback_t throwingEscaper = [](
+            SAA_in          const std::string&              name,
+            SAA_in          const std::string&              value
+            )
+            -> std::string
+        {
+            BL_UNUSED( name );
+            BL_UNUSED( value );
+
+            BL_THROW( bl::UnexpectedException(), "boom" );
+        };
+
+        const auto resolver = resolver_t::createInstance(
+            std::string( "x={{var1}}" )                                 /* templateText */,
+            false                                                       /* skipUndefined */
+            );
+
+        UTF_REQUIRE_THROW( resolver -> resolve( vars, throwingEscaper ), UnexpectedException );
+    }
+}
+
+/************************************************************************
  * Self-tests for the exception assertion macros in Utf.h
  *
  * The macros are harness code with no coverage of their own, and getting one of them

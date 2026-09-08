@@ -124,9 +124,34 @@ namespace utest
             }
         };
 
+        /**
+         * @brief A visitor which aborts the tokenization on the first ID_WORD token
+         *
+         * The early abort contract of lex::tokenize cannot be observed with TokensVisitor,
+         * which always returns true
+         */
+
+        struct AbortOnFirstWordVisitor
+        {
+            template
+            <
+                typename Token
+            >
+            bool operator()( SAA_in const Token& token ) const
+            {
+                return ID_WORD != token.id();
+            }
+        };
+
     } // lex
 
 } // utest
+
+/*
+ * Note that this case is a manual bulk-analysis tool which requires '--is-client --path <dir>',
+ * so it is skipped in every CI run and contributes no coverage there - see
+ * BaseLib_ParsingTokenClassificationTests below for the assertions which always execute
+ */
 
 UTF_AUTO_TEST_CASE( BaseLib_ParsingGetTokens )
 {
@@ -260,3 +285,97 @@ UTF_AUTO_TEST_CASE( BaseLib_ParsingGetTokens )
     }
 }
 
+/************************************************************************
+ * Token classification tests
+ *
+ * Unlike BaseLib_ParsingGetTokens these are not gated on any command line parameter,
+ * so they are the only assertions the parsing module contributes to a CI run
+ */
+
+UTF_AUTO_TEST_CASE( BaseLib_ParsingTokenClassificationTests )
+{
+    using namespace bl;
+    using namespace bl::lex;
+    using namespace utest::lex;
+
+    const WordsLexer lexer;
+
+    /*
+     * The whole input is consumed and only the ID_WORD tokens enter the map, which pins
+     * that the "\\w+" rule wins over the single character "." rule - if it did not the
+     * map would have one entry per letter instead of one per word
+     */
+
+    {
+        std::map< std::string, std::size_t > wordsMap;
+
+        const std::string input = "one two two\nthree, two.\n";
+
+        char const* first = input.c_str();
+        char const* last = &first[ input.size() ];
+
+        const bool result = lex::tokenize(
+            first,
+            last,
+            lexer,
+            cpp::bind< bool >( TokensVisitor(), _1, cpp::ref( wordsMap ) )
+            );
+
+        UTF_REQUIRE( result );
+        UTF_REQUIRE( first == last );
+
+        UTF_REQUIRE_EQUAL( wordsMap.size(), 3U );
+
+        UTF_REQUIRE_EQUAL( wordsMap[ "one" ], 1U );
+        UTF_REQUIRE_EQUAL( wordsMap[ "two" ], 3U );
+        UTF_REQUIRE_EQUAL( wordsMap[ "three" ], 1U );
+
+        /*
+         * The punctuation and the newlines were classified as ID_CHAR / ID_EOL and
+         * therefore never entered the map
+         */
+
+        UTF_REQUIRE( wordsMap.find( "," ) == wordsMap.end() );
+        UTF_REQUIRE( wordsMap.find( "\n" ) == wordsMap.end() );
+    }
+
+    /*
+     * An empty input tokenizes successfully and yields no words at all
+     */
+
+    {
+        std::map< std::string, std::size_t > wordsMap;
+
+        const std::string input;
+
+        char const* first = input.c_str();
+        char const* last = &first[ input.size() ];
+
+        const bool result = lex::tokenize(
+            first,
+            last,
+            lexer,
+            cpp::bind< bool >( TokensVisitor(), _1, cpp::ref( wordsMap ) )
+            );
+
+        UTF_REQUIRE( result );
+        UTF_REQUIRE( wordsMap.empty() );
+    }
+
+    /*
+     * A visitor which returns false aborts the tokenization - lex::tokenize reports
+     * failure and leaves the input iterator short of the end of the sequence
+     */
+
+    {
+        const std::string input = "one two two\nthree, two.\n";
+
+        char const* first = input.c_str();
+        char const* last = &first[ input.size() ];
+
+        const bool result = lex::tokenize( first, last, lexer, AbortOnFirstWordVisitor() );
+
+        UTF_REQUIRE( ! result );
+        UTF_REQUIRE( first != last );
+    }
+}

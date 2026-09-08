@@ -3,3 +3,7 @@
 --log_level=message --run_test=CmdLine_Parse_CommandMode_Create
 --log_level=message --run_test=CmdLine_Parse_CommandMode_Mail
 --log_level=message --run_test=CmdLine_Parse_CommandMode_Run
+--log_level=message --run_test=CmdLineApp_MainExitCodeMapping
+--log_level=message --run_test=CmdLineApp_TryParseAndTryExecuteExitCodes
+--log_level=message --run_test=CmdLineEhUtils_ProcessExceptionWritesPrivateDumpFile
+--log_level=message --run_test=CmdLineEhUtils_AsioErrorCallbackBranches
