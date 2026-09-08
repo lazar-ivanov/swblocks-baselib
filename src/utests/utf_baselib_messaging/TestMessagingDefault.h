@@ -21,6 +21,43 @@
 
 namespace
 {
+    /**
+     * @brief A minimal message block completion queue stub which is handed out for peer ids
+     * that the test wants to present as directly connected to the backend
+     */
+
+    template
+    <
+        typename E = void
+    >
+    class TestBlockCompletionQueueT : public bl::messaging::MessageBlockCompletionQueue
+    {
+        BL_CTR_DEFAULT( TestBlockCompletionQueueT, protected )
+
+        BL_DECLARE_OBJECT_IMPL_ONEIFACE( TestBlockCompletionQueueT, bl::messaging::MessageBlockCompletionQueue )
+
+    public:
+
+        virtual void requestHeartbeat() OVERRIDE
+        {
+        }
+
+        virtual bool tryScheduleBlock(
+            SAA_in                  const bl::uuid_t&                                   targetPeerId,
+            SAA_in                  bl::om::ObjPtr< bl::data::DataBlock >&&             dataBlock,
+            SAA_in                  CompletionCallback&&                                callback
+            ) OVERRIDE
+        {
+            BL_UNUSED( targetPeerId );
+            BL_UNUSED( dataBlock );
+            BL_UNUSED( callback );
+
+            return true;
+        }
+    };
+
+    typedef bl::om::ObjectImpl< TestBlockCompletionQueueT<> > TestBlockCompletionQueue;
+
     template
     <
         typename E = void
@@ -36,11 +73,14 @@ namespace
         bl::cpp::ScalarTypeIniter< bool >                                       m_wasBlockDispatched;
         bl::uuid_t                                                              m_targetPeerId;
         bl::uuid_t                                                              m_resolvedTargetPeerId;
+        bl::uuid_t                                                              m_directlyConnectedPeerId;
+        bl::om::ObjPtr< bl::messaging::MessageBlockCompletionQueue >            m_queue;
 
         TestHostServicesContextT() NOEXCEPT
             :
             m_targetPeerId( bl::uuids::nil() ),
-            m_resolvedTargetPeerId( bl::uuids::nil() )
+            m_resolvedTargetPeerId( bl::uuids::nil() ),
+            m_directlyConnectedPeerId( bl::uuids::nil() )
         {
         }
 
@@ -61,6 +101,24 @@ namespace
             m_targetPeerId = targetPeerId;
         }
 
+        /*
+         * Note that the completion queue is created here rather than lazily in the virtual
+         * below because the latter is invoked on a task thread while this setter is only
+         * ever called from the test thread before the backend task is scheduled
+         */
+
+        void directlyConnectedPeerId( SAA_in const bl::uuid_t& directlyConnectedPeerId )
+        {
+            m_directlyConnectedPeerId = directlyConnectedPeerId;
+
+            if( ! m_queue )
+            {
+                m_queue = TestBlockCompletionQueue::createInstance<
+                    bl::messaging::MessageBlockCompletionQueue
+                    >();
+            }
+        }
+
         auto wasMessageForBackend() const NOEXCEPT -> bool
         {
             return ! m_wasBlockDispatched;
@@ -79,7 +137,16 @@ namespace
         virtual auto tryGetMessageBlockCompletionQueue( SAA_in const bl::uuid_t& targetPeerId )
             -> bl::om::ObjPtr< bl::messaging::MessageBlockCompletionQueue > OVERRIDE
         {
-            BL_UNUSED( targetPeerId );
+            /*
+             * m_directlyConnectedPeerId defaults to nil() and m_queue is only created when
+             * directlyConnectedPeerId() is called, so unless a test opts in explicitly this
+             * keeps returning nullptr - i.e. no peer id is directly connected
+             */
+
+            if( m_queue && targetPeerId == m_directlyConnectedPeerId )
+            {
+                return bl::om::copy( m_queue );
+            }
 
             return nullptr;
         }
@@ -329,6 +396,90 @@ namespace
             targetPeerId
             );
     }
+
+    /**
+     * @brief An authorization cache mock which can fail the authorization service refresh -
+     * i.e. the update() call the broker makes in postAuthorization() after the authorization
+     * task created by the cache miss arm has completed
+     *
+     * Everything else, including the opt-in cache miss mode and the call counters, is
+     * inherited from utest::DummyAuthorizationCacheT
+     */
+
+    template
+    <
+        typename E = void
+    >
+    class FailingUpdateAuthorizationCacheT : public utest::DummyAuthorizationCacheT<>
+    {
+        BL_DECLARE_OBJECT_IMPL_ONEIFACE( FailingUpdateAuthorizationCacheT, bl::security::AuthorizationCache )
+
+    protected:
+
+        typedef utest::DummyAuthorizationCacheT<>                               base_type;
+
+        std::atomic< bool >                                                     m_failUpdate;
+
+        /*
+         * The state of the authorization task is captured here at the moment update() is
+         * called - i.e. this is what actually pins the ordering, as the state can only
+         * change afterwards
+         */
+
+        std::atomic< bl::tasks::Task::State >                                   m_updateTaskState;
+
+        FailingUpdateAuthorizationCacheT()
+            :
+            m_failUpdate( false ),
+            m_updateTaskState( bl::tasks::Task::Created )
+        {
+        }
+
+    public:
+
+        void failUpdate( SAA_in const bool failUpdate ) NOEXCEPT
+        {
+            m_failUpdate = failUpdate;
+        }
+
+        auto updateTaskState() const NOEXCEPT -> bl::tasks::Task::State
+        {
+            return m_updateTaskState;
+        }
+
+        virtual auto update(
+            SAA_in              const bl::om::ObjPtr< bl::data::DataBlock >&        authenticationToken,
+            SAA_in_opt          const bl::om::ObjPtr< bl::tasks::Task >&            authorizationTask = nullptr
+            )
+            -> bl::om::ObjPtr< bl::security::SecurityPrincipal > OVERRIDE
+        {
+            m_updateTaskState =
+                authorizationTask ? authorizationTask -> getState() : bl::tasks::Task::Created;
+
+            /*
+             * The base is called first on purpose, so the call is counted and the task which
+             * was handed to it is recorded even when the refresh is configured to fail
+             */
+
+            auto principal = base_type::update( authenticationToken, authorizationTask );
+
+            if( m_failUpdate )
+            {
+                BL_THROW(
+                    bl::SecurityException()
+                        << bl::eh::errinfo_error_code(
+                            bl::eh::errc::make_error_code( bl::eh::errc::permission_denied )
+                            ),
+                    BL_MSG()
+                        << "Authorization service refresh has failed"
+                    );
+            }
+
+            return principal;
+        }
+    };
+
+    typedef bl::om::ObjectImpl< FailingUpdateAuthorizationCacheT<> > FailingUpdateAuthorizationCache;
 
     /*
      * Use this macro to enable the hook in the tests where necessary:
@@ -680,6 +831,120 @@ UTF_AUTO_TEST_CASE( BackendTests )
         }
     }
 
+    {
+        /*
+         * Test that an associate message is *skipped* when the target peer id is already
+         * directly connected to the backend - i.e. when the block dispatcher hands out a
+         * message block completion queue for it
+         *
+         * This is the routing security invariant of the broker - if the association was
+         * recorded in that case then any client which is able to send an associate message
+         * would silently re-route the traffic of a directly connected peer to itself
+         *
+         * Note that the message must still succeed, as a proxy is expected to keep trying
+         * to associate peer ids which have since moved and connected directly
+         */
+
+        const auto sourcePeerId = bl::uuids::create();
+        const auto targetPeerId = bl::uuids::create();
+
+        const auto createAssociateMessage = [ & ]() -> bl::om::ObjPtr< BrokerProtocol >
+        {
+            auto brokerProtocol = createProtocolMessage();
+
+            brokerProtocol -> messageType(
+                MessageType::toString( MessageType::BackendAssociateTargetPeerId )
+                );
+
+            brokerProtocol -> sourcePeerId( bl::uuids::uuid2string( sourcePeerId ) );
+            brokerProtocol -> targetPeerId( bl::uuids::uuid2string( targetPeerId ) );
+
+            return brokerProtocol;
+        };
+
+        const auto createResolveMessage = [ & ]() -> bl::om::ObjPtr< BrokerProtocol >
+        {
+            auto brokerProtocol = createProtocolMessage();
+
+            brokerProtocol -> messageType(
+                MessageType::toString( MessageType::AsyncRpcAcknowledgment )
+                );
+
+            brokerProtocol -> sourcePeerId( "" );
+            brokerProtocol -> targetPeerId( "" );
+
+            return brokerProtocol;
+        };
+
+        /*
+         * The skip arm - the target peer id is reported as directly connected
+         */
+
+        {
+            const auto contextWithDirectPeer = context_t::createInstance();
+
+            contextWithDirectPeer -> directlyConnectedPeerId( targetPeerId );
+
+            testBackendProcessingTask(
+                "associate ignored for directly connected peer",
+                brokerBackendProcessing,
+                createAssociateMessage(),
+                contextWithDirectPeer
+                );
+
+            UTF_REQUIRE( contextWithDirectPeer -> wasMessageForBackend() );
+            UTF_REQUIRE( bl::uuids::nil() == contextWithDirectPeer -> resolvedTargetPeerId() );
+
+            const auto context = context_t::createInstance();
+
+            testBackendProcessingTask(
+                "resolve test for dispatch after the associate was ignored",
+                brokerBackendProcessing,
+                createResolveMessage(),
+                context,
+                bl::uuids::create()     /* sourcePeerId */,
+                targetPeerId
+                );
+
+            UTF_REQUIRE( ! context -> wasMessageForBackend() );
+            UTF_REQUIRE( bl::uuids::nil() == context -> resolvedTargetPeerId() );
+        }
+
+        /*
+         * The control arm - the only difference from the arm above is that the block
+         * dispatcher does not hand out a queue for the target peer id, in which case the
+         * association is recorded and the message is re-addressed to the source peer id
+         */
+
+        {
+            const auto contextWithoutDirectPeer = context_t::createInstance();
+
+            testBackendProcessingTask(
+                "associate recorded for a peer which is not directly connected",
+                brokerBackendProcessing,
+                createAssociateMessage(),
+                contextWithoutDirectPeer
+                );
+
+            UTF_REQUIRE( contextWithoutDirectPeer -> wasMessageForBackend() );
+            UTF_REQUIRE( bl::uuids::nil() == contextWithoutDirectPeer -> resolvedTargetPeerId() );
+
+            const auto context = context_t::createInstance();
+
+            testBackendProcessingTask(
+                "resolve test for dispatch after the associate was recorded",
+                brokerBackendProcessing,
+                createResolveMessage(),
+                context,
+                bl::uuids::create()     /* sourcePeerId */,
+                targetPeerId
+                );
+
+            UTF_REQUIRE( ! context -> wasMessageForBackend() );
+            UTF_REQUIRE( sourcePeerId == context -> resolvedTargetPeerId() );
+        }
+    }
+
     const auto testPermissionDeniedFailure = [ & ](
         SAA_in          const std::string&                                                  testName,
         SAA_in          const std::string&                                                  cookiesText,
@@ -822,6 +1087,484 @@ UTF_AUTO_TEST_CASE( BackendTests )
         brokerProtocol -> principalIdentityInfo( nullptr );
         testBackendProcessingTask( "no principal identity info", brokerBackendProcessing, brokerProtocol );
     }
+}
+
+UTF_AUTO_TEST_CASE( IO_BrokerAuthorizationCacheMissTests )
+{
+    using namespace bl;
+    using namespace bl::data;
+    using namespace bl::tasks;
+    using namespace bl::messaging;
+
+    typedef utest::TestMessagingUtils utils_t;
+
+    /*
+     * utest::DummyAuthorizationCache never returns nullptr from tryGetAuthorizedPrinciplal()
+     * and every broker in the suite is handed one of those whenever --path / --password are
+     * not provided, i.e. on every automated run, so the broker's cache miss arm - which is
+     * the arm that talks to the authorization service - is otherwise never taken
+     *
+     * The mock below opts into the cache miss mode and can also fail the refresh
+     */
+
+    const auto authorizationCache = FailingUpdateAuthorizationCache::createInstance();
+
+    authorizationCache -> forceCacheMiss( true );
+
+    /*
+     * A distinct authentication token, so the failing refresh arm below misses the cache too
+     */
+
+    const std::string cookiesTextToFailRefresh =
+        utest::DummyAuthorizationCache::dummyTokenData() + ";refreshFails=true";
+
+    const auto callbackTests = [ & ]() -> void
+    {
+        os::mutex messagesLock;
+        std::vector< om::ObjPtr< BrokerProtocol > > messagesReceived;
+
+        const auto incomingObjectChannel = om::lockDisposable(
+            MessagingClientObjectDispatchFromCallback::createInstance< MessagingClientObjectDispatch >(
+                [ & ](
+                    SAA_in              const bl::uuid_t&                               targetPeerId,
+                    SAA_in              const om::ObjPtr< BrokerProtocol >&             brokerProtocol,
+                    SAA_in_opt          const om::ObjPtr< Payload >&                    payload
+                    )
+                    -> void
+                {
+                    BL_UNUSED( targetPeerId );
+                    BL_UNUSED( payload );
+
+                    BL_MUTEX_GUARD( messagesLock );
+
+                    messagesReceived.push_back( om::copy( brokerProtocol ) );
+                }
+                )
+            );
+
+        const auto noOfMessagesReceived = [ & ]() -> std::size_t
+        {
+            BL_MUTEX_GUARD( messagesLock );
+
+            return messagesReceived.size();
+        };
+
+        const auto waitForMessages = [ & ]( SAA_in const std::size_t expected ) -> void
+        {
+            const std::size_t maxRetries = 60U;
+            std::size_t retries = 0U;
+
+            for( ;; )
+            {
+                if( noOfMessagesReceived() >= expected )
+                {
+                    break;
+                }
+
+                if( retries >= maxRetries )
+                {
+                    UTF_FAIL( "The message was not delivered within 60 seconds" );
+
+                    break;
+                }
+
+                os::sleep( time::seconds( 1L ) );
+                ++retries;
+            }
+        };
+
+        utils_t::executeMessagingTests(
+            incomingObjectChannel,
+            [ & ](
+                SAA_in          const std::string&                                      cookiesText,
+                SAA_in          const bl::om::ObjPtr< datablocks_pool_type >&           dataBlocksPool,
+                SAA_in          const bl::om::ObjPtr< ExecutionQueue >&                 eq,
+                SAA_in          const bl::om::ObjPtr< BackendProcessing >&              backend,
+                SAA_in          const bl::om::ObjPtr< utils_t::async_wrapper_t >&       asyncWrapper
+                ) -> void
+            {
+                const bl::uuid_t peerIds[ 2 ] = { uuids::create(), uuids::create() };
+
+                const auto payload = bl::dm::DataModelUtils::loadFromFile< Payload >(
+                    utest::TestUtils::resolveDataFilePath( "async_rpc_request.json" )
+                    );
+
+                auto connections = utils_t::createNoOfConnections( 2U );
+
+                UTF_REQUIRE_EQUAL( 2U, connections.size() );
+
+                std::vector< om::ObjPtrDisposable< MessagingClientObject > > clients;
+
+                clients.reserve( 2U );
+
+                for( std::size_t i = 0U; i < 2U; ++i )
+                {
+                    auto blockDispatch = om::lockDisposable(
+                        utils_t::client_factory_t::createWithSmartDefaults(
+                            om::copy( eq ),
+                            peerIds[ i ],
+                            om::copy( backend ),
+                            om::copy( asyncWrapper ),
+                            test::UtfArgsParser::host()                         /* host */,
+                            test::UtfArgsParser::port()                         /* inboundPort */,
+                            test::UtfArgsParser::port() + 1                     /* outboundPort */,
+                            std::move( connections[ i ].first )                 /* inboundConnection */,
+                            std::move( connections[ i ].second )                /* outboundConnection */,
+                            om::copy( dataBlocksPool )
+                            )
+                        );
+
+                    auto client = om::lockDisposable(
+                        MessagingClientObjectImplDefault::createInstance< MessagingClientObject >(
+                            om::qi< MessagingClientBlockDispatch >( blockDispatch ),
+                            dataBlocksPool
+                            )
+                        );
+
+                    blockDispatch.detachAsObjPtr();
+
+                    clients.push_back( std::move( client ) );
+                }
+
+                const auto sendOneMessage = [ & ]( SAA_in const std::string& cookies ) -> void
+                {
+                    const auto brokerProtocol = utest::TestMessagingUtils::createBrokerProtocolMessage(
+                        MessageType::AsyncRpcDispatch,
+                        uuids::create()                                         /* conversationId */,
+                        cookies
+                        );
+
+                    scheduleAndExecuteInParallel(
+                        [ & ]( SAA_in const om::ObjPtr< ExecutionQueue >& eqLocal ) -> void
+                        {
+                            eqLocal -> push_back(
+                                ExternalCompletionTaskImpl::createInstance< Task >(
+                                    cpp::bind(
+                                        &MessagingClientObjectDispatch::pushMessageCopyCallback,
+                                        om::ObjPtrCopyable< MessagingClientObjectDispatch >::acquireRef(
+                                            clients[ 0U ] -> outgoingObjectChannel().get()
+                                            ),
+                                        peerIds[ 1U ]                           /* targetPeerId */,
+                                        om::ObjPtrCopyable< BrokerProtocol >( brokerProtocol ),
+                                        om::ObjPtrCopyable< Payload >( payload ),
+                                        _1 /* onReady - the completion callback */
+                                        )
+                                    )
+                                );
+                        }
+                        );
+                };
+
+                /*
+                 * The first message misses the cache, so the broker must create the
+                 * authorization task, run it as its continuation and only then call update()
+                 */
+
+                sendOneMessage( cookiesText );
+
+                waitForMessages( 1U );
+
+                UTF_REQUIRE_EQUAL( 1U, authorizationCache -> createTaskCalls() );
+                UTF_REQUIRE_EQUAL( 1U, authorizationCache -> updateCalls() );
+
+                /*
+                 * postAuthorization() must run strictly after the authorization task has
+                 * completed - this is the ordering nothing else in the suite pins
+                 */
+
+                UTF_REQUIRE( authorizationCache -> lastTaskHandedToUpdate() );
+
+                /*
+                 * Note that Task::Completed is only ever set by the execution queue and only
+                 * on the task it owns, so a task which is executed as a continuation of the
+                 * broker backend wrapper task settles at Task::PendingCompletion instead
+                 *
+                 * Task::PendingCompletion is exactly what AuthorizationCacheImpl requires in
+                 * tryGetRefreshedPrincipal(), i.e. any state other than Created or Running,
+                 * so that check below is the production contract and it is captured at the
+                 * moment update() was called - had postAuthorization() run before (or
+                 * instead of) the authorization task, it would have been Created or Running
+                 */
+
+                const auto taskStateAtUpdate = authorizationCache -> updateTaskState();
+
+                BL_LOG(
+                    Logging::debug(),
+                    BL_MSG()
+                        << "The authorization task state observed by update() was "
+                        << static_cast< int >( taskStateAtUpdate )
+                    );
+
+                UTF_REQUIRE( bl::tasks::Task::Created != taskStateAtUpdate );
+                UTF_REQUIRE( bl::tasks::Task::Running != taskStateAtUpdate );
+
+                {
+                    BL_MUTEX_GUARD( messagesLock );
+
+                    UTF_REQUIRE_EQUAL( 1U, messagesReceived.size() );
+
+                    const auto& principalIdentityInfo =
+                        messagesReceived[ 0U ] -> principalIdentityInfo();
+
+                    UTF_REQUIRE( principalIdentityInfo );
+                    UTF_REQUIRE( ! principalIdentityInfo -> authenticationToken() );
+                    UTF_REQUIRE( principalIdentityInfo -> securityPrincipal() );
+
+                    UTF_REQUIRE_EQUAL(
+                        bl::str::to_lower_copy( principalIdentityInfo -> securityPrincipal() -> sid() ),
+                        bl::str::to_lower_copy( utest::DummyAuthorizationCache::dummySid() )
+                        );
+                }
+
+                /*
+                 * The second message on the same connection carries the same token, which is
+                 * in the cache now, so the hit arm must be taken instead
+                 */
+
+                sendOneMessage( cookiesText );
+
+                waitForMessages( 2U );
+
+                UTF_REQUIRE_EQUAL( 1U, authorizationCache -> createTaskCalls() );
+                UTF_REQUIRE_EQUAL( 1U, authorizationCache -> updateCalls() );
+
+                /*
+                 * The third message carries a token which is not in the cache and the refresh
+                 * is configured to fail, so the message must be rejected with
+                 * BrokerErrorCodes::AuthorizationFailed and must not be forwarded at all
+                 */
+
+                authorizationCache -> failUpdate( true );
+
+                try
+                {
+                    sendOneMessage( cookiesTextToFailRefresh );
+
+                    UTF_FAIL( "Sending the message must fail when the authorization refresh fails" );
+                }
+                catch( ServerErrorException& e )
+                {
+                    const auto* ec = eh::get_error_info< eh::errinfo_error_code >( e );
+
+                    UTF_REQUIRE( ec );
+                    UTF_REQUIRE_EQUAL(
+                        *ec,
+                        eh::errc::make_error_code( BrokerErrorCodes::AuthorizationFailed )
+                        );
+                }
+
+                UTF_REQUIRE_EQUAL( 2U, authorizationCache -> createTaskCalls() );
+                UTF_REQUIRE_EQUAL( 2U, authorizationCache -> updateCalls() );
+
+                /*
+                 * Nothing must have been forwarded, i.e. the message was not delivered
+                 * half-authorized
+                 */
+
+                os::sleep( time::seconds( 2L ) );
+
+                UTF_REQUIRE_EQUAL( 2U, noOfMessagesReceived() );
+            }
+            );
+    };
+
+    test::MachineGlobalTestLock lock;
+
+    const auto processingBackend = bl::om::lockDisposable(
+        utest::TestMessagingUtils::createTestMessagingBackend(
+            bl::om::qi< bl::security::AuthorizationCache >( authorizationCache )
+            )
+        );
+
+    bl::messaging::BrokerFacade::execute(
+        processingBackend,
+        test::UtfCrypto::getDefaultServerKey()              /* privateKeyPem */,
+        test::UtfCrypto::getDefaultServerCertificate()      /* certificatePem */,
+        test::UtfArgsParser::port()                         /* inboundPort */,
+        test::UtfArgsParser::port() + 1                     /* outboundPort */,
+        test::UtfArgsParser::threadsCount(),
+        0U                                                  /* maxConcurrentTasks */,
+        callbackTests
+        );
+}
+
+UTF_AUTO_TEST_CASE( IO_MessagingClientReconnectAndChannelIdTests )
+{
+    using namespace bl;
+    using namespace bl::data;
+    using namespace bl::tasks;
+    using namespace bl::messaging;
+
+    typedef utest::TestMessagingUtils utils_t;
+
+    /*
+     * A messaging client which is created without pre-established connections starts out
+     * disconnected and only the reconnect timer can bring it up - the first tick creates the
+     * connection establisher task and only the next one, RECONNECT_TIMER_IN_SECONDS later,
+     * observes it as completed and builds the sender and the receiver connections
+     *
+     * Every other case in the suite either hands the client pre-established connections or
+     * tears the client down before that second tick, so this is the only place where the
+     * timer driven connect / disconnect detection and the channel id regeneration which goes
+     * with it are actually exercised
+     */
+
+    const auto controlToken = SimpleTaskControlTokenImpl::createInstance< TaskControlTokenRW >();
+
+    const auto callbackTests = [ & ]() -> void
+    {
+        const auto target = om::lockDisposable(
+            MessagingClientBlockDispatchFromCallback::createInstance< MessagingClientBlockDispatch >(
+                [](
+                    SAA_in              const bl::uuid_t&                               targetPeerId,
+                    SAA_in              const om::ObjPtr< data::DataBlock >&            dataBlock
+                    ) -> void
+                {
+                    BL_UNUSED( targetPeerId );
+                    BL_UNUSED( dataBlock );
+                }
+                )
+            );
+
+        const auto peerId = uuids::create();
+
+        const auto client = om::lockDisposable(
+            MessagingClientFactorySsl::createWithSmartDefaults(
+                peerId,
+                om::copy( target ),
+                test::UtfArgsParser::host(),
+                test::UtfArgsParser::port()                         /* inboundPort */
+                )
+            );
+
+        /*
+         * The client has no connections at all yet, so it must report itself as disconnected
+         * while still having a well defined (i.e. non-nil) channel id
+         */
+
+        const auto channelIdInitial = client -> channelId();
+
+        UTF_REQUIRE( ! client -> isConnected() );
+        UTF_REQUIRE( channelIdInitial != uuids::nil() );
+
+        {
+            const std::size_t maxRetries = 180U;
+            std::size_t retries = 0U;
+
+            for( ;; )
+            {
+                if( client -> isConnected() )
+                {
+                    BL_LOG(
+                        Logging::debug(),
+                        BL_MSG()
+                            << "The messaging client has connected to the broker in about "
+                            << retries
+                            << " seconds"
+                        );
+
+                    break;
+                }
+
+                if( retries >= maxRetries )
+                {
+                    UTF_FAIL( "The messaging client did not connect to the broker within 180 seconds" );
+
+                    break;
+                }
+
+                os::sleep( time::seconds( 1L ) );
+                ++retries;
+            }
+        }
+
+        const auto channelIdConnected = client -> channelId();
+
+        UTF_REQUIRE( client -> isConnected() );
+        UTF_REQUIRE( channelIdConnected != uuids::nil() );
+        UTF_REQUIRE( channelIdConnected != channelIdInitial );
+
+        /*
+         * The block counters are maintained by the sender and the receiver connections which
+         * only exist once the reconnect timer has established them
+         */
+
+        {
+            const auto clientImpl = om::tryQI< utils_t::client_t >( client );
+
+            UTF_REQUIRE( clientImpl );
+
+            BL_LOG(
+                Logging::debug(),
+                BL_MSG()
+                    << "The messaging client has sent "
+                    << clientImpl -> noOfBlocksSent()
+                    << " and received "
+                    << clientImpl -> noOfBlocksReceived()
+                    << " blocks"
+                );
+        }
+
+        /*
+         * Now stop the broker while the client is still alive and verify that the client
+         * notices the disconnect and regenerates the channel id again
+         */
+
+        controlToken -> requestCancel();
+
+        {
+            const std::size_t maxRetries = 120U;
+            std::size_t retries = 0U;
+
+            for( ;; )
+            {
+                if( ! client -> isConnected() )
+                {
+                    break;
+                }
+
+                if( retries >= maxRetries )
+                {
+                    UTF_FAIL( "The messaging client did not detect the broker shutdown within 120 seconds" );
+
+                    break;
+                }
+
+                os::sleep( time::seconds( 1L ) );
+                ++retries;
+            }
+        }
+
+        /*
+         * Wait for at least one more reconnect timer tick, so the connected flags are flipped
+         * back and the channel id is regenerated
+         */
+
+        os::sleep( time::seconds( 7L ) );
+
+        const auto channelIdDisconnected = client -> channelId();
+
+        UTF_REQUIRE( ! client -> isConnected() );
+        UTF_REQUIRE( channelIdDisconnected != channelIdConnected );
+    };
+
+    test::MachineGlobalTestLock lock;
+
+    const auto processingBackend = bl::om::lockDisposable(
+        utest::TestMessagingUtils::createTestMessagingBackend()
+        );
+
+    bl::messaging::BrokerFacade::execute(
+        processingBackend,
+        test::UtfCrypto::getDefaultServerKey()              /* privateKeyPem */,
+        test::UtfCrypto::getDefaultServerCertificate()      /* certificatePem */,
+        test::UtfArgsParser::port()                         /* inboundPort */,
+        test::UtfArgsParser::port() + 1                     /* outboundPort */,
+        test::UtfArgsParser::threadsCount(),
+        0U                                                  /* maxConcurrentTasks */,
+        callbackTests,
+        om::copy( controlToken )
+        );
 }
 
 UTF_AUTO_TEST_CASE( BrokerFacadeTests )
