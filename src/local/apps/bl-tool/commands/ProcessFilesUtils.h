@@ -488,8 +488,15 @@ namespace bltool
                 bool atLeastOneMarkedComment = false;
 
                 {
-                    bl::fs::SafeOutputFileStreamWrapper outputFile( path );
-                    auto& os = outputFile.stream();
+                    /*
+                     * The new content is built in memory first because the loop below can
+                     * reject the input - code following the end of a block comment on the
+                     * same line is legal C++ which this rewriter refuses - and opening the
+                     * output file truncates it, so writing as we go would destroy a file
+                     * we have just refused to process
+                     */
+
+                    bl::cpp::SafeOutputStringStream os;
 
                     while( pos < count )
                     {
@@ -593,6 +600,16 @@ namespace bltool
 
                         inComment = false;
                         commentStartPos = std::string::npos;
+                    }
+
+                    /*
+                     * The whole input was accepted, so the file can now be rewritten
+                     */
+
+                    {
+                        bl::fs::SafeOutputFileStreamWrapper outputFile( path );
+
+                        outputFile.stream() << os.str();
                     }
 
                     if( atLeastOneMarkedComment )

@@ -23,6 +23,9 @@
 #include <utests/baselib/Utf.h>
 #include <utests/baselib/UtfArgsParser.h>
 
+#include <atomic>
+#include <thread>
+
 /************************************************************************
  * Abstract process priority tests
  *
@@ -170,4 +173,218 @@ UTF_AUTO_TEST_CASE( Tasks_BasicTests )
             }
         }
     }
+}
+
+UTF_AUTO_TEST_CASE( Tasks_LocalThreadPoolScopeTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    BL_LOG_MULTILINE( Logging::debug(), BL_MSG() << "\n******************************** Starting test: Tasks_LocalThreadPoolScopeTests ********************************\n" );
+
+    /*
+     * setLocalThreadPool() is a partial contract - only SimpleTaskBaseT::scheduleTask and
+     * scheduleNothrow's failure path go through TaskBaseT::getThreadPool( eq ) at all,
+     * while the timer, TCP / SSL and shutdown tasks bind their asio objects to the process
+     * global pool regardless. This case pins the half which does honour it, because
+     * AsyncExecutorImpl exists specifically to isolate its work and depends on it
+     *
+     * This module runs with no default thread pools at all - see the
+     * UTF_TEST_APP_INIT_DEACTIVATE_THREAD_POOLS define in UtfBaselibBasicTaskMain.cpp -
+     * which is what makes 'the local pool' and 'the default pool' trivially
+     * distinguishable here and gives the case its discriminating power
+     */
+
+    UTF_REQUIRE( nullptr == ThreadPoolDefault::getDefault( ThreadPoolId::GeneralPurpose ) );
+
+    const auto mainThreadIdHash = std::hash< std::thread::id >()( std::this_thread::get_id() );
+
+    /*
+     * A single threaded pool, so its worker has exactly one thread id
+     */
+
+    const auto tpLocal = om::lockDisposable(
+        ThreadPoolImpl::createInstance< ThreadPool >(
+            os::AbstractPriority::Normal,
+            1U /* threadsCount */
+            )
+        );
+
+    UTF_REQUIRE_EQUAL( 1U, tpLocal -> size() );
+
+    /*
+     * Learn that thread id by posting a probe directly on the pool's own io_service, and
+     * wait for it with a bounded wait_for rather than a sleep, so the case cannot hang
+     */
+
+    std::atomic< std::size_t > poolThreadIdHash( 0U );
+
+    {
+        os::mutex lock;
+        os::condition_variable cv;
+
+        bool probeDone = false;
+
+        tpLocal -> aioService().post(
+            [ &lock, &cv, &probeDone, &poolThreadIdHash ]() -> void
+            {
+                poolThreadIdHash = std::hash< std::thread::id >()( std::this_thread::get_id() );
+
+                os::mutex_unique_lock guard( lock );
+
+                probeDone = true;
+
+                cv.notify_all();
+            }
+            );
+
+        os::mutex_unique_lock guard( lock );
+
+        UTF_REQUIRE(
+            cv.wait_for(
+                guard,
+                os::chrono::seconds( 30 ),
+                [ &probeDone ]() -> bool
+                {
+                    return probeDone;
+                }
+                )
+            );
+    }
+
+    std::atomic< std::size_t > taskThreadIdHash( 0U );
+
+    {
+        /*
+         * The queue is declared after the pool, so it is disposed first - the teardown
+         * ordering T098 fences
+         */
+
+        const auto eq = om::lockDisposable(
+            ExecutionQueueImpl::createInstance< ExecutionQueue >( ExecutionQueue::OptionKeepAll )
+            );
+
+        eq -> setLocalThreadPool( tpLocal.get() );
+
+        UTF_REQUIRE_EQUAL( tpLocal.get(), eq -> getLocalThreadPool() );
+
+        const auto task = SimpleTaskImpl::createInstance< Task >(
+            cpp::void_callback_t(
+                [ &taskThreadIdHash ]() -> void
+                {
+                    taskThreadIdHash = std::hash< std::thread::id >()( std::this_thread::get_id() );
+                }
+                )
+            );
+
+        eq -> push_back( task );
+        eq -> waitForSuccess( task );
+
+        UTF_REQUIRE( task -> isFailed() == false );
+        UTF_REQUIRE_EQUAL( Task::Completed, task -> getState() );
+
+        /*
+         * Both slots really were written, so the comparison below cannot pass vacuously
+         */
+
+        UTF_REQUIRE( 0U != poolThreadIdHash.load() );
+        UTF_REQUIRE( 0U != taskThreadIdHash.load() );
+
+        /*
+         * The work ran on the local pool and not inline on the pushing thread
+         */
+
+        UTF_REQUIRE_EQUAL( poolThreadIdHash.load(), taskThreadIdHash.load() );
+        UTF_REQUIRE( taskThreadIdHash.load() != mainThreadIdHash );
+
+        /*
+         * The accessor is a plain non-owning slot which can also be cleared
+         */
+
+        eq -> setLocalThreadPool( nullptr );
+
+        UTF_REQUIRE( nullptr == eq -> getLocalThreadPool() );
+    }
+
+    /*
+     * The single thread identity argument above is only sound if the pool never grew
+     */
+
+    UTF_REQUIRE_EQUAL( 1U, tpLocal -> size() );
+}
+
+UTF_AUTO_TEST_CASE( Tasks_SchedulingWithoutUsableThreadPoolTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    BL_LOG_MULTILINE( Logging::debug(), BL_MSG() << "\n******************************** Starting test: Tasks_SchedulingWithoutUsableThreadPoolTests ********************************\n" );
+
+    /*
+     * The documented teardown order - queues before the pools they point at
+     *
+     * ExecutionQueue::setLocalThreadPool() stores a *non-owning* ThreadPool*, so nothing
+     * stops one component disposing a pool another component's queue is still using. The
+     * two arms which cover that - a queue with no usable pool at all, and a queue whose
+     * pool has already been disposed - are deliberately NOT written here: today the first
+     * dereferences a null om::ObjPtr< ThreadPool > inside a NOEXCEPT function and the
+     * second escapes BL_NOEXCEPT_END into os::fastAbort(), and neither ending the process
+     * can be asserted in-process. They need a production guard on
+     * TaskBaseT::getThreadPool() plus a non-throwing fallback in scheduleNothrow's catch
+     * handler - whose entire recovery strategy is currently to use the very resource whose
+     * failure it is recovering from - before they can be added
+     *
+     * What this case fences is the ordering which avoids all of that
+     */
+
+    UTF_REQUIRE( nullptr == ThreadPoolDefault::getDefault( ThreadPoolId::GeneralPurpose ) );
+
+    const auto tp = ThreadPoolImpl::createInstance< ThreadPool >(
+        os::AbstractPriority::Normal,
+        1U /* threadsCount */
+        );
+
+    auto eq = om::lockDisposable(
+        ExecutionQueueImpl::createInstance< ExecutionQueue >( ExecutionQueue::OptionKeepFailed )
+        );
+
+    eq -> setLocalThreadPool( tp.get() );
+
+    /*
+     * The pool is known good at this point
+     */
+
+    bool called = false;
+
+    const auto task = SimpleTaskImpl::createInstance< Task >(
+        cpp::void_callback_t(
+            [ &called ]() -> void
+            {
+                called = true;
+            }
+            )
+        );
+
+    eq -> push_back( task );
+    eq -> waitForSuccess( task );
+
+    UTF_REQUIRE( called );
+    UTF_REQUIRE( task -> isFailed() == false );
+    UTF_REQUIRE_EQUAL( Task::Completed, task -> getState() );
+
+    /*
+     * Asserted here rather than after disposeQueue(), which releases the reference
+     */
+
+    UTF_REQUIRE( eq -> isEmpty() );
+
+    ExecutionQueue::disposeQueue( eq );
+
+    UTF_REQUIRE( ! eq );
+
+    /*
+     * Only now may the pool go away - and nothing aborts, which is the whole point
+     */
+
+    tp -> dispose();
 }
