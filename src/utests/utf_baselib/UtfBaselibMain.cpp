@@ -36,6 +36,7 @@ using namespace bl;
 #include "TestBaselibDefault7.h"
 #include "TestBaselibDefault8.h"
 #include "TestBaselibDefault9.h"
+#include "TestBaselibDefault10.h"
 #include "TestObjModel.h"
 #include "TestTimeZoneData.h"
 #include "TestDateTimeValidationUtils.h"

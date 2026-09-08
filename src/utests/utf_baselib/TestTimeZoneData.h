@@ -19,6 +19,7 @@
 #include <baselib/core/ErrorHandling.h>
 #include <baselib/core/TimeZoneData.h>
 #include <baselib/core/TimeUtils.h>
+#include <baselib/core/OS.h>
 
 #include <cstdint>
 #include <ctime>
@@ -527,3 +528,121 @@ UTF_AUTO_TEST_CASE( TestISOTimeFormat )
             );
     }
 }
+
+#if ! defined( _WIN32 )
+
+/*
+ * getDefaultTimeZone() has no in-repository callers at all; the keep-or-delete decision
+ * for it was taken as KEEP and is recorded in
+ * notes/plans/issues/timezonedata-get-default-timezone-keep-decision.md
+ *
+ * Only the TZ environment variable leg is covered here - the /etc/timezone and
+ * /etc/sysconfig/clock legs read absolute paths a unit test must not create
+ */
+
+UTF_AUTO_TEST_CASE( TestGetDefaultTimeZonePosixTzEnvVar )
+{
+    using namespace bl;
+    using namespace bl::time;
+
+    TimeZoneData::init();
+
+    /*
+     * The process is left exactly as it was found - note that glibc's localtime_r does
+     * not re-read TZ (only localtime / tzset do), so mutating it here cannot perturb the
+     * timestamp formatting assertions in TestISOTimeFormat
+     */
+
+    const auto tzSnapshot = os::tryGetEnvironmentVariable( "TZ" );
+
+    const bool tzWasSet = !! tzSnapshot;
+    const std::string tzSavedValue = tzWasSet ? *tzSnapshot : std::string();
+
+    {
+        BL_SCOPE_EXIT(
+            {
+                if( tzWasSet )
+                {
+                    os::setEnvironmentVariable( "TZ", tzSavedValue );
+                }
+                else
+                {
+                    os::unsetEnvironmentVariable( "TZ" );
+                }
+            }
+            );
+
+        /*
+         * A valid Olson value is returned verbatim
+         */
+
+        os::setEnvironmentVariable( "TZ", "America/New_York" );
+
+        UTF_REQUIRE_EQUAL( TimeZoneData::getDefaultTimeZone(), "America/New_York" );
+
+        /*
+         * So is a valid abbreviated one, which is what the warning text promises
+         */
+
+        os::setEnvironmentVariable( "TZ", "IST" );
+
+        UTF_REQUIRE_EQUAL( TimeZoneData::getDefaultTimeZone(), "IST" );
+
+        /*
+         * An invalid value must not be returned as a time zone name - it is rejected by
+         * the validateTimeZone gate, logged as a warning naming the offending value, and
+         * the lookup falls through to the machine's own configuration
+         *
+         * Only the warning may be asserted: what the fall through produces depends on
+         * /etc/timezone, /etc/sysconfig/clock and localtime_r on the machine running the
+         * test, and on a machine where none of them yields a valid zone the call throws
+         */
+
+        os::setEnvironmentVariable( "TZ", "Not/A_Zone" );
+
+        {
+            cpp::SafeOutputStringStream capturedLog;
+
+            const Logging::line_logger_t ll(
+                cpp::bind(
+                    &Logging::defaultLineLoggerWithLock, _1, _2, _3, _4, true /* addNewLine */, cpp::ref( capturedLog )
+                    )
+                );
+
+            Logging::LineLoggerPusher pushLogger( ll );
+
+            Logging::LevelPusher pushLevel( Logging::LL_WARNING );
+
+            try
+            {
+                ( void ) TimeZoneData::getDefaultTimeZone();
+            }
+            catch( UserMessageException& )
+            {
+                /*
+                 * "Cannot determine local time zone" - a legitimate outcome of the fall
+                 * through, and not what this case is asserting
+                 */
+            }
+
+            const auto text = capturedLog.str();
+
+            UTF_REQUIRE(
+                cpp::contains( text, std::string( "Unable to determine machine time zone from TZ env variable" ) )
+                );
+
+            UTF_REQUIRE( cpp::contains( text, std::string( "Not/A_Zone" ) ) );
+        }
+    }
+
+    const auto tzRestored = os::tryGetEnvironmentVariable( "TZ" );
+
+    UTF_REQUIRE_EQUAL( tzWasSet, !! tzRestored );
+
+    if( tzWasSet )
+    {
+        UTF_REQUIRE_EQUAL( tzSavedValue, *tzRestored );
+    }
+}
+
+#endif // ! defined( _WIN32 )

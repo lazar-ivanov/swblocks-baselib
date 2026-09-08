@@ -1907,6 +1907,236 @@ UTF_AUTO_TEST_CASE( RestServiceSslGatewayInboundFilterTests )
 }
 
 /************************************************************************
+ * GraphQL vs simple JSON error rendering, at the HTTP level
+ *
+ * --graphql-error-formatting is a one flag switch on a shipped binary which changes the
+ * disclosure level, the message text and the visibility of the error code for every error
+ * response the gateway produces
+ *
+ * RestServiceSslGatewayInboundFilterTests already runs formatEhResponseGraphQL inside a
+ * server, but only for a response the gateway itself dropped, where the status is the
+ * default the caller passed in. This case drives the same renderer through a broker
+ * authorization failure instead, which is the path where the exception callback the
+ * renderer binds by reference has to UPGRADE the status - the by reference
+ * cpp::ref( httpStatusCodeActual ) binding of formatEhResponseGraphQL is exercised
+ * nowhere else - and it is the only place where the two renderers are compared on one and
+ * the same input
+ */
+
+UTF_AUTO_TEST_CASE( RestServiceSslGatewayGraphQLErrorRenderingTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace bl::messaging;
+
+    const auto controlToken = SimpleTaskControlTokenImpl::createInstance< TaskControlTokenRW >();
+
+    const auto callbackTests = [ & ]() -> void
+    {
+        std::unordered_set< std::string > tokenCookieNames;
+        tokenCookieNames.emplace( utest::DummyAuthorizationCache::dummyCookieName() );
+
+        const auto callback = [ & ]() -> void
+        {
+            scheduleAndExecuteInParallel(
+                [ & ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+                {
+                    eq -> setOptions( tasks::ExecutionQueue::OptionKeepNone );
+
+                    const os::port_t httpPort =
+                        utest::TestRestUtils::getHttpPort( test::UtfArgsParser::port() /* brokerInboundPort */ );
+
+                    /*
+                     * The very same unauthorized token request which
+                     * RestServiceSslBackendAssortedTests issues against the simple JSON
+                     * renderer - it is known to drive getStdErrorResponse with a
+                     * permission_denied ServerErrorException
+                     */
+
+                    {
+                        http::StatusesList expectedHttpStatuses;
+                        expectedHttpStatuses.insert( http::Parameters::HTTP_CLIENT_ERROR_UNAUTHORIZED );
+
+                        std::string tokenData = utest::DummyAuthorizationCache::dummyTokenDataUnauthorized();
+
+                        auto taskImpl = utest::TestRestUtils::executeHttpRequest(
+                            eq,
+                            httpPort,
+                            true                                        /* allowFailure */,
+                            str::empty()                                /* contentType */,
+                            std::string()                               /* content */,
+                            "/foo/bar"                                  /* urlPath */,
+                            "GET"                                       /* action */,
+                            std::move( tokenData )                      /* tokenData */,
+                            expectedHttpStatuses                        /* expectedHttpStatuses */
+                            );
+
+                        UTF_REQUIRE( taskImpl -> isFailed() );
+                        UTF_REQUIRE( taskImpl -> exception() );
+
+                        /*
+                         * Status parity with the simple JSON case: the status the client
+                         * sees is 401 and not the 500 the gateway started from, i.e. the
+                         * by reference status binding works through this renderer too
+                         */
+
+                        UTF_REQUIRE_EQUAL(
+                            taskImpl -> getHttpStatus(),
+                            http::Parameters::HTTP_CLIENT_ERROR_UNAUTHORIZED
+                            );
+
+                        UTF_REQUIRE_EQUAL( 1U, taskImpl -> getResponseHeaders().count( "content-type" ) );
+
+                        UTF_REQUIRE_EQUAL(
+                            taskImpl -> getResponseHeaders().at( "content-type" ),
+                            http::HttpHeader::g_contentTypeJsonUtf8
+                            );
+
+                        const auto& response = taskImpl -> getResponse();
+
+                        UTF_REQUIRE( ! response.empty() );
+
+                        const auto errorGraphQL =
+                            dm::DataModelUtils::loadFromJsonText< dm::ServerErrorGraphQL >( response );
+
+                        UTF_REQUIRE( errorGraphQL );
+
+                        BL_LOG_MULTILINE(
+                            Logging::debug(),
+                            BL_MSG()
+                                << "\n**********************************************\n"
+                                << "\nError as GraphQL response:\n\n"
+                                << dm::DataModelUtils::getDocAsPrettyJsonString( errorGraphQL )
+                                << "\n\n"
+                            );
+
+                        UTF_REQUIRE_EQUAL( 1U, errorGraphQL -> errors().size() );
+
+                        const auto& error = errorGraphQL -> errors().at( 0 );
+
+                        UTF_REQUIRE( error );
+
+                        UTF_REQUIRE_EQUAL(
+                            error -> errorType(),
+                            std::string( "bl::ServerErrorException" )
+                            );
+
+                        const auto ecExpected = eh::errc::make_error_code( eh::errc::permission_denied );
+
+                        /*
+                         * The message is split into two platform independent halves - the
+                         * text comes from BrokerErrorCodes::tryGetExpectedErrorMessage and
+                         * the suffix from the non zero error code
+                         */
+
+                        const auto& message = error -> message();
+
+                        UTF_REQUIRE_EQUAL( 0U, message.find( ecExpected.message() ) );
+                        UTF_REQUIRE( std::string::npos != message.find( "(error code " ) );
+
+                        /*
+                         * Disclosure parity - the assertion only a cross renderer test can
+                         * make. RestServiceSslBackendAssortedTests requires the simple JSON
+                         * body of this very same failure to carry a NON EMPTY
+                         * exceptionFullDump(), i.e. the whole eh::diagnostic_information
+                         * dump with the source file, the function, the host name and the
+                         * task information; none of it may appear here
+                         */
+
+                        UTF_REQUIRE( std::string::npos == response.find( "exceptionFullDump" ) );
+                        UTF_REQUIRE( std::string::npos == response.find( "exceptionMessage" ) );
+                        UTF_REQUIRE( std::string::npos == response.find( net::getShortHostName() ) );
+                        UTF_REQUIRE( std::string::npos == response.find( "function_name" ) );
+
+                        /*
+                         * The two envelopes are not interchangeable
+                         *
+                         * Note that loading a GraphQL body as a ServerErrorJson does NOT
+                         * throw: 'result' is an optional complex property, so it simply
+                         * stays null and the 'errors' array lands in the object's unmapped
+                         * property bag. What makes them non interchangeable is that a
+                         * client reading this body through the simple JSON envelope gets
+                         * no error information at all
+                         */
+
+                        bool loadedAsSimpleJson = false;
+
+                        try
+                        {
+                            const auto errorJson =
+                                dm::DataModelUtils::loadFromJsonText< dm::ServerErrorJson >( response );
+
+                            loadedAsSimpleJson = ( nullptr != errorJson -> result() );
+                        }
+                        catch( std::exception& )
+                        {
+                            loadedAsSimpleJson = false;
+                        }
+
+                        UTF_REQUIRE( ! loadedAsSimpleJson );
+                    }
+
+                    /*
+                     * The renderer is only on the error path - a success response is
+                     * untouched by it
+                     */
+
+                    {
+                        const auto taskImpl = utest::TestRestUtils::executeHttpRequest(
+                            eq,
+                            httpPort,
+                            false                                       /* allowFailure */,
+                            str::empty()                                /* contentType */,
+                            std::string()                               /* content */,
+                            "/backendhealth"                            /* urlPath */
+                            );
+
+                        UTF_REQUIRE( ! taskImpl -> isFailed() );
+
+                        UTF_REQUIRE_EQUAL(
+                            taskImpl -> getHttpStatus(),
+                            http::Parameters::HTTP_SUCCESS_OK
+                            );
+
+                        const auto stockHealthCheckResponse =
+                            httpserver::Response::createInstance( http::Parameters::HTTP_SUCCESS_OK ) -> content();
+
+                        UTF_REQUIRE_EQUAL( taskImpl -> getResponse(), stockHealthCheckResponse );
+                    }
+                }
+                );
+        };
+
+        utest::TestRestUtils::httpRestWithMessagingBackendTests(
+            callback                                                        /* callback */,
+            false                                                           /* waitOnServer */,
+            false                                                           /* isQuietMode */,
+            1U                                                              /* requestsCount */,
+            uuids::create()                                                 /* gatewayPeerId */,
+            uuids::create()                                                 /* serverPeerId */,
+            om::copy( controlToken )                                        /* controlToken */,
+            test::UtfArgsParser::host()                                     /* brokerHostName */,
+            test::UtfArgsParser::port()                                     /* brokerInboundPort */,
+            test::UtfArgsParser::connections()                              /* noOfConnections */,
+            cpp::copy( utest::DummyAuthorizationCache::dummySid() )         /* expectedSecurityId */,
+            std::move( tokenCookieNames )                                   /* tokenCookieNames */,
+            cpp::copy( utest::DummyAuthorizationCache::dummyTokenType() )   /* tokenTypeDefault */,
+            std::string()                                                   /* tokenDataDefault */,
+            utest::TestRestUtils::defaultToken()                            /* tokenData */,
+            time::neg_infin                                                 /* requestTimeout */,
+            false                                                           /* isAuthnticationAlwaysRequired */,
+            std::string()                                                   /* requiredContentType */,
+            false                                                           /* isGraphQLServer */,
+            utest::TestRestUtils::format_eh_response_callback_t(
+                &rest::RestUtils::formatEhResponseGraphQL
+                )                                                           /* ehFormatCallback */
+            );
+    };
+
+    utest::TestRestUtils::startBrokerAndRunTests( callbackTests, controlToken );
+}
+
+/************************************************************************
  * The clamp on a peer supplied HTTP status code, the 'unset means 0' semantics and the
  * Content-Type consistency check
  *

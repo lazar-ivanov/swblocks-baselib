@@ -265,3 +265,40 @@ UTF_AUTO_TEST_CASE( TestWatchdogMultipleMonitorsDeterministic )
         UTF_REQUIRE_EQUAL( 5U, watchdog2.run( 10U ) );
     }
 }
+
+UTF_AUTO_TEST_CASE( TestWatchdogArgumentValidation )
+{
+    using bl::Watchdog;
+
+    /*
+     * The constructor's BL_CHK on the checking interval is the only thing preventing
+     * timeDurationInCheckingIntervals( ... ) from dividing by zero on every call
+     *
+     * Watchdog is BL_NO_COPY_OR_MOVE, so the construction is wrapped in a lambda rather
+     * than declared inline in the macro argument
+     */
+
+    const auto cb = []() -> void
+    {
+        bl::Watchdog watchdog( bl::time::milliseconds( 0 ) /* checkingInterval */ );
+
+        BL_UNUSED( watchdog );
+    };
+
+    UTF_CHECK_THROW( cb(), bl::UnexpectedException );
+
+    Watchdog watchdog( bl::time::milliseconds( 1 ) /* checkingInterval */ );
+
+    UTF_CHECK_THROW(
+        watchdog.extendExpiration( "m", bl::time::milliseconds( -1 ) ),
+        bl::UnexpectedException
+        );
+
+    /*
+     * extendExpiration( ... ) validates BEFORE it calls setupMonitor( ... ), so a
+     * rejected call must not consume a monitor slot - index 0 for the first monitor
+     * actually registered is what proves "m" above was never registered
+     */
+
+    UTF_CHECK_EQUAL( 0U, watchdog.setupMonitor( "other" ) );
+}

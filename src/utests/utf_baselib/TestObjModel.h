@@ -2008,3 +2008,159 @@ UTF_AUTO_TEST_CASE( ObjModel_ObjPtrDisposableTests )
     UTF_REQUIRE_EQUAL( 0L, g_fooSvcLive );
 }
 
+/************************************************************************
+ * The single threaded ObjectImpl / RefCountedBase< false > specialisation
+ *
+ * A repository wide grep finds no RefCountedBase< false > and no
+ * ObjectImpl< ..., ..., false > instantiation anywhere - the three production ObjectImpl
+ * typedefs all pass true explicitly - so the non atomic specialisation is never even type
+ * checked by the compiler, in any toolchain or variant. This is what type checks it
+ *
+ * The keep-or-delete decision for the single threaded configuration was taken as KEEP and
+ * is recorded in notes/plans/issues/objmodel-single-threaded-config-keep-decision.md
+ */
+
+namespace
+{
+    long g_stLiveCounted = 0L;
+
+    template
+    <
+        typename E = void
+    >
+    class StCountedT :
+        public bl::cpp::noncopyable,
+        public bl::om::Object
+    {
+        BL_QITBL_BEGIN()
+        BL_QITBL_END( bl::om::Object )
+
+    protected:
+
+        StCountedT()
+        {
+            ++g_stLiveCounted;
+        }
+
+        ~StCountedT() NOEXCEPT
+        {
+            --g_stLiveCounted;
+        }
+    };
+
+    typedef bl::om::ObjectImpl<
+        StCountedT<>,
+        false   /* enableSharedPtr */,
+        false   /* isMultiThreaded */
+        >
+        StCountedImpl;
+
+    typedef bl::om::ObjectImpl<
+        StCountedT<>,
+        true    /* enableSharedPtr */,
+        false   /* isMultiThreaded */
+        >
+        StCountedSharedImpl;
+
+} // __unnamed
+
+UTF_AUTO_TEST_CASE( ObjModel_SingleThreadedObjectImplTests )
+{
+    using namespace bl;
+
+    UTF_REQUIRE_EQUAL( 0L, g_stLiveCounted );
+
+    {
+        /*
+         * The two samples are taken in the tightest possible window around the creation,
+         * because om::outstandingObjectRefs() is process wide and shared with the thread
+         * pools - see the note next to CountedT above
+         */
+
+        const auto stBefore = om::detail::ServerLifetimeTrackerT< false >::outstandingRefs();
+        const auto mtBefore = om::outstandingObjectRefs();
+
+        const auto o = StCountedImpl::createInstance();
+
+        const auto mtAfter = om::outstandingObjectRefs();
+        const auto stAfter = om::detail::ServerLifetimeTrackerT< false >::outstandingRefs();
+
+        UTF_REQUIRE( o );
+        UTF_REQUIRE_EQUAL( 1L, g_stLiveCounted );
+
+        /*
+         * The two trackers are independent - om::outstandingObjectRefs() reports only
+         * ServerLifetimeTrackerT< true >, so a single threaded object is counted in a
+         * separate static which no global leak check ever reads
+         */
+
+        UTF_REQUIRE_EQUAL( mtBefore, mtAfter );
+        UTF_REQUIRE_EQUAL( stBefore + 1L, stAfter );
+
+        /*
+         * The non atomic counter has to round trip through addRef / release exactly the
+         * way the atomic one does
+         */
+
+        {
+            const auto copied = om::copy( o );
+
+            UTF_REQUIRE( copied );
+            UTF_REQUIRE( om::areEqual( o, copied ) );
+            UTF_REQUIRE_EQUAL( 1L, g_stLiveCounted );
+
+            const auto asObject = om::tryQI< om::Object >( o );
+
+            UTF_REQUIRE( asObject );
+            UTF_REQUIRE_EQUAL( 1L, g_stLiveCounted );
+        }
+
+        /*
+         * Both extra references are gone and the object is still alive
+         */
+
+        UTF_REQUIRE_EQUAL( 1L, g_stLiveCounted );
+        UTF_REQUIRE_EQUAL( stBefore + 1L, om::detail::ServerLifetimeTrackerT< false >::outstandingRefs() );
+    }
+
+    UTF_REQUIRE_EQUAL( 0L, g_stLiveCounted );
+
+    /*
+     * SharedPtrImpl< true > combined with the non atomic counter - getSharedPtr( ... )
+     * calls the virtual addRef( ... ), so this is the combination which would break first
+     * if the std::conditional in RefCountedBase were changed
+     */
+
+    {
+        /*
+         * Note that the instance is created as the concrete implementation type: with
+         * enableSharedPtr the class has two om::Object base subobjects - one through
+         * SharedPtrImpl< true > -> SharedPtr and one through StCountedT - so an implicit
+         * conversion of the impl pointer to om::Object* is ambiguous. Every reference
+         * below therefore goes through queryInterface( ... ), which is what production
+         * code does too
+         */
+
+        auto o = StCountedSharedImpl::createInstance();
+
+        UTF_REQUIRE_EQUAL( 1L, g_stLiveCounted );
+
+        auto shared = om::getSharedPtr( o );
+
+        UTF_REQUIRE( shared );
+
+        o.reset();
+
+        /*
+         * The shared_ptr alone keeps it alive
+         */
+
+        UTF_REQUIRE_EQUAL( 1L, g_stLiveCounted );
+
+        shared.reset();
+
+        UTF_REQUIRE_EQUAL( 0L, g_stLiveCounted );
+    }
+
+    UTF_REQUIRE_EQUAL( 0L, g_stLiveCounted );
+}

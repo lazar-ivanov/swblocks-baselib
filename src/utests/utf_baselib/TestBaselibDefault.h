@@ -728,6 +728,34 @@ UTF_AUTO_TEST_CASE( BaseLib_TestErrorCodeToStringAndHasher )
     UTF_REQUIRE( hasher( ec1 ) != hasher( ec2 ) );
     UTF_REQUIRE_EQUAL( hasher( ec1 ), stringHasher( ec1AsString ) );
     UTF_REQUIRE_EQUAL( hasher( ec2 ), stringHasher( ec2AsString ) );
+
+    /*
+     * Two codes which share a numeric value but differ in category is the whole
+     * justification for hashing the string form rather than ec.value() - without the
+     * category in the string they would collide as unordered_map keys
+     */
+
+    const auto ecGeneric = eh::error_code( 13, eh::generic_category() );
+    const auto ecSystem = eh::error_code( 13, eh::system_category() );
+    const auto ecGenericCopy = eh::error_code( 13, eh::generic_category() );
+
+    UTF_REQUIRE( eh::errorCodeToString( ecGeneric ) != eh::errorCodeToString( ecSystem ) );
+
+    UTF_REQUIRE( hasher( ecGeneric ) != hasher( ecSystem ) );
+
+    /*
+     * Equal codes must hash equally - the container invariant
+     */
+
+    UTF_REQUIRE_EQUAL( hasher( ecGeneric ), hasher( ecGenericCopy ) );
+
+    /*
+     * These are deliberately 'contains' and not equality checks - the exact stream format
+     * of an error_code varies across the Boost versions this library supports
+     */
+
+    UTF_REQUIRE( cpp::contains( eh::errorCodeToString( ecGeneric ), std::string( "generic" ) ) );
+    UTF_REQUIRE( cpp::contains( eh::errorCodeToString( ecSystem ), std::string( "system" ) ) );
 }
 
 UTF_AUTO_TEST_CASE( BaseLib_TestErrorCodeFromExceptionPtr )
@@ -1357,6 +1385,71 @@ UTF_AUTO_TEST_CASE( BaseLib_LoggingBasicTests )
             Logging::levelToChannel( Logging::stringToLogLevel( "none" ) ),
             bl::UnexpectedException
             );
+
+        /*
+         * logLevelToString and tryStringToLogLevel are two independent tables over the
+         * same seven labels - a label added to or renamed in one of them and not the
+         * other would break level parsing for any consumer which formats a level and
+         * reads it back
+         *
+         * The checks are deliberately non-fatal so a single drifted label reports all
+         * seven rather than aborting the case on the first one
+         */
+
+        const Logging::Level allLevels[] =
+        {
+            Logging::LL_NONE,
+            Logging::LL_NOTIFY,
+            Logging::LL_ERROR,
+            Logging::LL_WARNING,
+            Logging::LL_INFO,
+            Logging::LL_DEBUG,
+            Logging::LL_TRACE,
+        };
+
+        for( const auto levelToFormat : allLevels )
+        {
+            const auto levelAsString = Logging::logLevelToString( levelToFormat );
+
+            UTF_CHECK( ! levelAsString.empty() );
+
+            Logging::Level parsed = Logging::LL_LAST;
+
+            UTF_CHECK( Logging::tryStringToLogLevel( levelAsString, parsed ) );
+            UTF_CHECK_EQUAL( levelToFormat, parsed );
+        }
+
+        /*
+         * The parsing side is case insensitive in the formatting direction too
+         *
+         * Note that the labels logLevelToString produces are already lower case, so the
+         * to_lower_copy round trip only restates the loop above; the to_upper_copy one is
+         * what actually exercises the str::iequals comparisons
+         */
+
+        {
+            Logging::Level parsed = Logging::LL_LAST;
+
+            UTF_CHECK(
+                Logging::tryStringToLogLevel(
+                    bl::str::to_lower_copy( Logging::logLevelToString( Logging::LL_WARNING ) ),
+                    parsed
+                    )
+                );
+
+            UTF_CHECK_EQUAL( Logging::Level::LL_WARNING, parsed );
+
+            parsed = Logging::LL_LAST;
+
+            UTF_CHECK(
+                Logging::tryStringToLogLevel(
+                    bl::str::to_upper_copy( Logging::logLevelToString( Logging::LL_WARNING ) ),
+                    parsed
+                    )
+                );
+
+            UTF_CHECK_EQUAL( Logging::Level::LL_WARNING, parsed );
+        }
     }
 }
 
@@ -1459,6 +1552,81 @@ UTF_AUTO_TEST_CASE( BaseLib_LoggingMultiLineTests )
     UTF_CHECK_EQUAL( line, "" );
 
     UTF_CHECK( is.eof() );
+
+    /*
+     * The loop in Channel::outMultiLine is 'while( ! is.eof() ) { std::getline( ... ); }'
+     * and std::getline consumes the delimiter without setting eofbit, so a message which
+     * ENDS with a newline costs one extra iteration which logs an empty line, and an
+     * empty message logs exactly one empty line
+     *
+     * The message above has no trailing newline and therefore never reaches that
+     * boundary, yet production logs messages with leading and trailing newlines routinely
+     * (BL_LOG_MULTILINE( ..., "\n**** Starting test ... ****\n" ))
+     *
+     * THIS PINS CURRENT BEHAVIOUR, including the trailing blank line, which may or may
+     * not be considered a defect. If the team decides the blank line is wrong, this is
+     * the single place the expectation flips
+     */
+
+    const auto countLoggedLines = []( SAA_in const std::string& text ) -> std::vector< std::string >
+    {
+        std::vector< std::string > result;
+
+        bl::cpp::SafeInputStringStream input( text );
+
+        std::string current;
+
+        while( std::getline( input, current ) )
+        {
+            result.push_back( current );
+        }
+
+        return result;
+    };
+
+    const std::string prefix = Logging::info().prefix();
+
+    {
+        bl::cpp::SafeOutputStringStream osTrailing;
+
+        const Logging::line_logger_t llTrailing(
+                bl::cpp::bind(
+                    &Logging::defaultLineLoggerWithLock, _1, _2, _3, _4, true /*addNewLine */, bl::cpp::ref( osTrailing )
+                    )
+                );
+
+        Logging::LineLoggerPusher pushLoggerTrailing( llTrailing );
+
+        BL_LOG_MULTILINE( Logging::info(), BL_MSG() << "Line1\nLine2\n" );
+
+        const auto lines = countLoggedLines( osTrailing.str() );
+
+        UTF_REQUIRE_EQUAL( 3U, lines.size() );
+
+        UTF_CHECK_EQUAL( lines[ 0 ], prefix + "Line1" );
+        UTF_CHECK_EQUAL( lines[ 1 ], prefix + "Line2" );
+        UTF_CHECK_EQUAL( lines[ 2 ], prefix );
+    }
+
+    {
+        bl::cpp::SafeOutputStringStream osEmpty;
+
+        const Logging::line_logger_t llEmpty(
+                bl::cpp::bind(
+                    &Logging::defaultLineLoggerWithLock, _1, _2, _3, _4, true /*addNewLine */, bl::cpp::ref( osEmpty )
+                    )
+                );
+
+        Logging::LineLoggerPusher pushLoggerEmpty( llEmpty );
+
+        BL_LOG_MULTILINE( Logging::info(), BL_MSG() << "" );
+
+        const auto lines = countLoggedLines( osEmpty.str() );
+
+        UTF_REQUIRE_EQUAL( 1U, lines.size() );
+
+        UTF_CHECK_EQUAL( lines[ 0 ], prefix );
+    }
 }
 
 UTF_AUTO_TEST_CASE( BaseLib_LoggingConcurrencyTests )
@@ -5358,6 +5526,50 @@ UTF_AUTO_TEST_CASE( FsUtils_TestMakeHidden )
     }
 
     bl::fs::safeUpdateFileAttributes( tmpPath, bl::os::FileAttributeHidden, false /* remove */ );
+
+    if( bl::os::onWindows() )
+    {
+        /*
+         * os::unsafe::updateFileAttributes rejects a zero attribute set and any bit
+         * outside FileAttributesMask before it reaches SetFileAttributesW, and reports a
+         * missing path as a system error rather than silently doing nothing
+         *
+         * On UNIX the implementation is an empty function (OSImplUNIX.h), which is why
+         * this is Windows only - it still has to compile everywhere
+         *
+         * Note the exception types are those the production macros actually throw:
+         * BL_CHK gives UnexpectedException, not ArgumentException, and the
+         * GetFileAttributesW failure comes through createException( ... ) as a
+         * SystemException
+         */
+
+        UTF_REQUIRE_THROW(
+            bl::os::unsafe::updateFileAttributes( tmpPath, bl::os::FileAttributeNone ),
+            bl::UnexpectedException
+            );
+
+        UTF_REQUIRE_THROW(
+            bl::os::unsafe::updateFileAttributes(
+                tmpPath,
+                static_cast< bl::os::FileAttributes >( ~static_cast< std::uint32_t >( bl::os::FileAttributesMask ) )
+                ),
+            bl::UnexpectedException
+            );
+
+        UTF_REQUIRE_THROW(
+            bl::os::unsafe::updateFileAttributes( tmpPath / "no-such-file", bl::os::FileAttributeHidden ),
+            bl::SystemException
+            );
+
+        /*
+         * The positive control - without it the three rejections above could all pass
+         * vacuously if the API stopped working altogether
+         */
+
+        bl::os::unsafe::updateFileAttributes( tmpPath, bl::os::FileAttributeHidden, false /* remove */ );
+
+        UTF_REQUIRE( bl::fs::safeGetFileAttributes( tmpPath ) & bl::os::FileAttributeHidden );
+    }
 }
 
 UTF_AUTO_TEST_CASE( FsUtils_TestCreateTempDirAndCreateDirectory )
@@ -5377,6 +5589,46 @@ UTF_AUTO_TEST_CASE( FsUtils_TestCreateTempDirAndCreateDirectory )
     }
 
     UTF_REQUIRE( ! bl::fs::exists( tmpPath ) );
+
+    /*
+     * The TmpDirT( rootTemp ) branch - every other TmpDir in the suite is default
+     * constructed, so this branch has no coverage at all
+     *
+     * A non empty rootTemp creates rootTemp / ( "bl-temp-dir-" + uuid ) with
+     * safeCreateDirectory and NOT safeMkdirs, so rootTemp itself must already exist; the
+     * result then goes through makeHidden, which renames it to a leading dot name on
+     * every platform
+     */
+
+    {
+        bl::fs::TmpDir outer;
+
+        bl::fs::path savedInnerPath;
+
+        {
+            bl::fs::TmpDir inner( outer.path() );
+
+            savedInnerPath = inner.path();
+
+            UTF_REQUIRE( bl::fs::is_directory( inner.path() ) );
+            UTF_REQUIRE_EQUAL( inner.path().parent_path(), outer.path() );
+            UTF_REQUIRE( 0U == inner.path().filename().string().find( "." ) );
+        }
+
+        /*
+         * Only the inner directory is removed - the caller supplied root survives
+         */
+
+        UTF_REQUIRE( ! bl::fs::path_exists( savedInnerPath ) );
+        UTF_REQUIRE( bl::fs::is_directory( outer.path() ) );
+
+        /*
+         * A missing root is not created for the caller - safeCreateDirectory reports it
+         * through BL_CHK_EC_USER_FRIENDLY, which throws SystemException
+         */
+
+        UTF_REQUIRE_THROW( bl::fs::TmpDir( outer.path() / "no-such-root" ), bl::SystemException );
+    }
 }
 
 UTF_AUTO_TEST_CASE( FsUtils_TestMkdirs )
