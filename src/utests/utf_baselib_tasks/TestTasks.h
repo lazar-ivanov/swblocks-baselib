@@ -5667,6 +5667,164 @@ UTF_AUTO_TEST_CASE( Tasks_SimpleTimerTests )
 
         UTF_REQUIRE( time::seconds( 3L ) < elapsed && elapsed < time::seconds( 8L ) );
     }
+
+    {
+        /*
+         * SimpleTimerT::onTimerNoThrow() wraps the user callback in BL_WARN_NOEXCEPT_*, so an
+         * exception thrown out of the callback is logged as a warning and swallowed, and the
+         * timer keeps ticking at the defaultDuration it was constructed with instead of dying
+         *
+         * Neither the swallow path nor the fallback period is exercised anywhere above, yet a
+         * change which let the exception escape would fail the timer task, the OptionKeepNone
+         * queue would discard it and SimpleTimer would go silently dead - reconnect timers and
+         * cancel request sweeps would stop with no diagnostic at all - and a fallback of zero
+         * would turn the timer into a busy loop
+         *
+         * The log capture is mandatory rather than cosmetic: UtfMain.h turns LL_WARNING into
+         * BOOST_ERROR, so the warning has to be redirected for the case to pass at all
+         */
+
+        std::atomic< std::size_t > throwingCounter( 0U );
+
+        os::mutex timestampsLock;
+        std::vector< time::ptime > timestamps;
+
+        const auto throwingUpdater = [ &throwingCounter, &timestampsLock, &timestamps ]()
+            -> time::time_duration
+        {
+            {
+                BL_MUTEX_GUARD( timestampsLock );
+
+                timestamps.push_back( time::microsec_clock::universal_time() );
+            }
+
+            const auto invocation = ++throwingCounter;
+
+            if( invocation <= 3U )
+            {
+                BL_THROW(
+                    UnexpectedException(),
+                    BL_MSG()
+                        << "timer callback failure"
+                    );
+            }
+
+            /*
+             * Request to stop the timer
+             */
+
+            return time::neg_infin;
+        };
+
+        cpp::SafeOutputStringStream os;
+
+        {
+            const Logging::line_logger_t ll(
+                cpp::bind(
+                    &Logging::defaultLineLoggerWithLock,
+                    _1,
+                    _2,
+                    _3,
+                    _4,
+                    true /* addNewLine */,
+                    cpp::ref( os )
+                    )
+                );
+
+            Logging::LineLoggerPusher pushLogger( ll );
+
+            Logging::LevelPusher pushLevel( Logging::LL_DEBUG );
+
+            SimpleTimer timer(
+                throwingUpdater                 /* callback */,
+                time::milliseconds( 200 )       /* defaultDuration */,
+                time::milliseconds( 0 )         /* initDelay */,
+                false                           /* dontStart */
+                );
+
+            /*
+             * Three throwing invocations at ~200 ms apart keep the timer alive long enough
+             * for the wait below to be entered while it is still running
+             */
+
+            UTF_REQUIRE_NO_THROW( timer.wait() );
+        }
+
+        UTF_REQUIRE_EQUAL( 4U, throwingCounter.load() );
+
+        std::vector< time::ptime > timestampsCopy;
+
+        {
+            BL_MUTEX_GUARD( timestampsLock );
+
+            timestampsCopy = timestamps;
+        }
+
+        UTF_REQUIRE_EQUAL( 4U, timestampsCopy.size() );
+
+        /*
+         * Every gap must be the fallback period rather than a hot loop; 150 ms leaves room
+         * for timer granularity on a loaded machine while still failing on a zero fallback
+         */
+
+        for( std::size_t i = 1U; i < timestampsCopy.size(); ++i )
+        {
+            UTF_REQUIRE( ( timestampsCopy[ i ] - timestampsCopy[ i - 1U ] ) >= time::milliseconds( 150 ) );
+        }
+
+        UTF_REQUIRE(
+            str::contains( os.str(), "SimpleTimerT::onTimerNoThrow(): NOEXCEPT block threw an exception" )
+            );
+    }
+
+    {
+        /*
+         * runNow() has no coverage at all, although ProxyBrokerBackendProcessingFactory calls
+         * it in production; the init delay below is long enough that the timer can never fire
+         * on its own, so the only thing which can move the counter is runNow() itself
+         */
+
+        std::atomic< std::size_t > runNowCounter( 0U );
+
+        const auto runNowUpdater = [ &runNowCounter ]() -> time::time_duration
+        {
+            ++runNowCounter;
+
+            return time::seconds( 30L );
+        };
+
+        SimpleTimer timer(
+            runNowUpdater                       /* callback */,
+            time::seconds( 30L )                /* defaultDuration */,
+            time::seconds( 30L )                /* initDelay */,
+            false                               /* dontStart */
+            );
+
+        os::sleep( time::milliseconds( 300 ) );
+        UTF_REQUIRE_EQUAL( 0U, runNowCounter.load() );
+
+        timer.runNow();
+
+        os::sleep( time::milliseconds( 300 ) );
+        UTF_REQUIRE_EQUAL( 1U, runNowCounter.load() );
+
+        timer.stop();
+
+        /*
+         * Note that SimpleTimerT::runNow()'s guard message is a copy/paste of wait()'s and
+         * reads "Attempting to wait on a simple timer object that has not been started", so
+         * only the exception type is asserted here
+         */
+
+        SimpleTimer notStartedTimer(
+            runNowUpdater                       /* callback */,
+            time::seconds( 30L )                /* defaultDuration */,
+            time::seconds( 0L )                 /* initDelay */,
+            true                                /* dontStart */
+            );
+
+        UTF_REQUIRE_THROW( notStartedTimer.runNow(), bl::UnexpectedException );
+    }
 }
 
 UTF_AUTO_TEST_CASE( Tasks_EarlyCancelTests )

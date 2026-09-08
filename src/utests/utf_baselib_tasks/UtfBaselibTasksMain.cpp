@@ -19,3 +19,4 @@
 
 #include "TestTasks.h"
 #include "TestTasks2.h"
+#include "TestTasks3.h"
