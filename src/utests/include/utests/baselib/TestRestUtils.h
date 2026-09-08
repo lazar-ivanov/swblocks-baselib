@@ -145,6 +145,20 @@ namespace utest
         >
         server_context_factory_t;
 
+        /**
+         * @brief A live view of the echo server context's processed messages counter
+         *
+         * The echo context is created and owned by httpRestWithMessagingBackendTests, so a
+         * caller supplied callback which needs to sample the counter around individual
+         * requests has to be handed a getter rather than a value; the getter holds its own
+         * reference to the context, so it also stays valid after the fixture has returned
+         *
+         * Note that it always reports the echo context - a caller which replaces it via
+         * serverContextFactory will see the counter stay at zero
+         */
+
+        typedef bl::cpp::function< std::size_t () > messages_processed_callback_t;
+
         static auto defaultToken() -> std::string
         {
             return TestMessagingUtils::getTokenData();
@@ -340,7 +354,9 @@ namespace utest
             SAA_in_opt      std::string&&                                                   requiredContentType = std::string(),
             SAA_in_opt      const bool                                                      isGraphQLServer = false,
             SAA_in_opt      format_eh_response_callback_t&&                                 ehFormatCallback = format_eh_response_callback_t(),
-            SAA_in_opt      const server_context_factory_t&                                 serverContextFactory = server_context_factory_t()
+            SAA_in_opt      const server_context_factory_t&                                 serverContextFactory = server_context_factory_t(),
+            SAA_inout_opt   messages_processed_callback_t*                                  messagesProcessedOut = nullptr,
+            SAA_in_opt      const bl::uuid_t&                                               gatewayTargetPeerId = bl::uuids::nil()
             )
         {
             using namespace bl;
@@ -375,6 +391,18 @@ namespace utest
                     cpp::copy( tokenData )              /* tokenData */
                     )
                 );
+
+            if( messagesProcessedOut )
+            {
+                const auto contextRef =
+                    om::ObjPtrCopyable< echo::EchoServerProcessingContext >::acquireRef( echoContext.get() );
+
+                *messagesProcessedOut =
+                    [ contextRef ]() -> std::size_t
+                    {
+                        return contextRef -> messagesProcessed();
+                    };
+            }
 
             {
                 const auto backend1 = om::lockDisposable(
@@ -452,7 +480,8 @@ namespace utest
                             om::copy( controlToken ),
                             om::copy( backend1 )                                    /* messagingBackend */,
                             gatewayPeerId                                           /* sourcePeerId */,
-                            serverPeerId                                            /* targetPeerId */,
+                            gatewayTargetPeerId.is_nil() ?
+                                serverPeerId : gatewayTargetPeerId                  /* targetPeerId */,
                             om::copy( dataBlocksPool ),
                             BL_PARAM_FWD( tokenCookieNames ),
                             true                                                    /* serverAuthenticationRequired */,
