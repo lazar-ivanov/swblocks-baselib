@@ -28,6 +28,7 @@
 using namespace bl;
 
 #include "TestBaselibDefault.h"
+#include "TestBaselibDefault2.h"
 #include "TestObjModel.h"
 #include "TestTimeZoneData.h"
 #include "TestTransaction.h"

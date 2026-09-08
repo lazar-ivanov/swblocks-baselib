@@ -865,6 +865,39 @@ namespace utest
 
                         BL_ASSERT( fsmd -> isFinalized() );
 
+                        {
+                            /*
+                             * Verify that the transfer really exercises the multi-chunk code paths
+                             * of the packager, the transmitter, the receiver and the unpackager
+                             *
+                             * The generated input tree contains a file which is larger than one
+                             * data block as well as a zero size file, so a future change of the
+                             * default data block capacity cannot silently turn the whole suite
+                             * back into a single chunk transfer
+                             */
+
+                            const auto fsmdRO = om::qi< FilesystemMetadataRO >( fsmd );
+
+                            std::size_t maxChunksPerEntry = 0U;
+                            std::size_t minChunksPerEntry = std::numeric_limits< std::size_t >::max();
+
+                            const auto entries = fsmdRO -> queryAllEntries();
+
+                            for( ; entries -> hasCurrent(); entries -> loadNext() )
+                            {
+                                const auto chunksCount = fsmdRO -> queryChunksCount( entries -> current() );
+
+                                maxChunksPerEntry = std::max( maxChunksPerEntry, chunksCount );
+                                minChunksPerEntry = std::min( minChunksPerEntry, chunksCount );
+                            }
+
+                            if( test::UtfArgsParser::path().empty() && ! faultOptions.singleFileInput )
+                            {
+                                UTF_REQUIRE( maxChunksPerEntry > 1U );
+                                UTF_REQUIRE( minChunksPerEntry == 0U );
+                            }
+                        }
+
                         artifactId = metadataStore -> saveArtifact( fsmd );
                     },
                     executionQueue
@@ -1137,7 +1170,25 @@ namespace utest
                         << isSameDir
                     );
 
-                BL_RT_ASSERT( isSameDir, "Files downloaded do not match the files uploaded" );
+                UTF_REQUIRE( isSameDir );
+
+                if( test::UtfArgsParser::path().empty() && ! faultOptions.singleFileInput )
+                {
+                    /*
+                     * A direct byte level check of the file which is transferred as multiple
+                     * chunks; it verifies that every chunk has landed at the correct offset
+                     * and in the correct order
+                     */
+
+                    UTF_REQUIRE(
+                        TestFsUtils::compareFileContents(
+                            root / "foo" / "bar" / "multiChunkFile.bin",
+                            fs::path( outputPath ) / "foo" / "bar" / "multiChunkFile.bin",
+                            true /* ignoreTimestamp */,
+                            true /* ignoreName */
+                            )
+                        );
+                }
             };
 
             for( std::size_t downloadId = 0U; downloadId < noOfDownloads; ++downloadId )
