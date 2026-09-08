@@ -1569,10 +1569,7 @@ UTF_AUTO_TEST_CASE( IO_MessagingClientReconnectAndChannelIdTests )
 
 UTF_AUTO_TEST_CASE( BrokerFacadeTests )
 {
-    if( ! test::UtfArgsParser::isServer() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isServer(), "requires --is-server (manual run test)" );
 
     /*
      * This global lock needed to avoid conflicts with the default ports used below
@@ -1597,10 +1594,7 @@ UTF_AUTO_TEST_CASE( BrokerFacadeTests )
 
 UTF_AUTO_TEST_CASE( ProxyBrokerFacadeTests )
 {
-    if( ! test::UtfArgsParser::isServer() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isServer(), "requires --is-server (manual run test)" );
 
     typedef utest::TestMessagingUtils utils_t;
 
@@ -1614,10 +1608,7 @@ UTF_AUTO_TEST_CASE( ProxyBrokerClientBasicTests )
     using namespace bl::tasks;
     using namespace bl::messaging;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (manual run test)" );
 
     typedef utest::TestMessagingUtils utils_t;
 
@@ -1842,10 +1833,7 @@ UTF_AUTO_TEST_CASE( BrokerClientTests )
     using namespace bl::tasks;
     using namespace bl::messaging;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (manual run test)" );
 
     typedef utest::TestMessagingUtils utils_t;
 
@@ -2616,22 +2604,13 @@ UTF_AUTO_TEST_CASE( IO_MessagingClientObjectDispatchTcpDispatcherTests )
 
                         UTF_REQUIRE( task -> isFailed() );
 
-                        try
-                        {
-                            cpp::safeRethrowException( task -> exception() );
+                        UTF_REQUIRE_THROW_ERROR_CODE(
+                            cpp::safeRethrowException( task -> exception() ),
+                            ServerErrorException,
+                            eh::errc::make_error_code( BrokerErrorCodes::TargetPeerQueueFull )
+                            );
 
-                            UTF_FAIL( "This must throw" );
-                        }
-                        catch( ServerErrorException& e )
-                        {
-                            const auto* ec = e.errorCode();
-
-                            UTF_REQUIRE(
-                                ec && eh::errc::make_error_code( BrokerErrorCodes::TargetPeerQueueFull ) == *ec
-                                );
-
-                            ++noOfFailedCalls;
-                        }
+                        ++noOfFailedCalls;
                     }
 
                     UTF_REQUIRE( noOfFailedCalls );
@@ -2668,22 +2647,13 @@ UTF_AUTO_TEST_CASE( IO_MessagingClientObjectDispatchTcpDispatcherTests )
 
                     noOfFailedCalls = 0U;
 
-                    try
-                    {
-                        eq -> flush();
+                    UTF_REQUIRE_THROW_ERROR_CODE(
+                        eq -> flush(),
+                        ServerErrorException,
+                        eh::errc::make_error_code( BrokerErrorCodes::TargetPeerNotFound )
+                        );
 
-                        UTF_FAIL( "This must throw" );
-                    }
-                    catch( ServerErrorException& e )
-                    {
-                        const auto* ec = e.errorCode();
-
-                        UTF_REQUIRE(
-                            ec && eh::errc::make_error_code( BrokerErrorCodes::TargetPeerNotFound ) == *ec
-                            );
-
-                        ++noOfFailedCalls;
-                    }
+                    ++noOfFailedCalls;
 
                     UTF_REQUIRE( noOfFailedCalls );
 
@@ -4433,14 +4403,7 @@ UTF_AUTO_TEST_CASE( IO_MessagingPerfTests )
     using namespace bl::tasks;
     using namespace bl::messaging;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        /*
-         * This is a manual test
-         */
-
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (manual run test)" );
 
     typedef utest::TestMessagingUtils utils_t;
 
@@ -5612,22 +5575,11 @@ UTF_AUTO_TEST_CASE( IO_MessagingMultiplexingTests )
                                         {
                                             UTF_REQUIRE_EQUAL( task -> isFailed(), true );
 
-                                            try
-                                            {
-                                                cpp::safeRethrowException( task -> exception() );
-                                            }
-                                            catch( ServerErrorException& e )
-                                            {
-                                                const auto* ec =
-                                                    eh::get_error_info< eh::errinfo_error_code >( e );
-
-                                                UTF_REQUIRE( ec );
-
-                                                UTF_REQUIRE_EQUAL(
-                                                    *ec,
-                                                    eh::errc::make_error_code( BrokerErrorCodes::TargetPeerNotFound )
-                                                    );
-                                            }
+                                            UTF_REQUIRE_THROW_ERROR_CODE(
+                                                cpp::safeRethrowException( task -> exception() ),
+                                                ServerErrorException,
+                                                eh::errc::make_error_code( BrokerErrorCodes::TargetPeerNotFound )
+                                                );
                                         }
                                     }
                                 }
@@ -6961,10 +6913,7 @@ UTF_AUTO_TEST_CASE( IO_ConnectionEstablisherBasicTests )
     using namespace bl::tasks;
     using namespace bl::messaging;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (manual run test)" );
 
     typedef utest::TestMessagingUtils                                               utils_t;
     typedef ProxyBrokerBackendProcessingFactorySsl::connection_establisher_t        connection_establisher_t;

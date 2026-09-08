@@ -342,10 +342,14 @@ public:
             }
 
             outstandingRefs = bl::om::outstandingObjectRefs();
+            test::outstandingRefsAtExit() = outstandingRefs;
+
             BL_CHK( false, 0L == outstandingRefs, BL_MSG() << "Objects leaked!" );
         }
         catch( std::exception& e )
         {
+            test::outstandingRefsAtExit() = outstandingRefs;
+
             /*
              * Using the logger here may not be safe since it maybe
              * still wired to the UTF logger (which cannot be used during globals unwind)

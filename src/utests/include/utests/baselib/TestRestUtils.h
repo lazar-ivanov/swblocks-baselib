@@ -369,7 +369,17 @@ namespace utest
                             callback = waitOnServer ? waitOnBackendCallback : executeHttpRequestCallback;
                         }
 
-                        TestTaskUtils::startAcceptorAndExecuteCallback( callback, acceptor );
+                        /*
+                         * The acceptor binds "0.0.0.0", so the readiness probe must target the
+                         * regular test host rather than the bind address
+                         */
+
+                        TestTaskUtils::startAcceptorAndExecuteCallback(
+                            callback,
+                            acceptor,
+                            test::UtfArgsParser::host()                      /* readinessHost */,
+                            httpPort                                        /* readinessPort */
+                            );
 
                         if( ! waitOnServer && ! isCustomCallback )
                         {

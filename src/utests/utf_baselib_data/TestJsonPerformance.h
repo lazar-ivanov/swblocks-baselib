@@ -147,10 +147,7 @@ UTF_AUTO_TEST_CASE( JsonPerformanceBasicParsing )
 {
     using namespace utest::json_perf;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (performance benchmark)" );
 
     const std::size_t warmupIterations = 100;
     const std::size_t testIterations = 1000;
@@ -219,10 +216,7 @@ UTF_AUTO_TEST_CASE( JsonPerformanceLargeParsing )
 {
     using namespace utest::json_perf;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (performance benchmark)" );
 
     const std::size_t testIterations = 100;
 
@@ -269,10 +263,7 @@ UTF_AUTO_TEST_CASE( JsonPerformanceSerialization )
 {
     using namespace utest::json_perf;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (performance benchmark)" );
 
     const std::size_t testIterations = 1000;
 
@@ -388,10 +379,7 @@ UTF_AUTO_TEST_CASE( JsonPerformanceObjectAccess )
 {
     using namespace utest::json_perf;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (performance benchmark)" );
 
     const std::size_t testIterations = 10000;
 
@@ -444,10 +432,7 @@ UTF_AUTO_TEST_CASE( JsonPerformanceNestedAccess )
 {
     using namespace utest::json_perf;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (performance benchmark)" );
 
     const std::size_t testIterations = 100000;
 
@@ -514,10 +499,7 @@ UTF_AUTO_TEST_CASE( JsonPerformanceObjectConstruction )
 {
     using namespace utest::json_perf;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (performance benchmark)" );
 
     const std::size_t testIterations = 10000;
 
@@ -570,10 +552,7 @@ UTF_AUTO_TEST_CASE( JsonPerformanceRoundTrip )
 {
     using namespace utest::json_perf;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (performance benchmark)" );
 
     const std::size_t testIterations = 500;
 
@@ -835,10 +814,7 @@ UTF_AUTO_TEST_CASE( DataModelPerformanceSimpleSerialization )
     using namespace utest::dm_perf;
     using namespace bl::dm;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (performance benchmark)" );
 
     const std::size_t testIterations = 5000;
 
@@ -916,10 +892,7 @@ UTF_AUTO_TEST_CASE( DataModelPerformanceSimpleDeserialization )
     using namespace utest::dm_perf;
     using namespace bl::dm;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (performance benchmark)" );
 
     const std::size_t testIterations = 5000;
 
@@ -977,10 +950,7 @@ UTF_AUTO_TEST_CASE( DataModelPerformanceComplexSerialization )
     using namespace utest::dm_perf;
     using namespace bl::dm;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (performance benchmark)" );
 
     const std::size_t testIterations = 2000;
 
@@ -1058,10 +1028,7 @@ UTF_AUTO_TEST_CASE( DataModelPerformanceComplexDeserialization )
     using namespace utest::dm_perf;
     using namespace bl::dm;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (performance benchmark)" );
 
     const std::size_t testIterations = 2000;
 
@@ -1121,10 +1088,7 @@ UTF_AUTO_TEST_CASE( DataModelPerformanceRoundTrip )
     using namespace utest::dm_perf;
     using namespace bl::dm;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (performance benchmark)" );
 
     const std::size_t testIterations = 2000;
 
@@ -1201,10 +1165,7 @@ UTF_AUTO_TEST_CASE( DataModelPerformanceOverheadSimple )
     using namespace utest::dm_perf;
     using namespace bl::dm;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (performance benchmark)" );
 
     const std::size_t testIterations = 5000;
 
@@ -1344,10 +1305,7 @@ UTF_AUTO_TEST_CASE( DataModelPerformanceOverheadComplex )
     using namespace utest::dm_perf;
     using namespace bl::dm;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (performance benchmark)" );
 
     const std::size_t testIterations = 2000;
 
@@ -1563,10 +1521,7 @@ UTF_AUTO_TEST_CASE( DataModelSerializationProfileSimple )
     using namespace utest::dm_perf;
     using namespace bl::dm;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (performance benchmark)" );
 
     const std::size_t testIterations = 5000;
 
@@ -1683,10 +1638,7 @@ UTF_AUTO_TEST_CASE( DataModelSerializationProfileComplex )
     using namespace utest::dm_perf;
     using namespace bl::dm;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (performance benchmark)" );
 
     const std::size_t testIterations = 2000;
 
@@ -1802,10 +1754,7 @@ UTF_AUTO_TEST_CASE( DataModelSerializationEmplaceBaseline )
     using namespace utest::json_perf;
     using namespace utest::dm_perf;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (performance benchmark)" );
 
     /*
      * Micro-benchmark: measure the raw cost of building a json::object via emplace

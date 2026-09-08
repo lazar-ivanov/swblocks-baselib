@@ -156,11 +156,6 @@ namespace utest
             using namespace utest;
             using namespace test;
 
-            if( ! UtfArgsParser::isServer() )
-            {
-                return;
-            }
-
             cpp::SafeUniquePtr< test::MachineGlobalTestLock > lock;
 
             if( UtfArgsParser::port() == UtfArgsParser::PORT_DEFAULT )

@@ -134,21 +134,9 @@ UTF_AUTO_TEST_CASE( BaseLib_ParsingGetTokens )
     using namespace bl::lex;
     using namespace utest::lex;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (manual run test)" );
 
-    if( test::UtfArgsParser::path().empty() )
-    {
-        BL_LOG(
-            Logging::notify(),
-            BL_MSG()
-                << "The --path parameter must be provided"
-            );
-
-        return;
-    }
+    UTF_SKIP_UNLESS( ! test::UtfArgsParser::path().empty(), "requires --path" );
 
     const WordsLexer lexer;
 

@@ -641,14 +641,7 @@ UTF_AUTO_TEST_CASE( RestServiceSslHttpGatewayOnlyTests )
     using namespace bl;
     using namespace bl::tasks;
 
-    if( ! test::UtfArgsParser::isServer() )
-    {
-        /*
-         * This is a manual run test
-         */
-
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isServer(), "requires --is-server (manual run test)" );
 
     const auto controlToken = SimpleTaskControlTokenImpl::createInstance< TaskControlTokenRW >();
 
@@ -674,14 +667,7 @@ UTF_AUTO_TEST_CASE( RestServiceSslHttpGatewayOnlyTests )
 
 UTF_AUTO_TEST_CASE( RestServiceSslBackendHttpOnlyTests )
 {
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        /*
-         * This is a manual run test
-         */
-
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (manual run test)" );
 
     if( test::UtfArgsParser::tokenData().empty() )
     {

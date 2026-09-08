@@ -4242,10 +4242,7 @@ UTF_AUTO_TEST_CASE( Tasks_PingerManualTests )
     using namespace bl;
     using namespace bl::tasks;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (manual run test)" );
 
     scheduleAndExecuteInParallel(
         []( SAA_in const om::ObjPtr< tasks::ExecutionQueue >& eq ) -> void

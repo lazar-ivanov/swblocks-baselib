@@ -526,15 +526,12 @@ UTF_AUTO_TEST_CASE( AuthorizationCacheRestImplManualInvoke )
      * This is a manual invoke test against some real service
      */
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (manual run test)" );
 
-    if( test::UtfArgsParser::path().empty() ||  test::UtfArgsParser::password().empty() )
-    {
-        UTF_FAIL( "The --path and --password are required parameters for this test" );
-    }
+    UTF_SKIP_UNLESS(
+        ! test::UtfArgsParser::path().empty() && ! test::UtfArgsParser::password().empty(),
+        "requires --path and --password (real service)"
+        );
 
     typedef om::ObjectImpl< AuthorizationCacheImpl< AuthorizationServiceRest > > cache_t;
 

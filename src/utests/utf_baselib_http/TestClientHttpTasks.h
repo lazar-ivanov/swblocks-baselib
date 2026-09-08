@@ -768,10 +768,7 @@ UTF_AUTO_TEST_CASE( Client_SimpleHttpTimeoutTests )
     using namespace bl::tasks;
     using namespace bl::transfer;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (manual run test)" );
 
     utest::http::HttpServerHelpers::startHttpServerAndExecuteCallback(
         []() -> void

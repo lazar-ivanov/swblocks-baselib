@@ -1505,7 +1505,9 @@ UTF_AUTO_TEST_CASE( BaseLib_HttpServerConnectionTimeoutAndCapTest )
                 UTF_REQUIRE( connection3.waitUntilClosed( time::seconds( 10 ) ) );
             }
         },
-        acceptor
+        acceptor,
+        test::UtfArgsParser::host()                     /* readinessHost */,
+        test::UtfArgsParser::port()                     /* readinessPort */
         );
 }
 

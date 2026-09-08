@@ -674,7 +674,8 @@ namespace utest
             SAA_in_opt          const CancelType                                                cancelType = CancelType::NoCancel,
             SAA_in_opt          const bl::cpp::void_callback_t&                                 cancelCallback = bl::cpp::void_callback_t(),
             SAA_in_opt          const bl::om::ObjPtr< bl::tasks::ExecutionQueue >&              executionQueue = nullptr,
-            SAA_in_opt          const PipelineFaultOptions&                                     faultOptions = PipelineFaultOptions()
+            SAA_in_opt          const PipelineFaultOptions&                                     faultOptions = PipelineFaultOptions(),
+            SAA_in_opt          const bool                                                      expectNotFoundAfterDelete = true
             )
         {
             using namespace bl;
@@ -1295,27 +1296,39 @@ namespace utest
                     );
             }
 
-            try
-            {
-                cbDownloadTest( noOfDownloads );
-            }
-            catch( ServerErrorException& e )
-            {
-                /*
-                 * Since we deleted the chunks we now expect ServerErrorException exception on the client
-                 * with error code attached to it matching eh::errc::no_such_file_or_directory condition
-                 */
+            /*
+             * Since we deleted the chunks we now expect a ServerErrorException on the client
+             * with an error code attached to it matching the eh::errc::no_such_file_or_directory
+             * condition, and with the same value carried as the errno
+             *
+             * Note that the download must be driven exactly once, so the two halves are asserted
+             * by a single predicate built from the same tools UTF_REQUIRE_THROW_ERROR_CODE and
+             * UTF_REQUIRE_THROW_ERRNO use; unlike the try / catch this replaces, it also fails
+             * when no exception is thrown at all
+             *
+             * The exception is a topology with a caching blob server proxy in the path: the
+             * proxy's RemoveChunk deliberately does not invalidate its local chunk cache (see
+             * ProxyDataChunkStorageImpl::executeCommand), so the download after the deletion is
+             * legitimately served from that cache and must still succeed
+             */
 
+            if( expectNotFoundAfterDelete )
+            {
                 const auto expectedEC = eh::errc::make_error_code( eh::errc::no_such_file_or_directory );
 
-                const eh::error_code* ec = e.errorCode();
-                const int* errNo = e.errNo();
-
-                UTF_REQUIRE( ec );
-                UTF_REQUIRE( errNo );
-
-                UTF_REQUIRE_EQUAL( *ec, expectedEC );
-                UTF_REQUIRE_EQUAL( *errNo, expectedEC.value() );
+                UTF_REQUIRE_EXCEPTION(
+                    cbDownloadTest( noOfDownloads ),
+                    ServerErrorException,
+                    [ &expectedEC ]( const ServerErrorException& ex ) -> bool
+                    {
+                        return test::UtfExceptionTools::matchErrorCode( ex, expectedEC ) &&
+                            test::UtfExceptionTools::matchErrNo( ex, expectedEC.value() );
+                    }
+                    );
+            }
+            else
+            {
+                UTF_REQUIRE_NO_THROW( cbDownloadTest( noOfDownloads ) );
             }
         }
 
@@ -1604,7 +1617,12 @@ namespace utest
                 }
                 );
 
-            TestTaskUtils::startAcceptorAndExecuteCallback( cbTransferTest, acceptor );
+            TestTaskUtils::startAcceptorAndExecuteCallback(
+                cbTransferTest,
+                acceptor,
+                UtfArgsParser::host()                                       /* readinessHost */,
+                blobServerPort                                              /* readinessPort */
+                );
         }
 
         static void filesPackagerTestsWrapInternal(
@@ -1647,7 +1665,8 @@ namespace utest
                 test::UtfArgsParser::host(),
                 blobServerPort,
                 cancelType,
-                faultOptions
+                faultOptions,
+                true                            /* expectNotFoundAfterDelete */
                 );
 
             cbExecuteTests(
@@ -1698,6 +1717,10 @@ namespace utest
             /*
              * When we test the proxy we request the # of downloads to be 2, so we test
              * the caching functionality
+             *
+             * The download which follows the deletion is expected to succeed here rather than
+             * to fail with 'no such file or directory': the chunks are served from the proxy's
+             * local cache, which RemoveChunk deliberately does not invalidate
              */
 
             const auto cbTransferTest = cpp::bind(
@@ -1707,7 +1730,8 @@ namespace utest
                 metadataStore,
                 test::UtfArgsParser::host(),
                 blobServerPort,
-                CancelType::NoCancel
+                CancelType::NoCancel,
+                false                           /* expectNotFoundAfterDelete - see above */
                 );
 
             const auto cbProxyTransferTests =
@@ -2094,7 +2118,8 @@ namespace utest
             SAA_in              const std::string&                                              host,
             SAA_in              const unsigned short                                            port,
             SAA_in              const CancelType                                                cancelType,
-            SAA_in              const PipelineFaultOptions&                                     faultOptions
+            SAA_in              const PipelineFaultOptions&                                     faultOptions,
+            SAA_in_opt          const bool                                                      expectNotFoundAfterDelete = true
             )
         {
             switch( cancelType )
@@ -2114,7 +2139,8 @@ namespace utest
                             CancelType::NoCancel,
                             bl::cpp::void_callback_t()      /* cancelCallback */,
                             nullptr                         /* executionQueue */,
-                            faultOptions
+                            faultOptions,
+                            expectNotFoundAfterDelete
                             );
                     }
                     break;
@@ -2142,7 +2168,8 @@ namespace utest
             SAA_in              const bl::om::ObjPtrCopyable< FilesystemMetadataStore >&        metadataStore,
             SAA_in_opt          const std::string&                                              host = "localhost",
             SAA_in_opt          const unsigned short                                            port = test::UtfArgsParser::PORT_DEFAULT,
-            SAA_in_opt          const CancelType                                                cancelType = CancelType::NoCancel
+            SAA_in_opt          const CancelType                                                cancelType = CancelType::NoCancel,
+            SAA_in_opt          const bool                                                      expectNotFoundAfterDelete = true
             )
         {
             executeTheFilesPackagerAndTransmitterPipelineWithFaults(
@@ -2152,7 +2179,8 @@ namespace utest
                 host,
                 port,
                 cancelType,
-                PipelineFaultOptions()
+                PipelineFaultOptions(),
+                expectNotFoundAfterDelete
                 );
         }
 
@@ -2160,11 +2188,6 @@ namespace utest
         {
             using namespace bl;
             using namespace test;
-
-            if( ! UtfArgsParser::isClient() )
-            {
-                return;
-            }
 
             const auto context = bl::transfer::SendRecvContext::createInstance(
                 SimpleEndpointSelectorImpl::createInstance< EndpointSelector >(
@@ -2190,11 +2213,6 @@ namespace utest
             using namespace bl::messaging;
             using namespace bl::transfer;
             using namespace test;
-
-            if( ! UtfArgsParser::isServer() )
-            {
-                return;
-            }
 
             cpp::SafeUniquePtr< test::MachineGlobalTestLock > lock;
 

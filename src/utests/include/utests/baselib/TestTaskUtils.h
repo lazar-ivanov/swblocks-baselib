@@ -30,6 +30,7 @@
 #include <baselib/tasks/utils/DirectoryScannerControlToken.h>
 #include <baselib/tasks/Algorithms.h>
 #include <baselib/tasks/Task.h>
+#include <baselib/tasks/TcpBaseTasks.h>
 #include <baselib/tasks/ExecutionQueue.h>
 #include <baselib/tasks/SimpleTaskControlToken.h>
 #include <baselib/tasks/TasksUtils.h>
@@ -79,7 +80,14 @@ namespace utest
             session_map_t;
 
         const bl::om::ObjPtr< bl::data::DataBlock >                         m_data;
+
+        /*
+         * The failure injection hook - when this is not nil, every storage call for that
+         * chunk id fails with eh::errc::no_such_file_or_directory before it does any work
+         */
+
         bl::uuid_t                                                          m_invalidChunkId;
+        std::atomic< std::size_t >                                          m_injectedFailures;
         bl::cpp::ScalarTypeIniter< bool >                                   m_expectRealData;
         bl::cpp::ScalarTypeIniter< bool >                                   m_noisyMode;
         bl::cpp::ScalarTypeIniter< bool >                                   m_storageDisabled;
@@ -106,6 +114,8 @@ namespace utest
         BackendImplTestT( SAA_in_opt const std::size_t blockCapacity = bl::data::DataBlock::defaultCapacity() )
             :
             m_data( initDataBlock( bl::data::DataBlock::createInstance( blockCapacity ) ) ),
+            m_invalidChunkId( bl::uuids::nil() ),
+            m_injectedFailures( 0U ),
             m_loadCalls( 0U ),
             m_saveCalls( 0U ),
             m_removeCalls( 0U ),
@@ -123,6 +133,35 @@ namespace utest
                     bl::eh::errc::make_error_code( bl::eh::errc::operation_not_permitted ),
                     BL_MSG()
                         << "The storage interface is disabled"
+                    );
+            }
+        }
+
+        void chkInvalidChunkId( SAA_in const bl::uuid_t& chunkId )
+        {
+            if( m_invalidChunkId != bl::uuids::nil() && chunkId == m_invalidChunkId )
+            {
+                ++m_injectedFailures;
+
+                /*
+                 * Note that this must be a ServerErrorException and not just any exception
+                 * carrying the error code: TcpBlockTransferServerConnection::chk4ServerErrors()
+                 * propagates only ServerErrorException back to the client and treats every other
+                 * exception as a fatal server condition which takes the acceptor down
+                 *
+                 * This mirrors DataChunkStorageFilesystem::throwChunkDoesNotExist() exactly, which
+                 * is what a real storage backend does for a chunk which is not there
+                 */
+
+                BL_THROW(
+                    bl::ServerErrorException()
+                        << bl::eh::errinfo_error_code(
+                            bl::eh::errc::make_error_code( bl::eh::errc::no_such_file_or_directory )
+                            )
+                        << bl::eh::errinfo_error_uuid( chunkId ),
+                    BL_MSG()
+                        << "Injected failure for chunk "
+                        << chunkId
                     );
             }
         }
@@ -151,22 +190,38 @@ namespace utest
             BL_ASSERT( dataIn );
 
             /*
-             * Check the first 16 bytes
+             * Check the block over its full length rather than just a prefix of it - a framing
+             * or truncation regression past the first few bytes, and a recycled block whose head
+             * happens to match, are both invisible to a prefix check
              */
 
             const auto data = dataIn -> begin();
-            bool ok = true;
+            const auto size = dataIn -> size();
 
-            for( std::size_t i = 0, count = std::min< std::size_t >( dataIn -> size(), 16U ); i < count; ++i )
+            std::size_t invalidPos = size;
+
+            for( std::size_t i = 0; i < size; ++i )
             {
                  if( ( i % 128 ) != ( std::size_t )( data[ i ] ) )
                  {
-                     ok = false;
+                     invalidPos = i;
                      break;
                  }
             }
 
-            BL_CHK( false, ok, BL_MSG() << "Data block is invalid" );
+            BL_CHK(
+                false,
+                size == invalidPos,
+                BL_MSG()
+                    << "Data block is invalid at offset "
+                    << invalidPos
+                    << " of "
+                    << size
+                    << "; expected "
+                    << ( invalidPos % 128 )
+                    << " but the actual value is "
+                    << ( std::size_t )( data[ invalidPos ] )
+                );
         }
 
         static bool areBlocksEqual(
@@ -202,6 +257,16 @@ namespace utest
             m_invalidChunkId = invalidChunkId;
         }
 
+        const bl::uuid_t& invalidChunkId() const NOEXCEPT
+        {
+            return m_invalidChunkId;
+        }
+
+        std::size_t injectedFailures() const NOEXCEPT
+        {
+            return m_injectedFailures;
+        }
+
         void setStorageDisabled( SAA_in const bool storageDisabled ) NOEXCEPT
         {
             m_storageDisabled = storageDisabled;
@@ -213,6 +278,7 @@ namespace utest
             m_saveCalls = 0U;
             m_removeCalls = 0U;
             m_flushCalls = 0U;
+            m_injectedFailures = 0U;
         }
 
         std::size_t loadCalls() const NOEXCEPT
@@ -273,6 +339,7 @@ namespace utest
             BL_UNUSED( sessionId );
 
             chkStorageDisabled();
+            chkInvalidChunkId( chunkId );
 
             UTF_RECORD( m_assertions, chunkId != bl::uuids::nil() );
 
@@ -304,6 +371,7 @@ namespace utest
             BL_UNUSED( sessionId );
 
             chkStorageDisabled();
+            chkInvalidChunkId( chunkId );
 
             UTF_RECORD( m_assertions, chunkId != bl::uuids::nil() );
 
@@ -312,6 +380,14 @@ namespace utest
                 UTF_RECORD( m_assertions, m_data -> size() == data -> size() );
 
                 verifyData( data );
+
+                /*
+                 * A block which has the right length and follows the pattern can still be the
+                 * contents of a different block instance, so also compare it byte for byte
+                 * against the reference block
+                 */
+
+                UTF_RECORD( m_assertions, areBlocksEqual( m_data, data ) );
             }
 
             if( m_noisyMode )
@@ -337,6 +413,7 @@ namespace utest
             BL_UNUSED( sessionId );
 
             chkStorageDisabled();
+            chkInvalidChunkId( chunkId );
 
             UTF_RECORD( m_assertions, chunkId != bl::uuids::nil() );
 
@@ -624,13 +701,85 @@ namespace utest
 
     public:
 
+        /**
+         * @brief Blocks until an acceptor is ready to serve, or fails the test case
+         *
+         * An acceptor becomes ready only when it reaches m_acceptor -> listen() in
+         * TcpBaseTasks.h, which happens after a DNS resolve, and m_localEndpoint has no public
+         * accessor, so there is no in-process readiness observable; a bounded poll of short
+         * lived TCP connects is therefore the readiness signal
+         *
+         * Note that a bare TCP connect is sufficient even for the SSL acceptors because they
+         * accept the connection before the protocol handshake begins - the probe deliberately
+         * does not attempt a handshake
+         */
+
+        static void waitForAcceptorReady(
+            SAA_in              const std::string&                                          readinessHost,
+            SAA_in              const unsigned short                                        readinessPort,
+            SAA_in_opt          const long                                                  timeoutInSeconds = 30L
+            )
+        {
+            using namespace bl;
+            using namespace tasks;
+
+            typedef TcpConnectionEstablisherConnectorImpl< TcpSocketAsyncBase >             connector_t;
+
+            const auto startTime = time::second_clock::universal_time();
+
+            for( ;; )
+            {
+                {
+                    /*
+                     * The probe connection is kept strictly short lived - the queue and the
+                     * connector are both discarded before the next iteration - so the acceptor's
+                     * connection bookkeeping is not polluted
+                     */
+
+                    const auto eq = om::lockDisposable(
+                        ExecutionQueueImpl::createInstance< ExecutionQueue >( ExecutionQueue::OptionKeepAll )
+                        );
+
+                    const auto connector = connector_t::createInstance( cpp::copy( readinessHost ), readinessPort );
+                    const auto taskConnector = om::qi< Task >( connector.get() );
+
+                    eq -> push_back( taskConnector );
+                    eq -> wait( taskConnector );
+
+                    if( ! taskConnector -> isFailed() )
+                    {
+                        return;
+                    }
+                }
+
+                if( ( time::second_clock::universal_time() - startTime ) > time::seconds( timeoutInSeconds ) )
+                {
+                    UTF_FAIL(
+                        BL_MSG()
+                            << "The acceptor did not become ready within "
+                            << timeoutInSeconds
+                            << " seconds at "
+                            << readinessHost
+                            << ":"
+                            << readinessPort
+                        );
+
+                    return;
+                }
+
+                os::sleep( time::milliseconds( 50 ) );
+            }
+        }
+
         template
         <
             typename Acceptor
         >
         static void startAcceptorAndExecuteCallback(
             SAA_in              const bl::cpp::void_callback_t&                             callback,
-            SAA_in              const bl::om::ObjPtr< Acceptor >&                           acceptor
+            SAA_in              const bl::om::ObjPtr< Acceptor >&                           acceptor,
+            SAA_in_opt          const std::string&                                          readinessHost = bl::str::empty(),
+            SAA_in_opt          const unsigned short                                        readinessPort = 0U
             )
         {
             using namespace bl;
@@ -640,7 +789,7 @@ namespace utest
                 [ & ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
                 {
                     /*
-                     * Start the acceptor and sleep for a couple of seconds to give it a chance to start
+                     * Start the acceptor and wait for it to become ready before the callback runs
                      */
 
                     const auto taskAcceptor = om::qi< Task >( acceptor );
@@ -657,7 +806,19 @@ namespace utest
                         "TestTaskUtilsT::startAcceptorAndExecuteCallback"
                         );
 
-                    os::sleep( time::milliseconds( 5000 ) );
+                    if( 0U != readinessPort )
+                    {
+                        waitForAcceptorReady( readinessHost, readinessPort );
+                    }
+                    else
+                    {
+                        /*
+                         * The caller did not provide a readiness endpoint, so fall back to the
+                         * historical fixed sleep
+                         */
+
+                        os::sleep( time::milliseconds( 5000 ) );
+                    }
 
                     callback();
                 }
@@ -681,6 +842,8 @@ namespace utest
             using namespace bl;
             using namespace tasks;
 
+            const auto readinessHost = cpp::copy( host );
+
             const auto acceptor = Acceptor::template createInstance<>(
                 controlToken,
                 dataBlocksPool,
@@ -693,7 +856,7 @@ namespace utest
 
             UTF_REQUIRE( acceptor );
 
-            startAcceptorAndExecuteCallback( callback, acceptor );
+            startAcceptorAndExecuteCallback( callback, acceptor, readinessHost, port );
         }
     };
 

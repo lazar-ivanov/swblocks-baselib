@@ -369,7 +369,17 @@ namespace utest
                         certificatePem
                         );
 
-                    utest::TestTaskUtils::startAcceptorAndExecuteCallback( callback, acceptor );
+                    /*
+                     * The acceptor binds "0.0.0.0", so the readiness probe must target the
+                     * regular test host rather than the bind address
+                     */
+
+                    utest::TestTaskUtils::startAcceptorAndExecuteCallback(
+                        callback,
+                        acceptor,
+                        test::UtfArgsParser::host()                          /* readinessHost */,
+                        test::UtfArgsParser::port()                          /* readinessPort */
+                        );
                 }
             }
         };

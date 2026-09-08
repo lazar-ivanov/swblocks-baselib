@@ -395,11 +395,15 @@ UTF_AUTO_TEST_CASE( BlobTransfer_UnpackagerSymlinkTargetPolicyTests )
 
 UTF_AUTO_TEST_CASE( BlobTransfer_StartBlobServer )
 {
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isServer(), "requires --is-server (manual run test)" );
+
     utest::TestBlobTransferFilesystemUtilsImpl::startBlobServer();
 }
 
 UTF_AUTO_TEST_CASE( BlobTransfer_StartBlobClient )
 {
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (manual run test)" );
+
     utest::TestBlobTransferFilesystemUtilsImpl::startBlobClient();
 }
 
@@ -414,6 +418,8 @@ UTF_AUTO_TEST_CASE( BlobTransfer_ProxyDataChunkBackendImplTests )
 
 UTF_AUTO_TEST_CASE( BlobTransfer_StartBlobServerProxy )
 {
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isServer(), "requires --is-server (manual run test)" );
+
     utest::TestBlobTransferFilesystemUtilsImpl::startBlobServerProxy();
 }
 

@@ -186,3 +186,110 @@ UTF_AUTO_TEST_CASE( StringTemplateTests )
         "Variable 'undefinedVar' is undefined when resolving a string template"
         );
 }
+
+/************************************************************************
+ * Self-tests for the exception assertion macros in Utf.h
+ *
+ * The macros are harness code with no coverage of their own, and getting one of them
+ * wrong is silent - a predicate which always returns true turns every site which uses
+ * it into an assertion which cannot fail
+ */
+
+UTF_AUTO_TEST_CASE( UtfExceptionMacrosTests )
+{
+    using namespace bl;
+
+    const auto ioError = eh::errc::make_error_code( eh::errc::io_error );
+    const auto permissionDenied = eh::errc::make_error_code( eh::errc::permission_denied );
+
+    const auto throwServerError = []( SAA_in const eh::error_code& ec ) -> void
+    {
+        BL_THROW(
+            ServerErrorException()
+                << eh::errinfo_error_code( ec ),
+            BL_MSG()
+                << "Simulated server error for the harness self-test"
+            );
+    };
+
+    const auto throwWithoutErrorCode = []() -> void
+    {
+        BL_THROW(
+            ServerErrorException(),
+            BL_MSG()
+                << "Simulated server error which carries no error code"
+            );
+    };
+
+    /*
+     * The positive direction - the error code, the error code together with a message
+     * fragment, and the errno all match
+     */
+
+    UTF_REQUIRE_THROW_ERROR_CODE( throwServerError( ioError ), ServerErrorException, ioError );
+
+    UTF_CHECK_THROW_ERROR_CODE( throwServerError( ioError ), ServerErrorException, ioError );
+
+    UTF_REQUIRE_THROW_ERROR_CODE_AND_MESSAGE(
+        throwServerError( ioError ),
+        ServerErrorException,
+        ioError,
+        "Simulated server error for the harness self-test"
+        );
+
+    /*
+     * BL_THROW_EC attaches the errno alongside the error code for a generic category code
+     */
+
+    UTF_REQUIRE_THROW_ERRNO(
+        BL_THROW_EC( ioError, BL_MSG() << "Simulated system error for the harness self-test" ),
+        SystemException,
+        ioError.value()
+        );
+
+    /*
+     * The negative directions are asserted against the predicates directly rather than
+     * through the macros, so that the run does not record a real Boost.Test failure
+     */
+
+    try
+    {
+        throwServerError( permissionDenied );
+
+        UTF_FAIL( "The exception was expected to be thrown" );
+    }
+    catch( ServerErrorException& e )
+    {
+        UTF_REQUIRE( test::UtfExceptionTools::matchErrorCode( e, permissionDenied ) );
+
+        /*
+         * An exception carrying a different error code must not satisfy the predicate
+         */
+
+        UTF_REQUIRE( ! test::UtfExceptionTools::matchErrorCode( e, ioError ) );
+
+        /*
+         * ... and neither must a message fragment which is not part of the message
+         */
+
+        UTF_REQUIRE( ! test::UtfExceptionTools::matchMessage( e, "no such text in the message" ) );
+    }
+
+    try
+    {
+        throwWithoutErrorCode();
+
+        UTF_FAIL( "The exception was expected to be thrown" );
+    }
+    catch( ServerErrorException& e )
+    {
+        /*
+         * The 'no error code attached' branch must be rejected rather than dereferenced,
+         * and reported distinctly from 'a different error code was attached'
+         */
+
+        UTF_REQUIRE( ! test::UtfExceptionTools::matchErrorCode( e, ioError ) );
+
+        UTF_REQUIRE( ! test::UtfExceptionTools::matchErrNo( e, ioError.value() ) );
+    }
+}

@@ -2411,6 +2411,218 @@ UTF_AUTO_TEST_CASE( IO_SslSimpleConnectAndTransmitDataMessageDispatcherOutgoingT
         >();
 }
 
+/************************************************************************
+ * Chunk level failure injection over the TCP block transfer stack
+ *
+ * Two holes are covered here. The harness backend used to validate a received chunk by
+ * checking only its first 16 bytes out of a 1 MB block, so a framing or truncation
+ * regression past that prefix - or a recycled block whose head happened to match - was
+ * invisible; and there was no way to make one specific chunk fail, so the per chunk error
+ * propagation from the storage backend back to the client was untested from this module
+ */
+
+UTF_AUTO_TEST_CASE( Io_TcpBlockTransferChunkFailurePropagationTests )
+{
+    using namespace bl;
+    using namespace bl::data;
+    using namespace bl::tasks;
+    using namespace utest;
+
+    typedef TcpBlockServerDataChunkStorage                                  acceptor_t;
+    typedef acceptor_t::async_wrapper_t                                     async_wrapper_t;
+    typedef async_wrapper_t::backend_interface_t                            backend_interface_t;
+
+    /*
+     * First the self check of the verification itself: a block which follows the pattern
+     * everywhere except in its very last byte must be rejected
+     *
+     * Note that this is the assertion which pins the full length check - with the old
+     * 16 byte prefix check the very same block was accepted silently
+     */
+
+    {
+        const auto block = BackendImplTestImpl::initDataBlock( DataBlock::createInstance() );
+
+        UTF_REQUIRE( block -> size() > 16U );
+
+        UTF_REQUIRE_NO_THROW( BackendImplTestImpl::verifyData( block ) );
+
+        auto* const data = block -> begin();
+        const auto lastPos = block -> size() - 1U;
+
+        data[ lastPos ] = ( char )( ( ( std::size_t )( data[ lastPos ] ) + 1U ) % 128U );
+
+        UTF_REQUIRE_THROW( BackendImplTestImpl::verifyData( block ), UnexpectedException );
+    }
+
+    test::MachineGlobalTestLock lock;
+
+    const auto controlToken = SimpleTaskControlTokenImpl::createInstance< TaskControlTokenRW >();
+    const auto dataBlocksPool = datablocks_pool_type::createInstance();
+    const auto backendImpl = BackendImplTestImpl::createInstance();
+
+    UTF_REQUIRE_EQUAL( backendImpl -> invalidChunkId(), uuids::nil() );
+    UTF_REQUIRE_EQUAL( backendImpl -> injectedFailures(), 0U );
+
+    const auto storage = om::lockDisposable(
+        async_wrapper_t::createInstance< async_wrapper_t >(
+            om::qi< backend_interface_t >( backendImpl )        /* writeBackend */,
+            om::qi< backend_interface_t >( backendImpl )        /* readBackend */,
+            test::UtfArgsParser::threadsCount(),
+            om::qi< TaskControlToken >( controlToken ),
+            0U                                                  /* maxConcurrentTasks */,
+            dataBlocksPool
+            )
+        );
+
+    const bl::uuid_t injectedChunkId = uuids::create();
+    const bl::uuid_t healthyChunkId = uuids::create();
+
+    const auto cbTest = [ & ]() -> void
+    {
+        tasks::scheduleAndExecuteInParallel(
+            [ & ]( SAA_in const om::ObjPtr< tasks::ExecutionQueue >& eq ) -> void
+            {
+                const auto connect = [ & ]() -> om::ObjPtr< connection_t >
+                {
+                    const auto connector =
+                        connector_t::createInstance( std::string( "localhost" ), 28100U );
+
+                    const auto taskConnector = om::qi< tasks::Task >( connector.get() );
+                    eq -> push_back( taskConnector );
+                    eq -> waitForSuccess( taskConnector );
+
+                    auto transfer = connection_t::createInstance(
+                        connection_t::CommandId::NoCommand,
+                        uuids::create()                                 /* peerId */,
+                        dataBlocksPool
+                        );
+
+                    transfer -> attachStream( connector -> detachStream() );
+
+                    return transfer;
+                };
+
+                /*
+                 * A healthy chunk first, to establish that the transfer path works and that
+                 * the full length data check accepts a block which travelled over the wire
+                 */
+
+                {
+                    const auto transfer = connect();
+                    const auto taskTransfer = om::qi< tasks::Task >( transfer );
+
+                    transfer -> setChunkData( backendImpl -> getData() );
+                    transfer -> setCommandId( connection_t::CommandId::SendChunk );
+                    transfer -> setChunkId( healthyChunkId );
+
+                    eq -> push_back( taskTransfer );
+                    eq -> waitForSuccess( taskTransfer );
+
+                    UTF_REQUIRE_EQUAL( backendImpl -> saveCalls(), 1U );
+                    UTF_REQUIRE_EQUAL( backendImpl -> injectedFailures(), 0U );
+
+                    transfer -> setCommandId( connection_t::CommandId::ReceiveChunk );
+                    transfer -> setChunkId( healthyChunkId );
+                    transfer -> detachChunkData();
+
+                    eq -> push_back( taskTransfer );
+                    eq -> waitForSuccess( taskTransfer );
+
+                    UTF_REQUIRE_EQUAL( backendImpl -> loadCalls(), 1U );
+
+                    BackendImplTestImpl::verifyData( transfer -> getChunkData() );
+
+                    tasks::cancelAndWaitForSuccess( eq, taskTransfer );
+                }
+
+                /*
+                 * Now arm the failure injection for one specific chunk and drive it
+                 */
+
+                backendImpl -> resetStats();
+                backendImpl -> setInvalidChunkId( injectedChunkId );
+
+                UTF_REQUIRE_EQUAL( backendImpl -> invalidChunkId(), injectedChunkId );
+                UTF_REQUIRE_EQUAL( backendImpl -> injectedFailures(), 0U );
+
+                {
+                    const auto transfer = connect();
+                    const auto taskTransfer = om::qi< tasks::Task >( transfer );
+
+                    transfer -> setChunkData( backendImpl -> getData() );
+                    transfer -> setCommandId( connection_t::CommandId::SendChunk );
+                    transfer -> setChunkId( injectedChunkId );
+
+                    eq -> push_back( taskTransfer );
+
+                    /*
+                     * The backend error must arrive at the client as a ServerErrorException
+                     * carrying the very error code the storage layer failed with
+                     */
+
+                    UTF_REQUIRE_THROW_ERROR_CODE(
+                        eq -> waitForSuccess( taskTransfer ),
+                        ServerErrorException,
+                        eh::errc::make_error_code( eh::errc::no_such_file_or_directory )
+                        );
+
+                    UTF_REQUIRE_EQUAL( backendImpl -> injectedFailures(), 1U );
+
+                    /*
+                     * The failure is injected ahead of any work, so no counter may advance
+                     */
+
+                    UTF_REQUIRE_EQUAL( 0U, backendImpl -> saveCalls() );
+                    UTF_REQUIRE_EQUAL( 0U, backendImpl -> loadCalls() );
+                    UTF_REQUIRE_EQUAL( 0U, backendImpl -> removeCalls() );
+
+                    /*
+                     * The failure was expected and has already been asserted, so the failed
+                     * task must be discarded here - otherwise the queue would rethrow it when
+                     * it is flushed at the end of the scope
+                     */
+
+                    eq -> forceFlushNoThrow();
+                }
+
+                /*
+                 * The injection must be scoped to its own chunk id - every other chunk still
+                 * has to be served normally
+                 */
+
+                {
+                    const auto transfer = connect();
+                    const auto taskTransfer = om::qi< tasks::Task >( transfer );
+
+                    transfer -> setChunkData( backendImpl -> getData() );
+                    transfer -> setCommandId( connection_t::CommandId::SendChunk );
+                    transfer -> setChunkId( healthyChunkId );
+
+                    eq -> push_back( taskTransfer );
+                    eq -> waitForSuccess( taskTransfer );
+
+                    UTF_REQUIRE_EQUAL( backendImpl -> saveCalls(), 1U );
+                    UTF_REQUIRE_EQUAL( backendImpl -> injectedFailures(), 1U );
+
+                    tasks::cancelAndWaitForSuccess( eq, taskTransfer );
+                }
+
+                backendImpl -> assertions().requireNone();
+            }
+            );
+    };
+
+    TestTaskUtils::createAcceptorAndExecute< acceptor_t >(
+        controlToken,
+        cbTest,
+        dataBlocksPool,
+        storage,
+        std::string( "localhost" ),
+        28100U
+        );
+}
+
 namespace
 {
     /**
@@ -2737,10 +2949,7 @@ UTF_AUTO_TEST_CASE( IO_SimplePerfMessageDispatcherTests )
 
 UTF_AUTO_TEST_CASE( IO_PerfStartServer )
 {
-    if( ! test::UtfArgsParser::isServer() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isServer(), "requires --is-server (manual performance run)" );
 
     test::MachineGlobalTestLock lock;
 
@@ -2749,10 +2958,7 @@ UTF_AUTO_TEST_CASE( IO_PerfStartServer )
 
 UTF_AUTO_TEST_CASE( IO_PerfStartMessageDispatcherServer )
 {
-    if( ! test::UtfArgsParser::isServer() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isServer(), "requires --is-server (manual performance run)" );
 
     test::MachineGlobalTestLock lock;
 
@@ -2763,10 +2969,7 @@ UTF_AUTO_TEST_CASE( IO_PerfStartClient )
 {
     using namespace test;
 
-    if( ! UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( UtfArgsParser::isClient(), "requires --is-client (manual performance run)" );
 
     const auto dataBlocksPool = bl::data::datablocks_pool_type::createInstance();
 
@@ -2787,10 +2990,7 @@ UTF_AUTO_TEST_CASE( IO_MaxConnectionsTest )
     using namespace bl::tasks;
     using namespace utest;
 
-    if( ! UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( UtfArgsParser::isClient(), "requires --is-client (manual performance run)" );
 
     tasks::scheduleAndExecuteInParallel(
         []( SAA_in const om::ObjPtr< tasks::ExecutionQueue >& eq ) -> void
