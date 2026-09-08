@@ -555,26 +555,157 @@ UTF_AUTO_TEST_CASE( Client_SimpleHttpTests )
 
                         eq -> push_back( task );
 
-                        const std::string* redirectUrl = nullptr;
+                        UTF_REQUIRE_THROW( eq -> waitForSuccess( task ), bl::HttpException );
+
+                        UTF_REQUIRE( stask -> isFailed() );
+                        UTF_REQUIRE( nullptr != stask -> exception() );
+
+                        UTF_REQUIRE_EQUAL(
+                            stask -> getHttpStatus(),
+                            http::Parameters::HTTP_REDIRECT_PERMANENTLY
+                            );
 
                         try
                         {
-                            eq -> waitForSuccess( task );
+                            cpp::safeRethrowException( stask -> exception() );
+
+                            UTF_FAIL( "A redirect must be reported as an HttpException" );
                         }
-                        catch ( HttpException& e )
+                        catch( HttpException& e )
                         {
-                            redirectUrl = e.httpRedirectUrl();
+                            UTF_REQUIRE( nullptr != e.httpStatusCode() );
+                            UTF_REQUIRE_EQUAL( *e.httpStatusCode(), 301 );
+
+                            /*
+                             * Pinning the absence is what makes the href sub-block below
+                             * meaningful - g_redirectedResult carries no href at all
+                             */
+
+                            UTF_REQUIRE( nullptr == e.httpRedirectUrl() );
+
+                            UTF_REQUIRE( nullptr != eh::get_error_info< eh::errinfo_is_expected >( e ) );
                         }
 
-                        if( test::UtfArgsParser::host() != "localhost" )
+                        UTF_REQUIRE( eq -> isEmpty() );
+                    }
+
+                    {
+                        /*
+                         * The redirect URL is extracted from the response body with a case
+                         * insensitive regex which accepts either quoting style, so an upper
+                         * case HREF in single quotes exercises both halves of it. There is no
+                         * coverage of that regex anywhere else
+                         */
+
+                        const std::string body =
+                            "<html><body>Go <a HREF='https://example.invalid/next'>here</a></body></html>";
+
+                        RawHttpResponder responder(
+                            RawHttpResponder::makeResponse(
+                                "HTTP/1.0 302 Moved Temporarily",
+                                {
+                                    "Content-Type: text/html",
+                                    "Content-Length: " + utils::lexical_cast< std::string >( body.size() )
+                                },
+                                body
+                                )
+                            );
+
+                        const auto taskImpl = SimpleHttpGetTaskImpl::createInstance(
+                            std::string( "127.0.0.1" ),
+                            responder.port(),
+                            "/probe"
+                            );
+
+                        taskImpl -> setTimeout( time::seconds( 60 ) );
+
+                        const auto task = om::qi< Task >( taskImpl );
+
+                        eq -> push_back( task );
+
+                        UTF_REQUIRE_THROW( eq -> waitForSuccess( task ), bl::HttpException );
+
+                        UTF_REQUIRE_EQUAL( 302U, taskImpl -> getHttpStatus() );
+
+                        try
                         {
-                            UTF_REQUIRE(
-                                stask -> getHttpStatus() >= http::Parameters::HTTP_REDIRECT_START_RANGE &&
-                                stask -> getHttpStatus() <= http::Parameters::HTTP_REDIRECT_END_RANGE
+                            cpp::safeRethrowException( taskImpl -> exception() );
+
+                            UTF_FAIL( "A redirect must be reported as an HttpException" );
+                        }
+                        catch( HttpException& e )
+                        {
+                            UTF_REQUIRE( nullptr != e.httpRedirectUrl() );
+                            UTF_REQUIRE_EQUAL( *e.httpRedirectUrl(), "https://example.invalid/next" );
+                        }
+
+                        UTF_REQUIRE( eq -> isEmpty() );
+                    }
+
+                    {
+                        /*
+                         * Anything other than exactly 200 makes the client fail the task, so
+                         * "201 Created is a failure for this client" is a genuinely surprising
+                         * contract which every REST caller hits - widening the comparison to a
+                         * 2xx range check is a plausible "fix" which would silently change it
+                         *
+                         * addExpectedHttpStatuses does not make the task succeed either; all
+                         * it does is make isExpectedException() return true, which suppresses
+                         * the diagnostic dump in chk2DumpException. That dump is itself gated
+                         * on a non-empty task name and SimpleHttpTask never sets one, so on
+                         * this task the setter has no observable effect at all - which is
+                         * what the two identical outcomes below record
+                         */
+
+                        const auto fnRun201Case = [ &eq ]( SAA_in const bool addExpectedStatus ) -> void
+                        {
+                            RawHttpResponder responder(
+                                RawHttpResponder::makeResponse(
+                                    "HTTP/1.0 201 Created",
+                                    { "Content-Type: text/plain", "Content-Length: 2" },
+                                    "ok"
+                                    )
                                 );
 
-                            UTF_REQUIRE( nullptr != redirectUrl );
-                        }
+                            const auto taskImpl = SimpleHttpGetTaskImpl::createInstance(
+                                std::string( "127.0.0.1" ),
+                                responder.port(),
+                                "/probe"
+                                );
+
+                            taskImpl -> setTimeout( time::seconds( 60 ) );
+
+                            if( addExpectedStatus )
+                            {
+                                http::StatusesList statuses;
+
+                                statuses.insert( 201U );
+
+                                taskImpl -> addExpectedHttpStatuses( statuses );
+                            }
+
+                            const auto task = om::qi< Task >( taskImpl );
+
+                            eq -> push_back( task );
+
+                            UTF_REQUIRE_THROW( eq -> waitForSuccess( task ), bl::HttpException );
+
+                            UTF_REQUIRE( taskImpl -> isFailed() );
+                            UTF_REQUIRE_EQUAL( 201U, taskImpl -> getHttpStatus() );
+
+                            /*
+                             * decodeContent() runs before throwHttpException(), so the body is
+                             * still handed to the caller on an HTTP error - the opposite of the
+                             * truncation and the response size cap paths, where it stays empty
+                             */
+
+                            UTF_REQUIRE_EQUAL( taskImpl -> getResponse(), "ok" );
+
+                            UTF_REQUIRE( eq -> isEmpty() );
+                        };
+
+                        fnRun201Case( false /* addExpectedStatus */ );
+                        fnRun201Case( true /* addExpectedStatus */ );
                     }
                 });
         }
@@ -1279,6 +1410,534 @@ UTF_AUTO_TEST_CASE( Client_SimpleHttpStatusLineParsingTests )
 
                 UTF_REQUIRE( eq -> isEmpty() );
             });
+    }
+}
+
+UTF_AUTO_TEST_CASE( Client_SimpleHttpResponseHeaderParsingTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    BL_LOG_MULTILINE(
+        Logging::debug(),
+        BL_MSG()
+            << "\n******************************** Starting test: Client_SimpleHttpResponseHeaderParsingTests ********************************\n"
+        );
+
+    /*
+     * doReadHeaders splits every header line at the first ':', skips the line entirely when
+     * there is no separator or when the separator is at position 0, trims both halves and
+     * then either folds the value into the cookie buffer (when the name matches Set-Cookie
+     * case insensitively) or lower-cases the name and emplaces it - so for a duplicate name
+     * the first value wins. The accumulated cookies land under the single lower-cased
+     * "cookie" key with a trailing separator
+     *
+     * Duplicate-header first-wins is a header smuggling relevant decision which no test
+     * states today, and the cookie fold is the client's only cookie support, so its exact
+     * shape is what an application would have to parse back
+     *
+     * One response carries every shape at once, built with explicit "\r\n" joins so the
+     * malformed lines are unmistakable
+     */
+
+    const std::string body = "ok";
+
+    RawHttpResponder responder(
+        RawHttpResponder::makeResponse(
+            "HTTP/1.0 200 OK",
+            {
+                "Content-Type: text/plain",
+                "X-Mixed-CASE:   spaced value",
+                "X-Dup: first",
+                "X-Dup: second",
+                "Set-Cookie: a=1; Path=/",
+                "set-cookie: b=2",
+                "Location: http://example.invalid:8080/x",
+                "NoSeparatorLine",
+                ":leading-colon-value",
+                "Content-Length: " + utils::lexical_cast< std::string >( body.size() )
+            },
+            body
+            )
+        );
+
+    scheduleAndExecuteInParallel(
+        [ &responder ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+        {
+            eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+            const auto taskImpl = SimpleHttpGetTaskImpl::createInstance(
+                std::string( "127.0.0.1" ),
+                responder.port(),
+                "/probe"
+                );
+
+            taskImpl -> setTimeout( time::seconds( 60 ) );
+
+            const auto task = om::qi< Task >( taskImpl );
+
+            eq -> push_back( task );
+
+            UTF_REQUIRE_NO_THROW( eq -> waitForSuccess( task ) );
+
+            UTF_REQUIRE_EQUAL( taskImpl -> getResponse(), "ok" );
+
+            /*
+             * The name is lower-cased and the value is trimmed. Dropping the lower-casing
+             * would break every tryGetResponseHeader caller, including chk2EnhanceException
+             * and decodeContent's own Content-Type lookup
+             */
+
+            {
+                const auto value = taskImpl -> tryGetResponseHeader( "X-MIXED-case" );
+
+                UTF_REQUIRE( value );
+                UTF_REQUIRE_EQUAL( *value, "spaced value" );
+            }
+
+            UTF_REQUIRE_EQUAL( taskImpl -> getResponseHeaders().count( "x-mixed-case" ), 1U );
+            UTF_REQUIRE_EQUAL( taskImpl -> getResponseHeaders().count( "X-Mixed-CASE" ), 0U );
+
+            /*
+             * emplace(), not operator[] - the first value of a duplicated header wins
+             */
+
+            {
+                const auto value = taskImpl -> tryGetResponseHeader( "x-dup" );
+
+                UTF_REQUIRE( value );
+                UTF_REQUIRE_EQUAL( *value, "first" );
+            }
+
+            /*
+             * Only the first colon separates, so a value which contains one survives intact
+             */
+
+            {
+                const auto value = taskImpl -> tryGetResponseHeader( "location" );
+
+                UTF_REQUIRE( value );
+                UTF_REQUIRE_EQUAL( *value, "http://example.invalid:8080/x" );
+            }
+
+            /*
+             * Both Set-Cookie values are folded into one "cookie" entry, in the order they
+             * arrived and each followed by the separator. The trailing ';' is deliberate -
+             * asserting it rather than trimming it is what would catch a change to the
+             * separator handling
+             */
+
+            {
+                const auto value = taskImpl -> tryGetResponseHeader( http::HttpHeader::g_cookie );
+
+                UTF_REQUIRE( value );
+                UTF_REQUIRE_EQUAL( *value, "a=1; Path=/;b=2;" );
+            }
+
+            UTF_REQUIRE( ! taskImpl -> tryGetResponseHeader( http::HttpHeader::g_setCookie ) );
+
+            /*
+             * A line with no separator and a line whose separator is at position 0 are both
+             * skipped, so neither reaches the map - and no entry with an empty name is made
+             */
+
+            UTF_REQUIRE( ! taskImpl -> tryGetResponseHeader( "noseparatorline" ) );
+            UTF_REQUIRE_EQUAL( taskImpl -> getResponseHeaders().count( str::empty() ), 0U );
+
+            UTF_REQUIRE( nullptr == taskImpl -> tryGetResponseHeader( "x-absent" ) );
+
+            UTF_REQUIRE( eq -> isEmpty() );
+        });
+}
+
+UTF_AUTO_TEST_CASE( Client_SimpleHttpContentCharsetTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    BL_LOG_MULTILINE(
+        Logging::debug(),
+        BL_MSG()
+            << "\n******************************** Starting test: Client_SimpleHttpContentCharsetTests ********************************\n"
+        );
+
+    /*
+     * Every response the rest of the suite receives is application/json; charset=UTF-8 with a
+     * pure ASCII body, so the UTF-8 arm of decodeContent runs but is a no-op and cannot tell a
+     * correct conversion from no conversion at all. isExpectUtf8Content is never set anywhere,
+     * although bl-tool's HttpRequest sets it unconditionally
+     *
+     * Dropping the '! m_isExpectUtf8Content' guard would mangle every UTF-8 response bl-tool
+     * fetches, and dropping the conversion would hand UTF-8 bytes to a caller which asked for
+     * ISO-8859-1 - neither shows up in any assertion today
+     *
+     * The byte sequences are written as explicit escapes rather than as source literals: the
+     * repository is compiled by MSVC as well and a raw non-ASCII character in the source would
+     * be re-encoded by the compiler
+     */
+
+    const std::string utf8Body = "caf\xC3\xA9";                 /* 5 bytes, e-acute as UTF-8 */
+    const std::string latin1Body = "caf\xE9";                   /* 4 bytes, e-acute as ISO-8859-1 */
+
+    const auto fnRunCase = [](
+        SAA_in      const std::string&      contentType,
+        SAA_in      const std::string&      responseBody,
+        SAA_in      const bool              expectUtf8Content,
+        SAA_in      const std::string&      expectedResponse
+        )
+        -> void
+    {
+        RawHttpResponder responder(
+            RawHttpResponder::makeResponse(
+                "HTTP/1.0 200 OK",
+                {
+                    "Content-Type: " + contentType,
+                    "Content-Length: " + utils::lexical_cast< std::string >( responseBody.size() )
+                },
+                responseBody
+                )
+            );
+
+        scheduleAndExecuteInParallel(
+            [ &responder, expectUtf8Content, &expectedResponse ](
+                SAA_in const om::ObjPtr< ExecutionQueue >& eq
+                ) -> void
+            {
+                eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+                const auto taskImpl = SimpleHttpGetTaskImpl::createInstance(
+                    std::string( "127.0.0.1" ),
+                    responder.port(),
+                    "/probe"
+                    );
+
+                taskImpl -> setTimeout( time::seconds( 60 ) );
+
+                if( expectUtf8Content )
+                {
+                    taskImpl -> isExpectUtf8Content( true );
+                }
+
+                UTF_REQUIRE_EQUAL( taskImpl -> isExpectUtf8Content(), expectUtf8Content );
+
+                const auto task = om::qi< Task >( taskImpl );
+
+                eq -> push_back( task );
+
+                UTF_REQUIRE_NO_THROW( eq -> waitForSuccess( task ) );
+
+                /*
+                 * Asserted on every case so a decode failure can never be mistaken for a
+                 * transport failure
+                 */
+
+                UTF_REQUIRE_EQUAL( 200U, taskImpl -> getHttpStatus() );
+
+                UTF_REQUIRE_EQUAL( taskImpl -> getResponse(), expectedResponse );
+
+                UTF_REQUIRE( eq -> isEmpty() );
+            });
+    };
+
+    /*
+     * (1) UTF-8 without isExpectUtf8Content - the body is converted to ISO-8859-1, which is
+     *     the only assertion anywhere that the conversion actually happens
+     */
+
+    fnRunCase( "text/plain; charset=UTF-8", utf8Body, false /* expectUtf8Content */, latin1Body );
+
+    /*
+     * (2) ... and with it set the conversion is suppressed
+     */
+
+    fnRunCase( "text/plain; charset=UTF-8", utf8Body, true /* expectUtf8Content */, utf8Body );
+
+    /*
+     * (3) A pass-through charset, spelled in lower case - which also proves the captured
+     *     charset is upper-cased before it is compared
+     */
+
+    fnRunCase( "text/plain; charset=iso-8859-1", latin1Body, false /* expectUtf8Content */, latin1Body );
+
+    /*
+     * (4) The other two pass-through charsets are in the same set
+     */
+
+    fnRunCase( "text/plain; charset=WINDOWS-1252", latin1Body, false /* expectUtf8Content */, latin1Body );
+
+    /*
+     * (5) No charset at all - the body is returned untouched
+     */
+
+    fnRunCase( "text/plain", utf8Body, false /* expectUtf8Content */, utf8Body );
+
+    {
+        /*
+         * (6) An unsupported charset logs a warning and leaves the body untouched, and (7) a
+         *     quoted charset value takes the same path: the trailing \b of the charset regex
+         *     makes the greedy [^;]+ back off the closing quote, so the capture is '"UTF-8'
+         *     with the leading quote still on it, which matches no known charset. RFC 7231
+         *     permits a quoted charset, so this pins a real quirk and makes fixing it a
+         *     deliberate act rather than an accident
+         *
+         * The warning is emitted from a thread pool thread and the test binaries route every
+         * warning to a test error, so the level is raised globally for both cases
+         */
+
+        Logging::LevelPusher pushLevel( Logging::LL_ERROR, true /* global */ );
+
+        fnRunCase( "text/plain; charset=KOI8-R", utf8Body, false /* expectUtf8Content */, utf8Body );
+
+        fnRunCase( "text/plain; charset=\"UTF-8\"; boundary=x", utf8Body, false /* expectUtf8Content */, utf8Body );
+    }
+
+    {
+        /*
+         * (8) A body which is not representable in ISO-8859-1 makes the conversion fail, so
+         *     the whole task fails - the status line had already been parsed, which is why
+         *     the status is still asserted separately
+         */
+
+        const std::string emojiBody = "\xF0\x9F\x98\x81";       /* 4 bytes, not representable in ISO-8859-1 */
+
+        RawHttpResponder responder(
+            RawHttpResponder::makeResponse(
+                "HTTP/1.0 200 OK",
+                {
+                    "Content-Type: text/plain; charset=UTF-8",
+                    "Content-Length: " + utils::lexical_cast< std::string >( emojiBody.size() )
+                },
+                emojiBody
+                )
+            );
+
+        scheduleAndExecuteInParallel(
+            [ &responder ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+            {
+                eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+                const auto taskImpl = SimpleHttpGetTaskImpl::createInstance(
+                    std::string( "127.0.0.1" ),
+                    responder.port(),
+                    "/probe"
+                    );
+
+                taskImpl -> setTimeout( time::seconds( 60 ) );
+
+                const auto task = om::qi< Task >( taskImpl );
+
+                eq -> push_back( task );
+
+                UTF_REQUIRE_THROW( eq -> waitForSuccess( task ), std::exception );
+
+                UTF_REQUIRE( taskImpl -> isFailed() );
+                UTF_REQUIRE_EQUAL( 200U, taskImpl -> getHttpStatus() );
+
+                /*
+                 * The exception type is build dependent - with boost_locale linked the failure
+                 * is a boost::locale::conv::conversion_error, which is a std::runtime_error and
+                 * is not enhanced, so only the default build's own type can be named here
+                 */
+
+                #if defined( BL_NO_BOOST_LOCALE_LIB )
+                UTF_REQUIRE_THROW(
+                    cpp::safeRethrowException( taskImpl -> exception() ),
+                    bl::ArgumentException
+                    );
+                #endif
+
+                UTF_REQUIRE( eq -> isEmpty() );
+            });
+    }
+}
+
+UTF_AUTO_TEST_CASE( Client_SimpleHttpRequestFramingTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    BL_LOG_MULTILINE(
+        Logging::debug(),
+        BL_MSG()
+            << "\n******************************** Starting test: Client_SimpleHttpRequestFramingTests ********************************\n"
+        );
+
+    /*
+     * Every other client case observes only the response - nothing in the repository has ever
+     * looked at the bytes initRequest() puts on the wire, so the request line, the Host
+     * rendering, the user agent emission, the custom header separator and the point at which
+     * Content-Length is generated are all invisible today
+     *
+     * This pins the current rendering; it deliberately does not test request header validation
+     * because initRequest() performs none - a caller supplied header value containing CRLF
+     * splits the request, which is a production hardening question and not a test gap
+     *
+     * initRequest() renders the whole request into one streambuf which doRequest() then sends
+     * with a single async_write, so a request of this size arrives at the responder as one
+     * chunk and read_until leaves the body in the same buffer as the headers
+     */
+
+    const auto makeOkResponse = []() -> std::string
+    {
+        return RawHttpResponder::makeResponse(
+            "HTTP/1.0 200 OK",
+            { "Content-Type: text/plain", "Content-Length: 2" },
+            "ok"
+            );
+    };
+
+    const auto runTask = []( SAA_in const om::ObjPtr< Task >& task ) -> void
+    {
+        scheduleAndExecuteInParallel(
+            [ &task ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+            {
+                eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+                eq -> push_back( task );
+
+                UTF_REQUIRE_NO_THROW( eq -> waitForSuccess( task ) );
+
+                UTF_REQUIRE( eq -> isEmpty() );
+            });
+    };
+
+    {
+        /*
+         * (1) A GET with no content and no custom headers
+         */
+
+        RawHttpResponder responder( makeOkResponse() );
+
+        const auto taskImpl = SimpleHttpGetTaskImpl::createInstance(
+            std::string( "127.0.0.1" ),
+            responder.port(),
+            "/probe"
+            );
+
+        taskImpl -> setTimeout( time::seconds( 60 ) );
+
+        runTask( om::qi< Task >( taskImpl ) );
+
+        const auto request = responder.lastRequest();
+
+        UTF_REQUIRE( 0U == request.find( "GET /probe HTTP/1.0\r\n" ) );
+
+        /*
+         * The port is not emitted with the host. That is legal for HTTP/1.0, but it breaks
+         * name based virtual hosting on a non default port, so a reviewer should see it
+         * stated rather than have to derive it
+         */
+
+        UTF_REQUIRE( cpp::contains( request, "Host: 127.0.0.1" ) );
+        UTF_REQUIRE( ! cpp::contains( request, "Host: 127.0.0.1:" ) );
+
+        UTF_REQUIRE( cpp::contains( request, "\r\nAccept: */*\r\nConnection: close" ) );
+
+        /*
+         * No user agent is configured, so the header is omitted entirely - the negative half
+         * of the pair which the next sub-block completes
+         */
+
+        UTF_REQUIRE_EQUAL( http::Parameters::userAgentDefault(), str::empty() );
+        UTF_REQUIRE( ! cpp::contains( request, "User-Agent:" ) );
+
+        /*
+         * There is no body, so no Content-Length is generated at all
+         */
+
+        UTF_REQUIRE( ! cpp::contains( request, "Content-Length:" ) );
+    }
+
+    {
+        /*
+         * (2) A PUT with content - the Content-Length is derived from m_contentIn.size(),
+         *     never from a caller supplied value, and the body follows the blank line
+         */
+
+        RawHttpResponder responder( makeOkResponse() );
+
+        const std::string content = "abcdefghij";
+
+        http::Parameters::userAgentDefault( cpp::copy( http::HttpHeader::g_userAgentBotDefault ) );
+
+        BL_SCOPE_EXIT(
+            {
+                http::Parameters::userAgentDefault( std::string() );
+            }
+            );
+
+        const auto taskImpl = SimpleHttpPutTaskImpl::createInstance(
+            std::string( "127.0.0.1" ),
+            responder.port(),
+            "/probe",
+            content
+            );
+
+        taskImpl -> setTimeout( time::seconds( 60 ) );
+
+        runTask( om::qi< Task >( taskImpl ) );
+
+        const auto request = responder.lastRequest();
+
+        UTF_REQUIRE( 0U == request.find( "PUT /probe HTTP/1.0\r\n" ) );
+
+        UTF_REQUIRE(
+            cpp::contains(
+                request,
+                "\r\nUser-Agent: " + http::Parameters::userAgentDefault() + "\r\n"
+                )
+            );
+
+        UTF_REQUIRE( cpp::contains( request, "\r\nContent-Length: 10\r\n" ) );
+
+        const std::string tail = "\r\n\r\n" + content;
+
+        UTF_REQUIRE( request.size() >= tail.size() );
+        UTF_REQUIRE_EQUAL( request.substr( request.size() - tail.size() ), tail );
+    }
+
+    {
+        /*
+         * (3) The custom headers are written with g_nameSeparator and nothing appended, so
+         *     there is no space after the colon, and they all precede the generated
+         *     Content-Length - which is why a caller supplied Content-Length would produce a
+         *     duplicate rather than an override
+         */
+
+        RawHttpResponder responder( makeOkResponse() );
+
+        http::HeadersMap headers;
+
+        headers.emplace( "X-One", "1" );
+        headers.emplace( "X-Two", "2" );
+
+        const auto taskImpl = SimpleHttpPutTaskImpl::createInstance(
+            std::string( "127.0.0.1" ),
+            responder.port(),
+            "/probe",
+            std::string( "abcdefghij" ),
+            std::move( headers )
+            );
+
+        taskImpl -> setTimeout( time::seconds( 60 ) );
+
+        runTask( om::qi< Task >( taskImpl ) );
+
+        const auto request = responder.lastRequest();
+
+        UTF_REQUIRE( cpp::contains( request, "\r\nX-One:1\r\n" ) );
+        UTF_REQUIRE( cpp::contains( request, "\r\nX-Two:2\r\n" ) );
+
+        const auto posOne = request.find( "X-One:" );
+        const auto posTwo = request.find( "X-Two:" );
+        const auto posContentLength = request.find( "Content-Length:" );
+
+        UTF_REQUIRE( posOne != std::string::npos );
+        UTF_REQUIRE( posTwo != std::string::npos );
+        UTF_REQUIRE( posContentLength != std::string::npos );
+
+        UTF_REQUIRE( posOne < posContentLength );
+        UTF_REQUIRE( posTwo < posContentLength );
     }
 }
 

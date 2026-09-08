@@ -544,4 +544,217 @@ UTF_AUTO_TEST_CASE( TlsHandshake_AllowUntrustedRecordsAndClearsEndpointInfo )
     UTF_REQUIRE( ! crypto::CryptoBase::allowUntrustedCertificates() );
 }
 
+UTF_AUTO_TEST_CASE( TlsHandshake_SniOmittedForAddressLiterals )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    /*
+     * createSocket() sets the server name indication for a DNS name only - RFC 6066 section 3
+     * forbids an address literal in the extension, OpenSSL does not check that and a strict
+     * peer may abort the handshake, so a host which parses as an address gets no SNI
+     *
+     * The ClientHello is never inspected by any test, so both halves of that decision - the
+     * extension being present for a name host and absent for an address literal - are
+     * invisible today and a regression only shows up against a strict peer in production
+     *
+     * The peer here is a plain TCP acceptor: no certificates are needed and the handshake can
+     * never complete, which is why the connector is cancelled rather than waited on
+     */
+
+    typedef TcpConnectionEstablisherConnectorImpl< TcpSslSocketAsyncBase >      ssl_connector_t;
+
+    test::MachineGlobalTestLock lock;
+
+    /*
+     * Reads the beginning of the first ClientHello the connector sends and returns it as raw
+     * bytes - the record contains embedded NULs, so it must not go through a std::string
+     * constructed from a pointer. Both the accept and the read are deadline bounded so a
+     * connector which never arrives fails the case on its own deadline instead of hanging it
+     */
+
+    const auto fnCaptureClientHello = []( SAA_in const std::string& host ) -> std::vector< char >
+    {
+        asio::io_service ioService;
+
+        asio::ip::tcp::acceptor acceptor(
+            ioService,
+            asio::ip::tcp::endpoint( asio::ip::tcp::v4(), test::UtfArgsParser::port() )
+            );
+
+        std::vector< char > received;
+
+        scheduleAndExecuteInParallel(
+            [ &host, &ioService, &acceptor, &received ](
+                SAA_in const om::ObjPtr< ExecutionQueue >& eq
+                ) -> void
+            {
+                eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+                const auto connector = ssl_connector_t::createInstance(
+                    cpp::copy( host ),
+                    test::UtfArgsParser::port(),
+                    false                                       /* logExceptions */
+                    );
+
+                const auto task = om::qi< Task >( connector );
+
+                eq -> push_back( task );
+
+                {
+                    asio::ip::tcp::socket socket( ioService );
+
+                    asio::deadline_timer timer( ioService );
+
+                    {
+                        eh::error_code acceptEc;
+                        bool acceptCompleted = false;
+
+                        acceptor.async_accept(
+                            socket,
+                            [ &acceptEc, &acceptCompleted, &timer ](
+                                SAA_in const eh::error_code& ec
+                                ) -> void
+                            {
+                                acceptEc = ec;
+                                acceptCompleted = true;
+
+                                timer.cancel();
+                            }
+                            );
+
+                        timer.expires_from_now( time::seconds( 30 ) );
+
+                        timer.async_wait(
+                            [ &acceptor ]( SAA_in const eh::error_code& ec ) -> void
+                            {
+                                if( asio::error::operation_aborted != ec )
+                                {
+                                    eh::error_code cancelEc;
+
+                                    acceptor.cancel( cancelEc );
+                                }
+                            }
+                            );
+
+                        #if ( ( BOOST_VERSION / 100 ) >= 1066 )
+                        ioService.restart();
+                        #else
+                        ioService.reset();
+                        #endif
+
+                        ioService.run();
+
+                        UTF_REQUIRE( acceptCompleted );
+                        UTF_REQUIRE( ! acceptEc );
+                    }
+
+                    {
+                        char buffer[ 1024 ];
+
+                        eh::error_code readEc;
+                        std::size_t bytesRead = 0U;
+
+                        socket.async_read_some(
+                            asio::buffer( buffer, sizeof( buffer ) ),
+                            [ &readEc, &bytesRead, &timer ](
+                                SAA_in      const eh::error_code&       ec,
+                                SAA_in      const std::size_t           transferred
+                                ) -> void
+                            {
+                                readEc = ec;
+                                bytesRead = transferred;
+
+                                timer.cancel();
+                            }
+                            );
+
+                        timer.expires_from_now( time::seconds( 30 ) );
+
+                        timer.async_wait(
+                            [ &socket ]( SAA_in const eh::error_code& ec ) -> void
+                            {
+                                if( asio::error::operation_aborted != ec )
+                                {
+                                    eh::error_code cancelEc;
+
+                                    socket.cancel( cancelEc );
+                                }
+                            }
+                            );
+
+                        #if ( ( BOOST_VERSION / 100 ) >= 1066 )
+                        ioService.restart();
+                        #else
+                        ioService.reset();
+                        #endif
+
+                        ioService.run();
+
+                        UTF_REQUIRE( ! readEc );
+
+                        received.assign( buffer, buffer + bytesRead );
+                    }
+
+                    /*
+                     * The task is cancelled before the accepted socket goes away: cancelTask()
+                     * force-shuts the connector's own socket, which makes isChannelOpen() false
+                     * and therefore takes the handshake retry path out of play - closing the
+                     * peer first would instead surface as an EOF, which is retryable
+                     */
+
+                    task -> requestCancel();
+
+                    eq -> wait( task );
+                }
+
+                UTF_REQUIRE( eq -> isEmpty() );
+            }
+            );
+
+        return received;
+    };
+
+    const auto fnContains = [](
+        SAA_in      const std::vector< char >&      haystack,
+        SAA_in      const std::string&              needle
+        )
+        -> bool
+    {
+        return haystack.end() != std::search(
+            haystack.begin(),
+            haystack.end(),
+            needle.begin(),
+            needle.end()
+            );
+    };
+
+    {
+        /*
+         * A DNS name is carried in the SNI extension in clear, so it is findable in the raw
+         * bytes of the ClientHello
+         */
+
+        const auto clientHello = fnCaptureClientHello( "localhost" );
+
+        UTF_REQUIRE( clientHello.size() > 0U );
+        UTF_REQUIRE_EQUAL( 0x16, static_cast< unsigned char >( clientHello[ 0 ] ) );
+
+        UTF_REQUIRE( fnContains( clientHello, "localhost" ) );
+    }
+
+    {
+        /*
+         * ... while an address literal must not appear anywhere in it
+         */
+
+        const auto clientHello = fnCaptureClientHello( "127.0.0.1" );
+
+        UTF_REQUIRE( clientHello.size() > 0U );
+        UTF_REQUIRE_EQUAL( 0x16, static_cast< unsigned char >( clientHello[ 0 ] ) );
+
+        UTF_REQUIRE( ! fnContains( clientHello, "127.0.0.1" ) );
+    }
+}
+
 #endif /* __UTEST_TESTTLSHANDSHAKEVERIFICATION_H_ */
