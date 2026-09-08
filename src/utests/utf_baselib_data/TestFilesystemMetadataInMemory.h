@@ -117,24 +117,42 @@ UTF_AUTO_TEST_CASE( TestFilesystemMetadataInMemoryImpl )
 
         const std::uint64_t pos64 = 5ULL * std::numeric_limits< std::uint32_t >::max();
 
-        fsmd_t::EntryInfo entry;
-        entry.size = 4321U;
-        entry.type = fsmd_t::File;
-        entry.lastModified = now;
-        entry.timeCreated = now;
-        entry.relPath = bl::bo::path::createInstance();
+        /*
+         * EntryInfo::relPath is a refcounted handle to a mutable bo::path and createEntry( ... )
+         * stores the handle as-is, so every entry must be given its own box - sharing one box
+         * across the two entries would leave both of them pointing at whatever the box holds
+         * last, and the read-back below would not be able to tell them apart
+         */
+
+        const auto makeEntry = [ & ]( SAA_in const std::string& relPath ) -> fsmd_t::EntryInfo
+        {
+            fsmd_t::EntryInfo info;
+
+            info.size         = 4321U;
+            info.type         = fsmd_t::File;
+            info.lastModified = now;
+            info.timeCreated  = now;
+            info.relPath      = bl::bo::path::createInstance();
+
+            bl::fs::path path( relPath );
+            info.relPath -> lvalue().swap( path );
+
+            return info;
+        };
 
         fsmd_t::ChunkInfo chunk;
         chunk.pos = pos64;
         chunk.size = 1234;
 
-        bl::fs::path path1( "foo/bar1/baz" );
-        entry.relPath -> lvalue().swap( path1 );
-        const auto entryId1 = fsmd -> createEntry( bl::cpp::copy( entry ) );
+        std::map< bl::uuid_t, std::string > expectedPaths;
 
-        bl::fs::path path2( "foo/bar/baz2" );
-        entry.relPath -> lvalue().swap( path2 );
-        const auto entryId2 = fsmd -> createEntry( bl::cpp::copy( entry ) );
+        const auto entryId1 = fsmd -> createEntry( makeEntry( "foo/bar1/baz" ) );
+        expectedPaths[ entryId1 ] = "foo/bar1/baz";
+
+        const auto entryId2 = fsmd -> createEntry( makeEntry( "foo/bar/baz2" ) );
+        expectedPaths[ entryId2 ] = "foo/bar/baz2";
+
+        UTF_REQUIRE_EQUAL( expectedPaths.size(), 2U );
 
         UTF_REQUIRE( s.insert( entryId1 ).second );
         UTF_REQUIRE( s.insert( entryId2 ).second );
@@ -213,10 +231,18 @@ UTF_AUTO_TEST_CASE( TestFilesystemMetadataInMemoryImpl )
             UTF_REQUIRE( now == entryInfo.lastModified );
             UTF_REQUIRE( now == entryInfo.timeCreated );
 
-            UTF_REQUIRE(
-                "foo/bar1/baz" == entryInfo.relPath -> value() ||
-                "foo/bar/baz2" == entryInfo.relPath -> value()
-                );
+            /*
+             * The store must return the path the entry was created with and not merely one of
+             * the paths which were handed to it - a disjunction over both would be satisfied by
+             * a createEntry( ... ) which stored a constant or swapped the two entries around
+             */
+
+            const auto posExpected = expectedPaths.find( entryId );
+
+            UTF_REQUIRE( posExpected != expectedPaths.end() );
+            UTF_REQUIRE_EQUAL( entryInfo.relPath -> value().string(), posExpected -> second );
+
+            expectedPaths.erase( posExpected );
 
             const auto iterChunks = ro -> queryChunks( entryId );
 
@@ -239,32 +265,7 @@ UTF_AUTO_TEST_CASE( TestFilesystemMetadataInMemoryImpl )
 
         UTF_REQUIRE_EQUAL( 2U, countEntries );
 
-        {
-            const auto stats = om::qi< fsmd_t >( fsmd ) -> computeStatistics();
-
-            BL_LOG_MULTILINE(
-                Logging::debug(),
-                BL_MSG()
-                    << "Filesystem metadata statistics (1):\n"
-                    << "\nentriesCount: "
-                    << stats.entriesCount
-                    << "\nsymlinksCount: "
-                    << stats.symlinksCount
-                    << "\ndirectoriesCount: "
-                    << stats.directoriesCount
-                    << "\nfilesCount: "
-                    << stats.filesCount
-                    << "\ntotalSize: "
-                    << stats.totalSize
-                    << "\n\n"
-                );
-
-            UTF_REQUIRE_EQUAL( stats.entriesCount, 2U );
-            UTF_REQUIRE_EQUAL( stats.symlinksCount, 0U );
-            UTF_REQUIRE_EQUAL( stats.directoriesCount, 0U );
-            UTF_REQUIRE_EQUAL( stats.filesCount, 2U );
-            UTF_REQUIRE_EQUAL( stats.totalSize, 2U * 4321U );
-        }
+        UTF_REQUIRE( expectedPaths.empty() );
     }
 }
 
@@ -326,5 +327,422 @@ UTF_AUTO_TEST_CASE( TestFilesystemMetadataEntryPathValidation )
         entry.relPath -> lvalue().swap( path );
 
         UTF_REQUIRE_THROW( fsmd -> createEntry( std::move( entry ) ), bl::UnexpectedException );
+    }
+}
+
+UTF_AUTO_TEST_CASE( TestFilesystemMetadataRejectedMutationsLeaveStoreConsistent )
+{
+    using namespace bl;
+
+    /*
+     * createEntry( ... ) and createChunk( ... ) register the new id in the store before they
+     * validate anything and roll back with scope guards, so a rejected mutation must leave all
+     * five containers of the store consistent - a guard which is dismissed early or dropped
+     * would leave a phantom id which queryAllEntries() / queryAllChunks() still yield but which
+     * loadEntryInfo() / loadChunkInfo() can no longer resolve, and the failure would then land
+     * in a NOEXCEPT task handler far away from the cause
+     */
+
+    typedef bl::data::FilesystemMetadataInMemoryImpl fsmd_t;
+
+    /*
+     * Note that a fresh bo::path box per call is mandatory here - createEntry( ... ) moves from
+     * its argument and stores the refcounted handle as-is
+     */
+
+    const auto makeEntry = [](
+        SAA_in          const fsmd_t::EntryType                     type,
+        SAA_in          const std::string&                          relPath,
+        SAA_in_opt      const std::string&                          targetPath = bl::str::empty()
+        )
+        -> fsmd_t::EntryInfo
+    {
+        fsmd_t::EntryInfo info;
+
+        info.size    = 4321U;
+        info.type    = type;
+        info.relPath = bl::bo::path::createInstance();
+
+        bl::fs::path path( relPath );
+        info.relPath -> lvalue().swap( path );
+
+        if( ! targetPath.empty() )
+        {
+            info.targetPath = bl::bo::path::createInstance();
+
+            bl::fs::path target( targetPath );
+            info.targetPath -> lvalue().swap( target );
+        }
+
+        return info;
+    };
+
+    const auto wo = fsmd_t::createInstance< bl::data::FilesystemMetadataWO >();
+
+    const auto goodId = wo -> createEntry( makeEntry( fsmd_t::File, "a/b.txt" ) );
+
+    /*
+     * A duplicate relative path, a path which escapes the tree and a symlink without a target
+     * are all rejected - and none of them may consume a slot in the store
+     */
+
+    UTF_REQUIRE_THROW( wo -> createEntry( makeEntry( fsmd_t::File, "a/b.txt" ) ), bl::UnexpectedException );
+    UTF_REQUIRE_THROW( wo -> createEntry( makeEntry( fsmd_t::File, "../escape" ) ), bl::UnexpectedException );
+    UTF_REQUIRE_THROW( wo -> createEntry( makeEntry( fsmd_t::Symlink, "a/link" ) ), bl::UnexpectedException );
+
+    std::map< bl::uuid_t /* chunkId */, bl::uuid_t /* entryId */ > chunk2entry;
+
+    const auto chunkId = wo -> createChunk( goodId, fsmd_t::ChunkInfo() );
+    chunk2entry[ chunkId ] = goodId;
+
+    /*
+     * createChunk( ... ) pushes the new chunk id before it resolves the entry, so an unknown
+     * entry id must be rolled back by the guard rather than left behind in m_chunkIds
+     */
+
+    UTF_REQUIRE_THROW( wo -> createChunk( bl::uuids::create(), fsmd_t::ChunkInfo() ), bl::UnexpectedException );
+
+    /*
+     * The symlink above was rejected before m_relPaths was touched, so its path must still be
+     * available to a later entry
+     */
+
+    const auto goodId2 = wo -> createEntry( makeEntry( fsmd_t::File, "a/link" ) );
+
+    const auto goodId3 = wo -> createEntry( makeEntry( fsmd_t::File, "a/c.txt" ) );
+
+    const auto chunkId2 = wo -> createChunk( goodId3, fsmd_t::ChunkInfo() );
+    chunk2entry[ chunkId2 ] = goodId3;
+
+    const auto chunkId3 = wo -> createChunk( goodId3, fsmd_t::ChunkInfo() );
+    chunk2entry[ chunkId3 ] = goodId3;
+
+    wo -> finalize();
+
+    const auto ro = bl::om::qi< bl::data::FilesystemMetadataRO >( wo );
+
+    /*
+     * m_fileIds has no phantoms, and m_files agrees with it - a one-sided rollback shows up as a
+     * mismatch between these two counts
+     */
+
+    UTF_REQUIRE_EQUAL( ro -> queryEntriesCount(), 3U );
+    UTF_REQUIRE_EQUAL( om::qi< fsmd_t >( wo ) -> computeStatistics().entriesCount, 3U );
+
+    {
+        std::set< bl::uuid_t > entryIds;
+
+        const auto iter = ro -> queryAllEntries();
+
+        for( ; iter -> hasCurrent() ; iter -> loadNext() )
+        {
+            const auto entryId = iter -> current();
+
+            UTF_REQUIRE( entryIds.insert( entryId ).second );
+            UTF_REQUIRE_NO_THROW( ro -> loadEntryInfo( entryId ) );
+        }
+
+        std::set< bl::uuid_t > expectedEntryIds;
+        expectedEntryIds.insert( goodId );
+        expectedEntryIds.insert( goodId2 );
+        expectedEntryIds.insert( goodId3 );
+
+        UTF_REQUIRE( entryIds == expectedEntryIds );
+    }
+
+    {
+        std::set< bl::uuid_t > chunkIds;
+
+        const auto iter = ro -> queryAllChunks();
+
+        for( ; iter -> hasCurrent() ; iter -> loadNext() )
+        {
+            const auto id = iter -> current();
+
+            UTF_REQUIRE( chunkIds.insert( id ).second );
+            UTF_REQUIRE_NO_THROW( ro -> loadChunkInfo( id ) );
+
+            /*
+             * The chunk to entry join is what the unpackaging path uses to decide which file a
+             * chunk is written into
+             */
+
+            const auto pos = chunk2entry.find( id );
+
+            UTF_REQUIRE( pos != chunk2entry.end() );
+            UTF_REQUIRE_EQUAL( ro -> queryEntryId( id ), pos -> second );
+        }
+
+        UTF_REQUIRE_EQUAL( chunkIds.size(), 3U );
+    }
+
+    {
+        /*
+         * The per-entry view must agree with the global one
+         */
+
+        const auto verifyEntryChunks = [ & ]( SAA_in const bl::uuid_t& entryId ) -> void
+        {
+            std::set< bl::uuid_t > expectedChunkIds;
+
+            for( const auto& pair : chunk2entry )
+            {
+                if( pair.second == entryId )
+                {
+                    expectedChunkIds.insert( pair.first );
+                }
+            }
+
+            std::set< bl::uuid_t > chunkIds;
+
+            const auto iter = ro -> queryChunks( entryId );
+
+            for( ; iter -> hasCurrent() ; iter -> loadNext() )
+            {
+                UTF_REQUIRE( chunkIds.insert( iter -> current() ).second );
+            }
+
+            UTF_REQUIRE( chunkIds == expectedChunkIds );
+            UTF_REQUIRE_EQUAL( ro -> queryChunksCount( entryId ), expectedChunkIds.size() );
+        };
+
+        verifyEntryChunks( goodId );
+        verifyEntryChunks( goodId2 );
+        verifyEntryChunks( goodId3 );
+
+        UTF_REQUIRE_EQUAL( ro -> queryChunksCount( goodId ), 1U );
+        UTF_REQUIRE_EQUAL( ro -> queryChunksCount( goodId2 ), 0U );
+        UTF_REQUIRE_EQUAL( ro -> queryChunksCount( goodId3 ), 2U );
+    }
+
+    UTF_REQUIRE_THROW( ro -> queryEntryId( bl::uuids::create() ), bl::UnexpectedException );
+
+    /*
+     * Entry ids and chunk ids live in different maps and must not be interchangeable - a
+     * container which is keyed or valued the wrong way round would answer these
+     */
+
+    UTF_REQUIRE_THROW( ro -> queryEntryId( goodId ), bl::UnexpectedException );
+    UTF_REQUIRE_THROW( ro -> queryChunksCount( chunkId ), bl::UnexpectedException );
+    UTF_REQUIRE_THROW( ro -> loadChunkInfo( goodId ), bl::UnexpectedException );
+
+    {
+        /*
+         * The uniqueness rule must be distinguishable from the containment rules, which all
+         * throw the same exception type; a separate store is needed because wo is finalized now
+         */
+
+        const auto wo2 = fsmd_t::createInstance< bl::data::FilesystemMetadataWO >();
+
+        ( void ) wo2 -> createEntry( makeEntry( fsmd_t::File, "a/b.txt" ) );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            wo2 -> createEntry( makeEntry( fsmd_t::File, "a/b.txt" ) ),
+            bl::UnexpectedException,
+            "relPath must be unique"
+            );
+    }
+}
+
+UTF_AUTO_TEST_CASE( TestFilesystemMetadataChecksumAndHashAssociation )
+{
+    using namespace bl;
+
+    /*
+     * isChecksumSet is a silent on / off switch for integrity checking - the unpackager only
+     * accumulates and compares the chunk CRCs when it is set - so associateChecksum( ... )
+     * forgetting to raise it would skip verification for every file without any other signal
+     */
+
+    typedef bl::data::FilesystemMetadataInMemoryImpl fsmd_t;
+
+    const auto makeEntry = []( SAA_in const std::string& relPath ) -> fsmd_t::EntryInfo
+    {
+        fsmd_t::EntryInfo info;
+
+        info.size    = 4321U;
+        info.type    = fsmd_t::File;
+        info.relPath = bl::bo::path::createInstance();
+
+        bl::fs::path path( relPath );
+        info.relPath -> lvalue().swap( path );
+
+        return info;
+    };
+
+    const auto wo = fsmd_t::createInstance< bl::data::FilesystemMetadataWO >();
+
+    const auto withChecksum = wo -> createEntry( makeEntry( "a/with.txt" ) );
+    const auto withoutChecksum = wo -> createEntry( makeEntry( "a/without.txt" ) );
+
+    UTF_REQUIRE( ! wo -> isFinalized() );
+
+    wo -> associateChecksum( withChecksum, 0xDEADBEEFU );
+
+    wo -> associateHash( withChecksum, "sha256-abc" );
+
+    /*
+     * A second call must replace the hash, not append to it
+     */
+
+    wo -> associateHash( withChecksum, "sha256-def" );
+
+    UTF_REQUIRE_THROW( wo -> associateChecksum( bl::uuids::create(), 1U ), bl::UnexpectedException );
+    UTF_REQUIRE_THROW( wo -> associateHash( bl::uuids::create(), "x" ), bl::UnexpectedException );
+
+    wo -> finalize();
+
+    UTF_REQUIRE( wo -> isFinalized() );
+
+    /*
+     * A finalized store is immutable, so both mutators must refuse to run behind an outstanding
+     * RO iterator
+     */
+
+    UTF_REQUIRE_THROW( wo -> associateChecksum( withChecksum, 2U ), bl::UnexpectedException );
+    UTF_REQUIRE_THROW( wo -> associateHash( withChecksum, "sha256-ghi" ), bl::UnexpectedException );
+
+    const auto ro = bl::om::qi< bl::data::FilesystemMetadataRO >( wo );
+
+    {
+        const auto a = ro -> loadEntryInfo( withChecksum );
+
+        UTF_REQUIRE( a.isChecksumSet );
+        UTF_REQUIRE_EQUAL( a.checksum.value(), 0xDEADBEEFU );
+        UTF_REQUIRE( a.hash );
+        UTF_REQUIRE_EQUAL( a.hash -> value(), "sha256-def" );
+    }
+
+    {
+        /*
+         * The entry which was never touched must be unaffected by either call, which is what
+         * catches getEntry( ... ) resolving to the wrong slot
+         */
+
+        const auto b = ro -> loadEntryInfo( withoutChecksum );
+
+        UTF_REQUIRE( ! b.isChecksumSet );
+        UTF_REQUIRE_EQUAL( b.checksum.value(), 0U );
+        UTF_REQUIRE( ! b.hash );
+    }
+}
+
+UTF_AUTO_TEST_CASE( TestFilesystemMetadataComputeStatistics )
+{
+    using namespace bl;
+
+    /*
+     * computeStatistics() has only ever been called on a store which holds File entries, so the
+     * Symlink and Directory arms of its switch, its default: throw and its chkLocked() guard
+     * have never executed - swapping or merging two of the arms would pass the whole suite
+     */
+
+    typedef bl::data::FilesystemMetadataInMemoryImpl fsmd_t;
+
+    const auto makeEntry = [](
+        SAA_in          const fsmd_t::EntryType                     type,
+        SAA_in          const std::string&                          relPath,
+        SAA_in          const std::uint64_t                         size,
+        SAA_in_opt      const std::string&                          targetPath = bl::str::empty()
+        )
+        -> fsmd_t::EntryInfo
+    {
+        fsmd_t::EntryInfo info;
+
+        info.size    = size;
+        info.type    = type;
+        info.relPath = bl::bo::path::createInstance();
+
+        bl::fs::path path( relPath );
+        info.relPath -> lvalue().swap( path );
+
+        if( ! targetPath.empty() )
+        {
+            info.targetPath = bl::bo::path::createInstance();
+
+            bl::fs::path target( targetPath );
+            info.targetPath -> lvalue().swap( target );
+        }
+
+        return info;
+    };
+
+    {
+        const auto wo = fsmd_t::createInstance< bl::data::FilesystemMetadataWO >();
+
+        /*
+         * Statistics may not be read off a store which is still being populated
+         */
+
+        UTF_REQUIRE_THROW( om::qi< fsmd_t >( wo ) -> computeStatistics(), bl::UnexpectedException );
+
+        ( void ) wo -> createEntry( makeEntry( fsmd_t::File, "a/f1.txt", 100U ) );
+        ( void ) wo -> createEntry( makeEntry( fsmd_t::File, "a/f2.txt", 200U ) );
+        ( void ) wo -> createEntry( makeEntry( fsmd_t::File, "a/f3.txt", 300U ) );
+
+        ( void ) wo -> createEntry( makeEntry( fsmd_t::Directory, "a/d1", 0U ) );
+        ( void ) wo -> createEntry( makeEntry( fsmd_t::Directory, "a/d2", 0U ) );
+
+        ( void ) wo -> createEntry( makeEntry( fsmd_t::Symlink, "a/link", 7U, "a/f1.txt" ) );
+
+        wo -> finalize();
+
+        const auto ro = bl::om::qi< bl::data::FilesystemMetadataRO >( wo );
+
+        const auto stats = om::qi< fsmd_t >( wo ) -> computeStatistics();
+
+        BL_LOG_MULTILINE(
+            Logging::debug(),
+            BL_MSG()
+                << "Filesystem metadata statistics (mixed entry types):\n"
+                << "\nentriesCount: "
+                << stats.entriesCount
+                << "\nsymlinksCount: "
+                << stats.symlinksCount
+                << "\ndirectoriesCount: "
+                << stats.directoriesCount
+                << "\nfilesCount: "
+                << stats.filesCount
+                << "\ntotalSize: "
+                << stats.totalSize
+                << "\n\n"
+            );
+
+        UTF_REQUIRE_EQUAL( stats.entriesCount, 6U );
+        UTF_REQUIRE_EQUAL( stats.filesCount, 3U );
+        UTF_REQUIRE_EQUAL( stats.directoriesCount, 2U );
+        UTF_REQUIRE_EQUAL( stats.symlinksCount, 1U );
+
+        /*
+         * Every entry type contributes to totalSize, including the symlink and the directories
+         */
+
+        UTF_REQUIRE_EQUAL( stats.totalSize, 607ULL );
+
+        UTF_REQUIRE_EQUAL( stats.entriesCount, ( std::uint32_t ) ro -> queryEntriesCount() );
+    }
+
+    {
+        /*
+         * chkEntryInfo() does not validate the entry type, so an out of range one is accepted by
+         * createEntry( ... ) and only surfaces in the default: arm of the switch; if type
+         * validation is ever added there this block moves to the createEntry( ... ) call instead
+         */
+
+        const auto wo = fsmd_t::createInstance< bl::data::FilesystemMetadataWO >();
+
+        fsmd_t::EntryInfo info;
+
+        info.type    = static_cast< fsmd_t::EntryType >( 42 );
+        info.relPath = bl::bo::path::createInstance();
+
+        bl::fs::path path( "a/bogus.txt" );
+        info.relPath -> lvalue().swap( path );
+
+        ( void ) wo -> createEntry( std::move( info ) );
+
+        wo -> finalize();
+
+        UTF_REQUIRE_THROW( om::qi< fsmd_t >( wo ) -> computeStatistics(), bl::UnexpectedException );
     }
 }
