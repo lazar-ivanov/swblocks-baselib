@@ -42,7 +42,7 @@ namespace utest
 
     private:
 
-        bl::os::mutex                   m_lock;
+        mutable bl::os::mutex           m_lock;
         bl::os::condition_variable      m_cv;
         bool                            m_signaled;
 
@@ -67,16 +67,37 @@ namespace utest
 
         bool wait()
         {
+            return wait( 10U * 1000U /* timeoutInMilliseconds */ );
+        }
+
+        /**
+         * @brief A wait with an explicit bound, so a test can also assert that something
+         * has *not* happened without blocking for the full default timeout
+         */
+
+        bool wait( SAA_in const std::size_t timeoutInMilliseconds )
+        {
             bl::os::mutex_unique_lock guard( m_lock );
 
             return m_cv.wait_for(
                 guard,
-                bl::os::chrono::seconds( 10 ),
+                bl::os::chrono::milliseconds( timeoutInMilliseconds ),
                 [ this ]() -> bool
                 {
                     return m_signaled;
                 }
                 );
+        }
+
+        /**
+         * @brief Samples the current state without waiting
+         */
+
+        bool isSignaled() const
+        {
+            BL_MUTEX_GUARD( m_lock );
+
+            return m_signaled;
         }
     };
 

@@ -654,6 +654,11 @@ UTF_AUTO_TEST_CASE( AsyncCB_CancelWithOperationTaskInProgressTests )
 
     cpp::ScalarTypeIniter< bool > secondOperationExecuted;
 
+    cpp::ScalarTypeIniter< bool > firstResultIsFailed;
+    cpp::ScalarTypeIniter< bool > firstResultIsCanceled;
+    cpp::ScalarTypeIniter< bool > firstResultHasTask;
+    cpp::ScalarTypeIniter< Task::State > firstResultTaskState( Task::Created );
+
     const auto wrapperImpl = AsyncExecutorWrapperCallbackImpl::createInstance(
         4U                                          /* threadsCount */,
         om::ObjPtr< TaskControlToken >()            /* controlToken */,
@@ -689,9 +694,25 @@ UTF_AUTO_TEST_CASE( AsyncCB_CancelWithOperationTaskInProgressTests )
 
         asyncExecutor -> asyncBegin(
             operation1,
-            [ &firstCallbackCalled ]( SAA_in const AsyncOperation::Result& result ) NOEXCEPT -> void
+            [
+                &firstCallbackCalled,
+                &firstResultIsFailed,
+                &firstResultIsCanceled,
+                &firstResultHasTask,
+                &firstResultTaskState
+            ]
+            ( SAA_in const AsyncOperation::Result& result ) NOEXCEPT -> void
             {
-                BL_UNUSED( result );
+                /*
+                 * The result is only copied out here and asserted on the test thread
+                 * below, as a failing REQUIRE on a thread pool worker would terminate
+                 * the process instead of failing this case
+                 */
+
+                firstResultIsFailed = result.isFailed();
+                firstResultIsCanceled = result.isCanceled();
+                firstResultHasTask = !! result.task;
+                firstResultTaskState = result.task ? result.task -> getState() : Task::Created;
 
                 firstCallbackCalled.signal();
             }
@@ -708,6 +729,17 @@ UTF_AUTO_TEST_CASE( AsyncCB_CancelWithOperationTaskInProgressTests )
         releaseOperationTask.signal();
 
         UTF_REQUIRE( firstCallbackCalled.wait() );
+
+        /*
+         * The executor samples m_stopped before it acts on the pending cancellation, so
+         * the operation state task - which was already past its own isCanceled() check
+         * when it was marked - must be delivered as a completed task on a success result
+         */
+
+        UTF_REQUIRE( firstResultHasTask.value() );
+        UTF_REQUIRE_EQUAL( Task::Completed, firstResultTaskState.value() );
+        UTF_REQUIRE( ! firstResultIsFailed.value() );
+        UTF_REQUIRE( ! firstResultIsCanceled.value() );
 
         asyncExecutor -> releaseOperation( operation1 );
 
@@ -794,4 +826,686 @@ UTF_AUTO_TEST_CASE( AsyncCB_DeferredAssertionsRecorderTests )
 
     UTF_REQUIRE_EQUAL( recorder.failures(), 1U );
     UTF_REQUIRE( cpp::contains( recorder.firstFailure(), "false" ) );
+}
+
+UTF_AUTO_TEST_CASE( AsyncCB_ConcurrencySlotBoundTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace asynccb;
+
+    /*
+     * The executor bounds the number of operations which can execute concurrently to
+     * maxConcurrentTasks and that concurrency slot is owned by the operation's executor
+     * task, which stays in the workers queue from asyncBegin until the operation is
+     * cancelled or released - i.e. not merely until its callback has returned
+     *
+     * Beyond the bound the new executor task is simply left in the pending list and it is
+     * never scheduled, so the operation state execute() callback cannot have been entered
+     *
+     * Note that threadsCount must exceed maxConcurrentTasks here - the terminating and the
+     * cancellation calls are posted to the completion tasks queue, whose own throttle limit
+     * equals threadsCount, and the execute() callbacks below block
+     */
+
+    const std::size_t noOfOperations = 3U;
+
+    utest::AsyncTestSignal started[ noOfOperations ];
+    utest::AsyncTestSignal release[ noOfOperations ];
+    utest::AsyncTestSignal callbackCalled[ noOfOperations ];
+
+    std::atomic< std::size_t > startedCount( 0U );
+
+    const auto wrapperImpl = AsyncExecutorWrapperCallbackImpl::createInstance(
+        4U                                          /* threadsCount */,
+        om::ObjPtr< TaskControlToken >()            /* controlToken */,
+        2U                                          /* maxConcurrentTasks */
+        );
+
+    {
+        const auto& asyncExecutor = wrapperImpl -> asyncExecutor();
+
+        om::ObjPtr< AsyncOperation > operations[ noOfOperations ];
+
+        for( std::size_t i = 0U; i < noOfOperations; ++i )
+        {
+            operations[ i ] = asyncExecutor -> createOperation(
+                wrapperImpl -> createOperationState(
+                    [ &startedCount, &started, &release, i ]() -> void
+                    {
+                        ++startedCount;
+
+                        started[ i ].signal();
+
+                        ( void ) release[ i ].wait();
+                    },
+                    AsyncOperationState::create_task_callback_t()
+                    )
+                );
+
+            asyncExecutor -> asyncBegin(
+                operations[ i ],
+                [ &callbackCalled, i ]( SAA_in const AsyncOperation::Result& result ) NOEXCEPT -> void
+                {
+                    BL_UNUSED( result );
+
+                    callbackCalled[ i ].signal();
+                }
+                );
+        }
+
+        /*
+         * Only the first two operations can execute; the third one must be throttled
+         */
+
+        UTF_REQUIRE( started[ 0 ].wait() );
+        UTF_REQUIRE( started[ 1 ].wait() );
+
+        UTF_REQUIRE_EQUAL( 2U, startedCount.load() );
+
+        UTF_REQUIRE( ! started[ 2 ].wait( 500U ) );
+
+        /*
+         * Completing the first operation's callback is not sufficient to free its slot -
+         * only releasing (or cancelling) the operation is
+         */
+
+        release[ 0 ].signal();
+
+        UTF_REQUIRE( callbackCalled[ 0 ].wait() );
+
+        UTF_REQUIRE( ! started[ 2 ].isSignaled() );
+
+        asyncExecutor -> releaseOperation( operations[ 0 ] );
+
+        UTF_REQUIRE( started[ 2 ].wait() );
+        UTF_REQUIRE_EQUAL( 3U, startedCount.load() );
+
+        /*
+         * Every operation must be released before the wrapper leaves scope, as disposing
+         * the executor while it still has outstanding calls trips a runtime assert
+         */
+
+        release[ 1 ].signal();
+        release[ 2 ].signal();
+
+        UTF_REQUIRE( callbackCalled[ 1 ].wait() );
+        UTF_REQUIRE( callbackCalled[ 2 ].wait() );
+
+        asyncExecutor -> releaseOperation( operations[ 1 ] );
+        asyncExecutor -> releaseOperation( operations[ 2 ] );
+    }
+}
+
+UTF_AUTO_TEST_CASE( AsyncCB_ConcurrentAsyncBeginIsRejectedTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace asynccb;
+
+    /*
+     * A second async call on an operation which is still in flight must be rejected with
+     * an exception and it must not overwrite the pending callback
+     *
+     * The check is made in asyncBeginImpl, outside of the NOEXCEPT requestNewAsyncCall,
+     * so that it can throw rather than terminate the process
+     */
+
+    utest::AsyncTestSignal executeStarted;
+    utest::AsyncTestSignal releaseExecute;
+    utest::AsyncTestSignal firstCallbackCalled;
+    utest::AsyncTestSignal secondCallbackCalled;
+
+    const auto wrapperImpl = AsyncExecutorWrapperCallbackImpl::createInstance( 2U /* threadsCount */ );
+
+    {
+        const auto& asyncExecutor = wrapperImpl -> asyncExecutor();
+
+        auto operation = asyncExecutor -> createOperation(
+            wrapperImpl -> createOperationState(
+                [ &executeStarted, &releaseExecute ]() -> void
+                {
+                    executeStarted.signal();
+
+                    ( void ) releaseExecute.wait();
+                },
+                AsyncOperationState::create_task_callback_t()
+                )
+            );
+
+        asyncExecutor -> asyncBegin(
+            operation,
+            [ &firstCallbackCalled ]( SAA_in const AsyncOperation::Result& result ) NOEXCEPT -> void
+            {
+                BL_UNUSED( result );
+
+                firstCallbackCalled.signal();
+            }
+            );
+
+        UTF_REQUIRE( executeStarted.wait() );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            asyncExecutor -> asyncBegin(
+                operation,
+                [ &secondCallbackCalled ]( SAA_in const AsyncOperation::Result& result ) NOEXCEPT -> void
+                {
+                    BL_UNUSED( result );
+
+                    secondCallbackCalled.signal();
+                }
+                ),
+            UnexpectedException,
+            "Another async call is already in progress"
+            );
+
+        releaseExecute.signal();
+
+        /*
+         * The first callback must still be delivered and the rejected one must never be
+         * invoked or stored
+         */
+
+        UTF_REQUIRE( firstCallbackCalled.wait() );
+
+        UTF_REQUIRE( ! secondCallbackCalled.isSignaled() );
+
+        /*
+         * The operation can only be released once the pending call has completed, as
+         * releaseOperation checks that from within a NOEXCEPT block
+         */
+
+        asyncExecutor -> releaseOperation( operation );
+    }
+}
+
+UTF_AUTO_TEST_CASE( AsyncCB_CanceledControlTokenAbortsOperationTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace asynccb;
+
+    /*
+     * When the executor is created with a control token which is already cancelled the
+     * operation must be aborted without calling execute() at all
+     *
+     * Note that this short circuit lives only on the execute() path - an operation state
+     * which models its execution as a task is deliberately not aborted by the token, so
+     * only the sync path is asserted here
+     */
+
+    const auto controlToken = SimpleTaskControlTokenImpl::createInstance();
+
+    controlToken -> requestCancel();
+
+    utest::AsyncTestSignal callbackCalled;
+
+    cpp::ScalarTypeIniter< bool > executed;
+
+    eh::error_code capturedCode;
+    cpp::ScalarTypeIniter< bool > capturedIsCanceled;
+    cpp::ScalarTypeIniter< bool > capturedIsFailed;
+    cpp::ScalarTypeIniter< bool > capturedHasTask;
+    cpp::ScalarTypeIniter< bool > capturedHasException;
+
+    const auto wrapperImpl = AsyncExecutorWrapperCallbackImpl::createInstance(
+        2U                                              /* threadsCount */,
+        om::qi< TaskControlToken >( controlToken )      /* controlToken */,
+        0U                                              /* maxConcurrentTasks */
+        );
+
+    {
+        const auto& asyncExecutor = wrapperImpl -> asyncExecutor();
+
+        auto operation = asyncExecutor -> createOperation(
+            wrapperImpl -> createOperationState(
+                [ &executed ]() -> void
+                {
+                    executed = true;
+                },
+                AsyncOperationState::create_task_callback_t()
+                )
+            );
+
+        asyncExecutor -> asyncBegin(
+            operation,
+            [
+                &callbackCalled,
+                &capturedCode,
+                &capturedIsCanceled,
+                &capturedIsFailed,
+                &capturedHasTask,
+                &capturedHasException
+            ]
+            ( SAA_in const AsyncOperation::Result& result ) NOEXCEPT -> void
+            {
+                capturedCode = result.code;
+                capturedIsCanceled = result.isCanceled();
+                capturedIsFailed = result.isFailed();
+                capturedHasTask = !! result.task;
+                capturedHasException = !! result.exception;
+
+                callbackCalled.signal();
+            }
+            );
+
+        UTF_REQUIRE( callbackCalled.wait() );
+
+        UTF_REQUIRE( ! executed.value() );
+
+        UTF_REQUIRE( asio::error::operation_aborted == capturedCode );
+        UTF_REQUIRE( capturedIsCanceled.value() );
+        UTF_REQUIRE( capturedIsFailed.value() );
+        UTF_REQUIRE( ! capturedHasTask.value() );
+        UTF_REQUIRE( ! capturedHasException.value() );
+
+        asyncExecutor -> releaseOperation( operation );
+    }
+}
+
+UTF_AUTO_TEST_CASE( AsyncCB_ExecuteExceptionIsDeliveredTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace asynccb;
+
+    /*
+     * An exception thrown out of execute() is captured and delivered to the callback as
+     * Result::exception, with an empty error code and no task
+     *
+     * The remaining calls counter is decremented on the failure path too, so the very same
+     * operation can be used to start a new async call immediately afterwards
+     */
+
+    std::atomic< int > executeCalls( 0 );
+
+    utest::AsyncTestSignal firstCallbackCalled;
+    utest::AsyncTestSignal secondCallbackCalled;
+
+    std::exception_ptr capturedEptr;
+    cpp::ScalarTypeIniter< bool > capturedHasTask;
+    cpp::ScalarTypeIniter< bool > capturedIsFailed;
+    cpp::ScalarTypeIniter< bool > capturedIsCanceled;
+    cpp::ScalarTypeIniter< bool > secondFailed;
+
+    const auto wrapperImpl = AsyncExecutorWrapperCallbackImpl::createInstance( 2U /* threadsCount */ );
+
+    {
+        const auto& asyncExecutor = wrapperImpl -> asyncExecutor();
+
+        auto operation = asyncExecutor -> createOperation(
+            wrapperImpl -> createOperationState(
+                [ &executeCalls ]() -> void
+                {
+                    if( 1 == ++executeCalls )
+                    {
+                        BL_THROW(
+                            UnexpectedException(),
+                            BL_MSG()
+                                << "execute failed"
+                            );
+                    }
+                },
+                AsyncOperationState::create_task_callback_t()
+                )
+            );
+
+        /*
+         * The client callback is invoked from within a NOEXCEPT block, so the result is
+         * only copied out here and asserted on the test thread below
+         */
+
+        asyncExecutor -> asyncBegin(
+            operation,
+            [
+                &firstCallbackCalled,
+                &capturedEptr,
+                &capturedHasTask,
+                &capturedIsFailed,
+                &capturedIsCanceled
+            ]
+            ( SAA_in const AsyncOperation::Result& result ) NOEXCEPT -> void
+            {
+                capturedEptr = result.exception;
+                capturedHasTask = !! result.task;
+                capturedIsFailed = result.isFailed();
+                capturedIsCanceled = result.isCanceled();
+
+                firstCallbackCalled.signal();
+            }
+            );
+
+        UTF_REQUIRE( firstCallbackCalled.wait() );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            cpp::safeRethrowException( capturedEptr ),
+            UnexpectedException,
+            "execute failed"
+            );
+
+        UTF_REQUIRE( capturedIsFailed.value() );
+        UTF_REQUIRE( ! capturedIsCanceled.value() );
+        UTF_REQUIRE( ! capturedHasTask.value() );
+
+        /*
+         * The failed operation must be reusable as is
+         */
+
+        asyncExecutor -> asyncBegin(
+            operation,
+            [ &secondCallbackCalled, &secondFailed ]
+            ( SAA_in const AsyncOperation::Result& result ) NOEXCEPT -> void
+            {
+                secondFailed = result.isFailed();
+
+                secondCallbackCalled.signal();
+            }
+            );
+
+        UTF_REQUIRE( secondCallbackCalled.wait() );
+        UTF_REQUIRE( ! secondFailed.value() );
+
+        asyncExecutor -> releaseOperation( operation );
+    }
+}
+
+UTF_AUTO_TEST_CASE( AsyncCB_OperationStateTaskContinuationTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace asynccb;
+
+    /*
+     * When the operation state models its execution as a task the executor walks the whole
+     * continuation chain itself before it invokes the async callback, hands the tail of the
+     * chain back in Result::task and marks that tail as completed
+     *
+     * A failure anywhere in the chain is propagated to the callback through the exception
+     * carried by the tail task
+     */
+
+    const auto wrapperImpl = AsyncExecutorWrapperCallbackImpl::createInstance( 4U /* threadsCount */ );
+
+    {
+        const auto& asyncExecutor = wrapperImpl -> asyncExecutor();
+
+        {
+            /*
+             * The full chain must have executed by the time the callback is invoked
+             */
+
+            std::atomic< std::size_t > stepsExecuted( 0U );
+
+            utest::AsyncTestSignal callbackCalled;
+
+            cpp::ScalarTypeIniter< std::size_t > capturedSteps;
+            cpp::ScalarTypeIniter< bool > capturedIsFailed;
+            om::ObjPtrCopyable< Task > capturedResultTask;
+
+            const auto continuationTask = SimpleTaskImpl::createInstance< Task >(
+                [ &stepsExecuted ]() -> void
+                {
+                    ++stepsExecuted;
+                }
+                );
+
+            auto operation = asyncExecutor -> createOperation(
+                wrapperImpl -> createOperationState(
+                    []() -> void
+                    {
+                        /*
+                         * Never called - this operation state models its execution as a task
+                         */
+
+                        UTF_FAIL( "The operation state callback must not be called" );
+                    },
+                    [ &stepsExecuted, &continuationTask ]() -> om::ObjPtr< Task >
+                    {
+                        return SimpleTaskWithContinuation::createInstance< Task >(
+                            [ &stepsExecuted, &continuationTask ]() -> om::ObjPtr< Task >
+                            {
+                                ++stepsExecuted;
+
+                                return om::copy( continuationTask );
+                            }
+                            );
+                    }
+                    )
+                );
+
+            asyncExecutor -> asyncBegin(
+                operation,
+                [ &callbackCalled, &stepsExecuted, &capturedSteps, &capturedIsFailed, &capturedResultTask ]
+                ( SAA_in const AsyncOperation::Result& result ) NOEXCEPT -> void
+                {
+                    capturedSteps = stepsExecuted.load();
+                    capturedIsFailed = result.isFailed();
+                    capturedResultTask = result.task;
+
+                    callbackCalled.signal();
+                }
+                );
+
+            UTF_REQUIRE( callbackCalled.wait() );
+
+            /*
+             * Both the head of the chain and its continuation must have run before the
+             * callback was invoked
+             */
+
+            UTF_REQUIRE_EQUAL( 2U, capturedSteps.value() );
+
+            /*
+             * The tail of the chain, not its head, is what is handed back
+             */
+
+            UTF_REQUIRE( om::areEqual( capturedResultTask, continuationTask ) );
+            UTF_REQUIRE( Task::Completed == capturedResultTask -> getState() );
+            UTF_REQUIRE( ! capturedIsFailed.value() );
+
+            asyncExecutor -> releaseOperation( operation );
+        }
+
+        {
+            /*
+             * A continuation which fails propagates its exception through the tail task
+             */
+
+            utest::AsyncTestSignal callbackCalled;
+
+            std::exception_ptr capturedEptr;
+            cpp::ScalarTypeIniter< bool > capturedIsFailed;
+
+            const auto failingContinuation = SimpleTaskImpl::createInstance< Task >(
+                []() -> void
+                {
+                    BL_THROW(
+                        UnexpectedException(),
+                        BL_MSG()
+                            << "The continuation task has failed"
+                        );
+                }
+                );
+
+            auto operation = asyncExecutor -> createOperation(
+                wrapperImpl -> createOperationState(
+                    []() -> void
+                    {
+                        /*
+                         * Never called - this operation state models its execution as a task
+                         */
+
+                        UTF_FAIL( "The operation state callback must not be called" );
+                    },
+                    [ &failingContinuation ]() -> om::ObjPtr< Task >
+                    {
+                        return SimpleTaskWithContinuation::createInstance< Task >(
+                            [ &failingContinuation ]() -> om::ObjPtr< Task >
+                            {
+                                return om::copy( failingContinuation );
+                            }
+                            );
+                    }
+                    )
+                );
+
+            asyncExecutor -> asyncBegin(
+                operation,
+                [ &callbackCalled, &capturedEptr, &capturedIsFailed ]
+                ( SAA_in const AsyncOperation::Result& result ) NOEXCEPT -> void
+                {
+                    capturedEptr = result.exception;
+                    capturedIsFailed = result.isFailed();
+
+                    callbackCalled.signal();
+                }
+                );
+
+            UTF_REQUIRE( callbackCalled.wait() );
+
+            UTF_REQUIRE( capturedIsFailed.value() );
+
+            UTF_REQUIRE_THROW_MESSAGE(
+                cpp::safeRethrowException( capturedEptr ),
+                UnexpectedException,
+                "The continuation task has failed"
+                );
+
+            asyncExecutor -> releaseOperation( operation );
+        }
+    }
+}
+
+UTF_AUTO_TEST_CASE( AsyncCB_CancelBeforeExecuteDeliversAbortedTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace asynccb;
+
+    /*
+     * The headline guarantee of the AsyncOperation interface is that the callback is always
+     * called, and that an operation which was cancelled successfully is reported through
+     * Result::code being equal to asio::error::operation_aborted
+     *
+     * The workers throttle is used to make this deterministic - the first operation occupies
+     * the single concurrency slot, so the second operation's executor task is left pending
+     * and its execute() cannot have run by the time it is cancelled
+     */
+
+    utest::AsyncTestSignal started0;
+    utest::AsyncTestSignal release0;
+    utest::AsyncTestSignal callback0Called;
+    utest::AsyncTestSignal callback1Called;
+
+    cpp::ScalarTypeIniter< bool > executed1;
+
+    cpp::ScalarTypeIniter< bool > captured0IsFailed;
+
+    eh::error_code captured1Code;
+    cpp::ScalarTypeIniter< bool > captured1IsCanceled;
+    cpp::ScalarTypeIniter< bool > captured1IsFailed;
+    cpp::ScalarTypeIniter< bool > captured1HasException;
+    cpp::ScalarTypeIniter< bool > captured1HasTask;
+
+    const auto wrapperImpl = AsyncExecutorWrapperCallbackImpl::createInstance(
+        4U                                          /* threadsCount */,
+        om::ObjPtr< TaskControlToken >()            /* controlToken */,
+        1U                                          /* maxConcurrentTasks */
+        );
+
+    {
+        const auto& asyncExecutor = wrapperImpl -> asyncExecutor();
+
+        auto operation0 = asyncExecutor -> createOperation(
+            wrapperImpl -> createOperationState(
+                [ &started0, &release0 ]() -> void
+                {
+                    started0.signal();
+
+                    ( void ) release0.wait();
+                },
+                AsyncOperationState::create_task_callback_t()
+                )
+            );
+
+        asyncExecutor -> asyncBegin(
+            operation0,
+            [ &callback0Called, &captured0IsFailed ]
+            ( SAA_in const AsyncOperation::Result& result ) NOEXCEPT -> void
+            {
+                captured0IsFailed = result.isFailed();
+
+                callback0Called.signal();
+            }
+            );
+
+        UTF_REQUIRE( started0.wait() );
+
+        auto operation1 = asyncExecutor -> createOperation(
+            wrapperImpl -> createOperationState(
+                [ &executed1 ]() -> void
+                {
+                    executed1 = true;
+                },
+                AsyncOperationState::create_task_callback_t()
+                )
+            );
+
+        asyncExecutor -> asyncBegin(
+            operation1,
+            [
+                &callback1Called,
+                &captured1Code,
+                &captured1IsCanceled,
+                &captured1IsFailed,
+                &captured1HasException,
+                &captured1HasTask
+            ]
+            ( SAA_in const AsyncOperation::Result& result ) NOEXCEPT -> void
+            {
+                captured1Code = result.code;
+                captured1IsCanceled = result.isCanceled();
+                captured1IsFailed = result.isFailed();
+                captured1HasException = !! result.exception;
+                captured1HasTask = !! result.task;
+
+                callback1Called.signal();
+            }
+            );
+
+        /*
+         * The second operation must really be parked behind the first one
+         */
+
+        UTF_REQUIRE( ! callback1Called.wait( 500U ) );
+
+        operation1 -> cancel();
+
+        UTF_REQUIRE( callback1Called.wait() );
+
+        UTF_REQUIRE( ! executed1.value() );
+
+        UTF_REQUIRE( asio::error::operation_aborted == captured1Code );
+        UTF_REQUIRE( captured1IsCanceled.value() );
+        UTF_REQUIRE( captured1IsFailed.value() );
+        UTF_REQUIRE( ! captured1HasException.value() );
+        UTF_REQUIRE( ! captured1HasTask.value() );
+
+        /*
+         * Cancelling one operation must not disturb the other one
+         */
+
+        release0.signal();
+
+        UTF_REQUIRE( callback0Called.wait() );
+        UTF_REQUIRE( ! captured0IsFailed.value() );
+
+        /*
+         * The cancelled operation has already dropped its task pointer, so releasing it
+         * skips the pending calls check - this is the documented cancel-then-release order
+         */
+
+        asyncExecutor -> releaseOperation( operation0 );
+        asyncExecutor -> releaseOperation( operation1 );
+    }
 }
