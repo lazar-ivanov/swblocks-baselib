@@ -546,6 +546,121 @@ namespace
 
                                 backendImpl -> assertions().requireNone();
 
+                                if( isAuthenticationRequired && ! isServerConnectionAuthenticated() )
+                                {
+                                    /*
+                                     * The commands which the 'is authentication required' callback
+                                     * selects must be rejected by the server while the connection is
+                                     * not authenticated yet - the rejection must be a recoverable per
+                                     * command error which never reaches the backend and which leaves
+                                     * the connection usable for the commands which follow
+                                     */
+
+                                    const auto testRejectedCommand = [ & ]() -> void
+                                    {
+                                        eq -> push_back( taskTransfer );
+
+                                        try
+                                        {
+                                            eq -> waitForSuccess( taskTransfer );
+                                            UTF_FAIL( "This is expected to throw" );
+                                        }
+                                        catch( bl::ServerErrorException& e )
+                                        {
+                                            BL_LOG_MULTILINE(
+                                                bl::Logging::debug(),
+                                                BL_MSG()
+                                                    << "Expected permission denied exception:\n"
+                                                    << bl::eh::diagnostic_information( e )
+                                                );
+
+                                            const auto* errNo = eh::get_error_info< eh::errinfo_errno >( e );
+                                            const auto* ec = eh::get_error_info< eh::errinfo_error_code >( e );
+                                            UTF_REQUIRE( errNo && ec );
+
+                                            eh::error_code ecExpected( *errNo, eh::generic_category() );
+
+                                            UTF_REQUIRE_EQUAL( *ec, ecExpected );
+
+                                            UTF_REQUIRE_EQUAL(
+                                                *ec,
+                                                eh::errc::make_error_code( eh::errc::permission_denied )
+                                                );
+                                        }
+
+                                        UTF_REQUIRE( ! isServerConnectionAuthenticated() );
+                                    };
+
+                                    /*
+                                     * An unauthenticated put request must be rejected
+                                     */
+
+                                    transfer -> setCommandInfo(
+                                        connection_t::CommandId::SendChunk,
+                                        uuids::create() /* chunkId */,
+                                        nullptr /* chunkData */,
+                                        BlockTransferDefs::BlockType::Normal
+                                        );
+                                    transfer -> setChunkData( backendImpl -> getData() );
+
+                                    testRejectedCommand();
+
+                                    /*
+                                     * ... and so must an unauthenticated remove request
+                                     */
+
+                                    transfer -> detachChunkData();
+
+                                    transfer -> setCommandInfo(
+                                        connection_t::CommandId::RemoveChunk,
+                                        uuids::create() /* chunkId */,
+                                        nullptr /* chunkData */,
+                                        BlockTransferDefs::BlockType::Normal
+                                        );
+
+                                    testRejectedCommand();
+
+                                    /*
+                                     * Neither of the rejected commands should have reached the backend
+                                     */
+
+                                    UTF_REQUIRE_EQUAL( 0U, backendImpl -> saveCalls() );
+                                    UTF_REQUIRE_EQUAL( 0U, backendImpl -> removeCalls() );
+
+                                    /*
+                                     * The gate is selective - the callback does not require authentication
+                                     * for the peer sessions flush request, so this command must still be
+                                     * executed normally on an unauthenticated connection
+                                     */
+
+                                    transfer -> detachChunkData();
+
+                                    transfer -> setCommandInfo(
+                                        connection_t::CommandId::FlushPeerSessions,
+                                        uuids::nil() /* chunkId */,
+                                        nullptr /* chunkData */,
+                                        BlockTransferDefs::BlockType::Normal
+                                        );
+
+                                    eq -> push_back( taskTransfer );
+                                    UTF_REQUIRE_NO_THROW( eq -> waitForSuccess( taskTransfer ) );
+
+                                    UTF_REQUIRE_EQUAL( 1U, backendImpl -> flushCalls() );
+
+                                    UTF_REQUIRE( ! isServerConnectionAuthenticated() );
+
+                                    backendImpl -> assertions().requireNone();
+
+                                    /*
+                                     * Restore the state which the code below expects - i.e. the backend
+                                     * call counters at zero and the chunk data attached to the task
+                                     */
+
+                                    backendImpl -> resetStats();
+
+                                    transfer -> setChunkData( backendImpl -> getData() );
+                                }
+
                                 if( isAuthenticationRequired )
                                 {
                                     authenticateBackend();

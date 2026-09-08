@@ -213,6 +213,61 @@ namespace utest
 
                     testChunkNotFound( uuids::create() /* chunkId */, false /* dumpException */ );
                 }
+
+                /*
+                 * Test saving over a chunk which is still active (i.e. without removing it
+                 * first) - the data which was saved last must supersede the previous one
+                 * both in size and in content and in both directions
+                 */
+
+                {
+                    const auto chunkId = uuids::create();
+
+                    const std::string testData2( "short" );
+
+                    const auto shortBlock = DataBlock::createInstance( 128 );
+
+                    std::memcpy( shortBlock -> begin(), testData2.c_str(), testData2.size() );
+
+                    shortBlock -> setSize( testData2.size() );
+                    shortBlock -> setOffset1( 0U );
+
+                    storage -> save( sessionId, chunkId, dataBlock );
+
+                    /*
+                     * Note that the chunk is deliberately not removed before it is saved again
+                     */
+
+                    storage -> save( sessionId, chunkId, shortBlock );
+
+                    const auto readBack = DataBlock::createInstance( 128 );
+                    readBack -> setSize( readBack -> capacity() );
+
+                    storage -> load( sessionId, chunkId, readBack );
+
+                    UTF_REQUIRE_EQUAL( readBack -> size(), testData2.size() );
+
+                    UTF_REQUIRE( BackendImplTestImpl::areBlocksEqual( shortBlock, readBack ) );
+
+                    /*
+                     * Now overwrite in the other direction - a longer chunk over a shorter one
+                     */
+
+                    storage -> save( sessionId, chunkId, dataBlock );
+
+                    const auto readBack2 = DataBlock::createInstance( 128 );
+                    readBack2 -> setSize( readBack2 -> capacity() );
+
+                    storage -> load( sessionId, chunkId, readBack2 );
+
+                    UTF_REQUIRE_EQUAL( readBack2 -> size(), testData.size() );
+
+                    UTF_REQUIRE( BackendImplTestImpl::areBlocksEqual( dataBlock, readBack2 ) );
+
+                    storage -> remove( sessionId, chunkId );
+
+                    testChunkNotFound( chunkId, false /* dumpException */ );
+                }
             };
 
             const std::size_t noOfChunks = 100;
@@ -513,5 +568,80 @@ UTF_AUTO_TEST_CASE( TestDataChunkStorageSingleFileDeleteAndReopen )
             storage -> load( sessionId, chunkIdRemoved, loaded ),
             bl::ServerErrorException
             );
+    }
+}
+
+UTF_AUTO_TEST_CASE( TestDataChunkStorageSingleFileOverwriteAndReopen )
+{
+    using namespace bl;
+    using namespace bl::data;
+    using namespace utest;
+
+    /*
+     * A chunk which is saved over while it is still active must supersede the previous
+     * record after the storage is disposed and opened again - save( ... ) marks the old
+     * record deleted in place before it appends the new one, so loadChunksData( ... ) must
+     * not resurrect the older (i.e. the first) record for the same chunk id
+     */
+
+    fs::TmpDir tempDir;
+
+    const std::string testData( "This is test data" );
+
+    const auto dataBlock = DataBlock::createInstance( 128 );
+
+    std::memcpy( dataBlock -> begin(), testData.c_str(), testData.size() );
+
+    dataBlock -> setSize( testData.size() );
+    dataBlock -> setOffset1( 0U );
+
+    const std::string testData2( "short" );
+
+    const auto shortBlock = DataBlock::createInstance( 128 );
+
+    std::memcpy( shortBlock -> begin(), testData2.c_str(), testData2.size() );
+
+    shortBlock -> setSize( testData2.size() );
+    shortBlock -> setOffset1( 0U );
+
+    const auto sessionId = uuids::create();
+
+    const auto chunkIdKept = uuids::create();
+
+    {
+        const auto storage = om::lockDisposable(
+            DataChunkStorageFilesystemSingleFile::createInstance< DataChunkStorage >(
+                cpp::copy( tempDir.path() ) /* rootPath */
+                )
+            );
+
+        storage -> save( sessionId, chunkIdKept, dataBlock );
+        storage -> save( sessionId, chunkIdKept, shortBlock );
+    }
+
+    {
+        /*
+         * Opening the storage again must succeed and the chunk must carry the data
+         * which was saved last
+         */
+
+        om::ObjPtrDisposable< DataChunkStorage > storage;
+
+        UTF_REQUIRE_NO_THROW(
+            storage = om::lockDisposable(
+                DataChunkStorageFilesystemSingleFile::createInstance< DataChunkStorage >(
+                    cpp::copy( tempDir.path() ) /* rootPath */
+                    )
+                )
+            );
+
+        const auto loaded = DataBlock::createInstance( 128 );
+        loaded -> setSize( loaded -> capacity() );
+
+        storage -> load( sessionId, chunkIdKept, loaded );
+
+        UTF_REQUIRE_EQUAL( loaded -> size(), testData2.size() );
+
+        UTF_REQUIRE( BackendImplTestImpl::areBlocksEqual( shortBlock, loaded ) );
     }
 }
