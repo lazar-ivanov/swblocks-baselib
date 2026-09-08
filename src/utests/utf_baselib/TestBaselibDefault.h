@@ -926,6 +926,34 @@ UTF_AUTO_TEST_CASE( BaseLib_TestUuid )
         UTF_REQUIRE( ! bl::uuids::isUuid( s + "-" ) )
         UTF_REQUIRE( ! bl::uuids::isUuid( s + "0" ) )
         UTF_REQUIRE( ! bl::uuids::isUuid( s + "-0" ) )
+
+        /*
+         * string2uuid is a different code path than the isUuid regex above - it parses via
+         * bl::cpp::SafeInputStringStream and must report all rejections as bl::ArgumentException
+         * rather than as std::ios_base::failure, which none of its callers would catch
+         *
+         * The trailing garbage forms must be rejected as well - the extractor consumes exactly
+         * the first 36 characters, so without the end of stream check they would silently parse
+         * as the leading uuid
+         */
+
+        UTF_REQUIRE_THROW( bl::uuids::string2uuid( "" ), bl::ArgumentException );
+        UTF_REQUIRE_THROW( bl::uuids::string2uuid( "abcd0123" ), bl::ArgumentException );
+        UTF_REQUIRE_THROW( bl::uuids::string2uuid( "4f082035-e301-4cce-68f1c99f9223" ), bl::ArgumentException );
+        UTF_REQUIRE_THROW( bl::uuids::string2uuid( "zzzzzzzz-e301-4cce-94f0-68f1c99f9223" ), bl::ArgumentException );
+        UTF_REQUIRE_THROW( bl::uuids::string2uuid( s + "0" ), bl::ArgumentException );
+        UTF_REQUIRE_THROW( bl::uuids::string2uuid( s + "-0" ), bl::ArgumentException );
+        UTF_REQUIRE_THROW( bl::uuids::string2uuid( s + " " ), bl::ArgumentException );
+        UTF_REQUIRE_THROW( bl::uuids::string2uuid( "{" + s + "}" ), bl::ArgumentException );
+
+        /*
+         * The uppercase form is accepted, but the canonical output is always lowercase
+         */
+
+        UTF_REQUIRE_EQUAL( bl::uuids::string2uuid( bl::str::to_upper_copy( s ) ), bl::uuids::string2uuid( s ) );
+        UTF_REQUIRE_EQUAL( bl::uuids::uuid2string( bl::uuids::string2uuid( bl::str::to_upper_copy( s ) ) ), s );
+
+        UTF_REQUIRE_EQUAL( bl::uuids::string2uuid( "00000000-0000-0000-0000-000000000000" ), bl::uuids::nil() );
     }
 
     UTF_MESSAGE( "*************** end uuid tests ***************\n" );
@@ -7682,6 +7710,53 @@ UTF_AUTO_TEST_CASE( BaseLib_SafeStringStreamTests )
         bl::cpp::secureWipe( stream );
 
         UTF_CHECK_EQUAL( "000", stream.str() );
+    }
+
+    /*
+     * The exception masks below are the contract which uuids::string2uuid, str::toBool and
+     * DateTimeValidationUtils::getDateTime all rely on - the input stream must mask badbit
+     * only, so a failed extraction just sets failbit and these parsers can convert it into
+     * their own exception types instead of leaking std::ios_base::failure to their callers
+     */
+
+    {
+        bl::cpp::SafeInputStringStream is;
+        bl::cpp::SafeOutputStringStream os;
+        bl::cpp::SafeStringStream ss;
+
+        UTF_REQUIRE_EQUAL( is.exceptions(), std::ios_base::badbit );
+        UTF_REQUIRE_EQUAL( os.exceptions(), ( std::ios_base::failbit | std::ios_base::badbit ) );
+        UTF_REQUIRE_EQUAL( ss.exceptions(), std::ios_base::badbit );
+    }
+
+    {
+        /*
+         * ... and the input mask is not merely cosmetic - a failed extraction must set
+         * failbit without throwing
+         */
+
+        bl::cpp::SafeInputStringStream is( "not-a-number" );
+
+        int value = 0;
+
+        UTF_REQUIRE_NO_THROW( is >> value );
+        UTF_REQUIRE( is.fail() );
+    }
+
+    {
+        /*
+         * The mirror image for the output stream - failbit is masked there, so an operation
+         * which sets it does throw (the badbit case is already covered above)
+         */
+
+        bl::cpp::SafeOutputStringStream stream;
+
+        UTF_REQUIRE_EXCEPTION(
+            stream.setstate( std::ios_base::failbit ),
+            std::exception /* TODO: must be std::ios_base::failure - see comment above */,
+            utest::TestUtils::logExceptionDetails
+            );
+        UTF_CHECK( stream.rdstate() == std::ios_base::failbit );
     }
 }
 
