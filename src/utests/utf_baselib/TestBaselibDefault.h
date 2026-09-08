@@ -1147,11 +1147,14 @@ UTF_AUTO_TEST_CASE( BaseLib_TestUuidUniquenessMultiThreaded )
         );
 
     std::set< std::string > idsMerged;
+    std::set< std::size_t > threadHashes;
 
     for( const auto& pair : ids )
     {
         const auto pos = threadIds.find( pair.first );
         UTF_REQUIRE( pos != std::end( threadIds ) );
+
+        threadHashes.insert( pos -> second );
 
         UTF_MESSAGE( BL_MSG() << "UUIDs batch '" << pair.first << "' created in thread " << pos -> second );
 
@@ -1165,6 +1168,24 @@ UTF_AUTO_TEST_CASE( BaseLib_TestUuidUniquenessMultiThreaded )
     }
 
     UTF_MESSAGE( BL_MSG() << "Created " << idsMerged.size() << " unique uuids" );
+
+    /*
+     * The ten batches run on the shared thread pool, so on a machine with a single
+     * hardware thread they can all legitimately execute on one thread - assert the
+     * diversity only where the machine can actually deliver it
+     *
+     * Without this the case would still pass if scheduleAndExecuteInParallel( ... ) ever
+     * degenerated to serial execution, covering nothing about per thread seeding
+     */
+
+    if( std::thread::hardware_concurrency() > 1 )
+    {
+        UTF_REQUIRE( threadHashes.size() >= 2U );
+    }
+    else
+    {
+        UTF_MESSAGE( BL_MSG() << "Single hardware thread machine - thread diversity not asserted" );
+    }
 }
 
 BL_IID_DECLARE( iid_test12345, "2a5b48f8-fc88-40f6-b69a-af53e5932603" )
@@ -4898,6 +4919,54 @@ UTF_AUTO_TEST_CASE( BaseLib_TestUuidIteratorImpl )
     i1 -> loadNext();
     UTF_REQUIRE( ! i1 -> hasCurrent() );
 
+    /*
+     * The out of range guard in loadNext() is unreachable from a
+     * for( ; hasCurrent(); loadNext() ) traversal, which is the only shape used anywhere
+     * else - without it m_pos would walk past m_end, hasCurrent() would stay true and
+     * every consumer would loop indefinitely over out of bounds memory
+     */
+
+    UTF_REQUIRE_THROW( i1 -> loadNext(), bl::UnexpectedException );
+
+    i1 -> reset();
+
+    UTF_REQUIRE( i1 -> hasCurrent() );
+    UTF_REQUIRE_EQUAL( i1 -> current(), single );
+
+    {
+        /*
+         * An empty pointer pair range
+         */
+
+        const auto empty = bl::UuidIteratorImpl::createInstance< bl::UuidIterator >( beginSingle, beginSingle );
+
+        UTF_REQUIRE( ! empty -> hasCurrent() );
+        UTF_REQUIRE_THROW( empty -> loadNext(), bl::UnexpectedException );
+
+        empty -> reset();
+
+        UTF_REQUIRE( ! empty -> hasCurrent() );
+    }
+
+    {
+        /*
+         * The std::vector overload with an empty vector - this exercises the
+         * data.empty() ? nullptr : &data.front() branch, which a naive &data.front()
+         * rewrite would turn into undefined behavior
+         */
+
+        const std::vector< bl::uuid_t > none;
+
+        const auto empty = bl::UuidIteratorImpl::createInstance< bl::UuidIterator >( none );
+
+        UTF_REQUIRE( ! empty -> hasCurrent() );
+        UTF_REQUIRE_THROW( empty -> loadNext(), bl::UnexpectedException );
+
+        empty -> reset();
+
+        UTF_REQUIRE( ! empty -> hasCurrent() );
+    }
+
     UTF_REQUIRE( i2 -> hasCurrent() );
     i2 -> loadNext();
     UTF_REQUIRE( i2 -> hasCurrent() );
@@ -6371,6 +6440,116 @@ UTF_AUTO_TEST_CASE( BaseLib_StringUtilsSecureStringWrapper )
             bl::str::SecureStringWrapper sec3( &s2, 1024 )
             );
     }
+
+    {
+        /*
+         * The copy ctor always binds m_implPtr to its own m_impl, so a copy has storage
+         * which is fully independent from the source
+         */
+
+        bl::str::SecureStringWrapper src;
+        src.append( "secret-value" );
+
+        bl::str::SecureStringWrapper copy( src );
+
+        UTF_CHECK_EQUAL( copy.getAsNonSecureString(), "secret-value" );
+        UTF_CHECK_EQUAL( src.getAsNonSecureString(), "secret-value" );
+        UTF_CHECK( copy.getAsNonSecureString().c_str() != src.getAsNonSecureString().c_str() );
+    }
+
+    {
+        /*
+         * A copy of an external string wrapper must not alias the external string -
+         * if it did, the copy would wipe the original's string when it is destroyed
+         */
+
+        std::string ext( "ext-secret" );
+
+        {
+            bl::str::SecureStringWrapper w( &ext );
+            bl::str::SecureStringWrapper copy( w );
+
+            UTF_CHECK_EQUAL( copy.getAsNonSecureString(), "ext-secret" );
+            UTF_CHECK( copy.getAsNonSecureString().c_str() != ext.c_str() );
+
+            copy.clear();
+
+            UTF_CHECK_EQUAL( ext, "ext-secret" );
+        }
+
+        UTF_CHECK( ext.empty() );
+    }
+
+    {
+        /*
+         * Copy assignment replaces the payload rather than appending to it, and it
+         * leaves the source intact
+         */
+
+        bl::str::SecureStringWrapper a;
+        a.append( "aaa" );
+
+        bl::str::SecureStringWrapper b;
+        b.append( "bbbbb" );
+
+        b = a;
+
+        UTF_CHECK_EQUAL( b.getAsNonSecureString(), "aaa" );
+        UTF_CHECK_EQUAL( a.getAsNonSecureString(), "aaa" );
+
+        /*
+         * Both self assignment guards - without the 'this == &other' checks the clear()
+         * at the top of each operator would wipe the payload before appending it back
+         *
+         * The assignment is routed through a reference, as BaseLib_StringUtilsWipe
+         * already does, to keep the compiler's self assignment diagnostics quiet
+         */
+
+        auto& aRef = a;
+
+        a = aRef;
+
+        UTF_CHECK_EQUAL( a.getAsNonSecureString(), "aaa" );
+
+        a = std::move( aRef );
+
+        UTF_CHECK_EQUAL( a.getAsNonSecureString(), "aaa" );
+    }
+
+    {
+        /*
+         * Reallocation through grow(): INITIAL_CAPACITY is 16, so the first 20 bytes
+         * reserve 32 and the following 100 bytes take the temporary copy path and
+         * reserve 128 - which is where reserve() must re-sync m_dataPtr, or the clear()
+         * below terminates the process through checkWrappedStringIntegrity()
+         */
+
+        bl::str::SecureStringWrapper w;
+
+        w.append( std::string( 20U, 'x' ) );
+        w.append( std::string( 100U, 'y' ) );
+
+        UTF_CHECK_EQUAL( w.size(), 120U );
+        UTF_CHECK_EQUAL( w.getAsNonSecureString(), std::string( 20U, 'x' ) + std::string( 100U, 'y' ) );
+
+        w.clear();
+
+        UTF_CHECK( w.empty() );
+    }
+
+    {
+        /*
+         * Self append across the capacity boundary
+         */
+
+        bl::str::SecureStringWrapper s;
+
+        s.append( std::string( 16U, 'z' ) );
+        s.append( s );
+
+        UTF_CHECK_EQUAL( s.size(), 32U );
+        UTF_CHECK_EQUAL( s.getAsNonSecureString(), std::string( 32U, 'z' ) );
+    }
 }
 
 /************************************************************************
@@ -6660,6 +6839,108 @@ UTF_AUTO_TEST_CASE( BaseLib_RetryOnErrorTests )
         UTF_REQUIRE_EQUAL( e.what(), "This is fail more exception" );
         UTF_REQUIRE_EQUAL( failMoreCalled, 1U );
     }
+
+    /*
+     * The value returning overloads are separate instantiations of
+     * detail::Utils::retryOnError< R, EXCEPTION > and none of the checks above reach
+     * them; the default retryTimeout is timeoutNoDelay(), so nothing below sleeps
+     */
+
+    std::size_t intCalled = 0U;
+
+    const auto cbIntFailsTwiceThenReturns7 = [ & ]() -> int
+    {
+        ++intCalled;
+
+        if( intCalled < 3U )
+        {
+            BL_THROW(
+                bl::UnexpectedException(),
+                BL_MSG()
+                    << "This is fail twice exception"
+                );
+        }
+
+        return 7;
+    };
+
+    const auto cbIntSucceeds = [ & ]() -> int
+    {
+        ++intCalled;
+
+        return 42;
+    };
+
+    const auto cbIntAlwaysFails = [ & ]() -> int
+    {
+        ++intCalled;
+
+        BL_THROW(
+            bl::UnexpectedException(),
+            BL_MSG()
+                << "This is int fail always exception"
+            );
+    };
+
+    intCalled = 0U;
+
+    UTF_REQUIRE_EQUAL(
+        ( bl::utils::retryOnError< int, bl::UnexpectedException >( cbIntFailsTwiceThenReturns7, retryCount ) ),
+        7
+        );
+
+    UTF_REQUIRE_EQUAL( intCalled, 3U );
+
+    intCalled = 0U;
+
+    UTF_REQUIRE_EQUAL( bl::utils::retryOnAllErrors< int >( cbIntSucceeds, retryCount ), 42 );
+
+    UTF_REQUIRE_EQUAL( intCalled, 1U );
+
+    intCalled = 0U;
+
+    UTF_REQUIRE_THROW(
+        ( bl::utils::retryOnError< int, bl::UnexpectedException >( cbIntAlwaysFails, 2U ) ),
+        bl::UnexpectedException
+        );
+
+    /*
+     * The normal call plus the retry count, exactly as for the void overload
+     */
+
+    UTF_REQUIRE_EQUAL( intCalled, 3U );
+
+    {
+        /*
+         * On failure tryRetryOnAllErrors< R > must report false and a default
+         * constructed R, not an uninitialized one, and must not let the exception escape
+         */
+
+        intCalled = 0U;
+
+        const auto result = bl::utils::tryRetryOnAllErrors< int >( cbIntAlwaysFails, 2U );
+
+        UTF_REQUIRE( ! result.second );
+        UTF_REQUIRE_EQUAL( result.first, 0 );
+        UTF_REQUIRE_EQUAL( intCalled, 3U );
+    }
+
+    {
+        intCalled = 0U;
+
+        const auto result = bl::utils::tryRetryOnAllErrors< int >( cbIntSucceeds, retryCount );
+
+        UTF_REQUIRE( result.second );
+        UTF_REQUIRE_EQUAL( result.first, 42 );
+        UTF_REQUIRE_EQUAL( intCalled, 1U );
+    }
+
+    /*
+     * The void tryRetryOnAllErrors overload in both outcomes
+     */
+
+    UTF_REQUIRE( bl::utils::tryRetryOnAllErrors( cbTestSuccess, retryCount ) );
+    UTF_REQUIRE( ! bl::utils::tryRetryOnAllErrors( cbTestAlwaysFail, 1U ) );
 }
 
 /************************************************************************
@@ -7935,6 +8216,57 @@ UTF_AUTO_TEST_CASE( BaseLib_TextFilesEncodingTests )
         bl::UnexpectedException,
         "Invalid TextFileEncoding"
         );
+
+    /*
+     * Files shorter than the preambles - the size >= preamble.size() guard in
+     * checkFilePreamble( ... ) and the ftell - buffer.size() rewind which puts the file
+     * position back when the bytes read are not a preamble after all
+     *
+     * Utf8_NoPreamble makes the on disk bytes exactly the content, so a 1 byte file is
+     * below both preambles and a 2 byte file is below the UTF-8 one and exactly the size
+     * of the UTF-16LE one
+     */
+
+    {
+        const char* const smallContents[] = { "a", "ab", "abc" };
+
+        for( std::size_t i = 0; i < BL_ARRAY_SIZE( smallContents ); ++i )
+        {
+            const std::string content( smallContents[ i ] );
+
+            const auto small = tmpDir.path() / ( "small" + std::to_string( i ) + ".txt" );
+
+            writeTextFile( small, content, TextFileEncoding::Utf8_NoPreamble );
+
+            UTF_REQUIRE_EQUAL( bl::fs::file_size( small ), content.size() );
+
+            TextFileEncoding enc = TextFileEncoding::Unknown;
+
+            const auto text = readTextFile( small, &enc );
+
+            UTF_REQUIRE_EQUAL( text, content );
+            UTF_REQUIRE_EQUAL( enc, TextFileEncoding::Ascii );
+        }
+    }
+
+    if( bl::os::onUNIX() )
+    {
+        /*
+         * A 2 byte file whose bytes are exactly the UTF-16LE BOM is detected as UTF-16
+         * and refused off Windows
+         *
+         * On Windows it takes the size % sizeof( wchar_t ) == 0 path instead and returns
+         * an empty string with encoding Utf16LE, which is a different assertion
+         */
+
+        const auto bomOnly = tmpDir.path() / "bom-only.txt";
+
+        writeTextFile( bomOnly, "\xFF\xFE", TextFileEncoding::Utf8_NoPreamble );
+
+        UTF_REQUIRE_EQUAL( bl::fs::file_size( bomOnly ), 2U );
+
+        UTF_REQUIRE_THROW( readTextFile( bomOnly ), bl::NotSupportedException );
+    }
 }
 
 /************************************************************************
@@ -8468,6 +8800,144 @@ UTF_AUTO_TEST_CASE( BaseLib_RandomTests )
         Logging::debug(),
         message
         );
+
+    {
+        /*
+         * Guard bands around the requested region - the 13 byte fill above still passes
+         * if only the first byte is written, so these pin the exact extent of the fill
+         */
+
+        unsigned char buf[ 64 ];
+        std::memset( buf, 0xCC, sizeof( buf ) );
+
+        bl::random::getRandomBytes( buf + 8, 48 );
+
+        for( std::size_t i = 0U; i < 8U; ++i )
+        {
+            UTF_REQUIRE_EQUAL( ( unsigned int ) buf[ i ], 0xCCU );
+        }
+
+        for( std::size_t i = 56U; i < 64U; ++i )
+        {
+            UTF_REQUIRE_EQUAL( ( unsigned int ) buf[ i ], 0xCCU );
+        }
+    }
+
+    {
+        /*
+         * Every index of the requested region must really be written - accumulate the
+         * distinct values observed per index over 32 fills; a single index which is
+         * never written would hold the same zero on all 32 iterations
+         */
+
+        std::set< unsigned char > seen[ 48 ];
+
+        for( std::size_t iteration = 0U; iteration < 32U; ++iteration )
+        {
+            unsigned char probe[ 48 ];
+            std::memset( probe, 0, sizeof( probe ) );
+
+            bl::random::getRandomBytes( probe, sizeof( probe ) );
+
+            for( std::size_t i = 0U; i < BL_ARRAY_SIZE( probe ); ++i )
+            {
+                seen[ i ].insert( probe[ i ] );
+            }
+        }
+
+        for( std::size_t i = 0U; i < 48U; ++i )
+        {
+            UTF_REQUIRE( seen[ i ].size() >= 2U );
+        }
+    }
+
+    {
+        /*
+         * The bufferSize == 1 boundary
+         */
+
+        unsigned char one = 0xCC;
+
+        bool changed = false;
+
+        for( std::size_t i = 0U; i < 32U; ++i )
+        {
+            bl::random::getRandomBytes( &one, 1U );
+
+            if( 0xCC != one )
+            {
+                changed = true;
+            }
+        }
+
+        UTF_REQUIRE( changed );
+    }
+
+    {
+        /*
+         * maxValue == 0 is legal and must return 0 - the range is inclusive of maxValue
+         * and production relies on that in RotatingMessagingClientDispatchBaseT
+         */
+
+        for( std::size_t i = 0U; i < 32U; ++i )
+        {
+            UTF_REQUIRE_EQUAL( bl::random::getUniformRandomUnsignedValue< std::size_t >( 0U ), 0U );
+        }
+    }
+
+    {
+        /*
+         * A non power of two range, inclusive of its maximum
+         */
+
+        std::set< std::size_t > values;
+
+        for( std::size_t i = 0U; i < 2000U; ++i )
+        {
+            const auto value = bl::random::getUniformRandomUnsignedValue< std::size_t >( 6U );
+
+            UTF_REQUIRE( value <= 6U );
+
+            values.insert( value );
+        }
+
+        UTF_REQUIRE_EQUAL( values.size(), 7U );
+    }
+
+    {
+        /*
+         * A type wider than the underlying 32 bit engine - at least one draw must exceed
+         * the range of an std::uint32_t, which catches a truncating implementation such
+         * as a modulo of a single draw
+         */
+
+        bool wide = false;
+
+        for( std::size_t i = 0U; i < 200U; ++i )
+        {
+            const auto value = bl::random::getUniformRandomUnsignedValue< std::uint64_t >(
+                std::numeric_limits< std::uint64_t >::max()
+                );
+
+            if( value > std::numeric_limits< std::uint32_t >::max() )
+            {
+                wide = true;
+            }
+        }
+
+        UTF_REQUIRE( wide );
+    }
+
+    {
+        /*
+         * A type narrower than the engine
+         */
+
+        for( std::size_t i = 0U; i < 200U; ++i )
+        {
+            UTF_REQUIRE( bl::random::getUniformRandomUnsignedValue< std::uint16_t >( 3U ) <= 3U );
+        }
+    }
 }
 
 /************************************************************************
