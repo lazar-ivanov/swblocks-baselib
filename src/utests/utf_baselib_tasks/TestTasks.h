@@ -2926,6 +2926,9 @@ namespace
         bl::cpp::ScalarTypeIniter< std::size_t >            m_lastValue;
         bl::cpp::ScalarTypeIniter< std::size_t >            m_nextCount;
         bl::cpp::ScalarTypeIniter< std::size_t >            m_completedCount;
+        bl::cpp::ScalarTypeIniter< std::size_t >            m_errorCount;
+        bl::cpp::ScalarTypeIniter< std::size_t >            m_nextCountAtError;
+        std::exception_ptr                                  m_lastError;
 
         ~MonotonicCounterObserverT() NOEXCEPT
         {
@@ -2962,11 +2965,58 @@ namespace
             return m_completedCount;
         }
 
+        /**
+         * @brief The last value which was accepted by onNext( ... )
+         */
+
+        std::size_t lastValue() const NOEXCEPT
+        {
+            return m_lastValue;
+        }
+
+        /**
+         * @brief The number of onError( ... ) calls received
+         */
+
+        std::size_t errorCount() const NOEXCEPT
+        {
+            return m_errorCount;
+        }
+
+        /**
+         * @brief The number of onNext( ... ) calls received at the moment onError( ... )
+         * arrived - equal to nextCount() if and only if nothing was delivered after the error
+         */
+
+        std::size_t nextCountAtError() const NOEXCEPT
+        {
+            return m_nextCountAtError;
+        }
+
+        /**
+         * @brief The exception which was delivered to onError( ... )
+         */
+
+        std::exception_ptr lastError() const NOEXCEPT
+        {
+            return m_lastError;
+        }
+
         virtual void onCompleted() OVERRIDE
         {
             base_type::onCompleted();
 
             ++m_completedCount;
+        }
+
+        virtual void onError( SAA_in const std::exception_ptr& eptr ) OVERRIDE
+        {
+            m_nextCountAtError = m_nextCount;
+            m_lastError = eptr;
+
+            ++m_errorCount;
+
+            base_type::onError( eptr );
         }
 
         virtual bool onNext( SAA_in const bl::cpp::any& value ) OVERRIDE
@@ -3295,20 +3345,137 @@ UTF_AUTO_TEST_CASE( Tasks_ReactiveTests )
 
 UTF_AUTO_TEST_CASE( Tasks_ReactiveTestsWithException )
 {
+    using namespace bl;
+    using namespace bl::tasks;
+
     BL_LOG_MULTILINE( bl::Logging::debug(), BL_MSG() << "*** Default tests with throw\n" );
 
-    try
-    {
-        runReactiveTest( ThrowFromInnerLoop );
-        UTF_FAIL( "This must throw" );
-    }
-    catch( bl::UnexpectedException& e )
-    {
-        const auto msg = e.message();
+    /*
+     * The body below is what runReactiveTest( ThrowFromInnerLoop ) does, inlined so that the
+     * observer outlives the wait and the onError( ... ) delivery can be asserted on
+     *
+     * notifyOnErrorNothrow() is the only channel by which a subscriber learns that its
+     * upstream has failed - it force flushes the events queue of every subscription which
+     * has not been completed yet, so the error can overtake the events which are pending,
+     * and then schedules notifyObserverError() on it
+     */
 
-        UTF_REQUIRE( msg );
-        UTF_REQUIRE_EQUAL( *msg, "Throwing a test exception from the inner loop" );
-    }
+    const std::size_t ticksCount = 30U;
+
+    scheduleAndExecuteInParallel(
+        [ &ticksCount ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+        {
+            const auto observableImpl = om::getSharedPtr(
+                MonotonicCounterObservableImpl::createInstance(
+                    true                    /* throwFromInnerLoop */,
+                    ticksCount,
+                    10U                     /* intervalInMilliseconds */
+                    )
+                );
+
+            const auto observable = om::qi< reactive::Observable >( observableImpl );
+
+            observableImpl -> allowNoSubscribers( true );
+
+            const auto observerImpl = MonotonicCounterObserverImpl::createInstance();
+
+            const auto subscription = observable -> subscribe( om::qi< reactive::Observer >( observerImpl ) );
+
+            BL_UNUSED( subscription );
+
+            const auto task = om::qi< Task >( observable.get() );
+
+            eq -> push_back( task );
+
+            bool taskThrew = false;
+            std::string taskMessage;
+
+            try
+            {
+                eq -> waitForSuccess( task );
+            }
+            catch( bl::UnexpectedException& e )
+            {
+                taskThrew = true;
+
+                const auto msg = e.message();
+
+                if( msg )
+                {
+                    taskMessage = *msg;
+                }
+            }
+
+            /*
+             * The observable task itself must fail with the exception the inner loop threw
+             */
+
+            UTF_REQUIRE( taskThrew );
+            UTF_REQUIRE_EQUAL( taskMessage, "Throwing a test exception from the inner loop" );
+
+            /*
+             * The error must have been delivered to the subscriber exactly once and the
+             * completion must still follow it exactly once (the m_notifyCompleteOnError path)
+             */
+
+            UTF_REQUIRE_EQUAL( observerImpl -> errorCount(), 1U );
+            UTF_REQUIRE_EQUAL( observerImpl -> completedCount(), 1U );
+
+            /*
+             * It must be the very same exception, not a wrapped or a copied one
+             */
+
+            const auto lastError = observerImpl -> lastError();
+
+            UTF_REQUIRE( nullptr != lastError );
+
+            bool errorRethrew = false;
+            std::string errorMessage;
+
+            try
+            {
+                cpp::safeRethrowException( lastError );
+            }
+            catch( bl::UnexpectedException& e )
+            {
+                errorRethrew = true;
+
+                const auto msg = e.message();
+
+                if( msg )
+                {
+                    errorMessage = *msg;
+                }
+            }
+
+            UTF_REQUIRE( errorRethrew );
+            UTF_REQUIRE_EQUAL( errorMessage, "Throwing a test exception from the inner loop" );
+
+            /*
+             * The inner loop throws half way through, so the observer cannot have been told
+             * the whole sequence, and nothing must be delivered to onNext( ... ) after the
+             * error has arrived
+             */
+
+            UTF_REQUIRE( observerImpl -> lastValue() < ticksCount );
+            UTF_REQUIRE_EQUAL( observerImpl -> nextCountAtError(), observerImpl -> nextCount() );
+
+            /*
+             * ObserverBase::onError() swallows what it is given (it logs it through
+             * utils::tryCatchLog at debug level only), so an observer which does not override
+             * it must never let the error escape back into the notification task
+             *
+             * SelfUnsubscribingObserverImpl is used here only because it is a trivial
+             * ObserverBase subclass which does not override onError()
+             */
+
+            const auto plainObserverImpl = SelfUnsubscribingObserverImpl::createInstance();
+
+            UTF_REQUIRE_NO_THROW(
+                om::qi< reactive::Observer >( plainObserverImpl ) -> onError( lastError )
+                );
+        }
+        );
 }
 
 UTF_AUTO_TEST_CASE( Tasks_ReactiveTestsWithThrottle )
