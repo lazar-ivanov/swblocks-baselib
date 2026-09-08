@@ -1509,3 +1509,411 @@ UTF_AUTO_TEST_CASE( AsyncCB_CancelBeforeExecuteDeliversAbortedTests )
         asyncExecutor -> releaseOperation( operation1 );
     }
 }
+
+UTF_AUTO_TEST_CASE( AsyncOperation_ResultSemanticsTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    /*
+     * A pure struct test - no executor, no queue, no threads
+     *
+     * Result::isCanceled() has four branches and exactly one caller in the repository,
+     * utest::AsyncTestTaskSharedBase::wasCanceled(), which ORs it with TaskBase::isCanceled()
+     * and therefore masks a broken implementation entirely; the handler prolog macros in
+     * TaskBase.h read result.exception and result.code directly and never call it
+     *
+     * Note that isCanceled() rethrows and catches internally, so every call on an exception
+     * carrying Result costs a throw - the table is deliberately kept small
+     */
+
+    std::exception_ptr abortedSystemError;
+    std::exception_ptr abortedDecorated;
+    std::exception_ptr plainFailure;
+
+    try
+    {
+        BL_THROW_EC(
+            eh::error_code( asio::error::operation_aborted ),
+            BL_MSG()
+                << "aborted"
+            );
+    }
+    catch( std::exception& )
+    {
+        abortedSystemError = std::current_exception();
+    }
+
+    try
+    {
+        BL_THROW(
+            UnexpectedException()
+                << eh::errinfo_error_code( eh::error_code( asio::error::operation_aborted ) ),
+            BL_MSG()
+                << "decorated"
+            );
+    }
+    catch( std::exception& )
+    {
+        abortedDecorated = std::current_exception();
+    }
+
+    try
+    {
+        BL_THROW(
+            UnexpectedException(),
+            BL_MSG()
+                << "plain"
+            );
+    }
+    catch( std::exception& )
+    {
+        plainFailure = std::current_exception();
+    }
+
+    UTF_REQUIRE( abortedSystemError );
+    UTF_REQUIRE( abortedDecorated );
+    UTF_REQUIRE( plainFailure );
+
+    {
+        /*
+         * (1) Default constructed - neither failed nor canceled, and no task
+         */
+
+        const AsyncOperation::Result result;
+
+        UTF_REQUIRE( ! result.isFailed() );
+        UTF_REQUIRE( ! result.isCanceled() );
+        UTF_REQUIRE( ! result.task );
+    }
+
+    {
+        /*
+         * (2) The code only branch
+         */
+
+        const AsyncOperation::Result result( nullptr, eh::error_code( asio::error::operation_aborted ) );
+
+        UTF_REQUIRE( result.isFailed() );
+        UTF_REQUIRE( result.isCanceled() );
+    }
+
+    {
+        /*
+         * (3) A code which is not operation_aborted is a failure but not a cancellation
+         */
+
+        const AsyncOperation::Result result( nullptr, eh::error_code( asio::error::connection_refused ) );
+
+        UTF_REQUIRE( result.isFailed() );
+        UTF_REQUIRE( ! result.isCanceled() );
+    }
+
+    {
+        /*
+         * (4) An eh::system_error whose code() is operation_aborted
+         */
+
+        const AsyncOperation::Result result( abortedSystemError );
+
+        UTF_REQUIRE( result.isFailed() );
+        UTF_REQUIRE( result.isCanceled() );
+    }
+
+    {
+        /*
+         * (5) A non system exception which only carries eh::errinfo_error_code - dropping
+         * that lookup, or reordering the catch blocks, would silently lose this one
+         */
+
+        const AsyncOperation::Result result( abortedDecorated );
+
+        UTF_REQUIRE( result.isFailed() );
+        UTF_REQUIRE( result.isCanceled() );
+    }
+
+    {
+        /*
+         * (6) An undecorated exception is a failure and nothing more
+         */
+
+        const AsyncOperation::Result result( plainFailure );
+
+        UTF_REQUIRE( result.isFailed() );
+        UTF_REQUIRE( ! result.isCanceled() );
+    }
+
+    {
+        /*
+         * The task member is an om::ObjPtrCopyable populated from an rvalue om::ObjPtr
+         */
+
+        const AsyncOperation::Result result(
+            plainFailure,
+            eh::error_code(),
+            om::qi< Task >( SimpleTaskImpl::createInstance() )
+            );
+
+        UTF_REQUIRE( !! result.task );
+    }
+}
+
+UTF_AUTO_TEST_CASE( AsyncCB_CreateTaskExceptionIsDeliveredTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace asynccb;
+
+    /*
+     * An exception thrown by createTask() is caught by ExecutorTaskT::scheduleCall, which
+     * synthesises a tasks::SimpleCompletedTask carrying it; the executor then treats that
+     * task as a normally finished operation state task, so the client is handed
+     * Result{ exception = <the throw>, code = {}, task = <the synthetic task> } and
+     * execute() is never called
+     *
+     * Dropping the synthetic task branch would leave m_operationStateTaskInProgress null and
+     * lose the exception entirely - i.e. the client would be told the operation succeeded
+     */
+
+    cpp::ScalarTypeIniter< bool > executed;
+
+    utest::AsyncTestSignal callbackCalled;
+
+    std::exception_ptr capturedEptr;
+    cpp::ScalarTypeIniter< bool > capturedHasTask;
+    cpp::ScalarTypeIniter< bool > capturedTaskIsFailed;
+    cpp::ScalarTypeIniter< bool > capturedIsFailed;
+    cpp::ScalarTypeIniter< bool > capturedIsCanceled;
+
+    Task::State capturedTaskState = Task::Created;
+
+    const auto wrapperImpl = AsyncExecutorWrapperCallbackImpl::createInstance( 2U /* threadsCount */ );
+
+    {
+        const auto& asyncExecutor = wrapperImpl -> asyncExecutor();
+
+        auto operation = asyncExecutor -> createOperation(
+            wrapperImpl -> createOperationState(
+                [ &executed ]() -> void
+                {
+                    executed = true;
+                },
+                AsyncOperationState::create_task_callback_t(
+                    []() -> om::ObjPtr< Task >
+                    {
+                        BL_THROW(
+                            UnexpectedException(),
+                            BL_MSG()
+                                << "createTask failed"
+                            );
+                    }
+                    )
+                )
+            );
+
+        /*
+         * The client callback is invoked from within a NOEXCEPT block, so the result is only
+         * copied out here and asserted on the test thread below
+         */
+
+        asyncExecutor -> asyncBegin(
+            operation,
+            [
+                &callbackCalled,
+                &capturedEptr,
+                &capturedHasTask,
+                &capturedTaskIsFailed,
+                &capturedTaskState,
+                &capturedIsFailed,
+                &capturedIsCanceled
+            ]
+            ( SAA_in const AsyncOperation::Result& result ) NOEXCEPT -> void
+            {
+                capturedEptr = result.exception;
+                capturedHasTask = !! result.task;
+
+                if( result.task )
+                {
+                    capturedTaskState = result.task -> getState();
+                    capturedTaskIsFailed = result.task -> isFailed();
+                }
+
+                capturedIsFailed = result.isFailed();
+                capturedIsCanceled = result.isCanceled();
+
+                callbackCalled.signal();
+            }
+            );
+
+        UTF_REQUIRE( callbackCalled.wait() );
+
+        asyncExecutor -> releaseOperation( operation );
+    }
+
+    UTF_REQUIRE( ! executed.value() );
+
+    /*
+     * Checked separately because cpp::safeRethrowException( nullptr ) is a BL_RIP_MSG, so a
+     * regression which lost the exception would abort the binary instead of failing the case
+     */
+
+    UTF_REQUIRE( capturedEptr );
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        cpp::safeRethrowException( capturedEptr ),
+        UnexpectedException,
+        "createTask failed"
+        );
+
+    UTF_REQUIRE( capturedHasTask.value() );
+    UTF_REQUIRE( Task::Completed == capturedTaskState );
+    UTF_REQUIRE( capturedTaskIsFailed.value() );
+
+    UTF_REQUIRE( capturedIsFailed.value() );
+    UTF_REQUIRE( ! capturedIsCanceled.value() );
+}
+
+UTF_AUTO_TEST_CASE( AsyncCB_OperationAndStatePoolingTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace asynccb;
+
+    /*
+     * The pooling of operations and of operation states, and the two guards which make it
+     * safe - none of which any existing case observes, even though the reuse happens on every
+     * single run
+     *
+     * Losing the freed() guard turns a use after release into silent corruption of a
+     * *different* client's operation; losing the m_impl reset in releaseResources() recreates
+     * the reference cycle the header explicitly documents, which shows up only as the
+     * "Objects leaked!" teardown message and does not fail a run
+     */
+
+    const auto wrapperImpl = AsyncExecutorWrapperCallbackImpl::createInstance( 2U /* threadsCount */ );
+
+    {
+        const auto& asyncExecutor = wrapperImpl -> asyncExecutor();
+
+        /*
+         * Block A - the operations pool and the released object guard
+         */
+
+        {
+            /*
+             * Held as an om::ObjPtr lvalue so the lvalue createOperation( const ObjPtr& )
+             * forwarder in AsyncExecutor.h is the overload which is exercised
+             */
+
+            const om::ObjPtr< AsyncOperationState > stateLvalue = wrapperImpl -> createOperationState(
+                []() -> void
+                {
+                },
+                AsyncOperationState::create_task_callback_t()
+                );
+
+            auto operation = asyncExecutor -> createOperation( stateLvalue );
+
+            const auto operationCopy = om::copy( operation );
+
+            asyncExecutor -> releaseOperation( operation );
+
+            /*
+             * releaseOperation takes its argument by reference precisely so it can clear it
+             */
+
+            UTF_REQUIRE( ! operation );
+
+            UTF_REQUIRE_THROW_MESSAGE(
+                asyncExecutor -> asyncBegin(
+                    operationCopy,
+                    []( SAA_in const AsyncOperation::Result& ) NOEXCEPT -> void
+                    {
+                    }
+                    ),
+                UnexpectedException,
+                "Attempting to execute async operation on released object"
+                );
+
+            /*
+             * The very next operation comes straight back out of the pool
+             */
+
+            auto operation2 = asyncExecutor -> createOperation(
+                wrapperImpl -> createOperationState(
+                    []() -> void
+                    {
+                    },
+                    AsyncOperationState::create_task_callback_t()
+                    )
+                );
+
+            UTF_REQUIRE( om::areEqual( operation2, operationCopy ) );
+
+            asyncExecutor -> releaseOperation( operation2 );
+
+            UTF_REQUIRE( ! operation2 );
+        }
+
+        /*
+         * Block B - the operation states pool and the cycle breaking reset in
+         * releaseResources()
+         */
+
+        {
+            utest::AsyncTestSignal callbackCalled;
+
+            const om::ObjPtr< AsyncOperationStateImpl > state1 =
+                wrapperImpl -> createOperationState< AsyncOperationStateImpl >(
+                    []() -> void
+                    {
+                    },
+                    AsyncOperationState::create_task_callback_t()
+                    );
+
+            UTF_REQUIRE( state1 -> impl() );
+
+            auto operation = asyncExecutor -> createOperation( om::qi< AsyncOperationState >( state1 ) );
+
+            asyncExecutor -> asyncBegin(
+                operation,
+                [ &callbackCalled ]( SAA_in const AsyncOperation::Result& ) NOEXCEPT -> void
+                {
+                    callbackCalled.signal();
+                }
+                );
+
+            UTF_REQUIRE( callbackCalled.wait() );
+
+            asyncExecutor -> releaseOperation( operation );
+
+            /*
+             * dispose() flushes the completion queue and joins every executor thread, so the
+             * terminating call - and with it releaseResources() - has certainly run by the
+             * time it returns; this is the barrier which makes the two assertions below
+             * deterministic
+             */
+
+            wrapperImpl -> dispose();
+
+            UTF_REQUIRE( ! state1 -> impl() );
+
+            /*
+             * createOperationState only touches the shared state pool, so it is safe after
+             * dispose() - and it must hand back the very object which was recycled
+             */
+
+            UTF_REQUIRE(
+                om::areEqual(
+                    state1,
+                    wrapperImpl -> createOperationState< AsyncOperationStateImpl >(
+                        []() -> void
+                        {
+                        },
+                        AsyncOperationState::create_task_callback_t()
+                        )
+                    )
+                );
+        }
+    }
+}

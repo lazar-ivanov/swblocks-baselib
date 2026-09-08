@@ -474,3 +474,103 @@ UTF_AUTO_TEST_CASE( BlTool_ProcessFilesRemoveMarkedCommentsTests )
         UTF_REQUIRE_EQUAL( readAllBytes( path ), original );
     }
 }
+
+UTF_AUTO_TEST_CASE( BlTool_ProcessFilesLineFidelityTests )
+{
+    utest::TestDirectory dir;
+
+    /*
+     * The byte level contracts of a tool which rewrites source trees in place
+     *
+     * getFileLines() reads through fs::SafeInputFileStreamWrapper in binary mode, so the
+     * '\r' of a CRLF file survives into the line, and the writers append "\n" to every line
+     * unconditionally. Sub-blocks 1 and 2 therefore pin behaviour which is arguably wrong -
+     * the two commands disagree about line endings - and if that is ever fixed these
+     * assertions must move rather than disappear
+     */
+
+    {
+        /*
+         * trim_right() strips the retained '\r' along with the trailing spaces, so a CRLF
+         * file is silently converted to LF
+         */
+
+        const auto path = dir.testFile( "crlf.txt" );
+
+        writeAllBytes( path, "a\t b  \r\nc\r\n" );
+
+        UTF_REQUIRE_NO_THROW(
+            bltool::commands::ProcessFilesUtils::fileTrimSpacesFromTheRight( path )
+            );
+
+        UTF_REQUIRE_EQUAL( readAllBytes( path ), std::string( "a\t b\nc\n" ) );
+    }
+
+    {
+        /*
+         * The contrast which matters - the very same input through the tab converter keeps
+         * its CRLF endings, and each tab becomes exactly four spaces regardless of column,
+         * i.e. the expansion is not tab stop aware
+         */
+
+        const auto path = dir.testFile( "crlf2.txt" );
+
+        writeAllBytes( path, "a\t b  \r\nc\r\n" );
+
+        UTF_REQUIRE_NO_THROW(
+            bltool::commands::ProcessFilesUtils::fileConvertTabs2Spaces( path )
+            );
+
+        UTF_REQUIRE_EQUAL( readAllBytes( path ), std::string( "a     b  \r\nc\r\n" ) );
+    }
+
+    {
+        /*
+         * A file which did not end with a newline gains one
+         */
+
+        const auto path = dir.testFile( "nonl.txt" );
+
+        writeAllBytes( path, "a" );
+
+        UTF_REQUIRE_NO_THROW(
+            bltool::commands::ProcessFilesUtils::fileTrimSpacesFromTheRight( path )
+            );
+
+        UTF_REQUIRE_EQUAL( readAllBytes( path ), std::string( "a\n" ) );
+    }
+
+    {
+        /*
+         * An empty file stays empty - getFileLines() must return an empty vector rather than
+         * a single empty line, otherwise the rewriter would turn a zero byte file into "\n"
+         */
+
+        const auto path = dir.testFile( "empty.txt" );
+
+        writeAllBytes( path, "" );
+
+        UTF_REQUIRE_NO_THROW(
+            bltool::commands::ProcessFilesUtils::fileTrimSpacesFromTheRight( path )
+            );
+
+        UTF_REQUIRE_EQUAL( readAllBytes( path ), std::string( "" ) );
+        UTF_REQUIRE_EQUAL( bl::fs::file_size( path ), 0U );
+    }
+
+    {
+        /*
+         * A trailing blank line is preserved, because getFileLines() pushes it before EOF
+         */
+
+        const auto path = dir.testFile( "blank.txt" );
+
+        writeAllBytes( path, "a\n\n" );
+
+        UTF_REQUIRE_NO_THROW(
+            bltool::commands::ProcessFilesUtils::fileTrimSpacesFromTheRight( path )
+            );
+
+        UTF_REQUIRE_EQUAL( readAllBytes( path ), std::string( "a\n\n" ) );
+    }
+}

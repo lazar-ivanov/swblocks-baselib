@@ -768,3 +768,48 @@ UTF_AUTO_TEST_CASE( BlTool_GenerateBase64ResourceTests )
         UTF_REQUIRE( ! bl::fs::path_exists( notWritten ) );
     }
 }
+
+UTF_AUTO_TEST_CASE( BlTool_HttpRequestSaveResponseTests )
+{
+    /*
+     * saveResponse() is the self contained half of a command which otherwise needs a live
+     * HTTP(S) endpoint - no network is involved here and execute() is never called, only
+     * saveResponse() on the parsed leaf command
+     */
+
+    bltool::CmdLine cmdLine;
+
+    const auto command = cmdLine.parseCommandLine( "http request --host localhost --path /" );
+
+    UTF_REQUIRE( command != nullptr );
+    UTF_REQUIRE_EQUAL( command -> getFullName(), "http request" );
+
+    auto* const httpRequest = dynamic_cast< bltool::commands::HttpRequest* >( command );
+
+    UTF_REQUIRE( httpRequest != nullptr );
+
+    {
+        /*
+         * A body which already ends in a newline must not gain a second one - the loop must
+         * not perform the extra iteration which getline() signals at EOF
+         */
+
+        bl::cpp::SafeOutputStringStream oss;
+
+        httpRequest -> saveResponse( "line1\nline2\n", oss );
+
+        UTF_REQUIRE_EQUAL( oss.str(), std::string( "line1\nline2\n" ) );
+    }
+
+    {
+        /*
+         * A body with no trailing newline gains exactly one
+         */
+
+        bl::cpp::SafeOutputStringStream oss;
+
+        httpRequest -> saveResponse( "line1\nline2", oss );
+
+        UTF_REQUIRE_EQUAL( oss.str(), std::string( "line1\nline2\n" ) );
+    }
+}

@@ -961,3 +961,115 @@ UTF_AUTO_TEST_CASE( AsyncV2_ReadWriteStorageRoutingTests )
         writeImpl -> assertions().requireNone();
     }
 }
+
+namespace
+{
+    /**
+     * @brief Makes bl::detail::AsyncExecutorImplT<>::verifyQueues reachable
+     *
+     * verifyQueues is a protected static helper with zero call sites anywhere in the
+     * repository, so - being a member of a class template - it has never been instantiated
+     * and therefore never compiled, in either variant on any platform. Its body calls
+     * ExecutionQueue::scanQueue and om::qi< ExecutorTaskImpl >, both of which could have
+     * drifted under it.
+     *
+     * No object of this type is ever constructed: AsyncExecutorImplT carries
+     * BL_DECLARE_OBJECT_IMPL_NO_DESTRUCTOR and has no default constructor, and verifyQueues
+     * is static, so the derived probe idiom needs nothing more than the using declaration
+     */
+
+    struct VerifierProbe : public bl::detail::AsyncExecutorImplT<>
+    {
+        using bl::detail::AsyncExecutorImplT<>::verifyQueues;
+    };
+
+} // __unnamed
+
+UTF_AUTO_TEST_CASE( AsyncV2_ExecutorQueueVerifierTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    /*
+     * verifyQueues() is documented as a DEBUG only BL_ASSERT helper which always returns
+     * true, and the primary value of this case is forcing it to be instantiated at all
+     *
+     * Note that its scan callback does om::qi< ExecutorTaskImpl >( task ) *outside* the
+     * BL_ASSERT, so it throws in release too for any task which is not an executor task -
+     * i.e. it can only ever be called on a queue whose Pending and Executing queues are
+     * empty, which is exactly the invariant the executor itself would call it under. Every
+     * call below is therefore made on a drained queue.
+     *
+     * The debug only half - BL_ASSERT( taskImpl -> stopped() ) - is deliberately not
+     * depended upon here; it is a no-op under NDEBUG
+     */
+
+    const auto queue = om::lockDisposable(
+        ExecutionQueueImpl::createInstance< ExecutionQueue >( ExecutionQueue::OptionKeepNone )
+        );
+
+    /*
+     * An empty queue
+     */
+
+    UTF_REQUIRE( queue -> isEmpty() );
+    UTF_REQUIRE( VerifierProbe::verifyQueues( queue ) );
+
+    /*
+     * After one task has run to completion - OptionKeepNone discards it, so both scanned
+     * queues are empty again
+     */
+
+    {
+        cpp::ScalarTypeIniter< bool > called;
+
+        const auto task = SimpleTaskImpl::createInstance< Task >(
+            cpp::void_callback_t(
+                [ &called ]() -> void
+                {
+                    called = true;
+                }
+                )
+            );
+
+        queue -> push_back( task );
+        queue -> waitForSuccess( task );
+
+        UTF_REQUIRE( called.value() );
+        UTF_REQUIRE( queue -> isEmpty() );
+
+        UTF_REQUIRE( VerifierProbe::verifyQueues( queue ) );
+    }
+
+    /*
+     * And after a task which does not finish on its own is cancelled out of the queue
+     */
+
+    {
+        utest::AsyncTestSignal started;
+        utest::AsyncTestSignal release;
+
+        const auto task = SimpleTaskImpl::createInstance< Task >(
+            cpp::void_callback_t(
+                [ &started, &release ]() -> void
+                {
+                    started.signal();
+
+                    ( void ) release.wait();
+                }
+                )
+            );
+
+        queue -> push_back( task );
+
+        UTF_REQUIRE( started.wait() );
+
+        release.signal();
+
+        queue -> cancelAll( true /* wait */ );
+
+        UTF_REQUIRE( queue -> isEmpty() );
+
+        UTF_REQUIRE( VerifierProbe::verifyQueues( queue ) );
+    }
+}

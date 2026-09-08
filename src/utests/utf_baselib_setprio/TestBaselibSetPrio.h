@@ -45,6 +45,24 @@ UTF_AUTO_TEST_CASE( BaseLib_AbstractPriorityTests )
     os::setAbstractPriority( os::AbstractPriority::Background );
     os::setAbstractPriority( os::AbstractPriority::Background );
 
+#if ! defined( _WIN32 )
+
+    /*
+     * The observable effect of the API - Background maps to the nice value NZERO - 1
+     *
+     * errno must be cleared first, because -1 is itself a legal nice value and is therefore
+     * not distinguishable from a getpriority() failure by the return value alone
+     */
+
+    errno = 0;
+
+    const int backgroundPriority = ::getpriority( PRIO_PROCESS, 0 );
+
+    UTF_REQUIRE_EQUAL( 0, errno );
+    UTF_REQUIRE_EQUAL( 19, backgroundPriority );
+
+#endif // ! defined( _WIN32 )
+
     BL_LOG(
         Logging::debug(),
         BL_MSG()
@@ -74,6 +92,43 @@ UTF_AUTO_TEST_CASE( BaseLib_AbstractPriorityTests )
                 << "Ignoring expected failures from os::trySetAbstractPriority( ... )"
             );
     }
+
+#if ! defined( _WIN32 )
+
+    /*
+     * Whether raising the priority back is permitted at all depends on the privileges of the
+     * process, and containerised CI frequently runs as root - so both outcomes are asserted
+     * rather than only the one this machine happens to take
+     */
+
+    if( os::isUserAdministrator() )
+    {
+        UTF_REQUIRE( ok );
+        UTF_REQUIRE_EQUAL( 0, ::getpriority( PRIO_PROCESS, 0 ) );
+    }
+    else
+    {
+        /*
+         * trySetAbstractPriority swallows only EPERM / EACCES from eh::generic_category and
+         * reports the failure by returning false; a failed attempt must also leave the nice
+         * value exactly where it was, i.e. it must not partially apply
+         */
+
+        UTF_REQUIRE( ! ok );
+        UTF_REQUIRE( ! os::trySetAbstractPriority( os::AbstractPriority::Normal ) );
+        UTF_REQUIRE_EQUAL( 19, ::getpriority( PRIO_PROCESS, 0 ) );
+
+        /*
+         * ... and the non-swallowing entry point propagates it
+         */
+
+        UTF_REQUIRE_THROW(
+            os::setAbstractPriority( os::AbstractPriority::Normal ),
+            bl::SystemException
+            );
+    }
+
+#endif // ! defined( _WIN32 )
 
     BL_LOG(
         Logging::debug(),
@@ -105,6 +160,21 @@ UTF_AUTO_TEST_CASE( BaseLib_AbstractPriorityTests )
             );
     }
 
+#if ! defined( _WIN32 )
+
+    /*
+     * Greedy maps to the other end of the range, 0 - NZERO - which pins the mapping against
+     * Background and Greedy being swapped
+     */
+
+    if( os::isUserAdministrator() )
+    {
+        UTF_REQUIRE( ok );
+        UTF_REQUIRE_EQUAL( -20, ::getpriority( PRIO_PROCESS, 0 ) );
+    }
+
+#endif // ! defined( _WIN32 )
+
     BL_LOG(
         Logging::debug(),
         BL_MSG()
@@ -115,4 +185,17 @@ UTF_AUTO_TEST_CASE( BaseLib_AbstractPriorityTests )
     {
         os::sleep( time::seconds( 30 ) );
     }
+
+    /*
+     * The default accessor pair is just a round trip over a static and is platform agnostic
+     *
+     * It is restored to Normal at the end, which is what UtfMain.h's DefaultUtfConfigT sets
+     * at startup
+     */
+
+    os::setAbstractPriorityDefault( os::AbstractPriority::Greedy );
+    UTF_REQUIRE_EQUAL( os::AbstractPriority::Greedy, os::getAbstractPriorityDefault() );
+
+    os::setAbstractPriorityDefault( os::AbstractPriority::Normal );
+    UTF_REQUIRE_EQUAL( os::AbstractPriority::Normal, os::getAbstractPriorityDefault() );
 }

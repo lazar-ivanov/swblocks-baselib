@@ -202,10 +202,16 @@ namespace bltool
 
                 std::string line;
 
-                while( is.good() )
-                {
-                    std::getline( is, line );
+                /*
+                 * The loop condition must be the extraction itself rather than is.good():
+                 * for a body which ends in a newline getline() performs one more successful
+                 * looking iteration which extracts nothing and sets eofbit and failbit, and
+                 * writing that empty line out appended a spurious blank line to every saved
+                 * response
+                 */
 
+                while( std::getline( is, line ) )
+                {
                     os << line << std::endl;
                 }
             }

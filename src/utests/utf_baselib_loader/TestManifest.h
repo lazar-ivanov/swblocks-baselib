@@ -543,4 +543,64 @@ UTF_AUTO_TEST_CASE( TestToolchainMatch )
     UTF_CHECK( ! platform -> matchesToolchain( "vc13-release", false /* ignoreCompilerId */ ) );
     UTF_CHECK( platform -> matchesToolchain( "vc13-release", true /* ignoreCompilerId */ ) );
     UTF_CHECK( ! platform -> matchesToolchain( "vc12-debug", true /* ignoreCompilerId */ ) );
+
+    /*
+     * removeCompilerId() requires *exactly* two '-' separated parts and both name( true )
+     * and matchesToolchain( ..., true ) route through it, so a toolchain string with no
+     * separator at all makes them throw rather than return a name or a false
+     *
+     * This shape is not hypothetical - TestManifestRead above builds a platform with the
+     * toolchain "msvc12" and the personality fixtures use "toolchain"
+     */
+
+    const auto noDash = bl::loader::Platform::get( "linux", "x64", "gcc48" );
+
+    UTF_CHECK_EQUAL( noDash -> name(), "linux_x64_gcc48" );
+
+    UTF_CHECK_THROW_MESSAGE(
+        noDash -> name( true /* ignoreCompilerId */ ),
+        bl::UnexpectedException,
+        "is not in expected format"
+        );
+
+    UTF_CHECK_THROW(
+        noDash -> matchesToolchain( "gcc49", true /* ignoreCompilerId */ ),
+        bl::UnexpectedException
+        );
+
+    UTF_CHECK( noDash -> matchesToolchain( "gcc48", false /* ignoreCompilerId */ ) );
+
+    /*
+     * More than one separator is rejected too - the check is 'exactly two parts' and not
+     * 'at least two parts', so "a-b-c" must not silently resolve to "c"
+     */
+
+    const auto twoDashes = bl::loader::Platform::get( "linux", "x64", "gcc-4-8" );
+
+    UTF_CHECK_THROW( twoDashes -> name( true /* ignoreCompilerId */ ), bl::UnexpectedException );
+
+    /*
+     * matchesToolchain applies removeCompilerId to its *argument* as well, so a malformed
+     * argument throws rather than simply reporting no match
+     */
+
+    UTF_CHECK_THROW(
+        platform -> matchesToolchain( "release", true /* ignoreCompilerId */ ),
+        bl::UnexpectedException
+        );
+
+    /*
+     * An empty half is accepted, because splitString yields two parts for both of these -
+     * pinning the current lenient handling
+     */
+
+    UTF_CHECK_EQUAL(
+        bl::loader::Platform::get( "os", "arch", "-release" ) -> name( true /* ignoreCompilerId */ ),
+        "os_arch_release"
+        );
+
+    UTF_CHECK_EQUAL(
+        bl::loader::Platform::get( "os", "arch", "vc12-" ) -> name( true /* ignoreCompilerId */ ),
+        "os_arch_"
+        );
 }

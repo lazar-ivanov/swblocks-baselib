@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <baselib/tasks/Algorithms.h>
 #include <baselib/tasks/TaskBase.h>
 #include <baselib/tasks/ExecutionQueueImpl.h>
 
@@ -387,4 +388,43 @@ UTF_AUTO_TEST_CASE( Tasks_SchedulingWithoutUsableThreadPoolTests )
      */
 
     tp -> dispose();
+}
+
+UTF_AUTO_TEST_CASE( Tasks_ScheduleAndExecuteInParallelNoThreadPoolTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    BL_LOG_MULTILINE( Logging::debug(), BL_MSG() << "\n******************************** Starting test: Tasks_ScheduleAndExecuteInParallelNoThreadPoolTests ********************************\n" );
+
+    /*
+     * scheduleAndExecuteInParallel's two guards are unreachable in every module except this
+     * one, which is the only place where ThreadPoolDefault::getDefault( ... ) is null for
+     * both pool ids - UtfBaselibBasicTaskMain.cpp defines
+     * UTF_TEST_APP_INIT_DEACTIVATE_THREAD_POOLS
+     *
+     * Without them the failure mode of a mis-initialised application is a null dereference
+     * inside TaskBase::getThreadPool() rather than an actionable message
+     */
+
+    UTF_REQUIRE( ! ThreadPoolDefault::getDefault( ThreadPoolId::GeneralPurpose ) );
+
+    bool schedulerInvoked = false;
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        scheduleAndExecuteInParallel(
+            [ &schedulerInvoked ]( SAA_in const om::ObjPtr< ExecutionQueue >& ) -> void
+            {
+                schedulerInvoked = true;
+            }
+            ),
+        bl::UnexpectedException,
+        "No global default thread pool has been configured yet"
+        );
+
+    /*
+     * The guard fires before any execution queue is created and before any user code runs
+     */
+
+    UTF_REQUIRE_EQUAL( schedulerInvoked, false );
 }

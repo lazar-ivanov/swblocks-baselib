@@ -19,3 +19,4 @@
 
 #include "TestBlTool.h"
 #include "TestBlToolProcessFiles.h"
+#include "TestMessagingApps.h"

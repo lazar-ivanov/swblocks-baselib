@@ -15,6 +15,7 @@
  */
 
 #include <baselib/cmdline/CmdLineBase.h>
+#include <baselib/cmdline/GlobalOptions.h>
 
 #include <baselib/core/Utils.h>
 
@@ -522,6 +523,55 @@ UTF_AUTO_TEST_CASE( CmdLine_Parse_Class )
     UTF_CHECK( ! cmdln.m_missing.isPositional() );
     UTF_CHECK_EQUAL( cmdln.m_missing.getDefaultValue(), false );
     UTF_CHECK_EQUAL( cmdln.m_missing.getValue(), false );
+
+    UTF_MESSAGE( "* streaming the options" );
+
+    /*
+     * Option::toStream() and the free operator<<( ostream&, const OptionBase& ) have no
+     * caller anywhere in src/. The scalar-vs-vector overload set toStream() resolves against
+     * is a *private static* pair picked at compile time, which is exactly the kind of thing a
+     * template refactor changes silently - a MultiStringOption which started printing an
+     * address instead of "a, b" would go unnoticed
+     *
+     * getValue() returns the default when hasValue() is false, so a defaulted option streams
+     * its default and an option with neither streams a value-initialised value_type
+     */
+
+    {
+        bl::cpp::SafeOutputStringStream oss;
+        oss << cmdln.m_command;
+        UTF_CHECK_EQUAL( oss.str(), std::string( "run" ) );
+    }
+
+    {
+        bl::cpp::SafeOutputStringStream oss;
+        oss << cmdln.m_filenames;
+        UTF_CHECK_EQUAL( oss.str(), std::string( "filename1, filename2" ) );
+    }
+
+    {
+        bl::cpp::SafeOutputStringStream oss;
+        oss << cmdln.m_numbers;
+        UTF_CHECK_EQUAL( oss.str(), std::string( "1, 2, 3" ) );
+    }
+
+    {
+        bl::cpp::SafeOutputStringStream oss;
+        oss << cmdln.m_opt3;
+        UTF_CHECK_EQUAL( oss.str(), std::string( "default" ) );
+    }
+
+    {
+        bl::cpp::SafeOutputStringStream oss;
+        oss << cmdln.m_number3;
+        UTF_CHECK_EQUAL( oss.str(), std::string( "0" ) );
+    }
+
+    {
+        bl::cpp::SafeOutputStringStream oss;
+        oss << cmdln.m_help;
+        UTF_CHECK_EQUAL( oss.str(), std::string( "0" ) );
+    }
 
     UTF_MESSAGE( "***************** end CmdLine_Parse_Class tests *****************\n" );
 }
@@ -1607,3 +1657,125 @@ UTF_AUTO_TEST_CASE( CmdLine_CommandTreeRegistration )
     UTF_MESSAGE( "***************** end CmdLine_CommandTreeRegistration tests *****************\n" );
 }
 
+namespace
+{
+    /**
+     * A minimal tree whose only purpose is to reach the isDryRunApplicable() == false branch
+     * of CommandBaseT::getOptionsHelp - nothing in the repository overrides that virtual, so
+     * the branch, and with it setFlags / unsetFlags / findOption( ..., lookupParent ), is
+     * dead in every build
+     *
+     * It is also the only place bl::cmdline::GlobalOptions is instantiated in the repository -
+     * bl-tool and TestCmdLine's own CmdLineModeTest each define a look-alike of their own
+     */
+
+    class NoDryRunCommand : public bl::cmdline::CommandBase
+    {
+    public:
+
+        BL_CMDLINE_OPTION     ( m_target,   StringOption,   "target",   "What to operate on" )
+
+        NoDryRunCommand( SAA_inout bl::cmdline::CommandBase* parent )
+            :
+            bl::cmdline::CommandBase( parent, "nodryrun", "DryRunRoot @FULLNAME@ [options]" )
+        {
+            addOption( m_target );
+        }
+
+        virtual bool isDryRunApplicable() const OVERRIDE
+        {
+            return false;
+        }
+    };
+
+    class PlainCommand : public bl::cmdline::CommandBase
+    {
+    public:
+
+        BL_CMDLINE_OPTION     ( m_source,   StringOption,   "source",   "What to read from" )
+
+        PlainCommand( SAA_inout bl::cmdline::CommandBase* parent )
+            :
+            bl::cmdline::CommandBase( parent, "plain", "DryRunRoot @FULLNAME@ [options]" )
+        {
+            addOption( m_source );
+        }
+    };
+
+    class DryRunRoot : public bl::cmdline::CmdLineBase
+    {
+    public:
+
+        bl::cmdline::GlobalOptions      m_globals;
+        NoDryRunCommand                 m_noDryRun;
+        PlainCommand                    m_plain;
+
+        DryRunRoot()
+            :
+            bl::cmdline::CmdLineBase( "root" ),
+            m_globals( this ),
+            m_noDryRun( this ),
+            m_plain( this )
+        {
+        }
+    };
+
+} // __unnamed
+
+UTF_AUTO_TEST_CASE( CmdLine_DryRunNotApplicableHidesParentOption )
+{
+    UTF_MESSAGE( "***************** CmdLine_DryRunNotApplicableHidesParentOption tests *****************\n" );
+
+    /*
+     * A leaf command appends the root's option block to its own help, and immediately before
+     * doing so it hides the root's "dryrun,n" option if the command declares dry run to be
+     * inapplicable, then unhides it again
+     *
+     * Both halves mutate a shared, parent-owned option through a non-const OptionBase* and
+     * the pair is NOT RAII protected - if the middle call ever throws, --dryrun disappears
+     * from the root's help for the rest of the process. Only the non-throwing path is
+     * asserted here; the missing BL_SCOPE_EXIT is a production change and is recorded in
+     * notes/plans/issues/ rather than made here
+     */
+
+    DryRunRoot root;
+
+    const auto plainHelp = root.m_plain.helpMessage( false /* includeSubCommands */ );
+
+    UTF_CHECK( bl::cpp::contains( plainHelp, "--dryrun" ) );
+
+    const auto hiddenHelp = root.m_noDryRun.helpMessage( false /* includeSubCommands */ );
+
+    UTF_CHECK( ! bl::cpp::contains( hiddenHelp, "--dryrun" ) );
+
+    /*
+     * Only dryrun was suppressed - the rest of the root's block is still there
+     */
+
+    UTF_CHECK( bl::cpp::contains( hiddenHelp, "--verbose" ) );
+
+    /*
+     * The flag was restored, i.e. unhideNonApplicableParentOptions() ran, and setFlags /
+     * unsetFlags kept their |= and &= ~ semantics rather than clobbering the other flags
+     */
+
+    UTF_REQUIRE( root.findOption( "dryrun,n" ) != nullptr );
+    UTF_CHECK( ! root.findOption( "dryrun,n" ) -> isHidden() );
+
+    /*
+     * ... and the mutation left no residue in a subsequent rendering
+     */
+
+    UTF_CHECK( bl::cpp::contains( root.m_plain.helpMessage( false /* includeSubCommands */ ), "--dryrun" ) );
+
+    /*
+     * GlobalOptions registered all four of its switches through CommandBase's four argument
+     * addOption overload, and DebugSwitch carries Hidden so it never shows up in the help
+     */
+
+    UTF_CHECK_EQUAL( root.getAllOptions().size(), 4U );
+    UTF_CHECK( root.findOption( "debug" ) != nullptr );
+    UTF_CHECK( ! bl::cpp::contains( plainHelp, "--debug" ) );
+
+    UTF_MESSAGE( "***************** end CmdLine_DryRunNotApplicableHidesParentOption tests *****************\n" );
+}
