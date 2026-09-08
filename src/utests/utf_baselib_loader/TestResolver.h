@@ -49,6 +49,49 @@ struct ResolverFixture
     }
 };
 
+/**
+ * @brief A locally counted object used to observe the reference counting contract of
+ * ResolverImplT::getCoreServices / setCoreServices
+ *
+ * Every type the resolver component itself instantiates is declared om::detail::LttLeaked
+ * and is therefore excluded from om::outstandingObjectRefs(), so the assertions in the core
+ * services case below are made against this counter instead
+ */
+
+template
+<
+    typename E = void
+>
+class CoreServicesTestObjT : public bl::om::Object
+{
+    BL_DECLARE_OBJECT_IMPL_ONEIFACE_NO_DESTRUCTOR( CoreServicesTestObjT, bl::om::Object )
+
+protected:
+
+    CoreServicesTestObjT() NOEXCEPT
+    {
+        ++g_live;
+    }
+
+    ~CoreServicesTestObjT() NOEXCEPT
+    {
+        --g_live;
+    }
+
+public:
+
+    static long g_live;
+};
+
+template
+<
+    typename E
+>
+long
+CoreServicesTestObjT< E >::g_live = 0L;
+
+typedef bl::om::ObjectImpl< CoreServicesTestObjT<> > CoreServicesTestObj;
+
 UTF_AUTO_TEST_CASE( TestResolver_CheckFailure )
 {
     using namespace bl;
@@ -213,4 +256,288 @@ UTF_FIXTURE_TEST_CASE( TestResolver_CheckSuccess, ResolverFixture )
     }
 
     UTF_CHECK_EQUAL( 0L, om::outstandingObjectRefs() );
+}
+
+UTF_AUTO_TEST_CASE( TestResolver_CoreServices )
+{
+    using namespace bl;
+    using namespace bl::loader;
+
+    /*
+     * This is a raw pointer ownership contract across the plug-in ABI and both plausible
+     * regressions are silent in-process and fatal out-of-process - dropping the addRef() in
+     * getCoreServices() makes every host which wraps the result destroy the core services
+     * object out from under the resolver, and storing a non-owning raw pointer in
+     * setCoreServices() leaves the resolver with a dangling pointer as soon as the caller's
+     * ObjPtr dies
+     *
+     * The case deliberately uses no fixture - it never loads the plug-in library, so it
+     * cannot interact with the loader reset in ~TestPluginT
+     */
+
+    auto manifest = Manifest::createInstance(
+        uuids::create() /* serverid */,
+        1 /* versionMajor */,
+        0 /* versionMinor */,
+        0 /* versionPatch */,
+        std::set< om::clsid_t >() /* clsids */,
+        uuids::nil() /* pluginClassId */,
+        "name",
+        "description",
+        false /* isClient */,
+        true /* isServer */,
+        Platform::get( "os", "arch", "toolchain" ),
+        uuids::create() /* cppCompatibilityId */
+        );
+
+    std::unordered_map< fs::path, om::ObjPtr< Manifest > > plugins;
+    plugins.emplace( fs::path( "plugin" ), std::move( manifest ) );
+
+    const auto resolver = ResolverImplDefault::createInstance< om::Resolver >(
+        PluginAccess::createInstance( plugins )
+        );
+
+    /*
+     * Nothing has been set yet - the out parameter must be written as nullptr and the call
+     * must still report success
+     */
+
+    om::objref_t coreServicesRef = nullptr;
+
+    UTF_REQUIRE_EQUAL( resolver -> getCoreServices( coreServicesRef ), 0 );
+    UTF_REQUIRE( nullptr == coreServicesRef );
+
+    UTF_REQUIRE_EQUAL( CoreServicesTestObj::g_live, 0L );
+
+    /*
+     * om::detail::ppv() makes the objref_t without an extra addRef, so the only reference
+     * the resolver can be holding once the scope below closes is one it took itself
+     */
+
+    {
+        const auto services = CoreServicesTestObj::createInstance();
+
+        UTF_REQUIRE_EQUAL( CoreServicesTestObj::g_live, 1L );
+
+        UTF_REQUIRE_EQUAL( resolver -> setCoreServices( om::detail::ppv( services.get() ) ), 0 );
+    }
+
+    UTF_REQUIRE_EQUAL( CoreServicesTestObj::g_live, 1L );
+
+    /*
+     * getCoreServices() hands back a reference which the *caller* owns, so wrapping it -
+     * om::wrap attaches rather than takes an extra reference - must not destroy the object;
+     * repeat it a few times, since a missing addRef() would only be visible once the
+     * resolver's own reference has been consumed
+     */
+
+    for( std::size_t i = 0U; i < 3U; ++i )
+    {
+        UTF_REQUIRE_EQUAL( resolver -> getCoreServices( coreServicesRef ), 0 );
+        UTF_REQUIRE( nullptr != coreServicesRef );
+
+        {
+            const auto wrapped = om::wrap< om::Object >( coreServicesRef );
+
+            UTF_REQUIRE( wrapped );
+            UTF_REQUIRE_EQUAL( CoreServicesTestObj::g_live, 1L );
+        }
+
+        UTF_REQUIRE_EQUAL( CoreServicesTestObj::g_live, 1L );
+    }
+
+    /*
+     * A null argument clears the slot rather than crashing, and releases the resolver's own
+     * reference
+     */
+
+    UTF_REQUIRE_EQUAL( resolver -> setCoreServices( nullptr ), 0 );
+    UTF_REQUIRE_EQUAL( CoreServicesTestObj::g_live, 0L );
+
+    UTF_REQUIRE_EQUAL( resolver -> getCoreServices( coreServicesRef ), 0 );
+    UTF_REQUIRE( nullptr == coreServicesRef );
+}
+
+UTF_AUTO_TEST_CASE( TestResolver_RegisterHost )
+{
+    using namespace bl;
+    using namespace bl::loader;
+
+    /*
+     * registerHost() is how a host process publishes its own classes into the same
+     * resolution namespace as its plug-ins - it reads '<current executable>.mf', fans the
+     * manifest's whole classIds() set out into the server map and registers the loader's
+     * default factory for the host serverid, which is what makes the host resolvable
+     * *without* any dlopen()
+     *
+     * Note that this case writes a file next to the test executable and there is no way to
+     * redirect that; unlike TestResolver_CheckSuccess it therefore has to clean up after
+     * itself, because a stale manifest left behind would make the negative half of the next
+     * run fail
+     */
+
+    const auto exePath = fs::path( os::getCurrentExecutablePath() );
+    const auto mfPath = Manifest::getManifestPath( exePath );
+
+    UTF_REQUIRE( ! fs::path_exists( mfPath ) );
+
+    BL_SCOPE_EXIT(
+        {
+            fs::safeRemoveIfExists( mfPath );
+        }
+        );
+
+    const auto pluginServerId = uuids::create();
+    const auto pluginClsid = uuids::create();
+
+    const auto hostServerId = uuids::create();
+    const auto hostClsidA = uuids::create();
+    const auto hostClsidB = uuids::create();
+
+    const auto createResolver = [ & ]( SAA_in std::set< om::clsid_t >&& pluginClsids )
+        -> om::ObjPtr< om::Resolver >
+    {
+        auto manifest = Manifest::createInstance(
+            pluginServerId,
+            1 /* versionMajor */,
+            0 /* versionMinor */,
+            0 /* versionPatch */,
+            BL_PARAM_FWD( pluginClsids ),
+            uuids::nil() /* pluginClassId */,
+            "plug-in name",
+            "plug-in description",
+            false /* isClient */,
+            true /* isServer */,
+            Platform::get( "os", "arch", "toolchain" ),
+            uuids::create() /* cppCompatibilityId */
+            );
+
+        std::unordered_map< fs::path, om::ObjPtr< Manifest > > plugins;
+        plugins.emplace( fs::path( "plugin" ), std::move( manifest ) );
+
+        return ResolverImplDefault::createInstance< om::Resolver >(
+            PluginAccess::createInstance( plugins )
+            );
+    };
+
+    std::set< om::clsid_t > pluginOnlyClsids;
+    pluginOnlyClsids.insert( pluginClsid );
+
+    const auto resolver = createResolver( std::move( pluginOnlyClsids ) );
+
+    /*
+     * The negative half first - with no manifest next to the executable readForBinary()
+     * throws and eh::EcUtils::getErrorCode() converts that into a non-zero return
+     */
+
+    {
+        Logging::LineLoggerPusher pushLineLogger( &utest::errorToDebugLineLogger );
+
+        UTF_REQUIRE( resolver -> registerHost() != 0 );
+    }
+
+    std::set< om::clsid_t > hostClsids;
+    hostClsids.insert( hostClsidA );
+    hostClsids.insert( hostClsidB );
+
+    ManifestFactory::writeForBinary(
+        Manifest::createInstance(
+            hostServerId,
+            1 /* versionMajor */,
+            0 /* versionMinor */,
+            0 /* versionPatch */,
+            std::move( hostClsids ),
+            uuids::nil() /* pluginClassId */,
+            "host name",
+            "host description",
+            false /* isClient */,
+            true /* isServer */,
+            Platform::get( "os", "arch", "toolchain" ),
+            uuids::create() /* cppCompatibilityId */
+            ),
+        cpp::copy( exePath )
+        );
+
+    UTF_REQUIRE_EQUAL( resolver -> registerHost(), 0 );
+
+    /*
+     * The whole classIds() set is registered, not just the plug-in clsid
+     */
+
+    {
+        om::serverid_t serverid;
+
+        UTF_REQUIRE_EQUAL( resolver -> resolveServer( hostClsidA, serverid ), 0 );
+        UTF_REQUIRE_EQUAL( hostServerId, serverid );
+
+        UTF_REQUIRE_EQUAL( resolver -> resolveServer( hostClsidB, serverid ), 0 );
+        UTF_REQUIRE_EQUAL( hostServerId, serverid );
+    }
+
+    /*
+     * The default factory was cached, so the host serverid resolves with onlyIfLoaded
+     */
+
+    {
+        om::objref_t factoryRef = nullptr;
+
+        UTF_REQUIRE_EQUAL( resolver -> getFactory( hostServerId, factoryRef, true /* onlyIfLoaded */ ), 0 );
+        UTF_REQUIRE( nullptr != factoryRef );
+
+        const auto factory = om::wrap< om::Factory >( factoryRef );
+
+        UTF_REQUIRE( factory );
+    }
+
+    /*
+     * The unrelated plug-in clsid still resolves through PluginAccess
+     */
+
+    {
+        om::serverid_t serverid;
+
+        UTF_REQUIRE_EQUAL( resolver -> resolveServer( pluginClsid, serverid ), 0 );
+        UTF_REQUIRE_EQUAL( pluginServerId, serverid );
+    }
+
+    /*
+     * A second call is idempotent and changes nothing, which is what emplace() rather than
+     * insert_or_assign() guarantees
+     */
+
+    UTF_REQUIRE_EQUAL( resolver -> registerHost(), 0 );
+
+    {
+        om::serverid_t serverid;
+
+        UTF_REQUIRE_EQUAL( resolver -> resolveServer( hostClsidA, serverid ), 0 );
+        UTF_REQUIRE_EQUAL( hostServerId, serverid );
+
+        UTF_REQUIRE_EQUAL( resolver -> resolveServer( pluginClsid, serverid ), 0 );
+        UTF_REQUIRE_EQUAL( pluginServerId, serverid );
+    }
+
+    /*
+     * The precedence sub-block - a clsid which the host manifest also claims, but which was
+     * already cached against a plug-in, must keep pointing at the plug-in; a host manifest
+     * is not allowed to hijack clsids which are already bound
+     */
+
+    {
+        std::set< om::clsid_t > overlappingClsids;
+        overlappingClsids.insert( pluginClsid );
+        overlappingClsids.insert( hostClsidA );
+
+        const auto resolverWithOverlap = createResolver( std::move( overlappingClsids ) );
+
+        om::serverid_t serverid;
+
+        UTF_REQUIRE_EQUAL( resolverWithOverlap -> resolveServer( hostClsidA, serverid ), 0 );
+        UTF_REQUIRE_EQUAL( pluginServerId, serverid );
+
+        UTF_REQUIRE_EQUAL( resolverWithOverlap -> registerHost(), 0 );
+
+        UTF_REQUIRE_EQUAL( resolverWithOverlap -> resolveServer( hostClsidA, serverid ), 0 );
+        UTF_REQUIRE_EQUAL( pluginServerId, serverid );
+    }
 }

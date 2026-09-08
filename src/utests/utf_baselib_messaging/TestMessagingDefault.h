@@ -945,6 +945,160 @@ UTF_AUTO_TEST_CASE( BackendTests )
         }
     }
 
+    {
+        /*
+         * Test the AcceptorNotify implementation of the broker backend
+         *
+         * This is the second half of the routing invariant tested above - a peer which was
+         * reachable only through a proxy and then connects directly to the backend must have
+         * its stale route dropped by peerConnectedNotify(), otherwise every message for that
+         * peer would keep being sent to the proxy's physical connection and be lost
+         *
+         * Note that peerDisconnectedNotify() is deliberately a no-op - a disconnect must not
+         * invalidate the route, as the peer is expected to remain reachable via the proxy
+         *
+         * Both notifications must return 'false' to indicate that the call was completed
+         * synchronously and that the completion callback will not be invoked - the acceptor
+         * relies on that return value to decide whether it has to wait for a callback
+         */
+
+        const auto acceptorNotify = bl::om::qi< AcceptorNotify >( brokerBackendProcessing );
+
+        bool callbackInvoked = false;
+
+        bl::tasks::CompletionCallback cb =
+            [ &callbackInvoked ]( SAA_in_opt const std::exception_ptr& ) -> void
+            {
+                callbackInvoked = true;
+            };
+
+        const auto sourcePeerId = bl::uuids::create();
+        const auto targetPeerId = bl::uuids::create();
+
+        const auto createAssociateMessage = [ & ]() -> bl::om::ObjPtr< BrokerProtocol >
+        {
+            auto brokerProtocol = createProtocolMessage();
+
+            brokerProtocol -> messageType(
+                MessageType::toString( MessageType::BackendAssociateTargetPeerId )
+                );
+
+            brokerProtocol -> sourcePeerId( bl::uuids::uuid2string( sourcePeerId ) );
+            brokerProtocol -> targetPeerId( bl::uuids::uuid2string( targetPeerId ) );
+
+            return brokerProtocol;
+        };
+
+        const auto createResolveMessage = [ & ]() -> bl::om::ObjPtr< BrokerProtocol >
+        {
+            auto brokerProtocol = createProtocolMessage();
+
+            brokerProtocol -> messageType(
+                MessageType::toString( MessageType::AsyncRpcAcknowledgment )
+                );
+
+            brokerProtocol -> sourcePeerId( "" );
+            brokerProtocol -> targetPeerId( "" );
+
+            return brokerProtocol;
+        };
+
+        /*
+         * Establish the route which the notifications below are expected to act upon
+         *
+         * Note that each resolve probe below uses a freshly created context, so that the
+         * resolved target peer id it reports cannot be carrying state from a previous probe
+         */
+
+        {
+            const auto context = context_t::createInstance();
+
+            testBackendProcessingTask(
+                "associate before the acceptor notifications",
+                brokerBackendProcessing,
+                createAssociateMessage(),
+                context
+                );
+
+            UTF_REQUIRE( context -> wasMessageForBackend() );
+            UTF_REQUIRE( bl::uuids::nil() == context -> resolvedTargetPeerId() );
+        }
+
+        {
+            const auto context = context_t::createInstance();
+
+            testBackendProcessingTask(
+                "resolve test for dispatch before the acceptor notifications",
+                brokerBackendProcessing,
+                createResolveMessage(),
+                context,
+                bl::uuids::create()     /* sourcePeerId */,
+                targetPeerId
+                );
+
+            UTF_REQUIRE( ! context -> wasMessageForBackend() );
+            UTF_REQUIRE_EQUAL( sourcePeerId, context -> resolvedTargetPeerId() );
+        }
+
+        /*
+         * A disconnect notification must leave the route intact
+         */
+
+        UTF_REQUIRE( ! acceptorNotify -> peerDisconnectedNotify( targetPeerId, bl::cpp::copy( cb ) ) );
+
+        {
+            const auto context = context_t::createInstance();
+
+            testBackendProcessingTask(
+                "resolve test for dispatch after peerDisconnectedNotify",
+                brokerBackendProcessing,
+                createResolveMessage(),
+                context,
+                bl::uuids::create()     /* sourcePeerId */,
+                targetPeerId
+                );
+
+            UTF_REQUIRE( ! context -> wasMessageForBackend() );
+            UTF_REQUIRE_EQUAL( sourcePeerId, context -> resolvedTargetPeerId() );
+        }
+
+        /*
+         * A connect notification must drop it
+         */
+
+        UTF_REQUIRE( ! acceptorNotify -> peerConnectedNotify( targetPeerId, bl::cpp::copy( cb ) ) );
+
+        {
+            const auto context = context_t::createInstance();
+
+            testBackendProcessingTask(
+                "resolve test for dispatch after peerConnectedNotify",
+                brokerBackendProcessing,
+                createResolveMessage(),
+                context,
+                bl::uuids::create()     /* sourcePeerId */,
+                targetPeerId
+                );
+
+            UTF_REQUIRE( ! context -> wasMessageForBackend() );
+            UTF_REQUIRE_EQUAL( bl::uuids::nil(), context -> resolvedTargetPeerId() );
+        }
+
+        /*
+         * An unknown peer id - dissociateTargetPeerId() returns false and must not throw -
+         * and an empty completion callback must both be tolerated
+         */
+
+        UTF_REQUIRE( ! acceptorNotify -> peerConnectedNotify( bl::uuids::create(), bl::cpp::copy( cb ) ) );
+        UTF_REQUIRE( ! acceptorNotify -> peerConnectedNotify( targetPeerId, bl::tasks::CompletionCallback() ) );
+
+        /*
+         * None of the five notifications above is allowed to invoke the completion callback
+         */
+
+        UTF_REQUIRE( ! callbackInvoked );
+    }
+
     const auto testPermissionDeniedFailure = [ & ](
         SAA_in          const std::string&                                                  testName,
         SAA_in          const std::string&                                                  cookiesText,
@@ -1086,6 +1240,246 @@ UTF_AUTO_TEST_CASE( BackendTests )
 
         brokerProtocol -> principalIdentityInfo( nullptr );
         testBackendProcessingTask( "no principal identity info", brokerBackendProcessing, brokerProtocol );
+    }
+}
+
+UTF_AUTO_TEST_CASE( BrokerErrorCodesTests )
+{
+    using namespace bl;
+    using namespace bl::messaging;
+
+    /*
+     * The four constants are copied into locals before they are compared - they are declared
+     * in-class with an initializer and have no out-of-class definition, so binding them
+     * directly to the const references the check macros take would odr-use them
+     */
+
+    const int targetPeerNotFound = BrokerErrorCodes::TargetPeerNotFound;
+    const int targetPeerQueueFull = BrokerErrorCodes::TargetPeerQueueFull;
+    const int authorizationFailed = BrokerErrorCodes::AuthorizationFailed;
+    const int protocolValidationFailed = BrokerErrorCodes::ProtocolValidationFailed;
+
+    /*
+     * The two broker specific codes are part of the wire contract between a broker and its
+     * clients and are deliberately hard-coded to the Linux numeric values, because the
+     * corresponding eh::errc names do not have stable values across platforms - replacing
+     * them with the names would silently change the wire values on Windows and macOS
+     */
+
+    UTF_REQUIRE_EQUAL( 99, targetPeerNotFound );
+    UTF_REQUIRE_EQUAL( 105, targetPeerQueueFull );
+
+    UTF_REQUIRE_EQUAL( static_cast< int >( eh::errc::permission_denied ), authorizationFailed );
+    UTF_REQUIRE_EQUAL( static_cast< int >( eh::errc::invalid_argument ), protocolValidationFailed );
+
+    /*
+     * isExpectedErrorCode() - the four accepted values, a non-broker generic value, the two
+     * wrong category values and a default constructed code
+     *
+     * The category guard is what stops an asio / system_category error whose value happens
+     * to be 99 or 105 from being mistaken for a broker error
+     */
+
+    UTF_REQUIRE(
+        BrokerErrorCodes::isExpectedErrorCode(
+            eh::errc::make_error_code( BrokerErrorCodes::TargetPeerNotFound )
+            )
+        );
+
+    UTF_REQUIRE(
+        BrokerErrorCodes::isExpectedErrorCode(
+            eh::errc::make_error_code( BrokerErrorCodes::TargetPeerQueueFull )
+            )
+        );
+
+    UTF_REQUIRE(
+        BrokerErrorCodes::isExpectedErrorCode(
+            eh::errc::make_error_code( BrokerErrorCodes::AuthorizationFailed )
+            )
+        );
+
+    UTF_REQUIRE(
+        BrokerErrorCodes::isExpectedErrorCode(
+            eh::errc::make_error_code( BrokerErrorCodes::ProtocolValidationFailed )
+            )
+        );
+
+    UTF_REQUIRE(
+        ! BrokerErrorCodes::isExpectedErrorCode( eh::errc::make_error_code( eh::errc::address_in_use ) )
+        );
+
+    UTF_REQUIRE( ! BrokerErrorCodes::isExpectedErrorCode( eh::error_code( 99, eh::system_category() ) ) );
+    UTF_REQUIRE( ! BrokerErrorCodes::isExpectedErrorCode( eh::error_code( 105, eh::system_category() ) ) );
+
+    UTF_REQUIRE( ! BrokerErrorCodes::isExpectedErrorCode( eh::error_code() ) );
+
+    /*
+     * tryGetExpectedErrorMessage() - the two POSIX-ish codes map to the standard message of
+     * the error code itself while the two broker codes map to fixed user-facing strings,
+     * which are what reaches the GraphQL clients
+     */
+
+    {
+        const auto ecAuthorizationFailed =
+            eh::errc::make_error_code( BrokerErrorCodes::AuthorizationFailed );
+
+        const auto ecProtocolValidationFailed =
+            eh::errc::make_error_code( BrokerErrorCodes::ProtocolValidationFailed );
+
+        UTF_REQUIRE( ! BrokerErrorCodes::tryGetExpectedErrorMessage( ecAuthorizationFailed ).empty() );
+
+        UTF_REQUIRE_EQUAL(
+            BrokerErrorCodes::tryGetExpectedErrorMessage( ecAuthorizationFailed ),
+            ecAuthorizationFailed.message()
+            );
+
+        UTF_REQUIRE( ! BrokerErrorCodes::tryGetExpectedErrorMessage( ecProtocolValidationFailed ).empty() );
+
+        UTF_REQUIRE_EQUAL(
+            BrokerErrorCodes::tryGetExpectedErrorMessage( ecProtocolValidationFailed ),
+            ecProtocolValidationFailed.message()
+            );
+
+        UTF_REQUIRE_EQUAL(
+            BrokerErrorCodes::tryGetExpectedErrorMessage(
+                eh::errc::make_error_code( BrokerErrorCodes::TargetPeerNotFound )
+                ),
+            std::string( "The server is currently unavailable" )
+            );
+
+        UTF_REQUIRE_EQUAL(
+            BrokerErrorCodes::tryGetExpectedErrorMessage(
+                eh::errc::make_error_code( BrokerErrorCodes::TargetPeerQueueFull )
+                ),
+            std::string( "The server is too busy" )
+            );
+
+        UTF_REQUIRE_EQUAL(
+            BrokerErrorCodes::tryGetExpectedErrorMessage(
+                eh::errc::make_error_code( eh::errc::address_in_use )
+                ),
+            str::empty()
+            );
+
+        UTF_REQUIRE_EQUAL( BrokerErrorCodes::tryGetExpectedErrorMessage( eh::error_code() ), str::empty() );
+
+        /*
+         * The check below pins the *current* behavior rather than endorsing it - unlike
+         * isExpectedErrorCode() above, tryGetExpectedErrorMessage() switches on the numeric
+         * value without checking the category at all, so an unrelated system_category errno
+         * 99 is given the broker's user-facing message
+         *
+         * It is a UTF_CHECK so that the asymmetry between the two functions is visible in
+         * the suite rather than only in the source
+         */
+
+        UTF_CHECK_EQUAL(
+            BrokerErrorCodes::tryGetExpectedErrorMessage( eh::error_code( 99, eh::system_category() ) ),
+            std::string( "The server is currently unavailable" )
+            );
+    }
+
+    /*
+     * rethrowIfNotExpectedException() / isExpectedException() - only a ServerErrorException
+     * which carries an expected error code is swallowed, anything else must propagate
+     *
+     * Note that a null exception_ptr must never be passed to either of them - that would be
+     * a BL_RIP_MSG which terminates the process - so every exception pointer below is
+     * obtained from an exception which was actually thrown
+     */
+
+    const auto makeEptr = []( SAA_in const cpp::void_callback_t& callback ) -> std::exception_ptr
+    {
+        try
+        {
+            callback();
+        }
+        catch( std::exception& )
+        {
+            return std::current_exception();
+        }
+
+        UTF_FAIL( "The callback above is expected to throw" );
+
+        return std::exception_ptr();
+    };
+
+    {
+        const auto eptr = makeEptr(
+            []() -> void
+            {
+                BL_THROW(
+                    ServerErrorException()
+                        << eh::errinfo_error_code(
+                            eh::errc::make_error_code( BrokerErrorCodes::TargetPeerNotFound )
+                            ),
+                    BL_MSG()
+                        << "Expected broker error"
+                    );
+            }
+            );
+
+        UTF_REQUIRE_NO_THROW( BrokerErrorCodes::rethrowIfNotExpectedException( eptr ) );
+        UTF_REQUIRE( BrokerErrorCodes::isExpectedException( eptr ) );
+    }
+
+    {
+        const auto eptr = makeEptr(
+            []() -> void
+            {
+                BL_THROW(
+                    ServerErrorException()
+                        << eh::errinfo_error_code(
+                            eh::errc::make_error_code( eh::errc::address_in_use )
+                            ),
+                    BL_MSG()
+                        << "Unexpected error code"
+                    );
+            }
+            );
+
+        UTF_REQUIRE_THROW( BrokerErrorCodes::rethrowIfNotExpectedException( eptr ), ServerErrorException );
+        UTF_REQUIRE( ! BrokerErrorCodes::isExpectedException( eptr ) );
+    }
+
+    {
+        const auto eptr = makeEptr(
+            []() -> void
+            {
+                BL_THROW(
+                    ServerErrorException(),
+                    BL_MSG()
+                        << "No error code at all"
+                    );
+            }
+            );
+
+        UTF_REQUIRE_THROW( BrokerErrorCodes::rethrowIfNotExpectedException( eptr ), ServerErrorException );
+        UTF_REQUIRE( ! BrokerErrorCodes::isExpectedException( eptr ) );
+    }
+
+    {
+        /*
+         * The type gate - an expected error code attached to an exception which is not a
+         * ServerErrorException must not be swallowed either
+         */
+
+        const auto eptr = makeEptr(
+            []() -> void
+            {
+                BL_THROW(
+                    ArgumentException()
+                        << eh::errinfo_error_code(
+                            eh::errc::make_error_code( BrokerErrorCodes::TargetPeerNotFound )
+                            ),
+                    BL_MSG()
+                        << "Expected error code on a non-server exception"
+                    );
+            }
+            );
+
+        UTF_REQUIRE_THROW( BrokerErrorCodes::rethrowIfNotExpectedException( eptr ), ArgumentException );
+        UTF_REQUIRE( ! BrokerErrorCodes::isExpectedException( eptr ) );
     }
 }
 
