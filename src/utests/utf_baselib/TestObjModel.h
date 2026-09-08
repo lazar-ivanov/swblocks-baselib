@@ -36,7 +36,10 @@
 #include <baselib/core/TimeUtils.h>
 #include <baselib/core/BaseIncludes.h>
 
+#include <atomic>
 #include <set>
+#include <unordered_set>
+#include <vector>
 
 #include <utests/baselib/Utf.h>
 
@@ -128,6 +131,76 @@ public:
 };
 
 typedef bl::om::ObjectImpl< MyObjEncapsulatedT<> > MyObjEncapsulated;
+
+/************************************************************************
+ * A file local counted test object, shared by the factory, proxy, shared_ptr
+ * and refcount balance cases below
+ *
+ * om::outstandingObjectRefs() is process wide - it is shared with the thread pools and it
+ * is sensitive to the order in which the cases execute, which is why ObjModel_BasicTests
+ * has to spin waiting for it to settle - so the lifetime assertions below count their own
+ * instances with a private counter instead
+ */
+
+namespace
+{
+    long g_liveCounted = 0L;
+
+    template
+    <
+        typename E = void
+    >
+    class CountedT :
+        public bl::cpp::noncopyable,
+        public utest::MyInterface1,
+        public utest::MyInterface2,
+        public bl::om::Disposable
+    {
+        BL_QITBL_BEGIN()
+            BL_QITBL_ENTRY( utest::MyInterface1 )
+            BL_QITBL_ENTRY( utest::MyInterface2 )
+            BL_QITBL_ENTRY( bl::om::Disposable )
+        BL_QITBL_END( utest::MyInterface1 )
+
+    private:
+
+        long m_value;
+
+    protected:
+
+        CountedT()
+            :
+            m_value( 0L )
+        {
+            ++g_liveCounted;
+        }
+
+        ~CountedT() NOEXCEPT
+        {
+            --g_liveCounted;
+        }
+
+    public:
+
+        virtual long getValue() OVERRIDE
+        {
+            return m_value;
+        }
+
+        virtual void incValue( SAA_in const long step ) OVERRIDE
+        {
+            m_value += step;
+        }
+
+        virtual void dispose() OVERRIDE
+        {
+        }
+    };
+
+    typedef bl::om::ObjectImpl< CountedT<> >                                     CountedImpl;
+    typedef bl::om::ObjectImpl< CountedT<>, true /* enableSharedPtr */ >         CountedSharedImpl;
+
+} // __unnamed
 
 UTF_AUTO_TEST_CASE( ObjModel_InterfaceDefinitionsTests )
 {
@@ -405,17 +478,14 @@ UTF_AUTO_TEST_CASE( ObjModel_FactoryTests )
 
     const om::clsid_t clsid = uuids::create();
 
-    try
-    {
-        /*
-         * Verify the class not yet registered case
-         */
+    /*
+     * Verify the class not yet registered case
+     */
 
-        factory -> createInstance( clsid, TestInterface1234::iid() );
-    }
-    catch( ClassNotFoundException& )
-    {
-    }
+    UTF_REQUIRE_THROW(
+        factory -> createInstance( clsid, TestInterface1234::iid() ),
+        ClassNotFoundException
+        );
 
     const auto cbCreate = []
     (
@@ -440,43 +510,48 @@ UTF_AUTO_TEST_CASE( ObjModel_FactoryTests )
         UTF_CHECK_EQUAL( o2 -> getValue(), 15 );
     }
 
-    try
-    {
-        /*
-         * Verify the class already registered case
-         */
+    /*
+     * Verify the class already registered case
+     */
 
-        factoryImpl -> registerClass( clsid, cbCreate );
-    }
-    catch( UnexpectedException& )
-    {
-    }
+    UTF_REQUIRE_THROW( factoryImpl -> registerClass( clsid, cbCreate ), UnexpectedException );
 
-    try
-    {
-        /*
-         * Verify the invalid callback case
-         */
+    /*
+     * Verify the invalid callback case
+     */
 
-        factoryImpl -> registerClass( uuids::create(), om::register_class_callback_t() );
-    }
-    catch( UnexpectedException& )
-    {
-    }
+    const om::clsid_t emptyCallbackClsid = uuids::create();
+
+    UTF_REQUIRE_THROW(
+        factoryImpl -> registerClass( emptyCallbackClsid, om::register_class_callback_t() ),
+        UnexpectedException
+        );
+
+    /*
+     * A rejected registration must not leave a phantom entry behind - if it did the empty
+     * callback would then be invoked and crash on the next createInstance( ... )
+     */
+
+    UTF_REQUIRE(
+        nullptr == factoryImpl -> tryCreateInstance( emptyCallbackClsid, TestInterface1234::iid() )
+        );
+
+    /*
+     * Verify the unregistering of a class which was never registered
+     */
+
+    UTF_REQUIRE_THROW( factoryImpl -> unregisterClass( uuids::create() ), UnexpectedException );
 
     factoryImpl -> unregisterClass( clsid );
 
-    try
-    {
-        /*
-         * Verify the class unregistered case
-         */
+    /*
+     * Verify the class unregistered case
+     */
 
-        factory -> createInstance( clsid, TestInterface1234::iid() );
-    }
-    catch( ClassNotFoundException& )
-    {
-    }
+    UTF_REQUIRE_THROW(
+        factory -> createInstance( clsid, TestInterface1234::iid() ),
+        ClassNotFoundException
+        );
 }
 
 UTF_AUTO_TEST_CASE( ObjModel_GlobalApiTests )
@@ -486,17 +561,11 @@ UTF_AUTO_TEST_CASE( ObjModel_GlobalApiTests )
 
     const om::clsid_t clsid = uuids::create();
 
-    try
-    {
-        /*
-         * Verify the class not yet registered case
-         */
+    /*
+     * Verify the class not yet registered case
+     */
 
-        om::createInstance< TestInterface1234 >( clsid );
-    }
-    catch( ClassNotFoundException& )
-    {
-    }
+    UTF_REQUIRE_THROW( om::createInstance< TestInterface1234 >( clsid ), ClassNotFoundException );
 
     const auto cbCreate = []
     (
@@ -521,43 +590,70 @@ UTF_AUTO_TEST_CASE( ObjModel_GlobalApiTests )
         UTF_CHECK_EQUAL( o2 -> getValue(), 15 );
     }
 
-    try
-    {
-        /*
-         * Verify the class already registered case
-         */
+    /*
+     * Verify the class already registered case
+     */
 
-        om::registerClass( clsid, cbCreate );
-    }
-    catch( UnexpectedException& )
-    {
-    }
+    UTF_REQUIRE_THROW( om::registerClass( clsid, cbCreate ), UnexpectedException );
 
-    try
-    {
-        /*
-         * Verify the invalid callback case
-         */
+    /*
+     * Verify the invalid callback case
+     */
 
-        om::registerClass( uuids::create(), om::register_class_callback_t() );
-    }
-    catch( UnexpectedException& )
-    {
-    }
+    UTF_REQUIRE_THROW(
+        om::registerClass( uuids::create(), om::register_class_callback_t() ),
+        UnexpectedException
+        );
 
     om::unregisterClass( clsid );
 
-    try
+    /*
+     * Verify the class unregistered case
+     */
+
+    UTF_REQUIRE_THROW( om::createInstance< TestInterface1234 >( clsid ), ClassNotFoundException );
+
+    /*
+     * A registered class which does not implement the requested interface is reported
+     * exactly as if the class was never registered - the default factory produced nothing
+     * and there is no resolver to fall back on
+     *
+     * SimpleFactoryImpl< T > builds the object and then queries it, so the object it built
+     * must be freed by the temporary ObjPtr when the query fails
+     */
+
     {
+        const om::clsid_t countedClsid = uuids::create();
+
+        om::registerClass( countedClsid, &om::SimpleFactoryImpl< CountedImpl >::createInstance );
+
+        BL_SCOPE_EXIT(
+            {
+                om::unregisterClass( countedClsid );
+            }
+            );
+
+        UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
+
+        UTF_REQUIRE_THROW(
+            om::createInstance< TestInterface1235 >( countedClsid ),
+            ClassNotFoundException
+            );
+
+        UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
+
         /*
-         * Verify the class unregistered case
+         * The positive control - a supported interface really does resolve through the
+         * same registration
          */
 
-        om::createInstance< TestInterface1234 >( clsid );
+        const auto supported = om::createInstance< utest::MyInterface1 >( countedClsid );
+
+        UTF_REQUIRE( supported );
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
     }
-    catch( ClassNotFoundException& )
-    {
-    }
+
+    UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
 }
 
 UTF_AUTO_TEST_CASE( ObjModel_MyObjectImplTests )
@@ -703,6 +799,328 @@ UTF_AUTO_TEST_CASE( ObjModel_MakeSharedTests )
     UTF_CHECK_EQUAL( 18, si1 -> getValue() );
 }
 
+UTF_AUTO_TEST_CASE( ObjModel_SharedPtrLifetimeTests )
+{
+    using namespace bl;
+    using namespace utest;
+
+    UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
+
+    /*
+     * With the SharedPtr interface enabled the object caches its own shared_ptr weakly, so
+     * two getSharedPtr( ... ) results share one control block while the first is alive, and
+     * a third one taken after they are both gone must carry a brand new control block
+     */
+
+    {
+        auto o = CountedSharedImpl::createInstance< MyInterface1 >();
+
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+
+        auto sp1 = om::getSharedPtr( o );
+        auto sp2 = om::getSharedPtr( o );
+
+        UTF_REQUIRE( sp1 );
+        UTF_REQUIRE( sp2 );
+        UTF_REQUIRE( ownerEqual( sp1, sp2 ) );
+        UTF_REQUIRE_EQUAL( 2L, sp1.use_count() );
+
+        const std::weak_ptr< om::Object > w = sp1;
+
+        sp1.reset();
+        sp2.reset();
+
+        /*
+         * The ObjPtr still owns the object, but the cached control block is gone
+         */
+
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+        UTF_REQUIRE( w.expired() );
+
+        auto sp3 = om::getSharedPtr( o );
+
+        UTF_REQUIRE( sp3 );
+
+        /*
+         * Still expired - this is what distinguishes the m_this.lock() returns empty branch
+         * from the cached hit above. Comparing sp3 against a retained copy of sp1 would be
+         * inverted, because a retained copy keeps m_this alive
+         */
+
+        UTF_REQUIRE( w.expired() );
+
+        o.reset();
+
+        /*
+         * The shared_ptr alone keeps the object alive, i.e. getSharedPtr( ... ) really did
+         * take a hard reference of its own
+         */
+
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+
+        sp3.reset();
+
+        UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
+    }
+
+    UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
+
+    /*
+     * The release order does not matter - here the shared_ptr goes first
+     */
+
+    {
+        auto o = CountedSharedImpl::createInstance< MyInterface1 >();
+
+        auto sp = om::getSharedPtr( o );
+
+        UTF_REQUIRE( sp );
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+
+        sp.reset();
+
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+
+        o.reset();
+
+        UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
+    }
+
+    /*
+     * Without the SharedPtr interface makeShared( ... ) falls back to a hard reference plus
+     * an independent control block per call
+     */
+
+    {
+        auto o = CountedImpl::createInstance< MyInterface1 >();
+
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+
+        auto m1 = om::makeShared( o.get() );
+        auto m2 = om::makeShared( o.get() );
+
+        UTF_REQUIRE( m1 );
+        UTF_REQUIRE( m2 );
+        UTF_REQUIRE( ! ownerEqual( m1, m2 ) );
+
+        o.reset();
+
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+
+        m1.reset();
+
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+
+        m2.reset();
+
+        /*
+         * Destroyed exactly once, i.e. both fallbacks addRef'ed and both deleters released
+         */
+
+        UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
+    }
+
+    UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
+}
+
+UTF_AUTO_TEST_CASE( ObjModel_RefCountBalanceTests )
+{
+    using namespace bl;
+    using namespace utest;
+
+    /*
+     * Every wrapper in the ObjPtr family has its own ownership convention which is invisible
+     * at the call site - wrap( ... ) attaches, copy( ... ) / copyAs( ... ) / acquireRef( ... )
+     * addRef, moveAs( ... ) transfers - and an imbalance in any of them produces either a leak
+     * which is merely logged at teardown or a crash which points nowhere near the cause
+     */
+
+    UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
+
+    {
+        const auto o = CountedImpl::createInstance();
+
+        UTF_REQUIRE( o );
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+    }
+
+    UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
+
+    /*
+     * wrap( ... ) attaches - it consumes the reference which queryInterface( ... ) returned
+     * rather than taking one of its own
+     */
+
+    {
+        auto o = CountedImpl::createInstance< MyInterface1 >();
+
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+
+        {
+            const auto wrapped = om::wrap< MyInterface2 >( o -> queryInterface( MyInterface2::iid() ) );
+
+            UTF_REQUIRE( wrapped );
+            UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+        }
+
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+
+        o.reset();
+
+        UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
+    }
+
+    /*
+     * copy( ... ) and copyAs( ... ) both addRef, so the object outlives every one of them
+     * until the last is released
+     */
+
+    {
+        auto o = CountedImpl::createInstance< MyInterface1 >();
+
+        auto c = om::copy( o );
+        auto d = om::copyAs< MyInterface1 >( o.get() );
+
+        UTF_REQUIRE( c );
+        UTF_REQUIRE( d );
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+
+        o.reset();
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+
+        c.reset();
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+
+        d.reset();
+        UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
+    }
+
+    /*
+     * moveAs( ... ) transfers the reference - it neither addRefs nor releases
+     */
+
+    {
+        auto o = CountedImpl::createInstance< MyInterface1 >();
+
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+
+        auto m = om::moveAs< om::Object >( std::move( o ) );
+
+        UTF_REQUIRE( ! o );
+        UTF_REQUIRE( m );
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+
+        m.reset();
+
+        UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
+    }
+
+    /*
+     * ObjPtrCopyable copies, self assigns through a copy, survives a container round trip
+     * and hands its reference away through detachAsUnique( ... ) - all without an imbalance
+     */
+
+    {
+        const auto o = CountedImpl::createInstance< MyInterface1 >();
+
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+
+        {
+            om::ObjPtrCopyable< MyInterface1 > p1( o );
+
+            om::ObjPtrCopyable< MyInterface1 > p2 = p1;
+
+            p1 = p2;
+
+            UTF_REQUIRE( o.get() == p1.get() );
+            UTF_REQUIRE( o.get() == p2.get() );
+
+            std::vector< om::ObjPtrCopyable< MyInterface1 > > values;
+
+            values.push_back( p1 );
+            values.push_back( p2 );
+
+            UTF_REQUIRE_EQUAL( 2U, values.size() );
+
+            values.erase( values.begin() );
+
+            UTF_REQUIRE_EQUAL( 1U, values.size() );
+            UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+        }
+
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+
+        {
+            om::ObjPtrCopyable< MyInterface1 > p3( o );
+
+            auto unique = p3.detachAsUnique();
+
+            UTF_REQUIRE( ! p3 );
+            UTF_REQUIRE( unique );
+            UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+        }
+
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+
+        /*
+         * The two parameter acquireRef( ... ) form, the one the REST and the HTTP server
+         * processing contexts use to take a reference to themselves through om::Disposable
+         */
+
+        {
+            const auto concrete = CountedImpl::createInstance();
+
+            UTF_REQUIRE_EQUAL( 2L, g_liveCounted );
+
+            {
+                typedef om::ObjPtrCopyable< CountedImpl, om::Disposable > counted_ref_t;
+
+                const auto acquired = counted_ref_t::acquireRef( concrete.get() );
+
+                UTF_REQUIRE( acquired );
+                UTF_REQUIRE_EQUAL( 2L, g_liveCounted );
+            }
+
+            /*
+             * If acquireRef( ... ) had not taken a reference the object would already be
+             * gone here, while concrete still points at it
+             */
+
+            UTF_REQUIRE_EQUAL( 2L, g_liveCounted );
+        }
+
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+    }
+
+    UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
+
+    /*
+     * The std::hash specialization which makes ObjPtrCopyable usable as an unordered
+     * container key - tasks::SimpleTaskControlToken relies on it
+     */
+
+    {
+        const auto o = CountedImpl::createInstance< MyInterface1 >();
+
+        std::unordered_set< om::ObjPtrCopyable< MyInterface1 > > keys;
+
+        keys.insert( om::ObjPtrCopyable< MyInterface1 >( o ) );
+
+        UTF_REQUIRE_EQUAL( 1U, keys.size() );
+
+        const auto pos = keys.find( om::ObjPtrCopyable< MyInterface1 >( o ) );
+
+        UTF_REQUIRE( pos != keys.end() );
+
+        keys.erase( pos );
+
+        UTF_REQUIRE( keys.empty() );
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+    }
+
+    UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
+}
+
 /************************************************************************
  * Tests for ProxyImpl
  */
@@ -734,6 +1152,252 @@ UTF_AUTO_TEST_CASE( ObjModel_ProxyImplTests )
 
     proxy -> disconnect();
     UTF_CHECK_EQUAL( nullValue, proxy -> tryAcquireRef< MyInterface1 >().get() );
+}
+
+UTF_AUTO_TEST_CASE( ObjModel_ProxyImplGuardTests )
+{
+    using namespace bl;
+    using namespace utest;
+
+    /*
+     * tryAcquireRefUnsafe( ... ) transfers its internal lock to the caller's guard only when
+     * BOTH the query succeeded and a guard was supplied, while disconnect( ... ) transfers it
+     * whenever a guard was supplied
+     *
+     * The messaging and the REST processing paths rely on that transfer for mutual exclusion,
+     * and turning the conjunction into a plain 'if( guard )' would leak the proxy lock on
+     * every disconnected acquisition and deadlock the next caller
+     */
+
+    const auto i1 = om::createInstance< MyInterface1 >( clsids::MyObjectImpl() );
+
+    const auto proxy = om::ProxyImpl::createInstance< om::Proxy >();
+
+    /*
+     * Disconnected, with a guard - no reference and no lock transfer
+     */
+
+    {
+        os::mutex_unique_lock g1;
+
+        UTF_REQUIRE( ! proxy -> tryAcquireRef< MyInterface1 >( MyInterface1::iid(), &g1 ) );
+        UTF_REQUIRE( ! g1.owns_lock() );
+    }
+
+    proxy -> connect( i1.get() );
+
+    /*
+     * ~ProxyImplT calls BL_RT_ASSERT and aborts the process if the proxy is still connected,
+     * so the teardown below must survive an early assertion failure
+     */
+
+    BL_SCOPE_EXIT(
+        {
+            proxy -> disconnect();
+        }
+        );
+
+    /*
+     * Connected, but the interface is not supported - still no lock transfer
+     */
+
+    {
+        os::mutex_unique_lock g2;
+
+        UTF_REQUIRE( ! proxy -> tryAcquireRef< TestInterface1234 >( TestInterface1234::iid(), &g2 ) );
+        UTF_REQUIRE( ! g2.owns_lock() );
+    }
+
+    /*
+     * Connected and supported - the reference is handed out and the lock comes with it
+     */
+
+    {
+        os::mutex_unique_lock g3;
+
+        const auto i2 = proxy -> tryAcquireRef< MyInterface1 >( MyInterface1::iid(), &g3 );
+
+        UTF_REQUIRE( i2 );
+        UTF_REQUIRE( g3.owns_lock() );
+        UTF_REQUIRE( om::areEqual( i1, i2 ) );
+
+        /*
+         * The transferred lock really is the proxy's lock, so a second acquirer must block
+         * on it until the guard is released
+         *
+         * The worker touches only the atomic - Boost.Test assertions are not thread safe off
+         * the main thread - and both assertions are made after the join, so a failure can
+         * never leave a joinable thread behind
+         */
+
+        std::atomic< bool > secondAcquireDone( false );
+
+        os::thread worker(
+            [ &proxy, &secondAcquireDone ]() -> void
+            {
+                ( void ) proxy -> tryAcquireRef< MyInterface1 >();
+
+                secondAcquireDone = true;
+            }
+            );
+
+        os::sleep( time::milliseconds( 300 ) );
+
+        const bool doneWhileLocked = secondAcquireDone;
+
+        g3.unlock();
+
+        worker.join();
+
+        const bool doneAfterUnlock = secondAcquireDone;
+
+        UTF_REQUIRE( ! doneWhileLocked );
+        UTF_REQUIRE( doneAfterUnlock );
+    }
+
+    /*
+     * Without a guard nothing is transferred, so two acquisitions in a row on the same
+     * thread must not deadlock
+     */
+
+    UTF_REQUIRE( proxy -> tryAcquireRef< MyInterface1 >() );
+    UTF_REQUIRE( proxy -> tryAcquireRef< MyInterface1 >() );
+
+    /*
+     * disconnect( guard ) transfers the lock unconditionally
+     */
+
+    {
+        os::mutex_unique_lock g4;
+
+        proxy -> disconnect( &g4 );
+
+        UTF_REQUIRE( g4.owns_lock() );
+
+        g4.unlock();
+    }
+
+    UTF_REQUIRE( ! proxy -> tryAcquireRef< MyInterface1 >() );
+
+    proxy -> disconnect();
+}
+
+UTF_AUTO_TEST_CASE( ObjModel_ProxyImplStrongRefTests )
+{
+    using namespace bl;
+    using namespace utest;
+
+    UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
+
+    /*
+     * A strong reference proxy addRefs on connect and releases on disconnect, and a
+     * re-connect must release the previous reference before it takes the new one
+     */
+
+    {
+        auto a = CountedImpl::createInstance< MyInterface1 >();
+        auto b = CountedImpl::createInstance< MyInterface1 >();
+
+        UTF_REQUIRE_EQUAL( 2L, g_liveCounted );
+
+        const auto proxy = om::ProxyImpl::createInstance< om::Proxy >( true /* strongRef */ );
+
+        BL_SCOPE_EXIT(
+            {
+                proxy -> disconnect();
+            }
+            );
+
+        proxy -> connect( a.get() );
+
+        /*
+         * The proxy alone keeps the object alive now
+         *
+         * Note that the same raw pointer must never be connected twice while the proxy holds
+         * the only strong reference - disconnectInternalNoLock() releases before connect()
+         * addRefs - which is why b is kept alive independently across the re-connect below
+         */
+
+        a.reset();
+
+        UTF_REQUIRE_EQUAL( 2L, g_liveCounted );
+        UTF_REQUIRE( proxy -> tryAcquireRef< MyInterface1 >() );
+
+        proxy -> connect( b.get() );
+
+        /*
+         * The re-connect released the previous strong reference
+         */
+
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+
+        proxy -> disconnect();
+
+        b.reset();
+
+        UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
+    }
+
+    UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
+
+    /*
+     * The default proxy is a weak one - connect( ... ) takes no reference, so dropping the
+     * last ObjPtr destroys the object even while the proxy is still connected
+     *
+     * This is safe only because disconnect() on a weak proxy never dereferences m_ref
+     */
+
+    {
+        auto c = CountedImpl::createInstance< MyInterface1 >();
+
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+
+        const auto proxy = om::ProxyImpl::createInstance< om::Proxy >();
+
+        BL_SCOPE_EXIT(
+            {
+                proxy -> disconnect();
+            }
+            );
+
+        proxy -> connect( c.get() );
+
+        UTF_REQUIRE( proxy -> tryAcquireRef< MyInterface1 >() );
+
+        c.reset();
+
+        UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
+    }
+
+    UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
+
+    /*
+     * And symmetrically - a weak proxy must not release on disconnect
+     */
+
+    {
+        auto d = CountedImpl::createInstance< MyInterface1 >();
+
+        const auto proxy = om::ProxyImpl::createInstance< om::Proxy >();
+
+        BL_SCOPE_EXIT(
+            {
+                proxy -> disconnect();
+            }
+            );
+
+        proxy -> connect( d.get() );
+
+        proxy -> disconnect();
+
+        UTF_REQUIRE_EQUAL( 1L, g_liveCounted );
+
+        d.reset();
+
+        UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
+    }
+
+    UTF_REQUIRE_EQUAL( 0L, g_liveCounted );
 }
 
 /************************************************************************
