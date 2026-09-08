@@ -280,6 +280,7 @@ namespace utest
         std::atomic< std::size_t >                                                          loadsForwarded;
         std::atomic< std::size_t >                                                          removesForwarded;
         std::atomic< std::size_t >                                                          connectionDrops;
+        std::atomic< std::size_t >                                                          sessionFlushes;
 
         PipelineFaultCounters()
             :
@@ -287,7 +288,8 @@ namespace utest
             savesForwarded( 0U ),
             loadsForwarded( 0U ),
             removesForwarded( 0U ),
-            connectionDrops( 0U )
+            connectionDrops( 0U ),
+            sessionFlushes( 0U )
         {
         }
     };
@@ -344,6 +346,17 @@ namespace utest
 
         std::string                                                                         authenticationToken;
 
+        /*
+         * When non zero the reactive units of the pipeline are configured with this throttle
+         * limit, so notifyOnNext() starts rejecting values and every unit has to re-offer the
+         * same value later instead of consuming it
+         *
+         * Zero leaves the default (ObservableBase::DEFAULT_THROTTLE_LIMIT), which the fixed
+         * input tree never reaches
+         */
+
+        std::size_t                                                                         subscriberThrottleLimit;
+
         bool                                                                                disablePeerSessionsTracking;
         bool                                                                                forcePeerSessionsTracking;
         bool                                                                                singleFileInput;
@@ -354,6 +367,7 @@ namespace utest
         PipelineFaultOptions()
             :
             withheldChunkIndex( NoWithheldChunk ),
+            subscriberThrottleLimit( 0U ),
             disablePeerSessionsTracking( false ),
             forcePeerSessionsTracking( false ),
             singleFileInput( false ),
@@ -518,10 +532,93 @@ namespace utest
         virtual void flushPeerSessions( SAA_in const bl::uuid_t& peerId ) OVERRIDE
         {
             m_storage -> flushPeerSessions( peerId );
+
+            ++m_options.counters -> sessionFlushes;
         }
     };
 
     typedef bl::om::ObjectImpl< FaultInjectingDataChunkStorageT<> > FaultInjectingDataChunkStorage;
+
+    /**
+     * @brief class FailingCacheStorage - a data chunk storage double whose every write fails
+     *
+     * It exists to test the proxy chunk storage's read through cache population path: a cache
+     * write failure must reach the caller instead of being logged and swallowed
+     *
+     * load() throws 'the chunk does not exist' rather than returning silently, so a cache hit
+     * can never be faked and the population block is always reached
+     */
+
+    template
+    <
+        typename E = void
+    >
+    class FailingCacheStorageT : public bl::data::DataChunkStorage
+    {
+        BL_CTR_DEFAULT( FailingCacheStorageT, protected )
+        BL_DECLARE_OBJECT_IMPL_ONEIFACE_DISPOSABLE( FailingCacheStorageT, bl::data::DataChunkStorage )
+
+    public:
+
+        virtual void dispose() NOEXCEPT OVERRIDE
+        {
+        }
+
+        virtual void load(
+            SAA_in                  const bl::uuid_t&                                       sessionId,
+            SAA_in                  const bl::uuid_t&                                       chunkId,
+            SAA_in                  const bl::om::ObjPtr< bl::data::DataBlock >&            data
+            ) OVERRIDE
+        {
+            BL_UNUSED( sessionId );
+            BL_UNUSED( data );
+
+            BL_THROW(
+                bl::ServerErrorException()
+                    << bl::eh::errinfo_error_code(
+                        bl::eh::errc::make_error_code( bl::eh::errc::no_such_file_or_directory )
+                        )
+                    << bl::eh::errinfo_error_uuid( chunkId ),
+                BL_MSG()
+                    << "Chunk with id "
+                    << chunkId
+                    << " does not exist"
+                );
+        }
+
+        virtual void save(
+            SAA_in                  const bl::uuid_t&                                       sessionId,
+            SAA_in                  const bl::uuid_t&                                       chunkId,
+            SAA_in                  const bl::om::ObjPtr< bl::data::DataBlock >&            data
+            ) OVERRIDE
+        {
+            BL_UNUSED( sessionId );
+            BL_UNUSED( chunkId );
+            BL_UNUSED( data );
+
+            BL_THROW_EC(
+                bl::eh::errc::make_error_code( bl::eh::errc::no_space_on_device ),
+                BL_MSG()
+                    << "Simulated cache write failure"
+                );
+        }
+
+        virtual void remove(
+            SAA_in                  const bl::uuid_t&                                       sessionId,
+            SAA_in                  const bl::uuid_t&                                       chunkId
+            ) OVERRIDE
+        {
+            BL_UNUSED( sessionId );
+            BL_UNUSED( chunkId );
+        }
+
+        virtual void flushPeerSessions( SAA_in const bl::uuid_t& peerId ) OVERRIDE
+        {
+            BL_UNUSED( peerId );
+        }
+    };
+
+    typedef bl::om::ObjectImpl< FailingCacheStorageT<> > FailingCacheStorageImpl;
 
     /**
      * @brief class FaultInjectingBlobServer - the blob server acceptor which remembers its
@@ -631,13 +728,28 @@ namespace utest
         typedef bl::data::DataChunkStorage                                                      DataChunkStorage;
 
         /*
+         * The reactive processing unit wrapper of the unpackager
+         *
+         * The feed callback below receives the wrapper rather than the unit itself because
+         * bindInputConnector() is a member of the wrapper, and chunks must be pushed through
+         * an input connector rather than by calling onChunkArrived() directly
+         */
+
+        typedef bl::om::ObjectImpl
+        <
+            bl::reactive::ProcessingUnit< bl::transfer::FilesUnpackagerUnit, bl::reactive::Observable >,
+            true /* enableSharedPtr */
+        >
+        unpackager_unit_t;
+
+        /*
          * The callback which feeds chunks into a standalone unpackager unit - see
          * runStandaloneUnpackager( ... ) below
          */
 
         typedef bl::cpp::function
         <
-            void ( SAA_inout bl::transfer::FilesUnpackagerUnit& unit )
+            void ( SAA_inout unpackager_unit_t& unit )
         >
         unpackager_feed_callback_t;
 
@@ -675,7 +787,8 @@ namespace utest
             SAA_in_opt          const bl::cpp::void_callback_t&                                 cancelCallback = bl::cpp::void_callback_t(),
             SAA_in_opt          const bl::om::ObjPtr< bl::tasks::ExecutionQueue >&              executionQueue = nullptr,
             SAA_in_opt          const PipelineFaultOptions&                                     faultOptions = PipelineFaultOptions(),
-            SAA_in_opt          const bool                                                      expectNotFoundAfterDelete = true
+            SAA_in_opt          const bool                                                      expectNotFoundAfterDelete = true,
+            SAA_inout_opt       bl::fs::path*                                                   abortedStagingDirOut = nullptr
             )
         {
             using namespace bl;
@@ -834,6 +947,18 @@ namespace utest
                          */
 
                         unitChunksTransmitter -> allowNoSubscribers( true );
+
+                        if( faultOptions.subscriberThrottleLimit )
+                        {
+                            /*
+                             * Force the 'subscriber is full, re-offer the same value later'
+                             * contract of every unit which publishes here
+                             */
+
+                            scanner -> setThrottleLimit( faultOptions.subscriberThrottleLimit );
+                            unitPackager -> setThrottleLimit( faultOptions.subscriberThrottleLimit );
+                            unitChunksTransmitter -> setThrottleLimit( faultOptions.subscriberThrottleLimit );
+                        }
 
                         /*
                          * Start the reactive units in the correct order and wait
@@ -1024,6 +1149,11 @@ namespace utest
                             unitChunksReceiver -> enablePeerSessionsTracking();
                         }
 
+                        if( faultOptions.subscriberThrottleLimit )
+                        {
+                            unitChunksReceiver -> setThrottleLimit( faultOptions.subscriberThrottleLimit );
+                        }
+
                         if( verifyOnly )
                         {
                             const auto unitBlocksReceiver =
@@ -1127,6 +1257,17 @@ namespace utest
                             catch( std::exception& )
                             {
                                 const auto& tmpDir = unitUnpackager -> targetTmpDir();
+
+                                if( abortedStagingDirOut )
+                                {
+                                    /*
+                                     * Record what the unit still owns at this point, so the caller
+                                     * can verify that nothing was left behind once the download
+                                     * has been aborted
+                                     */
+
+                                    *abortedStagingDirOut = tmpDir;
+                                }
 
                                 if( false == tmpDir.empty() && fs::exists( tmpDir ) )
                                 {
@@ -1255,6 +1396,11 @@ namespace utest
                             unitChunksDeleter -> enablePeerSessionsTracking();
                         }
 
+                        if( faultOptions.subscriberThrottleLimit )
+                        {
+                            unitChunksDeleter -> setThrottleLimit( faultOptions.subscriberThrottleLimit );
+                        }
+
                         const auto unitBlocksReceiver =
                                 unit_blocks_receiver_t::createInstance(
                                     context -> dataBlocksPool()
@@ -1346,6 +1492,25 @@ namespace utest
 
             UTF_REQUIRE( CancelType::NoCancel != cancelType );
 
+            /*
+             * The staging directory the unpackager still owned when an aborted download
+             * unwound; it is only recorded for the download cancellations
+             */
+
+            fs::path abortedStagingDir;
+
+            /*
+             * The initial delay of the cancelling timer grows quadratically with the iteration
+             * number (0, 40, 160, 360, 640, 1000, 1440, 1960 ms), so one ladder covers phases
+             * whose durations differ by an order of magnitude: the deleter phase completes in
+             * about 200 ms while the upload and the download phases take about a second each
+             *
+             * A cancel which lands after its phase has already completed is a no-op, so the
+             * first iterations are what keeps the assertion below from becoming vacuous on the
+             * short phase, and the later ones sample progressively later points of the long
+             * ones
+             */
+
             const auto executeOnce = [ & ]( SAA_in const std::size_t iterationNo ) -> void
             {
                 scheduleAndExecuteInParallel(
@@ -1373,12 +1538,15 @@ namespace utest
                                                 return true;
                                             },
                                             time::milliseconds( coinToss ? 100U : 500U ) /* duration */,
-                                            time::milliseconds( iterationNo * 1000 ) /* initDelay */
+                                            time::milliseconds( iterationNo * iterationNo * 40 ) /* initDelay */
                                             );
 
                                         eqLocal -> push_back( om::qi< Task >( timerTaskImpl ) );
                                     },
-                                    eqTopLevel
+                                    eqTopLevel,
+                                    PipelineFaultOptions()          /* faultOptions */,
+                                    true                            /* expectNotFoundAfterDelete */,
+                                    &abortedStagingDir
                                     );
 
                                 eqLocal -> forceFlushNoThrow();
@@ -1388,7 +1556,15 @@ namespace utest
                     );
             };
 
-            const std::size_t retryCount = 5;
+            const std::size_t retryCount = 8;
+
+            /*
+             * The number of iterations in which the cancel actually landed while the pipeline
+             * was still running; without it the whole case can pass with no assertion executed
+             * at all when every cancel arrives after the pipeline has already completed
+             */
+
+            std::size_t observedCancellations = 0U;
 
             for( std::size_t i = 0U; i < retryCount; ++i )
             {
@@ -1406,6 +1582,8 @@ namespace utest
                         );
 
                     UTF_REQUIRE_EQUAL( e.code(), bl::asio::error::operation_aborted );
+
+                    ++observedCancellations;
                 }
                 catch( bl::UnexpectedException& e )
                 {
@@ -1443,7 +1621,50 @@ namespace utest
 
                     UTF_REQUIRE( message );
                     UTF_REQUIRE( std::string::npos != message -> find( "The unpackaged content is incomplete" ) );
+
+                    /*
+                     * The incomplete content report is the other legitimate way an interrupted
+                     * transfer surfaces (see the comment above), so it counts as an observed
+                     * cancellation just like the operation_aborted one
+                     */
+
+                    ++observedCancellations;
                 }
+
+                /*
+                 * Note that nothing else is caught here on purpose - a bl::ServerErrorException
+                 * or any other failure type is not an expected outcome of a cancellation and
+                 * must fail the test rather than be absorbed silently
+                 */
+            }
+
+            UTF_MESSAGE(
+                BL_MSG()
+                    << "Cancellation type "
+                    << static_cast< int >( cancelType )
+                    << ": the cancel landed while the pipeline was running in "
+                    << observedCancellations
+                    << " of "
+                    << retryCount
+                    << " iterations"
+                );
+
+            /*
+             * The whole point of these cases is the abort path; if no iteration ever aborted
+             * then nothing about cancelAll() or the staging cleanup was exercised
+             */
+
+            UTF_REQUIRE( observedCancellations >= 1U );
+
+            if( CancelType::CancelDownload == cancelType )
+            {
+                /*
+                 * The unpackager discards its staging directory when the download is aborted
+                 * (FilesUnpackagerUnit::flushAllPendingTasks) and the pipeline driver removes
+                 * it when the unit itself did not fail; either way nothing may be left behind
+                 */
+
+                UTF_REQUIRE( ! fs::path_exists( abortedStagingDir ) );
             }
         }
 
@@ -1913,6 +2134,51 @@ namespace utest
                                             )
                                         );
 
+                                    {
+                                        /*
+                                         * The load above was a cache miss which had to be served
+                                         * remotely, so the proxy must have populated its read
+                                         * through cache with the chunk - and with the nil session
+                                         * id executeCommand() saves with
+                                         *
+                                         * Nothing else in the suite can tell a proxy which caches
+                                         * from one which never removes a remote round trip
+                                         *
+                                         * Note that this block runs on the calling thread rather
+                                         * than through the queue: a failing UTF assertion throws
+                                         * boost::execution_aborted, which is not derived from
+                                         * std::exception and would escape the NOEXCEPT task
+                                         * handlers instead of failing the case cleanly
+                                         */
+
+                                        const auto fromCache = bl::data::DataBlock::createInstance();
+
+                                        UTF_REQUIRE_NO_THROW(
+                                            syncCacheStorage -> load( uuids::nil(), chunkId, fromCache )
+                                            );
+
+                                        BackendImplTestImpl::verifyData( fromCache );
+
+                                        /*
+                                         * SendChunk and RemoveChunk deliberately do not work with
+                                         * the cache, so a chunk which was only ever saved through
+                                         * the proxy must not be in there
+                                         */
+
+                                        const auto savedOnlyChunkId = uuids::create();
+
+                                        proxyStorage -> save( uuids::nil(), savedOnlyChunkId, dataBlockIn );
+
+                                        const auto probe = bl::data::DataBlock::createInstance();
+
+                                        UTF_REQUIRE_THROW(
+                                            syncCacheStorage -> load( uuids::nil(), savedOnlyChunkId, probe ),
+                                            ServerErrorException
+                                            );
+
+                                        proxyStorage -> remove( uuids::nil(), savedOnlyChunkId );
+                                    }
+
                                     const std::size_t noOfIterations = 10;
 
                                     {
@@ -1974,8 +2240,140 @@ namespace utest
 
                                     g.dismiss();
                                 }
+
+                                {
+                                    /*
+                                     * A server side error must be reported to the caller as it is:
+                                     * reconnect() classifies it before it does any reconnect work
+                                     * and rethrows it unchanged
+                                     *
+                                     * If that classification is dropped or moved below the endpoint
+                                     * retry ladder then an ordinary 'the chunk does not exist'
+                                     * answer from a perfectly healthy blob server turns into a 90
+                                     * seconds per endpoint reconnect storm which eventually
+                                     * surfaces as ServerNoConnectionException
+                                     *
+                                     * Note that reconnect()'s two remaining arms - the
+                                     * operation_aborted rethrow inside the retry loop and the
+                                     * ladder exhaustion - are deliberately not covered here:
+                                     * EndpointCircularIterator's retry budget cannot be shortened
+                                     * at the construction site the proxy uses, so either arm would
+                                     * cost 90+ seconds per endpoint. The cancellation is covered
+                                     * from the other direction by
+                                     * BlobTransfer_ProxyDataChunkStorageCanceledTokenTests
+                                     *
+                                     * This block runs on the calling thread, which is also what
+                                     * makes the recovery check below meaningful: the failing load
+                                     * and the operations which follow it use the very same per
+                                     * thread client of the proxy
+                                     */
+
+                                    const auto missingChunkId = uuids::create();
+                                    const auto probe = bl::data::DataBlock::createInstance();
+
+                                    const auto expectedEC =
+                                        eh::errc::make_error_code( eh::errc::no_such_file_or_directory );
+
+                                    const auto t0 = time::microsec_clock::universal_time();
+
+                                    UTF_REQUIRE_EXCEPTION(
+                                        proxyStorage -> load( uuids::nil(), missingChunkId, probe ),
+                                        ServerErrorException,
+                                        [ &expectedEC ]( const ServerErrorException& ex ) -> bool
+                                        {
+                                            return test::UtfExceptionTools::matchErrorCode( ex, expectedEC );
+                                        }
+                                        );
+
+                                    const auto elapsed = time::microsec_clock::universal_time() - t0;
+
+                                    BL_LOG(
+                                        Logging::debug(),
+                                        BL_MSG()
+                                            << "proxy: the server error was reported in "
+                                            << elapsed.total_milliseconds()
+                                            << " ms"
+                                        );
+
+                                    UTF_REQUIRE( elapsed < time::seconds( 10 ) );
+
+                                    /*
+                                     * The per thread client must not have been torn down or
+                                     * poisoned by the server error
+                                     */
+
+                                    const auto recoveryChunkId = uuids::create();
+
+                                    proxyStorage -> save( uuids::nil(), recoveryChunkId, dataBlockIn );
+
+                                    const auto recovered = bl::data::DataBlock::createInstance();
+
+                                    proxyStorage -> load( uuids::nil(), recoveryChunkId, recovered );
+
+                                    BackendImplTestImpl::verifyData( recovered );
+
+                                    proxyStorage -> remove( uuids::nil(), recoveryChunkId );
+                                }
                             }
                             );
+                    }
+
+                    {
+                        /*
+                         * A cache write failure must reach the caller instead of being logged and
+                         * ignored: a proxy with caching enabled must not keep answering from the
+                         * network when its local data store cache is unavailable
+                         *
+                         * The endpoint is the same live blob server as above, so the remote read
+                         * succeeds and the failure is unambiguously the cache write
+                         *
+                         * The proxy logs the failed cache write as a warning before it re-throws
+                         * it, and that warning is expected here, so the level is pushed globally
+                         * to keep it out of the test log
+                         */
+
+                        const Logging::LevelPusher pushLevel( Logging::LL_ERROR, true /* global */ );
+
+                        const auto failingCache = om::lockDisposable(
+                            FailingCacheStorageImpl::createInstance< DataChunkStorage >()
+                            );
+
+                        const auto failingProxy = om::lockDisposable(
+                            ProxyDataChunkStorageImpl::createInstance< DataChunkStorage >(
+                                endpointSelector,
+                                failingCache,
+                                context -> dataBlocksPool(),
+                                om::qi< TaskControlToken >( controlToken )
+                                )
+                            );
+
+                        const auto cachedChunkId = uuids::create();
+                        const auto dataBlockIn = BackendImplTestImpl::initDataBlock();
+
+                        failingProxy -> save( uuids::nil(), cachedChunkId, dataBlockIn );
+
+                        const auto dataBlockOut = bl::data::DataBlock::createInstance();
+
+                        UTF_REQUIRE_THROW_MESSAGE(
+                            failingProxy -> load( uuids::nil(), cachedChunkId, dataBlockOut ),
+                            SystemException,
+                            "Simulated cache write failure"
+                            );
+
+                        /*
+                         * The chunk must not have been marked as cached when the save failed - the
+                         * insert lives inside the same guarded block, after the save - so a second
+                         * load must fail in exactly the same way instead of being served from a
+                         * cache which never received the bytes
+                         */
+
+                        UTF_REQUIRE_THROW_MESSAGE(
+                            failingProxy -> load( uuids::nil(), cachedChunkId, dataBlockOut ),
+                            SystemException,
+                            "Simulated cache write failure"
+                            );
+
+                        failingProxy -> remove( uuids::nil(), cachedChunkId );
                     }
                 }
             };
@@ -2060,12 +2458,6 @@ namespace utest
             using namespace bl::tasks;
             using namespace bl::transfer;
 
-            typedef om::ObjectImpl
-                <
-                    ProcessingUnit< FilesUnpackagerUnit, Observable >,
-                    true /* enableSharedPtr */
-                > unit_unpackager_t;
-
             const auto context = SendRecvContext::createInstance(
                 SimpleEndpointSelectorImpl::createInstance< EndpointSelector >(
                     cpp::copy( test::UtfArgsParser::host() ),
@@ -2073,8 +2465,8 @@ namespace utest
                     )
                 );
 
-            const auto unit = unit_unpackager_t::createInstance(
-                unit_unpackager_t::SuaError,
+            const auto unit = unpackager_unit_t::createInstance(
+                unpackager_unit_t::SuaError,
                 context,
                 fsmdRO,
                 fs::path( targetDir ),
