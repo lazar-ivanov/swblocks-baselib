@@ -5,6 +5,7 @@
 --log_level=message --run_test=BaseLib_BaseDefsTests
 --log_level=message --run_test=BaseLib_BoxedValueObjectTests
 --log_level=message --run_test=BaseLib_ContainerHelperTests
+--log_level=message --run_test=BaseLib_DataBlockCheckedSettersTests
 --log_level=message --run_test=BaseLib_DataBlockTests
 --log_level=message --run_test=BaseLib_DataEnsureAvailableTests
 --log_level=message --run_test=BaseLib_EhExceptionHooksTests

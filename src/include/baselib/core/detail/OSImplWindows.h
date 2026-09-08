@@ -3148,7 +3148,7 @@ namespace bl
 
                     const auto computerName = tryGetEnvironmentVariable( "COMPUTERNAME" );
 
-                    const auto userDomain =  tryGetEnvironmentVariable( "USERDNSDOMAIN" );
+                    const auto userDomain =  tryGetEnvironmentVariable( "USERDOMAIN" );
 
                     if(
                         ! userDomain ||

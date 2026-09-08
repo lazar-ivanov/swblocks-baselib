@@ -1573,6 +1573,56 @@ UTF_AUTO_TEST_CASE( BaseLib_ThreadPoolTests )
             }
             );
     }
+
+    {
+        /*
+         * The observable state of a disposed pool
+         *
+         * Note that the pool below is deliberately not wrapped in om::lockDisposable( ... )
+         * since this block disposes of it explicitly
+         */
+
+        const auto tp2 = bl::ThreadPoolImpl::createInstance< bl::ThreadPool >(
+            bl::os::AbstractPriority::Normal,
+            2U
+            );
+
+        UTF_REQUIRE_EQUAL( 2U, tp2 -> size() );
+        UTF_REQUIRE_NO_THROW( tp2 -> aioService() );
+
+        tp2 -> dispose();
+
+        /*
+         * disposeInternal( ... ) swaps the threads vector out, so size() must not lie
+         */
+
+        UTF_REQUIRE_EQUAL( 0U, tp2 -> size() );
+
+        /*
+         * The two guards below are the only thing which prevents aioService() from
+         * handing out a destroyed I/O service object
+         */
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            tp2 -> resize( 4U ),
+            bl::UnexpectedException,
+            "Thread pool object has been disposed"
+            );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            tp2 -> aioService(),
+            bl::UnexpectedException,
+            "Thread pool object has been disposed"
+            );
+
+        /*
+         * dispose() must be idempotent and a clean shutdown must not latch an exception
+         */
+
+        UTF_REQUIRE_NO_THROW( tp2 -> dispose() );
+
+        UTF_REQUIRE( ! tp2 -> lastException() );
+    }
 }
 
 /************************************************************************
@@ -4588,7 +4638,12 @@ UTF_AUTO_TEST_CASE( BaseLib_SimpleEndpointSelectorImplTests )
         UTF_REQUIRE( iterator -> canRetry() );
         UTF_REQUIRE( iterator -> canRetryNow() );
 
-        for( std::size_t i = 0; i < 10; ++i )
+        /*
+         * The loop must run past the exhaustion threshold, otherwise the else block
+         * below is never executed
+         */
+
+        for( std::size_t i = 0; i < ( iterator -> maxRetryCount() + 2 ); ++i )
         {
             if( i < ( iterator -> maxRetryCount() - 1 ) )
             {
@@ -4605,6 +4660,22 @@ UTF_AUTO_TEST_CASE( BaseLib_SimpleEndpointSelectorImplTests )
             UTF_REQUIRE_EQUAL( iterator -> host(), "my.host.com" );
             UTF_REQUIRE_EQUAL( iterator -> port(), 1234 );
         }
+
+        /*
+         * The iterator is exhausted now; resetRetry() must make it usable again and it
+         * must also clear the retry time gate - otherwise a transfer which reconnected
+         * successfully would remain gated by the retry timeout forever
+         */
+
+        UTF_REQUIRE( ! iterator -> canRetry() );
+
+        iterator -> resetRetry();
+
+        UTF_REQUIRE( iterator -> canRetry() );
+        UTF_REQUIRE( iterator -> canRetryNow() );
+        UTF_REQUIRE( iterator -> selectNext() );
+
+        UTF_REQUIRE_EQUAL( iterator -> count(), 1U );
     }
 
     {
@@ -4664,7 +4735,14 @@ UTF_AUTO_TEST_CASE( BaseLib_EndpointSelectorImplTests )
             UTF_REQUIRE_EQUAL( iterator -> count(), 4U );
 
 
-            const std::size_t iterationsCount = 10U * BL_ARRAY_SIZE( hosts );
+            /*
+             * The iteration count must exceed the exhaustion threshold, which is
+             * BL_ARRAY_SIZE( hosts ) * ( maxRetryCount() - 1 ), otherwise the else block
+             * below is never executed
+             */
+
+            const std::size_t iterationsCount =
+                BL_ARRAY_SIZE( hosts ) * ( iterator -> maxRetryCount() + 2 );
 
             for( std::size_t i = 0; i < iterationsCount; ++i )
             {
@@ -4686,6 +4764,25 @@ UTF_AUTO_TEST_CASE( BaseLib_EndpointSelectorImplTests )
                     UTF_REQUIRE( ! iterator -> canRetryNow() );
                 }
             }
+
+            /*
+             * The iterator is exhausted now; resetRetry() must zero the retry counters
+             * *and* clear the retry time gate, but it must not rewind the index - that
+             * would silently re-pin the endpoint which has just failed
+             */
+
+            UTF_REQUIRE( ! iterator -> canRetry() );
+
+            iterator -> resetRetry();
+
+            UTF_REQUIRE( iterator -> canRetry() );
+            UTF_REQUIRE( iterator -> canRetryNow() );
+            UTF_REQUIRE( iterator -> selectNext() );
+
+            UTF_REQUIRE_EQUAL(
+                iterator -> host(),
+                hosts[ ( iterationsCount + 1 ) % BL_ARRAY_SIZE( hosts ) ]
+                );
         }
 
         {
@@ -4721,6 +4818,17 @@ UTF_AUTO_TEST_CASE( BaseLib_EndpointSelectorImplTests )
     {
         const auto selector = bl::EndpointSelectorImpl::createInstance( 1234 );
         UTF_REQUIRE_EQUAL( selector -> count(), 0U );
+
+        /*
+         * An empty selector cannot shell out an iterator - chkIndex() in the iterator
+         * constructor is what prevents an out of range read on the entries vector
+         */
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            selector -> createIterator(),
+            bl::UnexpectedException,
+            "Endpoint selector is empty"
+            );
 
         for( std::size_t i = 0; i < BL_ARRAY_SIZE( hosts ); ++i )
         {
@@ -6725,10 +6833,59 @@ UTF_AUTO_TEST_CASE( BaseLib_UniqueHandleTests )
 
 UTF_AUTO_TEST_CASE( BaseLib_LfnPrefixesTests )
 {
+    /*
+     * chk2RemovePrefix( ... ) is pure string manipulation with no platform specific API
+     * and it is called from fs::normalizePathParameterForPrint( ... ) - i.e. from every
+     * filesystem error message - on every platform, so it must be verified everywhere
+     */
+
+    {
+        const auto cbCheckRemovePrefix = [](
+            SAA_in      const std::string&                          input,
+            SAA_in      const std::string&                          expected
+            ) -> void
+        {
+            const auto stripped =
+                bl::fs::detail::WinLfnUtils::chk2RemovePrefix( bl::fs::path( input ) ).string();
+
+            UTF_REQUIRE_EQUAL( expected, stripped );
+
+            /*
+             * Removing the prefix must be idempotent
+             */
+
+            const auto strippedTwice =
+                bl::fs::detail::WinLfnUtils::chk2RemovePrefix( bl::fs::path( stripped ) ).string();
+
+            UTF_REQUIRE_EQUAL( stripped, strippedTwice );
+        };
+
+        cbCheckRemovePrefix( "\\\\?\\c:\\foo", "c:\\foo" );
+        cbCheckRemovePrefix( "\\\\?\\UNC\\server\\share", "\\\\server\\share" );
+
+        /*
+         * The bare prefix and a UNC prefix without its trailing separator - the latter
+         * does not match g_lfnUncPrefix, so only the plain prefix is stripped
+         */
+
+        cbCheckRemovePrefix( "\\\\?\\", "" );
+        cbCheckRemovePrefix( "\\\\?\\UNC", "UNC" );
+
+        /*
+         * A path which merely contains the prefix away from position 0 must be untouched
+         */
+
+        cbCheckRemovePrefix( "c:\\already\\\\?\\inside", "c:\\already\\\\?\\inside" );
+
+        cbCheckRemovePrefix( "relative/path", "relative/path" );
+        cbCheckRemovePrefix( "", "" );
+    }
+
     if( ! bl::os::onWindows() )
     {
         /*
-         * This is Windows only test
+         * The rest of the test covers chk2AddPrefix( ... ), which depends on
+         * path::is_absolute() and is therefore Windows only
          */
 
         return;
@@ -6782,6 +6939,61 @@ UTF_AUTO_TEST_CASE( BaseLib_LfnPrefixesTests )
                 bl::fs::detail::WinLfnUtils::chk2RemovePrefix( bl::cpp::copy( pathUnc ) )
                 ).string();
         UTF_REQUIRE_EQUAL( pathStrUnc, pathStrUncReconstructed );
+    }
+
+    {
+        /*
+         * chk2AddPrefix( ... ) boundaries - note that on Windows fs::path itself routes
+         * through chk2AddPrefix( ... ), so the explicit call below is the second (and
+         * idempotent) application of it
+         */
+
+        const auto cbAddPrefix = []( SAA_in const std::string& input ) -> std::string
+        {
+            return bl::fs::detail::WinLfnUtils::chk2AddPrefix( bl::fs::path( input ) ).string();
+        };
+
+        UTF_REQUIRE(
+            bl::fs::detail::WinLfnUtils::chk2AddPrefix( bl::fs::path() ).empty()
+            );
+
+        UTF_REQUIRE_EQUAL( std::string( "relative\\path" ), cbAddPrefix( "relative\\path" ) );
+
+        UTF_REQUIRE_EQUAL( std::string( "\\\\?\\c:\\foo" ), cbAddPrefix( "\\\\?\\c:\\foo" ) );
+
+        UTF_REQUIRE_EQUAL( std::string( "\\\\?\\c:\\foo" ), cbAddPrefix( "c:\\foo" ) );
+
+        UTF_REQUIRE_EQUAL(
+            std::string( "\\\\?\\UNC\\server\\share" ),
+            cbAddPrefix( "\\\\server\\share" )
+            );
+
+        /*
+         * Three or more leading backslashes are parsed by Boost.Filesystem as a root
+         * directory followed by redundant separators - there is no root name, so such a
+         * path is not absolute and it is returned unchanged
+         *
+         * What matters is that it is never mistaken for a UNC share
+         */
+
+        UTF_REQUIRE_EQUAL( std::string( "\\\\\\weird" ), cbAddPrefix( "\\\\\\weird" ) );
+
+        /*
+         * Adding and then removing the prefix must be lossless for both forms
+         */
+
+        const auto cbCheckRoundTrip = []( SAA_in const std::string& original ) -> void
+        {
+            UTF_REQUIRE_EQUAL(
+                original,
+                bl::fs::detail::WinLfnUtils::chk2RemovePrefix(
+                    bl::fs::detail::WinLfnUtils::chk2AddPrefix( bl::fs::path( original ) )
+                    ).string()
+                );
+        };
+
+        cbCheckRoundTrip( "c:\\foo" );
+        cbCheckRoundTrip( "\\\\server\\share" );
     }
 }
 
@@ -7967,29 +8179,51 @@ UTF_AUTO_TEST_CASE( BaseLib_SafeCoerceToTests )
 
 namespace
 {
-    bool isLocalUserOnWindows()
+    /*
+     * An independent oracle for os::tryGetUserDomain() which is derived from the
+     * documented contract rather than copied from the implementation
+     *
+     * USERDNSDOMAIN wins when it is set; otherwise USERDOMAIN is the user domain
+     * unless it is empty or it is merely the computer name (i.e. a local account)
+     */
+
+    std::string expectedUserDomainFromEnvironment()
     {
         const auto dnsDomain = bl::os::tryGetEnvironmentVariable( "USERDNSDOMAIN" );
 
-        if( ! dnsDomain )
+        if( dnsDomain )
         {
-            const auto computerName = bl::os::tryGetEnvironmentVariable( "COMPUTERNAME" );
+            return *dnsDomain;
+        }
 
-            const auto userDomain = bl::os::tryGetEnvironmentVariable( "USERDNSDOMAIN" );
+        const auto userDomain = bl::os::tryGetEnvironmentVariable( "USERDOMAIN" );
 
-            if(
-                ! userDomain || userDomain -> empty() ||
-                ( computerName && ( *computerName == *userDomain ) )
-                )
-            {
-                BL_LOG(
-                    bl::Logging::debug(),
-                    BL_MSG()
-                        << "Federated login not possible for local users."
-                    );
+        if( ! userDomain || userDomain -> empty() )
+        {
+            return std::string();
+        }
 
-                return true;
-            }
+        const auto computerName = bl::os::tryGetEnvironmentVariable( "COMPUTERNAME" );
+
+        if( computerName && ( *computerName == *userDomain ) )
+        {
+            return std::string();
+        }
+
+        return *userDomain;
+    }
+
+    bool isLocalUserOnWindows()
+    {
+        if( expectedUserDomainFromEnvironment().empty() )
+        {
+            BL_LOG(
+                bl::Logging::debug(),
+                BL_MSG()
+                    << "Federated login not possible for local users."
+                );
+
+            return true;
         }
 
         return false;
@@ -8003,6 +8237,13 @@ UTF_AUTO_TEST_CASE( BaseLib_GetUserDomainTests )
     if( onWindows )
     {
         const auto domain = bl::os::tryGetUserDomain();
+
+        /*
+         * The expectation is computed independently from the environment, so this is a
+         * real oracle and not a comparison of the implementation against a copy of itself
+         */
+
+        UTF_REQUIRE_EQUAL( expectedUserDomainFromEnvironment(), domain );
 
         if( isLocalUserOnWindows() )
         {
@@ -8021,6 +8262,51 @@ UTF_AUTO_TEST_CASE( BaseLib_GetUserDomainTests )
             const auto domainCopy = bl::os::getUserDomain();
 
             UTF_REQUIRE_EQUAL( domain, domainCopy );
+        }
+
+        /*
+         * Now drive the two environment variables directly, so the fall-back path which
+         * must read USERDOMAIN (and not USERDNSDOMAIN again) is actually exercised
+         */
+
+        {
+            const auto dnsDomainSaved = bl::os::tryGetEnvironmentVariable( "USERDNSDOMAIN" );
+            const auto userDomainSaved = bl::os::tryGetEnvironmentVariable( "USERDOMAIN" );
+
+            BL_SCOPE_EXIT(
+                {
+                    if( dnsDomainSaved )
+                    {
+                        bl::os::setEnvironmentVariable( "USERDNSDOMAIN", *dnsDomainSaved );
+                    }
+                    else
+                    {
+                        bl::os::unsetEnvironmentVariable( "USERDNSDOMAIN" );
+                    }
+
+                    if( userDomainSaved )
+                    {
+                        bl::os::setEnvironmentVariable( "USERDOMAIN", *userDomainSaved );
+                    }
+                    else
+                    {
+                        bl::os::unsetEnvironmentVariable( "USERDOMAIN" );
+                    }
+                }
+                );
+
+            bl::os::unsetEnvironmentVariable( "USERDNSDOMAIN" );
+            bl::os::setEnvironmentVariable( "USERDOMAIN", "SENTINELDOMAIN" );
+
+            UTF_REQUIRE_EQUAL( std::string( "SENTINELDOMAIN" ), bl::os::tryGetUserDomain() );
+
+            /*
+             * With both variables unset the account is local and no domain is available
+             */
+
+            bl::os::unsetEnvironmentVariable( "USERDOMAIN" );
+
+            UTF_REQUIRE( bl::os::tryGetUserDomain().empty() );
         }
     }
     else
