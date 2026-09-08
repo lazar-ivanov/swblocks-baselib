@@ -353,7 +353,7 @@ UTF_AUTO_TEST_CASE( TestFilesystemMetadataRejectedMutationsLeaveStoreConsistent 
     const auto makeEntry = [](
         SAA_in          const fsmd_t::EntryType                     type,
         SAA_in          const std::string&                          relPath,
-        SAA_in_opt      const std::string&                          targetPath = bl::str::empty()
+        SAA_in_opt      const std::string&                          targetPath
         )
         -> fsmd_t::EntryInfo
     {
@@ -379,16 +379,16 @@ UTF_AUTO_TEST_CASE( TestFilesystemMetadataRejectedMutationsLeaveStoreConsistent 
 
     const auto wo = fsmd_t::createInstance< bl::data::FilesystemMetadataWO >();
 
-    const auto goodId = wo -> createEntry( makeEntry( fsmd_t::File, "a/b.txt" ) );
+    const auto goodId = wo -> createEntry( makeEntry( fsmd_t::File, "a/b.txt" , bl::str::empty() ) );
 
     /*
      * A duplicate relative path, a path which escapes the tree and a symlink without a target
      * are all rejected - and none of them may consume a slot in the store
      */
 
-    UTF_REQUIRE_THROW( wo -> createEntry( makeEntry( fsmd_t::File, "a/b.txt" ) ), bl::UnexpectedException );
-    UTF_REQUIRE_THROW( wo -> createEntry( makeEntry( fsmd_t::File, "../escape" ) ), bl::UnexpectedException );
-    UTF_REQUIRE_THROW( wo -> createEntry( makeEntry( fsmd_t::Symlink, "a/link" ) ), bl::UnexpectedException );
+    UTF_REQUIRE_THROW( wo -> createEntry( makeEntry( fsmd_t::File, "a/b.txt" , bl::str::empty() ) ), bl::UnexpectedException );
+    UTF_REQUIRE_THROW( wo -> createEntry( makeEntry( fsmd_t::File, "../escape" , bl::str::empty() ) ), bl::UnexpectedException );
+    UTF_REQUIRE_THROW( wo -> createEntry( makeEntry( fsmd_t::Symlink, "a/link" , bl::str::empty() ) ), bl::UnexpectedException );
 
     std::map< bl::uuid_t /* chunkId */, bl::uuid_t /* entryId */ > chunk2entry;
 
@@ -407,9 +407,9 @@ UTF_AUTO_TEST_CASE( TestFilesystemMetadataRejectedMutationsLeaveStoreConsistent 
      * available to a later entry
      */
 
-    const auto goodId2 = wo -> createEntry( makeEntry( fsmd_t::File, "a/link" ) );
+    const auto goodId2 = wo -> createEntry( makeEntry( fsmd_t::File, "a/link" , bl::str::empty() ) );
 
-    const auto goodId3 = wo -> createEntry( makeEntry( fsmd_t::File, "a/c.txt" ) );
+    const auto goodId3 = wo -> createEntry( makeEntry( fsmd_t::File, "a/c.txt" , bl::str::empty() ) );
 
     const auto chunkId2 = wo -> createChunk( goodId3, fsmd_t::ChunkInfo() );
     chunk2entry[ chunkId2 ] = goodId3;
@@ -534,10 +534,10 @@ UTF_AUTO_TEST_CASE( TestFilesystemMetadataRejectedMutationsLeaveStoreConsistent 
 
         const auto wo2 = fsmd_t::createInstance< bl::data::FilesystemMetadataWO >();
 
-        ( void ) wo2 -> createEntry( makeEntry( fsmd_t::File, "a/b.txt" ) );
+        ( void ) wo2 -> createEntry( makeEntry( fsmd_t::File, "a/b.txt" , bl::str::empty() ) );
 
         UTF_REQUIRE_THROW_MESSAGE(
-            wo2 -> createEntry( makeEntry( fsmd_t::File, "a/b.txt" ) ),
+            wo2 -> createEntry( makeEntry( fsmd_t::File, "a/b.txt" , bl::str::empty() ) ),
             bl::UnexpectedException,
             "relPath must be unique"
             );
@@ -643,7 +643,7 @@ UTF_AUTO_TEST_CASE( TestFilesystemMetadataComputeStatistics )
         SAA_in          const fsmd_t::EntryType                     type,
         SAA_in          const std::string&                          relPath,
         SAA_in          const std::uint64_t                         size,
-        SAA_in_opt      const std::string&                          targetPath = bl::str::empty()
+        SAA_in_opt      const std::string&                          targetPath
         )
         -> fsmd_t::EntryInfo
     {
@@ -676,12 +676,12 @@ UTF_AUTO_TEST_CASE( TestFilesystemMetadataComputeStatistics )
 
         UTF_REQUIRE_THROW( om::qi< fsmd_t >( wo ) -> computeStatistics(), bl::UnexpectedException );
 
-        ( void ) wo -> createEntry( makeEntry( fsmd_t::File, "a/f1.txt", 100U ) );
-        ( void ) wo -> createEntry( makeEntry( fsmd_t::File, "a/f2.txt", 200U ) );
-        ( void ) wo -> createEntry( makeEntry( fsmd_t::File, "a/f3.txt", 300U ) );
+        ( void ) wo -> createEntry( makeEntry( fsmd_t::File, "a/f1.txt", 100U , bl::str::empty() ) );
+        ( void ) wo -> createEntry( makeEntry( fsmd_t::File, "a/f2.txt", 200U , bl::str::empty() ) );
+        ( void ) wo -> createEntry( makeEntry( fsmd_t::File, "a/f3.txt", 300U , bl::str::empty() ) );
 
-        ( void ) wo -> createEntry( makeEntry( fsmd_t::Directory, "a/d1", 0U ) );
-        ( void ) wo -> createEntry( makeEntry( fsmd_t::Directory, "a/d2", 0U ) );
+        ( void ) wo -> createEntry( makeEntry( fsmd_t::Directory, "a/d1", 0U , bl::str::empty() ) );
+        ( void ) wo -> createEntry( makeEntry( fsmd_t::Directory, "a/d2", 0U , bl::str::empty() ) );
 
         ( void ) wo -> createEntry( makeEntry( fsmd_t::Symlink, "a/link", 7U, "a/f1.txt" ) );
 
