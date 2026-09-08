@@ -5400,6 +5400,42 @@ UTF_AUTO_TEST_CASE( FsUtils_TestNormalize )
             bl::fs::normalize( "\\\\host\\directoryname" ),
             bl::ArgumentException
             );
+
+        /*
+         * A parent directory reference must be clamped at the root - POSIX defines
+         * "/.." as "/", so the expectations below are spelled out as literals rather
+         * than computed by calling bl::fs::normalize( ... ) again
+         *
+         * Without the clamp "/.." becomes an empty path and everything appended to it
+         * turns the result into a current directory relative path
+         */
+
+        UTF_TEST_NORMALIZE(
+            "/../etc/passwd",
+            bl::fs::path( "/etc/passwd" )
+            );
+
+        UTF_TEST_NORMALIZE(
+            "/..",
+            bl::fs::path( "/" )
+            );
+
+        UTF_TEST_NORMALIZE(
+            "/../../..",
+            bl::fs::path( "/" )
+            );
+
+        UTF_TEST_NORMALIZE(
+            "/a/../../b",
+            bl::fs::path( "/b" )
+            );
+
+        UTF_TEST_NORMALIZE(
+            "/a/./b/../c",
+            bl::fs::path( "/a/c" )
+            );
+
+        UTF_REQUIRE( bl::fs::normalize( "/../etc/passwd" ).is_absolute() );
     }
 
     if( bl::os::onWindows() )
@@ -5475,6 +5511,25 @@ UTF_AUTO_TEST_CASE( FsUtils_TestNormalize )
             std::string( "\\\\?\\D:\\very long path\\.\\another level\\..\\yet another level" ),
             bl::fs::path( "\\\\?\\D:\\very long path\\yet another level" )
             );
+
+        /*
+         * The parent directory reference is clamped at the root here too; note that
+         * the first path element on Windows is the root *name* ( "C:" ) and only
+         * becomes the root path once the root directory element is appended, which is
+         * why the clamp compares against root_path() and not against the seed value
+         */
+
+        UTF_TEST_NORMALIZE(
+            std::string( "C:\\..\\Windows" ),
+            bl::fs::path( "C:\\Windows" )
+            );
+
+        UTF_TEST_NORMALIZE(
+            std::string( "C:\\a\\..\\..\\b" ),
+            bl::fs::path( "C:\\b" )
+            );
+
+        UTF_REQUIRE( bl::fs::normalize( "C:\\..\\Windows" ).is_absolute() );
     }
 }
 
@@ -7583,6 +7638,45 @@ UTF_AUTO_TEST_CASE( BaseLib_TextFilesEncodingTests )
     TestFileEncoding( textFile, asciiContent, TextFileEncoding::Utf16LE, asciiContent.length() * 2 + 2 );
     TestFileEncoding( textFile, utf8Content, TextFileEncoding::Utf16LE, 12 );
     TestFileEncoding( textFile, emptyContent, TextFileEncoding::Utf16LE, 2 );
+
+    /*
+     * writeTextFile( ... ) is documented to create the parent path if it doesn't exist,
+     * but every case above writes into a directory which already exists
+     */
+
+    const auto nestedDir = tmpDir.path() / "created" / "by" / "writeTextFile";
+    const auto nested = nestedDir / "note.txt";
+
+    writeTextFile( nested, "nested", TextFileEncoding::Utf8_NoPreamble );
+
+    UTF_REQUIRE( bl::fs::is_directory( nestedDir ) );
+    UTF_REQUIRE_EQUAL( readTextFile( nested ), std::string( "nested" ) );
+
+    /*
+     * No preamble was written, so the file holds the content and nothing else
+     */
+
+    UTF_REQUIRE_EQUAL( bl::fs::file_size( nested ), 6U );
+
+    /*
+     * The default: arm of the encoding switch; TextFileEncoding::Unknown is the only
+     * unreachable enumerator, since Ascii and Utf8_NoPreamble are the same value
+     *
+     * Note that the target file is opened (and therefore truncated) before the switch,
+     * so these calls leave 'textFile' empty
+     */
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        writeTextFile( textFile, "x", static_cast< TextFileEncoding >( 0 ) ),
+        bl::UnexpectedException,
+        "Invalid TextFileEncoding"
+        );
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        writeTextFile( textFile, "x", static_cast< TextFileEncoding >( 4242 ) ),
+        bl::UnexpectedException,
+        "Invalid TextFileEncoding"
+        );
 }
 
 /************************************************************************
@@ -8360,6 +8454,56 @@ UTF_AUTO_TEST_CASE( FsUtils_SafeFileStreamWrapperTests )
             }
             UTF_REQUIRE ( i == 2*N );
         }
+    }
+
+    /*
+     * flushAndCheck() must make the content visible to another reader while the writer
+     * is still open - the destructor deliberately discards flush and close errors, so
+     * this is the only way a caller can learn that the bytes really reached the file
+     *
+     * All the round trips above read the file back only after the writer was destroyed,
+     * so the implicit flush there would hide a missing flush in flushAndCheck()
+     */
+
+    {
+        const auto filePath = tmpPath / "flush-and-check.txt";
+
+        bl::fs::SafeOutputFileStreamWrapper outputFile( filePath );
+        outputFile.stream() << "flushed-content";
+
+        UTF_REQUIRE_NO_THROW( outputFile.flushAndCheck() );
+
+        bl::fs::SafeInputFileStreamWrapper inputFile( filePath );
+        auto& is = inputFile.stream();
+
+        std::string readBack;
+        std::getline( is, readBack );
+
+        UTF_REQUIRE_EQUAL( readBack, std::string( "flushed-content" ) );
+    }
+
+    /*
+     * A failed stream must be reported as an error instead of being discarded
+     *
+     * Note that the stream is created with exceptions( badbit | failbit ) set, so the
+     * mask has to be cleared first - otherwise flush() would throw std::ios_base::failure
+     * from its sentry before flushAndCheck() ever gets to its own check
+     */
+
+    {
+        const auto badPath = tmpPath / "flush-and-check-failure.txt";
+
+        bl::fs::SafeOutputFileStreamWrapper badFile( badPath );
+        auto& os = badFile.stream();
+
+        os.exceptions( std::ios::goodbit );
+        os.setstate( std::ios::failbit );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            badFile.flushAndCheck(),
+            bl::UnexpectedException,
+            "Failed to write the contents of a file"
+            );
     }
 }
 
