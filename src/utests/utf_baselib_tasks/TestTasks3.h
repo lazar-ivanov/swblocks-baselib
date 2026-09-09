@@ -1112,6 +1112,82 @@ UTF_AUTO_TEST_CASE( Tasks_RetryableWrapperTaskCancelDuringRetrySleepTests )
     }
 }
 
+UTF_AUTO_TEST_CASE( Tasks_TimerTaskCancelBeforeStartTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    /*
+     * The deterministic form of the race the case above can only hit intermittently: the timer
+     * task is cancelled while it is still in the Created state, before the queue starts it
+     *
+     * requestCancel() marks the task and then returns without calling cancelTask(), because that
+     * is only done for running tasks, and the generic "cancelled before it started" abort in
+     * scheduleNothrow() is bypassed for timer tasks by scheduleEvenIfAlreadyCanceled(). The
+     * pending cancellation must therefore be honoured when the timer is armed, or the task sleeps
+     * its full init delay
+     */
+
+    const auto initDelay = time::seconds( 30 );
+
+    /*
+     * The aborted wait completes in well under a second, so this bound leaves a large margin
+     * for a heavily loaded machine while staying far below initDelay
+     *
+     * Asserting only 'elapsed < initDelay' would also accept a cancellation which is honoured
+     * just before the sleep runs out, so a partial regression would pass unnoticed
+     */
+
+    const auto maxCancelDelay = time::seconds( 5 );
+
+    std::atomic< bool > callbackRan( false );
+
+    const auto eq = om::lockDisposable(
+        ExecutionQueueImpl::createInstance< ExecutionQueue >( ExecutionQueue::OptionKeepAll )
+        );
+
+    const auto task = om::qi< Task >(
+        SimpleTimerTask::createInstance(
+            [ &callbackRan ]() -> bool
+            {
+                callbackRan = true;
+
+                return false;
+            },
+            cpp::copy( initDelay )                          /* duration */,
+            cpp::copy( initDelay )                          /* initDelay */
+            )
+        );
+
+    const auto started = time::microsec_clock::universal_time();
+
+    task -> requestCancel();
+
+    eq -> push_back( task );
+
+    eq -> flushNoThrowIfFailed();
+
+    const auto elapsed = time::microsec_clock::universal_time() - started;
+
+    /*
+     * The cancellation aborted the armed wait instead of letting it run out
+     */
+
+    UTF_REQUIRE( elapsed < maxCancelDelay );
+
+    /*
+     * The timer callback belongs to the elapsed sleep, which never happened
+     */
+
+    UTF_REQUIRE( ! callbackRan.load() );
+
+    /*
+     * An aborted timer wait completes the task without an exception of its own
+     */
+
+    UTF_REQUIRE( ! task -> exception() );
+}
+
 namespace
 {
     /**

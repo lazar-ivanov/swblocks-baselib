@@ -890,7 +890,7 @@ UTF_AUTO_TEST_CASE( AsyncV2_ReadWriteStorageRoutingTests )
 
         const auto newOpState = [ &asyncStorage, &sessionId ](
             SAA_in              const OperationId                   operationId,
-            SAA_in              const uuid_t&                       chunkId
+            SAA_in              const bl::uuid_t&                   chunkId
             )
             -> om::ObjPtr< AsyncOperationStateImpl >
         {

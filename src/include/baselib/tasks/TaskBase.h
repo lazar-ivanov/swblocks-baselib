@@ -1815,6 +1815,27 @@ namespace bl
                 resetTimer( eq );
 
                 scheduleTimerInternal( getInitDelay() );
+
+                /*
+                 * Honour a cancellation which was requested before the task started
+                 *
+                 * requestCancelInternal() only calls cancelTask() for a task which is already
+                 * running, so a request which arrived while this task was still in the Created
+                 * state has marked it and returned without touching the timer - which did not
+                 * exist yet. The generic "cancelled before it started" abort in scheduleNothrow()
+                 * does not apply either, because scheduleEvenIfAlreadyCanceled() below returns
+                 * true for timer tasks. Without the check here the wait just armed would run to
+                 * completion and the task would finish only after its full init delay
+                 *
+                 * This runs under the same lock as requestCancel(), so the request is either
+                 * entirely before the wait was armed (and is seen here) or entirely after it
+                 * (and reaches cancelTask() directly, as the state is Running by then)
+                 */
+
+                if( isCanceled() )
+                {
+                    cancelTask();
+                }
             }
 
             virtual bool scheduleEvenIfAlreadyCanceled() OVERRIDE

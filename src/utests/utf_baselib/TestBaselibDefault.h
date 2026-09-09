@@ -2105,10 +2105,18 @@ UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessDetachedStdioTests )
         args.push_back( "-c" );
         /*
          * Note: fd 1 is duplicated into fd 3 before it gets redirected to the output file
+         *
+         * The descriptors are compared against /dev/null with test -ef (same device and inode)
+         * rather than resolved with readlink, because only Linux exposes them as symbolic links:
+         * /dev/fd is procfs there, but on macOS it is the fdesc filesystem, whose entries are the
+         * opened objects themselves (sockets, pipes, devices), so readlink fails on all of them.
+         * /dev/fd is the portable spelling - on Linux it is a symbolic link to /proc/self/fd
          */
 
         args.push_back(
-            "exec 3>&1; readlink /proc/self/fd/0 /proc/self/fd/3 /proc/self/fd/2 > " + outputFile.string()
+            "exec 3>&1; for fd in 0 3 2; do"
+            " if [ /dev/fd/$fd -ef /dev/null ]; then echo /dev/null; else echo other; fi;"
+            " done > " + outputFile.string()
             );
 
         const auto proc = bl::os::createProcess( args, bl::os::ProcessCreateFlags::DetachProcess );
@@ -2483,23 +2491,60 @@ UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessDescriptorHygieneTests )
         std::getline( *out, line );
     };
 
+    /*
+     * The count is taken from the kernel's view of the child's own descriptors, which is
+     * spelled differently per platform: procfs on Linux and the fdesc filesystem on macOS,
+     * which reports one entry more than Linux does for the same set of open descriptors
+     *
+     * 'wc -l' is padded with leading blanks by the BSD implementation but not the GNU one,
+     * so the blanks are stripped to keep the expected value identical in both cases
+     */
+
+#ifdef __linux__
+
+    /*
+     * 0, 1, 2 and the directory descriptor 'ls' itself opens
+     */
+
+    const std::string fdDirectory = "/proc/self/fd";
+    const std::string expectedCount = "4";
+
+#else
+
+    /*
+     * 0, 1, 2, the directory descriptor 'ls' itself opens and the one the fdesc filesystem
+     * exposes while that directory is being read
+     */
+
+    const std::string fdDirectory = "/dev/fd";
+    const std::string expectedCount = "5";
+
+#endif
+
+    /*
+     * The script is passed as an argument vector rather than as a single command line because
+     * the command line form is split by the library and does not preserve the single quotes
+     * which 'tr' needs around its operand
+     */
+
+    std::vector< std::string > args;
+    args.push_back( "bash" );
+    args.push_back( "-c" );
+    args.push_back( "ls " + fdDirectory + " | wc -l | tr -d ' '" );
+
     for( std::size_t i = 0U; i < 5U; ++i )
     {
         line.clear();
 
         const auto proc = bl::os::createProcess(
-            "bash -c \"ls /proc/self/fd | wc -l\"",
+            args,
             bl::os::ProcessCreateFlags::RedirectStdout | bl::os::ProcessCreateFlags::WaitToFinish,
             callbackIos
             );
 
         UTF_REQUIRE( proc );
 
-        /*
-         * 0, 1, 2 and the directory descriptor 'ls' itself opens
-         */
-
-        UTF_CHECK_EQUAL( line, std::string( "4" ) );
+        UTF_CHECK_EQUAL( line, expectedCount );
     }
 }
 

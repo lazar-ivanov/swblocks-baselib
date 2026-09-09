@@ -2107,7 +2107,7 @@ namespace
             }
 
             virtual bool peerConnectedNotify(
-                SAA_in                  const uuid_t&                                   peerId,
+                SAA_in                  const bl::uuid_t&                               peerId,
                 SAA_in_opt              tasks::CompletionCallback&&                     completionCallback
                 )
                 OVERRIDE
@@ -2139,7 +2139,7 @@ namespace
             }
 
             virtual bool peerDisconnectedNotify(
-                SAA_in                  const uuid_t&                                   peerId,
+                SAA_in                  const bl::uuid_t&                               peerId,
                 SAA_in_opt              tasks::CompletionCallback&&                     completionCallback
                 )
                 OVERRIDE
@@ -5166,7 +5166,7 @@ UTF_AUTO_TEST_CASE( IO_BlockTransferClientCommandStateTests )
 
         const auto chkRow = [ & ](
             SAA_in              const CommandId                                  commandId,
-            SAA_in              const uuid_t&                                    chunkId,
+            SAA_in              const bl::uuid_t&                                chunkId,
             SAA_in              data::DataBlock*                                 dataRawPtr,
             SAA_in              const bool                                       expected
             )

@@ -4729,7 +4729,7 @@ namespace
 
         const auto fsmdRO = om::qi< FilesystemMetadataRO >( fsmd );
 
-        std::unordered_map< fs::path, uuid_t > entryIds;
+        std::unordered_map< fs::path, bl::uuid_t > entryIds;
 
         {
             const auto allEntries = fsmdRO -> queryAllEntries();
@@ -4761,7 +4761,7 @@ namespace
         UTF_REQUIRE_EQUAL( entryIds.size(), expectedCount );
         UTF_REQUIRE_EQUAL( fsmdRO -> queryEntriesCount(), expectedCount );
 
-        const auto cbEntryId = [ &entryIds ]( SAA_in const fs::path& relPath ) -> uuid_t
+        const auto cbEntryId = [ &entryIds ]( SAA_in const fs::path& relPath ) -> bl::uuid_t
         {
             const auto pos = entryIds.find( relPath );
 

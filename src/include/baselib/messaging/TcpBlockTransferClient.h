@@ -2111,7 +2111,10 @@ namespace bl
                 }
                 catch( eh::system_error& e )
                 {
-                    if( asio::error::not_connected != e.code() )
+                    if(
+                        asio::error::not_connected != e.code() &&
+                        asio::error::invalid_argument != e.code()
+                        )
                     {
                         throw;
                     }
@@ -2120,6 +2123,9 @@ namespace bl
                      * The other side has closed the socket already; the address stays unknown
                      * and the registration (if it ever happens) is treated as coming from the
                      * same host
+                     *
+                     * getpeername reports this as ENOTCONN on Linux and as EINVAL on macOS and
+                     * the other BSDs
                      */
                 }
 

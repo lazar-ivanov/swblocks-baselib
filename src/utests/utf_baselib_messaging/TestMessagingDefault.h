@@ -3930,7 +3930,7 @@ UTF_AUTO_TEST_CASE( IO_MessagingClientObjectDispatchTcpDispatcherTests )
             const auto probeSink = om::lockDisposable(
                 MessagingClientBlockDispatchFromCallback::createInstance< MessagingClientBlockDispatch >(
                     [](
-                        SAA_in          const uuid_t&                                   peerId,
+                        SAA_in          const bl::uuid_t&                               peerId,
                         SAA_in          const om::ObjPtr< data::DataBlock >&            dataBlock
                         ) -> void
                     {
@@ -5090,7 +5090,7 @@ UTF_AUTO_TEST_CASE( IO_MessagingMessageProcessingOutboundQueueTests )
                     )
                 );
 
-            const auto cbCreateRequest = [ & ]( SAA_in const uuid_t& messageId ) -> om::ObjPtr< BrokerProtocol >
+            const auto cbCreateRequest = [ & ]( SAA_in const bl::uuid_t& messageId ) -> om::ObjPtr< BrokerProtocol >
             {
                 auto brokerProtocol = utest::TestMessagingUtils::createBrokerProtocolMessage(
                     MessageType::AsyncRpcDispatch,
@@ -7744,13 +7744,13 @@ UTF_AUTO_TEST_CASE( IO_MessagingClientBackendProcessingTests )
 
     std::atomic< std::size_t > calls( 0U );
 
-    uuid_t seenPeer = uuids::nil();
+    bl::uuid_t seenPeer = uuids::nil();
     om::ObjPtr< data::DataBlock > seen;
 
     const auto sink = om::lockDisposable(
         MessagingClientBlockDispatchFromCallback::createInstance< MessagingClientBlockDispatch >(
             [ & ](
-                SAA_in              const uuid_t&                                   peerId,
+                SAA_in              const bl::uuid_t&                               peerId,
                 SAA_in              const om::ObjPtr< data::DataBlock >&            dataBlock
                 ) -> void
             {
@@ -9420,8 +9420,8 @@ UTF_AUTO_TEST_CASE( IO_MessagingProxyBackendTests )
                         os::sleep( time::seconds( 6L ) );
 
                         {
-                            std::unordered_set< uuid_t > activeClients;
-                            std::unordered_set< uuid_t > pendingPrune;
+                            std::unordered_set< bl::uuid_t > activeClients;
+                            std::unordered_set< bl::uuid_t > pendingPrune;
 
                             proxyBackend -> getCurrentState( &activeClients, &pendingPrune );
 
@@ -9479,7 +9479,7 @@ UTF_AUTO_TEST_CASE( IO_MessagingProxyBackendTests )
                                 );
 
                             {
-                                std::unordered_set< uuid_t > activeClients;
+                                std::unordered_set< bl::uuid_t > activeClients;
 
                                 proxyBackend -> getCurrentState( &activeClients, nullptr /* pendingPrune */ );
 
@@ -9493,8 +9493,8 @@ UTF_AUTO_TEST_CASE( IO_MessagingProxyBackendTests )
 
                             for( std::size_t retries = 0U; retries < maxProbeRetries; ++retries )
                             {
-                                std::unordered_set< uuid_t > activeClients;
-                                std::unordered_set< uuid_t > pendingPrune;
+                                std::unordered_set< bl::uuid_t > activeClients;
+                                std::unordered_set< bl::uuid_t > pendingPrune;
 
                                 proxyBackend -> getCurrentState( &activeClients, &pendingPrune );
 
@@ -10812,7 +10812,7 @@ UTF_AUTO_TEST_CASE( MessagingAsyncDispatcherWrapperContractTests )
     {
         return MessagingClientBlockDispatchFromCallback::createInstance< MessagingClientBlockDispatch >(
             [](
-                SAA_in              const uuid_t&                                   peerId,
+                SAA_in              const bl::uuid_t&                               peerId,
                 SAA_in              const om::ObjPtr< data::DataBlock >&            dataBlock
                 ) -> void
             {

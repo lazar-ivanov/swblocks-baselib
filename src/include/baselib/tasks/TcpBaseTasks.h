@@ -2496,11 +2496,18 @@ namespace bl
                 }
                 catch( eh::system_error& e )
                 {
-                    if( asio::error::not_connected == e.code() )
+                    if(
+                        asio::error::not_connected == e.code() ||
+                        asio::error::invalid_argument == e.code()
+                        )
                     {
                         /*
                          * Expected error in case other side closed the socket,
                          * just return here to avoid logging the exception
+                         *
+                         * Both codes mean the same thing here: getpeername reports ENOTCONN on
+                         * Linux for a socket whose connection is already gone, but EINVAL on
+                         * macOS and the other BSDs
                          */
 
                         return;

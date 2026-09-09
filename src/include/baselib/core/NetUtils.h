@@ -130,7 +130,20 @@ namespace bl
                     }
                     catch( eh::system_error& e )
                     {
-                        if( asio::error::not_connected != e.code() )
+                        /*
+                         * The connection is already gone, so the placeholder below is returned
+                         * instead of failing the caller; getpeername reports this as ENOTCONN on
+                         * Linux and as EINVAL on macOS and the other BSDs
+                         *
+                         * Note that EINVAL is deliberately not retried in safeRemoteEndpoint( ... )
+                         * above - the retry loop there is for a spurious ENOTCONN on a socket which
+                         * is still live, and retrying a genuinely dead one would only sleep
+                         */
+
+                        if(
+                            asio::error::not_connected != e.code() &&
+                            asio::error::invalid_argument != e.code()
+                            )
                         {
                             throw;
                         }

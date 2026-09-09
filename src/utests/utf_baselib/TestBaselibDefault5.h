@@ -466,7 +466,16 @@ UTF_AUTO_TEST_CASE( BaseLib_NamedMutexRobustnessTests )
     sa.sa_handler = &noopSignalHandler;
     sa.sa_flags = 0;
 
-    UTF_REQUIRE_EQUAL( 0, ::sigemptyset( &sa.sa_mask ) );
+    /*
+     * The parentheses around ::sigemptyset are required and must not be removed
+     *
+     * On macOS <signal.h> declares sigemptyset() as a function but then shadows it with a
+     * function-like macro, so a plain ::sigemptyset( ... ) would expand to ::(*(&sa.sa_mask) = 0, 0)
+     * and fail to compile with 'expected unqualified-id'; wrapping the name in parentheses
+     * suppresses the macro expansion and calls the real POSIX function on all platforms
+     */
+
+    UTF_REQUIRE_EQUAL( 0, ( ::sigemptyset )( &sa.sa_mask ) );
     UTF_REQUIRE_EQUAL( 0, ::sigaction( SIGUSR1, &sa, &oldSa ) );
 
     BL_SCOPE_EXIT(
@@ -2174,7 +2183,12 @@ UTF_AUTO_TEST_CASE( BaseLib_OSChildStdinEpipeTests )
     sa.sa_handler = SIG_IGN;
     sa.sa_flags = 0;
 
-    UTF_REQUIRE_EQUAL( 0, ::sigemptyset( &sa.sa_mask ) );
+    /*
+     * The parentheses around ::sigemptyset are required and must not be removed
+     * (see the note on the other ::sigemptyset call site above)
+     */
+
+    UTF_REQUIRE_EQUAL( 0, ( ::sigemptyset )( &sa.sa_mask ) );
     UTF_REQUIRE_EQUAL( 0, ::sigaction( SIGPIPE, &sa, &oldSa ) );
 
     BL_SCOPE_EXIT(

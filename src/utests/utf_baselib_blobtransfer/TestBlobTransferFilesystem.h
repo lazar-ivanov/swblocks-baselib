@@ -549,7 +549,7 @@ namespace
             now
             );
 
-        std::vector< uuid_t > chunkIds;
+        std::vector< bl::uuid_t > chunkIds;
         std::vector< om::ObjPtr< data::DataBlock > > chunkBlocks;
 
         cs::crc_32_type fileCrc;
@@ -1436,7 +1436,7 @@ UTF_AUTO_TEST_CASE( BlobTransfer_UnpackagerRejectsLateChunksTests )
 
         om::ObjPtr< data::FilesystemMetadataRO > fsmdRO;
         std::vector< LateChunkFile > files;
-        uuid_t emptyEntryId = uuids::nil();
+        bl::uuid_t emptyEntryId = uuids::nil();
 
         buildLateChunkPackage( fsmdRO, files, emptyEntryId, noOfFiles, chunkSize );
 
@@ -1542,7 +1542,7 @@ UTF_AUTO_TEST_CASE( BlobTransfer_UnpackagerRejectsLateChunksTests )
 
         om::ObjPtr< data::FilesystemMetadataRO > fsmdRO;
         std::vector< LateChunkFile > files;
-        uuid_t emptyEntryId = uuids::nil();
+        bl::uuid_t emptyEntryId = uuids::nil();
 
         buildLateChunkPackage( fsmdRO, files, emptyEntryId, 1U /* noOfFiles */, chunkSize );
 
