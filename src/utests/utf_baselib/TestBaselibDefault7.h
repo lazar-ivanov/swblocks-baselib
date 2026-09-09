@@ -135,14 +135,19 @@ UTF_AUTO_TEST_CASE( BaseLib_DataBlockReadWriteCodecTests )
      * leaves both the size and the capacity untouched
      */
 
-    const auto small = DataBlock::createInstance( 8U );
+    /*
+     * Not named 'small' - rpcndr.h, which the Windows SDK headers pull in, defines 'small'
+     * as a macro for 'char', so the declaration does not compile on Windows
+     */
 
-    small -> reset();
+    const auto smallBlock = DataBlock::createInstance( 8U );
 
-    small -> write( "12345678", 8U );
+    smallBlock -> reset();
+
+    smallBlock -> write( "12345678", 8U );
 
     UTF_REQUIRE_THROW_MESSAGE(
-        small -> write( "9", 1U ),
+        smallBlock -> write( "9", 1U ),
         BufferTooSmallException,
         resolveMessage(
             BL_MSG()
@@ -155,8 +160,8 @@ UTF_AUTO_TEST_CASE( BaseLib_DataBlockReadWriteCodecTests )
             )
         );
 
-    UTF_REQUIRE_EQUAL( 8U, small -> size() );
-    UTF_REQUIRE_EQUAL( 8U, small -> capacity() );
+    UTF_REQUIRE_EQUAL( 8U, smallBlock -> size() );
+    UTF_REQUIRE_EQUAL( 8U, smallBlock -> capacity() );
 
     /*
      * The length prefix and the payload are two separate capacity checked writes, so the
@@ -165,22 +170,22 @@ UTF_AUTO_TEST_CASE( BaseLib_DataBlockReadWriteCodecTests )
      * a dangling length prefix of a text which was never written
      */
 
-    small -> reset();
+    smallBlock -> reset();
 
-    UTF_REQUIRE_THROW( small -> write( std::string( 6U, 'x' ) ), BufferTooSmallException );
+    UTF_REQUIRE_THROW( smallBlock -> write( std::string( 6U, 'x' ) ), BufferTooSmallException );
 
-    UTF_REQUIRE_EQUAL( 0U, small -> size() );
+    UTF_REQUIRE_EQUAL( 0U, smallBlock -> size() );
 
     /*
      * The same for the const char* overload, and the largest text which still fits is
      * the positive control that the check is not off by the size of the prefix
      */
 
-    UTF_REQUIRE_THROW( small -> write( "xxxxxx" ), BufferTooSmallException );
+    UTF_REQUIRE_THROW( smallBlock -> write( "xxxxxx" ), BufferTooSmallException );
 
-    UTF_REQUIRE_EQUAL( 0U, small -> size() );
+    UTF_REQUIRE_EQUAL( 0U, smallBlock -> size() );
 
-    UTF_REQUIRE_NO_THROW( small -> write( std::string( 4U, 'x' ) ) );
+    UTF_REQUIRE_NO_THROW( smallBlock -> write( std::string( 4U, 'x' ) ) );
 
-    UTF_REQUIRE_EQUAL( 8U, small -> size() );
+    UTF_REQUIRE_EQUAL( 8U, smallBlock -> size() );
 }

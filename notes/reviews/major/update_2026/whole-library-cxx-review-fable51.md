@@ -576,6 +576,20 @@ These were established by reading `OSImplWindows.h` on Linux; none can be compil
 - `OSImplWindows.h:3530-3565`, deleter `:227-242`: reading the indeterminate `HKEY` is UB and, if non-null, `RegCloseKey( garbage )` fails inside the `noexcept` deleter → `BL_RIP_MSG` on the common "key not found" path; `location` tests the constant `HKEY_CURRENT_USER` instead of `currentUser`. Fix: `= NULL`, attach only on `ERROR_SUCCESS`, `currentUser ? :`.
 
 ### W-4 Handle leak, `LSA_UNICODE_STRING`, handle inheritance race, junction print name — Low-Medium
+
+> **Resolved 2026-09-08 on a Windows host.** (a), (b) and (d) are fixed and verified; see the W-4
+> entry in `whole-library-cxx-review-fable51-decisions.md` and the "Outcome (2026-09-08)" section of
+> `notes/plans/issues/windows-only-residual-findings-deferral.md`. **(c), the handle inheritance
+> race, is deferred and CLOSED as a recorded risk acceptance** in
+> `notes/plans/issues/windows-handle-inheritance-race-deferral.md` — it is a decided item, not an
+> open to-do, and should not be re-reported as a new finding.
+>
+> **Erratum in the (c) bullet below:** "compatible with the existing `STARTUPINFOEXW`" is wrong. The
+> function builds a plain `STARTUPINFOW`; there is no `STARTUPINFOEX`,
+> `InitializeProcThreadAttributeList` or `EXTENDED_STARTUPINFO_PRESENT` anywhere in
+> `OSImplWindows.h`. The attribute list therefore requires converting the whole spawn path, which is
+> why (c) was mis-sized alongside its three siblings and why it was ultimately deferred.
+
 - `:1555-1585`: `pi.hThread` closed only on the `assignNewJob` path (leak per spawn when already in a job or detached). Fix: attach unconditionally.
 - `:2047-2053`: `LSA_UNICODE_STRING::Buffer` treated as NUL-terminated and non-NULL. Fix: `std::wstring( Buffer, Length / sizeof( WCHAR ) )` with a NULL check.
 - `:1687-1708`, `:898-939`, `:1536-1548`: `_wfopen` handles are inheritable (no `N` mode flag) and `bInheritHandles=TRUE` inherits every inheritable handle, so two concurrent `createProcess` calls cross-inherit pipe ends (a reader sees EOF only when the other child exits). Fix: `N` flag; `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` (compatible with the existing `STARTUPINFOEXW`).

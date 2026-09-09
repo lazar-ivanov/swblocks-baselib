@@ -106,9 +106,17 @@ UTF_AUTO_TEST_CASE( BaseLib_OSStdioReadWriteErrorTests )
     /*
      * The real error branch - reading from a handle which was opened for writing only
      *
-     * Note that the errno value is libc specific (EBADF on glibc), so only its presence
-     * is asserted here, together with the message which distinguishes this branch from
-     * the end of file one above
+     * Note that the errno value is platform specific, so only its presence is asserted
+     * here, together with the message which distinguishes this branch from the end of file
+     * one above
+     *
+     * The branch is decided by std::ferror and NOT by errno - that is the whole point of
+     * the distinction, and it is why this case is meaningful on both platforms. glibc sets
+     * EBADF here, so the reported cause is EBADF; the Windows CRT sets no errno at all for
+     * a stream level failure (measured with vc143 / UCRT: std::fread on a stream opened
+     * "wb" returns 0 with errno == 0 and std::ferror == 1), so the generic io_error is
+     * reported instead. Before that fix, testing errno made Windows misreport this genuine
+     * error as "Reading past the end of file" carrying EPERM
      */
 
     {
@@ -133,6 +141,14 @@ UTF_AUTO_TEST_CASE( BaseLib_OSStdioReadWriteErrorTests )
                     "An error occurred while reading from a file with std::fread"
                     )
                 );
+
+            /*
+             * And the cause is the platform's own where it has one, the generic io_error
+             * where it has not - never the EPERM of the end-of-file branch, which is what
+             * this case would have seen on Windows before the discriminator was fixed
+             */
+
+            UTF_REQUIRE( EPERM != *errNo );
         }
     }
 

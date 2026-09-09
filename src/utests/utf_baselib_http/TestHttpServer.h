@@ -2363,6 +2363,61 @@ UTF_AUTO_TEST_CASE( BaseLib_HttpServerDerivedConnectionCapTest )
         server_t::getDerivedMaxConnections( 1024ULL * 1024U * 1024U * 1024U, 1024U, 0U ),
         1U
         );
+
+    /*
+     * The rows above inject their terms. This one uses the real values of the host, which
+     * is what proves the Windows arrangement end to end: os::getFileDescriptorSoftLimit()
+     * returns zero there ("not applicable" - Windows bounds handles by available kernel
+     * memory rather than by a per-process soft limit), so the descriptor term is skipped
+     * and the cap is decided by the RAM term and the ceiling alone
+     *
+     * Stated as an equality against the same arithmetic with the descriptor term forced to
+     * zero, so it is a real assertion on Windows and a tautology-free one on UNIX, where
+     * the limit is non-zero and the two sides genuinely differ unless the limit is large
+     */
+
+    const auto physicalMemorySize = os::getPhysicalMemorySize();
+    const auto fileDescriptorSoftLimit = os::getFileDescriptorSoftLimit();
+
+    UTF_REQUIRE( 0U != physicalMemorySize );
+
+    if( os::onWindows() )
+    {
+        UTF_REQUIRE_EQUAL( 0U, fileDescriptorSoftLimit );
+
+        UTF_REQUIRE_EQUAL(
+            server_t::getDerivedMaxConnections( 1024U * 1024U, physicalMemorySize, fileDescriptorSoftLimit ),
+            server_t::getDerivedMaxConnections( 1024U * 1024U, physicalMemorySize, 0U /* skipped */ )
+            );
+    }
+    else
+    {
+        UTF_REQUIRE( 0U != fileDescriptorSoftLimit );
+    }
+
+    /*
+     * And whatever the host, the derived cap is a usable number rather than zero or the
+     * ceiling by accident
+     */
+
+    const auto derived = server_t::getDerivedMaxConnections(
+        1024U * 1024U,
+        physicalMemorySize,
+        fileDescriptorSoftLimit
+        );
+
+    UTF_MESSAGE(
+        BL_MSG()
+            << "Derived maximum connections on this host is "
+            << derived
+            << " from physical memory "
+            << physicalMemorySize
+            << " and descriptor soft limit "
+            << fileDescriptorSoftLimit
+        );
+
+    UTF_REQUIRE( 0U != derived );
+    UTF_REQUIRE( derived <= 4096U );
 }
 
 UTF_AUTO_TEST_CASE( BaseLib_HttpServerConnectionTimeoutAndCapTest )

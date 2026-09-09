@@ -26,6 +26,34 @@ across before starting. The two instruction files the earlier sections of the de
 (`windows-only-residual-findings-instructions.md` and the O-3/O-4 companion) are gone for the same
 reason — the deferral record itself carries everything they contained.
 
+## 0. Errata (found by the Windows session of 2026-09-08)
+
+Three statements below are wrong. They are corrected here rather than edited in place, so that the
+text a previous session worked from stays legible.
+
+1. **Item 13(c) — "compatible with the `STARTUPINFOEXW` the function already builds".** The function
+   builds a plain `STARTUPINFOW`; there is no `STARTUPINFOEX`, no
+   `InitializeProcThreadAttributeList` and no `EXTENDED_STARTUPINFO_PRESENT` anywhere in
+   `OSImplWindows.h`. Passing `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` therefore means converting the
+   whole spawn path, not adding an argument, which is why 13(c) was **deferred and closed as a
+   recorded risk acceptance** in
+   `notes/plans/issues/windows-handle-inheritance-race-deferral.md` rather than implemented. That
+   record carries the decision, the full implementation design and the triggers which should reopen
+   it; 13(c) is no longer work this handoff asks for.
+2. **Item 10 and section 4b — "the round-trip scaffold is at
+   `src/utests/utf_baselib/TestBaselibDefault.h:1577`".** There is no argv scaffold at that line;
+   `:1577` is inside the multi-line logging tests. The scaffold that exists is the `echo-argv.bat`
+   harness of `BaseLib_OSCreateProcessArgvQuotingWindowsTests` in `TestBaselibDefault5.h`, and a
+   batch harness cannot serve as the oracle in any case (see item 10's outcome in the deferral
+   record): `cmd.exe` applies its own parsing rather than `CommandLineToArgvW`'s, and its `shift`
+   loop cannot represent an empty argument. The oracle used instead is `::CommandLineToArgvW` itself.
+3. **Section 4b, item 5a — "the T061 oracle ... already ha[s] cases in the tree".** It does, and the
+   oracle is correctly derived from the contract, but on a host which is not domain joined
+   (`USERDNSDOMAIN` unset, `USERDOMAIN` equal to `COMPUTERNAME`) the expected answer is the empty
+   string and the **pre-fix implementation also returned the empty string** — so that case cannot
+   tell a fixed implementation from a broken one. A discriminating case has to drive the three
+   environment variables itself; `BaseLib_OSUserDomainEnvironmentWindowsTests` does.
+
 ---
 
 ## 1. What is already done (do not redo, do not re-review)

@@ -20,9 +20,9 @@ below are left as they were written, as the statement of the question.
 | Section | Decision taken | State |
 |---|---|---|
 | 1 — D-01, cancellation and the retry loop | change the semantics: a cancel latch in `RetryableWrapperTaskT` itself, not in `ForwarderTaskBase` or `SimpleTimerTaskT` | **done**, Linux |
-| 2.1, 2.2 — the two Windows fixes | run the suite once on a Windows host | **open**, needs a Windows host; handed off in section 4b of `notes/plans/issues/whole-library-windows-residuals-instructions.md` |
-| 2.3 — `ComUtils.h` / `WindowsShellShortcut.h` | apply the include fixes | **source change made**, uncompiled; verification is part of the same Windows handoff |
-| 2.4 — the seven never-compiled Windows test tasks | compile and run once, repairing test code only | **open**, same handoff |
+| 2.1, 2.2 — the two Windows fixes | run the suite once on a Windows host | **done**, Windows, 2026-09-08; 2.1 needed a new discriminating case (see section 2) |
+| 2.3 — `ComUtils.h` / `WindowsShellShortcut.h` | apply the include fixes | **done**, Windows, 2026-09-08; the three includes are exactly sufficient |
+| 2.4 — the seven never-compiled Windows test tasks | compile and run once, repairing test code only | **done**, Windows, 2026-09-08; two test-only repairs, one production defect recorded |
 | 3.1 — five unmapped exception types | map all five | **done** |
 | 3.2 — the rejected `OpenSSL` category | carry the name and the numeric value as data; do not reject the document, and do not teach `data/eh` about `crypto/` | **done** |
 | 3.3 — eight dropped `errinfo_*` fields | serialize all eight, redacting the two which disclose the server's internals | **done** |
@@ -83,6 +83,43 @@ should observe a cancel that arrives between attempts.
 ---
 
 ## 2. Fixed but unverified on this platform
+
+> **Resolved on a Windows host, 2026-09-08.** All four sub-sections below are closed. The full
+> outcome, with the verbatim pre-fix failures, is the "Outcome (2026-09-08)" section of
+> `notes/plans/issues/windows-only-residual-findings-deferral.md` (items 15, 16 and 17 there).
+> In summary:
+>
+> - **2.1 `USERDOMAIN`** - execution-proven, but **not** by the case this section names. The T061
+>   oracle is correctly derived from the contract, yet on a host which is not domain joined
+>   (`USERDNSDOMAIN` unset, `USERDOMAIN` equal to `COMPUTERNAME`) the expected answer is the empty
+>   string and the **pre-fix implementation also returned the empty string** - so that case cannot
+>   tell a fixed implementation from a broken one. A new case,
+>   `BaseLib_OSUserDomainEnvironmentWindowsTests`, drives the three environment variables itself and
+>   pins every leg including the discriminating one.
+> - **2.2 the merged-redirect assertion** - execution-proven green, no abort, by
+>   `BaseLib_OSCreateProcessRedirectedMergedTests` (2/2) and
+>   `BaseLib_OSCreateProcessMergedWithFileCallbackTests` (8/8).
+> - **2.3 `ComUtils.h` / `WindowsShellShortcut.h`** - the three includes applied on Linux are
+>   exactly sufficient; T373's `_WIN32` block compiles both standalone and
+>   `BaseLib_PublicHeadersAreSelfContainedAndInstantiable` is 34/34 on both toolchains.
+> - **2.4 the seven never-compiled tasks** - compiled and run. The first repair is why `utf_baselib`
+>   did not build on Windows **at all**: a local named `small` does not compile, because `rpcndr.h`
+>   defines `small` as a macro for `char`. The second uncovered a real cross-platform production
+>   defect - `os::fread( )` and `os::fwrite( )` distinguished a transfer error from a short transfer
+>   at end of file using `errno`, which the Windows CRT does not set for this case (measured:
+>   `errno == 0`, `ferror( ) == 1`), so a genuine error was reported as "Reading past the end of
+>   file". It was first recorded rather than fixed, then **fixed on the owner's instruction** as item
+>   18 of the deferral record: one `detail::getStdioTransferErrorCode( )` in
+>   `OSImplPlatformCommon.h` now carries the rule for `fread`, `fwrite` and
+>   `stdio_file_device_base::checkStream( )` alike - the last of which already held the correct
+>   idiom, which is how the convention was identified. UNIX behaviour is unchanged by construction;
+>   **that half still needs a Linux run.** T253's dropped hive assertion and T058's disabled argv
+>   case are both live again.
+>
+> Two statements in this section are errata, corrected in the outcome record: the claim that the
+> existing cases were sufficient for 2.1 (above), and the W-1 argv "scaffold" the companion handoff
+> cites - a batch harness cannot be the oracle, because `cmd.exe` applies its own parsing rather
+> than `CommandLineToArgvW`'s and its `shift` loop cannot represent an empty argument.
 
 Two defects are **Windows-only**. They were confirmed by source inspection and each carries a
 regression test, but `OSImplWindows.h` is `#error`-guarded to `_WIN32` and neither the Linux clang

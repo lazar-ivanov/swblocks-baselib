@@ -651,7 +651,8 @@ namespace bl
             /*
              * errno must be cleared before the call and captured immediately after it -
              * otherwise an unrelated failure earlier on this thread would be reported as
-             * the cause of a legitimate short read at the end of the file
+             * the cause of this one. Note that whether there is a failure at all is decided
+             * by std::ferror and not by errno; see getStdioTransferErrorCode( )
              */
 
             errno = 0;
@@ -663,27 +664,27 @@ namespace bl
                 fileptr.get()
                 );
 
-            const auto errorCode = errno;
+            const auto errorCode = detail::getStdioTransferErrorCode( fileptr.get(), errno );
 
             if( bytesRead != sizeInBytes )
             {
                 if( errorCode )
                 {
                     /*
-                     * This is a real error and errno is set; just report it
+                     * The stream carries an error indicator, so this is a real failure
                      */
 
                     BL_THROW_EC(
-                        eh::error_code( errorCode, eh::generic_category() ),
+                        errorCode,
                         BL_MSG()
                             << "An error occurred while reading from a file with std::fread"
                         );
                 }
 
                 /*
-                 * If the errno is not set that means we have attempted to read
-                 * pas the end of file and this was a partial read; throw some
-                 * system error (e.g. operation_not_permitted)
+                 * No error indicator means we have attempted to read past the end of file
+                 * and this was a partial read; throw some system error
+                 * (e.g. operation_not_permitted)
                  */
 
                  BL_CHK_EC(
@@ -715,23 +716,23 @@ namespace bl
                 fileptr.get()
                 );
 
-            const auto errorCode = errno;
+            const auto errorCode = detail::getStdioTransferErrorCode( fileptr.get(), errno );
 
             if( bytesWritten != sizeInBytes )
             {
                 if( errorCode )
                 {
                     BL_THROW_EC(
-                        eh::error_code( errorCode, eh::generic_category() ),
+                        errorCode,
                         BL_MSG()
                             << "An error occurred while writing to a file with std::fwrite"
                         );
                 }
 
                 /*
-                 * If the errno is not set that means something has failed but std::fwrite
-                 * doesn't provide the actual error code; throw some system error
-                 * (e.g. operation_not_permitted)
+                 * A short write with no error indicator on the stream is not something
+                 * std::fwrite is documented to produce and there is no code to report;
+                 * throw some system error (e.g. operation_not_permitted)
                  */
 
                  BL_CHK_EC(

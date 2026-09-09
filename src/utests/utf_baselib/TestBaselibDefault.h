@@ -8875,15 +8875,20 @@ UTF_AUTO_TEST_CASE( BaseLib_TextFilesEncodingTests )
         {
             const std::string content( smallContents[ i ] );
 
-            const auto small = tmpDir.path() / ( "small" + std::to_string( i ) + ".txt" );
+            /*
+             * Not named 'small' - rpcndr.h, which the Windows SDK headers pull in, defines
+             * 'small' as a macro for 'char', so the declaration does not compile on Windows
+             */
 
-            writeTextFile( small, content, TextFileEncoding::Utf8_NoPreamble );
+            const auto smallPath = tmpDir.path() / ( "small" + std::to_string( i ) + ".txt" );
 
-            UTF_REQUIRE_EQUAL( bl::fs::file_size( small ), content.size() );
+            writeTextFile( smallPath, content, TextFileEncoding::Utf8_NoPreamble );
+
+            UTF_REQUIRE_EQUAL( bl::fs::file_size( smallPath ), content.size() );
 
             TextFileEncoding enc = TextFileEncoding::Unknown;
 
-            const auto text = readTextFile( small, &enc );
+            const auto text = readTextFile( smallPath, &enc );
 
             UTF_REQUIRE_EQUAL( text, content );
             UTF_REQUIRE_EQUAL( enc, TextFileEncoding::Ascii );
@@ -10543,23 +10548,14 @@ UTF_AUTO_TEST_CASE( BaseLib_OSRegistryValueTest )
             );
 
         /*
-         * PRODUCTION DEFECT - NOT COVERED HERE
+         * The hive named by a failing diagnostic, and the handle lifetime on both failing
+         * paths, are covered by BaseLib_OSRegistryHiveDiagnosticsWindowsTests in
+         * TestBaselibDefault5.h
          *
-         * OSImplWindows.h:3590 reads
-         *
-         *     const auto location = HKEY_CURRENT_USER ? "HKEY_CURRENT_USER" : "HKEY_LOCAL_MACHINE";
-         *
-         * i.e. it tests a non-null CONSTANT rather than the currentUser argument which the
-         * line immediately above it uses ( :3588 ), so 'location' is always
-         * "HKEY_CURRENT_USER" and every HKLM diagnostic names the wrong hive - which sends
-         * the reader of a support ticket to the wrong place. The one token fix is to test
-         * 'currentUser' instead
-         *
-         * No assertion is added for it here: reaching that diagnostic under HKLM requires
-         * an open or a value read which fails with something OTHER than
-         * ERROR_FILE_NOT_FOUND ( which is returned as nullptr rather than thrown ), and
-         * there is no way to produce one deterministically without administrator rights or
-         * assumptions about machine specific registry content
+         * Reaching the diagnostic under HKEY_LOCAL_MACHINE needs an open which fails with
+         * something other than ERROR_FILE_NOT_FOUND ( which is returned as nullptr rather
+         * than thrown ), and HKEY_LOCAL_MACHINE\SECURITY is readable by SYSTEM only, which
+         * makes it deterministic without administrator rights
          */
     }
     #endif

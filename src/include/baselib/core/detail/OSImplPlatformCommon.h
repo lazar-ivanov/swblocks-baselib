@@ -195,6 +195,42 @@ namespace bl
 
         namespace detail
         {
+            /**
+             * @brief Maps the outcome of a short std::fread / std::fwrite into an error code
+             *
+             * Returns a falsy (default constructed) code when the transfer came up short but
+             * the stream carries no error, i.e. the end of the file was reached.
+             *
+             * std::ferror is the discriminator the C standard mandates for this: a short
+             * transfer sets the error indicator only for a genuine failure. errno cannot play
+             * that role, because it is not required to be set and the Windows CRT does not set
+             * it for a stream level failure - measured with vc143 / UCRT, std::fread on a
+             * stream opened "wb" returns 0 with errno == 0 and std::ferror == 1, while glibc
+             * happens to set EBADF. Testing errno therefore reports a real error as an end of
+             * file condition on Windows.
+             *
+             * std::ferror is a flag and not a code, so the cause still comes from the captured
+             * errno where the platform provided one, and from the generic io_error where it did
+             * not. The errno must be captured by the caller immediately after the transfer, so
+             * that an unrelated earlier failure on this thread cannot be reported as the cause.
+             */
+
+            inline eh::error_code getStdioTransferErrorCode(
+                SAA_in          std::FILE*                      fileptr,
+                SAA_in          const int                       capturedErrno
+                )
+            {
+                if( 0 == std::ferror( fileptr ) )
+                {
+                    return eh::error_code();
+                }
+
+                return capturedErrno ?
+                    eh::error_code( capturedErrno, eh::generic_category() )
+                    :
+                    eh::errc::make_error_code( eh::errc::io_error );
+            }
+
             /*
              * Implement Boost I/O streams source and sink for std::FILE, so we can
              * instantiate streambuf for std::FILE in platform / OS agnostic way
@@ -237,22 +273,16 @@ namespace bl
                 void checkStream()
                 {
                     /*
-                     * Note that std::ferror returns a flag and not an error code, so the real
-                     * cause has to come from errno; when it is not available the generic
-                     * io_error is reported instead of the flag value (which glibc returns as
-                     * 1, i.e. EPERM, for every stream failure)
+                     * getStdioTransferErrorCode( ) carries the rule - std::ferror decides
+                     * whether there is an error at all and the captured errno, or the generic
+                     * io_error where the platform did not provide one, carries the cause
                      */
 
-                    if( std::ferror( m_fileptr ) )
-                    {
-                        const auto errorCode = errno;
+                    const auto errorCode = getStdioTransferErrorCode( m_fileptr, errno );
 
-                        BL_CHK_EC_NM(
-                            errorCode ?
-                                eh::error_code( errorCode, eh::generic_category() )
-                                :
-                                eh::errc::make_error_code( eh::errc::io_error )
-                            );
+                    if( errorCode )
+                    {
+                        BL_CHK_EC_NM( errorCode );
                     }
                 }
 
