@@ -528,6 +528,29 @@ UTF_FIXTURE_TEST_CASE( TestManifestMissingOrNullPropertyIsRejected, ManifestFixt
             std::exception
             );
     }
+
+    {
+        /*
+         * A well formed JSON document whose top level value is not an object - the check
+         * for it is what keeps read() from calling as_object() on it and throwing whatever
+         * the JSON library happens to throw instead of a user friendly manifest error
+         */
+
+        const auto notAnObject = ( m_dir.path() / "not-an-object.mf" ).string();
+
+        {
+            bl::fs::SafeOutputFileStreamWrapper outputFile( notAnObject );
+            auto& os = outputFile.stream();
+
+            json::saveToStream( json::value( json::array() ), os, true /* prettyPrint */ );
+        }
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            ManifestFactory::read( notAnObject ),
+            bl::UnexpectedException,
+            "does not contain a JSON object"
+            );
+    }
 }
 
 UTF_AUTO_TEST_CASE( TestToolchainMatch )

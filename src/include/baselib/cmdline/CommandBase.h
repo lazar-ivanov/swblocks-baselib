@@ -194,17 +194,32 @@ namespace bl
             {
                 BL_NOEXCEPT_BEGIN()
 
-                if( m_commandsLookup.erase( command.getCommandName() ) != 0 )
+                const auto& name = command.getCommandName();
+
+                if( m_commandsLookup.erase( name ) != 0 )
                 {
                     /*
+                     * The vector entry is located by the same key which was just erased from
+                     * the map rather than by pointer identity, so removing a different object
+                     * which carries a registered name cannot leave the two structures out of
+                     * step and trip the assertion below
+                     *
                      * Destructors are called in strictly reverse order, hence it's most likely
                      * that the command being removed will be right at the end.
                      */
 
-                    const auto iter = utils::find_last( m_commands.begin(), m_commands.end(), &command );
-                    if( iter != m_commands.end() )
+                    const auto iter = std::find_if(
+                        m_commands.rbegin(),
+                        m_commands.rend(),
+                        [ &name ]( SAA_in const this_type* registered ) -> bool
+                        {
+                            return registered -> getCommandName() == name;
+                        }
+                        );
+
+                    if( iter != m_commands.rend() )
                     {
-                        m_commands.erase( iter );
+                        m_commands.erase( std::next( iter ).base() );
                     }
                 }
 
@@ -267,12 +282,32 @@ namespace bl
             {
                 BL_NOEXCEPT_BEGIN()
 
-                if( m_optionsLookup.erase( option.getName() ) != 0 )
+                const auto& name = option.getName();
+
+                if( m_optionsLookup.erase( name ) != 0 )
                 {
-                    const auto iter = utils::find_last( m_options.begin(), m_options.end(), &option );
-                    if( iter != m_options.end() )
+                    /*
+                     * The vector entry is located by the same key which was just erased from
+                     * the map rather than by pointer identity, so removing a different object
+                     * which carries a registered name cannot leave the two structures out of
+                     * step and trip the assertion below
+                     *
+                     * Destructors are called in strictly reverse order, hence it's most likely
+                     * that the option being removed will be right at the end.
+                     */
+
+                    const auto iter = std::find_if(
+                        m_options.rbegin(),
+                        m_options.rend(),
+                        [ &name ]( SAA_in const OptionBase* registered ) -> bool
+                        {
+                            return registered -> getName() == name;
+                        }
+                        );
+
+                    if( iter != m_options.rend() )
                     {
-                        m_options.erase( iter );
+                        m_options.erase( std::next( iter ).base() );
                     }
                 }
 
@@ -775,9 +810,21 @@ namespace bl
 
                     if( rootCmd != this )
                     {
+                        /*
+                         * The hiding is a scoped presentation tweak on an option which is owned
+                         * by the root command and outlives this call, so it has to be undone
+                         * even when rendering the root's help throws
+                         */
+
                         hideNonApplicableParentOptions();
+
+                        BL_SCOPE_EXIT(
+                            {
+                                unhideNonApplicableParentOptions();
+                            }
+                            );
+
                         oss << rootCmd -> getOptionsHelp();
-                        unhideNonApplicableParentOptions();
                     }
                 }
 

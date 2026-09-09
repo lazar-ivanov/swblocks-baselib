@@ -175,6 +175,73 @@ These compile only here; nothing about them has ever run.
   `BL_UNUSED` and `defaultPermissions()` returns 0. No change expected — confirm it compiles and
   that the mutex tests are green.
 
+## 4b. Test-enhancement residuals (added 2026-09-08)
+
+Source: item 5 of
+`notes/reviews/major/update_2026/whole-library-cxx-test-enhancement-outstanding-issues-plan.md`.
+These are independent of items 10-14 above and can be done in any order relative to them; they all
+live in `utf_baselib`, so run them in the same session to share the build.
+
+### Item 5a — execute the two inspection-only fixes
+
+Two one-token fixes in `src/include/baselib/core/detail/OSImplWindows.h` were made on Linux by
+inspection and have never been compiled or run:
+
+- `:3151`, `tryGetUserDomain()` — the `USERDOMAIN` leg. It is the Windows twin of the UNIX
+  local-vs-domain user check; the UNIX twin already carries the same shape.
+- `:1402`, `BL_ASSERT( ! callbackIos || out )` — the merged-redirect branch needs only the merged
+  pipe, the ios stream being optional.
+
+Both already have cases in the tree which were written blind and have never executed:
+
+- the T061 oracle, `expectedUserDomainFromEnvironment()` in
+  `src/utests/utf_baselib/TestBaselibDefault.h`;
+- the T059 file-callback block of `BaseLib_OSCreateProcessRedirectedMergedTests`.
+
+**Verification.** Run `utf_baselib` on `vc143` and `ccl16`, debug and release. Report whether each
+case passed as written, and quote verbatim any assertion which had to change together with the
+reason. Do not weaken an assertion to make it pass — if the fix is wrong, say so.
+
+### Item 5b — self-containment of `ComUtils.h` and `WindowsShellShortcut.h` (source change already made)
+
+`src/utests/utf_baselib/TestPublicHeaderInstantiation.cpp` (T373) enforces that every public header
+compiles standalone; its `_WIN32` block (`:57-59`, `:308-323`) arms the check for these two headers
+on Windows only, so it has never run.
+
+The three includes the plan called for **were added on Linux on 2026-09-08 and are uncompiled**:
+
+- `src/include/baselib/core/specific/ComUtils.h` gained `<baselib/core/BaseIncludes.h>` — it uses
+  `BL_THROW`, `SystemException` and `cpp::SafeUniquePtr`;
+- `src/include/baselib/core/specific/WindowsShellShortcut.h` gained `<baselib/core/FsUtils.h>` and
+  `<baselib/core/Logging.h>`.
+
+**Verification.** Build `utf_baselib` on Windows and confirm the `_WIN32` block of T373 compiles
+both headers standalone. If either still needs a further include, add it in the same shape (a
+`baselib/core/...` include above the platform headers) and say which and why.
+
+### Item 5c — the seven Windows-only test tasks which have never compiled
+
+Plan 13.4.1: T054's Windows arm, T058, T060, T061, T062, T253, T357. Compile and run each once, and
+repair **test code only** — a production change found necessary here is out of scope; record it and
+report it instead.
+
+Two of them are additionally gated on items 10-14 of this same handoff:
+
+- T253's dropped HKLM hive assertion, and
+- T058's disabled argv case (`src/utests/utf_baselib/TestBaselibDefault5.h:649`,
+  `productionArgvQuotingIsFixed = false`)
+
+become live once W-1 and W-3 are fixed. Do those two after item 10 and item 11 respectively, and
+flip the `productionArgvQuotingIsFixed` flag in the same change as the fix rather than separately.
+
+### Records to update for 4b
+
+- The outcome table of `notes/plans/issues/windows-only-residual-findings-deferral.md`, in the same
+  shape as the rest.
+- Section 2 of
+  `notes/reviews/major/update_2026/whole-library-cxx-test-enhancement-outstanding-issues.md`, which
+  is where these three items are catalogued.
+
 ## 5. Build and test matrix to run
 
 - `utf_baselib` (items 10-13 and the `RobustNamedMutex` half of 14) and `utf_baselib_http`

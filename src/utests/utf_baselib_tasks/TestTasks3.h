@@ -890,17 +890,14 @@ UTF_AUTO_TEST_CASE( Tasks_RetryableWrapperTaskCancelTests )
     using namespace bl::tasks;
 
     /*
-     * Cancellation is dropped on every wrapped task swap: ForwarderTaskBase::requestCancel()
-     * forwards to the *current* target only, the wrapper holds no cancel latch of its own,
-     * every task the factory produces starts with m_cancelRequested == false, and
-     * SimpleTimerTaskT::run() returns time::neg_infin *without* an exception when it is
-     * cancelled - so continuationTask()'s 'if( m_wrappedTask -> exception() ) return nullptr'
-     * guard never fires and a fresh work task is created anyway
+     * Cancellation stops the retry loop: RetryableWrapperTaskT keeps a cancel latch of its own
+     * because ForwarderTaskBase::requestCancel() only reaches the task which happens to be
+     * wrapped at the time of the call, while the operation this task represents is the whole
+     * retry sequence
      *
-     * A cancelled RetryableWrapperTask therefore runs the full maxRetryCount, which is the
-     * documented current behavior asserted below. It is a production defect worth raising
-     * separately - a cancelled retryable task keeps hammering a remote endpoint - and if it
-     * is ever fixed this case will fail loudly and must be updated deliberately
+     * Once the latch is set continuationTask() creates no further work task no matter which
+     * task is wrapped - the work task which has just failed, or the retry sleep timer, whose
+     * SimpleTimerTaskT::run() returns time::neg_infin *without* an exception when cancelled
      *
      * Tasks_RetryableWrapperTaskCancelStressTests covers the lock ordering race and asserts
      * only isFailed(), which holds whether or not cancellation stops the retry loop; this
@@ -961,39 +958,158 @@ UTF_AUTO_TEST_CASE( Tasks_RetryableWrapperTaskCancelTests )
     const auto elapsed = time::microsec_clock::universal_time() - started;
 
     /*
-     * The constructor's own taskFactory() call is the first one, so a full run through the
-     * retry loop calls the factory exactly maxRetryCount times
+     * The constructor's own taskFactory() call is the first one; the cancellation request can
+     * race with a retry which was already decided, so at most one more work task is created
+     * and never the full maxRetryCount the uncancelled loop would run
      */
 
-    UTF_REQUIRE_EQUAL( maxRetryCount, factoryCalls.load() );
+    UTF_REQUIRE( factoryCalls.load() <= 2U );
 
     UTF_REQUIRE( task -> isFailed() );
 
     /*
-     * The final exception is the work task's own error and not a bare operation_aborted
-     * swallowed by the retry sleep timer
+     * The final exception is the work task's own error when the cancellation landed on the
+     * work task, or operation_aborted when it landed on the retry sleep timer, which
+     * completes without an exception of its own
      */
 
-    UTF_REQUIRE_THROW_MESSAGE(
-        cpp::safeRethrowException( task -> exception() ),
-        bl::UnexpectedException,
-        "consistent error"
-        );
+    bool exceptionAsExpected = false;
+
+    try
+    {
+        cpp::safeRethrowException( task -> exception() );
+    }
+    catch( bl::UnexpectedException& e )
+    {
+        exceptionAsExpected = str::contains( eh::diagnostic_information( e ), "consistent error" );
+    }
+    catch( bl::SystemException& e )
+    {
+        exceptionAsExpected = ( asio::error::operation_aborted == e.code() );
+    }
+
+    UTF_REQUIRE( exceptionAsExpected );
 
     /*
-     * ( maxRetryCount - 1 ) retry sleeps of retryTimeout each have to have elapsed, i.e. 8 s
-     *
-     * The single requestCancel() above can land on the timer of the first sleep rather than
-     * on the work task and truncate that one sleep, so the tolerance below is one full
-     * retryTimeout plus a second of slack for a loaded machine. This still fails loudly if
-     * cancellation were ever to terminate the retry loop, in which case elapsed would be
-     * close to zero rather than merely a couple of seconds short
+     * Only the retry sleep which was already in flight when the cancellation landed can still
+     * elapse, so the whole run finishes in well under the ( maxRetryCount - 1 ) sleeps of
+     * retryTimeout each which the uncancelled loop would take
      */
 
-    const auto expectedMinimum =
-        retryTimeout * static_cast< int >( maxRetryCount - 1U ) - retryTimeout - time::seconds( 1 );
+    UTF_REQUIRE( elapsed < retryTimeout * static_cast< int >( maxRetryCount - 1U ) );
+}
 
-    UTF_REQUIRE( elapsed >= expectedMinimum );
+UTF_AUTO_TEST_CASE( Tasks_RetryableWrapperTaskCancelDuringRetrySleepTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    /*
+     * The companion of Tasks_RetryableWrapperTaskCancelTests above which pins the case the
+     * forwarding requestCancel() alone cannot handle: the cancellation lands while the retry
+     * sleep timer is the wrapped task
+     *
+     * The timer is cancelled and completes without an exception, so nothing but the wrapper's
+     * own cancel latch can stop the loop from creating the next work task
+     *
+     * The hand-off is made deterministic rather than timed. The verification callback runs
+     * inside continuationTask() under the wrapper's own lock, at the moment the work task has
+     * completed and the retry decision is being taken, so signalling from it and cancelling
+     * from the test thread orders the two: requestCancel() blocks on that same lock until the
+     * sleep timer has been swapped in, and therefore always lands on the timer. The retry
+     * timeout is a long one so that the sleep cannot elapse on a loaded machine, and the case
+     * still finishes in well under a second because cancelling aborts the timer
+     */
+
+    const std::size_t maxRetryCount = 5U;
+    const auto retryTimeout = time::seconds( 30 );
+
+    std::atomic< std::size_t > factoryCalls( 0U );
+    utest::TestSignal retryDecisionReached;
+
+    const auto eq = om::lockDisposable(
+        ExecutionQueueImpl::createInstance< ExecutionQueue >( ExecutionQueue::OptionKeepNone )
+        );
+
+    const auto taskImpl = RetryableWrapperTask::createInstance(
+        [ &factoryCalls ]() -> om::ObjPtr< Task >
+        {
+            ++factoryCalls;
+
+            return om::qi< Task >(
+                SimpleTaskImpl::createInstance(
+                    []() -> void
+                    {
+                        BL_THROW(
+                            bl::UnexpectedException(),
+                            BL_MSG()
+                                << "consistent error"
+                            );
+                    }
+                    )
+                );
+        },
+        maxRetryCount,
+        cpp::copy( retryTimeout )                           /* retryTimeout */,
+        [ &retryDecisionReached ]( SAA_in const om::ObjPtr< Task >& wrappedTask ) -> bool
+        {
+            retryDecisionReached.signal();
+
+            /*
+             * The default verification, so the wrapper retries exactly as it would without
+             * a callback at all
+             */
+
+            return ! wrappedTask -> isFailed();
+        }
+        );
+
+    const auto task = om::qi< Task >( taskImpl );
+
+    const auto started = time::microsec_clock::universal_time();
+
+    eq -> push_back( task );
+
+    UTF_REQUIRE( retryDecisionReached.wait() );
+
+    UTF_REQUIRE_EQUAL( 1U, factoryCalls.load() );
+
+    task -> requestCancel();
+
+    eq -> flushNoThrowIfFailed();
+
+    const auto elapsed = time::microsec_clock::universal_time() - started;
+
+    /*
+     * No work task is created after the sleep the cancellation interrupted
+     */
+
+    UTF_REQUIRE_EQUAL( 1U, factoryCalls.load() );
+
+    /*
+     * The sleep was aborted rather than run out - without that, this case alone would take
+     * the full retryTimeout
+     */
+
+    UTF_REQUIRE( elapsed < retryTimeout );
+
+    UTF_REQUIRE( task -> isFailed() );
+
+    /*
+     * The interrupted sleep timer has no exception of its own, so the wrapper completes the
+     * task as cancelled
+     */
+
+    try
+    {
+        cpp::safeRethrowException( task -> exception() );
+
+        UTF_FAIL( "The cancelled retryable task must complete with an exception" );
+    }
+    catch( bl::SystemException& e )
+    {
+        UTF_REQUIRE( asio::error::operation_aborted == e.code() );
+    }
 }
 
 namespace

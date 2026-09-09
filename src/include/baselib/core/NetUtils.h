@@ -578,6 +578,14 @@ namespace bl
                 SAA_in      const Iterator                                  bodyEnd
                 )
             {
+                /*
+                 * RFC 1071 computes the checksum over a header whose checksum field is zero;
+                 * the sum below simply skips the field, so this only makes that explicit and
+                 * keeps a header which is reused rather than built fresh consistent on the wire
+                 */
+
+                checksum( 0 );
+
                 std::uint32_t sum = ( type() << 8 ) + code() + identifier() + sequenceNumber();
 
                 Iterator iter = bodyBegin;

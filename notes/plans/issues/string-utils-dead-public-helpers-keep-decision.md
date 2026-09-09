@@ -5,7 +5,7 @@ This document records the keep-or-delete decision for four public helpers in
 have **no in-repository callers**, so that their retention is read as a decision and not re-filed as
 dead code.
 
-**Origin:** `CPP_TEST_ENHANCEMENT_PLAN.md`, task T355, which is *"gated on a keep-or-delete decision
+**Origin:** `notes/reviews/major/update_2026/whole-library-cxx-test-enhancement-plan.md`, task T355, which is *"gated on a keep-or-delete decision
 for the four helpers ... take that decision before implementing and characterise only what
 survives"*.
 

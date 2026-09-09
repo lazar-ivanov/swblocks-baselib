@@ -326,7 +326,13 @@ namespace bl
                     {
                         responseMetadata -> contentType( http::HttpHeader::g_contentTypeJsonUtf8 );
 
-                        responseBody = dm::ServerErrorHelpers::getServerErrorAsJson(
+                        /*
+                         * The body a REST server behind the gateway produces reaches the
+                         * gateway's client verbatim, so it goes through the same redaction
+                         * switch as the one the base context applies to an escaping exception
+                         */
+
+                        responseBody = rest::RestUtils::getServerErrorAsJson(
                             std::make_exception_ptr(
                                 BL_EXCEPTION(
                                     SystemException::create(
@@ -335,7 +341,8 @@ namespace bl
                                         ),
                                     BL_SYSTEM_ERROR_DEFAULT_MSG
                                     )
-                                )
+                                ),
+                            base_type::redactErrorResponses()
                             );
                     }
                     else if( urlPath == "/requestMetadata" )

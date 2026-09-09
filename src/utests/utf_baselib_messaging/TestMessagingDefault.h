@@ -3490,9 +3490,10 @@ UTF_AUTO_TEST_CASE( BackendProcessingDefaultsTests )
 
     /*
      * isConnected() is the signal which turns "the broker is unreachable" into a clean rejection
-     * instead of a hung request; BackendProcessingBase defaults it to true, the forwarding
-     * backend overrides it to delegate to its rotating outgoing channel, and the proxy backend
-     * simply inherits the default
+     * instead of a hung request; BackendProcessingBase defaults it to true, and both the
+     * forwarding backend and the proxy backend override it to delegate to their outgoing block
+     * channel. The broker's own backend, which tracks no outgoing connection, is the one which
+     * legitimately keeps the always-connected default - that is what is asserted below
      *
      * autoBlockDispatching() is what decides whether the dispatching backend chains a
      * DispatchingTask on top - BrokerBackendProcessingT overrides it to false, and flipping it
@@ -6405,9 +6406,15 @@ UTF_AUTO_TEST_CASE( IO_MessagingMessageProcessingTestWrappers )
 
                 {
                     /*
-                     * (d) an exception type the dispatch chain does not know about - the
-                     * fallback preserves the message but loses the type, which is the
-                     * observable symptom of the unmapped type fallback crossing a real wire
+                     * (d) bl::NotFoundException used to have no arm in the dispatch chain and
+                     * came back as a bl::UnexpectedException carrying the right message and
+                     * the wrong type; it has one now, so the type survives a real wire the
+                     * same way (b)'s does
+                     *
+                     * The fallback arm itself is no longer reachable with any declared bl::
+                     * type - it exists for a type name a newer peer sends - so it is covered
+                     * at unit level by ErrorToJsonExceptionTypeMappingTests in
+                     * utf_baselib_data rather than here
                      */
 
                     const auto processor1 = cbRunConversation(
@@ -6419,15 +6426,17 @@ UTF_AUTO_TEST_CASE( IO_MessagingMessageProcessingTestWrappers )
 
                     cbRequireServerErrorJson( processor1, bl::NotFoundException::fullTypeNameStatic() );
 
-                    const auto cbIsNotFoundMessage = []( SAA_in const bl::UnexpectedException& e ) -> bool
+                    const auto cbIsNotFound = []( SAA_in const bl::NotFoundException& e ) -> bool
                     {
-                        return std::string( "async-rpc marker: notfound" ) == std::string( e.what() );
+                        return
+                            std::string( "bl::NotFoundException" ) == std::string( e.fullTypeName() ) &&
+                            std::string( "async-rpc marker: notfound" ) == std::string( e.what() );
                     };
 
                     UTF_REQUIRE_EXCEPTION(
                         processor1 -> getResponse(),
-                        bl::UnexpectedException,
-                        cbIsNotFoundMessage
+                        bl::NotFoundException,
+                        cbIsNotFound
                         );
                 }
 
@@ -9637,14 +9646,21 @@ UTF_AUTO_TEST_CASE( IO_MessagingProxyBackendTests )
             om::qi< ProxyBrokerBackendProcessingFactorySsl::proxy_backend_t >( proxyBackendRef );
 
         /*
-         * The proxy backend does not override isConnected() and therefore inherits the always
-         * connected default from BackendProcessingBase - it keeps reporting itself as connected
-         * even once SharedStateT::isFullyDisconnected() is true and it has already called
-         * m_controlToken -> requestCancel()
+         * The proxy backend delegates isConnected() to its outgoing block channel the same way
+         * the forwarding backend does, rather than inheriting the always connected default of
+         * BackendProcessingBase - both REST consumers gate request admission on it, so a
+         * request to a proxy which has lost the actual backend fails fast
          *
-         * This pins today's behaviour only; whether the proxy should delegate to its outgoing
-         * channel the way the forwarding backend does is a product question for the owners and
-         * is deliberately not being "fixed" here
+         * The proxy is connected to the actual backend at this point in the case
+         *
+         * KNOWN GAP: this asserts only the 'true' half, which also held before the override was
+         * added, so it does not on its own discriminate the delegation from the old default. The
+         * 'false' half is not cheaply reachable - ProxyBrokerBackendProcessingFactorySsl::create()
+         * THROWS when no endpoint connects (see ForwardingBackendConnectFailureTests) rather than
+         * returning a live but disconnected backend, so reaching it needs either the actual
+         * backend torn down underneath a running proxy or direct construction of the detail::
+         * type with a stub outgoing channel. The delegated expression itself is the same one
+         * ForwardingBackendProcessing has used since before this change
          */
 
         UTF_REQUIRE( om::qi< BackendProcessing >( proxyBackendRef ) -> isConnected() );

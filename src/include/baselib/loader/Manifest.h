@@ -323,6 +323,22 @@ namespace bl
                     value = json::readFromStream( is );
                 }
 
+                /*
+                 * Every other malformed manifest path yields a user friendly exception, so a
+                 * top level value which is not an object must not reach as_object() and throw
+                 * whatever the JSON library happens to throw
+                 */
+
+                BL_CHK_T_USER_FRIENDLY(
+                    false,
+                    value.is_object(),
+                    UnexpectedException(),
+                    BL_MSG()
+                        << "Manifest file "
+                        << filePath
+                        << " does not contain a JSON object"
+                    );
+
                 auto json = cpp::copy( value.as_object() );
 
                 const auto manifestVersion = json::value_to< std::uint64_t >( getRequiredProperty( json, g_manifestVersion ) );

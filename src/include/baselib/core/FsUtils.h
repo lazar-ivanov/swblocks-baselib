@@ -569,6 +569,14 @@ namespace bl
 
                 static bool safeDeletePathNothrow( SAA_in const fs::path& path ) NOEXCEPT
                 {
+                    /*
+                     * The result is 'false' until the deletion has provably succeeded, because
+                     * an exception escaping the block below is swallowed by the noexcept guard
+                     * and control simply falls through to the return statement at the end
+                     */
+
+                    bool result = false;
+
                     BL_WARN_NOEXCEPT_BEGIN()
 
                     if( path_exists( path ) )
@@ -592,9 +600,11 @@ namespace bl
                         }
                     }
 
+                    result = true;
+
                     BL_WARN_NOEXCEPT_END( "safeDeletePathNothrow" )
 
-                    return true;
+                    return result;
                 }
 
                 static fs::path makeHidden( SAA_in const fs::path& path )

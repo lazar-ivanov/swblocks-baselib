@@ -176,15 +176,70 @@ UTF_AUTO_TEST_CASE( AuthorizationServiceRest_TemplateEscapingTests )
     }
 
     /*
-     * (4) Escaping is on, but the content type is not a JSON one - the content escaper is
-     * installed only for JSON content types, so the raw value reaches the request body; this
-     * pins the current behavior, so that a change to it has to be a deliberate one
+     * (4) Escaping is on and the content type is an XML one - the quote and the angle brackets
+     * of a token which would otherwise close the element it is substituted into are escaped
+     */
+
+    {
+        const auto config = prepareConfig();
+
+        config -> contentType( "application/xml" );
+
+        const auto result = pathAndContentFor(
+            AuthorizationServiceRest::create( om::copy( config ) ),
+            "tokenId=t1;tokenProperty1=v<a>&\"lue"
+            );
+
+        UTF_CHECK( cpp::contains( result.second, "::tokenProperty1::v&lt;a&gt;&amp;&quot;lue" ) );
+        UTF_CHECK( ! cpp::contains( result.second, "::tokenProperty1::v<a>" ) );
+    }
+
+    /*
+     * (5) Escaping is on and the content type is a form encoded one - the '&' and the '=' of the
+     * token are percent encoded, so it cannot append a field of its own to the body
+     */
+
+    {
+        const auto config = prepareConfig();
+
+        config -> contentType( "application/x-www-form-urlencoded" );
+
+        const auto result = pathAndContentFor(
+            AuthorizationServiceRest::create( om::copy( config ) ),
+            "tokenId=t1;tokenProperty1=a&b=c"
+            );
+
+        UTF_CHECK( cpp::contains( result.second, "::tokenProperty1::a%26b%3Dc" ) );
+    }
+
+    /*
+     * (6) Escaping is on, but the content type has no escaper of its own - the service refuses
+     * to be created rather than placing a client controlled value into a structured body
+     * unencoded, so the failure is at startup with a clear message
      */
 
     {
         const auto config = prepareConfig();
 
         config -> contentType( "text/plain" );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            ( void ) AuthorizationServiceRest::create( om::copy( config ) ),
+            ArgumentException,
+            "has no escaper for the substituted template variables"
+            );
+    }
+
+    /*
+     * (7) The same content type is accepted once escaping is turned off - the explicit opt out
+     * is what keeps a deployment with an unusual body structure working
+     */
+
+    {
+        const auto config = prepareConfig();
+
+        config -> contentType( "text/plain" );
+        config -> escapeTemplateVariables( false );
 
         const auto result = pathAndContentFor(
             AuthorizationServiceRest::create( om::copy( config ) ),
@@ -195,7 +250,7 @@ UTF_AUTO_TEST_CASE( AuthorizationServiceRest_TemplateEscapingTests )
     }
 
     /*
-     * (5) The token does not carry the property the URL template refers to - the template is
+     * (8) The token does not carry the property the URL template refers to - the template is
      * resolved with skipUndefined and the whole URL template is a single block, so the request
      * path resolves to an empty string
      */

@@ -255,6 +255,20 @@ UTF_AUTO_TEST_CASE( NetUtils_IcmpHeaderTests )
             static_cast< unsigned >( header.checksum() ),
             static_cast< unsigned >( header2.checksum() )
             );
+
+        /*
+         * computeChecksum( ... ) zeroes the field before summing, so recomputing it on a
+         * header which already carries one - i.e. a header which is reused rather than
+         * built fresh, which is what every caller other than the pinger would do - yields
+         * exactly the same value
+         */
+
+        header.computeChecksum( body.begin(), body.end() );
+
+        UTF_REQUIRE_EQUAL(
+            static_cast< unsigned >( header.checksum() ),
+            static_cast< unsigned >( header2.checksum() )
+            );
     }
 }
 

@@ -192,3 +192,17 @@ handoffs were consumed by the sessions that ran them.)
 **Also open from the same review, and not Windows-only:** the OpenSSL 1.1.1w build required for
 S-6/S-7 could not be run from this checkout either, for a reason that is not platform-specific -
 see the 2026-09-07 note under "Conditions to revisit" above.
+
+## C++ test enhancement, 2026-09-08: items 15-17 (test-enhancement residuals)
+
+Added from item 5 of
+`notes/reviews/major/update_2026/whole-library-cxx-test-enhancement-outstanding-issues-plan.md`. They
+are independent of items 10-14 above and share the same Windows session; the step-by-step
+instructions are in section 4b of
+`notes/plans/issues/whole-library-windows-residuals-instructions.md`.
+
+| # | Finding | Location | State on Linux | What the Windows session must do |
+|---|---|---|---|---|
+| 15 | The two inspection-only fixes of the test-enhancement work | `OSImplWindows.h:3151` (`tryGetUserDomain` reading `USERDNSDOMAIN` twice where it meant `USERDOMAIN`) and `:1402` (`BL_ASSERT( out )` where the merged-redirect branch needs only the merged pipe) | **fixed by inspection, never compiled or executed.** The UNIX twin of the second one aborted the test binary with `SIGABRT` before it was fixed there | run `utf_baselib` on `vc143` and `ccl16`, debug and release, so both become execution-proven. The cases already exist: the T061 oracle `expectedUserDomainFromEnvironment()` in `TestBaselibDefault.h`, and the T059 file-callback block of `BaseLib_OSCreateProcessRedirectedMergedTests` |
+| 16 | `core/specific/ComUtils.h` and `core/specific/WindowsShellShortcut.h` are not self-contained | both headers | **include fixes applied on Linux 2026-09-08 and uncompiled** - `ComUtils.h` gained `<baselib/core/BaseIncludes.h>`, `WindowsShellShortcut.h` gained `<baselib/core/FsUtils.h>` and `<baselib/core/Logging.h>` | build `utf_baselib` and confirm the `_WIN32` block of `TestPublicHeaderInstantiation.cpp` (T373, `:57-59` and `:308-323`) compiles both standalone; add any further include in the same shape and say which and why |
+| 17 | Seven Windows-only test tasks have never compiled | T054's Windows arm, T058, T060, T061, T062, T253, T357 (plan section 13.4.1) | written, never built | compile and run once, repairing **test code only**. T253's dropped HKLM hive assertion becomes live with item 12 (W-3), and T058's disabled argv case (`TestBaselibDefault5.h:649`, `productionArgvQuotingIsFixed = false`) with item 10 (W-1) - flip each flag in the same change as the fix it waits for |

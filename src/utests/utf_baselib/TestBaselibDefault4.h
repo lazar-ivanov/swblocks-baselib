@@ -208,19 +208,30 @@ UTF_AUTO_TEST_CASE( FsUtils_UnsupportedFileTypeRemovalTests )
     UTF_REQUIRE( bl::fs::path_exists( fifoPath ) );
 
     /*
-     * NOTE: as written today safeDeletePathNothrow( ... ) reports success while the
-     * directory survives - BL_WARN_NOEXCEPT_END( ... ) only logs the escaping exception
-     * and the execution then falls through to 'return true'
-     *
-     * This is pinned as it behaves rather than as it arguably should behave, so that a
-     * change which starts silently ignoring unknown file types is still caught by the
-     * path_exists( ... ) assertions below
+     * safeDeletePathNothrow( ... ) reports the real outcome - BL_WARN_NOEXCEPT_END( ... )
+     * logs the escaping exception and the result stays 'false', which is what the three
+     * in-tree callers treat as "log and continue"
      */
 
-    UTF_CHECK_EQUAL( true, bl::fs::safeDeletePathNothrow( dir ) );
+    UTF_CHECK_EQUAL( false, bl::fs::safeDeletePathNothrow( dir ) );
 
     UTF_REQUIRE( bl::fs::path_exists( dir ) );
     UTF_REQUIRE( bl::fs::path_exists( fifoPath ) );
+
+    /*
+     * The positive control - a directory which CAN be deleted still reports success, so
+     * the assertion above is not satisfied by a function which simply always fails
+     */
+
+    {
+        const auto plainDir = tmpDir.path() / "plain";
+
+        bl::fs::safeMkdirs( plainDir );
+
+        UTF_CHECK_EQUAL( true, bl::fs::safeDeletePathNothrow( plainDir ) );
+
+        UTF_REQUIRE( ! bl::fs::path_exists( plainDir ) );
+    }
 
     /*
      * Clean up by hand, so the destructor of TmpDir does not hit the same path

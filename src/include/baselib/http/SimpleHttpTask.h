@@ -1033,7 +1033,12 @@ namespace bl
         BL_DEFINE_STATIC_CONST_STRING( SimpleHttpTaskT, g_protocolDefault ) = "http";
 
         BL_DEFINE_STATIC_MEMBER( SimpleHttpTaskT, const str::regex, g_hrefRegex )             ( "\\bhref\\s*=\\s*[\"']([^\"']+)[\"']", str::regex::icase );
-        BL_DEFINE_STATIC_MEMBER( SimpleHttpTaskT, const str::regex, g_charsetRegex )          ( "\\bcharset\\s*=\\s*([^;]+)\\b", str::regex::icase );
+        /*
+         * RFC 7231 allows the charset parameter value to be a quoted string, so the quotes are
+         * excluded from the capture rather than becoming part of the charset name
+         */
+
+        BL_DEFINE_STATIC_MEMBER( SimpleHttpTaskT, const str::regex, g_charsetRegex )          ( "\\bcharset\\s*=\\s*\"?([^;\"\\s]+)\"?", str::regex::icase );
 
         typedef SimpleHttpTaskT<> SimpleHttpTask;
 

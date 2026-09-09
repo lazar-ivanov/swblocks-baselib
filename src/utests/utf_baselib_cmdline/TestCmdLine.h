@@ -1656,6 +1656,81 @@ UTF_AUTO_TEST_CASE( CmdLine_CommandTreeRegistration )
         UTF_REQUIRE_EQUAL( cmdln.getAllOptions().size(), sizeBefore - 1 );
     }
 
+    UTF_MESSAGE( "* removeOption() with a DIFFERENT object carrying a registered name" );
+
+    {
+        /*
+         * The name is erased from the map and the vector entry is located by that same key,
+         * so the two structures stay in step; locating it by pointer identity instead would
+         * erase nothing from the vector and trip the size assertion of removeOption( ... ),
+         * which aborts a debug run
+         */
+
+        CmdLineTest cmdln;
+
+        const auto sizeBefore = cmdln.getAllOptions().size();
+
+        bl::cmdline::StringOption impostor( "opt2", "A different object with a registered name" );
+
+        cmdln.removeOption( impostor );
+
+        UTF_REQUIRE_EQUAL( cmdln.getAllOptions().size(), sizeBefore - 1 );
+        UTF_REQUIRE( cmdln.findOption( "opt2" ) == nullptr );
+
+        /*
+         * The option which was actually registered under the name is the one which left the
+         * vector, and every other option is still there
+         */
+
+        for( const auto* option : cmdln.getAllOptions() )
+        {
+            UTF_REQUIRE( option != &cmdln.m_opt2 );
+        }
+
+        UTF_REQUIRE( cmdln.findOption( "opt3" ) == &cmdln.m_opt3 );
+    }
+
+    UTF_MESSAGE( "* removeCommand() with a DIFFERENT object carrying a registered name" );
+
+    {
+        /*
+         * Two trees each carrying a command registered under the same name, so the object
+         * handed to removeCommand( ... ) is not the one which is registered here
+         */
+
+        struct TempCommand : public bl::cmdline::CommandBase
+        {
+            TempCommand( SAA_inout bl::cmdline::CommandBase* parent )
+                :
+                bl::cmdline::CommandBase( parent, "temp" )
+            {
+            }
+        };
+
+        CmdLineModeTest cmdlnA;
+        CmdLineModeTest cmdlnB;
+
+        TempCommand tempA( &cmdlnA.m_commandCreate );
+        TempCommand tempB( &cmdlnB.m_commandCreate );
+
+        UTF_REQUIRE( cmdlnA.m_commandCreate.findCommand( "temp" ) == &tempA );
+
+        cmdlnA.m_commandCreate.removeCommand( tempB );
+
+        UTF_REQUIRE( cmdlnA.m_commandCreate.findCommand( "temp" ) == nullptr );
+
+        /*
+         * The other tree is untouched, and the siblings of the removed command survive
+         */
+
+        UTF_REQUIRE( cmdlnB.m_commandCreate.findCommand( "temp" ) == &tempB );
+
+        UTF_REQUIRE(
+            cmdlnA.m_commandCreate.findCommand( "object" ) ==
+                &cmdlnA.m_commandCreate.m_commandCreateObject
+            );
+    }
+
     UTF_MESSAGE( "***************** end CmdLine_CommandTreeRegistration tests *****************\n" );
 }
 
@@ -1722,6 +1797,35 @@ namespace
         }
     };
 
+    /**
+     * The same tree, but with the root's own message formatting made to throw on demand -
+     * that is the only way to reach the middle of the hide / render / unhide sequence, since
+     * rendering the root's option block is what sits between the two mutations
+     */
+
+    class ThrowingDryRunRoot : public DryRunRoot
+    {
+    public:
+
+        mutable bool                    m_throwOnFormat;
+
+        ThrowingDryRunRoot()
+            :
+            m_throwOnFormat( false )
+        {
+        }
+
+        virtual std::string formatMessage( SAA_in std::string msg ) const OVERRIDE
+        {
+            if( m_throwOnFormat )
+            {
+                BL_THROW( bl::UnexpectedException(), "The help rendering has failed" );
+            }
+
+            return DryRunRoot::formatMessage( std::move( msg ) );
+        }
+    };
+
 } // __unnamed
 
 UTF_AUTO_TEST_CASE( CmdLine_DryRunNotApplicableHidesParentOption )
@@ -1733,11 +1837,10 @@ UTF_AUTO_TEST_CASE( CmdLine_DryRunNotApplicableHidesParentOption )
      * doing so it hides the root's "dryrun,n" option if the command declares dry run to be
      * inapplicable, then unhides it again
      *
-     * Both halves mutate a shared, parent-owned option through a non-const OptionBase* and
-     * the pair is NOT RAII protected - if the middle call ever throws, --dryrun disappears
-     * from the root's help for the rest of the process. Only the non-throwing path is
-     * asserted here; the missing BL_SCOPE_EXIT is a production change and is recorded in
-     * notes/plans/issues/ rather than made here
+     * Both halves mutate a shared, parent-owned option through a non-const OptionBase* which
+     * outlives the call, so the pair is RAII protected - the throwing sub-case at the end is
+     * what proves --dryrun does not disappear from the root's help for the rest of the process
+     * when rendering the root's block fails
      */
 
     DryRunRoot root;
@@ -1779,107 +1882,37 @@ UTF_AUTO_TEST_CASE( CmdLine_DryRunNotApplicableHidesParentOption )
     UTF_CHECK( root.findOption( "debug" ) != nullptr );
     UTF_CHECK( ! bl::cpp::contains( plainHelp, "--debug" ) );
 
-    UTF_MESSAGE( "***************** end CmdLine_DryRunNotApplicableHidesParentOption tests *****************\n" );
-}
-
-namespace
-{
-    /**
-     * The only instantiation of bl::cmdline::BoolSwitchOrMultiStringOption anywhere in the
-     * repository - the typedef is published by Option.h but has no consumer in production,
-     * in bl-tool or in any other test, so this is the one place where the template body of
-     * Option< std::vector< std::string >, SwitchImpl< std::vector< std::string >, true > >
-     * is instantiated and compiled
-     */
-
-    class BoolSwitchOrMultiStringCmdLine : public bl::cmdline::CmdLineBase
-    {
-    public:
-
-        bl::cmdline::BoolSwitchOrMultiStringOption      m_flag;
-
-        BoolSwitchOrMultiStringCmdLine()
-            :
-            bl::cmdline::CmdLineBase( "BoolSwitchOrMultiStringOption command line options" ),
-            m_flag  ( "flag,f",         "A switch or a list" )
-        {
-            addOption( m_flag );
-        }
-    };
-
-} // __unnamed
-
-UTF_AUTO_TEST_CASE( CmdLine_BoolSwitchOrMultiStringOption )
-{
-    UTF_MESSAGE( "***************** CmdLine_BoolSwitchOrMultiStringOption tests *****************\n" );
-
-    /*
-     * Option::getSemantic() hands the semantic to IMPL::decorateSemantic() last, and for
-     * SwitchImpl that is 'return semantic -> zero_tokens()', which sets both min_tokens and
-     * max_tokens to zero. The std::vector< std::string > value type does not change that -
-     * the multitoken() call in getSemantic() is gated on isMultiValue(), which reads the
-     * option FLAGS rather than the value type, so for a plain declaration it never runs
-     *
-     * What the typedef actually is, therefore, is a valueless switch whose vector always
-     * stays empty and which cannot carry a value at all - any token following --flag is left
-     * over as a positional argument, and this parser declares none
-     *
-     * TODO: that makes the published typedef unusable under its own name; the decision to
-     * fix or delete it is recorded in
-     * notes/plans/issues/cmdline-boolswitch-or-multistring-option-deferral.md. The
-     * assertions below record what it does today, not what it ought to do
-     */
-
-    UTF_MESSAGE( "* the option is absent" );
+    UTF_MESSAGE( "* rendering the root's option block throws" );
 
     {
-        BoolSwitchOrMultiStringCmdLine cmdln;
+        ThrowingDryRunRoot throwingRoot;
 
-        UTF_REQUIRE_NO_THROW( cmdln.parseCommandLine( "" ) );
+        throwingRoot.m_throwOnFormat = true;
 
-        UTF_CHECK( ! cmdln.m_flag.hasValue() );
-        UTF_CHECK( cmdln.m_flag.getValue().empty() );
-    }
+        UTF_CHECK_THROW(
+            throwingRoot.m_noDryRun.helpMessage( false /* includeSubCommands */ ),
+            bl::UnexpectedException
+            );
 
-    UTF_MESSAGE( "* the option is present without a value" );
-
-    {
-        BoolSwitchOrMultiStringCmdLine cmdln;
-
-        UTF_REQUIRE_NO_THROW( cmdln.parseCommandLine( "--flag" ) );
+        throwingRoot.m_throwOnFormat = false;
 
         /*
-         * The notifier fired - so the switch is observable - even though zero_tokens() means
-         * that no token was consumed and the vector was left empty
+         * The hiding is undone even though the rendering in between never returned, so the
+         * next command's help still carries --dryrun
          */
 
-        UTF_CHECK( cmdln.m_flag.hasValue() );
-        UTF_CHECK( cmdln.m_flag.getValue().empty() );
-    }
+        UTF_REQUIRE( throwingRoot.findOption( "dryrun,n" ) != nullptr );
+        UTF_CHECK( ! throwingRoot.findOption( "dryrun,n" ) -> isHidden() );
 
-    UTF_MESSAGE( "* the option is present with one value" );
-
-    {
-        BoolSwitchOrMultiStringCmdLine cmdln;
-
-        UTF_REQUIRE_THROW(
-            cmdln.parseCommandLine( "--flag a" ),
-            bl::po::too_many_positional_options_error
+        UTF_CHECK(
+            bl::cpp::contains(
+                throwingRoot.m_plain.helpMessage( false /* includeSubCommands */ ),
+                "--dryrun"
+                )
             );
     }
 
-    UTF_MESSAGE( "* the option is present with two values" );
-
-    {
-        BoolSwitchOrMultiStringCmdLine cmdln;
-
-        UTF_REQUIRE_THROW(
-            cmdln.parseCommandLine( "--flag a b" ),
-            bl::po::too_many_positional_options_error
-            );
-    }
-
-    UTF_MESSAGE( "***************** end CmdLine_BoolSwitchOrMultiStringOption tests *****************\n" );
+    UTF_MESSAGE( "***************** end CmdLine_DryRunNotApplicableHidesParentOption tests *****************\n" );
 }
 
 UTF_AUTO_TEST_CASE( CmdLine_BaseServerCmdLineJvmGating )

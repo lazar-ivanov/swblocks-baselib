@@ -52,7 +52,25 @@ namespace bl
             };
 
             /**
-             * @brief class ObserverDisposer
+             * @brief class ObserverDisposer - the subscription handle returned by
+             * ObservableBaseT::subscribe( ... )
+             *
+             * *Ownership contract*: the disposer holds a WEAK reference to the observable, so
+             * that a handle which outlives its observable cannot keep it alive. The reference
+             * is therefore meaningful only while the caller manages the observable through
+             * om::getSharedPtr( ... ) - subscribe( ... ) materialises its own shared pointer as
+             * a local, so with the observable held through a plain om::ObjPtr the control block
+             * is already gone by the time the handle is destroyed and disposing the handle
+             * unsubscribes nothing.
+             *
+             * A caller which needs discarding or disposing the handle to actually unsubscribe
+             * has to hold the observable through om::getSharedPtr( ... ) for at least as long as
+             * the handle; a caller which uses the fire and forget form
+             * 'observable -> subscribe( observer );' is relying on the opposite and must keep
+             * holding the observable through a plain om::ObjPtr.
+             *
+             * Both halves of this are pinned by
+             * Tasks_ReactiveSubscriptionHandleLifetimeTests in utf_baselib_tasks.
              */
 
             template

@@ -172,6 +172,25 @@ namespace bl
                     BL_MSG()
                         << "The config properties 'isTokenBinary' and 'isTokenMultiProperties' cannot be both 'true'"
                     );
+
+                /*
+                 * A content type which has no escaper of its own would place a client controlled
+                 * value into a structured document unencoded, so it is rejected here rather than
+                 * silently at the first authorization request
+                 */
+
+                BL_CHK_T(
+                    false,
+                    ! isEscapeTemplateVariables() || getContentEscaper( m_config -> contentType() ),
+                    ArgumentException()
+                        << eh::errinfo_is_user_friendly( true ),
+                    BL_MSG()
+                        << "The 'contentType' property value '"
+                        << m_config -> contentType()
+                        << "' has no escaper for the substituted template variables; either use a "
+                        << "content type which has one (JSON, XML or x-www-form-urlencoded) or set "
+                        << "the 'escapeTemplateVariables' property to 'false'"
+                    );
             }
 
             static auto getUniqueProperties( SAA_in const om::ObjPtr< rest_config_t >& config )
@@ -386,6 +405,99 @@ namespace bl
                 return quoted.substr( 1U, quoted.size() - 2U );
             }
 
+            /**
+             * @brief Percent-encodes a value for use in an application/x-www-form-urlencoded body
+             */
+
+            static std::string escapeForFormUrlEncoded(
+                SAA_in          const std::string&                          name,
+                SAA_in          const std::string&                          value
+                )
+            {
+                BL_UNUSED( name );
+
+                return str::uriEncode( value );
+            }
+
+            /**
+             * @brief Escapes a value for use in the text content or an attribute of an XML document
+             */
+
+            static std::string escapeForXml(
+                SAA_in          const std::string&                          name,
+                SAA_in          const std::string&                          value
+                )
+            {
+                BL_UNUSED( name );
+
+                std::string result;
+
+                result.reserve( value.size() );
+
+                for( const char c : value )
+                {
+                    switch( c )
+                    {
+                        case '&':
+                            result += "&amp;";
+                            break;
+
+                        case '<':
+                            result += "&lt;";
+                            break;
+
+                        case '>':
+                            result += "&gt;";
+                            break;
+
+                        case '"':
+                            result += "&quot;";
+                            break;
+
+                        case '\'':
+                            result += "&apos;";
+                            break;
+
+                        default:
+                            result += c;
+                            break;
+                    }
+                }
+
+                return result;
+            }
+
+            /**
+             * @brief The escaper which encodes a substituted value for the structure of the
+             * configured content type
+             *
+             * @returns an empty callback when the content type has no escaper of its own; the
+             * caller decides whether that is an error - it is when escaping is enabled, because
+             * a client controlled value would otherwise be placed into a structured document
+             * unencoded
+             */
+
+            static auto getContentEscaper( SAA_in const std::string& contentType )
+                -> str::StringTemplateResolver::escaper_callback_t
+            {
+                if( str::icontains( contentType, "json" ) )
+                {
+                    return &AuthorizationServiceRestT::escapeForJson;
+                }
+
+                if( str::icontains( contentType, "x-www-form-urlencoded" ) )
+                {
+                    return &AuthorizationServiceRestT::escapeForFormUrlEncoded;
+                }
+
+                if( str::icontains( contentType, "xml" ) )
+                {
+                    return &AuthorizationServiceRestT::escapeForXml;
+                }
+
+                return str::StringTemplateResolver::escaper_callback_t();
+            }
+
             auto createAuthorizationTask( SAA_in const om::ObjPtr< data::DataBlock >& authenticationToken ) const
                 -> om::ObjPtr< tasks::Task >
             {
@@ -439,10 +551,7 @@ namespace bl
                 {
                     urlPathEscaper = &AuthorizationServiceRestT::escapeForUrlPath;
 
-                    if( str::icontains( m_config -> contentType(), "json" ) )
-                    {
-                        contentEscaper = &AuthorizationServiceRestT::escapeForJson;
-                    }
+                    contentEscaper = getContentEscaper( m_config -> contentType() );
                 }
 
                 auto taskImpl = task_impl_t::createInstance(

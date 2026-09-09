@@ -5451,12 +5451,9 @@ UTF_AUTO_TEST_CASE( BaseLib_TestScopeGuard )
     }
 
     /*
-     * Move assignment overwrites the target's callback without running it, so a cleanup
-     * the target was still holding is INTENTIONALLY dropped - the 'a' callback below
-     * never runs
-     *
-     * This is pinned here so that 'fixing' it cannot silently change the semantics at
-     * every call site
+     * Move assignment runs the cleanup the target is still holding before it takes over the
+     * source's - an armed guard always runs exactly once, which is the same rule the
+     * destructor implements
      */
 
     {
@@ -5469,12 +5466,58 @@ UTF_AUTO_TEST_CASE( BaseLib_TestScopeGuard )
 
             g1 = std::move( g2 );
 
+            UTF_REQUIRE_EQUAL( 1, a );
+            UTF_REQUIRE_EQUAL( 0, b );
+        }
+
+        UTF_REQUIRE_EQUAL( 1, a );
+        UTF_REQUIRE_EQUAL( 1, b );
+    }
+
+    /*
+     * A dismissed target has nothing to run, and self assignment is a no-op rather than a
+     * cleanup which fires while the guard is still armed
+     */
+
+    {
+        int a = 0;
+        int b = 0;
+
+        {
+            auto g1 = BL_SCOPE_GUARD( { ++a; } );
+            auto g2 = BL_SCOPE_GUARD( { ++b; } );
+
+            g1.dismiss();
+
+            g1 = std::move( g2 );
+
             UTF_REQUIRE_EQUAL( 0, a );
             UTF_REQUIRE_EQUAL( 0, b );
         }
 
         UTF_REQUIRE_EQUAL( 0, a );
         UTF_REQUIRE_EQUAL( 1, b );
+    }
+
+    {
+        int count = 0;
+
+        {
+            auto g = BL_SCOPE_GUARD( { ++count; } );
+
+            /*
+             * Through a pointer, so the compiler's own self-move diagnostic does not reject
+             * the very expression under test
+             */
+
+            auto* const self = &g;
+
+            g = std::move( *self );
+
+            UTF_REQUIRE_EQUAL( 0, count );
+        }
+
+        UTF_REQUIRE_EQUAL( 1, count );
     }
 }
 
@@ -8771,12 +8814,18 @@ UTF_AUTO_TEST_CASE( BaseLib_TextFilesEncodingTests )
     UTF_REQUIRE_EQUAL( bl::fs::file_size( nested ), 6U );
 
     /*
-     * The default: arm of the encoding switch; TextFileEncoding::Unknown is the only
+     * The default: arm of the encoding validation; TextFileEncoding::Unknown is the only
      * unreachable enumerator, since Ascii and Utf8_NoPreamble are the same value
      *
-     * Note that the target file is opened (and therefore truncated) before the switch,
-     * so these calls leave 'textFile' empty
+     * The encoding is validated BEFORE the target file is opened for writing, so a rejected
+     * call leaves the existing file exactly as it was rather than truncating it
      */
+
+    const std::string preservedContent( "must survive a rejected write" );
+
+    writeTextFile( textFile, preservedContent, TextFileEncoding::Utf8_NoPreamble );
+
+    UTF_REQUIRE_EQUAL( readTextFile( textFile ), preservedContent );
 
     UTF_REQUIRE_THROW_MESSAGE(
         writeTextFile( textFile, "x", static_cast< TextFileEncoding >( 0 ) ),
@@ -8784,11 +8833,30 @@ UTF_AUTO_TEST_CASE( BaseLib_TextFilesEncodingTests )
         "Invalid TextFileEncoding"
         );
 
+    UTF_REQUIRE_EQUAL( readTextFile( textFile ), preservedContent );
+
     UTF_REQUIRE_THROW_MESSAGE(
         writeTextFile( textFile, "x", static_cast< TextFileEncoding >( 4242 ) ),
         bl::UnexpectedException,
         "Invalid TextFileEncoding"
         );
+
+    UTF_REQUIRE_EQUAL( readTextFile( textFile ), preservedContent );
+
+    if( bl::os::onUNIX() )
+    {
+        /*
+         * The unsupported UTF-16LE arm is validated in the same place, so it does not
+         * truncate the file either
+         */
+
+        UTF_REQUIRE_THROW(
+            writeTextFile( textFile, "x", TextFileEncoding::Utf16LE ),
+            bl::NotSupportedException
+            );
+
+        UTF_REQUIRE_EQUAL( readTextFile( textFile ), preservedContent );
+    }
 
     /*
      * Files shorter than the preambles - the size >= preamble.size() guard in

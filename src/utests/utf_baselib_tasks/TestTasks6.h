@@ -428,9 +428,10 @@ UTF_AUTO_TEST_CASE( Tasks_ReactiveSubscriptionHandleLifetimeTests )
      * change on either side of it would fail them with a message which points at the
      * observable rather than at the change
      *
-     * Whether that is the *intended* ownership model is an open design question - this case
-     * pins the CURRENT behaviour in both directions, so that changing it has to be a
-     * deliberate and visible test change rather than a silent one
+     * That IS the ownership model - the disposer must not keep the observable alive, so the
+     * reference it holds is weak by design and the contract is documented on ObserverDisposerT
+     * in reactive/ObservableBase.h. This case pins both directions of it, so that changing it
+     * has to be a deliberate and visible test change rather than a silent one
      */
 
     {
@@ -627,33 +628,25 @@ UTF_AUTO_TEST_CASE( Tasks_ShutdownTaskCancelTests )
         );
 }
 
-UTF_AUTO_TEST_CASE( Tasks_TimerTaskIgnoresLocalThreadPoolTests )
+UTF_AUTO_TEST_CASE( Tasks_TimerTaskHonoursLocalThreadPoolTests )
 {
     using namespace bl;
     using namespace bl::tasks;
 
     /*
-     * TimerTaskBaseT::resetTimer() constructs its deadline timer on
-     * ThreadPoolDefault::getDefault( getThreadPoolId() ) -> aioService() and never consults
-     * the execution queue, while SimpleTaskBaseT::scheduleTask() goes through
-     * getThreadPool( eq ) and does honour the queue's local thread pool
+     * TimerTaskBaseT::resetTimer( eq ) constructs its deadline timer on
+     * getThreadPool( eq ) -> aioService(), which is the same accessor
+     * SimpleTaskBaseT::scheduleTask() goes through, so a timer task honours the execution
+     * queue's local thread pool exactly the way every other task does
      *
-     * Because every ObservableBase *is* a TimerTaskBase, that split decides where every
-     * reactive pipeline's timer runs, and nothing in the suite states it - 'fixing'
-     * TimerTaskBase to honour the local pool would move all of them and nothing would fail
-     *
-     * This case pins the CURRENT behaviour; changing it is a deliberate and visible decision
+     * Because every ObservableBase *is* a TimerTaskBase, this is what decides where every
+     * reactive pipeline's timer runs, and nothing else in the suite states it
      */
-
-    UTF_MESSAGE(
-        "Tasks_TimerTaskIgnoresLocalThreadPoolTests pins current behaviour: a timer task does "
-        "NOT honour the execution queue local thread pool while a simple task does"
-        );
 
     /*
      * The precondition, and the reason this arm lives in utf_baselib_tasks rather than in
-     * utf_baselib_basictask - a timer task reaching resetTimer() without the global default
-     * pools would dereference a null pointer
+     * utf_baselib_basictask - a timer task on a queue with NO local pool falls back to the
+     * global default pools and would dereference a null pointer without them
      */
 
     UTF_REQUIRE( nullptr != ThreadPoolDefault::getDefault( ThreadPoolId::GeneralPurpose ).get() );
@@ -746,13 +739,14 @@ UTF_AUTO_TEST_CASE( Tasks_TimerTaskIgnoresLocalThreadPoolTests )
     const auto simpleTaskThreadId = simpleProbe.value();
 
     /*
-     * The load bearing assertion - the timer body did not run on the queue's local pool
+     * The load bearing assertion - the timer body ran on the queue's local pool
      */
 
-    UTF_REQUIRE( timerBodyThreadId != localPoolThreadId );
+    UTF_REQUIRE_EQUAL( localPoolThreadId, timerBodyThreadId );
 
     /*
-     * ... and the control, which is what makes the divergence legible
+     * ... and the control, which is what makes the assertion above legible: a simple task
+     * on the very same queue lands on the very same pool
      */
 
     UTF_REQUIRE_EQUAL( localPoolThreadId, simpleTaskThreadId );

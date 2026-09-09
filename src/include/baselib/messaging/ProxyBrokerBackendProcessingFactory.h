@@ -1335,6 +1335,21 @@ namespace bl
                     return false;
                 }
 
+                virtual bool isConnected() const NOEXCEPT OVERRIDE
+                {
+                    /*
+                     * The proxy does track a connection to the actual backend, so it reports it
+                     * the same way the forwarding backend does rather than inheriting the base
+                     * default of "always connected"
+                     *
+                     * Note that isFullyDisconnected() is deliberately not used here - it logs
+                     * and is non-const, while both REST consumers gate request admission on
+                     * this accessor
+                     */
+
+                    return m_state -> outgoingBlockChannel() -> isConnected();
+                }
+
                 virtual void setHostServices( SAA_in om::ObjPtr< om::Proxy >&& hostServices ) NOEXCEPT OVERRIDE
                 {
                     BL_NOEXCEPT_BEGIN()

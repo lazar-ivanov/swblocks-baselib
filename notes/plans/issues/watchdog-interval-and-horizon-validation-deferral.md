@@ -1,10 +1,31 @@
 # `Watchdog` Interval and Horizon Validation: Deferral Record
 
 This document records two validation gaps in
-[`src/include/baselib/core/Watchdog.h`](../../../src/include/baselib/core/Watchdog.h) which are
-deliberately **not** fixed, so that their absence is read as a decision rather than an oversight.
+[`src/include/baselib/core/Watchdog.h`](../../../src/include/baselib/core/Watchdog.h) which were
+deliberately **not** fixed, so that their absence was read as a decision rather than an oversight.
 
-**Origin:** `CPP_TEST_ENHANCEMENT_PLAN.md`, task T362, which states that both *"are deliberately not
+**Status: CLOSED, both fixed 2026-09-08.**
+
+## Resolution (2026-09-08)
+
+Fixed as item 8.2 of
+`notes/reviews/major/update_2026/whole-library-cxx-test-enhancement-outstanding-issues-plan.md`.
+Both gaps are now closed with one `BL_CHK` each:
+
+- the constructor rejects a negative `checkingInterval` before the `std::uint64_t` cast can turn
+  it into a huge interval which silently disables the watchdog;
+- `expiringMonitors( horizon )` rejects a negative horizon, which used to wrap the same way and
+  report every monitor as expiring.
+
+`TestWatchdogArgumentValidation` in `src/utests/utf_baselib/TestWatchdog.h` gained a negative case
+for each. The accepted domain now matches what the documentation always stated, so no caller which
+was passing a valid value is affected.
+
+The rest of this document is the original analysis and is kept for the record.
+
+---
+
+**Origin:** `notes/reviews/major/update_2026/whole-library-cxx-test-enhancement-plan.md`, task T362, which states that both *"are deliberately not
 covered here because fixing them is a production change ... Record both, do not fix them from a
 test."*
 

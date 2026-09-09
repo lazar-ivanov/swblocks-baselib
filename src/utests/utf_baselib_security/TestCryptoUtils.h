@@ -755,28 +755,53 @@ UTF_AUTO_TEST_CASE( CryptoErrorHandling_OpenSslCategoryDoesNotSurviveServerError
         );
 
     /*
-     * This assertion pins a defect rather than a desirable behavior
+     * An eh::error_category is a process local object, so the OpenSSL category - which crypto/
+     * registers and data/eh must not depend on - cannot be rebuilt by createExceptionFromObject()
+     * and the error code therefore does not survive as a code
      *
-     * createExceptionFromObject() inspects categoryName before it dispatches on exceptionType,
-     * and its chain only knows "generic", "system" and the empty string - so a peer which is
-     * handed a perfectly well formed server error document describing a TLS failure gets an
-     * ArgumentException naming an internal category instead of the real error. The reachability
-     * is not hypothetical: EhUtils::asioErrorCallback re-tags every asio SSL error into the
-     * OpenSSL category and is installed process wide by CmdLineAppBase::main and by Utf.h
-     *
-     * The fix is to teach the chain the "OpenSSL" category (or to stop copying a category name
-     * which is neither generic nor system into the document); when it lands, this assertion has
-     * to flip to a successful round trip
+     * The document as a whole does survive though: the category NAME and the numeric value reach
+     * the rehydrated exception as data, so a peer handed a well formed server error describing a
+     * TLS failure gets that failure back instead of an ArgumentException about an internal
+     * category. The reachability is not hypothetical: EhUtils::asioErrorCallback re-tags every
+     * asio SSL error into the OpenSSL category and is installed process wide by
+     * CmdLineAppBase::main and by Utf.h
      */
 
-    UTF_REQUIRE_EXCEPTION(
-        ( void ) dm::ServerErrorHelpers::createExceptionFromObject( json ),
-        ArgumentException,
-        []( SAA_in const ArgumentException& e ) -> bool
-        {
-            return std::string( "Unknown error category: 'OpenSSL'" ) == e.what();
-        }
-        );
+    const auto restoredPtr = dm::ServerErrorHelpers::createExceptionFromObject( json );
+
+    try
+    {
+        cpp::safeRethrowException( restoredPtr );
+
+        UTF_FAIL( "The restored exception must be thrown" );
+    }
+    catch( SystemException& restored )
+    {
+        const auto* restoredCategoryName = eh::get_error_info< eh::errinfo_category_name >( restored );
+
+        UTF_REQUIRE( nullptr != restoredCategoryName );
+        UTF_REQUIRE_EQUAL( *restoredCategoryName, std::string( "OpenSSL" ) );
+
+        const auto* restoredSystemCode = eh::get_error_info< eh::errinfo_system_code >( restored );
+
+        UTF_REQUIRE( nullptr != restoredSystemCode );
+
+        UTF_REQUIRE_EQUAL(
+            *restoredSystemCode,
+            json -> result() -> exceptionProperties() -> systemCode()
+            );
+
+        /*
+         * The code itself is the honest part of the loss - its category is the one this process
+         * could name, not the OpenSSL one the value actually belongs to, which is exactly why
+         * the name above is carried separately
+         */
+
+        UTF_REQUIRE_EQUAL(
+            restored.code().value(),
+            json -> result() -> exceptionProperties() -> systemCode()
+            );
+    }
 
     /*
      * The positive control - the document itself round trips through JSON text without loss,

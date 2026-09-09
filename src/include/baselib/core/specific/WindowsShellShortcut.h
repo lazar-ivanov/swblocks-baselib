@@ -41,6 +41,8 @@
 #undef uuid_t
 
 #include <baselib/core/specific/ComUtils.h>
+#include <baselib/core/FsUtils.h>
+#include <baselib/core/Logging.h>
 #include <baselib/core/StringUtils.h>
 
 namespace bl

@@ -5,7 +5,7 @@ This document records the keep-or-delete decision for
 [`src/include/baselib/core/TimeZoneData.h`](../../../src/include/baselib/core/TimeZoneData.h), which
 has **no in-repository callers**.
 
-**Origin:** `CPP_TEST_ENHANCEMENT_PLAN.md`, task T361, which is *"gated on a keep-or-delete decision
+**Origin:** `notes/reviews/major/update_2026/whole-library-cxx-test-enhancement-plan.md`, task T361, which is *"gated on a keep-or-delete decision
 for `getDefaultTimeZone()`, which has zero in-repo callers - the same decision T268 raises"*.
 
 ---

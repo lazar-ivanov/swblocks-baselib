@@ -113,8 +113,44 @@ namespace bl
                     BL_DM_SET_SERVER_EXCEPTION_PROPERTY( sslIsVerifyErrorMessage, errinfo_ssl_is_verify_error_message, );
                     BL_DM_SET_SERVER_EXCEPTION_PROPERTY( sslIsVerifyErrorString, errinfo_ssl_is_verify_error_string,   );
                     BL_DM_SET_SERVER_EXCEPTION_PROPERTY( sslIsVerifySubjectName, errinfo_ssl_is_verify_subject_name,   );
+                    BL_DM_SET_SERVER_EXCEPTION_PROPERTY( hint, errinfo_hint,                                           );
+                    BL_DM_SET_SERVER_EXCEPTION_PROPERTY( originalType, errinfo_original_type,                          );
+                    BL_DM_SET_SERVER_EXCEPTION_PROPERTY( originalThreadName, errinfo_original_thread_name,             );
+                    BL_DM_SET_SERVER_EXCEPTION_PROPERTY( serviceStatus, errinfo_service_status,                        );
+                    BL_DM_SET_SERVER_EXCEPTION_PROPERTY( serviceStatusCategory, errinfo_service_status_category,       );
+                    BL_DM_SET_SERVER_EXCEPTION_PROPERTY( serviceStatusMessage, errinfo_service_status_message,         );
 
 #undef BL_DM_SET_SERVER_EXCEPTION_PROPERTY
+
+                    /*
+                     * The two below can't go through the macro above - the uuid has to be
+                     * converted into its string form for the wire, and the stack trace has to be
+                     * capped, as a single one of them can otherwise be kilobytes long and inflate
+                     * the whole error response
+                     */
+
+                    {
+                        const auto* info = eh::get_error_info< eh::errinfo_error_uuid >( e );
+
+                        if( info != nullptr )
+                        {
+                            errorResult -> exceptionProperties() -> errorUuid( uuids::uuid2string( *info ) );
+                        }
+                    }
+
+                    {
+                        const std::size_t maxStackTraceSize = 4096U;
+
+                        const auto* info = eh::get_error_info< eh::errinfo_original_stack_trace >( e );
+
+                        if( info != nullptr )
+                        {
+                            errorResult -> exceptionProperties() -> originalStackTrace(
+                                info -> size() > maxStackTraceSize ?
+                                    info -> substr( 0U, maxStackTraceSize ) : *info
+                                );
+                        }
+                    }
                 };
 
                 try
@@ -175,10 +211,21 @@ namespace bl
                 )
                 -> std::exception_ptr
             {
+                /*
+                 * The category name is carried as data whenever the document has one, even when
+                 * this process cannot name the category itself and therefore cannot rebuild the
+                 * error code - an eh::error_category is a process local object, so a code can
+                 * only be rebuilt for the categories every process knows
+                 */
+
+                if( ! exceptionProperties -> categoryName().empty() )
+                {
+                    exception << eh::errinfo_category_name( exceptionProperties -> categoryName() );
+                }
+
                 if( errorCategory && exceptionProperties -> errorCodeIsSet() )
                 {
                     exception
-                        << eh::errinfo_category_name( exceptionProperties -> categoryName() )
                         << eh::errinfo_error_code( eh::error_code( exceptionProperties -> errorCode(), *errorCategory ) )
                         ;
                 }
@@ -227,10 +274,31 @@ namespace bl
                 BL_DM_SET_EXCEPTION_STRING_PROPERTY( errinfo_ssl_is_verify_error_message, sslIsVerifyErrorMessage )
                 BL_DM_SET_EXCEPTION_STRING_PROPERTY( errinfo_ssl_is_verify_error_string, sslIsVerifyErrorString )
                 BL_DM_SET_EXCEPTION_STRING_PROPERTY( errinfo_ssl_is_verify_subject_name, sslIsVerifySubjectName )
+                BL_DM_SET_EXCEPTION_STRING_PROPERTY( errinfo_hint, hint )
+                BL_DM_SET_EXCEPTION_STRING_PROPERTY( errinfo_original_type, originalType )
+                BL_DM_SET_EXCEPTION_STRING_PROPERTY( errinfo_original_thread_name, originalThreadName )
+                BL_DM_SET_EXCEPTION_STRING_PROPERTY( errinfo_original_stack_trace, originalStackTrace )
+                BL_DM_SET_EXCEPTION_PROPERTY( errinfo_service_status, serviceStatus )
+                BL_DM_SET_EXCEPTION_PROPERTY( errinfo_service_status_category, serviceStatusCategory )
+                BL_DM_SET_EXCEPTION_STRING_PROPERTY( errinfo_service_status_message, serviceStatusMessage )
 
 #undef BL_DM_SET_EXCEPTION_STRING_PROPERTY
 
 #undef BL_DM_SET_EXCEPTION_PROPERTY
+
+                /*
+                 * The uuid travels as a string on the wire and has to be converted back here
+                 *
+                 * A value which is not a uuid is dropped rather than rejected: uuids::string2uuid
+                 * throws for it, and letting one corrupt field discard an otherwise well formed
+                 * server error document is exactly the failure mode the category chain above no
+                 * longer has
+                 */
+
+                if( uuids::isUuid( exceptionProperties -> errorUuid() ) )
+                {
+                    exception << eh::errinfo_error_uuid( uuids::string2uuid( exceptionProperties -> errorUuid() ) );
+                }
 
                 return std::make_exception_ptr(
                     eh::enable_current_exception(
@@ -276,6 +344,19 @@ namespace bl
 
                 const eh::error_category* errorCategory = nullptr;
 
+                /*
+                 * An eh::error_category is a process local object, so an error code can only be
+                 * rebuilt for the two categories every process is able to name; a category this
+                 * process does not know (e.g. "OpenSSL", which crypto/ registers, or one from a
+                 * newer peer) must not be fabricated with the wrong category object
+                 *
+                 * Rejecting the whole document over it would however discard a perfectly well
+                 * formed server error, so the name and the numeric code survive as data instead
+                 * - see exceptionFromProperties( ... ) above and the bl::SystemException arm
+                 */
+
+                bool isUnknownErrorCategory = false;
+
                 if( categoryName == "generic" )
                 {
                     errorCategory = &eh::generic_category();
@@ -290,13 +371,7 @@ namespace bl
                 }
                 else
                 {
-                    BL_THROW(
-                        ArgumentException(),
-                        BL_MSG()
-                            <<"Unknown error category: '"
-                            << categoryName
-                            <<"'"
-                         );
+                    isUnknownErrorCategory = true;
                 }
 
                 if( exceptionType == "bl::ArgumentException" )
@@ -306,6 +381,10 @@ namespace bl
                 else if( exceptionType == "bl::ArgumentNullException" )
                 {
                     return exceptionFromProperties( exceptionProperties, errorCategory, ArgumentNullException() );
+                }
+                else if( exceptionType == "bl::BufferTooSmallException" )
+                {
+                    return exceptionFromProperties( exceptionProperties, errorCategory, BufferTooSmallException() );
                 }
                 else if( exceptionType == "bl::CacheException" )
                 {
@@ -335,13 +414,25 @@ namespace bl
                 {
                     return exceptionFromProperties( exceptionProperties, errorCategory, JsonException() );
                 }
+                else if( exceptionType == "bl::NotFoundException" )
+                {
+                    return exceptionFromProperties( exceptionProperties, errorCategory, NotFoundException() );
+                }
                 else if( exceptionType == "bl::NotSupportedException" )
                 {
                     return exceptionFromProperties( exceptionProperties, errorCategory, NotSupportedException() );
                 }
+                else if( exceptionType == "bl::NumberCoerceException" )
+                {
+                    return exceptionFromProperties( exceptionProperties, errorCategory, NumberCoerceException() );
+                }
                 else if( exceptionType == "bl::ObjectDisconnectedException" )
                 {
                     return exceptionFromProperties( exceptionProperties, errorCategory, ObjectDisconnectedException() );
+                }
+                else if( exceptionType == "bl::PrintableWrapperException" )
+                {
+                    return exceptionFromProperties( exceptionProperties, errorCategory, PrintableWrapperException() );
                 }
                 else if( exceptionType == "bl::SecurityException" )
                 {
@@ -371,13 +462,48 @@ namespace bl
                         InvalidDataFormatException()
                         );
                 }
+                else if( exceptionType == "bl::UserAuthenticationException" )
+                {
+                    /*
+                     * Note that this arm must precede the one of its base class below, so the
+                     * derived type is not swallowed by it if the chain is ever converted from
+                     * exact name comparisons into something more permissive
+                     */
+
+                    return exceptionFromProperties(
+                        exceptionProperties,
+                        errorCategory,
+                        UserAuthenticationException()
+                        );
+                }
                 else if( exceptionType == "bl::UserMessageException" )
                 {
                     return exceptionFromProperties( exceptionProperties, errorCategory, UserMessageException() );
                 }
                 else if( exceptionType == "bl::SystemException" )
                 {
-                    if( ! errorCategory || ! exceptionProperties -> errorCodeIsSet() )
+                    if( isUnknownErrorCategory )
+                    {
+                        /*
+                         * The category cannot be resolved, so the numeric value is the only
+                         * thing left to rebuild the code from - a document which carries
+                         * neither describes no error at all, and building a code of zero out
+                         * of it would produce a SystemException whose code() says "success"
+                         */
+
+                        if( ! exceptionProperties -> systemCodeIsSet() && ! exceptionProperties -> errorCodeIsSet() )
+                        {
+                            BL_THROW(
+                                ArgumentException(),
+                                BL_MSG()
+                                    << "Neither systemCode nor errorCode is set for a SystemException "
+                                    << "whose error category '"
+                                    << categoryName
+                                    << "' cannot be resolved"
+                                 );
+                        }
+                    }
+                    else if( ! errorCategory || ! exceptionProperties -> errorCodeIsSet() )
                     {
                         BL_THROW(
                             ArgumentException(),
@@ -396,10 +522,22 @@ namespace bl
                         whatPrefix = exceptionMessage.substr( 0, pos );
                     }
 
-                    auto systemException = SystemException::create(
-                        eh::error_code( exceptionProperties -> errorCode(), *errorCategory ),
-                        whatPrefix
-                        );
+                    /*
+                     * A bl::SystemException must carry an error code, so when the category
+                     * cannot be resolved the numeric value is taken from systemCode; the real
+                     * category name is attached as errinfo_category_name data by
+                     * exceptionFromProperties( ... ) and overwrites the one the code implies
+                     */
+
+                    const auto errorCode = errorCategory ?
+                        eh::error_code( exceptionProperties -> errorCode(), *errorCategory ) :
+                        eh::error_code(
+                            exceptionProperties -> systemCodeIsSet() ?
+                                exceptionProperties -> systemCode() : exceptionProperties -> errorCode(),
+                            eh::system_category()
+                            );
+
+                    auto systemException = SystemException::create( errorCode, whatPrefix );
 
                     return exceptionFromProperties( exceptionProperties, errorCategory, systemException );
                 }
@@ -428,8 +566,9 @@ namespace bl
              *
              * The full diagnostic information is intended for trusted internal services and it
              * stays in the server logs; a response which can reach an untrusted client must not
-             * carry the exception dump, the source file / function names, the task information
-             * or the addresses of the server side endpoints
+             * carry the exception dump, the source file / function names, the task information,
+             * the addresses of the server side endpoints or the raw text of an error which was
+             * not raised as user friendly
              */
 
             static auto getRedactedServerErrorAsJson(
@@ -450,8 +589,32 @@ namespace bl
 
                 const auto& properties = result -> exceptionProperties();
 
+                /*
+                 * The raw what() text and errinfo_message are diagnostics of the same kind as
+                 * everything else on this list - BL_MSG() text in this library routinely carries
+                 * file paths, endpoint addresses and internal identifiers - so they are replaced
+                 * by the friendly message the model already computes
+                 *
+                 * An exception which was raised as user friendly is the exception to that: its
+                 * text was written to be shown to the caller, and result -> message() is the very
+                 * same string (see createServerErrorResultObject( ... ) above)
+                 */
+
+                const bool isUserFriendly =
+                    properties && properties -> isUserFriendlyIsSet() && properties -> isUserFriendly();
+
+                if( ! isUserFriendly )
+                {
+                    result -> exceptionMessage( cpp::copy( result -> message() ) );
+                }
+
                 if( properties )
                 {
+                    if( ! isUserFriendly )
+                    {
+                        properties -> message( str::empty() );
+                    }
+
                     properties -> fileName( str::empty() );
                     properties -> fileOpenMode( str::empty() );
                     properties -> functionName( str::empty() );
@@ -463,6 +626,8 @@ namespace bl
                     properties -> httpRedirectUrl( str::empty() );
                     properties -> externalCommandOutput( str::empty() );
                     properties -> parserFile( str::empty() );
+                    properties -> originalStackTrace( str::empty() );
+                    properties -> originalThreadName( str::empty() );
 
                     properties -> endpointPortReset();
                 }

@@ -152,6 +152,24 @@ namespace bl
                     );
             }
 
+            /**
+             * @brief Checks that a length-prefixed text fits as a whole
+             *
+             * Writing the prefix and the bytes are two separate capacity checked writes, so
+             * without this the block can be left holding a dangling length prefix of a text
+             * which was never written
+             */
+
+            void chkCanWriteText( SAA_in const std::int32_t textSize )
+            {
+                const std::size_t totalSize = sizeof( std::int32_t ) + static_cast< std::size_t >( textSize );
+
+                if( m_size + totalSize > m_capacity )
+                {
+                    throwWriteBufferTooSmallException( totalSize );
+                }
+            }
+
         public:
 
             typedef char*                                                       iterator;
@@ -353,6 +371,8 @@ namespace bl
             {
                 const std::int32_t textSize = numbers::safeCoerceTo< std::int32_t >( std::strlen( text ) );
 
+                chkCanWriteText( textSize );
+
                 write( textSize );
                 write( text, textSize );
             }
@@ -360,6 +380,8 @@ namespace bl
             void write( SAA_in const std::string& text )
             {
                 const std::int32_t textSize = numbers::safeCoerceTo< std::int32_t >( text.size() );
+
+                chkCanWriteText( textSize );
 
                 write( textSize );
                 write( text.c_str(), textSize );

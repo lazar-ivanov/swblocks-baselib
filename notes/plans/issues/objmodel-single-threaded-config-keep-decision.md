@@ -5,7 +5,7 @@ configuration of the object model - `bl::RefCountedBase< false >`,
 `bl::om::ObjectImpl< T, ..., false >` and `bl::om::detail::ServerLifetimeTrackerT< false >` - which
 has **no instantiation anywhere in the repository**.
 
-**Origin:** `CPP_TEST_ENHANCEMENT_PLAN.md`, task T360, which notes this is *"dead configuration with
+**Origin:** `notes/reviews/major/update_2026/whole-library-cxx-test-enhancement-plan.md`, task T360, which notes this is *"dead configuration with
 zero consumers and should be preceded by a keep-or-delete decision on the single-threaded
 configuration - if it is to be deleted, this task disappears"*.
 

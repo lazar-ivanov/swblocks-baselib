@@ -278,19 +278,35 @@ UTF_AUTO_TEST_CASE( TestWatchdogArgumentValidation )
      * than declared inline in the macro argument
      */
 
-    const auto cb = []() -> void
+    const auto construct = []( SAA_in const bl::time::time_duration& checkingInterval ) -> void
     {
-        bl::Watchdog watchdog( bl::time::milliseconds( 0 ) /* checkingInterval */ );
+        bl::Watchdog watchdog( checkingInterval );
 
         BL_UNUSED( watchdog );
     };
 
-    UTF_CHECK_THROW( cb(), bl::UnexpectedException );
+    UTF_CHECK_THROW( construct( bl::time::milliseconds( 0 ) ), bl::UnexpectedException );
+
+    /*
+     * A negative interval passes the zero check and then wraps into a huge unsigned value in
+     * the uint64_t cast, so the watchdog would silently never report anything as expiring
+     */
+
+    UTF_CHECK_THROW( construct( bl::time::milliseconds( -1 ) ), bl::UnexpectedException );
 
     Watchdog watchdog( bl::time::milliseconds( 1 ) /* checkingInterval */ );
 
     UTF_CHECK_THROW(
         watchdog.extendExpiration( "m", bl::time::milliseconds( -1 ) ),
+        bl::UnexpectedException
+        );
+
+    /*
+     * A negative horizon wraps the same way and would report EVERY monitor as expiring
+     */
+
+    UTF_CHECK_THROW(
+        watchdog.expiringMonitors( bl::time::milliseconds( -1 ) ),
         bl::UnexpectedException
         );
 

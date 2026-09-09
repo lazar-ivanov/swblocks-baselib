@@ -1,12 +1,26 @@
 # `CommandBase::getOptionsHelp()` hide / unhide pair is not RAII protected
 
 **Origin:** task **T281** of the C++ test enhancement plan
-(`CPP_TEST_ENHANCEMENT_PLAN.md`), while adding
+(`notes/reviews/major/update_2026/whole-library-cxx-test-enhancement-plan.md`), while adding
 `CmdLine_DryRunNotApplicableHidesParentOption` to
 `src/utests/utf_baselib_cmdline/TestCmdLine.h`.
 
-**Decision date:** 2026-09-08. **Status:** no production change; recorded only. The new test
-case asserts the non-throwing path only.
+**Decision date:** 2026-09-08. **Status:** ~~no production change; recorded only~~ -
+**CLOSED, fixed 2026-09-08**.
+
+---
+
+## Resolution (2026-09-08)
+
+Fixed as item 8.1 of
+`notes/reviews/major/update_2026/whole-library-cxx-test-enhancement-outstanding-issues-plan.md`.
+`CommandBaseT::getOptionsHelp()` now wraps the unhide in `BL_SCOPE_EXIT`, so the root's
+`dryrun,n` option is restored even when rendering the root's option block throws.
+`CmdLine_DryRunNotApplicableHidesParentOption` gained a sub-case which makes that rendering
+throw (through a root whose `formatMessage()` override throws on demand) and asserts that
+`--dryrun` is neither hidden afterwards nor missing from the next command's help.
+
+The rest of this document is the original analysis and is kept for the record.
 
 ---
 

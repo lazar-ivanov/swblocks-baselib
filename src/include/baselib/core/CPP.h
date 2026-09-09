@@ -584,6 +584,19 @@ namespace bl
 
             ScopeGuardT& operator=( SAA_in ScopeGuardT&& rhs )
             {
+                if( this == &rhs )
+                {
+                    return *this;
+                }
+
+                /*
+                 * An armed guard always runs exactly once - the same rule the destructor
+                 * implements - so the cleanup this guard is already holding is executed before
+                 * it is replaced rather than silently dropped
+                 */
+
+                runNow();
+
                 m_cb = std::move( rhs.m_cb );
                 m_disabled = rhs.m_disabled;
                 rhs.dismiss();

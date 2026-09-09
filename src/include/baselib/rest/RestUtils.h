@@ -117,7 +117,62 @@ namespace bl
                 }
             }
 
+            /**
+             * @brief Formats an exception as a simple JSON server error response body
+             *
+             * The response of an HTTP gateway goes out to a client which may be untrusted, so
+             * the first entry point below - the one every caller uses by default - returns the
+             * redacted document; the unredacted variant is the explicit opt-out for an internal
+             * deployment which scrapes the full diagnostics over HTTP
+             */
+
             static auto formatEhResponseSimpleJson(
+                SAA_in              const HttpStatusCode            httpStatusCode,
+                SAA_in              const std::exception_ptr&       eptr
+                )
+                -> om::ObjPtr< httpserver::Response >
+            {
+                return formatEhResponseSimpleJsonImpl(
+                    httpStatusCode,
+                    eptr,
+                    true                                                    /* redactErrorResponses */
+                    );
+            }
+
+            static auto formatEhResponseSimpleJsonUnredacted(
+                SAA_in              const HttpStatusCode            httpStatusCode,
+                SAA_in              const std::exception_ptr&       eptr
+                )
+                -> om::ObjPtr< httpserver::Response >
+            {
+                return formatEhResponseSimpleJsonImpl(
+                    httpStatusCode,
+                    eptr,
+                    false                                                   /* redactErrorResponses */
+                    );
+            }
+
+            /**
+             * @brief The JSON server error document a REST server places in a response body
+             *
+             * @param redactErrorResponses when 'true' (the default of every caller) the
+             * properties which disclose the internals of the server are removed
+             */
+
+            static auto getServerErrorAsJson(
+                SAA_in              const std::exception_ptr&                   eptr,
+                SAA_in              const bool                                  redactErrorResponses,
+                SAA_in_opt          const eh::void_exception_callback_t&        exceptionCallback =
+                    dm::ServerErrorHelpers::defaultEhCallback()
+                )
+                -> std::string
+            {
+                return redactErrorResponses ?
+                    dm::ServerErrorHelpers::getRedactedServerErrorAsJson( eptr, exceptionCallback ) :
+                    dm::ServerErrorHelpers::getServerErrorAsJson( eptr, exceptionCallback );
+            }
+
+            static auto formatEhResponseGraphQL(
                 SAA_in              const HttpStatusCode            httpStatusCode,
                 SAA_in              const std::exception_ptr&       eptr
                 )
@@ -127,7 +182,7 @@ namespace bl
 
                 auto httpStatusCodeActual = httpStatusCode;
 
-                auto contentJson = dm::ServerErrorHelpers::getServerErrorAsJson(
+                auto contentJson = GraphQLErrorHelpers::getServerErrorAsGraphQL(
                     eptr,
                     cpp::bind(
                         &updateHttpStatusFromException,
@@ -143,9 +198,12 @@ namespace bl
                     );
             }
 
-            static auto formatEhResponseGraphQL(
+        private:
+
+            static auto formatEhResponseSimpleJsonImpl(
                 SAA_in              const HttpStatusCode            httpStatusCode,
-                SAA_in              const std::exception_ptr&       eptr
+                SAA_in              const std::exception_ptr&       eptr,
+                SAA_in              const bool                      redactErrorResponses
                 )
                 -> om::ObjPtr< httpserver::Response >
             {
@@ -153,8 +211,9 @@ namespace bl
 
                 auto httpStatusCodeActual = httpStatusCode;
 
-                auto contentJson = GraphQLErrorHelpers::getServerErrorAsGraphQL(
+                auto contentJson = getServerErrorAsJson(
                     eptr,
+                    redactErrorResponses,
                     cpp::bind(
                         &updateHttpStatusFromException,
                         _1,

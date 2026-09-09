@@ -159,14 +159,28 @@ UTF_AUTO_TEST_CASE( BaseLib_DataBlockReadWriteCodecTests )
     UTF_REQUIRE_EQUAL( 8U, small -> capacity() );
 
     /*
-     * The length prefix and the payload are two separate writes, so this is the one
-     * place where a failed write( const std::string& ) is not atomic - the prefix has
-     * already been appended. This pins the current behavior which a reader must know
+     * The length prefix and the payload are two separate capacity checked writes, so the
+     * whole 4 + size is checked once before either of them - a failed
+     * write( const std::string& ) leaves the block exactly as it was rather than holding
+     * a dangling length prefix of a text which was never written
      */
 
     small -> reset();
 
     UTF_REQUIRE_THROW( small -> write( std::string( 6U, 'x' ) ), BufferTooSmallException );
 
-    UTF_REQUIRE_EQUAL( 4U, small -> size() );
+    UTF_REQUIRE_EQUAL( 0U, small -> size() );
+
+    /*
+     * The same for the const char* overload, and the largest text which still fits is
+     * the positive control that the check is not off by the size of the prefix
+     */
+
+    UTF_REQUIRE_THROW( small -> write( "xxxxxx" ), BufferTooSmallException );
+
+    UTF_REQUIRE_EQUAL( 0U, small -> size() );
+
+    UTF_REQUIRE_NO_THROW( small -> write( std::string( 4U, 'x' ) ) );
+
+    UTF_REQUIRE_EQUAL( 8U, small -> size() );
 }

@@ -295,20 +295,33 @@ UTF_AUTO_TEST_CASE( ErrorToJsonTests )
     }
 
     {
+        /*
+         * A category name this process cannot resolve does not reject the document - the error
+         * code cannot be rebuilt, because an eh::error_category is a process local object, but
+         * the name itself survives as data
+         */
+
         auto serverErrorJson = dm::ServerErrorJson::createInstance();
         serverErrorJson -> result( dm::ServerErrorResult::createInstance() );
         serverErrorJson -> result() -> exceptionType( "bl::ServerErrorException" );
         serverErrorJson -> result() -> exceptionProperties( dm::ExceptionProperties::createInstance() );
         serverErrorJson -> result() -> exceptionProperties() -> categoryName( "non-generic" );
+        serverErrorJson -> result() -> exceptionProperties() -> errorCode( 42 );
 
-        UTF_REQUIRE_EXCEPTION(
-            ( void )dm::ServerErrorHelpers::createExceptionFromObject( serverErrorJson ),
-            ArgumentException,
-            []( SAA_in const ArgumentException& e ) -> bool
-            {
-                return std::string("Unknown error category: 'non-generic'" ) == e.what();
-            }
-            );
+        try
+        {
+            std::rethrow_exception(
+                dm::ServerErrorHelpers::createExceptionFromObject( serverErrorJson )
+                );
+
+            UTF_FAIL( "The restored exception must be thrown" );
+        }
+        catch( ServerErrorException& e )
+        {
+            UTEST_PROPERTY_REQUIRE_EQUAL( errinfo_category_name, "non-generic" )
+
+            UTF_REQUIRE( nullptr == eh::get_error_info< eh::errinfo_error_code >( e ) );
+        }
     }
 
     /*
@@ -424,9 +437,9 @@ UTF_AUTO_TEST_CASE( ErrorToJsonTests )
     try
     {
         /*
-         * A null category means the error-code block in exceptionFromProperties() is skipped
-         * ENTIRELY, even when errorCode is set - and errinfo_category_name is attached only
-         * inside that block, so it must be absent as well
+         * An EMPTY category name means the error-code block in exceptionFromProperties() is
+         * skipped even when errorCode is set - and there is no name to carry as data either, so
+         * errinfo_category_name must be absent as well
          */
 
         auto serverErrorJson = dm::ServerErrorJson::createInstance();
@@ -460,7 +473,7 @@ UTF_AUTO_TEST_CASE( ErrorToJsonExceptionTypeMappingTests )
 
     /*
      * createServerErrorResultObject() writes e.fullTypeName() into the exceptionType string and
-     * createExceptionFromObject() reads it back through a chain of 19 bl:: arms plus the
+     * createExceptionFromObject() reads it back through a chain of 24 bl:: arms plus the
      * "std::exception" one. The name written on the way out and the type constructed on the way
      * in are coupled only by two hand maintained string literals sitting ~180 lines apart, and
      * before this case only four of those arms were ever executed
@@ -538,6 +551,7 @@ UTF_AUTO_TEST_CASE( ErrorToJsonExceptionTypeMappingTests )
 
     UTEST_ROUNDTRIP_EXCEPTION_TYPE( ArgumentException )
     UTEST_ROUNDTRIP_EXCEPTION_TYPE( ArgumentNullException )
+    UTEST_ROUNDTRIP_EXCEPTION_TYPE( BufferTooSmallException )
     UTEST_ROUNDTRIP_EXCEPTION_TYPE( CacheException )
     UTEST_ROUNDTRIP_EXCEPTION_TYPE( ExternalCommandException )
     UTEST_ROUNDTRIP_EXCEPTION_TYPE( HttpException )
@@ -545,39 +559,64 @@ UTF_AUTO_TEST_CASE( ErrorToJsonExceptionTypeMappingTests )
     UTEST_ROUNDTRIP_EXCEPTION_TYPE( TimeoutException )
     UTEST_ROUNDTRIP_EXCEPTION_TYPE( JavaException )
     UTEST_ROUNDTRIP_EXCEPTION_TYPE( JsonException )
+    UTEST_ROUNDTRIP_EXCEPTION_TYPE( NotFoundException )
     UTEST_ROUNDTRIP_EXCEPTION_TYPE( NotSupportedException )
+    UTEST_ROUNDTRIP_EXCEPTION_TYPE( NumberCoerceException )
     UTEST_ROUNDTRIP_EXCEPTION_TYPE( ObjectDisconnectedException )
+    UTEST_ROUNDTRIP_EXCEPTION_TYPE( PrintableWrapperException )
     UTEST_ROUNDTRIP_EXCEPTION_TYPE( SecurityException )
     UTEST_ROUNDTRIP_EXCEPTION_TYPE( ServerErrorException )
     UTEST_ROUNDTRIP_EXCEPTION_TYPE( ServerNoConnectionException )
     UTEST_ROUNDTRIP_EXCEPTION_TYPE( UnexpectedException )
     UTEST_ROUNDTRIP_EXCEPTION_TYPE( XmlException )
     UTEST_ROUNDTRIP_EXCEPTION_TYPE( InvalidDataFormatException )
+    UTEST_ROUNDTRIP_EXCEPTION_TYPE( UserAuthenticationException )
     UTEST_ROUNDTRIP_EXCEPTION_TYPE( UserMessageException )
 
     /*
      * The declared types which have NO arm in createExceptionFromObject() and therefore take the
-     * fall-through at ServerErrorHelpers.h:409-412. This is CHARACTERISING the current behaviour
-     * and not endorsing it: a BufferTooSmallException raised in the broker
-     * (messaging/BrokerBackendProcessing.h, messaging/MessagingUtils.h) reaches the client as a
-     * bl::UnexpectedException today. The point of pinning it is that a SIXTH unmapped type
-     * cannot be added tomorrow without this case failing - see the count assertions at the end
-     *
-     * When the production mapping is extended, move the entry to the table above
+     * fall-through to UnexpectedException. The table is empty now that the five types which used
+     * to take it - BufferTooSmallException, NotFoundException, UserAuthenticationException,
+     * NumberCoerceException and PrintableWrapperException - have arms of their own; the machinery
+     * is kept because a newly declared type still lands here until someone adds its arm, and the
+     * count assertions at the end are what makes that visible
      */
 
-#define UTEST_UNMAPPED_EXCEPTION_TYPE( exceptionClass )                                         \
-        UTEST_EXCEPTION_TYPE_ROUNDTRIP_IMPL(                                                    \
-            exceptionClass, UnexpectedException, fallThroughTypes                               \
-            )                                                                                   \
+    /*
+     * A type which is not declared by core/ErrorHandling.h at all, so it can never gain an arm -
+     * this keeps the fall-through arm itself covered now that every declared type is mapped, and
+     * it is also the shape of the case the fall-through exists for: a newer server naming a type
+     * this client has never heard of
+     */
 
-    UTEST_UNMAPPED_EXCEPTION_TYPE( BufferTooSmallException )
-    UTEST_UNMAPPED_EXCEPTION_TYPE( NotFoundException )
-    UTEST_UNMAPPED_EXCEPTION_TYPE( UserAuthenticationException )
-    UTEST_UNMAPPED_EXCEPTION_TYPE( NumberCoerceException )
-    UTEST_UNMAPPED_EXCEPTION_TYPE( PrintableWrapperException )
+    {
+        ++fallThroughTypes;
 
-#undef UTEST_UNMAPPED_EXCEPTION_TYPE
+        const auto errorJson = dm::ServerErrorJson::createInstance();
+
+        errorJson -> result( dm::ServerErrorResult::createInstance() );
+        errorJson -> result() -> message( "msg: a type from a newer peer" );
+        errorJson -> result() -> exceptionType( "bl::SomeExceptionFromANewerPeer" );
+        errorJson -> result() -> exceptionMessage( "msg: a type from a newer peer" );
+        errorJson -> result() -> exceptionFullDump( "<none>" );
+        errorJson -> result() -> exceptionProperties( dm::ExceptionProperties::createInstance() );
+
+        try
+        {
+            cpp::safeRethrowException(
+                dm::ServerErrorHelpers::createExceptionFromObject( errorJson )
+                );
+
+            UTF_FAIL( "createExceptionFromObject must produce a throwable exception" );
+        }
+        catch( bl::BaseExceptionDefault& e )
+        {
+            UTF_CHECK_EQUAL(
+                std::string( e.fullTypeName() ),
+                std::string( bl::UnexpectedException::fullTypeNameStatic() )
+                );
+        }
+    }
 
 #undef UTEST_ROUNDTRIP_EXCEPTION_TYPE
 
@@ -621,18 +660,19 @@ UTF_AUTO_TEST_CASE( ErrorToJsonExceptionTypeMappingTests )
      * The guard which forces a newly declared exception to be added to one of the two tables
      *
      * core/ErrorHandling.h declares 24 bl:: exception types: 22 through BL_DECLARE_EXCEPTION* at
-     * :750-771, plus UserMessageException (:716) and SystemException (:779). 18 are round
-     * tripped above, 5 fall through, and SystemException is covered by ErrorToJsonTests. C++ has
-     * no way to count the declarations, so the 24 below is the hand maintained half of the
-     * coupling - it is what the maintenance note at ErrorHandling.h:745 asks a reader to keep in
-     * step, and it must be bumped together with whichever table gains the new entry
+     * :750-771, plus UserMessageException (:716) and SystemException (:779). 23 are round
+     * tripped above and SystemException is covered by ErrorToJsonTests, so every declared type
+     * now has an arm and the single fall-through case above uses an undeclared name. C++ has no
+     * way to count the declarations, so the 24 below is the hand maintained half of the coupling
+     * - it is what the maintenance note at ErrorHandling.h:745 asks a reader to keep in step,
+     * and a newly declared type must be added to the table above together with it
      */
 
-    UTF_REQUIRE_EQUAL( roundTrippedTypes, 18U );
-    UTF_REQUIRE_EQUAL( fallThroughTypes, 5U );
+    UTF_REQUIRE_EQUAL( roundTrippedTypes, 23U );
+    UTF_REQUIRE_EQUAL( fallThroughTypes, 1U );
 
     UTF_REQUIRE_EQUAL(
-        roundTrippedTypes + fallThroughTypes + 1U /* SystemException, see ErrorToJsonTests */,
+        roundTrippedTypes + 1U /* SystemException, see ErrorToJsonTests */,
         24U
         );
 }
@@ -769,6 +809,160 @@ UTF_AUTO_TEST_CASE( ErrorToJsonSystemCodeDerivationTests )
             UTF_REQUIRE( nullptr == eh::get_error_info< eh::errinfo_error_code >( e ) );
         }
     }
+
+    {
+        /*
+         * 4. A category this process cannot name - the positive control for the relaxation of
+         * the category chain, which used to reject the whole document with an ArgumentException
+         *
+         * The name and the numeric value survive as data on a non-SystemException type too; the
+         * SystemException leg of the same behaviour is pinned by
+         * CryptoErrorHandling_OpenSslCategoryDoesNotSurviveServerErrorRoundTrip in
+         * utf_baselib_security against a real OpenSSL failure
+         */
+
+        const auto eptr = BL_MAKE_EXCEPTION_PTR(
+            ServerErrorException()
+                << eh::errinfo_category_name( "a category from a newer peer" )
+                << eh::errinfo_system_code( 400 ),
+            "unknown category"
+            );
+
+        const auto props = propertiesOf( eptr );
+
+        UTF_REQUIRE_EQUAL( props -> categoryName(), "a category from a newer peer" );
+
+        try
+        {
+            cpp::safeRethrowException( roundTrip( eptr ) );
+
+            UTF_FAIL( "The round tripped exception must be thrown" );
+        }
+        catch( ServerErrorException& e )
+        {
+            const auto* categoryName = eh::get_error_info< eh::errinfo_category_name >( e );
+
+            UTF_REQUIRE( nullptr != categoryName );
+            UTF_REQUIRE_EQUAL( *categoryName, "a category from a newer peer" );
+
+            const auto* systemCode = eh::get_error_info< eh::errinfo_system_code >( e );
+
+            UTF_REQUIRE( nullptr != systemCode );
+            UTF_REQUIRE_EQUAL( *systemCode, 400 );
+        }
+    }
+
+    {
+        /*
+         * 5. A bl::SystemException whose category cannot be resolved AND which carries no
+         * numeric value at all
+         *
+         * The relaxation above deliberately stops here: with nothing to rebuild the code from,
+         * the only SystemException which could be produced is one whose code() reports success,
+         * which is worse than refusing the document. The guard's message names the category, so
+         * an operator can see which one this process could not resolve
+         */
+
+        auto serverErrorJson = dm::ServerErrorJson::createInstance();
+
+        serverErrorJson -> result( dm::ServerErrorResult::createInstance() );
+        serverErrorJson -> result() -> exceptionType( "bl::SystemException" );
+        serverErrorJson -> result() -> exceptionMessage( "prefix: no code at all" );
+        serverErrorJson -> result() -> exceptionProperties( dm::ExceptionProperties::createInstance() );
+        serverErrorJson -> result() -> exceptionProperties() -> categoryName( "OpenSSL" );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            ( void ) dm::ServerErrorHelpers::createExceptionFromObject( serverErrorJson ),
+            ArgumentException,
+            "Neither systemCode nor errorCode is set"
+            );
+
+        /*
+         * The positive control - the very same document with a numeric value does rehydrate,
+         * so the guard above is about the missing value and not about the category name
+         */
+
+        serverErrorJson -> result() -> exceptionProperties() -> systemCode( 42 );
+
+        try
+        {
+            cpp::safeRethrowException(
+                dm::ServerErrorHelpers::createExceptionFromObject( serverErrorJson )
+                );
+
+            UTF_FAIL( "The restored exception must be thrown" );
+        }
+        catch( SystemException& e )
+        {
+            UTF_REQUIRE_EQUAL( e.code().value(), 42 );
+
+            const auto* categoryName = eh::get_error_info< eh::errinfo_category_name >( e );
+
+            UTF_REQUIRE( nullptr != categoryName );
+            UTF_REQUIRE_EQUAL( *categoryName, "OpenSSL" );
+        }
+    }
+
+    {
+        /*
+         * 6. A corrupt errorUuid is dropped rather than rejecting the whole document
+         *
+         * uuids::string2uuid throws for a value which is not a uuid, and letting one corrupt
+         * field discard an otherwise well formed server error is the failure mode the category
+         * chain above no longer has - so the field is gated on uuids::isUuid
+         */
+
+        const auto errorUuid = uuids::string2uuid( "0f5a3d1e-9c74-4c1a-8f2d-6c9b1a7e35d0" );
+
+        const auto eptr = BL_MAKE_EXCEPTION_PTR(
+            ServerErrorException() << eh::errinfo_error_uuid( errorUuid ),
+            "uuid round trip"
+            );
+
+        const auto serverErrorJson = dm::ServerErrorHelpers::createServerErrorObject( eptr );
+
+        /*
+         * The positive control first - a well formed uuid does survive
+         */
+
+        try
+        {
+            cpp::safeRethrowException(
+                dm::ServerErrorHelpers::createExceptionFromObject( serverErrorJson )
+                );
+
+            UTF_FAIL( "The restored exception must be thrown" );
+        }
+        catch( ServerErrorException& e )
+        {
+            const auto* restored = eh::get_error_info< eh::errinfo_error_uuid >( e );
+
+            UTF_REQUIRE( nullptr != restored );
+            UTF_REQUIRE_EQUAL( *restored, errorUuid );
+        }
+
+        serverErrorJson -> result() -> exceptionProperties() -> errorUuid( "not-a-uuid-at-all" );
+
+        try
+        {
+            cpp::safeRethrowException(
+                dm::ServerErrorHelpers::createExceptionFromObject( serverErrorJson )
+                );
+
+            UTF_FAIL( "The restored exception must be thrown" );
+        }
+        catch( ServerErrorException& e )
+        {
+            /*
+             * The document still rehydrates and everything else on it survives; only the
+             * corrupt field is gone
+             */
+
+            UTF_REQUIRE( nullptr == eh::get_error_info< eh::errinfo_error_uuid >( e ) );
+
+            UTF_REQUIRE_EQUAL( std::string( e.fullTypeName() ), "bl::ServerErrorException" );
+        }
+    }
 }
 
 UTF_AUTO_TEST_CASE( ErrorToJsonUnmappedErrorInfoTests )
@@ -776,14 +970,14 @@ UTF_AUTO_TEST_CASE( ErrorToJsonUnmappedErrorInfoTests )
     using namespace bl;
 
     /*
-     * core/ErrorHandling.h declares 42 errinfo_* types (33 baselib typedefs plus 9 imported
-     * from Boost) and ServerErrorHelpers maps exactly 34 of them onto ExceptionProperties in a
-     * hand written macro list, mirrored in reverse in exceptionFromProperties(). There is no
-     * coupling of any kind - compiler, test or otherwise - between the declaration list and the
-     * serialisation list
+     * ServerErrorHelpers maps the errinfo_* types onto ExceptionProperties in a hand written
+     * macro list, mirrored in reverse in exceptionFromProperties(). There is no coupling of any
+     * kind - compiler, test or otherwise - between the declaration list in core/ErrorHandling.h
+     * and the serialisation list
      *
-     * EIGHT declared errinfos therefore have NO wire representation, and three groups of them
-     * are attached by production code to exception types which ARE explicitly wire mapped:
+     * The eight errinfos below post-date the model and had NO wire representation at all until
+     * they were added to it; three groups of them are attached by production code to exception
+     * types which ARE explicitly wire mapped:
      *
      *   errinfo_hint, errinfo_original_type, errinfo_original_thread_name,
      *   errinfo_original_stack_trace          - jni/JniEnvironment.h, on bl::JavaException
@@ -796,17 +990,16 @@ UTF_AUTO_TEST_CASE( ErrorToJsonUnmappedErrorInfoTests )
      *                                           bl::NotSupportedException / bl::TimeoutException
      *                                           and the storage exceptions
      *
-     * A reviewer who adds a 35th mapping - or a 43rd errinfo - is expected to update this case
-     * deliberately rather than have the behaviour change silently. ErrorToJsonTests enumerates
-     * the 34 mapped ones, which is a complete blind spot for these eight, because the list
-     * under test IS the list under implementation
+     * This case pins their round trip end to end - through the JSON text and back into a live
+     * exception - so a mapping removed from either half of the pair fails loudly here. The only
+     * errinfos still deliberately without a property of their own are the two structural ones:
+     * errinfo_full_type_name, which travels as the exceptionType field, and
+     * errinfo_nested_exception_ptr, which is a process local pointer
+     *
+     * A reviewer who adds a new errinfo is expected to update this case deliberately rather than
+     * have the behaviour change silently. ErrorToJsonTests enumerates the mapped ones, which
+     * cannot see a gap at all, because the list under test IS the list under implementation
      */
-
-    UTF_MESSAGE(
-        "errinfo_* types with no wire representation (8): errinfo_hint, errinfo_original_type, "
-        "errinfo_original_thread_name, errinfo_original_stack_trace, errinfo_service_status, "
-        "errinfo_service_status_category, errinfo_service_status_message, errinfo_error_uuid"
-        );
 
     const auto stackTraceValue = std::string( "at Foo.bar(Foo.java:42)" );
 
@@ -844,15 +1037,19 @@ UTF_AUTO_TEST_CASE( ErrorToJsonUnmappedErrorInfoTests )
         );
 
     /*
-     * Every "the unmapped half is gone" assertion below is paired with a positive control on
-     * the SOURCE exception, so it cannot silently become vacuous if a producer stops attaching
-     * the errinfo
+     * Every "the value survived" assertion below is paired with a positive control on the SOURCE
+     * exception, so it cannot silently become vacuous if a producer stops attaching the errinfo
      */
 
-#define UTEST_REQUIRE_ERRINFO_DROPPED( errinfo, source, restored ) \
+#define UTEST_REQUIRE_ERRINFO_ROUND_TRIPS( errinfo, source, restored ) \
         { \
-            UTF_REQUIRE( nullptr != eh::get_error_info< eh::errinfo >( source ) ); \
-            UTF_REQUIRE( nullptr == eh::get_error_info< eh::errinfo >( restored ) ); \
+            const auto* sourceInfo = eh::get_error_info< eh::errinfo >( source ); \
+            const auto* restoredInfo = eh::get_error_info< eh::errinfo >( restored ); \
+            \
+            UTF_REQUIRE( nullptr != sourceInfo ); \
+            UTF_REQUIRE( nullptr != restoredInfo ); \
+            \
+            UTF_REQUIRE( *sourceInfo == *restoredInfo ); \
         } \
 
     {
@@ -887,20 +1084,26 @@ UTF_AUTO_TEST_CASE( ErrorToJsonUnmappedErrorInfoTests )
                 UTF_REQUIRE_EQUAL( restored.fullTypeName(), JavaException::fullTypeNameStatic() );
                 UTF_REQUIRE_EQUAL( restored.what(), "java failure" );
 
-                UTEST_REQUIRE_ERRINFO_DROPPED( errinfo_original_type, source, restored )
-                UTEST_REQUIRE_ERRINFO_DROPPED( errinfo_original_thread_name, source, restored )
-                UTEST_REQUIRE_ERRINFO_DROPPED( errinfo_original_stack_trace, source, restored )
-                UTEST_REQUIRE_ERRINFO_DROPPED( errinfo_hint, source, restored )
+                UTEST_REQUIRE_ERRINFO_ROUND_TRIPS( errinfo_original_type, source, restored )
+                UTEST_REQUIRE_ERRINFO_ROUND_TRIPS( errinfo_original_thread_name, source, restored )
+                UTEST_REQUIRE_ERRINFO_ROUND_TRIPS( errinfo_original_stack_trace, source, restored )
+                UTEST_REQUIRE_ERRINFO_ROUND_TRIPS( errinfo_hint, source, restored )
             }
 
             /*
-             * The only surviving trace of the four JNI errinfos is inside exceptionFullDump,
-             * and getRedactedServerErrorAsJson() - the variant the default HTTP server backend
-             * returns to a client - replaces that whole field with "<redacted>"
+             * The stack trace reaches the full document twice - in its own property and inside
+             * exceptionFullDump - and getRedactedServerErrorAsJson(), the variant the default
+             * HTTP server backend returns to a client, has to remove both: it replaces the dump
+             * with "<redacted>" and blanks originalStackTrace and originalThreadName
              */
 
             UTF_REQUIRE(
                 std::string::npos != parsed -> result() -> exceptionFullDump().find( stackTraceValue )
+                );
+
+            UTF_REQUIRE_EQUAL(
+                parsed -> result() -> exceptionProperties() -> originalStackTrace(),
+                stackTraceValue
                 );
 
             UTF_REQUIRE(
@@ -938,9 +1141,9 @@ UTF_AUTO_TEST_CASE( ErrorToJsonUnmappedErrorInfoTests )
                 UTF_REQUIRE_EQUAL( restored.fullTypeName(), SecurityException::fullTypeNameStatic() );
                 UTF_REQUIRE_EQUAL( restored.what(), "authz failure" );
 
-                UTEST_REQUIRE_ERRINFO_DROPPED( errinfo_service_status, source, restored )
-                UTEST_REQUIRE_ERRINFO_DROPPED( errinfo_service_status_category, source, restored )
-                UTEST_REQUIRE_ERRINFO_DROPPED( errinfo_service_status_message, source, restored )
+                UTEST_REQUIRE_ERRINFO_ROUND_TRIPS( errinfo_service_status, source, restored )
+                UTEST_REQUIRE_ERRINFO_ROUND_TRIPS( errinfo_service_status_category, source, restored )
+                UTEST_REQUIRE_ERRINFO_ROUND_TRIPS( errinfo_service_status_message, source, restored )
             }
         }
     }
@@ -973,12 +1176,12 @@ UTF_AUTO_TEST_CASE( ErrorToJsonUnmappedErrorInfoTests )
                 UTF_REQUIRE_EQUAL( restored.fullTypeName(), TimeoutException::fullTypeNameStatic() );
                 UTF_REQUIRE_EQUAL( restored.what(), "timeout failure" );
 
-                UTEST_REQUIRE_ERRINFO_DROPPED( errinfo_error_uuid, source, restored )
+                UTEST_REQUIRE_ERRINFO_ROUND_TRIPS( errinfo_error_uuid, source, restored )
             }
         }
     }
 
-#undef UTEST_REQUIRE_ERRINFO_DROPPED
+#undef UTEST_REQUIRE_ERRINFO_ROUND_TRIPS
 }
 
 UTF_AUTO_TEST_CASE( ServerErrorHelpersTests )
@@ -1169,7 +1372,7 @@ UTF_AUTO_TEST_CASE( ServerErrorHelpersRedactionTests )
      * httpserver/ServerBackendProcessingImplDefault.h), and until now it had never been executed
      * with an assertion attached anywhere
      *
-     * The redaction list is a hand maintained enumeration of eleven of the 34 properties, with
+     * The redaction list is a hand maintained enumeration of thirteen of the properties, with
      * no compiler or test coupling to the property set: adding a disclosing property to
      * data/models/ErrorHandling.h and forgetting this list, or deleting one line from it, is an
      * information disclosure regression with no signal at all
@@ -1183,8 +1386,17 @@ UTF_AUTO_TEST_CASE( ServerErrorHelpersRedactionTests )
 
     const auto errorCode = eh::errc::make_error_code( eh::errc::permission_denied );
 
+    /*
+     * The two errinfos below are not part of the shared decoration helper because only a JNI
+     * rethrow attaches them, but they are the two most disclosing properties of the model - a
+     * stack trace of the server's own code and the name of the thread which ran it - so the
+     * redaction has to cover them
+     */
+
     const auto eptr = utest::createDecoratedException(
-        HttpServerException(),
+        HttpServerException()
+            << eh::errinfo_original_stack_trace( "at Foo.bar(Foo.java:42)" )
+            << eh::errinfo_original_thread_name( "original_thread_name: ServerErrorHelpersRedactionTests" ),
         "ServerErrorHelpersRedactionTests",
         "message: Bad client request",
         errorCode
@@ -1236,6 +1448,8 @@ UTF_AUTO_TEST_CASE( ServerErrorHelpersRedactionTests )
     UTEST_REQUIRE_REDACTED_AWAY( httpRedirectUrl )
     UTEST_REQUIRE_REDACTED_AWAY( externalCommandOutput )
     UTEST_REQUIRE_REDACTED_AWAY( parserFile )
+    UTEST_REQUIRE_REDACTED_AWAY( originalStackTrace )
+    UTEST_REQUIRE_REDACTED_AWAY( originalThreadName )
 
 #undef UTEST_REQUIRE_REDACTED_AWAY
 
@@ -1252,13 +1466,27 @@ UTF_AUTO_TEST_CASE( ServerErrorHelpersRedactionTests )
     UTF_REQUIRE( ! redactedProperties -> endpointPortIsSet() );
 
     /*
-     * Preserved - the over-redaction guard. Blanking exceptionMessage or message would strip the
-     * only diagnostic a client ever gets
+     * The raw exception text of an error which is not user friendly is redacted too - BL_MSG()
+     * text in this codebase routinely contains file paths - and it is replaced rather than
+     * emptied, because exceptionMessage is a required property of the model
      *
-     * Known gap which is deliberately NOT asserted as a defect here: exceptionMessage and
-     * properties -> message() are not redacted even though BL_MSG() text in this codebase
-     * routinely contains file paths. If the maintainers decide those should be redacted, this
-     * list needs updating with the decision
+     * The friendly message the model computes is what takes its place, so a client still gets a
+     * diagnostic; the user-friendly positive control at the end of this case is what keeps the
+     * redaction from swallowing the text of an error which was written for the caller
+     */
+
+    UTF_REQUIRE( full -> result() -> exceptionMessage() != redacted -> result() -> exceptionMessage() );
+
+    UTF_REQUIRE_EQUAL(
+        redacted -> result() -> exceptionMessage(),
+        redacted -> result() -> message()
+        );
+
+    UTF_REQUIRE( ! fullProperties -> message().empty() );
+    UTF_REQUIRE( redactedProperties -> message().empty() );
+
+    /*
+     * Preserved - the over-redaction guard
      */
 
 #define UTEST_REQUIRE_PRESERVED( property ) \
@@ -1268,7 +1496,6 @@ UTF_AUTO_TEST_CASE( ServerErrorHelpersRedactionTests )
 
     UTF_REQUIRE_EQUAL( full -> result() -> message(), redacted -> result() -> message() );
     UTF_REQUIRE_EQUAL( full -> result() -> exceptionType(), redacted -> result() -> exceptionType() );
-    UTF_REQUIRE_EQUAL( full -> result() -> exceptionMessage(), redacted -> result() -> exceptionMessage() );
 
     UTEST_REQUIRE_PRESERVED( errNo )
     UTEST_REQUIRE_PRESERVED( timeThrown )
@@ -1305,6 +1532,36 @@ UTF_AUTO_TEST_CASE( ServerErrorHelpersRedactionTests )
 
     UTF_REQUIRE( fullJson.find( "function_name: " ) != std::string::npos );
     UTF_REQUIRE( redactedJson.find( "function_name: " ) == std::string::npos );
+
+    /*
+     * The user-friendly positive control for the message redaction above: an error which was
+     * raised to be shown to the caller keeps its text on both sides, and the assertions above
+     * would pass vacuously against an implementation which simply blanked every message
+     */
+
+    {
+        const auto friendlyMessage = std::string( "message: please retry with a smaller payload" );
+
+        const auto friendlyEptr = BL_MAKE_EXCEPTION_PTR(
+            UserMessageException() << eh::errinfo_message( friendlyMessage ),
+            friendlyMessage
+            );
+
+        const auto friendlyRedacted = dm::DataModelUtils::loadFromJsonText< dm::ServerErrorJson >(
+            dm::ServerErrorHelpers::getRedactedServerErrorAsJson( friendlyEptr )
+            );
+
+        UTF_REQUIRE( friendlyRedacted -> result() );
+        UTF_REQUIRE( friendlyRedacted -> result() -> exceptionProperties() );
+
+        UTF_REQUIRE_EQUAL( friendlyRedacted -> result() -> exceptionMessage(), friendlyMessage );
+        UTF_REQUIRE_EQUAL( friendlyRedacted -> result() -> message(), friendlyMessage );
+
+        UTF_REQUIRE_EQUAL(
+            friendlyRedacted -> result() -> exceptionProperties() -> message(),
+            friendlyMessage
+            );
+    }
 }
 
 UTF_AUTO_TEST_CASE( ServerErrorHelpersExceptionCallbackTests )

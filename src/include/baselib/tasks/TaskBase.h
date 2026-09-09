@@ -1718,11 +1718,20 @@ namespace bl
             cpp::SafeUniquePtr< asio::deadline_timer >                              m_timer;
             std::shared_ptr< ExecutionQueue >                                       m_eq;
 
-            void resetTimer()
+            /**
+             * @brief Creates the timer on the thread pool the task is to run on
+             *
+             * The queue's local thread pool is honoured here the same way
+             * TaskBaseT::getThreadPool( eq ) honours it for every other task - every
+             * ObservableBase is a timer task, so this is what decides where the timers of a
+             * reactive pipeline run when a local pool is configured
+             */
+
+            void resetTimer( SAA_in const std::shared_ptr< ExecutionQueue >& eq )
             {
                 m_timer.reset(
                     new asio::deadline_timer(
-                        ThreadPoolDefault::getDefault( base_type::getThreadPoolId() ) -> aioService(),
+                        base_type::getThreadPool( eq ) -> aioService(),
                         time::milliseconds( 0 )
                         )
                     );
@@ -1803,7 +1812,7 @@ namespace bl
 
                 m_eq = eq;
 
-                resetTimer();
+                resetTimer( eq );
 
                 scheduleTimerInternal( getInitDelay() );
             }
@@ -2062,6 +2071,18 @@ namespace bl
             cpp::ScalarTypeIniter< std::size_t >                                m_currentRetryCount;
             cpp::ScalarTypeIniter< bool >                                       m_retrying;
 
+            /**
+             * @brief The cancel latch of the wrapper itself
+             *
+             * The forwarding requestCancel() only reaches the task which happens to be wrapped at
+             * the time of the call, but the operation this task represents is the whole retry
+             * sequence and only the wrapper knows that; without the latch below every swap of the
+             * wrapped task (the retry sleep timer and then a freshly created work task) would
+             * silently discard the cancellation request
+             */
+
+            std::atomic< bool >                                                 m_cancelRequested;
+
             RetryableWrapperTaskT(
                 SAA_in          factory_callback_t&&                            taskFactory,
                 SAA_in          const std::size_t                               maxRetryCount,
@@ -2074,7 +2095,8 @@ namespace bl
                 m_taskFactory( BL_PARAM_FWD( taskFactory ) ),
                 m_maxRetryCount( maxRetryCount ),
                 m_retryTimeout( BL_PARAM_FWD( retryTimeout ) ),
-                m_verificationCallback( BL_PARAM_FWD( verificationCallback ) )
+                m_verificationCallback( BL_PARAM_FWD( verificationCallback ) ),
+                m_cancelRequested( false )
             {
             }
 
@@ -2089,6 +2111,13 @@ namespace bl
             }
 
         public:
+
+            virtual void requestCancel() NOEXCEPT OVERRIDE
+            {
+                m_cancelRequested = true;
+
+                base_type::requestCancel();
+            }
 
             virtual om::ObjPtr< Task > continuationTask() OVERRIDE
             {
@@ -2110,6 +2139,35 @@ namespace bl
                  */
 
                 BL_MUTEX_GUARD( m_lock );
+
+                if( m_cancelRequested )
+                {
+                    /*
+                     * The retry sequence was cancelled, so no further work task is to be
+                     * created regardless of which branch below would have been taken
+                     *
+                     * The work task's own error, if it has one, is more informative than a
+                     * bare cancellation, so it is kept; otherwise (e.g. the cancellation
+                     * landed on the retry sleep timer, which completes without an exception)
+                     * the task is completed as cancelled
+                     *
+                     * The check is made under the same lock which guards the swap, so a
+                     * cancellation request arriving after it still reaches the new target
+                     * via the forwarding requestCancel() and stops the next continuation
+                     */
+
+                    if( ! m_wrappedTask -> exception() )
+                    {
+                        auto exception =
+                            SystemException::create( asio::error::operation_aborted, BL_SYSTEM_ERROR_DEFAULT_MSG );
+
+                        exception << eh::errinfo_is_expected( true );
+
+                        m_wrappedTask -> exception( std::make_exception_ptr( exception ) );
+                    }
+
+                    return nullptr;
+                }
 
                 if( ! m_retrying )
                 {

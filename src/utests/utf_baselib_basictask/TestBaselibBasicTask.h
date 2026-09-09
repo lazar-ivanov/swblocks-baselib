@@ -184,16 +184,19 @@ UTF_AUTO_TEST_CASE( Tasks_LocalThreadPoolScopeTests )
     BL_LOG_MULTILINE( Logging::debug(), BL_MSG() << "\n******************************** Starting test: Tasks_LocalThreadPoolScopeTests ********************************\n" );
 
     /*
-     * setLocalThreadPool() is a partial contract - only SimpleTaskBaseT::scheduleTask and
-     * scheduleNothrow's failure path go through TaskBaseT::getThreadPool( eq ) at all,
-     * while the timer, TCP / SSL and shutdown tasks bind their asio objects to the process
-     * global pool regardless. This case pins the half which does honour it, because
-     * AsyncExecutorImpl exists specifically to isolate its work and depends on it
+     * setLocalThreadPool() is still a partial contract - the TCP / SSL and shutdown tasks
+     * bind their asio objects to the process global pool regardless - but timer tasks now
+     * honour it too, through the same TaskBaseT::getThreadPool( eq ) accessor
+     * SimpleTaskBaseT::scheduleTask uses. This case pins the half which does honour it,
+     * because AsyncExecutorImpl exists specifically to isolate its work and depends on it
      *
      * This module runs with no default thread pools at all - see the
      * UTF_TEST_APP_INIT_DEACTIVATE_THREAD_POOLS define in UtfBaselibBasicTaskMain.cpp -
      * which is what makes 'the local pool' and 'the default pool' trivially
      * distinguishable here and gives the case its discriminating power
+     *
+     * It is also why a timer task can now be hosted here at all: it used to reach for the
+     * absent global default pool and dereference a null pointer
      */
 
     UTF_REQUIRE( nullptr == ThreadPoolDefault::getDefault( ThreadPoolId::GeneralPurpose ) );
@@ -297,6 +300,41 @@ UTF_AUTO_TEST_CASE( Tasks_LocalThreadPoolScopeTests )
 
         UTF_REQUIRE_EQUAL( poolThreadIdHash.load(), taskThreadIdHash.load() );
         UTF_REQUIRE( taskThreadIdHash.load() != mainThreadIdHash );
+
+        /*
+         * A timer task binds its deadline timer through the very same accessor, so it runs
+         * on the local pool too - and this module has no global default pools at all, so
+         * before that was true a timer task here dereferenced a null pointer rather than
+         * merely running in the wrong place
+         *
+         * Every ObservableBase is a timer task, which is what makes this the assertion that
+         * decides where a reactive pipeline's timers run under an AsyncExecutorImpl
+         */
+
+        std::atomic< std::size_t > timerThreadIdHash( 0U );
+
+        const auto timerTask = SimpleTimerTask::createInstance< Task >(
+            [ &timerThreadIdHash ]() -> bool
+            {
+                timerThreadIdHash = std::hash< std::thread::id >()( std::this_thread::get_id() );
+
+                /*
+                 * Returning false terminates the timer task
+                 */
+
+                return false;
+            },
+            time::seconds( 30 )                         /* duration */,
+            time::time_duration()                       /* initDelay */
+            );
+
+        eq -> push_back( timerTask );
+        eq -> waitForSuccess( timerTask );
+
+        UTF_REQUIRE( 0U != timerThreadIdHash.load() );
+
+        UTF_REQUIRE_EQUAL( poolThreadIdHash.load(), timerThreadIdHash.load() );
+        UTF_REQUIRE( timerThreadIdHash.load() != mainThreadIdHash );
 
         /*
          * The accessor is a plain non-owning slot which can also be cleared

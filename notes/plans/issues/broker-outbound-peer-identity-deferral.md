@@ -188,3 +188,28 @@ out for this same reason.
 The conditions listed under "Revisit conditions" above govern these two as well; the second of
 them ("the M-4 decision requires an authorized principal for association messages") is now
 answered: it does, and that is why M-4 waits here.
+
+---
+
+## Related wire limitation: `chk4ServerErrors()` narrows a backend failure to one `uint32`
+
+**Recorded:** 2026-09-08, from item 7.11 of
+`notes/reviews/major/update_2026/whole-library-cxx-test-enhancement-outstanding-issues-plan.md`.
+**Status:** keep. No production change; recorded here because lifting it is a V1/V2 protocol change
+subject to the same compatibility constraints as the deferrals above.
+
+`messaging/TcpBlockTransferServer.h:331-380` (`chk4ServerErrors`) turns a backend failure into a
+single `uint32` error value in the wire `CommandBlock`, because that is the only field the protocol
+has for it. Its own comment states the intent: a specific set of exceptions propagates to the client
+as `ServerErrorException` and everything else is fatal for the server.
+
+The consequence is that only an `errno` or a generic-category code can travel. A backend failure
+carrying anything richer - an exception type, a message, an error category which is neither
+`generic` nor `system` (`OpenSSL`, say), or any of the `errinfo_*` fields the JSON server error
+document carries - arrives at the client as a bare number, and the client cannot tell two different
+failures with the same numeric value apart.
+
+Widening it means adding a field to `CommandBlock`, i.e. a V1/V2 protocol change with exactly the
+compatibility constraints described above for the peer identity work: both ends have to negotiate
+the version, and an old peer must keep working against a new one. It is therefore not worth doing on
+its own, and belongs with whichever change next opens the protocol version.

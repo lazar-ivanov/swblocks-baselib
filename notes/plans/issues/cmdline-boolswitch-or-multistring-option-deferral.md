@@ -1,12 +1,36 @@
 # `bl::cmdline::BoolSwitchOrMultiStringOption` cannot carry a value
 
 **Origin:** task **T364** of the C++ test enhancement plan
-(`CPP_TEST_ENHANCEMENT_PLAN.md`), while adding
+(`notes/reviews/major/update_2026/whole-library-cxx-test-enhancement-plan.md`), while adding
 `CmdLine_BoolSwitchOrMultiStringOption` to
 `src/utests/utf_baselib_cmdline/TestCmdLine.h`.
 
-**Decision date:** 2026-09-08. **Status:** no production change; recorded only. The new test
-case pins the current behaviour and carries a `TODO` pointing here.
+**Decision date:** 2026-09-08. **Status:** ~~no production change; recorded only~~ -
+**CLOSED, the typedef was withdrawn 2026-09-08.**
+
+---
+
+## Resolution (2026-09-08)
+
+Decided as item 4 (decision D8) of
+`notes/reviews/major/update_2026/whole-library-cxx-test-enhancement-outstanding-issues-plan.md`:
+**option 2 below, delete it as dead API.**
+
+`BoolSwitchOrMultiStringOption` was removed from `src/include/baselib/cmdline/Option.h`, and
+`CmdLine_BoolSwitchOrMultiStringOption` together with its `BoolSwitchOrMultiStringCmdLine`
+fixture was removed from `src/utests/utf_baselib_cmdline/TestCmdLine.h` - the typedef was the
+only thing the case existed to characterise.
+
+Why option 2 rather than option 1: the typedef has no consumer anywhere in the repository, and
+what it tries to express - "a flag, optionally followed by values" - is modelled in
+Boost.Program_options by `implicit_value`, not by the `zero_tokens` its `SwitchImpl` policy
+applies. Making it work would mean specialising a public template for a container value type and
+verifying the `implicit_value` / `multitoken` interaction against Boost 1.90, which is only worth
+doing if a downstream consumer is known. A consumer naming the typedef now gets a compile error
+and uses `BoolSwitch` plus `MultiStringOption` instead; this is a source-compatibility note for
+the release notes.
+
+The rest of this document is the original analysis and is kept for the record.
 
 ---
 

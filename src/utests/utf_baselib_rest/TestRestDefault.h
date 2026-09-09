@@ -228,6 +228,42 @@ UTF_AUTO_TEST_CASE( RestUtils_HttpStatusMappingTests )
             errorJson -> result() -> exceptionType(),
             std::string( "bl::SystemException" )
             );
+
+        /*
+         * The response of a gateway goes to a client which may be untrusted, so the document
+         * the default entry point produces is the redacted one
+         */
+
+        UTF_REQUIRE_EQUAL(
+            errorJson -> result() -> exceptionFullDump(),
+            std::string( "<redacted>" )
+            );
+    }
+
+    /*
+     * The explicit opt-out - an internal deployment which scrapes the full diagnostics over
+     * HTTP keeps the unredacted document, and this is also the positive control which stops
+     * the assertion above from passing against a formatter that produced no dump at all
+     */
+
+    {
+        const auto response =
+            RestUtils::formatEhResponseSimpleJsonUnredacted( badRequest, permissionDeniedEptr );
+
+        UTF_REQUIRE( response );
+
+        const auto errorJson =
+            dm::DataModelUtils::loadFromJsonText< dm::ServerErrorJson >( response -> content() );
+
+        UTF_REQUIRE( errorJson );
+        UTF_REQUIRE( errorJson -> result() );
+
+        UTF_REQUIRE( errorJson -> result() -> exceptionFullDump() != "<redacted>" );
+        UTF_REQUIRE( ! errorJson -> result() -> exceptionFullDump().empty() );
+
+        UTF_REQUIRE(
+            errorJson -> result() -> exceptionMessage() != errorJson -> result() -> message()
+            );
     }
 
     /*
@@ -733,17 +769,24 @@ UTF_AUTO_TEST_CASE( RestServiceSslBackendAssortedTests )
                             );
 
                         UTF_REQUIRE( errorJson -> result() );
-                        UTF_REQUIRE( ! errorJson -> result() -> exceptionFullDump().empty() );
+
+                        /*
+                         * The body a REST server behind the gateway produces reaches the
+                         * gateway's client verbatim, so it is redacted: the exception dump and
+                         * the raw exception text of an error which is not user friendly are
+                         * gone, and the friendly message is what is left to diagnose with
+                         */
+
+                        UTF_REQUIRE_EQUAL(
+                            errorJson -> result() -> exceptionFullDump(),
+                            std::string( "<redacted>" )
+                            );
 
                         const auto ecExpected = eh::errc::make_error_code( eh::errc::bad_file_descriptor );
 
-                        const auto expectedPrefix = std::string( "System error has occurred: " ) + ecExpected.message();
-
-                        UTF_REQUIRE( errorJson -> result() -> exceptionMessage().size() >= expectedPrefix.size() );
-
-                        UTF_REQUIRE_EQUAL(
-                            errorJson -> result() -> exceptionMessage().substr( 0, expectedPrefix.size() ),
-                            expectedPrefix
+                        UTF_REQUIRE(
+                            std::string::npos ==
+                                errorJson -> result() -> exceptionMessage().find( ecExpected.message() )
                             );
 
                         UTF_REQUIRE_EQUAL(
@@ -756,9 +799,19 @@ UTF_AUTO_TEST_CASE( RestServiceSslBackendAssortedTests )
                             std::string( "An unexpected error has occurred" )
                             );
 
+                        UTF_REQUIRE_EQUAL(
+                            errorJson -> result() -> exceptionMessage(),
+                            errorJson -> result() -> message()
+                            );
+
                         UTF_REQUIRE( errorJson -> result() -> exceptionProperties() );
 
                         const auto& exceptionProperties = errorJson -> result() -> exceptionProperties();
+
+                        /*
+                         * The properties which say what the failure WAS are kept - only the ones
+                         * which disclose the internals of the server are removed
+                         */
 
                         UTF_REQUIRE_EQUAL(
                             exceptionProperties -> categoryName(),
@@ -780,10 +833,10 @@ UTF_AUTO_TEST_CASE( RestServiceSslBackendAssortedTests )
                             ecExpected.message()
                             );
 
-                        UTF_REQUIRE_EQUAL(
-                            exceptionProperties -> message(),
-                            std::string( "System error has occurred" )
-                            );
+                        UTF_REQUIRE( exceptionProperties -> message().empty() );
+
+                        UTF_REQUIRE( exceptionProperties -> functionName().empty() );
+                        UTF_REQUIRE( exceptionProperties -> hostName().empty() );
                     };
 
                     {
@@ -867,13 +920,22 @@ UTF_AUTO_TEST_CASE( RestServiceSslBackendAssortedTests )
                             );
 
                         UTF_REQUIRE( errorJson -> result() );
-                        UTF_REQUIRE( ! errorJson -> result() -> exceptionFullDump().empty() );
+
+                        /*
+                         * The gateway's own error response is redacted too - this is the body
+                         * an internet facing HttpSslServer puts on the wire
+                         */
+
+                        UTF_REQUIRE_EQUAL(
+                            errorJson -> result() -> exceptionFullDump(),
+                            std::string( "<redacted>" )
+                            );
 
                         const auto ecExpected = eh::errc::make_error_code( eh::errc::permission_denied );
 
                         UTF_REQUIRE_EQUAL(
                             errorJson -> result() -> exceptionMessage(),
-                            std::string( "Server error has occurred: " ) + ecExpected.message()
+                            std::string( "An unexpected error has occurred" )
                             );
 
                         UTF_REQUIRE_EQUAL(
@@ -900,10 +962,7 @@ UTF_AUTO_TEST_CASE( RestServiceSslBackendAssortedTests )
                             ecExpected.value()
                             );
 
-                        UTF_REQUIRE_EQUAL(
-                            exceptionProperties -> message(),
-                            std::string( "Server error has occurred: " ) + ecExpected.message()
-                            );
+                        UTF_REQUIRE( exceptionProperties -> message().empty() );
 
                         /*
                          * The broker's authorization failure IS user friendly at source

@@ -1673,23 +1673,29 @@ UTF_AUTO_TEST_CASE( Client_SimpleHttpContentCharsetTests )
 
     {
         /*
-         * (6) An unsupported charset logs a warning and leaves the body untouched, and (7) a
-         *     quoted charset value takes the same path: the trailing \b of the charset regex
-         *     makes the greedy [^;]+ back off the closing quote, so the capture is '"UTF-8'
-         *     with the leading quote still on it, which matches no known charset. RFC 7231
-         *     permits a quoted charset, so this pins a real quirk and makes fixing it a
-         *     deliberate act rather than an accident
+         * (6) An unsupported charset logs a warning and leaves the body untouched
          *
          * The warning is emitted from a thread pool thread and the test binaries route every
-         * warning to a test error, so the level is raised globally for both cases
+         * warning to a test error, so the level is raised globally
          */
 
         Logging::LevelPusher pushLevel( Logging::LL_ERROR, true /* global */ );
 
         fnRunCase( "text/plain; charset=KOI8-R", utf8Body, false /* expectUtf8Content */, utf8Body );
-
-        fnRunCase( "text/plain; charset=\"UTF-8\"; boundary=x", utf8Body, false /* expectUtf8Content */, utf8Body );
     }
+
+    /*
+     * (7) RFC 7231 permits the charset parameter value to be a quoted string, and the quotes
+     *     are excluded from the capture - so this decodes exactly like case (1) rather than
+     *     going down the unsupported-charset arm with a capture of '"UTF-8'
+     */
+
+    fnRunCase(
+        "text/plain; charset=\"UTF-8\"; boundary=x",
+        utf8Body,
+        false                               /* expectUtf8Content */,
+        latin1Body
+        );
 
     {
         /*

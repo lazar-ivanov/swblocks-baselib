@@ -1267,10 +1267,15 @@ UTF_AUTO_TEST_CASE( BaseLib_HttpServerStdErrorResponseRedactionTest )
     UTF_REQUIRE( content.find( "\"endpointPort\"" ) == std::string::npos );
 
     /*
-     * The client must still be told what went wrong, so the message is deliberately kept
+     * The raw exception text goes the same way as the source locations - BL_MSG() text in this
+     * library routinely carries paths - and the client is told what went wrong through the
+     * friendly message the model computes instead
      */
 
-    UTF_REQUIRE( content.find( "Bad client request" ) != std::string::npos );
+    UTF_REQUIRE( content.find( "Bad client request" ) == std::string::npos );
+    UTF_REQUIRE( full.find( "Bad client request" ) != std::string::npos );
+
+    UTF_REQUIRE( content.find( BL_GENERIC_FRIENDLY_UNEXPECTED_MSG ) != std::string::npos );
 
     UTF_REQUIRE_EQUAL(
         response -> headers().at( http::HttpHeader::g_contentType ),
@@ -1281,6 +1286,27 @@ UTF_AUTO_TEST_CASE( BaseLib_HttpServerStdErrorResponseRedactionTest )
         response -> headers().at( http::HttpHeader::g_contentLength ),
         utils::lexical_cast< std::string >( content.size() )
         );
+
+    /*
+     * The user-friendly positive control: an error which was raised to be shown to the caller
+     * keeps its text, so the redaction above cannot be satisfied by an implementation which
+     * simply blanks every message
+     */
+
+    {
+        const auto friendlyEptr = std::make_exception_ptr(
+            BL_EXCEPTION( UserMessageException(), "The request payload is too large" )
+            );
+
+        const auto friendlyResponse = backend -> getStdErrorResponse(
+            http::Parameters::HTTP_CLIENT_ERROR_BAD_REQUEST,
+            friendlyEptr
+            );
+
+        UTF_REQUIRE(
+            friendlyResponse -> content().find( "The request payload is too large" ) != std::string::npos
+            );
+    }
 }
 
 UTF_AUTO_TEST_CASE( BaseLib_ParserTest )
@@ -2770,13 +2796,20 @@ UTF_AUTO_TEST_CASE( BaseLib_HttpServerBackendFailureStatusTest )
             scheduleAndExecuteInParallel(
                 []( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
                 {
+                    /*
+                     * The body is the redacted server error document, so the backend's own
+                     * "Simulated backend failure" text is not in it - what a client gets is
+                     * the friendly message. The status code is what carries the distinction
+                     * this case is about
+                     */
+
                     HttpServerHelpers::sendHttpRequestAndVerifyTheResult(
                         eq,
                         "/fail-plain"                                       /* uri */,
                         "0123456789"                                        /* content */,
                         true                                                /* exceptionExpected */,
                         http::Parameters::HTTP_SERVER_ERROR_INTERNAL        /* statusCodeExpected */,
-                        "Simulated backend failure"                         /* contentExpected */
+                        BL_GENERIC_FRIENDLY_UNEXPECTED_MSG                  /* contentExpected */
                         );
 
                     HttpServerHelpers::sendHttpRequestAndVerifyTheResult(

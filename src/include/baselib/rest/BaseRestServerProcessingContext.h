@@ -73,6 +73,17 @@ namespace bl
             const std::string                                                       m_tokenType;
             std::string                                                             m_tokenData;
 
+            /**
+             * @brief Whether the error responses this context produces are redacted
+             *
+             * A REST server behind the gateway returns its error document to the gateway
+             * verbatim, so a full exception dump placed here reaches the gateway's client; the
+             * default is therefore to redact, and an internal deployment which scrapes the full
+             * diagnostics over HTTP turns it off explicitly
+             */
+
+            cpp::ScalarTypeIniter< bool >                                           m_redactErrorResponses;
+
             os::mutex                                                               m_disposeLock;
             cpp::ScalarTypeIniter< bool >                                           m_isDisposed;
             std::atomic< unsigned long >                                            m_messagesProcessed;
@@ -95,6 +106,7 @@ namespace bl
                 m_backendReference( BL_PARAM_FWD( backendReference ) ),
                 m_tokenType( BL_PARAM_FWD( tokenType ) ),
                 m_tokenData( BL_PARAM_FWD( tokenData ) ),
+                m_redactErrorResponses( true ),
                 m_messagesProcessed( 0UL )
             {
                 /*
@@ -352,7 +364,7 @@ namespace bl
                     const auto errorString =
                         m_isGraphQLServer ?
                             messaging::GraphQLErrorHelpers::getServerErrorAsGraphQL( std::current_exception() ) :
-                            dm::ServerErrorHelpers::getServerErrorAsJson( std::current_exception() );
+                            RestUtils::getServerErrorAsJson( std::current_exception(), m_redactErrorResponses );
 
                     responseMetadata = dm::http::HttpResponseMetadata::createInstance();
                     responseMetadata -> contentType( http::HttpHeader::g_contentTypeJsonUtf8 );
@@ -514,6 +526,16 @@ namespace bl
             auto messagesProcessed() const NOEXCEPT -> unsigned long
             {
                 return m_messagesProcessed;
+            }
+
+            bool redactErrorResponses() const NOEXCEPT
+            {
+                return m_redactErrorResponses;
+            }
+
+            void redactErrorResponses( SAA_in const bool redactErrorResponses ) NOEXCEPT
+            {
+                m_redactErrorResponses = redactErrorResponses;
             }
 
             /*

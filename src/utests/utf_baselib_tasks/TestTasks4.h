@@ -769,17 +769,18 @@ UTF_AUTO_TEST_CASE( Tasks_ExcludedPathsControlTokenTests )
         UTF_REQUIRE( token -> isEntryAllowed( fs::directory_entry( otherPath ) ) );
 
         /*
-         * The lookup key is the *normalised* entry path while the constructor stores the
-         * caller's strings verbatim, so an un-normalised exclusion entry silently excludes
-         * nothing - this pins that contract explicitly rather than leaving it to be
-         * discovered in production
+         * The constructor normalises each entry exactly the way the lookup normalises a
+         * scanned path, so an un-normalised exclusion entry excludes what the caller meant
+         * rather than silently excluding nothing
          */
 
         const auto tokenWithNonNormalisedEntry = ExcludedPathsControlToken::createInstance(
             std::vector< std::string >{ excludedPath.string() + "/." }
             );
 
-        UTF_REQUIRE( tokenWithNonNormalisedEntry -> isEntryAllowed( fs::directory_entry( excludedPath ) ) );
+        UTF_REQUIRE( ! tokenWithNonNormalisedEntry -> isEntryAllowed( fs::directory_entry( excludedPath ) ) );
+
+        UTF_REQUIRE( tokenWithNonNormalisedEntry -> isEntryAllowed( fs::directory_entry( otherPath ) ) );
 
         /*
          * The error policy is hard coded to false, which makes the whole scan fail on the
