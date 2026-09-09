@@ -194,7 +194,19 @@ the releasing thread or behind `settledOutstandingObjectRefs`, so only the type 
 
 ---
 
-## Change 3 — diagnose the teardown warning before deciding (test only; was "absorb the warning")
+## Change 3 — the cancelled block reader keeps the input file open (production; was "absorb the warning")
+
+**Superseded 2026-09-09 by `windows-blobtransfer-cancel-handle-and-http-reset-flakes-plan.md`,
+section A, and `blobtransfer-cancel-teardown-warning-record.md`.** The warning is emitted by the
+**unpackager**, which discards its staging directory (`%TEMP%\.<uuid>` — a `TmpDir` is
+`.bl-temp-dir-<uuid>`) in the failure branch of `flushAllPendingTasks()`
+(`FilesUnpackagerUnit.h:1514-1518`) without first closing the output files of entries whose chunks
+have not all arrived; the multi-chunk file's handle is kept open between chunks, so the deletion
+hits a sharing violation whenever the cancel lands mid-download. The fix closes those handles
+before the deletion, as the incomplete-content branch (`:1584-1589`) already did. A first trace had
+attributed the hold to the packager's block reader (which did keep the input file open across
+blocks and on cancel — fixed as well, as a separate hardening), but the failing paths were never
+input trees. The text below is kept as the record of why the first proposal was withdrawn.
 
 **File:** `src/utests/utf_baselib_blobtransfer/TestBlobTransferFilesystem.h`,
 `BlobTransfer_FilesPackagerInMemoryCancelUploadTests` (line 33). Failed on `vc143`, passed on

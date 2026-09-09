@@ -1508,6 +1508,23 @@ namespace bl
                     /*
                      * All file writing is done
                      *
+                     * An entry which has not received all of its chunks still has its output
+                     * file open - the handle is kept across chunks - and no worker task is left
+                     * to close it. It must be closed here, whichever way the unit is ending:
+                     * whoever discards the staging directory next - the failure branch below,
+                     * or the owner of the pipeline after a stop, which completes this unit
+                     * without an error and while it is still alive - would otherwise find the
+                     * file open. On Windows a stdio handle has no delete sharing, so that
+                     * deletion fails with a sharing violation, its warning fails the test run
+                     * and the staging tree stays behind until the unit object is destroyed
+                     */
+
+                    for( const auto& pair : m_entriesInProgress )
+                    {
+                        pair.second -> filePtr.reset();
+                    }
+
+                    /*
                      * Check to see if we should commit or rollback the transaction
                      */
 
@@ -1573,18 +1590,13 @@ namespace bl
                          * The input has completed and every worker task is done, but the
                          * target is not complete: some chunks never arrived or some entries
                          * were never created. Reporting success here would publish a partial
-                         * tree, so close the files still open for the incomplete entries,
-                         * discard the staging directory and fail the unit
+                         * tree, so discard the staging directory (the files still open for the
+                         * incomplete entries were closed above) and fail the unit
                          *
                          * A stop request is excluded: the shutdown path reports the
                          * cancellation itself and the staging directory is discarded by
                          * the failure branch above once the unit is failing
                          */
-
-                        for( const auto& pair : m_entriesInProgress )
-                        {
-                            pair.second -> filePtr.reset();
-                        }
 
                         fs::safeDeletePathNothrow( m_targetTmpDir );
                         m_targetTmpDir.clear();

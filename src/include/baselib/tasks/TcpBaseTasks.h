@@ -309,9 +309,10 @@ namespace bl
                 {
                     /*
                      * If the socket is being forcefully shutdown (e.g. as part of
-                     * canceling an I/O task) then we should set the linger timeout
-                     * to zero so the socket is closed immediately as we don't have
-                     * to worry about errors at this point
+                     * canceling an I/O task) the linger option is set to disabled
+                     * (l_onoff = 0), which is the default graceful close: close() does not
+                     * block and the stack finishes the shutdown in the background. This is
+                     * not the abortive linger( true, 0 ) close, which would reset the peer
                      */
 
                     eh::error_code ec;
@@ -1196,9 +1197,11 @@ namespace bl
                 /*
                  * Open the acceptor with the option to reuse the address (i.e. SO_REUSEADDR)
                  *
-                 * Also set the linger option to false and zero timeout to ensure the acceptor
-                 * is closed promptly once the task is terminated (to have predictable behavior
-                 * for unit tests and in general)
+                 * The linger option is set to disabled (l_onoff = 0), which is the default
+                 * graceful close: close() returns at once and the stack completes the shutdown
+                 * in the background. This is not the abortive close - that would be
+                 * linger( true, 0 ) and it would reset the peer. On Windows the accepted sockets
+                 * inherit this setting from the acceptor
                  */
 
                 m_acceptor -> open( endpoint.protocol() );

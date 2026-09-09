@@ -1004,6 +1004,524 @@ UTF_AUTO_TEST_CASE( BlobTransfer_TransmitterServerUnreachableTests )
     UTF_REQUIRE( ! fsmd -> isFinalized() );
 }
 
+namespace
+{
+    /**
+     * @brief A block reader which is cancelled at the start of its next execution
+     *
+     * A cancellation which arrives while a reader executes is what the packager's worker queue
+     * delivers on a pipeline cancel (cancelAll() requests it on the executing task), and it is
+     * the only shape in which a reader can observe one: re-scheduling a completed task clears
+     * its cancel request first (TaskBase::scheduleNothrow). Requesting it from inside
+     * onExecute(), while the task is running, reproduces that without a timing window
+     */
+
+    template
+    <
+        typename E = void
+    >
+    class CancelOnExecuteBlockReaderT : public bl::transfer::detail::BlockReaderTaskT<>
+    {
+        BL_DECLARE_OBJECT_IMPL( CancelOnExecuteBlockReaderT )
+
+    protected:
+
+        typedef bl::transfer::detail::BlockReaderTaskT<>                    base_type;
+
+        bl::cpp::ScalarTypeIniter< bool >                                   m_cancelOnNextExecute;
+
+        CancelOnExecuteBlockReaderT( SAA_in const bl::om::ObjPtr< bl::data::FilesystemMetadataWO >& fsmd )
+            :
+            base_type( fsmd )
+        {
+        }
+
+        virtual void onExecute() NOEXCEPT OVERRIDE
+        {
+            if( m_cancelOnNextExecute )
+            {
+                m_cancelOnNextExecute = false;
+
+                base_type::requestCancel();
+            }
+
+            base_type::onExecute();
+        }
+
+    public:
+
+        void cancelOnNextExecute() NOEXCEPT
+        {
+            m_cancelOnNextExecute = true;
+        }
+    };
+
+    typedef bl::om::ObjectImpl< CancelOnExecuteBlockReaderT<> > CancelOnExecuteBlockReaderImpl;
+
+} // __unnamed
+
+UTF_AUTO_TEST_CASE( BlobTransfer_PackagerCancelledBlockReaderReleasesFileTests )
+{
+    using namespace bl;
+    using namespace bl::data;
+    using namespace bl::tasks;
+    using namespace bl::transfer;
+
+    /*
+     * A block reader used to keep its input file open between the blocks of a file which spans
+     * more than one data block, and a cancelled reader completed with the file still open and
+     * still reporting more blocks; the packager unit retains and recycles completed readers, so
+     * on a cancelled pipeline the file stayed open until the unit was destroyed - on Windows,
+     * where a stdio handle has no delete sharing, that made the input tree undeletable for that
+     * long, which is what the cancel-upload case tripped over in its temporary directory
+     * teardown (see blobtransfer-cancelled-reader-holds-input-file-record.md)
+     *
+     * The contract pinned here: the reader holds the file only while it reads a block and never
+     * while it is idle; and a reader which observes a cancellation while it executes releases
+     * its data block, completes successfully and reports no more blocks, so the unit neither
+     * offers a stale block downstream nor recycles it. No pipeline is involved, so there is no
+     * race to lose
+     */
+
+    const fs::TmpDir tmpDir;
+
+    const auto filePath = tmpDir.path() / "multi-block-file.bin";
+
+    /*
+     * Two full data blocks and a partial one, so the reader has to keep the file open
+     * across reschedules; the size is read back rather than assumed, as the text writer
+     * is free to add an encoding preamble
+     */
+
+    encoding::writeTextFile(
+        filePath,
+        std::string( 2U * DataBlock::defaultCapacity() + 12345U, 'x' )
+        );
+
+    const std::uint64_t fileSize = fs::file_size( filePath );
+
+    UTF_REQUIRE( fileSize > 2U * DataBlock::defaultCapacity() );
+    UTF_REQUIRE( fileSize < 3U * DataBlock::defaultCapacity() );
+
+    const auto fsmd = FilesystemMetadataInMemoryImpl::createInstance< FilesystemMetadataWO >();
+    const auto dataBlocksPool = datablocks_pool_type::createInstance();
+
+    scheduleAndExecuteInParallel(
+        [ & ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+        {
+            eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+            /*
+             * The file task is built from a directory entry the way the packager does it,
+             * from a scan of the input directory; the scan task owns the entries, so it has
+             * to outlive the file task
+             */
+
+            const auto boxedRootPath = bo::path::createInstance();
+            boxedRootPath -> swapValue( fs::path( tmpDir.path() ) );
+
+            const auto scanTask = ScanDirectoryTaskImpl::createInstance( tmpDir.path(), boxedRootPath );
+            const auto scanTaskBase = om::qi< Task >( scanTask );
+
+            eq -> push_back( scanTaskBase );
+            eq -> waitForSuccess( scanTaskBase, false /* cancel */ );
+
+            const fs::directory_entry* fileEntry = nullptr;
+
+            for( const auto& entry : scanTask -> entries() )
+            {
+                if( entry.path().filename() == filePath.filename() )
+                {
+                    fileEntry = &entry;
+                }
+            }
+
+            UTF_REQUIRE( nullptr != fileEntry );
+
+            const auto fileTask = bl::transfer::detail::FileTaskImpl::createInstance( fsmd, scanTask, *fileEntry );
+            const auto fileTaskBase = om::qi< Task >( fileTask );
+
+            eq -> push_back( fileTaskBase );
+            eq -> waitForSuccess( fileTaskBase, false /* cancel */ );
+
+            UTF_REQUIRE_EQUAL( fileTask -> fileSize(), fileSize );
+
+            const auto reader = CancelOnExecuteBlockReaderImpl::createInstance( fsmd );
+
+            reader -> attachAllData( fileTask, DataBlock::get( dataBlocksPool ) );
+
+            UTF_REQUIRE( reader -> hasMoreBlocks() );
+            UTF_REQUIRE( ! reader -> isAbandoned() );
+
+            const auto readerTask = om::qi< Task >( reader );
+
+            /*
+             * The first block leaves the file open - two blocks are still to be read
+             */
+
+            eq -> push_back( readerTask );
+            eq -> waitForSuccess( readerTask, false /* cancel */ );
+
+            UTF_REQUIRE( reader -> hasMoreBlocks() );
+            UTF_REQUIRE( reader -> dataBlock() );
+            UTF_REQUIRE_EQUAL( reader -> dataBlock() -> size(), DataBlock::defaultCapacity() );
+
+            {
+                /*
+                 * The reader is idle between two blocks of the same file and must not hold the
+                 * file: on Windows an open stdio handle has no delete sharing, so a rename (or
+                 * a delete) fails with a sharing violation - which is exactly what the
+                 * temporary directory teardown ran into while the reader kept the file open
+                 * across blocks
+                 */
+
+                const auto renamedPath = tmpDir.path() / "multi-block-file.renamed";
+
+                eh::error_code ec;
+
+                fs::unsafe::rename( filePath, renamedPath, ec );
+
+                UTF_REQUIRE( ! ec );
+                UTF_REQUIRE( fs::exists( renamedPath ) );
+
+                fs::unsafe::rename( renamedPath, filePath, ec );
+
+                UTF_REQUIRE( ! ec );
+                UTF_REQUIRE( fs::exists( filePath ) );
+            }
+
+            /*
+             * The next execution is cancelled while it runs. The reader must release the block
+             * and complete successfully without reporting more blocks, which is what keeps the
+             * unit from offering a stale block downstream or recycling the reader
+             */
+
+            reader -> cancelOnNextExecute();
+
+            eq -> push_back( readerTask );
+            eq -> wait( readerTask, false /* cancel */ );
+
+            UTF_REQUIRE( ! readerTask -> isFailed() );
+            UTF_REQUIRE( reader -> isAbandoned() );
+            UTF_REQUIRE( ! reader -> hasMoreBlocks() );
+            UTF_REQUIRE( ! reader -> dataBlock() );
+
+            {
+                eh::error_code ec;
+
+                fs::unsafe::remove( filePath, ec );
+
+                UTF_REQUIRE( ! ec );
+                UTF_REQUIRE( ! fs::exists( filePath ) );
+            }
+
+            /*
+             * A reused reader starts clean: the mark is cleared when a new file is attached
+             */
+
+            reader -> attachAllData( fileTask, DataBlock::get( dataBlocksPool ) );
+
+            UTF_REQUIRE( ! reader -> isAbandoned() );
+            UTF_REQUIRE( reader -> hasMoreBlocks() );
+        }
+        );
+}
+
+namespace
+{
+    /*
+     * An entry whose chunks have not all arrived keeps its output file open between chunks,
+     * and once the unit's writers have flushed nothing but the unit itself can close it.
+     * Whichever way the unit ends - a failure, which discards the staging directory in
+     * flushAllPendingTasks(), or a stop, after which the unit completes without an error and
+     * the owner of the pipeline deletes the staging directory while the unit is still alive -
+     * those files used to stay open until the unit object was destroyed. On Windows, where a
+     * stdio handle has no delete sharing, the deletion then failed with a sharing violation,
+     * its warning failed the test run and the staging tree stayed behind. That was the
+     * intermittent teardown failure of the cancel-upload and cancel-download cases (see
+     * blobtransfer-cancel-teardown-warning-record.md)
+     *
+     * The two cases below deliver one chunk of a three chunk file, so its file is open and
+     * waiting for the next chunk, and then end the unit each way. No pipeline and no timer are
+     * involved
+     */
+
+    /**
+     * @brief The chunk is a multiple of the stdio buffer size, so fwrite() passes it straight
+     * to the file and the file size shows when the chunk has been written - the writer does
+     * not flush between chunks, so a small chunk would stay in the stream buffer
+     */
+
+    const std::size_t g_openFileChunkSize = 64U * 1024U;
+
+    /**
+     * @brief Builds a package of one directory and one file of three chunks
+     */
+
+    bl::om::ObjPtr< bl::data::FilesystemMetadataWO > buildThreeChunkPackage(
+        SAA_out         std::vector< bl::uuid_t >&                                   chunkIds,
+        SAA_out         std::vector< bl::om::ObjPtr< bl::data::DataBlock > >&        chunkBlocks
+        )
+    {
+        using namespace bl;
+
+        typedef data::FilesystemMetadata                                             fsmd_t;
+        typedef utest::TestBlobTransferUtils                                         utils_t;
+
+        const std::size_t noOfChunks = 3U;
+
+        const auto now = std::time( nullptr );
+        BL_CHK_ERRNO_NM( ( std::time_t )( -1 ), now );
+
+        auto fsmdWO =
+            data::FilesystemMetadataInMemoryImpl::createInstance< data::FilesystemMetadataWO >();
+
+        utils_t::createEntry( fsmdWO, fsmd_t::Directory, "d", fs::path() /* targetPath */, 0U /* size */, now );
+
+        const auto entryId = utils_t::createEntry(
+            fsmdWO,
+            fsmd_t::File,
+            "d/f.bin",
+            fs::path()                                          /* targetPath */,
+            g_openFileChunkSize * noOfChunks,
+            now
+            );
+
+        cs::crc_32_type fileCrc;
+
+        for( std::size_t i = 0U; i < noOfChunks; ++i )
+        {
+            const std::uint64_t pos = g_openFileChunkSize * i;
+
+            auto block = createChunkData( pos, g_openFileChunkSize );
+
+            fsmd_t::ChunkInfo chunkInfo;
+
+            chunkInfo.pos = pos;
+            chunkInfo.size = static_cast< std::uint32_t >( g_openFileChunkSize );
+            chunkInfo.checksum = computeChunkChecksum( block );
+
+            const std::uint32_t chunkChecksumValue = chunkInfo.checksum;
+
+            fileCrc.process_bytes( &chunkChecksumValue, sizeof( chunkChecksumValue ) );
+
+            chunkIds.push_back( fsmdWO -> createChunk( entryId, std::move( chunkInfo ) ) );
+            chunkBlocks.push_back( std::move( block ) );
+        }
+
+        fsmdWO -> associateChecksum( entryId, fileCrc.checksum() );
+        fsmdWO -> finalize();
+
+        return fsmdWO;
+    }
+
+    /**
+     * @brief Delivers the first chunk into a running unpackager unit and waits until it is in
+     * the file, so the entry is idle with its output file open, waiting for the second chunk
+     *
+     * Returns the bound input connector. The short settle at the end lets the writer task
+     * finish its bookkeeping and complete: a task which is still running when the unit ends is
+     * cancelled and closes its own file, which would hide the defect these cases pin
+     */
+
+    bl::om::ObjPtr< bl::reactive::Observer > deliverFirstChunkAndWait(
+        SAA_inout       unpackager_pu_t&                                             unit,
+        SAA_in          const bl::fs::path&                                          staging,
+        SAA_in          const bl::uuid_t&                                            chunkId,
+        SAA_in          const bl::om::ObjPtr< bl::data::DataBlock >&                 block
+        )
+    {
+        using namespace bl;
+
+        /*
+         * A created directory proves that the unit's first loop iteration has run, so chunks
+         * can be pushed (see the chunk integrity cases above)
+         */
+
+        const std::size_t maxWaitIterations = 500U;
+
+        std::size_t waited = 0U;
+
+        for( ; waited < maxWaitIterations && ! fs::exists( staging / "d" ); ++waited )
+        {
+            os::sleep( time::milliseconds( 20 ) );
+        }
+
+        UTF_REQUIRE( waited < maxWaitIterations );
+
+        auto input = unit.bindInputConnector< unpackager_pu_t >(
+            &unpackager_pu_t::onChunkArrived,
+            &unpackager_pu_t::onInputCompleted
+            );
+
+        {
+            data::DataChunkBlock chunkBlock;
+
+            chunkBlock.chunkId = chunkId;
+            chunkBlock.data = block;
+
+            while( ! input -> onNext( cpp::any( chunkBlock ) ) )
+            {
+                os::sleep( time::milliseconds( 20 ) );
+            }
+        }
+
+        const auto filePath = staging / "d" / "f.bin";
+
+        for( waited = 0U; waited < maxWaitIterations; ++waited )
+        {
+            if( fs::exists( filePath ) && g_openFileChunkSize == fs::file_size( filePath ) )
+            {
+                break;
+            }
+
+            os::sleep( time::milliseconds( 20 ) );
+        }
+
+        UTF_REQUIRE( waited < maxWaitIterations );
+
+        os::sleep( time::milliseconds( 100 ) );
+
+        return input;
+    }
+
+} // __unnamed
+
+UTF_AUTO_TEST_CASE( BlobTransfer_UnpackagerFailureClosesOpenFilesBeforeDiscardingStagingTests )
+{
+    using namespace bl;
+
+    typedef utest::TestBlobTransferUtils                                         utils_t;
+
+    std::vector< bl::uuid_t > chunkIds;
+    std::vector< om::ObjPtr< data::DataBlock > > chunkBlocks;
+
+    const auto fsmdWO = buildThreeChunkPackage( chunkIds, chunkBlocks );
+
+    fs::path staging;
+
+    const utils_t::unpackager_feed_callback_t feedCallback =
+        [ & ]( SAA_inout unpackager_pu_t& unit ) -> void
+        {
+            staging = unit.targetTmpDir();
+
+            UTF_REQUIRE( ! staging.empty() );
+
+            const auto input = deliverFirstChunkAndWait( unit, staging, chunkIds[ 0 ], chunkBlocks[ 0 ] );
+
+            input -> onError(
+                BL_MAKE_EXCEPTION_PTR( UnexpectedException(), BL_MSG() << "injected download failure" )
+                );
+        };
+
+    const fs::TmpDir tmpDir;
+
+    const auto targetDir = tmpDir.path() / "out";
+
+    UTF_REQUIRE_THROW(
+        utils_t::runStandaloneUnpackager(
+            om::qi< data::FilesystemMetadataRO >( fsmdWO ),
+            targetDir,
+            unpackager_unit_t::StpAllow,
+            feedCallback
+            ),
+        UnexpectedException
+        );
+
+    /*
+     * The failure branch of flushAllPendingTasks() discards the staging directory. This case
+     * guards that branch; it is the stop case below which showed the defect - a failure
+     * delivered this way already ended with the file closed before the fix
+     */
+
+    UTF_REQUIRE( ! staging.empty() );
+    UTF_REQUIRE( ! fs::path_exists( staging ) );
+}
+
+UTF_AUTO_TEST_CASE( BlobTransfer_UnpackagerStopClosesOpenFilesTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace bl::transfer;
+
+    std::vector< bl::uuid_t > chunkIds;
+    std::vector< om::ObjPtr< data::DataBlock > > chunkBlocks;
+
+    const auto fsmdWO = buildThreeChunkPackage( chunkIds, chunkBlocks );
+
+    const fs::TmpDir tmpDir;
+
+    /*
+     * The unit is built here rather than through runStandaloneUnpackager( ... ) because it has
+     * to be alive when the staging directory is deleted below - which is how the pipeline
+     * driver finds it after a stop
+     */
+
+    const auto context = SendRecvContext::createInstance(
+        SimpleEndpointSelectorImpl::createInstance< EndpointSelector >(
+            cpp::copy( test::UtfArgsParser::host() ),
+            test::UtfArgsParser::port()
+            )
+        );
+
+    const auto unit = unpackager_pu_t::createInstance(
+        unpackager_unit_t::SuaError,
+        context,
+        om::qi< data::FilesystemMetadataRO >( fsmdWO ),
+        fs::path( tmpDir.path() / "out" ),
+        unpackager_unit_t::StpAllow
+        );
+
+    unit -> allowNoSubscribers( true );
+
+    fs::path staging;
+
+    scheduleAndExecuteInParallel(
+        [ & ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+        {
+            eq -> push_back( om::qi< Task >( unit ) );
+
+            staging = unit -> targetTmpDir();
+
+            UTF_REQUIRE( ! staging.empty() );
+
+            deliverFirstChunkAndWait( *unit, staging, chunkIds[ 0 ], chunkBlocks[ 0 ] );
+
+            /*
+             * A stop is what a cancelled pipeline delivers to the unit - through the queue,
+             * exactly as the cancel-upload and cancel-download cases do it; the unit may then
+             * complete without an error or report the cancellation, both are legitimate here
+             */
+
+            eq -> cancelAll( false /* wait */ );
+
+            unit -> onInputCompleted();
+
+            try
+            {
+                executeQueueAndCancelOnFailure( eq );
+            }
+            catch( eh::system_error& e )
+            {
+                UTF_REQUIRE_EQUAL( e.code(), asio::error::operation_aborted );
+            }
+        }
+        );
+
+    /*
+     * The unit is done and still alive; whatever it left behind must be deletable right now,
+     * without a retry - with the output file of the incomplete entry still open this is the
+     * deletion which failed on Windows
+     */
+
+    eh::error_code ec;
+
+    fs::unsafe::remove_all( staging, ec );
+
+    UTF_REQUIRE( ! ec );
+    UTF_REQUIRE( ! fs::path_exists( staging ) );
+}
+
 UTF_AUTO_TEST_CASE( BlobTransfer_StartBlobServer )
 {
     UTF_SKIP_UNLESS( test::UtfArgsParser::isServer(), "requires --is-server (manual run test)" );

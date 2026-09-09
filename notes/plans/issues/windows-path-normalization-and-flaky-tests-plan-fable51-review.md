@@ -193,6 +193,14 @@ pusher be used, scoped as narrowly as possible, with the on-disk leak stated in 
 
 ### 6. HTTP deferral: the IPv4/IPv6 root cause is refuted by the code; record evidence, not theory
 
+**Correction (2026-09-09, later the same day):** this finding read the plan's "failed 52/56" as 52
+failures. The run was **52 passed, 4 failed** — `BaseLib_HttpServerPerfTest`,
+`TlsHandshake_NameMismatchIsReportedThroughErrorInfo`,
+`TlsHandshake_AllowUntrustedRecordsAndClearsEndpointInfo`, `TlsHandshake_SniOmittedForAddressLiterals`,
+all of which open sockets. The "19 socket-free cases" argument below is therefore void and is struck;
+the other three arguments stand on their own. The later trace of the four cases is in
+`windows-blobtransfer-cancel-handle-and-http-reset-flakes-plan.md`, section B.
+
 The plan's "Records to write" bullet asserts an acceptor-is-IPv4-only / client-resolves-`::1`
 mechanism. The code says otherwise on every load-bearing point:
 
@@ -208,9 +216,10 @@ mechanism. The code says otherwise on every load-bearing point:
 - The readiness probe `waitForAcceptorReady` (`TestTaskUtils.h:717-772`) connects with the same
   connector to the same `localhost` before any case runs. If the theory held, every case would
   fail there, deterministically, on both toolchains, with "The acceptor did not become ready".
-- 19 of the 56 cases (`TestTlsProtocolPolicy.h`, `TestTlsPeerVerification.h`,
+- ~~19 of the 56 cases (`TestTlsProtocolPolicy.h`, `TestTlsPeerVerification.h`,
   `TestAsioSslStreamWrapper.h`) open no socket at all. "52 of 56 failed" therefore includes at
-  least 15 in-process certificate/policy cases, which no connectivity defect can explain.
+  least 15 in-process certificate/policy cases, which no connectivity defect can explain.~~
+  (Struck — see the correction above; only 4 cases failed and all of them open sockets.)
 - `system:10054` (`WSAECONNRESET`) means a peer accepted and then reset, or a listening backlog
   overflowed; "nothing listening on `::1`" produces `10061`.
 

@@ -516,6 +516,17 @@ UTF_AUTO_TEST_CASE( TlsHandshake_AllowUntrustedRecordsAndClearsEndpointInfo )
             );
     }
 
+    /*
+     * The map is process global and only the successful handshake below erases the seed, so
+     * a failure of this case would otherwise leave the entry behind for the rest of the run
+     */
+
+    BL_SCOPE_EXIT(
+        {
+            crypto::CryptoBase::clearUntrustedEndpointInfo( endpointIdOf( "localhost" ) );
+        }
+        );
+
     {
         const auto seeded = crypto::CryptoBase::getUntrustedEndpointsInfo();
 
@@ -646,7 +657,14 @@ UTF_AUTO_TEST_CASE( TlsHandshake_SniOmittedForAddressLiterals )
                         ioService.run();
 
                         UTF_REQUIRE( acceptCompleted );
-                        UTF_REQUIRE( ! acceptEc );
+
+                        /*
+                         * Compared rather than negated so that a failure prints the code - the
+                         * deadline above cancels the acceptor, which completes this handler with
+                         * operation_aborted, and that must stay distinguishable from a peer reset
+                         */
+
+                        UTF_REQUIRE_EQUAL( eh::error_code(), acceptEc );
                     }
 
                     {

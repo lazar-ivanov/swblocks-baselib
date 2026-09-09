@@ -9,7 +9,9 @@ was written into the plan and then **withdrawn** — see "The withdrawn explanat
 kept deliberately so the same wrong turn is not taken again.
 
 **Related:** `notes/plans/issues/windows-path-normalization-and-flaky-tests-plan.md` (this is the
-"Records to write" item of that plan) and its Fable 5.1 review, which refuted the first explanation.
+"Records to write" item of that plan) and its Fable 5.1 review, which refuted the first explanation;
+`windows-blobtransfer-cancel-handle-and-http-reset-flakes-plan.md` (section B) carries the code
+trace of 2026-09-09, the capture procedure and the fixes per mechanism.
 
 ---
 
@@ -71,23 +73,93 @@ refuted by the code:**
 - The failures are **intermittent and toolchain-correlated in the observed sample** (vc143 debug
   failed, ccl16 release passed) — one sample each, so the correlation is not established.
 
-## Unconfirmed candidates, for whoever picks this up
+## What the code settles (trace of 2026-09-09; details in the fix plan, section B)
 
-1. **Process-wide state leaking across cases** — `allowUntrustedCertificates()`, the
-   untrusted-endpoints map, or the global log level pushed by `SuppressExpectedWarningsScope`
-   (`TestTlsHandshakeVerification.h:121-134`).
-2. **Warning-as-failure amplification** — `UtfMain.h:124-126` fails a case on any `LL_WARNING`, and
-   `tryCatchLog` defaults to `Logging::warning()` around per-connection setup at
-   `TcpBaseTasks.h:1125-1131`. A benign transient would then present as a case failure.
-3. **Short wall-clock deadlines against a slow debug build** — the 3-second server-side TLS
-   handshake deadline at `TestHttpServer.h:2065` is a textbook producer of a client-side `10054`;
-   `TestClientHttpTasks.h:2323/2339` has a one-second margin. This fits "debug fails, release
-   passes" better than anything else on this list.
-4. **Port 28100 hijack** under Windows `SO_REUSEADDR` (`TcpBaseTasks.h:1205`) by a leftover exe or a
-   concurrently running module — every server module defaults to 28100 (`UtfArgsParser.h:46`) and
-   the project rules permit five modules at once. The bind succeeds silently and every request
-   resets.
-5. `BL_ASSERT` is live only in debug (`BaseDefs.h:63`), so a debug-only assertion path is possible.
+- **Why a `10054` fails a case at all.** `BL_TASKS_HANDLER_CHK_EC` fails the task for any error;
+  `isExpectedException` only suppresses the log line (`TaskBase.h:139-156`). After the handshake,
+  `TcpSslSocketAsyncBaseT::isExpectedException` (`TcpSslBaseTasks.h:399-424`) falls through to
+  `TaskBase::isExpectedException` = false, so a reset during the client's TLS **shutdown** also
+  fails the task (`onShutdownCompleted`, `:553-608`, line 600) — even though the whole response was
+  already received. The plain client completes the body only on a clean `eof`
+  (`SimpleHttpTask.h:832-835`); a reset that discards the receive buffer leaves
+  `m_httpStatus == 0`, the `HttpServerHelpers.h:262` signature. A client-side 10054 is logged only
+  at DEBUG (`TaskBase.h:846-853`) — which is the default level (`UtfArgsParser.h:318`), so a
+  captured stdout already holds the phase and code of every failure; the runs above did not keep
+  it.
+- **The SNI case's `acceptCompleted` is also true on the 30 s timeout path** (the timer cancels
+  the acceptor, the accept handler then runs with `operation_aborted`,
+  `TestTlsHandshakeVerification.h:613-638`), so `acceptEc` may be a timeout rather than a reset.
+  Note also that this record never stated the value of `acceptEc` at all — the `10054` above is
+  established for the three *connect-side* failures only. Boost.Asio's IOCP accept completion
+  remaps `ERROR_NETNAME_DELETED` to `connection_aborted` (10053, `socket_ops.ipp:193-195`), so a
+  peer which resets before the accept completes would most likely surface as 10053 there; 995
+  would mean the 30 s deadline fired and nothing connected. The assertion now prints the code
+  (`UTF_REQUIRE_EQUAL( eh::error_code(), acceptEc )`), so the next failure settles it.
+- **`linger( false, 0 )` verified against the built Boost headers**
+  (`boost/asio/detail/socket_option.hpp:227-237`: `l_onoff = 0`), and accepted sockets inherit it
+  via `SO_UPDATE_ACCEPT_CONTEXT` (`socket_ops.ipp:221-227`) — linger off in both places, so
+  neither is an RST source.
+- **`linger( false, 0 )`** (`TcpBaseTasks.h:1206`, `:318`) is linger *off* — a graceful close.
+  The two comments describing it as "closed immediately" are wrong.
+
+## Candidates after the trace
+
+Refuted:
+
+- The 3-second server-side handshake deadline (`TestHttpServer.h:2065`) is inside
+  `TimeoutHttpSslServerT`, instantiated only at `TestHttpServer.h:2629` in
+  `BaseLib_HttpSslServerProtocolHandshakeTimeoutTest`; none of the four cases uses it, the stock
+  default is 60 s (`TcpSslBaseTasks.h:73`), and `setProtocolTimeout` has no production caller.
+- Process-wide state as a *cascade*: `allowUntrustedCertificates`, `SuppressExpectedWarningsScope`,
+  `RealVerifyCallbackScope` and the perf test's `LevelPusher` are RAII and unwind on `UTF_REQUIRE`
+  throws. The manual seed of `localhost:28100` into the untrusted-endpoints map
+  (`TestTlsHandshakeVerification.h:513-516`) is the one non-RAII item — it stays seeded after a
+  failure at `:530`, but nothing later reads it (hygiene defect, not a cause).
+- Warning amplification: exactly four assertions failed (985/989), so no warning-driven
+  `BOOST_ERROR` fired. `BL_ASSERT`: an assert aborts the process. Backlog / connection cap:
+  `SOMAXCONN` and hundreds-to-4096 respectively, and the perf failure was in the sequential block.
+
+Still live, to be separated by the capture:
+
+1. **Windows `shutdown( SD_BOTH )` racing a peer that is still sending** — the only close helper,
+   `shutdownSocket` (`TcpBaseTasks.h:241-335`), shuts down both directions; on Windows `SD_RECEIVE`
+   resets the connection if data is queued or arrives afterwards. Several server paths reach it
+   without a prior TLS `async_shutdown` (`TcpSslBaseTasks.h:627-635`, `:352-360`;
+   `TcpBaseTasks.h:2434-2437`, `:1966-1978`).
+2. **Port 28100 shared with a foreign listener** — every server module defaults to 28100
+   (`UtfArgsParser.h:46`); `utf_baselib_tasks`/`_io` bind `"localhost"`, i.e. `[::1]:28100` on this
+   host (`TestTaskUtils.h:838`), and the HTTP client tries `::1` **first**. A concurrently running
+   or leftover process there receives the connection and resets it, the readiness probe passes
+   against it, and the SNI raw acceptor never sees its connection (timeout). Windows
+   `SO_REUSEADDR` (`TcpBaseTasks.h:1205`) also lets a second `0.0.0.0` bind succeed silently.
+3. **Server responding to an unparsable request and closing with request bytes unread**
+   (`HttpServer.h:183-235`, `:536-574`) — low prior on loopback (the client sends the request in
+   one write, `SimpleHttpTask.h:312`), but specific to the 400 request in the perf loop.
+
+## Evidence added 2026-09-09 (solo captures)
+
+The full module was run alone on the box — no other `utf-*` process, no listener on 281xx before
+any run, `tasklist` and `netstat` sampled before each run — with stdout saved per run:
+
+| Binary | Runs | Failures | Per run |
+|---|---|---|---|
+| `win-x64-ccl16-debug`, unmodified | 6 | **0** | ~222 s |
+| `win-a64-vc143-debug`, unmodified (the tree of the original observation) | 6 | **0** | ~222 s |
+
+The only 281xx state left behind was the expected TIME_WAIT population on `127.0.0.1:28100`
+(about 90 entries after a run). Twelve clean solo runs make an in-process race at the originally
+observed rate improbable; the original failure most likely depended on the conditions of that
+run (several modules in flight, or a leftover process). A lock audit found every server-starting
+case in `utf_baselib_io`, `utf_baselib_tasks`, `utf_baselib_messaging` and `utf_baselib_http`
+holding `MachineGlobalTestLock`, so a *properly running* concurrent module is serialized against
+the HTTP server — candidate 2 still needs a leftover process or a hung lock holder to work.
+
+Two test-only changes are in the tree so the next occurrence is more informative: the raw accept
+assertion prints its error code (`TestTlsHandshakeVerification.h`, `UTF_REQUIRE_EQUAL(
+eh::error_code(), acceptEc )`), and the manual `localhost:28100` seed of
+`TlsHandshake_AllowUntrustedRecordsAndClearsEndpointInfo` is cleared by a `BL_SCOPE_EXIT`. The two
+`linger( false, 0 )` comments in `TcpBaseTasks.h` now describe what the call does. No
+mechanism-dependent production change was made.
 
 ## What to capture next time it reproduces
 
