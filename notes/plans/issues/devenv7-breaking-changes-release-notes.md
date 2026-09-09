@@ -696,3 +696,60 @@ goes through `getStatusLine()`), `chk4ServerErrors()` narrowing a backend failur
 (a V1/V2 protocol change — recorded in `broker-outbound-peer-identity-deferral.md`), and
 `RemoveChunk` with `IgnoreIfNotFound` succeeding on a never-saved chunk (that is what the flag
 means).
+
+---
+
+## 15. Windows: `fs::path` now normalizes forward slashes to backslashes (2026-09-09)
+
+On Windows, `bl::fs::path` applies the long file name prefix `\?\` to every absolute path it is
+constructed from. That prefix **switches off path parsing in the kernel**, and under it a forward
+slash is not a separator but an illegal character. Until now the separators were left alone, so a
+path spelled with `/` — legal everywhere else on Windows — became unusable once it was prefixed.
+
+`WinLfnUtils::chk2AddPrefix` (`core/detail/OSImplPlatformCommon.h`) now calls `make_preferred()`
+before it does anything else, so every `fs::path` construction and assignment on Windows yields
+`\`-separated text. **POSIX is unaffected** — `PathImplT< false >` never calls that function, and
+backslash is a legal filename character there.
+
+### Why it mattered
+
+A blob package produced on Linux stores its relative entry paths as `d/f.bin`
+(`fs::getRelativePath` builds them with the platform separator). `FilesUnpackagerUnit` joins that
+onto an already-prefixed target directory, so unpacking such a package on Windows failed with
+`ERROR_INVALID_NAME` (123) from `CreateDirectoryW` / `SetFileTime` and `EINVAL` (22) from
+`_wfopen` — i.e. a package produced on one supported platform could not be consumed on another.
+
+The same class of defect had already been patched at three individual call sites — `JAVA_HOME`
+under MSYS (`scripts/devenv7/AGENTS.md:423`), `fs::temp_directory_path()` and
+`getFileOwner()` — each remembering to normalize on its own. The type now discharges the hazard it
+creates.
+
+### What becomes visible
+
+Absolute paths already came back prefixed and different from their input. What is new is that
+**relative** paths and **already-prefixed** paths also come back `\`-separated:
+
+- code that round-trips a relative path through `.string()` and compares against a `/`-spelled
+  literal (two in-tree tests were updated: `TestBaselibDefault.h:7759` and
+  `TestFilesystemMetadataInMemory.h:243`);
+- filesystem error messages, via `normalizePathParameterForPrint`;
+- the `.symlink` placeholder file the unpackager writes on Windows, whose content is the target
+  text — `../d/sub` is now persisted as `..\d\sub`;
+- `PluginAccess::getLibrary()`, which returns `\` for a `/`-spelled registration.
+
+`//server/share` is now correctly recognised as a UNC share instead of becoming
+`\?\//server/share`. That holds for `BOOST_FILESYSTEM_VERSION` 3, which is what consumers get by
+default; the version 4 `make_preferred()` deliberately leaves the root name alone.
+
+`bl::fs::nolfn::path` remains the raw Boost path for a caller who needs forward slashes preserved.
+
+### Not covered
+
+The mirror direction is unchanged and still open: a package produced **on Windows** stores
+`d\f.bin`, which on Linux is a single legal filename rather than a two-level path. The portable
+form would be `generic_string()` at whatever boundary persists the metadata; nothing in-tree
+persists it (the store is in-memory).
+
+Three things still bypass the guarantee, all benign today: the in-place mutators inherited from
+Boost (`/=`, `+=`, `swap`) and `auto x = fsPath / rhs`, which deduces `boost::filesystem::path`.
+Every in-tree operand is a single iterated component, a UUID or a separator-free literal.

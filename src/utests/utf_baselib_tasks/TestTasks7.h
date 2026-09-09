@@ -74,9 +74,17 @@ namespace
 
         typedef bl::tasks::SimpleTaskBase                                   base_type;
 
-        bool*                                                               m_destroyed;
+        /*
+         * The flag is atomic because the last reference to the task is not always dropped by
+         * the test thread - a thread pool thread which is still unwinding the queue's
+         * completion callback can be the one which runs this destructor, and the test thread
+         * then polls the flag. A plain bool there is a data race, which the Linux
+         * ThreadSanitizer run would report
+         */
 
-        TaskLifetimeProbeT( SAA_inout bool* const destroyed )
+        std::atomic< bool >*                                                m_destroyed;
+
+        TaskLifetimeProbeT( SAA_inout std::atomic< bool >* const destroyed )
             :
             m_destroyed( destroyed )
         {
@@ -116,6 +124,35 @@ namespace
     };
 
     typedef bl::om::ObjectImpl< TaskLifetimeProbeT<> > TaskLifetimeProbeImpl;
+
+    /**
+     * @brief Waits, bounded, for a destructor flag to be set, and returns its final value
+     *
+     * Dropping the last reference to a task does not always destroy it on the calling thread.
+     * The execution queue hands each scheduled task a completion callback which captures a
+     * strong om::ObjPtrCopyable< Task > (ExecutionQueueImpl.h), and TaskBase.h swaps that
+     * callback into a local and invokes it *after* releasing the task lock - so flush() or
+     * disposeQueue() can return while a thread pool thread still owns a reference on its
+     * stack. Asserting destruction on the next statement is therefore a race; it was observed
+     * to fail about one run in five on a two core Windows host.
+     *
+     * The bound is only paid when the assertion is about to fail, so the happy path is one
+     * poll. The shape (1000 x 10 ms, polling rather than assuming) follows the loops in
+     * TestTasks6.h - the sleep is the polling interval of a bounded loop, not a timing
+     * assumption
+     */
+
+    bool waitForDestroyed( SAA_in const std::atomic< bool >& destroyed ) NOEXCEPT
+    {
+        const std::size_t maxRetries = 1000U;
+
+        for( std::size_t retries = 0U; retries < maxRetries && ! destroyed; ++retries )
+        {
+            bl::os::sleep( bl::time::milliseconds( 10 ) );
+        }
+
+        return destroyed;
+    }
 
 } // __unnamed
 
@@ -189,7 +226,7 @@ UTF_AUTO_TEST_CASE( Tasks_SimpleTaskControlTokenTests )
          * for the life of the token
          */
 
-        bool destroyed = false;
+        std::atomic< bool > destroyed( false );
 
         const auto freshToken = SimpleTaskControlTokenImpl::createInstance< TaskControlTokenRW >();
 
@@ -1285,7 +1322,7 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueOwnershipCycleTests )
          * break the queue -> Task edge and hide the very cycle being asserted
          */
 
-        bool destroyed = false;
+        std::atomic< bool > destroyed( false );
 
         const auto probeImpl = TaskLifetimeProbeImpl::createInstance( &destroyed );
         const auto probeTask = om::qi< Task >( probeImpl );
@@ -1390,7 +1427,7 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueOwnershipCycleTests )
 
         const auto baselineArm = settledOutstandingObjectRefs();
 
-        bool destroyed = false;
+        std::atomic< bool > destroyed( false );
         bool emptyAfterFlush = false;
 
         {
@@ -1416,7 +1453,7 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueOwnershipCycleTests )
 
             emptyAfterFlush = eq -> isEmpty();
 
-            UTF_REQUIRE( destroyed );
+            UTF_REQUIRE( waitForDestroyed( destroyed ) );
         }
 
         UTF_REQUIRE( emptyAfterFlush );
@@ -1431,7 +1468,7 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueOwnershipCycleTests )
 
         const auto baselineArm = settledOutstandingObjectRefs();
 
-        bool destroyed = false;
+        std::atomic< bool > destroyed( false );
 
         auto probeImpl = TaskLifetimeProbeImpl::createInstance( &destroyed );
 
@@ -1454,7 +1491,7 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueOwnershipCycleTests )
 
         probeImpl.reset();
 
-        UTF_REQUIRE( destroyed );
+        UTF_REQUIRE( waitForDestroyed( destroyed ) );
         UTF_REQUIRE_EQUAL( baselineArm, waitForOutstandingObjectRefs( baselineArm ) );
     }
 }

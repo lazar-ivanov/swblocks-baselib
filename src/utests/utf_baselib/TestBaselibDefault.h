@@ -7756,7 +7756,15 @@ UTF_AUTO_TEST_CASE( BaseLib_LfnPrefixesTests )
 
         cbCheckRemovePrefix( "c:\\already\\\\?\\inside", "c:\\already\\\\?\\inside" );
 
-        cbCheckRemovePrefix( "relative/path", "relative/path" );
+        /*
+         * The expectation is spelled through fs::path rather than as a literal because on
+         * Windows the separators are normalized when the path is constructed - see the note
+         * in chk2AddPrefix( ... ) - so this input round-trips as 'relative\path' there and as
+         * 'relative/path' everywhere else. What the case pins is that removing the prefix
+         * does not disturb a path which never had one
+         */
+
+        cbCheckRemovePrefix( "relative/path", bl::fs::path( "relative/path" ).string() );
         cbCheckRemovePrefix( "", "" );
     }
 
@@ -7845,6 +7853,31 @@ UTF_AUTO_TEST_CASE( BaseLib_LfnPrefixesTests )
         UTF_REQUIRE_EQUAL(
             std::string( "\\\\?\\UNC\\server\\share" ),
             cbAddPrefix( "\\\\server\\share" )
+            );
+
+        /*
+         * Forward slashes are legal separators on Windows everywhere except under the long
+         * file name prefix, which switches path parsing off - so they have to be normalized
+         * before the prefix is applied, or the result names nothing. A package produced on a
+         * UNIX host stores its relative paths that way, which is how this reaches production
+         */
+
+        UTF_REQUIRE_EQUAL( std::string( "\\\\?\\c:\\foo" ), cbAddPrefix( "c:/foo" ) );
+
+        UTF_REQUIRE_EQUAL( std::string( "relative\\path" ), cbAddPrefix( "relative/path" ) );
+
+        /*
+         * The UNC detection tests for backslashes only, so a forward-slash share was not
+         * recognised before the normalization and came out as \\?\//server/share
+         *
+         * Note this holds for BOOST_FILESYSTEM_VERSION 3, which is what consumers get by
+         * default and what this repository builds against; the version 4 make_preferred( )
+         * deliberately leaves the root name alone, which would defeat it
+         */
+
+        UTF_REQUIRE_EQUAL(
+            std::string( "\\\\?\\UNC\\server\\share" ),
+            cbAddPrefix( "//server/share" )
             );
 
         /*

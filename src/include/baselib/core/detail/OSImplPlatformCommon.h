@@ -1144,6 +1144,29 @@ namespace bl
 
                     if( ! path.empty() )
                     {
+                        /*
+                         * The separators must be normalized before anything else looks at the
+                         * path, because the long file name prefix this function applies turns
+                         * off path normalization in the kernel: under \\?\ a forward slash is
+                         * not a separator but an illegal character, so a path which is merely
+                         * unconventional on the way in becomes unusable on the way out
+                         *
+                         * This has to happen before pathStr is captured below. The already
+                         * prefixed check tests pathStr, so normalizing after the capture would
+                         * leave an input such as //?/C:/x failing that test on the old string
+                         * and then entering the prefixing branch with the new one - where its
+                         * third character is now '?' and the UNC detection would mistake it for
+                         * a share, yielding \\?\UNC\?\C:\x
+                         *
+                         * It also has to happen on every path rather than only on the ones
+                         * being prefixed: a relative path is appended to an already prefixed
+                         * one by the caller (that is how the blob transfer unpackager composes
+                         * a target path), and the result re-enters here through a constructor
+                         * and takes the already prefixed branch below
+                         */
+
+                        path.make_preferred();
+
                         const auto pathStr = path.string();
 
                         /*

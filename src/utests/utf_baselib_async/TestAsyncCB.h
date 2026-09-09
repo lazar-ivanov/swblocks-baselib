@@ -809,7 +809,19 @@ UTF_AUTO_TEST_CASE( AsyncCB_DeferredAssertionsRecorderTests )
     utest::DeferredAssertions recorder;
 
     const std::size_t noOfTasks = 8U;
-    const std::size_t noOfRecordsPerTask = 100U;
+
+    /*
+     * Static so that the innermost lambda can read it without capturing it
+     *
+     * That lambda has an explicit capture list and no default capture mode. As an automatic
+     * const it is not odr-used there - it is only read in a loop bound - but the two Windows
+     * toolchains disagree about what that means: MSVC rejects the reference unless the variable
+     * is captured (C3493), while clang-cl applies the non-odr-use rule and then rejects the
+     * capture as unused (-Wunused-lambda-capture), and -WX makes both fatal. A variable with
+     * static storage duration is never captured by either, which satisfies them both
+     */
+
+    static const std::size_t noOfRecordsPerTask = 100U;
 
     scheduleAndExecuteInParallel(
         [ & ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void

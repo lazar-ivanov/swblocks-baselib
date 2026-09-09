@@ -146,11 +146,19 @@ UTF_AUTO_TEST_CASE( TestFilesystemMetadataInMemoryImpl )
 
         std::map< bl::uuid_t, std::string > expectedPaths;
 
+        /*
+         * The expectations are spelled through fs::path because makeEntry( ... ) stores the
+         * relative path as one, and on Windows fs::path normalizes the separators when it is
+         * constructed, so these round-trip as 'foo\bar1\baz' there and unchanged elsewhere.
+         * Forward slashes are used on the way in deliberately - that is what a package
+         * produced on a UNIX host carries
+         */
+
         const auto entryId1 = fsmd -> createEntry( makeEntry( "foo/bar1/baz" ) );
-        expectedPaths[ entryId1 ] = "foo/bar1/baz";
+        expectedPaths[ entryId1 ] = bl::fs::path( "foo/bar1/baz" ).string();
 
         const auto entryId2 = fsmd -> createEntry( makeEntry( "foo/bar/baz2" ) );
-        expectedPaths[ entryId2 ] = "foo/bar/baz2";
+        expectedPaths[ entryId2 ] = bl::fs::path( "foo/bar/baz2" ).string();
 
         UTF_REQUIRE_EQUAL( expectedPaths.size(), 2U );
 
