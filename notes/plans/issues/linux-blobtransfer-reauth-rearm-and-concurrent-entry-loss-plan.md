@@ -12,8 +12,8 @@ shared between the two tasks, R-1 — and four smaller items; see "Residual issu
 implementation". **Residuals R-1, R-2 (minimal) and R-4 implemented and verified on `gcc1520`
 debug and `clang2010` release, 2026-09-10, Fable 5.1**; R-3 deferred; R-5 (Windows and macOS)
 still outstanding. **R-6** (a null nested link aborted the process in `copyForTarget()`, found
-reviewing R-1) fixed in the working tree, 2026-09-10, Opus 5; stress verification of the whole
-tree in progress. **Revised 2026-09-10** after a read-only trace of
+reviewing R-1) fixed in `2bef17c`, 2026-09-10, Opus 5; the whole tree passed the full Linux
+stress run, see R-6. **Revised 2026-09-10** after a read-only trace of
 the code by Fable 5.1 (nothing was built or run for the revision): the two issues are most likely
 one defect with two faces — a race in *which* of two failing pipeline units gets reported — and
 the original re-arm hypothesis for issue 1 is not supported by the trace. See "The mechanism both
@@ -797,7 +797,25 @@ dump performs anyway. Both comments in `copyForTarget()` say so.
 **Test.** Arm (16) of `Tasks_ReactiveInputConnectorTests`: an exception thrown with a null nested
 pointer must be dispatched as a distinct copy which still carries the null link. Red on the
 unguarded code, gcc debug: the test process aborts with exit 134, `RIP: ... CPP.h(650): Attempting
-to rethrow a nullptr exception_ptr`. Green and the stress run of the guarded tree: pending.
+to rethrow a nullptr exception_ptr`. Green on the guarded code: the case passes, and R-2's info
+line appears exactly twice, for arms (11) and (15) — arm (16) dispatches, so it adds none.
+
+**Stress run of the whole tree** (`2bef17c`; gcc debug unless stated; `--log_level=test_suite`
+except for the batch and the loaded runs):
+
+| Check | Result |
+|---|---|
+| Both modules, all four Linux combinations: build and full suites | 0 warnings, 0 errors, every suite passing; the connector and the tightened cases ran in every one; R-2's info line twice in every tasks suite, never in a blobtransfer suite |
+| `...CancelUploadTests` × 100 | 0 failures, 0 crashes |
+| The three cancel cases × 50 | 0 failures, 0 crashes |
+| The seven post-deletion cases × 100 each | 0 failures, 0 crashes |
+| The 5-module batch × 10, clang release | every module of every replay passing |
+| `...ReauthAfterDropOnLoadTests` × 100, one core kept busy | 0 failures, 0 crashes |
+
+R-2's info line appeared in none of the 850 pipeline runs taken with the logging flag, so no real
+pipeline error fell back to the swallow path. As before, no pipeline case sends a nested chain
+through a connector, so R-1 and R-6 themselves are proven by arms (13) to (16), not by the stress
+run.
 
 ## Do not
 
