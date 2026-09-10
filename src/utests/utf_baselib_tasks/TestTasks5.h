@@ -1449,6 +1449,534 @@ UTF_AUTO_TEST_CASE( Tasks_ReactiveInputConnectorTests )
 
         UTF_REQUIRE_NO_THROW( om::qi< reactive::Observer >( plainObserver ) -> onError( eptr ) );
     }
+
+    {
+        /*
+         * (9) onError() hands the upstream error to the error dispatcher, so the target fails
+         * with it instead of taking the onCompleted() which follows for a normal end of input
+         *
+         * It must not throw: the error is not the connector's own, and the notification task
+         * which delivers it must not see an exception
+         *
+         * And it must hand over a deep copy, not the upstream exception object itself: the
+         * upstream task and the target each enhance and dump the exception they fail with when
+         * they complete, on different threads, so one object shared between them is written by
+         * both at once
+         */
+
+        std::exception_ptr eptr;
+
+        try
+        {
+            BL_THROW( UnexpectedException(), BL_MSG() << "probe upstream error" );
+        }
+        catch( std::exception& )
+        {
+            eptr = std::current_exception();
+        }
+
+        UTF_REQUIRE( nullptr != eptr );
+
+        const auto recorder = RecordingErrorDispatcherImpl::createInstance();
+
+        const auto connector = reactive::createInputConnector(
+            []( SAA_in const cpp::any& ) -> bool
+            {
+                return true;
+            },
+            om::qi< ErrorDispatcher >( recorder )
+            );
+
+        UTF_REQUIRE_NO_THROW( connector -> onError( eptr ) );
+        UTF_REQUIRE_EQUAL( recorder -> dispatchCount(), 1U );
+
+        const auto dispatched = recorder -> lastError();
+
+        UTF_REQUIRE( nullptr != dispatched );
+        UTF_REQUIRE( dispatched != eptr );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            cpp::safeRethrowException( dispatched ),
+            UnexpectedException,
+            "probe upstream error"
+            );
+
+        /*
+         * Enhancing the copy, as a failing task does, must leave the upstream exception as it was
+         */
+
+        try
+        {
+            cpp::safeRethrowException( dispatched );
+        }
+        catch( eh::exception& e )
+        {
+            e << eh::errinfo_task_info( "probe task info" );
+        }
+
+        try
+        {
+            cpp::safeRethrowException( eptr );
+        }
+        catch( eh::exception& e )
+        {
+            UTF_REQUIRE( nullptr == eh::get_error_info< eh::errinfo_task_info >( e ) );
+        }
+    }
+
+    {
+        /*
+         * (10) A non-boost exception is never enhanced in place by a task - it is wrapped for
+         * printing instead - so the target is given the very same exception
+         */
+
+        const auto eptr = std::make_exception_ptr( std::runtime_error( "probe non-boost error" ) );
+
+        const auto recorder = RecordingErrorDispatcherImpl::createInstance();
+
+        const auto connector = reactive::createInputConnector(
+            []( SAA_in const cpp::any& ) -> bool
+            {
+                return true;
+            },
+            om::qi< ErrorDispatcher >( recorder )
+            );
+
+        UTF_REQUIRE_NO_THROW( connector -> onError( eptr ) );
+        UTF_REQUIRE_EQUAL( recorder -> dispatchCount(), 1U );
+        UTF_REQUIRE( recorder -> lastError() == eptr );
+    }
+
+    {
+        /*
+         * (11) A boost exception which cannot be cloned can be neither copied nor shared
+         * safely, so it is only logged, as by a connector without an error dispatcher
+         */
+
+        class NonClonableBoostException :
+            public std::exception,
+            public boost::exception
+        {
+        };
+
+        const auto eptr = std::make_exception_ptr( NonClonableBoostException() );
+
+        const auto recorder = RecordingErrorDispatcherImpl::createInstance();
+
+        const auto connector = reactive::createInputConnector(
+            []( SAA_in const cpp::any& ) -> bool
+            {
+                return true;
+            },
+            om::qi< ErrorDispatcher >( recorder )
+            );
+
+        UTF_REQUIRE_NO_THROW( connector -> onError( eptr ) );
+        UTF_REQUIRE_EQUAL( recorder -> dispatchCount(), 0U );
+    }
+
+    {
+        /*
+         * (12) Without an error dispatcher there is no target to fail, so onError() falls back
+         * to ObserverBase::onError() and swallows
+         */
+
+        std::exception_ptr eptr;
+
+        try
+        {
+            BL_CHK( false, false, BL_MSG() << "probe upstream error" );
+        }
+        catch( std::exception& )
+        {
+            eptr = std::current_exception();
+        }
+
+        UTF_REQUIRE( nullptr != eptr );
+
+        const auto connector = reactive::createInputConnector(
+            []( SAA_in const cpp::any& ) -> bool
+            {
+                return true;
+            },
+            om::ObjPtr< ErrorDispatcher >()
+            );
+
+        UTF_REQUIRE_NO_THROW( connector -> onError( eptr ) );
+    }
+
+    {
+        /*
+         * (13) The nested exception chain is copied too. A link shared with the upstream
+         * exception would be formatted by both tasks at once - eh::diagnostic_information()
+         * walks the chain and Boost's formatter writes a cached string inside every link it
+         * formats - which is the race of the top level, one level down
+         */
+
+        std::exception_ptr inner;
+
+        try
+        {
+            BL_THROW( UnexpectedException(), BL_MSG() << "probe inner error" );
+        }
+        catch( std::exception& )
+        {
+            inner = std::current_exception();
+        }
+
+        std::exception_ptr outer;
+
+        try
+        {
+            BL_THROW(
+                UnexpectedException()
+                    << eh::errinfo_nested_exception_ptr( inner ),
+                BL_MSG()
+                    << "probe outer error"
+                );
+        }
+        catch( std::exception& )
+        {
+            outer = std::current_exception();
+        }
+
+        UTF_REQUIRE( nullptr != inner );
+        UTF_REQUIRE( nullptr != outer );
+
+        const auto recorder = RecordingErrorDispatcherImpl::createInstance();
+
+        const auto connector = reactive::createInputConnector(
+            []( SAA_in const cpp::any& ) -> bool
+            {
+                return true;
+            },
+            om::qi< ErrorDispatcher >( recorder )
+            );
+
+        UTF_REQUIRE_NO_THROW( connector -> onError( outer ) );
+        UTF_REQUIRE_EQUAL( recorder -> dispatchCount(), 1U );
+
+        const auto dispatched = recorder -> lastError();
+
+        UTF_REQUIRE( nullptr != dispatched );
+        UTF_REQUIRE( dispatched != outer );
+
+        std::exception_ptr nestedCopy;
+
+        try
+        {
+            cpp::safeRethrowException( dispatched );
+        }
+        catch( eh::exception& e )
+        {
+            const auto* nested = eh::get_error_info< eh::errinfo_nested_exception_ptr >( e );
+
+            UTF_REQUIRE( nullptr != nested );
+
+            nestedCopy = *nested;
+        }
+
+        UTF_REQUIRE( nullptr != nestedCopy );
+        UTF_REQUIRE( nestedCopy != inner );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            cpp::safeRethrowException( nestedCopy ),
+            UnexpectedException,
+            "probe inner error"
+            );
+
+        /*
+         * Enhancing the copy's link, as the target's completion would, must leave the
+         * upstream's inner exception as it was
+         */
+
+        try
+        {
+            cpp::safeRethrowException( nestedCopy );
+        }
+        catch( eh::exception& e )
+        {
+            e << eh::errinfo_task_info( "probe task info" );
+        }
+
+        try
+        {
+            cpp::safeRethrowException( inner );
+        }
+        catch( eh::exception& e )
+        {
+            UTF_REQUIRE( nullptr == eh::get_error_info< eh::errinfo_task_info >( e ) );
+        }
+
+        /*
+         * The chain was copied, not dropped: the formatter still reaches the inner message
+         * through the copy
+         */
+
+        UTF_REQUIRE( cpp::contains( eh::diagnostic_information( dispatched ), "probe inner error" ) );
+    }
+
+    {
+        /*
+         * (14) A chain whose inner link is a non-boost exception is dispatched with that link
+         * shared - it has no error info container, so there is nothing for two tasks to write
+         */
+
+        const auto inner = std::make_exception_ptr( std::runtime_error( "probe non-boost inner error" ) );
+
+        std::exception_ptr outer;
+
+        try
+        {
+            BL_THROW(
+                UnexpectedException()
+                    << eh::errinfo_nested_exception_ptr( inner ),
+                BL_MSG()
+                    << "probe outer error"
+                );
+        }
+        catch( std::exception& )
+        {
+            outer = std::current_exception();
+        }
+
+        UTF_REQUIRE( nullptr != outer );
+
+        const auto recorder = RecordingErrorDispatcherImpl::createInstance();
+
+        const auto connector = reactive::createInputConnector(
+            []( SAA_in const cpp::any& ) -> bool
+            {
+                return true;
+            },
+            om::qi< ErrorDispatcher >( recorder )
+            );
+
+        UTF_REQUIRE_NO_THROW( connector -> onError( outer ) );
+        UTF_REQUIRE_EQUAL( recorder -> dispatchCount(), 1U );
+
+        try
+        {
+            cpp::safeRethrowException( recorder -> lastError() );
+        }
+        catch( eh::exception& e )
+        {
+            const auto* nested = eh::get_error_info< eh::errinfo_nested_exception_ptr >( e );
+
+            UTF_REQUIRE( nullptr != nested );
+            UTF_REQUIRE( *nested == inner );
+        }
+    }
+
+    {
+        /*
+         * (15) A chain whose inner link is a boost exception which cannot be cloned can be
+         * neither copied nor shared, so the whole chain is not dispatched - the rule of (11)
+         * applied to a link
+         */
+
+        class NonClonableBoostException :
+            public std::exception,
+            public boost::exception
+        {
+        };
+
+        const auto inner = std::make_exception_ptr( NonClonableBoostException() );
+
+        std::exception_ptr outer;
+
+        try
+        {
+            BL_THROW(
+                UnexpectedException()
+                    << eh::errinfo_nested_exception_ptr( inner ),
+                BL_MSG()
+                    << "probe outer error"
+                );
+        }
+        catch( std::exception& )
+        {
+            outer = std::current_exception();
+        }
+
+        UTF_REQUIRE( nullptr != outer );
+
+        const auto recorder = RecordingErrorDispatcherImpl::createInstance();
+
+        const auto connector = reactive::createInputConnector(
+            []( SAA_in const cpp::any& ) -> bool
+            {
+                return true;
+            },
+            om::qi< ErrorDispatcher >( recorder )
+            );
+
+        UTF_REQUIRE_NO_THROW( connector -> onError( outer ) );
+        UTF_REQUIRE_EQUAL( recorder -> dispatchCount(), 0U );
+    }
+}
+
+namespace
+{
+    /**
+     * @brief An observable which fails on its first iteration
+     */
+
+    template
+    <
+        typename E = void
+    >
+    class FailingObservableT :
+        public bl::reactive::ObservableBase
+    {
+        BL_DECLARE_OBJECT_IMPL_NO_DESTRUCTOR( FailingObservableT )
+
+    protected:
+
+        typedef bl::reactive::ObservableBase                                base_type;
+
+        FailingObservableT()
+        {
+        }
+
+        virtual void tryStopObservable() OVERRIDE
+        {
+            BL_ASSERT( base_type::m_stopRequested );
+        }
+
+        virtual bl::time::time_duration chk2LoopUntilFinished() OVERRIDE
+        {
+            if( ! base_type::m_stopRequested )
+            {
+                BL_THROW(
+                    bl::UnexpectedException(),
+                    BL_MSG()
+                        << "upstream observable failure"
+                    );
+            }
+
+            return bl::time::neg_infin;
+        }
+    };
+
+    typedef bl::om::ObjectImpl< FailingObservableT<>, true /* enableSharedPtr */ >
+        FailingObservableImpl;
+
+    /**
+     * @brief A unit which does nothing until its input completes
+     */
+
+    template
+    <
+        typename E = void
+    >
+    class IdleUntilInputCompletedUnitT :
+        public bl::reactive::ObservableBase
+    {
+        BL_DECLARE_OBJECT_IMPL_NO_DESTRUCTOR( IdleUntilInputCompletedUnitT )
+
+    protected:
+
+        typedef bl::reactive::ObservableBase                                base_type;
+
+        std::atomic< bool >                                                 m_inputCompleted;
+
+        IdleUntilInputCompletedUnitT()
+            :
+            m_inputCompleted( false )
+        {
+        }
+
+        virtual void tryStopObservable() OVERRIDE
+        {
+            BL_ASSERT( base_type::m_stopRequested );
+        }
+
+        virtual bl::time::time_duration chk2LoopUntilFinished() OVERRIDE
+        {
+            if( base_type::m_stopRequested || m_inputCompleted )
+            {
+                return bl::time::neg_infin;
+            }
+
+            return bl::time::milliseconds( 10 );
+        }
+
+    public:
+
+        bool onInput( SAA_in const bl::cpp::any& )
+        {
+            return true;
+        }
+
+        void onInputCompleted()
+        {
+            m_inputCompleted = true;
+        }
+    };
+
+    typedef bl::om::ObjectImpl
+        <
+            bl::reactive::ProcessingUnit< IdleUntilInputCompletedUnitT<>, bl::reactive::Observable >,
+            true /* enableSharedPtr */
+        >
+        IdleUntilInputCompletedUnitImpl;
+
+} // __unnamed
+
+UTF_AUTO_TEST_CASE( Tasks_ReactiveInputConnectorPropagatesUpstreamErrorTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    /*
+     * A failing observable delivers onError() and then onCompleted() to its subscribers. A unit
+     * bound through bindInputConnector() must fail with the upstream error: were the error
+     * swallowed, the onCompleted() which follows would look like a normal end of input, and the
+     * unit would either finish successfully or - if it checks its input for completeness - fail
+     * with an error of its own which hides the real cause
+     */
+
+    scheduleAndExecuteInParallel(
+        []( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+        {
+            typedef IdleUntilInputCompletedUnitImpl unit_t;
+
+            const auto observableImpl = om::getSharedPtr( FailingObservableImpl::createInstance() );
+            const auto unit = om::getSharedPtr( unit_t::createInstance() );
+
+            const auto observable = om::qi< reactive::Observable >( observableImpl );
+
+            /*
+             * The subscription handle has to be held - ~ObserverDisposerT() disposes, so
+             * discarding one unsubscribes the observer immediately
+             */
+
+            const auto subscription = observable -> subscribe(
+                unit -> bindInputConnector< unit_t >( &unit_t::onInput, &unit_t::onInputCompleted )
+                );
+
+            BL_UNUSED( subscription );
+
+            const auto observableTask = om::qi< Task >( observable.get() );
+            const auto unitTask = om::qi< Task >( unit.get() );
+
+            eq -> push_back( unitTask );
+            eq -> push_back( observableTask );
+
+            UTF_REQUIRE_THROW_MESSAGE(
+                eq -> waitForSuccess( observableTask ),
+                UnexpectedException,
+                "upstream observable failure"
+                );
+
+            UTF_REQUIRE_THROW_MESSAGE(
+                eq -> waitForSuccess( unitTask ),
+                UnexpectedException,
+                "upstream observable failure"
+                );
+        }
+        );
 }
 
 UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueDisposeIdempotenceTests )

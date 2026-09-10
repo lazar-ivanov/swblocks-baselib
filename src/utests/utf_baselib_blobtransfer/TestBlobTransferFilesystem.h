@@ -1418,14 +1418,20 @@ UTF_AUTO_TEST_CASE( BlobTransfer_UnpackagerFailureClosesOpenFilesBeforeDiscardin
 
     const auto targetDir = tmpDir.path() / "out";
 
-    UTF_REQUIRE_THROW(
+    /*
+     * The unit must fail with the error its input delivered, not with its own report that the
+     * content is incomplete - both are UnexpectedException, so only the message tells them apart
+     */
+
+    UTF_REQUIRE_THROW_MESSAGE(
         utils_t::runStandaloneUnpackager(
             om::qi< data::FilesystemMetadataRO >( fsmdWO ),
             targetDir,
             unpackager_unit_t::StpAllow,
             feedCallback
             ),
-        UnexpectedException
+        UnexpectedException,
+        "injected download failure"
         );
 
     /*
