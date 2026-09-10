@@ -1,16 +1,16 @@
 ifneq (,$(filter vc143 ccl16,$(TOOLCHAIN)))
 # Cross-compilation support for x86 target
-# Prepend Llvm x86 bin directory if using clang-cl
+# Prepend the clang-cl bin directory selected for this host if using clang-cl
 ifdef BL_USE_CLANG_CL
 ifeq ($(BL_WIN_ARCH_IS_ARM64),1)
 # ARM64 host → x86 target cross-compilation
-PATH     := $(MSVC)/VC/Tools/Llvm/bin:$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\bin\Hostarm64\x86:$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\bin\Hostarm64\arm64:$(MSVC)/VC/Redist/MSVC/$(MSVCVERSIONTAG)\x86\$(MSVCRTTAG):$(PATH)
+PATH     := $(CLANG_CL_DIR):$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\bin\Hostarm64\x86:$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\bin\Hostarm64\arm64:$(MSVC)/VC/Redist/MSVC/$(MSVCVERSIONTAG)\x86\$(MSVCRTTAG):$(PATH)
 else ifeq ($(BL_WIN_ARCH_IS_X64),1)
 # x64 host → x86 target cross-compilation
-PATH     := $(MSVC)/VC/Tools/Llvm/bin:$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\bin\Hostx64\x86:$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\bin\Hostx64\x64:$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\x64\$(MSVCRTTAG):$(PATH)
+PATH     := $(CLANG_CL_DIR):$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\bin\Hostx64\x86:$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\bin\Hostx64\x64:$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\x64\$(MSVCRTTAG):$(PATH)
 else
 # Native x86 build
-PATH     := $(MSVC)/VC/Tools/Llvm/bin:$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\bin\Hostx86\x86:$(MSVC)/VC/Redist/MSVC/$(MSVCVERSIONTAG)\x86\$(MSVCRTTAG):$(PATH)
+PATH     := $(CLANG_CL_DIR):$(MSVC)/VC/Tools/MSVC/$(MSVCVERSIONTAG)\bin\Hostx86\x86:$(MSVC)/VC/Redist/MSVC/$(MSVCVERSIONTAG)\x86\$(MSVCRTTAG):$(PATH)
 endif
 else
 ifeq ($(BL_WIN_ARCH_IS_ARM64),1)

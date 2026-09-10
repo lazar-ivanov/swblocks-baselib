@@ -576,7 +576,7 @@ UTF_AUTO_TEST_CASE( Test_BlobServerFatalBackendErrorBlastRadius )
         )
         -> om::ObjPtr< connection_t >
     {
-        const auto connector = connector_t::createInstance( std::string( "localhost" ), 28100U );
+        const auto connector = connector_t::createInstance( std::string( "localhost" ), 28100 );
 
         const auto taskConnector = om::qi< Task >( connector.get() );
         eq -> push_back( taskConnector );
@@ -629,7 +629,7 @@ UTF_AUTO_TEST_CASE( Test_BlobServerFatalBackendErrorBlastRadius )
             controlToken,
             dataBlocksPool,
             std::string( "localhost" ),
-            28100U,
+            28100,
             bl::str::empty()                                        /* privateKeyPem */,
             bl::str::empty()                                        /* certificatePem */,
             asyncStorage
@@ -724,7 +724,7 @@ UTF_AUTO_TEST_CASE( Test_BlobServerFatalBackendErrorBlastRadius )
             controlToken,
             dataBlocksPool,
             std::string( "localhost" ),
-            28100U,
+            28100,
             bl::str::empty()                                        /* privateKeyPem */,
             bl::str::empty()                                        /* certificatePem */,
             asyncWrapper
@@ -834,7 +834,7 @@ UTF_AUTO_TEST_CASE( Test_BlobServerFatalBackendErrorBlastRadius )
             controlToken,
             dataBlocksPool,
             std::string( "localhost" ),
-            28100U,
+            28100,
             bl::str::empty()                                        /* privateKeyPem */,
             bl::str::empty()                                        /* certificatePem */,
             asyncStorage

@@ -3353,7 +3353,7 @@ UTF_AUTO_TEST_CASE( Io_TcpBlockTransferChunkFailurePropagationTests )
                 const auto connect = [ & ]() -> om::ObjPtr< connection_t >
                 {
                     const auto connector =
-                        connector_t::createInstance( std::string( "localhost" ), 28100U );
+                        connector_t::createInstance( std::string( "localhost" ), 28100 );
 
                     const auto taskConnector = om::qi< tasks::Task >( connector.get() );
                     eq -> push_back( taskConnector );

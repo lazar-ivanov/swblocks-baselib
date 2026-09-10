@@ -40,6 +40,13 @@ class PassThroughOptionParser(OptionParser):
     try:
       OptionParser._process_long_opt(self, rargs, values)
     except BadOptionError as err:
+      # optparse splits a joined "--option=value" and pushes the value back onto rargs
+      # before it fails to match the option, so passing the original argument through
+      # would deliver the value a second time as a bare argument, which clang-cl then
+      # reads as an input file (for example --target=i686-pc-windows-msvc turns into
+      # a spurious 'i686-pc-windows-msvc' linker input); drop the pushed-back value
+      if '=' in arg and rargs and rargs[0] == arg.split('=', 1)[1]:
+        rargs.pop(0)
       self.largs.append(arg)
 
   def _process_short_opts(self, rargs, values):
