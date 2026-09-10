@@ -115,9 +115,25 @@ namespace bl
             static ByteArrayPtr byteArrayPtrFromIndirectByteBuffer(
                 SAA_in  const JniEnvironment&                   environment,
                 SAA_in  jobject                                 byteBuffer,
-                SAA_in  jint                                    mode
+                SAA_in  jint                                    mode,
+                SAA_out jint&                                   arrayOffset
                 )
             {
+                /*
+                 * A read only buffer has no accessible backing array and a buffer obtained
+                 * through slice( ... ) does not start at the beginning of the one it returns
+                 */
+
+                BL_CHK_T(
+                    true,
+                    environment.isReadOnlyByteBuffer( byteBuffer ),
+                    JavaException(),
+                    BL_MSG()
+                        << "A read only java.nio.ByteBuffer is not supported"
+                    );
+
+                arrayOffset = environment.getByteBufferArrayOffset( byteBuffer );
+
                 LocalReference< jbyteArray > byteArray = environment.getByteBufferArray( byteBuffer );
 
                 jbyte* elems = environment.getByteArrayElements( byteArray.get() );
@@ -225,10 +241,17 @@ namespace bl
                     }
                     else
                     {
-                        inByteArrayPtr = byteArrayPtrFromIndirectByteBuffer( environment, inJavaBuffer, JNI_ABORT );
+                        jint inArrayOffset = 0;
+
+                        inByteArrayPtr = byteArrayPtrFromIndirectByteBuffer(
+                            environment,
+                            inJavaBuffer,
+                            JNI_ABORT,
+                            inArrayOffset
+                            );
 
                         inDataBlock = bl::data::DataBlock::createInstance(
-                            reinterpret_cast< char* >( inByteArrayPtr.get() ),
+                            reinterpret_cast< char* >( inByteArrayPtr.get() ) + inArrayOffset,
                             bl::numbers::safeCoerceTo< std::size_t >( environment.getByteBufferCapacity( inJavaBuffer ) )
                             );
                     }
@@ -242,10 +265,17 @@ namespace bl
                     }
                     else
                     {
-                        outByteArrayPtr = byteArrayPtrFromIndirectByteBuffer( environment, outJavaBuffer, 0 /* mode */ );
+                        jint outArrayOffset = 0;
+
+                        outByteArrayPtr = byteArrayPtrFromIndirectByteBuffer(
+                            environment,
+                            outJavaBuffer,
+                            0 /* mode */,
+                            outArrayOffset
+                            );
 
                         outDataBlock = bl::data::DataBlock::createInstance(
-                            reinterpret_cast< char* >( outByteArrayPtr.get() ),
+                            reinterpret_cast< char* >( outByteArrayPtr.get() ) + outArrayOffset,
                             bl::numbers::safeCoerceTo< std::size_t >( environment.getByteBufferCapacity( outJavaBuffer ) )
                             );
                     }
@@ -318,6 +348,26 @@ namespace bl
                     m_javaClass.get(),
                     &nativeCb,
                     1 /* nMethods */ );
+
+                if( 0 != jniErrorCode && JNI_TRUE == jniEnv -> ExceptionCheck() )
+                {
+                    /*
+                     * Per the JNI specification ::RegisterNatives raises a pending Java
+                     * exception (a NoSuchMethodError when the named method does not exist or
+                     * is not native) in addition to returning a non-zero error code
+                     *
+                     * The C++ exception thrown below carries the diagnosis, so the pending
+                     * Java exception must be cleared here rather than left behind: with an
+                     * exception pending the next JNI call made on this thread is undefined
+                     * behaviour, and fatal under CheckJNI ('JNI call made with exception
+                     * pending'), which would take down a process far away from the cause
+                     *
+                     * ::ExceptionCheck and ::ExceptionClear are among the few JNI functions
+                     * which are legal to call while an exception is pending
+                     */
+
+                    jniEnv -> ExceptionClear();
+                }
 
                 BL_CHK_T(
                     false,

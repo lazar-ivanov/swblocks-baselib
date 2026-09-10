@@ -22,3 +22,10 @@
 #include "TestPersonality.h"
 #include "TestPluginAccess.h"
 #include "TestResolver.h"
+#include "TestVersion.h"
+
+/*
+ * Must remain last - the object leak guard it registers has to run after every other case
+ */
+
+#include "TestObjectLeaks.h"

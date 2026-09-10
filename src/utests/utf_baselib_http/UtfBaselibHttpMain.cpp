@@ -22,3 +22,4 @@
 #include "TestTlsProtocolPolicy.h"
 #include "TestTlsPeerVerification.h"
 #include "TestTlsHandshakeVerification.h"
+#include "TestAsioSslStreamWrapper.h"

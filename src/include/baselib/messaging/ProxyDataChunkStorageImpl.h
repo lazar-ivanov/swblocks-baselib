@@ -30,6 +30,9 @@
 #include <baselib/core/EndpointSelector.h>
 #include <baselib/core/BaseIncludes.h>
 
+#include <thread>
+#include <unordered_map>
+
 #include <unordered_set>
 
 namespace bl
@@ -94,7 +97,23 @@ namespace bl
             const uuid_t                                                                            m_peerId;
             om::ObjPtrDisposable< tasks::ExecutionQueue >                                           m_workers;
 
-            mutable os::thread_specific_ptr< ClientWrapperHolder >                                  g_tlsClient;
+            /*
+             * The per-thread blob server connections of this instance
+             *
+             * Note that a thread_specific_ptr member can't be used here: its destructor only
+             * releases the slot of the thread which destroys the object, so the connections
+             * opened on the long lived pool threads would leak and a later instance at the
+             * same address would find (and reuse) the holders of the destroyed one
+             */
+
+            mutable std::unordered_map
+            <
+                std::thread::id,
+                cpp::SafeUniquePtr< ClientWrapperHolder >
+            >
+            m_clientsByThread;
+
+            mutable os::mutex                                                                       m_clientsLock;
             mutable os::mutex                                                                       m_lock;
 
             mutable std::unordered_set< uuid_t >                                                    m_cachedChunks;
@@ -365,12 +384,42 @@ namespace bl
 
             ClientWrapperHolder* tlsClient( SAA_in const bool force = false ) const
             {
-                if( force || nullptr == g_tlsClient.get() )
+                const auto threadId = std::this_thread::get_id();
+
+                ClientWrapperHolder* current = nullptr;
+
                 {
-                    g_tlsClient.reset( createClient( g_tlsClient.get() ).release() );
+                    BL_MUTEX_GUARD( m_clientsLock );
+
+                    const auto pos = m_clientsByThread.find( threadId );
+
+                    if( pos != m_clientsByThread.end() )
+                    {
+                        current = pos -> second.get();
+                    }
                 }
 
-                return g_tlsClient.get();
+                if( ! force && nullptr != current )
+                {
+                    return current;
+                }
+
+                /*
+                 * The connection is established outside of the lock - it can block for a
+                 * while and only this thread can be using its own entry anyway
+                 */
+
+                auto client = createClient( current );
+
+                ClientWrapperHolder* const result = client.get();
+
+                {
+                    BL_MUTEX_GUARD( m_clientsLock );
+
+                    m_clientsByThread[ threadId ] = std::move( client );
+                }
+
+                return result;
             }
 
             void executeCommand(
@@ -593,6 +642,17 @@ namespace bl
                 {
                     BL_ASSERT( 0U == m_workers -> getQueueSize( tasks::ExecutionQueue::Pending ) );
                     BL_ASSERT( 0U == m_workers -> getQueueSize( tasks::ExecutionQueue::Executing ) );
+                }
+
+                /*
+                 * Every per-thread connection of this instance is closed here, including the
+                 * ones which were opened on threads which are still alive
+                 */
+
+                {
+                    BL_MUTEX_GUARD( m_clientsLock );
+
+                    m_clientsByThread.clear();
                 }
 
                 tasks::ExecutionQueue::disposeQueue( m_workers );

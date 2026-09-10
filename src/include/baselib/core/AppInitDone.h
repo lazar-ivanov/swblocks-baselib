@@ -80,6 +80,8 @@ namespace bl
         om::ObjPtrDisposable< ThreadPool >          m_threadPoolNonBlocking;
 
         const bool                                  m_hasThreadPool;
+        const bool                                  m_hasSharedGeneralPurposeThreadPool;
+        const bool                                  m_hasSharedNonBlockingThreadPool;
 
     public:
 
@@ -107,7 +109,9 @@ namespace bl
             )
             :
             m_pushLevel( loggingLevel, true /* global */ ),
-            m_hasThreadPool( ! noThreadPool )
+            m_hasThreadPool( ! noThreadPool ),
+            m_hasSharedGeneralPurposeThreadPool( nullptr != sharedThreadPool ),
+            m_hasSharedNonBlockingThreadPool( nullptr != sharedNonBlockingThreadPool )
         {
             /*
              * By default we set the main thread in whatever
@@ -233,8 +237,26 @@ namespace bl
 
             if( m_hasThreadPool )
             {
-                ThreadPoolDefault::disposeGlobalThreadPool( m_threadPoolGeneralPurpose, ThreadPoolId::GeneralPurpose );
-                ThreadPoolDefault::disposeGlobalThreadPool( m_threadPoolNonBlocking, ThreadPoolId::NonBlocking );
+                /*
+                 * Note that the shared thread pools are not owned here and the global
+                 * default pointers for them must not be cleared (see the note above)
+                 */
+
+                if( ! m_hasSharedGeneralPurposeThreadPool )
+                {
+                    ThreadPoolDefault::disposeGlobalThreadPool(
+                        m_threadPoolGeneralPurpose,
+                        ThreadPoolId::GeneralPurpose
+                        );
+                }
+
+                if( ! m_hasSharedNonBlockingThreadPool )
+                {
+                    ThreadPoolDefault::disposeGlobalThreadPool(
+                        m_threadPoolNonBlocking,
+                        ThreadPoolId::NonBlocking
+                        );
+                }
             }
 
             BL_NOEXCEPT_END()

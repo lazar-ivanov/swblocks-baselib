@@ -21,6 +21,7 @@
 #include <baselib/core/ObjModel.h>
 #include <baselib/core/BaseIncludes.h>
 
+#include <utests/baselib/LoggerUtils.h>
 #include <utests/baselib/UtfDirectoryFixture.h>
 #include <utests/baselib/Utf.h>
 
@@ -33,16 +34,19 @@ struct PersonalityTestFixture
     const bl::fs::path                          m_plugin1;
     const bl::fs::path                          m_plugin2;
     const bl::fs::path                          m_plugin3;
+    const bl::fs::path                          m_plugin4;
 
     bl::om::ObjPtr< bl::loader::Manifest >     m_mf1;
     bl::om::ObjPtr< bl::loader::Manifest >     m_mf2;
     bl::om::ObjPtr< bl::loader::Manifest >     m_mf3;
+    bl::om::ObjPtr< bl::loader::Manifest >     m_mf4;
 
     PersonalityTestFixture()
         :
         m_plugin1( m_dir.testFile( "plugin1" ) ),
         m_plugin2( m_dir.testFile( "plugin2" ) ),
-        m_plugin3( m_dir.testFile( "plugin3" ) )
+        m_plugin3( m_dir.testFile( "plugin3" ) ),
+        m_plugin4( m_dir.testFile( "plugin4" ) )
     {
         using namespace bl;
         using namespace bl::loader;
@@ -54,6 +58,7 @@ struct PersonalityTestFixture
         os::fopen( m_plugin1, "w" );
         os::fopen( m_plugin2, "w" );
         os::fopen( m_plugin3, "w" );
+        os::fopen( m_plugin4, "w" );
 
         /*
          * Common plug-in properties
@@ -142,12 +147,42 @@ struct PersonalityTestFixture
             );
 
         /*
+         * Plug-in 4 - neither a client nor a server plug-in
+         *
+         * initPlugins() runs two independent 'if's, so a manifest which sets neither flag
+         * must land in neither map; it exists here so that direction is pinned as well as
+         * the both-flags direction which plug-in 3 already covers
+         */
+
+        const auto m4ServerId = uuids::create();
+        const auto m4PluginClsId = uuids::create();
+
+        std::set< om::clsid_t > m4ClsIds;
+        m4ClsIds.insert( m4PluginClsId );
+
+        m_mf4 = Manifest::createInstance(
+            m4ServerId,
+            versionMajor,
+            versionMinor,
+            versionPatch,
+            std::move( m4ClsIds ),
+            m4PluginClsId,
+            "plug-in 4 name",
+            "plug-in 4 description",
+            false /* isClient */,
+            false /* isServer */,
+            om::copy( platform ),
+            cppCompatId
+            );
+
+        /*
          * Create plug-in manifests
          */
 
         ManifestFactory::writeForBinary( om::copy( m_mf1 ), cpp::copy( m_plugin1 ) );
         ManifestFactory::writeForBinary( om::copy( m_mf2 ), cpp::copy( m_plugin2 ) );
         ManifestFactory::writeForBinary( om::copy( m_mf3 ), cpp::copy( m_plugin3 ) );
+        ManifestFactory::writeForBinary( om::copy( m_mf4 ), cpp::copy( m_plugin4 ) );
     }
 };
 
@@ -191,5 +226,107 @@ UTF_FIXTURE_TEST_CASE( TestPersonalityFileSystem, PersonalityTestFixture )
         const auto entry = serverPlugins.find( m_plugin3 );
         UTF_CHECK_EQUAL( true, entry != serverPlugins.end() );
         UTF_CHECK_EQUAL( m_mf3 -> serverId(), entry -> second -> serverId() );
+    }
+
+    /*
+     * The neither-client-nor-server plug-in is discovered by findPlugins() and read by
+     * initPlugins(), but it must not be filed in either map - which is what makes the two
+     * 'if's independent rather than an if / else
+     */
+
+    UTF_CHECK( clientPlugins.find( m_plugin4 ) == clientPlugins.end() );
+    UTF_CHECK( serverPlugins.find( m_plugin4 ) == serverPlugins.end() );
+
+    UTF_CHECK_EQUAL( false, personality -> checkForUpdate() );
+}
+
+UTF_AUTO_TEST_CASE( TestPersonalityFileSystemDiscoveryBranches )
+{
+    using namespace utest;
+    using namespace bl;
+    using namespace bl::loader;
+
+    /*
+     * The four discovery branches which the populated-directory case above never reaches
+     *
+     * The empty-directory branch is the only path on which initPlugins() is not called at
+     * all, and it is the one a fresh install hits, so it must warn rather than throw
+     */
+
+    const TestDirectory dir;
+
+    /*
+     * (1) The directory does not exist
+     */
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        PersonalityFileSystem::createInstance< Personality >( dir.testFile( "no-such-dir" ) ),
+        bl::UnexpectedException,
+        "does not exist"
+        );
+
+    /*
+     * (2) The path exists, but it is a regular file rather than a directory - note that the
+     * message is the same "does not exist" text, which is pinned here deliberately
+     */
+
+    {
+        const auto afile = dir.testFile( "afile" );
+
+        os::fopen( afile, "w" );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            PersonalityFileSystem::createInstance< Personality >( afile ),
+            bl::UnexpectedException,
+            "does not exist"
+            );
+    }
+
+    /*
+     * (3) An empty directory - findPlugins() returns nothing, initPlugins() is skipped and
+     * the personality is constructed successfully with both maps empty
+     */
+
+    {
+        const auto empty = dir.testFile( "empty" );
+
+        fs::safeMkdirs( empty );
+
+        /*
+         * The constructor logs "No plug-ins found" at warning level, which the module's
+         * line logger would otherwise turn into a test failure
+         */
+
+        Logging::LineLoggerPusher pushLineLogger( &warningToDebugLineLogger );
+
+        const auto p = PersonalityFileSystem::createInstance< Personality >( empty );
+
+        UTF_REQUIRE( p );
+        UTF_CHECK( p -> getClientPlugins().empty() );
+        UTF_CHECK( p -> getServerPlugins().empty() );
+        UTF_CHECK_EQUAL( false, p -> checkForUpdate() );
+    }
+
+    /*
+     * (4) A directory whose entries have no manifests next to them - isPlugin() rejects
+     * both, so nothing is read and readForBinary() is never given a chance to throw
+     */
+
+    {
+        const auto nomf = dir.testFile( "nomf" );
+
+        fs::safeMkdirs( nomf );
+
+        os::fopen( nomf / "afile", "w" );
+        os::fopen( nomf / "another", "w" );
+
+        Logging::LineLoggerPusher pushLineLogger( &warningToDebugLineLogger );
+
+        const auto p = PersonalityFileSystem::createInstance< Personality >( nomf );
+
+        UTF_REQUIRE( p );
+        UTF_CHECK( p -> getClientPlugins().empty() );
+        UTF_CHECK( p -> getServerPlugins().empty() );
+        UTF_CHECK_EQUAL( false, p -> checkForUpdate() );
     }
 }

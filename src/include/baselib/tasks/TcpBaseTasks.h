@@ -26,6 +26,7 @@
 
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace bl
 {
@@ -308,9 +309,10 @@ namespace bl
                 {
                     /*
                      * If the socket is being forcefully shutdown (e.g. as part of
-                     * canceling an I/O task) then we should set the linger timeout
-                     * to zero so the socket is closed immediately as we don't have
-                     * to worry about errors at this point
+                     * canceling an I/O task) the linger option is set to disabled
+                     * (l_onoff = 0), which is the default graceful close: close() does not
+                     * block and the stack finishes the shutdown in the background. This is
+                     * not the abortive linger( true, 0 ) close, which would reset the peer
                      */
 
                     eh::error_code ec;
@@ -616,6 +618,20 @@ namespace bl
                 return net::safeRemoteEndpointId( *m_socket );
             }
 
+            /**
+             * @brief Same as safeRemoteEndpointId() above, but it never retries and never blocks
+             */
+
+            std::string remoteEndpointIdNoWait() const
+            {
+                if( ! m_socket )
+                {
+                    return "<unknown>";
+                }
+
+                return net::remoteEndpointIdNoWait( *m_socket );
+            }
+
             void attachStream( SAA_in stream_ref&& stream ) NOEXCEPT
             {
                 onStreamChanging( stream );
@@ -866,9 +882,20 @@ namespace bl
             typedef typename STREAM::stream_ref                                         stream_ref;
             typedef typename base_type::tcp_resolver_type                               tcp_resolver_type;
 
+            enum : long
+            {
+                /*
+                 * How long to wait before the accept operation is re-armed after a
+                 * transient failure (e.g. the process has run out of descriptors)
+                 */
+
+                ACCEPT_BACK_OFF_IN_MILLISECONDS = 250L,
+            };
+
             cpp::SafeUniquePtr< tcp::acceptor >                                         m_acceptor;
             tcp::endpoint                                                               m_localEndpoint;
             eh::error_code                                                              m_errorCode;
+            cpp::SafeUniquePtr< asio::deadline_timer >                                  m_acceptBackOffTimer;
 
             TcpConnectionEstablisherAcceptor(
                 SAA_in                              std::string&&                       host,
@@ -894,6 +921,7 @@ namespace bl
                 }
 
                 m_acceptor.reset();
+                m_acceptBackOffTimer.reset();
 
                 BL_NOEXCEPT_END()
 
@@ -945,13 +973,60 @@ namespace bl
                  */
             }
 
+            /**
+             * @brief Re-arms the accept operation after a short back-off
+             *
+             * A transient accept failure (e.g. the process running out of descriptors) must
+             * never take the server down; the back-off is there so an error which persists
+             * doesn't turn into a busy loop
+             */
+
+            void scheduleAcceptAfterBackOff()
+            {
+                if( ! m_acceptBackOffTimer )
+                {
+                    const auto threadPool = ThreadPoolDefault::getDefault( base_type::getThreadPoolId() );
+                    BL_ASSERT( threadPool );
+
+                    m_acceptBackOffTimer.reset(
+                        new asio::deadline_timer( threadPool -> aioService() )
+                        );
+                }
+
+                m_acceptBackOffTimer -> expires_from_now(
+                    time::milliseconds( ACCEPT_BACK_OFF_IN_MILLISECONDS )
+                    );
+
+                m_acceptBackOffTimer -> async_wait(
+                    cpp::bind(
+                        &this_type::onAcceptBackOffExpired,
+                        om::ObjPtrCopyable< this_type >::acquireRef( this ),
+                        asio::placeholders::error
+                        )
+                    );
+            }
+
+            void onAcceptBackOffExpired( SAA_in const eh::error_code& ec ) NOEXCEPT
+            {
+                BL_TASKS_HANDLER_BEGIN_CHK_EC()
+
+                startAccept();
+
+                BL_TASKS_HANDLER_END_NOTREADY()
+            }
+
             void onConnectionAccepted( SAA_in const eh::error_code& ec ) NOEXCEPT
             {
                 BL_TASKS_HANDLER_BEGIN()
 
                 BL_ASSERT( m_acceptor );
 
-                const bool isSocketClosed = ! base_type::getSocket().is_open();
+                /*
+                 * Note that the state of the peer socket must not be part of the shutdown
+                 * decision below - asio only assigns the peer socket on a successful accept,
+                 * so it is closed on *every* accept failure, including the transient ones
+                 */
+
                 const bool isAcceptorClosed = ! m_acceptor -> is_open();
 
                 if( ec && asio::error::operation_aborted != ec )
@@ -984,9 +1059,28 @@ namespace bl
                  */
 
                 if(
+                    ! base_type::isCanceled() &&
+                    asio::error::operation_aborted != ec &&
+                    ! isAcceptorClosed &&
+                    ec
+                    )
+                {
+                    /*
+                     * A transient failure of the accept operation itself (the peer socket was
+                     * never assigned) - the error was logged above; back off shortly and then
+                     * continue accepting connections
+                     */
+
+                    m_errorCode = eh::error_code();
+
+                    scheduleAcceptAfterBackOff();
+
+                    return;
+                }
+
+                if(
                     base_type::isCanceled() ||
                     asio::error::operation_aborted == ec ||
-                    isSocketClosed ||
                     isAcceptorClosed
                     )
                 {
@@ -1056,6 +1150,11 @@ namespace bl
                     m_acceptor -> cancel();
                 }
 
+                if( m_acceptBackOffTimer )
+                {
+                    m_acceptBackOffTimer -> cancel();
+                }
+
                 base_type::cancelTask();
             }
 
@@ -1098,9 +1197,11 @@ namespace bl
                 /*
                  * Open the acceptor with the option to reuse the address (i.e. SO_REUSEADDR)
                  *
-                 * Also set the linger option to false and zero timeout to ensure the acceptor
-                 * is closed promptly once the task is terminated (to have predictable behavior
-                 * for unit tests and in general)
+                 * The linger option is set to disabled (l_onoff = 0), which is the default
+                 * graceful close: close() returns at once and the stack completes the shutdown
+                 * in the background. This is not the abortive close - that would be
+                 * linger( true, 0 ) and it would reset the peer. On Windows the accepted sockets
+                 * inherit this setting from the acceptor
                  */
 
                 m_acceptor -> open( endpoint.protocol() );
@@ -1612,6 +1713,22 @@ namespace bl
 
         protected:
 
+            enum : std::uint64_t
+            {
+                /*
+                 * The fixed ceiling of the derived connection cap
+                 */
+
+                MAX_CONNECTIONS_CEILING = 4096U,
+
+                /*
+                 * The worst case memory footprint assumed for a connection when the derived
+                 * server does not provide one
+                 */
+
+                DEFAULT_CONNECTION_FOOTPRINT_IN_BYTES = 1024U * 1024U,
+            };
+
             const om::ObjPtr< TaskControlTokenRW >                                              m_controlToken;
             om::ObjPtrDisposable< ExecutionQueue >                                              m_eqConnections;
             bool                                                                                m_forceShutdown;
@@ -1620,9 +1737,34 @@ namespace bl
             om::ObjPtr< om::Proxy >                                                             m_notifyCB;
             std::unordered_map< Task*, std::string >                                            m_activeEndpoints;
 
+            /*
+             * The protocol handshake tasks which are currently in flight
+             *
+             * A notification arrives with the task only, so the handshake tasks must be
+             * tracked separately - the map of the active endpoints can't be used to tell
+             * them apart from the connection tasks because it is cleared when the server
+             * starts shutting down
+             */
+
+            std::unordered_set< Task* >                                                         m_handshakeTasks;
+            cpp::ScalarTypeIniter< bool >                                                       m_shuttingDown;
+
             om::ObjPtr< om::Proxy >                                                             m_hostServices;
             om::ObjPtr< om::Proxy >                                                             m_executionServices;
             om::ObjPtrDisposable< ExecutionQueue >                                              m_eqSupportingTasks;
+
+            /*
+             * The maximum number of connections which will be accepted concurrently
+             *
+             * Zero means unbounded; when it is not set explicitly the effective value is
+             * derived from the resources of the host (see getDerivedMaxConnections below)
+             * and logged once when the server starts
+             */
+
+            cpp::ScalarTypeIniter< std::size_t >                                                m_maxConnections;
+            cpp::ScalarTypeIniter< bool >                                                       m_maxConnectionsIsSet;
+            cpp::ScalarTypeIniter< std::size_t >                                                m_effectiveMaxConnections;
+            cpp::ScalarTypeIniter< std::uint64_t >                                              m_connectionMemoryFootprint;
 
             TcpServerBase(
                 SAA_in                  const om::ObjPtr< TaskControlTokenRW >&                 controlToken,
@@ -1696,8 +1838,19 @@ namespace bl
                 if( eptrIn )
                 {
                     /*
-                     * Note that the task lock isn't held while this callback is called,
-                     * so we can safely call cancelAll() with wait=true
+                     * Note that this callback is called while the task lock is held, so we
+                     * can't wait for the queues to be flushed here - the connection tasks
+                     * deliver their notifications on the non-blocking thread pool and would
+                     * block on the very same lock in onEvent(), which can deadlock all the
+                     * threads in that pool
+                     *
+                     * The notification callback is disconnected first, so the connections
+                     * completing after the cancellation don't call back into the server task,
+                     * and then the queues are simply cancelled without waiting
+                     *
+                     * Note also that the queues and the callback below may be null if the task
+                     * was cancelled before it has started executing (i.e. scheduleTask was
+                     * never called)
                      */
 
                     if( m_hostServices )
@@ -1710,11 +1863,20 @@ namespace bl
                         m_executionServices -> disconnect();
                     }
 
-                    m_eqSupportingTasks -> forceFlushNoThrow( true /* wait */ );
+                    if( m_notifyCB )
+                    {
+                        m_notifyCB -> disconnect();
+                    }
 
-                    m_eqConnections -> forceFlushNoThrow( true /* wait */ );
+                    if( m_eqSupportingTasks )
+                    {
+                        m_eqSupportingTasks -> forceFlushNoThrow( false /* wait */ );
+                    }
 
-                    m_notifyCB -> disconnect();
+                    if( m_eqConnections )
+                    {
+                        m_eqConnections -> forceFlushNoThrow( false /* wait */ );
+                    }
                 }
                 else
                 {
@@ -1723,7 +1885,10 @@ namespace bl
                      * expected to be shutdown already (i.e. no outstanding connections)
                      */
 
-                    if( ! m_eqConnections -> isEmpty() || ! m_eqSupportingTasks -> isEmpty() )
+                    if(
+                        ( m_eqConnections && ! m_eqConnections -> isEmpty() ) ||
+                        ( m_eqSupportingTasks && ! m_eqSupportingTasks -> isEmpty() )
+                        )
                     {
                         BL_RIP_MSG(
                             "Forcefully terminating a server task while there are "
@@ -1774,6 +1939,49 @@ namespace bl
                      * can be done in this case - the task itself would report the error
                      * information in the server logs
                      */
+
+                    const auto handshakePos = m_handshakeTasks.find( task.get() );
+
+                    if( handshakePos == m_handshakeTasks.end() )
+                    {
+                        /*
+                         * This is a late notification of a connection task which was already
+                         * removed from the map of the active endpoints (the map is cleared
+                         * when the server disconnects its notification callback)
+                         *
+                         * There is nothing to be done for it here and, most importantly, it
+                         * must not be handled as a handshake task below
+                         */
+
+                        return;
+                    }
+
+                    m_handshakeTasks.erase( handshakePos );
+
+                    if( m_shuttingDown )
+                    {
+                        /*
+                         * The server has stopped accepting and may have observed the queues as
+                         * drained already, so a connection must not be pushed any more - a
+                         * handshake which completed too late has its stream closed instead
+                         */
+
+                        if( base_type::isProtocolHandshakeNeeded && ! task -> isFailed() )
+                        {
+                            BL_WARN_NOEXCEPT_BEGIN()
+
+                            auto connectedStream = detail::HandshakeTaskHelper< STREAM >::getStream( task );
+
+                            if( connectedStream )
+                            {
+                                TcpSocketCommonBase::shutdownSocket( connectedStream -> lowest_layer() );
+                            }
+
+                            BL_WARN_NOEXCEPT_END( "TcpServerBase::onEvent() - closing a late handshake" )
+                        }
+
+                        return;
+                    }
 
                     if( task -> isFailed() )
                     {
@@ -1842,6 +2050,86 @@ namespace bl
                  */
             }
 
+            /**
+             * @brief The worst case memory footprint of a single connection of this server
+             *
+             * It is only used to derive the default connection cap; the derived classes are
+             * expected to override it with a value which matches what a connection of theirs
+             * can hold (e.g. the maximum request size for an HTTP server or the capacity of
+             * a data block for a blob server)
+             */
+
+            virtual std::uint64_t connectionMemoryFootprint() const NOEXCEPT
+            {
+                return m_connectionMemoryFootprint ?
+                    m_connectionMemoryFootprint.value() : DEFAULT_CONNECTION_FOOTPRINT_IN_BYTES;
+            }
+
+        public:
+
+            /**
+             * @brief Derives the default maximum number of concurrent connections
+             *
+             * The value is the minimum of a fixed ceiling, half of the descriptor soft limit
+             * (each connection holds at least one descriptor and the rest of the process needs
+             * descriptors too) and the number of connections which fit in 80% of the physical
+             * memory of the host; the terms for which the value is unknown are skipped
+             */
+
+            static std::size_t getDerivedMaxConnections(
+                SAA_in              const std::uint64_t                                         memoryFootprint,
+                SAA_in              const std::uint64_t                                         physicalMemorySize,
+                SAA_in              const std::uint64_t                                         fileDescriptorSoftLimit
+                ) NOEXCEPT
+            {
+                std::uint64_t result = MAX_CONNECTIONS_CEILING;
+
+                if( fileDescriptorSoftLimit )
+                {
+                    result = std::min( result, fileDescriptorSoftLimit / 2U );
+                }
+
+                if( physicalMemorySize && memoryFootprint )
+                {
+                    result = std::min( result, ( physicalMemorySize / 10U * 8U ) / memoryFootprint );
+                }
+
+                if( 0U == result )
+                {
+                    result = 1U;
+                }
+
+                return static_cast< std::size_t >( result );
+            }
+
+        protected:
+
+            void initMaxConnections()
+            {
+                if( m_maxConnectionsIsSet )
+                {
+                    m_effectiveMaxConnections = m_maxConnections.value();
+                }
+                else
+                {
+                    m_effectiveMaxConnections = getDerivedMaxConnections(
+                        connectionMemoryFootprint(),
+                        os::getPhysicalMemorySize(),
+                        os::getFileDescriptorSoftLimit()
+                        );
+                }
+
+                BL_LOG(
+                    Logging::debug(),
+                    BL_MSG()
+                        << "The maximum number of concurrent connections for server "
+                        << this
+                        << " is "
+                        << m_effectiveMaxConnections.value()
+                        << ( m_effectiveMaxConnections ? "" : " (unbounded)" )
+                    );
+            }
+
             virtual void scheduleTask( SAA_in const std::shared_ptr< ExecutionQueue >& eq ) OVERRIDE
             {
                 if( ! m_eqConnections )
@@ -1868,6 +2156,8 @@ namespace bl
                     m_executionServices = om::ProxyImpl::createInstance< om::Proxy >();
                     m_executionServices -> connect( m_eqSupportingTasks.get() );
                 }
+
+                initMaxConnections();
 
                 m_notifyCB = om::ProxyImpl::createInstance< om::Proxy >();
                 m_notifyCB -> connect( static_cast< Task* >( this ) );
@@ -1909,7 +2199,17 @@ namespace bl
                                 << " were closed / completed successfully"
                             );
 
+                        m_shuttingDown = true;
+
                         m_notifyCB -> disconnect();
+
+                        /*
+                         * The maps hold raw pointers of tasks which are being destroyed, so they
+                         * must not outlive the notifications which populate them
+                         */
+
+                        m_activeEndpoints.clear();
+                        m_handshakeTasks.clear();
                     }
                     else
                     {
@@ -1975,6 +2275,13 @@ namespace bl
 
                 base_type::m_acceptor -> close();
 
+                /*
+                 * Note that this runs while the task lock is held; from this point on a
+                 * handshake which completes late must not push a new connection (see onEvent)
+                 */
+
+                m_shuttingDown = true;
+
                 if( m_controlToken )
                 {
                     /*
@@ -1988,16 +2295,29 @@ namespace bl
                     m_controlToken -> requestCancel();
                 }
 
-                os::mutex_unique_lock guard;
+                /*
+                 * Note that each proxy is disconnected under its own guard - passing the same
+                 * guard to both would swap the first proxy's lock out (releasing it) while the
+                 * second one is being held, which both loses the protection the hand-off is
+                 * there for and holds an unrelated proxy lock across the calls below
+                 */
 
-                if( m_hostServices )
                 {
-                    m_hostServices -> disconnect( &guard );
+                    os::mutex_unique_lock guard;
+
+                    if( m_hostServices )
+                    {
+                        m_hostServices -> disconnect( &guard );
+                    }
                 }
 
-                if( m_executionServices )
                 {
-                    m_executionServices -> disconnect( &guard );
+                    os::mutex_unique_lock guard;
+
+                    if( m_executionServices )
+                    {
+                        m_executionServices -> disconnect( &guard );
+                    }
                 }
 
                 /*
@@ -2079,11 +2399,49 @@ namespace bl
 
                 m_notifyCB -> disconnect();
 
+                /*
+                 * The maps hold raw pointers of tasks which are being destroyed, so they must
+                 * not outlive the notifications which populate them
+                 */
+
+                m_activeEndpoints.clear();
+                m_handshakeTasks.clear();
+
                 return false;
             }
 
             virtual void processIncomingConnection( SAA_inout stream_ref&& connectedStream ) OVERRIDE
             {
+                if(
+                    m_effectiveMaxConnections &&
+                    m_eqConnections -> size() >= m_effectiveMaxConnections.value()
+                    )
+                {
+                    /*
+                     * The server is at its connection cap - the new connection is closed
+                     * immediately instead of being parked, so a client which never completes
+                     * its request can't keep resources of the server tied up indefinitely
+                     */
+
+                    BL_LOG(
+                        server_policy_t::isLogOnConnect( m_eqConnections -> size() ) ?
+                            Logging::debug() : Logging::trace(),
+                        BL_MSG()
+                            << "Refusing a connection for "
+                            << net::formatEndpointId( base_type::m_localEndpoint )
+                            << " - the maximum number of concurrent connections ("
+                            << m_effectiveMaxConnections.value()
+                            << ") has been reached"
+                        );
+
+                    if( connectedStream )
+                    {
+                        TcpSocketCommonBase::shutdownSocket( connectedStream -> lowest_layer() );
+                    }
+
+                    return;
+                }
+
                 ( void ) base_type::tryConfigureConnectedStream( *connectedStream );
 
                 if( base_type::isProtocolHandshakeNeeded )
@@ -2092,9 +2450,21 @@ namespace bl
                      * Schedule the handshake task
                      */
 
-                    m_eqConnections -> push_back(
-                        createProtocolHandshakeTask( BL_PARAM_FWD( connectedStream ) )
-                        );
+                    const auto handshakeTask =
+                        createProtocolHandshakeTask( BL_PARAM_FWD( connectedStream ) );
+
+                    m_handshakeTasks.insert( handshakeTask.get() );
+
+                    try
+                    {
+                        m_eqConnections -> push_back( handshakeTask );
+                    }
+                    catch( std::exception& )
+                    {
+                        m_handshakeTasks.erase( handshakeTask.get() );
+
+                        throw;
+                    }
                 }
                 else
                 {
@@ -2129,11 +2499,18 @@ namespace bl
                 }
                 catch( eh::system_error& e )
                 {
-                    if( asio::error::not_connected == e.code() )
+                    if(
+                        asio::error::not_connected == e.code() ||
+                        asio::error::invalid_argument == e.code()
+                        )
                     {
                         /*
                          * Expected error in case other side closed the socket,
                          * just return here to avoid logging the exception
+                         *
+                         * Both codes mean the same thing here: getpeername reports ENOTCONN on
+                         * Linux for a socket whose connection is already gone, but EINVAL on
+                         * macOS and the other BSDs
                          */
 
                         return;
@@ -2186,6 +2563,35 @@ namespace bl
             }
 
         public:
+
+            /**
+             * @brief Sets the maximum number of connections which will be accepted concurrently
+             *
+             * Zero means unbounded; when it is not set the effective value is derived from the
+             * resources of the host. It must be called before the server task is scheduled
+             */
+
+            void setMaxConnections( SAA_in const std::size_t maxConnections ) NOEXCEPT
+            {
+                m_maxConnections = maxConnections;
+                m_maxConnectionsIsSet = true;
+            }
+
+            std::size_t getMaxConnections() const NOEXCEPT
+            {
+                return m_effectiveMaxConnections;
+            }
+
+            /**
+             * @brief Sets the worst case memory footprint of a single connection which is used
+             * to derive the default connection cap; it must be called before the server task is
+             * scheduled
+             */
+
+            void setConnectionMemoryFootprint( SAA_in const std::uint64_t memoryFootprint ) NOEXCEPT
+            {
+                m_connectionMemoryFootprint = memoryFootprint;
+            }
 
             void setHostServices( SAA_in om::ObjPtr< om::Proxy >&& hostServices ) NOEXCEPT
             {

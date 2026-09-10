@@ -90,8 +90,18 @@ namespace bl
                         const auto status = m_entry.symlink_status();
                         const auto& path = m_entry.path();
 
-                        m_info.lastModified = fs::last_write_time( path );
-                        m_info.timeCreated = os::onWindows() ? fs::safeGetFileCreateTime( path ) : 0;
+                        /*
+                         * Note that the timestamps are only obtained for entries which are not
+                         * symlinks - these calls follow the link, so a dangling one would throw
+                         * and fail the whole packaging run; the unpackager can't restore the
+                         * timestamp of a link anyway
+                         */
+
+                        if( ! fs::is_symlink( status ) )
+                        {
+                            m_info.lastModified = fs::last_write_time( path );
+                            m_info.timeCreated = os::onWindows() ? fs::safeGetFileCreateTime( path ) : 0;
+                        }
 
                         m_info.relPath = bo::path::createInstance();
                         BL_VERIFY( fs::getRelativePath( path, m_entryTask -> rootPath(), m_info.relPath -> lvalue() ) );
@@ -228,10 +238,16 @@ namespace bl
                 const om::ObjPtr< data::FilesystemMetadataWO >                                  m_fsmd;
 
                 om::ObjPtr< FileTaskImpl >                                                      m_fileTask;
-                os::stdio_file_ptr                                                              m_filePtr;
                 om::ObjPtr< data::DataBlock >                                                   m_dataBlock;
                 cpp::ScalarTypeIniter< std::uint64_t >                                          m_filePos;
                 uuid_t                                                                          m_chunkId;
+
+                /*
+                 * Set when the reader observed a cancellation and gave up on its file - see
+                 * abandon() below; cleared by attachAllData() when the reader is reused
+                 */
+
+                cpp::ScalarTypeIniter< bool >                                                   m_abandoned;
 
                 BlockReaderTaskT(
                     SAA_in          const om::ObjPtr< data::FilesystemMetadataWO >&             fsmd
@@ -258,12 +274,27 @@ namespace bl
 
                     const std::size_t bytesToRead = ( std::size_t )( ( bytesLeft <= capacity ) ? bytesLeft : capacity );
 
-                    if( ! m_filePtr )
+                    /*
+                     * The file is opened for every block and closed again before this task
+                     * completes - it is never held while the task is idle in the unit's worker
+                     * queue between the blocks of a file which spans more than one data block
+                     *
+                     * The unit retains completed readers (OptionKeepAll) and recycles them, so a
+                     * handle kept across blocks lived as long as the reader object - and on a
+                     * cancelled pipeline that is until the unit is destroyed, which on Windows
+                     * (no delete sharing on a stdio handle) made the input tree undeletable for
+                     * that long. One open per block costs nothing next to reading, checksumming
+                     * and hashing the block
+                     */
+
+                    const auto filePtr = os::fopen( m_fileTask -> entry().path(), "rb" );
+
+                    if( m_filePos )
                     {
-                        m_filePtr = os::fopen( m_fileTask -> entry().path(), "rb" );
+                        os::fseek( filePtr, m_filePos, SEEK_SET );
                     }
 
-                    os::fread( m_filePtr, m_dataBlock -> pv(), bytesToRead );
+                    os::fread( filePtr, m_dataBlock -> pv(), bytesToRead );
 
                     m_dataBlock -> setSize( bytesToRead );
 
@@ -298,16 +329,25 @@ namespace bl
 
                     m_filePos += bytesToRead;
                     BL_ASSERT( m_filePos <= fileSize );
+                }
 
-                    if( m_filePos == m_fileTask -> fileSize() )
-                    {
-                        /*
-                         * Promptly close file handle when no longer needed to avoid
-                         * hitting open file handles limit imposed by stdio library
-                         */
+                /**
+                 * @brief Gives up on the file of a reader which was cancelled
+                 *
+                 * A cancelled reader used to complete with its (unread or half read) data block
+                 * still attached and with hasMoreBlocks() still true, so the unit would offer a
+                 * stale block downstream and re-schedule the reader for a file nobody wants any
+                 * more. Releasing the block and marking the reader abandoned makes it simply
+                 * available for the next file instead
+                 *
+                 * It is only called from onExecute(), i.e. on the thread which executes the
+                 * reader - never concurrently with a read
+                 */
 
-                        m_filePtr.reset();
-                    }
+                void abandon() NOEXCEPT
+                {
+                    m_dataBlock.reset();
+                    m_abandoned = true;
                 }
 
                 virtual void onExecute() NOEXCEPT OVERRIDE
@@ -326,6 +366,16 @@ namespace bl
                         doExecute();
                     }
 
+                    /*
+                     * The cancellation can also arrive while the block above is being read, so
+                     * the check is repeated after it
+                     */
+
+                    if( isCanceled() )
+                    {
+                        abandon();
+                    }
+
                     BL_TASKS_HANDLER_END()
                 }
 
@@ -333,7 +383,12 @@ namespace bl
 
                 bool hasMoreBlocks() const NOEXCEPT
                 {
-                    return ( m_fileTask && m_filePos < m_fileTask -> fileSize() );
+                    return ( ! m_abandoned && m_fileTask && m_filePos < m_fileTask -> fileSize() );
+                }
+
+                bool isAbandoned() const NOEXCEPT
+                {
+                    return m_abandoned;
                 }
 
                 const om::ObjPtr< FileTaskImpl >& fileTask() const NOEXCEPT
@@ -366,6 +421,7 @@ namespace bl
                     m_fileTask = om::copy( fileTask );
                     m_dataBlock = om::copy( dataBlock );
                     m_filePos = 0U;
+                    m_abandoned = false;
                 }
 
                 const uuid_t& chunkId() const NOEXCEPT
@@ -440,6 +496,17 @@ namespace bl
                  */
 
                 const auto packager = om::qi< detail::BlockReaderTaskImpl >( topReady );
+
+                if( packager -> isAbandoned() )
+                {
+                    /*
+                     * The reader was cancelled and has released its data block; it has nothing
+                     * to push, it must not be re-scheduled and the file it gave up on must not
+                     * be credited with a checksum or a hash - it is simply available
+                     */
+
+                    return base_type::ReturnTrue;
+                }
 
                 /*
                  * Try to push out the data block now...

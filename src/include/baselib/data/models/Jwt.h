@@ -38,7 +38,12 @@ namespace bl
 
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( issuer, "iss" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( subject, "sub" )
-                BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( audience, "aud" )
+                /*
+                  * Note that "aud" is either a single string or an array of strings
+                  * (RFC 7519 section 4.1.3)
+                  */
+
+                BL_DM_DECLARE_STRING_OR_ARRAY_ALTERNATE_PROPERTY( audience, "aud" )
 
                 BL_DM_PROPERTIES_IMPL_BEGIN()
                     BL_DM_IMPL_PROPERTY( issuer )
@@ -60,7 +65,12 @@ namespace bl
 
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( issuer, "iss" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( subject, "sub" )
-                BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( audience, "aud" )
+                /*
+                  * Note that "aud" is either a single string or an array of strings
+                  * (RFC 7519 section 4.1.3)
+                  */
+
+                BL_DM_DECLARE_STRING_OR_ARRAY_ALTERNATE_PROPERTY( audience, "aud" )
                 BL_DM_DECLARE_UINT64_ALTERNATE_PROPERTY( expiresAt, "exp" )
                 BL_DM_DECLARE_UINT64_ALTERNATE_PROPERTY( notBefore, "nbf" )
                 BL_DM_DECLARE_UINT64_ALTERNATE_PROPERTY( issuedAt, "iat" )
@@ -94,7 +104,12 @@ namespace bl
 
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( issuer, "iss" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( subject, "sub" )
-                BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( audience, "aud" )
+                /*
+                  * Note that "aud" is either a single string or an array of strings
+                  * (RFC 7519 section 4.1.3)
+                  */
+
+                BL_DM_DECLARE_STRING_OR_ARRAY_ALTERNATE_PROPERTY( audience, "aud" )
                 BL_DM_DECLARE_UINT64_ALTERNATE_PROPERTY( expiresAt, "exp" )
                 BL_DM_DECLARE_UINT64_ALTERNATE_PROPERTY( notBefore, "nbf" )
                 BL_DM_DECLARE_UINT64_ALTERNATE_PROPERTY( issuedAt, "iat" )
@@ -161,7 +176,12 @@ namespace bl
 
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( issuer, "iss" )
                 BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( subject, "sub" )
-                BL_DM_DECLARE_STRING_ALTERNATE_PROPERTY( audience, "aud" )
+                /*
+                  * Note that "aud" is either a single string or an array of strings
+                  * (RFC 7519 section 4.1.3)
+                  */
+
+                BL_DM_DECLARE_STRING_OR_ARRAY_ALTERNATE_PROPERTY( audience, "aud" )
                 BL_DM_DECLARE_UINT64_ALTERNATE_PROPERTY( expiresAt, "exp" )
                 BL_DM_DECLARE_UINT64_ALTERNATE_PROPERTY( notBefore, "nbf" )
                 BL_DM_DECLARE_UINT64_ALTERNATE_PROPERTY( issuedAt, "iat" )

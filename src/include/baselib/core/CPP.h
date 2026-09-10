@@ -53,20 +53,35 @@
 #define BL_RIP_MSG( msg ) \
     do \
     { \
-        BL_STDIO_TEXT( \
-            { \
-                std::cerr \
-                    << "ERROR: RIP: Unrecoverable error has occurred at " \
-                    << __FILE__ \
-                    << "(" \
-                    << __LINE__ \
-                    << "): " \
-                    << msg \
-                    << std::endl; \
-                \
-                std::fflush( stderr ); \
-            } \
-            ); \
+        /* \
+         * The stdio lock must never be waited on here - this is the abort path and it is \
+         * reached from noexcept destructors and from the terminate handler, where another \
+         * thread may be holding that lock (e.g. blocked writing to a full pipe, or being \
+         * unwound); when it can't be taken the message is written with a raw write instead \
+         */ \
+        \
+        if( \
+            ! bl::tryStdioText( \
+                [ & ]() -> void \
+                { \
+                    std::cerr \
+                        << "ERROR: RIP: Unrecoverable error has occurred at " \
+                        << __FILE__ \
+                        << "(" \
+                        << __LINE__ \
+                        << "): " \
+                        << msg \
+                        << std::endl; \
+                    \
+                    std::fflush( stderr ); \
+                } \
+                ) \
+            ) \
+        { \
+            bl::os::writeToStdErrNothrow( \
+                "ERROR: RIP: Unrecoverable error has occurred at " __FILE__ "\n" \
+                ); \
+        } \
         \
         bl::os::fastAbort(); \
     } \
@@ -249,8 +264,17 @@ namespace bl
         typedef function< void () > void_callback_t;
         typedef function< bool () > bool_callback_t;
 
-        typedef function< void () NOEXCEPT > void_callback_noexcept_t;
-        typedef function< bool () NOEXCEPT > bool_callback_noexcept_t;
+        /*
+         * Note that an exception specification must not appear inside a type-id: it is
+         * ill-formed in C++11 / C++14 (the compilers in use accept it) and in C++17 it becomes
+         * part of the type, which would change the meaning of these typedefs
+         *
+         * The 'noexcept' semantics of these callbacks is a convention and it is enforced by
+         * the BL_NOEXCEPT_* macros in the callbacks themselves
+         */
+
+        typedef function< void () > void_callback_noexcept_t;
+        typedef function< bool () > bool_callback_noexcept_t;
 
     } // cpp
 
@@ -276,6 +300,28 @@ namespace bl
 
                 cb();
             }
+
+            /**
+             * @brief Same as stdioText( ... ) above, but it never blocks
+             *
+             * Returns false when the lock is held by another thread, in which case the caller
+             * has to fall back on something which needs no lock; it is used by the abort path,
+             * which must never wait on a thread that may itself be blocked (or being unwound)
+             */
+
+            static bool tryStdioText( SAA_in const cpp::void_callback_t& cb ) NOEXCEPT
+            {
+                std::unique_lock< std::recursive_mutex > g( g_lock, std::try_to_lock );
+
+                if( ! g.owns_lock() )
+                {
+                    return false;
+                }
+
+                cb();
+
+                return true;
+            }
         };
 
         template
@@ -292,6 +338,11 @@ namespace bl
     inline void stdioText( SAA_in const cpp::void_callback_t& cb )
     {
         detail::GlobalHooks::stdioText( cb );
+    }
+
+    inline bool tryStdioText( SAA_in const cpp::void_callback_t& cb ) NOEXCEPT
+    {
+        return detail::GlobalHooks::tryStdioText( cb );
     }
 
     namespace cpp
@@ -533,6 +584,19 @@ namespace bl
 
             ScopeGuardT& operator=( SAA_in ScopeGuardT&& rhs )
             {
+                if( this == &rhs )
+                {
+                    return *this;
+                }
+
+                /*
+                 * An armed guard always runs exactly once - the same rule the destructor
+                 * implements - so the cleanup this guard is already holding is executed before
+                 * it is replaced rather than silently dropped
+                 */
+
+                runNow();
+
                 m_cb = std::move( rhs.m_cb );
                 m_disabled = rhs.m_disabled;
                 rhs.dismiss();

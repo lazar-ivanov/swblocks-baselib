@@ -1,0 +1,30 @@
+#
+# ThreadSanitizer suppressions for the baselib test binaries
+#
+# Format: <report type>:<function name pattern>, see
+# https://github.com/google/sanitizers/wiki/ThreadSanitizerSuppressions
+#
+# Only add an entry here together with a record under notes/plans/issues/ which
+# explains why the reported pattern cannot occur in practice
+#
+
+# The AsyncExecutor task lock / execution queue lock cycle
+#
+# scheduleAsyncCall( ... ) posts the completion callback while the executor task
+# lock is held (queue lock acquired under the task lock) and the reverse edge
+# exists when a completion SimpleTask invokes its callback while executing (task
+# lock held, then the executor's m_executeLock and the executor task lock)
+#
+# The cycle can never close: the task whose lock is taken by the first edge has
+# just been moved from Ready into the pending queue and a task in Ready has
+# already released its onExecute lock, while the second edge holds the lock of a
+# task which is Executing - the same TaskInfo cannot be Ready and Executing at
+# once, so the two edges are never held at the same time for one mutex instance
+#
+# ThreadSanitizer reports the cycle because the completion task objects are
+# pooled and reused (ExecutionQueue::OptionKeepAll), so it observes the two
+# orders across historical acquisitions of the same mutex object
+#
+# See notes/plans/issues/async-executor-tsan-inversion-record.md
+#
+deadlock:bl::detail::AsyncExecutorImplT*::ExecutorTaskT*::scheduleAsyncCall

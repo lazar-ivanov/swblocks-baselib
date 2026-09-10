@@ -92,6 +92,16 @@ namespace bl
 
                 typedef http::Parameters::HttpHeader                                HttpHeader;
 
+                enum : std::size_t
+                {
+                    /*
+                     * The maximum length of the request URI; the request line as a whole is
+                     * already bounded by the maximum headers size of the parser
+                     */
+
+                    MAX_URI_SIZE = 8192U,
+                };
+
                 static auto serverError( SAA_in const MessageBuffer& message ) -> ServerResult
                 {
                     return std::make_pair(
@@ -160,6 +170,32 @@ namespace bl
                     }
                 }
 
+                /**
+                 * @brief Checks that a header value contains no CTL characters
+                 *
+                 * HTAB is the only control character which is allowed in a field value
+                 * (RFC 7230 section 3.2); an embedded CR or LF would make the request
+                 * ambiguous for any intermediary which is more lenient than we are
+                 */
+
+                static bool isValidValue( SAA_in const std::string& value ) NOEXCEPT
+                {
+                    for( const auto ch : value )
+                    {
+                        if( '\t' == ch )
+                        {
+                            continue;
+                        }
+
+                        if( ! isChar( ch ) || isCtl( ch ) )
+                        {
+                            return false;
+                        }
+                    }
+
+                    return true;
+                }
+
                 static bool isValidName( SAA_in const std::string& name ) NOEXCEPT
                 {
                     if( name.empty() )
@@ -215,6 +251,24 @@ namespace bl
 
                     context.m_method = std::move( elements[ 0 ] );
 
+                    if( elements[ 1 ].size() > MAX_URI_SIZE )
+                    {
+                        return serverError(
+                            BL_MSG()
+                                << "The request URI is longer than the maximum of "
+                                << static_cast< std::size_t >( MAX_URI_SIZE )
+                                << " characters"
+                            );
+                    }
+
+                    if( ! isValidValue( elements[ 1 ] ) )
+                    {
+                        return serverError(
+                            BL_MSG()
+                                << "Invalid characters in the request URI"
+                            );
+                    }
+
                     context.m_uri = std::move( elements[ 1 ] );
 
                     if(
@@ -244,7 +298,7 @@ namespace bl
                 {
                     const auto pos = input.find( HttpHeader::g_nameSeparator );
 
-                    if( pos == std::string::npos || ( pos + 1 ) >= input.length() )
+                    if( pos == std::string::npos )
                     {
                         return serverError(
                             BL_MSG()
@@ -256,8 +310,6 @@ namespace bl
 
                     auto name = input.substr( 0, pos );
 
-                    str::trim( name );
-
                     if( name.empty() )
                     {
                         return serverError(
@@ -266,26 +318,55 @@ namespace bl
                             );
                     }
 
+                    /*
+                     * No white space is allowed between the header name and the colon, nor
+                     * before the name itself (RFC 7230 section 3.2.4 requires a request with
+                     * such a header to be rejected as it is a request smuggling vector)
+                     */
+
+                    if( str::is_space()( name.front() ) || str::is_space()( name.back() ) )
+                    {
+                        return serverError(
+                            BL_MSG()
+                                << "White space in the header name: '"
+                                << name
+                                << "'"
+                            );
+                    }
+
                     if( ! isValidName( name ) )
                     {
                         return serverError(
                             BL_MSG()
                                 << "Invalid characters in the header name: '"
-                                << std::move( name )
+                                << name
                                 << "'"
                             );
                     }
 
+                    /*
+                     * The header names are normalized to lower case, so a header which is
+                     * sent twice in a different case can't end up as two distinct entries
+                     * (which for Content-Length would make the framing of the request depend
+                     * on the iteration order of the map)
+                     */
+
+                    str::to_lower( name );
+
                     auto value = input.substr( pos + 1 );
 
-                    str::trim_left( value );
+                    /*
+                     * Note that an empty header value is legal (RFC 7230 section 3.2)
+                     */
 
-                    if( value.empty() )
+                    str::trim( value );
+
+                    if( ! isValidValue( value ) )
                     {
                         return serverError(
                             BL_MSG()
-                                << "Header with no value: '"
-                                << input
+                                << "Invalid characters in the value of header '"
+                                << name
                                 << "'"
                             );
                     }

@@ -172,6 +172,25 @@ namespace bl
                     BL_MSG()
                         << "The config properties 'isTokenBinary' and 'isTokenMultiProperties' cannot be both 'true'"
                     );
+
+                /*
+                 * A content type which has no escaper of its own would place a client controlled
+                 * value into a structured document unencoded, so it is rejected here rather than
+                 * silently at the first authorization request
+                 */
+
+                BL_CHK_T(
+                    false,
+                    ! isEscapeTemplateVariables() || getContentEscaper( m_config -> contentType() ),
+                    ArgumentException()
+                        << eh::errinfo_is_user_friendly( true ),
+                    BL_MSG()
+                        << "The 'contentType' property value '"
+                        << m_config -> contentType()
+                        << "' has no escaper for the substituted template variables; either use a "
+                        << "content type which has one (JSON, XML or x-www-form-urlencoded) or set "
+                        << "the 'escapeTemplateVariables' property to 'false'"
+                    );
             }
 
             static auto getUniqueProperties( SAA_in const om::ObjPtr< rest_config_t >& config )
@@ -322,6 +341,163 @@ namespace bl
                 return m_config -> tokenType();
             }
 
+            /**
+             * @brief Whether the template variables are escaped before they are substituted
+             *
+             * The default is 'true' when the property is not present in the configuration
+             */
+
+            bool isEscapeTemplateVariables() const
+            {
+                return
+                    m_config -> escapeTemplateVariablesIsSet() ?
+                        m_config -> escapeTemplateVariables() : true;
+            }
+
+            /**
+             * @brief Rejects token bytes which can't appear in an HTTP request line or in a
+             * JSON document under any encoding
+             */
+
+            static void chkTokenText( SAA_in const std::string& value )
+            {
+                for( const char c : value )
+                {
+                    BL_CHK_T_USER_FRIENDLY(
+                        true,
+                        '\r' == c || '\n' == c || '\0' == c,
+                        SecurityException(),
+                        BL_MSG()
+                            << "The authentication token contains an invalid character"
+                        );
+                }
+            }
+
+            /**
+             * @brief Percent-encodes a value for use in the path of a URL
+             */
+
+            static std::string escapeForUrlPath(
+                SAA_in          const std::string&                          name,
+                SAA_in          const std::string&                          value
+                )
+            {
+                BL_UNUSED( name );
+
+                return str::uriEncode( value );
+            }
+
+            /**
+             * @brief JSON-escapes a value (without the surrounding quotes)
+             */
+
+            static std::string escapeForJson(
+                SAA_in          const std::string&                          name,
+                SAA_in          const std::string&                          value
+                )
+            {
+                BL_UNUSED( name );
+
+                const auto quoted = boost::json::serialize( boost::json::value( value ) );
+
+                BL_ASSERT( quoted.size() >= 2U );
+
+                return quoted.substr( 1U, quoted.size() - 2U );
+            }
+
+            /**
+             * @brief Percent-encodes a value for use in an application/x-www-form-urlencoded body
+             */
+
+            static std::string escapeForFormUrlEncoded(
+                SAA_in          const std::string&                          name,
+                SAA_in          const std::string&                          value
+                )
+            {
+                BL_UNUSED( name );
+
+                return str::uriEncode( value );
+            }
+
+            /**
+             * @brief Escapes a value for use in the text content or an attribute of an XML document
+             */
+
+            static std::string escapeForXml(
+                SAA_in          const std::string&                          name,
+                SAA_in          const std::string&                          value
+                )
+            {
+                BL_UNUSED( name );
+
+                std::string result;
+
+                result.reserve( value.size() );
+
+                for( const char c : value )
+                {
+                    switch( c )
+                    {
+                        case '&':
+                            result += "&amp;";
+                            break;
+
+                        case '<':
+                            result += "&lt;";
+                            break;
+
+                        case '>':
+                            result += "&gt;";
+                            break;
+
+                        case '"':
+                            result += "&quot;";
+                            break;
+
+                        case '\'':
+                            result += "&apos;";
+                            break;
+
+                        default:
+                            result += c;
+                            break;
+                    }
+                }
+
+                return result;
+            }
+
+            /**
+             * @brief The escaper which encodes a substituted value for the structure of the
+             * configured content type
+             *
+             * @returns an empty callback when the content type has no escaper of its own; the
+             * caller decides whether that is an error - it is when escaping is enabled, because
+             * a client controlled value would otherwise be placed into a structured document
+             * unencoded
+             */
+
+            static auto getContentEscaper( SAA_in const std::string& contentType )
+                -> str::StringTemplateResolver::escaper_callback_t
+            {
+                if( str::icontains( contentType, "json" ) )
+                {
+                    return &AuthorizationServiceRestT::escapeForJson;
+                }
+
+                if( str::icontains( contentType, "x-www-form-urlencoded" ) )
+                {
+                    return &AuthorizationServiceRestT::escapeForFormUrlEncoded;
+                }
+
+                if( str::icontains( contentType, "xml" ) )
+                {
+                    return &AuthorizationServiceRestT::escapeForXml;
+                }
+
+                return str::StringTemplateResolver::escaper_callback_t();
+            }
+
             auto createAuthorizationTask( SAA_in const om::ObjPtr< data::DataBlock >& authenticationToken ) const
                 -> om::ObjPtr< tasks::Task >
             {
@@ -341,6 +517,14 @@ namespace bl
                 {
                     std::string textToken( authenticationToken -> begin(), authenticationToken -> end() );
 
+                    /*
+                     * The token is client controlled, so the bytes which would break the
+                     * request line or the JSON body regardless of the encoding are rejected
+                     * before anything is built out of them
+                     */
+
+                    chkTokenText( textToken );
+
                     if( m_config -> isTokenMultiProperties() )
                     {
                         variables = str::parsePropertiesList( textToken );
@@ -353,12 +537,29 @@ namespace bl
 
                 headers[ task_impl_t::HttpHeader::g_contentType ] = m_config -> contentType();
 
+                /*
+                 * The values substituted into the templates are client controlled, so they are
+                 * encoded for the structure they are placed into - percent encoding for the
+                 * request line and JSON escaping for a JSON body (see decision 3 of the review
+                 * plan; the escaping can be disabled through the configuration)
+                 */
+
+                str::StringTemplateResolver::escaper_callback_t urlPathEscaper;
+                str::StringTemplateResolver::escaper_callback_t contentEscaper;
+
+                if( isEscapeTemplateVariables() )
+                {
+                    urlPathEscaper = &AuthorizationServiceRestT::escapeForUrlPath;
+
+                    contentEscaper = getContentEscaper( m_config -> contentType() );
+                }
+
                 auto taskImpl = task_impl_t::createInstance(
                     cpp::copy( m_config -> host() ),
                     cpp::copy( m_config -> port() ),
-                    m_urlPathTemplate -> resolve( variables )       /* urlPath */,
+                    m_urlPathTemplate -> resolve( variables, urlPathEscaper )       /* urlPath */,
                     m_config -> httpAction(),
-                    m_requestTemplate -> resolve( variables )       /* content */,
+                    m_requestTemplate -> resolve( variables, contentEscaper )       /* content */,
                     std::move( headers )
                     );
 

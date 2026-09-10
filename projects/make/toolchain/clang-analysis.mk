@@ -243,7 +243,10 @@ CXXFLAGS += -O1
 endif
 
 # Export sanitizer options
-export TSAN_OPTIONS=second_deadlock_stack=1
+#
+# The suppressions file carries the known lock order inversions which cannot close;
+# every entry in it must be backed by a record under notes/plans/issues/
+export TSAN_OPTIONS=second_deadlock_stack=1:suppressions=$(abspath projects/make/toolchain/tsan-suppressions.txt)
 
 endif # BL_CLANG_ENABLE_RA_TSAN
 

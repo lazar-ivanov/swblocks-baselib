@@ -22,6 +22,7 @@
 #include <utests/baselib/TestUtils.h>
 #include <utests/baselib/TestTaskUtils.h>
 #include <utests/baselib/MachineGlobalTestLock.h>
+#include <utests/baselib/UtfConcurrent.h>
 
 #include <baselib/examples/echoserver/EchoServerProcessingContext.h>
 
@@ -54,6 +55,10 @@
 #include <baselib/core/ObjModelDefs.h>
 #include <baselib/core/BaseIncludes.h>
 #include <baselib/core/TimeUtils.h>
+
+#include <atomic>
+#include <memory>
+#include <unordered_set>
 
 namespace utest
 {
@@ -180,6 +185,31 @@ namespace utest
         static const std::string                                                    g_dummySid;
         static const std::string                                                    g_dummyCookieName;
 
+        /*
+         * The cache miss mode is opt-in - in the default mode the class behaves exactly as
+         * it did before, i.e. the lookup either returns a principal or throws and the rest
+         * of the interface is unimplemented
+         *
+         * In the cache miss mode the first lookup of a given token returns nullptr, which
+         * is what drives the broker down its createAuthorizationTask() / update() arm
+         */
+
+        bl::cpp::ScalarTypeIniter< bool >                                           m_forceCacheMiss;
+
+        std::atomic< std::size_t >                                                  m_createTaskCalls{ 0U };
+        std::atomic< std::size_t >                                                  m_updateCalls{ 0U };
+
+        mutable bl::os::mutex                                                       m_lock;
+        std::unordered_set< std::string >                                           m_tokensLookedUp;
+        bl::om::ObjPtr< bl::tasks::Task >                                           m_lastTaskHandedToUpdate;
+
+        bool isFirstLookup( SAA_in const std::string& tokenData )
+        {
+            BL_MUTEX_GUARD( m_lock );
+
+            return m_tokensLookedUp.insert( tokenData ).second;
+        }
+
     public:
 
         static auto dummyTokenType() NOEXCEPT -> const std::string&
@@ -205,6 +235,28 @@ namespace utest
         static auto dummyCookieName() NOEXCEPT -> const std::string&
         {
             return g_dummyCookieName;
+        }
+
+        void forceCacheMiss( SAA_in const bool forceCacheMiss ) NOEXCEPT
+        {
+            m_forceCacheMiss = forceCacheMiss;
+        }
+
+        std::size_t createTaskCalls() const NOEXCEPT
+        {
+            return m_createTaskCalls;
+        }
+
+        std::size_t updateCalls() const NOEXCEPT
+        {
+            return m_updateCalls;
+        }
+
+        auto lastTaskHandedToUpdate() const -> bl::om::ObjPtr< bl::tasks::Task >
+        {
+            BL_MUTEX_GUARD( m_lock );
+
+            return bl::om::copy( m_lastTaskHandedToUpdate );
         }
 
         static auto getTestSecurityPrincipal(
@@ -261,6 +313,11 @@ namespace utest
 
             if( "authorized" == pos -> second )
             {
+                if( m_forceCacheMiss && isFirstLookup( tokenData ) )
+                {
+                    return nullptr;
+                }
+
                 return getTestSecurityPrincipal( authenticationToken );
             }
 
@@ -290,9 +347,20 @@ namespace utest
         {
             BL_UNUSED( authenticationToken );
 
-            BL_THROW(
-                bl::NotSupportedException(),
-                "DummyAuthorizationCache::createAuthorizationTask() is unimplemented"
+            if( ! m_forceCacheMiss )
+            {
+                BL_THROW(
+                    bl::NotSupportedException(),
+                    "DummyAuthorizationCache::createAuthorizationTask() is unimplemented"
+                    );
+            }
+
+            ++m_createTaskCalls;
+
+            return bl::tasks::SimpleTaskImpl::createInstance< bl::tasks::Task >(
+                []() -> void
+                {
+                }
                 );
         }
 
@@ -317,13 +385,23 @@ namespace utest
             )
             -> bl::om::ObjPtr< bl::security::SecurityPrincipal > OVERRIDE
         {
-            BL_UNUSED( authenticationToken );
-            BL_UNUSED( authorizationTask );
+            if( ! m_forceCacheMiss )
+            {
+                BL_THROW(
+                    bl::NotSupportedException(),
+                    "DummyAuthorizationCache::update() is unimplemented"
+                    );
+            }
 
-            BL_THROW(
-                bl::NotSupportedException(),
-                "DummyAuthorizationCache::update() is unimplemented"
-                );
+            ++m_updateCalls;
+
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                m_lastTaskHandedToUpdate = bl::om::copy( authorizationTask );
+            }
+
+            return getTestSecurityPrincipal( authenticationToken );
         }
 
         virtual void evict(
@@ -566,6 +644,15 @@ namespace utest
             )
             -> bl::om::ObjPtr< bl::messaging::BrokerProtocol >
         {
+            /*
+             * Note that g_tokenType must only ever be touched while g_tokenTypeLock is held,
+             * so the cached value is copied into the local below inside the guard; reading it
+             * after the guard has been released races with the lazy initialization above when
+             * two threads call this on a cold cache
+             */
+
+            std::string effectiveTokenType;
+
             if( tokenType.empty() )
             {
                 BL_MUTEX_GUARD( g_tokenTypeLock );
@@ -583,12 +670,18 @@ namespace utest
                                 )
                                 -> tokenType();
                 }
+
+                effectiveTokenType = g_tokenType;
+            }
+            else
+            {
+                effectiveTokenType = tokenType;
             }
 
             return bl::messaging::MessagingUtils::createBrokerProtocolMessage(
                 messageType,
                 conversationId,
-                tokenType.empty() ? g_tokenType : tokenType,
+                effectiveTokenType,
                 cookiesText,
                 messageId
                 );
@@ -674,9 +767,17 @@ namespace utest
                 );
         }
 
+        /*
+         * Note that this is invoked on a dispatch thread, so the target peer id invariant is
+         * recorded in the caller owned recorder and asserted by the caller on the main test
+         * thread - a REQUIRE-level assertion here would terminate the process instead of
+         * failing the test case
+         */
+
         static void dispatchCallback(
             SAA_in              const bl::om::ObjPtrCopyable< bl::om::Proxy >&  clientSink,
             SAA_in_opt          const bl::uuid_t&                               targetPeerIdExpected,
+            SAA_in              const std::shared_ptr< DeferredAssertions >&    assertions,
             SAA_in              const bl::uuid_t&                               targetPeerId,
             SAA_in              const bl::om::ObjPtr< BrokerProtocol >&         brokerProtocol,
             SAA_in_opt          const bl::om::ObjPtr< Payload >&                payload
@@ -684,7 +785,7 @@ namespace utest
         {
             if( targetPeerIdExpected != bl::uuids::nil() )
             {
-                UTF_REQUIRE_EQUAL( targetPeerId, targetPeerIdExpected );
+                UTF_RECORD( *assertions, targetPeerId == targetPeerIdExpected );
             }
 
             bl::os::mutex_unique_lock guard;
@@ -702,9 +803,42 @@ namespace utest
             }
         }
 
-        static void verifyUniformMessageDistribution( SAA_in const clients_list_t& clients )
+        /**
+         * @brief Verifies that every client channel was used and that the message
+         * distribution over the channels is uniform
+         *
+         * The min / max computation used to be dead weight with respect to the outcome of the
+         * test: the helper exists to detect a load balancing regression in the messaging
+         * client's channel selection, and a regression which funnelled 95% of the traffic
+         * through one connection - or which stopped incrementing the counters in one of the
+         * two directions - would still leave every client above the per client floor below
+         *
+         * The bounds are calibrated rather than guessed. An instrumented release run of
+         * utf_baselib_messaging reported 'receivedLower=19; receivedUpper=21; sentLower=20;
+         * sentUpper=20' at the demultiplexing call site and '50 / 50 / 55 / 55' at the
+         * multiplexing one - i.e. an observed spread of at most 2 and an observed skew ratio
+         * of at most 21 / 19. The defaults sit comfortably above both, so a healthy heartbeat
+         * cannot turn them into a flaky failure
+         *
+         * The two extra parameters are defaulted so that any other call site keeps compiling
+         * and behaving exactly as before
+         */
+
+        static void verifyUniformMessageDistribution(
+            SAA_in                  const clients_list_t&                           clients,
+            SAA_in_opt              const std::uint64_t                             expectedPerClient = 0U,
+            SAA_in_opt              const std::uint64_t                             tolerance = 4U,
+            SAA_in_opt              const std::uint64_t                             maxSkewFactor = 8U
+            )
         {
             using namespace bl;
+
+            /*
+             * An empty clients list would leave all four bounds at their initial values and
+             * make every assertion below vacuously true
+             */
+
+            UTF_REQUIRE( ! clients.empty() );
 
             /*
              * Verify that all channels dispatched at least 2 messages or more
@@ -760,9 +894,60 @@ namespace utest
                     << "; sentUpper="
                     << sentUpper
                 );
+
+            /*
+             * The assertions are placed after the log line above, so a failure is always
+             * preceded by the four printed bounds
+             */
+
+            UTF_REQUIRE( receivedLower > 0U && sentLower > 0U );
+
+            if( clients.size() >= 2U )
+            {
+                /*
+                 * The bounded skew half - a single client has no spread at all
+                 */
+
+                UTF_REQUIRE( receivedUpper <= receivedLower * maxSkewFactor );
+                UTF_REQUIRE( sentUpper <= sentLower * maxSkewFactor );
+
+                if( expectedPerClient )
+                {
+                    /*
+                     * ... and the spread, which is what 'uniform' actually means; the
+                     * tolerance absorbs the association and heartbeat blocks which ride on
+                     * the same connections
+                     */
+
+                    UTF_REQUIRE( sentUpper - sentLower <= tolerance );
+                    UTF_REQUIRE( receivedUpper - receivedLower <= tolerance );
+                }
+            }
+
+            if( expectedPerClient )
+            {
+                /*
+                 * The absolute floor half
+                 */
+
+                UTF_REQUIRE( sentLower >= expectedPerClient );
+                UTF_REQUIRE( receivedLower >= expectedPerClient );
+            }
         }
 
-        static void flushQueueWithRetriesOnTargetPeerNotFound( SAA_in const bl::om::ObjPtr< ExecutionQueue >& eq )
+        /*
+         * The optional 'totalRetries' out parameter accumulates the number of TargetPeerNotFound
+         * retries performed across all the tasks flushed by this call - it lets a test assert that
+         * a mechanism which exists to eliminate the TargetPeerNotFound race (such as the proxy
+         * associate message prefix) actually does so, instead of the retries silently hiding it
+         *
+         * It is defaulted so that every existing call site is unaffected
+         */
+
+        static void flushQueueWithRetriesOnTargetPeerNotFound(
+            SAA_in              const bl::om::ObjPtr< ExecutionQueue >&         eq,
+            SAA_inout_opt       std::size_t*                                    totalRetries = nullptr
+            )
         {
             using namespace bl;
             using namespace bl::tasks;
@@ -811,6 +996,11 @@ namespace utest
                         }
 
                         ++retryCount;
+
+                        if( totalRetries )
+                        {
+                            ++( *totalRetries );
+                        }
 
                         os::sleep( time::milliseconds( 200L ) );
 
@@ -935,18 +1125,29 @@ namespace utest
                 );
         }
 
-        static auto createTestMessagingBackend() -> bl::om::ObjPtr< bl::messaging::BackendProcessing >
+        static auto createTestMessagingBackend(
+            SAA_in_opt      const bl::om::ObjPtr< bl::security::AuthorizationCache >&   authorizationCache = nullptr
+            )
+            -> bl::om::ObjPtr< bl::messaging::BackendProcessing >
         {
             using namespace bl;
             using namespace bl::security;
 
+            auto cache = om::copy( authorizationCache );
+
+            if( ! cache )
+            {
+                cache =
+                    ( test::UtfArgsParser::path().empty() || test::UtfArgsParser::password().empty() ) ?
+                        DummyAuthorizationCache::createInstance< AuthorizationCache >()
+                        :
+                        cache_t::template createInstance< AuthorizationCache >(
+                            AuthorizationServiceRest::create( test::UtfArgsParser::path() )
+                            );
+            }
+
             return messaging::BrokerBackendProcessing::createInstance< messaging::BackendProcessing >(
-                ( test::UtfArgsParser::path().empty() || test::UtfArgsParser::password().empty() ) ?
-                    DummyAuthorizationCache::createInstance< AuthorizationCache >()
-                    :
-                    cache_t::template createInstance< AuthorizationCache >(
-                        AuthorizationServiceRest::create( test::UtfArgsParser::path() )
-                        )
+                std::move( cache )
                 );
         }
 

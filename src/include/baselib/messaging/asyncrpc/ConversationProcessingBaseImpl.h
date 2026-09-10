@@ -163,6 +163,14 @@ namespace bl
             cpp::ScalarTypeIniter< std::size_t >                                        m_retryCount;
             MessageInfo                                                                 m_retryMessage;
 
+            /*
+             * The outbound messages which have been requested to be sent, but not yet
+             * picked up for sending (only one message is in flight at a time and it is
+             * picked up by tryPopProcessingTask(); see the comment there)
+             */
+
+            std::deque< MessageInfo >                                                   m_outboundQueue;
+
             mutable os::mutex                                                           m_lock;
 
             ConversationProcessingBaseImpl(
@@ -329,11 +337,7 @@ namespace bl
                         << payload
                     );
 
-                createProcessingTask( brokerProtocol, payload );
-
-                m_retryCount = 0;
-                m_retryMessage.brokerProtocol = om::copy( brokerProtocol );
-                m_retryMessage.payload = om::copy( payload );
+                enqueueOutboundMessage( isAckMessage, brokerProtocol, payload );
 
                 if( ! isAckMessage )
                 {
@@ -344,11 +348,62 @@ namespace bl
                 }
             }
 
+            void enqueueOutboundMessage(
+                SAA_in              const bool                                          isAckMessage,
+                SAA_in              const om::ObjPtr< BrokerProtocol >&                 brokerProtocol,
+                SAA_in_opt          const om::ObjPtr< payload_t >&                      payload
+                )
+            {
+                if( m_outboundQueue.size() >= BLOCK_QUEUE_SIZE )
+                {
+                    BL_THROW_EC(
+                        eh::errc::make_error_code( BrokerErrorCodes::TargetPeerQueueFull ),
+                        BL_MSG()
+                            << "The task with conversation id "
+                            << str::quoteString( uuids::uuid2string( m_conversationId ) )
+                            << " has its outbound queue full and can't send messages"
+                        );
+                }
+
+                MessageInfo messageInfo;
+
+                messageInfo.brokerProtocol = om::copy( brokerProtocol );
+                messageInfo.payload = om::copy( payload );
+
+                if( isAckMessage )
+                {
+                    /*
+                     * Acknowledgment messages are placed ahead of any queued non-acknowledgment
+                     * message because the remote peer waits for the acknowledgment before it
+                     * accepts any other message from this conversation
+                     */
+
+                    auto pos = m_outboundQueue.begin();
+
+                    while(
+                        pos != m_outboundQueue.end() &&
+                        MessageType::AsyncRpcAcknowledgment ==
+                            MessageType::toEnum( pos -> brokerProtocol -> messageType() )
+                        )
+                    {
+                        ++pos;
+                    }
+
+                    m_outboundQueue.insert( pos, std::move( messageInfo ) );
+                }
+                else
+                {
+                    m_outboundQueue.push_back( std::move( messageInfo ) );
+                }
+            }
+
             void createProcessingTask(
                 SAA_in              const om::ObjPtr< BrokerProtocol >&                 brokerProtocol,
                 SAA_in_opt          const om::ObjPtr< payload_t >&                      payload
                 )
             {
+                BL_ASSERT( ! m_processingTask );
+
                 m_processingTask =
                     tasks::ExternalCompletionTaskImpl::createInstance< tasks::Task >(
                         cpp::bind(
@@ -462,8 +517,26 @@ namespace bl
                 m_msgTimeout = msgTimeout;
             }
 
-            auto tryPopProcessingTask() NOEXCEPT -> om::ObjPtr< tasks::Task >
+            auto tryPopProcessingTask() -> om::ObjPtr< tasks::Task >
             {
+                /*
+                 * Only one message is in flight at a time: if there is no processing task
+                 * pending (e.g. a retry created by retryProcessingTask) then pick up the
+                 * next queued outbound message and create the processing task for it
+                 *
+                 * The message picked up becomes the retry message, so a failed send can
+                 * be retried before the next queued message is picked up
+                 */
+
+                if( ! m_processingTask && ! m_outboundQueue.empty() )
+                {
+                    m_retryCount = 0;
+                    m_retryMessage = std::move( m_outboundQueue.front() );
+                    m_outboundQueue.pop_front();
+
+                    createProcessingTask( m_retryMessage.brokerProtocol, m_retryMessage.payload );
+                }
+
                 return om::moveAs< tasks::Task >( m_processingTask );
             }
 
@@ -511,8 +584,13 @@ namespace bl
 
                 BL_MUTEX_GUARD( m_lock );
 
-                if( m_isFinished || m_processingTask )
+                if( m_isFinished || m_processingTask || ! m_outboundQueue.empty() )
                 {
+                    /*
+                     * Note: if there are outbound messages which have not been sent yet then
+                     * we should not process anything else until they are picked up and sent
+                     */
+
                     return;
                 }
 

@@ -62,11 +62,11 @@ namespace bl
         std::vector< cpp::SafeUniquePtr< os::thread > >     m_threads;
         cpp::SafeUniquePtr< asio::io_service >              m_ioservice;
         cpp::SafeUniquePtr< asio::io_service::work >        m_work;
-        os::mutex                                           m_lock;
+        mutable os::mutex                                   m_lock;
         os::condition_variable                              m_cvNotifyReady;
         std::atomic< std::size_t >                          m_threadsReady;
 
-        bool                                                m_shuttingDown;
+        std::atomic< bool >                                 m_shuttingDown;
         const bool                                          m_abortIfUnhandled;
         eh::eh_callback_t                                   m_ehCB;
         std::exception_ptr                                  m_lastException;
@@ -82,7 +82,19 @@ namespace bl
         {
             if( ! m_shuttingDown )
             {
-                m_lastException = eptr;
+                {
+                    /*
+                     * The last exception is guarded by the pool lock as it can be
+                     * read concurrently via lastException()
+                     *
+                     * Note that the lock is not held while the exception handling
+                     * callbacks below are invoked as they may call back into the pool
+                     */
+
+                    BL_MUTEX_GUARD( m_lock );
+
+                    m_lastException = eptr;
+                }
 
                 if( m_ehCB && m_ehCB( eptr ) )
                 {
@@ -146,7 +158,7 @@ namespace bl
 
                     os::mutex_unique_lock guard( m_lock );
 
-                    if( nullptr == m_ioservice || nullptr == m_work )
+                    if( ! m_shuttingDown && ( nullptr == m_ioservice || nullptr == m_work ) )
                     {
                         /*
                          * Both m_ioservice and m_work should be assigned in a transaction,
@@ -183,15 +195,25 @@ namespace bl
                         m_work = std::move( work );
                     }
 
-                    BL_ASSERT( m_ioservice );
-                    BL_ASSERT( m_work );
-
                     if( firstRun )
                     {
                         ++m_threadsReady;
-                        m_cvNotifyReady.notify_one();
+                        m_cvNotifyReady.notify_all();
                         firstRun = false;
                     }
+
+                    if( m_shuttingDown )
+                    {
+                        /*
+                         * The pool is being disposed - the I/O service object is about to
+                         * be destroyed, so we must neither re-create nor run it here
+                         */
+
+                        break;
+                    }
+
+                    BL_ASSERT( m_ioservice );
+                    BL_ASSERT( m_work );
 
                     guard.unlock();
 
@@ -239,7 +261,23 @@ namespace bl
             m_ehCB( BL_PARAM_FWD( ehCB ) ),
             m_lastException( nullptr )
         {
-            createThreads( limitThreadCount( threadsCount ) );
+            try
+            {
+                createThreads( limitThreadCount( threadsCount ) );
+            }
+            catch( std::exception& )
+            {
+                /*
+                 * If the threads creation fails half way through the destructor of the
+                 * object will not be invoked, so the threads which were started already
+                 * must be stopped and joined here - otherwise they would continue using
+                 * the lock and the condition variable of the destroyed object
+                 */
+
+                disposeInternal( true /* force */ );
+
+                throw;
+            }
         }
 
         ~ThreadPoolImplT() NOEXCEPT
@@ -299,9 +337,15 @@ namespace bl
                  * Wait until all threads are ready and executing
                  */
 
+                /*
+                 * Note that the predicate below must be '>=' as another concurrent
+                 * caller may have requested more threads than we did and in this case
+                 * the count will never be equal to our own thread count
+                 */
+
                 const auto cb = [ this, &threadCount ]() -> bool
                 {
-                    if( threadCount == m_threadsReady )
+                    if( m_threadsReady >= threadCount )
                     {
                         return true;
                     }
@@ -321,13 +365,30 @@ namespace bl
              * disposed then it is a nop)
              */
 
-            m_shuttingDown = true;
+            std::vector< cpp::SafeUniquePtr< os::thread > > threads;
 
-            m_work.reset();
-
-            if( m_ioservice && force )
             {
-                m_ioservice -> stop();
+                /*
+                 * The state flip below must be done under the lock, so it can't race
+                 * with a concurrent resize() pushing new threads into m_threads
+                 *
+                 * The threads are swapped out into a local, so they can be joined
+                 * outside of the lock (joining under the lock would deadlock as the
+                 * threads themselves acquire it)
+                 */
+
+                BL_MUTEX_GUARD( m_lock );
+
+                m_shuttingDown = true;
+
+                m_work.reset();
+
+                if( m_ioservice && force )
+                {
+                    m_ioservice -> stop();
+                }
+
+                m_threads.swap( threads );
             }
 
             /*
@@ -335,7 +396,7 @@ namespace bl
              * the I/O service object
              */
 
-            for( auto i = m_threads.begin(); i != m_threads.end(); ++i )
+            for( auto i = threads.begin(); i != threads.end(); ++i )
             {
                 /*
                  * This logic here is to ensure idempotency
@@ -365,7 +426,9 @@ namespace bl
                 }
             }
 
-            m_threads.clear();
+            threads.clear();
+
+            BL_MUTEX_GUARD( m_lock );
 
             m_ioservice.reset();
         }
@@ -437,6 +500,8 @@ namespace bl
 
         virtual std::exception_ptr lastException() const OVERRIDE
         {
+            BL_MUTEX_GUARD( m_lock );
+
             return m_lastException;
         }
 

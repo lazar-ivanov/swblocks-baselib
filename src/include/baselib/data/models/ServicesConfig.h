@@ -34,6 +34,14 @@ namespace bl
                 BL_DM_DECLARE_STRING_REQUIRED_PROPERTY( tokenType )
                 BL_DM_DECLARE_BOOL_REQUIRED_PROPERTY( isTokenBinary )
                 BL_DM_DECLARE_BOOL_PROPERTY( isTokenMultiProperties )
+
+                /*
+                 * Whether the values substituted into the URL path and content templates are
+                 * escaped for the structure they are placed into; when the property is absent
+                 * the escaping is enabled
+                 */
+
+                BL_DM_DECLARE_BOOL_PROPERTY( escapeTemplateVariables )
                 BL_DM_DECLARE_STRING_REQUIRED_PROPERTY( host )
                 BL_DM_DECLARE_INT_REQUIRED_PROPERTY( port )
                 BL_DM_DECLARE_INT_REQUIRED_PROPERTY( successStatus )
@@ -62,6 +70,7 @@ namespace bl
                     BL_DM_IMPL_PROPERTY( tokenType )
                     BL_DM_IMPL_PROPERTY( isTokenBinary )
                     BL_DM_IMPL_PROPERTY( isTokenMultiProperties )
+                    BL_DM_IMPL_PROPERTY( escapeTemplateVariables )
                     BL_DM_IMPL_PROPERTY( host )
                     BL_DM_IMPL_PROPERTY( port )
                     BL_DM_IMPL_PROPERTY( successStatus )
@@ -92,6 +101,7 @@ namespace bl
             BL_DM_DEFINE_PROPERTY( AuthorizationServiceRestConfig, tokenType )
             BL_DM_DEFINE_PROPERTY( AuthorizationServiceRestConfig, isTokenBinary )
             BL_DM_DEFINE_PROPERTY( AuthorizationServiceRestConfig, isTokenMultiProperties )
+            BL_DM_DEFINE_PROPERTY( AuthorizationServiceRestConfig, escapeTemplateVariables )
             BL_DM_DEFINE_PROPERTY( AuthorizationServiceRestConfig, host )
             BL_DM_DEFINE_PROPERTY( AuthorizationServiceRestConfig, port )
             BL_DM_DEFINE_PROPERTY( AuthorizationServiceRestConfig, successStatus )

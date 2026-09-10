@@ -38,8 +38,15 @@ def _deny_scandir_for(monkeypatch, denied):
     """Make os.scandir raise PermissionError for one directory; os.walk then calls onerror."""
     original = os.scandir
 
+    # Match on the resolved path: the code under test walks a root it resolved itself, so on
+    # platforms where the temporary directory sits behind a symbolic link (macOS keeps /var as
+    # a link to private/var) the path os.walk() passes here does not match the caller's path
+    # lexically. os.path.realpath() uses lstat/readlink rather than scandir, so it cannot
+    # recurse back into this mock.
+    denied_resolved = os.path.realpath(str(denied))
+
     def fake_scandir(path=".", *args, **kwargs):
-        if os.path.normpath(str(path)) == os.path.normpath(str(denied)):
+        if os.path.realpath(str(path)) == denied_resolved:
             raise PermissionError(13, "Permission denied", str(path))
         return original(path, *args, **kwargs)
 

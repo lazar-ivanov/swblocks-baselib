@@ -23,3 +23,4 @@
 #include "TestDataChunkStorageFilesystem.h"
 #include "TestJsonPerformance.h"
 #include "TestJsonAbstraction.h"
+#include "TestJsonSecurityModels.h"

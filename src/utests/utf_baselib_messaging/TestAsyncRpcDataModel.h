@@ -159,3 +159,95 @@ UTF_AUTO_TEST_CASE( MessagingHelpersDataIntegrityTest )
     UTF_CHECK_EQUAL( payloadHash, dm::DataModelUtils::getObjectHashCanonical( payload ) );
 }
 
+
+UTF_AUTO_TEST_CASE( MessageTypeWireStringsTest )
+{
+    using namespace bl;
+    using namespace bl::messaging;
+
+    /*
+     * The MessageType strings go on the wire verbatim inside every broker protocol message, so
+     * renaming an enumerator is a silent interop break between two builds of this library - a
+     * peer sends a string the other side's tryToEnum() rejects
+     *
+     * Every other test in the tree calls toString() and tryToEnum() on values it produced
+     * itself, which stays self consistent under a rename; the only literal pinned anywhere else
+     * is "AsyncRpcDispatch", inside utf_baselib_rest's RestServiceSslBackendAssortedTests, which
+     * stands up a broker, a gateway and an HTTP server in-process. This case spells all five out
+     * as literals, with no broker and no network
+     *
+     * Note that renaming AsyncRpcAcknowledgment in particular would break
+     * ConversationProcessingBaseImpl's acknowledgment detection at five separate sites
+     */
+
+#define UTEST_REQUIRE_MESSAGE_TYPE_WIRE_STRING( enumerator, literal ) \
+        { \
+            UTF_REQUIRE_EQUAL( MessageType::toString( MessageType::enumerator ), std::string( literal ) ); \
+            UTF_REQUIRE_EQUAL( MessageType::toEnum( literal ), MessageType::enumerator ); \
+        } \
+
+    UTEST_REQUIRE_MESSAGE_TYPE_WIRE_STRING( AsyncRpcDispatch, "AsyncRpcDispatch" )
+    UTEST_REQUIRE_MESSAGE_TYPE_WIRE_STRING( AsyncRpcAcknowledgment, "AsyncRpcAcknowledgment" )
+    UTEST_REQUIRE_MESSAGE_TYPE_WIRE_STRING( AsyncNotification, "AsyncNotification" )
+    UTEST_REQUIRE_MESSAGE_TYPE_WIRE_STRING( BackendAssociateTargetPeerId, "BackendAssociateTargetPeerId" )
+    UTEST_REQUIRE_MESSAGE_TYPE_WIRE_STRING( BackendDissociateTargetPeerId, "BackendDissociateTargetPeerId" )
+
+#undef UTEST_REQUIRE_MESSAGE_TYPE_WIRE_STRING
+
+    {
+        /*
+         * tryToEnum() compares against the literals verbatim - it neither folds case nor trims
+         */
+
+        MessageType::Enum e;
+
+        UTF_REQUIRE( ! MessageType::tryToEnum( "asyncrpcdispatch", e ) );
+        UTF_REQUIRE( ! MessageType::tryToEnum( " AsyncRpcDispatch", e ) );
+        UTF_REQUIRE( ! MessageType::tryToEnum( bl::str::empty(), e ) );
+
+        UTF_REQUIRE( MessageType::tryToEnum( "AsyncRpcDispatch", e ) );
+        UTF_REQUIRE_EQUAL( e, MessageType::AsyncRpcDispatch );
+    }
+
+    /*
+     * The branch every wire-facing dispatcher relies on, and the assertion which also pins the
+     * friendlyName appearing in the operator-visible message
+     */
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        MessageType::toEnum( "NoSuchMessageType" ),
+        bl::UserMessageException,
+        "MessageType has invalid string value 'NoSuchMessageType'"
+        );
+
+    {
+        /*
+         * ... and the string survives a real serialize / deserialize round trip through
+         * BrokerProtocol::messageType, which is a REQUIRED string property
+         */
+
+        const MessageType::Enum allTypes[] =
+        {
+            MessageType::AsyncRpcDispatch,
+            MessageType::AsyncRpcAcknowledgment,
+            MessageType::AsyncNotification,
+            MessageType::BackendAssociateTargetPeerId,
+            MessageType::BackendDissociateTargetPeerId,
+        };
+
+        for( const auto messageType : allTypes )
+        {
+            const auto bp = BrokerProtocol::createInstance();
+
+            bp -> messageType( MessageType::toString( messageType ) );
+            bp -> messageId( uuids::uuid2string( uuids::create() ) );
+            bp -> conversationId( uuids::uuid2string( uuids::create() ) );
+
+            const auto text = dm::DataModelUtils::getDocAsPackedJsonString( bp );
+
+            const auto reloaded = dm::DataModelUtils::loadFromJsonText< BrokerProtocol >( text );
+
+            UTF_REQUIRE_EQUAL( MessageType::toEnum( reloaded -> messageType() ), messageType );
+        }
+    }
+}

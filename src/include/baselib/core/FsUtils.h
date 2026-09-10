@@ -569,6 +569,14 @@ namespace bl
 
                 static bool safeDeletePathNothrow( SAA_in const fs::path& path ) NOEXCEPT
                 {
+                    /*
+                     * The result is 'false' until the deletion has provably succeeded, because
+                     * an exception escaping the block below is swallowed by the noexcept guard
+                     * and control simply falls through to the return statement at the end
+                     */
+
+                    bool result = false;
+
                     BL_WARN_NOEXCEPT_BEGIN()
 
                     if( path_exists( path ) )
@@ -592,9 +600,11 @@ namespace bl
                         }
                     }
 
+                    result = true;
+
                     BL_WARN_NOEXCEPT_END( "safeDeletePathNothrow" )
 
-                    return true;
+                    return result;
                 }
 
                 static fs::path makeHidden( SAA_in const fs::path& path )
@@ -631,11 +641,27 @@ namespace bl
 
                         newPath = path.parent_path() / newName;
                         safeRename( path, newPath );
+
+                        /*
+                         * If setting the attributes below fails the rename must be undone -
+                         * otherwise the caller is left with a directory it does not know the
+                         * name of (and its own rollback would delete the original name)
+                         */
+
+                        auto g = BL_SCOPE_GUARD(
+                            {
+                                ( void ) trySafeRename( newPath, path );
+                            }
+                            );
+
+                        safeUpdateFileAttributes( newPath, os::FileAttributeHidden );
+
+                        g.dismiss();
+
+                        return newPath;
                     }
-                    else
-                    {
-                        newPath = path;
-                    }
+
+                    newPath = path;
 
                     safeUpdateFileAttributes( newPath, os::FileAttributeHidden );
 
@@ -741,6 +767,14 @@ namespace bl
                     auto result = * it++;
 
                     /*
+                     * The root of the path is where the normalization stops - a parent
+                     * directory reference must never pop below it (POSIX defines "/.." as
+                     * "/", so "/../etc/passwd" is "/etc/passwd" and not "etc/passwd")
+                     */
+
+                    const auto rootPath = absPath.root_path();
+
+                    /*
                      * resolves ".." and "." in the path
                      */
 
@@ -748,7 +782,10 @@ namespace bl
                     {
                         if( *it == ".." )
                         {
-                            result = result.parent_path();
+                            if( result != rootPath )
+                            {
+                                result = result.parent_path();
+                            }
                         }
                         else if( *it != "." )
                         {
@@ -921,13 +958,38 @@ namespace bl
                     ensurePathExists( sourceDir );
                     ensurePathDoesNotExist( targetDir );
 
+                    /*
+                     * The rollback below is armed only after the target directory was really
+                     * created by this call - create_directory( ... ) succeeds silently for a
+                     * directory which already exists, and deleting a directory which appeared
+                     * in the meantime (i.e. one this call does not own) would be destructive
+                     */
+
+                    eh::error_code ec;
+
+                    const bool created = fs::unsafe::create_directory( targetDir, ec );
+
+                    BL_CHK_EC_USER_FRIENDLY(
+                        ec,
+                        BL_MSG()
+                            << "Cannot create directory "
+                            << normalizePathParameterForPrint( targetDir )
+                        );
+
+                    BL_CHK_USER_FRIENDLY(
+                        false,
+                        created,
+                        BL_MSG()
+                            << "Directory "
+                            << normalizePathParameterForPrint( targetDir )
+                            << " already exists"
+                        );
+
                     auto g = BL_SCOPE_GUARD(
                         {
                             safeDeletePathNothrow( targetDir );
                         }
                         );
-
-                    fs::copy_directory( sourceDir, targetDir );
 
                     for( fs::recursive_directory_iterator i( sourceDir ), end; i != end; ++i )
                     {
@@ -1011,6 +1073,32 @@ namespace bl
                 {
                     BL_ASSERT( m_fileStream );
                     return *m_fileStream;
+                }
+
+                /**
+                 * @brief Flushes the stream and verifies that nothing has failed
+                 *
+                 * The destructor discards flush and close errors, so a caller which must
+                 * know that the content really reached the file has to call this before the
+                 * wrapper goes out of scope
+                 */
+
+                void flushAndCheck()
+                {
+                    BL_ASSERT( m_fileStream );
+
+                    m_fileStream -> flush();
+
+                    BL_CHK_USER_FRIENDLY(
+                        true,
+                        m_fileStream -> fail(),
+                        BL_MSG()
+                            << "Failed to write the contents of a file"
+                        );
+
+                    BL_ASSERT( m_filePtr );
+
+                    BL_CHK_ERRNO_NM( false, 0 == std::fflush( m_filePtr.get() ) );
                 }
             };
 
@@ -1375,6 +1463,12 @@ namespace bl
                 os
                     << os::getPid()
                     << '\n';
+
+                /*
+                 * The lock file must not be reported as created when the write failed
+                 */
+
+                file.flushAndCheck();
 
                 return true;
             }

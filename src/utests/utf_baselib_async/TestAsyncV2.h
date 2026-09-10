@@ -511,8 +511,7 @@ namespace asyncv2
                                         }
                                         catch( bl::eh::system_error& e )
                                         {
-                                            BL_UNUSED( e );
-                                            BL_ASSERT( bl::asio::error::operation_aborted == e.code() );
+                                            UTF_REQUIRE( bl::asio::error::operation_aborted == e.code() );
                                         }
 
                                         ++canceledTests;
@@ -526,6 +525,23 @@ namespace asyncv2
                                         << canceledTests
                                         << " async tasks"
                                     );
+
+                                /*
+                                 * The 2 s sleep above leaves plenty of the 10K x 4-5 randomised
+                                 * async calls still in flight, so cancelAll() must have failed at
+                                 * least one of them - otherwise a cancellation path which silently
+                                 * stopped cancelling would leave this branch green, because the
+                                 * client tasks are cancelled by their own execution queue no
+                                 * matter what the executor does
+                                 *
+                                 * The BL_ASSERT( eq -> isEmpty() ) below is deliberately left
+                                 * alone - it sits outside this branch and also guards the
+                                 * flushAndDiscardReady() path shared with the non-cancel cases
+                                 */
+
+                                UTF_REQUIRE( canceledTests > 0U );
+
+                                UTF_REQUIRE( eq -> isEmpty() );
                             }
                             else
                             {
@@ -701,3 +717,375 @@ UTF_AUTO_TEST_CASE( AsyncV2_CancelTests )
     AsyncTestTaskAsyncFastStartImpl::executePerfTests< AsyncTestTaskAsyncFastStartImpl >( true /* testCancel */ );
 }
 
+
+UTF_AUTO_TEST_CASE( AsyncV2_BlocksOutstandingCapTests )
+{
+    using namespace bl;
+    using namespace asyncv2;
+
+    typedef AsyncDataChunkStorage::OperationId                                              OperationId;
+
+    /*
+     * The shared state's admission control refuses to allocate a new data block once the
+     * configured maximum number of outstanding blocks has been reached, and a block is only
+     * returned to the pool - and the counter decremented - by releaseResources()
+     *
+     * The decrement is made through a compare exchange loop, so that a state which never
+     * obtained a block from allocateBlock() can never underflow the counter
+     *
+     * The operation states are driven directly here, so no server and no sockets are needed
+     */
+
+    const auto backendImpl = om::lockDisposable( utest::BackendImplTestImpl::createInstance() );
+
+    {
+        const auto storage = om::qi< data::DataChunkStorage >( backendImpl );
+
+        const auto asyncStorage = om::lockDisposable(
+            AsyncDataChunkStorage::createInstance(
+                storage                                     /* writeBackend */,
+                storage                                     /* readBackend */,
+                test::UtfArgsParser::threadsCount()
+                )
+            );
+
+        const auto newAllocState = [ &asyncStorage ]() -> om::ObjPtr< AsyncOperationStateImpl >
+        {
+            return asyncStorage -> createOperationState< AsyncOperationStateImpl >(
+                OperationId::Alloc,
+                uuids::create()                             /* sessionId */,
+                uuids::create()                             /* chunkId */,
+                uuids::nil()                                /* sourcePeerId */,
+                uuids::nil()                                /* targetPeerId */
+                );
+        };
+
+        asyncStorage -> impl() -> maxOutstandingBlocks( 2U );
+
+        UTF_REQUIRE_EQUAL( 2U, asyncStorage -> impl() -> maxOutstandingBlocks() );
+        UTF_REQUIRE_EQUAL( 0U, asyncStorage -> impl() -> outstandingBlocks() );
+
+        const auto state1 = newAllocState();
+        state1 -> execute();
+
+        const auto state2 = newAllocState();
+        state2 -> execute();
+
+        UTF_REQUIRE( state1 -> data() );
+        UTF_REQUIRE( state2 -> data() );
+        UTF_REQUIRE_EQUAL( 2U, asyncStorage -> impl() -> outstandingBlocks() );
+
+        /*
+         * The cap has been reached, so the next allocation must be refused
+         */
+
+        const auto state3 = newAllocState();
+
+        UTF_REQUIRE_THROW_ERROR_CODE_AND_MESSAGE(
+            state3 -> execute(),
+            SystemException,
+            eh::errc::make_error_code( eh::errc::no_buffer_space ),
+            "maximum number of outstanding data blocks"
+            );
+
+        UTF_REQUIRE( ! state3 -> data() );
+        UTF_REQUIRE_EQUAL( 2U, asyncStorage -> impl() -> outstandingBlocks() );
+
+        /*
+         * Releasing an operation returns its block and frees the slot again
+         */
+
+        state1 -> releaseResources();
+
+        UTF_REQUIRE_EQUAL( 1U, asyncStorage -> impl() -> outstandingBlocks() );
+        UTF_REQUIRE( ! state1 -> data() );
+
+        const auto state4 = newAllocState();
+        state4 -> execute();
+
+        UTF_REQUIRE( state4 -> data() );
+        UTF_REQUIRE_EQUAL( 2U, asyncStorage -> impl() -> outstandingBlocks() );
+
+        /*
+         * Releasing a state which never obtained a block must leave the counter alone
+         */
+
+        const auto state5 = newAllocState();
+
+        state5 -> releaseResources();
+
+        UTF_REQUIRE_EQUAL( 2U, asyncStorage -> impl() -> outstandingBlocks() );
+
+        state2 -> releaseResources();
+        state3 -> releaseResources();
+        state4 -> releaseResources();
+
+        UTF_REQUIRE_EQUAL( 0U, asyncStorage -> impl() -> outstandingBlocks() );
+
+        /*
+         * Zero means unbounded, which is the default
+         */
+
+        asyncStorage -> impl() -> maxOutstandingBlocks( 0U );
+
+        UTF_REQUIRE_EQUAL( 0U, asyncStorage -> impl() -> maxOutstandingBlocks() );
+
+        const auto state6 = newAllocState();
+        state6 -> execute();
+
+        const auto state7 = newAllocState();
+        state7 -> execute();
+
+        const auto state8 = newAllocState();
+        state8 -> execute();
+
+        UTF_REQUIRE_EQUAL( 3U, asyncStorage -> impl() -> outstandingBlocks() );
+
+        state6 -> releaseResources();
+        state7 -> releaseResources();
+        state8 -> releaseResources();
+
+        UTF_REQUIRE_EQUAL( 0U, asyncStorage -> impl() -> outstandingBlocks() );
+    }
+}
+
+UTF_AUTO_TEST_CASE( AsyncV2_ReadWriteStorageRoutingTests )
+{
+    using namespace bl;
+    using namespace asyncv2;
+
+    typedef AsyncDataChunkStorage::OperationId                                              OperationId;
+    typedef AsyncDataChunkStorage::CommandId                                                CommandId;
+
+    /*
+     * The async storage is constructed from a write storage and a read storage and the
+     * routing between the two is the entire point of the type - Get is served by the read
+     * storage while Put, Command::Remove and Command::FlushPeerSessions all go to the write
+     * storage
+     *
+     * The rest of the suite always passes the same backend twice, so a swap of the two
+     * constructor arguments is invisible to it
+     */
+
+    const auto readImpl = om::lockDisposable( utest::BackendImplTestImpl::createInstance() );
+    const auto writeImpl = om::lockDisposable( utest::BackendImplTestImpl::createInstance() );
+
+    /*
+     * The block which is saved below is the one obtained from the Alloc operation and not
+     * the write backend's own reference block, so its payload must not be verified
+     */
+
+    writeImpl -> setExpectRealData( true );
+
+    {
+        const auto asyncStorage = om::lockDisposable(
+            AsyncDataChunkStorage::createInstance(
+                om::qi< data::DataChunkStorage >( writeImpl )       /* writeBackend */,
+                om::qi< data::DataChunkStorage >( readImpl )        /* readBackend */,
+                test::UtfArgsParser::threadsCount()
+                )
+            );
+
+        const auto sessionId = uuids::create();
+
+        const auto newOpState = [ &asyncStorage, &sessionId ](
+            SAA_in              const OperationId                   operationId,
+            SAA_in              const bl::uuid_t&                   chunkId
+            )
+            -> om::ObjPtr< AsyncOperationStateImpl >
+        {
+            return asyncStorage -> createOperationState< AsyncOperationStateImpl >(
+                operationId,
+                sessionId,
+                chunkId,
+                uuids::nil()                                /* sourcePeerId */,
+                uuids::nil()                                /* targetPeerId */
+                );
+        };
+
+        {
+            const auto state = newOpState( OperationId::Get, uuids::create() /* chunkId */ );
+
+            state -> execute();
+
+            UTF_REQUIRE_EQUAL( 1U, readImpl -> loadCalls() );
+            UTF_REQUIRE_EQUAL( 0U, writeImpl -> loadCalls() );
+
+            UTF_REQUIRE_EQUAL(
+                0U,
+                readImpl -> saveCalls() + readImpl -> removeCalls() + readImpl -> flushCalls()
+                );
+
+            /*
+             * The read must have populated the block which the Get path allocated
+             */
+
+            UTF_REQUIRE( state -> data() );
+            UTF_REQUIRE_EQUAL( readImpl -> getData() -> size(), state -> data() -> size() );
+
+            state -> releaseResources();
+        }
+
+        {
+            /*
+             * Put requires a data block and Alloc is how a test obtains one
+             */
+
+            const auto state = newOpState( OperationId::Alloc, uuids::create() /* chunkId */ );
+
+            state -> execute();
+
+            UTF_REQUIRE( state -> data() );
+
+            state -> operationId( OperationId::Put );
+
+            state -> execute();
+
+            UTF_REQUIRE_EQUAL( 1U, writeImpl -> saveCalls() );
+            UTF_REQUIRE_EQUAL( 0U, readImpl -> saveCalls() );
+
+            state -> releaseResources();
+        }
+
+        {
+            const auto state = newOpState( OperationId::Command, uuids::create() /* chunkId */ );
+
+            state -> commandId( CommandId::Remove );
+
+            state -> execute();
+
+            UTF_REQUIRE_EQUAL( 1U, writeImpl -> removeCalls() );
+            UTF_REQUIRE_EQUAL( 0U, readImpl -> removeCalls() );
+
+            state -> releaseResources();
+        }
+
+        {
+            const auto state = newOpState( OperationId::Command, uuids::nil() /* chunkId */ );
+
+            state -> commandId( CommandId::FlushPeerSessions );
+
+            state -> execute();
+
+            UTF_REQUIRE_EQUAL( 1U, writeImpl -> flushCalls() );
+            UTF_REQUIRE_EQUAL( 0U, readImpl -> flushCalls() );
+
+            state -> releaseResources();
+        }
+
+        readImpl -> assertions().requireNone();
+        writeImpl -> assertions().requireNone();
+    }
+}
+
+namespace
+{
+    /**
+     * @brief Makes bl::detail::AsyncExecutorImplT<>::verifyQueues reachable
+     *
+     * verifyQueues is a protected static helper with zero call sites anywhere in the
+     * repository, so - being a member of a class template - it has never been instantiated
+     * and therefore never compiled, in either variant on any platform. Its body calls
+     * ExecutionQueue::scanQueue and om::qi< ExecutorTaskImpl >, both of which could have
+     * drifted under it.
+     *
+     * No object of this type is ever constructed: AsyncExecutorImplT carries
+     * BL_DECLARE_OBJECT_IMPL_NO_DESTRUCTOR and has no default constructor, and verifyQueues
+     * is static, so the derived probe idiom needs nothing more than the using declaration
+     */
+
+    struct VerifierProbe : public bl::detail::AsyncExecutorImplT<>
+    {
+        using bl::detail::AsyncExecutorImplT<>::verifyQueues;
+    };
+
+} // __unnamed
+
+UTF_AUTO_TEST_CASE( AsyncV2_ExecutorQueueVerifierTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    /*
+     * verifyQueues() is documented as a DEBUG only BL_ASSERT helper which always returns
+     * true, and the primary value of this case is forcing it to be instantiated at all
+     *
+     * Note that its scan callback does om::qi< ExecutorTaskImpl >( task ) *outside* the
+     * BL_ASSERT, so it throws in release too for any task which is not an executor task -
+     * i.e. it can only ever be called on a queue whose Pending and Executing queues are
+     * empty, which is exactly the invariant the executor itself would call it under. Every
+     * call below is therefore made on a drained queue.
+     *
+     * The debug only half - BL_ASSERT( taskImpl -> stopped() ) - is deliberately not
+     * depended upon here; it is a no-op under NDEBUG
+     */
+
+    const auto queue = om::lockDisposable(
+        ExecutionQueueImpl::createInstance< ExecutionQueue >( ExecutionQueue::OptionKeepNone )
+        );
+
+    /*
+     * An empty queue
+     */
+
+    UTF_REQUIRE( queue -> isEmpty() );
+    UTF_REQUIRE( VerifierProbe::verifyQueues( queue ) );
+
+    /*
+     * After one task has run to completion - OptionKeepNone discards it, so both scanned
+     * queues are empty again
+     */
+
+    {
+        cpp::ScalarTypeIniter< bool > called;
+
+        const auto task = SimpleTaskImpl::createInstance< Task >(
+            cpp::void_callback_t(
+                [ &called ]() -> void
+                {
+                    called = true;
+                }
+                )
+            );
+
+        queue -> push_back( task );
+        queue -> waitForSuccess( task );
+
+        UTF_REQUIRE( called.value() );
+        UTF_REQUIRE( queue -> isEmpty() );
+
+        UTF_REQUIRE( VerifierProbe::verifyQueues( queue ) );
+    }
+
+    /*
+     * And after a task which does not finish on its own is cancelled out of the queue
+     */
+
+    {
+        utest::AsyncTestSignal started;
+        utest::AsyncTestSignal release;
+
+        const auto task = SimpleTaskImpl::createInstance< Task >(
+            cpp::void_callback_t(
+                [ &started, &release ]() -> void
+                {
+                    started.signal();
+
+                    ( void ) release.wait();
+                }
+                )
+            );
+
+        queue -> push_back( task );
+
+        UTF_REQUIRE( started.wait() );
+
+        release.signal();
+
+        queue -> cancelAll( true /* wait */ );
+
+        UTF_REQUIRE( queue -> isEmpty() );
+
+        UTF_REQUIRE( VerifierProbe::verifyQueues( queue ) );
+    }
+}

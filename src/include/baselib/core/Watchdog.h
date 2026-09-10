@@ -97,6 +97,25 @@ namespace bl
             m_checkingIntervalInMicros( static_cast< std::uint64_t >( m_checkingInterval.total_microseconds() ) )
         {
             /*
+             * A negative interval would survive the zero check below and then wrap into a huge
+             * unsigned value in the cast above, which silently disables the watchdog
+             */
+
+            BL_CHK(
+                true,
+                checkingInterval.is_negative(),
+                BL_MSG()
+                    << "The watchdog checking interval must be greater than zero"
+                );
+
+            BL_CHK(
+                0U,
+                m_checkingIntervalInMicros,
+                BL_MSG()
+                    << "The watchdog checking interval must be greater than zero"
+                );
+
+            /*
              * Atomics require explicit initialization
              * Setting them all to std::numeric_limits< std::unit64_t >::max()
              * simplifies the extendExpiration method, because the main loop
@@ -162,6 +181,13 @@ namespace bl
             SAA_in      const time::time_duration&        extension
             )
         {
+            BL_CHK(
+                true,
+                extension.is_negative(),
+                BL_MSG()
+                    << "The watchdog expiration extension must not be negative"
+                );
+
             const auto monitorIndex = setupMonitor( name );
             m_expirations[ monitorIndex ] = timeDurationInCheckingIntervals( extension ) + 1;
         }
@@ -173,6 +199,18 @@ namespace bl
 
         std::vector< std::string > expiringMonitors( SAA_in const time::time_duration& horizon )
         {
+            /*
+             * A negative horizon wraps into a huge unsigned value in
+             * timeDurationInCheckingIntervals( ... ) and reports every monitor as expiring
+             */
+
+            BL_CHK(
+                true,
+                horizon.is_negative(),
+                BL_MSG()
+                    << "The watchdog expiration horizon must not be negative"
+                );
+
             const auto horizonInIntervals = timeDurationInCheckingIntervals( horizon );
 
             std::vector< std::string > result;

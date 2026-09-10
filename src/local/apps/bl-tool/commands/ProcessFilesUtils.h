@@ -317,6 +317,33 @@ namespace bltool
                             headerParsed = true;
                         }
                     }
+
+                    if( inFileHader )
+                    {
+                        /*
+                         * The header comment was never closed, so we can't tell where it
+                         * ends - write the original lines back instead of consuming the
+                         * entire file and leaving it empty
+                         */
+
+                        for( const auto& line : lines )
+                        {
+                            os << line << "\n";
+                        }
+                    }
+                    else if( ! licenseWritten )
+                    {
+                        /*
+                         * The file has no body (e.g. it only contains a header comment),
+                         * but the header comment must still be written - otherwise the
+                         * file would simply be truncated to zero bytes
+                         */
+
+                        if( ! headerCommentText.empty() )
+                        {
+                            os << headerCommentText;
+                        }
+                    }
                 }
             }
 
@@ -406,7 +433,13 @@ namespace bltool
 
                     if( inComment )
                     {
-                        for( std::size_t i = commentStartPos; i <= pos; ++i )
+                        /*
+                         * The comment was never closed - flush all the lines from
+                         * commentStartPos to the end of the file; note that 'pos' is
+                         * equal to 'count' here, so the bound must be exclusive
+                         */
+
+                        for( std::size_t i = commentStartPos; i < pos; ++i )
                         {
                             os << lines[ i ] << "\n";
                         }
@@ -455,8 +488,15 @@ namespace bltool
                 bool atLeastOneMarkedComment = false;
 
                 {
-                    bl::fs::SafeOutputFileStreamWrapper outputFile( path );
-                    auto& os = outputFile.stream();
+                    /*
+                     * The new content is built in memory first because the loop below can
+                     * reject the input - code following the end of a block comment on the
+                     * same line is legal C++ which this rewriter refuses - and opening the
+                     * output file truncates it, so writing as we go would destroy a file
+                     * we have just refused to process
+                     */
+
+                    bl::cpp::SafeOutputStringStream os;
 
                     while( pos < count )
                     {
@@ -547,13 +587,29 @@ namespace bltool
 
                     if( inComment )
                     {
-                        for( std::size_t i = commentStartPos; i <= pos; ++i )
+                        /*
+                         * The comment was never closed - flush all the lines from
+                         * commentStartPos to the end of the file; note that 'pos' is
+                         * equal to 'count' here, so the bound must be exclusive
+                         */
+
+                        for( std::size_t i = commentStartPos; i < pos; ++i )
                         {
                             os << lines[ i ] << "\n";
                         }
 
                         inComment = false;
                         commentStartPos = std::string::npos;
+                    }
+
+                    /*
+                     * The whole input was accepted, so the file can now be rewritten
+                     */
+
+                    {
+                        bl::fs::SafeOutputFileStreamWrapper outputFile( path );
+
+                        outputFile.stream() << os.str();
                     }
 
                     if( atLeastOneMarkedComment )

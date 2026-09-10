@@ -15,10 +15,14 @@
  */
 
 #include <baselib/cmdline/CmdLineBase.h>
+#include <baselib/cmdline/GlobalOptions.h>
+
+#include <baselib/messaging/server/BaseServerCmdLine.h>
 
 #include <baselib/core/Utils.h>
 
 #include <utests/baselib/Utf.h>
+#include <utests/baselib/UtfDirectoryFixture.h>
 
 #include <string>
 #include <cctype>
@@ -522,7 +526,115 @@ UTF_AUTO_TEST_CASE( CmdLine_Parse_Class )
     UTF_CHECK_EQUAL( cmdln.m_missing.getDefaultValue(), false );
     UTF_CHECK_EQUAL( cmdln.m_missing.getValue(), false );
 
+    UTF_MESSAGE( "* streaming the options" );
+
+    /*
+     * Option::toStream() and the free operator<<( ostream&, const OptionBase& ) have no
+     * caller anywhere in src/. The scalar-vs-vector overload set toStream() resolves against
+     * is a *private static* pair picked at compile time, which is exactly the kind of thing a
+     * template refactor changes silently - a MultiStringOption which started printing an
+     * address instead of "a, b" would go unnoticed
+     *
+     * getValue() returns the default when hasValue() is false, so a defaulted option streams
+     * its default and an option with neither streams a value-initialised value_type
+     */
+
+    {
+        bl::cpp::SafeOutputStringStream oss;
+        oss << cmdln.m_command;
+        UTF_CHECK_EQUAL( oss.str(), std::string( "run" ) );
+    }
+
+    {
+        bl::cpp::SafeOutputStringStream oss;
+        oss << cmdln.m_filenames;
+        UTF_CHECK_EQUAL( oss.str(), std::string( "filename1, filename2" ) );
+    }
+
+    {
+        bl::cpp::SafeOutputStringStream oss;
+        oss << cmdln.m_numbers;
+        UTF_CHECK_EQUAL( oss.str(), std::string( "1, 2, 3" ) );
+    }
+
+    {
+        bl::cpp::SafeOutputStringStream oss;
+        oss << cmdln.m_opt3;
+        UTF_CHECK_EQUAL( oss.str(), std::string( "default" ) );
+    }
+
+    {
+        bl::cpp::SafeOutputStringStream oss;
+        oss << cmdln.m_number3;
+        UTF_CHECK_EQUAL( oss.str(), std::string( "0" ) );
+    }
+
+    {
+        bl::cpp::SafeOutputStringStream oss;
+        oss << cmdln.m_help;
+        UTF_CHECK_EQUAL( oss.str(), std::string( "0" ) );
+    }
+
     UTF_MESSAGE( "***************** end CmdLine_Parse_Class tests *****************\n" );
+}
+
+UTF_AUTO_TEST_CASE( CmdLine_ParserInstanceIsSingleUse )
+{
+    UTF_MESSAGE( "***************** CmdLine_ParserInstanceIsSingleUse tests *****************\n" );
+
+    /*
+     * NOTE: this test case intentionally pins a *restriction*, it does not endorse it.
+     *
+     * A CmdLineBase instance is single-use. OptionBase::m_hasValue is set by the notifier
+     * installed in Option::getSemantic() and is never cleared, and Option::m_value is never
+     * reset either, so a second parseCommandLine() call on the same instance observes the state
+     * left behind by the first one - the stale hasValue() bits satisfy checkRequiredOptions()
+     * and getValue() keeps returning the previous parse's value instead of the default.
+     *
+     * A parser instance must therefore be constructed fresh for every command line which is to
+     * be parsed, which is what all the negative expectations in this module rely on.
+     *
+     * If parseCommandLine() is ever made re-entrant (i.e. resetting m_hasValue and m_value at
+     * the top) then this is the case where that decision is recorded and it must be rewritten.
+     */
+
+    CmdLineTest cmdln;
+
+    UTF_MESSAGE( "* parsing the first command line, supplying all the required options" );
+    UTF_REQUIRE_NO_THROW( cmdln.parseCommandLine( "run --number1 7 --factor1 1.5 --opt2 first" ) );
+
+    UTF_REQUIRE( cmdln.m_command.hasValue() );
+    UTF_REQUIRE_EQUAL( cmdln.m_command.getValue(), "run" );
+    UTF_REQUIRE( cmdln.m_number1.hasValue() );
+    UTF_REQUIRE_EQUAL( cmdln.m_number1.getValue(), 7 );
+    UTF_REQUIRE( cmdln.m_factor1.hasValue() );
+    UTF_REQUIRE_EQUAL( cmdln.m_factor1.getValue(), 1.5 );
+    UTF_REQUIRE( cmdln.m_opt2.hasValue() );
+    UTF_REQUIRE_EQUAL( cmdln.m_opt2.getValue(), "first" );
+
+    /*
+     * The key expectation: parsing an empty command line on the *same* instance does not throw,
+     * even though all three required options are absent from it. Contrast this with
+     * CmdLine_MissingRequiredOptionsMessage below, where the very same empty command line does
+     * throw "required but missing" on a freshly constructed instance.
+     */
+
+    UTF_MESSAGE( "* re-parsing an empty command line on the same instance" );
+    UTF_REQUIRE_NO_THROW( cmdln.parseCommandLine( "" ) );
+
+    UTF_REQUIRE( cmdln.m_command.hasValue() );
+    UTF_REQUIRE( cmdln.m_number1.hasValue() );
+    UTF_REQUIRE( cmdln.m_factor1.hasValue() );
+
+    /*
+     * The values from the first parse survive - they are not reset to the default values
+     */
+
+    UTF_REQUIRE_EQUAL( cmdln.m_number1.getValue(), 7 );
+    UTF_REQUIRE_EQUAL( cmdln.m_factor1.getValue(), 1.5 );
+    UTF_REQUIRE_EQUAL( cmdln.m_opt2.getValue(), "first" );
+
+    UTF_MESSAGE( "***************** end CmdLine_ParserInstanceIsSingleUse tests *****************\n" );
 }
 
 namespace
@@ -783,40 +895,44 @@ UTF_AUTO_TEST_CASE( CmdLine_Parse_CommandMode )
     UTF_MESSAGE( cmdln.helpMessage() );
 
     /*
-     * BUG: these tests must be disabled in clang/gcc as they cause
-     * "memory access violation at address: 0x00adfd28: invalid permissions"
+     * NOTE: every negative expectation below gets its own freshly constructed parser instance
+     * because a CmdLineBase instance is single-use - see CmdLine_ParserInstanceIsSingleUse
      */
 
-#if defined(_MSC_VER)
     UTF_MESSAGE( "* checking invalid command lines" );
 
     {
+        CmdLineModeTest c;
+
         const char * args[] = { "unittest", "--from", "start", "--to", "finish", "--speed", "8.5", "-v" };
 
         UTF_REQUIRE_THROW(
-            cmdln.parseCommandLine( BL_ARRAY_SIZE( args ), args ),
+            c.parseCommandLine( BL_ARRAY_SIZE( args ), args ),
             bl::po::unknown_option
             );
     }
 
     {
+        CmdLineModeTest c;
+
         const char * args[] = { "unittest", "--global=test", "-?", "extra" };
 
         UTF_REQUIRE_THROW(
-            cmdln.parseCommandLine( BL_ARRAY_SIZE( args ), args ),
+            c.parseCommandLine( BL_ARRAY_SIZE( args ), args ),
             bl::po::too_many_positional_options_error
             );
     }
 
     {
+        CmdLineModeTest c;
+
         const char * args[] = { "unittest", "invalid" };
 
         UTF_REQUIRE_THROW(
-            cmdln.parseCommandLine( BL_ARRAY_SIZE( args ), args ),
+            c.parseCommandLine( BL_ARRAY_SIZE( args ), args ),
             bl::UserMessageException
             );
     }
-#endif
 
     UTF_MESSAGE( "* parsing empty command line" );
     auto command = cmdln.parseCommandLine( "" );
@@ -876,40 +992,40 @@ UTF_AUTO_TEST_CASE( CmdLine_Parse_CommandMode_Run )
     UTF_MESSAGE( "* executing command" );
     cmdln.executeCommand( command );
 
-#if defined(_MSC_VER)
-    {
-        UTF_MESSAGE( "* checking invalid command lines" );
-        CmdLineModeTest cmdln;
+    UTF_MESSAGE( "* checking invalid command lines" );
 
-        /*
-         * Command names are case sensitive
-         */
+    /*
+     * NOTE: every negative expectation below gets its own freshly constructed parser instance
+     * because a CmdLineBase instance is single-use - see CmdLine_ParserInstanceIsSingleUse
+     */
 
-        UTF_REQUIRE_THROW( cmdln.parseCommandLine( "RUN" ), bl::UserMessageException );
+    /*
+     * Command names are case sensitive
+     */
 
-        /*
-         * "run" has required options "<how>" and "--to"
-         */
+    { CmdLineModeTest c; UTF_REQUIRE_THROW( c.parseCommandLine( "RUN" ), bl::UserMessageException ); }
 
-        UTF_REQUIRE_THROW( cmdln.parseCommandLine( "run" ), bl::UserMessageException );
-        UTF_REQUIRE_THROW( cmdln.parseCommandLine( "run quickly" ), bl::UserMessageException );
-        UTF_REQUIRE_THROW( cmdln.parseCommandLine( "run quickly --to the hills" ), bl::po::too_many_positional_options_error );
+    /*
+     * "run" has required options "<how>" and "--to"
+     */
 
-        /*
-         * Invalid floating option "--speed" value
-         */
+    { CmdLineModeTest c; UTF_REQUIRE_THROW( c.parseCommandLine( "run" ), bl::UserMessageException ); }
+    { CmdLineModeTest c; UTF_REQUIRE_THROW( c.parseCommandLine( "run quickly" ), bl::UserMessageException ); }
+    { CmdLineModeTest c; UTF_REQUIRE_THROW( c.parseCommandLine( "run quickly --to the hills" ), bl::po::too_many_positional_options_error ); }
 
-        UTF_REQUIRE_THROW( cmdln.parseCommandLine( "run forever --to infinity --speed=light" ), bl::po::invalid_option_value );
+    /*
+     * Invalid floating option "--speed" value
+     */
 
-        /*
-         * Option "--property" requires exactly 2 arguments
-         */
+    { CmdLineModeTest c; UTF_REQUIRE_THROW( c.parseCommandLine( "run forever --to infinity --speed=light" ), bl::po::invalid_option_value ); }
 
-        UTF_REQUIRE_THROW( cmdln.parseCommandLine( "run test --property" ), bl::po::invalid_command_line_syntax );
-        UTF_REQUIRE_THROW( cmdln.parseCommandLine( "run test --property color" ), bl::po::invalid_command_line_syntax );
-        UTF_REQUIRE_THROW( cmdln.parseCommandLine( "run test --property color light blue" ), bl::po::too_many_positional_options_error );
-    }
-#endif
+    /*
+     * Option "--property" requires exactly 2 arguments
+     */
+
+    { CmdLineModeTest c; UTF_REQUIRE_THROW( c.parseCommandLine( "run test --property" ), bl::po::invalid_command_line_syntax ); }
+    { CmdLineModeTest c; UTF_REQUIRE_THROW( c.parseCommandLine( "run test --property color" ), bl::po::invalid_command_line_syntax ); }
+    { CmdLineModeTest c; UTF_REQUIRE_THROW( c.parseCommandLine( "run test --property color light blue" ), bl::po::too_many_positional_options_error ); }
 
     UTF_MESSAGE( "***************** end CmdLine_Parse_CommandMode_Run tests *****************\n" );
 }
@@ -1040,41 +1156,876 @@ UTF_AUTO_TEST_CASE( CmdLine_Parse_CommandMode_Create )
         cmdln.executeCommand( command );
     }
 
-#if defined(_MSC_VER)
+    UTF_MESSAGE( "* checking invalid command lines" );
+
+    /*
+     * NOTE: every negative expectation below gets its own freshly constructed parser instance
+     * because a CmdLineBase instance is single-use - see CmdLine_ParserInstanceIsSingleUse
+     */
+
+    /*
+     * Command names are case sensitive
+     */
+
+    { CmdLineModeTest c; UTF_REQUIRE_THROW( c.parseCommandLine( "CREATE" ), bl::UserMessageException ); }
+    { CmdLineModeTest c; UTF_REQUIRE_THROW( c.parseCommandLine( "create USER username" ), bl::UserMessageException ); }
+
+    /*
+     * Positional options do not enforce the minimal number of arguments, hence no exception is thrown:
+     *
+     * UTF_REQUIRE_THROW( cmdln.parseCommandLine( "create user John" ), bl::po::required_option );
+     */
+
+    { CmdLineModeTest c; UTF_REQUIRE_THROW( c.parseCommandLine( "create user John von Neumann" ), bl::po::too_many_positional_options_error ); }
+
+    /*
+     * Invalid sub-command name
+     */
+
+    { CmdLineModeTest c; UTF_REQUIRE_THROW( c.parseCommandLine( "create something --else" ), bl::UserMessageException ); }
+
+    /*
+     * "create user" has a required positional option "name" but "--help" overrides it
+     */
+
     {
-        UTF_MESSAGE( "* checking invalid command lines" );
-        CmdLineModeTest cmdln;
+        CmdLineModeTest c;
+
+        UTF_REQUIRE_NO_THROW( c.parseCommandLine( "create user --help" ) );
+        UTF_CHECK( c.m_help.getValue() );
 
         /*
-         * Command names are case sensitive
+         * The required positional option really was missing - the parse succeeded only
+         * because of the Override flag on the help switch
          */
 
-        UTF_REQUIRE_THROW( cmdln.parseCommandLine( "CREATE" ), bl::UserMessageException );
-        UTF_REQUIRE_THROW( cmdln.parseCommandLine( "create USER username" ), bl::UserMessageException );
-
-        /*
-         * Positional options do not enforce the minimal number of arguments, hence no exception is thrown:
-         *
-         * UTF_REQUIRE_THROW( cmdln.parseCommandLine( "create user John" ), bl::po::required_option );
-         */
-
-        UTF_REQUIRE_THROW( cmdln.parseCommandLine( "create user John von Neumann" ), bl::po::too_many_positional_options_error );
-
-        /*
-         * Invalid sub-command name
-         */
-
-        UTF_REQUIRE_THROW( cmdln.parseCommandLine( "create something --else" ), bl::UserMessageException );
-
-        /*
-         * "create user" has a required positional option "name" but "--help" overrides it
-         */
-
-        UTF_REQUIRE_NO_THROW( cmdln.parseCommandLine( "create user --help" ) );
-        UTF_CHECK( cmdln.m_help.getValue() );
+        UTF_CHECK( ! c.m_commandCreate.m_commandCreateUser.m_name.hasValue() );
     }
-#endif
 
     UTF_MESSAGE( "***************** end CmdLine_Parse_CommandMode_Create tests *****************\n" );
 }
 
+UTF_AUTO_TEST_CASE( CmdLine_MissingRequiredOptionsMessage )
+{
+    UTF_MESSAGE( "***************** CmdLine_MissingRequiredOptionsMessage tests *****************\n" );
+
+    /*
+     * NOTE: every sub-block below gets its own freshly constructed parser instance
+     * because a CmdLineBase instance is single-use - see CmdLine_ParserInstanceIsSingleUse
+     */
+
+    UTF_MESSAGE( "* three missing required options (the plural form and all getDisplayName() branches)" );
+
+    {
+        CmdLineTest cmdln;
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            cmdln.parseCommandLine( "" ),
+            bl::UserMessageException,
+            "Invalid command line: the options '<command>', '--number1' and '--factor1' are required but missing"
+            );
+    }
+
+    UTF_MESSAGE( "* two missing required options (only the last separator is used)" );
+
+    {
+        CmdLineModeTest cmdln;
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            cmdln.parseCommandLine( "run" ),
+            bl::UserMessageException,
+            "the options '<how>' and '--to' are required but missing"
+            );
+    }
+
+    UTF_MESSAGE( "* one missing required option (the singular form)" );
+
+    {
+        CmdLineModeTest cmdln;
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            cmdln.parseCommandLine( "run quickly" ),
+            bl::UserMessageException,
+            "the option '--to' is required but missing"
+            );
+    }
+
+    UTF_MESSAGE( "* an Override option wins over the missing required options" );
+
+    {
+        CmdLineTest cmdln;
+
+        UTF_REQUIRE_NO_THROW( cmdln.parseCommandLine( "--help" ) );
+        UTF_CHECK( cmdln.m_help.getValue() );
+        UTF_CHECK( ! cmdln.m_command.hasValue() );
+    }
+
+    UTF_MESSAGE( "* OptionBase::getDisplayName()" );
+
+    {
+        CmdLineTest cmdln;
+
+        UTF_CHECK_EQUAL( cmdln.m_command.getDisplayName(), "<command>" );
+        UTF_CHECK_EQUAL( cmdln.m_number1.getDisplayName(), "--number1" );
+        UTF_CHECK_EQUAL( cmdln.m_factor1.getDisplayName(), "--factor1" );
+        UTF_CHECK_EQUAL( cmdln.m_filenames.getDisplayName(), "<filename>" );
+        UTF_CHECK_EQUAL( cmdln.m_help.getDisplayName(), "--help" );
+    }
+
+    UTF_MESSAGE( "***************** end CmdLine_MissingRequiredOptionsMessage tests *****************\n" );
+}
+
+UTF_AUTO_TEST_CASE( CmdLine_HelpMessageComposition )
+{
+    UTF_MESSAGE( "***************** CmdLine_HelpMessageComposition tests *****************\n" );
+
+    /*
+     * NOTE: every sub-block below gets its own freshly constructed instance because
+     * setHelpMessage() mutates the command it is invoked on
+     */
+
+    UTF_MESSAGE( "* @CMDNAME@ / @FULLNAME@ expansion, including repeated occurrences of a token" );
+
+    {
+        CmdLineModeTest cmdln;
+
+        cmdln.m_commandCreate.m_commandCreateObject.setHelpMessage( "[@FULLNAME@]-[@CMDNAME@]-[@FULLNAME@]" );
+
+        UTF_REQUIRE_EQUAL(
+            cmdln.m_commandCreate.m_commandCreateObject.helpMessage( false /* includeSubCommands */ ),
+            "[create object]-[object]-[create object]"
+            );
+    }
+
+    UTF_MESSAGE( "* the caption substituted for @CAPTION@ is itself token expanded" );
+
+    {
+        CmdLineModeTest cmdln;
+
+        cmdln.m_commandCreate.m_commandCreateObject.setHelpMessage( "@CAPTION@" );
+
+        UTF_REQUIRE_EQUAL(
+            cmdln.m_commandCreate.m_commandCreateObject.helpMessage( false /* includeSubCommands */ ),
+            "CmdLineModeTest create object <name> [options]"
+            );
+    }
+
+    UTF_MESSAGE( "* @COMMANDS@ skips commands with an empty caption but still recurses into them" );
+
+    {
+        CmdLineModeTest cmdln;
+
+        cmdln.setHelpMessage( "@COMMANDS@" );
+
+        /*
+         * "create" is omitted because its caption is empty, but its children are still listed,
+         * and the whole list is in registration order
+         */
+
+        UTF_REQUIRE_EQUAL(
+            cmdln.helpMessage( false /* includeSubCommands */ ),
+            "  run\n  mail\n  create object\n  create user\n"
+            );
+    }
+
+    UTF_MESSAGE( "* @OPTIONS@ renders the positional options by hand and filters out the hidden ones" );
+
+    {
+        CmdLineTest cmdln;
+
+        /*
+         * NOTE: the non-positional option block is formatted by Boost and its column layout
+         * depends on getScreenColumns(), hence the substring checks rather than equality
+         */
+
+        const auto help = cmdln.helpMessage( false /* includeSubCommands */ );
+
+        UTF_CHECK( bl::cpp::contains( help, "<command>" ) );
+        UTF_CHECK( bl::cpp::contains( help, "Command: run, stop" ) );
+        UTF_CHECK( bl::cpp::contains( help, "--opt1" ) );
+        UTF_CHECK( ! bl::cpp::contains( help, "You should never see this option" ) );
+        UTF_CHECK( ! bl::cpp::contains( help, "--hidden" ) );
+    }
+
+    UTF_MESSAGE( "* a leaf command appends the root options; a command with nothing to say renders nothing" );
+
+    {
+        CmdLineModeTest cmdln;
+
+        const auto runHelp = cmdln.m_commandRun.helpMessage( false /* includeSubCommands */ );
+
+        UTF_CHECK( bl::cpp::contains( runHelp, "--global" ) );
+        UTF_CHECK( bl::cpp::contains( runHelp, "--dryrun" ) );
+
+        /*
+         * "create" has no caption, no help message and no options of its own, and it is not a
+         * leaf either, so it renders nothing at all and reports it - this is the branch which
+         * suppresses the separating blank line in the parent's helpMessage() loop
+         */
+
+        bl::cpp::SafeOutputStringStream oss;
+
+        const auto notEmpty = cmdln.m_commandCreate.helpMessage( oss, false /* includeSubCommands */ );
+
+        UTF_CHECK( ! notEmpty );
+        UTF_CHECK( oss.str().empty() );
+    }
+
+    UTF_MESSAGE( "***************** end CmdLine_HelpMessageComposition tests *****************\n" );
+}
+
+namespace
+{
+    /**
+     * Write a list file with the exact content provided and return its path
+     *
+     * The file is opened in binary mode, so the content is written verbatim
+     */
+
+    std::string writeListFile(
+        SAA_in      const utest::TestDirectory&     dir,
+        SAA_in      const std::string&              name,
+        SAA_in      const std::string&              content
+        )
+    {
+        const auto path = dir.testFile( name );
+
+        {
+            bl::fs::SafeOutputFileStreamWrapper file( path );
+
+            file.stream() << content;
+            file.flushAndCheck();
+        }
+
+        return path.string();
+    }
+
+} // __unnamed
+
+UTF_AUTO_TEST_CASE( CmdLine_ExpandListAndLoadListFile )
+{
+    UTF_MESSAGE( "***************** CmdLine_ExpandListAndLoadListFile tests *****************\n" );
+
+    utest::TestDirectory dir;
+
+    const auto list1 = writeListFile( dir, "list1.txt", "  alpha  \n\nbeta\n   \ngamma\n" );
+    const auto list2 = writeListFile( dir, "list2.txt", "delta\r\nepsilon\r\n" );
+    const auto list3 = writeListFile( dir, "list3.txt", "@list1.txt\nzeta" );
+
+    UTF_MESSAGE( "* expandList() rejects empty values" );
+
+    {
+        std::vector< std::string > values;
+        values.push_back( std::string() );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            bl::cmdline::CommandBase::expandList( values ),
+            bl::UserMessageException,
+            "List may not contain empty values"
+            );
+    }
+
+    UTF_MESSAGE( "* loadListFile() requires a file name to follow the '@'" );
+
+    {
+        std::vector< std::string > values;
+        values.push_back( "@" );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            bl::cmdline::CommandBase::expandList( values ),
+            bl::UserMessageException,
+            "List @file name must be specified"
+            );
+    }
+
+    UTF_MESSAGE( "* loadListFile() fails if the list file does not exist" );
+
+    {
+        std::vector< std::string > result;
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            bl::cmdline::CommandBase::loadListFile( result, dir.testFile( "nope.txt" ).string() ),
+            bl::SystemException,
+            "Cannot open or create file"
+            );
+    }
+
+    UTF_MESSAGE( "* '@file' entries are expanded in place; lines are trimmed and blank ones skipped" );
+
+    {
+        std::vector< std::string > values;
+        values.push_back( "x" );
+        values.push_back( "@" + list1 );
+        values.push_back( "y" );
+
+        std::vector< std::string > expected;
+        expected.push_back( "x" );
+        expected.push_back( "alpha" );
+        expected.push_back( "beta" );
+        expected.push_back( "gamma" );
+        expected.push_back( "y" );
+
+        UTF_REQUIRE_EQUAL( bl::cmdline::CommandBase::expandList( values ), expected );
+    }
+
+    UTF_MESSAGE( "* the list file is opened in binary mode, so the stray CR is removed by the trim" );
+
+    {
+        std::vector< std::string > values;
+        values.push_back( "@" + list2 );
+
+        std::vector< std::string > expected;
+        expected.push_back( "delta" );
+        expected.push_back( "epsilon" );
+
+        UTF_REQUIRE_EQUAL( bl::cmdline::CommandBase::expandList( values ), expected );
+    }
+
+    UTF_MESSAGE( "* expansion is not recursive and a missing trailing newline is not an error" );
+
+    {
+        std::vector< std::string > values;
+        values.push_back( "@" + list3 );
+
+        std::vector< std::string > expected;
+        expected.push_back( "@list1.txt" );
+        expected.push_back( "zeta" );
+
+        UTF_REQUIRE_EQUAL( bl::cmdline::CommandBase::expandList( values ), expected );
+    }
+
+    UTF_MESSAGE( "* a list with no '@file' entries is copied through without touching the file system" );
+
+    {
+        const std::vector< std::string > empty;
+
+        UTF_REQUIRE( bl::cmdline::CommandBase::expandList( empty ).empty() );
+
+        std::vector< std::string > values;
+        values.push_back( "a" );
+        values.push_back( "b" );
+
+        UTF_REQUIRE_EQUAL( bl::cmdline::CommandBase::expandList( values ), values );
+    }
+
+    UTF_MESSAGE( "***************** end CmdLine_ExpandListAndLoadListFile tests *****************\n" );
+}
+
+UTF_AUTO_TEST_CASE( CmdLine_CommandTreeRegistration )
+{
+    UTF_MESSAGE( "***************** CmdLine_CommandTreeRegistration tests *****************\n" );
+
+    UTF_MESSAGE( "* adding the very same option object twice is rejected" );
+
+    {
+        CmdLineModeTest cmdln;
+
+        const auto sizeBefore = cmdln.getAllOptions().size();
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            cmdln.addOption( cmdln.m_verbose ),
+            bl::UnexpectedException,
+            "Duplicate command line option: 'verbose,v'"
+            );
+
+        /*
+         * The lookup map insert runs first, so the options vector must not have been touched
+         */
+
+        UTF_REQUIRE_EQUAL( cmdln.getAllOptions().size(), sizeBefore );
+    }
+
+    UTF_MESSAGE( "* adding a different option object with an already registered name is rejected" );
+
+    {
+        CmdLineModeTest cmdln;
+
+        const auto sizeBefore = cmdln.getAllOptions().size();
+
+        bl::cmdline::VerboseSwitch duplicate;
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            cmdln.addOption( duplicate ),
+            bl::UnexpectedException,
+            "Duplicate command line option: 'verbose,v'"
+            );
+
+        UTF_REQUIRE_EQUAL( cmdln.getAllOptions().size(), sizeBefore );
+
+        /*
+         * The option which registered the name first still wins the lookup
+         */
+
+        UTF_REQUIRE( cmdln.findOption( "verbose,v" ) == &cmdln.m_verbose );
+    }
+
+    UTF_MESSAGE( "* registering a second command with an already registered name is rejected" );
+
+    {
+        CmdLineModeTest cmdln;
+
+        /*
+         * The nested command constructor is protected, hence the derived type
+         */
+
+        struct DuplicateCommand : public bl::cmdline::CommandBase
+        {
+            DuplicateCommand( SAA_inout bl::cmdline::CommandBase* parent )
+                :
+                bl::cmdline::CommandBase( parent, "run" )
+            {
+            }
+        };
+
+        /*
+         * addCommand() throws from inside the child's constructor, so the child is never
+         * constructed and its destructor (which would unregister it) never runs
+         */
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            DuplicateCommand duplicate( &cmdln ),
+            bl::UnexpectedException,
+            "Duplicate command: 'run'"
+            );
+
+        UTF_REQUIRE( cmdln.findCommand( "run" ) == &cmdln.m_commandRun );
+    }
+
+    UTF_MESSAGE( "* findOption() parent lookup and getRootCommand()" );
+
+    {
+        CmdLineModeTest cmdln;
+
+        UTF_REQUIRE( cmdln.m_commandRun.findOption( "global" ) == nullptr );
+        UTF_REQUIRE( cmdln.m_commandRun.findOption( "global", true /* lookupParent */ ) == &cmdln.m_global );
+
+        UTF_REQUIRE( cmdln.m_commandRun.getRootCommand() == &cmdln );
+        UTF_REQUIRE( cmdln.getRootCommand() == &cmdln );
+    }
+
+    UTF_MESSAGE( "* a nested command unregisters itself from its parent when it is destroyed" );
+
+    {
+        CmdLineModeTest cmdln;
+
+        struct TempCommand : public bl::cmdline::CommandBase
+        {
+            TempCommand( SAA_inout bl::cmdline::CommandBase* parent )
+                :
+                bl::cmdline::CommandBase( parent, "temp" )
+            {
+            }
+        };
+
+        {
+            TempCommand temp( &cmdln.m_commandCreate );
+
+            UTF_REQUIRE( cmdln.m_commandCreate.findCommand( "temp" ) == &temp );
+        }
+
+        UTF_REQUIRE( cmdln.m_commandCreate.findCommand( "temp" ) == nullptr );
+
+        /*
+         * Both containers must stay consistent - "object" and "user" survive the removal
+         */
+
+        UTF_REQUIRE( cmdln.m_commandCreate.hasCommands() );
+        UTF_REQUIRE( cmdln.m_commandCreate.findCommand( "object" ) == &cmdln.m_commandCreate.m_commandCreateObject );
+        UTF_REQUIRE( cmdln.m_commandCreate.findCommand( "user" ) == &cmdln.m_commandCreate.m_commandCreateUser );
+    }
+
+    UTF_MESSAGE( "* removeOption() with the very object which registered the name" );
+
+    {
+        CmdLineTest cmdln;
+
+        const auto sizeBefore = cmdln.getAllOptions().size();
+
+        UTF_REQUIRE( cmdln.findOption( "opt2" ) == &cmdln.m_opt2 );
+
+        cmdln.removeOption( cmdln.m_opt2 );
+
+        UTF_REQUIRE_EQUAL( cmdln.getAllOptions().size(), sizeBefore - 1 );
+        UTF_REQUIRE( cmdln.findOption( "opt2" ) == nullptr );
+
+        /*
+         * Removing an option whose name was never registered is a no-op
+         */
+
+        UTF_REQUIRE_NO_THROW( cmdln.removeOption( cmdln.m_missing ) );
+        UTF_REQUIRE_EQUAL( cmdln.getAllOptions().size(), sizeBefore - 1 );
+    }
+
+    UTF_MESSAGE( "* removeOption() with a DIFFERENT object carrying a registered name" );
+
+    {
+        /*
+         * The name is erased from the map and the vector entry is located by that same key,
+         * so the two structures stay in step; locating it by pointer identity instead would
+         * erase nothing from the vector and trip the size assertion of removeOption( ... ),
+         * which aborts a debug run
+         */
+
+        CmdLineTest cmdln;
+
+        const auto sizeBefore = cmdln.getAllOptions().size();
+
+        bl::cmdline::StringOption impostor( "opt2", "A different object with a registered name" );
+
+        cmdln.removeOption( impostor );
+
+        UTF_REQUIRE_EQUAL( cmdln.getAllOptions().size(), sizeBefore - 1 );
+        UTF_REQUIRE( cmdln.findOption( "opt2" ) == nullptr );
+
+        /*
+         * The option which was actually registered under the name is the one which left the
+         * vector, and every other option is still there
+         */
+
+        for( const auto* option : cmdln.getAllOptions() )
+        {
+            UTF_REQUIRE( option != &cmdln.m_opt2 );
+        }
+
+        UTF_REQUIRE( cmdln.findOption( "opt3" ) == &cmdln.m_opt3 );
+    }
+
+    UTF_MESSAGE( "* removeCommand() with a DIFFERENT object carrying a registered name" );
+
+    {
+        /*
+         * Two trees each carrying a command registered under the same name, so the object
+         * handed to removeCommand( ... ) is not the one which is registered here
+         */
+
+        struct TempCommand : public bl::cmdline::CommandBase
+        {
+            TempCommand( SAA_inout bl::cmdline::CommandBase* parent )
+                :
+                bl::cmdline::CommandBase( parent, "temp" )
+            {
+            }
+        };
+
+        CmdLineModeTest cmdlnA;
+        CmdLineModeTest cmdlnB;
+
+        TempCommand tempA( &cmdlnA.m_commandCreate );
+        TempCommand tempB( &cmdlnB.m_commandCreate );
+
+        UTF_REQUIRE( cmdlnA.m_commandCreate.findCommand( "temp" ) == &tempA );
+
+        cmdlnA.m_commandCreate.removeCommand( tempB );
+
+        UTF_REQUIRE( cmdlnA.m_commandCreate.findCommand( "temp" ) == nullptr );
+
+        /*
+         * The other tree is untouched, and the siblings of the removed command survive
+         */
+
+        UTF_REQUIRE( cmdlnB.m_commandCreate.findCommand( "temp" ) == &tempB );
+
+        UTF_REQUIRE(
+            cmdlnA.m_commandCreate.findCommand( "object" ) ==
+                &cmdlnA.m_commandCreate.m_commandCreateObject
+            );
+    }
+
+    UTF_MESSAGE( "***************** end CmdLine_CommandTreeRegistration tests *****************\n" );
+}
+
+namespace
+{
+    /**
+     * A minimal tree whose only purpose is to reach the isDryRunApplicable() == false branch
+     * of CommandBaseT::getOptionsHelp - nothing in the repository overrides that virtual, so
+     * the branch, and with it setFlags / unsetFlags / findOption( ..., lookupParent ), is
+     * dead in every build
+     *
+     * It is also the only place bl::cmdline::GlobalOptions is instantiated in the repository -
+     * bl-tool and TestCmdLine's own CmdLineModeTest each define a look-alike of their own
+     */
+
+    class NoDryRunCommand : public bl::cmdline::CommandBase
+    {
+    public:
+
+        BL_CMDLINE_OPTION     ( m_target,   StringOption,   "target",   "What to operate on" )
+
+        NoDryRunCommand( SAA_inout bl::cmdline::CommandBase* parent )
+            :
+            bl::cmdline::CommandBase( parent, "nodryrun", "DryRunRoot @FULLNAME@ [options]" )
+        {
+            addOption( m_target );
+        }
+
+        virtual bool isDryRunApplicable() const OVERRIDE
+        {
+            return false;
+        }
+    };
+
+    class PlainCommand : public bl::cmdline::CommandBase
+    {
+    public:
+
+        BL_CMDLINE_OPTION     ( m_source,   StringOption,   "source",   "What to read from" )
+
+        PlainCommand( SAA_inout bl::cmdline::CommandBase* parent )
+            :
+            bl::cmdline::CommandBase( parent, "plain", "DryRunRoot @FULLNAME@ [options]" )
+        {
+            addOption( m_source );
+        }
+    };
+
+    class DryRunRoot : public bl::cmdline::CmdLineBase
+    {
+    public:
+
+        bl::cmdline::GlobalOptions      m_globals;
+        NoDryRunCommand                 m_noDryRun;
+        PlainCommand                    m_plain;
+
+        DryRunRoot()
+            :
+            bl::cmdline::CmdLineBase( "root" ),
+            m_globals( this ),
+            m_noDryRun( this ),
+            m_plain( this )
+        {
+        }
+    };
+
+    /**
+     * The same tree, but with the root's own message formatting made to throw on demand -
+     * that is the only way to reach the middle of the hide / render / unhide sequence, since
+     * rendering the root's option block is what sits between the two mutations
+     */
+
+    class ThrowingDryRunRoot : public DryRunRoot
+    {
+    public:
+
+        mutable bool                    m_throwOnFormat;
+
+        ThrowingDryRunRoot()
+            :
+            m_throwOnFormat( false )
+        {
+        }
+
+        virtual std::string formatMessage( SAA_in std::string msg ) const OVERRIDE
+        {
+            if( m_throwOnFormat )
+            {
+                BL_THROW( bl::UnexpectedException(), "The help rendering has failed" );
+            }
+
+            return DryRunRoot::formatMessage( std::move( msg ) );
+        }
+    };
+
+} // __unnamed
+
+UTF_AUTO_TEST_CASE( CmdLine_DryRunNotApplicableHidesParentOption )
+{
+    UTF_MESSAGE( "***************** CmdLine_DryRunNotApplicableHidesParentOption tests *****************\n" );
+
+    /*
+     * A leaf command appends the root's option block to its own help, and immediately before
+     * doing so it hides the root's "dryrun,n" option if the command declares dry run to be
+     * inapplicable, then unhides it again
+     *
+     * Both halves mutate a shared, parent-owned option through a non-const OptionBase* which
+     * outlives the call, so the pair is RAII protected - the throwing sub-case at the end is
+     * what proves --dryrun does not disappear from the root's help for the rest of the process
+     * when rendering the root's block fails
+     */
+
+    DryRunRoot root;
+
+    const auto plainHelp = root.m_plain.helpMessage( false /* includeSubCommands */ );
+
+    UTF_CHECK( bl::cpp::contains( plainHelp, "--dryrun" ) );
+
+    const auto hiddenHelp = root.m_noDryRun.helpMessage( false /* includeSubCommands */ );
+
+    UTF_CHECK( ! bl::cpp::contains( hiddenHelp, "--dryrun" ) );
+
+    /*
+     * Only dryrun was suppressed - the rest of the root's block is still there
+     */
+
+    UTF_CHECK( bl::cpp::contains( hiddenHelp, "--verbose" ) );
+
+    /*
+     * The flag was restored, i.e. unhideNonApplicableParentOptions() ran, and setFlags /
+     * unsetFlags kept their |= and &= ~ semantics rather than clobbering the other flags
+     */
+
+    UTF_REQUIRE( root.findOption( "dryrun,n" ) != nullptr );
+    UTF_CHECK( ! root.findOption( "dryrun,n" ) -> isHidden() );
+
+    /*
+     * ... and the mutation left no residue in a subsequent rendering
+     */
+
+    UTF_CHECK( bl::cpp::contains( root.m_plain.helpMessage( false /* includeSubCommands */ ), "--dryrun" ) );
+
+    /*
+     * GlobalOptions registered all four of its switches through CommandBase's four argument
+     * addOption overload, and DebugSwitch carries Hidden so it never shows up in the help
+     */
+
+    UTF_CHECK_EQUAL( root.getAllOptions().size(), 4U );
+    UTF_CHECK( root.findOption( "debug" ) != nullptr );
+    UTF_CHECK( ! bl::cpp::contains( plainHelp, "--debug" ) );
+
+    UTF_MESSAGE( "* rendering the root's option block throws" );
+
+    {
+        ThrowingDryRunRoot throwingRoot;
+
+        throwingRoot.m_throwOnFormat = true;
+
+        UTF_CHECK_THROW(
+            throwingRoot.m_noDryRun.helpMessage( false /* includeSubCommands */ ),
+            bl::UnexpectedException
+            );
+
+        throwingRoot.m_throwOnFormat = false;
+
+        /*
+         * The hiding is undone even though the rendering in between never returned, so the
+         * next command's help still carries --dryrun
+         */
+
+        UTF_REQUIRE( throwingRoot.findOption( "dryrun,n" ) != nullptr );
+        UTF_CHECK( ! throwingRoot.findOption( "dryrun,n" ) -> isHidden() );
+
+        UTF_CHECK(
+            bl::cpp::contains(
+                throwingRoot.m_plain.helpMessage( false /* includeSubCommands */ ),
+                "--dryrun"
+                )
+            );
+    }
+
+    UTF_MESSAGE( "***************** end CmdLine_DryRunNotApplicableHidesParentOption tests *****************\n" );
+}
+
+UTF_AUTO_TEST_CASE( CmdLine_BaseServerCmdLineJvmGating )
+{
+    UTF_MESSAGE( "***************** CmdLine_BaseServerCmdLineJvmGating tests *****************\n" );
+
+    /*
+     * BaseServerCmdLineT declares m_jarBasePath with cmdline::Required, but it registers that
+     * option - and m_jvmDebugPort - only when the enableJvm constructor argument is true, so
+     * for a server built with enableJvm == false the Required marker is inert and
+     * --jar-base-path is simply an unknown option
+     *
+     * bl-messaging-echo-server is built with enableJvm = false, and moving m_jarBasePath out
+     * of the gate would make it refuse to start without --jar-base-path
+     *
+     * NOTE: every sub-block below gets its own freshly constructed parser instance because a
+     * CmdLineBase instance is single-use - see CmdLine_ParserInstanceIsSingleUse
+     */
+
+    const std::string peerAndBrokers(
+        "--peer-id 11111111-2222-3333-4444-555555555555 --broker-endpoints host:29300"
+        );
+
+    UTF_MESSAGE( "* enableJvm == false: the JVM options are not registered" );
+
+    {
+        bl::messaging::BaseServerCmdLine cmdlNoJvm( "test-server", false /* enableJvm */ );
+
+        UTF_MESSAGE( cmdlNoJvm.helpMessage() );
+
+        UTF_REQUIRE_NO_THROW( cmdlNoJvm.parseCommandLine( peerAndBrokers ) );
+
+        /*
+         * The documented default of --connections
+         */
+
+        UTF_REQUIRE_EQUAL( 16U, cmdlNoJvm.m_connections.getValue() );
+    }
+
+    {
+        bl::messaging::BaseServerCmdLine cmdlNoJvm( "test-server", false /* enableJvm */ );
+
+        UTF_REQUIRE_THROW(
+            cmdlNoJvm.parseCommandLine( peerAndBrokers + " --jar-base-path /opt/jars" ),
+            bl::po::unknown_option
+            );
+    }
+
+    UTF_MESSAGE( "* enableJvm == true: --jar-base-path is registered and required" );
+
+    {
+        bl::messaging::BaseServerCmdLine cmdlJvm( "test-server", true /* enableJvm */ );
+
+        UTF_MESSAGE( cmdlJvm.helpMessage() );
+
+        /*
+         * CmdLineBase::checkRequiredOptions() reports missing required options as a
+         * bl::UserMessageException rather than as bl::po::required_option - see
+         * CmdLine_MissingRequiredOptionsMessage
+         */
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            cmdlJvm.parseCommandLine( peerAndBrokers ),
+            bl::UserMessageException,
+            "the option '--jar-base-path' is required but missing"
+            );
+    }
+
+    {
+        bl::messaging::BaseServerCmdLine cmdlJvm( "test-server", true /* enableJvm */ );
+
+        UTF_REQUIRE_NO_THROW( cmdlJvm.parseCommandLine( peerAndBrokers + " --jar-base-path /opt/jars" ) );
+
+        UTF_REQUIRE_EQUAL( 0U, cmdlJvm.m_jvmDebugPort.getValue() );
+    }
+
+    UTF_MESSAGE( "* --peer-id is required in both shapes" );
+
+    {
+        bl::messaging::BaseServerCmdLine cmdlNoJvm( "test-server", false /* enableJvm */ );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            cmdlNoJvm.parseCommandLine( "--broker-endpoints host:29300" ),
+            bl::UserMessageException,
+            "the option '--peer-id' is required but missing"
+            );
+    }
+
+    {
+        bl::messaging::BaseServerCmdLine cmdlJvm( "test-server", true /* enableJvm */ );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            cmdlJvm.parseCommandLine( "--broker-endpoints host:29300 --jar-base-path /opt/jars" ),
+            bl::UserMessageException,
+            "the option '--peer-id' is required but missing"
+            );
+    }
+
+    UTF_MESSAGE( "* --broker-endpoints accepts more than one value" );
+
+    {
+        bl::messaging::BaseServerCmdLine cmdlNoJvm( "test-server", false /* enableJvm */ );
+
+        UTF_REQUIRE_NO_THROW(
+            cmdlNoJvm.parseCommandLine(
+                "--peer-id 11111111-2222-3333-4444-555555555555 --broker-endpoints a:1 b:2"
+                )
+            );
+
+        UTF_REQUIRE_EQUAL( 2U, cmdlNoJvm.m_brokerEndpoints.getValue().size() );
+        UTF_CHECK_EQUAL( cmdlNoJvm.m_brokerEndpoints.getValue()[ 0 ], "a:1" );
+        UTF_CHECK_EQUAL( cmdlNoJvm.m_brokerEndpoints.getValue()[ 1 ], "b:2" );
+    }
+
+    UTF_MESSAGE( "***************** end CmdLine_BaseServerCmdLineJvmGating tests *****************\n" );
+}

@@ -137,7 +137,13 @@ namespace utest
 
                 m_responseHeaders.clear();
 
-                const auto pos = m_request -> headers().find( http::HttpHeader::g_userAgent );
+                /*
+                 * Note that the parser normalizes the header names to lower case
+                 */
+
+                const auto pos = m_request -> headers().find(
+                    bl::str::to_lower_copy( http::HttpHeader::g_userAgent )
+                    );
 
                 if( pos != m_request -> headers().end() )
                 {
@@ -363,7 +369,17 @@ namespace utest
                         certificatePem
                         );
 
-                    utest::TestTaskUtils::startAcceptorAndExecuteCallback( callback, acceptor );
+                    /*
+                     * The acceptor binds "0.0.0.0", so the readiness probe must target the
+                     * regular test host rather than the bind address
+                     */
+
+                    utest::TestTaskUtils::startAcceptorAndExecuteCallback(
+                        callback,
+                        acceptor,
+                        test::UtfArgsParser::host()                          /* readinessHost */,
+                        test::UtfArgsParser::port()                          /* readinessPort */
+                        );
                 }
             }
         };

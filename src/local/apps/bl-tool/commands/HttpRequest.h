@@ -173,6 +173,17 @@ namespace bltool
 
                         taskImpl -> isExpectUtf8Content( true );
 
+                        if( m_cookies.hasValue() || m_headers.hasValue() )
+                        {
+                            /*
+                             * The request carries credentials (cookies or custom headers), so
+                             * the exception dumps of this task must not contain the URL, the
+                             * request or the response
+                             */
+
+                            taskImpl -> isSecureMode( true );
+                        }
+
                         eq -> push_back( om::qi< Task >( taskImpl ) );
                         eq -> flush();
 
@@ -191,10 +202,16 @@ namespace bltool
 
                 std::string line;
 
-                while( is.good() )
-                {
-                    std::getline( is, line );
+                /*
+                 * The loop condition must be the extraction itself rather than is.good():
+                 * for a body which ends in a newline getline() performs one more successful
+                 * looking iteration which extracts nothing and sets eofbit and failbit, and
+                 * writing that empty line out appended a spurious blank line to every saved
+                 * response
+                 */
 
+                while( std::getline( is, line ) )
+                {
                     os << line << std::endl;
                 }
             }

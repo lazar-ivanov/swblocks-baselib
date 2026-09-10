@@ -54,12 +54,75 @@ namespace bl
             {
             public:
 
+                /**
+                 * @brief Rejects an encoding which cannot be written on this platform
+                 *
+                 * This is deliberately called before the file is opened for writing - the
+                 * arms below throw from inside the switch, i.e. after os::fopen( ..., "wb" )
+                 * has already truncated an existing file
+                 */
+
+                static void chkEncodingSupported(
+                    SAA_in      const fs::path&                             fileName,
+                    SAA_in      const TextFileEncoding                      encoding
+                    )
+                {
+
+#if defined( _WIN32 )
+
+                    /*
+                     * The file name is only named by the UNIX-only arm below
+                     */
+
+                    BL_UNUSED( fileName );
+
+#endif // defined( _WIN32 )
+
+                    switch( encoding )
+                    {
+                        case TextFileEncoding::Utf8:
+                        case TextFileEncoding::Utf8_NoPreamble:
+                            break;
+
+                        case TextFileEncoding::Utf16LE:
+                        case TextFileEncoding::Utf16LE_NoPreamble:
+
+#if ! defined( _WIN32 )
+
+                            BL_THROW(
+                                NotSupportedException(),
+                                BL_MSG()
+                                    << "Writing UTF-16LE encoded file "
+                                    << fileName
+                                    << " is not supported on this platform"
+                                );
+
+#endif // ! defined( _WIN32 )
+
+                            break;
+
+                        default:
+                            BL_THROW(
+                                UnexpectedException(),
+                                BL_MSG()
+                                    << "Invalid TextFileEncoding: "
+                                    << ( int ) encoding
+                                );
+                    }
+                }
+
                 static void writeTextFile(
                     SAA_in      const fs::path&                             fileName,
                     SAA_in      const std::string&                          content,
                     SAA_in      const TextFileEncoding                      encoding
                     )
                 {
+                    /*
+                     * An unsupported or invalid encoding must not truncate an existing file
+                     */
+
+                    chkEncodingSupported( fileName, encoding );
+
                     const fs::path parentDir = fileName.parent_path();
 
                     if( ! parentDir.empty() )

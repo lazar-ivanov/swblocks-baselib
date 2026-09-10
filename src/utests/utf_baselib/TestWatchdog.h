@@ -204,3 +204,117 @@ UTF_AUTO_TEST_CASE( TestWatchdogExpring )
     UTF_CHECK_EQUAL( "testMonitor1", expiring[ 0 ] );
     UTF_CHECK_EQUAL( "testMonitor2", expiring[ 1 ] );
 }
+
+UTF_AUTO_TEST_CASE( TestWatchdogMultipleMonitorsDeterministic )
+{
+    using bl::Watchdog;
+
+    /*
+     * The countdown is kept in whole checking intervals, so run() is fully deterministic
+     * and independent of the wall clock - it decrements every registered monitor once per
+     * iteration and returns the index of the iteration on which one of them reaches zero
+     *
+     * With a 1 ms interval extendExpiration( ... ) stores
+     * ( duration + interval - 1 ) / interval + 1 intervals, i.e. 1001 for 1000 ms and 6
+     * for 5 ms, so "stuck" hits zero on iteration 5 while "healthy" is still at 995
+     */
+
+    {
+        Watchdog watchdog( bl::time::milliseconds( 1 ) /* checkingInterval */ );
+
+        watchdog.extendExpiration( "healthy", bl::time::milliseconds( 1000U ) );
+        watchdog.extendExpiration( "stuck", bl::time::milliseconds( 5U ) );
+
+        UTF_REQUIRE_EQUAL( 5U, watchdog.run( 100U ) );
+
+        /*
+         * Only the monitor which actually expired may be reported - "healthy" is 995
+         * intervals away, far outside the 10 interval horizon below
+         */
+
+        const auto expiring = watchdog.expiringMonitors( bl::time::milliseconds( 10U ) );
+
+        UTF_REQUIRE_EQUAL( 1U, expiring.size() );
+        UTF_REQUIRE_EQUAL( std::string( "stuck" ), expiring[ 0 ] );
+    }
+
+    /*
+     * extendExpiration( ... ) is an unconditional assignment, i.e. a genuine reset of the
+     * countdown and not an accumulation on top of what is left
+     */
+
+    {
+        Watchdog watchdog2( bl::time::milliseconds( 1 ) /* checkingInterval */ );
+
+        watchdog2.extendExpiration( "m", bl::time::milliseconds( 5U ) );
+
+        /*
+         * 6 intervals against 3 iterations - nothing expires, so maxIterations is returned
+         * and 3 intervals have been consumed
+         */
+
+        UTF_REQUIRE_EQUAL( 3U, watchdog2.run( 3U ) );
+
+        watchdog2.extendExpiration( "m", bl::time::milliseconds( 5U ) );
+
+        /*
+         * Back to 6 intervals - had the second extension accumulated onto the remaining 3
+         * this would be 8, and had it not reset at all it would return 2
+         */
+
+        UTF_REQUIRE_EQUAL( 5U, watchdog2.run( 10U ) );
+    }
+}
+
+UTF_AUTO_TEST_CASE( TestWatchdogArgumentValidation )
+{
+    using bl::Watchdog;
+
+    /*
+     * The constructor's BL_CHK on the checking interval is the only thing preventing
+     * timeDurationInCheckingIntervals( ... ) from dividing by zero on every call
+     *
+     * Watchdog is BL_NO_COPY_OR_MOVE, so the construction is wrapped in a lambda rather
+     * than declared inline in the macro argument
+     */
+
+    const auto construct = []( SAA_in const bl::time::time_duration& checkingInterval ) -> void
+    {
+        bl::Watchdog watchdog( checkingInterval );
+
+        BL_UNUSED( watchdog );
+    };
+
+    UTF_CHECK_THROW( construct( bl::time::milliseconds( 0 ) ), bl::UnexpectedException );
+
+    /*
+     * A negative interval passes the zero check and then wraps into a huge unsigned value in
+     * the uint64_t cast, so the watchdog would silently never report anything as expiring
+     */
+
+    UTF_CHECK_THROW( construct( bl::time::milliseconds( -1 ) ), bl::UnexpectedException );
+
+    Watchdog watchdog( bl::time::milliseconds( 1 ) /* checkingInterval */ );
+
+    UTF_CHECK_THROW(
+        watchdog.extendExpiration( "m", bl::time::milliseconds( -1 ) ),
+        bl::UnexpectedException
+        );
+
+    /*
+     * A negative horizon wraps the same way and would report EVERY monitor as expiring
+     */
+
+    UTF_CHECK_THROW(
+        watchdog.expiringMonitors( bl::time::milliseconds( -1 ) ),
+        bl::UnexpectedException
+        );
+
+    /*
+     * extendExpiration( ... ) validates BEFORE it calls setupMonitor( ... ), so a
+     * rejected call must not consume a monitor slot - index 0 for the first monitor
+     * actually registered is what proves "m" above was never registered
+     */
+
+    UTF_CHECK_EQUAL( 0U, watchdog.setupMonitor( "other" ) );
+}

@@ -160,9 +160,16 @@ namespace bl
                 )
                 -> om::ObjPtr< Response > OVERRIDE
             {
+                /*
+                 * Note that the redacted form is used here - this response goes out over HTTP
+                 * and it may reach an untrusted client, so it must not carry the exception
+                 * dump, the source locations or the server side endpoint addresses (the full
+                 * information is still logged on the server)
+                 */
+
                 return Response::createInstance(
                     httpStatusCode                                                          /* httpStatusCode */,
-                    dm::ServerErrorHelpers::getServerErrorAsJson( eptr )                    /* content */,
+                    dm::ServerErrorHelpers::getRedactedServerErrorAsJson( eptr )            /* content */,
                     cpp::copy( http::HttpHeader::g_contentTypeJsonUtf8 )                    /* contentType */
                     );
             }

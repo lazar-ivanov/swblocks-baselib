@@ -125,60 +125,96 @@ namespace utest
                 }
             };
 
+            if( ! exists( left ) || ! exists( right ) || ! is_directory( left ) || ! is_directory( right ) )
+            {
+                /*
+                 * A missing path, or a path which is not a directory, is a mismatch and it
+                 * must never be reported as an agreement - otherwise a transfer which has
+                 * produced nothing at all would compare equal to its own input
+                 */
+
+                BL_LOG(
+                    bl::Logging::debug(),
+                    BL_MSG()
+                        << "TestFsUtils: Comparison failed because one of the paths does not exist "
+                        << "or is not a directory "
+                        << left
+                        << " "
+                        << right
+                    );
+
+                return false;
+            }
+
             bool isSimilar = true;
 
-            if( exists( left ) && exists( right ) && is_directory( left ) && is_directory( right ) )
+            list_t leftVec, rightVec;
+
+            copy( bl::fs::directory_iterator( left ), bl::fs::directory_iterator(), back_inserter( leftVec ) );
+            copy( bl::fs::directory_iterator( right ), bl::fs::directory_iterator(), back_inserter( rightVec ) );
+
+            isSimilar = isSimilar && ( leftVec.size() == rightVec.size() );
+
+            if( ! isSimilar)
             {
-                list_t leftVec, rightVec;
+                printFolders( left, right, isSimilar );
+                return isSimilar;
+            }
 
-                copy( bl::fs::directory_iterator( left ), bl::fs::directory_iterator(), back_inserter( leftVec ) );
-                copy( bl::fs::directory_iterator( right ), bl::fs::directory_iterator(), back_inserter( rightVec ) );
+            sort( leftVec.begin(), leftVec.end() );
+            sort( rightVec.begin(), rightVec.end() );
 
-                isSimilar = isSimilar && ( leftVec.size() == rightVec.size() );
+            auto leftIter = leftVec.begin();
+            auto rightIter = rightVec.begin();
 
-                if( ! isSimilar)
+            for( ; leftIter != leftVec.end() && rightIter != rightVec.end(); ++leftIter, ++rightIter )
+            {
+                /*
+                 * The type of the right hand side entry must be checked too, otherwise
+                 * a directory on the left and a file on the right compare as similar
+                 */
+
+                if( is_directory( *leftIter ) )
                 {
-                    printFolders( left, right, isSimilar );
-                    return isSimilar;
+                    isSimilar = isSimilar &&
+                        is_directory( *rightIter ) &&
+                        ( leftIter->filename() == rightIter->filename() ) &&
+                        compareFolders( *leftIter, *rightIter );
+                }
+                else if( is_regular_file( *leftIter ) )
+                {
+                    isSimilar = isSimilar &&
+                        is_regular_file( *rightIter ) &&
+                        compareFileContents( *leftIter, *rightIter );
+                }
+                else if( is_symlink( *leftIter ) )
+                {
+                    isSimilar = isSimilar &&
+                        is_symlink( *rightIter ) &&
+                        ( read_symlink( *leftIter ).filename() == read_symlink( *rightIter ).filename() );
+                }
+                else
+                {
+                    /*
+                     * An entry of some other type which the comparator can't verify; it is
+                     * reported as a mismatch rather than silently accepted
+                     */
+
+                    isSimilar = false;
                 }
 
-                sort( leftVec.begin(), leftVec.end() );
-                sort( rightVec.begin(), rightVec.end() );
-
-                auto leftIter = leftVec.begin();
-                auto rightIter = rightVec.begin();
-
-                for( ; leftIter != leftVec.end() && rightIter != rightVec.end(); ++leftIter, ++rightIter )
+                if( ! isSimilar )
                 {
-                    if( is_directory( *leftIter ) )
-                    {
-                        isSimilar = isSimilar &&
-                            ( leftIter->filename() == rightIter->filename() ) &&
-                            compareFolders( *leftIter, *rightIter );
-                    }
-                    else if( is_regular_file( *leftIter ) )
-                    {
-                        isSimilar = isSimilar && compareFileContents( *leftIter, *rightIter );
-                    }
-                    else if( is_symlink( *leftIter ) )
-                    {
-                        isSimilar = isSimilar &&
-                            ( read_symlink( *leftIter ).filename() == read_symlink( *rightIter ).filename() );
-                    }
+                    BL_LOG(
+                        bl::Logging::debug(),
+                        BL_MSG()
+                            << "TestFsUtils: Comparison failed "
+                            << *leftIter
+                            << " "
+                            << *rightIter
+                        );
 
-                    if( ! isSimilar )
-                    {
-                        BL_LOG(
-                            bl::Logging::debug(),
-                            BL_MSG()
-                                << "TestFsUtils: Comparison failed "
-                                << *leftIter
-                                << " "
-                                << *rightIter
-                            );
-
-                        break;
-                    }
+                    break;
                 }
             }
 
@@ -193,64 +229,119 @@ namespace utest
              SAA_in_opt          const bool              ignoreName = false
              )
         {
-            bool isSimilar = false;
-
-            if( exists( leftPath ) && exists( rightPath ) && is_regular_file( leftPath ) && is_regular_file( rightPath ) )
+            if( ! exists( leftPath ) || ! exists( rightPath ) ||
+                ! is_regular_file( leftPath ) || ! is_regular_file( rightPath ) )
             {
-                isSimilar =
-                    ( ignoreName || ( leftPath.filename() == rightPath.filename() ) ) &&
-                    ( file_size( leftPath ) == file_size( rightPath ) ) &&
-                    ( ignoreTimestamp || ( last_write_time( leftPath ) == last_write_time( rightPath ) ) );
+                BL_LOG(
+                    bl::Logging::debug(),
+                    BL_MSG()
+                        << "TestFsUtils: File Comparison failed because one of the paths does not exist "
+                        << "or is not a regular file "
+                        << leftPath
+                        << " "
+                        << rightPath
+                    );
 
-                if( ! isSimilar )
+                return false;
+            }
+
+            const auto fileSize = file_size( leftPath );
+
+            const bool isMetadataSimilar =
+                ( ignoreName || ( leftPath.filename() == rightPath.filename() ) ) &&
+                ( fileSize == file_size( rightPath ) ) &&
+                ( ignoreTimestamp || ( last_write_time( leftPath ) == last_write_time( rightPath ) ) );
+
+            if( ! isMetadataSimilar )
+            {
+                BL_LOG(
+                    bl::Logging::debug(),
+                    BL_MSG()
+                        << "TestFsUtils: File Metadata Comparison failed "
+                        << leftPath
+                        << " "
+                        << rightPath
+                    );
+
+                return false;
+            }
+
+            /*
+             * The metadata matches; now compare the entire content of the two files by
+             * streaming both of them in fixed size chunks until the end of the file
+             *
+             * Every byte is compared, including the one at offset zero, and the first
+             * difference short-circuits the comparison
+             */
+
+            const std::size_t bufferSize = 64U * 1024U;
+
+            const auto leftContents = bl::cpp::SafeUniquePtr< char[] >::attach( new char[ bufferSize ] );
+            const auto rightContents = bl::cpp::SafeUniquePtr< char[] >::attach( new char[ bufferSize ] );
+
+            bl::fs::SafeInputFileStreamWrapper leftFileWrapper( leftPath );
+            auto& leftFile = leftFileWrapper.stream();
+
+            bl::fs::SafeInputFileStreamWrapper rightFileWrapper( rightPath );
+            auto& rightFile = rightFileWrapper.stream();
+
+            std::uint64_t offset = 0U;
+
+            while( offset < fileSize )
+            {
+                const auto readSize =
+                    ( std::size_t ) std::min< std::uint64_t >( bufferSize, fileSize - offset );
+
+                leftFile.read( leftContents.get(), readSize );
+                rightFile.read( rightContents.get(), readSize );
+
+                if(
+                    leftFile.gcount() != ( std::streamsize ) readSize ||
+                    rightFile.gcount() != ( std::streamsize ) readSize
+                    )
                 {
                     BL_LOG(
                         bl::Logging::debug(),
                         BL_MSG()
-                            << "TestFsUtils: File Metadata Comparison failed "
+                            << "TestFsUtils: File Content Comparison failed because one of the files "
+                            << "could not be read at offset "
+                            << offset
+                            << " "
                             << leftPath
                             << " "
                             << rightPath
                         );
+
+                    return false;
                 }
 
-                bl::fs::SafeInputFileStreamWrapper leftFileWrapper( leftPath );
-                auto& leftFile = leftFileWrapper.stream();
-                leftFile.seekg( 0, std::ios::end );
+                std::size_t counter = 0U;
 
-                bl::fs::SafeInputFileStreamWrapper rightFileWrapper( rightPath );
-                auto& rightFile = rightFileWrapper.stream();
-                rightFile.seekg( 0, std::ios::end );
-
-                if( leftFile.good() && rightFile.good() )
+                while( counter < readSize && leftContents.get()[ counter ] == rightContents.get()[ counter ] )
                 {
-                    const auto leftSize = leftFile.tellg();
-                    const auto rightSize = rightFile.tellg();
-                    isSimilar = isSimilar && ( leftSize == rightSize );
-
-                    if( isSimilar && leftSize > 0 )
-                    {
-                        const auto readSize = ( std::size_t ) std::min< decltype( leftSize ) >( 1024U, leftSize );
-                        const auto leftContents = bl::cpp::SafeUniquePtr< char[] >::attach( new char[ readSize ] );
-                        const auto rightContents = bl::cpp::SafeUniquePtr< char[] >::attach( new char[ readSize ] );
-
-                        leftFile.seekg( 0, std::ios::beg );
-                        rightFile.seekg( 0, std::ios::beg );
-                        leftFile.read( leftContents.get(), readSize );
-                        rightFile.read( rightContents.get(), readSize );
-
-                        std::size_t counter = readSize - 1;
-
-                        while( counter && isSimilar )
-                        {
-                            isSimilar = isSimilar && ( leftContents.get()[ counter ] == rightContents.get()[ counter ] );
-                            --counter;
-                        }
-                    }
+                    ++counter;
                 }
+
+                if( counter != readSize )
+                {
+                    BL_LOG(
+                        bl::Logging::debug(),
+                        BL_MSG()
+                            << "TestFsUtils: File Content Comparison failed at offset "
+                            << ( offset + counter )
+                            << " "
+                            << leftPath
+                            << " "
+                            << rightPath
+                        );
+
+                    return false;
+                }
+
+                offset += readSize;
             }
 
-            return isSimilar;
+            return true;
         }
 
         static void createDummyFile(
@@ -258,15 +349,38 @@ namespace utest
              SAA_in              const std::uint64_t        fileSize
              )
         {
-            const unsigned char pattern[] = { 1, 2, 3, 4, 5 };
+            /*
+             * The file is filled with a position dependent pattern, so the content is a
+             * real oracle for a transfer: the value of a byte is derived from its absolute
+             * offset in the file, which makes a block written at the wrong offset, in the
+             * wrong order or twice detectable
+             *
+             * The byte at offset zero is deliberately not zero, and the period of the
+             * pattern (251) does not divide the block size used by the transfer code, so
+             * swapping two whole blocks does not go unnoticed either
+             */
+
+            const std::size_t bufferSize = 64U * 1024U;
+
+            const auto buffer = bl::cpp::SafeUniquePtr< char[] >::attach( new char[ bufferSize ] );
+
             const auto outfile = bl::os::fopen( path, "wb" );
 
-            if( fileSize > 0 )
+            std::uint64_t offset = 0U;
+
+            while( offset < fileSize )
             {
-                std::uint64_t pos = fileSize > BL_ARRAY_SIZE( pattern ) ? fileSize - BL_ARRAY_SIZE( pattern ) : 0U;
-                const auto writeSize = ( std::size_t ) std::min< decltype( fileSize ) >( fileSize, BL_ARRAY_SIZE( pattern ) );
-                bl::os::fseek( outfile, pos, SEEK_SET );
-                bl::os::fwrite( outfile, pattern , writeSize );
+                const auto writeSize =
+                    ( std::size_t ) std::min< std::uint64_t >( bufferSize, fileSize - offset );
+
+                for( std::size_t k = 0U; k < writeSize; ++k )
+                {
+                    buffer.get()[ k ] = static_cast< char >( ( ( offset + k ) * 31U + 7U ) % 251U );
+                }
+
+                bl::os::fwrite( outfile, buffer.get(), writeSize );
+
+                offset += writeSize;
             }
         }
 
@@ -304,7 +418,16 @@ namespace utest
             m_fixedFilePaths.push_back( std::make_pair( normalFilePath, 20U * 1024U ) );
             m_fixedFilePaths.push_back( std::make_pair( barPath / "oneChunkFile.bin", 510U * 1024U ) );
             m_fixedFilePaths.push_back( std::make_pair( barPath / "chunkSizedFile.bin", 512U * 1024U ) );
-            m_fixedFilePaths.push_back( std::make_pair( barPath / "multipleChunkFile.bin", 2U * 512U * 1024U ) );
+
+            /*
+             * The default capacity of bl::data::DataBlock is 1MB, so exactlyOneBlockFile.bin
+             * pins the 'bytes left == capacity' boundary case while multiChunkFile.bin is
+             * transferred as three blocks - two full ones and a partial one, because its
+             * size is deliberately not a multiple of the block size
+             */
+
+            m_fixedFilePaths.push_back( std::make_pair( barPath / "exactlyOneBlockFile.bin", 2U * 512U * 1024U ) );
+            m_fixedFilePaths.push_back( std::make_pair( barPath / "multiChunkFile.bin", 2U * 1024U * 1024U + 12345U ) );
             m_fixedFilePaths.push_back( std::make_pair( barPath / " FileName with Spaces.bin", 20U * 1024U ) );
             m_fixedFilePaths.push_back( std::make_pair( barPath / "FileNameWithOne Space.bin", 20U * 1024U ) );
             m_fixedFilePaths.push_back( std::make_pair( barPath / "FileNameWith'!£$%^&_-@;,.(WinRestrictedSpecialCharacters).bin", 20U * 1024U ) );
@@ -330,6 +453,17 @@ namespace utest
                 m_fixedDirSymlinkPaths.push_back( std::make_pair( barPath, basePath / "linkToBar" ) );
                 m_fixedDirSymlinkPaths.push_back( std::make_pair( basePath / "emptyDirectory", basePath / "linkToEmpty" ) );
                 m_fixedFileSymlinkPaths.push_back( std::make_pair( normalFilePath, basePath / "linkToNormal.bin" ) );
+
+                /*
+                 * A dangling link - its target is never created
+                 *
+                 * Obtaining the timestamps of a link follows it, so packaging a tree which
+                 * contains a broken link must not attempt to stat the target of the link
+                 */
+
+                m_fixedFileSymlinkPaths.push_back(
+                    std::make_pair( basePath / "noSuchTarget.bin", basePath / "danglingLink.bin" )
+                    );
             }
         }
 

@@ -113,7 +113,7 @@ namespace
         "            typename E\n"
         "        >\n"
         "        const std::string\n"
-        "        ConfigDataDefaultT< E >::g_resourceDataDecoded = ConfigDataDefaultT< E >::initResourceData();\n"
+        "        {{ResourceClassName}}T< E >::g_resourceDataDecoded = {{ResourceClassName}}T< E >::initResourceData();\n"
         "\n"
         "        typedef {{ResourceClassName}}T<> {{ResourceClassName}};\n"
         "\n"
@@ -203,9 +203,13 @@ namespace bltool
             {
                 using namespace bl;
 
-                const std::string encodedData = SerializationUtils::base64EncodeString(
-                    encoding::readTextFile( m_inputFile.getValue() )
-                    );
+                /*
+                 * Note that the input must be read as binary - reading it as text applies BOM
+                 * detection and transcoding, which corrupts a binary resource
+                 */
+
+                const std::string encodedData =
+                    SerializationUtils::encodeFromFileToBase64String( m_inputFile.getValue() );
 
                 const auto classNameUpperCase = str::to_upper_copy( m_className.getValue() );
 

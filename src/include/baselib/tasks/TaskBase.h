@@ -276,7 +276,7 @@ namespace bl
         typedef cpp::function< om::ObjPtr< Task > () >                                          GetContinuationCallback;
         typedef cpp::function< om::ObjPtr< Task > ( SAA_inout Task* finishedTask ) >            ContinuationCallback;
 
-        typedef cpp::function< void ( SAA_in_opt const std::exception_ptr& eptr ) NOEXCEPT >    CompletionCallback;
+        typedef cpp::function< void ( SAA_in_opt const std::exception_ptr& eptr ) >             CompletionCallback;
         typedef cpp::function< void ( SAA_in const CompletionCallback& onReady ) >              ScheduleCallback;
 
         /**
@@ -578,7 +578,7 @@ namespace bl
                             }
 
                             eptr = std::current_exception();
-                            m_exception = eptr;
+                            setExceptionInternal( eptr );
                         }
                     }
 
@@ -699,7 +699,7 @@ namespace bl
 
                     if( ! m_exception )
                     {
-                        m_exception = eptr;
+                        setExceptionInternal( eptr );
                     }
 
                     m_cbReady.swap( cbReady );
@@ -728,8 +728,18 @@ namespace bl
 
             std::string                                                             m_name;
 
-            State                                                                   m_state;
+            /*
+             * Note that m_state and m_hasException are atomic as they're read from other
+             * threads without holding the task lock (e.g. by getState(), isFailed() and
+             * isFailedOrFailing()) while they're written under the lock
+             *
+             * m_hasException simply mirrors ( nullptr != m_exception ) and it must only be
+             * updated together with m_exception via setExceptionInternal( ... ) below
+             */
+
+            std::atomic< State >                                                    m_state;
             std::exception_ptr                                                      m_exception;
+            std::atomic< bool >                                                     m_hasException;
             cpp::void_callback_noexcept_t                                           m_cbReady;
             bool                                                                    m_notifyCalled;
             mutable os::mutex                                                       m_lock;
@@ -739,13 +749,30 @@ namespace bl
                 :
 #if !defined( BL_DEVENV_VERSION ) || BL_DEVENV_VERSION < 3
                 m_cancelRequested( ATOMIC_VAR_INIT( false ) ),
+                m_state( ATOMIC_VAR_INIT( Created ) ),
+                m_exception( nullptr ),
+                m_hasException( ATOMIC_VAR_INIT( false ) ),
 #else
                 m_cancelRequested( false ),
-#endif
                 m_state( Created ),
                 m_exception( nullptr ),
+                m_hasException( false ),
+#endif
                 m_notifyCalled( false )
             {
+            }
+
+            /**
+             * @brief Sets the task exception and keeps the m_hasException mirror in sync
+             *
+             * It must be called with the task lock held (or before the task is shared
+             * with other threads) as it is the only place where m_exception is assigned
+             */
+
+            void setExceptionInternal( SAA_in_opt const std::exception_ptr& eptr ) NOEXCEPT
+            {
+                m_exception = eptr;
+                m_hasException = ( nullptr != eptr );
             }
 
             ~TaskBaseT()
@@ -940,6 +967,12 @@ namespace bl
              * state if e.g. they terminate unexpectedly (e.g. with exception)
              *
              * This task can also be used to re-map the final exception if desired
+             *
+             * Note that this callback is invoked while the task lock (m_lock) is held and
+             * therefore it must never block - in particular it must not wait on other tasks
+             * or flush execution queues with wait=true, as the tasks it would wait on may
+             * need to acquire this same lock (see the header invariant at the top of this
+             * file - a task must never block on tasks executing in the same thread pool)
              */
 
             virtual auto onTaskStoppedNothrow(
@@ -1056,12 +1089,12 @@ namespace bl
 
             virtual bool isFailed() const NOEXCEPT OVERRIDE
             {
-                return ( m_state >= Task::PendingCompletion && nullptr != m_exception );
+                return ( m_state >= Task::PendingCompletion && m_hasException );
             }
 
             virtual bool isFailedOrFailing() const NOEXCEPT OVERRIDE
             {
-                return ( nullptr != m_exception );
+                return m_hasException;
             }
 
             virtual Task::State getState() const NOEXCEPT OVERRIDE
@@ -1095,7 +1128,7 @@ namespace bl
 
                 BL_MUTEX_GUARD( m_lock );
 
-                m_exception = exception;
+                setExceptionInternal( exception );
 
                 BL_NOEXCEPT_END()
             }
@@ -1128,7 +1161,7 @@ namespace bl
                      * clear the m_notifyCalled flag
                      */
 
-                    m_exception = nullptr;
+                    setExceptionInternal( nullptr );
                     m_notifyCalled = false;
                     m_cancelRequested = false;
                 }
@@ -1148,9 +1181,9 @@ namespace bl
                          * before it has started execution
                          */
 
-                        BL_THROW_EC( asio::error::operation_aborted, BL_SYSTEM_ERROR_DEFAULT_MSG );
-
                         isExpectedException = true;
+
+                        BL_THROW_EC( asio::error::operation_aborted, BL_SYSTEM_ERROR_DEFAULT_MSG );
                     }
 
                     scheduleTask( eq );
@@ -1233,7 +1266,7 @@ namespace bl
 
             SimpleCompletedTaskT( SAA_in_opt const std::exception_ptr& eptr = std::exception_ptr() )
             {
-                base_type::m_exception = eptr;
+                base_type::setExceptionInternal( eptr );
                 base_type::m_state = Task::Completed;
             }
 
@@ -1685,11 +1718,20 @@ namespace bl
             cpp::SafeUniquePtr< asio::deadline_timer >                              m_timer;
             std::shared_ptr< ExecutionQueue >                                       m_eq;
 
-            void resetTimer()
+            /**
+             * @brief Creates the timer on the thread pool the task is to run on
+             *
+             * The queue's local thread pool is honoured here the same way
+             * TaskBaseT::getThreadPool( eq ) honours it for every other task - every
+             * ObservableBase is a timer task, so this is what decides where the timers of a
+             * reactive pipeline run when a local pool is configured
+             */
+
+            void resetTimer( SAA_in const std::shared_ptr< ExecutionQueue >& eq )
             {
                 m_timer.reset(
                     new asio::deadline_timer(
-                        ThreadPoolDefault::getDefault( base_type::getThreadPoolId() ) -> aioService(),
+                        base_type::getThreadPool( eq ) -> aioService(),
                         time::milliseconds( 0 )
                         )
                     );
@@ -1770,9 +1812,30 @@ namespace bl
 
                 m_eq = eq;
 
-                resetTimer();
+                resetTimer( eq );
 
                 scheduleTimerInternal( getInitDelay() );
+
+                /*
+                 * Honour a cancellation which was requested before the task started
+                 *
+                 * requestCancelInternal() only calls cancelTask() for a task which is already
+                 * running, so a request which arrived while this task was still in the Created
+                 * state has marked it and returned without touching the timer - which did not
+                 * exist yet. The generic "cancelled before it started" abort in scheduleNothrow()
+                 * does not apply either, because scheduleEvenIfAlreadyCanceled() below returns
+                 * true for timer tasks. Without the check here the wait just armed would run to
+                 * completion and the task would finish only after its full init delay
+                 *
+                 * This runs under the same lock as requestCancel(), so the request is either
+                 * entirely before the wait was armed (and is seen here) or entirely after it
+                 * (and reaches cancelTask() directly, as the state is Running by then)
+                 */
+
+                if( isCanceled() )
+                {
+                    cancelTask();
+                }
             }
 
             virtual bool scheduleEvenIfAlreadyCanceled() OVERRIDE
@@ -1790,11 +1853,15 @@ namespace bl
                 if( m_timer )
                 {
                     /*
-                     * Just schedule the timer immediately to start attempting
-                     * cancellation as soon as possible
+                     * Just cancel the timer to start attempting cancellation
+                     * as soon as possible
+                     *
+                     * Note that we must not re-arm the timer here as the aborted
+                     * wait handler will call run() and re-arm it itself, so exactly
+                     * one wait handler is kept in flight
                      */
 
-                    scheduleTimerInternal();
+                    m_timer -> cancel();
                 }
             }
 
@@ -1802,15 +1869,14 @@ namespace bl
 
             void wakeUp()
             {
-                if( Running == getState() && m_timer )
-                {
-                    /*
-                     * Cancel the timer to execute the task immediately
-                     * and replace it with a fresh (non-canceled) timer
-                     */
+                /*
+                 * Cancel the timer to execute the task immediately
+                 *
+                 * The aborted wait handler calls run() and then re-arms the timer,
+                 * so this is the same operation as runNow() below
+                 */
 
-                    resetTimer();
-                }
+                runNow();
             }
 
             void runNow()
@@ -1819,7 +1885,13 @@ namespace bl
 
                 if( Running == base_type::m_state && m_timer )
                 {
-                    scheduleTimerInternal();
+                    /*
+                     * Cancel the armed wait to execute run() immediately; the aborted
+                     * wait handler will re-arm the timer, so exactly one wait handler
+                     * is kept in flight
+                     */
+
+                    m_timer -> cancel();
                 }
             }
 
@@ -2020,6 +2092,18 @@ namespace bl
             cpp::ScalarTypeIniter< std::size_t >                                m_currentRetryCount;
             cpp::ScalarTypeIniter< bool >                                       m_retrying;
 
+            /**
+             * @brief The cancel latch of the wrapper itself
+             *
+             * The forwarding requestCancel() only reaches the task which happens to be wrapped at
+             * the time of the call, but the operation this task represents is the whole retry
+             * sequence and only the wrapper knows that; without the latch below every swap of the
+             * wrapped task (the retry sleep timer and then a freshly created work task) would
+             * silently discard the cancellation request
+             */
+
+            std::atomic< bool >                                                 m_cancelRequested;
+
             RetryableWrapperTaskT(
                 SAA_in          factory_callback_t&&                            taskFactory,
                 SAA_in          const std::size_t                               maxRetryCount,
@@ -2032,7 +2116,8 @@ namespace bl
                 m_taskFactory( BL_PARAM_FWD( taskFactory ) ),
                 m_maxRetryCount( maxRetryCount ),
                 m_retryTimeout( BL_PARAM_FWD( retryTimeout ) ),
-                m_verificationCallback( BL_PARAM_FWD( verificationCallback ) )
+                m_verificationCallback( BL_PARAM_FWD( verificationCallback ) ),
+                m_cancelRequested( false )
             {
             }
 
@@ -2048,6 +2133,13 @@ namespace bl
 
         public:
 
+            virtual void requestCancel() NOEXCEPT OVERRIDE
+            {
+                m_cancelRequested = true;
+
+                base_type::requestCancel();
+            }
+
             virtual om::ObjPtr< Task > continuationTask() OVERRIDE
             {
                 auto task = base_type::handleContinuationForward();
@@ -2055,6 +2147,47 @@ namespace bl
                 if( task )
                 {
                     return task;
+                }
+
+                /*
+                 * The decision below and the replacement of the wrapped task must be
+                 * made atomically under the same lock which protects m_wrappedTask, so
+                 * concurrent forwarding callers (e.g. requestCancel) can't observe or
+                 * release the task while it is being replaced
+                 *
+                 * Note that the wrapped task is accessed directly here as the forwarding
+                 * accessors would attempt to acquire the same non-recursive lock
+                 */
+
+                BL_MUTEX_GUARD( m_lock );
+
+                if( m_cancelRequested )
+                {
+                    /*
+                     * The retry sequence was cancelled, so no further work task is to be
+                     * created regardless of which branch below would have been taken
+                     *
+                     * The work task's own error, if it has one, is more informative than a
+                     * bare cancellation, so it is kept; otherwise (e.g. the cancellation
+                     * landed on the retry sleep timer, which completes without an exception)
+                     * the task is completed as cancelled
+                     *
+                     * The check is made under the same lock which guards the swap, so a
+                     * cancellation request arriving after it still reaches the new target
+                     * via the forwarding requestCancel() and stops the next continuation
+                     */
+
+                    if( ! m_wrappedTask -> exception() )
+                    {
+                        auto exception =
+                            SystemException::create( asio::error::operation_aborted, BL_SYSTEM_ERROR_DEFAULT_MSG );
+
+                        exception << eh::errinfo_is_expected( true );
+
+                        m_wrappedTask -> exception( std::make_exception_ptr( exception ) );
+                    }
+
+                    return nullptr;
                 }
 
                 if( ! m_retrying )
@@ -2072,9 +2205,9 @@ namespace bl
 
                     m_retrying = true;
 
-                    exception( nullptr );
+                    m_wrappedTask -> exception( nullptr );
 
-                    m_wrappedTask = SimpleTimerTask::createInstance< Task >(
+                    auto retryTimerTask = SimpleTimerTask::createInstance< Task >(
                         []() -> bool
                         {
                             return false;
@@ -2082,6 +2215,8 @@ namespace bl
                         cpp::copy( m_retryTimeout ) /* duration */,
                         cpp::copy( m_retryTimeout ) /* initDelay */
                         );
+
+                    m_wrappedTask.swap( retryTimerTask );
                 }
                 else
                 {
@@ -2092,14 +2227,16 @@ namespace bl
                      * them every time
                      */
 
-                    if( exception() )
+                    if( m_wrappedTask -> exception() )
                     {
                         return nullptr;
                     }
 
                     m_retrying = false;
 
-                    m_wrappedTask = m_taskFactory();
+                    auto newTask = m_taskFactory();
+
+                    m_wrappedTask.swap( newTask );
                 }
 
                 return om::copyAs< Task >( this );

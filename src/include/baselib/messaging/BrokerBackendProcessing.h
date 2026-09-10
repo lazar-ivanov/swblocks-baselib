@@ -187,6 +187,22 @@ namespace bl
 
                 const auto protocolDataOffset = m_data -> offset1();
 
+                /*
+                 * The offset comes from the wire; it must never be past the end of the block
+                 * as the size computation below would then wrap
+                 */
+
+                BL_CHK_T(
+                    false,
+                    protocolDataOffset <= m_data -> size(),
+                    BufferTooSmallException(),
+                    BL_MSG()
+                        << "The protocol data offset "
+                        << protocolDataOffset
+                        << " is past the end of a data block of size "
+                        << m_data -> size()
+                    );
+
                 const std::string protocolData(
                     m_data -> begin() + protocolDataOffset,
                     m_data -> size() - protocolDataOffset

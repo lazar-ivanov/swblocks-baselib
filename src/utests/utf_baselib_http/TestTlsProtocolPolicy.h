@@ -15,11 +15,15 @@
  */
 
 #include <baselib/crypto/CryptoBase.h>
+#include <baselib/crypto/OpenSSLTypes.h>
+#include <baselib/crypto/ErrorHandling.h>
 
 #include <baselib/core/BaseIncludes.h>
 
 #include <utests/baselib/UtfCrypto.h>
 #include <utests/baselib/Utf.h>
+
+#include <openssl/pem.h>
 
 /*
  * Tests for the TLS protocol version policy configured by
@@ -242,9 +246,130 @@ namespace utest
                 );
         }
 
+        /**
+         * @brief Re-encodes the default server private key as a passphrase protected PEM
+         *
+         * The checked in test material carries plaintext keys only and an encrypted one is
+         * derived here at test time rather than committed, so that no further key material has
+         * to live in the tree
+         */
+
+        inline auto getEncryptedServerKeyPem() -> std::string
+        {
+            const std::string keyPem( test::UtfCrypto::getDefaultServerKey() );
+
+            const auto keyBuffer = bl::crypto::bio_ptr_t::attach(
+                ::BIO_new_mem_buf(
+                    const_cast< char* >( keyPem.c_str() ),
+                    static_cast< int >( keyPem.size() )
+                    )
+                );
+
+            BL_CHK_CRYPTO_API_NM( keyBuffer );
+
+            const auto key = bl::crypto::evppkey_ptr_t::attach(
+                ::PEM_read_bio_PrivateKey(
+                    keyBuffer.get(),
+                    nullptr     /* EVP_PKEY out pointer */,
+                    nullptr     /* password callback */,
+                    nullptr     /* password bytes */
+                    )
+                );
+
+            BL_CHK_CRYPTO_API_NM( key );
+
+            const auto encrypted = bl::crypto::bio_ptr_t::attach( ::BIO_new( ::BIO_s_mem() ) );
+
+            BL_CHK_CRYPTO_API_NM( encrypted );
+
+            const std::string passphrase( "1234" );
+
+            BL_CHK_CRYPTO_API_NM(
+                ::PEM_write_bio_PrivateKey(
+                    encrypted.get(),
+                    key.get(),
+                    ::EVP_aes_256_cbc(),
+                    nullptr                                             /* key data */,
+                    0                                                   /* key length */,
+                    nullptr                                             /* password callback */,
+                    const_cast< char* >( passphrase.c_str() )           /* password bytes */
+                    )
+                );
+
+            const int length = BIO_pending( encrypted.get() );
+
+            BL_CHK_CRYPTO_API_NM( length > 0 );
+
+            std::string text;
+
+            text.resize( static_cast< std::size_t >( length ) );
+
+            BL_CHK_CRYPTO_API_NM( length == ::BIO_read( encrypted.get(), &text[ 0 ], length ) );
+
+            return text;
+        }
+
     } // tlspolicy
 
 } // utest
+
+UTF_AUTO_TEST_CASE( TlsProtocolPolicy_ServerContextRejectsBadKeyMaterial )
+{
+    using namespace utest::tlspolicy;
+
+    /*
+     * The two guards in createAsioSslServerContext which reject key material a server can't
+     * serve with are exercised here, each one followed by the matching pair so that a
+     * regression which made the function throw unconditionally can't pass this case
+     *
+     * OpenSSL's own ssl_set_cert() does not fail on a key/certificate mismatch - it marks the
+     * error, frees the private key it was given and pops the mark - so use_certificate_chain()
+     * succeeds and the explicit ::SSL_CTX_check_private_key() is the only thing standing
+     * between a mismatched pair and a server which starts and then fails every handshake
+     */
+
+    UTF_REQUIRE_THROW(
+        bl::crypto::CryptoBase::createAsioSslServerContext(
+            test::UtfCrypto::getDefaultServerKey(),
+            test::UtfCrypto::getIpAddressServerCertificate()
+            ),
+        bl::SystemException
+        );
+
+    /*
+     * The OpenSSL error queue is process global, so a rejection which leaves it dirty would
+     * surface as an unrelated failure in whatever runs next
+     */
+
+    UTF_CHECK( 0 == bl::crypto::detail::getFirstError().value() );
+
+    UTF_REQUIRE_NO_THROW( createServerContext() );
+
+    /*
+     * An encrypted private key must be rejected rather than prompted for - the default asio
+     * password callback reads the terminal, which makes a daemon either block on /dev/tty or
+     * fail with an unrelated error. The rejecting callback is invoked by OpenSSL from inside
+     * ::PEM_read_bio_PrivateKey(), so the throw has to unwind across the OpenSSL C frames
+     */
+
+    const auto encryptedKeyPem = getEncryptedServerKeyPem();
+
+    UTF_REQUIRE(
+        0U == encryptedKeyPem.find( "-----BEGIN ENCRYPTED PRIVATE KEY-----" ) ||
+        std::string::npos != encryptedKeyPem.find( "Proc-Type: 4,ENCRYPTED" )
+        );
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        bl::crypto::CryptoBase::createAsioSslServerContext(
+            encryptedKeyPem,
+            test::UtfCrypto::getDefaultServerCertificate()
+            ),
+        bl::SecurityException,
+        "is encrypted, which is not supported"
+        );
+
+    UTF_REQUIRE_NO_THROW( createServerContext() );
+}
 
 UTF_AUTO_TEST_CASE( TlsProtocolPolicy_Tls11IsRefusedUnderTheDefaultPolicy )
 {

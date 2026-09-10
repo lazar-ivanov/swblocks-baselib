@@ -69,6 +69,7 @@
 #include <utests/baselib/TestTaskUtils.h>
 #include <utests/baselib/UtfArgsParser.h>
 #include <utests/baselib/Utf.h>
+#include <utests/baselib/UtfConcurrent.h>
 #include <utests/baselib/TestFsUtils.h>
 
 /************************************************************************
@@ -472,6 +473,18 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueCancelTests )
                 UTF_REQUIRE( ! eq -> cancel( task1, false /* wait */ ) );
                 UTF_REQUIRE( eq -> cancel( task2, false /* wait */ ) );
 
+                if( ! keepCanceled )
+                {
+                    /*
+                     * Without OptionKeepCanceled the entry was destroyed by the cancel
+                     * above, so a second cancel of the very same task must be a no-op and
+                     * must not throw - getTaskInfoPtrFromTask( ... ) is called with
+                     * allowMissing = true
+                     */
+
+                    UTF_REQUIRE( ! eq -> cancel( task2, false /* wait */ ) );
+                }
+
                 /*
                  * Flush the queue and verify that the tasks were executed
                  * and canceled respectively
@@ -485,9 +498,36 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueCancelTests )
                 if( keepCanceled )
                 {
                     UTF_REQUIRE( ! eq -> isEmpty() );
+
+                    /*
+                     * With OptionKeepCanceled the canceled entry was moved into the ready
+                     * queue, where it is no longer cancelable and must be left in place -
+                     * otherwise every cancel( task, false ) call site would silently
+                     * destroy retained results
+                     */
+
+                    UTF_REQUIRE( ! eq -> cancel( task2, false /* wait */ ) );
+                    UTF_REQUIRE_EQUAL( 1U, eq -> getQueueSize( ExecutionQueue::Ready ) );
+
                     const auto taskTop = eq -> pop( false /* wait */ );
                     UTF_REQUIRE( taskTop );
                     UTF_REQUIRE( om::areEqual( taskTop, task2 ) );
+
+                    /*
+                     * The canceled entry never executed, so it is still in its initial state
+                     */
+
+                    UTF_REQUIRE_EQUAL( Task::Created, taskTop -> getState() );
+                    UTF_REQUIRE( ! taskTop -> isFailed() );
+
+                    /*
+                     * Neither of these is in the queue any longer - task2 has just been
+                     * popped out of it and task1 completed successfully and was not
+                     * retained, because only OptionKeepCanceled is set
+                     */
+
+                    UTF_REQUIRE( ! eq -> cancel( task2, false /* wait */ ) );
+                    UTF_REQUIRE( ! eq -> cancel( task1, false /* wait */ ) );
                 }
 
                 UTF_REQUIRE( eq -> isEmpty() );
@@ -592,49 +632,6 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueWaitNoPrioritizeTests )
 
 namespace
 {
-    class ExecutionQueueTestSignal
-    {
-        BL_NO_COPY_OR_MOVE( ExecutionQueueTestSignal )
-
-    private:
-
-        bl::os::mutex                   m_lock;
-        bl::os::condition_variable      m_cv;
-        bool                            m_signaled;
-
-    public:
-
-        ExecutionQueueTestSignal()
-            :
-            m_signaled( false )
-        {
-        }
-
-        void signal() NOEXCEPT
-        {
-            {
-                BL_MUTEX_GUARD( m_lock );
-                m_signaled = true;
-            }
-
-            m_cv.notify_all();
-        }
-
-        bool wait()
-        {
-            bl::os::mutex_unique_lock guard( m_lock );
-
-            return m_cv.wait_for(
-                guard,
-                bl::os::chrono::seconds( 10 ),
-                [ this ]() -> bool
-                {
-                    return m_signaled;
-                }
-                );
-        }
-    };
-
     class ExecutionQueueCompletionControl
     {
         BL_NO_COPY_OR_MOVE( ExecutionQueueCompletionControl )
@@ -1071,10 +1068,10 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueAllTasksCompletedObsoleteCandidateTest )
     ExecutionQueueNotificationTestContext context( ExecutionQueue::OptionKeepNone );
     ExecutionQueueCompletionControl controlA;
     ExecutionQueueCompletionControl controlB;
-    ExecutionQueueTestSignal callbackAEntered;
-    ExecutionQueueTestSignal callbackBEntered;
-    ExecutionQueueTestSignal releaseCallbackA;
-    ExecutionQueueTestSignal releaseCallbackB;
+    utest::TestSignal callbackAEntered;
+    utest::TestSignal callbackBEntered;
+    utest::TestSignal releaseCallbackA;
+    utest::TestSignal releaseCallbackB;
     std::atomic< bool > hookTimedOut( false );
     std::atomic< bool > completionAFailed( false );
     std::atomic< bool > completionBFailed( false );
@@ -1191,7 +1188,7 @@ namespace
 
         const auto controlA = std::make_shared< ExecutionQueueCompletionControl >();
         const auto controlB = std::make_shared< ExecutionQueueCompletionControl >();
-        const auto callbackAEntered = std::make_shared< ExecutionQueueTestSignal >();
+        const auto callbackAEntered = std::make_shared< utest::TestSignal >();
         const auto completionAFailed = std::make_shared< std::atomic< bool > >( false );
         const auto completionBFailed = std::make_shared< std::atomic< bool > >( false );
 
@@ -1708,9 +1705,9 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueNotificationConcurrentDeliveryTest )
     ExecutionQueueNotificationDepthProbe probe;
     ExecutionQueueCompletionControl controlA;
     ExecutionQueueCompletionControl controlB;
-    ExecutionQueueTestSignal callbackAEntered;
-    ExecutionQueueTestSignal callbackBEntered;
-    ExecutionQueueTestSignal releaseCallbackA;
+    utest::TestSignal callbackAEntered;
+    utest::TestSignal callbackBEntered;
+    utest::TestSignal releaseCallbackA;
 
     std::atomic< bool > completionAFailed( false );
     std::atomic< bool > completionBFailed( false );
@@ -2211,8 +2208,8 @@ UTF_AUTO_TEST_CASE( Tasks_ExecutionQueueAllTasksCompletedAdmissionTests )
 
     {
         ExecutionQueueNotificationTestContext context( ExecutionQueue::OptionKeepNone );
-        ExecutionQueueTestSignal secondExecutionStarted;
-        ExecutionQueueTestSignal releaseSecondExecution;
+        utest::TestSignal secondExecutionStarted;
+        utest::TestSignal releaseSecondExecution;
         std::atomic< std::size_t > executions( 0U );
         std::atomic< bool > executionTimedOut( false );
         bool continuationReturned = false;
@@ -2927,7 +2924,11 @@ namespace
         typedef bl::reactive::ObserverBase base_type;
 
         bl::cpp::ScalarTypeIniter< std::size_t >            m_lastValue;
-        bl::cpp::ScalarTypeIniter< bool >                   m_onCompletedCalled;
+        bl::cpp::ScalarTypeIniter< std::size_t >            m_nextCount;
+        bl::cpp::ScalarTypeIniter< std::size_t >            m_completedCount;
+        bl::cpp::ScalarTypeIniter< std::size_t >            m_errorCount;
+        bl::cpp::ScalarTypeIniter< std::size_t >            m_nextCountAtError;
+        std::exception_ptr                                  m_lastError;
 
         ~MonotonicCounterObserverT() NOEXCEPT
         {
@@ -2942,18 +2943,86 @@ namespace
 
         bool onCompletedCalled() const NOEXCEPT
         {
-            return m_onCompletedCalled;
+            return 0U != m_completedCount;
+        }
+
+        /**
+         * @brief The number of onNext( ... ) calls received, including the rejected ones
+         */
+
+        std::size_t nextCount() const NOEXCEPT
+        {
+            return m_nextCount;
+        }
+
+        /**
+         * @brief The number of onCompleted() calls - a counter rather than a flag, so that
+         * both 'exactly once' and 'never' are assertable
+         */
+
+        std::size_t completedCount() const NOEXCEPT
+        {
+            return m_completedCount;
+        }
+
+        /**
+         * @brief The last value which was accepted by onNext( ... )
+         */
+
+        std::size_t lastValue() const NOEXCEPT
+        {
+            return m_lastValue;
+        }
+
+        /**
+         * @brief The number of onError( ... ) calls received
+         */
+
+        std::size_t errorCount() const NOEXCEPT
+        {
+            return m_errorCount;
+        }
+
+        /**
+         * @brief The number of onNext( ... ) calls received at the moment onError( ... )
+         * arrived - equal to nextCount() if and only if nothing was delivered after the error
+         */
+
+        std::size_t nextCountAtError() const NOEXCEPT
+        {
+            return m_nextCountAtError;
+        }
+
+        /**
+         * @brief The exception which was delivered to onError( ... )
+         */
+
+        std::exception_ptr lastError() const NOEXCEPT
+        {
+            return m_lastError;
         }
 
         virtual void onCompleted() OVERRIDE
         {
             base_type::onCompleted();
 
-            m_onCompletedCalled = true;
+            ++m_completedCount;
+        }
+
+        virtual void onError( SAA_in const std::exception_ptr& eptr ) OVERRIDE
+        {
+            m_nextCountAtError = m_nextCount;
+            m_lastError = eptr;
+
+            ++m_errorCount;
+
+            base_type::onError( eptr );
         }
 
         virtual bool onNext( SAA_in const bl::cpp::any& value ) OVERRIDE
         {
+            ++m_nextCount;
+
             if( 0 == ( std::rand() % 2 ) )
             {
                 /*
@@ -3034,6 +3103,10 @@ namespace
 
                 eq -> push_back( task );
 
+                std::size_t countAtDispose = 0U;
+                std::size_t countAfterDispose = 0U;
+                bool secondDisposeThrew = false;
+
                 if( DisconnectObserver == test || DisconnectObservable == test )
                 {
                     /*
@@ -3044,7 +3117,33 @@ namespace
 
                     if( DisconnectObserver == test )
                     {
+                        /*
+                         * dispose() unsubscribes through unsubscribeInternal( id, true ),
+                         * which force flushes the events queue *waiting* and only then
+                         * erases the subscription - so the count sampled right after it
+                         * returns is a stable ceiling, and because the erase happens before
+                         * any completion can be scheduled the observer is never completed
+                         */
+
+                        countAtDispose = observerImpl -> nextCount();
+
                         subscription -> dispose();
+
+                        countAfterDispose = observerImpl -> nextCount();
+
+                        try
+                        {
+                            /*
+                             * ObserverDisposerT::dispose() resets its weak reference to the
+                             * observable, so disposing a second time must be a no-op
+                             */
+
+                            subscription -> dispose();
+                        }
+                        catch( std::exception& )
+                        {
+                            secondDisposeThrew = true;
+                        }
                     }
                     else if( DisconnectObservable == test )
                     {
@@ -3066,7 +3165,17 @@ namespace
                     UTF_REQUIRE( e.code() == asio::error::operation_aborted );
                 }
 
-                if( DisconnectObserver != test )
+                if( DisconnectObserver == test )
+                {
+                    const auto nextCountAfterWait = observerImpl -> nextCount();
+                    const auto completedCountAfterWait = observerImpl -> completedCount();
+
+                    UTF_REQUIRE( countAtDispose > 0U );
+                    UTF_REQUIRE_EQUAL( nextCountAfterWait, countAfterDispose );
+                    UTF_REQUIRE_EQUAL( completedCountAfterWait, 0U );
+                    UTF_REQUIRE( ! secondDisposeThrew );
+                }
+                else
                 {
                     UTF_REQUIRE( observerImpl -> onCompletedCalled() );
                 }
@@ -3088,6 +3197,146 @@ namespace
 
 } // __unnamed
 
+namespace
+{
+    /*
+     * The value of the --unique-id argument which arms the re-entrant unsubscribe helper
+     * case below; the helper is a no-op unless it is passed, so it can't abort the normal
+     * runs of the module
+     */
+
+    const char* const g_reentrantUnsubscribeId = "reentrant-unsubscribe";
+
+    /**
+     * @brief An observer which disposes its own subscription from within onNext
+     */
+
+    template
+    <
+        typename E = void
+    >
+    class SelfUnsubscribingObserverT : public bl::reactive::ObserverBase
+    {
+        BL_CTR_DEFAULT( SelfUnsubscribingObserverT, protected )
+        BL_DECLARE_OBJECT_IMPL_NO_DESTRUCTOR( SelfUnsubscribingObserverT )
+
+    protected:
+
+        bl::om::ObjPtr< bl::om::Disposable >                                m_subscription;
+
+    public:
+
+        void subscription( SAA_in bl::om::ObjPtr< bl::om::Disposable >&& subscription ) NOEXCEPT
+        {
+            m_subscription = BL_PARAM_FWD( subscription );
+        }
+
+        virtual bool onNext( SAA_in const bl::cpp::any& /* value */ ) OVERRIDE
+        {
+            if( m_subscription )
+            {
+                /*
+                 * This is the forbidden operation - it must abort the process
+                 */
+
+                const auto subscription = std::move( m_subscription );
+
+                subscription -> dispose();
+            }
+
+            return true;
+        }
+    };
+
+    typedef bl::om::ObjectImpl< SelfUnsubscribingObserverT<> > SelfUnsubscribingObserverImpl;
+
+} // __unnamed
+
+UTF_AUTO_TEST_CASE( Tasks_ReactiveUnsubscribeFromCallbackHelper )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    /*
+     * This case is a helper for Tasks_ReactiveUnsubscribeFromCallbackTests below - it is a
+     * no-op unless the environment variable which the parent process sets is present, as it
+     * is expected to abort the process
+     */
+
+    if( test::UtfArgsParser::uniqueId() != g_reentrantUnsubscribeId )
+    {
+        UTF_REQUIRE( true );
+
+        return;
+    }
+
+    scheduleAndExecuteInParallel(
+        []( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+        {
+            /*
+             * Note that the observable has to be held through a shared pointer - the
+             * disposer returned by subscribe( ... ) keeps a weak reference to it
+             */
+
+            const auto observableImpl = om::getSharedPtr(
+                MonotonicCounterObservableImpl::createInstance()
+                );
+
+            const auto observable = om::qi< reactive::Observable >( observableImpl );
+
+            const auto observerImpl = SelfUnsubscribingObserverImpl::createInstance();
+
+            observerImpl -> subscription(
+                observable -> subscribe( om::qi< reactive::Observer >( observerImpl ) )
+                );
+
+            const auto task = om::qi< Task >( observable.get() );
+
+            eq -> push_back( task );
+
+            eq -> flush( false /* discardPending */, true /* nothrowIfFailed */ );
+        });
+}
+
+UTF_AUTO_TEST_CASE( Tasks_ReactiveUnsubscribeFromCallbackTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    /*
+     * Unsubscribing from within an observer callback would wait for the very task which is
+     * making the call, i.e. it deadlocks; the contract forbids it and it is enforced with a
+     * BL_RT_ASSERT, which aborts the process - so the helper case above has to be executed
+     * in a child process
+     */
+
+    std::vector< std::string > cmdLine;
+
+    cmdLine.push_back( os::getCurrentExecutablePath() );
+    cmdLine.push_back( "--run_test=Tasks_ReactiveUnsubscribeFromCallbackHelper" );
+    cmdLine.push_back( "--catch_system_errors=no" );
+
+    /*
+     * The custom module arguments must be separated from the Boost.Test ones
+     */
+
+    cmdLine.push_back( "--" );
+    cmdLine.push_back( resolveMessage( BL_MSG() << "--unique-id=" << g_reentrantUnsubscribeId ) );
+
+    const auto processRef = os::createProcess( cmdLine );
+
+    const auto exitCode = os::tryAwaitTermination( processRef, 60 * 1000 /* timeoutMs */ );
+
+    BL_LOG(
+        Logging::debug(),
+        BL_MSG()
+            << "The re-entrant unsubscribe helper exited with code "
+            << exitCode
+        );
+
+    UTF_REQUIRE( 0 != exitCode );
+}
+
 UTF_AUTO_TEST_CASE( Tasks_ReactiveTests )
 {
     BL_LOG_MULTILINE( bl::Logging::debug(), BL_MSG() << "*** Default tests\n" );
@@ -3096,20 +3345,137 @@ UTF_AUTO_TEST_CASE( Tasks_ReactiveTests )
 
 UTF_AUTO_TEST_CASE( Tasks_ReactiveTestsWithException )
 {
+    using namespace bl;
+    using namespace bl::tasks;
+
     BL_LOG_MULTILINE( bl::Logging::debug(), BL_MSG() << "*** Default tests with throw\n" );
 
-    try
-    {
-        runReactiveTest( ThrowFromInnerLoop );
-        UTF_FAIL( "This must throw" );
-    }
-    catch( bl::UnexpectedException& e )
-    {
-        const auto msg = e.message();
+    /*
+     * The body below is what runReactiveTest( ThrowFromInnerLoop ) does, inlined so that the
+     * observer outlives the wait and the onError( ... ) delivery can be asserted on
+     *
+     * notifyOnErrorNothrow() is the only channel by which a subscriber learns that its
+     * upstream has failed - it force flushes the events queue of every subscription which
+     * has not been completed yet, so the error can overtake the events which are pending,
+     * and then schedules notifyObserverError() on it
+     */
 
-        UTF_REQUIRE( msg );
-        UTF_REQUIRE_EQUAL( *msg, "Throwing a test exception from the inner loop" );
-    }
+    const std::size_t ticksCount = 30U;
+
+    scheduleAndExecuteInParallel(
+        [ &ticksCount ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+        {
+            const auto observableImpl = om::getSharedPtr(
+                MonotonicCounterObservableImpl::createInstance(
+                    true                    /* throwFromInnerLoop */,
+                    ticksCount,
+                    10U                     /* intervalInMilliseconds */
+                    )
+                );
+
+            const auto observable = om::qi< reactive::Observable >( observableImpl );
+
+            observableImpl -> allowNoSubscribers( true );
+
+            const auto observerImpl = MonotonicCounterObserverImpl::createInstance();
+
+            const auto subscription = observable -> subscribe( om::qi< reactive::Observer >( observerImpl ) );
+
+            BL_UNUSED( subscription );
+
+            const auto task = om::qi< Task >( observable.get() );
+
+            eq -> push_back( task );
+
+            bool taskThrew = false;
+            std::string taskMessage;
+
+            try
+            {
+                eq -> waitForSuccess( task );
+            }
+            catch( bl::UnexpectedException& e )
+            {
+                taskThrew = true;
+
+                const auto msg = e.message();
+
+                if( msg )
+                {
+                    taskMessage = *msg;
+                }
+            }
+
+            /*
+             * The observable task itself must fail with the exception the inner loop threw
+             */
+
+            UTF_REQUIRE( taskThrew );
+            UTF_REQUIRE_EQUAL( taskMessage, "Throwing a test exception from the inner loop" );
+
+            /*
+             * The error must have been delivered to the subscriber exactly once and the
+             * completion must still follow it exactly once (the m_notifyCompleteOnError path)
+             */
+
+            UTF_REQUIRE_EQUAL( observerImpl -> errorCount(), 1U );
+            UTF_REQUIRE_EQUAL( observerImpl -> completedCount(), 1U );
+
+            /*
+             * It must be the very same exception, not a wrapped or a copied one
+             */
+
+            const auto lastError = observerImpl -> lastError();
+
+            UTF_REQUIRE( nullptr != lastError );
+
+            bool errorRethrew = false;
+            std::string errorMessage;
+
+            try
+            {
+                cpp::safeRethrowException( lastError );
+            }
+            catch( bl::UnexpectedException& e )
+            {
+                errorRethrew = true;
+
+                const auto msg = e.message();
+
+                if( msg )
+                {
+                    errorMessage = *msg;
+                }
+            }
+
+            UTF_REQUIRE( errorRethrew );
+            UTF_REQUIRE_EQUAL( errorMessage, "Throwing a test exception from the inner loop" );
+
+            /*
+             * The inner loop throws half way through, so the observer cannot have been told
+             * the whole sequence, and nothing must be delivered to onNext( ... ) after the
+             * error has arrived
+             */
+
+            UTF_REQUIRE( observerImpl -> lastValue() < ticksCount );
+            UTF_REQUIRE_EQUAL( observerImpl -> nextCountAtError(), observerImpl -> nextCount() );
+
+            /*
+             * ObserverBase::onError() swallows what it is given (it logs it through
+             * utils::tryCatchLog at debug level only), so an observer which does not override
+             * it must never let the error escape back into the notification task
+             *
+             * SelfUnsubscribingObserverImpl is used here only because it is a trivial
+             * ObserverBase subclass which does not override onError()
+             */
+
+            const auto plainObserverImpl = SelfUnsubscribingObserverImpl::createInstance();
+
+            UTF_REQUIRE_NO_THROW(
+                om::qi< reactive::Observer >( plainObserverImpl ) -> onError( lastError )
+                );
+        }
+        );
 }
 
 UTF_AUTO_TEST_CASE( Tasks_ReactiveTestsWithThrottle )
@@ -3214,8 +3580,16 @@ UTF_AUTO_TEST_CASE( Tasks_ScanDirectoryTaskTests )
 
     const auto t1 = bl::time::microsec_clock::universal_time();
 
+    /*
+     * Every entry the scanners report, so the output of the recursion can be compared
+     * against an independent oracle once the scan has completed
+     */
+
+    std::vector< fs::path > actual;
+    long totalEntriesCount = 0L;
+
     scheduleAndExecuteInParallel(
-        [ &root, &controlToken ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+        [ &root, &controlToken, &actual, &totalEntriesCount ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
         {
             eq -> setOptions( ExecutionQueue::OptionKeepAll );
 
@@ -3253,9 +3627,19 @@ UTF_AUTO_TEST_CASE( Tasks_ScanDirectoryTaskTests )
 
                 const auto scanner = om::qi< ScanDirectoryTaskImpl >( scannerTask );
 
+                /*
+                 * m_rootPath is a shared box which is ref-copied into every child scanner,
+                 * so it must be identical across the whole recursion - FilesPackagerUnit
+                 * relies on it for the relative paths it stores
+                 */
+
+                UTF_REQUIRE_EQUAL( scanner -> rootPath(), fs::path( root ) );
+
                 for( const auto& entry : scanner -> entries() )
                 {
                     ++entriesCount;
+
+                    actual.push_back( entry.path() );
 
                     if( test::UtfArgsParser::isVerboseMode() )
                     {
@@ -3264,6 +3648,8 @@ UTF_AUTO_TEST_CASE( Tasks_ScanDirectoryTaskTests )
                 }
             }
 
+            totalEntriesCount = entriesCount;
+
             BL_LOG(
                 Logging::debug(),
                 BL_MSG()
@@ -3271,6 +3657,87 @@ UTF_AUTO_TEST_CASE( Tasks_ScanDirectoryTaskTests )
                     << entriesCount
                 );
         });
+
+    UTF_REQUIRE( ! actual.empty() );
+
+    if( tmpDir )
+    {
+        /*
+         * The tree was generated by the test itself, so an independent oracle can be built
+         * from Boost's recursive directory iterator, which - exactly like ScanDirectoryTask
+         * and as documented at FsUtils.h:932 - does not descend into linked directories
+         */
+
+        std::vector< fs::path > expected;
+
+        for( fs::recursive_directory_iterator it( root ), end; it != end; ++it )
+        {
+            expected.push_back( it -> path() );
+        }
+
+        std::sort( actual.begin(), actual.end() );
+        std::sort( expected.begin(), expected.end() );
+
+        UTF_REQUIRE_EQUAL( actual.size(), expected.size() );
+        UTF_CHECK_EQUAL_COLLECTIONS( actual.begin(), actual.end(), expected.begin(), expected.end() );
+
+        if( os::onUNIX() )
+        {
+            /*
+             * TestFsUtils only creates the symlinks on UNIX; foo/linkToBar points at
+             * foo/bar, so the scanner must report the link itself but must never descend
+             * through it - otherwise a backup scan would loop or duplicate whole subtrees
+             */
+
+            const auto cbIsPathUnder = [](
+                SAA_in          const fs::path&         path,
+                SAA_in          const fs::path&         base
+                ) -> bool
+            {
+                auto baseIt = base.begin();
+                auto pathIt = path.begin();
+
+                for( ; baseIt != base.end(); ++baseIt, ++pathIt )
+                {
+                    if( pathIt == path.end() || *pathIt != *baseIt )
+                    {
+                        return false;
+                    }
+                }
+
+                return pathIt != path.end();
+            };
+
+            const auto linkToBar = fs::path( root ) / "foo" / "linkToBar";
+
+            std::size_t countOfPathsUnderLinkToBar = 0U;
+            bool linkToBarIsPresentAndIsSymlink = false;
+
+            for( const auto& path : actual )
+            {
+                if( path == linkToBar )
+                {
+                    linkToBarIsPresentAndIsSymlink = fs::is_symlink( fs::symlink_status( path ) );
+                }
+                else if( cbIsPathUnder( path, linkToBar ) )
+                {
+                    ++countOfPathsUnderLinkToBar;
+                }
+            }
+
+            UTF_REQUIRE_EQUAL( 0U, countOfPathsUnderLinkToBar );
+            UTF_REQUIRE( linkToBarIsPresentAndIsSymlink );
+        }
+    }
+    else
+    {
+        /*
+         * An external tree supplied through --path can change under the scan, so only the
+         * fact that it produced entries can be asserted
+         */
+
+        UTF_REQUIRE( totalEntriesCount > 0L );
+    }
 
     const auto duration = bl::time::microsec_clock::universal_time() - t1;
 
@@ -3399,6 +3866,62 @@ UTF_AUTO_TEST_CASE( Tasks_SimpleTimerTaskTests )
         });
 }
 
+UTF_AUTO_TEST_CASE( Tasks_TimerTaskRunNowAndWakeUpTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    scheduleAndExecuteInParallel(
+        []( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+        {
+            std::atomic< long > counter( 0L );
+
+            /*
+             * The timer period below is very long, so the callback is expected to be
+             * invoked exactly once when the task starts and then exactly once per
+             * runNow() / wakeUp() request
+             *
+             * Note that if these requests were to re-arm the timer instead of simply
+             * cancelling the armed wait then more than one wait handler would be left
+             * in flight and each of them would cancel the wait armed by the previous
+             * one, so the callback would execute back-to-back in a tight loop
+             */
+
+            const auto task = SimpleTimerTask::createInstance(
+                [ &counter ]() -> bool
+                {
+                    ++counter;
+
+                    return true;
+                },
+                time::seconds( 10 )                                     /* duration */,
+                time::time_duration()                                   /* initDelay */
+                );
+
+            eq -> push_back( om::qi< Task >( task ) );
+
+            os::sleep( time::milliseconds( 300 ) );
+
+            UTF_REQUIRE_EQUAL( counter.load(), 1L );
+
+            task -> runNow();
+
+            os::sleep( time::milliseconds( 300 ) );
+
+            UTF_REQUIRE_EQUAL( counter.load(), 2L );
+
+            task -> wakeUp();
+
+            os::sleep( time::milliseconds( 300 ) );
+
+            UTF_REQUIRE_EQUAL( counter.load(), 3L );
+
+            task -> requestCancel();
+
+            eq -> flush();
+        });
+}
+
 UTF_AUTO_TEST_CASE( Tasks_AdjustableTimerTaskTests )
 {
     using namespace bl;
@@ -3481,6 +4004,13 @@ namespace
 
         entries_map_t                                                       m_entries;
 
+        /*
+         * Every delivered entry path, in delivery order - this is what makes 'delivered
+         * exactly once' assertable against an independent walk of the tree
+         */
+
+        std::vector< bl::fs::path >                                         m_paths;
+
         bl::cpp::ScalarTypeIniter< std::size_t >                            m_filesCount;
         bl::cpp::ScalarTypeIniter< std::size_t >                            m_dirsCount;
         bl::cpp::ScalarTypeIniter< std::size_t >                            m_symlinksCount;
@@ -3489,7 +4019,49 @@ namespace
         bl::fs::path                                                        m_root;
         bl::cpp::ScalarTypeIniter< bool >                                   m_isVerbose;
 
+        /*
+         * logResults() is const - it is the shape which selects the bindInputConnector( ... )
+         * overload the processing unit tests bind - so the flag it sets has to be mutable
+         */
+
+        mutable bl::cpp::ScalarTypeIniter< bool >                           m_logResultsCalled;
+
     public:
+
+        const std::vector< bl::fs::path >& paths() const NOEXCEPT
+        {
+            return m_paths;
+        }
+
+        std::size_t entriesCount() const NOEXCEPT
+        {
+            return m_paths.size();
+        }
+
+        std::size_t filesCount() const NOEXCEPT
+        {
+            return m_filesCount;
+        }
+
+        std::size_t dirsCount() const NOEXCEPT
+        {
+            return m_dirsCount;
+        }
+
+        std::size_t symlinksCount() const NOEXCEPT
+        {
+            return m_symlinksCount;
+        }
+
+        std::size_t otherCount() const NOEXCEPT
+        {
+            return m_otherCount;
+        }
+
+        bool logResultsCalled() const NOEXCEPT
+        {
+            return m_logResultsCalled;
+        }
 
         void setOptions( SAA_in const bl::fs::path& root, SAA_in const bool isVerbose = false )
         {
@@ -3511,6 +4083,8 @@ namespace
             for( const auto& entry : scanner -> entries() )
             {
                 const auto status = entry.symlink_status();
+
+                m_paths.push_back( entry.path() );
 
                 if( ! m_root.empty() )
                 {
@@ -3558,6 +4132,8 @@ namespace
 
         void logResults() const
         {
+            m_logResultsCalled = true;
+
             BL_LOG_MULTILINE(
                 bl::Logging::debug(),
                 BL_MSG()
@@ -3645,28 +4221,84 @@ UTF_AUTO_TEST_CASE( Tasks_RecursiveDirectoryScannerTests )
 
     const auto t1 = bl::time::microsec_clock::universal_time();
 
+    std::vector< fs::path > actual;
+    std::vector< fs::path > actualThrottled;
+
+    std::size_t filesCount = 0U;
+    std::size_t dirsCount = 0U;
+    std::size_t symlinksCount = 0U;
+    std::size_t otherCount = 0U;
+    bool logResultsCalled = false;
+
+    const bool selfGeneratedTree = ( nullptr != tmpDir.get() );
+
     scheduleAndExecuteInParallel(
-        [ &root ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+        [
+            &root,
+            &actual,
+            &actualThrottled,
+            &filesCount,
+            &dirsCount,
+            &symlinksCount,
+            &otherCount,
+            &logResultsCalled,
+            &selfGeneratedTree
+        ](
+            SAA_in const om::ObjPtr< ExecutionQueue >& eq
+            ) -> void
         {
-            const auto controlToken =
-                test::UtfArgsParser::isRelaxedScanMode() ?
-                    utest::ScanningControlImpl::createInstance< DirectoryScannerControlToken >() :
-                    nullptr;
+            const auto cbScan = [ &root, &eq ]( SAA_in const std::size_t throttleLimit )
+                -> om::ObjPtr< RecursiveDirectoryScannerObserverImpl >
+            {
+                const auto controlToken =
+                    test::UtfArgsParser::isRelaxedScanMode() ?
+                        utest::ScanningControlImpl::createInstance< DirectoryScannerControlToken >() :
+                        nullptr;
 
-            const auto scanner = RecursiveDirectoryScannerImpl::createInstance(
-                root,
-                controlToken
-                );
+                const auto scanner = RecursiveDirectoryScannerImpl::createInstance(
+                    root,
+                    controlToken
+                    );
 
-            const auto scannerObserver = RecursiveDirectoryScannerObserverImpl::createInstance< reactive::Observer >();
+                if( throttleLimit )
+                {
+                    /*
+                     * A throttle limit of one forces the scanner through the hold-and-retry
+                     * path of flushAllPendingTasks() - it cannot hand over m_current until
+                     * the subscriber's events queue has drained the previous batch
+                     */
 
-            scanner -> subscribe( scannerObserver );
+                    scanner -> setThrottleLimit( throttleLimit );
+                }
 
-            const auto scannerTask = om::qi< Task >( scanner.get() );
-            eq -> push_back( scannerTask );
-            eq -> waitForSuccess( scannerTask );
+                const auto scannerObserver = RecursiveDirectoryScannerObserverImpl::createInstance< reactive::Observer >();
 
-            om::qi< RecursiveDirectoryScannerObserverImpl >( scannerObserver ) -> logResults();
+                scanner -> subscribe( scannerObserver );
+
+                const auto scannerTask = om::qi< Task >( scanner.get() );
+                eq -> push_back( scannerTask );
+                eq -> waitForSuccess( scannerTask );
+
+                auto analyzer = om::qi< RecursiveDirectoryScannerObserverImpl >( scannerObserver );
+
+                analyzer -> logResults();
+
+                return analyzer;
+            };
+
+            const auto analyzer = cbScan( 0U /* throttleLimit */ );
+
+            actual = analyzer -> paths();
+            filesCount = analyzer -> filesCount();
+            dirsCount = analyzer -> dirsCount();
+            symlinksCount = analyzer -> symlinksCount();
+            otherCount = analyzer -> otherCount();
+            logResultsCalled = analyzer -> logResultsCalled();
+
+            if( selfGeneratedTree )
+            {
+                actualThrottled = cbScan( 1U /* throttleLimit */ ) -> paths();
+            }
         });
 
     const auto duration = bl::time::microsec_clock::universal_time() - t1;
@@ -3682,6 +4314,85 @@ UTF_AUTO_TEST_CASE( Tasks_RecursiveDirectoryScannerTests )
             << durationInSeconds
             << " seconds"
         );
+
+    UTF_REQUIRE( ! actual.empty() );
+    UTF_REQUIRE( filesCount > 0U );
+    UTF_REQUIRE( dirsCount > 0U );
+    UTF_REQUIRE( logResultsCalled );
+
+    if( selfGeneratedTree )
+    {
+        /*
+         * The tree was generated by the test itself, so an independent oracle can be built
+         * from Boost's recursive directory iterator, which - exactly like ScanDirectoryTask -
+         * does not descend into linked directories
+         *
+         * Equal sizes prove that nothing was delivered twice and equal content proves that
+         * nothing was dropped; the throttled scan has to deliver exactly the same set
+         */
+
+        std::vector< fs::path > expected;
+
+        for( fs::recursive_directory_iterator it( root ), end; it != end; ++it )
+        {
+            expected.push_back( it -> path() );
+        }
+
+        std::sort( actual.begin(), actual.end() );
+        std::sort( actualThrottled.begin(), actualThrottled.end() );
+        std::sort( expected.begin(), expected.end() );
+
+        UTF_REQUIRE_EQUAL( actual.size(), expected.size() );
+        UTF_CHECK_EQUAL_COLLECTIONS( actual.begin(), actual.end(), expected.begin(), expected.end() );
+
+        UTF_REQUIRE_EQUAL( actualThrottled.size(), expected.size() );
+        UTF_CHECK_EQUAL_COLLECTIONS(
+            actualThrottled.begin(),
+            actualThrottled.end(),
+            expected.begin(),
+            expected.end()
+            );
+
+        if( os::onUNIX() )
+        {
+            /*
+             * TestFsUtils only creates the symlinks on UNIX; foo/linkToBar points at foo/bar,
+             * so the scanner must report the link itself exactly once and must never descend
+             * through it
+             */
+
+            const auto linkToBar = fs::path( root ) / "foo" / "linkToBar";
+            const auto linkToBarPrefix = linkToBar.string() + "/";
+
+            std::size_t linkToBarCount = 0U;
+            std::size_t underLinkToBarCount = 0U;
+
+            for( const auto& path : actual )
+            {
+                const auto pathString = path.string();
+
+                if( path == linkToBar )
+                {
+                    ++linkToBarCount;
+                }
+                else if( 0 == pathString.compare( 0U, linkToBarPrefix.size(), linkToBarPrefix ) )
+                {
+                    ++underLinkToBarCount;
+                }
+            }
+
+            UTF_REQUIRE_EQUAL( linkToBarCount, 1U );
+            UTF_REQUIRE_EQUAL( underLinkToBarCount, 0U );
+            UTF_REQUIRE( symlinksCount > 0U );
+        }
+
+        /*
+         * The generated tree only contains files, directories and symlinks
+         */
+
+        UTF_REQUIRE_EQUAL( otherCount, 0U );
+        UTF_REQUIRE_EQUAL( filesCount + dirsCount + symlinksCount, actual.size() );
+    }
 }
 
 /************************************************************************
@@ -3721,10 +4432,25 @@ namespace
 
         BL_LOG_MULTILINE( Logging::debug(), BL_MSG() << "*** Processing units directory scanner observable tests\n" );
 
+        std::size_t expectedEntriesCount = 0U;
+
+        if( tmpDir )
+        {
+            /*
+             * The exact count assertion is only meaningful for the tree the test generated
+             * itself - a user supplied --path root can change under the scan
+             */
+
+            for( fs::recursive_directory_iterator it( root ), end; it != end; ++it )
+            {
+                ++expectedEntriesCount;
+            }
+        }
+
         const auto t1 = bl::time::microsec_clock::universal_time();
 
         scheduleAndExecuteInParallel(
-            [ &root ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+            [ &root, &expectedEntriesCount ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
             {
                 const auto controlToken =
                     test::UtfArgsParser::isRelaxedScanMode() ?
@@ -3736,17 +4462,26 @@ namespace
                     controlToken
                     );
 
+                typedef om::ObjectImpl< ProcessingUnit< BASE, II > > unit_t;
+
+                /*
+                 * The unit is held past the subscription scope so its counters can be read
+                 * after the scan; the counted reference which bindInputConnectorImpl( ... )
+                 * takes is what would otherwise keep it alive
+                 */
+
+                const auto unit = unit_t::template createInstance< unit_t >();
+
                 {
-                    typedef om::ObjectImpl< ProcessingUnit< BASE, II > > unit_t;
-
-                    const auto unit = unit_t::template createInstance< unit_t >();
-
                     const auto isVerbose = test::UtfArgsParser::isVerboseMode();
 
-                    if( isVerbose )
-                    {
-                        unit -> setOptions( root, test::UtfArgsParser::isVerboseMode() );
-                    }
+                    /*
+                     * setOptions( ... ) is called unconditionally now - it is what populates
+                     * m_entries, whose per entry duplicate path BL_ASSERT is a debug only
+                     * check that no batch is ever delivered twice
+                     */
+
+                    unit -> setOptions( root, isVerbose );
 
                     scanner -> subscribe( unit -> bindInputConnector( &unit_t::onDataArrived, &unit_t::logResults ) );
                     scanner -> subscribe( unit -> bindInputConnector( &unit_t::onDummyDataArrivedConst ) );
@@ -3756,6 +4491,27 @@ namespace
                 const auto scannerTask = om::qi< Task >( scanner.get() );
                 eq -> push_back( scannerTask );
                 eq -> waitForSuccess( scannerTask );
+
+                const auto unitFilesCount = unit -> filesCount();
+                const auto unitDirsCount = unit -> dirsCount();
+                const auto unitEntriesCount = unit -> entriesCount();
+                const auto unitLogResultsCalled = unit -> logResultsCalled();
+
+                UTF_REQUIRE( unitFilesCount > 0U );
+                UTF_REQUIRE( unitDirsCount > 0U );
+
+                /*
+                 * logResults() is the completed callback bound through the
+                 * bindInputConnector( inputCB, completedCB ) overload - if it never ran the
+                 * unit was never told the input had completed
+                 */
+
+                UTF_REQUIRE( unitLogResultsCalled );
+
+                if( expectedEntriesCount )
+                {
+                    UTF_REQUIRE_EQUAL( unitEntriesCount, expectedEntriesCount );
+                }
             });
 
         const auto duration = bl::time::microsec_clock::universal_time() - t1;
@@ -3810,6 +4566,14 @@ namespace
         using namespace utest;
         using namespace fs;
 
+        /*
+         * The relative path of the file whose executable bit is set below - the fixed tree
+         * TestFsUtils builds has no executable file, and that header is a shared Stage 1
+         * fixture which must not be changed from here, so the bit is set locally
+         */
+
+        const fs::path executableFileRelPath = fs::path( "foo" ) / "bar" / "oneChunkFile.bin";
+
         cpp::SafeUniquePtr< TmpDir > tmpDir;
         fs::path root = test::UtfArgsParser::path();
 
@@ -3822,14 +4586,29 @@ namespace
             root = tmpDir -> path();
             TestFsUtils dummyCreator;
             dummyCreator.createDummyTestDir( root );
+
+            if( os::onUNIX() )
+            {
+                fs::permissions(
+                    root / executableFileRelPath,
+                    fs::perms::add_perms | fs::ExecutableFileMask
+                    );
+            }
         }
 
         BL_LOG_MULTILINE( Logging::debug(), BL_MSG() << "*** Files packager processing unit's observable tests\n" );
 
         const auto t1 = bl::time::microsec_clock::universal_time();
 
+        /*
+         * The metadata store is created here rather than inside the pipeline, so it can be
+         * read back and verified once the pipeline has drained and finalized it
+         */
+
+        const auto fsmd = createFSMD();
+
         scheduleAndExecuteInParallel(
-            [ &root, &contextIn, &host, &port ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+            [ &root, &contextIn, &host, &port, &fsmd ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
             {
                 const auto context = om::copy( contextIn.get() );
 
@@ -3846,8 +4625,6 @@ namespace
                     root,
                     controlToken
                     );
-
-                const auto fsmd = createFSMD();
 
                 /*
                  * Create the file packager unit
@@ -3929,6 +4706,264 @@ namespace
                 << durationInSeconds
                 << " seconds"
             );
+
+        if( ! tmpDir )
+        {
+            /*
+             * An externally supplied tree keeps the historical smoke test behaviour
+             */
+
+            return;
+        }
+
+        /*
+         * The packager is the sole author of the metadata which is persisted and shipped to
+         * other systems - the entry type, the Executable flag, sizes and timestamps, the
+         * relative path, the chunk tiling, the file level CRC-32 folded over the per chunk
+         * checksums and the file level digest folded over the per chunk digest strings
+         *
+         * None of that is verifiable through the transfer round trip, because the unpackager
+         * recomputes it exactly the same way, so it is verified here against an oracle which
+         * is computed independently from the bytes of the tree which was packaged
+         */
+
+        const auto fsmdRO = om::qi< FilesystemMetadataRO >( fsmd );
+
+        std::unordered_map< fs::path, bl::uuid_t > entryIds;
+
+        {
+            const auto allEntries = fsmdRO -> queryAllEntries();
+
+            for( ; allEntries -> hasCurrent(); allEntries -> loadNext() )
+            {
+                const auto entryId = allEntries -> current();
+                const auto info = fsmdRO -> loadEntryInfo( entryId );
+
+                UTF_REQUIRE( info.relPath );
+
+                const auto& entryRelPath = info.relPath -> value();
+
+                UTF_REQUIRE( ! entryRelPath.empty() );
+                UTF_REQUIRE( entryRelPath.is_relative() );
+                UTF_REQUIRE( entryIds.find( entryRelPath ) == entryIds.end() );
+
+                entryIds[ entryRelPath ] = entryId;
+            }
+        }
+
+        std::size_t expectedCount = 0U;
+
+        for( fs::recursive_directory_iterator it( root ), end; it != end; ++it )
+        {
+            ++expectedCount;
+        }
+
+        UTF_REQUIRE_EQUAL( entryIds.size(), expectedCount );
+        UTF_REQUIRE_EQUAL( fsmdRO -> queryEntriesCount(), expectedCount );
+
+        const auto cbEntryId = [ &entryIds ]( SAA_in const fs::path& relPath ) -> bl::uuid_t
+        {
+            const auto pos = entryIds.find( relPath );
+
+            UTF_REQUIRE( pos != entryIds.end() );
+
+            return pos -> second;
+        };
+
+        /*
+         * Recomputes the per chunk checksum and digest of a regular file from its bytes and
+         * verifies the chunk tiling, the entry level checksum and the entry level hash
+         */
+
+        const auto cbVerifyRegularFile = [ &fsmdRO, &root, &cbEntryId ](
+            SAA_in              const fs::path&                                     relPath,
+            SAA_in              const std::vector< std::uint32_t >&                 expectedChunkSizes
+            ) -> void
+        {
+            const auto entryId = cbEntryId( relPath );
+            const auto info = fsmdRO -> loadEntryInfo( entryId );
+
+            UTF_REQUIRE( FilesystemMetadata::File == info.type );
+            UTF_REQUIRE_EQUAL( fsmdRO -> queryChunksCount( entryId ), expectedChunkSizes.size() );
+
+            std::vector< FilesystemMetadata::ChunkInfo > chunkInfos;
+
+            {
+                const auto chunks = fsmdRO -> queryChunks( entryId );
+
+                for( ; chunks -> hasCurrent(); chunks -> loadNext() )
+                {
+                    chunkInfos.push_back( fsmdRO -> loadChunkInfo( chunks -> current() ) );
+                }
+            }
+
+            UTF_REQUIRE_EQUAL( chunkInfos.size(), expectedChunkSizes.size() );
+
+            const auto filePtr = os::fopen( root / relPath, "rb" );
+
+            cs::crc_32_type entryCrc;
+            hash::HashCalculatorDefault entryHash;
+
+            std::uint64_t pos = 0U;
+
+            for( std::size_t i = 0U; i < chunkInfos.size(); ++i )
+            {
+                const std::uint64_t chunkPos = chunkInfos[ i ].pos;
+                const std::uint32_t chunkSize = chunkInfos[ i ].size;
+                const std::uint32_t chunkChecksum = chunkInfos[ i ].checksum;
+
+                UTF_REQUIRE_EQUAL( chunkPos, pos );
+                UTF_REQUIRE_EQUAL( chunkSize, expectedChunkSizes[ i ] );
+                UTF_REQUIRE( chunkSize > 0U );
+
+                std::vector< char > buffer( chunkSize );
+
+                os::fread( filePtr, &buffer[ 0 ], buffer.size() );
+
+                cs::crc_32_type chunkCrc;
+                chunkCrc.process_bytes( &buffer[ 0 ], buffer.size() );
+
+                UTF_REQUIRE_EQUAL( chunkChecksum, chunkCrc.checksum() );
+
+                entryCrc.process_bytes( &chunkChecksum, sizeof( chunkChecksum ) );
+
+                hash::HashCalculatorDefault chunkHash;
+                chunkHash.update( &buffer[ 0 ], buffer.size() );
+                chunkHash.finalize();
+
+                const auto chunkDigest = chunkHash.digestStr();
+
+                entryHash.update( chunkDigest.c_str(), chunkDigest.size() );
+
+                pos += chunkSize;
+            }
+
+            const std::uint64_t entrySize = info.size;
+
+            UTF_REQUIRE_EQUAL( entrySize, pos );
+
+            entryHash.finalize();
+
+            const std::uint32_t entryChecksum = info.checksum;
+
+            UTF_REQUIRE( info.isChecksumSet );
+            UTF_REQUIRE_EQUAL( entryChecksum, entryCrc.checksum() );
+
+            UTF_REQUIRE( info.hash );
+            UTF_REQUIRE_EQUAL( info.hash -> value(), entryHash.digestStr() );
+        };
+
+        {
+            /*
+             * A directory has no chunks and no checksum
+             */
+
+            const auto entryId = cbEntryId( fs::path( "foo" ) / "emptyDirectory" );
+            const auto info = fsmdRO -> loadEntryInfo( entryId );
+
+            UTF_REQUIRE( FilesystemMetadata::Directory == info.type );
+            UTF_REQUIRE_EQUAL( fsmdRO -> queryChunksCount( entryId ), 0U );
+        }
+
+        {
+            /*
+             * FilesPackagerUnit::pushReadyTask returns before any chunk or checksum is
+             * created for a zero length file
+             */
+
+            const auto entryId = cbEntryId( fs::path( "foo" ) / "zeroSizeFile.bin" );
+            const auto info = fsmdRO -> loadEntryInfo( entryId );
+
+            const std::uint64_t entrySize = info.size;
+
+            UTF_REQUIRE( FilesystemMetadata::File == info.type );
+            UTF_REQUIRE_EQUAL( entrySize, 0U );
+            UTF_REQUIRE_EQUAL( fsmdRO -> queryChunksCount( entryId ), 0U );
+            UTF_REQUIRE( ! info.isChecksumSet );
+        }
+
+        {
+            /*
+             * A file which fits in a single data block
+             */
+
+            std::vector< std::uint32_t > expectedChunkSizes;
+
+            expectedChunkSizes.push_back( 20U * 1024U );
+
+            cbVerifyRegularFile( fs::path( "foo" ) / "bar" / "normalFile.bin", expectedChunkSizes );
+        }
+
+        {
+            /*
+             * The multi chunk file - its chunks must tile it exactly, two full data blocks
+             * and a partial one, and the entry level checksum and hash must be the fold of
+             * the per chunk ones in ascending file position order
+             */
+
+            const std::uint64_t blockCapacity = data::DataBlock::defaultCapacity();
+            const std::uint64_t fileSize = 2U * 1024U * 1024U + 12345U;
+
+            std::vector< std::uint32_t > expectedChunkSizes;
+
+            std::uint64_t bytesLeft = fileSize;
+
+            while( bytesLeft )
+            {
+                const std::uint64_t bytesToRead = ( bytesLeft <= blockCapacity ) ? bytesLeft : blockCapacity;
+
+                expectedChunkSizes.push_back( ( std::uint32_t ) bytesToRead );
+
+                bytesLeft -= bytesToRead;
+            }
+
+            UTF_REQUIRE_EQUAL( expectedChunkSizes.size(), 3U );
+
+            cbVerifyRegularFile( fs::path( "foo" ) / "bar" / "multiChunkFile.bin", expectedChunkSizes );
+        }
+
+        if( os::onUNIX() )
+        {
+            {
+                /*
+                 * The Executable flag comes from status.permissions() & fs::ExecutableFileMask
+                 */
+
+                const auto info = fsmdRO -> loadEntryInfo( cbEntryId( executableFileRelPath ) );
+
+                const std::uint32_t entryFlags = info.flags;
+
+                UTF_REQUIRE( FilesystemMetadata::File == info.type );
+                UTF_REQUIRE( 0U != ( entryFlags & ( std::uint32_t ) FilesystemMetadata::Executable ) );
+            }
+
+            {
+                /*
+                 * The timestamps of a symlink are deliberately not read - those calls follow
+                 * the link, so a dangling one would fail the whole packaging run
+                 */
+
+                const auto info = fsmdRO -> loadEntryInfo( cbEntryId( fs::path( "foo" ) / "linkToBar" ) );
+
+                const std::time_t lastModified = info.lastModified;
+
+                UTF_REQUIRE( FilesystemMetadata::Symlink == info.type );
+                UTF_REQUIRE( info.targetPath );
+                UTF_REQUIRE( ! info.targetPath -> value().empty() );
+                UTF_REQUIRE_EQUAL( lastModified, 0 );
+            }
+
+            {
+                const auto info = fsmdRO -> loadEntryInfo( cbEntryId( fs::path( "foo" ) / "danglingLink.bin" ) );
+
+                const std::time_t lastModified = info.lastModified;
+
+                UTF_REQUIRE( FilesystemMetadata::Symlink == info.type );
+                UTF_REQUIRE( info.targetPath );
+                UTF_REQUIRE_EQUAL( info.targetPath -> value().filename(), fs::path( "noSuchTarget.bin" ) );
+                UTF_REQUIRE_EQUAL( lastModified, 0 );
+            }
+        }
     }
 
 } // __unnamed
@@ -4055,6 +5090,37 @@ UTF_AUTO_TEST_CASE( Tasks_PingerMatchersTests )
             UTF_REQUIRE( ProcessPingerTaskImpl::matchAverageRoundTripTime( lineAverageRTT, &rtt ) );
             UTF_REQUIRE( numbers::floatingPointEqual( rtt, 6.933 ) );
         }
+
+        {
+            /*
+             * The cross platform fallback - the Darwin round trip time format is matched
+             * through getPatternAvgRttAlt(), and the second Linux packet summary alternative
+             * is accepted, but the Darwin packet summary form deliberately is not (the
+             * asymmetry is documented in matchPacketsArrived)
+             */
+
+            double rtt;
+
+            UTF_REQUIRE(
+                ProcessPingerTaskImpl::matchAverageRoundTripTime(
+                    "round-trip min/avg/max/stddev = 0.048/0.048/0.048/0.000 ms",
+                    &rtt
+                    )
+                );
+            UTF_REQUIRE( numbers::floatingPointEqual( rtt, 0.048 ) );
+
+            UTF_REQUIRE(
+                ProcessPingerTaskImpl::matchPacketsArrived(
+                    "1 packets transmitted, 1 packets received, 0% packet loss, time 3005ms"
+                    )
+                );
+
+            UTF_REQUIRE(
+                ! ProcessPingerTaskImpl::matchPacketsArrived(
+                    "1 packets transmitted, 1 packets received, 0.0% packet loss"
+                    )
+                );
+        }
     }
     else if( os::onDarwin() )
     {
@@ -4072,6 +5138,35 @@ UTF_AUTO_TEST_CASE( Tasks_PingerMatchersTests )
             UTF_REQUIRE( ProcessPingerTaskImpl::matchAverageRoundTripTime( lineAverageRTT, &rtt ) );
             UTF_REQUIRE( numbers::floatingPointEqual( rtt, 0.048 ) );
         }
+
+        {
+            /*
+             * The cross platform fallback - the Linux round trip time format is matched
+             * through getPatternAvgRttAlt() and both Linux packet summary forms are accepted
+             */
+
+            double rtt;
+
+            UTF_REQUIRE(
+                ProcessPingerTaskImpl::matchAverageRoundTripTime(
+                    "rtt min/avg/max/mdev = 2.125/2.347/2.637/0.204 ms",
+                    &rtt
+                    )
+                );
+            UTF_REQUIRE( numbers::floatingPointEqual( rtt, 2.347 ) );
+
+            UTF_REQUIRE(
+                ProcessPingerTaskImpl::matchPacketsArrived(
+                    "1 packets transmitted, 1 received, 0% packet loss, time 3003ms"
+                    )
+                );
+
+            UTF_REQUIRE(
+                ProcessPingerTaskImpl::matchPacketsArrived(
+                    "1 packets transmitted, 1 packets received, 0% packet loss"
+                    )
+                );
+        }
     }
     else
     {
@@ -4081,6 +5176,59 @@ UTF_AUTO_TEST_CASE( Tasks_PingerMatchersTests )
                 << "ProcessPingerTaskImpl: current platform is not supported"
             );
     }
+
+    /*
+     * All platforms - the negative direction of the packet summary matcher
+     */
+
+    UTF_REQUIRE(
+        ! ProcessPingerTaskImpl::matchPacketsArrived(
+            "1 packets transmitted, 0 received, 100% packet loss, time 0ms"
+            )
+        );
+
+    UTF_REQUIRE(
+        ! ProcessPingerTaskImpl::matchPacketsArrived(
+            "2 packets transmitted, 2 received, 0% packet loss"
+            )
+        );
+
+    {
+        /*
+         * ... and the out parameter contract - a line which matches no pattern must leave
+         * the round trip time untouched
+         */
+
+        double rtt = -1.0;
+
+        UTF_REQUIRE(
+            ! ProcessPingerTaskImpl::matchAverageRoundTripTime(
+                "64 bytes from 127.0.0.1: icmp_seq=1 ttl=64 time=0.031 ms",
+                &rtt
+                )
+            );
+        UTF_REQUIRE( numbers::floatingPointEqual( rtt, -1.0 ) );
+    }
+
+    /*
+     * The identity guard in matchAverageRoundTripTime: on Windows both accessors resolve to
+     * the same pattern object, so without '&alternate != &primary' the same input would be
+     * matched twice against an identical pattern; on the UNIX platforms they really differ,
+     * which is what makes the fallback above meaningful
+     */
+
+    if( os::onWindows() )
+    {
+        UTF_REQUIRE(
+            &ProcessPingerTaskImpl::getPatternAvgRtt() == &ProcessPingerTaskImpl::getPatternAvgRttAlt()
+            );
+    }
+    else
+    {
+        UTF_REQUIRE(
+            &ProcessPingerTaskImpl::getPatternAvgRtt() != &ProcessPingerTaskImpl::getPatternAvgRttAlt()
+            );
+    }
 }
 
 UTF_AUTO_TEST_CASE( Tasks_PingerManualTests )
@@ -4088,10 +5236,7 @@ UTF_AUTO_TEST_CASE( Tasks_PingerManualTests )
     using namespace bl;
     using namespace bl::tasks;
 
-    if( ! test::UtfArgsParser::isClient() )
-    {
-        return;
-    }
+    UTF_SKIP_UNLESS( test::UtfArgsParser::isClient(), "requires --is-client (manual run test)" );
 
     scheduleAndExecuteInParallel(
         []( SAA_in const om::ObjPtr< tasks::ExecutionQueue >& eq ) -> void
@@ -4550,6 +5695,68 @@ UTF_AUTO_TEST_CASE( Tasks_LambdaCapture )
         );
 }
 
+UTF_AUTO_TEST_CASE( Tasks_RetryableWrapperTaskCancelStressTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+
+    /*
+     * The wrapper task replaces the wrapped task from its continuation callback while
+     * a concurrent requestCancel() may be forwarding a call to the very same task, so
+     * the decision and the replacement must be made under the wrapper task lock
+     */
+
+    for( std::size_t i = 0U; i < 20U; ++i )
+    {
+        const auto eq = om::lockDisposable(
+            ExecutionQueueImpl::createInstance< ExecutionQueue >( ExecutionQueue::OptionKeepNone )
+            );
+
+        const auto taskImpl = RetryableWrapperTask::createInstance(
+            []() -> om::ObjPtr< Task >
+            {
+                return om::qi< Task >(
+                    SimpleTaskImpl::createInstance(
+                        []() -> void
+                        {
+                            BL_THROW(
+                                bl::UnexpectedException(),
+                                BL_MSG()
+                                    << "Consistent error"
+                                );
+                        }
+                        )
+                    );
+            },
+            20U                                             /* maxRetryCount */,
+            time::milliseconds( 1 )                         /* retryTimeout */
+            );
+
+        const auto task = om::qi< Task >( taskImpl );
+
+        eq -> push_back( task );
+
+        os::thread cancelThread(
+            [ &task ]() -> void
+            {
+                for( std::size_t j = 0U; j < 200U; ++j )
+                {
+                    task -> requestCancel();
+                }
+            }
+            );
+
+        cancelThread.join();
+
+        eq -> flush(
+            false                                           /* discardPending */,
+            true                                            /* nothrowIfFailed */
+            );
+
+        UTF_REQUIRE( task -> isFailed() );
+    }
+}
+
 UTF_AUTO_TEST_CASE( Tasks_RetryableWrapperTaskTests )
 {
     using namespace bl;
@@ -4794,6 +6001,22 @@ UTF_AUTO_TEST_CASE( Tasks_RetryableWrapperTaskTests )
         );
 
     UTF_CHECK_EQUAL( executedTimestamps.size(), maxRetryCount );
+
+    /*
+     * ... and the back-off itself: RetryableWrapperTaskT::continuationTask() inserts a
+     * SimpleTimerTask carrying the configured retryTimeout between two consecutive attempts,
+     * so the recorded timestamps must be at least that far apart
+     *
+     * Only the LOWER bound is asserted, and with a generous tolerance of half the timeout, so
+     * that a loaded machine cannot fail it - while a regression which passed zero as the
+     * timer's initDelay / duration, turning the retry into a tight loop against a failing
+     * remote endpoint, still would
+     */
+
+    for( std::size_t i = 1U; i < executedTimestamps.size(); ++i )
+    {
+        UTF_CHECK( ( executedTimestamps[ i ] - executedTimestamps[ i - 1U ] ) >= ( retryTimeout / 2 ) );
+    }
 }
 
 UTF_AUTO_TEST_CASE( Tasks_ShutdownContinuationTests )
@@ -5453,6 +6676,164 @@ UTF_AUTO_TEST_CASE( Tasks_SimpleTimerTests )
          */
 
         UTF_REQUIRE( time::seconds( 3L ) < elapsed && elapsed < time::seconds( 8L ) );
+    }
+
+    {
+        /*
+         * SimpleTimerT::onTimerNoThrow() wraps the user callback in BL_WARN_NOEXCEPT_*, so an
+         * exception thrown out of the callback is logged as a warning and swallowed, and the
+         * timer keeps ticking at the defaultDuration it was constructed with instead of dying
+         *
+         * Neither the swallow path nor the fallback period is exercised anywhere above, yet a
+         * change which let the exception escape would fail the timer task, the OptionKeepNone
+         * queue would discard it and SimpleTimer would go silently dead - reconnect timers and
+         * cancel request sweeps would stop with no diagnostic at all - and a fallback of zero
+         * would turn the timer into a busy loop
+         *
+         * The log capture is mandatory rather than cosmetic: UtfMain.h turns LL_WARNING into
+         * BOOST_ERROR, so the warning has to be redirected for the case to pass at all
+         */
+
+        std::atomic< std::size_t > throwingCounter( 0U );
+
+        os::mutex timestampsLock;
+        std::vector< time::ptime > timestamps;
+
+        const auto throwingUpdater = [ &throwingCounter, &timestampsLock, &timestamps ]()
+            -> time::time_duration
+        {
+            {
+                BL_MUTEX_GUARD( timestampsLock );
+
+                timestamps.push_back( time::microsec_clock::universal_time() );
+            }
+
+            const auto invocation = ++throwingCounter;
+
+            if( invocation <= 3U )
+            {
+                BL_THROW(
+                    UnexpectedException(),
+                    BL_MSG()
+                        << "timer callback failure"
+                    );
+            }
+
+            /*
+             * Request to stop the timer
+             */
+
+            return time::neg_infin;
+        };
+
+        cpp::SafeOutputStringStream os;
+
+        {
+            const Logging::line_logger_t ll(
+                cpp::bind(
+                    &Logging::defaultLineLoggerWithLock,
+                    _1,
+                    _2,
+                    _3,
+                    _4,
+                    true /* addNewLine */,
+                    cpp::ref( os )
+                    )
+                );
+
+            Logging::LineLoggerPusher pushLogger( ll );
+
+            Logging::LevelPusher pushLevel( Logging::LL_DEBUG );
+
+            SimpleTimer timer(
+                throwingUpdater                 /* callback */,
+                time::milliseconds( 200 )       /* defaultDuration */,
+                time::milliseconds( 0 )         /* initDelay */,
+                false                           /* dontStart */
+                );
+
+            /*
+             * Three throwing invocations at ~200 ms apart keep the timer alive long enough
+             * for the wait below to be entered while it is still running
+             */
+
+            UTF_REQUIRE_NO_THROW( timer.wait() );
+        }
+
+        UTF_REQUIRE_EQUAL( 4U, throwingCounter.load() );
+
+        std::vector< time::ptime > timestampsCopy;
+
+        {
+            BL_MUTEX_GUARD( timestampsLock );
+
+            timestampsCopy = timestamps;
+        }
+
+        UTF_REQUIRE_EQUAL( 4U, timestampsCopy.size() );
+
+        /*
+         * Every gap must be the fallback period rather than a hot loop; 150 ms leaves room
+         * for timer granularity on a loaded machine while still failing on a zero fallback
+         */
+
+        for( std::size_t i = 1U; i < timestampsCopy.size(); ++i )
+        {
+            UTF_REQUIRE( ( timestampsCopy[ i ] - timestampsCopy[ i - 1U ] ) >= time::milliseconds( 150 ) );
+        }
+
+        UTF_REQUIRE(
+            str::contains( os.str(), "SimpleTimerT::onTimerNoThrow(): NOEXCEPT block threw an exception" )
+            );
+    }
+
+    {
+        /*
+         * runNow() has no coverage at all, although ProxyBrokerBackendProcessingFactory calls
+         * it in production; the init delay below is long enough that the timer can never fire
+         * on its own, so the only thing which can move the counter is runNow() itself
+         */
+
+        std::atomic< std::size_t > runNowCounter( 0U );
+
+        const auto runNowUpdater = [ &runNowCounter ]() -> time::time_duration
+        {
+            ++runNowCounter;
+
+            return time::seconds( 30L );
+        };
+
+        SimpleTimer timer(
+            runNowUpdater                       /* callback */,
+            time::seconds( 30L )                /* defaultDuration */,
+            time::seconds( 30L )                /* initDelay */,
+            false                               /* dontStart */
+            );
+
+        os::sleep( time::milliseconds( 300 ) );
+        UTF_REQUIRE_EQUAL( 0U, runNowCounter.load() );
+
+        timer.runNow();
+
+        os::sleep( time::milliseconds( 300 ) );
+        UTF_REQUIRE_EQUAL( 1U, runNowCounter.load() );
+
+        timer.stop();
+
+        /*
+         * Note that SimpleTimerT::runNow()'s guard message is a copy/paste of wait()'s and
+         * reads "Attempting to wait on a simple timer object that has not been started", so
+         * only the exception type is asserted here
+         */
+
+        SimpleTimer notStartedTimer(
+            runNowUpdater                       /* callback */,
+            time::seconds( 30L )                /* defaultDuration */,
+            time::seconds( 0L )                 /* initDelay */,
+            true                                /* dontStart */
+            );
+
+        UTF_REQUIRE_THROW( notStartedTimer.runNow(), bl::UnexpectedException );
     }
 }
 

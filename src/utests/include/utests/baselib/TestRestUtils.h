@@ -32,6 +32,86 @@
 namespace utest
 {
     /**
+     * @brief A BaseRestServerProcessingContext implementation whose response metadata is
+     * chosen by the test
+     *
+     * EchoServerProcessingContext is the only implementation of the base in the repository
+     * and it only ever sets status codes drawn from http::Parameters and exactly one
+     * header, so without this there is no way to feed the gateway a hostile or merely
+     * unusual HttpResponseMetadata
+     */
+
+    template
+    <
+        typename E = void
+    >
+    class TestRestServerProcessingContextT :
+        public bl::rest::BaseRestServerProcessingContext< TestRestServerProcessingContextT< E > >
+    {
+        BL_DECLARE_OBJECT_IMPL( TestRestServerProcessingContextT )
+
+    public:
+
+        typedef bl::dm::messaging::BrokerProtocol                                   BrokerProtocol;
+
+        typedef bl::cpp::function
+        <
+            bl::om::ObjPtr< bl::dm::http::HttpResponseMetadata > (
+                SAA_in      const bl::om::ObjPtr< BrokerProtocol >&                     brokerProtocol,
+                SAA_in      const bl::om::ObjPtrCopyable< bl::data::DataBlock >&        dataBlock
+                )
+        >
+        processing_callback_t;
+
+    protected:
+
+        typedef bl::rest::BaseRestServerProcessingContext
+        <
+            TestRestServerProcessingContextT< E >
+        >
+        base_type;
+
+        const processing_callback_t                                                 m_callback;
+
+        TestRestServerProcessingContextT(
+            SAA_in      processing_callback_t&&                                     callback,
+            SAA_in      const bool                                                  isGraphQLServer,
+            SAA_in      const bool                                                  isAuthnticationAlwaysRequired,
+            SAA_in      std::string&&                                               requiredContentType,
+            SAA_in      bl::om::ObjPtr< bl::data::datablocks_pool_type >&&          dataBlocksPool,
+            SAA_in      bl::om::ObjPtr< bl::om::Proxy >&&                           backendReference,
+            SAA_in      std::string&&                                               tokenType,
+            SAA_in_opt  std::string&&                                               tokenData = std::string()
+            )
+            :
+            base_type(
+                isGraphQLServer,
+                isAuthnticationAlwaysRequired,
+                BL_PARAM_FWD( requiredContentType ),
+                BL_PARAM_FWD( dataBlocksPool ),
+                BL_PARAM_FWD( backendReference ),
+                BL_PARAM_FWD( tokenType ),
+                BL_PARAM_FWD( tokenData )
+                ),
+            m_callback( BL_PARAM_FWD( callback ) )
+        {
+        }
+
+    public:
+
+        auto processingSync(
+            SAA_in      const bl::om::ObjPtr< BrokerProtocol >&                     brokerProtocolIn,
+            SAA_in      const bl::om::ObjPtrCopyable< bl::data::DataBlock >&        dataBlock
+            )
+            -> bl::om::ObjPtr< bl::dm::http::HttpResponseMetadata >
+        {
+            return m_callback( brokerProtocolIn, dataBlock );
+        }
+    };
+
+    typedef bl::om::ObjectImpl< TestRestServerProcessingContextT<> > TestRestServerProcessingContext;
+
+    /**
      * @brief Helpers for aiding implementation of REST tests
      */
 
@@ -44,6 +124,40 @@ namespace utest
         BL_DECLARE_STATIC( TestRestUtilsT )
 
     public:
+
+        typedef bl::httpserver::ServerBackendProcessing::format_eh_response_callback_t
+            format_eh_response_callback_t;
+
+        /**
+         * @brief Creates the server side processing context which replaces the echo context
+         *
+         * This is a factory rather than a ready made context because the context has to be
+         * constructed with the backend reference proxy which httpRestWithMessagingBackendTests
+         * itself creates and connects to the server side forwarding backend
+         */
+
+        typedef bl::cpp::function
+        <
+            bl::om::ObjPtrDisposable< bl::messaging::AsyncBlockDispatcher > (
+                SAA_in      const bl::om::ObjPtr< bl::data::datablocks_pool_type >&     dataBlocksPool,
+                SAA_in      const bl::om::ObjPtr< bl::om::Proxy >&                      backendReference
+                )
+        >
+        server_context_factory_t;
+
+        /**
+         * @brief A live view of the echo server context's processed messages counter
+         *
+         * The echo context is created and owned by httpRestWithMessagingBackendTests, so a
+         * caller supplied callback which needs to sample the counter around individual
+         * requests has to be handed a getter rather than a value; the getter holds its own
+         * reference to the context, so it also stays valid after the fixture has returned
+         *
+         * Note that it always reports the echo context - a caller which replaces it via
+         * serverContextFactory will see the counter stay at zero
+         */
+
+        typedef bl::cpp::function< std::size_t () > messages_processed_callback_t;
 
         static auto defaultToken() -> std::string
         {
@@ -235,7 +349,14 @@ namespace utest
             SAA_in_opt      std::string&&                                                   tokenTypeDefault = defaultTokenType(),
             SAA_in_opt      std::string&&                                                   tokenDataDefault = std::string(),
             SAA_in_opt      std::string&&                                                   tokenData = defaultToken(),
-            SAA_in_opt      const bl::time::time_duration&                                  requestTimeout = bl::time::neg_infin
+            SAA_in_opt      const bl::time::time_duration&                                  requestTimeout = bl::time::neg_infin,
+            SAA_in_opt      const bool                                                      isAuthnticationAlwaysRequired = false,
+            SAA_in_opt      std::string&&                                                   requiredContentType = std::string(),
+            SAA_in_opt      const bool                                                      isGraphQLServer = false,
+            SAA_in_opt      format_eh_response_callback_t&&                                 ehFormatCallback = format_eh_response_callback_t(),
+            SAA_in_opt      const server_context_factory_t&                                 serverContextFactory = server_context_factory_t(),
+            SAA_inout_opt   messages_processed_callback_t*                                  messagesProcessedOut = nullptr,
+            SAA_in_opt      const bl::uuid_t&                                               gatewayTargetPeerId = bl::uuids::nil()
             )
         {
             using namespace bl;
@@ -261,15 +382,27 @@ namespace utest
                 echo::EchoServerProcessingContext::createInstance(
                     isQuietMode || waitOnServer,
                     0UL                                 /* maxProcessingDelayInMicroseconds */,
-                    false                               /* isGraphQLServer */,
-                    false                               /* isAuthnticationAlwaysRequired */,
-                    std::string()                       /* requiredContentType */,
+                    isGraphQLServer                     /* isGraphQLServer */,
+                    isAuthnticationAlwaysRequired       /* isAuthnticationAlwaysRequired */,
+                    BL_PARAM_FWD( requiredContentType ) /* requiredContentType */,
                     om::copy( dataBlocksPool ),
                     om::copy( backendReference ),
                     cpp::copy( tokenTypeDefault )       /* tokenType */,
                     cpp::copy( tokenData )              /* tokenData */
                     )
                 );
+
+            if( messagesProcessedOut )
+            {
+                const auto contextRef =
+                    om::ObjPtrCopyable< echo::EchoServerProcessingContext >::acquireRef( echoContext.get() );
+
+                *messagesProcessedOut =
+                    [ contextRef ]() -> std::size_t
+                    {
+                        return contextRef -> messagesProcessed();
+                    };
+            }
 
             {
                 const auto backend1 = om::lockDisposable(
@@ -300,11 +433,38 @@ namespace utest
                         )
                     );
 
+                /*
+                 * The caller supplied server context, when there is one, replaces the echo
+                 * context as the implementation behind the server side forwarding backend
+                 */
+
+                const auto serverContext = serverContextFactory ?
+                    serverContextFactory( dataBlocksPool, backendReference ) :
+                    om::ObjPtrDisposable< messaging::AsyncBlockDispatcher >();
+
                 {
                     auto proxy = om::ProxyImpl::createInstance< om::Proxy >( true /* strongRef */ );
-                    proxy -> connect( static_cast< messaging::AsyncBlockDispatcher* >( echoContext.get() ) );
+
+                    proxy -> connect(
+                        serverContext ?
+                            serverContext.get() :
+                            static_cast< messaging::AsyncBlockDispatcher* >( echoContext.get() )
+                        );
+
                     backend2 -> setHostServices( std::move( proxy ) );
                 }
+
+                /*
+                 * The composed isConnected() is a four level chain and the gateway bridge
+                 * polls it every 5 s, cancelling the control token the moment it reads
+                 * false - so in a healthy deployment it must be true continuously, and a
+                 * regression which makes it under-report would otherwise surface only as a
+                 * mysteriously cancelled token deep inside an unrelated case
+                 */
+
+                UTF_REQUIRE( backend1 -> isConnected() );
+                UTF_REQUIRE( backend2 -> isConnected() );
+                UTF_REQUIRE( ! controlToken -> isCanceled() );
 
                 {
                     BL_SCOPE_EXIT(
@@ -320,7 +480,8 @@ namespace utest
                             om::copy( controlToken ),
                             om::copy( backend1 )                                    /* messagingBackend */,
                             gatewayPeerId                                           /* sourcePeerId */,
-                            serverPeerId                                            /* targetPeerId */,
+                            gatewayTargetPeerId.is_nil() ?
+                                serverPeerId : gatewayTargetPeerId                  /* targetPeerId */,
                             om::copy( dataBlocksPool ),
                             BL_PARAM_FWD( tokenCookieNames ),
                             true                                                    /* serverAuthenticationRequired */,
@@ -328,7 +489,8 @@ namespace utest
                             true                                                    /* logUnauthorizedMessages */,
                             BL_PARAM_FWD( tokenTypeDefault ),
                             BL_PARAM_FWD( tokenDataDefault ),
-                            requestTimeout
+                            requestTimeout,
+                            BL_PARAM_FWD( ehFormatCallback )
                             )
                         );
 
@@ -369,9 +531,47 @@ namespace utest
                             callback = waitOnServer ? waitOnBackendCallback : executeHttpRequestCallback;
                         }
 
-                        TestTaskUtils::startAcceptorAndExecuteCallback( callback, acceptor );
+                        /*
+                         * The identical assertion block again, immediately after the
+                         * caller's callback has returned - the gateway must not have self
+                         * cancelled during the run
+                         *
+                         * It has to run inside the callback rather than after
+                         * startAcceptorAndExecuteCallback returns, because shutting the
+                         * acceptor down cancels the shared control token by design
+                         * (TcpBaseTasks.h:2292), and it is skipped in the wait on server
+                         * mode, where the caller's callback is itself the one which blocks
+                         * until that cancellation
+                         */
 
-                        if( ! waitOnServer && ! isCustomCallback )
+                        const bl::cpp::void_callback_t innerCallback = callback;
+
+                        const bl::cpp::void_callback_t callbackWithAssertions =
+                            [ & ]() -> void
+                            {
+                                innerCallback();
+
+                                if( ! waitOnServer )
+                                {
+                                    UTF_REQUIRE( backend1 -> isConnected() );
+                                    UTF_REQUIRE( backend2 -> isConnected() );
+                                    UTF_REQUIRE( ! controlToken -> isCanceled() );
+                                }
+                            };
+
+                        /*
+                         * The acceptor binds "0.0.0.0", so the readiness probe must target the
+                         * regular test host rather than the bind address
+                         */
+
+                        TestTaskUtils::startAcceptorAndExecuteCallback(
+                            callbackWithAssertions,
+                            acceptor,
+                            test::UtfArgsParser::host()                      /* readinessHost */,
+                            httpPort                                        /* readinessPort */
+                            );
+
+                        if( ! waitOnServer && ! isCustomCallback && ! serverContext )
                         {
                             UTF_REQUIRE_EQUAL( requestsCount, echoContext -> messagesProcessed() );
                         }

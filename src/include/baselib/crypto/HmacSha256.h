@@ -17,6 +17,8 @@
 #ifndef __BL_CRYPTO_HMACSHA256_H_
 #define __BL_CRYPTO_HMACSHA256_H_
 
+#include <baselib/crypto/ErrorHandling.h>
+
 #include <baselib/core/CPP.h>
 #include <baselib/core/ErrorHandling.h>
 #include <baselib/core/SerializationUtils.h>
@@ -155,7 +157,7 @@ namespace bl
                         ::HMAC(
                             ::EVP_sha256(),
                             key.c_str(),
-                            static_cast< int >( key.length() ),
+                            toIntSize( key.length() ),
                             reinterpret_cast< const unsigned char* >( message.c_str() ),
                             message.length(),
                             messageDigest,

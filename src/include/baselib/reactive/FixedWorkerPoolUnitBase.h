@@ -141,7 +141,12 @@ namespace bl
 
                 BL_NOEXCEPT_BEGIN()
 
-                if( isFailedOrFailing() && false == m_eqWorkerTasks -> isEmpty() )
+                /*
+                 * Note that the queue may not exist yet - the observable can fail (through
+                 * dispatchException) before its first iteration has created it
+                 */
+
+                if( m_eqWorkerTasks && isFailedOrFailing() && false == m_eqWorkerTasks -> isEmpty() )
                 {
                     /*
                      * An error has occurred; just keep popping the

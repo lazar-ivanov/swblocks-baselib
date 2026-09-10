@@ -195,6 +195,19 @@ namespace bl
 
         /*****************************************************
          * Process creation and termination support
+         *
+         * Two properties of the UNIX implementation are part of the contract of these APIs:
+         *
+         * 1) The parent death signal of a non-detached child (PR_SET_PDEATHSIG on Linux) is
+         *    delivered when the *thread* which created the child terminates, not when the
+         *    process does - so a child which must outlive the calling thread has to be
+         *    created either from a long lived thread or as a detached process
+         *
+         * 2) A process which writes into the standard input of a child (the redirect flags
+         *    below) must ignore SIGPIPE - the default disposition of that signal terminates
+         *    the writing process when the child exits before its input was fully written;
+         *    with the signal ignored the write fails with EPIPE, which these APIs report as
+         *    an ordinary error (and closing the stream tolerates it)
          */
 
         inline process_ref createProcess(
@@ -548,6 +561,30 @@ namespace bl
             return detail::OS::getPid( process );
         }
 
+        /**
+         * @brief Returns the size of the physical memory of the host in bytes
+         *
+         * Zero is returned if the value can't be obtained, so every caller must treat
+         * zero as 'unknown' and fall back on its own default
+         */
+
+        inline std::uint64_t getPhysicalMemorySize()
+        {
+            return detail::OS::getPhysicalMemorySize();
+        }
+
+        /**
+         * @brief Returns the soft limit on the number of file descriptors of the process
+         *
+         * Zero is returned when there is no such limit or it can't be obtained (which is
+         * always the case on Windows), so every caller must treat zero as 'not applicable'
+         */
+
+        inline std::uint64_t getFileDescriptorSoftLimit()
+        {
+            return detail::OS::getFileDescriptorSoftLimit();
+        }
+
         /*
          * Host to network byte order and vice versa functions
          *
@@ -611,6 +648,15 @@ namespace bl
             SAA_in          const std::size_t                   sizeInBytes
             )
         {
+            /*
+             * errno must be cleared before the call and captured immediately after it -
+             * otherwise an unrelated failure earlier on this thread would be reported as
+             * the cause of this one. Note that whether there is a failure at all is decided
+             * by std::ferror and not by errno; see getStdioTransferErrorCode( )
+             */
+
+            errno = 0;
+
             const std::size_t bytesRead = std::fread(
                 buffer,
                 1                                   /* element size */,
@@ -618,25 +664,27 @@ namespace bl
                 fileptr.get()
                 );
 
+            const auto errorCode = detail::getStdioTransferErrorCode( fileptr.get(), errno );
+
             if( bytesRead != sizeInBytes )
             {
-                if( errno )
+                if( errorCode )
                 {
                     /*
-                     * This is a real error and errno is set; just report it
+                     * The stream carries an error indicator, so this is a real failure
                      */
 
                     BL_THROW_EC(
-                        eh::error_code( errno, eh::generic_category() ),
+                        errorCode,
                         BL_MSG()
                             << "An error occurred while reading from a file with std::fread"
                         );
                 }
 
                 /*
-                 * If the errno is not set that means we have attempted to read
-                 * pas the end of file and this was a partial read; throw some
-                 * system error (e.g. operation_not_permitted)
+                 * No error indicator means we have attempted to read past the end of file
+                 * and this was a partial read; throw some system error
+                 * (e.g. operation_not_permitted)
                  */
 
                  BL_CHK_EC(
@@ -654,6 +702,13 @@ namespace bl
             SAA_in          const bool                          noflush = false
             )
         {
+            /*
+             * See the note in fread( ... ) above - errno must be cleared before the call
+             * and captured immediately after it
+             */
+
+            errno = 0;
+
             const std::size_t bytesWritten = std::fwrite(
                 buffer,
                 1                                   /* element size */,
@@ -661,21 +716,23 @@ namespace bl
                 fileptr.get()
                 );
 
+            const auto errorCode = detail::getStdioTransferErrorCode( fileptr.get(), errno );
+
             if( bytesWritten != sizeInBytes )
             {
-                if( errno )
+                if( errorCode )
                 {
                     BL_THROW_EC(
-                        eh::error_code( errno, eh::generic_category() ),
+                        errorCode,
                         BL_MSG()
                             << "An error occurred while writing to a file with std::fwrite"
                         );
                 }
 
                 /*
-                 * If the errno is not set that means something has failed but std::fwrite
-                 * doesn't provide the actual error code; throw some system error
-                 * (e.g. operation_not_permitted)
+                 * A short write with no error indicator on the stream is not something
+                 * std::fwrite is documented to produce and there is no code to report;
+                 * throw some system error (e.g. operation_not_permitted)
                  */
 
                  BL_CHK_EC(
@@ -1040,6 +1097,19 @@ namespace bl
         inline void sendDebugMessage( SAA_in const std::string& message ) NOEXCEPT
         {
             detail::OS::sendDebugMessage( message );
+        }
+
+        /**
+         * @brief Creates a file which is only accessible to its owner
+         *
+         * Returns false when the file exists already; it must be used wherever the content
+         * can carry sensitive information and the directory is shared (e.g. the temporary
+         * directory of the machine)
+         */
+
+        inline bool createNewFilePrivate( SAA_in const fs::path& path )
+        {
+            return detail::OS::createNewFilePrivate( path );
         }
 
         inline bool createNewFile( SAA_in const fs::path& path )

@@ -157,10 +157,102 @@ namespace bl
 
                 enum
                 {
-                    GET_PASSWD_BUFFER_LENGTH = 512
+                    GET_PASSWD_BUFFER_LENGTH = 512,
+
+                    /*
+                     * The buffer of the getpw*_r calls is grown up to this size when the
+                     * entry does not fit (they answer ERANGE in that case)
+                     */
+
+                    GET_PASSWD_BUFFER_MAX_LENGTH = 64 * 1024,
                 };
 
+                /**
+                 * @brief Invokes a getpw*_r style call, growing the buffer while it answers ERANGE
+                 *
+                 * The returned value is the errno of the call (zero on success) and *not* -1,
+                 * which is what these functions document; the buffer is owned by the caller
+                 * because the returned entry points into it
+                 */
+
+                template
+                <
+                    typename CALLBACK
+                >
+                static int callWithPasswdBuffer(
+                    SAA_in          const CALLBACK&                     callback,
+                    SAA_inout       std::vector< char >&                buffer
+                    )
+                {
+                    if( buffer.empty() )
+                    {
+                        buffer.resize( GET_PASSWD_BUFFER_LENGTH );
+                    }
+
+                    for( ;; )
+                    {
+                        const int rc = callback( &buffer[ 0 ], buffer.size() );
+
+                        if( ERANGE != rc || buffer.size() >= GET_PASSWD_BUFFER_MAX_LENGTH )
+                        {
+                            return rc;
+                        }
+
+                        buffer.resize( 2U * buffer.size() );
+                    }
+                }
+
                 static const char*                  g_procSelfExeSymlink;
+
+                /*
+                 * The pids of detached child processes which were still running when their
+                 * handles were released; they are reaped opportunistically (see
+                 * reapAbandonedProcessesNothrow), so they don't accumulate as zombies
+                 */
+
+                static mutex                        g_abandonedPidsLock;
+                static std::vector< pid_t >         g_abandonedPids;
+
+                static void rememberAbandonedProcess( SAA_in const pid_t pid )
+                {
+                    BL_MUTEX_GUARD( g_abandonedPidsLock );
+
+                    g_abandonedPids.push_back( pid );
+                }
+
+                static void reapAbandonedProcessesNothrow() NOEXCEPT
+                {
+                    BL_NOEXCEPT_BEGIN()
+
+                    BL_MUTEX_GUARD( g_abandonedPidsLock );
+
+                    for( auto pos = g_abandonedPids.begin(); pos != g_abandonedPids.end(); )
+                    {
+                        int status = 0;
+
+                        const auto rc = ::waitpid( *pos, &status, WNOHANG );
+
+                        if( 0 == rc || ( -1 == rc && EINTR == errno ) )
+                        {
+                            /*
+                             * The process is still running (or the call was interrupted)
+                             */
+
+                            ++pos;
+
+                            continue;
+                        }
+
+                        /*
+                         * The process was reaped (rc == pid) or it is no longer our
+                         * child (e.g. ECHILD) - in both cases forget about it
+                         */
+
+                        pos = g_abandonedPids.erase( pos );
+                    }
+
+                    BL_NOEXCEPT_END()
+                }
 
                 class EncapsulatedPidHandle FINAL
                 {
@@ -180,11 +272,41 @@ namespace bl
 
                 public:
 
+                    /**
+                     * @brief Sends a signal to the process (or to its group)
+                     *
+                     * Note that the internal callers below already hold the lock and have
+                     * verified the pid, so they call sendSignalNoLock( ... ) directly
+                     */
+
                     void sendSignal(
                         SAA_in    const int     signal,
                         SAA_in    const bool    includeSubprocesses
                         )
                     {
+                        BL_MUTEX_GUARD( m_lock );
+
+                        if( 0 == m_pid )
+                        {
+                            /*
+                             * The process has terminated and has been waited on already -
+                             * signalling pid 0 would send the signal to the process group of
+                             * the caller (i.e. to ourselves)
+                             */
+
+                            return;
+                        }
+
+                        sendSignalNoLock( signal, includeSubprocesses );
+                    }
+
+                    void sendSignalNoLock(
+                        SAA_in    const int     signal,
+                        SAA_in    const bool    includeSubprocesses
+                        )
+                    {
+                        BL_ASSERT( 0 != m_pid );
+
                         const auto rc = ::kill(
                             includeSubprocesses ? -m_pid : m_pid,
                             signal
@@ -235,19 +357,33 @@ namespace bl
                     {
                         BL_NOEXCEPT_BEGIN()
 
+                        reapAbandonedProcessesNothrow();
+
+                        if( ! m_terminateOnDestruction )
+                        {
+                            /*
+                             * A detached process is not waited on; reap it if it has already
+                             * exited and otherwise remember it, so it gets reaped later
+                             */
+
+                            if( 0 != m_pid && ! tryTimedAwaitTermination( 0 /* timeoutMs */ ) )
+                            {
+                                rememberAbandonedProcess( m_pid );
+                            }
+
+                            return;
+                        }
+
                         if( tryTimedAwaitTermination( 2000 /* timeoutMs */ ) )
                         {
                             return;
                         }
 
-                        if( m_terminateOnDestruction )
-                        {
-                            terminateProcess( false /* force */, true /* includeSubprocesses */ );
+                        terminateProcess( false /* force */, true /* includeSubprocesses */ );
 
-                            if( ! tryTimedAwaitTermination( 2000 /* timeoutMs */ ) )
-                            {
-                                terminateProcess( true /* force */, true /* includeSubprocesses */ );
-                            }
+                        if( ! tryTimedAwaitTermination( 2000 /* timeoutMs */ ) )
+                        {
+                            terminateProcess( true /* force */, true /* includeSubprocesses */ );
                         }
 
                         BL_NOEXCEPT_END()
@@ -568,7 +704,7 @@ namespace bl
                             return;
                         }
 
-                        sendSignal( force ? SIGKILL : SIGTERM, includeSubprocesses );
+                        sendSignalNoLock( force ? SIGKILL : SIGTERM, includeSubprocesses );
                     }
 
                     void sendProcessStopEvent( SAA_in const bool includeSubprocesses )
@@ -582,7 +718,7 @@ namespace bl
                                 << "Attempting to send stop signal to a process which has been terminated already"
                             );
 
-                        sendSignal( SIGINT, includeSubprocesses );
+                        sendSignalNoLock( SIGINT, includeSubprocesses );
                     }
                 };
 
@@ -736,6 +872,39 @@ namespace bl
                     return pipe;
                 }
 
+                /**
+                 * @brief Closes the stream which writes into the standard input of a child
+                 *
+                 * Flushing (or closing) the write end of a pipe whose reader has exited fails
+                 * with EPIPE, which is an ordinary outcome for a child that finished before
+                 * its input was fully written; the default stdio deleter is NOEXCEPT and RIPs
+                 * on any failure, so it must not be the one which closes this stream
+                 *
+                 * Note that the process must ignore SIGPIPE for the write to return EPIPE at
+                 * all - see the note on os::createProcess in OS.h
+                 */
+
+                static void closeChildStdinNothrow( SAA_inout stdio_file_ptr& filePtr ) NOEXCEPT
+                {
+                    BL_NOEXCEPT_BEGIN()
+
+                    auto* const rawFilePtr = filePtr.release();
+
+                    if( nullptr == rawFilePtr )
+                    {
+                        return;
+                    }
+
+                    errno = 0;
+
+                    if( 0 != std::fclose( rawFilePtr ) && EPIPE != errno )
+                    {
+                        BL_RIP_MSG( "Cannot close the standard input stream of a child process" );
+                    }
+
+                    BL_NOEXCEPT_END()
+                }
+
                 static stdio_file_ptr convert2StdioFile(
                     SAA_inout           fd_ref&                                 fd,
                     SAA_in              const bool                              readOnly
@@ -759,6 +928,260 @@ namespace bl
                     fd.release();
 
                     return result;
+                }
+
+                /*
+                 * The information the child process needs after the fork; all of it is
+                 * prepared by the parent before the fork (see execChildProcessNothrow)
+                 */
+
+                struct ChildExecInfo
+                {
+                    const char*         path;
+                    char* const*        argv;
+                    int                 fdStdin;
+                    int                 fdStdout;
+                    int                 fdStderr;
+                    int                 fdDevNull;
+                    int                 fdComm;
+                    int                 maxFd;
+                    bool                setParentDeathSignal;
+
+                    /*
+                     * The pid of the parent captured before the fork, so the child can verify
+                     * that the parent is still the same one after PR_SET_PDEATHSIG was armed
+                     */
+
+                    ::pid_t             parentPid;
+                };
+
+                /*
+                 * The record written by the child process to the parent when it fails
+                 * before or during the exec call
+                 */
+
+                struct ChildExecFailure
+                {
+                    int                 step;
+                    int                 errorCode;
+                };
+
+                enum ChildExecStep : int
+                {
+                    ChildExecStepDup2       = 1,
+                    ChildExecStepSetsid     = 2,
+                    ChildExecStepPrctl      = 3,
+                    ChildExecStepFcntl      = 4,
+                    ChildExecStepExec       = 5,
+                };
+
+                static const char* childExecStepName( SAA_in const int step ) NOEXCEPT
+                {
+                    switch( step )
+                    {
+                        case ChildExecStepDup2:     return "dup2";
+                        case ChildExecStepSetsid:   return "setsid";
+                        case ChildExecStepPrctl:    return "prctl";
+                        case ChildExecStepFcntl:    return "fcntl";
+                        case ChildExecStepExec:     return "exec";
+                    }
+
+                    return "unknown step";
+                }
+
+                static void childExecFailNothrow(
+                    SAA_in          const ChildExecInfo&                        info,
+                    SAA_in          const int                                   step
+                    ) NOEXCEPT
+                {
+                    ChildExecFailure failure;
+
+                    failure.step = step;
+                    failure.errorCode = errno;
+
+                    const char* buffer = reinterpret_cast< const char* >( &failure );
+
+                    std::size_t written = 0U;
+
+                    while( written < sizeof( failure ) )
+                    {
+                        const auto rc = ::write( info.fdComm, buffer + written, sizeof( failure ) - written );
+
+                        if( -1 == rc )
+                        {
+                            if( EINTR == errno )
+                            {
+                                continue;
+                            }
+
+                            break;
+                        }
+
+                        written += static_cast< std::size_t >( rc );
+                    }
+
+                    ::_exit( 1 );
+                }
+
+                /*
+                 * Marks every descriptor from 'fromFd' upward close-on-exec with a single
+                 * system call: close_range( fromFd, ~0U, CLOSE_RANGE_CLOEXEC ), available on
+                 * Linux 5.11 and newer. Returns false when the kernel does not support it
+                 * (ENOSYS on kernels older than 5.9, EINVAL on 5.9 and 5.10 which have the
+                 * call but not the flag) or on any other platform, in which case the caller
+                 * falls back to marking the descriptors one by one
+                 *
+                 * The raw syscall form is used on purpose: the glibc wrapper exists only from
+                 * glibc 2.34 and the flag / syscall number may be missing from older headers,
+                 * while the number (436) has been the same on every Linux architecture since
+                 * the call was added. The selection is made at run time, so one binary behaves
+                 * correctly on every kernel it may run on
+                 *
+                 * Note: this must remain async-signal-safe (it is called in the forked child)
+                 */
+
+                static bool tryMarkAllCloseOnExecNothrow( SAA_in const int fromFd ) NOEXCEPT
+                {
+#ifdef __linux__
+#ifdef __NR_close_range
+                    const long closeRangeSyscall = __NR_close_range;
+#else
+                    const long closeRangeSyscall = 436L;
+#endif
+#ifdef CLOSE_RANGE_CLOEXEC
+                    const unsigned int closeRangeCloexec = CLOSE_RANGE_CLOEXEC;
+#else
+                    const unsigned int closeRangeCloexec = ( 1U << 2 );
+#endif
+
+                    return 0 == ::syscall(
+                        closeRangeSyscall,
+                        static_cast< unsigned int >( fromFd ),
+                        ~0U,
+                        closeRangeCloexec
+                        );
+#else
+                    BL_UNUSED( fromFd );
+
+                    return false;
+#endif
+                }
+
+                static void execChildProcessNothrow( SAA_in const ChildExecInfo& info ) NOEXCEPT
+                {
+                    /*
+                     * After a fork in a multi-threaded process only async-signal-safe calls can
+                     * be made safely: the other threads do not exist in the child process, but
+                     * the locks they were holding at the time of the fork (e.g. the logging
+                     * lock) are copied in their locked state, so anything which needs them
+                     * deadlocks forever in the child
+                     *
+                     * This is why nothing here allocates, logs, throws or uses streams; all the
+                     * data is prepared by the parent before the fork and on failure the step
+                     * and errno are written to the parent with a raw write and the child exits
+                     * immediately with _exit
+                     *
+                     * See the following web page for more details:
+                     *
+                     * http://programmers.stackexchange.com/questions/206963/which-child-process-will-inherit-threads-of-parent-process
+                     */
+
+                    /*
+                     * Override the standard I/O descriptors before anything else; a detached
+                     * process gets /dev/null for the ones which are not redirected
+                     */
+
+                    const int fdStdio[ 3 ] = { info.fdStdin, info.fdStdout, info.fdStderr };
+
+                    for( int fd = 0; fd < 3; ++fd )
+                    {
+                        const int fdSource = ( -1 != fdStdio[ fd ] ) ? fdStdio[ fd ] : info.fdDevNull;
+
+                        if( -1 != fdSource && -1 == ::dup2( fdSource, fd ) )
+                        {
+                            childExecFailNothrow( info, ChildExecStepDup2 );
+                        }
+                    }
+
+                    /*
+                     * In child, divorce from parent session
+                     */
+
+                    if( -1 == ::setsid() )
+                    {
+                        childExecFailNothrow( info, ChildExecStepSetsid );
+                    }
+
+#ifdef __linux__
+                    /*
+                     * The ::prctl API is only available on Linux and according to this stack overflow thread it is
+                     * not easy to implement equivalent functionality on non-Linux POSIX compatible platform
+                     *
+                     * http://stackoverflow.com/questions/284325/how-to-make-child-process-die-after-parent-exits/17589555#17589555
+                     *
+                     * PR_SET_PDEATHSIG makes sure that the signal SIGKILL will be sent to the child process
+                     * when the parent dies (not requested for detached processes)
+                     */
+
+                    if( info.setParentDeathSignal )
+                    {
+                        if( -1 == ::prctl( PR_SET_PDEATHSIG, SIGKILL ) )
+                        {
+                            childExecFailNothrow( info, ChildExecStepPrctl );
+                        }
+
+                        /*
+                         * The parent may have died between the fork and the prctl call above,
+                         * in which case the death signal was already missed - the child must
+                         * not continue as an orphan in that case
+                         *
+                         * Note that ::getppid and ::_exit are both async-signal-safe
+                         */
+
+                        if( ::getppid() != info.parentPid )
+                        {
+                            ::_exit( 1 );
+                        }
+                    }
+#endif
+
+                    /*
+                     * Mark all open file descriptors other than the standard ones as
+                     * close-on-exec to hide them from the new program
+                     *
+                     * http://www.gnu.org/software/libc/manual/html_node/Descriptors-and-Streams.html
+                     *
+                     * The one-by-one loop below costs one fcntl call per possible descriptor
+                     * up to the soft RLIMIT_NOFILE (about a million calls and 130-280 ms per
+                     * spawn under a 1048576 limit, which containers and services commonly
+                     * have), so it is only the fallback for kernels without close_range
+                     */
+
+                    if( ! tryMarkAllCloseOnExecNothrow( STDERR_FILENO + 1 ) )
+                    {
+                        for( int fd = info.maxFd; --fd > STDERR_FILENO; )
+                        {
+                            tryMakeFileDescriptorPrivate( fd );
+                        }
+                    }
+
+                    /*
+                     * The comm pipe must be close-on-exec for the "EOF means success"
+                     * protocol with the parent, so it is verified explicitly either way
+                     */
+
+                    if( ! tryMakeFileDescriptorPrivate( info.fdComm ) )
+                    {
+                        childExecFailNothrow( info, ChildExecStepFcntl );
+                    }
+
+                    /*
+                     * Execute the new process
+                     */
+
+                    ::execvp( info.path, info.argv );
+
+                    childExecFailNothrow( info, ChildExecStepExec );
                 }
 
             public:
@@ -1073,19 +1496,35 @@ namespace bl
 
                     try
                     {
-                        str::escaped_list_separator< char > els( "\\", " ", "\"\'");
+                        /*
+                         * Note that the tab is a separator too and that empty tokens (which
+                         * adjacent separators produce) are skipped - they would otherwise
+                         * become empty argv entries
+                         */
+
+                        str::escaped_list_separator< char > els( "\\", " \t", "\"\'");
                         str::tokenizer< str::escaped_list_separator< char > > tokens( commandLine, els );
 
                         for( const auto& arg : tokens )
                         {
+                            if( arg.empty() )
+                            {
+                                continue;
+                            }
+
                             args.emplace_back( arg );
                         }
                     }
                     catch( str::escaped_list_error& e )
                     {
+                        /*
+                         * Note that the command line itself must not be attached to the
+                         * exception - it may carry credentials
+                         */
+
                         BL_THROW(
                             ArgumentException()
-                                << eh::errinfo_string_value( commandLine ),
+                                << eh::errinfo_string_value( args.empty() ? str::empty() : args.front() ),
                             BL_MSG()
                                 << "Invalid command line: "
                                 << e.what()
@@ -1139,7 +1578,8 @@ namespace bl
 
                         outFilePtr.reset();
                         errFilePtr.reset();
-                        inFilePtr.reset();
+
+                        closeChildStdinNothrow( inFilePtr );
 
                         outPipe.first.reset();
                         outPipe.second.reset();
@@ -1185,7 +1625,14 @@ namespace bl
                              */
 
                             BL_ASSERT( outPipe.second.get() );
-                            BL_ASSERT( out );
+
+                            /*
+                             * What this branch needs is the merged pipe above; the ios
+                             * stream is only constructed when the ios callback was
+                             * supplied and the file callback is an equally legal choice
+                             */
+
+                            BL_ASSERT( ! callbackIos || out );
                         }
                         else
                         {
@@ -1255,14 +1702,16 @@ namespace bl
                     pidHandle.reset( new EncapsulatedPidHandle( ! detachProcess /* terminateOnDestruction */ ) );
 
                     /*
-                     * Get the user and group IDs before we fork to avoid forking and then having a problem getting these values.
+                     * Note that the identity switch is performed by 'su' (see the command line
+                     * built below), so the user and group ids are not needed here - the lookup
+                     * is still made to verify that the user exists before the fork
                      */
-
-                    auto userID = ( ::uid_t ) -1;
-                    auto groupID = ( ::gid_t ) -1;
 
                     if( ! userName.empty() )
                     {
+                        auto userID = ( ::uid_t ) -1;
+                        auto groupID = ( ::gid_t ) -1;
+
                         getUserCredentials( userName, userID, groupID );
 
                         BL_CHK_T_USER_FRIENDLY(
@@ -1282,6 +1731,52 @@ namespace bl
 
                     stdio_pipe_t parentChildCommPipe = createPipe();
 
+                    /*
+                     * Detached processes get their standard descriptors attached to /dev/null
+                     * (unless they are redirected); the descriptor is opened before the fork
+                     * because the child can't safely do anything but a few system calls
+                     */
+
+                    fd_ref devNullFd;
+
+                    if( detachProcess )
+                    {
+                        devNullFd.reset( ::open( "/dev/null", O_RDWR ) );
+
+                        BL_CHK_ERRNO(
+                            -1,
+                            devNullFd.get(),
+                            BL_MSG()
+                                << "Cannot open /dev/null"
+                            );
+                    }
+
+                    /*
+                     * Everything the child needs must be prepared before the fork (see the
+                     * comment in execChildProcessNothrow)
+                     */
+
+                    ChildExecInfo childInfo;
+
+                    childInfo.path = path.c_str();
+                    childInfo.argv = &argv[ 0 ];
+                    childInfo.fdStdin = inPipe.first ? inPipe.first.get() : -1;
+                    childInfo.fdStdout = outPipe.second ? outPipe.second.get() : -1;
+                    childInfo.fdStderr = -1;
+
+                    if( flagsRedirect & ProcessCreateFlags::RedirectStderr )
+                    {
+                        childInfo.fdStderr = errPipe.second ? errPipe.second.get() : outPipe.second.get();
+                    }
+
+                    childInfo.fdDevNull = devNullFd ? devNullFd.get() : -1;
+                    childInfo.fdComm = parentChildCommPipe.second.get();
+                    childInfo.maxFd = ::getdtablesize();
+                    childInfo.setParentDeathSignal = ! detachProcess;
+                    childInfo.parentPid = ::getpid();
+
+                    reapAbandonedProcessesNothrow();
+
                     const auto pid = ::fork();
 
                     BL_CHK_T(
@@ -1295,213 +1790,11 @@ namespace bl
                     if( pid == 0 )
                     {
                         /*
-                         * Child Process
+                         * Child Process - it either replaces itself with the new program
+                         * or exits (see execChildProcessNothrow)
                          */
 
-                        /*
-                         * Apparently the only safe thing to do after ::fork() API is
-                         * to call exec and replace the process completely or call _exit
-                         *
-                         * If an error occurs in the child process code after ::fork
-                         * call, but before we replace the process with exec then we
-                         * must call _exit and terminate the process immediately
-                         *
-                         * See the following web page for one of the reasons why:
-                         *
-                         * http://programmers.stackexchange.com/questions/206963/which-child-process-will-inherit-threads-of-parent-process
-                         */
-
-                        try
-                        {
-                            {
-                                /*
-                                 * Since we are going to replace the child process with execvp
-                                 * which we are never going to return from, the first thing we
-                                 * must do in the child process is create a scope to clean up
-                                 * appropriately the inherited handles and anything else in the
-                                 * local scope which needs to be cleaned up
-                                 */
-
-                                BL_SCOPE_EXIT(
-                                    {
-                                        cbCloseObjects();
-                                    }
-                                    );
-
-                                /*
-                                 * Override the standard I/O descriptors before we do
-                                 * anything else
-                                 */
-
-                                if( flagsRedirect & ProcessCreateFlags::RedirectStdout )
-                                {
-                                    BL_ASSERT( outPipe.second.get() );
-
-                                    BL_CHK_ERRNO(
-                                        -1,
-                                        ::dup2( outPipe.second.get(), STDOUT_FILENO ),
-                                        BL_MSG()
-                                            << "Cannot replace STDOUT file descriptor"
-                                        );
-                                }
-
-                                if( flagsRedirect & ProcessCreateFlags::RedirectStderr )
-                                {
-                                    const int fderr =
-                                        errPipe.second ?
-                                        errPipe.second.get() :
-                                        outPipe.second.get();
-
-                                    BL_ASSERT( fderr );
-
-                                    BL_CHK_ERRNO(
-                                        -1,
-                                        ::dup2( fderr, STDERR_FILENO ),
-                                        BL_MSG()
-                                            << "Cannot replace STDERR file descriptor"
-                                        );
-                                }
-
-                                if( flagsRedirect & ProcessCreateFlags::RedirectStdin )
-                                {
-                                    BL_ASSERT( inPipe.first.get() );
-
-                                    BL_CHK_ERRNO(
-                                        -1,
-                                        ::dup2( inPipe.first.get(), STDIN_FILENO ),
-                                        BL_MSG()
-                                            << "Cannot replace STDIN file descriptor"
-                                        );
-                                }
-                            }
-
-                            /*
-                             * In child, divorce from parent session
-                             */
-
-                            BL_CHK_ERRNO(
-                                -1,
-                                ::setsid(),
-                                BL_MSG()
-                                    << "Setsid failed, unable to create a new process"
-                                );
-#ifdef __linux__
-                            /*
-                             * The ::prctl API is only available on Linux and according to this stack overflow thread it is
-                             * not easy to implement equivalent functionality on non-Linux POSIX compatible platform
-                             *
-                             * We ill figure out how to deal with this later as it is not essential functinality
-                             *
-                             * http://stackoverflow.com/questions/284325/how-to-make-child-process-die-after-parent-exits/17589555#17589555
-                             */
-
-                            if( ! detachProcess )
-                            {
-                                /*
-                                 * As suggested in 'http://stackoverflow.com/questions/284325/how-to-make-child-process-die-after-parent-exits'
-                                 * prctl will make sure that the signal SIGKILL will be sent to the child process when the parent dies.
-                                 *
-                                 * 'man 2 prctl'
-                                 * PR_SET_PDEATHSIG (since Linux 2.1.57)
-                                 * Set the parent process death signal of the calling process to arg2 (either a signal value in the range 1..maxsig, or 0 to clear).
-                                 * This is the signal that the calling process will get when its parent dies. This value is cleared for the child of a fork(2)
-                                 */
-
-                                BL_CHK_ERRNO(
-                                    -1,
-                                    ::prctl( PR_SET_PDEATHSIG, SIGKILL ),
-                                    BL_MSG()
-                                        << "prctl failed, unable to force the parent lifetime to the child process"
-                                    );
-                            }
-#endif
-
-                            /*
-                             * For detached processes, we need to close all file descriptors.
-                             *
-                             * For the rest, we leave stdin, stdout, and stderr open.
-                             *
-                             * http://www.gnu.org/software/libc/manual/html_node/Descriptors-and-Streams.html
-                             */
-
-                            const int fileDescriptorThreshold = detachProcess ? -1 : STDERR_FILENO;
-
-                            /*
-                             * HACK: mark all open file handles as close-on-exec to hide them from the child process
-                             */
-
-                            for( int fd = ::getdtablesize(); --fd > fileDescriptorThreshold; )
-                            {
-                                tryMakeFileDescriptorPrivate( fd );
-                            }
-
-                            parentChildCommPipe.first.reset();
-                            makeFileDescriptorPrivate( parentChildCommPipe.second.get() );
-
-                            const auto commFilePtr =
-                                convert2StdioFile( parentChildCommPipe.second, false /* readOnly */ );
-                            const auto commStream = fileptr2ostream( commFilePtr.get() );
-
-                            /*
-                             * Execute the new process
-                             */
-
-                            const auto execResult = ::execvp( path.c_str(), &argv[ 0 ] );
-
-                            if( -1 == execResult )
-                            {
-                                *commStream << errno;
-
-                                BL_THROW(
-                                    createException( "exec", errno, path ),
-                                    BL_MSG()
-                                        << "exec failed"
-                                    );
-                            }
-                        }
-                        catch( std::exception& e )
-                        {
-                            BL_LOG_MULTILINE(
-                                Logging::debug(),
-                                BL_MSG()
-                                    << "\nUnhandled exception was encountered in child process:\n"
-                                    << eh::diagnostic_information( e )
-                                );
-                        }
-                        catch( ... )
-                        {
-                            BL_LOG_MULTILINE(
-                                Logging::debug(),
-                                BL_MSG()
-                                    << "Unexpected error occurred in child process"
-                                );
-                        }
-
-                        /*
-                         * If we are here then apparently only safe thing to do
-                         * is to call _exit - see comment at the beginning of
-                         * the try block
-                         *
-                         * The top handler after fork always returns 1 exit code
-                         * to indicate an error
-                         *
-                         * Note that 1 can be a genuine exit code returned by the
-                         * process itself and we can't distinguish this case from
-                         * errors which have occurred post fork and before exec
-                         *
-                         * In the cases where the caller wants to handle these
-                         * errors it should redirect the output and parse it
-                         *
-                         * There is no better way to handle these errors on Linux
-                         * and we can't really communicate the error efficiently
-                         * to the calling process without inventing some
-                         * sophisticated mechanism to transport the exception info
-                         * with pipes, etc, but then the question is how do you
-                         * handle errors which occur while trying to do this
-                         * sophisticated error handling
-                         */
-
-                        ::_exit( 1 );
+                        execChildProcessNothrow( childInfo );
                     }
 
                     /*
@@ -1515,24 +1808,62 @@ namespace bl
 
                         const auto g = BL_SCOPE_GUARD( parentChildCommPipe.first.reset(); );
 
-                        const auto commFilePtr =
-                            convert2StdioFile( parentChildCommPipe.first, true /* readOnly */ );
-                        const auto commStream = fileptr2istream( commFilePtr.get() );
+                        /*
+                         * Read the failure record from the child (if any); EOF without
+                         * a record means that the exec has succeeded
+                         */
 
-                        std::string childErrorCode;
+                        ChildExecFailure failure = { 0, 0 };
 
-                        std::getline( *commStream, childErrorCode );
+                        std::size_t bytesRead = 0U;
 
-                        if( ! childErrorCode.empty() )
+                        while( bytesRead < sizeof( failure ) )
                         {
-                            const int errorCode = std::atoi( childErrorCode.c_str() );
+                            const auto rc = ::read(
+                                parentChildCommPipe.first.get(),
+                                reinterpret_cast< char* >( &failure ) + bytesRead,
+                                sizeof( failure ) - bytesRead
+                                );
+
+                            if( -1 == rc )
+                            {
+                                if( EINTR == errno )
+                                {
+                                    continue;
+                                }
+
+                                BL_THROW(
+                                    createException( "read", errno ),
+                                    BL_MSG()
+                                        << "Cannot read the child process status"
+                                    );
+                            }
+
+                            if( 0 == rc )
+                            {
+                                break;
+                            }
+
+                            bytesRead += static_cast< std::size_t >( rc );
+                        }
+
+                        if( bytesRead )
+                        {
+                            BL_CHK(
+                                false,
+                                sizeof( failure ) == bytesRead,
+                                BL_MSG()
+                                    << "Malformed child process status"
+                                );
 
                             BL_THROW(
-                                createException( "createProcess" /* locationOrAPI */, errorCode, path ),
+                                createException( "createProcess" /* locationOrAPI */, failure.errorCode, path ),
                                 BL_MSG()
                                     << "Cannot create process with command line '"
                                     << str::join( commandArguments, " " )
-                                    << "'"
+                                    << "'; "
+                                    << childExecStepName( failure.step )
+                                    << " failed in the child process"
                                 );
                         }
                     }
@@ -1615,32 +1946,32 @@ namespace bl
                     SAA_in          const std::string&                          value
                     )
                 {
+                    /*
+                     * The argument is wrapped in single quotes, which is the only complete
+                     * quoting for a POSIX shell - inside them every character is literal, so
+                     * the only thing which has to be escaped is the single quote itself (by
+                     * closing the quoted section, emitting an escaped quote and re-opening it)
+                     *
+                     * Escaping a list of metacharacters instead would leave '$', backtick,
+                     * '*', '?', '[', '{', '~', '#', '!', '=' and newline to be interpreted by
+                     * the shell of the target user
+                     */
+
+                    str << '\'';
+
                     for( const char c : value )
                     {
-                        switch( c )
+                        if( '\'' == c )
                         {
-                            /*
-                             * Quote all shell metacharacters
-                             */
+                            str << "'\\''";
 
-                            case ' ':
-                            case '\t':
-                            case '\'':
-                            case '\"':
-                            case '\\':
-                            case '|':
-                            case '&':
-                            case ';':
-                            case '(':
-                            case ')':
-                            case '<':
-                            case '>':
-                                str << '\\';
-                                break;
+                            continue;
                         }
 
                         str << c;
                     }
+
+                    str << '\'';
                 }
 
                 template
@@ -1692,6 +2023,40 @@ namespace bl
                 }
 
                 /*****************************************************
+                 * System resources information
+                 */
+
+                static std::uint64_t getPhysicalMemorySize()
+                {
+                    const auto pages = ::sysconf( _SC_PHYS_PAGES );
+                    const auto pageSize = ::sysconf( _SC_PAGESIZE );
+
+                    if( pages <= 0 || pageSize <= 0 )
+                    {
+                        return 0U;
+                    }
+
+                    return static_cast< std::uint64_t >( pages ) * static_cast< std::uint64_t >( pageSize );
+                }
+
+                static std::uint64_t getFileDescriptorSoftLimit()
+                {
+                    struct rlimit limit;
+
+                    if( 0 != ::getrlimit( RLIMIT_NOFILE, &limit ) )
+                    {
+                        return 0U;
+                    }
+
+                    if( RLIM_INFINITY == limit.rlim_cur )
+                    {
+                        return 0U;
+                    }
+
+                    return static_cast< std::uint64_t >( limit.rlim_cur );
+                }
+
+                /*****************************************************
                  * File I/O support
                  */
 
@@ -1733,8 +2098,18 @@ namespace bl
                     SAA_in          const stdio_file_ptr&               fileptr
                     )
                 {
-                    const auto pos = ftello( fileptr.get() );
-                    BL_CHK_ERRNO_NM( numbers::safeCoerceTo< off_t >( -1 ), pos );
+                    /*
+                     * The call must be made inside the macro - it clears errno before it
+                     * evaluates the expression, so evaluating ftello outside of it would
+                     * report a failure with error code 0 ("Success")
+                     */
+
+                    off_t pos;
+
+                    BL_CHK_ERRNO_NM(
+                        numbers::safeCoerceTo< off_t >( -1 ),
+                        ( pos = ftello( fileptr.get() ) )
+                        );
 
                     return numbers::safeCoerceTo< std::uint64_t >( pos );
                 }
@@ -1833,17 +2208,20 @@ namespace bl
                 {
                     ::passwd pw;
                     ::passwd *result = nullptr;
-                    char buffer[ GET_PASSWD_BUFFER_LENGTH ];
+                    std::vector< char > buffer;
 
-                    BL_CHK_ERRNO_USER_FRIENDLY(
-                        -1,
-                        ::getpwuid_r(
-                            ::geteuid(),
-                            &pw,
-                            buffer,
-                            BL_ARRAY_SIZE( buffer ),
-                            &result
-                            ),
+                    const auto rc = callWithPasswdBuffer(
+                        [ &pw, &result ]( SAA_in char* data, SAA_in const std::size_t size ) -> int
+                        {
+                            return ::getpwuid_r( ::geteuid(), &pw, data, size, &result );
+                        },
+                        buffer
+                        );
+
+                    BL_CHK_T_USER_FRIENDLY(
+                        false,
+                        0 == rc,
+                        createException( "getpwuid_r", rc ),
                         BL_MSG()
                             << "Cannot obtain user login name"
                         );
@@ -1880,17 +2258,20 @@ namespace bl
                 {
                     ::passwd pw;
                     ::passwd *result = nullptr;
-                    char buffer[ GET_PASSWD_BUFFER_LENGTH ];
+                    std::vector< char > buffer;
 
-                    BL_CHK_ERRNO_USER_FRIENDLY(
-                        -1,
-                        ::getpwnam_r(
-                            userName.c_str(),
-                            &pw,
-                            buffer,
-                            BL_ARRAY_SIZE( buffer ),
-                            &result
-                            ),
+                    const auto rc = callWithPasswdBuffer(
+                        [ &pw, &result, &userName ]( SAA_in char* data, SAA_in const std::size_t size ) -> int
+                        {
+                            return ::getpwnam_r( userName.c_str(), &pw, data, size, &result );
+                        },
+                        buffer
+                        );
+
+                    BL_CHK_T_USER_FRIENDLY(
+                        false,
+                        0 == rc,
+                        createException( "getpwnam_r", rc ),
                         BL_MSG()
                             << "Cannot obtain password entry for user '"
                             << userName
@@ -1932,17 +2313,20 @@ namespace bl
 
                     ::passwd pw;
                     ::passwd *result = nullptr;
-                    char buffer[ GET_PASSWD_BUFFER_LENGTH ];
+                    std::vector< char > buffer;
 
-                    BL_CHK_ERRNO(
-                        -1,
-                        ::getpwuid_r(
-                            fileStatus.st_uid,
-                            &pw,
-                            buffer,
-                            BL_ARRAY_SIZE( buffer ),
-                            &result
-                            ),
+                    const auto rc = callWithPasswdBuffer(
+                        [ &pw, &result, &fileStatus ]( SAA_in char* data, SAA_in const std::size_t size ) -> int
+                        {
+                            return ::getpwuid_r( fileStatus.st_uid, &pw, data, size, &result );
+                        },
+                        buffer
+                        );
+
+                    BL_CHK_T(
+                        false,
+                        0 == rc,
+                        createException( "getpwuid_r", rc ),
                         BL_MSG()
                             << "Cannot get user name for UID "
                             << fileStatus.st_uid
@@ -2173,7 +2557,21 @@ namespace bl
                         op_op.sem_flg = ( noUndo ? 0 : SEM_UNDO );
                         op_op.sem_op = value;
 
-                        chkOp( 0 == ::semop( id, &op_op, 1 ), "semop" );
+                        /*
+                         * semop is restartable - a signal delivered while waiting on the
+                         * semaphore (e.g. through asio::signal_set) must not make the lock
+                         * operation fail
+                         */
+
+                        int rc;
+
+                        do
+                        {
+                            rc = ::semop( id, &op_op, 1 );
+                        }
+                        while( -1 == rc && EINTR == errno );
+
+                        chkOp( 0 == rc, "semop" );
                     }
 
                     static int semOpenOrCreate(
@@ -2220,18 +2618,29 @@ namespace bl
                         return semid;
                     }
 
+                    /**
+                     * @brief The default permissions of the semaphore
+                     *
+                     * Note that the default is owner only - a world writable semaphore can be
+                     * incremented by any local user, which both breaks the exclusion it is
+                     * there to provide and allows a denial of service on it
+                     */
+
                     static int defaultPermissions()
                     {
-                        return ( S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH );
+                        return ( S_IRUSR | S_IWUSR );
                     }
 
                 public:
 
                     typedef ipc::scoped_lock< RobustNamedMutex > Guard;
 
-                    RobustNamedMutex( SAA_in const std::string& name )
+                    RobustNamedMutex(
+                        SAA_in          const std::string&              name,
+                        SAA_in_opt      const int                       permissions = defaultPermissions()
+                        )
                         :
-                        m_semaphoreId( semOpenOrCreate( name, defaultPermissions() ) )
+                        m_semaphoreId( semOpenOrCreate( name, permissions ) )
                     {
                     }
 
@@ -2658,6 +3067,29 @@ namespace bl
                      }
                 }
 
+                /**
+                 * @brief Same as createNewFile( ... ) above, but the file is only accessible
+                 * to the owner (mode 0600)
+                 */
+
+                static bool createNewFilePrivate( SAA_in const fs::path& path )
+                {
+                    const int fd = ::open(
+                        path.string().c_str(),
+                        O_WRONLY | O_CREAT | O_EXCL,
+                        S_IRUSR | S_IWUSR
+                        );
+
+                    if( fd == -1 )
+                    {
+                        return false;
+                    }
+
+                    ::close( fd );
+
+                    return true;
+                }
+
                 static bool isFileInUseError( SAA_in const eh::error_code& ec )
                 {
                     BL_UNUSED( ec );
@@ -2700,6 +3132,8 @@ namespace bl
             };
 
             BL_DEFINE_STATIC_MEMBER( OSImplT, const char*, g_procSelfExeSymlink ) = "/proc/self/exe";
+            BL_DEFINE_STATIC_MEMBER( OSImplT, mutex, g_abandonedPidsLock );
+            BL_DEFINE_STATIC_MEMBER( OSImplT, std::vector< pid_t >, g_abandonedPids );
 
             typedef OSImplT<> OSImpl;
 

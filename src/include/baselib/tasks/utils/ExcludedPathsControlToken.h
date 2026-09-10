@@ -44,9 +44,29 @@ namespace bl
         public:
 
             ExcludedPathsControlTokenT( SAA_in const std::vector< std::string >& excludedPaths )
-                :
-                m_excludedPaths( excludedPaths.begin(), excludedPaths.end() )
             {
+                /*
+                 * The entries are normalised exactly the way isEntryAllowed( ... ) below
+                 * normalises a scanned path, so a caller does not have to hand over strings
+                 * which are already in that form for the lookup to match
+                 */
+
+                for( const auto& excludedPath : excludedPaths )
+                {
+                    m_excludedPaths.insert( normalizePath( excludedPath ) );
+                }
+            }
+
+            static std::string normalizePath( SAA_in const std::string& path )
+            {
+                auto normalizedPath = fs::normalize( fs::path( path ) ).string();
+
+                if( os::onWindows() )
+                {
+                    str::to_lower( normalizedPath );
+                }
+
+                return normalizedPath;
             }
 
             virtual bool isErrorAllowed( SAA_in const eh::error_code& /* code */ ) const NOEXCEPT OVERRIDE
@@ -56,12 +76,7 @@ namespace bl
 
             virtual bool isEntryAllowed( SAA_in const fs::directory_entry& entry ) OVERRIDE
             {
-                auto normEntryPath = fs::normalize( entry.path() ).string();
-
-                if( os::onWindows() )
-                {
-                    str::to_lower( normEntryPath );
-                }
+                const auto normEntryPath = normalizePath( entry.path().string() );
 
                 return m_excludedPaths.find( normEntryPath ) == m_excludedPaths.end();
             }

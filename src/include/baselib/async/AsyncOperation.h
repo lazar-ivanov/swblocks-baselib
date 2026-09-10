@@ -146,7 +146,7 @@ namespace bl
             const om::ObjPtrCopyable< tasks::Task > task;
         };
 
-        typedef cpp::function< void( SAA_in const Result& exception ) NOEXCEPT > callback_t;
+        typedef cpp::function< void( SAA_in const Result& exception ) > callback_t;
 
         virtual void cancel() NOEXCEPT = 0;
     };

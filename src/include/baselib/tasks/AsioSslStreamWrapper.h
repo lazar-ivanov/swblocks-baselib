@@ -45,7 +45,7 @@ namespace bl
 
             typedef AsioSslStreamWrapperT< E >                                          this_type;
 
-            typedef cpp::function< void ( SAA_in const eh::error_code& ec ) NOEXCEPT >  completion_callback_t;
+            typedef cpp::function< void ( SAA_in const eh::error_code& ec ) >           completion_callback_t;
 
             typedef cpp::function
             <

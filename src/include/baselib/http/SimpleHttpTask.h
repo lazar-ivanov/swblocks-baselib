@@ -67,6 +67,22 @@ namespace bl
                 MAX_DUMP_STRING_LENGTH = 2048
             };
 
+            enum : std::size_t
+            {
+                /*
+                 * The maximum size of the status line and of the response headers; it matches
+                 * the maximum headers size accepted by the HTTP server implementation
+                 */
+
+                g_maxResponseHeadersSize = 1U << 16,
+
+                /*
+                 * The default maximum size of a response body which will be accepted
+                 */
+
+                g_maxResponseSizeDefault = 1U << 26,
+            };
+
             static const std::string                                                g_protocolDefault;
 
             static const str::regex                                                 g_hrefRegex;
@@ -78,11 +94,21 @@ namespace bl
             std::string                                                             m_contentOut;
             cpp::SafeOutputStringStream                                             m_contentOutStream;
             asio::streambuf                                                         m_request;
+
+            /*
+             * The response streambuf is bounded, so a server which never sends the end of
+             * the status line or of the headers can't exhaust the memory of the client
+             * (async_read_until fails with not_found once the limit is reached)
+             */
+
             asio::streambuf                                                         m_response;
+
             const om::ObjPtr< data::DataBlock >                                     m_contentBuffer;
             const HeadersMap                                                        m_requestHeaders;
             HeadersMap                                                              m_responseHeaders;
             size_t                                                                  m_responseLength;
+            std::size_t                                                             m_contentReceived;
+            std::size_t                                                             m_maxResponseSize;
             unsigned int                                                            m_httpStatus;
             std::set< unsigned int >                                                m_expectedHttpStatuses;
             std::string                                                             m_remoteEndpointId;
@@ -106,9 +132,12 @@ namespace bl
                 m_path( path ),
                 m_action( action ),
                 m_contentIn( content ),
+                m_response( g_maxResponseHeadersSize /* maximum_size */ ),
                 m_contentBuffer( data::DataBlock::createInstance( 2048U /* capacity */ ) ),
                 m_requestHeaders( BL_PARAM_FWD( requestHeaders ) ),
                 m_responseLength( -1 ),
+                m_contentReceived( 0U ),
+                m_maxResponseSize( g_maxResponseSizeDefault ),
                 m_httpStatus( HTTP_STATUS_UNDEFINED ),
                 m_timeout(
                     time::seconds(
@@ -124,6 +153,18 @@ namespace bl
                  */
 
                 base_type::isCloseStreamOnTaskFinish( true );
+            }
+
+            void chkResponseSize() const
+            {
+                BL_CHK_USER_FRIENDLY(
+                    false,
+                    m_contentReceived <= m_maxResponseSize,
+                    BL_MSG()
+                        << "The HTTP response body is larger than the maximum of "
+                        << m_maxResponseSize
+                        << " bytes"
+                    );
             }
 
             void cancelTimer()
@@ -301,7 +342,7 @@ namespace bl
                         << "; m_timedOut is "
                         << m_timedOut.value()
                         << "; task state is "
-                        << TaskBase::m_state
+                        << TaskBase::m_state.load()
                         << "; channel open is "
                         << base_type::isChannelOpen()
                     );
@@ -498,6 +539,16 @@ namespace bl
                 return m_timedOut;
             }
 
+            std::size_t getMaxResponseSize() const NOEXCEPT
+            {
+                return m_maxResponseSize;
+            }
+
+            void setMaxResponseSize( SAA_in const std::size_t maxResponseSize ) NOEXCEPT
+            {
+                m_maxResponseSize = maxResponseSize;
+            }
+
             bool isSecureMode() const NOEXCEPT
             {
                 return m_isSecureMode;
@@ -620,8 +671,6 @@ namespace bl
                         )
                     );
 
-                scheduleTimer();
-
                 BL_TASKS_HANDLER_END_NOTREADY()
             }
 
@@ -668,8 +717,6 @@ namespace bl
                         asio::placeholders::error
                         )
                     );
-
-                scheduleTimer();
 
                 BL_TASKS_HANDLER_END_NOTREADY()
             }
@@ -718,7 +765,19 @@ namespace bl
 
                 if( pos != m_responseHeaders.end() )
                 {
-                    m_responseLength = std::stoul( pos -> second );
+                    const auto& contentLength = pos -> second;
+
+                    /*
+                     * Note that a signed value must be rejected explicitly - a lexical cast
+                     * to an unsigned type would otherwise wrap a negative value silently
+                     */
+
+                    chkHttpResponse(
+                        ! contentLength.empty() && '-' != contentLength[ 0 ] && '+' != contentLength[ 0 ],
+                        contentLength
+                        );
+
+                    m_responseLength = utils::lexical_cast< std::size_t >( contentLength );
                 }
 
                 auto cookies = cookiesBuffer.str();
@@ -731,8 +790,12 @@ namespace bl
                 if( m_response.size() > 0 )
                 {
                     // get current content
+                    m_contentReceived += m_response.size();
+
                     m_contentOutStream << &m_response;
                 }
+
+                chkResponseSize();
 
                 // Start reading remaining data
                 base_type::getStream().async_read_some(
@@ -744,8 +807,6 @@ namespace bl
                         asio::placeholders::bytes_transferred
                         )
                     );
-
-                scheduleTimer();
 
                 BL_TASKS_HANDLER_END_NOTREADY()
             }
@@ -770,10 +831,29 @@ namespace bl
 
                 if( asio::error::eof == ec ||
                     ( base_type::isExpectedProtocolException( nullptr, std::exception(), &ec ) &&
-                      m_responseLength == m_contentOutStream.str().size() )
+                      m_responseLength == m_contentReceived )
                   )
                 {
                     BL_TASKS_HANDLER_BEGIN()
+
+                    /*
+                     * A clean EOF is not a complete response if the server announced a
+                     * Content-Length which was not delivered - accepting it would hand a
+                     * silently truncated body to the caller
+                     */
+
+                    if( static_cast< std::size_t >( -1 ) != m_responseLength && m_responseLength != m_contentReceived )
+                    {
+                        BL_THROW(
+                            UnexpectedException(),
+                            BL_MSG()
+                                << "The HTTP response was truncated - "
+                                << m_contentReceived
+                                << " bytes were received out of the "
+                                << m_responseLength
+                                << " bytes announced in the Content-Length header"
+                            );
+                    }
 
                     m_contentOut = decodeContent();
 
@@ -792,6 +872,10 @@ namespace bl
                 BL_TASKS_HANDLER_BEGIN_CHK_EC()
 
                 // store any content from response
+                m_contentReceived += bytesTransferred;
+
+                chkResponseSize();
+
                 m_contentOutStream
                     << std::string( reinterpret_cast< char* >( m_contentBuffer -> pv() ), bytesTransferred );
 
@@ -805,8 +889,6 @@ namespace bl
                         asio::placeholders::bytes_transferred
                         )
                     );
-
-                scheduleTimer();
 
                 BL_TASKS_HANDLER_END_NOTREADY()
             }
@@ -951,7 +1033,12 @@ namespace bl
         BL_DEFINE_STATIC_CONST_STRING( SimpleHttpTaskT, g_protocolDefault ) = "http";
 
         BL_DEFINE_STATIC_MEMBER( SimpleHttpTaskT, const str::regex, g_hrefRegex )             ( "\\bhref\\s*=\\s*[\"']([^\"']+)[\"']", str::regex::icase );
-        BL_DEFINE_STATIC_MEMBER( SimpleHttpTaskT, const str::regex, g_charsetRegex )          ( "\\bcharset\\s*=\\s*([^;]+)\\b", str::regex::icase );
+        /*
+         * RFC 7231 allows the charset parameter value to be a quoted string, so the quotes are
+         * excluded from the capture rather than becoming part of the charset name
+         */
+
+        BL_DEFINE_STATIC_MEMBER( SimpleHttpTaskT, const str::regex, g_charsetRegex )          ( "\\bcharset\\s*=\\s*\"?([^;\"\\s]+)\"?", str::regex::icase );
 
         typedef SimpleHttpTaskT<> SimpleHttpTask;
 

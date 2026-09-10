@@ -29,6 +29,7 @@
 
 #include <utests/baselib/Utf.h>
 #include <utests/baselib/UtfArgsParser.h>
+#include <utests/baselib/UtfConcurrent.h>
 
 #include <atomic>
 
@@ -44,6 +45,13 @@
 
 namespace utest
 {
+    /*
+     * The signal primitive now lives in UtfConcurrent.h, so it can also be used by the
+     * tests which must not depend on the messaging and the transfer headers
+     */
+
+    typedef TestSignal AsyncTestSignal;
+
     /**
      * @brief Common base async task
      */

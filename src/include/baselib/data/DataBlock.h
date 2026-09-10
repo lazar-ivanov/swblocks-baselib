@@ -152,6 +152,24 @@ namespace bl
                     );
             }
 
+            /**
+             * @brief Checks that a length-prefixed text fits as a whole
+             *
+             * Writing the prefix and the bytes are two separate capacity checked writes, so
+             * without this the block can be left holding a dangling length prefix of a text
+             * which was never written
+             */
+
+            void chkCanWriteText( SAA_in const std::int32_t textSize )
+            {
+                const std::size_t totalSize = sizeof( std::int32_t ) + static_cast< std::size_t >( textSize );
+
+                if( m_size + totalSize > m_capacity )
+                {
+                    throwWriteBufferTooSmallException( totalSize );
+                }
+            }
+
         public:
 
             typedef char*                                                       iterator;
@@ -159,9 +177,14 @@ namespace bl
 
             void readEnsureAvailable( SAA_in const std::size_t size )
             {
+                /*
+                 * Note that the check below is written as a subtraction, so it can't wrap
+                 * for a large size
+                 */
+
                 BL_CHK_T(
                     false,
-                    m_offset1 + size <= m_size,
+                    m_offset1 <= m_size && size <= m_size - m_offset1,
                     BufferTooSmallException(),
                     BL_MSG()
                         << "Attempt to read "
@@ -217,6 +240,34 @@ namespace bl
                 m_size = size;
             }
 
+            /**
+             * @brief Same as setSize( ... ) above, but the invariant is enforced in release
+             * builds too
+             *
+             * It must be used wherever the value comes from the wire or from any other
+             * untrusted source - every consumer of a data block computes size() - offset1()
+             * and a size which violates the invariant makes that expression wrap
+             */
+
+            void setSizeChecked( SAA_in const std::size_t size )
+            {
+                BL_CHK_T(
+                    false,
+                    size <= m_capacity && m_offset1 <= size,
+                    BufferTooSmallException(),
+                    BL_MSG()
+                        << "Invalid data block size "
+                        << size
+                        << " (capacity is "
+                        << m_capacity
+                        << " and the protocol data offset is "
+                        << m_offset1
+                        << ")"
+                    );
+
+                m_size = size;
+            }
+
             bool freed() const NOEXCEPT
             {
                 return m_freed;
@@ -235,6 +286,28 @@ namespace bl
             void setOffset1( SAA_in const std::size_t offset1 ) NOEXCEPT
             {
                 BL_ASSERT( offset1 <= m_size );
+                m_offset1 = offset1;
+            }
+
+            /**
+             * @brief Same as setOffset1( ... ) above, but the invariant is enforced in release
+             * builds too; it must be used wherever the value comes from the wire
+             */
+
+            void setOffset1Checked( SAA_in const std::size_t offset1 )
+            {
+                BL_CHK_T(
+                    false,
+                    offset1 <= m_size,
+                    BufferTooSmallException(),
+                    BL_MSG()
+                        << "Invalid data block protocol data offset "
+                        << offset1
+                        << " (the size of the block is "
+                        << m_size
+                        << ")"
+                    );
+
                 m_offset1 = offset1;
             }
 
@@ -298,6 +371,8 @@ namespace bl
             {
                 const std::int32_t textSize = numbers::safeCoerceTo< std::int32_t >( std::strlen( text ) );
 
+                chkCanWriteText( textSize );
+
                 write( textSize );
                 write( text, textSize );
             }
@@ -305,6 +380,8 @@ namespace bl
             void write( SAA_in const std::string& text )
             {
                 const std::int32_t textSize = numbers::safeCoerceTo< std::int32_t >( text.size() );
+
+                chkCanWriteText( textSize );
 
                 write( textSize );
                 write( text.c_str(), textSize );
@@ -333,7 +410,23 @@ namespace bl
                 std::int32_t textSize;
                 read( &textSize );
 
-                readEnsureAvailable( textSize );
+                /*
+                 * The length is read from the block, so it can't be trusted - a negative
+                 * value would be sign extended into a huge size_t and would make the
+                 * availability check below wrap
+                 */
+
+                BL_CHK_T(
+                    false,
+                    textSize >= 0,
+                    BufferTooSmallException(),
+                    BL_MSG()
+                        << "Invalid negative string length "
+                        << textSize
+                        << " in a data block"
+                    );
+
+                readEnsureAvailable( static_cast< std::size_t >( textSize ) );
 
                 text -> assign( m_data.get() + m_offset1, textSize );
                 m_offset1 += textSize;

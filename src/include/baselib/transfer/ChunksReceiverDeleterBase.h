@@ -361,6 +361,16 @@ namespace bl
                     const auto taskRemoved = m_eqWorkerTasks -> pop( false /* wait */ );
                     BL_ASSERT( om::areEqual( taskRemoved, taskTransfer ) );
 
+                    if( false == force && base_type::tryRearmPostponedChunk( taskRemoved ) )
+                    {
+                        /*
+                         * A chunk postponed for re-authentication was re-armed on this
+                         * task and is being requested now
+                         */
+
+                        continue;
+                    }
+
                     if(
                         m_eqWorkerTasks -> isEmpty() &&
                         false == force &&

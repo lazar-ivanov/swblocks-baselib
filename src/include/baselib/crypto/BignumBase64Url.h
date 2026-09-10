@@ -70,7 +70,7 @@ namespace bl
                 auto result = bignum_ptr_t::attach(
                     ::BN_bin2bn(
                         buffer.data(),
-                        static_cast< int >( buffer.size() ),
+                        toIntSize( buffer.size() ),
                         nullptr
                         )
                     );

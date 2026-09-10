@@ -90,16 +90,22 @@ namespace bl
                 cpp::SafeInputStringStream is( value );
 
                 /*
-                 * Keeping std::ios::failbit and std::ios::badbit in the exceptions mask for now
-                 * Need to implement bl::cpp::getline to handle std::ios::failbit and
-                 * std::ios::badbit for input streams
+                 * Note that the exceptions mask must not be set here - it would make the
+                 * extraction below throw std::ios_base::failure before BL_CHK_ARG runs, so
+                 * the caller would not get the ArgumentException the interface promises
                  */
 
-                is.exceptions( std::ios::failbit | std::ios::badbit );
                 uuid_t uuid;
                 BL_SAFE_MEMSET( &uuid, 0, sizeof( uuid ) );
                 is >> uuid;
-                BL_CHK_ARG( ! is.fail(), value );
+
+                /*
+                 * The stream must have consumed the whole value - otherwise a valid uuid
+                 * followed by garbage would be accepted
+                 */
+
+                BL_CHK_ARG( ! is.fail() && EOF == is.peek(), value );
+
                 return uuid;
             }
 

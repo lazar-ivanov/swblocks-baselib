@@ -76,6 +76,16 @@ namespace bl
             enum : std::size_t
             {
                 FRESHNESS_INTERVAL_DEFAULT_IN_SECONDS = 15U * 60U,
+
+                /*
+                 * The maximum number of entries which will be cached
+                 *
+                 * The key is the hash of the raw token bytes, so every byte-different
+                 * presentation of the same credential is a separate entry - without a bound
+                 * a long running broker accumulates every token it has ever authorized
+                 */
+
+                MAX_ENTRIES_DEFAULT = 10000U,
             };
 
             struct AuthorizationInfo
@@ -86,19 +96,66 @@ namespace bl
 
             const om::ObjPtr< SERVICE >                                             m_authorizationService;
             time::time_duration                                                     m_freshnessInterval;
-            os::mutex                                                               m_lock;
+            const std::size_t                                                       m_maxEntries;
+            mutable os::mutex                                                      m_lock;
             std::unordered_map< std::string, AuthorizationInfo >                    m_cache;
+            cpp::ScalarTypeIniter< bool >                                           m_cacheFullWasLogged;
 
             AuthorizationCacheImpl(
                 SAA_in              om::ObjPtr< SERVICE >&&                         authorizationService,
-                SAA_in_opt          const time::time_duration&                      freshnessInterval = time::neg_infin
+                SAA_in_opt          const time::time_duration&                      freshnessInterval = time::neg_infin,
+                SAA_in_opt          const std::size_t                               maxEntries = MAX_ENTRIES_DEFAULT
                 )
                 :
                 m_authorizationService( BL_PARAM_FWD( authorizationService ) ),
                 m_freshnessInterval(
                     freshnessInterval.is_special() ? freshnessIntervalDefault() : BL_PARAM_FWD( freshnessInterval )
-                    )
+                    ),
+                m_maxEntries( maxEntries )
             {
+            }
+
+            /**
+             * @brief The current time; it is virtual, so the tests can inject a clock
+             */
+
+            virtual auto now() const -> time::ptime
+            {
+                return time::microsec_clock::universal_time();
+            }
+
+            /**
+             * @brief Whether a cached entry is too old to be used
+             *
+             * A timestamp in the future is treated as stale as well - the system clock can be
+             * stepped backwards (e.g. by NTP), which must not turn every cached lookup into a
+             * failure until the clock catches up
+             */
+
+            bool isStale( SAA_in const AuthorizationInfo& info ) const
+            {
+                const auto currentTime = now();
+
+                return info.timestamp > currentTime || ( currentTime - info.timestamp ) > m_freshnessInterval;
+            }
+
+            /**
+             * @brief Removes every stale entry from the cache; the lock must be held
+             */
+
+            void sweepStaleEntriesNoLock()
+            {
+                for( auto i = m_cache.begin(); i != m_cache.end(); )
+                {
+                    if( isStale( i -> second ) )
+                    {
+                        i = m_cache.erase( i );
+                    }
+                    else
+                    {
+                        ++i;
+                    }
+                }
             }
 
             auto getKey( SAA_in const om::ObjPtr< data::DataBlock >& authenticationToken ) -> std::string
@@ -140,8 +197,15 @@ namespace bl
 
                 const auto* info = tryGetAuthorizationInfo( authenticationToken );
 
+                /*
+                 * Note that the principal may carry no token at all (an authorization service
+                 * which does not echo one), in which case the token presented by the caller
+                 * is the one to use - it is dereferenced unconditionally further down
+                 */
+
                 const auto& latestAuthenticationToken =
-                    info ?  info -> principal -> authenticationToken() : authenticationToken;
+                    ( info && info -> principal -> authenticationToken() ) ?
+                        info -> principal -> authenticationToken() : authenticationToken;
 
                 return m_authorizationService -> createAuthorizationTask( latestAuthenticationToken );
             }
@@ -235,10 +299,42 @@ namespace bl
                         << "Security principal cannot be nullptr"
                     );
 
-                auto& info = m_cache[ getKey( authenticationToken ) ];
+                const auto key = getKey( authenticationToken );
+
+                if( m_cache.size() >= m_maxEntries && m_cache.find( key ) == m_cache.end() )
+                {
+                    /*
+                     * The cache is at its limit and this would be a new entry - sweep the
+                     * stale ones once and, if that did not make room, simply don't cache the
+                     * principal (the authorization itself succeeded, it will just cost
+                     * another round trip next time)
+                     */
+
+                    sweepStaleEntriesNoLock();
+
+                    if( m_cache.size() >= m_maxEntries )
+                    {
+                        if( ! m_cacheFullWasLogged )
+                        {
+                            m_cacheFullWasLogged = true;
+
+                            BL_LOG(
+                                Logging::warning(),
+                                BL_MSG()
+                                    << "The authorization cache has reached its maximum size of "
+                                    << m_maxEntries
+                                    << " entries; new authorizations will not be cached"
+                                );
+                        }
+
+                        return principal;
+                    }
+                }
+
+                auto& info = m_cache[ key ];
 
                 info.principal = principal;
-                info.timestamp = time::microsec_clock::universal_time();
+                info.timestamp = now();
 
                 return principal;
             }
@@ -271,9 +367,9 @@ namespace bl
             {
                 BL_MUTEX_GUARD( m_lock );
 
-                const auto* info = tryGetAuthorizationInfo( authenticationToken );
+                const auto pos = m_cache.find( getKey( authenticationToken ) );
 
-                if( ! info )
+                if( pos == m_cache.end() )
                 {
                     /*
                      * This token has never been authorized and placed in the cache
@@ -282,23 +378,19 @@ namespace bl
                     return nullptr;
                 }
 
-                const auto& timestamp = info -> timestamp;
-
-                const auto now = time::microsec_clock::universal_time();
-
-                BL_CHK(
-                    false,
-                    timestamp <= now,
-                    BL_MSG()
-                        << "Invalid timestamp in the authorization cache"
-                    );
-
-                if( ( now - timestamp ) > m_freshnessInterval )
+                if( isStale( pos -> second ) )
                 {
+                    /*
+                     * The entry is erased here, so the refresh re-validates the token which
+                     * the caller presented instead of a stale one which is still cached
+                     */
+
+                    m_cache.erase( pos );
+
                     return nullptr;
                 }
 
-                return om::copy( info -> principal );
+                return om::copy( pos -> second.principal );
             }
 
             virtual auto createAuthorizationTask(
@@ -334,6 +426,43 @@ namespace bl
                 BL_MUTEX_GUARD( m_lock );
 
                 m_cache.erase( getKey( authenticationToken ) );
+            }
+
+            /**
+             * @brief The number of entries which are currently cached
+             */
+
+            auto size() const -> std::size_t
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                return m_cache.size();
+            }
+
+            /**
+             * @brief Overwrites the timestamp of a cached entry
+             *
+             * It exists to let the tests inject a timestamp (in particular one in the future,
+             * i.e. a wall clock which was stepped backwards) without waiting
+             */
+
+            void setTimestampForTesting(
+                SAA_in              const om::ObjPtr< data::DataBlock >&    authenticationToken,
+                SAA_in              const time::ptime&                      timestamp
+                )
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                const auto pos = m_cache.find( getKey( authenticationToken ) );
+
+                BL_CHK(
+                    false,
+                    pos != m_cache.end(),
+                    BL_MSG()
+                        << "The authentication token is not in the cache"
+                    );
+
+                pos -> second.timestamp = timestamp;
             }
         };
 

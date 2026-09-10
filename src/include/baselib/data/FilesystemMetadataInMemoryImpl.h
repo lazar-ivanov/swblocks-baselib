@@ -151,6 +151,8 @@ namespace bl
 
             MetadataStatistics computeStatistics()
             {
+                chkLocked();
+
                 MetadataStatistics result;
 
                 result.entriesCount = ( std::uint32_t ) m_files.size();
@@ -210,14 +212,25 @@ namespace bl
             {
                 chkLocked();
 
-                return UuidIteratorImpl::createInstance< UuidIterator >( m_fileIds );
+                /*
+                 * The owner is passed to the iterator, so it can't outlive the store whose
+                 * vector it points into
+                 */
+
+                return UuidIteratorImpl::createInstance< UuidIterator >(
+                    m_fileIds,
+                    om::qi< om::Object >( static_cast< FilesystemMetadataRO* >( this ) )
+                    );
             }
 
             virtual om::ObjPtr< UuidIterator >      queryAllChunks() OVERRIDE
             {
                 chkLocked();
 
-                return UuidIteratorImpl::createInstance< UuidIterator >( m_chunkIds );
+                return UuidIteratorImpl::createInstance< UuidIterator >(
+                    m_chunkIds,
+                    om::qi< om::Object >( static_cast< FilesystemMetadataRO* >( this ) )
+                    );
             }
 
             virtual std::size_t                     queryEntriesCount() OVERRIDE
@@ -231,7 +244,10 @@ namespace bl
             {
                 chkLocked();
 
-                return UuidIteratorImpl::createInstance< UuidIterator >( getEntry( entryId ).chunkIds );
+                return UuidIteratorImpl::createInstance< UuidIterator >(
+                    getEntry( entryId ).chunkIds,
+                    om::qi< om::Object >( static_cast< FilesystemMetadataRO* >( this ) )
+                    );
             }
 
             virtual std::size_t                     queryChunksCount( SAA_in const uuid_t& entryId ) OVERRIDE
@@ -243,6 +259,8 @@ namespace bl
 
             virtual uuid_t                          queryEntryId( SAA_in const uuid_t& chunkId ) OVERRIDE
             {
+                chkLocked();
+
                 const auto pos = m_chunk2files.find( chunkId );
 
                 BL_CHK(
@@ -279,6 +297,69 @@ namespace bl
              * Implementation of FilesystemMetadataWO
              */
 
+            /**
+             * @brief Validates the relative path (and the symlink target) of an entry
+             *
+             * The metadata can come from a remote peer and every consumer joins the relative
+             * path onto the staging directory before it creates the entry, so a path which is
+             * absolute or which contains a parent directory reference would let the unpackager
+             * write outside of the tree it is unpacking into
+             */
+
+            static void chkEntryInfo( SAA_in const EntryInfo& info )
+            {
+                const auto& relPath = info.relPath ? info.relPath -> value() : fs::path();
+
+                BL_CHK_T_USER_FRIENDLY(
+                    false,
+                    ! relPath.empty(),
+                    UnexpectedException(),
+                    BL_MSG()
+                        << "The relative path of a filesystem metadata entry is empty"
+                    );
+
+                /*
+                 * Note that only the containment rules are enforced here and not full path
+                 * portability - the library supports (and its own tests use) names which are
+                 * legal on UNIX but not on Windows, e.g. names containing quotes
+                 */
+
+                BL_CHK_T_USER_FRIENDLY(
+                    false,
+                    relPath.root_path().empty(),
+                    UnexpectedException(),
+                    BL_MSG()
+                        << "The relative path of a filesystem metadata entry must not be absolute: '"
+                        << relPath.string()
+                        << "'"
+                    );
+
+                for( const auto& element : relPath )
+                {
+                    BL_CHK_T_USER_FRIENDLY(
+                        true,
+                        ".." == element.string(),
+                        UnexpectedException(),
+                        BL_MSG()
+                            << "The relative path of a filesystem metadata entry must not contain "
+                            << "a parent directory reference: '"
+                            << relPath.string()
+                            << "'"
+                        );
+                }
+
+                if( FilesystemMetadata::Symlink == info.type )
+                {
+                    BL_CHK_T_USER_FRIENDLY(
+                        false,
+                        info.targetPath && ! info.targetPath -> value().string().empty(),
+                        UnexpectedException(),
+                        BL_MSG()
+                            << "The target path of a symlink metadata entry is empty"
+                        );
+                }
+            }
+
             virtual uuid_t  createEntry( SAA_in EntryInfo&& entryInfo ) OVERRIDE
             {
                 BL_MUTEX_GUARD( m_lock );
@@ -296,6 +377,8 @@ namespace bl
 
                 newObj.entryId = entryId;
                 newObj.info = std::forward< EntryInfo >( entryInfo );
+
+                chkEntryInfo( newObj.info );
 
                 /*
                  * Ensure the relative path provided is always unique

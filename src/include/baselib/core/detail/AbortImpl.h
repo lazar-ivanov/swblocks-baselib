@@ -21,10 +21,13 @@
 
 #if defined( _WIN32 )
 #include <Windows.h>
+#include <io.h>
 #else
 #include <signal.h>
+#include <unistd.h>
 #endif
 
+#include <cstddef>
 #include <stdlib.h>
 
 namespace bl
@@ -93,6 +96,34 @@ namespace bl
         inline void fastAbort() NOEXCEPT
         {
             detail::AbortImpl::fastAbort();
+        }
+
+        /**
+         * @brief Writes a message to the standard error stream without taking any lock
+         *
+         * It is the fallback of the abort path, where the stdio lock may be held by another
+         * thread; the underlying call is async-signal-safe
+         */
+
+        inline void writeToStdErrNothrow( SAA_in const char* message ) NOEXCEPT
+        {
+            if( nullptr == message )
+            {
+                return;
+            }
+
+            std::size_t size = 0U;
+
+            while( message[ size ] )
+            {
+                ++size;
+            }
+
+#if defined( _WIN32 )
+            ( void ) ::_write( 2 /* stderr */, message, static_cast< unsigned int >( size ) );
+#else
+            ( void ) ::write( 2 /* stderr */, message, size );
+#endif
         }
 
     } // os

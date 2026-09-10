@@ -82,6 +82,7 @@ namespace bl
 
             static const std::string                            g_connection;
             static const std::string                            g_close;
+            static const std::string                            g_transferEncoding;
 
             static const char                                   g_nameSeparator;
             static const char                                   g_cookieSeparator;
@@ -116,6 +117,8 @@ namespace bl
         BL_DEFINE_STATIC_CONST_STRING( HttpHeaderT, g_cookie )                      = "Cookie";
         BL_DEFINE_STATIC_CONST_STRING( HttpHeaderT, g_setCookie )                   = "Set-Cookie";
         BL_DEFINE_STATIC_CONST_STRING( HttpHeaderT, g_userAgent )                   = "User-Agent";
+
+        BL_DEFINE_STATIC_CONST_STRING( HttpHeaderT, g_transferEncoding )            = "Transfer-Encoding";
 
         BL_DEFINE_STATIC_CONST_STRING( HttpHeaderT, g_userAgentDefault )            = "swblocks-baselib-client/1.0";
         BL_DEFINE_STATIC_CONST_STRING( HttpHeaderT, g_userAgentBotDefault )         = "swblocks-baselib-client-bot/1.0";
@@ -355,6 +358,15 @@ namespace bl
             static const std::string                                                g_notImplemented;
             static const std::string                                                g_badGateway;
             static const std::string                                                g_serviceUnavailable;
+            static const std::string                                                g_tooManyRequests;
+            static const std::string                                                g_gatewayTimeout;
+
+            static const std::string                                                g_phraseInformational;
+            static const std::string                                                g_phraseSuccess;
+            static const std::string                                                g_phraseRedirection;
+            static const std::string                                                g_phraseClientError;
+            static const std::string                                                g_phraseServerError;
+            static const std::string                                                g_phraseUnknown;
 
         public:
 
@@ -407,6 +419,9 @@ namespace bl
                     case Parameters::HTTP_CLIENT_ERROR_CONFLICT:
                         return g_conflict;
 
+                    case Parameters::HTTP_CLIENT_ERROR_TOO_MANY_REQUESTS:
+                        return g_tooManyRequests;
+
                     case Parameters::HTTP_SERVER_ERROR_INTERNAL:
                         return g_internalError;
 
@@ -419,8 +434,93 @@ namespace bl
                     case Parameters::HTTP_SERVER_ERROR_SERVICE_UNAVAILABLE:
                         return g_serviceUnavailable;
 
+                    case Parameters::HTTP_SERVER_ERROR_GATEWAY_TIMEOUT:
+                        return g_gatewayTimeout;
+
                     default:
                         return g_internalError;
+                }
+            }
+
+            /**
+             * @brief Returns the status line for a status code
+             *
+             * Unlike get( ... ) above this never substitutes a different status code - a code
+             * for which there is no canonical reason phrase here is emitted as is with a
+             * generic phrase for its class, so the status line, the response status and the
+             * error body can never disagree
+             */
+
+            static std::string getStatusLine( SAA_in const Parameters::HttpStatusCode status )
+            {
+                switch( status )
+                {
+                    case Parameters::HTTP_STATUS_UNDEFINED:
+                    case Parameters::HTTP_SUCCESS_OK:
+                    case Parameters::HTTP_SUCCESS_CREATED:
+                    case Parameters::HTTP_SUCCESS_ACCEPTED:
+                    case Parameters::HTTP_SUCCESS_NO_CONTENT:
+                    case Parameters::HTTP_REDIRECT_MULTIPLE_CHOICES:
+                    case Parameters::HTTP_REDIRECT_PERMANENTLY:
+                    case Parameters::HTTP_REDIRECT_TEMPORARILY:
+                    case Parameters::HTTP_REDIRECT_NOT_MODIFIED:
+                    case Parameters::HTTP_REDIRECT_END_RANGE:
+                    case Parameters::HTTP_CLIENT_ERROR_BAD_REQUEST:
+                    case Parameters::HTTP_CLIENT_ERROR_UNAUTHORIZED:
+                    case Parameters::HTTP_CLIENT_ERROR_FORBIDDEN:
+                    case Parameters::HTTP_CLIENT_ERROR_NOT_FOUND:
+                    case Parameters::HTTP_CLIENT_ERROR_CONFLICT:
+                    case Parameters::HTTP_CLIENT_ERROR_TOO_MANY_REQUESTS:
+                    case Parameters::HTTP_SERVER_ERROR_INTERNAL:
+                    case Parameters::HTTP_SERVER_ERROR_NOT_IMPLEMENTED:
+                    case Parameters::HTTP_SERVER_ERROR_BAD_GATEWAY:
+                    case Parameters::HTTP_SERVER_ERROR_SERVICE_UNAVAILABLE:
+                    case Parameters::HTTP_SERVER_ERROR_GATEWAY_TIMEOUT:
+                        return get( status );
+
+                    default:
+                        break;
+                }
+
+                cpp::SafeOutputStringStream oss;
+
+                oss
+                    << "HTTP/1.0 "
+                    << static_cast< unsigned int >( status )
+                    << " "
+                    << genericReasonPhrase( status )
+                    << "\r\n";
+
+                return oss.str();
+            }
+
+            /**
+             * @brief The generic reason phrase for the class of a status code
+             */
+
+            static const std::string& genericReasonPhrase( SAA_in const Parameters::HttpStatusCode status )
+            {
+                const auto statusClass = static_cast< unsigned int >( status ) / 100U;
+
+                switch( statusClass )
+                {
+                    case 1U:
+                        return g_phraseInformational;
+
+                    case 2U:
+                        return g_phraseSuccess;
+
+                    case 3U:
+                        return g_phraseRedirection;
+
+                    case 4U:
+                        return g_phraseClientError;
+
+                    case 5U:
+                        return g_phraseServerError;
+
+                    default:
+                        return g_phraseUnknown;
                 }
             }
         };
@@ -446,6 +546,15 @@ namespace bl
         BL_DEFINE_STATIC_CONST_STRING( StatusStringsT, g_notImplemented )           = "HTTP/1.0 501 Not Implemented\r\n";
         BL_DEFINE_STATIC_CONST_STRING( StatusStringsT, g_badGateway )               = "HTTP/1.0 502 Bad Gateway\r\n";
         BL_DEFINE_STATIC_CONST_STRING( StatusStringsT, g_serviceUnavailable )       = "HTTP/1.0 503 Service Unavailable\r\n";
+        BL_DEFINE_STATIC_CONST_STRING( StatusStringsT, g_tooManyRequests )          = "HTTP/1.0 429 Too Many Requests\r\n";
+        BL_DEFINE_STATIC_CONST_STRING( StatusStringsT, g_gatewayTimeout )           = "HTTP/1.0 504 Gateway Timeout\r\n";
+
+        BL_DEFINE_STATIC_CONST_STRING( StatusStringsT, g_phraseInformational )      = "Informational";
+        BL_DEFINE_STATIC_CONST_STRING( StatusStringsT, g_phraseSuccess )            = "Success";
+        BL_DEFINE_STATIC_CONST_STRING( StatusStringsT, g_phraseRedirection )        = "Redirection";
+        BL_DEFINE_STATIC_CONST_STRING( StatusStringsT, g_phraseClientError )        = "Client Error";
+        BL_DEFINE_STATIC_CONST_STRING( StatusStringsT, g_phraseServerError )        = "Server Error";
+        BL_DEFINE_STATIC_CONST_STRING( StatusStringsT, g_phraseUnknown )            = "Unknown Status";
 
     } //http
 

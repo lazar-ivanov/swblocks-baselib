@@ -118,7 +118,7 @@ namespace bl
                         );
 
                     BL_CHK_CRYPTO_API_NM(
-                        ::X509_gmtime_adj( ::X509_getm_notAfter( x509cert.get() ), 60 * 60 * 24 * daysValid )
+                        ::X509_gmtime_adj( ::X509_getm_notAfter( x509cert.get() ), validitySeconds( daysValid ) )
                         );
 #else
                     BL_CHK_CRYPTO_API_NM(
@@ -126,7 +126,7 @@ namespace bl
                         );
 
                     BL_CHK_CRYPTO_API_NM(
-                        ::X509_gmtime_adj( X509_get_notAfter( x509cert.get() ), 60 * 60 * 24 * daysValid )
+                        ::X509_gmtime_adj( X509_get_notAfter( x509cert.get() ), validitySeconds( daysValid ) )
                         );
 #endif
 
@@ -213,17 +213,52 @@ namespace bl
                         );
                 }
 
+                /**
+                 * @brief The validity period of a certificate in seconds
+                 *
+                 * The arithmetic is done in 'long' - 60 * 60 * 24 * daysValid overflows an
+                 * int for a validity of more than 24855 days
+                 */
+
+                static long validitySeconds( SAA_in const int daysValid )
+                {
+                    BL_CHK_ARG( daysValid >= 0, daysValid );
+
+                    const long secondsPerDay = 60L * 60L * 24L;
+
+                    BL_CHK_ARG(
+                        static_cast< long >( daysValid ) <= ( std::numeric_limits< long >::max() / secondsPerDay ),
+                        daysValid
+                        );
+
+                    return secondsPerDay * static_cast< long >( daysValid );
+                }
+
                 static std::string bioBufferToString( const bio_ptr_t& bioBuffer )
                 {
                     const int length = BIO_pending( bioBuffer.get() );
 
-                    const auto pemBytes = cpp::SafeUniquePtr< char[] >::attach( new char[ length ] );
+                    /*
+                     * BIO_pending returns a negative value on failure and BIO_read can return
+                     * fewer bytes than requested, so both have to be verified
+                     */
 
-                    BL_CHK_CRYPTO_API_NM(
-                        ::BIO_read( bioBuffer.get(), pemBytes.get(), length )
-                        );
+                    BL_CHK_CRYPTO_API_NM( length >= 0 );
 
-                    return std::string( pemBytes.get(), length );
+                    std::string text;
+
+                    if( 0 == length )
+                    {
+                        return text;
+                    }
+
+                    text.resize( static_cast< std::size_t >( length ) );
+
+                    const int bytesRead = ::BIO_read( bioBuffer.get(), &text[ 0 ], length );
+
+                    BL_CHK_CRYPTO_API_NM( bytesRead == length );
+
+                    return text;
                 }
             };
 

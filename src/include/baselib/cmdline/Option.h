@@ -326,8 +326,6 @@ namespace bl
 
         typedef Option< bool, detail::SwitchImpl< bool, true > >  BoolSwitch;
 
-        typedef Option< std::vector< std::string >, detail::SwitchImpl< std::vector< std::string >, true > >  BoolSwitchOrMultiStringOption;
-
         /**
          * @brief Declare a class encapsulating a particular command line option
          * and initialize it with the specified arguments

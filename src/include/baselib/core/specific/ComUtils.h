@@ -21,6 +21,8 @@
 #error This file can only be included when compiling on Windows platform
 #endif
 
+#include <baselib/core/BaseIncludes.h>
+
 #include <objbase.h>
 #include <objidl.h>
 

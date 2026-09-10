@@ -70,8 +70,17 @@ namespace bl
             {
                 if( ! m_urng )
                 {
-                    m_urng.reset( new random::mt19937 );
-                    random::seed( *m_urng );
+                    /*
+                     * Note that the generator is seeded before it is stored, so if the
+                     * seeding throws we don't leave a default seeded generator behind
+                     * (which would return the same sequence in every thread)
+                     */
+
+                    auto urng = cpp::SafeUniquePtr< random::mt19937 >::attach( new random::mt19937 );
+
+                    random::seed( *urng );
+
+                    m_urng = std::move( urng );
                 }
 
                 return *m_urng;

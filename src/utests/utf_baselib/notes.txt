@@ -5,6 +5,8 @@
 --log_level=message --run_test=BaseLib_BaseDefsTests
 --log_level=message --run_test=BaseLib_BoxedValueObjectTests
 --log_level=message --run_test=BaseLib_ContainerHelperTests
+--log_level=message --run_test=BaseLib_DataBlockCheckedSettersTests
+--log_level=message --run_test=BaseLib_DataBlockReadWriteCodecTests
 --log_level=message --run_test=BaseLib_DataBlockTests
 --log_level=message --run_test=BaseLib_DataEnsureAvailableTests
 --log_level=message --run_test=BaseLib_EhExceptionHooksTests
@@ -116,3 +118,13 @@
 --log_level=message --run_test=TestTransaction5
 --log_level=message --run_test=TestTimeZoneData
 --log_level=message --run_test=NetUtils_TryParseEndpointTest
+--log_level=message --run_test=BaseLib_DataBlockPoolAndCopyTests
+--log_level=message --run_test=BaseLib_OSCreateProcessArgvQuotingWindowsTests
+--log_level=message --run_test=BaseLib_OSNamedMutexNonAsciiNameWindowsTests
+--log_level=message --run_test=BaseLib_OSPathPermissionsNonAsciiWindowsTests
+--log_level=message --run_test=BaseLib_OSCreateProcessNonAsciiCommandLineWindowsTests
+--log_level=message --run_test=BaseLib_OSRegistryHiveDiagnosticsWindowsTests
+--log_level=message --run_test=BaseLib_OSCreateProcessThreadHandleLeakWindowsTests
+--log_level=message --run_test=BaseLib_OSJunctionPrintNameWindowsTests
+--log_level=message --run_test=BaseLib_OSResourceLimitsWindowsTests
+--log_level=message --run_test=BaseLib_OSUserDomainEnvironmentWindowsTests

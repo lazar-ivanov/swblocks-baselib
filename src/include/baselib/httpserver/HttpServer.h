@@ -64,19 +64,101 @@ namespace bl
             ServerResult                                                                        m_parsingStatus;
             cpp::ScalarTypeIniter< bool >                                                       m_isStreamTruncationError;
 
+            cpp::SafeUniquePtr< asio::deadline_timer >                                          m_timer;
+            time::time_duration                                                                 m_timeout;
+
         protected:
 
-            HttpServerReceiveRequestTask( SAA_in typename base_type::stream_ref&& connectedStream )
+            HttpServerReceiveRequestTask(
+                SAA_in          typename base_type::stream_ref&&                                connectedStream,
+                SAA_in_opt      time::time_duration&&                                           timeout = time::time_duration()
+                )
                 :
                 m_buffer( data::DataBlock::createInstance( 512U ) ),
                 m_parser( Parser::createInstance() ),
-                m_parsingStatus( ParserHelpers::serverResult( HttpParserResult::MORE_DATA_REQUIRED ) )
+                m_parsingStatus( ParserHelpers::serverResult( HttpParserResult::MORE_DATA_REQUIRED ) ),
+                m_timeout( BL_PARAM_FWD( timeout ) )
             {
                 base_type::attachStream( BL_PARAM_FWD( connectedStream ) );
             }
 
+            /**
+             * @brief Arms the inactivity deadline of the connection
+             *
+             * The timer is re-armed before every read, so a client which keeps sending data
+             * is never interrupted while a client which stops sending is cancelled
+             */
+
+            void scheduleTimer()
+            {
+                if( m_timeout.is_special() || m_timeout.total_milliseconds() <= 0 )
+                {
+                    return;
+                }
+
+                if( ! m_timer )
+                {
+                    m_timer.reset(
+                        new asio::deadline_timer(
+                            ThreadPoolDefault::getDefault( tasks::TaskBase::getThreadPoolId() ) -> aioService()
+                            )
+                        );
+                }
+
+                m_timer -> expires_from_now( m_timeout );
+
+                m_timer -> async_wait(
+                    cpp::bind(
+                        &this_type::onTimer,
+                        om::ObjPtrCopyable< this_type >::acquireRef( this ),
+                        asio::placeholders::error
+                        )
+                    );
+            }
+
+            void onTimer( SAA_in const eh::error_code& ec ) NOEXCEPT
+            {
+                BL_NOEXCEPT_BEGIN()
+
+                BL_MUTEX_GUARD( tasks::TaskBase::m_lock );
+
+                if( ! ec && tasks::Task::Running == tasks::TaskBase::m_state )
+                {
+                    BL_LOG(
+                        Logging::debug(),
+                        BL_MSG()
+                            << "Cancelling an HTTP connection which was idle for longer than "
+                            << m_timeout
+                        );
+
+                    tasks::TaskBase::requestCancelInternal();
+                }
+
+                BL_NOEXCEPT_END()
+            }
+
+            virtual auto onTaskStoppedNothrow(
+                SAA_in_opt              const std::exception_ptr&                               eptrIn = nullptr,
+                SAA_inout_opt           bool*                                                   isExpectedException = nullptr
+                ) NOEXCEPT
+                -> std::exception_ptr OVERRIDE
+            {
+                BL_NOEXCEPT_BEGIN()
+
+                if( m_timer )
+                {
+                    m_timer -> cancel();
+                }
+
+                BL_NOEXCEPT_END()
+
+                return base_type::onTaskStoppedNothrow( eptrIn, isExpectedException );
+            }
+
             void scheduleRead()
             {
+                scheduleTimer();
+
                 base_type::getStream().async_read_some(
                     asio::buffer( m_buffer -> pv(), m_buffer -> size() ),
                     cpp::bind(
@@ -211,21 +293,98 @@ namespace bl
 
             const om::ObjPtr< Response >                                                        m_response;
 
+            cpp::SafeUniquePtr< asio::deadline_timer >                                          m_timer;
+            time::time_duration                                                                 m_timeout;
+
         protected:
 
             HttpServerSendResponseTask(
-                SAA_in      typename base_type::stream_ref&&                                    connectedStream,
-                SAA_in      om::ObjPtr< Response >&&                                            response
+                SAA_in          typename base_type::stream_ref&&                                connectedStream,
+                SAA_in          om::ObjPtr< Response >&&                                        response,
+                SAA_in_opt      time::time_duration&&                                           timeout = time::time_duration()
                 )
                 :
-                m_response( BL_PARAM_FWD( response ) )
+                m_response( BL_PARAM_FWD( response ) ),
+                m_timeout( BL_PARAM_FWD( timeout ) )
             {
                 base_type::attachStream( BL_PARAM_FWD( connectedStream ) );
                 base_type::isCloseStreamOnTaskFinish( true );
             }
 
+            /**
+             * @brief Arms the deadline for writing the response out
+             */
+
+            void scheduleTimer()
+            {
+                if( m_timeout.is_special() || m_timeout.total_milliseconds() <= 0 )
+                {
+                    return;
+                }
+
+                if( ! m_timer )
+                {
+                    m_timer.reset(
+                        new asio::deadline_timer(
+                            ThreadPoolDefault::getDefault( tasks::TaskBase::getThreadPoolId() ) -> aioService()
+                            )
+                        );
+                }
+
+                m_timer -> expires_from_now( m_timeout );
+
+                m_timer -> async_wait(
+                    cpp::bind(
+                        &this_type::onTimer,
+                        om::ObjPtrCopyable< this_type >::acquireRef( this ),
+                        asio::placeholders::error
+                        )
+                    );
+            }
+
+            void onTimer( SAA_in const eh::error_code& ec ) NOEXCEPT
+            {
+                BL_NOEXCEPT_BEGIN()
+
+                BL_MUTEX_GUARD( tasks::TaskBase::m_lock );
+
+                if( ! ec && tasks::Task::Running == tasks::TaskBase::m_state )
+                {
+                    BL_LOG(
+                        Logging::debug(),
+                        BL_MSG()
+                            << "Cancelling an HTTP connection which did not accept the response within "
+                            << m_timeout
+                        );
+
+                    tasks::TaskBase::requestCancelInternal();
+                }
+
+                BL_NOEXCEPT_END()
+            }
+
+            virtual auto onTaskStoppedNothrow(
+                SAA_in_opt              const std::exception_ptr&                               eptrIn = nullptr,
+                SAA_inout_opt           bool*                                                   isExpectedException = nullptr
+                ) NOEXCEPT
+                -> std::exception_ptr OVERRIDE
+            {
+                BL_NOEXCEPT_BEGIN()
+
+                if( m_timer )
+                {
+                    m_timer -> cancel();
+                }
+
+                BL_NOEXCEPT_END()
+
+                return base_type::onTaskStoppedNothrow( eptrIn, isExpectedException );
+            }
+
             void scheduleWrite()
             {
+                scheduleTimer();
+
                 asio::async_write(
                     base_type::getStream(),
                     asio::buffer( m_response -> getSerialized().c_str(), m_response -> getSerialized().size() ),
@@ -314,25 +473,84 @@ namespace bl
             const om::ObjPtr< ServerBackendProcessing >                                         m_backend;
             State                                                                               m_state;
 
+            /*
+             * The inactivity timeout of the receive and of the send tasks of this connection
+             */
+
+            const time::time_duration                                                          m_connectionTimeout;
+
             HttpServerConnection(
                 SAA_in          om::ObjPtr< ServerBackendProcessing >&&                         backend,
-                SAA_in          typename STREAM::stream_ref&&                                   connectedStream
+                SAA_in          typename STREAM::stream_ref&&                                   connectedStream,
+                SAA_in_opt      time::time_duration&&                                           connectionTimeout
+                    = time::time_duration()
                 )
                 :
                 m_backend( BL_PARAM_FWD( backend ) ),
-                m_state( RECEIVE )
+                m_state( RECEIVE ),
+                m_connectionTimeout( BL_PARAM_FWD( connectionTimeout ) )
             {
-                m_receiveRequestTask = receive_task_t::createInstance( BL_PARAM_FWD( connectedStream ) );
+                m_receiveRequestTask = receive_task_t::createInstance(
+                    BL_PARAM_FWD( connectedStream ),
+                    cpp::copy( m_connectionTimeout )
+                    );
 
                 m_wrappedTask = om::qi< tasks::Task >( m_receiveRequestTask );
             }
 
-            void scheduleStdErrorResponse( SAA_in const std::exception_ptr& eptr )
+            /**
+             * @brief Maps a failure of the backend processing task to an HTTP status code
+             *
+             * A failure of the processing stage is a failure of the server or of the backend
+             * behind it, not a bad request; the request timeout of the backend bridge cancels
+             * the request, which is reported as a gateway timeout
+             */
+
+            static auto getProcessingErrorStatusCode( SAA_in const std::exception_ptr& eptr )
+                -> http::Parameters::HttpStatusCode
             {
-                const auto remoteEndpointId = m_receiveRequestTask -> safeRemoteEndpointId();
+                try
+                {
+                    cpp::safeRethrowException( eptr );
+                }
+                catch( eh::system_error& e )
+                {
+                    if(
+                        asio::error::operation_aborted == e.code() ||
+                        asio::error::timed_out == e.code()
+                        )
+                    {
+                        return http::Parameters::HTTP_SERVER_ERROR_GATEWAY_TIMEOUT;
+                    }
+                }
+                catch( std::exception& )
+                {
+                    /*
+                     * Any other failure is reported as an internal server error below
+                     */
+                }
+
+                return http::Parameters::HTTP_SERVER_ERROR_INTERNAL;
+            }
+
+            void scheduleStdErrorResponse(
+                SAA_in          const std::exception_ptr&                                       eptr,
+                SAA_in_opt      const http::Parameters::HttpStatusCode                          httpStatusCode
+                    = http::Parameters::HTTP_CLIENT_ERROR_BAD_REQUEST
+                )
+            {
+                /*
+                 * Note that the endpoint id must be obtained without retrying here - this code
+                 * runs from continuationTask() which is invoked while the execution queue lock
+                 * is held and it must never block (a client which resets the connection makes
+                 * getpeername fail with ENOTCONN, which the retrying helper answers with a 3
+                 * seconds sleep - and that would stall every other connection of the server)
+                 */
+
+                const auto remoteEndpointId = m_receiveRequestTask -> remoteEndpointIdNoWait();
 
                 auto response = m_backend -> getStdErrorResponse(
-                    http::Parameters::HTTP_CLIENT_ERROR_BAD_REQUEST,
+                    httpStatusCode,
                     eptr
                     );
 
@@ -347,7 +565,8 @@ namespace bl
 
                 m_sendResponseTask = send_task_t::createInstance(
                     m_receiveRequestTask -> detachStream(),
-                    std::move( response )
+                    std::move( response ),
+                    cpp::copy( m_connectionTimeout )
                     );
 
                 m_wrappedTask = om::qi< tasks::Task >( m_sendResponseTask );
@@ -393,7 +612,14 @@ namespace bl
                         return nullptr;
                     }
 
-                    scheduleStdErrorResponse( eptr );
+                    scheduleStdErrorResponse(
+                        eptr,
+                        PROCESS == m_state ?
+                            getProcessingErrorStatusCode( eptr )
+                            :
+                            http::Parameters::HTTP_CLIENT_ERROR_BAD_REQUEST
+                        );
+
                     return om::copyAs< Task >( this );
                 }
 
@@ -422,7 +648,8 @@ namespace bl
                         {
                             m_sendResponseTask = send_task_t::createInstance(
                                 BL_PARAM_FWD( m_receiveRequestTask -> detachStream() ),
-                                std::move( m_backend -> getResponse( m_processingTask ) )
+                                std::move( m_backend -> getResponse( m_processingTask ) ),
+                                cpp::copy( m_connectionTimeout )
                                 );
                             m_wrappedTask = om::qi< tasks::Task >( m_sendResponseTask );
                             m_state = RESPOND;
@@ -473,7 +700,20 @@ namespace bl
 
             const om::ObjPtr< ServerBackendProcessing >                                         m_backend;
 
+            enum : long
+            {
+                /*
+                 * The default inactivity timeout of a connection - a client which stops
+                 * sending its request (or stops reading the response) for longer than this
+                 * has its connection cancelled
+                 */
+
+                DEFAULT_CONNECTION_TIMEOUT_IN_SECONDS = 60L,
+            };
+
         protected:
+
+            time::time_duration                                                                m_connectionTimeout;
 
             HttpServerT(
                 SAA_in      om::ObjPtr< ServerBackendProcessing >&&                             backend,
@@ -485,7 +725,8 @@ namespace bl
                 )
                 :
                 base_type( controlToken, BL_PARAM_FWD( host ), port, privateKeyPem, certificatePem ),
-                m_backend( BL_PARAM_FWD( backend ) )
+                m_backend( BL_PARAM_FWD( backend ) ),
+                m_connectionTimeout( time::seconds( DEFAULT_CONNECTION_TIMEOUT_IN_SECONDS ) )
             {
             }
 
@@ -493,10 +734,40 @@ namespace bl
             {
                 const auto connection = HttpServerConnectionImpl< STREAM >::createInstance(
                     om::copy( m_backend ),
-                    BL_PARAM_FWD( connectedStream )
+                    BL_PARAM_FWD( connectedStream ),
+                    cpp::copy( m_connectionTimeout )
                     );
 
                 return om::qi< tasks::Task >( connection );
+            }
+
+            virtual std::uint64_t connectionMemoryFootprint() const NOEXCEPT OVERRIDE
+            {
+                /*
+                 * A connection can hold a full request (the headers plus the content) and
+                 * the response which is built out of it
+                 */
+
+                return Parser::g_maxHeadersSize + Parser::g_maxContentSize + ( 64U * 1024U );
+            }
+
+        public:
+
+            /**
+             * @brief Sets the inactivity timeout of the connections of this server
+             *
+             * A zero or special duration disables the timeout; it must be set before the
+             * server task is scheduled
+             */
+
+            void setConnectionTimeout( SAA_in const time::time_duration& connectionTimeout ) NOEXCEPT
+            {
+                m_connectionTimeout = connectionTimeout;
+            }
+
+            const time::time_duration& getConnectionTimeout() const NOEXCEPT
+            {
+                return m_connectionTimeout;
             }
         };
 

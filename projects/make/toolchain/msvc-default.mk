@@ -137,7 +137,19 @@ ifdef BL_USE_CLANG_CL
 
   # Construct clang-cl directory path
   ifeq ($(ARCH),x86)
-    CLANG_CL_DIR := $(MSVC)/VC/Tools/Llvm/bin
+    # The 32-bit x86 clang-cl host cannot code-generate the largest translation units in
+    # this project; it exhausts its ~2GB address space and aborts with an illegal
+    # instruction (0xC000001D) instead of a diagnostic. Prefer a 64-bit host, which
+    # compiles the same sources to the same x86 target - see the explicit target triple
+    # added to CXXFLAGS below - and fall back to the 32-bit host only when the build
+    # host is itself x86 and no 64-bit host can run.
+    ifeq ($(BL_WIN_ARCH_IS_ARM64),1)
+      CLANG_CL_DIR := $(MSVC)/VC/Tools/Llvm/ARM64/bin
+    else ifeq ($(BL_WIN_ARCH_IS_X64),1)
+      CLANG_CL_DIR := $(MSVC)/VC/Tools/Llvm/x64/bin
+    else
+      CLANG_CL_DIR := $(MSVC)/VC/Tools/Llvm/bin
+    endif
   else
     CLANG_CL_DIR := $(MSVC)/VC/Tools/Llvm/$(CLANG_CL_ARCH_DIR)/bin
   endif
@@ -363,6 +375,15 @@ ifdef BL_USE_CLANG_CL
 CXXFLAGS += -Wno-microsoft-cast
 # unqualified lookup into a dependent base class (Microsoft extension)
 CXXFLAGS += -Wno-microsoft-template
+endif
+
+# The clang-cl host selected for an x86 target is normally 64-bit (see CLANG_CL_DIR above),
+# so it defaults to its own host triple; the x86 target has to be requested explicitly. This
+# is also the triple the 32-bit host defaults to, so it is a no-op when that host is used.
+ifdef BL_USE_CLANG_CL
+ifeq ($(ARCH),x86)
+CXXFLAGS += --target=i686-pc-windows-msvc
+endif
 endif
 
 #

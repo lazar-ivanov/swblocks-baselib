@@ -43,13 +43,13 @@
  * https://developers.redhat.com/blog/2017/03/10/wimplicit-fallthrough-in-gcc-7
  */
 #if !defined( __clang__ ) && defined( __GNUC__ )
-#if ( __cplusplus == 201103L || __cplusplus == 201402L )
+#if ( __cplusplus >= 201703L )
+/* C++17 and above */
+#define BL_IMPLICIT_FALLTHROUGH [[fallthrough]];
+#elif ( __cplusplus >= 201103L )
 /* C++11 or C++14 */
 #define BL_IMPLICIT_FALLTHROUGH [[gnu::fallthrough]];
-#elif ( __cplusplus == 201703L )
-/* C++17 */
-#define BL_IMPLICIT_FALLTHROUGH [[fallthrough]];
-else
+#else
 #error "Unsupported C++ version"
 #endif
 #else
@@ -120,6 +120,13 @@ namespace bl
             RedirectStderr              = 1 << 4,
             RedirectStdin               = 1 << 5,
 
+            /*
+             * A detached process is not terminated when its handle is released (the handle
+             * remains waitable while it is held); on UNIX its standard descriptors which are
+             * not redirected are attached to /dev/null and the redirected ones are valid only
+             * for the lifetime of the redirect callback (the pipes are closed when it returns)
+             */
+
             DetachProcess               = 1 << 6,
 
             RedirectOut                 = RedirectStdout | RedirectStderr,
@@ -188,6 +195,42 @@ namespace bl
 
         namespace detail
         {
+            /**
+             * @brief Maps the outcome of a short std::fread / std::fwrite into an error code
+             *
+             * Returns a falsy (default constructed) code when the transfer came up short but
+             * the stream carries no error, i.e. the end of the file was reached.
+             *
+             * std::ferror is the discriminator the C standard mandates for this: a short
+             * transfer sets the error indicator only for a genuine failure. errno cannot play
+             * that role, because it is not required to be set and the Windows CRT does not set
+             * it for a stream level failure - measured with vc143 / UCRT, std::fread on a
+             * stream opened "wb" returns 0 with errno == 0 and std::ferror == 1, while glibc
+             * happens to set EBADF. Testing errno therefore reports a real error as an end of
+             * file condition on Windows.
+             *
+             * std::ferror is a flag and not a code, so the cause still comes from the captured
+             * errno where the platform provided one, and from the generic io_error where it did
+             * not. The errno must be captured by the caller immediately after the transfer, so
+             * that an unrelated earlier failure on this thread cannot be reported as the cause.
+             */
+
+            inline eh::error_code getStdioTransferErrorCode(
+                SAA_in          std::FILE*                      fileptr,
+                SAA_in          const int                       capturedErrno
+                )
+            {
+                if( 0 == std::ferror( fileptr ) )
+                {
+                    return eh::error_code();
+                }
+
+                return capturedErrno ?
+                    eh::error_code( capturedErrno, eh::generic_category() )
+                    :
+                    eh::errc::make_error_code( eh::errc::io_error );
+            }
+
             /*
              * Implement Boost I/O streams source and sink for std::FILE, so we can
              * instantiate streambuf for std::FILE in platform / OS agnostic way
@@ -229,12 +272,44 @@ namespace bl
 
                 void checkStream()
                 {
-                    const auto errNo = std::ferror( m_fileptr );
+                    /*
+                     * getStdioTransferErrorCode( ) carries the rule - std::ferror decides
+                     * whether there is an error at all and the captured errno, or the generic
+                     * io_error where the platform did not provide one, carries the cause
+                     */
 
-                    if( errNo )
+                    const auto errorCode = getStdioTransferErrorCode( m_fileptr, errno );
+
+                    if( errorCode )
                     {
-                        BL_CHK_EC_NM( eh::error_code( errNo, eh::generic_category() ) );
+                        BL_CHK_EC_NM( errorCode );
                     }
+                }
+
+                /*
+                 * The 64 bit seek / tell primitives for a raw stdio stream
+                 */
+
+                static bool trySeekFile(
+                    SAA_inout       std::FILE*                          fileptr,
+                    SAA_in          const ios::stream_offset            offset,
+                    SAA_in          const int                           origin
+                    ) NOEXCEPT
+                {
+#if defined( _WIN32 )
+                    return 0 == ::_fseeki64( fileptr, static_cast< std::int64_t >( offset ), origin );
+#else
+                    return 0 == ::fseeko( fileptr, static_cast< ::off_t >( offset ), origin );
+#endif
+                }
+
+                static std::int64_t tellFile( SAA_inout std::FILE* fileptr ) NOEXCEPT
+                {
+#if defined( _WIN32 )
+                    return ::_ftelli64( fileptr );
+#else
+                    return static_cast< std::int64_t >( ::ftello( fileptr ) );
+#endif
                 }
 
                 stdio_file_device_base( SAA_inout std::FILE* fileptr )
@@ -291,7 +366,13 @@ namespace bl
                             break;
                     }
 
-                    if( std::fseek( m_fileptr, numbers::safeCoerceTo< long >( offset ), localDirection ) )
+                    /*
+                     * Note that the 64 bit variants are used here - std::fseek and std::ftell
+                     * take and return a long, which is 32 bit on Windows, so a file backed
+                     * stream beyond 2 GiB would throw or truncate there
+                     */
+
+                    if( ! trySeekFile( m_fileptr, offset, localDirection ) )
                     {
                         checkStream();
 
@@ -309,7 +390,7 @@ namespace bl
                            );
                     }
 
-                    const auto newPos = std::ftell( m_fileptr );
+                    const auto newPos = tellFile( m_fileptr );
 
                     if( newPos < 0 )
                     {
@@ -1063,6 +1144,29 @@ namespace bl
 
                     if( ! path.empty() )
                     {
+                        /*
+                         * The separators must be normalized before anything else looks at the
+                         * path, because the long file name prefix this function applies turns
+                         * off path normalization in the kernel: under \\?\ a forward slash is
+                         * not a separator but an illegal character, so a path which is merely
+                         * unconventional on the way in becomes unusable on the way out
+                         *
+                         * This has to happen before pathStr is captured below. The already
+                         * prefixed check tests pathStr, so normalizing after the capture would
+                         * leave an input such as //?/C:/x failing that test on the old string
+                         * and then entering the prefixing branch with the new one - where its
+                         * third character is now '?' and the UNC detection would mistake it for
+                         * a share, yielding \\?\UNC\?\C:\x
+                         *
+                         * It also has to happen on every path rather than only on the ones
+                         * being prefixed: a relative path is appended to an already prefixed
+                         * one by the caller (that is how the blob transfer unpackager composes
+                         * a target path), and the result re-enters here through a constructor
+                         * and takes the already prefixed branch below
+                         */
+
+                        path.make_preferred();
+
                         const auto pathStr = path.string();
 
                         /*

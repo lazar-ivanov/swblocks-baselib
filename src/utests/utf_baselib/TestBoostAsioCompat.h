@@ -17,6 +17,9 @@
 #include <baselib/core/NetUtils.h>
 #include <baselib/core/BaseIncludes.h>
 
+#include <atomic>
+#include <cstddef>
+#include <iterator>
 #include <string>
 
 #include <utests/baselib/Utf.h>
@@ -63,6 +66,31 @@ namespace
             return resolver.resolve( query, ec ).begin();
 #else
             return resolver.resolve( query, ec );
+#endif
+        }
+
+        /*
+         * The throwing form of resolve( query ) - the one which reports failures through
+         * boost::asio::detail::throw_error( ... ) and therefore through the baselib error
+         * callback which replaces it
+         *
+         * It carries the same BOOST_VERSION gate as resolveQuery( ... ) above and for the
+         * same reason - only the result type differs between the two branches
+         */
+
+        template
+        <
+            typename RESOLVER
+        >
+        typename RESOLVER::iterator resolveQueryThrow(
+            SAA_in          RESOLVER&                                   resolver,
+            SAA_in          const typename RESOLVER::query&             query
+            )
+        {
+#if BOOST_VERSION >= 106600
+            return resolver.resolve( query ).begin();
+#else
+            return resolver.resolve( query );
 #endif
         }
 
@@ -483,6 +511,490 @@ UTF_AUTO_TEST_CASE( BoostAsioCompat_AsyncConnectIteratorForm )
     UTF_CHECK( socket.is_open() );
 }
 
+UTF_AUTO_TEST_CASE( BoostAsioCompat_ResolverThrowingOverloadRoutesThroughErrorCallback )
+{
+    using namespace bl;
+
+    typedef asio::ip::tcp_resolver resolver_t;
+
+    /*
+     * The throwing resolve( query ) overload reports its failures through
+     * boost::asio::detail::throw_error( ec, "resolve" ), which BoostAsioErrorCallback.h
+     * replaces with its own inline overloads before any asio header is included
+     *
+     * Utf.h installs bl::cmdline::EhUtils::asioErrorCallback at start-up, so a failure here
+     * must surface as a bl::SystemException carrying the asio error code and the location
+     * string. The derived type is asserted deliberately - with the override gone the thrown
+     * type would be exactly boost::system::system_error, which bl::SystemException derives
+     * from, and all of the baselib error enrichment would be silently lost
+     *
+     * The numeric_host flag on a non numeric host is used to force the failure because it is
+     * deterministic and environment independent, the same shape which
+     * BoostAsioCompat_ResolverNumericHostFlag relies upon
+     */
+
+    asio::io_service ioService;
+    resolver_t resolver( ioService );
+
+    const resolver_t::query nonNumeric(
+        "localhost"                                         /* host_name */,
+        "80"                                                /* service_name */,
+        asio::ip::resolver_query_base::numeric_host         /* flags */
+        );
+
+    UTF_REQUIRE_THROW(
+        utest_asio_compat::resolveQueryThrow( resolver, nonNumeric ),
+        SystemException
+        );
+
+    bool hasErrorCode = false;
+    bool errorCodeIsSet = false;
+    bool locationSurvived = false;
+
+    UTF_REQUIRE_EXCEPTION(
+        utest_asio_compat::resolveQueryThrow( resolver, nonNumeric ),
+        SystemException,
+        [ & ]( SAA_in const SystemException& ex ) -> bool
+        {
+            const auto* const code = eh::get_error_info< eh::errinfo_error_code >( ex );
+
+            hasErrorCode = ( nullptr != code );
+            errorCodeIsSet = hasErrorCode && ( *code != eh::error_code() );
+            locationSurvived = cpp::contains( std::string( ex.what() ), "resolve" );
+
+            return true;
+        }
+        );
+
+    UTF_REQUIRE( hasErrorCode );
+    UTF_REQUIRE( errorCodeIsSet );
+    UTF_REQUIRE( locationSurvived );
+
+    /*
+     * The throwing compat overload branches on q.has_protocol(), so both branches must route
+     * their failures the same way
+     */
+
+    const resolver_t::query nonNumericWithProtocol(
+        asio::ip::tcp::v4()                                 /* protocol */,
+        "localhost"                                         /* host_name */,
+        "80"                                                /* service_name */,
+        asio::ip::resolver_query_base::numeric_host         /* flags */
+        );
+
+    UTF_REQUIRE_THROW(
+        utest_asio_compat::resolveQueryThrow( resolver, nonNumericWithProtocol ),
+        SystemException
+        );
+
+    /*
+     * The positive control - the throwing overload must not throw when the resolve succeeds
+     */
+
+    const resolver_t::query numericLiteral(
+        "127.0.0.1"                                         /* host_name */,
+        "80"                                                /* service_name */,
+        asio::ip::resolver_query_base::numeric_host         /* flags */
+        );
+
+    UTF_REQUIRE_NO_THROW( utest_asio_compat::resolveQueryThrow( resolver, numericLiteral ) );
+
+    UTF_REQUIRE(
+        0U != utest_asio_compat::countEndpoints(
+            utest_asio_compat::resolveQueryThrow( resolver, numericLiteral )
+            )
+        );
+}
+
+UTF_AUTO_TEST_CASE( BoostAsioCompat_IoContextPostDefersHandler )
+{
+    using namespace bl;
+
+    /*
+     * post() always defers, dispatch() would run the handler inline when the caller is
+     * already executing inside the io_context. That difference is the exact semantic
+     * tasks::TaskBase::scheduleNothrow depends upon, and swapping the two would surface
+     * there as a lock re-entrancy or a hang rather than as a failed assertion
+     */
+
+    {
+        asio::io_service ioService;
+
+        bool innerRan = false;
+        bool innerRanBeforeOuterReturned = false;
+
+        ioService.post(
+            [ &ioService, &innerRan, &innerRanBeforeOuterReturned ]() -> void
+            {
+                ioService.post(
+                    [ &innerRan ]() -> void
+                    {
+                        innerRan = true;
+                    }
+                    );
+
+                innerRanBeforeOuterReturned = innerRan;
+            }
+            );
+
+        UTF_REQUIRE( ! innerRan );
+
+        ioService.run();
+
+        UTF_REQUIRE( innerRan );
+        UTF_REQUIRE( ! innerRanBeforeOuterReturned );
+    }
+
+    /*
+     * The handler is forwarded, so a move-only handler must be accepted
+     *
+     * A second io_service is used rather than restart() so the case stays buildable on the
+     * pre-1.66 branch, and the handler is a small function object rather than a lambda
+     * because a lambda cannot capture by move in C++11 - init captures are C++14
+     */
+
+    {
+        struct MoveOnlyHandler
+        {
+            cpp::SafeUniquePtr< int >                       m_value;
+            int*                                            m_observed;
+
+            MoveOnlyHandler(
+                SAA_inout       cpp::SafeUniquePtr< int >&&             value,
+                SAA_in          int*                                    observed
+                )
+                :
+                m_value( std::move( value ) ),
+                m_observed( observed )
+            {
+            }
+
+            MoveOnlyHandler( SAA_inout MoveOnlyHandler&& other )
+                :
+                m_value( std::move( other.m_value ) ),
+                m_observed( other.m_observed )
+            {
+            }
+
+            void operator()()
+            {
+                *m_observed = *m_value;
+            }
+        };
+
+        asio::io_service ioService;
+
+        int observed = 0;
+
+        ioService.post(
+            MoveOnlyHandler( cpp::SafeUniquePtr< int >::attach( new int( 42 ) ), &observed )
+            );
+
+        UTF_REQUIRE_EQUAL( 0, observed );
+
+        ioService.run();
+
+        UTF_REQUIRE_EQUAL( 42, observed );
+    }
+}
+
+UTF_AUTO_TEST_CASE( BoostAsioCompat_ResolverAsyncNumericHostFlagAndFailureIterator )
+{
+    using namespace bl;
+
+    typedef asio::ip::tcp_resolver resolver_t;
+
+    /*
+     * The asynchronous path forwards the query flags separately from the synchronous one and
+     * it has two branches of its own, so both are driven here with the deterministic
+     * numeric_host shape
+     *
+     * The failure path also pins that the handler wrapper hands out an end iterator when the
+     * resolve failed - TcpConnectionEstablisherBase::getEndpoint and IcmpPingerTaskT::onResolved
+     * guard the dereference of that iterator with a BL_ASSERT only, i.e. with nothing at all
+     * in a release build
+     */
+
+    {
+        asio::io_service ioService;
+        resolver_t resolver( ioService );
+
+        bool completed = false;
+        eh::error_code ec;
+        bool endpointsAreEnd = false;
+
+        const resolver_t::query nonNumeric(
+            "localhost"                                     /* host_name */,
+            "80"                                            /* service_name */,
+            asio::ip::resolver_query_base::numeric_host     /* flags */
+            );
+
+        resolver.async_resolve(
+            nonNumeric,
+            [ &completed, &ec, &endpointsAreEnd ](
+                SAA_in          const eh::error_code&       code,
+                SAA_in          resolver_t::iterator        endpoints
+                ) -> void
+            {
+                completed = true;
+                ec = code;
+                endpointsAreEnd = ( endpoints == resolver_t::iterator() );
+            }
+            );
+
+        ioService.run();
+
+        UTF_REQUIRE( completed );
+        UTF_REQUIRE( !! ec );
+        UTF_CHECK( endpointsAreEnd );
+    }
+
+    /*
+     * The same, through the q.has_protocol() branch of the shim
+     */
+
+    {
+        asio::io_service ioService;
+        resolver_t resolver( ioService );
+
+        bool completed = false;
+        eh::error_code ec;
+        bool endpointsAreEnd = false;
+
+        const resolver_t::query nonNumeric(
+            asio::ip::tcp::v4()                             /* protocol */,
+            "localhost"                                     /* host_name */,
+            "80"                                            /* service_name */,
+            asio::ip::resolver_query_base::numeric_host     /* flags */
+            );
+
+        resolver.async_resolve(
+            nonNumeric,
+            [ &completed, &ec, &endpointsAreEnd ](
+                SAA_in          const eh::error_code&       code,
+                SAA_in          resolver_t::iterator        endpoints
+                ) -> void
+            {
+                completed = true;
+                ec = code;
+                endpointsAreEnd = ( endpoints == resolver_t::iterator() );
+            }
+            );
+
+        ioService.run();
+
+        UTF_REQUIRE( completed );
+        UTF_REQUIRE( !! ec );
+        UTF_CHECK( endpointsAreEnd );
+    }
+}
+
+UTF_AUTO_TEST_CASE( BoostAsioCompat_IoServiceWorkHoldsAndReleases )
+{
+    using namespace bl;
+
+    /*
+     * io_service::work is the compatibility name for io_service_work_compat, which holds
+     * an executor_work_guard released by its destructor. ThreadPoolImpl.h is the only
+     * consumer and it depends on both halves: if the guard held nothing, every
+     * ThreadPoolImplT::run() thread would return from io_service::run() immediately and
+     * exit - which utf_baselib_basictask would observe as a HANG at eq -> pop( wait ),
+     * not as a failed assertion
+     */
+
+    asio::io_service ioService;
+
+    UTF_REQUIRE( ! ioService.stopped() );
+
+    {
+        const asio::io_service::work work( ioService );
+
+        BL_UNUSED( work );
+
+        /*
+         * Nothing has been posted, so there is no ready handler to dispatch; the point of
+         * the call is that scheduler::poll() does NOT take its
+         * "if( outstanding_work_ == 0 ) { stop(); return 0; }" early exit
+         */
+
+        UTF_CHECK_EQUAL( 0U, ioService.poll() );
+
+        /*
+         * The "holds" half
+         */
+
+        UTF_CHECK( ! ioService.stopped() );
+    }
+
+    /*
+     * The "releases" half - work_finished() calls stop() the moment the outstanding work
+     * count reaches zero, so this must be observable BEFORE run() is ever called; run()
+     * returning 0 is only a consequence of it
+     */
+
+    UTF_CHECK( ioService.stopped() );
+
+    UTF_CHECK_EQUAL( 0U, ioService.run() );
+
+    /*
+     * The same property in the shape ThreadPoolImpl actually uses it - the guard lives in
+     * a cpp::SafeUniquePtr and a separate thread is parked inside run()
+     */
+
+    asio::io_service io2;
+
+    auto work2 = cpp::SafeUniquePtr< asio::io_service::work >::attach(
+        new asio::io_service::work( io2 )
+        );
+
+    std::atomic< bool > done( false );
+
+    os::thread runner(
+        [ &io2, &done ]() -> void
+        {
+            io2.run();
+            done = true;
+        }
+        );
+
+    os::sleep( time::milliseconds( 200 ) );
+
+    /*
+     * This can only be false if the work guard failed to hold - a thread which has not
+     * been scheduled yet leaves it true, so there is no false failure here
+     */
+
+    UTF_CHECK( ! done );
+
+    work2.reset();
+
+    UTF_REQUIRE( runner.timed_join( os::get_system_time() + time::seconds( 30 ) ) );
+
+    UTF_CHECK( done );
+}
+
+UTF_AUTO_TEST_CASE( BoostAsioCompat_AsyncConnectIteratorFormFailurePaths )
+{
+    using namespace bl;
+
+    typedef asio::ip::tcp_resolver resolver_t;
+
+    /*
+     * The compatibility overload default-constructs the end iterator and forwards to
+     * Boost's range form. Its two failure shapes are what production actually meets:
+     * an empty range is what TcpConnectionEstablisherClient::continueAfterResolved gets
+     * from an empty resolve, and "nothing is listening" is the ordinary failure of every
+     * outbound TCP task
+     */
+
+    {
+        asio::io_service ioService;
+        asio::ip::tcp::socket socket( ioService );
+
+        bool completed = false;
+        eh::error_code connectEc;
+        resolver_t::iterator handedBack;
+
+        asio::async_connect(
+            socket,
+            resolver_t::iterator()                              /* begin == end */,
+            [ & ]( SAA_in const eh::error_code& code, SAA_in resolver_t::iterator connected ) -> void
+            {
+                completed = true;
+                connectEc = code;
+                handedBack = connected;
+            }
+            );
+
+        ioService.run();
+
+        /*
+         * A well formed empty range completes rather than hanging or dereferencing
+         */
+
+        UTF_REQUIRE( completed );
+        UTF_CHECK( connectEc == asio::error::not_found );
+        UTF_CHECK( ! socket.is_open() );
+        UTF_CHECK( handedBack == resolver_t::iterator() );
+    }
+
+    {
+        /*
+         * The acceptor is opened and bound but deliberately NOT put into the listening
+         * state: the port stays reserved for the lifetime of this socket, so no other
+         * process can take it, while a connect to it is refused by the kernel. That is
+         * strictly more deterministic than binding, reading the port and closing the
+         * acceptor, which leaves a window in which the ephemeral port could be re-bound
+         */
+
+        asio::io_service ioService;
+
+        asio::ip::tcp::acceptor acceptor( ioService );
+
+        acceptor.open( asio::ip::tcp::v4() );
+        acceptor.bind( asio::ip::tcp::endpoint( asio::ip::address_v4::loopback(), 0 /* ephemeral port */ ) );
+
+        resolver_t resolver( ioService );
+        eh::error_code ec;
+
+        const resolver_t::query query(
+            "127.0.0.1"                                         /* host_name */,
+            std::to_string( acceptor.local_endpoint().port() )  /* service_name */,
+            asio::ip::resolver_query_base::numeric_host         /* flags */
+            );
+
+        const auto endpoints = utest_asio_compat::resolveQuery( resolver, query, ec );
+
+        UTF_REQUIRE( ! ec );
+
+        asio::ip::tcp::socket socket( ioService );
+
+        bool completed = false;
+        eh::error_code connectEc;
+        resolver_t::iterator handedBack;
+
+        asio::async_connect(
+            socket,
+            endpoints,
+            [ & ]( SAA_in const eh::error_code& code, SAA_in resolver_t::iterator connected ) -> void
+            {
+                completed = true;
+                connectEc = code;
+                handedBack = connected;
+            }
+            );
+
+        ioService.run();
+
+        UTF_REQUIRE( completed );
+        UTF_CHECK( !! connectEc );
+
+        /*
+         * No connection was established
+         *
+         * Note that - unlike the empty range case above - the socket is left OPEN here:
+         * Boost's iterator connect op closes it only before trying the NEXT endpoint and
+         * breaks out of the loop after the last failure without closing ( see
+         * boost/asio/impl/connect.hpp, iterator_connect_op::operator() ). That is Boost's
+         * own behaviour rather than anything the compatibility overload does, so the
+         * "not connected" property is asserted instead of is_open()
+         */
+
+        eh::error_code remoteEc;
+
+        socket.remote_endpoint( remoteEc );
+
+        UTF_CHECK( !! remoteEc );
+
+        /*
+         * Every endpoint failed, so the iterator handed back is the end of the range the
+         * compatibility overload built
+         */
+
+        UTF_CHECK( handedBack == resolver_t::iterator() );
+    }
+}
+
 #if BOOST_VERSION >= 106600
 
 UTF_AUTO_TEST_CASE( BoostAsioCompat_AsyncConnectRangeForm )
@@ -538,6 +1050,68 @@ UTF_AUTO_TEST_CASE( BoostAsioCompat_AsyncConnectRangeForm )
     UTF_REQUIRE( completed );
     UTF_REQUIRE( ! connectEc );
     UTF_CHECK( socket.is_open() );
+}
+
+UTF_AUTO_TEST_CASE( BoostAsioCompat_ResolverStringOverloadsRemainVisible )
+{
+    using namespace bl;
+
+    typedef asio::ip::tcp_resolver resolver_t;
+
+    /*
+     * basic_resolver_compat declares "using base_type::resolve;" and
+     * "using base_type::async_resolve;" precisely so its query taking overloads do not
+     * hide every string based overload inherited from basic_resolver< Protocol >
+     *
+     * Every existing case and every production call site uses the query form, so deleting
+     * either using-declaration is invisible today. This is deliberately a COMPILE time
+     * guard expressed as a runtime case, in the same spirit as
+     * BoostAsioCompat_AsyncConnectRangeForm above - it does not compile without them
+     *
+     * numeric_host on a loopback literal keeps the whole case independent of the resolver
+     * configuration of the host
+     */
+
+    asio::io_service ioService;
+    resolver_t resolver( ioService );
+    eh::error_code ec;
+
+    const auto results = resolver.resolve(
+        "127.0.0.1"                                         /* host */,
+        "80"                                                /* service */,
+        asio::ip::resolver_query_base::numeric_host         /* resolve_flags */,
+        ec
+        );
+
+    UTF_REQUIRE( ! ec );
+    UTF_REQUIRE( results.begin() != results.end() );
+
+    bool completed = false;
+    eh::error_code asyncEc;
+    std::size_t count = 0U;
+
+    /*
+     * The modern ( ec, results_type ) handler signature - the query based async_resolve
+     * hands back an iterator instead, so this also pins which overload was selected
+     */
+
+    resolver.async_resolve(
+        "127.0.0.1"                                         /* host */,
+        "80"                                                /* service */,
+        asio::ip::resolver_query_base::numeric_host         /* resolve_flags */,
+        [ & ]( SAA_in const eh::error_code& code, SAA_in const resolver_t::results_type& resolved ) -> void
+        {
+            completed = true;
+            asyncEc = code;
+            count = static_cast< std::size_t >( std::distance( resolved.begin(), resolved.end() ) );
+        }
+        );
+
+    ioService.run();
+
+    UTF_REQUIRE( completed );
+    UTF_REQUIRE( ! asyncEc );
+    UTF_REQUIRE( count > 0U );
 }
 
 #endif // BOOST_VERSION >= 106600

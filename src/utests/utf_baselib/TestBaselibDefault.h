@@ -728,6 +728,34 @@ UTF_AUTO_TEST_CASE( BaseLib_TestErrorCodeToStringAndHasher )
     UTF_REQUIRE( hasher( ec1 ) != hasher( ec2 ) );
     UTF_REQUIRE_EQUAL( hasher( ec1 ), stringHasher( ec1AsString ) );
     UTF_REQUIRE_EQUAL( hasher( ec2 ), stringHasher( ec2AsString ) );
+
+    /*
+     * Two codes which share a numeric value but differ in category is the whole
+     * justification for hashing the string form rather than ec.value() - without the
+     * category in the string they would collide as unordered_map keys
+     */
+
+    const auto ecGeneric = eh::error_code( 13, eh::generic_category() );
+    const auto ecSystem = eh::error_code( 13, eh::system_category() );
+    const auto ecGenericCopy = eh::error_code( 13, eh::generic_category() );
+
+    UTF_REQUIRE( eh::errorCodeToString( ecGeneric ) != eh::errorCodeToString( ecSystem ) );
+
+    UTF_REQUIRE( hasher( ecGeneric ) != hasher( ecSystem ) );
+
+    /*
+     * Equal codes must hash equally - the container invariant
+     */
+
+    UTF_REQUIRE_EQUAL( hasher( ecGeneric ), hasher( ecGenericCopy ) );
+
+    /*
+     * These are deliberately 'contains' and not equality checks - the exact stream format
+     * of an error_code varies across the Boost versions this library supports
+     */
+
+    UTF_REQUIRE( cpp::contains( eh::errorCodeToString( ecGeneric ), std::string( "generic" ) ) );
+    UTF_REQUIRE( cpp::contains( eh::errorCodeToString( ecSystem ), std::string( "system" ) ) );
 }
 
 UTF_AUTO_TEST_CASE( BaseLib_TestErrorCodeFromExceptionPtr )
@@ -847,6 +875,98 @@ UTF_AUTO_TEST_CASE( BaseLib_EhExceptionHooksTests )
         UTF_REQUIRE_EQUAL( throwHookInvoked2, false );
         #endif // BL_ENABLE_EXCEPTION_HOOKS
     }
+
+    /*
+     * A hook which itself constructs an exception must not deadlock - every BL_EXCEPTION
+     * goes through enableThrowHook, so a hook body which throws re-enters it on the same
+     * thread; the hook is copied out under g_lock and invoked outside of it precisely so
+     * that this can work
+     *
+     * Note the failure mode of a regression here is a HANG and not a failed assertion:
+     * os::mutex is a non-recursive std::mutex, so re-entering it on the same thread
+     * self-deadlocks rather than reporting an error - a CI timeout, not flakiness
+     *
+     * The hook only records what it sees - it is NOEXCEPT, so it must not assert
+     */
+
+    {
+        bool inHook = false;
+
+        std::atomic< int > outerInvocations( 0 );
+        std::atomic< int > nestedInvocations( 0 );
+
+        std::atomic< bool > sawMessage( false );
+        std::atomic< bool > sawTimeThrown( false );
+        std::atomic< bool > sawThrowFile( false );
+
+        const auto reentrantHook = [ & ](
+            SAA_in                  const BaseException&            exception
+            ) NOEXCEPT -> void
+        {
+            if( inHook )
+            {
+                ++nestedInvocations;
+
+                return;
+            }
+
+            inHook = true;
+
+            BL_SCOPE_EXIT( { inHook = false; } );
+
+            try
+            {
+                BL_THROW( UnexpectedException(), "hook-internal" );
+            }
+            catch( UnexpectedException& )
+            {
+            }
+
+            /*
+             * The hook must see the exception already decorated by BL_EXCEPTION_IMPL
+             */
+
+            sawMessage = ( nullptr != exception.message() );
+            sawTimeThrown = ( nullptr != exception.timeThrown() );
+            sawThrowFile = ( nullptr != eh::get_error_info< eh::throw_file >( exception ) );
+
+            ++outerInvocations;
+        };
+
+        {
+            BL_EXCEPTION_HOOKS_THROW_GUARD( cpp::bind< void >( reentrantHook, _1 ) );
+
+            throwAndCatchException();
+        }
+
+        #ifdef BL_ENABLE_EXCEPTION_HOOKS
+        UTF_REQUIRE_EQUAL( 1, outerInvocations.load() );
+        UTF_REQUIRE_EQUAL( 1, nestedInvocations.load() );
+
+        UTF_REQUIRE( sawMessage.load() );
+        UTF_REQUIRE( sawTimeThrown.load() );
+        UTF_REQUIRE( sawThrowFile.load() );
+        #else // BL_ENABLE_EXCEPTION_HOOKS
+        UTF_REQUIRE_EQUAL( 0, outerInvocations.load() );
+        UTF_REQUIRE_EQUAL( 0, nestedInvocations.load() );
+
+        UTF_REQUIRE( ! sawMessage.load() );
+        UTF_REQUIRE( ! sawTimeThrown.load() );
+        UTF_REQUIRE( ! sawThrowFile.load() );
+        #endif // BL_ENABLE_EXCEPTION_HOOKS
+
+        /*
+         * The guard restored the previous (empty) hook, so this must not invoke it again
+         */
+
+        throwAndCatchException();
+
+        #ifdef BL_ENABLE_EXCEPTION_HOOKS
+        UTF_REQUIRE_EQUAL( 1, outerInvocations.load() );
+        #else // BL_ENABLE_EXCEPTION_HOOKS
+        UTF_REQUIRE_EQUAL( 0, outerInvocations.load() );
+        #endif // BL_ENABLE_EXCEPTION_HOOKS
+    }
 }
 
 /************************************************************************
@@ -926,6 +1046,34 @@ UTF_AUTO_TEST_CASE( BaseLib_TestUuid )
         UTF_REQUIRE( ! bl::uuids::isUuid( s + "-" ) )
         UTF_REQUIRE( ! bl::uuids::isUuid( s + "0" ) )
         UTF_REQUIRE( ! bl::uuids::isUuid( s + "-0" ) )
+
+        /*
+         * string2uuid is a different code path than the isUuid regex above - it parses via
+         * bl::cpp::SafeInputStringStream and must report all rejections as bl::ArgumentException
+         * rather than as std::ios_base::failure, which none of its callers would catch
+         *
+         * The trailing garbage forms must be rejected as well - the extractor consumes exactly
+         * the first 36 characters, so without the end of stream check they would silently parse
+         * as the leading uuid
+         */
+
+        UTF_REQUIRE_THROW( bl::uuids::string2uuid( "" ), bl::ArgumentException );
+        UTF_REQUIRE_THROW( bl::uuids::string2uuid( "abcd0123" ), bl::ArgumentException );
+        UTF_REQUIRE_THROW( bl::uuids::string2uuid( "4f082035-e301-4cce-68f1c99f9223" ), bl::ArgumentException );
+        UTF_REQUIRE_THROW( bl::uuids::string2uuid( "zzzzzzzz-e301-4cce-94f0-68f1c99f9223" ), bl::ArgumentException );
+        UTF_REQUIRE_THROW( bl::uuids::string2uuid( s + "0" ), bl::ArgumentException );
+        UTF_REQUIRE_THROW( bl::uuids::string2uuid( s + "-0" ), bl::ArgumentException );
+        UTF_REQUIRE_THROW( bl::uuids::string2uuid( s + " " ), bl::ArgumentException );
+        UTF_REQUIRE_THROW( bl::uuids::string2uuid( "{" + s + "}" ), bl::ArgumentException );
+
+        /*
+         * The uppercase form is accepted, but the canonical output is always lowercase
+         */
+
+        UTF_REQUIRE_EQUAL( bl::uuids::string2uuid( bl::str::to_upper_copy( s ) ), bl::uuids::string2uuid( s ) );
+        UTF_REQUIRE_EQUAL( bl::uuids::uuid2string( bl::uuids::string2uuid( bl::str::to_upper_copy( s ) ) ), s );
+
+        UTF_REQUIRE_EQUAL( bl::uuids::string2uuid( "00000000-0000-0000-0000-000000000000" ), bl::uuids::nil() );
     }
 
     UTF_MESSAGE( "*************** end uuid tests ***************\n" );
@@ -1027,11 +1175,14 @@ UTF_AUTO_TEST_CASE( BaseLib_TestUuidUniquenessMultiThreaded )
         );
 
     std::set< std::string > idsMerged;
+    std::set< std::size_t > threadHashes;
 
     for( const auto& pair : ids )
     {
         const auto pos = threadIds.find( pair.first );
         UTF_REQUIRE( pos != std::end( threadIds ) );
+
+        threadHashes.insert( pos -> second );
 
         UTF_MESSAGE( BL_MSG() << "UUIDs batch '" << pair.first << "' created in thread " << pos -> second );
 
@@ -1045,6 +1196,24 @@ UTF_AUTO_TEST_CASE( BaseLib_TestUuidUniquenessMultiThreaded )
     }
 
     UTF_MESSAGE( BL_MSG() << "Created " << idsMerged.size() << " unique uuids" );
+
+    /*
+     * The ten batches run on the shared thread pool, so on a machine with a single
+     * hardware thread they can all legitimately execute on one thread - assert the
+     * diversity only where the machine can actually deliver it
+     *
+     * Without this the case would still pass if scheduleAndExecuteInParallel( ... ) ever
+     * degenerated to serial execution, covering nothing about per thread seeding
+     */
+
+    if( std::thread::hardware_concurrency() > 1 )
+    {
+        UTF_REQUIRE( threadHashes.size() >= 2U );
+    }
+    else
+    {
+        UTF_MESSAGE( BL_MSG() << "Single hardware thread machine - thread diversity not asserted" );
+    }
 }
 
 BL_IID_DECLARE( iid_test12345, "2a5b48f8-fc88-40f6-b69a-af53e5932603" )
@@ -1216,6 +1385,71 @@ UTF_AUTO_TEST_CASE( BaseLib_LoggingBasicTests )
             Logging::levelToChannel( Logging::stringToLogLevel( "none" ) ),
             bl::UnexpectedException
             );
+
+        /*
+         * logLevelToString and tryStringToLogLevel are two independent tables over the
+         * same seven labels - a label added to or renamed in one of them and not the
+         * other would break level parsing for any consumer which formats a level and
+         * reads it back
+         *
+         * The checks are deliberately non-fatal so a single drifted label reports all
+         * seven rather than aborting the case on the first one
+         */
+
+        const Logging::Level allLevels[] =
+        {
+            Logging::LL_NONE,
+            Logging::LL_NOTIFY,
+            Logging::LL_ERROR,
+            Logging::LL_WARNING,
+            Logging::LL_INFO,
+            Logging::LL_DEBUG,
+            Logging::LL_TRACE,
+        };
+
+        for( const auto levelToFormat : allLevels )
+        {
+            const auto levelAsString = Logging::logLevelToString( levelToFormat );
+
+            UTF_CHECK( ! levelAsString.empty() );
+
+            Logging::Level parsed = Logging::LL_LAST;
+
+            UTF_CHECK( Logging::tryStringToLogLevel( levelAsString, parsed ) );
+            UTF_CHECK_EQUAL( levelToFormat, parsed );
+        }
+
+        /*
+         * The parsing side is case insensitive in the formatting direction too
+         *
+         * Note that the labels logLevelToString produces are already lower case, so the
+         * to_lower_copy round trip only restates the loop above; the to_upper_copy one is
+         * what actually exercises the str::iequals comparisons
+         */
+
+        {
+            Logging::Level parsed = Logging::LL_LAST;
+
+            UTF_CHECK(
+                Logging::tryStringToLogLevel(
+                    bl::str::to_lower_copy( Logging::logLevelToString( Logging::LL_WARNING ) ),
+                    parsed
+                    )
+                );
+
+            UTF_CHECK_EQUAL( Logging::Level::LL_WARNING, parsed );
+
+            parsed = Logging::LL_LAST;
+
+            UTF_CHECK(
+                Logging::tryStringToLogLevel(
+                    bl::str::to_upper_copy( Logging::logLevelToString( Logging::LL_WARNING ) ),
+                    parsed
+                    )
+                );
+
+            UTF_CHECK_EQUAL( Logging::Level::LL_WARNING, parsed );
+        }
     }
 }
 
@@ -1318,6 +1552,81 @@ UTF_AUTO_TEST_CASE( BaseLib_LoggingMultiLineTests )
     UTF_CHECK_EQUAL( line, "" );
 
     UTF_CHECK( is.eof() );
+
+    /*
+     * The loop in Channel::outMultiLine is 'while( ! is.eof() ) { std::getline( ... ); }'
+     * and std::getline consumes the delimiter without setting eofbit, so a message which
+     * ENDS with a newline costs one extra iteration which logs an empty line, and an
+     * empty message logs exactly one empty line
+     *
+     * The message above has no trailing newline and therefore never reaches that
+     * boundary, yet production logs messages with leading and trailing newlines routinely
+     * (BL_LOG_MULTILINE( ..., "\n**** Starting test ... ****\n" ))
+     *
+     * THIS PINS CURRENT BEHAVIOUR, including the trailing blank line, which may or may
+     * not be considered a defect. If the team decides the blank line is wrong, this is
+     * the single place the expectation flips
+     */
+
+    const auto countLoggedLines = []( SAA_in const std::string& text ) -> std::vector< std::string >
+    {
+        std::vector< std::string > result;
+
+        bl::cpp::SafeInputStringStream input( text );
+
+        std::string current;
+
+        while( std::getline( input, current ) )
+        {
+            result.push_back( current );
+        }
+
+        return result;
+    };
+
+    const std::string prefix = Logging::info().prefix();
+
+    {
+        bl::cpp::SafeOutputStringStream osTrailing;
+
+        const Logging::line_logger_t llTrailing(
+                bl::cpp::bind(
+                    &Logging::defaultLineLoggerWithLock, _1, _2, _3, _4, true /*addNewLine */, bl::cpp::ref( osTrailing )
+                    )
+                );
+
+        Logging::LineLoggerPusher pushLoggerTrailing( llTrailing );
+
+        BL_LOG_MULTILINE( Logging::info(), BL_MSG() << "Line1\nLine2\n" );
+
+        const auto lines = countLoggedLines( osTrailing.str() );
+
+        UTF_REQUIRE_EQUAL( 3U, lines.size() );
+
+        UTF_CHECK_EQUAL( lines[ 0 ], prefix + "Line1" );
+        UTF_CHECK_EQUAL( lines[ 1 ], prefix + "Line2" );
+        UTF_CHECK_EQUAL( lines[ 2 ], prefix );
+    }
+
+    {
+        bl::cpp::SafeOutputStringStream osEmpty;
+
+        const Logging::line_logger_t llEmpty(
+                bl::cpp::bind(
+                    &Logging::defaultLineLoggerWithLock, _1, _2, _3, _4, true /*addNewLine */, bl::cpp::ref( osEmpty )
+                    )
+                );
+
+        Logging::LineLoggerPusher pushLoggerEmpty( llEmpty );
+
+        BL_LOG_MULTILINE( Logging::info(), BL_MSG() << "" );
+
+        const auto lines = countLoggedLines( osEmpty.str() );
+
+        UTF_REQUIRE_EQUAL( 1U, lines.size() );
+
+        UTF_CHECK_EQUAL( lines[ 0 ], prefix );
+    }
 }
 
 UTF_AUTO_TEST_CASE( BaseLib_LoggingConcurrencyTests )
@@ -1452,6 +1761,56 @@ UTF_AUTO_TEST_CASE( BaseLib_ThreadPoolTests )
                 tpDefault -> dispose();
             }
             );
+    }
+
+    {
+        /*
+         * The observable state of a disposed pool
+         *
+         * Note that the pool below is deliberately not wrapped in om::lockDisposable( ... )
+         * since this block disposes of it explicitly
+         */
+
+        const auto tp2 = bl::ThreadPoolImpl::createInstance< bl::ThreadPool >(
+            bl::os::AbstractPriority::Normal,
+            2U
+            );
+
+        UTF_REQUIRE_EQUAL( 2U, tp2 -> size() );
+        UTF_REQUIRE_NO_THROW( tp2 -> aioService() );
+
+        tp2 -> dispose();
+
+        /*
+         * disposeInternal( ... ) swaps the threads vector out, so size() must not lie
+         */
+
+        UTF_REQUIRE_EQUAL( 0U, tp2 -> size() );
+
+        /*
+         * The two guards below are the only thing which prevents aioService() from
+         * handing out a destroyed I/O service object
+         */
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            tp2 -> resize( 4U ),
+            bl::UnexpectedException,
+            "Thread pool object has been disposed"
+            );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            tp2 -> aioService(),
+            bl::UnexpectedException,
+            "Thread pool object has been disposed"
+            );
+
+        /*
+         * dispose() must be idempotent and a clean shutdown must not latch an exception
+         */
+
+        UTF_REQUIRE_NO_THROW( tp2 -> dispose() );
+
+        UTF_REQUIRE( ! tp2 -> lastException() );
     }
 }
 
@@ -1706,6 +2065,618 @@ UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessTests2 )
         UTF_CHECK_EQUAL( ec, 0 );
     }
 }
+
+#if ! defined( _WIN32 )
+
+namespace
+{
+    std::string readWholeFile( SAA_in const bl::fs::path& path )
+    {
+        std::ifstream is( path.string() );
+
+        std::string text;
+        std::string line;
+
+        while( std::getline( is, line ) )
+        {
+            text += line;
+            text += '\n';
+        }
+
+        return text;
+    }
+}
+
+UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessDetachedStdioTests )
+{
+    /*
+     * A detached child must start with the standard descriptors attached to /dev/null
+     * (not closed) and a detached child with redirection must deliver its output to
+     * the callback
+     */
+
+    bl::fs::TmpDir tmpDir;
+
+    const auto outputFile = tmpDir.path() / "detached_stdio.txt";
+
+    {
+        std::vector< std::string > args;
+        args.push_back( "bash" );
+        args.push_back( "-c" );
+        /*
+         * Note: fd 1 is duplicated into fd 3 before it gets redirected to the output file
+         *
+         * The descriptors are compared against /dev/null with test -ef (same device and inode)
+         * rather than resolved with readlink, because only Linux exposes them as symbolic links:
+         * /dev/fd is procfs there, but on macOS it is the fdesc filesystem, whose entries are the
+         * opened objects themselves (sockets, pipes, devices), so readlink fails on all of them.
+         * /dev/fd is the portable spelling - on Linux it is a symbolic link to /proc/self/fd
+         */
+
+        args.push_back(
+            "exec 3>&1; for fd in 0 3 2; do"
+            " if [ /dev/fd/$fd -ef /dev/null ]; then echo /dev/null; else echo other; fi;"
+            " done > " + outputFile.string()
+            );
+
+        const auto proc = bl::os::createProcess( args, bl::os::ProcessCreateFlags::DetachProcess );
+        UTF_REQUIRE( proc );
+
+        UTF_CHECK_EQUAL( 0, bl::os::tryAwaitTermination( proc ) );
+
+        UTF_CHECK_EQUAL( readWholeFile( outputFile ), std::string( "/dev/null\n/dev/null\n/dev/null\n" ) );
+    }
+
+    {
+        std::string line;
+
+        const auto callbackIos = [ & ](
+            SAA_in              const bl::os::process_handle_t  process,
+            SAA_in_opt          std::istream*                   out,
+            SAA_in_opt          std::istream*                   err,
+            SAA_in_opt          std::ostream*                   in
+            ) -> void
+        {
+            UTF_REQUIRE( process );
+            UTF_REQUIRE( out );
+            UTF_REQUIRE( ! err );
+            UTF_REQUIRE( ! in );
+
+            std::getline( *out, line );
+        };
+
+        const auto proc = bl::os::createProcess(
+            "bash -c \"echo hello\"",
+            bl::os::ProcessCreateFlags::DetachProcess | bl::os::ProcessCreateFlags::RedirectStdout,
+            callbackIos
+            );
+
+        UTF_REQUIRE( proc );
+
+        UTF_CHECK_EQUAL( line, std::string( "hello" ) );
+        UTF_CHECK_EQUAL( 0, bl::os::tryAwaitTermination( proc ) );
+    }
+}
+
+UTF_AUTO_TEST_CASE( BaseLib_OSSendSignalAfterTerminationTests )
+{
+    /*
+     * Sending a signal through a handle whose process has already been waited on must be a
+     * no-op - the pid of such a handle is zero and ::kill( 0, ... ) / ::kill( -0, ... ) would
+     * signal the process group of the caller, i.e. the test process itself
+     *
+     * If this regresses the test process is terminated by the SIGTERM below
+     */
+
+    const auto proc = bl::os::createProcess( "true" );
+
+    UTF_REQUIRE( proc );
+    UTF_REQUIRE_EQUAL( 0, bl::os::tryAwaitTermination( proc ) );
+
+    bl::os::sendSignal( proc.get(), SIGTERM, false /* includeSubprocesses */ );
+    bl::os::sendSignal( proc.get(), SIGTERM, true /* includeSubprocesses */ );
+
+    UTF_REQUIRE( true );
+}
+
+UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessDetachedReleaseTests )
+{
+    /*
+     * Releasing the handle of a running detached child must not stall and the
+     * abandoned child must be reaped by a subsequent process creation once it
+     * exits (i.e. no zombies accumulate in a long running parent)
+     */
+
+    std::uint64_t pid = 0U;
+
+    const auto start = bl::time::microsec_clock::universal_time();
+
+    {
+        const auto proc = bl::os::createProcess( "sleep 30", bl::os::ProcessCreateFlags::DetachProcess );
+        UTF_REQUIRE( proc );
+
+        pid = bl::os::getPid( proc );
+        UTF_REQUIRE( pid );
+    }
+
+    const auto elapsed = bl::time::microsec_clock::universal_time() - start;
+
+    UTF_CHECK( elapsed < bl::time::seconds( 1 ) );
+
+    UTF_REQUIRE_EQUAL( 0, ::kill( static_cast< ::pid_t >( pid ), SIGKILL ) );
+
+    const auto cbIsStillOurChild = [ & ]() -> bool
+    {
+        const auto statusFile = bl::fs::path( "/proc" ) / std::to_string( pid ) / "status";
+
+        if( ! bl::fs::exists( statusFile ) )
+        {
+            return false;
+        }
+
+        const std::string ppidLine = "PPid:\t" + std::to_string( bl::os::getPid() ) + "\n";
+
+        return std::string::npos != readWholeFile( statusFile ).find( ppidLine );
+    };
+
+    bool reaped = false;
+
+    for( std::size_t i = 0U; i < 50U && ! reaped; ++i )
+    {
+        bl::os::sleep( bl::time::milliseconds( 100 ) );
+
+        const auto proc = bl::os::createProcess( "true" );
+        UTF_REQUIRE_EQUAL( 0, bl::os::tryAwaitTermination( proc ) );
+
+        reaped = ! cbIsStillOurChild();
+    }
+
+    UTF_CHECK( reaped );
+}
+
+UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessExecFailureWhileLoggingTests )
+{
+    /*
+     * An exec failure must be reported to the parent with the original errno and the
+     * child must exit even when other threads hold the logging lock at the time of the
+     * fork (the child inherits the locked state and must never touch the lock)
+     */
+
+    const auto cbCheckExecFailure = [](
+        SAA_in          const std::string&                      command,
+        SAA_in          const bl::os::ProcessCreateFlags        flags,
+        SAA_in          const int                               errnoExpected
+        ) -> void
+    {
+        try
+        {
+            bl::os::createProcess( command, flags );
+            UTF_FAIL( "os::createProcess must throw" );
+        }
+        catch( bl::SystemException& e )
+        {
+            const auto* ec = bl::eh::get_error_info< bl::eh::errinfo_errno >( e );
+            UTF_REQUIRE( nullptr != ec );
+            UTF_CHECK_EQUAL( errnoExpected, *ec );
+        }
+    };
+
+    bl::fs::TmpDir tmpDir;
+
+    cbCheckExecFailure( "doesnotexistproc", bl::os::ProcessCreateFlags::NoRedirect, ENOENT );
+    cbCheckExecFailure( tmpDir.path().string(), bl::os::ProcessCreateFlags::NoRedirect, EACCES );
+
+    const auto cbNoopLineLogger = [](
+        SAA_in      const std::string&                          prefix,
+        SAA_in      const std::string&                          text,
+        SAA_in      const bool                                  enableTimestamp,
+        SAA_in      const bl::Logging::Level                    level
+        ) -> void
+    {
+        BL_UNUSED( prefix );
+        BL_UNUSED( text );
+        BL_UNUSED( enableTimestamp );
+        BL_UNUSED( level );
+    };
+
+    std::atomic< bool > stopLogging( false );
+    std::vector< bl::os::thread > loggers;
+
+    const auto cbStopLogging = [ & ]() -> void
+    {
+        stopLogging = true;
+
+        for( auto& logger : loggers )
+        {
+            if( logger.joinable() )
+            {
+                logger.join();
+            }
+        }
+    };
+
+    BL_SCOPE_EXIT(
+        {
+            cbStopLogging();
+        }
+        );
+
+    {
+        bl::Logging::LineLoggerPusher pusher( cbNoopLineLogger );
+
+        for( std::size_t i = 0U; i < 4U; ++i )
+        {
+            loggers.emplace_back(
+                [ &stopLogging ]() -> void
+                {
+                    while( ! stopLogging )
+                    {
+                        BL_LOG( bl::Logging::debug(), "spawn while logging stress" );
+                    }
+                }
+                );
+        }
+
+        for( std::size_t i = 0U; i < 20U; ++i )
+        {
+            const auto start = bl::time::microsec_clock::universal_time();
+
+            cbCheckExecFailure( "doesnotexistproc", bl::os::ProcessCreateFlags::NoRedirect, ENOENT );
+            cbCheckExecFailure( "doesnotexistproc", bl::os::ProcessCreateFlags::DetachProcess, ENOENT );
+
+            const auto elapsed = bl::time::microsec_clock::universal_time() - start;
+
+            UTF_REQUIRE( elapsed < bl::time::seconds( 1 ) );
+        }
+
+        cbStopLogging();
+    }
+
+    /*
+     * No child process may be left behind (a child stuck after a failed exec would
+     * still be a child of this process); the last child may still be exiting, so
+     * allow a short grace period
+     */
+
+    const auto until = bl::time::microsec_clock::universal_time() + bl::time::seconds( 5 );
+
+    for( ;; )
+    {
+        int status = 0;
+
+        const auto rc = ::waitpid( -1, &status, WNOHANG );
+
+        if( rc > 0 )
+        {
+            continue;
+        }
+
+        if( 0 == rc && bl::time::microsec_clock::universal_time() < until )
+        {
+            bl::os::sleep( bl::time::milliseconds( 10 ) );
+
+            continue;
+        }
+
+        UTF_CHECK_EQUAL( -1, rc );
+        UTF_CHECK_EQUAL( ECHILD, errno );
+
+        break;
+    }
+}
+
+UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessDescriptorLimitTests )
+{
+    /*
+     * The close-on-exec sweep in the child must not cost time proportional to the soft
+     * descriptor limit; raise the soft limit to the hard limit for the duration of the
+     * test and require the spawns to stay fast
+     */
+
+    struct ::rlimit limits = {};
+
+    UTF_REQUIRE_EQUAL( 0, ::getrlimit( RLIMIT_NOFILE, &limits ) );
+
+    const ::rlim_t targetLimit = std::min< ::rlim_t >( limits.rlim_max, 1048576U );
+
+    if( targetLimit < 65536U )
+    {
+        UTF_MESSAGE( "The hard descriptor limit is too low for this test to be meaningful; skipping" );
+
+        return;
+    }
+
+    struct ::rlimit raisedLimits = limits;
+    raisedLimits.rlim_cur = targetLimit;
+
+    UTF_REQUIRE_EQUAL( 0, ::setrlimit( RLIMIT_NOFILE, &raisedLimits ) );
+
+    BL_SCOPE_EXIT(
+        {
+            ::setrlimit( RLIMIT_NOFILE, &limits );
+        }
+        );
+
+    UTF_REQUIRE( static_cast< ::rlim_t >( ::getdtablesize() ) == targetLimit );
+
+    const std::size_t spawnCount = 5U;
+
+    const auto start = bl::time::microsec_clock::universal_time();
+
+    for( std::size_t i = 0U; i < spawnCount; ++i )
+    {
+        const auto proc = bl::os::createProcess( "true", bl::os::ProcessCreateFlags::WaitToFinish );
+        UTF_REQUIRE( proc );
+    }
+
+    const auto elapsed = bl::time::microsec_clock::universal_time() - start;
+
+    UTF_MESSAGE(
+        BL_MSG()
+            << "Average spawn time with soft descriptor limit "
+            << targetLimit
+            << " is "
+            << ( elapsed.total_milliseconds() / spawnCount )
+            << " ms"
+        );
+
+    UTF_CHECK( elapsed < bl::time::milliseconds( 20 * spawnCount ) );
+}
+
+UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessDescriptorHygieneTests )
+{
+    /*
+     * No descriptor other than the standard ones may leak into the child, including
+     * descriptors which are not close-on-exec and one being opened by another thread
+     * at the time of the spawn
+     */
+
+    std::vector< int > fds;
+
+    BL_SCOPE_EXIT(
+        {
+            for( const int fd : fds )
+            {
+                ::close( fd );
+            }
+        }
+        );
+
+    for( std::size_t i = 0U; i < 10U; ++i )
+    {
+        const int fd = ::open( "/dev/null", O_RDWR );
+        UTF_REQUIRE( -1 != fd );
+
+        fds.push_back( fd );
+    }
+
+    std::atomic< bool > stopOpening( false );
+
+    bl::os::thread opener(
+        [ &stopOpening ]() -> void
+        {
+            while( ! stopOpening )
+            {
+                const int fd = ::open( "/dev/null", O_RDWR );
+
+                if( -1 != fd )
+                {
+                    ::close( fd );
+                }
+            }
+        }
+        );
+
+    BL_SCOPE_EXIT(
+        {
+            stopOpening = true;
+            opener.join();
+        }
+        );
+
+    std::string line;
+
+    const auto callbackIos = [ & ](
+        SAA_in              const bl::os::process_handle_t  process,
+        SAA_in_opt          std::istream*                   out,
+        SAA_in_opt          std::istream*                   err,
+        SAA_in_opt          std::ostream*                   in
+        ) -> void
+    {
+        UTF_REQUIRE( process );
+        UTF_REQUIRE( out );
+        UTF_REQUIRE( ! err );
+        UTF_REQUIRE( ! in );
+
+        std::getline( *out, line );
+    };
+
+    /*
+     * The count is taken from the kernel's view of the child's own descriptors, which is
+     * spelled differently per platform: procfs on Linux and the fdesc filesystem on macOS,
+     * which reports one entry more than Linux does for the same set of open descriptors
+     *
+     * 'wc -l' is padded with leading blanks by the BSD implementation but not the GNU one,
+     * so the blanks are stripped to keep the expected value identical in both cases
+     */
+
+#ifdef __linux__
+
+    /*
+     * 0, 1, 2 and the directory descriptor 'ls' itself opens
+     */
+
+    const std::string fdDirectory = "/proc/self/fd";
+    const std::string expectedCount = "4";
+
+#else
+
+    /*
+     * 0, 1, 2, the directory descriptor 'ls' itself opens and the one the fdesc filesystem
+     * exposes while that directory is being read
+     */
+
+    const std::string fdDirectory = "/dev/fd";
+    const std::string expectedCount = "5";
+
+#endif
+
+    /*
+     * The script is passed as an argument vector rather than as a single command line because
+     * the command line form is split by the library and does not preserve the single quotes
+     * which 'tr' needs around its operand
+     */
+
+    std::vector< std::string > args;
+    args.push_back( "bash" );
+    args.push_back( "-c" );
+    args.push_back( "ls " + fdDirectory + " | wc -l | tr -d ' '" );
+
+    for( std::size_t i = 0U; i < 5U; ++i )
+    {
+        line.clear();
+
+        const auto proc = bl::os::createProcess(
+            args,
+            bl::os::ProcessCreateFlags::RedirectStdout | bl::os::ProcessCreateFlags::WaitToFinish,
+            callbackIos
+            );
+
+        UTF_REQUIRE( proc );
+
+        UTF_CHECK_EQUAL( line, expectedCount );
+    }
+}
+
+#endif // ! defined( _WIN32 )
+
+#if defined( _WIN32 )
+
+UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessDetachedWindowsTests )
+{
+    if( test::UtfArgsParser::isAnalysisEnabled() )
+    {
+        /*
+         * See the note in BaseLib_OSCreateProcessTests about CreateProcess and the
+         * application verifier
+         */
+
+        return;
+    }
+
+    /*
+     * The Windows counterpart of the detached process tests above: a detached child
+     * which is not redirected must start with usable standard handles (the ones of
+     * its own hidden console), a detached child with redirection must deliver its
+     * output to the callback and releasing the handle of a running detached child
+     * must return promptly without terminating it (there are no zombies to reap on
+     * Windows; the process object goes away with its last handle)
+     */
+
+    bl::fs::TmpDir tmpDir;
+
+    const auto outputFile = tmpDir.path() / "detached_stdio.txt";
+
+    {
+        /*
+         * Each of the handle duplications below fails (and breaks the && chain) if the
+         * respective standard handle of the child is not valid, so the file is written
+         * only if all three standard handles are usable
+         */
+
+        const auto proc = bl::os::createProcess(
+            "cmd.exe /c \"ver 3<&0 4>&1 5>&2 >nul && echo hello>\"" + outputFile.string() + "\"\"",
+            bl::os::ProcessCreateFlags::DetachProcess
+            );
+
+        UTF_REQUIRE( proc );
+
+        UTF_CHECK_EQUAL( 0, bl::os::tryAwaitTermination( proc ) );
+
+        UTF_REQUIRE( bl::fs::exists( outputFile ) );
+        UTF_CHECK_EQUAL( bl::str::trim_copy( bl::encoding::readTextFile( outputFile ) ), std::string( "hello" ) );
+    }
+
+    {
+        const auto proc = bl::os::createProcess( "cmd.exe /c \"echo hello\"", bl::os::ProcessCreateFlags::DetachProcess );
+        UTF_REQUIRE( proc );
+
+        UTF_CHECK_EQUAL( 0, bl::os::tryAwaitTermination( proc ) );
+    }
+
+    {
+        std::string line;
+
+        const auto callbackIos = [ & ](
+            SAA_in              const bl::os::process_handle_t  process,
+            SAA_in_opt          std::istream*                   out,
+            SAA_in_opt          std::istream*                   err,
+            SAA_in_opt          std::ostream*                   in
+            ) -> void
+        {
+            UTF_REQUIRE( process );
+            UTF_REQUIRE( out );
+            UTF_REQUIRE( ! err );
+            UTF_REQUIRE( ! in );
+
+            std::getline( *out, line );
+        };
+
+        const auto proc = bl::os::createProcess(
+            "cmd.exe /c \"echo hello\"",
+            bl::os::ProcessCreateFlags::DetachProcess | bl::os::ProcessCreateFlags::RedirectStdout,
+            callbackIos
+            );
+
+        UTF_REQUIRE( proc );
+
+        UTF_CHECK_EQUAL( bl::str::trim_copy( line ), std::string( "hello" ) );
+        UTF_CHECK_EQUAL( 0, bl::os::tryAwaitTermination( proc ) );
+    }
+
+    std::uint64_t pid = 0U;
+
+    const auto start = bl::time::microsec_clock::universal_time();
+
+    {
+        const auto proc = bl::os::createProcess( "ping -n 31 127.0.0.1", bl::os::ProcessCreateFlags::DetachProcess );
+        UTF_REQUIRE( proc );
+
+        pid = bl::os::getPid( proc );
+        UTF_REQUIRE( pid );
+    }
+
+    const auto elapsed = bl::time::microsec_clock::universal_time() - start;
+
+    UTF_CHECK( elapsed < bl::time::seconds( 1 ) );
+
+    {
+        const auto handle = ::OpenProcess(
+            PROCESS_TERMINATE | SYNCHRONIZE,
+            FALSE /* bInheritHandle */,
+            static_cast< DWORD >( pid )
+            );
+
+        UTF_REQUIRE( NULL != handle );
+
+        BL_SCOPE_EXIT(
+            {
+                ::CloseHandle( handle );
+            }
+            );
+
+        /*
+         * The detached child must have survived the release of its handle
+         */
+
+        UTF_CHECK( WAIT_TIMEOUT == ::WaitForSingleObject( handle, 0 /* dwMilliseconds */ ) );
+
+        UTF_REQUIRE( ::TerminateProcess( handle, 1 /* uExitCode */ ) );
+        UTF_REQUIRE( WAIT_OBJECT_0 == ::WaitForSingleObject( handle, 10000 /* dwMilliseconds */ ) );
+    }
+}
+
+#endif // defined( _WIN32 )
 
 UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessRedirectedTests )
 {
@@ -2117,6 +3088,44 @@ UTF_AUTO_TEST_CASE( BaseLib_OSCreateProcessRedirectedMergedTests )
     UTF_REQUIRE( 0 == exitCode );
 
     UTF_REQUIRE( 2U <= lines.size() );
+
+    if( bl::os::onUNIX() )
+    {
+        /*
+         * ProcessCreateFlags::CloseStdin - the script above never reads its standard
+         * input, so the EOF property of that flag is not exercised by it
+         *
+         * With RedirectStdin | CloseStdin the parent creates the pipe and immediately
+         * resets the write end, so no writable end survives anywhere and the child's very
+         * first read returns EOF. Dropping that reset, or reordering the post-fork
+         * inPipe.first.reset() so that a writable end survives in the parent, turns every
+         * createRedirectedProcess*AndWait( ... ) call over a stdin reading command into an
+         * unrecoverable deadlock: the child blocks on read while the parent blocks in
+         * WaitToFinish
+         *
+         * NOTE THAT A REGRESSION HERE MANIFESTS AS A HANG, not as a failed assertion
+         *
+         * The block is UNIX only because it runs bash; it also inherits the Windows
+         * analysis skip at the top of this case
+         */
+
+        lines.clear();
+
+        const auto stdinProcessRef = bl::os::createRedirectedProcessMergeOutputAndWait(
+            std::vector< std::string >
+            {
+                "bash",
+                "-c",
+                "if read line; then echo GOT; else echo EOF; fi"
+            },
+            cbRedirectedIos
+            );
+
+        UTF_REQUIRE( ! lines.empty() );
+        UTF_CHECK_EQUAL( std::string( "EOF" ), lines.front() );
+
+        UTF_CHECK_EQUAL( 0, bl::os::tryAwaitTermination( stdinProcessRef ) );
+    }
 }
 
 /************************************************************************
@@ -2698,6 +3707,56 @@ UTF_AUTO_TEST_CASE( BaseLib_OSLargeFileSupportTests )
         const auto newPos = bl::os::ftell( fileptr );
         UTF_REQUIRE( ( pos + BL_ARRAY_SIZE( buffer ) ) == newPos );
     }
+
+    /*
+     * Everything above goes through os::fseek / os::ftell, which are the OSImplWindows
+     * wrappers - they bypass the Boost device entirely. The same 5 GiB offset is walked
+     * again below through fs::SafeInputFileStreamWrapper, i.e. through
+     * stdio_file_device_base::trySeekFile / ::tellFile / ::seek, which are what backs
+     * every SafeInputFileStreamWrapper in the library
+     *
+     * On Windows std::fseek / std::ftell take and return a 32 bit long, which is exactly
+     * why the device calls _fseeki64 / _ftelli64; replacing them would silently wrap here
+     *
+     * The file is sparse, so a filesystem without sparse file support would make this
+     * expensive rather than wrong - the guard degrades to a skip in that case
+     */
+
+    if( bl::fs::file_size( largeFilePath ) != ( pos + BL_ARRAY_SIZE( pattern ) ) )
+    {
+        UTF_MESSAGE(
+            "Skipping the 64 bit device seek assertions - the sparse file was not created at its full size"
+            );
+    }
+    else
+    {
+        bl::fs::SafeInputFileStreamWrapper large( largeFilePath );
+
+        auto& is = large.stream();
+
+        is.seekg( 0, std::ios::end );
+
+        UTF_REQUIRE_EQUAL(
+            static_cast< std::int64_t >( pos ) + static_cast< std::int64_t >( BL_ARRAY_SIZE( pattern ) ),
+            static_cast< std::int64_t >( is.tellg() )
+            );
+
+        std::memset( buffer, 0, BL_ARRAY_SIZE( buffer ) );
+
+        is.seekg( static_cast< std::streamoff >( pos ), std::ios::beg );
+        is.read( reinterpret_cast< char* >( buffer ), BL_ARRAY_SIZE( buffer ) );
+
+        UTF_REQUIRE( ! is.fail() );
+        UTF_REQUIRE( 0 == ::memcmp( buffer, pattern, BL_ARRAY_SIZE( buffer ) ) );
+
+        std::memset( buffer, 0, BL_ARRAY_SIZE( buffer ) );
+
+        is.seekg( -static_cast< std::streamoff >( BL_ARRAY_SIZE( pattern ) ), std::ios::end );
+        is.read( reinterpret_cast< char* >( buffer ), BL_ARRAY_SIZE( buffer ) );
+
+        UTF_REQUIRE( ! is.fail() );
+        UTF_REQUIRE( 0 == ::memcmp( buffer, pattern, BL_ARRAY_SIZE( buffer ) ) );
+    }
 }
 
 /************************************************************************
@@ -2963,6 +4022,52 @@ UTF_AUTO_TEST_CASE( BaseLib_OSJunctionsTests )
         UTF_REQUIRE( bl::fs::exists( filePath ) );
 
         UTF_REQUIRE( bl::fs::exists( junctionDir ) );
+
+        /*
+         * REPARSE_BUFFER_SIZE_DEFAULT is sizeof( REPARSE_DATA_BUFFER ) + 4 * ( MAX_PATH + 2 ),
+         * i.e. it holds about 260 wide characters of target path, so a longer target takes
+         * the dynamicBuffer branch of createJunction and makes DeviceIoControl in
+         * getAndProcessReparseBuffer return ERROR_INSUFFICIENT_BUFFER / ERROR_MORE_DATA,
+         * which is what drives the doubling loop there
+         *
+         * Neither branch has ever executed in this suite - every other junction case uses
+         * a short TmpDir path
+         */
+
+        {
+            auto deepTarget = tmpPath / "deep-target";
+
+            for( std::size_t i = 0U; i < 12U; ++i )
+            {
+                deepTarget /= std::string( 30U, 'a' );
+            }
+
+            bl::fs::safeMkdirs( deepTarget );
+
+            /*
+             * Guards this case against a future TmpDir change which shortens the path
+             */
+
+            UTF_REQUIRE( deepTarget.wstring().size() > 260U );
+
+            const auto deepJunction = tmpPath / "deep-junction";
+
+            bl::fs::createDirectoryJunction( deepTarget, deepJunction );
+
+            UTF_REQUIRE( bl::fs::isDirectoryJunction( deepJunction ) );
+
+            /*
+             * Byte exact, which is what proves both the dynamic write buffer and the
+             * growing read loop are correct
+             */
+
+            UTF_REQUIRE_EQUAL( deepTarget, bl::fs::getDirectoryJunctionTarget( deepJunction ) );
+
+            bl::fs::deleteDirectoryJunction( deepJunction );
+
+            UTF_REQUIRE( bl::fs::is_directory( deepTarget ) );
+            UTF_REQUIRE( ! bl::fs::path_exists( deepJunction ) );
+        }
     }
 
     UTF_REQUIRE( ! bl::fs::exists( tmpPath ) );
@@ -3617,6 +4722,131 @@ UTF_AUTO_TEST_CASE( BaseLib_PathUtilsTests )
 
     {
         /*
+         * 'path' is a strict PREFIX of 'root', i.e. the path iterator runs out first
+         *
+         * The walk condition is "ip != path.end() && ir != root.end() && *ip == *ir" - the
+         * end checks deliberately precede the dereference, and this is the shape which
+         * makes the difference: reordering them back to dereference-before-end-check is
+         * undefined behaviour for exactly this input
+         */
+
+        bl::fs::path relPath;
+
+        UTF_REQUIRE(
+            ! bl::fs::getRelativePath(
+                pathNormalizeForOS( "c:\\foo" ),
+                pathNormalizeForOS( "c:\\foo\\bar\\baz" ),
+                relPath,
+                true /* allowNonStrictRoot */
+                )
+            );
+
+        UTF_REQUIRE( relPath.is_relative() );
+        UTF_REQUIRE_EQUAL( relPath.string(), pathNormalizeForOS( "..\\.." ) );
+    }
+
+    {
+        bl::fs::path relPath( "keepme" );
+
+        UTF_REQUIRE(
+            ! bl::fs::getRelativePath(
+                pathNormalizeForOS( "c:\\foo" ),
+                pathNormalizeForOS( "c:\\foo\\bar\\baz" ),
+                relPath
+                )
+            );
+
+        UTF_REQUIRE_EQUAL( relPath.string(), "keepme" );
+    }
+
+    {
+        /*
+         * The argument preconditions - getRelativePath walks two iterators and is only
+         * meaningful for absolute paths, so a relative or empty argument must be rejected
+         * before the walk rather than producing a nonsense relative path
+         *
+         * An empty root reaches ensureAbsolute( ... ) first, so its exception carries the
+         * "must be absolute" message rather than "cannot be empty" - which is why only the
+         * type is asserted for the getRelativePath calls and the messages are pinned on
+         * the two ensure* helpers directly ( nothing else in the repository calls them )
+         */
+
+        bl::fs::path relPath;
+
+        UTF_REQUIRE_THROW(
+            bl::fs::getRelativePath( "relative/path", pathNormalizeForOS( "c:\\foo" ), relPath ),
+            bl::ArgumentException
+            );
+
+        UTF_REQUIRE_THROW(
+            bl::fs::getRelativePath( pathNormalizeForOS( "c:\\foo" ), "relative/root", relPath ),
+            bl::ArgumentException
+            );
+
+        UTF_REQUIRE_THROW(
+            bl::fs::getRelativePath( pathNormalizeForOS( "c:\\foo" ), bl::fs::path(), relPath ),
+            bl::ArgumentException
+            );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            bl::fs::ensureAbsolute( "relative/path" ),
+            bl::ArgumentException,
+            "must be absolute"
+            );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            bl::fs::ensureNotEmpty( bl::fs::path() ),
+            bl::ArgumentException,
+            "cannot be empty"
+            );
+    }
+
+    {
+        /*
+         * The trailing separator dot filter is applied to 'root' ONLY, so a trailing
+         * separator on 'path' survives into the result while one on 'root' does not -
+         * contrast the "c:\foo\bar\baz" over "c:\foo\bar\" block above, which yields
+         * "baz" and not ".\baz"
+         *
+         * If this is judged a defect rather than a contract, the fix is a production
+         * change ( filter the dots on 'ip' too ) and this assertion becomes its regression
+         * test
+         */
+
+        bl::fs::path relPath;
+
+        const auto isPrefix =
+            bl::fs::getRelativePath(
+                pathNormalizeForOS( "c:\\foo\\bar\\" ),
+                pathNormalizeForOS( "c:\\foo\\bar" ),
+                relPath
+                );
+
+        UTF_REQUIRE( isPrefix );
+        UTF_CHECK_EQUAL( relPath.string(), "." );
+    }
+
+    {
+        /*
+         * The mirrored case - with a trailing separator on both sides the two dot elements
+         * cancel out in the walk itself and the result is empty
+         */
+
+        bl::fs::path relPath;
+
+        const auto isPrefix =
+            bl::fs::getRelativePath(
+                pathNormalizeForOS( "c:\\foo\\bar\\" ),
+                pathNormalizeForOS( "c:\\foo\\bar\\" ),
+                relPath
+                );
+
+        UTF_REQUIRE( isPrefix );
+        UTF_CHECK_EQUAL( relPath.string(), "" );
+    }
+
+    {
+        /*
          * All this is needed because std::make_tuple() supports only 5 arguments in MSVC and we need 7 values...
          */
 
@@ -3855,7 +5085,12 @@ UTF_AUTO_TEST_CASE( BaseLib_SimpleEndpointSelectorImplTests )
         UTF_REQUIRE( iterator -> canRetry() );
         UTF_REQUIRE( iterator -> canRetryNow() );
 
-        for( std::size_t i = 0; i < 10; ++i )
+        /*
+         * The loop must run past the exhaustion threshold, otherwise the else block
+         * below is never executed
+         */
+
+        for( std::size_t i = 0; i < ( iterator -> maxRetryCount() + 2 ); ++i )
         {
             if( i < ( iterator -> maxRetryCount() - 1 ) )
             {
@@ -3872,6 +5107,22 @@ UTF_AUTO_TEST_CASE( BaseLib_SimpleEndpointSelectorImplTests )
             UTF_REQUIRE_EQUAL( iterator -> host(), "my.host.com" );
             UTF_REQUIRE_EQUAL( iterator -> port(), 1234 );
         }
+
+        /*
+         * The iterator is exhausted now; resetRetry() must make it usable again and it
+         * must also clear the retry time gate - otherwise a transfer which reconnected
+         * successfully would remain gated by the retry timeout forever
+         */
+
+        UTF_REQUIRE( ! iterator -> canRetry() );
+
+        iterator -> resetRetry();
+
+        UTF_REQUIRE( iterator -> canRetry() );
+        UTF_REQUIRE( iterator -> canRetryNow() );
+        UTF_REQUIRE( iterator -> selectNext() );
+
+        UTF_REQUIRE_EQUAL( iterator -> count(), 1U );
     }
 
     {
@@ -3931,7 +5182,14 @@ UTF_AUTO_TEST_CASE( BaseLib_EndpointSelectorImplTests )
             UTF_REQUIRE_EQUAL( iterator -> count(), 4U );
 
 
-            const std::size_t iterationsCount = 10U * BL_ARRAY_SIZE( hosts );
+            /*
+             * The iteration count must exceed the exhaustion threshold, which is
+             * BL_ARRAY_SIZE( hosts ) * ( maxRetryCount() - 1 ), otherwise the else block
+             * below is never executed
+             */
+
+            const std::size_t iterationsCount =
+                BL_ARRAY_SIZE( hosts ) * ( iterator -> maxRetryCount() + 2 );
 
             for( std::size_t i = 0; i < iterationsCount; ++i )
             {
@@ -3953,6 +5211,25 @@ UTF_AUTO_TEST_CASE( BaseLib_EndpointSelectorImplTests )
                     UTF_REQUIRE( ! iterator -> canRetryNow() );
                 }
             }
+
+            /*
+             * The iterator is exhausted now; resetRetry() must zero the retry counters
+             * *and* clear the retry time gate, but it must not rewind the index - that
+             * would silently re-pin the endpoint which has just failed
+             */
+
+            UTF_REQUIRE( ! iterator -> canRetry() );
+
+            iterator -> resetRetry();
+
+            UTF_REQUIRE( iterator -> canRetry() );
+            UTF_REQUIRE( iterator -> canRetryNow() );
+            UTF_REQUIRE( iterator -> selectNext() );
+
+            UTF_REQUIRE_EQUAL(
+                iterator -> host(),
+                hosts[ ( iterationsCount + 1 ) % BL_ARRAY_SIZE( hosts ) ]
+                );
         }
 
         {
@@ -3988,6 +5265,17 @@ UTF_AUTO_TEST_CASE( BaseLib_EndpointSelectorImplTests )
     {
         const auto selector = bl::EndpointSelectorImpl::createInstance( 1234 );
         UTF_REQUIRE_EQUAL( selector -> count(), 0U );
+
+        /*
+         * An empty selector cannot shell out an iterator - chkIndex() in the iterator
+         * constructor is what prevents an out of range read on the entries vector
+         */
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            selector -> createIterator(),
+            bl::UnexpectedException,
+            "Endpoint selector is empty"
+            );
 
         for( std::size_t i = 0; i < BL_ARRAY_SIZE( hosts ); ++i )
         {
@@ -4057,6 +5345,54 @@ UTF_AUTO_TEST_CASE( BaseLib_TestUuidIteratorImpl )
     i1 -> loadNext();
     UTF_REQUIRE( ! i1 -> hasCurrent() );
 
+    /*
+     * The out of range guard in loadNext() is unreachable from a
+     * for( ; hasCurrent(); loadNext() ) traversal, which is the only shape used anywhere
+     * else - without it m_pos would walk past m_end, hasCurrent() would stay true and
+     * every consumer would loop indefinitely over out of bounds memory
+     */
+
+    UTF_REQUIRE_THROW( i1 -> loadNext(), bl::UnexpectedException );
+
+    i1 -> reset();
+
+    UTF_REQUIRE( i1 -> hasCurrent() );
+    UTF_REQUIRE_EQUAL( i1 -> current(), single );
+
+    {
+        /*
+         * An empty pointer pair range
+         */
+
+        const auto empty = bl::UuidIteratorImpl::createInstance< bl::UuidIterator >( beginSingle, beginSingle );
+
+        UTF_REQUIRE( ! empty -> hasCurrent() );
+        UTF_REQUIRE_THROW( empty -> loadNext(), bl::UnexpectedException );
+
+        empty -> reset();
+
+        UTF_REQUIRE( ! empty -> hasCurrent() );
+    }
+
+    {
+        /*
+         * The std::vector overload with an empty vector - this exercises the
+         * data.empty() ? nullptr : &data.front() branch, which a naive &data.front()
+         * rewrite would turn into undefined behavior
+         */
+
+        const std::vector< bl::uuid_t > none;
+
+        const auto empty = bl::UuidIteratorImpl::createInstance< bl::UuidIterator >( none );
+
+        UTF_REQUIRE( ! empty -> hasCurrent() );
+        UTF_REQUIRE_THROW( empty -> loadNext(), bl::UnexpectedException );
+
+        empty -> reset();
+
+        UTF_REQUIRE( ! empty -> hasCurrent() );
+    }
+
     UTF_REQUIRE( i2 -> hasCurrent() );
     i2 -> loadNext();
     UTF_REQUIRE( i2 -> hasCurrent() );
@@ -4115,6 +5451,119 @@ UTF_AUTO_TEST_CASE( BaseLib_TestScopeGuard )
         UTF_REQUIRE( called1 );
         UTF_REQUIRE( called2 );
     }
+
+    /*
+     * runNow() disables the guard before it invokes the callback, so the destructor
+     * which follows cannot run the callback a second time
+     */
+
+    {
+        int count = 0;
+
+        {
+            auto g = BL_SCOPE_GUARD( { ++count; } );
+
+            g.runNow();
+
+            UTF_REQUIRE_EQUAL( 1, count );
+        }
+
+        UTF_REQUIRE_EQUAL( 1, count );
+    }
+
+    /*
+     * The move constructor dismisses the source, so responsibility for the callback
+     * transfers exactly once - ScopeGuard::create returns by value, so every
+     * BL_SCOPE_GUARD goes through this path
+     */
+
+    {
+        int count = 0;
+
+        {
+            auto g1 = BL_SCOPE_GUARD( { ++count; } );
+
+            {
+                auto g2( std::move( g1 ) );
+
+                UTF_REQUIRE_EQUAL( 0, count );
+            }
+
+            UTF_REQUIRE_EQUAL( 1, count );
+        }
+
+        UTF_REQUIRE_EQUAL( 1, count );
+    }
+
+    /*
+     * Move assignment runs the cleanup the target is still holding before it takes over the
+     * source's - an armed guard always runs exactly once, which is the same rule the
+     * destructor implements
+     */
+
+    {
+        int a = 0;
+        int b = 0;
+
+        {
+            auto g1 = BL_SCOPE_GUARD( { ++a; } );
+            auto g2 = BL_SCOPE_GUARD( { ++b; } );
+
+            g1 = std::move( g2 );
+
+            UTF_REQUIRE_EQUAL( 1, a );
+            UTF_REQUIRE_EQUAL( 0, b );
+        }
+
+        UTF_REQUIRE_EQUAL( 1, a );
+        UTF_REQUIRE_EQUAL( 1, b );
+    }
+
+    /*
+     * A dismissed target has nothing to run, and self assignment is a no-op rather than a
+     * cleanup which fires while the guard is still armed
+     */
+
+    {
+        int a = 0;
+        int b = 0;
+
+        {
+            auto g1 = BL_SCOPE_GUARD( { ++a; } );
+            auto g2 = BL_SCOPE_GUARD( { ++b; } );
+
+            g1.dismiss();
+
+            g1 = std::move( g2 );
+
+            UTF_REQUIRE_EQUAL( 0, a );
+            UTF_REQUIRE_EQUAL( 0, b );
+        }
+
+        UTF_REQUIRE_EQUAL( 0, a );
+        UTF_REQUIRE_EQUAL( 1, b );
+    }
+
+    {
+        int count = 0;
+
+        {
+            auto g = BL_SCOPE_GUARD( { ++count; } );
+
+            /*
+             * Through a pointer, so the compiler's own self-move diagnostic does not reject
+             * the very expression under test
+             */
+
+            auto* const self = &g;
+
+            g = std::move( *self );
+
+            UTF_REQUIRE_EQUAL( 0, count );
+        }
+
+        UTF_REQUIRE_EQUAL( 1, count );
+    }
 }
 
 /************************************************************************
@@ -4165,6 +5614,50 @@ UTF_AUTO_TEST_CASE( FsUtils_TestMakeHidden )
     }
 
     bl::fs::safeUpdateFileAttributes( tmpPath, bl::os::FileAttributeHidden, false /* remove */ );
+
+    if( bl::os::onWindows() )
+    {
+        /*
+         * os::unsafe::updateFileAttributes rejects a zero attribute set and any bit
+         * outside FileAttributesMask before it reaches SetFileAttributesW, and reports a
+         * missing path as a system error rather than silently doing nothing
+         *
+         * On UNIX the implementation is an empty function (OSImplUNIX.h), which is why
+         * this is Windows only - it still has to compile everywhere
+         *
+         * Note the exception types are those the production macros actually throw:
+         * BL_CHK gives UnexpectedException, not ArgumentException, and the
+         * GetFileAttributesW failure comes through createException( ... ) as a
+         * SystemException
+         */
+
+        UTF_REQUIRE_THROW(
+            bl::os::unsafe::updateFileAttributes( tmpPath, bl::os::FileAttributeNone ),
+            bl::UnexpectedException
+            );
+
+        UTF_REQUIRE_THROW(
+            bl::os::unsafe::updateFileAttributes(
+                tmpPath,
+                static_cast< bl::os::FileAttributes >( ~static_cast< std::uint32_t >( bl::os::FileAttributesMask ) )
+                ),
+            bl::UnexpectedException
+            );
+
+        UTF_REQUIRE_THROW(
+            bl::os::unsafe::updateFileAttributes( tmpPath / "no-such-file", bl::os::FileAttributeHidden ),
+            bl::SystemException
+            );
+
+        /*
+         * The positive control - without it the three rejections above could all pass
+         * vacuously if the API stopped working altogether
+         */
+
+        bl::os::unsafe::updateFileAttributes( tmpPath, bl::os::FileAttributeHidden, false /* remove */ );
+
+        UTF_REQUIRE( bl::fs::safeGetFileAttributes( tmpPath ) & bl::os::FileAttributeHidden );
+    }
 }
 
 UTF_AUTO_TEST_CASE( FsUtils_TestCreateTempDirAndCreateDirectory )
@@ -4184,6 +5677,46 @@ UTF_AUTO_TEST_CASE( FsUtils_TestCreateTempDirAndCreateDirectory )
     }
 
     UTF_REQUIRE( ! bl::fs::exists( tmpPath ) );
+
+    /*
+     * The TmpDirT( rootTemp ) branch - every other TmpDir in the suite is default
+     * constructed, so this branch has no coverage at all
+     *
+     * A non empty rootTemp creates rootTemp / ( "bl-temp-dir-" + uuid ) with
+     * safeCreateDirectory and NOT safeMkdirs, so rootTemp itself must already exist; the
+     * result then goes through makeHidden, which renames it to a leading dot name on
+     * every platform
+     */
+
+    {
+        bl::fs::TmpDir outer;
+
+        bl::fs::path savedInnerPath;
+
+        {
+            bl::fs::TmpDir inner( outer.path() );
+
+            savedInnerPath = inner.path();
+
+            UTF_REQUIRE( bl::fs::is_directory( inner.path() ) );
+            UTF_REQUIRE_EQUAL( inner.path().parent_path(), outer.path() );
+            UTF_REQUIRE( 0U == inner.path().filename().string().find( "." ) );
+        }
+
+        /*
+         * Only the inner directory is removed - the caller supplied root survives
+         */
+
+        UTF_REQUIRE( ! bl::fs::path_exists( savedInnerPath ) );
+        UTF_REQUIRE( bl::fs::is_directory( outer.path() ) );
+
+        /*
+         * A missing root is not created for the caller - safeCreateDirectory reports it
+         * through BL_CHK_EC_USER_FRIENDLY, which throws SystemException
+         */
+
+        UTF_REQUIRE_THROW( bl::fs::TmpDir( outer.path() / "no-such-root" ), bl::SystemException );
+    }
 }
 
 UTF_AUTO_TEST_CASE( FsUtils_TestMkdirs )
@@ -4643,6 +6176,49 @@ UTF_AUTO_TEST_CASE( FsUtils_TestNormalize )
             bl::fs::normalize( "\\\\host\\directoryname" ),
             bl::ArgumentException
             );
+
+        /*
+         * A parent directory reference must be clamped at the root - POSIX defines
+         * "/.." as "/", so the expectations below are spelled out as literals rather
+         * than computed by calling bl::fs::normalize( ... ) again
+         *
+         * Without the clamp "/.." becomes an empty path and everything appended to it
+         * turns the result into a current directory relative path
+         */
+
+        UTF_TEST_NORMALIZE(
+            "/../etc/passwd",
+            bl::fs::path( "/etc/passwd" )
+            );
+
+        UTF_TEST_NORMALIZE(
+            "/..",
+            bl::fs::path( "/" )
+            );
+
+        UTF_TEST_NORMALIZE(
+            "/../../..",
+            bl::fs::path( "/" )
+            );
+
+        UTF_TEST_NORMALIZE(
+            "/a/../../b",
+            bl::fs::path( "/b" )
+            );
+
+        UTF_TEST_NORMALIZE(
+            "/a/./b/../c",
+            bl::fs::path( "/a/c" )
+            );
+
+        UTF_REQUIRE( bl::fs::normalize( "/../etc/passwd" ).is_absolute() );
+
+        /*
+         * normalizePathCliParameter( ... ) resolves ".." through normalize( ... ); there
+         * is no LFN prefix to remove on this platform
+         */
+
+        UTF_REQUIRE_EQUAL( bl::fs::normalizePathCliParameter( "/a/b/../c" ), std::string( "/a/c" ) );
     }
 
     if( bl::os::onWindows() )
@@ -4717,6 +6293,63 @@ UTF_AUTO_TEST_CASE( FsUtils_TestNormalize )
         UTF_TEST_NORMALIZE(
             std::string( "\\\\?\\D:\\very long path\\.\\another level\\..\\yet another level" ),
             bl::fs::path( "\\\\?\\D:\\very long path\\yet another level" )
+            );
+
+        /*
+         * The parent directory reference is clamped at the root here too; note that
+         * the first path element on Windows is the root *name* ( "C:" ) and only
+         * becomes the root path once the root directory element is appended, which is
+         * why the clamp compares against root_path() and not against the seed value
+         */
+
+        UTF_TEST_NORMALIZE(
+            std::string( "C:\\..\\Windows" ),
+            bl::fs::path( "C:\\Windows" )
+            );
+
+        UTF_TEST_NORMALIZE(
+            std::string( "C:\\a\\..\\..\\b" ),
+            bl::fs::path( "C:\\b" )
+            );
+
+        UTF_REQUIRE( bl::fs::normalize( "C:\\..\\Windows" ).is_absolute() );
+
+        /*
+         * bl::fs::path adds the \\?\ LFN prefix in its constructor on Windows, and
+         * normalizePathCliParameter( ... ) exists precisely to take it back off again -
+         * it is what JvmHelpers uses to build the JVM class path and the -D options, so a
+         * change which stopped removing the prefix would hand the JVM \\?\C:\... and it
+         * would fail to load
+         */
+
+        const auto lfnInput = bl::fs::path( "c:\\some\\dir" ).string();
+
+        UTF_REQUIRE( 0 == lfnInput.find( "\\\\?\\" ) );
+
+        const auto lfnResult = bl::fs::normalizePathCliParameter( lfnInput );
+
+        UTF_REQUIRE( 0 != lfnResult.find( "\\\\?\\" ) );
+        UTF_REQUIRE( bl::str::iends_with( lfnResult, "some\\dir" ) );
+    }
+
+    /*
+     * normalizePathCliParameter( ... ) ground truth - every existing assertion about this
+     * function ( utf_baselib_jni/TestJni.h:753/765/766 ) computes its expectation by
+     * calling the function under test, so it holds for ANY implementation, including one
+     * which returns the empty string
+     */
+
+    UTF_REQUIRE_EQUAL( bl::fs::normalizePathCliParameter( std::string() ), std::string() );
+
+    {
+        const auto cwd = bl::fs::current_path();
+
+        const auto resolved = bl::fs::normalizePathCliParameter( "some/relative/leaf" );
+
+        UTF_REQUIRE( bl::fs::path( resolved ).is_absolute() );
+
+        UTF_REQUIRE(
+            bl::fs::normalize( cwd / "some" / "relative" / "leaf" ).compare( bl::fs::path( resolved ) ) == 0
             );
     }
 }
@@ -4972,6 +6605,94 @@ UTF_AUTO_TEST_CASE( BaseLib_StringUtilsSplitTests )
         {
             const auto result = bl::str::splitString( str6, sep, 0U, str6.length() );
             UTF_REQUIRE_EQUAL( result.size(), 3U );
+        }
+
+        /*
+         * The cases below pin the RANGE handling of splitString - every assertion above
+         * checks element counts only, and neither of the two range fixes changes any of
+         * those counts
+         *
+         * httpserver/Parser.h splits an untrusted network buffer with an explicit
+         * endPos, so a token which is allowed to extend past it reads into the body of
+         * the request
+         *
+         * These inputs need their own literals - none of the strings above has a
+         * separator which crosses a useful endPos
+         */
+
+        {
+            /*
+             * The separator cannot fit in the requested window - the window itself is
+             * the only element, and not the whole text
+             */
+
+            const auto result =
+                bl::str::splitString( std::string( "left_abcd_right" ), std::string( "abcdef" ), 5U, 9U );
+
+            UTF_REQUIRE_EQUAL( result.size(), 1U );
+            UTF_CHECK_EQUAL( "abcd", result[ 0 ] );
+        }
+
+        {
+            /*
+             * The separator straddles endPos - it must not match, so the window is
+             * returned whole rather than split around a token which lies outside it
+             */
+
+            const auto result =
+                bl::str::splitString( std::string( "ab--cd" ), std::string( "--" ), 0U, 3U );
+
+            UTF_REQUIRE_EQUAL( result.size(), 1U );
+            UTF_CHECK_EQUAL( "ab-", result[ 0 ] );
+        }
+
+        {
+            /*
+             * The separator ends exactly at endPos - it must match and leave an empty
+             * trailing element
+             */
+
+            const auto result =
+                bl::str::splitString( std::string( "ab--cd" ), std::string( "--" ), 0U, 4U );
+
+            UTF_REQUIRE_EQUAL( result.size(), 2U );
+            UTF_CHECK_EQUAL( "ab", result[ 0 ] );
+            UTF_CHECK_EQUAL( "", result[ 1 ] );
+        }
+
+        {
+            /*
+             * Empty leading and trailing elements inside a window
+             */
+
+            const auto result =
+                bl::str::splitString( std::string( "xx--yy--zz" ), std::string( "--" ), 2U, 8U );
+
+            UTF_REQUIRE_EQUAL( result.size(), 3U );
+            UTF_CHECK_EQUAL( "", result[ 0 ] );
+            UTF_CHECK_EQUAL( "yy", result[ 1 ] );
+            UTF_CHECK_EQUAL( "", result[ 2 ] );
+        }
+
+        {
+            /*
+             * Content assertions for two of the size-only inputs above
+             */
+
+            const auto result = bl::str::splitString( str6, sep, 0U, str6.length() );
+
+            UTF_REQUIRE_EQUAL( result.size(), 3U );
+            UTF_CHECK_EQUAL( "left_", result[ 0 ] );
+            UTF_CHECK_EQUAL( "_middle_", result[ 1 ] );
+            UTF_CHECK_EQUAL( "_right", result[ 2 ] );
+        }
+
+        {
+            const auto result = bl::str::splitString( str3, sep, 4U, str3.length() );
+
+            UTF_REQUIRE_EQUAL( result.size(), 2U );
+            UTF_CHECK_EQUAL( "", result[ 0 ] );
+            UTF_CHECK_EQUAL( "", result[ 1 ] );
         }
     }
 }
@@ -5317,6 +7038,116 @@ UTF_AUTO_TEST_CASE( BaseLib_StringUtilsSecureStringWrapper )
             bl::str::SecureStringWrapper sec3( &s2, 1024 )
             );
     }
+
+    {
+        /*
+         * The copy ctor always binds m_implPtr to its own m_impl, so a copy has storage
+         * which is fully independent from the source
+         */
+
+        bl::str::SecureStringWrapper src;
+        src.append( "secret-value" );
+
+        bl::str::SecureStringWrapper copy( src );
+
+        UTF_CHECK_EQUAL( copy.getAsNonSecureString(), "secret-value" );
+        UTF_CHECK_EQUAL( src.getAsNonSecureString(), "secret-value" );
+        UTF_CHECK( copy.getAsNonSecureString().c_str() != src.getAsNonSecureString().c_str() );
+    }
+
+    {
+        /*
+         * A copy of an external string wrapper must not alias the external string -
+         * if it did, the copy would wipe the original's string when it is destroyed
+         */
+
+        std::string ext( "ext-secret" );
+
+        {
+            bl::str::SecureStringWrapper w( &ext );
+            bl::str::SecureStringWrapper copy( w );
+
+            UTF_CHECK_EQUAL( copy.getAsNonSecureString(), "ext-secret" );
+            UTF_CHECK( copy.getAsNonSecureString().c_str() != ext.c_str() );
+
+            copy.clear();
+
+            UTF_CHECK_EQUAL( ext, "ext-secret" );
+        }
+
+        UTF_CHECK( ext.empty() );
+    }
+
+    {
+        /*
+         * Copy assignment replaces the payload rather than appending to it, and it
+         * leaves the source intact
+         */
+
+        bl::str::SecureStringWrapper a;
+        a.append( "aaa" );
+
+        bl::str::SecureStringWrapper b;
+        b.append( "bbbbb" );
+
+        b = a;
+
+        UTF_CHECK_EQUAL( b.getAsNonSecureString(), "aaa" );
+        UTF_CHECK_EQUAL( a.getAsNonSecureString(), "aaa" );
+
+        /*
+         * Both self assignment guards - without the 'this == &other' checks the clear()
+         * at the top of each operator would wipe the payload before appending it back
+         *
+         * The assignment is routed through a reference, as BaseLib_StringUtilsWipe
+         * already does, to keep the compiler's self assignment diagnostics quiet
+         */
+
+        auto& aRef = a;
+
+        a = aRef;
+
+        UTF_CHECK_EQUAL( a.getAsNonSecureString(), "aaa" );
+
+        a = std::move( aRef );
+
+        UTF_CHECK_EQUAL( a.getAsNonSecureString(), "aaa" );
+    }
+
+    {
+        /*
+         * Reallocation through grow(): INITIAL_CAPACITY is 16, so the first 20 bytes
+         * reserve 32 and the following 100 bytes take the temporary copy path and
+         * reserve 128 - which is where reserve() must re-sync m_dataPtr, or the clear()
+         * below terminates the process through checkWrappedStringIntegrity()
+         */
+
+        bl::str::SecureStringWrapper w;
+
+        w.append( std::string( 20U, 'x' ) );
+        w.append( std::string( 100U, 'y' ) );
+
+        UTF_CHECK_EQUAL( w.size(), 120U );
+        UTF_CHECK_EQUAL( w.getAsNonSecureString(), std::string( 20U, 'x' ) + std::string( 100U, 'y' ) );
+
+        w.clear();
+
+        UTF_CHECK( w.empty() );
+    }
+
+    {
+        /*
+         * Self append across the capacity boundary
+         */
+
+        bl::str::SecureStringWrapper s;
+
+        s.append( std::string( 16U, 'z' ) );
+        s.append( s );
+
+        UTF_CHECK_EQUAL( s.size(), 32U );
+        UTF_CHECK_EQUAL( s.getAsNonSecureString(), std::string( 32U, 'z' ) );
+    }
 }
 
 /************************************************************************
@@ -5606,6 +7437,108 @@ UTF_AUTO_TEST_CASE( BaseLib_RetryOnErrorTests )
         UTF_REQUIRE_EQUAL( e.what(), "This is fail more exception" );
         UTF_REQUIRE_EQUAL( failMoreCalled, 1U );
     }
+
+    /*
+     * The value returning overloads are separate instantiations of
+     * detail::Utils::retryOnError< R, EXCEPTION > and none of the checks above reach
+     * them; the default retryTimeout is timeoutNoDelay(), so nothing below sleeps
+     */
+
+    std::size_t intCalled = 0U;
+
+    const auto cbIntFailsTwiceThenReturns7 = [ & ]() -> int
+    {
+        ++intCalled;
+
+        if( intCalled < 3U )
+        {
+            BL_THROW(
+                bl::UnexpectedException(),
+                BL_MSG()
+                    << "This is fail twice exception"
+                );
+        }
+
+        return 7;
+    };
+
+    const auto cbIntSucceeds = [ & ]() -> int
+    {
+        ++intCalled;
+
+        return 42;
+    };
+
+    const auto cbIntAlwaysFails = [ & ]() -> int
+    {
+        ++intCalled;
+
+        BL_THROW(
+            bl::UnexpectedException(),
+            BL_MSG()
+                << "This is int fail always exception"
+            );
+    };
+
+    intCalled = 0U;
+
+    UTF_REQUIRE_EQUAL(
+        ( bl::utils::retryOnError< int, bl::UnexpectedException >( cbIntFailsTwiceThenReturns7, retryCount ) ),
+        7
+        );
+
+    UTF_REQUIRE_EQUAL( intCalled, 3U );
+
+    intCalled = 0U;
+
+    UTF_REQUIRE_EQUAL( bl::utils::retryOnAllErrors< int >( cbIntSucceeds, retryCount ), 42 );
+
+    UTF_REQUIRE_EQUAL( intCalled, 1U );
+
+    intCalled = 0U;
+
+    UTF_REQUIRE_THROW(
+        ( bl::utils::retryOnError< int, bl::UnexpectedException >( cbIntAlwaysFails, 2U ) ),
+        bl::UnexpectedException
+        );
+
+    /*
+     * The normal call plus the retry count, exactly as for the void overload
+     */
+
+    UTF_REQUIRE_EQUAL( intCalled, 3U );
+
+    {
+        /*
+         * On failure tryRetryOnAllErrors< R > must report false and a default
+         * constructed R, not an uninitialized one, and must not let the exception escape
+         */
+
+        intCalled = 0U;
+
+        const auto result = bl::utils::tryRetryOnAllErrors< int >( cbIntAlwaysFails, 2U );
+
+        UTF_REQUIRE( ! result.second );
+        UTF_REQUIRE_EQUAL( result.first, 0 );
+        UTF_REQUIRE_EQUAL( intCalled, 3U );
+    }
+
+    {
+        intCalled = 0U;
+
+        const auto result = bl::utils::tryRetryOnAllErrors< int >( cbIntSucceeds, retryCount );
+
+        UTF_REQUIRE( result.second );
+        UTF_REQUIRE_EQUAL( result.first, 42 );
+        UTF_REQUIRE_EQUAL( intCalled, 1U );
+    }
+
+    /*
+     * The void tryRetryOnAllErrors overload in both outcomes
+     */
+
+    UTF_REQUIRE( bl::utils::tryRetryOnAllErrors( cbTestSuccess, retryCount ) );
+    UTF_REQUIRE( ! bl::utils::tryRetryOnAllErrors( cbTestAlwaysFail, 1U ) );
 }
 
 /************************************************************************
@@ -5779,10 +7712,67 @@ UTF_AUTO_TEST_CASE( BaseLib_UniqueHandleTests )
 
 UTF_AUTO_TEST_CASE( BaseLib_LfnPrefixesTests )
 {
+    /*
+     * chk2RemovePrefix( ... ) is pure string manipulation with no platform specific API
+     * and it is called from fs::normalizePathParameterForPrint( ... ) - i.e. from every
+     * filesystem error message - on every platform, so it must be verified everywhere
+     */
+
+    {
+        const auto cbCheckRemovePrefix = [](
+            SAA_in      const std::string&                          input,
+            SAA_in      const std::string&                          expected
+            ) -> void
+        {
+            const auto stripped =
+                bl::fs::detail::WinLfnUtils::chk2RemovePrefix( bl::fs::path( input ) ).string();
+
+            UTF_REQUIRE_EQUAL( expected, stripped );
+
+            /*
+             * Removing the prefix must be idempotent
+             */
+
+            const auto strippedTwice =
+                bl::fs::detail::WinLfnUtils::chk2RemovePrefix( bl::fs::path( stripped ) ).string();
+
+            UTF_REQUIRE_EQUAL( stripped, strippedTwice );
+        };
+
+        cbCheckRemovePrefix( "\\\\?\\c:\\foo", "c:\\foo" );
+        cbCheckRemovePrefix( "\\\\?\\UNC\\server\\share", "\\\\server\\share" );
+
+        /*
+         * The bare prefix and a UNC prefix without its trailing separator - the latter
+         * does not match g_lfnUncPrefix, so only the plain prefix is stripped
+         */
+
+        cbCheckRemovePrefix( "\\\\?\\", "" );
+        cbCheckRemovePrefix( "\\\\?\\UNC", "UNC" );
+
+        /*
+         * A path which merely contains the prefix away from position 0 must be untouched
+         */
+
+        cbCheckRemovePrefix( "c:\\already\\\\?\\inside", "c:\\already\\\\?\\inside" );
+
+        /*
+         * The expectation is spelled through fs::path rather than as a literal because on
+         * Windows the separators are normalized when the path is constructed - see the note
+         * in chk2AddPrefix( ... ) - so this input round-trips as 'relative\path' there and as
+         * 'relative/path' everywhere else. What the case pins is that removing the prefix
+         * does not disturb a path which never had one
+         */
+
+        cbCheckRemovePrefix( "relative/path", bl::fs::path( "relative/path" ).string() );
+        cbCheckRemovePrefix( "", "" );
+    }
+
     if( ! bl::os::onWindows() )
     {
         /*
-         * This is Windows only test
+         * The rest of the test covers chk2AddPrefix( ... ), which depends on
+         * path::is_absolute() and is therefore Windows only
          */
 
         return;
@@ -5836,6 +7826,86 @@ UTF_AUTO_TEST_CASE( BaseLib_LfnPrefixesTests )
                 bl::fs::detail::WinLfnUtils::chk2RemovePrefix( bl::cpp::copy( pathUnc ) )
                 ).string();
         UTF_REQUIRE_EQUAL( pathStrUnc, pathStrUncReconstructed );
+    }
+
+    {
+        /*
+         * chk2AddPrefix( ... ) boundaries - note that on Windows fs::path itself routes
+         * through chk2AddPrefix( ... ), so the explicit call below is the second (and
+         * idempotent) application of it
+         */
+
+        const auto cbAddPrefix = []( SAA_in const std::string& input ) -> std::string
+        {
+            return bl::fs::detail::WinLfnUtils::chk2AddPrefix( bl::fs::path( input ) ).string();
+        };
+
+        UTF_REQUIRE(
+            bl::fs::detail::WinLfnUtils::chk2AddPrefix( bl::fs::path() ).empty()
+            );
+
+        UTF_REQUIRE_EQUAL( std::string( "relative\\path" ), cbAddPrefix( "relative\\path" ) );
+
+        UTF_REQUIRE_EQUAL( std::string( "\\\\?\\c:\\foo" ), cbAddPrefix( "\\\\?\\c:\\foo" ) );
+
+        UTF_REQUIRE_EQUAL( std::string( "\\\\?\\c:\\foo" ), cbAddPrefix( "c:\\foo" ) );
+
+        UTF_REQUIRE_EQUAL(
+            std::string( "\\\\?\\UNC\\server\\share" ),
+            cbAddPrefix( "\\\\server\\share" )
+            );
+
+        /*
+         * Forward slashes are legal separators on Windows everywhere except under the long
+         * file name prefix, which switches path parsing off - so they have to be normalized
+         * before the prefix is applied, or the result names nothing. A package produced on a
+         * UNIX host stores its relative paths that way, which is how this reaches production
+         */
+
+        UTF_REQUIRE_EQUAL( std::string( "\\\\?\\c:\\foo" ), cbAddPrefix( "c:/foo" ) );
+
+        UTF_REQUIRE_EQUAL( std::string( "relative\\path" ), cbAddPrefix( "relative/path" ) );
+
+        /*
+         * The UNC detection tests for backslashes only, so a forward-slash share was not
+         * recognised before the normalization and came out as \\?\//server/share
+         *
+         * Note this holds for BOOST_FILESYSTEM_VERSION 3, which is what consumers get by
+         * default and what this repository builds against; the version 4 make_preferred( )
+         * deliberately leaves the root name alone, which would defeat it
+         */
+
+        UTF_REQUIRE_EQUAL(
+            std::string( "\\\\?\\UNC\\server\\share" ),
+            cbAddPrefix( "//server/share" )
+            );
+
+        /*
+         * Three or more leading backslashes are parsed by Boost.Filesystem as a root
+         * directory followed by redundant separators - there is no root name, so such a
+         * path is not absolute and it is returned unchanged
+         *
+         * What matters is that it is never mistaken for a UNC share
+         */
+
+        UTF_REQUIRE_EQUAL( std::string( "\\\\\\weird" ), cbAddPrefix( "\\\\\\weird" ) );
+
+        /*
+         * Adding and then removing the prefix must be lossless for both forms
+         */
+
+        const auto cbCheckRoundTrip = []( SAA_in const std::string& original ) -> void
+        {
+            UTF_REQUIRE_EQUAL(
+                original,
+                bl::fs::detail::WinLfnUtils::chk2RemovePrefix(
+                    bl::fs::detail::WinLfnUtils::chk2AddPrefix( bl::fs::path( original ) )
+                    ).string()
+                );
+        };
+
+        cbCheckRoundTrip( "c:\\foo" );
+        cbCheckRoundTrip( "\\\\server\\share" );
     }
 }
 
@@ -5990,6 +8060,103 @@ UTF_AUTO_TEST_CASE( BaseLib_Base64Tests )
 
         {
             /*
+             * Malformed input must be rejected before it is handed to the Boost iterators
+             *
+             * A data length of 1 modulo 4 can't be produced by the encoder and it would
+             * make the transform read past the end of the string
+             */
+
+            UTF_REQUIRE_THROW(
+                bl::SerializationUtils::base64DecodeString( "TG9yZ" ),
+                bl::ArgumentException
+                );
+
+            UTF_REQUIRE_THROW(
+                bl::SerializationUtils::base64DecodeString( "TG9yZ=" ),
+                bl::ArgumentException
+                );
+
+            /*
+             * At most two padding characters are legal
+             */
+
+            UTF_REQUIRE_THROW(
+                bl::SerializationUtils::base64DecodeString( "YQ===" ),
+                bl::ArgumentException
+                );
+
+            UTF_REQUIRE_THROW(
+                bl::SerializationUtils::base64DecodeString( "====" ),
+                bl::ArgumentException
+                );
+
+            /*
+             * Characters outside of the base64 alphabet - note that '=' only counts as
+             * padding when it is trailing, so here it is rejected as an invalid character
+             */
+
+            UTF_REQUIRE_THROW(
+                bl::SerializationUtils::base64DecodeString( "TG=y" ),
+                bl::ArgumentException
+                );
+
+            UTF_REQUIRE_THROW(
+                bl::SerializationUtils::base64DecodeString( "TG9\n" ),
+                bl::ArgumentException
+                );
+
+            /*
+             * The base64url alphabet must not be accepted by the base64 decoder
+             */
+
+            UTF_REQUIRE_THROW(
+                bl::SerializationUtils::base64DecodeString( "TG-y" ),
+                bl::ArgumentException
+                );
+
+            UTF_REQUIRE_THROW(
+                bl::SerializationUtils::base64DecodeString( "TG_y" ),
+                bl::ArgumentException
+                );
+
+            /*
+             * The validation lives in the template and not in the std::string wrapper, so
+             * decoding into a vector of bytes must fail in exactly the same way
+             */
+
+            UTF_REQUIRE_THROW(
+                bl::SerializationUtils::base64DecodeVector( "TG9yZ" ),
+                bl::ArgumentException
+                );
+
+            /*
+             * Positive control to ensure the accepted alphabet can't be narrowed later -
+             * '+' is 62 (111110) and '/' is 63 (111111), so the first octet is 0xFB
+             */
+
+            UTF_REQUIRE_EQUAL(
+                bl::SerializationUtils::base64DecodeString( "+/==" ),
+                std::string( "\xFB" )
+                );
+
+            /*
+             * The rejected input must never be echoed back in the exception
+             */
+
+            try
+            {
+                bl::SerializationUtils::base64DecodeString( "TG9yZ" );
+                UTF_FAIL( BL_MSG() << "base64DecodeString must throw" );
+            }
+            catch( bl::ArgumentException& e )
+            {
+                UTF_REQUIRE( ! bl::eh::get_error_info< bl::eh::errinfo_string_value >( e ) );
+                UTF_REQUIRE( ! bl::cpp::contains( std::string( e.what() ), "TG9yZ" ) );
+            }
+        }
+
+        {
+            /*
              * Test to ensure we can deal with encoding zeros in std::string
              */
 
@@ -6084,13 +8251,18 @@ UTF_AUTO_TEST_CASE( BaseLib_Base64EncodingTests )
 
     UTF_REQUIRE( ! encodedString.empty() );
 
-    UTF_REQUIRE_THROW_MESSAGE(
+    /*
+     * Note that the input is validated before it is handed to the Boost iterators, so an
+     * invalid character is reported as a bl::ArgumentException (and the rejected input is
+     * deliberately not embedded in the exception)
+     */
+
+    UTF_REQUIRE_THROW(
         bl::SerializationUtils::decodeFromBase64StringToFile(
             "invalidBase64String%",
             outputPath
             ),
-        std::exception,
-        "attempt to decode a value not in base64 char set"
+        bl::ArgumentException
         );
 
     UTF_REQUIRE( ! fs::path_exists( outputPath ) );
@@ -6106,6 +8278,69 @@ UTF_AUTO_TEST_CASE( BaseLib_Base64EncodingTests )
             true /* ignoreName */
             )
         );
+
+    {
+        /*
+         * The maxSize check is "fileSize < maxSize", i.e. a STRICT less-than, so a file of
+         * exactly maxSize bytes is rejected. The extreme maxSize == 1 assertion above
+         * cannot tell that apart from an implementation which always rejects whenever a
+         * maxSize is supplied, nor from a flipped comparison; a 10 byte file tested at
+         * both 10 and 11 can
+         *
+         * Note also that the is.read( ... ) below the check is not followed by a gcount()
+         * assertion, so a short read would silently base64 encode uninitialised heap
+         * memory - that is not deterministically testable here, but it is worth knowing
+         */
+
+        bl::fs::TmpDir boundaryTmpDir;
+
+        const auto& boundaryPath = boundaryTmpDir.path();
+
+        const auto sized = boundaryPath / "sized.bin";
+
+        utest::TestFsUtils::createDummyFile( sized, 10U );
+
+        std::size_t sizedFileSize = 0U;
+
+        UTF_REQUIRE_THROW(
+            bl::SerializationUtils::encodeFromFileToBase64String( sized, &sizedFileSize, 10U ),
+            bl::UnexpectedException
+            );
+
+        UTF_REQUIRE_NO_THROW(
+            bl::SerializationUtils::encodeFromFileToBase64String( sized, &sizedFileSize, 11U )
+            );
+
+        UTF_REQUIRE_EQUAL( sizedFileSize, 10U );
+
+        /*
+         * The zero length round trip - the encoded form of an empty file is the empty
+         * string, and decoding it must still create the parent directory and the ( empty )
+         * output file rather than skipping the write altogether
+         */
+
+        const auto empty = boundaryPath / "empty.bin";
+
+        utest::TestFsUtils::createDummyFile( empty, 0U );
+
+        std::size_t emptyFileSize = 1U;
+
+        UTF_REQUIRE_EQUAL(
+            bl::SerializationUtils::encodeFromFileToBase64String( empty, &emptyFileSize ),
+            std::string()
+            );
+
+        UTF_REQUIRE_EQUAL( emptyFileSize, 0U );
+
+        const auto emptyCopy = boundaryPath / "out" / "empty-copy.bin";
+
+        UTF_REQUIRE( ! bl::fs::path_exists( emptyCopy.parent_path() ) );
+
+        bl::SerializationUtils::decodeFromBase64StringToFile( std::string(), emptyCopy );
+
+        UTF_REQUIRE( bl::fs::path_exists( emptyCopy ) );
+        UTF_REQUIRE_EQUAL( bl::fs::file_size( emptyCopy ), 0U );
+    }
 }
 
 /************************************************************************
@@ -6190,6 +8425,74 @@ UTF_AUTO_TEST_CASE( BaseLib_Base64UrlTests )
             const auto encoded = bl::SerializationUtils::base64UrlEncodeString( text );
             cbVerifyEncoded( encoded );
         }
+    }
+
+    /*
+     * The assertions below are deliberately outside the random buffer loop, so a failure
+     * names the offending input
+     *
+     * The loop above only ever feeds the output of base64UrlEncode, whose length is
+     * never 1 mod 4, so the rejection branch and the difference between the padding arms
+     * are never reached by it
+     */
+
+    {
+        /*
+         * A length of 1 mod 4 cannot be padded into valid base64 and must be rejected
+         */
+
+        const std::string bad( "TG9yZ" );
+        const std::string badLonger( "TG9yZW1wc" );
+
+        UTF_REQUIRE_EQUAL( 1U, bad.size() % 4U );
+        UTF_REQUIRE_EQUAL( 1U, badLonger.size() % 4U );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            bl::SerializationUtils::base64UrlDecodeString( bad ),
+            bl::ArgumentException,
+            "Invalid base64url encoded string"
+            );
+
+        UTF_REQUIRE_THROW( bl::SerializationUtils::base64UrlDecodeVector( bad ), bl::ArgumentException );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            bl::SerializationUtils::base64UrlDecodeString( badLonger ),
+            bl::ArgumentException,
+            "Invalid base64url encoded string"
+            );
+
+        UTF_REQUIRE_THROW( bl::SerializationUtils::base64UrlDecodeVector( badLonger ), bl::ArgumentException );
+
+        /*
+         * The input is attacker supplied and it travels back to the client through
+         * ExceptionProperties::stringValue, so it must not be attached to the exception
+         * and it must not appear in the message either
+         */
+
+        bool caught = false;
+
+        try
+        {
+            ( void ) bl::SerializationUtils::base64UrlDecodeString( bad );
+        }
+        catch( bl::ArgumentException& e )
+        {
+            caught = true;
+
+            UTF_REQUIRE( ! bl::eh::get_error_info< bl::eh::errinfo_string_value >( e ) );
+            UTF_REQUIRE( ! bl::cpp::contains( std::string( e.what() ), bad ) );
+        }
+
+        UTF_REQUIRE( caught );
+
+        /*
+         * The three padding arms of the switch must stay distinct - the round trip test
+         * above cannot tell them apart, because it only ever supplies encoder output
+         */
+
+        UTF_REQUIRE_EQUAL( bl::SerializationUtils::base64UrlDecodeString( "YQ" ), std::string( "a" ) );
+        UTF_REQUIRE_EQUAL( bl::SerializationUtils::base64UrlDecodeString( "YWE" ), std::string( "aa" ) );
+        UTF_REQUIRE_EQUAL( bl::SerializationUtils::base64UrlDecodeString( "YQ==" ), std::string( "a" ) );
     }
 }
 
@@ -6403,6 +8706,44 @@ UTF_AUTO_TEST_CASE( BaseLib_URIEncodeDecodeTests )
     }
 
     {
+        /*
+         * Every byte value must round-trip - the lookup tables are indexed with the
+         * character, so on a platform where char is signed the bytes from 0x80 to 0xFF
+         * would index before the tables and the emitted hex digits would be garbage
+         */
+
+        std::string input;
+
+        for( unsigned int i = 1U; i < 256U; ++i )
+        {
+            input.push_back( static_cast< char >( static_cast< unsigned char >( i ) ) );
+        }
+
+        const auto encoded = uriEncode( input );
+
+        for( const auto ch : encoded )
+        {
+            const auto value = static_cast< unsigned char >( ch );
+
+            UTF_REQUIRE( value >= 0x20U && value < 0x7FU );
+        }
+
+        UTF_REQUIRE_EQUAL( uriDecode( encoded ), input );
+
+        const auto encodedUnsafeOnly = uriEncodeUnsafeOnly( input );
+
+        UTF_REQUIRE_EQUAL( uriDecode( encodedUnsafeOnly ), input );
+
+        /*
+         * Inputs which are too short to hold an escape sequence must be returned as they are
+         */
+
+        UTF_REQUIRE_EQUAL( uriDecode( "" ), "" );
+        UTF_REQUIRE_EQUAL( uriDecode( "a" ), "a" );
+        UTF_REQUIRE_EQUAL( uriDecode( "%4" ), "%4" );
+    }
+
+    {
 
         /*
          * safe characters, which need not be encoded
@@ -6530,6 +8871,126 @@ UTF_AUTO_TEST_CASE( BaseLib_TextFilesEncodingTests )
     TestFileEncoding( textFile, asciiContent, TextFileEncoding::Utf16LE, asciiContent.length() * 2 + 2 );
     TestFileEncoding( textFile, utf8Content, TextFileEncoding::Utf16LE, 12 );
     TestFileEncoding( textFile, emptyContent, TextFileEncoding::Utf16LE, 2 );
+
+    /*
+     * writeTextFile( ... ) is documented to create the parent path if it doesn't exist,
+     * but every case above writes into a directory which already exists
+     */
+
+    const auto nestedDir = tmpDir.path() / "created" / "by" / "writeTextFile";
+    const auto nested = nestedDir / "note.txt";
+
+    writeTextFile( nested, "nested", TextFileEncoding::Utf8_NoPreamble );
+
+    UTF_REQUIRE( bl::fs::is_directory( nestedDir ) );
+    UTF_REQUIRE_EQUAL( readTextFile( nested ), std::string( "nested" ) );
+
+    /*
+     * No preamble was written, so the file holds the content and nothing else
+     */
+
+    UTF_REQUIRE_EQUAL( bl::fs::file_size( nested ), 6U );
+
+    /*
+     * The default: arm of the encoding validation; TextFileEncoding::Unknown is the only
+     * unreachable enumerator, since Ascii and Utf8_NoPreamble are the same value
+     *
+     * The encoding is validated BEFORE the target file is opened for writing, so a rejected
+     * call leaves the existing file exactly as it was rather than truncating it
+     */
+
+    const std::string preservedContent( "must survive a rejected write" );
+
+    writeTextFile( textFile, preservedContent, TextFileEncoding::Utf8_NoPreamble );
+
+    UTF_REQUIRE_EQUAL( readTextFile( textFile ), preservedContent );
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        writeTextFile( textFile, "x", static_cast< TextFileEncoding >( 0 ) ),
+        bl::UnexpectedException,
+        "Invalid TextFileEncoding"
+        );
+
+    UTF_REQUIRE_EQUAL( readTextFile( textFile ), preservedContent );
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        writeTextFile( textFile, "x", static_cast< TextFileEncoding >( 4242 ) ),
+        bl::UnexpectedException,
+        "Invalid TextFileEncoding"
+        );
+
+    UTF_REQUIRE_EQUAL( readTextFile( textFile ), preservedContent );
+
+    if( bl::os::onUNIX() )
+    {
+        /*
+         * The unsupported UTF-16LE arm is validated in the same place, so it does not
+         * truncate the file either
+         */
+
+        UTF_REQUIRE_THROW(
+            writeTextFile( textFile, "x", TextFileEncoding::Utf16LE ),
+            bl::NotSupportedException
+            );
+
+        UTF_REQUIRE_EQUAL( readTextFile( textFile ), preservedContent );
+    }
+
+    /*
+     * Files shorter than the preambles - the size >= preamble.size() guard in
+     * checkFilePreamble( ... ) and the ftell - buffer.size() rewind which puts the file
+     * position back when the bytes read are not a preamble after all
+     *
+     * Utf8_NoPreamble makes the on disk bytes exactly the content, so a 1 byte file is
+     * below both preambles and a 2 byte file is below the UTF-8 one and exactly the size
+     * of the UTF-16LE one
+     */
+
+    {
+        const char* const smallContents[] = { "a", "ab", "abc" };
+
+        for( std::size_t i = 0; i < BL_ARRAY_SIZE( smallContents ); ++i )
+        {
+            const std::string content( smallContents[ i ] );
+
+            /*
+             * Not named 'small' - rpcndr.h, which the Windows SDK headers pull in, defines
+             * 'small' as a macro for 'char', so the declaration does not compile on Windows
+             */
+
+            const auto smallPath = tmpDir.path() / ( "small" + std::to_string( i ) + ".txt" );
+
+            writeTextFile( smallPath, content, TextFileEncoding::Utf8_NoPreamble );
+
+            UTF_REQUIRE_EQUAL( bl::fs::file_size( smallPath ), content.size() );
+
+            TextFileEncoding enc = TextFileEncoding::Unknown;
+
+            const auto text = readTextFile( smallPath, &enc );
+
+            UTF_REQUIRE_EQUAL( text, content );
+            UTF_REQUIRE_EQUAL( enc, TextFileEncoding::Ascii );
+        }
+    }
+
+    if( bl::os::onUNIX() )
+    {
+        /*
+         * A 2 byte file whose bytes are exactly the UTF-16LE BOM is detected as UTF-16
+         * and refused off Windows
+         *
+         * On Windows it takes the size % sizeof( wchar_t ) == 0 path instead and returns
+         * an empty string with encoding Utf16LE, which is a different assertion
+         */
+
+        const auto bomOnly = tmpDir.path() / "bom-only.txt";
+
+        writeTextFile( bomOnly, "\xFF\xFE", TextFileEncoding::Utf8_NoPreamble );
+
+        UTF_REQUIRE_EQUAL( bl::fs::file_size( bomOnly ), 2U );
+
+        UTF_REQUIRE_THROW( readTextFile( bomOnly ), bl::NotSupportedException );
+    }
 }
 
 /************************************************************************
@@ -6684,6 +9145,88 @@ UTF_AUTO_TEST_CASE( BaseLib_SafeCoerceToTests )
         numbers::safeCoerceTo< std::int32_t >( static_cast< std::uint32_t >( std::numeric_limits< std::int32_t >::max() ) ),
         std::numeric_limits< std::int32_t >::max()
         );
+
+    /*
+     * All the assertions above only ever coerce non-negative values, so the lower bound
+     * check is entered but never violated - the assertions below cover the four dispatch
+     * corners where a negative source must be rejected instead of silently wrapping
+     */
+
+    /*
+     * Equal sizes (signed -> unsigned), i.e. NumberCoerceHelper< false >
+     */
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        numbers::safeCoerceTo< std::uint32_t >( static_cast< std::int32_t >( -1 ) ),
+        NumberCoerceException,
+        "Cannot coerce number -1 into a numeric type of size 4 (in bytes) "
+        "which is unsigned and can hold a minimum value of 0"
+        );
+
+    /*
+     * Widening into an unsigned type - this is the pattern used by os::detail::ftell
+     * when it coerces a negative off_t into std::uint64_t
+     */
+
+    UTF_REQUIRE_THROW(
+        numbers::safeCoerceTo< std::uint64_t >( static_cast< std::int32_t >( -1 ) ),
+        NumberCoerceException
+        );
+
+    /*
+     * Narrowing into an unsigned type, i.e. NumberCoerceHelper< true > - this also proves
+     * the lower bound check runs before the maximum value check, because -1 does not
+     * exceed the maximum of std::uint8_t and would otherwise wrap into 255
+     */
+
+    UTF_REQUIRE_THROW(
+        numbers::safeCoerceTo< std::uint8_t >( static_cast< std::int16_t >( -1 ) ),
+        NumberCoerceException
+        );
+
+    /*
+     * Narrowing into a signed type which is below its minimum value
+     */
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        numbers::safeCoerceTo< std::int8_t >( static_cast< std::int32_t >( -200 ) ),
+        NumberCoerceException,
+        "can hold a minimum value of -128"
+        );
+
+    /*
+     * The boundaries which must be accepted - the exact minimum value and zero
+     */
+
+    UTF_REQUIRE_EQUAL(
+        numbers::safeCoerceTo< std::int8_t >( static_cast< std::int32_t >( -128 ) ),
+        static_cast< std::int8_t >( -128 )
+        );
+
+    UTF_REQUIRE_EQUAL(
+        numbers::safeCoerceTo< std::uint32_t >( static_cast< std::int32_t >( 0 ) ),
+        0U
+        );
+
+    /*
+     * Widening signed -> signed must not throw - os::detail::ftell depends on this when
+     * it evaluates numbers::safeCoerceTo< off_t >( -1 ) as the expected error value
+     */
+
+    UTF_REQUIRE_EQUAL(
+        numbers::safeCoerceTo< std::int64_t >( static_cast< std::int32_t >( -1 ) ),
+        static_cast< std::int64_t >( -1 )
+        );
+
+    /*
+     * A lower bound violation must also be routed through the error handling callback
+     */
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        numbers::safeCoerceTo< std::uint32_t >( static_cast< std::int32_t >( -1 ), ehCallback ),
+        ArgumentException,
+        "This is custom special message"
+        );
 }
 
 /************************************************************************
@@ -6692,29 +9235,51 @@ UTF_AUTO_TEST_CASE( BaseLib_SafeCoerceToTests )
 
 namespace
 {
-    bool isLocalUserOnWindows()
+    /*
+     * An independent oracle for os::tryGetUserDomain() which is derived from the
+     * documented contract rather than copied from the implementation
+     *
+     * USERDNSDOMAIN wins when it is set; otherwise USERDOMAIN is the user domain
+     * unless it is empty or it is merely the computer name (i.e. a local account)
+     */
+
+    std::string expectedUserDomainFromEnvironment()
     {
         const auto dnsDomain = bl::os::tryGetEnvironmentVariable( "USERDNSDOMAIN" );
 
-        if( ! dnsDomain )
+        if( dnsDomain )
         {
-            const auto computerName = bl::os::tryGetEnvironmentVariable( "COMPUTERNAME" );
+            return *dnsDomain;
+        }
 
-            const auto userDomain = bl::os::tryGetEnvironmentVariable( "USERDNSDOMAIN" );
+        const auto userDomain = bl::os::tryGetEnvironmentVariable( "USERDOMAIN" );
 
-            if(
-                ! userDomain || userDomain -> empty() ||
-                ( computerName && ( *computerName == *userDomain ) )
-                )
-            {
-                BL_LOG(
-                    bl::Logging::debug(),
-                    BL_MSG()
-                        << "Federated login not possible for local users."
-                    );
+        if( ! userDomain || userDomain -> empty() )
+        {
+            return std::string();
+        }
 
-                return true;
-            }
+        const auto computerName = bl::os::tryGetEnvironmentVariable( "COMPUTERNAME" );
+
+        if( computerName && ( *computerName == *userDomain ) )
+        {
+            return std::string();
+        }
+
+        return *userDomain;
+    }
+
+    bool isLocalUserOnWindows()
+    {
+        if( expectedUserDomainFromEnvironment().empty() )
+        {
+            BL_LOG(
+                bl::Logging::debug(),
+                BL_MSG()
+                    << "Federated login not possible for local users."
+                );
+
+            return true;
         }
 
         return false;
@@ -6728,6 +9293,13 @@ UTF_AUTO_TEST_CASE( BaseLib_GetUserDomainTests )
     if( onWindows )
     {
         const auto domain = bl::os::tryGetUserDomain();
+
+        /*
+         * The expectation is computed independently from the environment, so this is a
+         * real oracle and not a comparison of the implementation against a copy of itself
+         */
+
+        UTF_REQUIRE_EQUAL( expectedUserDomainFromEnvironment(), domain );
 
         if( isLocalUserOnWindows() )
         {
@@ -6746,6 +9318,51 @@ UTF_AUTO_TEST_CASE( BaseLib_GetUserDomainTests )
             const auto domainCopy = bl::os::getUserDomain();
 
             UTF_REQUIRE_EQUAL( domain, domainCopy );
+        }
+
+        /*
+         * Now drive the two environment variables directly, so the fall-back path which
+         * must read USERDOMAIN (and not USERDNSDOMAIN again) is actually exercised
+         */
+
+        {
+            const auto dnsDomainSaved = bl::os::tryGetEnvironmentVariable( "USERDNSDOMAIN" );
+            const auto userDomainSaved = bl::os::tryGetEnvironmentVariable( "USERDOMAIN" );
+
+            BL_SCOPE_EXIT(
+                {
+                    if( dnsDomainSaved )
+                    {
+                        bl::os::setEnvironmentVariable( "USERDNSDOMAIN", *dnsDomainSaved );
+                    }
+                    else
+                    {
+                        bl::os::unsetEnvironmentVariable( "USERDNSDOMAIN" );
+                    }
+
+                    if( userDomainSaved )
+                    {
+                        bl::os::setEnvironmentVariable( "USERDOMAIN", *userDomainSaved );
+                    }
+                    else
+                    {
+                        bl::os::unsetEnvironmentVariable( "USERDOMAIN" );
+                    }
+                }
+                );
+
+            bl::os::unsetEnvironmentVariable( "USERDNSDOMAIN" );
+            bl::os::setEnvironmentVariable( "USERDOMAIN", "SENTINELDOMAIN" );
+
+            UTF_REQUIRE_EQUAL( std::string( "SENTINELDOMAIN" ), bl::os::tryGetUserDomain() );
+
+            /*
+             * With both variables unset the account is local and no domain is available
+             */
+
+            bl::os::unsetEnvironmentVariable( "USERDOMAIN" );
+
+            UTF_REQUIRE( bl::os::tryGetUserDomain().empty() );
         }
     }
     else
@@ -6907,6 +9524,144 @@ UTF_AUTO_TEST_CASE( BaseLib_RandomTests )
         Logging::debug(),
         message
         );
+
+    {
+        /*
+         * Guard bands around the requested region - the 13 byte fill above still passes
+         * if only the first byte is written, so these pin the exact extent of the fill
+         */
+
+        unsigned char buf[ 64 ];
+        std::memset( buf, 0xCC, sizeof( buf ) );
+
+        bl::random::getRandomBytes( buf + 8, 48 );
+
+        for( std::size_t i = 0U; i < 8U; ++i )
+        {
+            UTF_REQUIRE_EQUAL( ( unsigned int ) buf[ i ], 0xCCU );
+        }
+
+        for( std::size_t i = 56U; i < 64U; ++i )
+        {
+            UTF_REQUIRE_EQUAL( ( unsigned int ) buf[ i ], 0xCCU );
+        }
+    }
+
+    {
+        /*
+         * Every index of the requested region must really be written - accumulate the
+         * distinct values observed per index over 32 fills; a single index which is
+         * never written would hold the same zero on all 32 iterations
+         */
+
+        std::set< unsigned char > seen[ 48 ];
+
+        for( std::size_t iteration = 0U; iteration < 32U; ++iteration )
+        {
+            unsigned char probe[ 48 ];
+            std::memset( probe, 0, sizeof( probe ) );
+
+            bl::random::getRandomBytes( probe, sizeof( probe ) );
+
+            for( std::size_t i = 0U; i < BL_ARRAY_SIZE( probe ); ++i )
+            {
+                seen[ i ].insert( probe[ i ] );
+            }
+        }
+
+        for( std::size_t i = 0U; i < 48U; ++i )
+        {
+            UTF_REQUIRE( seen[ i ].size() >= 2U );
+        }
+    }
+
+    {
+        /*
+         * The bufferSize == 1 boundary
+         */
+
+        unsigned char one = 0xCC;
+
+        bool changed = false;
+
+        for( std::size_t i = 0U; i < 32U; ++i )
+        {
+            bl::random::getRandomBytes( &one, 1U );
+
+            if( 0xCC != one )
+            {
+                changed = true;
+            }
+        }
+
+        UTF_REQUIRE( changed );
+    }
+
+    {
+        /*
+         * maxValue == 0 is legal and must return 0 - the range is inclusive of maxValue
+         * and production relies on that in RotatingMessagingClientDispatchBaseT
+         */
+
+        for( std::size_t i = 0U; i < 32U; ++i )
+        {
+            UTF_REQUIRE_EQUAL( bl::random::getUniformRandomUnsignedValue< std::size_t >( 0U ), 0U );
+        }
+    }
+
+    {
+        /*
+         * A non power of two range, inclusive of its maximum
+         */
+
+        std::set< std::size_t > values;
+
+        for( std::size_t i = 0U; i < 2000U; ++i )
+        {
+            const auto value = bl::random::getUniformRandomUnsignedValue< std::size_t >( 6U );
+
+            UTF_REQUIRE( value <= 6U );
+
+            values.insert( value );
+        }
+
+        UTF_REQUIRE_EQUAL( values.size(), 7U );
+    }
+
+    {
+        /*
+         * A type wider than the underlying 32 bit engine - at least one draw must exceed
+         * the range of an std::uint32_t, which catches a truncating implementation such
+         * as a modulo of a single draw
+         */
+
+        bool wide = false;
+
+        for( std::size_t i = 0U; i < 200U; ++i )
+        {
+            const auto value = bl::random::getUniformRandomUnsignedValue< std::uint64_t >(
+                std::numeric_limits< std::uint64_t >::max()
+                );
+
+            if( value > std::numeric_limits< std::uint32_t >::max() )
+            {
+                wide = true;
+            }
+        }
+
+        UTF_REQUIRE( wide );
+    }
+
+    {
+        /*
+         * A type narrower than the engine
+         */
+
+        for( std::size_t i = 0U; i < 200U; ++i )
+        {
+            UTF_REQUIRE( bl::random::getUniformRandomUnsignedValue< std::uint16_t >( 3U ) <= 3U );
+        }
+    }
 }
 
 /************************************************************************
@@ -7073,6 +9828,53 @@ UTF_AUTO_TEST_CASE( BaseLib_SafeStringStreamTests )
 
         UTF_CHECK_EQUAL( "000", stream.str() );
     }
+
+    /*
+     * The exception masks below are the contract which uuids::string2uuid, str::toBool and
+     * DateTimeValidationUtils::getDateTime all rely on - the input stream must mask badbit
+     * only, so a failed extraction just sets failbit and these parsers can convert it into
+     * their own exception types instead of leaking std::ios_base::failure to their callers
+     */
+
+    {
+        bl::cpp::SafeInputStringStream is;
+        bl::cpp::SafeOutputStringStream os;
+        bl::cpp::SafeStringStream ss;
+
+        UTF_REQUIRE_EQUAL( is.exceptions(), std::ios_base::badbit );
+        UTF_REQUIRE_EQUAL( os.exceptions(), ( std::ios_base::failbit | std::ios_base::badbit ) );
+        UTF_REQUIRE_EQUAL( ss.exceptions(), std::ios_base::badbit );
+    }
+
+    {
+        /*
+         * ... and the input mask is not merely cosmetic - a failed extraction must set
+         * failbit without throwing
+         */
+
+        bl::cpp::SafeInputStringStream is( "not-a-number" );
+
+        int value = 0;
+
+        UTF_REQUIRE_NO_THROW( is >> value );
+        UTF_REQUIRE( is.fail() );
+    }
+
+    {
+        /*
+         * The mirror image for the output stream - failbit is masked there, so an operation
+         * which sets it does throw (the badbit case is already covered above)
+         */
+
+        bl::cpp::SafeOutputStringStream stream;
+
+        UTF_REQUIRE_EXCEPTION(
+            stream.setstate( std::ios_base::failbit ),
+            std::exception /* TODO: must be std::ios_base::failure - see comment above */,
+            utest::TestUtils::logExceptionDetails
+            );
+        UTF_CHECK( stream.rdstate() == std::ios_base::failbit );
+    }
 }
 
 /************************************************************************
@@ -7178,6 +9980,56 @@ UTF_AUTO_TEST_CASE( FsUtils_SafeFileStreamWrapperTests )
             }
             UTF_REQUIRE ( i == 2*N );
         }
+    }
+
+    /*
+     * flushAndCheck() must make the content visible to another reader while the writer
+     * is still open - the destructor deliberately discards flush and close errors, so
+     * this is the only way a caller can learn that the bytes really reached the file
+     *
+     * All the round trips above read the file back only after the writer was destroyed,
+     * so the implicit flush there would hide a missing flush in flushAndCheck()
+     */
+
+    {
+        const auto filePath = tmpPath / "flush-and-check.txt";
+
+        bl::fs::SafeOutputFileStreamWrapper outputFile( filePath );
+        outputFile.stream() << "flushed-content";
+
+        UTF_REQUIRE_NO_THROW( outputFile.flushAndCheck() );
+
+        bl::fs::SafeInputFileStreamWrapper inputFile( filePath );
+        auto& is = inputFile.stream();
+
+        std::string readBack;
+        std::getline( is, readBack );
+
+        UTF_REQUIRE_EQUAL( readBack, std::string( "flushed-content" ) );
+    }
+
+    /*
+     * A failed stream must be reported as an error instead of being discarded
+     *
+     * Note that the stream is created with exceptions( badbit | failbit ) set, so the
+     * mask has to be cleared first - otherwise flush() would throw std::ios_base::failure
+     * from its sentry before flushAndCheck() ever gets to its own check
+     */
+
+    {
+        const auto badPath = tmpPath / "flush-and-check-failure.txt";
+
+        bl::fs::SafeOutputFileStreamWrapper badFile( badPath );
+        auto& os = badFile.stream();
+
+        os.exceptions( std::ios::goodbit );
+        os.setstate( std::ios::failbit );
+
+        UTF_REQUIRE_THROW_MESSAGE(
+            badFile.flushAndCheck(),
+            bl::UnexpectedException,
+            "Failed to write the contents of a file"
+            );
     }
 }
 
@@ -7739,6 +10591,50 @@ UTF_AUTO_TEST_CASE( BaseLib_OSRegistryValueTest )
             bl::os::tryGetRegistryValue( keyName, "value-\xE9" /* not UTF-8 */, true /* currentUser */ ),
             bl::SystemException
             );
+
+        /*
+         * PINNED LIMIT - tryGetRegistryValue( ... ) reads into a fixed WCHAR buffer[ 1024 ]
+         * ( OSImplWindows.h:3585 ), so a REG_SZ longer than 1023 characters makes
+         * RegGetValueW return ERROR_MORE_DATA and the function throws rather than growing
+         * the buffer and retrying
+         *
+         * 1023 characters is therefore the documented maximum today. The value of pinning
+         * it is that a partial read - i.e. a silent truncation - would be a very different
+         * and much worse failure mode; if the buffer is ever made growable this is the
+         * single place which flips to an equality check against the written value
+         */
+
+        const std::string longValueName = "long-value";
+        const std::wstring wlongValueName = conv.from_bytes( longValueName );
+        const std::wstring wlongData( 2000U, L'x' );
+
+        UTF_REQUIRE_EQUAL(
+            ERROR_SUCCESS,
+            ::RegSetValueExW(
+                hkey                                                            /* hKey */,
+                wlongValueName.c_str()                                          /* lpValueName */,
+                0                                                               /* Reserved */,
+                REG_SZ                                                          /* dwType */,
+                reinterpret_cast< const BYTE* >( wlongData.c_str() )            /* lpData */,
+                static_cast< DWORD >( ( wlongData.size() + 1 ) * sizeof( wchar_t ) ) /* cbData */
+                )
+            );
+
+        UTF_REQUIRE_THROW(
+            bl::os::getRegistryValue( keyName, longValueName, true /* currentUser */ ),
+            bl::SystemException
+            );
+
+        /*
+         * The hive named by a failing diagnostic, and the handle lifetime on both failing
+         * paths, are covered by BaseLib_OSRegistryHiveDiagnosticsWindowsTests in
+         * TestBaselibDefault5.h
+         *
+         * Reaching the diagnostic under HKEY_LOCAL_MACHINE needs an open which fails with
+         * something other than ERROR_FILE_NOT_FOUND ( which is returned as nullptr rather
+         * than thrown ), and HKEY_LOCAL_MACHINE\SECURITY is readable by SYSTEM only, which
+         * makes it deterministic without administrator rights
+         */
     }
     #endif
 

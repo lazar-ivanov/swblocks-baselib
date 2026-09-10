@@ -543,9 +543,14 @@ namespace bl
 
                                 BL_CHK_BOOL_WINAPI( ::GetExitCodeProcess( m_processHandle, &ec ) );
 
+                                /*
+                                 * It is the exit code which carries STILL_ACTIVE, not the
+                                 * wait result - comparing rc made this check dead code
+                                 */
+
                                 BL_CHK(
                                     false,
-                                    STILL_ACTIVE != rc,
+                                    STILL_ACTIVE != ec,
                                     BL_MSG()
                                         << "Process is not expected to be active"
                                     );
@@ -612,14 +617,22 @@ namespace bl
                     return eh::error_code( errorCode, eh::system_category() );
                 }
 
+                /**
+                 * @brief Builds an exception for an API which RETURNS its error code
+                 *
+                 * ::GetLastError() is meaningless for those - the Reg*, Lsa* and
+                 * *SecurityInfo* families report through the return value and are not
+                 * documented to set the last error at all, so reading it yields whatever
+                 * unrelated call happened to set it last
+                 */
+
                 static SystemException createException(
+                    SAA_in          const int               errorCode,
                     SAA_in_opt      const std::string&      locationOrAPI,
                     SAA_in_opt      const std::string&      fileName = str::empty()
                     )
                 {
-                    const auto code = createSystemErrorCode( ( int )::GetLastError() );
-
-                    auto exception = SystemException::create( code, locationOrAPI );
+                    auto exception = SystemException::create( createSystemErrorCode( errorCode ), locationOrAPI );
 
                     if( ! fileName.empty() )
                     {
@@ -627,6 +640,14 @@ namespace bl
                     }
 
                     return exception;
+                }
+
+                static SystemException createException(
+                    SAA_in_opt      const std::string&      locationOrAPI,
+                    SAA_in_opt      const std::string&      fileName = str::empty()
+                    )
+                {
+                    return createException( ( int )::GetLastError(), locationOrAPI, fileName );
                 }
 
                 /**
@@ -687,6 +708,23 @@ namespace bl
                         );
 
                     return result;
+                }
+
+                /**
+                 * @brief Converts a counted LSA_UNICODE_STRING into a std::wstring
+                 *
+                 * Length is a count of bytes, not of characters, and Buffer is documented
+                 * as possibly NULL and not necessarily NUL-terminated
+                 */
+
+                static std::wstring lsaString2wstring( SAA_in const LSA_UNICODE_STRING& text )
+                {
+                    if( NULL == text.Buffer || 0U == text.Length )
+                    {
+                        return std::wstring();
+                    }
+
+                    return std::wstring( text.Buffer, text.Length / sizeof( WCHAR ) );
                 }
 
                 static ::errno_t putenvWrapper(
@@ -1392,7 +1430,14 @@ namespace bl
                              */
 
                             BL_ASSERT( outPipe.second.get() );
-                            BL_ASSERT( out );
+
+                            /*
+                             * What this branch needs is the merged pipe above; the ios
+                             * stream is only constructed when the ios callback was
+                             * supplied and the file callback is an equally legal choice
+                             */
+
+                            BL_ASSERT( ! callbackIos || out );
 
                             si.hStdError = outPipe.second.get();
                         }
@@ -1440,8 +1485,16 @@ namespace bl
                         si.dwFlags |= STARTF_USESTDHANDLES;
                     }
 
-                    std::vector< WCHAR > cmdline( commandLine.size() + 1, L'\0' );
-                    std::copy( commandLine.begin(), commandLine.end(), cmdline.begin() );
+                    /*
+                     * CreateProcessW may modify the command line in place, so the
+                     * converted text has to be copied into a writable NUL-terminated
+                     * buffer rather than handed over as the c_str() of a const string
+                     */
+
+                    const auto wcommandLine = utf8ToUtf16( commandLine );
+
+                    std::vector< WCHAR > cmdline( wcommandLine.size() + 1, L'\0' );
+                    std::copy( wcommandLine.begin(), wcommandLine.end(), cmdline.begin() );
 
                     auto processJobHandle = cpp::SafeUniquePtr< EncapsulatedProcessJobHandle >::attach(
                         new EncapsulatedProcessJobHandle( ! detachProcess /* terminateProcessOnDestruction */ )
@@ -1554,10 +1607,16 @@ namespace bl
 
                     processJobHandle -> setProcessHandle( pi.hProcess );
 
+                    /*
+                     * The thread handle is owned by the caller of CreateProcessW on every
+                     * path, not only on the assignNewJob one - a spawn which is already in
+                     * a job or detached leaked one thread handle per call
+                     */
+
+                    const auto thread = handle_ref::attach( reinterpret_cast< generic_handle_t >( pi.hThread ) );
+
                     if( assignNewJob )
                     {
-                        const auto thread = handle_ref::attach( reinterpret_cast< generic_handle_t >( pi.hThread ) );
-
                         if( ! ::AssignProcessToJobObject( processJobHandle -> getJobHandle(), processJobHandle -> getProcessHandle() ) )
                         {
                             const auto lastError = ::GetLastError();
@@ -1623,6 +1682,64 @@ namespace bl
                     return process.release();
                 }
 
+                /**
+                 * @brief Appends one argument to a command line per the CommandLineToArgvW rules
+                 *
+                 * An argument needs quoting when it is empty or contains a space, a tab, a
+                 * newline, a vertical tab or a '"'. Inside the quotes a backslash is only
+                 * special when it immediately precedes a '"' or the closing quote, so a run
+                 * of n backslashes is emitted as 2n + 1 before a literal '"', as 2n before
+                 * the closing quote and as n everywhere else
+                 */
+
+                static void appendQuotedArgument(
+                    SAA_inout       cpp::SafeOutputStringStream&                commandLine,
+                    SAA_in          const std::string&                          argument
+                    )
+                {
+                    if( ! argument.empty() && std::string::npos == argument.find_first_of( " \t\n\v\"" ) )
+                    {
+                        commandLine << argument;
+
+                        return;
+                    }
+
+                    commandLine << '"';
+
+                    for( auto pos = argument.cbegin(); ; ++pos )
+                    {
+                        std::size_t backslashes = 0U;
+
+                        while( pos != argument.cend() && '\\' == *pos )
+                        {
+                            ++pos;
+                            ++backslashes;
+                        }
+
+                        if( pos == argument.cend() )
+                        {
+                            /*
+                             * The run is followed by the closing quote we are about to emit
+                             */
+
+                            commandLine << std::string( 2U * backslashes, '\\' );
+
+                            break;
+                        }
+
+                        if( '"' == *pos )
+                        {
+                            commandLine << std::string( 2U * backslashes + 1U, '\\' ) << '"';
+                        }
+                        else
+                        {
+                            commandLine << std::string( backslashes, '\\' ) << *pos;
+                        }
+                    }
+
+                    commandLine << '"';
+                }
+
                 static process_handle_t createProcess(
                     SAA_in          const std::vector< std::string >&           commandArguments,
                     SAA_in_opt      const ProcessCreateFlags                    flags = ProcessCreateFlags::NoRedirect,
@@ -1633,24 +1750,14 @@ namespace bl
                     cpp::SafeOutputStringStream commandLine;
                     bool first = true;
 
-                    for( auto arg : commandArguments )
+                    for( const auto& arg : commandArguments )
                     {
                         if( ! first )
                         {
                             commandLine << ' ';
                         }
 
-                        if( cpp::contains( arg, ' ' ) )
-                        {
-                            str::replace_all( arg, "\\", "\\\\" );
-                            str::replace_all( arg, "\"", "\\\"" );
-
-                            commandLine << '"' << arg << '"';
-                        }
-                        else
-                        {
-                            commandLine << arg;
-                        }
+                        appendQuotedArgument( commandLine, arg );
 
                         first = false;
                     }
@@ -1678,6 +1785,37 @@ namespace bl
                     {
                         return static_cast< std::uint64_t >( ::GetCurrentProcessId() );
                     }
+                }
+
+                /*****************************************************
+                 * System resources information
+                 */
+
+                static std::uint64_t getPhysicalMemorySize()
+                {
+                    MEMORYSTATUSEX status;
+
+                    std::memset( &status, 0, sizeof( status ) );
+
+                    status.dwLength = sizeof( status );
+
+                    if( ! ::GlobalMemoryStatusEx( &status ) )
+                    {
+                        return 0U;
+                    }
+
+                    return static_cast< std::uint64_t >( status.ullTotalPhys );
+                }
+
+                static std::uint64_t getFileDescriptorSoftLimit()
+                {
+                    /*
+                     * There is no equivalent of the descriptor soft limit on Windows - the
+                     * handle count is bounded by the available kernel memory only, so zero
+                     * ('not applicable') is returned here
+                     */
+
+                    return 0U;
                 }
 
                 /*****************************************************
@@ -2044,12 +2182,18 @@ namespace bl
                             SECURITY_LOGON_TYPE::Interactive == dataPtr -> LogonType ||
                             SECURITY_LOGON_TYPE::RemoteInteractive == dataPtr -> LogonType;
 
+                        /*
+                         * An LSA_UNICODE_STRING is counted, not NUL-terminated, and its
+                         * Buffer may be NULL by contract - both have to be honoured here
+                         * rather than handing the raw pointer to a wide string comparison
+                         */
+
                         if (
                             isInteractiveLogon &&
-                            g_windowManagerDomain != dataPtr -> LogonDomain.Buffer
+                            g_windowManagerDomain != lsaString2wstring( dataPtr -> LogonDomain )
                             )
                         {
-                            names.emplace( conv.to_bytes( dataPtr -> UserName.Buffer ) );
+                            names.emplace( conv.to_bytes( lsaString2wstring( dataPtr -> UserName ) ) );
                         }
                     }
 
@@ -2361,16 +2505,29 @@ namespace bl
                     if( 0U == targetClean.find( g_lfnPrefix ) )
                     {
                         targetClean.erase( targetClean.begin(), targetClean.begin() + g_lfnPrefix.size() );
+                    }
 
-                        if( targetClean.back() != L'\\' )
-                        {
-                            /*
-                             * The substitute name must end in backslash, but we will
-                             * strip the backslash in the print name
-                             */
+                    /*
+                     * A junction target must be absolute - the reparse point stores the text
+                     * verbatim, so whoever follows the link resolves a relative target
+                     * against the volume root rather than against the caller's current
+                     * directory. The check is made after the long file name prefix has been
+                     * stripped so it applies to both spellings of the same path, and it also
+                     * rejects the empty path which the back() below cannot be asked about
+                     */
 
-                            targetClean += L"\\";
-                        }
+                    BL_CHK_ARG( fs::path( targetClean ).is_absolute(), to );
+
+                    if( targetClean.back() != L'\\' )
+                    {
+                        /*
+                         * The substitute name must end in backslash and the print name is
+                         * the same text without it, so the backslash is ensured for every
+                         * spelling of the path - ensuring it only for the prefixed one left
+                         * the print name of a plain absolute path one character short
+                         */
+
+                        targetClean += L"\\";
                     }
 
                     const DWORD substituteNameLengthInBytes =
@@ -2801,9 +2958,25 @@ namespace bl
 
                     typedef ipc::scoped_lock< RobustNamedMutex > Guard;
 
-                    RobustNamedMutex( SAA_in const std::string& name )
+                    /*
+                     * The permissions parameter exists for interface parity with the UNIX
+                     * implementation; a Windows named mutex uses the default security
+                     * descriptor of the process instead
+                     */
+
+                    static int defaultPermissions() NOEXCEPT
                     {
-                        std::wstring wname( name.begin(), name.end() );
+                        return 0;
+                    }
+
+                    RobustNamedMutex(
+                        SAA_in          const std::string&              name,
+                        SAA_in_opt      const int                       permissions = defaultPermissions()
+                        )
+                    {
+                        BL_UNUSED( permissions );
+
+                        const auto wname = utf8ToUtf16( name );
 
                         const auto rawHandle =
                             ::CreateMutexW( NULL /* security attributes */, FALSE /* take ownership */, wname.c_str() );
@@ -3094,7 +3267,7 @@ namespace bl
 
                     const auto computerName = tryGetEnvironmentVariable( "COMPUTERNAME" );
 
-                    const auto userDomain =  tryGetEnvironmentVariable( "USERDNSDOMAIN" );
+                    const auto userDomain =  tryGetEnvironmentVariable( "USERDOMAIN" );
 
                     if(
                         ! userDomain ||
@@ -3392,8 +3565,12 @@ namespace bl
                     auto pathPreferred = path;
                     pathPreferred.make_preferred();
 
-                    const auto name = pathPreferred.string();
-                    std::wstring wname( name.begin(), name.end() );
+                    /*
+                     * The native path is already wide - narrowing it to string() and
+                     * widening it back loses every non-ASCII character on the way
+                     */
+
+                    const auto& wname = pathPreferred.native();
 
                     DWORD rc =
                         ::GetNamedSecurityInfoW(
@@ -3527,13 +3704,13 @@ namespace bl
                     SAA_in_opt     const bool                               currentUser = false
                     )
                 {
-                    HKEY regKeyHandle;
+                    HKEY regKeyHandle = NULL;
                     WCHAR buffer[ 1024 ];
                     DWORD size = sizeof( buffer );
 
                     const auto locationCode = currentUser ? HKEY_CURRENT_USER : HKEY_LOCAL_MACHINE;
 
-                    const auto location = HKEY_CURRENT_USER ? "HKEY_CURRENT_USER" : "HKEY_LOCAL_MACHINE";
+                    const auto location = currentUser ? "HKEY_CURRENT_USER" : "HKEY_LOCAL_MACHINE";
 
                     const auto openKeyErrorCode =
                         RegOpenKeyExW(
@@ -3544,7 +3721,15 @@ namespace bl
                             &regKeyHandle                                     /* phkResult */
                             );
 
-                    const auto handlePtr = reg_key_handle_ptr_t::attach( regKeyHandle );
+                    /*
+                     * The handle is only valid when the open succeeded - on any failure
+                     * RegOpenKeyExW leaves it unspecified, so attaching it first would
+                     * hand an indeterminate handle to RegCloseKey( ) in the NOEXCEPT
+                     * deleter on the ordinary 'key not found' path
+                     */
+
+                    const auto handlePtr = ERROR_SUCCESS == openKeyErrorCode ?
+                        reg_key_handle_ptr_t::attach( regKeyHandle ) : reg_key_handle_ptr_t();
 
                     if( openKeyErrorCode == ERROR_FILE_NOT_FOUND )
                     {
@@ -3555,7 +3740,7 @@ namespace bl
                         BL_CHK_T_USER_FRIENDLY(
                             true,
                             openKeyErrorCode != ERROR_SUCCESS,
-                            createException( "RegOpenKeyExW" /* locationOrAPI */ ),
+                            createException( ( int ) openKeyErrorCode, "RegOpenKeyExW" /* locationOrAPI */ ),
                             BL_MSG()
                                 << "Cannot open registry key "
                                 << location
@@ -3584,7 +3769,7 @@ namespace bl
                         BL_CHK_T_USER_FRIENDLY(
                             true,
                             regValueErrorCode != ERROR_SUCCESS,
-                            createException( "RegGetValueW" /* locationOrAPI */ ),
+                            createException( ( int ) regValueErrorCode, "RegGetValueW" /* locationOrAPI */ ),
                             BL_MSG()
                                 << "Cannot open registry value "
                                 << location
@@ -3644,6 +3829,39 @@ namespace bl
                         ::CloseHandle( fileHandle );
                         return true;
                     }
+                }
+
+                /**
+                 * @brief Same as createNewFile( ... ) above, but the file is not shared while
+                 * it is being created
+                 *
+                 * Note that a Windows file inherits the ACL of its directory - restricting it
+                 * to the owner requires an explicit DACL, which is listed for a Windows host
+                 * in the residual findings handoff
+                 */
+
+                static bool createNewFilePrivate( SAA_in const fs::path& path )
+                {
+                    const auto pwzFileName = path.native().c_str();
+
+                    const auto fileHandle = ::CreateFileW(
+                            pwzFileName,
+                            FILE_WRITE_ATTRIBUTES,                                      /* dwDesiredAccess */
+                            0U                                                          /* dwShareMode - no sharing */,
+                            NULL,                                                       /* lpSecurityAttributes */
+                            CREATE_NEW                                                  /* dwCreationDisposition */,
+                            FILE_ATTRIBUTE_NORMAL,                                      /* dwFlagsAndAttributes */
+                            NULL                                                        /* hTemplateFile */
+                            );
+
+                    if( INVALID_HANDLE_VALUE == fileHandle )
+                    {
+                        return false;
+                    }
+
+                    ::CloseHandle( fileHandle );
+
+                    return true;
                 }
 
                 static bool isFileInUseError( SAA_in const eh::error_code& ec )

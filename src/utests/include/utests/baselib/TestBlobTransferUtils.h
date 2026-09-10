@@ -50,6 +50,7 @@
 #include <baselib/data/FilesystemMetadataInMemoryImpl.h>
 
 #include <baselib/core/Utils.h>
+#include <baselib/core/FileEncoding.h>
 #include <baselib/core/EndpointSelector.h>
 #include <baselib/core/EndpointSelectorImpl.h>
 #include <baselib/core/OS.h>
@@ -62,9 +63,13 @@
 #include <baselib/core/ObjModelDefs.h>
 #include <baselib/core/BaseIncludes.h>
 
+#include <atomic>
 #include <cstdlib>
 #include <cstdint>
+#include <deque>
+#include <memory>
 #include <unordered_map>
+#include <vector>
 
 #include <utests/baselib/MachineGlobalTestLock.h>
 #include <utests/baselib/TestTaskUtils.h>
@@ -170,6 +175,533 @@ namespace utest
     typedef bl::om::ObjectImpl< FilesystemMetadataStoreInMemory > FilesystemMetadataStoreInMemoryImpl;
 
     /**
+     * @brief class ChunksFilter - a pass-through unit which withholds the chunk with the
+     * requested index from its subscribers (fault injection for the unpackager tests)
+     */
+
+    template
+    <
+        typename E = void
+    >
+    class ChunksFilterT :
+        public bl::reactive::ObservableBase
+    {
+        BL_DECLARE_OBJECT_IMPL( ChunksFilterT )
+
+    protected:
+
+        typedef bl::reactive::ObservableBase                                                base_type;
+
+        const std::size_t                                                                   m_withheldChunkIndex;
+        std::size_t                                                                         m_chunksSeen;
+        std::deque< bl::cpp::any >                                                          m_pending;
+        bl::cpp::ScalarTypeIniter< bool >                                                   m_inputDisconnected;
+
+        ChunksFilterT( SAA_in const std::size_t withheldChunkIndex )
+            :
+            m_withheldChunkIndex( withheldChunkIndex ),
+            m_chunksSeen( 0U )
+        {
+            m_name = "success:Chunks_Filter";
+        }
+
+        virtual void tryStopObservable() OVERRIDE
+        {
+            /*
+             * Nothing to stop; the pending events are simply not forwarded
+             */
+        }
+
+        virtual bl::time::time_duration chk2LoopUntilFinished() OVERRIDE
+        {
+            using namespace bl;
+
+            base_type::chk2ThrowIfStopped();
+
+            while( ! m_pending.empty() )
+            {
+                if( ! base_type::notifyOnNext( cpp::any( m_pending.front() ) ) )
+                {
+                    /*
+                     * The subscriber queues are full; wait and retry
+                     */
+
+                    return time::milliseconds( 20 );
+                }
+
+                m_pending.pop_front();
+            }
+
+            if( m_inputDisconnected )
+            {
+                return time::neg_infin;
+            }
+
+            return time::milliseconds( 20 );
+        }
+
+    public:
+
+        bool onChunkArrived( SAA_in const bl::cpp::any& value )
+        {
+            BL_MUTEX_GUARD( m_lock );
+
+            base_type::chk2ThrowIfStopped();
+
+            const auto chunkIndex = m_chunksSeen++;
+
+            if( chunkIndex != m_withheldChunkIndex )
+            {
+                m_pending.push_back( value );
+            }
+
+            return true;
+        }
+
+        void onInputCompleted()
+        {
+            BL_MUTEX_GUARD( m_lock );
+
+            m_inputDisconnected = true;
+        }
+    };
+
+    typedef ChunksFilterT<> ChunksFilter;
+
+    /**
+     * @brief PipelineFaultCounters - observations made by the fault injection code; shared by all
+     * copies of the options object, so the test can assert on them after the pipeline has completed
+     */
+
+    struct PipelineFaultCounters
+    {
+        std::atomic< std::size_t >                                                          authentications;
+        std::atomic< std::size_t >                                                          savesForwarded;
+        std::atomic< std::size_t >                                                          loadsForwarded;
+        std::atomic< std::size_t >                                                          removesForwarded;
+        std::atomic< std::size_t >                                                          connectionDrops;
+        std::atomic< std::size_t >                                                          sessionFlushes;
+
+        PipelineFaultCounters()
+            :
+            authentications( 0U ),
+            savesForwarded( 0U ),
+            loadsForwarded( 0U ),
+            removesForwarded( 0U ),
+            connectionDrops( 0U ),
+            sessionFlushes( 0U )
+        {
+        }
+    };
+
+    /**
+     * @brief PipelineFaultOptions - fault injection settings for the transfer pipeline tests
+     */
+
+    struct PipelineFaultOptions
+    {
+        enum : std::size_t
+        {
+            NoWithheldChunk = std::size_t( -1 ),
+        };
+
+        /*
+         * Faults injected by the blob server side storage decorator; the drop faults close
+         * every client connection instead of serving the first call of the respective kind,
+         * so the client sees a dropped connection (retried) rather than a server error
+         */
+
+        enum class ServerFault
+        {
+            None,
+            DropConnectionOnFirstSave,
+            DropConnectionOnFirstLoad,
+            DropConnectionOnFirstRemove,
+            FailFirstSave,
+        };
+
+        /*
+         * The expected outcome of the upload; when it is not Success the download and the
+         * removal are skipped and the metadata object is expected to remain mutable
+         */
+
+        enum class UploadOutcome
+        {
+            Success,
+            ServerError,
+            ConnectionError,
+        };
+
+        /*
+         * When different than NoWithheldChunk the download pipeline withholds the chunk
+         * with this index from the unpackager and the download is expected to fail
+         */
+
+        std::size_t                                                                         withheldChunkIndex;
+
+        /*
+         * When not empty the blob server requires authentication with this token and the
+         * transfer context is configured to send it
+         */
+
+        std::string                                                                         authenticationToken;
+
+        /*
+         * When non zero the reactive units of the pipeline are configured with this throttle
+         * limit, so notifyOnNext() starts rejecting values and every unit has to re-offer the
+         * same value later instead of consuming it
+         *
+         * Zero leaves the default (ObservableBase::DEFAULT_THROTTLE_LIMIT), which the fixed
+         * input tree never reaches
+         */
+
+        std::size_t                                                                         subscriberThrottleLimit;
+
+        bool                                                                                disablePeerSessionsTracking;
+        bool                                                                                forcePeerSessionsTracking;
+        bool                                                                                singleFileInput;
+        UploadOutcome                                                                       expectedUploadOutcome;
+        ServerFault                                                                         serverFault;
+        std::shared_ptr< PipelineFaultCounters >                                            counters;
+
+        PipelineFaultOptions()
+            :
+            withheldChunkIndex( NoWithheldChunk ),
+            subscriberThrottleLimit( 0U ),
+            disablePeerSessionsTracking( false ),
+            forcePeerSessionsTracking( false ),
+            singleFileInput( false ),
+            expectedUploadOutcome( UploadOutcome::Success ),
+            serverFault( ServerFault::None ),
+            counters( std::make_shared< PipelineFaultCounters >() )
+        {
+        }
+
+        bool isServerFaultInjectionRequested() const NOEXCEPT
+        {
+            return ! authenticationToken.empty() || ServerFault::None != serverFault;
+        }
+
+        static bool isConnectionDrop( SAA_in const ServerFault fault ) NOEXCEPT
+        {
+            return
+                ServerFault::DropConnectionOnFirstSave == fault ||
+                ServerFault::DropConnectionOnFirstLoad == fault ||
+                ServerFault::DropConnectionOnFirstRemove == fault;
+        }
+    };
+
+    /**
+     * @brief class FaultInjectingDataChunkStorage - a data chunk storage decorator which injects
+     * the configured server fault once and forwards everything else to the wrapped storage
+     */
+
+    template
+    <
+        typename E = void
+    >
+    class FaultInjectingDataChunkStorageT : public bl::data::DataChunkStorage
+    {
+        BL_DECLARE_OBJECT_IMPL_ONEIFACE_DISPOSABLE( FaultInjectingDataChunkStorageT, bl::data::DataChunkStorage )
+
+    protected:
+
+        typedef PipelineFaultOptions::ServerFault                                           ServerFault;
+
+        const bl::om::ObjPtr< bl::data::DataChunkStorage >                                  m_storage;
+        const PipelineFaultOptions                                                          m_options;
+        bl::cpp::void_callback_t                                                            m_dropCallback;
+        bl::os::mutex                                                                       m_lock;
+        bl::cpp::ScalarTypeIniter< bool >                                                   m_faultInjected;
+
+        FaultInjectingDataChunkStorageT(
+            SAA_in              const bl::om::ObjPtr< bl::data::DataChunkStorage >&        storage,
+            SAA_in              const PipelineFaultOptions&                                 options
+            )
+            :
+            m_storage( bl::om::copy( storage ) ),
+            m_options( options )
+        {
+        }
+
+        /*
+         * Returns true if the current call must be skipped (the fault was injected now)
+         */
+
+        bool chk2InjectFault( SAA_in const ServerFault fault )
+        {
+            BL_MUTEX_GUARD( m_lock );
+
+            if( m_faultInjected || fault != m_options.serverFault )
+            {
+                return false;
+            }
+
+            m_faultInjected = true;
+
+            if( PipelineFaultOptions::isConnectionDrop( fault ) && m_dropCallback )
+            {
+                m_dropCallback();
+
+                ++m_options.counters -> connectionDrops;
+            }
+
+            return true;
+        }
+
+    public:
+
+        void dropCallback( SAA_in bl::cpp::void_callback_t&& callback )
+        {
+            BL_MUTEX_GUARD( m_lock );
+
+            m_dropCallback = std::move( callback );
+        }
+
+        virtual void dispose() NOEXCEPT OVERRIDE
+        {
+            /*
+             * The wrapped storage is owned and disposed by the caller
+             */
+        }
+
+        virtual void load(
+            SAA_in                  const bl::uuid_t&                                       sessionId,
+            SAA_in                  const bl::uuid_t&                                       chunkId,
+            SAA_in                  const bl::om::ObjPtr< bl::data::DataBlock >&            data
+            ) OVERRIDE
+        {
+            if( chk2InjectFault( ServerFault::DropConnectionOnFirstLoad ) )
+            {
+                return;
+            }
+
+            m_storage -> load( sessionId, chunkId, data );
+
+            ++m_options.counters -> loadsForwarded;
+        }
+
+        virtual void save(
+            SAA_in                  const bl::uuid_t&                                       sessionId,
+            SAA_in                  const bl::uuid_t&                                       chunkId,
+            SAA_in                  const bl::om::ObjPtr< bl::data::DataBlock >&            data
+            ) OVERRIDE
+        {
+            if( chk2InjectFault( ServerFault::DropConnectionOnFirstSave ) )
+            {
+                return;
+            }
+
+            if( chk2InjectFault( ServerFault::FailFirstSave ) )
+            {
+                /*
+                 * A ServerErrorException is reported to the client as a server error (which
+                 * the client does not retry); any other exception is fatal for the server
+                 */
+
+                BL_THROW(
+                    bl::ServerErrorException()
+                        << bl::eh::errinfo_error_code( bl::eh::errc::make_error_code( bl::eh::errc::io_error ) )
+                        << bl::eh::errinfo_error_uuid( chunkId ),
+                    BL_MSG()
+                        << "Injected save failure for chunk "
+                        << chunkId
+                    );
+            }
+
+            m_storage -> save( sessionId, chunkId, data );
+
+            ++m_options.counters -> savesForwarded;
+        }
+
+        virtual void remove(
+            SAA_in                  const bl::uuid_t&                                       sessionId,
+            SAA_in                  const bl::uuid_t&                                       chunkId
+            ) OVERRIDE
+        {
+            if( chk2InjectFault( ServerFault::DropConnectionOnFirstRemove ) )
+            {
+                return;
+            }
+
+            m_storage -> remove( sessionId, chunkId );
+
+            ++m_options.counters -> removesForwarded;
+        }
+
+        virtual void flushPeerSessions( SAA_in const bl::uuid_t& peerId ) OVERRIDE
+        {
+            m_storage -> flushPeerSessions( peerId );
+
+            ++m_options.counters -> sessionFlushes;
+        }
+    };
+
+    typedef bl::om::ObjectImpl< FaultInjectingDataChunkStorageT<> > FaultInjectingDataChunkStorage;
+
+    /**
+     * @brief class FailingCacheStorage - a data chunk storage double whose every write fails
+     *
+     * It exists to test the proxy chunk storage's read through cache population path: a cache
+     * write failure must reach the caller instead of being logged and swallowed
+     *
+     * load() throws 'the chunk does not exist' rather than returning silently, so a cache hit
+     * can never be faked and the population block is always reached
+     */
+
+    template
+    <
+        typename E = void
+    >
+    class FailingCacheStorageT : public bl::data::DataChunkStorage
+    {
+        BL_CTR_DEFAULT( FailingCacheStorageT, protected )
+        BL_DECLARE_OBJECT_IMPL_ONEIFACE_DISPOSABLE( FailingCacheStorageT, bl::data::DataChunkStorage )
+
+    public:
+
+        virtual void dispose() NOEXCEPT OVERRIDE
+        {
+        }
+
+        virtual void load(
+            SAA_in                  const bl::uuid_t&                                       sessionId,
+            SAA_in                  const bl::uuid_t&                                       chunkId,
+            SAA_in                  const bl::om::ObjPtr< bl::data::DataBlock >&            data
+            ) OVERRIDE
+        {
+            BL_UNUSED( sessionId );
+            BL_UNUSED( data );
+
+            BL_THROW(
+                bl::ServerErrorException()
+                    << bl::eh::errinfo_error_code(
+                        bl::eh::errc::make_error_code( bl::eh::errc::no_such_file_or_directory )
+                        )
+                    << bl::eh::errinfo_error_uuid( chunkId ),
+                BL_MSG()
+                    << "Chunk with id "
+                    << chunkId
+                    << " does not exist"
+                );
+        }
+
+        virtual void save(
+            SAA_in                  const bl::uuid_t&                                       sessionId,
+            SAA_in                  const bl::uuid_t&                                       chunkId,
+            SAA_in                  const bl::om::ObjPtr< bl::data::DataBlock >&            data
+            ) OVERRIDE
+        {
+            BL_UNUSED( sessionId );
+            BL_UNUSED( chunkId );
+            BL_UNUSED( data );
+
+            BL_THROW_EC(
+                bl::eh::errc::make_error_code( bl::eh::errc::no_space_on_device ),
+                BL_MSG()
+                    << "Simulated cache write failure"
+                );
+        }
+
+        virtual void remove(
+            SAA_in                  const bl::uuid_t&                                       sessionId,
+            SAA_in                  const bl::uuid_t&                                       chunkId
+            ) OVERRIDE
+        {
+            BL_UNUSED( sessionId );
+            BL_UNUSED( chunkId );
+        }
+
+        virtual void flushPeerSessions( SAA_in const bl::uuid_t& peerId ) OVERRIDE
+        {
+            BL_UNUSED( peerId );
+        }
+    };
+
+    typedef bl::om::ObjectImpl< FailingCacheStorageT<> > FailingCacheStorageImpl;
+
+    /**
+     * @brief class FaultInjectingBlobServer - the blob server acceptor which remembers its
+     * connection tasks, so a test can drop every client connection on demand
+     */
+
+    template
+    <
+        typename E = void
+    >
+    class FaultInjectingBlobServerT :
+        public bl::tasks::TcpBlockServerT< bl::tasks::TcpSocketAsyncBase, bl::AsyncDataChunkStorage >
+    {
+        BL_DECLARE_OBJECT_IMPL( FaultInjectingBlobServerT )
+
+    public:
+
+        typedef bl::tasks::TcpBlockServerT< bl::tasks::TcpSocketAsyncBase, bl::AsyncDataChunkStorage > base_type;
+        typedef typename base_type::isauthenticationrequired_callback_t                     isauthenticationrequired_callback_t;
+
+    protected:
+
+        bl::os::mutex                                                                       m_connectionsLock;
+        std::vector< bl::om::ObjPtr< bl::tasks::Task > >                                    m_connections;
+
+        FaultInjectingBlobServerT(
+            SAA_in              const bl::om::ObjPtr< bl::tasks::TaskControlTokenRW >&     controlToken,
+            SAA_in              const bl::om::ObjPtr< bl::data::datablocks_pool_type >&    dataBlocksPool,
+            SAA_in              std::string&&                                               host,
+            SAA_in              const unsigned short                                        port,
+            SAA_in              const bl::om::ObjPtr< bl::AsyncDataChunkStorage >&          storage,
+            SAA_in              isauthenticationrequired_callback_t&&                       isAuthenticationRequiredCallback
+            )
+            :
+            base_type(
+                controlToken,
+                dataBlocksPool,
+                BL_PARAM_FWD( host ),
+                port,
+                bl::str::empty()                                /* privateKeyPem */,
+                bl::str::empty()                                /* certificatePem */,
+                storage,
+                bl::uuids::nil()                                /* peerId */,
+                BL_PARAM_FWD( isAuthenticationRequiredCallback )
+                )
+        {
+        }
+
+        virtual bl::om::ObjPtr< bl::tasks::Task > createConnection(
+            SAA_inout           bl::tasks::TcpSocketAsyncBase::stream_ref&&                 connectedStream
+            ) OVERRIDE
+        {
+            auto connection = base_type::createConnection( BL_PARAM_FWD( connectedStream ) );
+
+            BL_MUTEX_GUARD( m_connectionsLock );
+
+            m_connections.push_back( bl::om::copy( connection ) );
+
+            return connection;
+        }
+
+    public:
+
+        void dropAllConnections()
+        {
+            std::vector< bl::om::ObjPtr< bl::tasks::Task > > connections;
+
+            {
+                BL_MUTEX_GUARD( m_connectionsLock );
+
+                connections.swap( m_connections );
+            }
+
+            for( const auto& connection : connections )
+            {
+                connection -> requestCancel();
+            }
+        }
+    };
+
+    typedef bl::om::ObjectImpl< FaultInjectingBlobServerT<> > FaultInjectingBlobServer;
+
+    /**
      * @brief class TestBlobTransferUtils - shared test code for the blob transfer code testing
      */
 
@@ -191,7 +723,35 @@ namespace utest
             CancelRemove,
         };
 
+        typedef utest::PipelineFaultOptions                                                     PipelineFaultOptions;
+
         typedef bl::data::DataChunkStorage                                                      DataChunkStorage;
+
+        /*
+         * The reactive processing unit wrapper of the unpackager
+         *
+         * The feed callback below receives the wrapper rather than the unit itself because
+         * bindInputConnector() is a member of the wrapper, and chunks must be pushed through
+         * an input connector rather than by calling onChunkArrived() directly
+         */
+
+        typedef bl::om::ObjectImpl
+        <
+            bl::reactive::ProcessingUnit< bl::transfer::FilesUnpackagerUnit, bl::reactive::Observable >,
+            true /* enableSharedPtr */
+        >
+        unpackager_unit_t;
+
+        /*
+         * The callback which feeds chunks into a standalone unpackager unit - see
+         * runStandaloneUnpackager( ... ) below
+         */
+
+        typedef bl::cpp::function
+        <
+            void ( SAA_inout unpackager_unit_t& unit )
+        >
+        unpackager_feed_callback_t;
 
     protected:
 
@@ -225,7 +785,10 @@ namespace utest
             SAA_in_opt          const unsigned short                                            port = test::UtfArgsParser::PORT_DEFAULT,
             SAA_in_opt          const CancelType                                                cancelType = CancelType::NoCancel,
             SAA_in_opt          const bl::cpp::void_callback_t&                                 cancelCallback = bl::cpp::void_callback_t(),
-            SAA_in_opt          const bl::om::ObjPtr< bl::tasks::ExecutionQueue >&              executionQueue = nullptr
+            SAA_in_opt          const bl::om::ObjPtr< bl::tasks::ExecutionQueue >&              executionQueue = nullptr,
+            SAA_in_opt          const PipelineFaultOptions&                                     faultOptions = PipelineFaultOptions(),
+            SAA_in_opt          const bool                                                      expectNotFoundAfterDelete = true,
+            SAA_inout_opt       bl::fs::path*                                                   abortedStagingDirOut = nullptr
             )
         {
             using namespace bl;
@@ -240,15 +803,26 @@ namespace utest
             cpp::SafeUniquePtr< TmpDir > tmpDir;
             fs::path root = test::UtfArgsParser::path();
 
-            if( root.empty() )
+            if( root.empty() || faultOptions.singleFileInput )
             {
                 /*
                  * Use system generated temporary directory if parameter is not provided
+                 *
+                 * The fault injection tests always use a generated input with a single small
+                 * file, so the transfer consists of exactly one chunk
                  */
                 tmpDir = cpp::SafeUniquePtr< TmpDir >::attach( new TmpDir );
                 root = tmpDir -> path();
-                TestFsUtils dummyCreator;
-                dummyCreator.createDummyTestDir( root );
+
+                if( faultOptions.singleFileInput )
+                {
+                    encoding::writeTextFile( root / "single-chunk-file.txt", std::string( 1024U, 'x' ) );
+                }
+                else
+                {
+                    TestFsUtils dummyCreator;
+                    dummyCreator.createDummyTestDir( root );
+                }
             }
 
             BL_LOG_MULTILINE(
@@ -280,7 +854,16 @@ namespace utest
                 context = bl::transfer::SendRecvContext::createInstance(
                     SimpleEndpointSelectorImpl::createInstance< EndpointSelector >( cpp::copy( host ), port )
                     );
+
+                if( ! faultOptions.authenticationToken.empty() )
+                {
+                    context -> setAuthenticationToken( cpp::copy( faultOptions.authenticationToken ) );
+                }
             }
+
+            const bool enableSessions =
+                ( test::UtfArgsParser::isEnableSessions() || faultOptions.forcePeerSessionsTracking ) &&
+                ! faultOptions.disablePeerSessionsTracking;
 
             {
                 BL_LOG_MULTILINE(
@@ -347,7 +930,7 @@ namespace utest
                                     test::UtfArgsParser::connections()
                                     );
 
-                        if( test::UtfArgsParser::isEnableSessions() )
+                        if( enableSessions )
                         {
                             unitChunksTransmitter -> enablePeerSessionsTracking();
                         }
@@ -365,6 +948,18 @@ namespace utest
 
                         unitChunksTransmitter -> allowNoSubscribers( true );
 
+                        if( faultOptions.subscriberThrottleLimit )
+                        {
+                            /*
+                             * Force the 'subscriber is full, re-offer the same value later'
+                             * contract of every unit which publishes here
+                             */
+
+                            scanner -> setThrottleLimit( faultOptions.subscriberThrottleLimit );
+                            unitPackager -> setThrottleLimit( faultOptions.subscriberThrottleLimit );
+                            unitChunksTransmitter -> setThrottleLimit( faultOptions.subscriberThrottleLimit );
+                        }
+
                         /*
                          * Start the reactive units in the correct order and wait
                          * for completion
@@ -379,14 +974,76 @@ namespace utest
                             cancelCallback();
                         }
 
+                        if( PipelineFaultOptions::UploadOutcome::Success != faultOptions.expectedUploadOutcome )
+                        {
+                            /*
+                             * The injected fault fails the upload with the expected error: a
+                             * server error is never retried, and a dropped connection is not
+                             * retried when the peer sessions tracking is enabled. In both cases
+                             * the metadata must remain mutable, so the caller could retry with
+                             * the same object
+                             */
+
+                            if( PipelineFaultOptions::UploadOutcome::ServerError == faultOptions.expectedUploadOutcome )
+                            {
+                                UTF_REQUIRE_THROW( executeQueueAndCancelOnFailure( eq ), ServerErrorException );
+                            }
+                            else
+                            {
+                                UTF_REQUIRE_THROW( executeQueueAndCancelOnFailure( eq ), eh::system_error );
+                            }
+
+                            UTF_REQUIRE( ! fsmd -> isFinalized() );
+
+                            return;
+                        }
+
                         executeQueueAndCancelOnFailure( eq );
 
                         BL_ASSERT( fsmd -> isFinalized() );
+
+                        {
+                            /*
+                             * Verify that the transfer really exercises the multi-chunk code paths
+                             * of the packager, the transmitter, the receiver and the unpackager
+                             *
+                             * The generated input tree contains a file which is larger than one
+                             * data block as well as a zero size file, so a future change of the
+                             * default data block capacity cannot silently turn the whole suite
+                             * back into a single chunk transfer
+                             */
+
+                            const auto fsmdRO = om::qi< FilesystemMetadataRO >( fsmd );
+
+                            std::size_t maxChunksPerEntry = 0U;
+                            std::size_t minChunksPerEntry = std::numeric_limits< std::size_t >::max();
+
+                            const auto entries = fsmdRO -> queryAllEntries();
+
+                            for( ; entries -> hasCurrent(); entries -> loadNext() )
+                            {
+                                const auto chunksCount = fsmdRO -> queryChunksCount( entries -> current() );
+
+                                maxChunksPerEntry = std::max( maxChunksPerEntry, chunksCount );
+                                minChunksPerEntry = std::min( minChunksPerEntry, chunksCount );
+                            }
+
+                            if( test::UtfArgsParser::path().empty() && ! faultOptions.singleFileInput )
+                            {
+                                UTF_REQUIRE( maxChunksPerEntry > 1U );
+                                UTF_REQUIRE( minChunksPerEntry == 0U );
+                            }
+                        }
 
                         artifactId = metadataStore -> saveArtifact( fsmd );
                     },
                     executionQueue
                     );
+
+                if( PipelineFaultOptions::UploadOutcome::Success != faultOptions.expectedUploadOutcome )
+                {
+                    return;
+                }
 
                 const auto duration = time::microsec_clock::universal_time() - t1;
 
@@ -428,6 +1085,15 @@ namespace utest
                         << downloadId
                     );
 
+                /*
+                 * The withheld chunk fault applies to the regular downloads only, not to the
+                 * download which is expected to fail after the chunks have been deleted
+                 */
+
+                const bool withholdChunk =
+                    PipelineFaultOptions::NoWithheldChunk != faultOptions.withheldChunkIndex &&
+                    downloadId < noOfDownloads;
+
                 fs::safeRemoveAllIfExists( outputPath );
 
                 const auto t1 = time::microsec_clock::universal_time();
@@ -464,6 +1130,12 @@ namespace utest
                                 true /* enableSharedPtr */
                             > unit_blocks_receiver_t;
 
+                        typedef om::ObjectImpl
+                            <
+                                ProcessingUnit< ChunksFilter, Observable >,
+                                true /* enableSharedPtr */
+                            > unit_chunks_filter_t;
+
                         const auto unitChunksReceiver =
                                 unit_receiver_t::createInstance(
                                     selector,
@@ -472,9 +1144,14 @@ namespace utest
                                     test::UtfArgsParser::connections()
                                     );
 
-                        if( test::UtfArgsParser::isEnableSessions() )
+                        if( enableSessions )
                         {
                             unitChunksReceiver -> enablePeerSessionsTracking();
+                        }
+
+                        if( faultOptions.subscriberThrottleLimit )
+                        {
+                            unitChunksReceiver -> setThrottleLimit( faultOptions.subscriberThrottleLimit );
                         }
 
                         if( verifyOnly )
@@ -517,12 +1194,46 @@ namespace utest
 
                             try
                             {
-                                unitChunksReceiver -> subscribe(
+                                const auto unpackagerInput =
                                     unitUnpackager -> bindInputConnector< unit_unpackager_t >(
                                         &unit_unpackager_t::onChunkArrived,
                                         &unit_unpackager_t::onInputCompleted
-                                        )
-                                    );
+                                        );
+
+                                if( withholdChunk )
+                                {
+                                    /*
+                                     * Interpose a filter which withholds one chunk, so the unpackager
+                                     * ends up with an incomplete entry once the input has completed
+                                     *
+                                     * The unpackager must fail (and discard its staging directory)
+                                     * instead of reporting success with a partial tree
+                                     */
+
+                                    const auto unitChunksFilter =
+                                        unit_chunks_filter_t::createInstance( faultOptions.withheldChunkIndex );
+
+                                    unitChunksFilter -> subscribe( unpackagerInput );
+
+                                    unitChunksReceiver -> subscribe(
+                                        unitChunksFilter -> template bindInputConnector< unit_chunks_filter_t >(
+                                            &unit_chunks_filter_t::onChunkArrived,
+                                            &unit_chunks_filter_t::onInputCompleted
+                                            )
+                                        );
+
+                                    eq -> push_back( om::qi< Task >( unitUnpackager ) );
+                                    eq -> push_back( om::qi< Task >( unitChunksFilter ) );
+                                    eq -> push_back( om::qi< Task >( unitChunksReceiver ) );
+
+                                    UTF_REQUIRE_THROW( executeQueueAndCancelOnFailure( eq ), UnexpectedException );
+
+                                    UTF_REQUIRE( unitUnpackager -> targetTmpDir().empty() );
+
+                                    return;
+                                }
+
+                                unitChunksReceiver -> subscribe( unpackagerInput );
 
                                 /*
                                  * Start the units in the right order and wait for completion
@@ -547,6 +1258,17 @@ namespace utest
                             {
                                 const auto& tmpDir = unitUnpackager -> targetTmpDir();
 
+                                if( abortedStagingDirOut )
+                                {
+                                    /*
+                                     * Record what the unit still owns at this point, so the caller
+                                     * can verify that nothing was left behind once the download
+                                     * has been aborted
+                                     */
+
+                                    *abortedStagingDirOut = tmpDir;
+                                }
+
                                 if( false == tmpDir.empty() && fs::exists( tmpDir ) )
                                 {
                                     /*
@@ -564,6 +1286,15 @@ namespace utest
                     },
                     executionQueue
                     );
+
+                if( withholdChunk )
+                {
+                    /*
+                     * The download was expected to fail; there is nothing to compare
+                     */
+
+                    return;
+                }
 
                 const auto duration = time::microsec_clock::universal_time() - t1;
 
@@ -592,7 +1323,25 @@ namespace utest
                         << isSameDir
                     );
 
-                BL_RT_ASSERT( isSameDir, "Files downloaded do not match the files uploaded" );
+                UTF_REQUIRE( isSameDir );
+
+                if( test::UtfArgsParser::path().empty() && ! faultOptions.singleFileInput )
+                {
+                    /*
+                     * A direct byte level check of the file which is transferred as multiple
+                     * chunks; it verifies that every chunk has landed at the correct offset
+                     * and in the correct order
+                     */
+
+                    UTF_REQUIRE(
+                        TestFsUtils::compareFileContents(
+                            root / "foo" / "bar" / "multiChunkFile.bin",
+                            fs::path( outputPath ) / "foo" / "bar" / "multiChunkFile.bin",
+                            true /* ignoreTimestamp */,
+                            true /* ignoreName */
+                            )
+                        );
+                }
             };
 
             for( std::size_t downloadId = 0U; downloadId < noOfDownloads; ++downloadId )
@@ -642,9 +1391,14 @@ namespace utest
                                     test::UtfArgsParser::connections()
                                     );
 
-                        if( test::UtfArgsParser::isEnableSessions() )
+                        if( enableSessions )
                         {
                             unitChunksDeleter -> enablePeerSessionsTracking();
+                        }
+
+                        if( faultOptions.subscriberThrottleLimit )
+                        {
+                            unitChunksDeleter -> setThrottleLimit( faultOptions.subscriberThrottleLimit );
                         }
 
                         const auto unitBlocksReceiver =
@@ -688,27 +1442,39 @@ namespace utest
                     );
             }
 
-            try
-            {
-                cbDownloadTest( noOfDownloads );
-            }
-            catch( ServerErrorException& e )
-            {
-                /*
-                 * Since we deleted the chunks we now expect ServerErrorException exception on the client
-                 * with error code attached to it matching eh::errc::no_such_file_or_directory condition
-                 */
+            /*
+             * Since we deleted the chunks we now expect a ServerErrorException on the client
+             * with an error code attached to it matching the eh::errc::no_such_file_or_directory
+             * condition, and with the same value carried as the errno
+             *
+             * Note that the download must be driven exactly once, so the two halves are asserted
+             * by a single predicate built from the same tools UTF_REQUIRE_THROW_ERROR_CODE and
+             * UTF_REQUIRE_THROW_ERRNO use; unlike the try / catch this replaces, it also fails
+             * when no exception is thrown at all
+             *
+             * The exception is a topology with a caching blob server proxy in the path: the
+             * proxy's RemoveChunk deliberately does not invalidate its local chunk cache (see
+             * ProxyDataChunkStorageImpl::executeCommand), so the download after the deletion is
+             * legitimately served from that cache and must still succeed
+             */
 
+            if( expectNotFoundAfterDelete )
+            {
                 const auto expectedEC = eh::errc::make_error_code( eh::errc::no_such_file_or_directory );
 
-                const eh::error_code* ec = e.errorCode();
-                const int* errNo = e.errNo();
-
-                UTF_REQUIRE( ec );
-                UTF_REQUIRE( errNo );
-
-                UTF_REQUIRE_EQUAL( *ec, expectedEC );
-                UTF_REQUIRE_EQUAL( *errNo, expectedEC.value() );
+                UTF_REQUIRE_EXCEPTION(
+                    cbDownloadTest( noOfDownloads ),
+                    ServerErrorException,
+                    [ &expectedEC ]( const ServerErrorException& ex ) -> bool
+                    {
+                        return test::UtfExceptionTools::matchErrorCode( ex, expectedEC ) &&
+                            test::UtfExceptionTools::matchErrNo( ex, expectedEC.value() );
+                    }
+                    );
+            }
+            else
+            {
+                UTF_REQUIRE_NO_THROW( cbDownloadTest( noOfDownloads ) );
             }
         }
 
@@ -725,6 +1491,25 @@ namespace utest
             using namespace bl::tasks;
 
             UTF_REQUIRE( CancelType::NoCancel != cancelType );
+
+            /*
+             * The staging directory the unpackager still owned when an aborted download
+             * unwound; it is only recorded for the download cancellations
+             */
+
+            fs::path abortedStagingDir;
+
+            /*
+             * The initial delay of the cancelling timer grows quadratically with the iteration
+             * number (0, 40, 160, 360, 640, 1000, 1440, 1960 ms), so one ladder covers phases
+             * whose durations differ by an order of magnitude: the deleter phase completes in
+             * about 200 ms while the upload and the download phases take about a second each
+             *
+             * A cancel which lands after its phase has already completed is a no-op, so the
+             * first iterations are what keeps the assertion below from becoming vacuous on the
+             * short phase, and the later ones sample progressively later points of the long
+             * ones
+             */
 
             const auto executeOnce = [ & ]( SAA_in const std::size_t iterationNo ) -> void
             {
@@ -753,12 +1538,15 @@ namespace utest
                                                 return true;
                                             },
                                             time::milliseconds( coinToss ? 100U : 500U ) /* duration */,
-                                            time::milliseconds( iterationNo * 1000 ) /* initDelay */
+                                            time::milliseconds( iterationNo * iterationNo * 40 ) /* initDelay */
                                             );
 
                                         eqLocal -> push_back( om::qi< Task >( timerTaskImpl ) );
                                     },
-                                    eqTopLevel
+                                    eqTopLevel,
+                                    PipelineFaultOptions()          /* faultOptions */,
+                                    true                            /* expectNotFoundAfterDelete */,
+                                    &abortedStagingDir
                                     );
 
                                 eqLocal -> forceFlushNoThrow();
@@ -768,7 +1556,15 @@ namespace utest
                     );
             };
 
-            const std::size_t retryCount = 5;
+            const std::size_t retryCount = 8;
+
+            /*
+             * The number of iterations in which the cancel actually landed while the pipeline
+             * was still running; without it the whole case can pass with no assertion executed
+             * at all when every cancel arrives after the pipeline has already completed
+             */
+
+            std::size_t observedCancellations = 0U;
 
             for( std::size_t i = 0U; i < retryCount; ++i )
             {
@@ -786,7 +1582,89 @@ namespace utest
                         );
 
                     UTF_REQUIRE_EQUAL( e.code(), bl::asio::error::operation_aborted );
+
+                    ++observedCancellations;
                 }
+                catch( bl::UnexpectedException& e )
+                {
+                    /*
+                     * A cancel which lands in the middle of a transfer stops the chunks
+                     * receiver, and a stopped observable notifies its subscribers with
+                     * onCompleted (see ObservableBase::run()), so the unpackager's input is
+                     * disconnected while its tree is still incomplete
+                     *
+                     * Whether the unit sees its own stop request by then is a race: the stop
+                     * is recorded by ObservableBase::requestCancel() under the very task lock
+                     * which FilesUnpackagerUnit::flushAllPendingTasks() holds while it runs,
+                     * so a cancel which is still in flight cannot be observed there and the
+                     * unit reports the incomplete content instead of the cancellation. The
+                     * unit cannot do better - the reactive base deliberately keeps the task
+                     * level cancel state private to it, and a completed input carries no
+                     * indication that it was aborted rather than finished
+                     *
+                     * Both are legitimate reports of an interrupted transfer - the unit fails
+                     * and discards its staging directory either way - so the incomplete
+                     * content report is accepted here explicitly instead of by luck. The
+                     * message is verified, so any other UnexpectedException still fails; the
+                     * incomplete tree itself is pinned deterministically by
+                     * BlobTransfer_FilesPackagerInMemoryWithheldChunkTests
+                     */
+
+                    BL_LOG_MULTILINE(
+                        bl::Logging::debug(),
+                        BL_MSG()
+                            << "Expected bl::UnexpectedException exception:\n"
+                            << bl::eh::diagnostic_information( e )
+                        );
+
+                    const std::string* message = e.message();
+
+                    UTF_REQUIRE( message );
+                    UTF_REQUIRE( std::string::npos != message -> find( "The unpackaged content is incomplete" ) );
+
+                    /*
+                     * The incomplete content report is the other legitimate way an interrupted
+                     * transfer surfaces (see the comment above), so it counts as an observed
+                     * cancellation just like the operation_aborted one
+                     */
+
+                    ++observedCancellations;
+                }
+
+                /*
+                 * Note that nothing else is caught here on purpose - a bl::ServerErrorException
+                 * or any other failure type is not an expected outcome of a cancellation and
+                 * must fail the test rather than be absorbed silently
+                 */
+            }
+
+            UTF_MESSAGE(
+                BL_MSG()
+                    << "Cancellation type "
+                    << static_cast< int >( cancelType )
+                    << ": the cancel landed while the pipeline was running in "
+                    << observedCancellations
+                    << " of "
+                    << retryCount
+                    << " iterations"
+                );
+
+            /*
+             * The whole point of these cases is the abort path; if no iteration ever aborted
+             * then nothing about cancelAll() or the staging cleanup was exercised
+             */
+
+            UTF_REQUIRE( observedCancellations >= 1U );
+
+            if( CancelType::CancelDownload == cancelType )
+            {
+                /*
+                 * The unpackager discards its staging directory when the download is aborted
+                 * (FilesUnpackagerUnit::flushAllPendingTasks) and the pipeline driver removes
+                 * it when the unit itself did not fail; either way nothing may be left behind
+                 */
+
+                UTF_REQUIRE( ! fs::path_exists( abortedStagingDir ) );
             }
         }
 
@@ -834,11 +1712,147 @@ namespace utest
             }
         }
 
+        static void executeTransferTestsWithFaults(
+            SAA_in                  const bl::cpp::void_callback_t&                                 cbTransferTest,
+            SAA_in                  const bl::om::ObjPtrCopyable< DataChunkStorage >&               syncStorage,
+            SAA_in                  const bl::om::ObjPtrCopyable< bl::tasks::TaskControlTokenRW >&  controlToken,
+            SAA_in                  const bl::om::ObjPtrCopyable< bl::transfer::SendRecvContext >&  context,
+            SAA_in                  const unsigned short                                            blobServerPort,
+            SAA_in                  const std::size_t                                               threadsCount,
+            SAA_in                  const std::size_t                                               maxConcurrentTasks,
+            SAA_in                  const PipelineFaultOptions&                                     faultOptions
+            )
+        {
+            using namespace bl;
+            using namespace bl::data;
+            using namespace bl::tasks;
+            using namespace test;
+
+            if( ! faultOptions.isServerFaultInjectionRequested() )
+            {
+                executeTransferTests(
+                    cbTransferTest,
+                    syncStorage,
+                    controlToken,
+                    context,
+                    blobServerPort,
+                    threadsCount,
+                    maxConcurrentTasks
+                    );
+
+                return;
+            }
+
+            /*
+             * Server side fault injection needs the in-process blob server: the sync storage is
+             * wrapped in the fault injecting decorator, the server requires authentication when
+             * a token is configured and the acceptor can drop all client connections on demand
+             */
+
+            UTF_REQUIRE( ! UtfArgsParser::isUseLocalBlobServer() );
+
+            const auto faultStorage = FaultInjectingDataChunkStorage::createInstance( syncStorage, faultOptions );
+
+            const auto expectedToken = faultOptions.authenticationToken;
+            const auto counters = faultOptions.counters;
+
+            AsyncDataChunkStorage::datablock_callback_t authenticationCallback =
+                [ expectedToken, counters ]( SAA_in const om::ObjPtr< DataBlock >& dataBlock ) -> void
+                {
+                    const std::string token(
+                        reinterpret_cast< const char* >( dataBlock -> begin() ),
+                        dataBlock -> size()
+                        );
+
+                    BL_CHK(
+                        false,
+                        token == expectedToken,
+                        BL_MSG()
+                            << "Unexpected authentication token was received by the blob server"
+                        );
+
+                    ++counters -> authentications;
+                };
+
+            const auto storage = om::lockDisposable(
+                AsyncDataChunkStorage::createInstance(
+                    om::qi< DataChunkStorage >( faultStorage )  /* writeStorage */,
+                    om::qi< DataChunkStorage >( faultStorage )  /* readStorage */,
+                    threadsCount,
+                    om::qi< TaskControlToken >( controlToken ),
+                    maxConcurrentTasks,
+                    context -> dataBlocksPool(),
+                    std::move( authenticationCallback )
+                    )
+                );
+
+            FaultInjectingBlobServer::isauthenticationrequired_callback_t isAuthenticationRequiredCallback =
+                [ expectedToken ](
+                    SAA_in      const BlockTransferDefs::BlockType                          blockType,
+                    SAA_in      const std::uint16_t                                         cntrlCode
+                    ) -> bool
+                {
+                    if( expectedToken.empty() || BlockTransferDefs::BlockType::Normal != blockType )
+                    {
+                        return false;
+                    }
+
+                    switch( cntrlCode )
+                    {
+                        case tasks::detail::CommandBlock::CntrlCodeGetDataBlock:
+                        case tasks::detail::CommandBlock::CntrlCodePutDataBlock:
+                        case tasks::detail::CommandBlock::CntrlCodeRemoveDataBlock:
+                            return true;
+
+                        default:
+                            return false;
+                    }
+                };
+
+            const auto acceptor = FaultInjectingBlobServer::createInstance(
+                controlToken,
+                context -> dataBlocksPool(),
+                std::string( UtfArgsParser::host() ),
+                blobServerPort,
+                storage,
+                std::move( isAuthenticationRequiredCallback )
+                );
+
+            faultStorage -> dropCallback(
+                cpp::bind(
+                    &FaultInjectingBlobServer::dropAllConnections,
+                    om::ObjPtrCopyable< FaultInjectingBlobServer >::acquireRef( acceptor.get() )
+                    )
+                );
+
+            /*
+             * The callback above holds a strong reference to the acceptor, while the acceptor
+             * owns the storage which owns the callback, so the reference cycle must be broken
+             * explicitly - otherwise the acceptor, its connection tasks and the whole storage
+             * graph outlive the test
+             */
+
+            BL_SCOPE_EXIT(
+                {
+                    faultStorage -> dropCallback( cpp::void_callback_t() );
+                }
+                );
+
+            TestTaskUtils::startAcceptorAndExecuteCallback(
+                cbTransferTest,
+                acceptor,
+                UtfArgsParser::host()                                       /* readinessHost */,
+                blobServerPort                                              /* readinessPort */
+                );
+        }
+
         static void filesPackagerTestsWrapInternal(
             SAA_in                  const execute_transfer_tests_callback_t&                            cbExecuteTests,
             SAA_in                  const unsigned short                                                blobServerPort,
             SAA_in                  const bl::om::ObjPtrCopyable< FilesystemMetadataStore >&            metadataStore,
-            SAA_in                  const CancelType                                                    cancelType
+            SAA_in                  const CancelType                                                    cancelType,
+            SAA_in_opt              const PipelineFaultOptions&                                         faultOptions =
+                PipelineFaultOptions()
             )
         {
             using namespace bl;
@@ -865,13 +1879,15 @@ namespace utest
                 );
 
             const auto cbTransferTest = cpp::bind(
-                &executeTheFilesPackagerAndTransmitterPipeline,
+                &executeTheFilesPackagerAndTransmitterPipelineWithFaults,
                 1U /* noOfDownloads */,
                 om::ObjPtrCopyable< bl::transfer::SendRecvContext >::acquireRef( context.get() ),
                 metadataStore,
                 test::UtfArgsParser::host(),
                 blobServerPort,
-                cancelType
+                cancelType,
+                faultOptions,
+                true                            /* expectNotFoundAfterDelete */
                 );
 
             cbExecuteTests(
@@ -922,6 +1938,10 @@ namespace utest
             /*
              * When we test the proxy we request the # of downloads to be 2, so we test
              * the caching functionality
+             *
+             * The download which follows the deletion is expected to succeed here rather than
+             * to fail with 'no such file or directory': the chunks are served from the proxy's
+             * local cache, which RemoveChunk deliberately does not invalidate
              */
 
             const auto cbTransferTest = cpp::bind(
@@ -931,7 +1951,8 @@ namespace utest
                 metadataStore,
                 test::UtfArgsParser::host(),
                 blobServerPort,
-                CancelType::NoCancel
+                CancelType::NoCancel,
+                false                           /* expectNotFoundAfterDelete - see above */
                 );
 
             const auto cbProxyTransferTests =
@@ -1113,6 +2134,51 @@ namespace utest
                                             )
                                         );
 
+                                    {
+                                        /*
+                                         * The load above was a cache miss which had to be served
+                                         * remotely, so the proxy must have populated its read
+                                         * through cache with the chunk - and with the nil session
+                                         * id executeCommand() saves with
+                                         *
+                                         * Nothing else in the suite can tell a proxy which caches
+                                         * from one which never removes a remote round trip
+                                         *
+                                         * Note that this block runs on the calling thread rather
+                                         * than through the queue: a failing UTF assertion throws
+                                         * boost::execution_aborted, which is not derived from
+                                         * std::exception and would escape the NOEXCEPT task
+                                         * handlers instead of failing the case cleanly
+                                         */
+
+                                        const auto fromCache = bl::data::DataBlock::createInstance();
+
+                                        UTF_REQUIRE_NO_THROW(
+                                            syncCacheStorage -> load( uuids::nil(), chunkId, fromCache )
+                                            );
+
+                                        BackendImplTestImpl::verifyData( fromCache );
+
+                                        /*
+                                         * SendChunk and RemoveChunk deliberately do not work with
+                                         * the cache, so a chunk which was only ever saved through
+                                         * the proxy must not be in there
+                                         */
+
+                                        const auto savedOnlyChunkId = uuids::create();
+
+                                        proxyStorage -> save( uuids::nil(), savedOnlyChunkId, dataBlockIn );
+
+                                        const auto probe = bl::data::DataBlock::createInstance();
+
+                                        UTF_REQUIRE_THROW(
+                                            syncCacheStorage -> load( uuids::nil(), savedOnlyChunkId, probe ),
+                                            ServerErrorException
+                                            );
+
+                                        proxyStorage -> remove( uuids::nil(), savedOnlyChunkId );
+                                    }
+
                                     const std::size_t noOfIterations = 10;
 
                                     {
@@ -1174,8 +2240,140 @@ namespace utest
 
                                     g.dismiss();
                                 }
+
+                                {
+                                    /*
+                                     * A server side error must be reported to the caller as it is:
+                                     * reconnect() classifies it before it does any reconnect work
+                                     * and rethrows it unchanged
+                                     *
+                                     * If that classification is dropped or moved below the endpoint
+                                     * retry ladder then an ordinary 'the chunk does not exist'
+                                     * answer from a perfectly healthy blob server turns into a 90
+                                     * seconds per endpoint reconnect storm which eventually
+                                     * surfaces as ServerNoConnectionException
+                                     *
+                                     * Note that reconnect()'s two remaining arms - the
+                                     * operation_aborted rethrow inside the retry loop and the
+                                     * ladder exhaustion - are deliberately not covered here:
+                                     * EndpointCircularIterator's retry budget cannot be shortened
+                                     * at the construction site the proxy uses, so either arm would
+                                     * cost 90+ seconds per endpoint. The cancellation is covered
+                                     * from the other direction by
+                                     * BlobTransfer_ProxyDataChunkStorageCanceledTokenTests
+                                     *
+                                     * This block runs on the calling thread, which is also what
+                                     * makes the recovery check below meaningful: the failing load
+                                     * and the operations which follow it use the very same per
+                                     * thread client of the proxy
+                                     */
+
+                                    const auto missingChunkId = uuids::create();
+                                    const auto probe = bl::data::DataBlock::createInstance();
+
+                                    const auto expectedEC =
+                                        eh::errc::make_error_code( eh::errc::no_such_file_or_directory );
+
+                                    const auto t0 = time::microsec_clock::universal_time();
+
+                                    UTF_REQUIRE_EXCEPTION(
+                                        proxyStorage -> load( uuids::nil(), missingChunkId, probe ),
+                                        ServerErrorException,
+                                        [ &expectedEC ]( const ServerErrorException& ex ) -> bool
+                                        {
+                                            return test::UtfExceptionTools::matchErrorCode( ex, expectedEC );
+                                        }
+                                        );
+
+                                    const auto elapsed = time::microsec_clock::universal_time() - t0;
+
+                                    BL_LOG(
+                                        Logging::debug(),
+                                        BL_MSG()
+                                            << "proxy: the server error was reported in "
+                                            << elapsed.total_milliseconds()
+                                            << " ms"
+                                        );
+
+                                    UTF_REQUIRE( elapsed < time::seconds( 10 ) );
+
+                                    /*
+                                     * The per thread client must not have been torn down or
+                                     * poisoned by the server error
+                                     */
+
+                                    const auto recoveryChunkId = uuids::create();
+
+                                    proxyStorage -> save( uuids::nil(), recoveryChunkId, dataBlockIn );
+
+                                    const auto recovered = bl::data::DataBlock::createInstance();
+
+                                    proxyStorage -> load( uuids::nil(), recoveryChunkId, recovered );
+
+                                    BackendImplTestImpl::verifyData( recovered );
+
+                                    proxyStorage -> remove( uuids::nil(), recoveryChunkId );
+                                }
                             }
                             );
+                    }
+
+                    {
+                        /*
+                         * A cache write failure must reach the caller instead of being logged and
+                         * ignored: a proxy with caching enabled must not keep answering from the
+                         * network when its local data store cache is unavailable
+                         *
+                         * The endpoint is the same live blob server as above, so the remote read
+                         * succeeds and the failure is unambiguously the cache write
+                         *
+                         * The proxy logs the failed cache write as a warning before it re-throws
+                         * it, and that warning is expected here, so the level is pushed globally
+                         * to keep it out of the test log
+                         */
+
+                        const Logging::LevelPusher pushLevel( Logging::LL_ERROR, true /* global */ );
+
+                        const auto failingCache = om::lockDisposable(
+                            FailingCacheStorageImpl::createInstance< DataChunkStorage >()
+                            );
+
+                        const auto failingProxy = om::lockDisposable(
+                            ProxyDataChunkStorageImpl::createInstance< DataChunkStorage >(
+                                endpointSelector,
+                                failingCache,
+                                context -> dataBlocksPool(),
+                                om::qi< TaskControlToken >( controlToken )
+                                )
+                            );
+
+                        const auto cachedChunkId = uuids::create();
+                        const auto dataBlockIn = BackendImplTestImpl::initDataBlock();
+
+                        failingProxy -> save( uuids::nil(), cachedChunkId, dataBlockIn );
+
+                        const auto dataBlockOut = bl::data::DataBlock::createInstance();
+
+                        UTF_REQUIRE_THROW_MESSAGE(
+                            failingProxy -> load( uuids::nil(), cachedChunkId, dataBlockOut ),
+                            SystemException,
+                            "Simulated cache write failure"
+                            );
+
+                        /*
+                         * The chunk must not have been marked as cached when the save failed - the
+                         * insert lives inside the same guarded block, after the save - so a second
+                         * load must fail in exactly the same way instead of being served from a
+                         * cache which never received the bytes
+                         */
+
+                        UTF_REQUIRE_THROW_MESSAGE(
+                            failingProxy -> load( uuids::nil(), cachedChunkId, dataBlockOut ),
+                            SystemException,
+                            "Simulated cache write failure"
+                            );
+
+                        failingProxy -> remove( uuids::nil(), cachedChunkId );
                     }
                 }
             };
@@ -1197,13 +2395,123 @@ namespace utest
                 );
         }
 
-        static void executeTheFilesPackagerAndTransmitterPipeline(
+        /**
+         * @brief Creates a filesystem metadata entry of the requested type
+         *
+         * The paths are boxed objects which can only be filled in via swap, so the helper
+         * hides that idiom from the tests which build metadata by hand
+         */
+
+        static bl::uuid_t createEntry(
+            SAA_in              const bl::om::ObjPtr< bl::data::FilesystemMetadataWO >&         fsmdWO,
+            SAA_in              const bl::data::FilesystemMetadata::EntryType                   type,
+            SAA_in              const bl::fs::path&                                             relPath,
+            SAA_in_opt          const bl::fs::path&                                             targetPath = bl::fs::path(),
+            SAA_in_opt          const std::uint64_t                                             size = 0U,
+            SAA_in_opt          const std::time_t                                               lastModified = 0
+            )
+        {
+            using namespace bl;
+
+            data::FilesystemMetadata::EntryInfo info;
+
+            info.type = type;
+            info.size = size;
+            info.timeCreated = lastModified;
+            info.lastModified = lastModified;
+
+            auto relPathCopy = relPath;
+            info.relPath = bo::path::createInstance();
+            info.relPath -> lvalue().swap( relPathCopy );
+
+            if( ! targetPath.empty() )
+            {
+                auto targetPathCopy = targetPath;
+                info.targetPath = bo::path::createInstance();
+                info.targetPath -> lvalue().swap( targetPathCopy );
+            }
+
+            return fsmdWO -> createEntry( std::move( info ) );
+        }
+
+        /**
+         * @brief Runs the unpackager unit standalone - with no blob server and no chunks receiver
+         *
+         * The metadata is driven directly; the optional callback is invoked once the unit is
+         * scheduled, so the caller can push chunks into it before the input is marked as
+         * completed. The staging directory the unit has created is returned, so the caller can
+         * verify what was unpackaged into it (it lives under the parent of targetDir and it is
+         * not deleted when the unit succeeds)
+         */
+
+        static bl::fs::path runStandaloneUnpackager(
+            SAA_in              const bl::om::ObjPtr< bl::data::FilesystemMetadataRO >&         fsmdRO,
+            SAA_in              const bl::fs::path&                                             targetDir,
+            SAA_in_opt          const bl::transfer::FilesUnpackagerUnit::SymlinkTargetPolicy    symlinkTargetPolicy =
+                bl::transfer::FilesUnpackagerUnit::StpAllow,
+            SAA_in_opt          const unpackager_feed_callback_t&                               feedCallback =
+                unpackager_feed_callback_t()
+            )
+        {
+            using namespace bl;
+            using namespace bl::reactive;
+            using namespace bl::tasks;
+            using namespace bl::transfer;
+
+            const auto context = SendRecvContext::createInstance(
+                SimpleEndpointSelectorImpl::createInstance< EndpointSelector >(
+                    cpp::copy( test::UtfArgsParser::host() ),
+                    test::UtfArgsParser::port()
+                    )
+                );
+
+            const auto unit = unpackager_unit_t::createInstance(
+                unpackager_unit_t::SuaError,
+                context,
+                fsmdRO,
+                fs::path( targetDir ),
+                symlinkTargetPolicy
+                );
+
+            /*
+             * For the unpackager unit it is ok to have no subscribers
+             */
+
+            unit -> allowNoSubscribers( true );
+
+            scheduleAndExecuteInParallel(
+                [ & ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+                {
+                    eq -> push_back( om::qi< Task >( unit ) );
+
+                    if( feedCallback )
+                    {
+                        feedCallback( *unit );
+                    }
+
+                    /*
+                     * onInputCompleted() only sets the input disconnected flag under the
+                     * unit's lock, so it can be signalled directly from here
+                     */
+
+                    unit -> onInputCompleted();
+
+                    executeQueueAndCancelOnFailure( eq );
+                }
+                );
+
+            return unit -> targetTmpDir();
+        }
+
+        static void executeTheFilesPackagerAndTransmitterPipelineWithFaults(
             SAA_in              const std::size_t                                               noOfDownloads,
             SAA_in              const bl::om::ObjPtrCopyable< bl::transfer::SendRecvContext >&  contextIn,
             SAA_in              const bl::om::ObjPtrCopyable< FilesystemMetadataStore >&        metadataStore,
-            SAA_in_opt          const std::string&                                              host = "localhost",
-            SAA_in_opt          const unsigned short                                            port = test::UtfArgsParser::PORT_DEFAULT,
-            SAA_in_opt          const CancelType                                                cancelType = CancelType::NoCancel
+            SAA_in              const std::string&                                              host,
+            SAA_in              const unsigned short                                            port,
+            SAA_in              const CancelType                                                cancelType,
+            SAA_in              const PipelineFaultOptions&                                     faultOptions,
+            SAA_in_opt          const bool                                                      expectNotFoundAfterDelete = true
             )
         {
             switch( cancelType )
@@ -1220,7 +2528,11 @@ namespace utest
                             metadataStore,
                             host,
                             port,
-                            CancelType::NoCancel
+                            CancelType::NoCancel,
+                            bl::cpp::void_callback_t()      /* cancelCallback */,
+                            nullptr                         /* executionQueue */,
+                            faultOptions,
+                            expectNotFoundAfterDelete
                             );
                     }
                     break;
@@ -1242,15 +2554,32 @@ namespace utest
             }
         }
 
+        static void executeTheFilesPackagerAndTransmitterPipeline(
+            SAA_in              const std::size_t                                               noOfDownloads,
+            SAA_in              const bl::om::ObjPtrCopyable< bl::transfer::SendRecvContext >&  contextIn,
+            SAA_in              const bl::om::ObjPtrCopyable< FilesystemMetadataStore >&        metadataStore,
+            SAA_in_opt          const std::string&                                              host = "localhost",
+            SAA_in_opt          const unsigned short                                            port = test::UtfArgsParser::PORT_DEFAULT,
+            SAA_in_opt          const CancelType                                                cancelType = CancelType::NoCancel,
+            SAA_in_opt          const bool                                                      expectNotFoundAfterDelete = true
+            )
+        {
+            executeTheFilesPackagerAndTransmitterPipelineWithFaults(
+                noOfDownloads,
+                contextIn,
+                metadataStore,
+                host,
+                port,
+                cancelType,
+                PipelineFaultOptions(),
+                expectNotFoundAfterDelete
+                );
+        }
+
         static void startBlobClient()
         {
             using namespace bl;
             using namespace test;
-
-            if( ! UtfArgsParser::isClient() )
-            {
-                return;
-            }
 
             const auto context = bl::transfer::SendRecvContext::createInstance(
                 SimpleEndpointSelectorImpl::createInstance< EndpointSelector >(
@@ -1276,11 +2605,6 @@ namespace utest
             using namespace bl::messaging;
             using namespace bl::transfer;
             using namespace test;
-
-            if( ! UtfArgsParser::isServer() )
-            {
-                return;
-            }
 
             cpp::SafeUniquePtr< test::MachineGlobalTestLock > lock;
 

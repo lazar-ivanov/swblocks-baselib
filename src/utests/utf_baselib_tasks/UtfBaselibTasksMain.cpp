@@ -18,3 +18,10 @@
 #include <utests/baselib/UtfMain.h>
 
 #include "TestTasks.h"
+#include "TestTasks2.h"
+#include "TestTasks3.h"
+#include "TestTasks4.h"
+#include "TestTasks5.h"
+#include "TestTasks6.h"
+#include "TestTasks7.h"
+#include "TestTasks8.h"

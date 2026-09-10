@@ -221,7 +221,21 @@ namespace bl
 
                 const auto chunkPath = getExistingChunkPath( chunkId );
 
-                const auto size = fs::file_size( chunkPath );
+                /*
+                 * Note that the chunk can be removed by another client between the existence
+                 * check above and the calls below; that is an ordinary request ordering race
+                 * and it must be reported as 'the chunk does not exist' - any other exception
+                 * type is treated as a fatal server error and takes the whole server down
+                 */
+
+                eh::error_code ec;
+
+                const auto size = fs::file_size( chunkPath, ec );
+
+                if( ec )
+                {
+                    base_type::throwChunkDoesNotExist( chunkId );
+                }
 
                 base_type::chkBlockSize( size, data );
 
@@ -234,7 +248,21 @@ namespace bl
 
                 if( size )
                 {
-                    const auto filePtr = os::fopen( getChunkPath( chunkId ), "rb" );
+                    os::stdio_file_ptr filePtr;
+
+                    try
+                    {
+                        filePtr = os::fopen( chunkPath, "rb" );
+                    }
+                    catch( std::exception& )
+                    {
+                        if( ! fs::path_exists( chunkPath ) )
+                        {
+                            base_type::throwChunkDoesNotExist( chunkId );
+                        }
+
+                        throw;
+                    }
 
                     os::fread( filePtr, data -> pv(), data -> size() );
                 }
@@ -269,7 +297,24 @@ namespace bl
 
                 const auto chunkPath = getExistingChunkPath( chunkId );
 
-                fs::safeRemove( chunkPath );
+                /*
+                 * Another client may have removed the chunk already (see the note in load
+                 * above), which must not be reported as a server error
+                 */
+
+                try
+                {
+                    fs::safeRemove( chunkPath );
+                }
+                catch( std::exception& )
+                {
+                    if( ! fs::path_exists( chunkPath ) )
+                    {
+                        base_type::throwChunkDoesNotExist( chunkId );
+                    }
+
+                    throw;
+                }
             }
         };
 
@@ -328,7 +373,23 @@ namespace bl
                 base_type( BL_PARAM_FWD( rootPath ), isRootTemp )
             {
                 m_filePath = m_rootPathChunks / "data.bin";
-                m_file = os::fopen( m_filePath, "ab+" );
+
+                /*
+                 * The file must be opened for update and not in append mode - with "a" every
+                 * write goes to the end of the file regardless of the file position, so the
+                 * delete markers which removeChunk( ... ) rewrites in place would be appended
+                 * as stray headers instead (the deletions would not survive a restart and the
+                 * storage could not be opened again)
+                 */
+
+                if( fs::path_exists( m_filePath ) )
+                {
+                    m_file = os::fopen( m_filePath, "rb+" );
+                }
+                else
+                {
+                    m_file = os::fopen( m_filePath, "wb+" );
+                }
 
                 loadChunksData();
             }
@@ -401,7 +462,13 @@ namespace bl
 
                     if( header.size )
                     {
-                        chkFileFormatInvariant( ( pos + header.size ) <= size );
+                        /*
+                         * Note that the check is written as a subtraction so it can't wrap
+                         * for a crafted (or corrupted) chunk size - a size which wraps the
+                         * position back to zero would otherwise make this loop run forever
+                         */
+
+                        chkFileFormatInvariant( header.size <= ( size - pos ) );
 
                         pos += header.size;
 

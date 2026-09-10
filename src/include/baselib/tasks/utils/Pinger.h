@@ -270,8 +270,23 @@ namespace bl
                  * Send just 1 ping packet and wait up to 3 seconds for a response
                  */
 
+                /*
+                 * The host name is passed as the last argument of the ping command, so it
+                 * must never be allowed to start with '-' as otherwise it will be parsed
+                 * as an option by the ping tool
+                 */
+
+                BL_CHK_USER_FRIENDLY(
+                    false,
+                    ! m_host.empty() && '-' != m_host[ 0 ],
+                    BL_MSG()
+                        << "Invalid host name '"
+                        << m_host
+                        << "'"
+                    );
+
                 std::vector< std::string > cmdLine;
-                cmdLine.reserve( 6 );
+                cmdLine.reserve( 7 );
 
                 if( os::onWindows() )
                 {
@@ -288,6 +303,12 @@ namespace bl
                     cmdLine.emplace_back( "1" );
                     cmdLine.emplace_back( os::onLinux() ? "-w" : "-t" );
                     cmdLine.emplace_back( std::to_string( ( m_timeoutMs + 500 ) / 1000 ) );
+
+                    /*
+                     * Terminate the options, so the host name can't be interpreted as one
+                     */
+
+                    cmdLine.emplace_back( "--" );
                 }
 
                 cmdLine.emplace_back( m_host );
@@ -543,6 +564,7 @@ namespace bl
             std::string                                         m_requestId;
             time::ptime                                         m_timeSent;
             asio::streambuf                                     m_replyBuffer;
+            cpp::ScalarTypeIniter< bool >                       m_done;
 
             static std::atomic< std::uint32_t >                 g_sequenceCounter;
 
@@ -809,6 +831,7 @@ namespace bl
                          */
 
                         m_isReachable = true;
+                        m_done = true;
                         m_roundTripTimeMs = ( now - m_timeSent ).total_microseconds() / 1000.0;
 
                         BL_LOG(
@@ -848,10 +871,14 @@ namespace bl
                     }
                 }
 
-                if( ! m_isReachable )
+                if( ! m_isReachable && ! m_done )
                 {
                     /*
                      * Wait for another ICMP packet
+                     *
+                     * Note that we must never re-arm the receive operation after the task
+                     * has finished (e.g. after a timeout or cancellation) as this would
+                     * leak the socket and keep it alive indefinitely
                      */
 
                     receiveReply();
@@ -881,7 +908,32 @@ namespace bl
                         );
                 }
 
+                /*
+                 * The task is about to complete, so the pending receive operation must be
+                 * cancelled - otherwise the socket will be kept alive by it until an
+                 * unrelated ICMP packet arrives on the host
+                 */
+
+                m_done = true;
+
+                cancelReceive();
+
                 BL_TASKS_HANDLER_END()
+            }
+
+            void cancelReceive() NOEXCEPT
+            {
+                if( m_socket )
+                {
+                    /*
+                     * The non-throwing overload is used here as the socket may not be
+                     * open yet and cancelling it is a best effort operation
+                     */
+
+                    eh::error_code ec;
+
+                    m_socket -> cancel( ec );
+                }
             }
 
             virtual void cancelTask() OVERRIDE
@@ -895,6 +947,15 @@ namespace bl
                 {
                     m_timer -> cancel();
                 }
+
+                /*
+                 * The pending receive operation must be cancelled too - otherwise the task
+                 * can't complete until an unrelated ICMP packet arrives on the host
+                 */
+
+                m_done = true;
+
+                cancelReceive();
 
                 base_type::cancelTask();
             }

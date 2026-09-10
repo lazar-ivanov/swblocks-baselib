@@ -481,6 +481,35 @@ UTF_AUTO_TEST_CASE( JsonParseEmptyValues )
     UTF_REQUIRE_EQUAL( bl::json::get_str( emptyStr ).length(), 0U );
 }
 
+namespace
+{
+    /*
+     * Build a document nested 'depth' objects deep: {"n":{"n":{ ... {"n":1} ... }}}
+     *
+     * Used both by the stream parsing case below and by the depth limit cases in section 10:
+     * parseOptions() is shared by the string and the stream paths, so the same bound applies to
+     * both and is asserted through both
+     */
+    inline std::string makeNestedJsonText( SAA_in const std::size_t depth )
+    {
+        std::string text;
+
+        text.reserve( depth * 6U + 8U );
+
+        for( std::size_t i = 0U; i < depth; ++i )
+        {
+            text += "{\"n\":";
+        }
+
+        text += "1";
+
+        text.append( depth, '}' );
+
+        return text;
+    }
+
+} // __unnamed
+
 UTF_AUTO_TEST_CASE( JsonParseFromStream )
 {
     utest::json::logImplementation();
@@ -494,6 +523,140 @@ UTF_AUTO_TEST_CASE( JsonParseFromStream )
     const auto& obj = parsed.as_object();
     UTF_REQUIRE_EQUAL( bl::json::get_str( obj.at( "stream" ) ), "test" );
     UTF_REQUIRE_EQUAL( obj.at( "value" ).as_int64(), 999 );
+
+    /*
+     * The document above is 29 bytes, which is one read of the 2048 byte buffer readFromStream
+     * feeds the incremental parser with and the success path only; everything below drives the
+     * rest of the function - the multi chunk loop, the partial final read, both error checks
+     * and finish()
+     */
+
+    const auto makePaddedDocument = []( SAA_in const std::size_t totalSize ) -> std::string
+    {
+        /*
+         * The padding stops one byte short of 'totalSize', so the three byte UTF-8 sequence
+         * which follows it begins at offset totalSize - 1. At 2048 that puts its lead byte at
+         * the very end of the first chunk and its two continuation bytes at the start of the
+         * second one
+         */
+
+        std::string text( "{\"pad\":\"" );
+
+        text.append( totalSize - text.size() - 1U, 'x' );
+
+        text += "\xE4\xBD\xA0";
+        text += "\",\"n\":12345}";
+
+        return text;
+    };
+
+    /*
+     * 2048 is one full buffer plus a short final read; 6000 forces three write() calls. Passing
+     * buffer.size() instead of gcount() to parser.write() would append stale bytes from the
+     * previous chunk on the final partial read, and constructing the parser inside the loop
+     * would lose everything but the last chunk - both are caught here
+     */
+
+    for( const std::size_t totalSize : { std::size_t( 2048U ), std::size_t( 6000U ) } )
+    {
+        const auto text = makePaddedDocument( totalSize );
+
+        std::istringstream chunked( text );
+
+        utest::json::verifyDeepEqual(
+            bl::json::readFromStream( chunked ),
+            bl::json::readFromString( text )
+            );
+    }
+
+    /*
+     * Trailing whitespace is consumed by the parser rather than reported as extra data, which
+     * is what lets Manifest::read() load a hand edited file which ends in a newline
+     */
+
+    {
+        std::istringstream trailingWhitespace( "{\"a\":1}\n   \n" );
+
+        const auto trailing = bl::json::readFromStream( trailingWhitespace );
+
+        UTF_REQUIRE_EQUAL( bl::json::get_int64( trailing.as_object().at( "a" ) ), 1 );
+    }
+
+    /*
+     * A truncated or a malformed document is rejected - the first through finish() reporting
+     * an incomplete document, the second through the ec check inside the loop
+     */
+
+    for( const char* const invalid : { "{\"a\":", "{invalid}" } )
+    {
+        std::istringstream iss( invalid );
+
+        UTF_REQUIRE_THROW( bl::json::readFromStream( iss ), bl::JsonException );
+    }
+
+    /*
+     * Empty and whitespace only input reach finish() with nothing written and are rejected the
+     * same way. Note that json-spirit's read_range_or_throw() asserts before it throws, so on
+     * that backend this aborts rather than throws in a debug build - the same exposure
+     * JsonErrorMalformedInput already has - and the check is therefore made there in release
+     * only
+     */
+
+#if !defined( BL_USE_JSON_SPIRIT ) || defined( NDEBUG )
+    for( const char* const empty : { "", "   \n\t " } )
+    {
+        std::istringstream iss( empty );
+
+        UTF_REQUIRE_THROW( bl::json::readFromStream( iss ), bl::JsonException );
+    }
+#endif
+
+    /*
+     * Trailing content after a complete document - the same divergence
+     * JsonParseTrailingDataIsRejected records for readFromString, asserted here for the stream
+     * path as well: stream_parser::write() is write_some() plus an extra_data check, so
+     * replacing it with write_some() would silently start accepting garbage on this path only
+     */
+
+    {
+        std::istringstream trailingData( R"({"a":1} {"b":2})" );
+
+#if !defined( BL_USE_JSON_SPIRIT )
+        UTF_REQUIRE_THROW( bl::json::readFromStream( trailingData ), bl::JsonException );
+#else
+        const auto first = bl::json::readFromStream( trailingData );
+
+        UTF_REQUIRE_EQUAL( bl::json::get_int64( first.as_object().at( "a" ) ), 1 );
+#endif
+    }
+
+    /*
+     * The stream path shares parseOptions() with the string path, so the configured 512 level
+     * bound (and number_precision::precise with it) applies here too; this mirrors
+     * JsonParseDepthWithinLimitIsAccepted and JsonParseDepthBeyondLimitIsRejected, and it is
+     * what fails if the stream parser is ever constructed with default options. Manifest::read
+     * is a stream parse
+     */
+
+    {
+        std::istringstream withinLimit( makeNestedJsonText( 500U ) );
+
+        UTF_REQUIRE_NO_THROW( bl::json::readFromStream( withinLimit ) );
+    }
+
+    {
+        std::istringstream beyondLimit( makeNestedJsonText( 600U ) );
+
+#if !defined( BL_USE_JSON_SPIRIT )
+        UTF_REQUIRE_THROW( bl::json::readFromStream( beyondLimit ), bl::JsonException );
+#else
+        /*
+         * json-spirit applies no depth limit at all and is deliberately left that way
+         */
+
+        UTF_REQUIRE_NO_THROW( bl::json::readFromStream( beyondLimit ) );
+#endif
+    }
 }
 
 UTF_AUTO_TEST_CASE( JsonParseMalformed )
@@ -648,6 +811,95 @@ UTF_AUTO_TEST_CASE( JsonSerializeCanonical )
         bl::json::value( obj ),
         "{\"apple\":\"first\",\"middle\":\"middle\",\"zebra\":\"last\"}"
         );
+}
+
+UTF_AUTO_TEST_CASE( JsonSerializeCanonicalNestedLayout )
+{
+    utest::json::logImplementation();
+
+    /*
+     * canonicalizeValue() switches on the value kind and recurses through the object and the
+     * array arms; every other canonical case in this file, and the data model one in
+     * TestDataModelDefault.h, only ever feeds it a flat object of scalars, so nothing asserts
+     * that a key nested inside an object - or inside an object inside an array - comes out
+     * sorted as well. Dropping the array arm, or letting objects fall into the default arm,
+     * would leave nested keys in insertion order and is invisible to all of them
+     *
+     * Both backends agree on the expected text and the case therefore needs no backend arms:
+     * Boost.JSON emits compact output with no incidental whitespace, and json-spirit's object
+     * is a std::map which is already sorted
+     *
+     * Note that getObjectHash() / getObjectHashCanonical(), the only readers of canonical
+     * output, have no production caller at all, and DataModelObject.h says the hash must not be
+     * persisted or used as a cross process key - so what this case protects is the serialized
+     * text itself, not a hash contract
+     */
+
+    bl::json::object zulu;
+    zulu[ "b" ] = 2;
+    zulu[ "a" ] = 1;
+
+    bl::json::object insideArray;
+    insideArray[ "y" ] = 2;
+    insideArray[ "x" ] = 1;
+
+    bl::json::array alpha;
+    alpha.push_back( bl::json::value( insideArray ) );
+
+    bl::json::object outer;
+    outer[ "zulu" ] = zulu;
+    outer[ "alpha" ] = alpha;
+
+    utest::json::verifyCanonicalText(
+        bl::json::value( outer ),
+        "{\"alpha\":[{\"x\":1,\"y\":2}],\"zulu\":{\"a\":1,\"b\":2}}"
+        );
+
+    /*
+     * The same document built with the opposite insertion order at every level must produce the
+     * same bytes
+     */
+
+    bl::json::object reversedZulu;
+    reversedZulu[ "a" ] = 1;
+    reversedZulu[ "b" ] = 2;
+
+    bl::json::object reversedInsideArray;
+    reversedInsideArray[ "x" ] = 1;
+    reversedInsideArray[ "y" ] = 2;
+
+    bl::json::array reversedAlpha;
+    reversedAlpha.push_back( bl::json::value( reversedInsideArray ) );
+
+    bl::json::object reversedAtEveryLevel;
+    reversedAtEveryLevel[ "alpha" ] = reversedAlpha;
+    reversedAtEveryLevel[ "zulu" ] = reversedZulu;
+
+    utest::json::verifyCanonicalOrderIndependent(
+        bl::json::value( outer ),
+        bl::json::value( reversedAtEveryLevel )
+        );
+
+    /*
+     * Canonical output is a reordering and nothing else - it must read back as the same
+     * document
+     */
+
+    const auto canonical =
+        bl::json::saveToString( bl::json::value( outer ), false /* prettyPrint */, false /* rawUtf8 */, true /* canonicalize */ );
+
+    utest::json::verifyDeepEqual( bl::json::readFromString( canonical ), bl::json::value( outer ) );
+
+    /*
+     * ... and the nested child canonicalized on its own is emitted verbatim inside the parent,
+     * which is the recursion itself
+     */
+
+    const auto canonicalChild =
+        bl::json::saveToString( bl::json::value( zulu ), false /* prettyPrint */, false /* rawUtf8 */, true /* canonicalize */ );
+
+    UTF_REQUIRE_EQUAL( canonicalChild, std::string( "{\"a\":1,\"b\":2}" ) );
+    UTF_REQUIRE( canonical.find( canonicalChild ) != std::string::npos );
 }
 
 UTF_AUTO_TEST_CASE( JsonSerializeToStream )
@@ -1210,6 +1462,160 @@ UTF_AUTO_TEST_CASE( JsonErrorExceptionContext )
     }
 }
 
+UTF_AUTO_TEST_CASE( JsonExceptionRemappingAndContext )
+{
+    utest::json::logImplementation();
+
+    /*
+     * remapIncorrectValueTypeException() and rethrowWithContext() are the two funnels every
+     * data model property deserialization error passes through. Only one arm of the first is
+     * reached by any existing test (DataModelPropertyErrorsCarryPropertyContext, always with
+     * userException = false), and the user friendly branch of the second - reached in
+     * production only when a complex property's child deserializer already produced a friendly
+     * JsonException - is never driven at all
+     *
+     * Only substrings and the user friendly flag are asserted, never the whole message: the
+     * backend specific portion differs between Boost.JSON and json-spirit. The context string
+     * is the test's own input and is therefore stable on both
+     */
+
+    try
+    {
+        /*
+         * A natural, backend portable conversion error - Boost.JSON reports it as a
+         * system_error carrying error::not_string and json-spirit as a plain std::runtime_error,
+         * and both derive from std::runtime_error, which is the type the BL_DM_IMPL_PROPERTY
+         * funnel catches
+         */
+
+        ( void ) bl::json::value( 42 ).as_string();
+
+        UTF_FAIL( "Reading a number as a string must throw" );
+    }
+    catch( std::runtime_error& e )
+    {
+        const auto eptr = std::current_exception();
+
+        /*
+         * A recognized conversion error is rewritten in readable words, marked user friendly
+         * and carries the context; the raw developer text (which on Boost.JSON reads like
+         * 'not a string [boost.json:N]') is nested rather than shown. A change to
+         * friendlyConversionText()'s dynamic_cast or to its code comparison silently degrades
+         * every one of these to the raw text
+         */
+
+        UTF_REQUIRE_EXCEPTION(
+            bl::json::remapIncorrectValueTypeException( e, eptr, "property 'p'" ),
+            bl::JsonException,
+            []( SAA_in const bl::JsonException& ex ) -> bool
+            {
+                const std::string message( ex.what() );
+
+                return
+                    bl::eh::isUserFriendly( ex ) &&
+                    bl::cpp::contains( message, "property 'p'" ) &&
+                    ! bl::cpp::contains( message, "boost.json" );
+            }
+            );
+
+        /*
+         * The userException parameter has no caller in the repository; it selects a different
+         * exception TYPE, which is the part a caller would depend on
+         */
+
+        UTF_REQUIRE_EXCEPTION(
+            bl::json::remapIncorrectValueTypeException( e, eptr, "property 'p'", true /* userException */ ),
+            bl::UserMessageException,
+            []( SAA_in const bl::UserMessageException& ex ) -> bool
+            {
+                return bl::cpp::contains( std::string( ex.what() ), "property 'p'" );
+            }
+            );
+    }
+
+    try
+    {
+        /*
+         * An error the remapper does not recognize - deliberately a raw std::runtime_error and
+         * not a baselib exception, since that is what an unrecognized backend failure looks
+         * like at the catch site
+         */
+
+        throw std::runtime_error( "synthetic backend failure" );
+    }
+    catch( std::runtime_error& e )
+    {
+        const auto eptr = std::current_exception();
+
+        /*
+         * It must NOT be marked user friendly, and its own text must survive alongside the
+         * context: there is no readable substitute for a message nobody recognized
+         */
+
+        UTF_REQUIRE_EXCEPTION(
+            bl::json::remapIncorrectValueTypeException( e, eptr, "property 'p'" ),
+            bl::JsonException,
+            []( SAA_in const bl::JsonException& ex ) -> bool
+            {
+                const std::string message( ex.what() );
+
+                return
+                    ! bl::eh::isUserFriendly( ex ) &&
+                    bl::cpp::contains( message, "synthetic backend failure" ) &&
+                    bl::cpp::contains( message, "property 'p'" );
+            }
+            );
+    }
+
+    /*
+     * rethrowWithContext() is the counterpart for the library's own checked accessors:
+     * bl::JsonException derives from std::exception and not from std::runtime_error, so the
+     * catch clause above never sees one. It must PRESERVE the user friendly flag in both
+     * directions - demoting a friendly nested model error to a developer error, or promoting a
+     * developer error to one shown to a user, are both silent today
+     */
+
+    try
+    {
+        BL_THROW( bl::JsonException(), "plain text" );
+    }
+    catch( bl::JsonException& e )
+    {
+        const auto eptr = std::current_exception();
+
+        UTF_REQUIRE_EXCEPTION(
+            bl::json::rethrowWithContext( e, eptr, "property 'p'" ),
+            bl::JsonException,
+            []( SAA_in const bl::JsonException& ex ) -> bool
+            {
+                return
+                    ! bl::eh::isUserFriendly( ex ) &&
+                    bl::cpp::contains( std::string( ex.what() ), "plain text for property 'p'" );
+            }
+            );
+    }
+
+    try
+    {
+        BL_THROW_USER_FRIENDLY( bl::JsonException(), "friendly text" );
+    }
+    catch( bl::JsonException& e )
+    {
+        const auto eptr = std::current_exception();
+
+        UTF_REQUIRE_EXCEPTION(
+            bl::json::rethrowWithContext( e, eptr, "property 'p'" ),
+            bl::JsonException,
+            []( SAA_in const bl::JsonException& ex ) -> bool
+            {
+                return
+                    bl::eh::isUserFriendly( ex ) &&
+                    bl::cpp::contains( std::string( ex.what() ), "friendly text for property 'p'" );
+            }
+            );
+    }
+}
+
 /********************************************************************************************
  * 9. Edge Cases Tests
  ********************************************************************************************/
@@ -1601,6 +2007,54 @@ UTF_AUTO_TEST_CASE( JsonSerializeEscapesControlCharacters )
         UTF_REQUIRE_EQUAL( reparsed.as_object().size(), 1U );
         UTF_REQUIRE_EQUAL( bl::json::get_str( reparsed.as_object().at( key ) ), text );
     }
+
+    /*
+     * A second document, this time containing an ESCAPED QUOTE followed by a control character
+     *
+     * escapeControlCharacters() is a byte-wise state machine over the writer's output: inside a
+     * literal a backslash copies itself together with the byte after it, so that an escaped
+     * quote does not end the literal. The document above never contains a quote inside a
+     * literal, so that two byte lookahead never has to prevent the 'literal ended' transition
+     * and the branch is only ever taken over the short escapes the writer itself emits
+     *
+     * Were the lookahead simplified away, the scanner would treat everything after the escaped
+     * quote as being outside a literal: the 0x01 below would be emitted raw - text which this
+     * library's own default backend refuses to read back - and \\u00XX would start being
+     * injected outside literals. The second member is there to prove the scanner resynchronised
+     *
+     * The keys are k and m so that the two backends agree on the member order (Boost.JSON
+     * preserves the insertion order, json-spirit's object is a std::map which sorts, and
+     * k < m); both must emit identical bytes for this document, so the assertion needs no
+     * backend arms
+     */
+
+    const std::string original( "a\"b\\c\x01" "d" );
+    const std::string second( "\x02", 1 );
+
+    bl::json::object obj2;
+    obj2.emplace( "k", original );
+    obj2.emplace( "m", second );
+
+    const auto value2 = bl::json::value( std::move( obj2 ) );
+
+    const std::string expected2( "{\"k\":\"a\\\"b\\\\c\\u0001d\",\"m\":\"\\u0002\"}" );
+
+    const auto serialized = bl::json::saveToString( value2, false /* prettyPrint */, false /* rawUtf8 */ );
+
+    UTF_REQUIRE_EQUAL( serialized, expected2 );
+
+    std::ostringstream stream2;
+    bl::json::saveToStream( value2, stream2, false /* prettyPrint */, false /* rawUtf8 */ );
+
+    UTF_REQUIRE_EQUAL( stream2.str(), expected2 );
+
+    UTF_REQUIRE( serialized.find( "\\u0001" ) != std::string::npos );
+    UTF_REQUIRE( serialized.find( '\x01' ) == std::string::npos );
+
+    const auto reparsed2 = bl::json::readFromString( serialized );
+
+    UTF_REQUIRE_EQUAL( bl::json::get_str( reparsed2.as_object().at( "k" ) ), original );
+    UTF_REQUIRE_EQUAL( bl::json::get_str( reparsed2.as_object().at( "m" ) ), second );
 }
 
 /************************************************************************
@@ -1779,31 +2233,6 @@ UTF_AUTO_TEST_CASE( JsonNumericNegativeZero )
  * bl::json::readFromString in baselib/core/JsonUtils.h
  ********************************************************************************************/
 
-namespace
-{
-    /*
-     * Build a document nested 'depth' objects deep: {"n":{"n":{ ... {"n":1} ... }}}
-     */
-    inline std::string makeNestedJsonText( SAA_in const std::size_t depth )
-    {
-        std::string text;
-
-        text.reserve( depth * 6U + 8U );
-
-        for( std::size_t i = 0U; i < depth; ++i )
-        {
-            text += "{\"n\":";
-        }
-
-        text += "1";
-
-        text.append( depth, '}' );
-
-        return text;
-    }
-
-} // __unnamed
-
 UTF_AUTO_TEST_CASE( JsonParseDepthWithinLimitIsAccepted )
 {
     utest::json::logImplementation();
@@ -1831,6 +2260,46 @@ UTF_AUTO_TEST_CASE( JsonParseDepthWithinLimitIsAccepted )
 
     UTF_REQUIRE_EQUAL( levels, 500U );
     UTF_REQUIRE_EQUAL( bl::json::get_int64( current ), 1 );
+
+    /*
+     * The parser is bounded at MAX_PARSE_DEPTH, but the three tree walks used on the way OUT -
+     * chkNoNonFiniteDoubles(), which runs on every saveToString() call, canonicalizeValue() and
+     * prettyPrintImpl() - are naive unbounded recursion with no depth check of their own. So a
+     * document this library is willing to ACCEPT must also be provably serializable, in all
+     * three modes, and must survive the full round trip
+     *
+     * Note that the failure mode here is a stack overflow, i.e. a process crash rather than a
+     * failed assertion - particularly on Windows, whose default stack is far smaller than
+     * Linux's. Raising MAX_PARSE_DEPTH without revisiting these three walks is exactly the
+     * change this block is meant to catch
+     */
+
+    const auto compact = bl::json::saveToString( parsed );
+
+    UTF_REQUIRE_EQUAL( compact, makeNestedJsonText( 500U ) );
+
+    /*
+     * One member per level, so sorting is the identity - which is what makes this a pure
+     * exercise of canonicalizeValue()'s recursion rather than of its ordering
+     */
+
+    const auto canonical = bl::json::saveToString(
+        parsed,
+        false           /* prettyPrint */,
+        false           /* rawUtf8 */,
+        true            /* canonicalize */
+        );
+
+    UTF_REQUIRE_EQUAL( canonical, makeNestedJsonText( 500U ) );
+
+    std::string pretty;
+
+    UTF_REQUIRE_NO_THROW( pretty = bl::json::saveToString( parsed, true /* prettyPrint */ ) );
+
+    UTF_REQUIRE( ! pretty.empty() );
+    UTF_REQUIRE_NO_THROW( ( void ) bl::json::readFromString( pretty ) );
+
+    utest::json::verifyDeepEqual( parsed, bl::json::readFromString( compact ) );
 }
 
 /*
@@ -1984,6 +2453,89 @@ UTF_AUTO_TEST_CASE( JsonPrettyPrintEmptyContainers )
 #endif
 
     UTF_REQUIRE( pretty.find( "\n\n" ) == std::string::npos );
+}
+
+UTF_AUTO_TEST_CASE( JsonPrettyPrintNestedLayout )
+{
+    utest::json::logImplementation();
+
+    /*
+     * The Boost.JSON backend does not use a library pretty printer - prettyPrintImpl() is a
+     * hand written recursive one, and its indentation depth, the restoration of the indent on
+     * the way out of a container, the comma placement and the exact key separator are asserted
+     * nowhere: JsonSerializePretty only looks for a newline and re-parses,
+     * JsonPrettyPrintEmptyContainers pins the empty containers only
+     *
+     * Losing indent.resize( indent.size() - 4 ) (indentation which grows and never comes back),
+     * emitting a trailing comma or changing ": " to " : " silently rewrites every manifest file
+     * Manifest::write() produces and every getDocAsPrettyJsonString() output, so the layout is
+     * pinned here byte for byte
+     *
+     * The document is built as a / e, which is also the sorted order, so both backends emit the
+     * members in the same order and the two expected texts differ only in the separator and in
+     * how an empty array is rendered. Neither backend appends a trailing newline
+     */
+
+    bl::json::object innermost;
+    innermost[ "c" ] = "d";
+
+    bl::json::array b;
+    b.push_back( bl::json::value( 1 ) );
+    b.push_back( bl::json::value( innermost ) );
+
+    bl::json::object a;
+    a[ "b" ] = b;
+
+    bl::json::object root;
+    root[ "a" ] = a;
+    root[ "e" ] = bl::json::array();
+
+    const auto pretty = bl::json::saveToString( bl::json::value( root ), true /* prettyPrint */ );
+
+#if !defined( BL_USE_JSON_SPIRIT )
+    const std::string expected =
+        R"({
+    "a": {
+        "b": [
+            1,
+            {
+                "c": "d"
+            }
+        ]
+    },
+    "e": []
+})";
+#else
+    const std::string expected =
+        R"({
+    "a" : {
+        "b" : [
+            1,
+            {
+                "c" : "d"
+            }
+        ]
+    },
+    "e" : [
+    ]
+})";
+#endif
+
+    UTF_REQUIRE_EQUAL( pretty, expected );
+
+    /*
+     * Layout is whitespace only - the document itself must be unchanged
+     */
+
+    utest::json::verifyDeepEqual( bl::json::readFromString( pretty ), bl::json::value( root ) );
+
+    /*
+     * A cheap guard against runaway indentation: the deepest member of this document sits at
+     * three levels (12 spaces) and nothing in it reaches five (20)
+     */
+
+    UTF_REQUIRE( pretty.find( "\n            " ) != std::string::npos );
+    UTF_REQUIRE( pretty.find( "\n                    " ) == std::string::npos );
 }
 
 UTF_AUTO_TEST_CASE( JsonParseDuplicateKeysAreBackendDefined )
@@ -2216,6 +2768,130 @@ UTF_AUTO_TEST_CASE( JsonNumericSmallUint64ReadsAsInt64 )
 
     UTF_REQUIRE_THROW( bl::json::value_to< std::int64_t >( obj.at( "big" ) ), std::exception );
     UTF_REQUIRE_THROW( bl::json::get_int64( obj.at( "big" ) ), std::exception );
+
+    /*
+     * get_int() has an is_uint64() arm of its own, with its own INT_MAX check, because
+     * as_int64() refuses the unsigned kind whatever the magnitude. Neither side of that arm is
+     * reached anywhere else - JsonNumericOutOfRangeIntIsRejected only ever feeds get_int() an
+     * int64 kind value - so 'simplifying' get_int() to a cast of as_int64() passes today and
+     * would break BL_DM_DECLARE_SIMPLE_VECTOR_PROPERTY( numbers, int, get_int ) for any object
+     * built in memory with unsigned values
+     */
+
+    UTF_REQUIRE_EQUAL( bl::json::get_int( obj.at( "small" ) ), 5 );
+    UTF_REQUIRE_EQUAL( bl::json::value_to< int >( obj.at( "small" ) ), 5 );
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        bl::json::get_int( obj.at( "max" ) ),
+        std::exception,
+        "is out of range for the requested integer type"
+        );
+
+    UTF_REQUIRE_THROW( bl::json::value_to< int >( obj.at( "big" ) ), std::exception );
+
+    /*
+     * ... and the same value read through the unsigned accessor, as a cross check on the kind
+     */
+
+    UTF_REQUIRE_EQUAL( bl::json::get_uint64( obj.at( "small" ) ), 5U );
+
+    /*
+     * The serialized text of a number above INT64_MAX is pinned directly, because the round
+     * trip helpers structurally cannot detect losing it: verifyRoundTrip / verifyDeepEqual
+     * compare SERIALIZED forms, so a serializer which emitted such a value as a negative int64
+     * would destroy it in the first serialization and then compare "-1" with "-1" and pass
+     */
+
+    UTF_REQUIRE_EQUAL(
+        bl::json::saveToString( bl::json::readFromString( R"({"u":18446744073709551615})" ) ),
+        std::string( "{\"u\":18446744073709551615}" )
+        );
+
+    bl::json::object maxObj;
+    maxObj.emplace( "u", std::numeric_limits< std::uint64_t >::max() );
+
+    UTF_REQUIRE_EQUAL(
+        bl::json::saveToString( bl::json::value( maxObj ) ),
+        std::string( "{\"u\":18446744073709551615}" )
+        );
+}
+
+UTF_AUTO_TEST_CASE( JsonObjectJoinQuoteFormattedKeys )
+{
+    utest::json::logImplementation();
+
+    /*
+     * The json::object overload of str::joinQuoteFormattedKeys ( JsonUtils.h ) shadows the
+     * generic MAP template ( StringUtils.h ), which uses pair.first and therefore does not
+     * compile against boost::json::object
+     *
+     * This case covers only what the overload itself contributes - the key extraction through
+     * BL_JSON_PAIR_KEY, the json::string_view -> std::string conversion, and the empty object.
+     * The separator / lastSeparator semantics of joinFormattedImpl are already pinned by
+     * BaseLib_StringUtilsJoinFormattedTests and are deliberately not duplicated here
+     *
+     * The keys are inserted in alphabetical order so that Boost.JSON's insertion order and
+     * json-spirit's std::map ordering agree - for unsorted insertion the two backends would
+     * emit the keys in a different order and no single expected string would fit both
+     */
+
+    bl::json::object three;
+    three.emplace( "alpha", "a" );
+    three.emplace( "beta", "b" );
+    three.emplace( "gamma", "c" );
+
+    UTF_REQUIRE_EQUAL(
+        bl::str::joinQuoteFormattedKeys( three ),
+        std::string( "'alpha', 'beta' and 'gamma'" )
+        );
+
+    UTF_REQUIRE_EQUAL(
+        bl::str::joinQuoteFormattedKeys( three, "|", "|" ),
+        std::string( "'alpha'|'beta'|'gamma'" )
+        );
+
+    bl::json::object two;
+    two.emplace( "alpha", "a" );
+    two.emplace( "beta", "b" );
+
+    UTF_REQUIRE_EQUAL(
+        bl::str::joinQuoteFormattedKeys( two ),
+        std::string( "'alpha' and 'beta'" )
+        );
+
+    bl::json::object one;
+    one.emplace( "alpha", "a" );
+
+    UTF_REQUIRE_EQUAL( bl::str::joinQuoteFormattedKeys( one ), std::string( "'alpha'" ) );
+
+    /*
+     * The empty object is the only path through the overload which never reaches
+     * BL_JSON_PAIR_KEY at all
+     */
+
+    const bl::json::object empty;
+
+    UTF_REQUIRE_EQUAL( bl::str::joinQuoteFormattedKeys( empty ), std::string( "" ) );
+
+    /*
+     * A key is copied out verbatim and only wrapped in quotes - it is neither escaped nor
+     * validated, so an embedded apostrophe and a non-ASCII UTF-8 byte sequence both survive
+     * the conversion unchanged. Each is put in a single key object so that the assertion does
+     * not depend on how the two backends order such a key against the others
+     */
+
+    bl::json::object quoted;
+    quoted.emplace( "it's", "a" );
+
+    UTF_REQUIRE_EQUAL( bl::str::joinQuoteFormattedKeys( quoted ), std::string( "'it's'" ) );
+
+    bl::json::object nonAscii;
+    nonAscii.emplace( "Caf\xC3\xA9", "a" );
+
+    UTF_REQUIRE_EQUAL(
+        bl::str::joinQuoteFormattedKeys( nonAscii ),
+        std::string( "'Caf\xC3\xA9'" )
+        );
 }
 
 #endif /* __UTEST_TESTJSONABSTRACTION_H_ */
