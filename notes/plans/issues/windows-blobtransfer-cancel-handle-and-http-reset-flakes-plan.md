@@ -1,10 +1,12 @@
 # The two Windows flakes left open by the path-normalization plan: mechanism, diagnosis and fix plan
 
 **Date:** 2026-09-09
-**Status:** **Approved 2026-09-09; implemented 2026-09-09** (working tree, uncommitted). Part A
-(blobtransfer) is fixed and verified — the cause turned out to be the unpackager, not the
-packager, see the correction in section A. Part B (HTTP) stays root-cause-unknown: twelve clean
-solo runs, test-only improvements in, no production socket change made.
+**Status:** **Approved 2026-09-09; implemented 2026-09-09** (the first part committed as
+`215b891`, the rest in the working tree). Part A (blobtransfer) is fixed and verified — the cause
+turned out to be the unpackager, not the packager, see the correction in section A. Part B (HTTP)
+was **root-caused and fixed later the same day**: candidate 2, with the twist that the
+`MachineGlobalTestLock` which should have prevented it has excluded nothing on Windows since
+`6db5ec1` — see the end of the implementation log and the HTTP record.
 **Found:** the two intermittent failures recorded by
 `windows-path-normalization-and-flaky-tests-plan.md` (Change 3 and its HTTP record) on the devenv7
 Windows host, branch `lazari2`. Their mechanisms below come from a read-only trace of the code by
@@ -250,6 +252,10 @@ intermittent" differently; the capture separates them):
   Windows acceptors (`TcpBaseTasks.h:1205`; Microsoft's recommendation for servers, turns a silent
   hijack into `WSAEADDRINUSE`). The `MachineGlobalTestLock` 1 s settle
   (`MachineGlobalTestLock.h:68-78`) can then be revisited.
+  **Outcome (2026-09-09): confirmed, in its lock form** — the concurrently running modules held
+  the machine-global lock *simultaneously*, because the lock itself has been broken on Windows
+  since `6db5ec1`; the fix is in the lock (implementation log, "Root cause of part B"). Per-module
+  ports and the `SO_EXCLUSIVEADDRUSE` hardening remain optional follow-ups and were not made.
 - **Candidate 1 confirmed** (failure during response read or TLS shutdown with no foreign
   listener) → two production changes, separately reviewable:
   1. Client tolerance: in `onShutdownCompleted` (`TcpSslBaseTasks.h:553-608`) treat
@@ -298,6 +304,9 @@ stdout captured, never through the whole suite.
   each flavour with no TmpDir warning; the new coverage passes on all three.
 - B.2 capture before any HTTP change (≥ 10 runs per flavour, module alone on the box); after the
   chosen B.3 change, `utf_baselib_http` ≥ 10 runs per flavour.
+  *As done:* solo runs never reproduced it (16 clean on the two debug trees), so the criterion
+  became the concurrent reproduction — 3/3 rounds failing before the fix, 3/3 clean after it on
+  `win-a64-vc143-debug` — plus the deterministic red/green lock case; see the implementation log.
 - `git ls-files --eol` / `file -b` on every touched file; nothing committed.
 
 ## Out of scope
@@ -363,10 +372,9 @@ stdout captured, never through the whole suite.
   failures in 20 runs** (runs 10, 11, 12), error 32 on the tree root, `foo/bar/multiChunkFile.bin` the
   first surviving file in every leftover tree, no leak at exit, every leftover tree deletable
   after the process exited. Mechanism A.1 confirmed; details in
-  `blobtransfer-cancelled-reader-holds-input-file-record.md`. Note this flavour is outside the
-  three build flavours of this plan, so the *disappearance* of the warning after the fix can only
-  be shown on it if that tree is rebuilt (owner's call); on the three built flavours the
-  deterministic reader test is the evidence, plus cancel-upload loops as a no-regression check.
+  `blobtransfer-cancel-teardown-warning-record.md`. This flavour is outside the three build
+  flavours of this plan; the tree was nevertheless rebuilt from `215b891` afterwards and the same
+  case then ran **0/20** on it with the fix (3/20 before).
 - `utf_baselib_http`, full module, unmodified `win-x64-ccl16-debug` binary, alone on the box:
   **0 failures in 6 runs** (~222 s each); `tasklist`/`netstat` before each run showed no other
   `utf-*` process and no listener on 281xx; after the runs the only 281xx state was the expected
@@ -418,3 +426,40 @@ with the fix and the reworked test on all three, zero warnings under `-WX`.
   so it is a guard for the failure branch, not the proof. The stop case is the pipeline's shape.
 - `utf_baselib_http`, full module, one run per flavour with the test-only tweaks in: **56/56 on
   all three.**
+
+**Root cause of part B (2026-09-09, later the same day; `win-a64-vc143-debug` rebuilt from
+`215b891`):**
+
+- Reproduced: `utf_baselib_http` alone on the box **0/10** (plus the 6 earlier); with
+  `utf_baselib_tasks`, `utf_baselib_io` and `utf_baselib_messaging` running concurrently
+  **3/3 rounds fail, 15 of 56 cases each**, all `system:10054` on `localhost:28100`; a 5 s
+  `netstat` sampler shows two processes listening on `0.0.0.0:28100` at once (the other one is
+  `utf_baselib_messaging`, a broker on 28100 + 28101) and the HTTP client's connections
+  established to the other process's listener — candidate 2.
+- The lock audit above was right about the cases and wrong about the lock: the DEBUG lines of
+  the three processes put on one timeline show io and messaging **inside `MachineGlobalTestLock`
+  at the same time** — 36, 34 and 41 overlapping acquisitions in the three rounds. `6db5ec1`
+  (2026-09-08) had made `acquireWithWatchdog()` take the `RobustNamedMutex::Guard` on a detached
+  helper thread which then exits; on Windows a named mutex is owned by the acquiring thread, so
+  the mutex is abandoned as soon as that thread exits, the next waiter anywhere gets
+  `WAIT_ABANDONED` (an acquisition, by design of the robust mutex) and the later `ReleaseMutex`
+  from the main thread fails with `ERROR_NOT_OWNER`, swallowed by Boost's `scoped_lock`
+  destructor. UNIX is unaffected (System V semaphore, process-scoped `SEM_UNDO`). Full
+  mechanism in the HTTP record.
+- Fix (`MachineGlobalTestLock.h`): the holder thread keeps the guard until the destructor
+  signals the release, unlocks on the acquiring thread and is joined; the watchdog is unchanged
+  and the thread is detached only on the rip path. No production code is touched.
+- Coverage: `BaseLib_MachineGlobalTestLockExcludesConcurrentAcquirerTests` (`utf_baselib`,
+  `TestBaselibDefault5.h`). Red on `win-a64-vc143-debug`: built with the new case against the
+  unfixed header it **fails** at `UTF_REQUIRE( ! acquired.wait( 500U ) )` — the second acquirer
+  went straight through the held lock, and the log still printed "was released" afterwards.
+- Verification with the fix (`win-a64-vc143-debug`; `utf_baselib`, `utf_baselib_tasks`, `_io`,
+  `_messaging` and `_http` rebuilt with `-j1`, zero warnings): the new case **5/5**, the two
+  existing named-mutex cases pass; the concurrent reproduction **3/3 rounds 56/56** (was 3/3
+  rounds with 15/56 failing); two listeners on `0.0.0.0:28100` in **0 of 360** netstat samples
+  (was 45 of 81); lock holds overlap by milliseconds only — the log order — where they overlapped
+  by seconds before. Details in the HTTP record. Second toolchain: `utf_baselib` rebuilt on
+  `win-x64-ccl16-debug` (clang-cl), zero warnings, the new case and the named-mutex robustness
+  case **3/3** there too. The server modules of the other flavours have not been rebuilt with the
+  header change; it is platform-generic, and the a64 debug tree is the one the failure was
+  observed on.

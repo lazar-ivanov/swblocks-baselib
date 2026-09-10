@@ -356,7 +356,10 @@ needs more than the eight modules affected by the pull.
 
 ## Out of scope
 
-- The HTTP failures — recorded with root cause unknown, not fixed (see Records).
+- The HTTP failures — recorded with root cause unknown at first; **root-caused and fixed on
+  2026-09-09**: the machine-global test lock had excluded nothing on Windows since `6db5ec1`, so
+  concurrently running modules shared port 28100 (see the HTTP record and
+  `windows-blobtransfer-cancel-handle-and-http-reset-flakes-plan.md`).
 - The Windows → Linux packaging direction (backslash relative paths) — recorded, not fixed (see
   Context and Records).
 - `13(c)`, the Windows handle-inheritance race, remains closed as a deferral in

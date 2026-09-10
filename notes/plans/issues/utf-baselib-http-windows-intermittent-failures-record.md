@@ -1,12 +1,14 @@
-# `utf_baselib_http` intermittent failures on Windows: root cause unknown
+# `utf_baselib_http` intermittent failures on Windows: the machine-global test lock excluded nothing (root cause found 2026-09-09)
 
 **Found:** 2026-09-09, while doing focused testing of the modules affected by commit `79488fa` on the
 devenv7 Windows host (ARM64 Windows 11, `dist-devenv7-windows-hostarch-a64-targets-a64-x64-x86`,
 MSVC 14.38.33130, clang-cl 16.0.5, Boost 1.90.0, OpenSSL 3.5.4), branch `lazari2`.
 
-**Status:** **recorded, not fixed.** The root cause is **unknown**. An earlier IPv4/IPv6 explanation
-was written into the plan and then **withdrawn** — see "The withdrawn explanation" below, which is
-kept deliberately so the same wrong turn is not taken again.
+**Status:** **root cause found and fixed in the working tree, 2026-09-09** (test infrastructure,
+`src/utests/include/utests/baselib/MachineGlobalTestLock.h`; see "Root cause" below). It was
+recorded as root-cause-unknown for most of that day; the sections in between are the trail. An
+earlier IPv4/IPv6 explanation was written into the plan and then **withdrawn** — see "The
+withdrawn explanation" below, which is kept deliberately so the same wrong turn is not taken again.
 
 **Related:** `notes/plans/issues/windows-path-normalization-and-flaky-tests-plan.md` (this is the
 "Records to write" item of that plan) and its Fable 5.1 review, which refuted the first explanation;
@@ -161,6 +163,79 @@ eh::error_code(), acceptEc )`), and the manual `localhost:28100` seed of
 `linger( false, 0 )` comments in `TcpBaseTasks.h` now describe what the call does. No
 mechanism-dependent production change was made.
 
+## Reproduced 2026-09-09 (later the same day): port 28100 shared with a concurrently running module
+
+`utf_baselib_http` rebuilt from `215b891` on **`win-a64-vc143-debug`**, the flavour of the original
+observation:
+
+| Condition | Runs | Result |
+|---|---|---|
+| alone on the box | 10 (plus the 6 earlier) | **0 failures** |
+| with `utf_baselib_tasks`, `utf_baselib_io`, `utf_baselib_messaging` running concurrently | 3 | **3 failures — 15 of 56 cases each time** |
+
+The 15 include all four cases of the original observation (`BaseLib_HttpServerPerfTest`, the
+three `TlsHandshake_*` cases) plus eleven more. The failing exceptions are plain
+`system:10054` resets on client connections to `localhost:28100` (43 in one run — e.g.
+`GET http://localhost:28100/request-uri` in `Client_SimpleHttpTests` reset by the remote host;
+`errinfo_endpoint_address` shows `::1` as always, the first resolved endpoint). A sampler of the
+non-TIME_WAIT sockets on 281xx every 5 s shows the mechanism directly: **two different processes
+listening on `0.0.0.0:28100` at the same time** for most of the run (one of them also on
+`0.0.0.0:28101`), and the HTTP process's client connections **established to the other
+process's listener** (its `127.0.0.1:<ephemeral> -> 127.0.0.1:28100` rows are owned by the HTTP
+process while the matching `127.0.0.1:28100 -> 127.0.0.1:<ephemeral>` rows are owned by the other
+one). The wrong server resets what it cannot parse. This is candidate 2 exactly — Windows
+`SO_REUSEADDR` lets the second bind succeed silently and delivers new connections
+indeterminately — and the original run was the milder form of it (fewer or shorter overlaps,
+hence four failures). The other listener was `utf_baselib_messaging` — a broker, inbound on 28100
+and outbound on `port + 1` = 28101 (`TestMessagingUtils.h:555`); its log places
+`IO_BrokerAuthorizationCacheMissTests` and `IO_MessagingClientReconnectAndChannelIdTests` in that
+window — but which module it was is incidental, see the next section.
+
+## Root cause (2026-09-09): the machine-global test lock has excluded nothing on Windows since `6db5ec1`
+
+Every server-starting case does hold `MachineGlobalTestLock`; the lock itself is broken. The
+DEBUG lines of the three concurrently running processes, put on one timeline, show
+`utf_baselib_io` and `utf_baselib_messaging` **inside the lock at the same time** — 36, 34 and 41
+overlapping acquisitions in the three rounds (e.g. io acquired at 20:39:43.896 and released at
+20:39:44.923; messaging acquired the same lock at 20:39:43.932).
+
+**Mechanism.** `6db5ec1` (2026-09-08, "P2 tail ... plus the two shared test headers") gave the lock
+a bounded, diagnosable wait: `acquireWithWatchdog()` constructs the `RobustNamedMutex::Guard` on a
+**detached helper thread**, which signals and exits, while the main thread keeps the guard and
+releases it later. On UNIX that is harmless — the System V semaphore and its `SEM_UNDO`
+adjustment belong to the process. On Windows `RobustNamedMutex` is a named Win32 mutex
+(`OSImplWindows.h:2949-3040`), and a Win32 mutex is **owned by the thread which acquired it**: when
+the helper thread exits the mutex is abandoned, the next `WaitForSingleObject` on it — in any
+process on the machine — returns `WAIT_ABANDONED` at once, and `RobustNamedMutex::lock()` treats
+that as an acquisition (rightly: an abandoned mutex is what a crashed holder leaves behind). The
+later `ReleaseMutex` from the main thread fails with `ERROR_NOT_OWNER` and Boost's `scoped_lock`
+destructor swallows the exception (`scoped_lock.hpp:254-258`), so "was released" is logged as if
+nothing had happened. Net effect: every acquisition succeeds immediately, every module runs its
+servers on 28100 whenever its own schedule says so, and Windows `SO_REUSEADDR`
+(`TcpBaseTasks.h:1205`) lets the second listener bind silently. The suite has run like this since
+`6db5ec1`, which is why the failures appeared on 2026-09-09, only when several modules were in
+flight (the matrix run), and never in a solo run.
+
+**Fix.** `MachineGlobalTestLock.h`: the thread which acquires the lock keeps it — it holds the
+guard until the destructor asks for the release and unlocks on the acquiring thread; the watchdog
+(progress lines, ten-minute rip) is unchanged and the thread is detached only on the rip path.
+Pinned by `BaseLib_MachineGlobalTestLockExcludesConcurrentAcquirerTests` (`utf_baselib`,
+`TestBaselibDefault5.h`): a second acquirer of the same named object on another thread must still
+be waiting after 500 ms while the lock is held, and must get through after the release.
+
+**Verification** (`win-a64-vc143-debug`; the five modules of the reproduction which include the
+header rebuilt with the fix, zero warnings). The new case **fails against the unfixed header** —
+the second acquirer goes straight through the held lock, and the log still prints "was released"
+afterwards — and passes **5/5** with it; the existing named-mutex cases still pass. The concurrent
+reproduction (http with tasks, io and messaging in flight) went from **3/3 rounds failing, 15 of
+56 cases each** to **3/3 rounds 56/56**. The netstat sampler saw two processes listening on
+`0.0.0.0:28100` in 17, 15 and 13 of 27 samples per round before the fix and in **0 of 119, 121
+and 120** after it. The lock timeline shows holds overlapping by seconds before (median 1.0-1.8 s,
+up to 30 s) and by a few milliseconds after (one 75 ms outlier): the residual is the log order —
+the next acquirer logs "acquired" the instant the holder's thread unlocks, before the releaser's
+own "was released" line — not a hold. The serialization shows in the run time as well: the
+module took about 630 s per round behind the companions instead of failing fast.
+
 ## What to capture next time it reproduces
 
 Do not theorise from the decorated endpoint again. Capture:
@@ -175,7 +250,9 @@ Do not theorise from the decorated endpoint again. Capture:
 ## Conditions to revisit
 
 - The failures become deterministic, or appear on `ccl16` as well.
-- Anyone changes the TLS handshake deadlines, the acceptor, or the test port allocation.
+- Anyone changes the TLS handshake deadlines, the acceptor, the test port allocation, or
+  `MachineGlobalTestLock` — on Windows the named mutex is thread-owned, so whichever thread
+  acquires it must be the one which holds and releases it (the regression of `6db5ec1`).
 - A dual-stack acceptor is wanted for its own sake — that is a production change to
   `TcpBaseTasks.h:1181-1214` affecting every server in the library (HTTP, blob, broker, messaging)
   and should not be undertaken to chase this symptom without evidence it is the cause.

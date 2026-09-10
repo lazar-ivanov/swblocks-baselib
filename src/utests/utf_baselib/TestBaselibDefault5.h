@@ -17,6 +17,7 @@
 #include <utests/baselib/Utf.h>
 #include <utests/baselib/UtfArgsParser.h>
 #include <utests/baselib/UtfBaseLibCommon.h>
+#include <utests/baselib/MachineGlobalTestLock.h>
 
 #include <baselib/core/Checksum.h>
 #include <baselib/core/ErrorHandling.h>
@@ -633,6 +634,94 @@ UTF_AUTO_TEST_CASE( BaseLib_NamedMutexRobustnessTests )
     }
 
 #endif // ! defined( _WIN32 )
+}
+
+/************************************************************************
+ * test::MachineGlobalTestLock exclusion tests
+ */
+
+UTF_AUTO_TEST_CASE( BaseLib_MachineGlobalTestLockExcludesConcurrentAcquirerTests )
+{
+    /*
+     * The lock is what keeps the server modules of the test suite off port 28100 while
+     * another one uses it, so for as long as it is held it has to exclude a second
+     * acquirer of the same named object - in the suite that is another process, which
+     * is stood in for here by another thread, since the underlying named object is the
+     * same either way
+     *
+     * On Windows the named object is a mutex owned by the thread which acquired it: an
+     * acquisition made on a helper thread which then exits leaves the mutex abandoned
+     * and the next waiter anywhere on the machine is let through at once
+     * (WAIT_ABANDONED). That is the regression this case pins - with such a lock the
+     * worker below acquires immediately instead of after the release
+     */
+
+    const auto name = "BL-Test-Machine-Lock-" + bl::uuids::uuid2string( bl::uuids::create() );
+
+#if ! defined( _WIN32 )
+
+    BL_SCOPE_EXIT(
+        {
+            removeNamedMutexSemaphoreNothrow( name );
+        }
+        );
+
+#endif // ! defined( _WIN32 )
+
+    utest::TestSignal acquired;
+
+    std::atomic< bool > failed( false );
+
+    bl::os::thread worker;
+
+    /*
+     * Declared before the scope which holds the lock, so the worker is joined only after
+     * the lock has been released - also on the exception path
+     */
+
+    BL_SCOPE_EXIT(
+        {
+            bl::os::safeThreadJoin( worker );
+        }
+        );
+
+    {
+        test::MachineGlobalTestLock lock( name );
+
+        worker = bl::os::thread(
+            [ &acquired, &failed, &name ]() -> void
+            {
+                try
+                {
+                    bl::os::RobustNamedMutex second( name );
+
+                    bl::os::ipc::scoped_lock< bl::os::RobustNamedMutex > secondGuard( second );
+
+                    acquired.signal();
+                }
+                catch( std::exception& )
+                {
+                    failed = true;
+                }
+            }
+            );
+
+        /*
+         * The lock is held here, so the worker must still be waiting - the bound is long
+         * enough to catch an immediate acquisition and short enough not to burden the run
+         */
+
+        UTF_REQUIRE( ! acquired.wait( 500U /* timeoutInMilliseconds */ ) );
+        UTF_REQUIRE( ! failed );
+    }
+
+    /*
+     * The lock has been released (after its settle time), so the worker must be let
+     * through now
+     */
+
+    UTF_REQUIRE( acquired.wait() );
+    UTF_REQUIRE( ! failed );
 }
 
 /************************************************************************

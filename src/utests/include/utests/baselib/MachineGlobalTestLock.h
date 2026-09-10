@@ -29,6 +29,7 @@
 #include <memory>
 #include <string>
 #include <type_traits>
+#include <utility>
 
 namespace test
 {
@@ -79,13 +80,13 @@ namespace test
         };
 
         /**
-         * @brief The state shared with the detached acquiring thread
+         * @brief The state shared with the holder thread
          */
 
         struct AcquireState
         {
-            utest::TestSignal                           signal;
-            bl::cpp::SafeUniquePtr< mutex_t::Guard >    guard;
+            utest::TestSignal                           acquired;
+            utest::TestSignal                           release;
             std::exception_ptr                          exception;
         };
 
@@ -93,7 +94,8 @@ namespace test
 
         const std::string                               m_name;
         mutex_t                                         m_lock;
-        bl::cpp::SafeUniquePtr< mutex_t::Guard >        m_guard;
+        std::shared_ptr< AcquireState >                 m_state;
+        bl::os::thread                                  m_holder;
 
         /**
          * @brief The diagnostics an operator needs in order to clear a stale lock
@@ -136,10 +138,19 @@ namespace test
         /**
          * @brief Acquires the lock with a bounded, diagnosable wait
          *
-         * bl::os::RobustNamedMutex::lock() is an untimed ::semop, so a lock which is held by
-         * a leftover process, by a stale semaphore or by a concurrent developer run would
-         * otherwise block this process forever behind a single debug line - the build then
-         * times out with no indication of which module, which case or which lock
+         * bl::os::RobustNamedMutex::lock() is an untimed wait (::semop on UNIX,
+         * WaitForSingleObject on Windows), so a lock which is held by a leftover process, by
+         * a stale semaphore or by a concurrent developer run would otherwise block this
+         * process forever behind a single debug line - the build then times out with no
+         * indication of which module, which case or which lock
+         *
+         * The lock is acquired on a holder thread which keeps it for the lifetime of this
+         * object and releases it on request. The thread which acquires must be the thread
+         * which holds and releases: on Windows the named object is a mutex owned by the
+         * acquiring thread, so a helper which acquired it and then exited would leave the
+         * mutex abandoned - the next waiter in any process would be let through at once
+         * (WAIT_ABANDONED) and the eventual ReleaseMutex from another thread would fail,
+         * i.e. the lock would exclude nothing
          */
 
         void acquireWithWatchdog()
@@ -148,34 +159,37 @@ namespace test
 
             mutex_t* const lock = &m_lock;
 
-            /*
-             * The acquiring thread must be detached rather than joined: after BL_RIP_MSG the
-             * process is going down anyway, and joining a thread which is blocked in the
-             * untimed ::semop would deadlock the teardown
-             */
-
-            bl::os::thread acquirer(
+            bl::os::thread holder(
                 [ state, lock ]() -> void
                 {
                     try
                     {
-                        state -> guard.reset( new ( mutex_t::Guard )( *lock ) );
+                        mutex_t::Guard guard( *lock );
+
+                        state -> acquired.signal();
+
+                        /*
+                         * Keep the lock on this thread until the release is requested; the
+                         * guard then unlocks it on the thread which acquired it
+                         */
+
+                        while( ! state -> release.wait() )
+                        {
+                        }
                     }
                     catch( std::exception& )
                     {
                         state -> exception = std::current_exception();
-                    }
 
-                    state -> signal.signal();
+                        state -> acquired.signal();
+                    }
                 }
                 );
-
-            acquirer.detach();
 
             const auto started = bl::time::second_clock::universal_time();
 
             while(
-                ! state -> signal.wait(
+                ! state -> acquired.wait(
                     static_cast< std::size_t >( PROGRESS_INTERVAL_IN_SECONDS ) * 1000U /* timeoutInMilliseconds */
                     )
                 )
@@ -195,16 +209,32 @@ namespace test
 
                 if( elapsed >= static_cast< long >( ACQUIRE_TIMEOUT_IN_SECONDS ) )
                 {
+                    /*
+                     * The holder thread is still blocked in the untimed wait, so it must be
+                     * detached rather than joined: after BL_RIP_MSG the process is going down
+                     * anyway, and joining it would deadlock the teardown
+                     */
+
+                    holder.detach();
+
                     BL_RIP_MSG( hungLockDiagnostics() );
                 }
             }
 
             if( state -> exception )
             {
+                /*
+                 * The holder thread signals after it has caught the exception, so it is on
+                 * its way out and the join returns at once
+                 */
+
+                holder.join();
+
                 bl::cpp::safeRethrowException( state -> exception );
             }
 
-            m_guard.swap( state -> guard );
+            m_state = state;
+            m_holder = std::move( holder );
         }
 
     public:
@@ -235,7 +265,7 @@ namespace test
 
         ~MachineGlobalTestLockT() NOEXCEPT
         {
-            if( m_guard )
+            if( m_state )
             {
                 /*
                  * Make sure we sleep one second before we release the lock to ensure that
@@ -245,7 +275,14 @@ namespace test
 
                 bl::os::sleep( bl::time::seconds( static_cast< long >( RELEASE_SETTLE_TIME_IN_SECONDS ) ) );
 
-                m_guard.reset();
+                /*
+                 * The holder thread unlocks and exits; joining it is what guarantees that the
+                 * lock is free by the time the release is reported
+                 */
+
+                m_state -> release.signal();
+
+                bl::os::safeThreadJoin( m_holder );
 
                 BL_LOG(
                     bl::Logging::debug(),

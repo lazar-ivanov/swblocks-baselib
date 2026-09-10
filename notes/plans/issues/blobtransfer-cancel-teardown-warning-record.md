@@ -131,6 +131,6 @@ warning came from the unpackager.
   on `win-x64-ccl16-debug`, `BlobTransfer_UnpackagerStopClosesOpenFilesTests` **fails** at
   `UTF_REQUIRE( ! ec )` (the staging tree cannot be removed while the unit is alive) and passes
   with the fix; the failure-branch case passes either way and is kept as a guard.
-- Not covered here: `win-a64-vc143-debug`, the flavour of the original observation, is outside
-  the three build flavours of this plan; the mechanism and the fix are flavour-independent, but
-  the loop on that tree can only be re-run once it is rebuilt.
+- 2026-09-09, `win-a64-vc143-debug` (the flavour of the original observation, outside the three
+  build flavours of the plan) rebuilt from `215b891`: cancel-upload **0/20** with the fix (3/20
+  before it, above).
