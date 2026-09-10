@@ -10,9 +10,10 @@ vc143/ccl16 × `VARIANT` debug/release) of all 19 test modules on branch `lazari
 plus the x86 build fixes committed as `c17cf2c`.
 
 **Status:** **Deferred, not reproduced at HEAD.** Both failures were observed once each during the
-matrix run. Nine subsequent targeted runs at HEAD (after pulling `79e1f74`) have not reproduced
-either. See "Reproduction attempts" — the failure to reproduce is itself unexplained and is the main
-reason this is a record rather than a fix.
+matrix run. Eight subsequent targeted runs of the module at HEAD (after pulling `79e1f74`) have not
+reproduced either, with zero sharing violations logged in any of them. See "Reproduction attempts" —
+the failure to reproduce is itself unexplained and is the main reason this is a record rather than a
+fix.
 
 **Platform:** Windows only, and in practice `ARCH=x86` only. Nothing here can occur on POSIX.
 
@@ -216,7 +217,7 @@ All at HEAD after pulling `79e1f74` (which added the Linux `InputConnector.h` fi
 | Attempt | Condition | Result |
 |---|---|---|
 | 5 × single case | `BlobTransfer_FilesPackagerInMemoryTests`, 4 CPU busy-loops alongside | 5/5 pass, 0 sharing violations, ~90 s per run |
-| 3 × five modules | `make -k -j5` over blobtransfer, messaging, io, http, tasks | 2 of 3 complete, both pass, 0 sharing violations, ~1235 s per iteration |
+| 3 × five modules | `make -k -j5` over blobtransfer, messaging, io, http, tasks | 3/3 pass, 0 sharing violations, 1241 / 1223 / 1242 s per iteration |
 
 **The synthetic-load attempt was a poor model and should not be repeated as-is.** Those runs took
 ~90 s where the same case took **470 s** during the failing matrix run — four busy-loops on two cores
