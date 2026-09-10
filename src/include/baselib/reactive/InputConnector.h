@@ -133,8 +133,10 @@ namespace bl
              * upstream exception, and eh::diagnostic_information() walks the chain and has
              * Boost's formatter write a cached string inside each link it formats - the same
              * race as sharing the top level, one level down. A link which can be neither copied
-             * nor shared makes the whole chain uncopyable, and a null link is never stored: the
-             * formatter rethrows each link and aborts on a null one
+             * nor shared makes the whole chain uncopyable. A null link is never followed or
+             * stored: the formatter rethrows each link, and a null exception_ptr aborts the
+             * process (cpp::safeRethrowException()) - so a null link already in the chain is left
+             * in the copy as it is, since it shares no object
              *
              * boost::exception_detail::clone_base is used directly rather than the public
              * boost::current_exception() / boost::rethrow_exception() route: that route clones a
@@ -189,6 +191,9 @@ namespace bl
                  * itself and before the clone is rethrown: rethrowing copies the object on some
                  * platforms (MSVC), and the copies share the error info container by reference
                  * count, so a container changed here is what every copy carries
+                 *
+                 * A null link is left as it is: it shares no object, and following it would
+                 * rethrow a null exception_ptr, which aborts the process
                  */
 
                 const auto* copy = dynamic_cast< const eh::exception* >( clone.get() );
@@ -197,7 +202,7 @@ namespace bl
                 {
                     const auto* nested = eh::get_error_info< eh::errinfo_nested_exception_ptr >( *copy );
 
-                    if( nested )
+                    if( nested && *nested )
                     {
                         const auto nestedCopy = copyForTarget( *nested, depth + 1U );
 

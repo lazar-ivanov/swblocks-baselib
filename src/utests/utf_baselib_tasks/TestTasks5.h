@@ -1814,6 +1814,62 @@ UTF_AUTO_TEST_CASE( Tasks_ReactiveInputConnectorTests )
         UTF_REQUIRE_NO_THROW( connector -> onError( outer ) );
         UTF_REQUIRE_EQUAL( recorder -> dispatchCount(), 0U );
     }
+
+    {
+        /*
+         * (16) A null nested link is left in the copy as it is: it shares no object, so there is
+         * nothing to copy, and following it would rethrow a null exception_ptr, which aborts the
+         * process (cpp::safeRethrowException())
+         */
+
+        std::exception_ptr outer;
+
+        try
+        {
+            BL_THROW(
+                UnexpectedException()
+                    << eh::errinfo_nested_exception_ptr( std::exception_ptr() ),
+                BL_MSG()
+                    << "probe outer error with a null link"
+                );
+        }
+        catch( std::exception& )
+        {
+            outer = std::current_exception();
+        }
+
+        UTF_REQUIRE( nullptr != outer );
+
+        const auto recorder = RecordingErrorDispatcherImpl::createInstance();
+
+        const auto connector = reactive::createInputConnector(
+            []( SAA_in const cpp::any& ) -> bool
+            {
+                return true;
+            },
+            om::qi< ErrorDispatcher >( recorder )
+            );
+
+        UTF_REQUIRE_NO_THROW( connector -> onError( outer ) );
+        UTF_REQUIRE_EQUAL( recorder -> dispatchCount(), 1U );
+
+        const auto dispatched = recorder -> lastError();
+
+        UTF_REQUIRE( nullptr != dispatched );
+        UTF_REQUIRE( dispatched != outer );
+
+        try
+        {
+            cpp::safeRethrowException( dispatched );
+        }
+        catch( eh::exception& e )
+        {
+            const auto* nested = eh::get_error_info< eh::errinfo_nested_exception_ptr >( e );
+
+            UTF_REQUIRE( nullptr != nested );
+            UTF_REQUIRE( nullptr == *nested );
+        }
+    }
 }
 
 namespace

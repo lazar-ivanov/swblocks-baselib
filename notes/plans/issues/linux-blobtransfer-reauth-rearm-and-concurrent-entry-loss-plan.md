@@ -11,7 +11,9 @@ exercises, with one residual to close before the commit — the nested exception
 shared between the two tasks, R-1 — and four smaller items; see "Residual issues after the
 implementation". **Residuals R-1, R-2 (minimal) and R-4 implemented and verified on `gcc1520`
 debug and `clang2010` release, 2026-09-10, Fable 5.1**; R-3 deferred; R-5 (Windows and macOS)
-still outstanding. **Revised 2026-09-10** after a read-only trace of
+still outstanding. **R-6** (a null nested link aborted the process in `copyForTarget()`, found
+reviewing R-1) fixed in the working tree, 2026-09-10, Opus 5; stress verification of the whole
+tree in progress. **Revised 2026-09-10** after a read-only trace of
 the code by Fable 5.1 (nothing was built or run for the revision): the two issues are most likely
 one defect with two faces — a race in *which* of two failing pipeline units gets reported — and
 the original re-arm hypothesis for issue 1 is not supported by the trace. See "The mechanism both
@@ -770,6 +772,32 @@ The tightened blobtransfer case and both connector cases ran in every one of the
 1.90.0 from the devenv7 dist; its container clone, `copy_boost_exception()` and the formatter's
 cached string are as described under R-1 (checked in those headers, not only in the 1.84 tree
 first consulted).
+
+### R-6 — a null nested link aborts the process in `copyForTarget()` (fixed 2026-09-10, Opus 5)
+
+**Found** reviewing the R-1 implementation, after `726e5ba`. `copyForTarget()` followed the nested
+link without checking it for null: `copyForTarget( *nested, depth + 1U )` rethrows the link through
+`cpp::safeRethrowException()`, which calls `BL_RIP_MSG` on a null `exception_ptr`
+(`CPP.h:646-660`). An upstream exception carrying `errinfo_nested_exception_ptr` with a null
+pointer therefore aborted the process inside the connector's `onError()`, on the events thread, at
+every logging level.
+
+**Severity.** Low — a null nested pointer is itself a defect at the throw site — but R-1 made it
+worse than before. Before R-1 the same exception reached `ObserverBase::onError()`, whose
+`utils::tryCatchLog( ..., LogFlags::DEBUG_ONLY )` formats it with `eh::diagnostic_information()`,
+which does abort on a null link, but only when debug logging is enabled: `BL_LOG_MULTILINE`
+evaluates its message only when its level is on (`Utils.h:425-433`). R-1 turned that debug-only
+abort into an unconditional one.
+
+**Fix.** `if( nested && *nested )`: a null link is not followed and stays in the copy as it is — it
+shares no object, so there is nothing to copy. The only abort left on such an exception is the
+library's existing one, a debug-level dump of the chain, which the upstream task's own completion
+dump performs anyway. Both comments in `copyForTarget()` say so.
+
+**Test.** Arm (16) of `Tasks_ReactiveInputConnectorTests`: an exception thrown with a null nested
+pointer must be dispatched as a distinct copy which still carries the null link. Red on the
+unguarded code, gcc debug: the test process aborts with exit 134, `RIP: ... CPP.h(650): Attempting
+to rethrow a nullptr exception_ptr`. Green and the stress run of the guarded tree: pending.
 
 ## Do not
 
