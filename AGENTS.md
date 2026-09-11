@@ -240,13 +240,15 @@ For detailed build system documentation, see `scripts/devenv7/AGENTS.md`:
 - Archive distribution scripts
 - Running the Python test suite on Windows
 - Linux x64 testing under Rosetta in Docker containers
+- ARM64 SVE capability reporting on virtualized aarch64 hosts
 
 ---
 
-**Document Version:** 2.3
+**Document Version:** 2.4
 **Last Updated:** 2026-09-11
 
 **Changelog:**
+- v2.4 (2026-09-11): Referenced the ARM64 SVE capability reporting guidance under Technical Reference
 - v2.3 (2026-09-11): Referenced the Rosetta container testing guidance under Technical Reference
 - v2.2 (2026-09-03): Noted the Windows Python provisioning procedure under the venv principle
 - v2.1 (2026-09-03): Added build and test rules to Code Change Guidelines
