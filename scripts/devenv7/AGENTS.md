@@ -20,9 +20,10 @@
 5. [devenv Version Gating Pattern](#devenv-version-gating-pattern)
 6. [Windows JNI Support (devenv7+)](#windows-jni-support-devenv7)
 7. [Python Test Suite on Windows](#python-test-suite-on-windows)
-8. [Common Pitfalls](#common-pitfalls)
-9. [Archive Distribution Script](#archive-distribution-script)
-10. [Tool Versions and Compatibility](#tool-versions-and-compatibility)
+8. [Linux x64 Testing Under Rosetta (Docker)](#linux-x64-testing-under-rosetta-docker)
+9. [Common Pitfalls](#common-pitfalls)
+10. [Archive Distribution Script](#archive-distribution-script)
+11. [Tool Versions and Compatibility](#tool-versions-and-compatibility)
 
 ---
 
@@ -480,6 +481,16 @@ compiler output through a Unix shell.
 
 ---
 
+## Linux x64 Testing Under Rosetta (Docker)
+
+`docker/ubuntu/launch.sh` runs the x64 toolchain under Rosetta emulation on Apple Silicon. Two properties of that environment make correct code fail its tests — see [docs/rosetta-container-testing.md](docs/rosetta-container-testing.md) for the analysis.
+
+- **PID 1 must reap orphans.** `launch.sh` runs interactive `bash` as PID 1, which reaps. Any other entry process (such as a detached container running `sleep infinity`) leaves killed grandchildren as zombies, so `kill( pid, 0 )` keeps succeeding and process group teardown tests fail. Add `--init` whenever PID 1 is not an interactive shell.
+- **Never assert an absolute child descriptor count.** Rosetta's binfmt handler passes the target binary and the interpreter into every child as non-close-on-exec descriptors, so the baseline is 8 where a native run sees 4. Measure a baseline in the same environment and compare against that instead.
+- **Keep builds at `-j1`.** Under gcc at `-O2` the largest test translation units peak near 3.7 GB resident; two parallel compiles exhaust an 8 GB VM and are OOM killed.
+
+---
+
 ## Common Pitfalls
 
 ### 1. Batch Script Echo Statements
@@ -669,6 +680,7 @@ Before committing changes to batch scripts:
 
 ## Version History
 
+- **2026-09-11**: Added Rosetta container testing constraints (PID 1 reaping, descriptor baseline, build memory ceiling)
 - **2026-02-16**: Added cross-platform OpenSSL build verification documentation (Linux, macOS, Windows)
 - **2026-02-13**: Added Linux and macOS dist folder naming conventions; added `BL_MAKE_JOBS` parallel jobs override documentation
 - **2026-02-11**: Restructured — condensed from ~1,800 lines, moved deep technical content to `docs/`
