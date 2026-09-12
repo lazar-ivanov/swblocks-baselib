@@ -20,9 +20,11 @@
 5. [devenv Version Gating Pattern](#devenv-version-gating-pattern)
 6. [Windows JNI Support (devenv7+)](#windows-jni-support-devenv7)
 7. [Python Test Suite on Windows](#python-test-suite-on-windows)
-8. [Common Pitfalls](#common-pitfalls)
-9. [Archive Distribution Script](#archive-distribution-script)
-10. [Tool Versions and Compatibility](#tool-versions-and-compatibility)
+8. [Linux x64 Testing Under Rosetta (Docker)](#linux-x64-testing-under-rosetta-docker)
+9. [ARM64 SVE Capability Reporting](#arm64-sve-capability-reporting)
+10. [Common Pitfalls](#common-pitfalls)
+11. [Archive Distribution Script](#archive-distribution-script)
+12. [Tool Versions and Compatibility](#tool-versions-and-compatibility)
 
 ---
 
@@ -480,6 +482,27 @@ compiler output through a Unix shell.
 
 ---
 
+## Linux x64 Testing Under Rosetta (Docker)
+
+`docker/ubuntu/launch.sh` runs the x64 toolchain under Rosetta emulation on Apple Silicon. Two properties of that environment make correct code fail its tests — see [docs/rosetta-container-testing.md](docs/rosetta-container-testing.md) for the analysis.
+
+- **PID 1 must reap orphans.** `launch.sh` runs interactive `bash` as PID 1, which reaps. Any other entry process (such as a detached container running `sleep infinity`) leaves killed grandchildren as zombies, so `kill( pid, 0 )` keeps succeeding and process group teardown tests fail. Add `--init` whenever PID 1 is not an interactive shell.
+- **Never assert an absolute child descriptor count.** Rosetta's binfmt handler passes the target binary and the interpreter into every child as non-close-on-exec descriptors, so the baseline is 8 where a native run sees 4. Measure a baseline in the same environment and compare against that instead.
+- **Keep builds at `-j1`.** Under gcc at `-O2` the largest test translation units peak near 3.7 GB resident; two parallel compiles exhaust an 8 GB VM and are OOM killed.
+
+---
+
+## ARM64 SVE Capability Reporting
+
+Some aarch64 hypervisors (observed under Parallels on Apple Silicon) advertise `HWCAP2_SVE2` without the base `HWCAP_SVE` bit — impossible on real hardware. OpenSSL 4.0+ acts on that bit from a library constructor and dies with `SIGILL`, so importing `cryptography` kills the Python test suite during collection. See [docs/arm64-sve-capability-reporting.md](docs/arm64-sve-capability-reporting.md) for the analysis.
+
+- **Check the kernel, not the distribution.** `grep -o 'sve[a-z0-9]*' /proc/cpuinfo | sort -u` — `sve2` without `sve` means affected. Containers share the host kernel, so an Ubuntu container on an affected host is affected too.
+- **The guard lives in `scripts/tests/conftest.py`,** which sets `OPENSSL_armcap=0` only when it detects that combination. It is inert on every other platform, and Windows ignores the variable entirely.
+- **Use `0`, never a hand-computed mask.** A non-zero value asserts a bit layout from `arm_arch.h` and can switch on a feature the CPU lacks. Note that `OPENSSL_armcap=` (empty) also means zero.
+- **Re-test before the OpenSSL 4.x uplift.** The devenv7 dist is on 3.5.4, which has no SVE code; moving to 4.x extends this crash from the Python suite to every baselib binary on an affected host.
+
+---
+
 ## Common Pitfalls
 
 ### 1. Batch Script Echo Statements
@@ -669,6 +692,8 @@ Before committing changes to batch scripts:
 
 ## Version History
 
+- **2026-09-11**: Added ARM64 SVE capability reporting guidance (hypervisors advertising SVE2 without SVE)
+- **2026-09-11**: Added Rosetta container testing constraints (PID 1 reaping, descriptor baseline, build memory ceiling)
 - **2026-02-16**: Added cross-platform OpenSSL build verification documentation (Linux, macOS, Windows)
 - **2026-02-13**: Added Linux and macOS dist folder naming conventions; added `BL_MAKE_JOBS` parallel jobs override documentation
 - **2026-02-11**: Restructured — condensed from ~1,800 lines, moved deep technical content to `docs/`
@@ -724,3 +749,4 @@ Before committing changes to batch scripts:
 - Archive distribution: `scripts/devenv7/windows/archive-dists-windows.bat`, `scripts/devenv7/linux/archive-dists-linux.sh`, `scripts/devenv7/macos/archive-dists-macos.sh`
 - OpenSSL ARM64 deep dive: [docs/openssl-arm64-build.md](docs/openssl-arm64-build.md)
 - Boost clang-win.jam patch deep dive: [docs/boost-clang-win-patch.md](docs/boost-clang-win-patch.md)
+- ARM64 SVE capability reporting deep dive: [docs/arm64-sve-capability-reporting.md](docs/arm64-sve-capability-reporting.md)

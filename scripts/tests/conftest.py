@@ -25,9 +25,55 @@ Used by both unit and functional tests.
 import pytest
 import tempfile
 import os
+import platform
 import sys
 from pathlib import Path
 from datetime import datetime, timezone
+
+
+# ========== ARM64 SVE Capability Workaround ==========
+#
+# Some aarch64 hypervisors (seen under Parallels on Apple Silicon) advertise
+# HWCAP2_SVE2 without the base HWCAP_SVE bit, which cannot happen on real
+# hardware because SVE2 is a superset of SVE. OpenSSL tests the two bits
+# independently in crypto/armcap.c, so it records SVE2 as present and - from
+# OpenSSL 4.0 on - executes 'cntb' in _armv8_sve_get_vl_bytes() from a library
+# constructor to read the SVE vector length. Without SVE that instruction traps,
+# so importing cryptography (pulled in here through moto) dies with SIGILL during
+# collection, before any test runs.
+#
+# OPENSSL_armcap makes OpenSSL skip capability detection and take the value as
+# given. Zero is deliberate: it means "no acceleration" in every OpenSSL version,
+# whereas a hand-computed non-zero mask asserts a bit layout from arm_arch.h and
+# could switch on a feature the CPU lacks. Nothing here asserts crypto throughput.
+#
+# libcrypto reads the variable when it is dlopen'ed rather than at process start,
+# so setting it from conftest is early enough.
+
+def _apply_sve_capability_workaround():
+    """Disable OpenSSL ARM capability detection on CPUs reporting SVE2 without SVE."""
+    if sys.platform != "linux" or platform.machine() != "aarch64":
+        return
+
+    if "OPENSSL_armcap" in os.environ:
+        # respect an explicit setting from the caller
+        return
+
+    try:
+        with open("/proc/cpuinfo", encoding="ascii", errors="replace") as cpuinfo:
+            features = next(
+                (line for line in cpuinfo if line.startswith("Features")), ""
+            )
+    except OSError:
+        return
+
+    flags = features.partition(":")[2].split()
+
+    if "sve2" in flags and "sve" not in flags:
+        os.environ["OPENSSL_armcap"] = "0"
+
+
+_apply_sve_capability_workaround()
 
 
 # ========== Temporary Directory Fixtures ==========
