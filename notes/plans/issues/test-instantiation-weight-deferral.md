@@ -127,6 +127,26 @@ was measured:
 The difference is `BrokerFacade::execute` plus the REST bridge, which `startBrokerAndRunTests` pulls
 and `createTestMessagingBackend` does not: 39.1MB against 20.9MB.
 
+### `utf_baselib_rest` cannot comply at 75MB either, and this is the strongest measurement in the record
+
+The 60.5MB figure above is what `startBrokerAndRunTests` costs on its own. The module's cases share
+considerably more than that. Splitting the header six cases against nine, a near even cut by case
+count, gave:
+
+| | Object | Cases |
+|---|---:|---:|
+| `utf_baselib_rest` before | 78.7 MB | 15 |
+| `utf_baselib_rest` after | 76.8 MB | 6 |
+| `utf_baselib_rest2` | 77.5 MB | 9 |
+
+76.8 + 77.5 against 78.7 means roughly **75.6MB is shared** — very nearly the whole module. Each
+half is within 2MB of the original while holding under half the cases, so **every possible partition
+of this module lands near 76MB**, including a fifteen way one. The split was reverted.
+
+`utf_baselib_rest` is therefore the one module which cannot be brought under the 75MB ceiling by any
+means available to this work. It is over by 3.7MB and no arrangement of files reduces it. Closing it
+out requires item 2 of this record and nothing else.
+
 ### `utf_baselib_io` is blocked for the same reason, measured the expensive way
 
 Unlike `rest`, this one was not predictable from a helper probe: `utf_baselib_io` drives neither
@@ -150,7 +170,7 @@ The header split (step A) was **kept**: it is verified inert, it turns a 7,442 l
 | Module | Object | Why nothing can be done by moving files |
 |---|---:|---|
 | `utf_baselib_rest` | 78.7 MB | its helper's floor alone is 60.5 MB; **not attempted** |
-| `utf_baselib_io` | 77.4 MB | ~30 MB shared; split attempted, both halves over the ceiling, **reverted** |
+| `utf_baselib_rest` | 78.7 MB | ~75.6 MB shared; every partition lands near 76 MB. **The only module which cannot comply at any ceiling below 80 MB** |
 | `utf_baselib_apps2` | 65.4 MB | one module, one header, **one test case**. `MessagingApps_HttpGatewayTlsValidationTests` instantiates the whole messaging HTTP gateway application: 44MB for 165 lines of test source. There is no split available at any granularity short of deleting the case |
 
 `utf_baselib_http` is the one to watch: it sits **0.1MB** under the ceiling, so it is the first module

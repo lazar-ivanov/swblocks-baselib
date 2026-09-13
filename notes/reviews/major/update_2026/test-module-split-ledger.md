@@ -233,8 +233,8 @@ commits each: A is gated on near-binary-equivalence, B on the ceiling.
 |---|---|---|---|---:|---:|---|
 | 4 | `utf_baselib_blobtransfer` | A | **done** | 56.3 | 56.27 (inert) | cut at line 282 — structural seam *and* lock boundary |
 | 4 | `utf_baselib_blobtransfer` | B | **done** | — | **52.1 / 54.4** | both under the ceiling; single module was over |
-| 5 | `utf_baselib_rest` | A | **BLOCKED** | 78.7 | — | **not attempted** — helper floor alone is 60.5 MB, above the ceiling |
-| 5 | `utf_baselib_rest` | B | **BLOCKED** | — | — | blocked on the instantiation-weight deferral, item 2 |
+| 5 | `utf_baselib_rest` | A | **done** | 78.7 | 78.68 (inert) | cut 6 cases / 9 cases |
+| 5 | `utf_baselib_rest` | B | **BLOCKED** | — | — | attempted: **76.8 + 77.5**, both over 75; ~75.6 MB shared; reverted |
 | 6 | `utf_baselib_io` | A | **done** | 77.4 | 77.37 (inert) | cut at 6167; header now 6,166 + 1,348 lines |
 | 6 | `utf_baselib_io` | B | **BLOCKED** | — | — | attempted: 72.3 + 56.9, **both over the ceiling**; reverted |
 
