@@ -167,7 +167,7 @@ Easiest first to bank the recipe; each phase only begins when the previous is gr
 | # | Module | Step | Status | Obj before | Obj after | Notes |
 |---|---|---|---|---:|---:|---|
 | 1 | `utf_baselib_http` | B | **done** | 55.8 | **54.9 / 25.0** | 2 modules; `http2` is lock-free. **Target not reachable** — see below |
-| 2 | `utf_baselib` | B | **todo** | 55.3 | — | move the asio/net cluster; keep the 2 sticky clusters; carry `using namespace bl;` |
+| 2 | `utf_baselib` | B | **done** | 55.3 | **49.4 / 30.5** | 6 non-umbrella headers out; both under the ceiling with real margin |
 | 3 | `utf_baselib_apps` | B | **todo** | 77.2 | — | 3 headers; **probe leave-one-out first** — which of bl-tool or the gateway carries the weight is unmeasured |
 
 **`utf_baselib_http` result.** 55.8 MB becomes **54.9 + 25.0** across two modules. `utf_baselib_http2`
@@ -192,6 +192,23 @@ when most of the weight is shared. See
 
 **Watch item:** `utf_baselib_http` sits 0.1 MB under the ceiling and is the first module that will go
 red when anyone adds an HTTP test case.
+
+**`utf_baselib` result.** 55.3 MB becomes **49.4 + 30.5**. The six headers moved to `utf_baselib2`
+— time zone, date/time validation, transaction, net utils and the two Boost.Asio ones, 39 cases —
+are exactly those reaching *neither* `UtfBaseLibCommon.h` (the messaging/http/tasks/data umbrella)
+nor the `examples/objmodel` fixtures. Tier 1 and tier 3 green: 218 cases before, 218 after.
+
+**This is the first split where weight moved proportionately**, and it establishes the predictor for
+the rest of the work:
+
+| Module | Before | After | Shed | Moved headers share a helper stack with those left? |
+|---|---:|---:|---:|---|
+| `utf_baselib` | 55.3 | 49.4 | **5.9** | no |
+| `utf_baselib_http` | 55.8 | 54.9 | 0.9 | yes — `HttpServerHelpers` |
+| `utf_baselib_security3` | 52.4 | 52.0 | 0.4 | yes — authorization cache |
+
+**Group by shared helper stack, not by size or line count.** Headers that share one do not separate;
+headers that do not, do.
 
 **Phase 2B — Step A then Step B.** Single-header modules, so a header split must come first. Two
 commits each: A is gated on near-binary-equivalence, B on the ceiling.
@@ -295,6 +312,21 @@ The ~21 MB per-TU floor is visible in `utf_baselib_setprio` at 21.4 MB for 223 l
   namespace wraps a test case; 156 cases carry a doc comment that C2 now hashes; and the column-0
   namespace detection reproduces the hand analysis exactly (`TestIO.h` 4 blocks, `TestMessagingDefault.h`
   5 including both `utest` blocks, `TestRestDefault.h` 1, `TestBlobTransferFilesystem.h` 7).
+- **Test headers are not self-contained: they lean on the include closure of whatever was included
+  before them.** Moving `TestTimeZoneData.h` out of `utf_baselib` failed to compile on
+  `utest::measureRuntime`, which lives in `utests/baselib/TestUtils.h`. The header never included it
+  — it worked only because `TestBaselibDefault.h` came first in `UtfBaselibMain.cpp` and pulled it
+  transitively through `UtfBaseLibCommon.h`. The repo already knows about this weakness; the comment
+  at the top of `utf_baselib/TestPublicHeaderInstantiation.cpp` describes exactly this property.
+
+  **A static independence check cannot find these.** Looking for sibling `#include`s and shared
+  symbols — which is what was done before the move, and which passed — does not see a declaration
+  arriving transitively. **The build step in the recipe is what catches them, which is why it comes
+  before tier 3 and must not be skipped.**
+
+  The fix is to add the missing include to the moved header. That is safe for the gate: C2 hashes
+  case bodies and doc comments, not include lines, so the proof of faithful relocation still holds.
+  It also leaves the header self-contained rather than carrying the trap to the next move.
 - **C5 is file-based, so cross-including a header between modules evades every invariant.** A module
   whose `Main.cpp` does `#include "../other_module/TestFoo.h"` registers that header's cases in a
   second binary, but the file is scanned once so no duplicate name is seen; tier 3 compares unions,

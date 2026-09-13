@@ -27,6 +27,16 @@
 
 using namespace bl;
 
+/*
+ * The time zone, date/time validation, transaction, net utils and Boost.Asio compatibility cases
+ * now live in utf_baselib2, so that no single test translation unit exhausts a 32-bit compiler host
+ * - see notes/reviews/major/update_2026/test-module-split-plan.md
+ *
+ * What remains is the group which reaches UtfBaseLibCommon.h - the umbrella pulling the whole
+ * messaging, http, tasks and data stack - plus the object model cases, which are welded to
+ * UtfLoaderInit.h and the examples/objmodel fixtures and cannot be separated from them
+ */
+
 #include "TestBaselibDefault.h"
 #include "TestBaselibDefault2.h"
 #include "TestBaselibDefault3.h"
@@ -38,12 +48,6 @@ using namespace bl;
 #include "TestBaselibDefault9.h"
 #include "TestBaselibDefault10.h"
 #include "TestObjModel.h"
-#include "TestTimeZoneData.h"
-#include "TestDateTimeValidationUtils.h"
-#include "TestTransaction.h"
-#include "TestNetUtils.h"
-#include "TestBoostAsioCompat.h"
-#include "TestBoostAsioErrorCallback.h"
 #include "TestWatchdog.h"
 
 /*

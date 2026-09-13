@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <utests/baselib/TestUtils.h>
 #include <utests/baselib/Utf.h>
 
 #include <baselib/core/ErrorHandling.h>

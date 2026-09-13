@@ -1,0 +1,7 @@
+--log_level=message --run_test=TestISOTimeFormat
+--log_level=message --run_test=TestTransaction1
+--log_level=message --run_test=TestTransaction2
+--log_level=message --run_test=TestTransaction3
+--log_level=message --run_test=TestTransaction4
+--log_level=message --run_test=TestTransaction5
+--log_level=message --run_test=TestTimeZoneData

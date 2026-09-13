@@ -1,4 +1,3 @@
---log_level=message --run_test=BaseLib_AbstractPriorityTests
 --log_level=message --run_test=BaseLib_Base64Tests
 --log_level=message --run_test=BaseLib_Base64EncodingTests
 --log_level=message --run_test=BaseLib_Base64UrlTests
@@ -54,7 +53,6 @@
 --log_level=message --run_test=BaseLib_OSTryAwaitTerminationTests
 --log_level=message --run_test=BaseLib_OSRegistryValueTest
 --log_level=message --run_test=BaseLib_ParamFwding
---log_level=message --run_test=BaseLib_ParserHelpersBreakRequestIntoSections
 --log_level=message --run_test=BaseLib_PathUtilsTests
 --log_level=message --run_test=BaseLib_RandomTests
 --log_level=message --run_test=BaseLib_RetryOnErrorTests
@@ -75,7 +73,6 @@
 --log_level=message --run_test=BaseLib_TestErrorCodeFromExceptionPtr
 --log_level=message --run_test=BaseLib_TestErrorCodeToStringAndHasher
 --log_level=message --run_test=BaseLib_TestErrorHandling
---log_level=message --run_test=BaseLib_TestFilesystemMetadataInMemoryDedupImpl
 --log_level=message --run_test=BaseLib_TestMessageBuffer
 --log_level=message --run_test=BaseLib_TestScopeGuard
 --log_level=message --run_test=BaseLib_TestUserMessageException
@@ -110,14 +107,6 @@
 --log_level=message --run_test=ObjModel_ObjPtrDisposableTests
 --log_level=message --run_test=ObjModel_ProxyImplTests
 --log_level=message --run_test=ObjModel_SharedPtrTests
---log_level=message --run_test=TestISOTimeFormat
---log_level=message --run_test=TestTransaction1
---log_level=message --run_test=TestTransaction2
---log_level=message --run_test=TestTransaction3
---log_level=message --run_test=TestTransaction4
---log_level=message --run_test=TestTransaction5
---log_level=message --run_test=TestTimeZoneData
---log_level=message --run_test=NetUtils_TryParseEndpointTest
 --log_level=message --run_test=BaseLib_DataBlockPoolAndCopyTests
 --log_level=message --run_test=BaseLib_OSCreateProcessArgvQuotingWindowsTests
 --log_level=message --run_test=BaseLib_OSNamedMutexNonAsciiNameWindowsTests
