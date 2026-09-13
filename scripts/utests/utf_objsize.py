@@ -48,19 +48,24 @@ import re
 import sys
 
 #
-# The ceiling, in megabytes, for one unit-test object on x86 debug
+# Two tiers, both in megabytes, for one unit-test object on x86 debug
 #
-# The deferral record originally proposed 40MB. The utf_baselib_security pilot then measured that
-# instantiating the AuthorizationCache stack costs about 26MB on its own, against the roughly 19MB
-# of marginal content a 40MB ceiling allows - so 40MB was unreachable for any module holding even
-# one such test case, by any arrangement of files
+# TARGET is what a split aims for. Splitting merely to below the hard limit is what let this
+# problem recur: a module which lands a fraction under goes red again the first time anyone adds a
+# test case, and the work has to be redone. 40MB leaves real room to grow
 #
-# 55MB was adopted instead on 2026-09-12. It is twice the headroom against the roughly 110MB which
-# actually exhausted the 32-bit clang-cl host, and it is reachable by moving files. Reducing the
-# instantiation weight itself is tracked separately in
+# CEILING is the hard limit. The utf_baselib_security pilot measured that instantiating the
+# AuthorizationCache stack costs about 26MB on its own, against the roughly 19MB of marginal content
+# a 40MB object allows - so for some modules the target is unreachable by any arrangement of files.
+# 55MB is half the roughly 110MB which actually exhausted the 32-bit clang-cl host, so the headroom
+# is large rather than marginal
+#
+# An object between the two is allowed but must be justified: record in the split ledger why the
+# target could not be reached. Reducing the instantiation weight itself is tracked in
 # notes/plans/issues/test-instantiation-weight-deferral.md
 #
 
+DEFAULT_TARGET_MB = 40.0
 DEFAULT_CEILING_MB = 55.0
 
 #
@@ -144,16 +149,18 @@ def is_gated( platform_tag, gate_pattern ):
     return re.search( gate_pattern, platform_tag ) is not None
 
 
-def report( trees, ceiling_mb, gate_pattern ):
+def report( trees, ceiling_mb, gate_pattern, target_mb = None ):
     """
-    Print the object table and return the list of ( platform_tag, module, tu, mb ) over ceiling
+    Print the object table and return ( over ceiling, over target ) as lists of
+    ( platform_tag, module, tu, mb )
 
     Only trees matching the gate pattern are gated; the others are reported for information
-    because the ceiling was calibrated on x86 debug and does not transfer directly - a64 debug
+    because the tiers were calibrated on x86 debug and do not transfer directly - a64 debug
     objects measure about 1.4x their x86 counterparts
     """
 
     over = []
+    above_target = []
 
     for platform_tag, module, tu, size in flatten( trees ):
 
@@ -164,7 +171,12 @@ def report( trees, ceiling_mb, gate_pattern ):
         if breach:
             over.append( ( platform_tag, module, tu, mb ) )
 
-        marker = 'OVER' if breach else ( '    ' if gated else ' -  ' )
+        missed = gated and not breach and target_mb is not None and mb > target_mb
+
+        if missed:
+            above_target.append( ( platform_tag, module, tu, mb ) )
+
+        marker = 'OVER' if breach else ( 'over' if missed else ( '    ' if gated else ' -  ' ) )
 
         print(
             '%s %8.1f MB  (marginal %6.1f)  %s  %s/%s' % (
@@ -177,7 +189,7 @@ def report( trees, ceiling_mb, gate_pattern ):
                 )
             )
 
-    return over
+    return over, above_target
 
 
 def compare( before, after ):
@@ -243,7 +255,16 @@ def main():
         '--ceiling',
         type = float,
         default = None,
-        help = 'fail with a non-zero exit code if any gated object exceeds this many MB',
+        help = 'fail with a non-zero exit code if any gated object exceeds this many MB (default %g)'
+               % DEFAULT_CEILING_MB,
+        )
+
+    parser.add_argument(
+        '--target',
+        type = float,
+        default = DEFAULT_TARGET_MB,
+        help = 'report, without failing, any gated object above this many MB (default %g)'
+               % DEFAULT_TARGET_MB,
         )
 
     parser.add_argument(
@@ -290,15 +311,25 @@ def main():
         print( 'utf_objsize: %d object(s) grew' % grew )
 
     over = []
+    above_target = []
 
     if not args.quiet or args.ceiling is not None:
         ceiling = args.ceiling if args.ceiling is not None else DEFAULT_CEILING_MB
-        over = report( trees, ceiling, args.gate_pattern )
+        over, above_target = report( trees, ceiling, args.gate_pattern, args.target )
 
     total = len( flatten( trees ) )
 
     print( '' )
     print( 'utf_objsize: %d object(s) across %d build tree(s)' % ( total, len( trees ) ) )
+
+    if above_target:
+        print( '' )
+        print( 'utf_objsize: %d object(s) are within the ceiling but above the %.0f MB target:' % (
+            len( above_target ), args.target ) )
+        for platform_tag, module, tu, mb in above_target:
+            print( '    %8.1f MB  %s/%s/%s' % ( mb, platform_tag, module, tu ) )
+        print( '' )
+        print( 'utf_objsize: each of these needs a recorded reason why the target is not reachable' )
 
     if args.ceiling is not None:
 
