@@ -192,6 +192,35 @@ target which is unreachable regardless. Reverted.
 The step A header split is kept: it is inert, and it leaves the file cut 31/7 for when the weight is
 addressed.
 
+### `utf_baselib_messaging`: four test-only approaches measured, none sufficient
+
+After `utf_baselib_rest` was resolved by relocating helper bodies, the same question was put to
+`utf_baselib_messaging` and answered by measurement rather than argument. **Do not re-try these.**
+
+| Approach | Result |
+|---|---|
+| Split the cases | 2-way gave 100.6 + 76.7; 3-way still left 95.6. ~90 MB is shared |
+| Wrap the `BrokerFacade` / `MessagingClientFactory` call sites | those roots are **1.7 s of 17.3 s** of instantiation — 10% |
+| Relocate **all nine** heavy helper bodies out of line | 112.68 -> **103.24 MB**, only 9.4 MB |
+| `extern template` | zero bytes; inline functions are exempt |
+
+Even the most generous test-only option leaves it 28 MB above the ceiling.
+
+**Why `rest` yielded and this does not.** `rest` had a peak: four helper members funnelled the entire
+broker, client factory and authorization cache stack, so moving them moved 30 MB. `messaging` has a
+long tail — `BlobServerFacadeT`, `TcpBlockServerT`, `ExecutionQueueImplT`,
+`TcpBlockTransferClientConnectionT`, `AsyncDataChunkStorageT` and more, each instantiated directly
+and diversely by its 46 cases. There is no chokepoint to relocate, and that same diffuseness is why
+splitting fails: any subset of cases still pulls most of the tail.
+
+Its `-ftime-trace` profile: 58.2 s compile, 17.3 s (30%) top-level instantiation, no root above
+1.5 s, and a tail extending well past the top fourteen entries.
+
+**`utf_baselib_messaging` is therefore the one accepted exception**, and the only remaining lever is
+item 2 of this record — reducing instantiation weight inside baselib, which is outside the test-only
+constraint. It is also the module which would still fail a 32-bit host build, at 112.7 MB against
+the roughly 110 MB which originally exhausted it.
+
 ### `utf_baselib_io` is blocked for the same reason, measured the expensive way
 
 Unlike `rest`, this one was not predictable from a helper probe: `utf_baselib_io` drives neither
