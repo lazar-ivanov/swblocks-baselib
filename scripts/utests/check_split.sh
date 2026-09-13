@@ -42,7 +42,7 @@ HERE="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOT="$( cd "${HERE}/../.." && pwd )"
 BASELINE="${ROOT}/notes/reviews/major/update_2026/baseline"
 
-CEILING=40
+CEILING=55
 TIER1_ONLY=0
 DO_RUN=0
 BLD=""

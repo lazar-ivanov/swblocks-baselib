@@ -48,10 +48,20 @@ import re
 import sys
 
 #
-# The default ceiling, in megabytes, per the deferral record's "aim for a ceiling" section
+# The ceiling, in megabytes, for one unit-test object on x86 debug
+#
+# The deferral record originally proposed 40MB. The utf_baselib_security pilot then measured that
+# instantiating the AuthorizationCache stack costs about 26MB on its own, against the roughly 19MB
+# of marginal content a 40MB ceiling allows - so 40MB was unreachable for any module holding even
+# one such test case, by any arrangement of files
+#
+# 55MB was adopted instead on 2026-09-12. It is twice the headroom against the roughly 110MB which
+# actually exhausted the 32-bit clang-cl host, and it is reachable by moving files. Reducing the
+# instantiation weight itself is tracked separately in
+# notes/plans/issues/test-instantiation-weight-deferral.md
 #
 
-DEFAULT_CEILING_MB = 40.0
+DEFAULT_CEILING_MB = 55.0
 
 #
 # The measured fixed cost of a test translation unit on x86 debug, in megabytes; reported
