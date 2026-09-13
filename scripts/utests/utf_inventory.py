@@ -32,6 +32,7 @@
 #   C5  no case name occurs twice anywhere in the tree
 #   C6  no helper block occurs twice within one module (an ODR risk); none was lost
 #   C7  every data file a module references exists in that module's data/ directory
+#   C8  every case a module's notes.txt names exists in that module
 #
 # C2 together with C3 and C4 is the core claim: the text of every test, and the compilation
 # context that text sees, is unchanged
@@ -89,6 +90,19 @@ DATA_REF_RE = re.compile( r'(?:resolveDataFilePath|loadDataFile)\(\s*"([^"]+)"' 
 #
 
 DATA_LITERAL_RE = re.compile( r'"([A-Za-z0-9_][A-Za-z0-9_.\-]*\.[A-Za-z0-9]{1,8})"' )
+
+#
+# Each module's notes.txt is a list of ready-made command lines for running single cases. They are
+# the first thing anyone reaches for when investigating a failure, and nothing else checks them: a
+# recipe naming a case which has moved or been deleted still satisfies every other invariant. Two
+# such were found in consecutive modules during the split, one of them naming a case which was very
+# much alive but had migrated to another module years earlier
+#
+# Boost.Test accepts a comma separated list in one --run_test, which is the only compound form used
+# in this tree; anything carrying a wildcard is skipped rather than guessed at
+#
+
+NOTES_RUN_TEST_RE = re.compile( r'--run_test=([^\s]+)' )
 
 
 def sha( text ):
@@ -373,6 +387,19 @@ def capture( src_utests ):
 
                 module_info[ 'files' ].append( { 'path': rel_path, 'includes': includes } )
 
+        notes_path = os.path.join( module_dir, 'notes.txt' )
+        notes_cases = []
+
+        if os.path.isfile( notes_path ):
+            with open( notes_path, 'r', encoding = 'utf-8', errors = 'replace' ) as stream:
+                for spec in NOTES_RUN_TEST_RE.findall( stream.read() ):
+                    for name in spec.split( ',' ):
+                        name = name.strip()
+                        if name and '*' not in name and '?' not in name:
+                            notes_cases.append( name )
+
+        module_info[ 'notes_cases' ] = sorted( set( notes_cases ) )
+
         data_dir = os.path.join( module_dir, 'data' )
 
         if os.path.isdir( data_dir ):
@@ -449,6 +476,39 @@ def check_intrinsic( manifest ):
                 failures.append(
                     'C7 module %s names data file %s but does not carry it in its data/ directory'
                     % ( module, literal )
+                    )
+
+    #
+    # C8 - every case a module's notes.txt names must exist in that module
+    #
+    # Split into the two failure modes, because they call for different fixes: a case which still
+    # exists somewhere has a recipe that should follow it to its new module, while one which exists
+    # nowhere is a stale recipe to delete
+    #
+
+    everywhere = {}
+
+    for case in manifest[ 'cases' ]:
+        everywhere[ case[ 'name' ] ] = case[ 'module' ]
+
+    for module, info in sorted( manifest[ 'modules' ].items() ):
+
+        own = { case[ 'name' ] for case in manifest[ 'cases' ] if case[ 'module' ] == module }
+
+        for name in info.get( 'notes_cases', [] ):
+
+            if name in own:
+                continue
+
+            if name in everywhere:
+                failures.append(
+                    'C8 module %s notes.txt names case %s which now lives in %s'
+                    % ( module, name, everywhere[ name ] )
+                    )
+            else:
+                failures.append(
+                    'C8 module %s notes.txt names case %s which does not exist anywhere'
+                    % ( module, name )
                     )
 
     by_name = {}

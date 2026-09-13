@@ -144,6 +144,21 @@ def main():
     mutated[ 'modules' ][ module ][ 'data_files' ] = {}
     ok &= expect( 'data file missing (%s)' % module, check_intrinsic( mutated ), 'C7' )
 
+    # C8 - a notes.txt recipe naming a case which moved to another module
+    mutated = copy.deepcopy( baseline )
+    source = next( name for name, info in mutated[ 'modules' ].items() if info.get( 'notes_cases' ) )
+    target = next( name for name in mutated[ 'modules' ] if name != source )
+    migrated = mutated[ 'modules' ][ source ][ 'notes_cases' ][ 0 ]
+    mutated[ 'modules' ][ target ].setdefault( 'notes_cases', [] ).append( migrated )
+    ok &= expect( 'notes.txt names a case in another module (%s)' % migrated,
+                  check_intrinsic( mutated ), 'C8' )
+
+    # C8 - a notes.txt recipe naming a case which exists nowhere
+    mutated = copy.deepcopy( baseline )
+    source = next( name for name, info in mutated[ 'modules' ].items() if info.get( 'notes_cases' ) )
+    mutated[ 'modules' ][ source ][ 'notes_cases' ].append( 'ACaseWhichWasDeletedYearsAgo' )
+    ok &= expect( 'notes.txt names a deleted case', check_intrinsic( mutated ), 'C8' )
+
     # C7 - the same data file name diverging between two modules
     mutated = copy.deepcopy( baseline )
     source = next( name for name, info in mutated[ 'modules' ].items() if info[ 'data_files' ] )
