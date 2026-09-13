@@ -14,14 +14,17 @@
  * limitations under the License.
  */
 
-#define UTF_TEST_MODULE utf_baselib_apps
+#define UTF_TEST_MODULE utf_baselib_apps2
 #include <utests/baselib/UtfMain.h>
 
 /*
- * The bl-tool application tests. The messaging HTTP gateway cases now live in utf_baselib_apps2,
- * so that no single test translation unit exhausts a 32-bit compiler host - see
+ * The messaging HTTP gateway app tests; split out of utf_baselib_apps so that no single test
+ * translation unit exhausts a 32-bit compiler host - see
  * notes/reviews/major/update_2026/test-module-split-plan.md
+ *
+ * utf_baselib_apps covered two unrelated applications. This header is the only one reaching
+ * apps/bl-messaging-http-gateway, and the two which remain are the only ones reaching apps/bl-tool,
+ * so the split follows the application boundary rather than cutting across it
  */
 
-#include "TestBlTool.h"
-#include "TestBlToolProcessFiles.h"
+#include "TestMessagingApps.h"

@@ -168,7 +168,7 @@ Easiest first to bank the recipe; each phase only begins when the previous is gr
 |---|---|---|---|---:|---:|---|
 | 1 | `utf_baselib_http` | B | **done** | 55.8 | **54.9 / 25.0** | 2 modules; `http2` is lock-free. **Target not reachable** — see below |
 | 2 | `utf_baselib` | B | **done** | 55.3 | **49.4 / 30.5** | 6 non-umbrella headers out; both under the ceiling with real margin |
-| 3 | `utf_baselib_apps` | B | **todo** | 77.2 | — | 3 headers; **probe leave-one-out first** — which of bl-tool or the gateway carries the weight is unmeasured |
+| 3 | `utf_baselib_apps` | B | **done** | 77.2 | **45.8 / 65.4** | split on the application boundary. **apps2 is OVER the ceiling and unsplittable** — see below |
 
 **`utf_baselib_http` result.** 55.8 MB becomes **54.9 + 25.0** across two modules. `utf_baselib_http2`
 (TLS policy, peer verification, stream wrapper — 19 cases) is entirely free of the machine-global
@@ -209,6 +209,22 @@ the rest of the work:
 
 **Group by shared helper stack, not by size or line count.** Headers that share one do not separate;
 headers that do not, do.
+
+**`utf_baselib_apps` result, and the first module which cannot reach the ceiling.** 77.2 MB becomes
+**45.8 + 65.4**, split on the application boundary: the two `bl-tool` headers stay, the one
+`bl-messaging-http-gateway` header leaves. Tier 1 and tier 3 green, 13 cases before and after.
+
+`utf_baselib_apps` at 45.8 MB is compliant. **`utf_baselib_apps2` at 65.4 MB is not, and no file
+move can fix it: it is one module, one header, one test case.**
+`MessagingApps_HttpGatewayTlsValidationTests` is 165 lines of test source which instantiates the
+entire messaging HTTP gateway application, and that costs **44 MB**. The split was kept regardless,
+because it moves the family maximum from 77.2 to 65.4 — an improvement, though not compliance.
+
+**The plan's §1.1 adjunct lever is refuted and should not be revisited.** It hypothesised that
+`UtfBaseLibCommon.h` — the umbrella pulling the whole messaging, http, tasks and data stack, included
+by 20 test headers — was driving object sizes. Measured: **0.1 MB**. Every include probed so far sits
+within 1.2 MB of the bare floor, while *using* what they declare costs 26 to 44 MB. Narrowing
+includes is worthless here; only reducing instantiation weight helps.
 
 **Phase 2B — Step A then Step B.** Single-header modules, so a header split must come first. Two
 commits each: A is gated on near-binary-equivalence, B on the ceiling.

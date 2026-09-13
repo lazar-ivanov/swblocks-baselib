@@ -48,6 +48,9 @@ Measured on `ARCH=x86 TOOLCHAIN=vc143 VARIANT=debug`, with one throwaway module 
 | **Using** it — `TestAuthorizationCacheImpl.h` alone | 47.3 MB | **25.9 MB** |
 | **Using** it — `TestAuthorizationCacheRestImpl.h` alone | 49.4 MB | **28.0 MB** |
 | `TestAuthorizationServiceRest.h` alone | 37.7 MB | 16.3 MB |
+| **Including** `utests/baselib/UtfBaseLibCommon.h` | 21.5 MB | 0.1 MB |
+| **Including** `apps/bl-messaging-http-gateway/MessagingHttpGatewayApp.h` | 22.6 MB | 1.2 MB |
+| **Using** it — `TestMessagingApps.h`, **one** test case | 65.4 MB | **44.0 MB** |
 
 **Including a template helper costs nothing; instantiating it costs about 26MB.** So any module
 containing even one authorization-cache test case exceeds the 40MB target before any sibling header
@@ -99,6 +102,12 @@ Modules currently between the target and the ceiling, each with its reason:
 | `utf_baselib_http` | 54.9 MB | `HttpServerHelpers` server instantiation, ~30MB shared across its headers |
 | `utf_baselib_data` | 49.8 MB | not yet attempted |
 
+**Above the ceiling, not merely the target:**
+
+| Module | Object | Why nothing can be done by moving files |
+|---|---:|---|
+| `utf_baselib_apps2` | 65.4 MB | one module, one header, **one test case**. `MessagingApps_HttpGatewayTlsValidationTests` instantiates the whole messaging HTTP gateway application: 44MB for 165 lines of test source. There is no split available at any granularity short of deleting the case |
+
 `utf_baselib_http` is the one to watch: it sits **0.1MB** under the ceiling, so it is the first module
 that will go red when anyone adds an HTTP test case. That is the concrete cost of leaving item 2
 undone, and it arrived on the very first module of the fan-out.
@@ -142,8 +151,15 @@ Candidates, cheapest first:
 2. **Reduce template depth.** The cache stack is templated on a policy which has few real
    instantiations in tests; a non-template base holding the bulk of the logic would collapse most of
    it.
-3. **Narrow the helper's own includes** — but note this was measured and is *not* where the weight
-   is: including the helper costs 0.5MB. Do not start here.
+3. **Narrowing includes is measured to be worthless and must not be attempted.** Every include
+   probed so far is within 1.2MB of the bare floor: `HttpServerHelpers.h` 0.5MB,
+   `TestAuthorizationCacheImplUtils.h` 0.5MB, `UtfBaseLibCommon.h` **0.1MB**,
+   `MessagingHttpGatewayApp.h` 1.2MB. The cost appears on instantiation, never on inclusion.
+
+   This specifically retires the "adjunct lever" proposed in §1.1 of the split plan, which
+   hypothesised that `UtfBaseLibCommon.h` — an umbrella pulling the whole messaging, http, tasks and
+   data stack, included by 20 test headers — was driving the object sizes. It is not. It costs
+   0.1MB. That hypothesis is refuted and should not be revisited.
 
 ### Step 3 — survey the rest
 
