@@ -452,9 +452,28 @@ TU exhausts a 32-bit compiler, which 55MB already satisfies with a wide margin.
   could not reach 40MB; if the same happens at 55MB for messaging, rest or io, this item stops being
   optional.
 - **Compile time or build-machine memory becomes a complaint.** Instantiation weight is compile time
-  as well as object size, and these are the largest single compilations in the repository.
-- **The 32-bit clang-cl host must be restored.** Item 5 of the companion record; the lower the
-  objects, the more comfortable that becomes.
+  as well as object size, and these are the largest single compilations in the repository. This is
+  now sharper than when it was written: since 2026-09-13 x86 targets are built by the x86-hosted
+  tools on every host, so on an ARM64 or x64 machine they run under emulation.
+- ~~**The 32-bit clang-cl host must be restored.**~~ **Done 2026-09-13** — item 5 of the companion
+  record is closed. The split was enough for it.
+
+- **This item now blocks item 4 of the companion record.** Restoring full `-Zi` for x86 `ccl16`
+  release was attempted on 2026-09-13 and failed: the 32-bit clang-cl reports `LLVM ERROR: out of
+  memory` generating it for the heaviest modules, so `-gline-tables-only` stays for that one
+  combination. That is a **second, distinct consumer of instantiation weight**, and the conditions
+  above do not detect it:
+
+  - It is driven by **peak memory in the optimizer**, not object size. The x86 `ccl16` release object
+    for `utf_baselib_messaging3` is 35.69MB — the *smallest* of the three variants measured — while
+    its debug object is 67.91MB. The object ceiling does not govern this path at all.
+  - The threshold sits between a **57MB** debug object (`utf_baselib_messaging2`, which builds
+    release with `-Zi`) and a **68MB** one (`messaging3`, which does not).
+  - **Splitting cannot reach it.** `messaging3` is 68.35MB of one inline helper,
+    `messageProcessingRoundTrip`. Only reducing the weight itself will move it.
+
+  So the practical test for whether this item has been done well enough is no longer the object
+  ceiling; it is whether x86 `ccl16` release builds with `-Zi`.
 
 ---
 

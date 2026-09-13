@@ -1,36 +1,105 @@
 # The x86 clang-cl Host Swap and Oversized Test Translation Units: Deferral Record
 
-This document records why the x86 `ccl16` build no longer uses the 32-bit clang-cl host, what was
-changed on 2026-09-10 to get x86 building again, and the two things that were **not** fixed: the test
-modules are single translation units large enough to exhaust a 32-bit compiler, and the debug info
-trimmed in February 2026 to work around an earlier instance of the same problem is still trimmed.
+This document records why the x86 `ccl16` build stopped using the 32-bit clang-cl host on
+2026-09-10, what was changed then to get x86 building again, and what became of the two things that
+were **not** fixed at the time.
 
-**It is a risk acceptance, not an assessment that the concern is absent.** The underlying problem —
-test translation units that grow without a bound — is real, is still in the tree, and the applied fix
-buys headroom rather than removing the cause.
+**Both have since been revisited — see "Outcome, 2026-09-13" below.** The test modules were split, so
+the 32-bit host is back and the headroom is no longer needed; the debug info trimmed in February 2026
+is still trimmed, for one combination only, and for a cause that is now measured rather than
+inferred. Everything from "The limitation" onwards is the original 2026-09-10 record, kept because
+its measurements and reasoning remain valid as the account of how this arose.
+
+**It was a risk acceptance, not an assessment that the concern was absent** — and that framing was
+right: the applied fix bought headroom rather than removing the cause, and removing the cause is what
+it eventually took.
 
 **Origin:** the full 12-combo Windows build/test matrix run on 2026-09-10 (`ARCH` a64/x64/x86 ×
 `TOOLCHAIN` vc143/ccl16 × `VARIANT` debug/release). Both x86 `ccl16` combos failed to build; the other
 ten combos passed. Not from a code review.
 
-**Platform:** Windows, `ARCH=x86`, `TOOLCHAIN=ccl16` only. `vc143` on x86 is unaffected — MSVC's
-`cl.exe` for an x86 target is selected by `MSVCHOSTARCHTAG` and is already a 64-bit host binary.
+**Platform:** Windows, `ARCH=x86`, `TOOLCHAIN=ccl16` only. `vc143` on x86 was unaffected — MSVC's
+`cl.exe` for an x86 target is selected by `MSVCHOSTARCHTAG`, which then resolved to a 64-bit host
+binary. *(As of 2026-09-13 it resolves to `Hostx86` for an x86 target, and `vc143` builds both
+variants with full `-Zi` on that 32-bit host regardless.)*
 
 ---
 
 ## Decision
 
-**Date:** 2026-09-10
-**Status:** **Applied fix recorded; two follow-ups deferred.** The follow-ups are real work items, not
-risk acceptances that should be closed unread — but neither blocks anything today.
+**Date:** 2026-09-10, updated 2026-09-13
+**Status:** **Items 1, 3 and 5 closed. Item 4 remains open, for a different and better understood
+reason than when it was written.** The test modules were split, the 32-bit clang-cl host was
+restored, and the 64-bit host swap was reverted. Full `-Zi` for x86 `ccl16` release is the one thing
+that did not come back.
 
 | # | Item | Disposition |
 |---|---|---|
-| 1 | x86 `ccl16` selects a 64-bit clang-cl host with an explicit `--target=i686-pc-windows-msvc` | **Applied** 2026-09-10 |
-| 2 | `PassThroughOptionParser` dropped the value of a joined `--opt=value` | **Applied** 2026-09-10 — prerequisite for item 1 |
-| 3 | Split the oversized test translation units so a 32-bit compiler can build them again | **Deferred** — this record |
-| 4 | Restore full `-Zi` debug info for x86 `ccl16` release once item 3 lands | **Deferred** — blocked on item 3 |
-| 5 | Restore the 32-bit clang-cl host for x86 targets once item 3 lands | **Deferred** — optional even then; see "Conditions to revisit" |
+| 1 | x86 `ccl16` selects a 64-bit clang-cl host with an explicit `--target=i686-pc-windows-msvc` | **Reverted** 2026-09-13 by item 5 — the explicit target triple is kept, see below |
+| 2 | `PassThroughOptionParser` dropped the value of a joined `--opt=value` | **Applied** 2026-09-10 — a real bug in its own right, unaffected by the revert |
+| 3 | Split the oversized test translation units so a 32-bit compiler can build them again | **Done** 2026-09-13 — peak x86 debug object 112.7MB → 69.94MB; see the split plan and ledger |
+| 4 | Restore full `-Zi` debug info for x86 `ccl16` release once item 3 lands | **Still deferred** — item 3 was not sufficient; now blocked on instantiation weight, see "Why item 4 did not come back" |
+| 5 | Restore the 32-bit clang-cl host for x86 targets once item 3 lands | **Done** 2026-09-13 — and extended: x86 targets now use x86-hosted tools for `vc143` too |
+
+---
+
+## Outcome, 2026-09-13
+
+Items 3 and 5 are closed and item 4 is not, and the reason is worth stating precisely because the
+original record expected 3 to unblock 4.
+
+**Item 3 worked exactly as intended.** The 32-bit clang-cl host — `PE32 executable, Intel i386`, the
+very binary that died with `0xC000001D` on the 112.68MB translation unit — now compiles the largest
+remaining one without complaint. The root cause was removed rather than merely given headroom.
+
+**Item 5 went further than the record proposed.** x86 targets are no longer cross-built from a
+64-bit host at all. `CLANG_CL_DIR` is back to `$(MSVC)/VC/Tools/Llvm/bin`, and `MSVCHOSTARCHTAG` now
+resolves to `Hostx86` whenever `ARCH=x86`, so `vc143` uses the 32-bit `cl.exe` as well. Previously
+an x86 build on this ARM64 machine ran `Hostarm64` tools throughout.
+
+The explicit `--target=i686-pc-windows-msvc` added by item 1 is **kept**. It is a no-op for the
+32-bit host, which already defaults to that triple, and it states the target rather than inheriting
+it from whichever host happens to run — which is what went wrong in the first place.
+
+### Why item 4 did not come back
+
+Measured on 2026-09-13 against `utf_baselib_messaging3`, the heaviest module after the split:
+
+| x86 `ccl16`, heaviest module | 32-bit host | 64-bit host |
+|---|---|---|
+| release, full `-Zi` | **LLVM ERROR: out of memory** | builds, 59.05MB object |
+| release, `-gline-tables-only` | builds, 35.69MB object | builds |
+| debug, full `-Zi` | **builds, 67.91MB object** | builds |
+
+So item 4 and item 5 are mutually exclusive for that one combination, and the decision recorded here
+is to keep item 5 and leave `-gline-tables-only` in place for x86 `ccl16` release only. Every other
+x86 combination gets full `-Zi`, including x86 `ccl16` **debug**, which the original workaround also
+covered.
+
+Three things this measurement settles:
+
+- **It is not about object size.** The release object is the *smallest* of the three at 35.69MB. The
+  failure is peak memory in the optimizer, which the object ceiling in `scripts/utests/utf_objsize.py`
+  does not govern. Do not expect the ceiling to predict it.
+- **`cl.exe` is unaffected.** x86 `vc143` builds both variants with full `-Zi` on its 32-bit host.
+  This is specific to clang-cl 16.
+- **More splitting will not fix it.** `utf_baselib_messaging2` (57.11MB debug object) does build
+  release with `-Zi`, so the limit sits between it and `messaging3` (67.91MB) — but `messaging3`
+  cannot be split further to any useful effect, because a single inline helper,
+  `messageProcessingRoundTrip`, accounts for 68.35MB of its 69.94MB. Item 4 is therefore blocked on
+  reducing instantiation weight inside `bl::messaging`, which is
+  [test-instantiation-weight-deferral.md](test-instantiation-weight-deferral.md), not on further
+  module splitting.
+
+**The 2026-02 diagnosis is now confirmed outright rather than inferred.** The record below notes that
+the out-of-memory reading was deduced from object size and the faulting frame, and suggests measuring
+peak working set to confirm it. No instrumentation was needed in the end: with the smaller TUs the
+32-bit host reports `LLVM ERROR: out of memory / Allocation failed` before the `0xC000001D`, naming
+the cause itself.
+
+One incidental cost worth knowing: on an ARM64 host the x86 tools run under emulation, so x86 builds
+are substantially slower than they were with `Hostarm64` tools. The 64-bit host swap was buying build
+speed as well as address space, even though only the latter was recorded.
 
 ---
 
@@ -202,51 +271,61 @@ Constraints to respect:
 Aim for a ceiling — 40MB per object on x86 debug is a reasonable first target, which is comfortably
 under what the 32-bit host managed historically and leaves room to grow.
 
-### Step 2 — restore full debug info for x86 ccl16 release
+### Step 2 — restore full debug info for x86 ccl16 release — ATTEMPTED 2026-09-13, STILL OPEN
 
-`projects/make/toolchain/msvc-default.mk` currently reads, for `BL_USE_CLANG_CL` + `ARCH=x86` +
-`VARIANT=release`, `CXXFLAGS += -gline-tables-only`, with every other combination getting `-Zi`.
-Once the objects are under control, delete that special case so the whole matrix uses `-Zi`.
+The special case was deleted and the combination rebuilt, and it failed: `LLVM ERROR: out of
+memory`. It was reinstated, narrowed to exactly `BL_USE_CLANG_CL` + `ARCH=x86` + `VARIANT=release`,
+and the makefile now carries the measurement table inline so the next person does not repeat the
+experiment blind. See "Why item 4 did not come back" above for what is and is not ruled out.
 
-This matters beyond tidiness: `-gline-tables-only` means x86 `ccl16` release has **line tables but no
-variable or type information**, so a crash dump from that configuration cannot be inspected the way
-the other eleven can. `scripts/debug_harness.py` runs `cdb` on a dump when a test crashes, and on this
-one configuration it has materially less to work with.
+The reason this still matters is unchanged, and is worth restating because the item is staying open:
+`-gline-tables-only` means x86 `ccl16` release has **line tables but no variable or type
+information**, so a crash dump from that configuration cannot be inspected the way the other eleven
+can. `scripts/debug_harness.py` runs `cdb` on a dump when a test crashes, and on this one
+configuration it has materially less to work with.
 
-Restore it and rebuild `ARCH=x86 TOOLCHAIN=ccl16 VARIANT=release`; if peak memory or object size is
-still uncomfortable, the split is not finished.
+The closing condition has changed. It is no longer "once the objects are under control" — they are,
+and it was not enough. It is now: once `bl::messaging` instantiation weight comes down far enough
+that the heaviest release TU fits a 32-bit optimizer, or once clang-cl is upgraded past 16.0.5 and
+its optimizer memory use is re-measured.
 
-### Step 3 — optionally restore the 32-bit host
+### Step 3 — optionally restore the 32-bit host — DONE 2026-09-13
 
-Only meaningful if there is a reason to want it (see below). To test whether it would work again,
-override the directory without editing the makefiles:
+Closed, and the makefile change is permanent: the `CLANG_CL_DIR` block for `ARCH=x86` is back to the
+single `$(MSVC)/VC/Tools/Llvm/bin` line. `MSVCHOSTARCHTAG` was additionally changed to resolve to
+`Hostx86` for an x86 target, so `vc143` uses the 32-bit `cl.exe` too rather than whatever the build
+host happens to be.
+
+The probe suggested here is still the right way to test a host swap without editing makefiles, and
+is recorded for reuse:
 
 ```
 make -k -j1 utests ARCH=x86 TOOLCHAIN=ccl16 VARIANT=debug \
   CLANG_CL_DIR='<dist>/toolchain-msvc/vc143/BuildTools/VC/Tools/Llvm/bin'
 ```
 
-`--target=i686-pc-windows-msvc` is harmless there — it is that host's own default triple — so the
-override alone is a complete test. If it builds, item 5 can be closed; the makefile change to make it
-permanent is to revert the `CLANG_CL_DIR` block to the single hardcoded `Llvm/bin` line.
-
 ---
 
 ## Conditions to revisit
 
-- **Any test module's x86 debug object approaches ~100MB again.** That is the band in which the
-  32-bit host died, and it is the signal that the 64-bit headroom is being consumed too. Worth a
-  periodic `find bld/win-x86-*/utests -name '*.obj' -printf '%s %p\n' | sort -rn | head` after a
-  matrix run.
+*Revised 2026-09-13: the first and fourth conditions below assumed a 64-bit host was doing the work.
+It no longer is, so the margin is thinner and the thresholds are lower.*
+
+- **Any test module's x86 debug object exceeds the 75MB ceiling.** This is now enforced rather than
+  watched: `scripts/utests/utf_objsize.py --ceiling 75` fails the build, and the peak today is
+  69.94MB — about 5MB of margin on the host that actually has to compile it. The old ~100MB trigger
+  no longer applies; there is no 64-bit headroom behind it any more.
+- **Any test module needs full `-Zi` in x86 `ccl16` release.** Separate and tighter: that path is
+  limited by peak optimizer memory, not object size, and empirically sits between a 57MB and a 68MB
+  debug object. The ceiling above does not protect it.
 - **Compile time or build-machine memory becomes a complaint.** These TUs are the largest single
   compilations in the repository and they are on the critical path of every full build; the split
   pays for itself in wall-clock long before it pays for itself in address space.
 - **A crash needs diagnosing in x86 ccl16 release.** That is the configuration with the trimmed debug
   info, and the moment it matters is the moment step 2 stops being cosmetic.
-- **The build must run on a 32-bit x86 host.** The fallback still selects `Llvm/bin` there, which will
-  crash on these TUs exactly as before — the fix helps only hosts that have a 64-bit clang-cl. This is
-  the one scenario in which the split is not optional. Related prior art:
-  `scripts/devenv7/AGENTS.md` already documents a separate x86-32-bit-host defect (the Boost
+- **The build must run on a 32-bit x86 host.** This is no longer a special case: every x86 target is
+  now built by the 32-bit tools on every host, so the ordinary matrix exercises it. Related prior
+  art: `scripts/devenv7/AGENTS.md` already documents a separate x86-32-bit-host defect (the Boost
   `clang-win.jam` `i686` patch), so that host is a configuration the project does try to support.
 - **A newer LLVM lands in the dist.** Worth re-testing step 3 opportunistically; a later clang may use
   less memory, though it is at least as likely to use more.
@@ -255,10 +334,11 @@ permanent is to revert the `CLANG_CL_DIR` block to the single hardcoded `Llvm/bi
 
 ## Records to update when it lands
 
-- This document: replace the Decision table dispositions with the outcome, in the shape the sibling
-  records use.
-- `projects/make/toolchain/msvc-default.mk`: the comment block above `CLANG_CL_DIR` for `ARCH=x86`
-  and the `-gline-tables-only` comment both reference this limitation and should be updated or removed
-  together with the code.
-- `scripts/devenv7/AGENTS.md`: if the 32-bit host is restored, or if the split changes how test
-  modules are laid out, the toolchain notes there should say so.
+All three were updated on 2026-09-13 for items 3 and 5. They stay listed because **item 4 is still
+open** and the same three will need revisiting when it closes.
+
+- This document: Decision table and the "Outcome, 2026-09-13" section.
+- `projects/make/toolchain/msvc-default.mk`: the comment above `CLANG_CL_DIR` for `ARCH=x86`, the
+  `MSVCHOSTARCHTAG` comments in the `vc143` and `ccl16` blocks, and the `BL_MINIMAL_DEBUG_INFO` block
+  which now carries the measurement table inline.
+- `scripts/devenv7/AGENTS.md`: the toolchain notes on which host builds an x86 target.

@@ -223,6 +223,19 @@ make -k -j4 ARCH=x64
 - `BL_WIN_ARCH_IS_ARM64` / `BL_WIN_ARCH_IS_X64` flags represent HOST architecture
 - `ARCH` variable represents TARGET architecture
 
+**Exception — `ARCH=x86` always uses the x86-hosted tools.** Host detection is overridden for an x86
+target: `MSVCHOSTARCHTAG` resolves to `Hostx86` and `CLANG_CL_DIR` to `VC/Tools/Llvm/bin` (the 32-bit
+clang-cl), for both `vc143` and `ccl16`, whatever the build host is. This keeps the 32-bit toolchain
+actually exercised rather than cross-built from a 64-bit host. Two consequences:
+
+- **x86 builds are slower on an ARM64 or x64 host**, because the tools run under emulation.
+- **The ~2GB address space of those tools is a real constraint.** It is why no test translation unit
+  may grow without bound; `scripts/utests/utf_objsize.py` enforces a 75MB object ceiling. One
+  combination still cannot afford full debug info — x86 + `ccl16` + release uses
+  `-gline-tables-only`, because the 32-bit clang-cl runs out of memory generating `-Zi` for the
+  heaviest modules. See
+  [notes/plans/issues/x86-clang-cl-host-and-test-module-size-deferral.md](../../notes/plans/issues/x86-clang-cl-host-and-test-module-size-deferral.md).
+
 **Host Architecture Detection Algorithm:**
 
 1. If `PROCESSOR_IDENTIFIER` contains "ARMv8" or "AArch64" → ARM64 host (works in all environments including MSYS2)

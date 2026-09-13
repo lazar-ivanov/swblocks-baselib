@@ -42,8 +42,11 @@ MSVCRTTAG           := Microsoft.VC143.CRT
 MSVCVERSIONTAG      := $(lastword $(sort $(notdir $(wildcard $(MSVC)/VC/Tools/MSVC/*))))
 # Dynamically detect Windows SDK version (the newest, as vs-detector.ps1 selects it)
 WINSDK10VERSIONTAG  := $(lastword $(sort $(notdir $(wildcard $(WINSDK10)/Include/*))))
-# Set host architecture tag based on detected architecture
-ifeq ($(BL_WIN_ARCH_IS_ARM64),1)
+# Set host architecture tag based on detected architecture, except for an x86 target, which
+# is built by the x86-hosted tools so the 32-bit toolchain is actually exercised
+ifeq ($(ARCH),x86)
+MSVCHOSTARCHTAG     := Hostx86
+else ifeq ($(BL_WIN_ARCH_IS_ARM64),1)
 MSVCHOSTARCHTAG     := Hostarm64
 else ifeq ($(BL_WIN_ARCH_IS_X64),1)
 MSVCHOSTARCHTAG     := Hostx64
@@ -67,8 +70,11 @@ MSVCRTTAG           := Microsoft.VC143.CRT
 MSVCVERSIONTAG      := $(lastword $(sort $(notdir $(wildcard $(MSVC)/VC/Tools/MSVC/*))))
 # Dynamically detect Windows SDK version (the newest, as vs-detector.ps1 selects it)
 WINSDK10VERSIONTAG  := $(lastword $(sort $(notdir $(wildcard $(WINSDK10)/Include/*))))
-# Set host architecture tag based on detected architecture
-ifeq ($(BL_WIN_ARCH_IS_ARM64),1)
+# Set host architecture tag based on detected architecture, except for an x86 target, which
+# is built by the x86-hosted tools so the 32-bit toolchain is actually exercised
+ifeq ($(ARCH),x86)
+MSVCHOSTARCHTAG     := Hostx86
+else ifeq ($(BL_WIN_ARCH_IS_ARM64),1)
 MSVCHOSTARCHTAG     := Hostarm64
 else ifeq ($(BL_WIN_ARCH_IS_X64),1)
 MSVCHOSTARCHTAG     := Hostx64
@@ -137,19 +143,12 @@ ifdef BL_USE_CLANG_CL
 
   # Construct clang-cl directory path
   ifeq ($(ARCH),x86)
-    # The 32-bit x86 clang-cl host cannot code-generate the largest translation units in
-    # this project; it exhausts its ~2GB address space and aborts with an illegal
-    # instruction (0xC000001D) instead of a diagnostic. Prefer a 64-bit host, which
-    # compiles the same sources to the same x86 target - see the explicit target triple
-    # added to CXXFLAGS below - and fall back to the 32-bit host only when the build
-    # host is itself x86 and no 64-bit host can run.
-    ifeq ($(BL_WIN_ARCH_IS_ARM64),1)
-      CLANG_CL_DIR := $(MSVC)/VC/Tools/Llvm/ARM64/bin
-    else ifeq ($(BL_WIN_ARCH_IS_X64),1)
-      CLANG_CL_DIR := $(MSVC)/VC/Tools/Llvm/x64/bin
-    else
-      CLANG_CL_DIR := $(MSVC)/VC/Tools/Llvm/bin
-    endif
+    # An x86 target is built by the 32-bit x86 clang-cl host, so the 32-bit toolchain is
+    # actually exercised rather than cross-built from a 64-bit one. That host has roughly
+    # 2GB of address space, which is why no test translation unit may grow without a
+    # bound - see notes/reviews/major/update_2026/test-module-split-plan.md and the
+    # ceiling enforced by scripts/utests/utf_objsize.py.
+    CLANG_CL_DIR := $(MSVC)/VC/Tools/Llvm/bin
   else
     CLANG_CL_DIR := $(MSVC)/VC/Tools/Llvm/$(CLANG_CL_ARCH_DIR)/bin
   endif
@@ -321,19 +320,37 @@ else
 endif
 CXXFLAGS += -nologo
 CXXFLAGS += -EHs
-# Use minimal debug info for x86 clang-cl release builds to reduce memory consumption
-# -gline-tables-only generates only line tables (much smaller than full -Zi debug info)
-# Only applies to: ARCH=x86, TOOLCHAIN=ccl16, VARIANT=release
+
+# Full debug info everywhere except one combination: x86 + clang-cl + release. There the 32-bit
+# clang-cl 16 host runs out of address space generating it for the heaviest test translation
+# units and dies with "LLVM ERROR: out of memory", so only line tables are emitted.
+#
+# Measured on 2026-09-13 against utf_baselib_messaging3, the heaviest module:
+#
+#   32-bit host, release, -Zi                  out of memory
+#   32-bit host, release, -gline-tables-only   builds, 35.69MB object
+#   64-bit host, release, -Zi                  builds, 59.05MB object
+#   32-bit host, debug,   -Zi                  builds, 67.91MB object
+#
+# So this is not about object size - the release object is the smallest of the three - but about
+# peak memory in the optimizer, which the object ceiling in scripts/utests/utf_objsize.py does
+# not govern. cl.exe is unaffected: x86 vc143 builds both variants with full -Zi on its 32-bit
+# host. utf_baselib_messaging2 also builds release with -Zi, so the limit sits between the two.
+#
+# Lifting this needs the instantiation weight itself reduced - see
+# notes/plans/issues/test-instantiation-weight-deferral.md - not more module splitting, because
+# one inline helper accounts for 68.35MB of messaging3's 69.94MB debug object.
+BL_MINIMAL_DEBUG_INFO :=
 ifdef BL_USE_CLANG_CL
 ifeq ($(ARCH),x86)
 ifeq ($(VARIANT),release)
+BL_MINIMAL_DEBUG_INFO := 1
+endif
+endif
+endif
+
+ifdef BL_MINIMAL_DEBUG_INFO
 CXXFLAGS += -gline-tables-only
-else
-CXXFLAGS += -Zi
-endif
-else
-CXXFLAGS += -Zi
-endif
 else
 CXXFLAGS += -Zi
 endif
@@ -377,9 +394,9 @@ CXXFLAGS += -Wno-microsoft-cast
 CXXFLAGS += -Wno-microsoft-template
 endif
 
-# The clang-cl host selected for an x86 target is normally 64-bit (see CLANG_CL_DIR above),
-# so it defaults to its own host triple; the x86 target has to be requested explicitly. This
-# is also the triple the 32-bit host defaults to, so it is a no-op when that host is used.
+# The 32-bit clang-cl host used for an x86 target already defaults to this triple, so this is
+# a no-op today. It is kept so the target is stated rather than inherited from whichever host
+# happens to run, which is what went wrong when a 64-bit host was briefly used here.
 ifdef BL_USE_CLANG_CL
 ifeq ($(ARCH),x86)
 CXXFLAGS += --target=i686-pc-windows-msvc

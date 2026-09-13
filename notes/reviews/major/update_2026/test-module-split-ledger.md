@@ -550,3 +550,43 @@ Beyond the synthetic mutations, the gate was checked against the real change: de
 `exceptionThrowHook3` from the relocated header is reported as
 `C6 helper member LOST: void exceptionThrowHook3( ... ) (utf_baselib_messaging/TestMessagingDefault.h:537)`,
 naming the helper and where it used to live.
+
+## Step 3 - the x86 deferral, 2026-09-13
+
+Two of the three follow-ups on
+[x86-clang-cl-host-and-test-module-size-deferral.md](../../../plans/issues/x86-clang-cl-host-and-test-module-size-deferral.md)
+are closed by the split. The third is not, and that is the useful finding.
+
+**Item 5 - the 32-bit clang-cl host - is restored, and this is the proof the split worked.** The very
+binary that died with 0xC000001D on the 112.68MB translation unit now compiles the largest remaining
+one. x86 targets no longer use 64-bit tools at all: `CLANG_CL_DIR` is back to `Llvm/bin` and
+`MSVCHOSTARCHTAG` resolves to `Hostx86` for an x86 target, so `vc143` uses the 32-bit `cl.exe`
+as well.
+
+**Item 4 - full `-Zi` for x86 ccl16 release - is not.** Deleting the `-gline-tables-only` special
+case makes that combination fail with `LLVM ERROR: out of memory`. Measured on
+`utf_baselib_messaging3`:
+
+| x86 ccl16, heaviest module | 32-bit host | 64-bit host |
+|---|---|---|
+| release, full `-Zi` | out of memory | builds, 59.05 MB |
+| release, `-gline-tables-only` | builds, 35.69 MB | builds |
+| debug, full `-Zi` | builds, 67.91 MB | builds |
+
+Items 4 and 5 are mutually exclusive for that one combination. The decision taken was to keep item 5
+and narrow the special case to exactly `BL_USE_CLANG_CL` + `ARCH=x86` + `VARIANT=release`; every
+other x86 combination now gets full `-Zi`, including x86 ccl16 **debug**, which the original
+workaround also covered.
+
+**The lesson for this plan is that the object ceiling does not govern that path.** The failing
+release object is 35.69MB, the smallest of the three - the limit is peak optimizer memory, not object
+size. `utf_baselib_messaging2` (57MB debug) does build release with `-Zi` and `messaging3` (68MB)
+does not, but splitting cannot close that gap because `messaging3` is 68.35MB of one inline helper.
+Item 4 is blocked on instantiation weight, not on module size.
+
+All four x86 combos build the heaviest module with the final configuration: ccl16 debug, ccl16
+release, vc143 debug, vc143 release.
+
+Incidental cost now that x86 uses x86-hosted tools everywhere: on an ARM64 or x64 host those tools
+run under emulation, so x86 builds are materially slower. The 64-bit host swap had been buying build
+speed as well as address space, which the original record did not note.

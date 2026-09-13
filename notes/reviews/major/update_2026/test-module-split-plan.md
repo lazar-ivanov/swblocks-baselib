@@ -527,16 +527,25 @@ Order — easiest first to bank the recipe, hardest last:
 **2A gate:** Tier 1 + **Tier 1A near-binary-equivalence**. Object size must *not* move — that is the
 point. **2B gate:** Tier 1 + Tier 2 (40 MB ceiling) + Tier 3.
 
-### Step 3 — close the deferral
+### Step 3 — close the deferral — DONE 2026-09-13, except item 4 and the matrix
 
-1. `utf_objsize.py` reports every x86 debug object under 40 MB.
-2. Delete the `-gline-tables-only` special case for `BL_USE_CLANG_CL` + `ARCH=x86` + `VARIANT=release`
-   in `projects/make/toolchain/msvc-default.mk:325-344`; rebuild that combo (item 4).
-3. Test the 32-bit host without a makefile edit (item 5):
-   `make -k -j1 utests ARCH=x86 TOOLCHAIN=ccl16 VARIANT=debug CLANG_CL_DIR='<dist>/…/VC/Tools/Llvm/bin'`
-4. Update the deferral record's Decision table, the `CLANG_CL_DIR` comment in `msvc-default.mk`, and
-   the toolchain notes in `scripts/devenv7/AGENTS.md`.
-5. Run the full 12-combo Windows matrix once.
+1. ~~`utf_objsize.py` reports every x86 debug object under 40 MB.~~ **Ceiling met at 75 MB, not 40.**
+   Peak is 69.94 MB; the 40 MB target is unreachable without reducing instantiation weight inside
+   `bl::messaging`, which is its own deferral.
+2. ~~Delete the `-gline-tables-only` special case…~~ **Attempted and reverted.** Deleting it makes
+   x86 `ccl16` release fail with `LLVM ERROR: out of memory` on the heaviest modules. The special
+   case is reinstated, narrowed to exactly that combination, and now carries the measurement table
+   inline. Item 4 stays open, blocked on instantiation weight rather than on module size.
+3. **Done — and made permanent rather than probed.** The 32-bit clang-cl host builds the largest
+   remaining TU. `CLANG_CL_DIR` is back to `Llvm/bin`, and `MSVCHOSTARCHTAG` now resolves to
+   `Hostx86` for an x86 target so `vc143` uses the 32-bit `cl.exe` too.
+4. **Done.** The deferral record's Decision table and outcome section, the `CLANG_CL_DIR` and
+   `MSVCHOSTARCHTAG` comments in `msvc-default.mk`, and the host notes in
+   `scripts/devenv7/AGENTS.md`.
+5. **Still outstanding: the full 12-combo Windows matrix has not been run against the split tree.**
+   Only x86 has been exercised end to end, and only `utf_baselib_messaging3` across all four x86
+   combos. Note x86 builds are now materially slower, since the x86 tools run under emulation on an
+   ARM64 or x64 host.
 
 ---
 
