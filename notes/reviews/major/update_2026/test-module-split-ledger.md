@@ -258,6 +258,56 @@ commits each: A is gated on near-binary-equivalence, B on the ceiling.
 - **Re-verify on ccl16** at the end of each phase; the pilot only rebuilt vc143, so the ccl16 tree
   still holds pre-split `utf_baselib_security` objects.
 
+## Phase 2 outcome
+
+**Eight of ten oversized modules are under the 75 MB ceiling; two are blocked on instantiation
+weight which no file arrangement divides.** Every split was verified at tier 1 and tier 3, and the
+tree held at **772 cases and 115 helper blocks throughout**.
+
+| Module | Before | After | Ceiling |
+|---|---:|---|---|
+| `utf_baselib_security` | 65.0 | 22.7 / 38.2 / 52.4 | yes |
+| `utf_baselib_http` | 55.8 | 54.9 / 25.0 | yes |
+| `utf_baselib` | 55.3 | 49.4 / 30.5 | yes |
+| `utf_baselib_apps` | 77.2 | 45.8 / 65.4 | yes |
+| `utf_baselib_blobtransfer` | 56.3 | 52.1 / 54.4 | yes |
+| `utf_baselib_io` | 77.4 | 72.3 / 56.9 | yes |
+| `utf_baselib_tasks` | 67.7 | untouched | yes |
+| `utf_baselib_data` | 49.8 | untouched | yes |
+| `utf_baselib_rest` | 78.7 | **blocked** | no |
+| `utf_baselib_messaging` | 112.7 | **blocked** | no |
+
+### The one thing that decides whether a module can be split
+
+Not size, not line count, not case count. **How much of the module every case instantiates in
+common.** Measured by splitting and taking `before - (a + b)`:
+
+| Module | Shared | Outcome |
+|---|---:|---|
+| `utf_baselib` | small | 5.9 MB shed for 6 headers — splits properly |
+| `utf_baselib_io` | ~30 MB | fits under 75 but nowhere near the target |
+| `utf_baselib_blobtransfer` | ~50 MB | fits, barely |
+| `utf_baselib_rest` | ~75.6 MB | every partition lands near 76 MB |
+| `utf_baselib_messaging` | ~90 MB | 16 of 38 cases removed bought 17 MB |
+
+Three splits were performed, measured and **reverted** because they bought almost nothing for a whole
+extra module: `utf_baselib_security4` (0.4 MB for 37.7), `utf_baselib_http3` (2.5 MB for 51.1), and
+the `rest` and `messaging` attempts above. **Always measure the proposed grouping; never predict it.**
+
+### What the gate caught that review would not
+
+| Invariant | Caught |
+|---|---|
+| C2 | a continuation note silently becoming a case's doc comment |
+| C7 | fixtures reachable only through helper parameters — 3 modules |
+| C8 | recipes orphaned by a move — 3 modules; plus 5 pre-existing dead ones in 4 modules |
+| tier 3 | an assertion-count shift which turned out to be a genuinely unstable case |
+
+None of these breaks a build. Each produces a module that compiles, links and reports green while
+being subtly wrong.
+
+---
+
 ### Step 3 — close the deferral
 
 | # | Item | Status | Commit | Notes |
