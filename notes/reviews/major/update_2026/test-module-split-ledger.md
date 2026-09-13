@@ -231,10 +231,10 @@ commits each: A is gated on near-binary-equivalence, B on the ceiling.
 
 | # | Module | Step | Status | Obj before | Obj after | Notes |
 |---|---|---|---|---:|---:|---|
-| 4 | `utf_baselib_blobtransfer` | A | **todo** | 56.3 | — | cut at line 292 — the structural seam *and* the lock boundary |
-| 4 | `utf_baselib_blobtransfer` | B | **todo** | — | — | |
-| 5 | `utf_baselib_rest` | A | **todo** | 78.7 | — | easiest file in the tree; one anon ns at 2983-3044 stays with the case at 3060 |
-| 5 | `utf_baselib_rest` | B | **todo** | — | — | |
+| 4 | `utf_baselib_blobtransfer` | A | **done** | 56.3 | 56.27 (inert) | cut at line 282 — structural seam *and* lock boundary |
+| 4 | `utf_baselib_blobtransfer` | B | **done** | — | **52.1 / 54.4** | both under the ceiling; single module was over |
+| 5 | `utf_baselib_rest` | A | **BLOCKED** | 78.7 | — | **not attempted** — helper floor alone is 60.5 MB, above the ceiling |
+| 5 | `utf_baselib_rest` | B | **BLOCKED** | — | — | blocked on the instantiation-weight deferral, item 2 |
 | 6 | `utf_baselib_io` | A | **todo** | 77.4 | — | 3493-3844 first (lowest risk); mind the **nested** anon ns at 1718-2156 |
 | 6 | `utf_baselib_io` | B | **todo** | — | — | |
 

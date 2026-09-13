@@ -51,6 +51,8 @@ Measured on `ARCH=x86 TOOLCHAIN=vc143 VARIANT=debug`, with one throwaway module 
 | **Including** `utests/baselib/UtfBaseLibCommon.h` | 21.5 MB | 0.1 MB |
 | **Including** `apps/bl-messaging-http-gateway/MessagingHttpGatewayApp.h` | 22.6 MB | 1.2 MB |
 | **Using** it — `TestMessagingApps.h`, **one** test case | 65.4 MB | **44.0 MB** |
+| **Instantiating** `TestRestUtils::startBrokerAndRunTests` alone | **60.5 MB** | **39.1 MB** |
+| **Instantiating** `TestMessagingUtils::createTestMessagingBackend` alone | 42.3 MB | 20.9 MB |
 
 **Including a template helper costs nothing; instantiating it costs about 26MB.** So any module
 containing even one authorization-cache test case exceeds the 40MB target before any sibling header
@@ -102,10 +104,34 @@ Modules currently between the target and the ceiling, each with its reason:
 | `utf_baselib_http` | 54.9 MB | `HttpServerHelpers` server instantiation, ~30MB shared across its headers |
 | `utf_baselib_data` | 49.8 MB | not yet attempted |
 
+### `utf_baselib_rest` cannot be split into compliance at all
+
+`TestRestUtils::startBrokerAndRunTests` instantiated on its own, in a module containing nothing but
+one trivial assertion, produces a **60.5MB** object. That is **above the 55MB ceiling before a single
+real test case is added**, and `utf_baselib_rest` has 88 references to that helper across its 13
+server cases.
+
+So no arrangement of that module's files reaches the ceiling — not a two way split, not a thirteen
+way one. Its header split was **not attempted**, because it cannot succeed and would produce two
+non-compliant modules plus a large diff to review.
+
+This does **not** generalise to the other large modules, which was the working assumption until it
+was measured:
+
+| Module | Stack it drives | Floor | Verdict |
+|---|---|---:|---|
+| `utf_baselib_rest` | `TestRestUtils` (88 refs) | **60.5 MB** | **blocked** — floor exceeds the ceiling |
+| `utf_baselib_messaging` | `TestMessagingUtils` (97 refs) | 42.3 MB | splittable, 12.7MB of headroom per module |
+| `utf_baselib_io` | neither | unmeasured | no shared test-helper stack; expected to split normally |
+
+The difference is `BrokerFacade::execute` plus the REST bridge, which `startBrokerAndRunTests` pulls
+and `createTestMessagingBackend` does not: 39.1MB against 20.9MB.
+
 **Above the ceiling, not merely the target:**
 
 | Module | Object | Why nothing can be done by moving files |
 |---|---:|---|
+| `utf_baselib_rest` | 78.7 MB | its helper's floor alone is 60.5 MB; **not attempted** |
 | `utf_baselib_apps2` | 65.4 MB | one module, one header, **one test case**. `MessagingApps_HttpGatewayTlsValidationTests` instantiates the whole messaging HTTP gateway application: 44MB for 165 lines of test source. There is no split available at any granularity short of deleting the case |
 
 `utf_baselib_http` is the one to watch: it sits **0.1MB** under the ceiling, so it is the first module
