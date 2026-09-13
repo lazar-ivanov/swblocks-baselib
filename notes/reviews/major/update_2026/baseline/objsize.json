@@ -1,0 +1,121 @@
+{
+  "win-a64-vc143-debug": {
+    "utf_baselib_cmdline": {
+      "UtfBaselibCmdlineMain.obj": 40238833
+    }
+  },
+  "win-x86-ccl16-debug": {
+    "utf_baselib": {
+      "TestPublicHeaderInstantiation.obj": 11972795,
+      "UtfBaselibMain.obj": 58625879
+    },
+    "utf_baselib_apps": {
+      "UtfBaselibAppsMain.obj": 80754692
+    },
+    "utf_baselib_async": {
+      "UtfBaselibAsyncMain.obj": 33378287
+    },
+    "utf_baselib_basictask": {
+      "UtfBaselibBasicTaskMain.obj": 26576475
+    },
+    "utf_baselib_blobtransfer": {
+      "UtfBlobTransferFilesystemMain.obj": 60180261
+    },
+    "utf_baselib_cmdline": {
+      "UtfBaselibCmdlineMain.obj": 28535171
+    },
+    "utf_baselib_data": {
+      "UtfBaselibDataMain.obj": 49260562
+    },
+    "utf_baselib_http": {
+      "UtfBaselibHttpMain.obj": 59288096
+    },
+    "utf_baselib_io": {
+      "UtfBaselibIoMain.obj": 83307919
+    },
+    "utf_baselib_loader": {
+      "UtfLoaderMain.obj": 27011556
+    },
+    "utf_baselib_messaging": {
+      "UtfBaselibMessagingMain.obj": 115662435
+    },
+    "utf_baselib_parsing": {
+      "UtfBaselibParsingMain.obj": 26132184
+    },
+    "utf_baselib_plugin": {
+      "Calculator.obj": 8434274
+    },
+    "utf_baselib_rest": {
+      "UtfBaselibRestMain.obj": 81934308
+    },
+    "utf_baselib_security": {
+      "UtfBaselibSecurityMain.obj": 67041086
+    },
+    "utf_baselib_setprio": {
+      "UtfBaselibSetPrioMain.obj": 22059528
+    },
+    "utf_baselib_tasks": {
+      "UtfBaselibTasksMain.obj": 71222969
+    },
+    "utf_baselib_utils": {
+      "UtfBaselibUtilsMain.obj": 23486338
+    }
+  },
+  "win-x86-vc143-debug": {
+    "utf_baselib": {
+      "TestPublicHeaderInstantiation.obj": 11849353,
+      "UtfBaselibMain.obj": 58012321
+    },
+    "utf_baselib_apps": {
+      "UtfBaselibAppsMain.obj": 80919503
+    },
+    "utf_baselib_async": {
+      "UtfBaselibAsyncMain.obj": 33249428
+    },
+    "utf_baselib_basictask": {
+      "UtfBaselibBasicTaskMain.obj": 26662405
+    },
+    "utf_baselib_blobtransfer": {
+      "UtfBlobTransferFilesystemMain.obj": 59003427
+    },
+    "utf_baselib_cmdline": {
+      "UtfBaselibCmdlineMain.obj": 28733090
+    },
+    "utf_baselib_data": {
+      "UtfBaselibDataMain.obj": 52248884
+    },
+    "utf_baselib_http": {
+      "UtfBaselibHttpMain.obj": 58550389
+    },
+    "utf_baselib_io": {
+      "UtfBaselibIoMain.obj": 81127558
+    },
+    "utf_baselib_loader": {
+      "UtfLoaderMain.obj": 27213257
+    },
+    "utf_baselib_messaging": {
+      "UtfBaselibMessagingMain.obj": 118147877
+    },
+    "utf_baselib_parsing": {
+      "UtfBaselibParsingMain.obj": 26460512
+    },
+    "utf_baselib_plugin": {
+      "Calculator.obj": 8482520
+    },
+    "utf_baselib_rest": {
+      "UtfBaselibRestMain.obj": 82506674
+    },
+    "utf_baselib_security": {
+      "UtfBaselibSecurityMain.obj": 68204220
+    },
+    "utf_baselib_setprio": {
+      "UtfBaselibSetPrioMain.obj": 22393206
+    },
+    "utf_baselib_tasks": {
+      "UtfBaselibTasksMain.obj": 70953181
+    },
+    "utf_baselib_utils": {
+      "UtfBaselibUtilsMain.obj": 23742189
+    }
+  }
+}
