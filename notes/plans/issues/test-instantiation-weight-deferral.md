@@ -192,7 +192,71 @@ target which is unreachable regardless. Reverted.
 The step A header split is kept: it is inert, and it leaves the file cut 31/7 for when the weight is
 addressed.
 
-### `utf_baselib_messaging`: four test-only approaches measured, none sufficient
+### CORRECTED: `utf_baselib_messaging` is tractable — it needs many small modules, not few large ones
+
+**The section below concluded this module could not be fixed in test code. That conclusion was
+wrong, and the error is worth understanding because it was a reasoning failure rather than a
+measurement failure.**
+
+Only 2-way and 3-way splits were ever measured. At 22 cases a module is 95.6MB and at 31 it is
+100.6MB, from which it was concluded that the weight is irreducibly shared and no partition works.
+A **small** module was never measured. Small modules are small:
+
+| Module contents | Object |
+|---|---:|
+| floor, `UtfMain.h` only | 21.4 MB |
+| **1 case** + the island's machinery | **44.11 MB** |
+| **7 cases** + the same machinery | **76.74 MB** |
+| implied marginal per extra case | **5.44 MB** |
+
+So a module of **six or fewer cases lands at 71.3MB**, under the ceiling. `utf_baselib_messaging`
+has 46 cases and needs roughly **eight modules**, not two or three.
+
+**The contradiction which should have been chased.** The "shed rate" reasoning below computes 0.55MB
+per case, from removing 9 cases and saving 5MB. Building up from one case gives 5.44MB per case — a
+factor of ten apart. Both are real: removing a few cases from a large module frees almost nothing
+because the survivors still instantiate the same machinery, whereas each case added to a small module
+costs its full marginal. That asymmetry is precisely why many small modules succeed where few large
+ones fail, and the pessimistic reading was reported as settled.
+
+**Where the weight actually sits.** Relocating the shared `utests/baselib` helpers bought only 6.8MB
+for the 7-case island (76.74 -> 69.97). Its weight is in its **own** inline machinery:
+`TestMessagingDefault2.h` carries two anonymous namespaces holding `TestConversationProcessing`,
+`TestRecordingObjectDispatch` and related classes across 2,371 lines. So the out-of-line treatment
+applies at **two** levels — shared helpers in `utests/baselib`, and module-local machinery in the
+module directory, which is the `utf_baselib_rest` pattern.
+
+Relocation and splitting compound: every MB moved out of line raises how many cases fit per module,
+so doing the relocation first means fewer than eight modules.
+
+**The heaviest single case was measured, since a case cannot straddle two executables and therefore
+sets the hard floor.** `IO_MessagingProxyBackendTests` — 1,257 lines, welded to `exceptionThrowHook2`
+and `exceptionThrowHook3` in the first anonymous namespace — costs **71.18MB** alone with that
+namespace's machinery. Under the ceiling, but by only 3.8MB, so it needs either a module to itself or
+the machinery relocated first. No single case exceeds the ceiling, which is what makes the whole
+scheme viable.
+
+Full measured picture:
+
+| Module contents | Object | |
+|---|---:|---|
+| floor, `UtfMain.h` only | 21.40 MB | |
+| 1 typical case + island machinery | 44.11 MB | OK |
+| 6 typical cases (interpolated) | 71.30 MB | OK |
+| 7 typical cases + island machinery | 76.74 MB | over |
+| heaviest case alone + `ns#1` machinery | 71.18 MB | OK, 3.8 MB margin |
+| all 46 cases, today | 112.68 MB | over |
+
+**Still to establish before committing to it:**
+
+- **Per-case weights vary** and only the extremes have been measured. 5.44MB is an average over one
+  island; boundaries should be chosen from a fuller distribution rather than by case count.
+- **The build mechanism.** `.cpp` files placed under `src/utests/include/utests/baselib` sit outside
+  any module directory, so `projects/make/common.mk`'s per-module `*.cpp` wildcard will not collect
+  them. Either a per-module makefile lists the implementations it links, or each module carries a thin
+  forwarding `.cpp`. This is the one part of the design which needs a new mechanism.
+
+### The superseded analysis, kept for the measurements it contains
 
 After `utf_baselib_rest` was resolved by relocating helper bodies, the same question was put to
 `utf_baselib_messaging` and answered by measurement rather than argument. **Do not re-try these.**
@@ -216,9 +280,9 @@ splitting fails: any subset of cases still pulls most of the tail.
 Its `-ftime-trace` profile: 58.2 s compile, 17.3 s (30%) top-level instantiation, no root above
 1.5 s, and a tail extending well past the top fourteen entries.
 
-**`utf_baselib_messaging` is therefore the one accepted exception**, and the only remaining lever is
-item 2 of this record — reducing instantiation weight inside baselib, which is outside the test-only
-constraint. It is also the module which would still fail a 32-bit host build, at 112.7 MB against
+**Superseded:** this paragraph claimed messaging was the one accepted exception and that only
+reducing baselib's instantiation weight could help. See the correction above - it is tractable with
+enough modules. It is also the module which would still fail a 32-bit host build, at 112.7 MB against
 the roughly 110 MB which originally exhausted it.
 
 ### `utf_baselib_io` is blocked for the same reason, measured the expensive way
