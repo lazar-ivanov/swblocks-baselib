@@ -19,4 +19,5 @@
 
 #include "TestServerMonitoring.h"
 #include "TestMessagingDefault.h"
+#include "TestMessagingDefault2.h"
 #include "TestAsyncRpcDataModel.h"
