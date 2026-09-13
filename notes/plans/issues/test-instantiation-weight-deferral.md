@@ -127,7 +127,30 @@ was measured:
 The difference is `BrokerFacade::execute` plus the REST bridge, which `startBrokerAndRunTests` pulls
 and `createTestMessagingBackend` does not: 39.1MB against 20.9MB.
 
-### `utf_baselib_rest` cannot comply at 75MB either, and this is the strongest measurement in the record
+### RESOLVED: `utf_baselib_rest` was fixed by moving four helper bodies out of line
+
+**This section is kept because the measurement stands and the reasoning was wrong.** The conclusion
+drawn from it — that only reducing instantiation weight inside baselib could help — did not hold.
+The weight was reachable from test code alone.
+
+Four members of `utest::TestRestUtilsT` were defined inside the class and therefore implicitly
+inline, so every TU including `TestRestUtils.h` instantiated them and the broker, messaging client
+factory and authorization cache stack beneath them. Moving those four bodies into
+`src/utests/utf_baselib_rest/TestRestUtilsImpl.cpp` removes the inline-ness:
+
+| Toolchain | Before | After |
+|---|---:|---|
+| vc143 | 78.68 MB | **48.76 main + 63.44 impl** |
+| ccl16 | 78.10 MB | **47.30 main + 62.86 impl** |
+
+Both objects under the ceiling on both toolchains. baselib untouched, the `template< E = void >`
+idiom kept, no build system change, no shared library. See commit `a00f41b`.
+
+**`extern template` does not work here and was measured first:** an explicit instantiation
+declaration does not suppress inline functions ([temp.explicit]/11), so the main object did not move
+by a byte while the instantiation TU added 68.68MB. The definition must physically move.
+
+### The original measurement, which remains correct as far as it goes
 
 The 60.5MB figure above is what `startBrokerAndRunTests` costs on its own. The module's cases share
 considerably more than that. Splitting the header six cases against nine, a near even cut by case
@@ -192,7 +215,6 @@ The header split (step A) was **kept**: it is verified inert, it turns a 7,442 l
 | Module | Object | Why nothing can be done by moving files |
 |---|---:|---|
 | `utf_baselib_rest` | 78.7 MB | its helper's floor alone is 60.5 MB; **not attempted** |
-| `utf_baselib_rest` | 78.7 MB | ~75.6 MB shared; every partition lands near 76 MB |
 | `utf_baselib_messaging` | 112.7 MB | ~90 MB shared; removing 16 of 38 cases bought 17 MB |
 | `utf_baselib_apps2` | 65.4 MB | one module, one header, **one test case**. `MessagingApps_HttpGatewayTlsValidationTests` instantiates the whole messaging HTTP gateway application: 44MB for 165 lines of test source. There is no split available at any granularity short of deleting the case |
 

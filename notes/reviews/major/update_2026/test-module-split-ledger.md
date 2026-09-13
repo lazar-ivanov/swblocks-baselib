@@ -234,7 +234,7 @@ commits each: A is gated on near-binary-equivalence, B on the ceiling.
 | 4 | `utf_baselib_blobtransfer` | A | **done** | 56.3 | 56.27 (inert) | cut at line 282 — structural seam *and* lock boundary |
 | 4 | `utf_baselib_blobtransfer` | B | **done** | — | **52.1 / 54.4** | both under the ceiling; single module was over |
 | 5 | `utf_baselib_rest` | A | **done** | 78.7 | 78.68 (inert) | cut 6 cases / 9 cases |
-| 5 | `utf_baselib_rest` | B | **BLOCKED** | — | — | attempted: **76.8 + 77.5**, both over 75; ~75.6 MB shared; reverted |
+| 5 | `utf_baselib_rest` | B | **RESOLVED** | 78.7 | **48.8 / 63.4** | not by splitting — four helper bodies moved out of line, commit `a00f41b` |
 | 6 | `utf_baselib_io` | A | **done** | 77.4 | 77.37 (inert) | cut at 6167; header now 6,166 + 1,348 lines |
 | 6 | `utf_baselib_io` | B | **BLOCKED** | — | — | attempted: 72.3 + 56.9, **both over the ceiling**; reverted |
 
@@ -260,8 +260,7 @@ commits each: A is gated on near-binary-equivalence, B on the ceiling.
 
 ## Phase 2 outcome
 
-**Eight of ten oversized modules are under the 75 MB ceiling; two are blocked on instantiation
-weight which no file arrangement divides.** Every split was verified at tier 1 and tier 3, and the
+**Nine of ten oversized modules are under the 75 MB ceiling. Only `utf_baselib_messaging` remains.** Every split was verified at tier 1 and tier 3, and the
 tree held at **772 cases and 115 helper blocks throughout**.
 
 | Module | Before | After | Ceiling |
@@ -274,7 +273,7 @@ tree held at **772 cases and 115 helper blocks throughout**.
 | `utf_baselib_io` | 77.4 | 72.3 / 56.9 | yes |
 | `utf_baselib_tasks` | 67.7 | untouched | yes |
 | `utf_baselib_data` | 49.8 | untouched | yes |
-| `utf_baselib_rest` | 78.7 | **blocked** | no |
+| `utf_baselib_rest` | 78.7 | 48.8 / 63.4 | yes |
 | `utf_baselib_messaging` | 112.7 | **blocked** | no |
 
 ### The one thing that decides whether a module can be split
