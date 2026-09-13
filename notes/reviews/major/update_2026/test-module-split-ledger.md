@@ -166,9 +166,32 @@ Easiest first to bank the recipe; each phase only begins when the previous is gr
 
 | # | Module | Step | Status | Obj before | Obj after | Notes |
 |---|---|---|---|---:|---:|---|
-| 1 | `utf_baselib_http` | B | **todo** | 55.8 | — | move the 3 lock-free TLS headers out; also isolates the lock |
+| 1 | `utf_baselib_http` | B | **done** | 55.8 | **54.9 / 25.0** | 2 modules; `http2` is lock-free. **Target not reachable** — see below |
 | 2 | `utf_baselib` | B | **todo** | 55.3 | — | move the asio/net cluster; keep the 2 sticky clusters; carry `using namespace bl;` |
 | 3 | `utf_baselib_apps` | B | **todo** | 77.2 | — | 3 headers; **probe leave-one-out first** — which of bl-tool or the gateway carries the weight is unmeasured |
+
+**`utf_baselib_http` result.** 55.8 MB becomes **54.9 + 25.0** across two modules. `utf_baselib_http2`
+(TLS policy, peer verification, stream wrapper — 19 cases) is entirely free of the machine-global
+lock and runs in parallel; `utf_baselib_http` keeps the three server-test headers which all reach
+`HttpServerHelpers.h`. Tier 1 and tier 3 both green: 56 cases before, 56 after (37 + 19), identical
+outcomes and assertion counts.
+
+**The 40 MB target is not reachable here, and a third module was tried and reverted.** Splitting
+`TestClientHttpTasks.h` (12 cases) out moved `utf_baselib_http` by **2.5 MB** (54.9 → 52.4) and
+produced a **51.1 MB** object — leaving two modules near the ceiling instead of one, for no real
+gain. The cause is the same as the security pilot's: including `HttpServerHelpers.h` costs 0.5 MB,
+but standing up a server through it costs roughly **30 MB** of instantiation that every server case
+in the module shares.
+
+**This is now a confirmed pattern, not a one-off.** Two independent helper stacks — the authorization
+cache and `HttpServerHelpers` — behave identically. Expect the same of `TestMessagingUtils.h`,
+`TestBlobTransferUtils.h`, `TestTaskUtils.h` and `TestRestUtils.h`, which back the three largest
+modules in the tree. **Measure each before planning its split**; the module count cannot be predicted
+when most of the weight is shared. See
+[../../../plans/issues/test-instantiation-weight-deferral.md](../../../plans/issues/test-instantiation-weight-deferral.md).
+
+**Watch item:** `utf_baselib_http` sits 0.1 MB under the ceiling and is the first module that will go
+red when anyone adds an HTTP test case.
 
 **Phase 2B — Step A then Step B.** Single-header modules, so a header split must come first. Two
 commits each: A is gated on near-binary-equivalence, B on the ceiling.

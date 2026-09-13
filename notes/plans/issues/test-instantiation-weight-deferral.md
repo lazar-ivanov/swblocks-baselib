@@ -1,11 +1,12 @@
 # Test Template Instantiation Weight: Deferral Record
 
-This document records why the test module object ceiling was set to 55MB rather than the 40MB the
-sibling record proposed, and the work that was **not** done: the template instantiation weight of the
-test suites is high enough that a handful of modules cannot reach 40MB by any arrangement of files.
+This document records why the test module object size policy has two tiers — a 40MB target and a
+55MB hard ceiling — rather than the single 40MB limit the sibling record proposed, and the work that
+was **not** done: the template instantiation weight of the test suites is high enough that a handful
+of modules cannot reach 40MB by any arrangement of files.
 
 **It is a risk acceptance, not an assessment that the concern is absent.** The weight is real, it is
-still in the tree, and 55MB buys headroom rather than removing the cause.
+still in the tree, and the 55MB allowance buys headroom rather than removing the cause.
 
 **Origin:** the `utf_baselib_security` pilot of the test module split, 2026-09-12. Measured, not
 inferred — see the numbers below.
@@ -20,14 +21,14 @@ and its ledger.
 ## Decision
 
 **Date:** 2026-09-12
-**Status:** **Ceiling raised to 55MB; instantiation weight reduction deferred.**
+**Status:** **Two-tier size policy applied; instantiation weight reduction deferred.**
 
 | # | Item | Disposition |
 |---|---|---|
-| 1 | Object ceiling for a unit-test TU on x86 debug | **55MB**, applied 2026-09-12 |
+| 1 | Object size policy for a unit-test TU on x86 debug | **target 40MB, hard ceiling 55MB**, applied 2026-09-12 |
 | 2 | Reduce the instantiation weight of the authorization cache test stack | **Deferred** — this record |
-| 3 | Survey the other test helper stacks for the same problem | **Deferred** — blocked on item 2's approach |
-| 4 | Revisit the 40MB ceiling once item 2 lands | **Deferred** — optional even then |
+| 3 | Survey the other test helper stacks for the same problem | **Partly answered** — `HttpServerHelpers` confirmed to have the same shape, 2026-09-12; messaging, blob transfer, tasks and REST still unmeasured |
+| 4 | Retire the 55MB allowance and hold every module at the 40MB target, once item 2 lands | **Deferred** — optional even then |
 
 ---
 
@@ -35,7 +36,7 @@ and its ledger.
 
 Every test module pays a fixed floor of about **21.4MB** — `UtfMain.h` plus baselib plus the
 header-only Boost.Test runner. `utf_baselib_setprio` is 223 lines of test source and still produces a
-21.4MB object. A 40MB ceiling therefore allows roughly **19MB** of marginal content per module.
+21.4MB object. The 40MB target therefore allows roughly **19MB** of marginal content per module.
 
 Measured on `ARCH=x86 TOOLCHAIN=vc143 VARIANT=debug`, with one throwaway module per probe:
 
@@ -49,7 +50,7 @@ Measured on `ARCH=x86 TOOLCHAIN=vc143 VARIANT=debug`, with one throwaway module 
 | `TestAuthorizationServiceRest.h` alone | 37.7 MB | 16.3 MB |
 
 **Including a template helper costs nothing; instantiating it costs about 26MB.** So any module
-containing even one authorization-cache test case exceeds a 40MB ceiling before any sibling header
+containing even one authorization-cache test case exceeds the 40MB target before any sibling header
 joins it. That is not a splitting problem and no rearrangement of files addresses it.
 
 ### Marginal costs are not additive
@@ -68,18 +69,39 @@ grouping itself, predicts the result.
 
 ## What was done instead
 
-The ceiling was set to **55MB** in `scripts/utests/utf_objsize.py` and `scripts/utests/check_split.sh`.
+Two tiers were set in `scripts/utests/utf_objsize.py` and `scripts/utests/check_split.sh`:
 
-Why that number:
+- **Target 40MB.** What a split aims for. `utf_objsize.py` reports every object above it without
+  failing, and each one needs a recorded reason in the split ledger why the target was not reachable.
+- **Hard ceiling 55MB.** The gate fails above it.
+
+**Why a target and not just a limit.** Splitting merely to below the limit is how this problem
+recurs. The first attempt at `utf_baselib_http` landed at 54.9MB against a 55MB limit — compliant
+that day, and red the next time anyone adds an HTTP test case, with the work to be redone. The
+February 2026 `-gline-tables-only` workaround bought about seven months for the same reason: it
+relieved pressure without leaving room. A target well below the limit is what makes the limit hold
+over time rather than only today.
+
+Why 55MB for the limit:
 
 - The 32-bit `clang-cl` host died on a **110MB** translation unit. 55MB is a factor of two below it,
   so the headroom is large rather than marginal.
 - It is reachable by moving whole files, which is the low-risk operation the split plan is built on
   and which the verification tooling can prove faithful.
-- It brings `utf_baselib_data` (49.8MB) into compliance with no work at all, and reduces
-  `utf_baselib` (55.3MB), `utf_baselib_http` (55.8MB) and `utf_baselib_blobtransfer` (56.3MB) to
-  moving a single small header each.
-- 40MB was a round number chosen before any of this had been measured.
+- It is where the pilot's measurements say some modules must land: `utf_baselib_security3` cannot
+  reach the target at all, for the reasons above.
+
+Modules currently between the target and the ceiling, each with its reason:
+
+| Module | Object | Why the target is not reachable |
+|---|---:|---|
+| `utf_baselib_security3` | 52.4 MB | authorization cache instantiation, ~26MB shared across its headers |
+| `utf_baselib_http` | 54.9 MB | `HttpServerHelpers` server instantiation, ~30MB shared across its headers |
+| `utf_baselib_data` | 49.8 MB | not yet attempted |
+
+`utf_baselib_http` is the one to watch: it sits **0.1MB** under the ceiling, so it is the first module
+that will go red when anyone adds an HTTP test case. That is the concrete cost of leaving item 2
+undone, and it arrived on the very first module of the fan-out.
 
 **What it does not do.** It does not make the translation units smaller, and it leaves the growth
 unbounded in the same way the companion record describes. A module which acquires a second heavy
@@ -89,8 +111,9 @@ helper stack will cross 55MB as easily as it crossed 40MB, and nothing warns.
 
 ## What limits the exposure while this is open
 
-- `utf_objsize.py` gates every build against the ceiling, so growth is now **detected** even though it
-  is not prevented. That is new; before this work nothing measured object size at all.
+- `utf_objsize.py` gates every build against the ceiling and reports everything above the target, so
+  growth is now **detected** even though it is not prevented. That is new; before this work nothing
+  measured object size at all.
 - The x86 build works on a 64-bit clang-cl host, so nothing is blocked today.
 - The pilot reduced `utf_baselib_security` from 65.0MB to a 52.4MB maximum, and the same treatment is
   planned for the nine remaining modules, so the trend is downward.
@@ -124,14 +147,29 @@ Candidates, cheapest first:
 
 ### Step 3 — survey the rest
 
-The authorization cache is the stack the pilot happened to land on. `TestMessagingUtils.h`,
-`TestBlobTransferUtils.h`, `TestTaskUtils.h` and `TestRestUtils.h` are the other shared helpers with
-plausible weight, and the modules that use them — messaging at 112.7MB, rest at 78.7MB, io at 77.4MB
-— are the largest in the tree. Whether they have the same shape is **unmeasured**.
+**`HttpServerHelpers.h` has already been confirmed to have the same shape**, during the
+`utf_baselib_http` split on 2026-09-12. Including it costs 0.5MB; standing up a server through it
+costs roughly **30MB** of instantiation which every server case in the module shares. The
+consequences were identical to the authorization cache:
+
+- `utf_baselib_http` is 54.9MB with three server-test headers and **cannot reach the 40MB target** by
+  moving files.
+- Splitting `TestClientHttpTasks.h` — 12 cases — into a fourth module moved `utf_baselib_http` by
+  **2.5MB** and produced a **51.1MB** object, leaving two modules near the ceiling instead of one.
+  Reverted.
+
+So this is not a peculiarity of the authorization cache. It is the shape of the test helper stacks
+generally, and it is the reason the 40MB target needs the 55MB allowance at all.
+
+Still **unmeasured**: `TestMessagingUtils.h`, `TestBlobTransferUtils.h`, `TestTaskUtils.h` and
+`TestRestUtils.h`. The modules that use them — messaging at 112.7MB, rest at 78.7MB, io at 77.4MB —
+are the largest in the tree, and on the evidence so far they should be expected to behave the same
+way. **Measure before planning their splits**, because the number of modules a split needs cannot be
+predicted when most of the weight is shared.
 
 ### Step 4 — revisit the ceiling
 
-If the weight comes down materially, lowering the ceiling back toward 40MB becomes possible. It is
+If the weight comes down materially, holding every module at the 40MB target becomes possible and the 55MB allowance can be retired. It is
 worth doing only if the growth trend justifies it; the companion record's real requirement is that no
 TU exhausts a 32-bit compiler, which 55MB already satisfies with a wide margin.
 

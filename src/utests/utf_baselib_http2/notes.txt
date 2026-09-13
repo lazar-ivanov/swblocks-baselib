@@ -1,0 +1,21 @@
+--log_level=message --run_test=TlsProtocolPolicy_ServerContextRejectsBadKeyMaterial
+--log_level=message --run_test=TlsProtocolPolicy_Tls11IsRefusedUnderTheDefaultPolicy
+--log_level=message --run_test=TlsProtocolPolicy_Tls10IsRefusedUnderTheDefaultPolicy
+--log_level=message --run_test=TlsProtocolPolicy_FloorAndSecurityLevelArePinned
+--log_level=message --run_test=TlsProtocolPolicy_HardeningOptionsArePinned
+--log_level=message --run_test=TlsProtocolPolicy_CipherSuitesAreAeadOnly
+
+--log_level=message --run_test=TlsPeerVerification_IpAddressLiteralsAreMatched
+--log_level=message --run_test=TlsPeerVerification_UnlistedIpAddressIsRefused
+--log_level=message --run_test=TlsPeerVerification_AddressLiteralIsNotMatchedAgainstDnsNames
+--log_level=message --run_test=TlsPeerVerification_DnsNamesStillMatch
+--log_level=message --run_test=TlsPeerVerification_ExistingServerCertificateBehaviourIsUnchanged
+--log_level=message --run_test=TlsPeerVerification_MultiLabelWildcardsDoNotMatch
+--log_level=message --run_test=TlsPeerVerification_DegenerateInputsAreRefused
+--log_level=message --run_test=TlsPeerVerification_CallbackFormFailsClosedWithoutPreverification
+--log_level=message --run_test=TlsPeerVerification_PartialWildcardsDoNotMatch
+--log_level=message --run_test=TlsPeerVerification_CommonNameIsNeverConsulted
+
+--log_level=message --run_test=AsioSslStreamWrapper_FreshStateTests
+--log_level=message --run_test=AsioSslStreamWrapper_BeginProtocolShutdownPreconditionTests
+--log_level=message --run_test=AsioSslStreamWrapper_EnhanceExceptionNoVerifyFailureTests
