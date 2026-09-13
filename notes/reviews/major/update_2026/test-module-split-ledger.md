@@ -62,7 +62,72 @@ Legend: `todo` · `in-progress` · `done` · `blocked` · `n/a`
 | Module | Step | Status | Commit | Obj before | Obj after | Gate | Notes |
 |---|---|---|---|---|---|---|---|
 | `utf_baselib_security` | A | **n/a** | — | — | — | — | headers already fine-grained; pure Step B |
-| `utf_baselib_security` | B | **todo** | — | 65.0 | — | — | 3-way split, zero data duplication |
+| `utf_baselib_security` | B | **done** | _this commit_ | 65.0 | **22.7** | green | `TestHashUtils`, `TestHmacSha256`, `TestRsaSignVerify`; **no data dir**, no lock |
+| `utf_baselib_security2` | B | **done** | _this commit_ | — | **38.2** | green | crypto + PEM; 11 `.pem` fixtures; no lock |
+| `utf_baselib_security3` | B | **done** | _this commit_ | — | **52.4** | tier2 over | auth cache + service; 8 JSON/txt; holds the lock; see below |
+
+**Result: 65.0 MB in one module becomes 22.7 / 38.2 / 52.4 across three.** Max down 19%, two of three
+under the 40 MB ceiling, and the machine-global lock confined to one module so the other two run free
+of it. Verification: tier 1 green (772 cases, C1–C7), tier 3 green — **51 cases before in one module,
+51 after across three, identical outcomes and assertion counts**.
+
+`utf_baselib_security3` remains above the ceiling and **cannot be brought under it by moving files**.
+A fourth module was tried and reverted; see the measurements below.
+
+**A 3-way split was not enough.** The first cut gave 22.7 / 38.2 / **52.4** — the third still over the
+40 MB ceiling. Throwaway probe modules settled why, and overturned the working hypothesis:
+
+| Probe | Object | Marginal over the 21.4 MB floor |
+|---|---:|---:|
+| `UtfMain.h` only (`utf_baselib_setprio`, 223 lines) | 21.4 MB | — |
+| `UtfMain.h` + `HttpServerHelpers.h` + one trivial case | 21.9 MB | **0.5 MB** |
+| `TestAuthorizationServiceRest.h` alone | 37.7 MB | **16.3 MB** |
+
+**The 40 MB ceiling is not reachable for every module, and this one proves it.** The full probe set,
+x86 vc143 debug:
+
+| probe | object | marginal over the 21.4 MB floor |
+|---|---:|---:|
+| floor — `UtfMain.h` only (`utf_baselib_setprio`, 223 lines) | 21.4 MB | — |
+| + **including** `HttpServerHelpers.h` | 21.9 MB | 0.5 MB |
+| + **including** `TestAuthorizationCacheImplUtils.h` | 21.9 MB | 0.5 MB |
+| **using** it — `TestAuthorizationCacheImpl.h` alone | 47.3 MB | **25.9 MB** |
+| **using** it — `TestAuthorizationCacheRestImpl.h` alone | 49.4 MB | **28.0 MB** |
+| `TestAuthorizationServiceRest.h` alone | 37.7 MB | 16.3 MB |
+
+Including a template helper costs nothing; **instantiating** it costs ~26 MB. Both auth cache headers
+independently force the same `AuthorizationCache` instantiations, which is why either alone is 47-49
+MB while both together are only 52. A 40 MB ceiling allows ~19 MB of marginal content, so **any
+module containing even one authorization-cache test case is over the ceiling no matter how the files
+are arranged.**
+
+That is a hard limit on what a file-move split can deliver, and it needs a decision rather than more
+splitting. The options are to reduce the instantiation weight itself (explicit instantiation in a
+translation unit, `extern template`, or less template depth in the cache stack), to raise the ceiling,
+or to record these modules as accepted exceptions. **The plan's §10 item 0.12 and its 40 MB target
+both need amending in light of this.**
+
+**Marginal object costs are NOT additive — they overlap, heavily.** Splitting
+`TestAuthorizationServiceRest.h` (16.3 MB standalone) out of `security3` reduced `security3` by
+**0.4 MB**, from 52.4 to 52.0. Nearly all of that header's weight is template instantiation it shares
+with `TestAuthorizationCacheRestImpl.h` — both drive `AuthorizationServiceRest` and the same REST and
+data-model templates — so removing the header does not remove the instantiations, which the remaining
+header still requires.
+
+**This changes how item 0.12 must be run.** Probing each header in its own module measures an *upper
+bound on that header's standalone cost*, not its marginal contribution to a group, and the two differ
+by more than an order of magnitude here (16.3 MB vs 0.4 MB). A split assignment cannot be
+bin-packed from isolated probe results. The measurement that actually predicts the outcome is the
+**leave-one-out delta**: build the module with a header removed and take the difference. Isolated
+probes remain useful for ranking candidates cheaply, but the chosen grouping must be built and
+measured before it is believed.
+
+**`HttpServerHelpers.h` is effectively free**, because `UtfMain.h` already pulls
+`baselib/http/SimpleHttpTask.h`, `tasks/AsioSslStreamWrapper.h`, `crypto/TrustedRoots.h` and the
+thread pools — the http and tasks machinery is *inside* the floor. So the weight of these modules is
+in the test headers themselves, not in a shared-helper tax, which is the good case: it splits by
+moving files. `TestAuthorizationServiceRest.h` alone is 16.3 MB of the 31 MB `security3` carried,
+so separating it is what lets both halves fit.
 
 ### Step 2 — fan out
 
@@ -155,6 +220,19 @@ The ~21 MB per-TU floor is visible in `utf_baselib_setprio` at 21.4 MB for 223 l
   namespace wraps a test case; 156 cases carry a doc comment that C2 now hashes; and the column-0
   namespace detection reproduces the hand analysis exactly (`TestIO.h` 4 blocks, `TestMessagingDefault.h`
   5 including both `utest` blocks, `TestRestDefault.h` 1, `TestBlobTransferFilesystem.h` 7).
+- **C5 is file-based, so cross-including a header between modules evades every invariant.** A module
+  whose `Main.cpp` does `#include "../other_module/TestFoo.h"` registers that header's cases in a
+  second binary, but the file is scanned once so no duplicate name is seen; tier 3 compares unions,
+  so it does not see it either. **Step B must move files, never cross-include them.** Verified
+  accidentally: a probe module written that way tripped no invariant.
+- **The build's test-data copy never prunes, so a clean bld is required to trust a split.**
+  `projects/make/common.mk:503-508` copies `src/utests/<module>/data/*` into
+  `bld/<plat>/utests/<module>/<binary-stem>-data/` with `cp -r` and never removes anything, and the
+  whole rule is skipped when the source `data/` directory does not exist. So after moving data files
+  out of a module, the old files remain in that module's build data directory and its tests keep
+  passing against them. **A missing data file would look green locally and only fail on a clean
+  build** — exactly the failure mode this work exists to prevent. Delete
+  `bld/<plat>/utests/<module>/*-data` for every module a split touches before running tier 3.
 - **`utf_baselib_plugin` is a shared library, not a test executable.** It has no `Main.cpp`, reports
   0 cases, and `utf_runlog.py` skips it because no matching `.exe` exists. That is correct, not a
   gap.

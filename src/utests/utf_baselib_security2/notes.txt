@@ -1,0 +1,5 @@
+--log_level=message --run_test=BignumBase64UrlTest
+
+--log_level=message --run_test=CryptoUtils_InitSsl
+--log_level=message --run_test=CryptoUtils_RsaTests
+--log_level=message --run_test=CryptoUtils_X509tests

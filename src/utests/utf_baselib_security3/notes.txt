@@ -1,0 +1,14 @@
+--log_level=message --run_test=AuthorizationCacheImplBasicTests
+--log_level=message --run_test=AuthorizationCacheImplFullTests
+--log_level=message --run_test=AuthorizationCacheImplBasicTests,AuthorizationCacheImplFullTests
+
+--log_level=message --run_test=AuthorizationCacheRestImplBasicTests
+--log_level=message --run_test=AuthorizationCacheRestImplFullTests
+--log_level=message --run_test=AuthorizationCacheRestImplManualInvoke --is-client --path $config_path --password $token
+
+--log_level=message --run_test=AuthorizationServiceRest_TemplateEscapingTests
+--log_level=message --run_test=AuthorizationServiceRest_StatusCategoryGateTests
+--log_level=message --run_test=AuthorizationServiceRest_TokenTextRejectionTests
+--log_level=message --run_test=AuthorizationServiceRest_ExtractIsPerCallStateTests
+--log_level=message --run_test=AuthorizationServiceRest_TokenShapeTests
+--log_level=message --run_test=AuthorizationServiceRest_ResponseParsingGuards
