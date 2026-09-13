@@ -30,7 +30,7 @@
 #   C3  every case sits under the same #if guard stack
 #   C4  every case sits under the same namespace stack
 #   C5  no case name occurs twice anywhere in the tree
-#   C6  no helper block occurs twice within one module (an ODR risk); none was lost
+#   C6  no helper block or member occurs twice within one module (an ODR risk); none was lost
 #   C7  every data file a module references exists in that module's data/ directory
 #   C8  every case a module's notes.txt names exists in that module
 #
@@ -103,6 +103,65 @@ DATA_LITERAL_RE = re.compile( r'"([A-Za-z0-9_][A-Za-z0-9_.\-]*\.[A-Za-z0-9]{1,8}
 #
 
 NOTES_RUN_TEST_RE = re.compile( r'--run_test=([^\s]+)' )
+
+#
+# C6 hashes each helper block whole, which cannot tell a block that was partitioned from one that
+# was deleted. Both look like "the block whose sha was X is gone". That is not a hypothetical: the
+# plan splits headers precisely by moving some helpers out and leaving the rest, and the tasks
+# fixture hoist does it on a much larger scale
+#
+# So helper blocks are also split into members, and the no-loss half of C6 is checked per member.
+# A member is a maximal run of lines ending at the first blank line at which every bracket it
+# opened is closed. That is the house style throughout src/utests - members are separated by
+# blank lines, and none leaves a bracket open across one - and it is asserted on every run by
+# requiring that the members of a block cover every non-blank line of it
+#
+# A nested namespace inside a block is one member rather than being descended into. That is a
+# deliberate limit: it keeps the rule total, and the outer block still moves or dies as a unit
+#
+
+STRIP_RE = re.compile( r'"[^"]*"|\'[^\']*\'|//.*$' )
+
+
+def bracket_delta( line ):
+    """
+    Net bracket depth contributed by one line, ignoring string literals and line comments
+    """
+
+    text = STRIP_RE.sub( '', line )
+
+    return ( text.count( '{' ) + text.count( '(' ) + text.count( '[' )
+           - text.count( '}' ) - text.count( ')' ) - text.count( ']' ) )
+
+
+def split_members( lines, start, stop ):
+    """
+    Split a helper block body, lines[ start : stop ], into ( first, last ) line index pairs
+    """
+
+    members = []
+    index = start
+
+    while index < stop:
+
+        if lines[ index ].strip() == '':
+            index += 1
+            continue
+
+        first = index
+        depth = 0
+
+        while index < stop:
+
+            depth += bracket_delta( lines[ index ] )
+            index += 1
+
+            if depth <= 0 and ( index >= stop or lines[ index ].strip() == '' ):
+                break
+
+        members.append( ( first, index - 1 ) )
+
+    return members
 
 
 def sha( text ):
@@ -200,6 +259,7 @@ def scan_file( path, module, rel_path, problems ):
 
     cases = []
     namespaces = []
+    members = []
     includes = []
     data_refs = set()
     data_literals = set()
@@ -326,6 +386,40 @@ def scan_file( path, module, rel_path, problems ):
                 'sha': sha( normalize( lines[ index : min( end, total - 1 ) + 1 ] ) ),
                 } )
 
+            #
+            # The enclosing namespace path is recorded beside the member rather than folded into
+            # its hash, because the two checks want different identities. The no-loss check
+            # compares text alone, so that hoisting a helper out of an anonymous namespace into
+            # a shared one reads as a move and not as a deletion. The duplication check compares
+            # text and path together, because the same helper text in two different namespaces
+            # is no ODR risk at all - utf_baselib_async carries five such pairs deliberately,
+            # one set in namespace asynccb and the parallel set in namespace asyncv2
+            #
+
+            member_ns = '::'.join( ns_stack + [ name ] )
+
+            covered = set()
+
+            for first, last in split_members( lines, open_index + 1, min( end, total ) ):
+
+                covered.update( range( first, last + 1 ) )
+
+                members.append( {
+                    'module': module,
+                    'file': rel_path,
+                    'line': first + 1,
+                    'ns': member_ns,
+                    'sha': sha( normalize( lines[ first : last + 1 ] ) ),
+                    'label': lines[ first ].strip()[ : 60 ],
+                    } )
+
+            for probe in range( open_index + 1, min( end, total ) ):
+                if lines[ probe ].strip() != '' and probe not in covered:
+                    problems.append(
+                        '%s:%d: helper block member extraction left this line uncovered - '
+                        'the member precondition does not hold' % ( rel_path, probe + 1 )
+                        )
+
             ns_stack.append( name )
             index = open_index + 1
             continue
@@ -337,13 +431,25 @@ def scan_file( path, module, rel_path, problems ):
 
         index += 1
 
-    return cases, namespaces, includes, sorted( data_refs ), sorted( data_literals )
+    return cases, namespaces, members, includes, sorted( data_refs ), sorted( data_literals )
 
 
 def file_sha( path ):
+    """
+    Hash a data file with line endings normalized to LF
+
+    Hashing the raw bytes makes the manifest depend on how the tree happened to be checked out.
+    core.autocrlf is true here with no .gitattributes, so a fresh worktree of the very same
+    commit gets CRLF where a long-lived one has LF, and the hashes disagree for no reason that
+    matters. Normalizing keeps the manifest a property of the commit rather than of the checkout,
+    which is what makes a baseline reproducible
+    """
+
     digest = hashlib.sha256()
+
     with open( path, 'rb' ) as stream:
-        digest.update( stream.read() )
+        digest.update( stream.read().replace( b'\r\n', b'\n' ) )
+
     return digest.hexdigest()[ :32 ]
 
 
@@ -352,7 +458,7 @@ def capture( src_utests ):
     Walk every utf* module directory and build the manifest
     """
 
-    manifest = { 'cases': [], 'namespaces': [], 'modules': {} }
+    manifest = { 'cases': [], 'namespaces': [], 'members': [], 'modules': {} }
     problems = []
 
     for module in sorted( os.listdir( src_utests ) ):
@@ -378,10 +484,11 @@ def capture( src_utests ):
                 path = os.path.join( root, entry )
                 rel_path = os.path.relpath( path, src_utests ).replace( os.sep, '/' )
 
-                cases, namespaces, includes, refs, literals = scan_file( path, module, rel_path, problems )
+                cases, namespaces, members, includes, refs, literals = scan_file( path, module, rel_path, problems )
 
                 manifest[ 'cases' ].extend( cases )
                 manifest[ 'namespaces' ].extend( namespaces )
+                manifest[ 'members' ].extend( members )
                 data_refs.update( refs )
                 data_literals.update( literals )
 
@@ -414,6 +521,7 @@ def capture( src_utests ):
 
     manifest[ 'cases' ].sort( key = lambda case: case[ 'name' ] )
     manifest[ 'namespaces' ].sort( key = lambda ns: ( ns[ 'module' ], ns[ 'file' ], ns[ 'line' ] ) )
+    manifest[ 'members' ].sort( key = lambda m: ( m[ 'module' ], m[ 'file' ], m[ 'line' ] ) )
 
     return manifest, problems
 
@@ -450,6 +558,28 @@ def check_intrinsic( manifest ):
                 where = ', '.join( '%s:%d' % ( e[ 'file' ], e[ 'line' ] ) for e in entries )
                 failures.append(
                     'C6 helper block duplicated within module %s (ODR risk): %s' % ( module, where )
+                    )
+
+    #
+    # The same check one level finer, so that copying a single helper into a second header of the
+    # same module is caught as well as copying a whole block. Identity here is the text together
+    # with the enclosing namespace path: the same text under two different namespaces is not a
+    # redefinition, and utf_baselib_async relies on that
+    #
+
+    by_module_member = {}
+
+    for member in manifest.get( 'members', [] ):
+        key = ( member[ 'sha' ], member[ 'ns' ] )
+        by_module_member.setdefault( member[ 'module' ], {} ).setdefault( key, [] ).append( member )
+
+    for module, entries in sorted( by_module_member.items() ):
+        for key, found in sorted( entries.items(), key = lambda item: item[ 0 ] ):
+            if len( found ) > 1:
+                where = ', '.join( '%s:%d' % ( f[ 'file' ], f[ 'line' ] ) for f in found )
+                failures.append(
+                    'C6 helper member duplicated within module %s (ODR risk): %s in namespace %s at %s'
+                    % ( module, found[ 0 ][ 'label' ], found[ 0 ][ 'ns' ] or '<global>', where )
                     )
 
     for module, info in sorted( manifest[ 'modules' ].items() ):
@@ -562,16 +692,41 @@ def check_against( before, after ):
                 'C4 case NAMESPACE STACK CHANGED: %s (%s -> %s)' % ( name, a[ 'namespaces' ], b[ 'namespaces' ] )
                 )
 
-    old_blocks = {}
+    #
+    # The no-loss half of C6, checked per member rather than per block. A helper is lost only if
+    # its text survives nowhere in the tree; a block that was partitioned, or a helper hoisted
+    # into a different namespace, is a move and reads as one
+    #
+    # Comparing text alone is what makes a hoist a move. The namespace path is deliberately not
+    # part of this identity - it is used only by the duplication check above
+    #
+    # Both manifests must actually carry members, or a baseline captured before this check
+    # existed would silently pass everything. That failure mode has bitten this tool twice
+    #
 
-    for ns in before[ 'namespaces' ]:
-        old_blocks.setdefault( ns[ 'sha' ], ns )
+    if 'members' not in before or not before[ 'members' ]:
+        failures.append(
+            'C6 the baseline carries no helper members - it predates the per-member check and '
+            'must be regenerated from its own commit before this invariant can be trusted'
+            )
+        return failures
 
-    new_blocks = { ns[ 'sha' ] for ns in after[ 'namespaces' ] }
+    if 'members' not in after or not after[ 'members' ]:
+        failures.append( 'C6 the current manifest carries no helper members - extraction failed' )
+        return failures
 
-    for digest in sorted( set( old_blocks ) - new_blocks ):
-        where = old_blocks[ digest ]
-        failures.append( 'C6 helper block LOST: %s:%d' % ( where[ 'file' ], where[ 'line' ] ) )
+    old_members = {}
+
+    for member in before[ 'members' ]:
+        old_members.setdefault( member[ 'sha' ], member )
+
+    new_members = { member[ 'sha' ] for member in after[ 'members' ] }
+
+    for digest in sorted( set( old_members ) - new_members ):
+        where = old_members[ digest ]
+        failures.append(
+            'C6 helper member LOST: %s (%s:%d)' % ( where[ 'label' ], where[ 'file' ], where[ 'line' ] )
+            )
 
     return failures
 

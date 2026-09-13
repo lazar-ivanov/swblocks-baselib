@@ -293,7 +293,7 @@ precondition.
 | **C3** | enclosing `#if` guard stack unchanged | a case silently moving inside/outside a platform guard |
 | **C4** | enclosing namespace stack unchanged | a case moving into/out of an anonymous namespace |
 | **C5** | no case name appears twice tree-wide | collision; keeps `--run_test=` recipes unambiguous |
-| **C6** | every baseline residue chunk still present; **none twice within one module** | a lost helper; an ODR violation from duplicating a helper |
+| **C6** | every baseline helper **member** still present somewhere; no member twice within one module under the same namespace | a lost helper; an ODR violation from duplicating a helper |
 | **C7** | every referenced data filename exists in that module's `data/`; duplicates byte-identical | a moved case that cannot find its fixture data |
 
 **C2 + C3 + C4 are the core claim:** the text of every test, *and the compilation context that text
@@ -303,6 +303,12 @@ C3 is load-bearing, not theoretical: nine headers mix platform guards with cases
 `TestBaselibDefault5.h` (9 guards / 17 cases) and `TestBaselibDefault.h` (4 guards / **120 cases**).
 
 C5 starts from a verified fact: **all 773 test-case names are globally unique today.**
+
+C6 is checked **per member, not per helper block**. A header split partitions a block — some helpers
+leave with the cases that use them, the rest stay — and a whole-block hash cannot tell that from a
+deletion. Loss is compared on member text alone, so hoisting a helper into a different namespace
+reads as a move; duplication is compared on text *and* enclosing namespace, because the same text
+under two namespaces is no ODR risk (`utf_baselib_async` keeps five such pairs deliberately).
 
 ### Tier 1A — the Step A gate: near-binary-equivalence
 

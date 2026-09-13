@@ -244,6 +244,8 @@ commits each: A is gated on near-binary-equivalence, B on the ceiling.
 |---|---|---|---|---:|---:|---|
 | 7 | `utf_baselib_messaging` | A | **done** | 112.7 | 112.68 (inert) | cut 4576-6914, 31/7 cases |
 | 7 | `utf_baselib_messaging` | B | **BLOCKED** | — | — | 2-way gave 100.6+76.7, 3-way left 95.6; ~90 MB shared; reverted |
+| 7 | `utf_baselib_messaging` | B2 | **done** | 112.7 | 68.4 / 57.3 / 69.9 / 60.4 | 4-way, after the helper bodies moved out of line; see below |
+| 7 | `utf_baselib_messaging` | A2 | **done** | 72.37 | 72.37 (inert, +0.003%) | `IO_MessagingProxyBackendTests` + its two hooks cut to a sibling header |
 | 8 | `utf_baselib_tasks` | — | **n/a** | 67.7 | 67.7 | **already under the 75 MB ceiling untouched**; the hoist was only needed to chase the 40 MB target |
 
 
@@ -442,3 +444,109 @@ The ~21 MB per-TU floor is visible in `utf_baselib_setprio` at 21.4 MB for 223 l
   decides each module's actual split, so it gates Step 2 but not Step 1.
 - **Do not delete `bld/win-x86-vc143-debug` or `bld/win-x86-ccl16-debug` until 0.8–0.11 are done.**
   They are the only built trees, and the runtime baseline needs their binaries.
+
+## utf_baselib_messaging, resolved
+
+The module that blocked Phase 2C is under the ceiling. It took two changes the earlier attempts had
+not tried, and it ends at four modules rather than the five the line-count estimate predicted.
+
+**What unblocked it.** The earlier 2-way and 3-way attempts failed because roughly 90 MB was shared
+by every case in the module, so no partition of the cases could get any part under the ceiling. That
+shared weight was not the test cases at all: it was the heavy inline members of
+`utests/baselib/TestMessagingUtils.h`, instantiated afresh in every module that included it. Moving
+those eight bodies out of line into `TestMessagingUtilsImpl.cpp`, with one thin forwarding `.cpp` per
+module that needs them, took the shared cost out of every main TU and put it in one object per module.
+
+Only then did splitting the cases pay.
+
+| Object | vc143 | ccl16 |
+|---|---:|---:|
+| `utf_baselib_messaging/UtfBaselibMessagingMain.obj` | 68.42 | 68.74 |
+| `utf_baselib_messaging/ImplTestMessagingUtils.obj` | 60.44 | 59.49 |
+| `utf_baselib_messaging2/UtfBaselibMessaging2Main.obj` | 57.29 | 57.11 |
+| `utf_baselib_messaging3/UtfBaselibMessaging3Main.obj` | 69.94 | 67.91 |
+| `utf_baselib_messaging3/ImplTestMessagingUtils.obj` | 60.44 | 59.49 |
+| `utf_baselib_messaging4/UtfBaselibMessaging4Main.obj` | 60.43 | 59.96 |
+| `utf_baselib_messaging4/ImplTestMessagingUtils.obj` | 60.44 | 59.49 |
+
+Down from a single 112.7 MB (vc143) / 110.3 MB (ccl16) object. `utf_baselib_rest` carries the same
+forwarder because `TestRestUtilsImpl.cpp` calls `createTestMessagingBackend()`;
+`utf_baselib_messaging2` deliberately has none, because it uses no member of the helper.
+
+**Why it stops at four, and not at the 40 MB target.** Three probes, each a temporary `#if 0` over
+part of `TestMessagingDefault2.h`, built and measured and then reverted:
+
+| Probe | Content | vc143 object |
+|---|---|---:|
+| A | the first 2 of `messaging3`'s 7 cases | 31.88 |
+| B | the other 5 | 69.42 |
+| C | **one five-line case** — `IO_MessagingMessageProcessingTests`, whose whole body is a call to `messageProcessingRoundTrip()` | **68.35** |
+
+Probe C is the answer. A single inline helper, `messageProcessingRoundTrip` (~250 lines, the only
+member of its anonymous namespace), accounts for 68.35 of that module's 69.94 MB. Splitting
+`messaging3`'s cases would drop the peak by 0.5 MB while adding a whole 31.88 MB module — a losing
+trade, and the same shape as the four dead ends recorded above.
+
+Moving that helper out of line the way `TestMessagingUtils` was moved would not help either: it is
+used by one module only, so the 68 MB would move from the main TU into a new impl TU and the peak
+would not change. It is worth doing only if a second module ever needs it.
+
+**Verified at every tier.** Tier 1 green with 772 cases and the per-member C6 below; tier 1A put
+the Step A header split at **+0.003%** object delta, which is what makes a verbatim cut provable;
+tier 2 passes the 75 MB ceiling across 69 objects on both toolchains; tier 3 reports **runtime
+behaviour unchanged** over 27 modules and 741 cases - registered set, executed set, outcomes, skips
+and per-case assertion counts, against the committed baseline. The messaging family accounts for
+30 + 8 + 7 + 1 = **46 cases, the original module's full count**, with none lost.
+
+**So the remaining weight is instantiation weight, not test content**, and reducing it is the
+library-side work already captured in
+[test-instantiation-weight-deferral.md](../../../plans/issues/test-instantiation-weight-deferral.md).
+The 75 MB ceiling is met with 5 MB of margin; the 40 MB target is not reachable for messaging without
+that work.
+
+## C6 now checks helper members, not whole blocks
+
+Splitting a header partitions a helper block: some members move out with the cases that use them and
+the rest stay. C6 hashed each block whole, so it could not tell a partition from a deletion — both
+read as "the block whose sha was X is gone". The `IO_MessagingProxyBackendTests` split tripped it
+exactly that way, moving `exceptionThrowHook2` and `exceptionThrowHook3` to the new header.
+
+Blocks are now also split into members and the no-loss half of C6 is checked per member:
+
+- **A member** is a maximal run of lines ending at the first blank line at which every bracket it
+  opened is closed. This is the house style throughout `src/utests`, and it is asserted on every run
+  by requiring that a block's members cover every non-blank line of it — 610 members over 135 blocks
+  in the baseline tree, **zero uncovered lines** in either tree.
+- **Loss is compared on text alone.** That is what makes a hoist a move: pulling a helper out of an
+  anonymous namespace into a shared one keeps its text, so it reads as relocated rather than deleted.
+  This is what `utf_baselib_tasks` would need if the 40 MB target is ever chased.
+- **Duplication is compared on text *and* enclosing namespace.** The same text under two different
+  namespaces is no ODR risk, and `utf_baselib_async` relies on that: `namespace asynccb` and
+  `namespace asyncv2` hold five pairs of identical helpers deliberately. Hashing text alone would
+  have false-alarmed on all five.
+- A nested namespace inside a block is one member rather than being descended into — a deliberate
+  limit that keeps the rule total.
+
+**The baseline was regenerated, not re-anchored.** It was captured at `36ec522` and that commit was
+checked out into a scratch worktree, so the regenerated manifest describes the same 19-module tree
+the original did. The safety proof is that `cases` and `namespaces` come back **byte-identical**, and
+`files` and `data_refs` unchanged, with `members` the only addition. Re-capturing from the working
+tree instead would silently re-anchor C1–C4 to the post-split state and destroy the evidence that no
+case has been lost since the beginning; that mistake was made once already and reverted.
+
+**One real bug surfaced while proving this.** `data_files` hashed raw file bytes, so a fresh worktree
+of the very same commit disagreed with a long-lived one: `core.autocrlf` is true with no
+`.gitattributes`, and nine `test-*.pem` files are `i/lf w/crlf`. The manifest was a property of the
+checkout rather than of the commit. `file_sha` now normalizes line endings, as every other hash in
+the tool already did, and the two checkouts agree.
+
+**The selftest proves the new behaviour both ways** — a deleted member fires C6, and a partitioned
+block does not. Its "unmutated baseline is clean" precondition now excludes C8, and only C8: C8 was
+added in `cc491ff`, after the baseline commit, and *that same commit* fixed the eight stale
+`--run_test` recipes it found, so the baseline tree genuinely violates it and the current tree does
+not.
+
+Beyond the synthetic mutations, the gate was checked against the real change: deleting
+`exceptionThrowHook3` from the relocated header is reported as
+`C6 helper member LOST: void exceptionThrowHook3( ... ) (utf_baselib_messaging/TestMessagingDefault.h:537)`,
+naming the helper and where it used to live.

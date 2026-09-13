@@ -70,8 +70,19 @@ def main():
 
     ok = True
 
-    # the unmutated baseline must be clean both ways, or every negative result below is suspect
-    clean = check_intrinsic( baseline ) + check_against( baseline, baseline )
+    #
+    # The unmutated baseline must be clean both ways, or every negative result below is suspect
+    #
+    # C8 is excluded, and only C8. It was added in cc491ff, after the baseline was captured at
+    # 36ec522, and that same commit fixed the eight stale --run_test recipes it found - recipes
+    # naming cases deleted or migrated years earlier. So the baseline tree really does violate
+    # C8; the current tree does not. Excluding it here keeps the precondition honest rather than
+    # papering over it, and C8 is intrinsic to whichever tree is scanned, so the baseline's copy
+    # of it is never consulted by a real run
+    #
+
+    clean = [ failure for failure in check_intrinsic( baseline ) if not failure.startswith( 'C8' ) ]
+    clean += check_against( baseline, baseline )
 
     if clean:
         print( '    FAIL  ----  unmutated baseline is not clean' )
@@ -132,11 +143,48 @@ def main():
     mutated[ 'namespaces' ].append( block )
     ok &= expect( 'helper duplicated within a module', check_intrinsic( mutated ), 'C6' )
 
-    # C6 - a helper block lost entirely
+    # C6 - a helper member lost entirely
     mutated = copy.deepcopy( baseline )
-    lost = mutated[ 'namespaces' ].pop( 0 )
-    ok &= expect( 'helper block lost (%s:%d)' % ( lost[ 'file' ], lost[ 'line' ] ),
+    lost = mutated[ 'members' ].pop( 0 )
+    ok &= expect( 'helper member lost (%s:%d)' % ( lost[ 'file' ], lost[ 'line' ] ),
                   check_against( baseline, mutated ), 'C6' )
+
+    #
+    # C6 - a helper block partitioned, which must NOT be reported as a loss
+    #
+    # This is the case the whole-block check could not express, and the reason the no-loss half
+    # of C6 moved down to members. Splitting a block in two keeps every member, so nothing is
+    # lost; deleting one of the halves is the previous test and still fires
+    #
+    mutated = copy.deepcopy( baseline )
+    victim = mutated[ 'namespaces' ][ 0 ]
+    moved = [ m for m in mutated[ 'members' ]
+              if m[ 'file' ] == victim[ 'file' ] and m[ 'module' ] == victim[ 'module' ] ][ : 2 ]
+
+    if len( moved ) == 2:
+        mutated[ 'namespaces' ].pop( 0 )
+        mutated[ 'namespaces' ].append( dict( victim, sha = 'a' * 32, line = 9001 ) )
+        mutated[ 'namespaces' ].append( dict( victim, sha = 'b' * 32, line = 9100 ) )
+        for member in moved:
+            member[ 'file' ] = victim[ 'file' ].replace( '.h', 'Split.h' )
+            member[ 'line' ] += 9000
+
+        residue = check_against( baseline, mutated )
+        if any( failure.startswith( 'C6' ) for failure in residue ):
+            print( '    FAIL  C6   block partitioned                             '
+                   '(reported as a loss - the per-member check is not working)' )
+            ok = False
+        else:
+            print( '    PASS  C6   block partitioned                             '
+                   'correctly read as a move, not a loss' )
+
+    # C6 - the same helper member copied into a second header of the same module
+    mutated = copy.deepcopy( baseline )
+    clone = copy.deepcopy( mutated[ 'members' ][ 0 ] )
+    clone[ 'file' ] = clone[ 'file' ].replace( '.h', 'Copy.h' )
+    mutated[ 'members' ].append( clone )
+    ok &= expect( 'helper member duplicated within a module',
+                  check_intrinsic( mutated ), 'C6' )
 
     # C7 - a data file a module still references was left behind
     mutated = copy.deepcopy( baseline )

@@ -14,7 +14,15 @@
  * limitations under the License.
  */
 
-#define UTF_TEST_MODULE utf_baselib_messaging
+#define UTF_TEST_MODULE utf_baselib_messaging3
 #include <utests/baselib/UtfMain.h>
 
-#include "TestMessagingDefault.h"
+/*
+ * The conversation and message processing tests; split out of utf_baselib_messaging so that no
+ * single test translation unit exhausts a 32-bit compiler host - see
+ * notes/reviews/major/update_2026/test-module-split-plan.md
+ *
+ * This range shares no names with what stays behind, in either direction
+ */
+
+#include "TestMessagingDefault2.h"

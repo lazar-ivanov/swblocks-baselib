@@ -14,7 +14,9 @@
  * limitations under the License.
  */
 
-#define UTF_TEST_MODULE utf_baselib_messaging
-#include <utests/baselib/UtfMain.h>
+/*
+ * Forwarding translation unit: pulls in the out of line TestMessagingUtils definitions so this
+ * module links them. See utests/baselib/TestMessagingUtilsImpl.cpp
+ */
 
-#include "TestMessagingDefault.h"
+#include <utests/baselib/TestMessagingUtilsImpl.cpp>

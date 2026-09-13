@@ -192,6 +192,55 @@ target which is unreachable regardless. Reverted.
 The step A header split is kept: it is inert, and it leaves the file cut 31/7 for when the weight is
 addressed.
 
+### RESOLVED: `utf_baselib_messaging` is under the ceiling in four modules, not eight
+
+**Both sections below are superseded by the outcome, and in different directions.** The first
+concluded the module could not be fixed at all; the second corrected that but predicted roughly
+eight modules from a marginal cost of 5.44MB per case. The answer was four, because the marginal
+cost per case was never the thing to attack.
+
+The ~90MB every case appeared to share was not shared by the *cases*. It was the heavy inline
+members of `utests/baselib/TestMessagingUtils.h`, re-instantiated in every module that included the
+header. Moving those eight bodies out of line — the same treatment `utf_baselib_rest` received
+above, with one thin forwarding `.cpp` per module that needs them — took that cost out of every main
+translation unit at once. Splitting the cases only started paying after that.
+
+| Object | vc143 | ccl16 |
+|---|---:|---:|
+| `utf_baselib_messaging/UtfBaselibMessagingMain.obj` | 68.42 | 68.74 |
+| `utf_baselib_messaging/ImplTestMessagingUtils.obj` | 60.44 | 59.49 |
+| `utf_baselib_messaging2/UtfBaselibMessaging2Main.obj` | 57.29 | 57.11 |
+| `utf_baselib_messaging3/UtfBaselibMessaging3Main.obj` | 69.94 | 67.91 |
+| `utf_baselib_messaging3/ImplTestMessagingUtils.obj` | 60.44 | 59.49 |
+| `utf_baselib_messaging4/UtfBaselibMessaging4Main.obj` | 60.43 | 59.96 |
+| `utf_baselib_messaging4/ImplTestMessagingUtils.obj` | 60.44 | 59.49 |
+
+From one object of 112.7MB (vc143) / 110.3MB (ccl16). Every object in the tree is now within the
+75MB ceiling on both toolchains.
+
+**Why it stops here, and why the 40MB target is still out of reach.** Three probes on
+`utf_baselib_messaging3`, each a temporary `#if 0` over part of the header, built and reverted:
+
+| Probe | Content | vc143 object |
+|---|---|---:|
+| A | the first 2 of its 7 cases | 31.88 MB |
+| B | the other 5 | 69.42 MB |
+| C | **one five-line case**, whose entire body is a call to `messageProcessingRoundTrip()` | **68.35 MB** |
+
+Probe C is the finding. A single inline helper of about 250 lines — the only member of its anonymous
+namespace — accounts for 68.35 of that module's 69.94MB. Splitting the remaining cases would lower
+the peak by 0.5MB while adding a whole 31.88MB module, which is the same losing trade as the four
+dead ends recorded elsewhere in this document.
+
+Moving that helper out of line would not help either, and this is the useful generalisation: the
+technique relocates weight, it does not reduce it. It pays only when **several modules** would
+otherwise each instantiate the same thing, which is why it worked for `TestMessagingUtils` (four
+modules) and `TestRestUtils`, and would do nothing for a helper one module uses.
+
+**What remains is therefore instantiation weight in `bl::messaging` itself, which is exactly the
+work this record defers.** The ceiling is met with roughly 5MB of margin; the 40MB target needs
+Step 2 below.
+
 ### CORRECTED: `utf_baselib_messaging` is tractable — it needs many small modules, not few large ones
 
 **The section below concluded this module could not be fixed in test code. That conclusion was

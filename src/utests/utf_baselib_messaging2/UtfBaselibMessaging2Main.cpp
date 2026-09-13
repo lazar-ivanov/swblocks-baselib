@@ -14,7 +14,17 @@
  * limitations under the License.
  */
 
-#define UTF_TEST_MODULE utf_baselib_messaging
+#define UTF_TEST_MODULE utf_baselib_messaging2
 #include <utests/baselib/UtfMain.h>
 
-#include "TestMessagingDefault.h"
+/*
+ * The server monitoring and async RPC data model tests; split out of utf_baselib_messaging so that
+ * no single test translation unit exhausts a 32-bit compiler host - see
+ * notes/reviews/major/update_2026/test-module-split-plan.md
+ *
+ * These two headers were already separate from TestMessagingDefault.h and share nothing with it, so
+ * they move as they are
+ */
+
+#include "TestServerMonitoring.h"
+#include "TestAsyncRpcDataModel.h"

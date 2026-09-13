@@ -14,7 +14,18 @@
  * limitations under the License.
  */
 
-#define UTF_TEST_MODULE utf_baselib_messaging
+#define UTF_TEST_MODULE utf_baselib_messaging4
 #include <utests/baselib/UtfMain.h>
 
-#include "TestMessagingDefault.h"
+/*
+ * IO_MessagingProxyBackendTests alone; split out of utf_baselib_messaging so that no single
+ * test translation unit exhausts a 32-bit compiler host - see
+ * notes/reviews/major/update_2026/test-module-split-plan.md
+ *
+ * This one case dominates whichever module holds it: measured on its own it instantiates
+ * 71.18 MB of x86 debug object, very nearly what all 31 cases of the original header cost
+ * together. It therefore gets a module to itself, and the exception throw hooks it arms
+ * travel with it - nothing else referenced them
+ */
+
+#include "TestMessagingProxyBackend.h"
