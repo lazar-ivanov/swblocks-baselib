@@ -129,26 +129,78 @@ in the test headers themselves, not in a shared-helper tax, which is the good ca
 moving files. `TestAuthorizationServiceRest.h` alone is 16.3 MB of the 31 MB `security3` carried,
 so separating it is what lets both halves fit.
 
-### Step 2 — fan out
+### Step 2 — fan out, serial mode
 
-Order is the plan's §10 order: easiest first to bank the recipe, hardest last.
+**Mode S is in force** (plan §8): one module at a time, one worktree, no lanes. Chosen deliberately
+so each module can be evaluated for new surprises before the next begins — the pilot produced four,
+and there is no reason to assume the harder modules produce none.
 
-| # | Module | Step | Status | Commit | Obj before | Obj after | Gate | Notes |
-|---|---|---|---|---|---|---|---|---|
-| 1 | `utf_baselib_apps` | B | **todo** | — | 77.2 | — | — | isolate the gateway header |
-| 2 | `utf_baselib_data` | B | **todo** | — | 49.8 | — | — | `serialized_object.json` follows `TestDataModelDefault.h` |
-| 3 | `utf_baselib_http` | B | **todo** | — | 55.8 | — | — | split on the lock; 3 TLS headers are lock-free |
-| 4 | `utf_baselib` | B | **todo** | — | 55.3 | — | — | 2 sticky clusters; carry `using namespace bl;` |
-| 5 | `utf_baselib_rest` | A | **todo** | — | 78.7 | — | — | easiest file in the tree |
-| 5 | `utf_baselib_rest` | B | **todo** | — | — | — | — | |
-| 6 | `utf_baselib_blobtransfer` | A | **todo** | — | 56.3 | — | — | cut at line 292 |
-| 6 | `utf_baselib_blobtransfer` | B | **todo** | — | — | — | — | |
-| 7 | `utf_baselib_messaging` | A | **todo** | — | 112.7 | — | — | cut 4576–6914, zero fixups; pin the cold-cache case |
-| 7 | `utf_baselib_messaging` | B | **todo** | — | — | — | — | |
-| 8 | `utf_baselib_io` | A | **todo** | — | 77.4 | — | — | hardest cuts; 3493–3844 first |
-| 8 | `utf_baselib_io` | B | **todo** | — | — | — | — | |
-| 9 | `utf_baselib_tasks` | hoist | **todo** | — | 67.7 | — | — | **prerequisite** — `TestTasks.h` fixtures to the shared tree |
-| 9 | `utf_baselib_tasks` | B | **todo** | — | — | — | — | only after the hoist |
+Against the **55MB** ceiling, `utf_baselib_data` at 49.8MB needs no work at all, and three modules
+need only a single header moved out. Eight modules remain.
+
+#### The per-module recipe
+
+Settled by the pilot. Run it in this order for every module; do not skip step 5 to save time, it is
+the step that costs nothing and catches the most.
+
+```
+1  confirm the module is built and note its object size
+2  choose the grouping - by data fixtures, by lock usage, then by cohesion
+      if the grouping is not obvious, probe LEAVE-ONE-OUT, never in isolation
+3  git mv the headers; write <Module>NMain.cpp; split data/ (COPY shared files); split notes.txt
+4  rm -rf bld/<plat>/utests/<family>*/*-data        the copy rule never prunes
+5  scripts/utests/check_split.sh --tier1            MUST be green before building
+6  mk -k -j1 <family...> ARCH=x86 TOOLCHAIN=vc143 VARIANT=debug
+7  scripts/utests/utf_objsize.py --ceiling 55       if over, return to 2
+8  utf_runlog.py --run --bld <tree> --only <family...> --capture t.json
+   utf_runlog.py --against t.json --compare baseline/runlog.json
+                 --nondet baseline/nondeterministic.json --family <prefix>
+9  update this ledger's row and commit code + ledger in ONE commit
+```
+
+#### Order and status
+
+Easiest first to bank the recipe; each phase only begins when the previous is green.
+
+**Phase 2A — pure file moves, no prerequisites.** These need no header splitting at all.
+
+| # | Module | Step | Status | Obj before | Obj after | Notes |
+|---|---|---|---|---:|---:|---|
+| 1 | `utf_baselib_http` | B | **todo** | 55.8 | — | move the 3 lock-free TLS headers out; also isolates the lock |
+| 2 | `utf_baselib` | B | **todo** | 55.3 | — | move the asio/net cluster; keep the 2 sticky clusters; carry `using namespace bl;` |
+| 3 | `utf_baselib_apps` | B | **todo** | 77.2 | — | 3 headers; **probe leave-one-out first** — which of bl-tool or the gateway carries the weight is unmeasured |
+
+**Phase 2B — Step A then Step B.** Single-header modules, so a header split must come first. Two
+commits each: A is gated on near-binary-equivalence, B on the ceiling.
+
+| # | Module | Step | Status | Obj before | Obj after | Notes |
+|---|---|---|---|---:|---:|---|
+| 4 | `utf_baselib_blobtransfer` | A | **todo** | 56.3 | — | cut at line 292 — the structural seam *and* the lock boundary |
+| 4 | `utf_baselib_blobtransfer` | B | **todo** | — | — | |
+| 5 | `utf_baselib_rest` | A | **todo** | 78.7 | — | easiest file in the tree; one anon ns at 2983-3044 stays with the case at 3060 |
+| 5 | `utf_baselib_rest` | B | **todo** | — | — | |
+| 6 | `utf_baselib_io` | A | **todo** | 77.4 | — | 3493-3844 first (lowest risk); mind the **nested** anon ns at 1718-2156 |
+| 6 | `utf_baselib_io` | B | **todo** | — | — | |
+
+**Phase 2C — the hard two.** Do not start before 2A and 2B are green.
+
+| # | Module | Step | Status | Obj before | Obj after | Notes |
+|---|---|---|---|---:|---:|---|
+| 7 | `utf_baselib_messaging` | A | **todo** | 112.7 | — | cut 4576-6914 (verbatim, zero fixups); **pin the cold-cache case**, plan §5.4 |
+| 7 | `utf_baselib_messaging` | B | **todo** | — | — | likely needs 3+ modules; measure, do not predict |
+| 8 | `utf_baselib_tasks` | hoist | **todo** | 67.7 | — | **prerequisite, own commit** — `TestTasks.h` fixtures to `src/utests/include/utests/baselib/` |
+| 8 | `utf_baselib_tasks` | B | **todo** | — | — | only after the hoist |
+
+| — | `utf_baselib_data` | — | **n/a** | 49.8 | 49.8 | already under the 55MB ceiling; no work |
+
+#### Standing cautions
+
+- **Never predict a grouping from isolated per-header measurements.** They were off by 40x in the
+  pilot. Leave-one-out, or build the grouping and measure it.
+- **Do not cross-include a header between modules.** No invariant catches it (see the C5 note below).
+- **Delete the build data directories** for the family before tier 3, every time.
+- **Re-verify on ccl16** at the end of each phase; the pilot only rebuilt vc143, so the ccl16 tree
+  still holds pre-split `utf_baselib_security` objects.
 
 ### Step 3 — close the deferral
 

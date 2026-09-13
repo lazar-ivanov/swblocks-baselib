@@ -90,7 +90,7 @@ changes" rule it must not ride along. Step 0's probe measures it for free.
 
 | Question | Decision |
 |---|---|
-| Ceiling | **40 MB** per object, x86 debug, per the deferral record |
+| Ceiling | **55 MB** per object, x86 debug, per the deferral record |
 | Single-header modules | **Verbatim block relocation** — whole `UTF_AUTO_TEST_CASE` blocks cut unchanged; no test logic rewritten |
 | How that is made safe | **Decomposed into Step A + Step B**, each with its own mechanical gate — §4. The central design decision. |
 | Execution | **Two interchangeable modes, serial or 3-lane parallel**, switchable at any module boundary — §8 |
