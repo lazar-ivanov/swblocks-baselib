@@ -54,11 +54,13 @@ import sys
 # problem recur: a module which lands a fraction under goes red again the first time anyone adds a
 # test case, and the work has to be redone. 40MB leaves real room to grow
 #
-# CEILING is the hard limit. The utf_baselib_security pilot measured that instantiating the
-# AuthorizationCache stack costs about 26MB on its own, against the roughly 19MB of marginal content
-# a 40MB object allows - so for some modules the target is unreachable by any arrangement of files.
-# 55MB is half the roughly 110MB which actually exhausted the 32-bit clang-cl host, so the headroom
-# is large rather than marginal
+# CEILING is the hard limit, raised to 75MB on 2026-09-12 once the fan-out had measured how much of
+# these modules is shared instantiation which no file move can divide. It is still comfortably below
+# the roughly 110MB which actually exhausted the 32-bit clang-cl host
+#
+# The gap between the two tiers is deliberately wide, and an object sitting in it is not "fine" - it
+# is a module which could not be brought to the target and needs its reason recorded in the split
+# ledger. Aim for 40MB, settle for as low as the module allows, and fail only above 75MB
 #
 # An object between the two is allowed but must be justified: record in the split ledger why the
 # target could not be reached. Reducing the instantiation weight itself is tracked in
@@ -66,7 +68,7 @@ import sys
 #
 
 DEFAULT_TARGET_MB = 40.0
-DEFAULT_CEILING_MB = 55.0
+DEFAULT_CEILING_MB = 75.0
 
 #
 # The measured fixed cost of a test translation unit on x86 debug, in megabytes; reported
