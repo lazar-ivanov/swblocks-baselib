@@ -41,19 +41,19 @@ Legend: `todo` · `in-progress` · `done` · `blocked` · `n/a`
 
 | # | Item | Status | Commit | Notes |
 |---|---|---|---|---|
-| 0.0 | Plan + ledger committed under `update_2026/` | **done** | _pending_ | this file and the plan beside it |
-| 0.1 | `utf_inventory.py` + invariants C1–C7 | **done** | _pending_ | 772 cases, 115 helper blocks, 19 modules |
-| 0.1a | `selftest_inventory.py` — prove each invariant fires | **done** | _pending_ | 11 corruptions, all caught |
-| 0.2 | `utf_objsize.py` + ceiling gate | **done** | _pending_ | gates `win-x86-*-debug` only |
-| 0.3 | `utf_runlog.py` + runtime comparator | **done** | _pending_ | `--list_content`, Entering/Leaving, SKIPPED, assertion counts |
-| 0.4 | `check_split.sh` — the single gate | **done** | _pending_ | tiers skip cleanly when inputs are absent |
-| 0.5 | Baseline: source inventory | **done** | _pending_ | `baseline/inventory.json` |
-| 0.6 | Baseline: object sizes | **done** | _pending_ | `baseline/objsize.json` — captured **before** any tree deletion |
+| 0.0 | Plan + ledger committed under `update_2026/` | **done** | `36ec522` | this file and the plan beside it |
+| 0.1 | `utf_inventory.py` + invariants C1–C7 | **done** | `36ec522` | 772 cases, 115 helper blocks, 19 modules |
+| 0.1a | `selftest_inventory.py` — prove each invariant fires | **done** | `36ec522` | 11 corruptions, all caught |
+| 0.2 | `utf_objsize.py` + ceiling gate | **done** | `36ec522` | gates `win-x86-*-debug` only |
+| 0.3 | `utf_runlog.py` + runtime comparator | **done** | `36ec522` | `--list_content`, Entering/Leaving, SKIPPED, assertion counts |
+| 0.4 | `check_split.sh` — the single gate | **done** | `36ec522` | tiers skip cleanly when inputs are absent |
+| 0.5 | Baseline: source inventory | **done** | `36ec522` | `baseline/inventory.json` |
+| 0.6 | Baseline: object sizes | **done** | `36ec522` | `baseline/objsize.json` — captured **before** any tree deletion |
 | 0.7 | Confirm `--report_level=detailed` emits per-case assertion counts | **done** | — | verified on `utf_baselib_utils`: 51 / 22 / 9 |
-| 0.8 | Baseline: runtime pass 1 | **todo** | — | `baseline/runlog-pass1.json` |
-| 0.9 | Baseline: runtime pass 2 | **todo** | — | second pass, for the non-determinism list |
-| 0.10 | Derive `baseline/nondeterministic.json` | **todo** | — | cases whose assertion count disagrees between passes |
-| 0.11 | Promote pass 1 to `baseline/runlog.json` | **todo** | — | the file tier 3 compares against |
+| 0.8 | Baseline: runtime pass 1 | **done** | _this commit_ | 741 registered, 741 ran, all passed, 645,156 assertions; promoted to `runlog.json` |
+| 0.9 | Baseline: runtime pass 2 | **done** | _this commit_ | independent second run, same 741/741 |
+| 0.10 | Derive `baseline/nondeterministic.json` | **done** | _this commit_ | **10 of 741** cases have unstable counts |
+| 0.11 | Promote pass 1 to `baseline/runlog.json` | **done** | _this commit_ | `runlog.json` **is** pass 1; re-derive 0.10 from it and `runlog-pass2.json` |
 | 0.12 | Per-header object-weight probe | **todo** | — | **the expensive one** — see below |
 | 0.13 | Probe `utf_baselib_apps` with `UtfBaseLibCommon.h` narrowed | **todo** | — | prices the adjunct lever, plan §1.1 |
 
@@ -107,6 +107,22 @@ globally unique. Note 772 is the count in *source*; a single platform builds few
 run executes 741) because some cases sit inside platform guards. Comparisons are always
 before-vs-after on the same platform, so this is not a discrepancy.
 
+**Runtime, `win-x86-vc143-debug`** — two independent full passes, 17 modules (`utf_baselib_plugin`
+is a shared library and has no binary). Both: **741 registered, 741 ran, every case passed**, 36
+skipped, **645,156 assertions**. Registered equals ran in every module, and no case was missing an
+assertion count — the parser covered the whole tree.
+
+Only **10 of 741** cases have assertion counts that disagree between the two passes, all
+cancel/reactive/timing-sensitive: `AsyncCB_CancelTests`, `AsyncV2_CancelTests`,
+`BaseLib_Base64UrlTests`, `BlobTransfer_FilesPackagerInMemoryCancelUploadTests`,
+`Tasks_ExternalCompletionTaskTests`, `Tasks_ReactiveDisconnectObservableTests`,
+`Tasks_ReactiveDisconnectObserverTests`, `Tasks_ReactiveTestsWithException`,
+`TestDataChunkStorageFilesystemMultiFiles`, `TestDataChunkStorageFilesystemSingleFile`.
+
+So **731 cases carry a full assertion-count comparison**. Note the two heaviest cases,
+`AsyncCB_SmallPerfTests` (368,642 assertions) and `BaseLib_SortedVectorHelperTests` (160,602), are
+*stable* and therefore fully compared.
+
 **Object sizes, x86 debug** — 20 objects over the 40 MB ceiling across the two toolchains:
 
 | Module | vc143 | ccl16 |
@@ -142,9 +158,20 @@ The ~21 MB per-TU floor is visible in `utf_baselib_setprio` at 21.4 MB for 223 l
 - **`utf_baselib_plugin` is a shared library, not a test executable.** It has no `Main.cpp`, reports
   0 cases, and `utf_runlog.py` skips it because no matching `.exe` exists. That is correct, not a
   gap.
-- **The runtime baseline must be captured twice.** A single pass cannot distinguish a real
-  regression from a case whose assertion count naturally varies. Until `nondeterministic.json`
-  exists, tier 3 will report false differences on retry-loop and perf cases.
+- **Assertion counts need `--report_level=detailed`, which `make test_*` does not pass.** The make
+  harness uses the `UTF_FLAGS` set in `common.mk`, so logs it produces carry no per-case counts.
+  `utf_runlog.py --run` executes the binaries directly with the right flags and is the reliable path
+  for a full-strength tier 3. Comparing against make-produced logs still works and still checks the
+  executed set, outcomes and skips — it just prints how many cases it compared *without* counts, so
+  a weaker check never passes for a strong one.
+- **Two false-alarm sources were found and fixed while validating the comparator**, both of the kind
+  that would have got the gate switched off: a snapshot parsed from logs has no registered set, which
+  once reported all 741 cases as "registration lost"; and a missing assertion count compared against a
+  real one reported every case as changed. Both now require *both* sides to have measured the thing
+  before comparing it.
+- **The comparator is validated against two real runs, not a synthetic mutation.** Pass 2 vs pass 1
+  reports exactly the 10 unstable cases without the filter, and passes clean with it — so the gate is
+  known not to cry wolf on an unchanged tree.
 - **Item 0.12 is the expensive one.** It builds one throwaway module per test header — roughly 50
   compiles at 1–4 minutes each. It is embarrassingly parallel across lanes and its output is what
   decides each module's actual split, so it gates Step 2 but not Step 1.

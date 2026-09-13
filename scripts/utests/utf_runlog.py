@@ -365,15 +365,24 @@ def nondeterministic( first, second ):
     return unstable
 
 
-def compare( before, after, unstable ):
+def compare( before, after, unstable, unmeasured = None ):
 
     failures = []
 
     unstable = set( unstable or [] )
 
+    if unmeasured is None:
+        unmeasured = []
+
     old_reg, new_reg = union( before, 'registered' ), union( after, 'registered' )
 
-    if old_reg or new_reg:
+    #
+    # Only --run mode populates the registered set, from --list_content. A snapshot parsed from
+    # logs has none, and treating an absent set as an empty one would report every case in the
+    # tree as lost. Compare only when both sides actually measured it
+    #
+
+    if old_reg and new_reg:
         for name in sorted( old_reg - new_reg ):
             failures.append( 'REGISTRATION LOST: %s' % name )
         for name in sorted( new_reg - old_reg ):
@@ -402,6 +411,17 @@ def compare( before, after, unstable ):
                 name, a.get( 'outcome' ), b.get( 'outcome' ) ) )
 
         if name in unstable:
+            continue
+
+        #
+        # Assertion counts only exist when the run carried --report_level=detailed. Logs which
+        # make produced with the default UTF_FLAGS have none, and comparing a real count against
+        # a missing one would report every case as changed - the sort of false alarm that gets a
+        # gate switched off. Skip the pair and account for it instead
+        #
+
+        if a.get( 'assertions' ) is None or b.get( 'assertions' ) is None:
+            unmeasured.append( name )
             continue
 
         if a.get( 'assertions' ) != b.get( 'assertions' ):
@@ -501,7 +521,14 @@ def main():
             with open( args.nondet ) as stream:
                 unstable = json.load( stream )
 
-        failures = compare( before, snapshot, unstable )
+        unmeasured = []
+
+        failures = compare( before, snapshot, unstable, unmeasured )
+
+        if unmeasured:
+            print( '' )
+            print( 'utf_runlog: NOTE - %d case(s) compared without assertion counts' % len( unmeasured ) )
+            print( 'utf_runlog: one side lacked --report_level=detailed, so only the outcome was checked' )
 
         if failures:
             print( '' )
