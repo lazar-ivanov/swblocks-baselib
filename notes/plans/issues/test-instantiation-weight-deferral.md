@@ -147,6 +147,28 @@ of this module lands near 76MB**, including a fifteen way one. The split was rev
 means available to this work. It is over by 3.7MB and no arrangement of files reduces it. Closing it
 out requires item 2 of this record and nothing else.
 
+### `utf_baselib_messaging` cannot comply either, and the shed rate is the proof
+
+Cases were removed from the module in two stages and the object measured each time:
+
+| Cases in the header | Module object | Shed |
+|---:|---:|---|
+| 38 | 112.7 MB | — |
+| 31 | 100.6 MB | 12.1 MB for 7 cases |
+| 22 | **95.6 MB** | **5.0 MB for 9 more** |
+
+Removing 16 of 38 cases bought 17MB. Reaching 75MB needs 20.6MB more at roughly 0.55MB per case,
+which is about 37 further cases when only 22 remain. **The shared instantiation is around 90MB and
+the cases themselves are nearly free**, so no partition of this module reaches the ceiling.
+
+The attempt also ran into the coupling the structural analysis had predicted:
+`IO_MessagingProxyBackendTests` is welded to `exceptionThrowHook2` and `exceptionThrowHook3` in the
+first anonymous namespace, so that cut needs a helper hoist as well - more work in service of a
+target which is unreachable regardless. Reverted.
+
+The step A header split is kept: it is inert, and it leaves the file cut 31/7 for when the weight is
+addressed.
+
 ### `utf_baselib_io` is blocked for the same reason, measured the expensive way
 
 Unlike `rest`, this one was not predictable from a helper probe: `utf_baselib_io` drives neither
@@ -170,7 +192,8 @@ The header split (step A) was **kept**: it is verified inert, it turns a 7,442 l
 | Module | Object | Why nothing can be done by moving files |
 |---|---:|---|
 | `utf_baselib_rest` | 78.7 MB | its helper's floor alone is 60.5 MB; **not attempted** |
-| `utf_baselib_rest` | 78.7 MB | ~75.6 MB shared; every partition lands near 76 MB. **The only module which cannot comply at any ceiling below 80 MB** |
+| `utf_baselib_rest` | 78.7 MB | ~75.6 MB shared; every partition lands near 76 MB |
+| `utf_baselib_messaging` | 112.7 MB | ~90 MB shared; removing 16 of 38 cases bought 17 MB |
 | `utf_baselib_apps2` | 65.4 MB | one module, one header, **one test case**. `MessagingApps_HttpGatewayTlsValidationTests` instantiates the whole messaging HTTP gateway application: 44MB for 165 lines of test source. There is no split available at any granularity short of deleting the case |
 
 `utf_baselib_http` is the one to watch: it sits **0.1MB** under the ceiling, so it is the first module

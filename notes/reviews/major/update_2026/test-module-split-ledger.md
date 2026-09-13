@@ -242,10 +242,10 @@ commits each: A is gated on near-binary-equivalence, B on the ceiling.
 
 | # | Module | Step | Status | Obj before | Obj after | Notes |
 |---|---|---|---|---:|---:|---|
-| 7 | `utf_baselib_messaging` | A | **todo** | 112.7 | — | cut 4576-6914 (verbatim, zero fixups); **pin the cold-cache case**, plan §5.4 |
-| 7 | `utf_baselib_messaging` | B | **todo** | — | — | likely needs 3+ modules; measure, do not predict |
-| 8 | `utf_baselib_tasks` | hoist | **todo** | 67.7 | — | **prerequisite, own commit** — `TestTasks.h` fixtures to `src/utests/include/utests/baselib/` |
-| 8 | `utf_baselib_tasks` | B | **todo** | — | — | only after the hoist |
+| 7 | `utf_baselib_messaging` | A | **done** | 112.7 | 112.68 (inert) | cut 4576-6914, 31/7 cases |
+| 7 | `utf_baselib_messaging` | B | **BLOCKED** | — | — | 2-way gave 100.6+76.7, 3-way left 95.6; ~90 MB shared; reverted |
+| 8 | `utf_baselib_tasks` | — | **n/a** | 67.7 | 67.7 | **already under the 75 MB ceiling untouched**; the hoist was only needed to chase the 40 MB target |
+
 
 | — | `utf_baselib_data` | — | **n/a** | 49.8 | 49.8 | already under the 55MB ceiling; no work |
 
