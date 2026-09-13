@@ -77,6 +77,19 @@ INCLUDE_RE = re.compile( r'^\s*#\s*include\s+(.+?)\s*$' )
 
 DATA_REF_RE = re.compile( r'(?:resolveDataFilePath|loadDataFile)\(\s*"([^"]+)"' )
 
+#
+# Matching only the call sites above is not enough. Several test helpers take the file name as a
+# parameter - testAuthorizationServiceForResponse( service, "response_success.txt" ) - so the
+# literal is nowhere near a resolveDataFilePath call. A module could then be split away from a
+# data file it genuinely needs and C7 would still pass, with the failure surfacing only as a test
+# error later
+#
+# So every filename-shaped literal is collected too, and checked against the set of data file
+# names which actually exist anywhere in the tree
+#
+
+DATA_LITERAL_RE = re.compile( r'"([A-Za-z0-9_][A-Za-z0-9_.\-]*\.[A-Za-z0-9]{1,8})"' )
+
 
 def sha( text ):
     return hashlib.sha256( text.encode( 'utf-8' ) ).hexdigest()[ :32 ]
@@ -175,6 +188,7 @@ def scan_file( path, module, rel_path, problems ):
     namespaces = []
     includes = []
     data_refs = set()
+    data_literals = set()
 
     cond_stack = []
     ns_stack = []
@@ -223,6 +237,9 @@ def scan_file( path, module, rel_path, problems ):
         for ref in DATA_REF_RE.findall( line ):
             data_refs.add( ref )
 
+        for literal in DATA_LITERAL_RE.findall( line ):
+            data_literals.add( literal )
+
         matched = CASE_RE.match( line )
         if matched:
 
@@ -251,6 +268,9 @@ def scan_file( path, module, rel_path, problems ):
             for body_line in lines[ index : end + 1 ]:
                 for ref in DATA_REF_RE.findall( body_line ):
                     data_refs.add( ref )
+
+                for literal in DATA_LITERAL_RE.findall( body_line ):
+                    data_literals.add( literal )
 
             cases.append( {
                 'name': name,
@@ -303,7 +323,7 @@ def scan_file( path, module, rel_path, problems ):
 
         index += 1
 
-    return cases, namespaces, includes, sorted( data_refs )
+    return cases, namespaces, includes, sorted( data_refs ), sorted( data_literals )
 
 
 def file_sha( path ):
@@ -330,6 +350,7 @@ def capture( src_utests ):
 
         module_info = { 'files': [], 'data_refs': [], 'data_files': {} }
         data_refs = set()
+        data_literals = set()
 
         for root, dirs, files in os.walk( module_dir ):
 
@@ -343,11 +364,12 @@ def capture( src_utests ):
                 path = os.path.join( root, entry )
                 rel_path = os.path.relpath( path, src_utests ).replace( os.sep, '/' )
 
-                cases, namespaces, includes, refs = scan_file( path, module, rel_path, problems )
+                cases, namespaces, includes, refs, literals = scan_file( path, module, rel_path, problems )
 
                 manifest[ 'cases' ].extend( cases )
                 manifest[ 'namespaces' ].extend( namespaces )
                 data_refs.update( refs )
+                data_literals.update( literals )
 
                 module_info[ 'files' ].append( { 'path': rel_path, 'includes': includes } )
 
@@ -360,6 +382,7 @@ def capture( src_utests ):
                     module_info[ 'data_files' ][ entry ] = file_sha( full )
 
         module_info[ 'data_refs' ] = sorted( data_refs )
+        module_info[ 'data_literals' ] = sorted( data_literals )
         manifest[ 'modules' ][ module ] = module_info
 
     manifest[ 'cases' ].sort( key = lambda case: case[ 'name' ] )
@@ -407,6 +430,25 @@ def check_intrinsic( manifest ):
             if ref not in info[ 'data_files' ]:
                 failures.append(
                     'C7 module %s references data file %s which is not in its data/ directory' % ( module, ref )
+                    )
+
+    #
+    # The set of names which are data files somewhere in the tree. A module naming one of these as
+    # a literal needs its own copy, because TestUtils::resolveDataFilePath resolves relative to the
+    # binary and a data/ directory cannot be shared between modules
+    #
+
+    known_data_names = set()
+
+    for info in manifest[ 'modules' ].values():
+        known_data_names.update( info[ 'data_files' ] )
+
+    for module, info in sorted( manifest[ 'modules' ].items() ):
+        for literal in info.get( 'data_literals', [] ):
+            if literal in known_data_names and literal not in info[ 'data_files' ]:
+                failures.append(
+                    'C7 module %s names data file %s but does not carry it in its data/ directory'
+                    % ( module, literal )
                     )
 
     by_name = {}

@@ -323,6 +323,19 @@ def collect_by_parsing( logs_dir, only ):
     return result
 
 
+def restrict( snapshot, prefix ):
+    """
+    Keep only the modules whose name starts with prefix
+
+    A split renames modules - utf_baselib_security becomes utf_baselib_security, _security2 and
+    _security3 - so a lane validating one family needs the baseline restricted to the family's
+    prefix on one side and to its several successors on the other. Comparing the union of each is
+    then exactly the right question, and it avoids running all seventeen modules to check three
+    """
+
+    return { name: record for name, record in snapshot.items() if name.startswith( prefix ) }
+
+
 def union( snapshot, key ):
     """
     Collapse a per-module snapshot into one tree-wide set, since the split moves cases between
@@ -453,6 +466,9 @@ def main():
     parser.add_argument( '--compare', metavar = 'PATH', help = 'the before snapshot' )
     parser.add_argument( '--against', metavar = 'PATH', help = 'the after snapshot (default: the tree)' )
     parser.add_argument( '--nondet', metavar = 'PATH', help = 'names to compare on outcome only' )
+    parser.add_argument( '--family', metavar = 'PREFIX',
+                         help = 'restrict both sides of the comparison to modules with this name prefix, '
+                                'so one split family can be validated without running the whole tree' )
     parser.add_argument( '--nondeterministic', nargs = 2, metavar = ( 'RUN1', 'RUN2' ),
                          help = 'derive the unstable-assertion list from two baseline runs' )
 
@@ -514,6 +530,13 @@ def main():
 
         with open( args.compare ) as stream:
             before = json.load( stream )
+
+        if args.family:
+            before = restrict( before, args.family )
+            snapshot = restrict( snapshot, args.family )
+            print( '' )
+            print( 'utf_runlog: restricted to family %s* - %d baseline module(s), %d now' % (
+                args.family, len( before ), len( snapshot ) ) )
 
         unstable = []
 
