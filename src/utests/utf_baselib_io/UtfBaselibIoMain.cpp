@@ -18,3 +18,4 @@
 #include <utests/baselib/UtfMain.h>
 
 #include "TestIO.h"
+#include "TestIO2.h"
