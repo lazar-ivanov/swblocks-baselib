@@ -18,3 +18,4 @@
 #include <utests/baselib/UtfMain.h>
 
 #include "TestBlobTransferFilesystem.h"
+#include "TestBlobTransferFilesystem2.h"
