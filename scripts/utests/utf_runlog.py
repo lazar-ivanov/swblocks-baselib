@@ -325,15 +325,22 @@ def collect_by_parsing( logs_dir, only ):
 
 def restrict( snapshot, prefix ):
     """
-    Keep only the modules whose name starts with prefix
+    Keep the modules of one split family: the prefix itself, plus the prefix with a numeric suffix
 
     A split renames modules - utf_baselib_security becomes utf_baselib_security, _security2 and
     _security3 - so a lane validating one family needs the baseline restricted to the family's
-    prefix on one side and to its several successors on the other. Comparing the union of each is
-    then exactly the right question, and it avoids running all seventeen modules to check three
+    original name on one side and to its several successors on the other. Comparing the union of
+    each is then exactly the right question, and it avoids running every module to check three
+
+    Note this deliberately does NOT match on a plain string prefix. Every module in the tree begins
+    with 'utf_baselib', so a prefix match for the utf_baselib family would sweep in utf_baselib_http,
+    utf_baselib_security and the rest, and then report every module which was not run as having lost
+    its cases. Matching '<prefix>' or '<prefix><digits>' follows the naming the split actually uses
     """
 
-    return { name: record for name, record in snapshot.items() if name.startswith( prefix ) }
+    pattern = re.compile( r'^%s[0-9]*$' % re.escape( prefix ) )
+
+    return { name: record for name, record in snapshot.items() if pattern.match( name ) }
 
 
 def union( snapshot, key ):
