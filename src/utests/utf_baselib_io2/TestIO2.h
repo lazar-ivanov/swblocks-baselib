@@ -22,8 +22,15 @@
  * range references exactly one name from the anonymous namespace at the top of TestIO.h - the
  * connector_t typedef - which is the smallest coupling any contiguous island in that file has.
  *
- * This file must be included after TestIO.h - it is a continuation, not a standalone header.
+ * It carries its own copy of the connector_t typedef, the single name it used from TestIO.h while
+ * the two were one translation unit.
  */
+
+namespace
+{
+    typedef bl::tasks::TcpConnectionEstablisherConnectorImpl< bl::tasks::TcpSocketAsyncBase >       connector_t;
+
+} // __unnamed
 
 #include <baselib/reactive/Observer.h>
 

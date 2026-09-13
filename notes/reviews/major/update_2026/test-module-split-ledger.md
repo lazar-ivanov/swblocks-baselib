@@ -343,6 +343,21 @@ The ~21 MB per-TU floor is visible in `utf_baselib_setprio` at 21.4 MB for 223 l
   The fix is to add the missing include to the moved header. That is safe for the gate: C2 hashes
   case bodies and doc comments, not include lines, so the proof of faithful relocation still holds.
   It also leaves the header self-contained rather than carrying the trap to the next move.
+- **Two baseline runs under-detect non-determinism, and the fan-out proved it.** The unstable list
+  was derived from two full passes, which agreed on
+  `IO_SimpleConnectAndTransmitDataMessageDispatcherOutgoingTests` at 8194 assertions both times. The
+  `utf_baselib_io` split then reported 8199, and re-running the **same binary** twice more gave 8199
+  and then 8194 — so the case varies run to run and the baseline was simply unlucky. It is now on the
+  list, taking it from 10 cases to 11.
+
+  Two consequences. First, **a tier 3 assertion-count difference is not automatically a regression**:
+  re-run the unchanged binary twice before concluding anything, which costs minutes and settles it.
+  Second, if the gate starts producing these regularly, the fix is more baseline passes rather than
+  a looser comparison — the check earns its place precisely because it is tight.
+
+  Note what this one was *not*: the case did not move, and five of its process siblings did. Had the
+  count shifted because it lost a side effect those siblings left behind, that would have been a real
+  defect of exactly the kind this check exists to find. Only re-running distinguishes the two.
 - **C5 is file-based, so cross-including a header between modules evades every invariant.** A module
   whose `Main.cpp` does `#include "../other_module/TestFoo.h"` registers that header's cases in a
   second binary, but the file is scanned once so no duplicate name is seen; tier 3 compares unions,
