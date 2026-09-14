@@ -267,6 +267,14 @@ PLUGINS     := $(patsubst $(SRCDIR)/plugins/%, %, $(wildcard $(SRCDIR)/plugins/*
 TESTAPPS    := $(patsubst $(SRCDIR)/tests/%, %, $(wildcard $(SRCDIR)/tests/*))
 UTESTS      := $(patsubst $(SRCDIR)/utests/%, %, $(wildcard $(SRCDIR)/utests/utf*))
 
+#
+# The test module object size gate. Runs after each test module links, so it costs one invocation
+# per module actually relinked rather than one per build, and reports headroom inline. Limits live
+# in src/utests/object-size-limits.json and are per platform, so what it does on any given build
+# depends on that file and not on this line - see notes/plans/test-module-size-gate-plan.md
+#
+SIZE_GATE   = $(PYTHON) $(TOPDIR)scripts/utests/utf_size_gate.py
+
 ifeq ($(TOOLCHAIN),clang801)
 ifeq ($(VARIANT),release)
 # TODO: in devenv4 there is an issue with clang linking statically boost regex to shared plugins,
@@ -351,6 +359,13 @@ utils: $(UTILTARGETS)
 
 utests: $(UTESTS)
 
+#
+# Print the object size table for the current build tree without building anything. The same
+# report the per-module lines come from, sorted by headroom with the tightest module first
+#
+utests-sizes:
+	@$(SIZE_GATE) --platform-dir $(BLDDIR) --summary
+
 testutf: $(UTESTS:%=test_%)
 
 testjni: $(JNITARGETS:%=test_%)
@@ -378,6 +393,7 @@ help:
 	$(info $(SPACE)plugins - build plugins sub-targets)
 	$(info $(SPACE)testapps - build testapps sub-targets)
 	$(info $(SPACE)test - build and test all targets)
+	$(info $(SPACE)utests-sizes - report test module object sizes and headroom)
 	$(info $(SPACE)testutf - build and run utf test sub-targets)
 	$(info $(SPACE)testjni - build and run jni test sub-targets)
 	$(info $(SPACE)testjava - build and run java test sub-targets)
@@ -434,7 +450,7 @@ mkutflogspath:
 build-plugins: $(PLUGINS)
 
 # targets which are always made
-.PHONY: all clean apps dotnet-apps plugins modules apis jni java utests testutf testjni testjava test help rpm msi $(TARGETS) build-plugins mktmppath mkbuildpath mkutflogspath
+.PHONY: all clean apps dotnet-apps plugins modules apis jni java utests utests-sizes testutf testjni testjava test help rpm msi $(TARGETS) build-plugins mktmppath mkbuildpath mkutflogspath
 
 # generate jni-libs rules
 define JNILIBTEMPLATE
@@ -495,6 +511,7 @@ define TEMPLATE
 	@echo "Linking $(1)..."
 	@mkdir -p $$(@D)
 	$$(LINK.$$(TOOLCHAIN))
+	@$$(if $$(findstring utf,$(1)),$$(SIZE_GATE) --platform-dir $$(BLDDIR) --module $(1),true)
 
   # if test data directory exists create rule to copy files from it
   $(1)_SRC_DATADIR = $$($(1)_SRCDIR)/data

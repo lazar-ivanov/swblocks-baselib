@@ -80,11 +80,12 @@ Before making ANY file change, verify:
 **Each test module is a single translation unit and must not grow without a bound.** One oversized
 module (112.7MB) once made two x86 build combinations impossible to compile at all.
 
-- Before adding a test case, check the target module has headroom: `scripts/utests/utf_objsize.py`.
+- Every test module prints its headroom as it links, and `make utests-sizes` shows the whole table.
 - Add to a module comfortably under the **40MB target**; never to one already at or near it.
 - Otherwise create a numbered sibling module (`utf_baselib_messaging2`, `3`, …). This needs no
   makefile change and is the intended answer, not a last resort.
-- **75MB per object is a hard ceiling** and fails the build.
+- **75MB per object is a hard ceiling and fails the build** on the platforms where it is enforced.
+  Split the module; do not raise the ceiling.
 
 Read `src/utests/AGENTS.md` before adding or splitting a test module — it carries the full rules,
 the new-module checklist, and the verification tiers.
@@ -270,6 +271,7 @@ For detailed build system documentation, see `scripts/devenv7/AGENTS.md`:
 **Last Updated:** 2026-09-11
 
 **Changelog:**
+- v2.6 (2026-09-14): Noted that the test module size ceiling is now enforced by the build
 - v2.5 (2026-09-13): Added the Test Module Size rule and referenced src/utests/AGENTS.md
 - v2.4 (2026-09-11): Referenced the ARM64 SVE capability reporting guidance under Technical Reference
 - v2.3 (2026-09-11): Referenced the Rosetta container testing guidance under Technical Reference

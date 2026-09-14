@@ -33,12 +33,38 @@ until the module was split four ways. See
 | Tier | Value | Meaning |
 |---|---:|---|
 | Target | **40 MB** | Aim here. An object above it is reported and needs a recorded reason. |
-| Ceiling | **75 MB** | Hard fail. `utf_objsize.py --ceiling 75` exits non-zero. |
+| Ceiling | **75 MB** | Hard fail on `win-x86-*-debug`. |
 | TU floor | **~21 MB** | What an empty test module costs. Subtract it to see your actual content. |
 
 Measured on `x86` `debug`, where the address-space limit is real. The floor is why splitting has a
 cost: **every new module pays ~21MB again**, so split when a module is genuinely large, not
 reflexively.
+
+### The gate enforces this for you
+
+Every test module prints its headroom as it links, and the build **fails** if an object exceeds the
+ceiling on an enforcing platform:
+
+```
+Linking utf_baselib_io...
+  utf_baselib_io                  72.3 / 75 MB  [##########]  96%  over 40 MB target
+```
+
+- `make utests-sizes` prints the whole table, tightest module first, without building.
+- Limits live in [object-size-limits.json](object-size-limits.json), per platform pattern.
+- **Today only `win-x86-*-debug` enforces.** `win-x86-*-release` reports, everything else is silent —
+  see [the rollout plan](../../notes/plans/test-module-size-gate-plan.md). So a module can be over
+  budget on a platform you are not building, and you will not hear about it until someone builds it.
+- `BL_SKIP_SIZE_GATE=1` silences it locally while experimenting.
+
+**A ceiling breach deletes the linked binary.** The build is configured `.DELETE_ON_ERROR`, so a
+failing gate takes the `.exe` with it and you cannot run that module's tests until you are under the
+ceiling again — or until you set `BL_SKIP_SIZE_GATE=1` for the run. That is a side effect of where
+the check is hooked, not a deliberate punishment.
+
+**Raising a ceiling is not the fix.** Split the module. Changing
+[object-size-limits.json](object-size-limits.json) is a deliberate commit of its own, argued in
+review, and for `win-x86` it means arguing against a measured toolchain crash.
 
 ---
 
