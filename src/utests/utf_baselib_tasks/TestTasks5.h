@@ -886,6 +886,17 @@ UTF_AUTO_TEST_CASE( Tasks_ReactiveNotifyOnNextThrottleTests )
 
                 const auto freeObserverDrained = freeObserver -> waitForNextCount( 3U );
 
+                /*
+                 * The blocked observer needs a rendezvous of its own before its counter is
+                 * sampled. The two waits above both observe progress made by *other* threads -
+                 * the producer reaching its throttle limit, and the free observer draining the
+                 * admitted values - and neither implies this observer's thread has yet run far
+                 * enough to record the one call it takes before parking on the gate. On a loaded
+                 * machine it has not, and nextCount() below reads 0
+                 */
+
+                const auto blockedObserverArrived = blockedObserver -> waitForNextCount( 1U );
+
                 const auto pushedAtRejection = probeImpl -> pushedCount();
                 const auto freeNextCountAtRejection = freeObserver -> nextCount();
                 const auto blockedNextCountAtRejection = blockedObserver -> nextCount();
@@ -900,6 +911,7 @@ UTF_AUTO_TEST_CASE( Tasks_ReactiveNotifyOnNextThrottleTests )
 
                 UTF_REQUIRE( firstRejectionSeen );
                 UTF_REQUIRE( freeObserverDrained );
+                UTF_REQUIRE( blockedObserverArrived );
                 UTF_REQUIRE_EQUAL( pushedAtRejection, 3U );
                 UTF_REQUIRE_EQUAL( freeNextCountAtRejection, 3U );
                 UTF_REQUIRE_EQUAL( blockedNextCountAtRejection, 1U );

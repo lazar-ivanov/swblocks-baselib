@@ -1,6 +1,6 @@
 # Tasks_ReactiveNotifyOnNextThrottleTests: A Missing Rendezvous
 
-**Status:** open, fix identified and not applied. Found 2026-09-14 by the 12-combo Windows matrix.
+**Status:** **RESOLVED 2026-09-14.** Found by the 12-combo Windows matrix, reproduced under load, fixed and verified.
 
 **Summary.** The test samples three counters but rendezvouses on only two of them. The third is read
 while another thread may not yet have been scheduled to update it, so under load the assertion on it
@@ -84,8 +84,50 @@ placed with the other two waits, before any counter is sampled. No sleep, no wea
 the same failure mode still caught if the blocked observer genuinely never arrives — it would fail on
 `blockedObserverArrived` with a clear cause instead of on a confusing count mismatch.
 
-**Not applied here.** It is a test-logic change and belongs in its own commit with its own
-verification, not folded into a validation run.
+### Applied and verified
+
+The failure as first seen was one occurrence in twelve matrix combos, which is far too rare to
+verify a fix against - the case also passed six times out of six serially *before* any change. So it
+was first made reproducible: run the single case in a loop against six busy loops on a two-core
+machine, starving the blocked observer's thread. That turned a 1-in-12 flake into a measurable rate.
+
+| | Pre-fix | Post-fix |
+|---|---:|---:|
+| Starved iterations | 150 | **450** |
+| Failures | **4 (2.7%)** | **0** |
+| Full module, serial | - | 3/3 pass |
+
+Every pre-fix failure was the same assertion at `TestTasks5.h:905`. At the measured 2.7% rate, 450
+clean runs would occur by chance roughly 0.02% of the time.
+
+**What this evidence does not cover.** It establishes the race is gone under starvation on
+`win-a64-vc143-debug`. It does not prove the case is race-free in general, and the fix was not
+re-verified on the other eleven combos - a judgement call, since the change is a bounded wait built
+from the test's own existing idiom rather than new machinery.
+
+### The baseline acceptance, and why it was surgical
+
+This is the **first deliberate change to test content** since `baseline/inventory.json` was captured,
+so it is the first time C2 has fired for a good reason - `case BODY CHANGED`. The gate was right and
+the baseline had to move.
+
+It was moved **one field at a time, not re-captured**. A wholesale re-capture would re-anchor C1 to
+C4 for all 772 cases and destroy the standing proof that the module split altered no test. Instead
+the accept asserted, before writing anything:
+
+- exactly one case's content differs, and it is this one
+- the case name set is unchanged, at 772
+- no helper member was lost
+- the edited case's guard and namespace stacks are unchanged
+
+The resulting diff is **one line** - a single `body_sha`. That is the shape any future intentional
+test change should take, and it is the same "accept, deliberately and visibly" workflow the
+[size gate plan](../test-module-size-gate-plan.md) proposes for object sizes.
+
+The harness was deliberately throwaway - "start N busy loops, run `--run_test=<case>` M times, count
+non-zero exits" - and is worth rebuilding from that description rather than preserving. The shape is
+what matters, and it generalises to any of the candidates in the next section: **make a rare
+concurrency failure frequent before trying to fix it**, or there is no way to tell a fix from luck.
 
 ---
 
@@ -102,7 +144,7 @@ running five concurrent test modules. A CI machine with more cores may never sho
 
 ## Conditions to revisit
 
-- **The fix lands.** Then this record closes.
+- ~~**The fix lands.**~~ Done; this record is closed.
 - **The same assertion fails again**, especially serially or on a machine that is not oversubscribed.
   That would mean the diagnosis here is wrong and the throttle itself is suspect.
 - **Other tests start failing under `-j5`.** The matrix run that found this was the first time the
