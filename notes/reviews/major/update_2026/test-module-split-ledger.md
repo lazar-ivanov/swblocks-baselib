@@ -587,6 +587,54 @@ Item 4 is blocked on instantiation weight, not on module size.
 All four x86 combos build the heaviest module with the final configuration: ccl16 debug, ccl16
 release, vc143 debug, vc143 release.
 
-Incidental cost now that x86 uses x86-hosted tools everywhere: on an ARM64 or x64 host those tools
-run under emulation, so x86 builds are materially slower. The 64-bit host swap had been buying build
-speed as well as address space, which the original record did not note.
+**Corrected 2026-09-14 by the full matrix.** This previously claimed x86 builds are materially slower
+now that they use emulated x86-hosted tools. They are not. `win-x86-vc143-debug` was the **fastest**
+build in the matrix at 14m, against 19m for x64 and 21m for a64 on the same toolchain and variant;
+the two slowest were `win-x64-ccl16-release` (71m) and `win-x86-ccl16-release` (59m). The emulation
+penalty per instruction is real but is outweighed by an x86 target generating far less code. The
+claim was reasoned, never measured, and is withdrawn.
+
+## The full 12-combo Windows matrix, 2026-09-14
+
+**Green. Twelve builds, twelve passes. Twelve test runs, twelve passes.** Both x86 ccl16 combos -
+the two that failed the 2026-09-10 matrix and started this whole effort - now build and pass.
+
+Run in two git worktrees, one per toolchain, each doing build -j1, test -j5, record, delete per
+combo. Deleting as it went is what made it fit: twelve trees would have needed roughly 45GB against
+27GB free, and peak usage stayed near 9GB. The test phase was serialized across the two lanes with
+a lock, because the suite contends on a machine global mutex guarding a fixed port and ten
+concurrent test processes on one lock has produced flakes here before.
+
+| Combo | Build | Test | Peak object | Peak module |
+|---|---|---|---:|---|
+| win-a64-vc143-debug | PASS 21m | PASS* 27m | 103.24 MB | utf_baselib_io |
+| win-a64-vc143-release | PASS 43m | PASS 27m | 125.32 MB | utf_baselib_io |
+| win-a64-ccl16-debug | PASS 24m | PASS 34m | 78.55 MB | utf_baselib_io |
+| win-a64-ccl16-release | PASS 46m | PASS 27m | 63.11 MB | utf_baselib_messaging3 |
+| win-x64-vc143-debug | PASS 19m | PASS 30m | 110.06 MB | utf_baselib_io |
+| win-x64-vc143-release | PASS 36m | PASS 28m | 118.62 MB | utf_baselib_io |
+| win-x64-ccl16-debug | PASS 33m | PASS 33m | 78.91 MB | utf_baselib_io |
+| win-x64-ccl16-release | PASS 71m | PASS 33m | 62.16 MB | utf_baselib_messaging3 |
+| win-x86-vc143-debug | PASS 14m | PASS 29m | 72.26 MB | utf_baselib_io |
+| win-x86-vc143-release | PASS 30m | PASS 28m | 96.77 MB | utf_baselib_io |
+| win-x86-ccl16-debug | PASS 31m | PASS 28m | 74.33 MB | utf_baselib_io |
+| win-x86-ccl16-release | PASS 59m | PASS 27m | 35.69 MB | utf_baselib_messaging3 |
+
+\* `win-a64-vc143-debug` failed once during the run, in
+`Tasks_ReactiveNotifyOnNextThrottleTests`. It was classified rather than dismissed: the same module
+passed under -j5 in the other eleven combos and passed six times out of six serially on an idle
+machine. The cause is a missing rendezvous in the test itself, recorded in
+[reactive-throttle-test-rendezvous-record.md](../../../plans/issues/reactive-throttle-test-rendezvous-record.md)
+with a one-line fix that has not been applied.
+
+**What the object sizes say, and it is not what the tooling assumes.** The combo the ceiling
+actually gates, win-x86-vc143-debug, is the second smallest in the matrix at 72.26MB, while
+win-a64-vc143-release sits at 125.32MB completely unwatched. Nothing there is a build failure - the
+2GB address space wall is x86 only - but a green utf_objsize run has never said anything about
+eleven of twelve combos. Worse for gate design, which variant is the worst case flips by toolchain:
+vc143 release objects are larger than debug, ccl16 release objects are far smaller. Sampling only
+debug would miss every vc143 peak. This is folded into
+[the gate plan](../../../plans/test-module-size-gate-plan.md).
+
+`utf_baselib_io` holds the peak in nine of twelve combos, which makes it the first candidate if any
+ceiling ever needs headroom.

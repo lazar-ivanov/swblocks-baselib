@@ -97,9 +97,26 @@ peak working set to confirm it. No instrumentation was needed in the end: with t
 32-bit host reports `LLVM ERROR: out of memory / Allocation failed` before the `0xC000001D`, naming
 the cause itself.
 
-One incidental cost worth knowing: on an ARM64 host the x86 tools run under emulation, so x86 builds
-are substantially slower than they were with `Hostarm64` tools. The 64-bit host swap was buying build
-speed as well as address space, even though only the latter was recorded.
+**Corrected 2026-09-14.** This paragraph previously claimed that x86 builds are substantially slower
+now, on the reasoning that x86 tools run emulated on an ARM64 host. The full matrix measured the
+opposite. Debug builds of the whole test suite:
+
+| Combo | Build |
+|---|---:|
+| `win-x86-vc143-debug` | **14m** — fastest in the matrix |
+| `win-x64-vc143-debug` | 19m |
+| `win-a64-vc143-debug` | 21m |
+| `win-a64-ccl16-debug` | 24m |
+| `win-x86-ccl16-debug` | 31m |
+| `win-x64-ccl16-debug` | 33m |
+
+The two slowest builds in the whole matrix are `win-x64-ccl16-release` at 71m and
+`win-x86-ccl16-release` at 59m — one of them a 64-bit target. The per-instruction emulation penalty
+is real, but it is outweighed by how much less code an x86 target generates: its peak object is
+72.26MB against 110.06MB for x64 and 103.24MB for a64 on the same toolchain and variant.
+
+The original claim was reasoned rather than measured, and should not be repeated. The 64-bit host
+swap bought address space; there is no evidence it bought build speed.
 
 ---
 

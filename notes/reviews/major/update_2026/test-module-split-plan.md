@@ -542,10 +542,15 @@ point. **2B gate:** Tier 1 + Tier 2 (40 MB ceiling) + Tier 3.
 4. **Done.** The deferral record's Decision table and outcome section, the `CLANG_CL_DIR` and
    `MSVCHOSTARCHTAG` comments in `msvc-default.mk`, and the host notes in
    `scripts/devenv7/AGENTS.md`.
-5. **Still outstanding: the full 12-combo Windows matrix has not been run against the split tree.**
-   Only x86 has been exercised end to end, and only `utf_baselib_messaging3` across all four x86
-   combos. Note x86 builds are now materially slower, since the x86 tools run under emulation on an
-   ARM64 or x64 host.
+5. **Done 2026-09-14 — the full 12-combo Windows matrix is green.** All twelve build, and all twelve
+   pass their tests. Both x86 `ccl16` combos, which failed the 2026-09-10 matrix and started this
+   whole effort, now build and pass. One test failure surfaced during the run and was classified as
+   a load-sensitive test bug rather than a defect — see
+   [the record](../../../plans/issues/reactive-throttle-test-rendezvous-record.md).
+
+   Note the x86 speed claim written here earlier was wrong: x86 builds are **not** slower for using
+   emulated tools. `win-x86-vc143-debug` was the fastest build in the matrix at 14m. See the ledger
+   for the measurements.
 
 ---
 

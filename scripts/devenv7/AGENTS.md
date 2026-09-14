@@ -228,7 +228,10 @@ target: `MSVCHOSTARCHTAG` resolves to `Hostx86` and `CLANG_CL_DIR` to `VC/Tools/
 clang-cl), for both `vc143` and `ccl16`, whatever the build host is. This keeps the 32-bit toolchain
 actually exercised rather than cross-built from a 64-bit host. Two consequences:
 
-- **x86 builds are slower on an ARM64 or x64 host**, because the tools run under emulation.
+- **x86 builds are not slower for this, despite the emulation.** Measured across the full 12-combo
+  matrix on an ARM64 host, `win-x86-vc143-debug` was the fastest build at 14m, against 19m for x64
+  and 21m for a64. The per-instruction penalty is outweighed by an x86 target generating far less
+  code. Do not assume an emulation tax here without measuring it.
 - **The ~2GB address space of those tools is a real constraint.** It is why no test translation unit
   may grow without bound; `scripts/utests/utf_objsize.py` enforces a 75MB object ceiling. One
   combination still cannot afford full debug info — x86 + `ccl16` + release uses
