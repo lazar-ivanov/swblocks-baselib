@@ -70,48 +70,139 @@ release is *larger* than debug (96.77 vs 72.26 on x86). For `ccl16` it is dramat
 (35.69 vs 74.33). A gate that sampled only debug variants would miss the true peak on every `vc143`
 combo, and one that sampled only release would miss it on every `ccl16` one. **Gate both.**
 
-**The 105MB non-x86 ceiling guessed below is too low** — four combos already exceed it, and it was
-derived as 1.4x the x86 figure from a single a64 module. Real ratios are ~1.7x for a64 vc143 debug
-and ~1.5x for x64. Open question 5 is answered: it had no basis, and these numbers replace it.
+**The 105MB non-x86 ceiling this plan originally guessed was too low** — four combos exceed it. It
+was derived as 1.4x the x86 figure from a single a64 module; real ratios are ~1.4x for a64 vc143
+debug and ~1.5x for x64, but the *peak* is what matters and that is 125.32MB. The placeholder below
+is now 140MB, and it is only a placeholder: Windows non-x86 stays in `report` until stage 2 sets it
+from data.
 
 One module dominates nine of twelve combos. `utf_baselib_io` is the tightest object in the tree on
 every `vc143` combo and every `ccl16` debug combo, which makes it the first candidate for splitting
 if any ceiling needs headroom.
 
-### Where the numbers live
+### Two files, two owners — this is what keeps friction near zero
 
-**`src/utests/object-sizes.json`** — next to the code it governs, so it appears in the same directory
-as the change that moved it and lands in the same review.
+The first draft of this plan had developers updating a baseline file whenever an object grew. That
+does not work, and the reason is worth stating because it is not obvious:
+
+**Baselines are per-combo, but a developer builds one or two combos.** If Alice adds a test and
+accepts the new size on `win-x64-vc143-debug`, the recorded baselines for that module on the other
+eleven combos are now stale-low. Bob, building `win-a64-ccl16-debug`, then gets a drift failure for a
+change he did not make and cannot evaluate. Multiply by every contributor and the gate is off within
+a month.
+
+So the data is split by **who writes it and when**:
+
+| | `src/utests/object-size-limits.json` | `src/utests/object-size-baselines.json` |
+|---|---|---|
+| Holds | ceiling and target per platform pattern | measured size per object per combo |
+| Written by | a human, deliberately, rarely | **the matrix operator**, via an explicit target |
+| Written when | a limit is argued and changed | after a full matrix run, at milestones |
+| Read by | **every build, including local** | the drift check, during a matrix run |
+| Enforces | **ceiling — fails any build** | drift — reported when the matrix runs |
+| Churn | almost none | once per matrix run |
+| Merge conflicts | possible but rare | rare — one writer at a time, by convention |
+
+**The ceiling needs no baseline.** It is a static number, so the check that actually prevents the
+112MB catastrophe runs on every build, everywhere, with zero data churn and nothing to update.
+
+**Drift needs a baseline, and there is no CI in this repository to own one.** There are no workflows,
+no Jenkinsfile and no pipeline — the `scripts/ci/` directory in the devenv dist is environment
+bootstrap, not a build service. An earlier draft of this plan assumed a nightly CI matrix existed.
+It does not, and the design must not depend on one appearing.
+
+So the owner is **whoever runs the matrix**. That is a deliberate, occasional act — it took about
+seven hours on a two-core box — performed at milestones rather than per commit. Drift is therefore
+"what grew since the last milestone", which is exactly the granularity creep needs. If CI ever
+arrives, it becomes the operator and nothing else about the design changes.
+
+### The two files
+
+Both sit in `src/utests/`, next to the code they govern.
+
+Build directories are named `$(OS)-$(ARCH)-$(TOOLCHAIN)-$(VARIANT)` (`common.mk:136`,
+`platform.mk:7`), and the `OS` component is `win` on devenv7 Windows, `ub12`…`ub24` on Ubuntu,
+`rhel5`…`rhel10` on RHEL, and `d156`…`d25` on macOS by Darwin release — so `win-x86-vc143-debug`,
+`ub24-x64-gcc-debug`, `d25-a64-clang-release`. Those prefixes are what the patterns match, which is
+what makes a per-platform rollout a one-word edit.
+
+**`object-size-limits.json`** — hand-edited, tiny, and the only file a build has to read:
 
 ```json
 {
   "version": 1,
   "limits": {
-    "win-x86-*-debug":   { "target_mb": 40, "ceiling_mb": 75 },
-    "win-x86-*-release": { "target_mb": 40, "ceiling_mb": 75 },
-    "*":                 { "target_mb": 80, "ceiling_mb": 140, "gate": "report" }
-  },
+    "win-x86-*":  { "target_mb": 40, "ceiling_mb": 75,  "gate": "enforce" },
+    "win-*":      { "target_mb": 80, "ceiling_mb": 140, "gate": "report" },
+    "*":          { "gate": "off" }
+  }
+}
+```
+
+**Most specific pattern wins**, so `win-x86-*` beats `win-*` beats `*`. Three values for `gate`:
+`enforce` fails the build above the ceiling, `report` prints the line and never fails, `off` is
+silent. A platform is adopted by changing one word.
+
+**`object-size-baselines.json`** — written only by `make utests-sizes-record`, never hand-edited:
+
+```json
+{
+  "version": 1,
   "drift": { "tolerance_pct": 2.0, "tolerance_mb": 1.0 },
-  "baselines": {
+  "recorded": {
     "win-x86-vc143-debug": {
-      "utf_baselib_messaging": { "UtfBaselibMessagingMain.obj": 71743334 }
+      "at": { "commit": "aeed9e2", "date": "2026-09-14" },
+      "objects": { "utf_baselib_io": { "UtfBaselibIoMain.obj": 75765350 } }
     }
   }
 }
 ```
 
-Three things this shape buys:
+Each combo carries the commit and date it was recorded at, because a partial matrix run merges into
+this file rather than replacing it, so entries legitimately come from different points in time. The
+drift report needs to be able to say "x64 last recorded four commits ago, a64 forty" rather than
+implying they are contemporaneous.
 
-- **Per-combo limits**, because an a64 object runs ~1.4× its x86 counterpart on `vc143` debug
-  (103.24 vs 72.26MB) and the spread across the matrix is wider still — 35.69MB to 125.32MB, a factor
-  of 3.5. A single global number would be either far too loose for x86 or spuriously red everywhere
-  else.
-- **Glob patterns**, so adding a toolchain does not mean adding twelve rows.
-- **`"gate": "report"`**, so a combo can be tracked without failing anyone's build — which is how
-  every combo starts (§6).
+Merged, never overwritten, so recording two combos cannot wipe the other ten.
 
-The baseline file is **merged, never overwritten**. A developer who can only build two combos must
-not wipe the other ten.
+### How recording actually happens
+
+**Not automatically, and not as a build parameter.** It is a separate target, run deliberately:
+
+```
+make utests-sizes-record          # merge whatever is in bld/ into the baselines file
+```
+
+**Automatic recording during ordinary builds would recreate the exact bug this design exists to
+avoid.** A developer building one combo would silently overwrite that combo's entry while leaving the
+other eleven untouched but now inconsistent with it — and worse, would do so without noticing. Making
+it an explicit target means recording appears in `git log` as a decision, and cannot happen by
+accident.
+
+It is a separate target rather than a flag like `RECORD_SIZES=1` for the same reason: a flag gets
+pasted into someone's shell alias and then fires on every build.
+
+**The sequence at a milestone**, and it is the sequence the 2026-09-14 matrix already followed by
+hand:
+
+```
+1  run the matrix                 build and test all twelve combos
+2  make utests-sizes-record       merge the measured sizes, stamped with the commit
+3  review the diff                this is the size changelog since the last milestone
+4  commit it                      alongside the matrix result
+```
+
+Step 3 is the point of the whole exercise. The diff is a per-module statement of what grew since the
+last milestone, in a form a reviewer can argue with.
+
+**Between milestones, drift is simply not checked.** Only the ceiling is, and the ceiling is the check
+that matters for preventing a hard failure. That is an honest limitation of having no CI, not a gap
+to paper over: drift catches slow creep, creep is slow, and milestone granularity is enough for it.
+
+**Why per-platform limits are not optional.** An a64 object runs ~1.4× its x86 counterpart on `vc143`
+debug (103.24 vs 72.26MB), and the measured spread is 35.69MB to 125.32MB — a factor of 3.5 on
+Windows alone. ELF and Mach-O differ again, and **no Linux or macOS object in this repo has ever been
+measured.** A single global number would be far too loose for x86 and spuriously red everywhere else.
 
 ---
 
@@ -121,7 +212,7 @@ not wipe the other ten.
 |---|---|---|
 | **Ceiling** | object vs `ceiling_mb` | **fail** |
 | **Target** | object vs `target_mb` | report, and require a reason in the split ledger |
-| **Drift** | object vs its recorded baseline | **fail** — the baseline is out of date |
+| **Drift** | object vs its last recorded baseline | **reported by a matrix run**, never fails a local build |
 
 **Drift is the anti-creep mechanism and the interesting one.** Ceiling alone does not prevent this
 happening again: `utf_baselib_io` can go 48 → 55 → 62 → 71MB over a year of ordinary work and nobody
@@ -195,13 +286,41 @@ FAIL  utf_baselib_data / UtfBaselibDataMain.obj
 | Target | Does |
 |---|---|
 | `make utests-sizes` | Print the table for whatever is in `bld/`. No build. |
-| `make utests-sizes-accept` | Re-record baselines for combos present in `bld/`, merging. |
-| `BL_SKIP_SIZE_GATE=1` | Local escape hatch. CI ignores it; document that plainly. |
+| `make utests-sizes-record` | Merge measured sizes into the baselines file. Milestones only. |
+| `BL_SKIP_SIZE_GATE=1` | Local escape hatch for experiments. Never set it in a matrix run. |
 
-**`accept` must refuse to record anything over the ceiling.** Otherwise the first person to hit the
-wall will accept their way through it, which is precisely the failure mode being designed against.
-It should also print each change it is about to make, so accepting is a decision rather than a
-reflex.
+There is deliberately **no developer-facing accept target.** Nothing a developer does updates a
+recorded size in the course of ordinary work: the ceiling never consults recorded sizes, and the
+baselines file is written only by the explicit `utests-sizes-record` target at a milestone.
+
+### What this costs a developer, concretely
+
+**Adding a test to a module with room** — the overwhelmingly common case. One extra line per module as
+it links, plus the summary. Nothing to update, nothing to commit, no JSON in the diff.
+
+```
+Linking utf_baselib_utils...
+  utf_baselib_utils           3.2 / 75.0 MB  [..........]   4%
+```
+
+**Adding a test to a module near the ceiling.** The same line, reading as a warning, visible long
+before it becomes a failure:
+
+```
+  utf_baselib_io             73.4 / 75.0 MB  [#########.]  98%  over 40 MB target
+```
+
+**Pushing a module over the ceiling.** The build fails and says to create a numbered sibling. Still no
+data file to touch. This is the only case that stops anyone, and it is the case the gate exists for.
+
+**A legitimate large increase that genuinely has to land.** Someone raises the ceiling for that
+pattern in `object-size-limits.json` — a one-line change, its own commit, argued in review. That is
+the intended friction: raising a ceiling should be a decision, not a reflex. An accept command that
+silently records whatever it finds is how this class of gate dies, which is why there isn't one.
+
+**What a milestone matrix catches that a developer cannot.** Running all twelve combos records every
+one and reports drift since the last milestone. A change that grew something unexpectedly on a combo
+its author never builds surfaces there, in the matrix operator's commit, not theirs.
 
 ---
 
@@ -232,27 +351,49 @@ while its output is still on screen, rather than at the end of a long build.
 
 ## 6. Rollout, so nobody's build breaks on a flag day
 
-| Phase | Gate behaviour | Exit criterion |
-|---|---|---|
-| 1 | Report only, every combo. `accept` populates baselines. | Full 12-combo matrix run; baselines committed |
-| 2 | **Ceiling fails** on `win-x86-*`; everything else reports | One clean matrix run with no ceiling breach |
-| 3 | **Drift fails** on `win-x86-*-debug` | A month of ordinary work without false alarms |
-| 4 | Extend drift to remaining combos as their baselines prove stable | — |
+**Rollout is per platform, and the unit of adoption is one word in `object-size-limits.json`.** A
+platform moves `off` → `report` → `enforce` on its own schedule, and a platform that is not ready
+simply is not listed. Nobody on an un-adopted platform sees anything change.
 
-Phase 1 is not optional. There is no baseline data for eight of the twelve combos today, and turning
-on a gate whose reference data was guessed is how gates get switched off.
+| Stage | Limits file says | What it proves before the next stage |
+|---|---|---|
+| 0 | `"win-x86-*": enforce`, everything else `off` | The mechanism works where the data is real and the constraint is real. x86 is the only place a ceiling breach is a hard build failure rather than a policy. |
+| 1 | add `"win-*": report` | Collects a64 and x64 Windows data through ordinary builds. Peaks are known (up to 125.32MB) but the limits are not yet argued. |
+| 2 | `"win-*": enforce` | A month with no false failures on Windows, ceilings set from stage 1 data rather than extrapolation. |
+| 3 | add `"ub24-*": report`, then `enforce` | **No Linux object has ever been measured here.** ELF differs from COFF; the numbers must be collected before any limit is credible. |
+| 4 | add `"d25-*"` (macOS), same two steps | Mach-O differs again, and macOS is the least exercised platform in this repo. |
+| 5 | add `rhel*`, older `ub*`/`d*` as they matter | Only where the matrix is actually run. |
+
+**Start with `win-x86` specifically, not Windows generally.** It is the only configuration with a
+hard physical limit — roughly 2GB of address space in the 32-bit toolchain — so the ceiling there is a
+fact rather than a policy, and the one number already calibrated against a real failure. Everywhere
+else the ceiling is a judgement about compile time and build memory, and judgements need data first.
+
+**Never skip `report` on a new platform.** A gate whose reference numbers were guessed will fire
+spuriously, and a gate that fires spuriously gets switched off — permanently, along with the
+platform that was working. The whole point of `report` is that the first numbers come from the
+platform itself.
+
+**The rollout order should follow wherever the matrix is actually run.** There is no CI here, so a
+platform reaches `report` only when someone builds and records it, and `enforce` only when that has
+happened enough times to argue a limit. Linux and macOS are therefore blocked on somebody running
+the suite there at all, not on anything in this design.
 
 ---
 
 ## 7. Risks
 
-- **Baseline churn in review.** Every test addition touches the JSON. Mitigated by the tolerance
-  band, and it is partly the point — the diff *is* the visibility.
+- ~~**Baseline churn in review.**~~ **Resolved by the two-file split.** Developers never touch either
+  file in ordinary work: the ceiling needs no recorded size, and the baselines file is touched only
+  by a deliberate milestone recording.
 - **Compiler upgrades move everything at once.** A new MSVC will shift every object a few percent and
-  fail every module simultaneously. Needs a documented "re-baseline after a toolchain bump" step,
-  done as its own commit, never mixed with test changes.
-- **Merge conflicts on the JSON.** Two developers accepting different modules conflict textually.
-  Mitigated by one object per line and stable key ordering; worst case, re-run `accept`.
+  trip drift on every module simultaneously. Because drift is only evaluated during a matrix run this
+  produces one noisy report rather than breaking everyone's build, and the recovery is a single
+  re-record commit. A toolchain bump large enough to threaten a *ceiling* is a different matter and
+  should be caught in the bump's own validation.
+- ~~**Merge conflicts on the JSON.**~~ **Structurally impossible now.** The baseline file has a
+  single writer at a time - the matrix operator. The limits file is hand-edited rarely and is a few
+  lines long.
 - **Gating what is cheap to measure rather than what matters.** Object size is a proxy. The thing
   that actually hurt was peak compiler memory, which this cannot see. The `x86` `ccl16` release
   caveat must stay documented next to the gate so it is not mistaken for full cover.
@@ -263,12 +404,15 @@ on a gate whose reference data was guessed is how gates get switched off.
 
 ## 8. Open questions
 
-1. **Hard-fail non-x86 combos, or report only?** There is no address-space wall there, so the
-   argument is compile time and build memory. Recommendation: report only, at least through phase 3.
+1. ~~**Hard-fail non-x86 combos, or report only?**~~ **Settled by the staged rollout.** Report until
+   a platform's own numbers justify a ceiling, then enforce. The `gate` field makes it per-platform.
 2. **Tolerance values.** 2% / 1MB is a starting guess, not a measurement. Phase 1 data should set it.
 3. **Should `.pdb` and `.exe` be gated?** Recommendation: report only — disk, not address space.
-4. **Where does CI enforce?** A gate developers can skip locally needs a CI job that cannot, and that
-   job needs the full matrix, which is slow. Worth deciding whether it runs per-PR or nightly.
+4. **Should this repository have CI at all?** It has none today, which is why drift is milestone
+   scoped rather than nightly. If CI arrives it becomes the matrix operator and nothing else here
+   changes - but a cheap per-PR job running one combo for the ceiling only would be worth more than
+   the full matrix, and would make the ceiling enforceable on contributions rather than only on
+   whoever builds locally.
 5. ~~**Does the a64 ceiling of 105MB have any basis?**~~ **Answered 2026-09-14: it did not.** The
    matrix measured every combo; four exceed 105MB and the peak is 125.32MB. The placeholder above is
    now 140MB ceiling / 80MB target for non-x86, which clears the measured peak with margin - but it
