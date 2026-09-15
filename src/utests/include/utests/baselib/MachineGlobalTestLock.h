@@ -60,11 +60,31 @@ namespace test
             /**
              * @brief The hard bound after which the acquisition is declared hung
              *
-             * This matches the spirit of TestMessagingUtilsT::createNoOfConnections(), which
-             * polls, escalates at 5 minutes and rips at 15
+             * This is a hang detector - for a stale semaphore or a leftover holder, which
+             * ::semop would otherwise wait on forever - and not a bound on legitimate
+             * queueing. Real contention is nowhere near it: thirteen modules share this lock
+             * and acquire it 103 times per run, and the 2026-09-15 a64 matrix measured the
+             * worst single wait at 112-120s under -j5, or under 7% of this bound.
+             *
+             * It is raised to 30 minutes because the wait is measured against the wall clock
+             * (second_clock::universal_time below), which keeps advancing while a virtual
+             * machine is suspended. On 2026-09-14 the aarch64 VM hosting this suite was
+             * suspended for 12m43s mid-run - a gap visible in the journal, with a matching
+             * 'Clock change detected' on resume - and four modules failed the old 10 minute
+             * bound on time no process had actually spent running.
+             *
+             * A larger number only widens the window. The robust fix is to stop charging the
+             * budget for time nobody waited: the loop below already waits in fixed intervals,
+             * so counting completed intervals instead of differencing the wall clock would
+             * make a suspend cost one interval rather than its whole duration. Note that
+             * swapping in a monotonic clock is not equivalent - only Linux excludes suspended
+             * time from it, while Windows and macOS do not.
+             *
+             * Note the lock is busy ~94% of the span it is in use, so it, and not the core
+             * count, is what bounds how fast the suite can run - raising -j buys very little.
              */
 
-            ACQUIRE_TIMEOUT_IN_SECONDS = 10L * 60L,
+            ACQUIRE_TIMEOUT_IN_SECONDS = 30L * 60L,
 
             /**
              * @brief The settle time before the lock is released
