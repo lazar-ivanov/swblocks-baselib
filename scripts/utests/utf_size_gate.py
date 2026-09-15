@@ -213,7 +213,14 @@ def run( platform_dir, module_filter, summary, limits ):
     platform_tag = os.path.basename( os.path.normpath( platform_dir ) )
     entry = resolve( platform_tag, limits ) if limits is not None else None
 
-    if entry is None or entry.get( 'gate', 'off' ) == 'off':
+    if entry is None:
+        entry = {}
+
+    #
+    # 'off' silences the automatic per-module line, but never an explicit --summary: asking for
+    # the table is how an unmeasured platform gets the numbers it needs to argue a limit
+    #
+    if entry.get( 'gate', 'off' ) == 'off' and not summary:
         return 0
 
     enforcing = entry.get( 'gate' ) == 'enforce'
