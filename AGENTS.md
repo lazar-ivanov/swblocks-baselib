@@ -253,6 +253,7 @@ For unit test module rules and layout, see `src/utests/AGENTS.md`:
 
 For detailed build system documentation, see `scripts/devenv7/AGENTS.md`:
 
+- Building the full matrix on Linux, for both a64 and x64, and the scripts that drive it
 - Cross-compilation and ARCH parameter internals
 - Host architecture detection algorithm
 - devenv version gating pattern

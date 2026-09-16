@@ -21,10 +21,11 @@
 6. [Windows JNI Support (devenv7+)](#windows-jni-support-devenv7)
 7. [Python Test Suite on Windows](#python-test-suite-on-windows)
 8. [Linux x64 Testing Under Rosetta (Docker)](#linux-x64-testing-under-rosetta-docker)
-9. [ARM64 SVE Capability Reporting](#arm64-sve-capability-reporting)
-10. [Common Pitfalls](#common-pitfalls)
-11. [Archive Distribution Script](#archive-distribution-script)
-12. [Tool Versions and Compatibility](#tool-versions-and-compatibility)
+9. [Building the Full Matrix](#building-the-full-matrix)
+10. [ARM64 SVE Capability Reporting](#arm64-sve-capability-reporting)
+11. [Common Pitfalls](#common-pitfalls)
+12. [Archive Distribution Script](#archive-distribution-script)
+13. [Tool Versions and Compatibility](#tool-versions-and-compatibility)
 
 ---
 
@@ -169,6 +170,14 @@ Three environment setup scripts are **always generated** regardless of target ar
 - `setup-env-a64.bat`
 - `setup-env-x64.bat`
 - `setup-env-x86.bat`
+
+### ci-init-env.mk Is Generated Into the Dist
+
+`linux/generate-ci-init-env.sh <dist-dir-name>` writes it to `<dist>/projects/make/ci-init-env.mk`, and every distribution archive ships one already pointing at that dist — which is what the `projects/` directory inside a dist is for.
+
+- **It is gitignored, so edit it locally and freely.** It is the one build input that is per-machine rather than per-commit, so it survives a `git pull` and a branch switch, and two checkouts on one machine can point at different dists.
+- **A checkout has two ways to get one:** copy the dist's copy into `projects/make/`, or set `CI_ENV_ROOT` to the dist root. `common.mk` looks in the repo first and falls back to `CI_ENV_ROOT`, erroring if it finds neither.
+- Per-platform path examples live in root `CONTRIBUTING.md`; do not duplicate them here.
 
 ### Environment Setup Script Variants
 
@@ -505,6 +514,55 @@ compiler output through a Unix shell.
 - **PID 1 must reap orphans.** `launch.sh` runs interactive `bash` as PID 1, which reaps. Any other entry process (such as a detached container running `sleep infinity`) leaves killed grandchildren as zombies, so `kill( pid, 0 )` keeps succeeding and process group teardown tests fail. Add `--init` whenever PID 1 is not an interactive shell.
 - **Never assert an absolute child descriptor count.** Rosetta's binfmt handler passes the target binary and the interpreter into every child as non-close-on-exec descriptors, so the baseline is 8 where a native run sees 4. Measure a baseline in the same environment and compare against that instead.
 - **Keep builds at `-j1`.** Under gcc at `-O2` the largest test translation units peak near 3.7 GB resident; two parallel compiles exhaust an 8 GB VM and are OOM killed.
+
+### Confirm Rosetta Is Actually Registered
+
+**Rosetta gets silently evicted, and QEMU takes over without saying so.** `systemd-binfmt` flushes the whole table and rebuilds it from `binfmt.d/*.conf`, so the imperative registration in `rosetta-binfmt.service` is destroyed by any package that ships a binfmt drop-in — `python3.12` did it here, via `unattended-upgrade`. QEMU then SIGSEGVs inside the JVM under gradle and aborts `utf_baselib_jni` hours into a build. Analysis in [docs/rosetta-container-testing.md](docs/rosetta-container-testing.md).
+
+```bash
+# present and 'enabled' means Rosetta; absent means you are on QEMU
+cat /proc/sys/fs/binfmt_misc/rosetta
+
+# was Rosetta registered BEFORE the last flush? then it is gone
+systemctl show -p ExecMainExitTimestamp rosetta-binfmt.service systemd-binfmt.service
+```
+
+- **`docker/ubuntu/run-matrix-x64.sh` refuses to start without it.** Override with `BL_ALLOW_QEMU=1` only to reproduce the QEMU behaviour deliberately.
+- **A service that reported success at boot proves nothing hours later.** Compare the two timestamps above: if `systemd-binfmt` is the more recent, the table was rebuilt and Rosetta is gone.
+- **Fix it declaratively, not just imperatively.** Add `/etc/binfmt.d/zz-rosetta.conf` with the same line `rosetta-binfmt.service` writes, so `systemd-binfmt` re-registers it rather than dropping it. Keep the service as well, for the cold boot case where the Parallels share is not yet mounted.
+- **After any unattended upgrade touching binfmt, re-check before a long run.** `journalctl -u systemd-binfmt --since '1 day ago'` shows each rebuild.
+
+---
+
+## Building the Full Matrix
+
+`linux/run-matrix.sh` builds and tests `{gcc1520, clang2010}` x `{debug, release}` for the current host, logging each combo separately plus a summary. It builds at `-j1` and tests at `-j5`; root `AGENTS.md` carries the rule on why a whole-repo build is never parallelized.
+
+**ARCH is not a matrix dimension on Linux.** `platform.mk` assigns it from `uname -m` with no override, so a64 comes from an aarch64 host and x64 from an amd64 container. That is four combos per architecture — the twelve-combo matrix is a Windows shape, where `ARCH=` is a real parameter.
+
+### a64, on the host
+
+```bash
+./scripts/devenv7/linux/run-matrix.sh
+```
+
+### x64, in a container
+
+`docker/ubuntu/run-matrix-x64.sh` runs that same script under `linux/amd64` against a **separate checkout and dist** bind mounted from `$HOME/x64_home`. Prepare both, then run:
+
+```bash
+cd ~/x64_home/dev/github/swblocks-baselib && git pull
+cd ~/x64_home && tar -xf swblocks/tar/dist-devenv7-ub24-gcc1520-clang2010-x64.tar.gz
+./scripts/devenv7/docker/ubuntu/run-matrix-x64.sh
+```
+
+- **Unpack a dist tarball from the home directory it belongs to.** The paths inside are relative (`swblocks/dist-...`), so `cd ~/x64_home` first; unpacking from elsewhere silently puts the dist where no makefile will look for it.
+- **The two checkouts keep their own `ci-init-env.mk`,** so syncing the x64 one to the a64 commit does not drag the a64 dist path across — see the Build System section on why that file is per-machine.
+- **`--init` and an explicit `HOME` are both required,** and `launch.sh` sets neither because it is for interactive use. The wrapper sets both — `--init` for the reaping the section above describes, `HOME` because `ci-init-env.mk` derives `DIST_ROOT_DEPS*` from it and Docker does not set it for `--user uid:gid`.
+
+### Disk
+
+One architecture wants roughly 22 GB: ~8 GB for an unpacked dist and ~14 GB for four build trees. Both are reproducible — trees by rebuilding, dists by unpacking `swblocks/tar/*.tar.gz` again — so freeing space for the other architecture means deleting `bld/` and the unpacked dist, never a tarball. `run-matrix.sh --min-free-mb` stops before a combo instead of dying mid-link, where `.DELETE_ON_ERROR` and a truncated object make the cause hard to read back.
 
 ---
 
