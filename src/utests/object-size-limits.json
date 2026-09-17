@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "_comment": [
+    "Per-object size limits for unit test modules. See",
+    "notes/plans/test-module-size-gate-plan.md for the design and",
+    "src/utests/AGENTS.md for what to do when a module gets close.",
+    "",
+    "Keys are glob patterns matched against the build directory name,",
+    "which is OS-ARCH-TOOLCHAIN-VARIANT. The MOST SPECIFIC pattern wins,",
+    "measured by the number of non-wildcard characters.",
+    "",
+    "gate: enforce - over ceiling fails the build",
+    "      report  - print the line, never fail",
+    "      off     - silent",
+    "",
+    "ROLLOUT STAGE 0: win-x86 debug only.",
+    "",
+    "That is narrower than 'Windows x86' on purpose. The 75MB ceiling was",
+    "calibrated against a 32-bit clang-cl crash on a debug object, and the",
+    "2026-09-14 matrix measured win-x86-vc143-release at 96.77MB - above 75,",
+    "and building perfectly well. Object size is a proxy for peak compiler",
+    "memory, and the proxy is only calibrated for debug. Enforcing 75 across",
+    "both variants would fail a build that has never had a problem.",
+    "",
+    "So release is measured but not limited until a number is argued from its",
+    "own data. Everything outside win-x86 is off: Linux and macOS objects have",
+    "never been measured here at all, and a gate with guessed numbers fires",
+    "spuriously, and a gate that fires spuriously gets switched off for good."
+  ],
+  "limits": {
+    "win-x86-*-debug": {
+      "target_mb": 40,
+      "ceiling_mb": 75,
+      "gate": "enforce",
+      "why": "32-bit toolchain, ~2GB address space. The one ceiling calibrated against a real failure: clang-cl 16 died with 0xC000001D on a 112.68MB object. Measured peak after the split is 72.26MB (vc143) and 74.33MB (ccl16)."
+    },
+    "win-x86-*-release": {
+      "target_mb": 40,
+      "ceiling_mb": 75,
+      "gate": "report",
+      "why": "Measured 96.77MB (vc143) and 35.69MB (ccl16) on 2026-09-14, so vc143 release is already well over the debug ceiling and builds fine. Reports against the debug numbers only to make the gap visible; needs its own limit argued before it can enforce."
+    },
+    "*": {
+      "gate": "off",
+      "why": "Stage 0. win-a64 and win-x64 move to report at stage 1, then enforce at stage 2. Linux and macOS have never been measured."
+    }
+  }
+}

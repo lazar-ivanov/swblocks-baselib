@@ -84,3 +84,50 @@ Measured on a 2-core, 8 GB VM with Rosetta emulation, building all test modules 
 Each test module is essentially one large translation unit compiled against a header-only library, so the build is dominated by ~19 long single-file compiles rather than by many short ones. That makes the wall-clock cost fairly insensitive to caching and largely proportional to the number of cells built.
 
 Memory is the binding constraint on parallelism. Under gcc at `-O2`, `cc1plus` on the largest test translation units (`UtfBaselibMessagingMain.cpp` in particular) peaks near 3.7 GB resident. Two such compiles in parallel will exhaust an 8 GB VM and invite the OOM killer, which surfaces as an opaque `Killed` partway through the build. Keeping the build at `-j1` avoids this; test execution is far lighter and parallelises safely.
+
+---
+
+## Rosetta Silently Reverts to QEMU
+
+Both Rosetta and `qemu-x86_64` answer for x86_64 ELF, so when Rosetta is missing the fallback is
+silent. It is not simply slower. `qemu-user` dies inside the JVM under gradle:
+
+```
+x86_64-binfmt-P: QEMU internal SIGSEGV {code=MAPERR, addr=0x20}
+```
+
+The JVM alone is fine — `java -version` runs clean — so this only surfaces once something drives it
+hard, which in this repo is the `utf_baselib_jni` gradle step. The build then aborts with
+`Aborted (core dumped)` hours in, after every other target has compiled.
+
+### Why registration disappears
+
+`rosetta-binfmt.service` registers **imperatively**, writing to
+`/proc/sys/fs/binfmt_misc/register` at boot. It therefore owns no `.conf` file.
+
+`systemd-binfmt.service` **flushes the entire table** and rebuilds it from `/usr/lib/binfmt.d/` and
+`/etc/binfmt.d/` only. Anything registered imperatively is collateral. It runs whenever a package
+shipping a binfmt drop-in is installed or upgraded — there is no need for that package to have
+anything to do with emulation.
+
+Observed on 2026-09-15:
+
+| Time | Event |
+|---|---|
+| Sep 14 20:39:33 | `rosetta-binfmt.service` registers `rosetta` at boot |
+| Sep 15 06:51:05 | `unattended-upgrade` upgrades `python3.12`, which ships `/usr/lib/binfmt.d/python3.12.conf` |
+| Sep 15 06:51:08 | `systemd-binfmt.service` runs, flushes, re-registers only `.conf` files — `rosetta` is gone |
+| Sep 15 13:10 | x64 matrix starts on QEMU with no indication of the substitution |
+| Sep 15 ~16:00 | QEMU SIGSEGVs in gradle; `utf_baselib_jni` aborts after ~3 h of healthy compiling |
+
+Unattended upgrades make this a recurring condition, not a one-off.
+
+### The durable fix
+
+Register Rosetta declaratively as well, so `systemd-binfmt` re-creates it instead of destroying it.
+`/etc/binfmt.d/zz-rosetta.conf` takes the same colon-delimited line the service writes; the `zz-`
+prefix makes it the last drop-in read, so it outranks `qemu-x86_64.conf`.
+
+Keep `rosetta-binfmt.service` too. `/media/psf/RosettaLinux` is a Parallels share that may not be
+mounted when `systemd-binfmt` runs early at boot, which is what the service's wait loop exists for.
+The drop-in covers re-registration after upgrades; the service covers cold boot.

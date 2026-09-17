@@ -2,9 +2,6 @@
 --log_level=message --run_test=IO_BasicMessageDispatcherTests
 --log_level=message --run_test=IO_BinaryProtocolInvariants
 --log_level=message --run_test=IO_MaxConnectionsTest
---log_level=message --run_test=IO_MessagingBackendProcessingHelpers
---log_level=message --run_test=IO_MessagingClientBlockDispatchLocalTests
---log_level=message --run_test=IO_MessagingClientTests
 --log_level=message --run_test=IO_PerfStartClient --is-client
 --log_level=message --run_test=IO_PerfStartServer --is-server
 --log_level=message --run_test=IO_PerfStartMessageDispatcherServer --is-server

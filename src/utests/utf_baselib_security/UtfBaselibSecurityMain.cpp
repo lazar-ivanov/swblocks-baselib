@@ -17,12 +17,16 @@
 #define UTF_TEST_MODULE utf_baselib_security
 #include <utests/baselib/UtfMain.h>
 
+/*
+ * The hashing and signing tests. The crypto and PEM key format cases now live in
+ * utf_baselib_security2, and the authorization cache and service cases in utf_baselib_security3,
+ * so that no single test translation unit exhausts a 32-bit compiler host - see
+ * notes/reviews/major/update_2026/test-module-split-plan.md
+ *
+ * Nothing here reads a data file or takes the machine global test lock, which is why this module
+ * has no data directory
+ */
+
 #include "TestHashUtils.h"
 #include "TestHmacSha256.h"
-#include "TestBignumBase64Url.h"
 #include "TestRsaSignVerify.h"
-#include "TestCryptoUtils.h"
-#include "TestPemKeyFormats.h"
-#include "TestAuthorizationCacheImpl.h"
-#include "TestAuthorizationCacheRestImpl.h"
-#include "TestAuthorizationServiceRest.h"

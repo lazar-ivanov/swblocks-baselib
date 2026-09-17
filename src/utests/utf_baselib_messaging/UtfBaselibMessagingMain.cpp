@@ -17,6 +17,4 @@
 #define UTF_TEST_MODULE utf_baselib_messaging
 #include <utests/baselib/UtfMain.h>
 
-#include "TestServerMonitoring.h"
 #include "TestMessagingDefault.h"
-#include "TestAsyncRpcDataModel.h"

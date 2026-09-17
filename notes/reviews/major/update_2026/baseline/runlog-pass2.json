@@ -1,0 +1,6953 @@
+{
+ "utf_baselib": {
+  "cases": {
+   "BaseLib_AppInitDoneDefaultPoolsTests": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_Base64EncodingTests": {
+    "assertions": 16,
+    "assertions_total": 16,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_Base64Tests": {
+    "assertions": 1065,
+    "assertions_total": 1065,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_Base64UrlTests": {
+    "assertions": 16390,
+    "assertions_total": 16390,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_BaseDefsTests": {
+    "assertions": 66,
+    "assertions_total": 66,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_BoxedValueObjectTests": {
+    "assertions": 12,
+    "assertions_total": 12,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_ContainerHelperTests": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_CopyDirectoryWithContentTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_DataBlockCheckedSettersTests": {
+    "assertions": 19,
+    "assertions_total": 19,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_DataBlockPoolAndCopyTests": {
+    "assertions": 26,
+    "assertions_total": 26,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_DataBlockReadWriteCodecTests": {
+    "assertions": 21,
+    "assertions_total": 21,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_DataBlockTests": {
+    "assertions": 27,
+    "assertions_total": 27,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_DataEnsureAvailableTests": {
+    "assertions": 14,
+    "assertions_total": 14,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_Default": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_EcUtilsCheckErrorCodeAndRoundTrip": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_EcUtilsGetErrorCodeMapping": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_EhExceptionHooksTests": {
+    "assertions": 11,
+    "assertions_total": 11,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_EhGenerateAbort": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_EhGenerateAssertionFailure": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_EhGenerateCrash": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_EhGenerateInvalidParameter": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_EhGenerateTermination": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_EndpointSelectorImplTests": {
+    "assertions": 895,
+    "assertions_total": 895,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_EnumUtilsTests": {
+    "assertions": 22,
+    "assertions_total": 22,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_ExecutionTimerTests": {
+    "assertions": 17,
+    "assertions_total": 17,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_FloatingPointEqualTests": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_GetSPNEGOTokenTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_GetUserDomainTests": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_GroupByTest": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_HttpGlobalsTests": {
+    "assertions": 14,
+    "assertions_total": 14,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_LfnPrefixesTests": {
+    "assertions": 35,
+    "assertions_total": 35,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_LfnUNCPathTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_LoggableCounterTests": {
+    "assertions": 17,
+    "assertions_total": 17,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_LoggingBasicTests": {
+    "assertions": 54,
+    "assertions_total": 54,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_LoggingConcurrencyTests": {
+    "assertions": 151,
+    "assertions_total": 151,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_LoggingLevelPrecedenceTests": {
+    "assertions": 11,
+    "assertions_total": 11,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_LoggingMultiLineTests": {
+    "assertions": 12,
+    "assertions_total": 12,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_LoggingThreadLocalTest": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_LoggingVerboseModeTests": {
+    "assertions": 13,
+    "assertions_total": 13,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_MachineGlobalTestLockExcludesConcurrentAcquirerTests": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_NamedMutexRobustnessTests": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_NamedMutexTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_NetworkByteOrderFunctionsTests": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_NetworkHelperFunctionsTests": {
+    "assertions": 9,
+    "assertions_total": 9,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSClientCheckTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSCreateProcessArgvQuotingWindowsTests": {
+    "assertions": 81,
+    "assertions_total": 81,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSCreateProcessDetachedWindowsTests": {
+    "assertions": 20,
+    "assertions_total": 20,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSCreateProcessMergedWithFileCallbackTests": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSCreateProcessNonAsciiCommandLineWindowsTests": {
+    "assertions": 16,
+    "assertions_total": 16,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSCreateProcessRedirectedMergedTests": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSCreateProcessRedirectedTests": {
+    "assertions": 24,
+    "assertions_total": 24,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSCreateProcessTests": {
+    "assertions": 11,
+    "assertions_total": 11,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSCreateProcessTests2": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSCreateProcessThreadHandleLeakWindowsTests": {
+    "assertions": 105,
+    "assertions_total": 105,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSDeletePathTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSGetConsoleSizeTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSGetCurrentExecutablePathTests": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSGetLocalAppDataDirTests": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSGetPidTests": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSGetSetEnvVarTests": {
+    "assertions": 18,
+    "assertions_total": 18,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSGetSetFileCreateTimeTests": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSGetUserNameTests": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSHardlinkTests": {
+    "assertions": 15,
+    "assertions_total": 15,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSJunctionPrintNameWindowsTests": {
+    "assertions": 10,
+    "assertions_total": 10,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSJunctionsTests": {
+    "assertions": 18,
+    "assertions_total": 18,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSLargeFileSupportTests": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSLoggedInUserNamesTests": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSLongFileNamesAppVerifCrashTests": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSLongFileNamesWindowsTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSNamedMutexNonAsciiNameWindowsTests": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSPathPermissionsNonAsciiWindowsTests": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSReadFromInputTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSRegistryHiveDiagnosticsWindowsTests": {
+    "assertions": 210,
+    "assertions_total": 210,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSRegistryValueTest": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSResourceLimitsWindowsTests": {
+    "assertions": 10,
+    "assertions_total": 10,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSSharedLibTests": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSStdioReadWriteErrorTests": {
+    "assertions": 13,
+    "assertions_total": 13,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSTerminateProcessTree": {
+    "assertions": 11,
+    "assertions_total": 11,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSTryAwaitTerminationTests": {
+    "assertions": 11,
+    "assertions_total": 11,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSUserDomainEnvironmentWindowsTests": {
+    "assertions": 10,
+    "assertions_total": 10,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_OSValidateProcessRedirectFlagsTests": {
+    "assertions": 10,
+    "assertions_total": 10,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_ParamFwding": {
+    "assertions": 30,
+    "assertions_total": 30,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_PathUtilsTests": {
+    "assertions": 263,
+    "assertions_total": 263,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_ProfilesDirectoryTests": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_PublicHeadersAreSelfContainedAndInstantiable": {
+    "assertions": 34,
+    "assertions_total": 34,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_RandomSeedTests": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_RandomTests": {
+    "assertions": 2302,
+    "assertions_total": 2302,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_RetryOnErrorTests": {
+    "assertions": 29,
+    "assertions_total": 29,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_SafeCoerceToTests": {
+    "assertions": 16,
+    "assertions_total": 16,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_SafeStringStreamTests": {
+    "assertions": 15,
+    "assertions_total": 15,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_SafeUniquePtrAndContainersTests": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_SafeUniquePtrTests": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_ScalarTypeIniterTests": {
+    "assertions": 28,
+    "assertions_total": 28,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_SimpleEndpointSelectorImplTests": {
+    "assertions": 93,
+    "assertions_total": 93,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_SortedVectorHelperTests": {
+    "assertions": 160602,
+    "assertions_total": 160602,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_StdioTextLockTests": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_StringUtilsDataRateTests": {
+    "assertions": 19,
+    "assertions_total": 19,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_StringUtilsDeadHelpersTests": {
+    "assertions": 25,
+    "assertions_total": 25,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_StringUtilsFormatMessageTests": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_StringUtilsFormatPercentTests": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_StringUtilsGetBeginning": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_StringUtilsGetEnding": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_StringUtilsJoinFormattedTests": {
+    "assertions": 9,
+    "assertions_total": 9,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_StringUtilsParsePropertiesListTests": {
+    "assertions": 26,
+    "assertions_total": 26,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_StringUtilsSecureStringWrapper": {
+    "assertions": 46,
+    "assertions_total": 46,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_StringUtilsSplitTests": {
+    "assertions": 72,
+    "assertions_total": 72,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_StringUtilsWipe": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TableTests": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TaggedPoolTests": {
+    "assertions": 22,
+    "assertions_total": 22,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TestCheckArgumentMacro": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TestChkErrnoMacro": {
+    "assertions": 9,
+    "assertions_total": 9,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TestErrorCodeFromExceptionPtr": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TestErrorCodeToStringAndHasher": {
+    "assertions": 10,
+    "assertions_total": 10,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TestErrorHandling": {
+    "assertions": 32,
+    "assertions_total": 32,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TestFsUtilsComparatorSelfTests": {
+    "assertions": 17,
+    "assertions_total": 17,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TestIsErrorConditionTests": {
+    "assertions": 9,
+    "assertions_total": 9,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TestMessageBuffer": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TestNestedExceptionDiagnostics": {
+    "assertions": 11,
+    "assertions_total": 11,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TestScopeExitWarnOnFailure": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TestScopeGuard": {
+    "assertions": 23,
+    "assertions_total": 23,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TestSystemExceptionCreateTests": {
+    "assertions": 29,
+    "assertions_total": 29,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TestUserFriendlyExceptionMacros": {
+    "assertions": 41,
+    "assertions_total": 41,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TestUserMessageException": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TestUuid": {
+    "assertions": 32,
+    "assertions_total": 32,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TestUuidGeneratorContract": {
+    "assertions": 503,
+    "assertions_total": 503,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TestUuidIteratorImpl": {
+    "assertions": 21,
+    "assertions_total": 21,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TestUuidPerformance": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TestUuidUniqueness": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TestUuidUniquenessMultiThreaded": {
+    "assertions": 31,
+    "assertions_total": 31,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TextFilesEncodingTests": {
+    "assertions": 44,
+    "assertions_total": 44,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_ThreadPoolDefaultRegistryTests": {
+    "assertions": 15,
+    "assertions_total": 15,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_ThreadPoolExceptionHandlingTests": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_ThreadPoolTests": {
+    "assertions": 14,
+    "assertions_total": 14,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TreeTests": {
+    "assertions": 73,
+    "assertions_total": 73,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TryCatchLogTests": {
+    "assertions": 16,
+    "assertions_total": 16,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_URIEncodeDecodeTests": {
+    "assertions": 657,
+    "assertions_total": 657,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_UniqueHandleTests": {
+    "assertions": 49,
+    "assertions_total": 49,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_UnorderedMapTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_Utf8ToIso88591SimpleTests": {
+    "assertions": 171,
+    "assertions_total": 171,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_UtilsFindLastTests": {
+    "assertions": 15,
+    "assertions_total": 15,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_UuidTestDeclareMacro": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_copyDirectoryPermissions_Tests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BoostAsioCompat_AsyncConnectIteratorForm": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BoostAsioCompat_AsyncConnectIteratorFormFailurePaths": {
+    "assertions": 9,
+    "assertions_total": 9,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BoostAsioCompat_AsyncConnectRangeForm": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BoostAsioCompat_IoContextPostDefersHandler": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BoostAsioCompat_IoServiceWorkHoldsAndReleases": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BoostAsioCompat_ResolverAllMatchingFlag": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BoostAsioCompat_ResolverAsyncHandlerIsStoredByValue": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BoostAsioCompat_ResolverAsyncNumericHostFlagAndFailureIterator": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BoostAsioCompat_ResolverCanonicalNameFlag": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BoostAsioCompat_ResolverIcmpProtocolConstraint": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BoostAsioCompat_ResolverNumericHostFlag": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BoostAsioCompat_ResolverPassiveDefaultFlags": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BoostAsioCompat_ResolverProtocolConstraintAsync": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BoostAsioCompat_ResolverProtocolConstraintSync": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BoostAsioCompat_ResolverQueryAccessors": {
+    "assertions": 17,
+    "assertions_total": 17,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BoostAsioCompat_ResolverStringOverloadsRemainVisible": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BoostAsioCompat_ResolverThrowingOverloadRoutesThroughErrorCallback": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BoostAsioErrorCallback_DefaultPathWithNullLocation": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BoostAsioErrorCallback_InstallAndRestore": {
+    "assertions": 13,
+    "assertions_total": 13,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DateTimeValidation_GetDateAndGetDateTime": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DateTimeValidation_GetDayOfWeek": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DateTimeValidation_ValidateDayOfWeek": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DateTimeValidation_ValidateStartEndRange": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DateTimeValidation_ValidateTime": {
+    "assertions": 11,
+    "assertions_total": 11,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "FsUtils_CopyDirectoryWithContentsTests": {
+    "assertions": 15,
+    "assertions_total": 15,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "FsUtils_JunctionsTests": {
+    "assertions": 30,
+    "assertions_total": 30,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "FsUtils_SafeFileStreamWrapperSeekTests": {
+    "assertions": 11,
+    "assertions_total": 11,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "FsUtils_SafeFileStreamWrapperTests": {
+    "assertions": 3010,
+    "assertions_total": 3010,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "FsUtils_TestCopyErrorCodeOverload": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "FsUtils_TestCreateLockFile": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "FsUtils_TestCreateTempDirAndCreateDirectory": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "FsUtils_TestMakeHidden": {
+    "assertions": 13,
+    "assertions_total": 13,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "FsUtils_TestMkdirs": {
+    "assertions": 3021,
+    "assertions_total": 3021,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "FsUtils_TestNormalize": {
+    "assertions": 24,
+    "assertions_total": 24,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "FsUtils_TestSafeRemove": {
+    "assertions": 23,
+    "assertions_total": 23,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "FsUtils_TestSafeRemoveAll": {
+    "assertions": 10,
+    "assertions_total": 10,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "NetUtils_IcmpHeaderTests": {
+    "assertions": 30,
+    "assertions_total": 30,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "NetUtils_Ipv4HeaderTests": {
+    "assertions": 17,
+    "assertions_total": 17,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "NetUtils_RemoteEndpointIdTests": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "NetUtils_tryParseEndpointTest": {
+    "assertions": 35,
+    "assertions_total": 35,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ObjModel_BasicTests": {
+    "assertions": 40,
+    "assertions_total": 40,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ObjModel_FactoryTests": {
+    "assertions": 11,
+    "assertions_total": 11,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ObjModel_GlobalApiTests": {
+    "assertions": 15,
+    "assertions_total": 15,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ObjModel_InterfaceDefinitionsTests": {
+    "assertions": 15,
+    "assertions_total": 15,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ObjModel_LoaderResetRestoredModuleStateTests": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ObjModel_LoaderResetTests": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ObjModel_MakeSharedTests": {
+    "assertions": 9,
+    "assertions_total": 9,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ObjModel_MyObjectImplTests": {
+    "assertions": 9,
+    "assertions_total": 9,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ObjModel_ObjPtrDisposableTests": {
+    "assertions": 38,
+    "assertions_total": 38,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ObjModel_ProxyImplGuardTests": {
+    "assertions": 13,
+    "assertions_total": 13,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ObjModel_ProxyImplStrongRefTests": {
+    "assertions": 14,
+    "assertions_total": 14,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ObjModel_ProxyImplTests": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ObjModel_RefCountBalanceTests": {
+    "assertions": 42,
+    "assertions_total": 42,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ObjModel_SharedPtrLifetimeTests": {
+    "assertions": 25,
+    "assertions_total": 25,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ObjModel_SharedPtrTests": {
+    "assertions": 18,
+    "assertions_total": 18,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ObjModel_SingleThreadedObjectImplTests": {
+    "assertions": 18,
+    "assertions_total": 18,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestISOTimeFormat": {
+    "assertions": 25,
+    "assertions_total": 25,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestTimeZoneData": {
+    "assertions": 22,
+    "assertions_total": 22,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestTimeZoneOffsetIsValidPosixSpec": {
+    "assertions": 36,
+    "assertions_total": 36,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestTransaction1": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestTransaction2": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestTransaction3": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestTransaction4": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestTransaction5": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestTransactionRollbackFailure": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestWatchdogArgumentValidation": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestWatchdogExceedMaxMonitors1": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestWatchdogExceedMaxMonitors2": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestWatchdogExpring": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestWatchdogMultipleMonitorsDeterministic": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestWatchdogNoTermination": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestWatchdogNoUpdates": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestWatchdogOneIteration": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestWatchdogSetupMonitor": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestWatchdogSomeUpdates": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestWindowsToOlsonMappingConsistency": {
+    "assertions": 27,
+    "assertions_total": 27,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   }
+  },
+  "clean": true,
+  "entered": [
+   "BaseLib_AppInitDoneDefaultPoolsTests",
+   "BaseLib_Base64EncodingTests",
+   "BaseLib_Base64Tests",
+   "BaseLib_Base64UrlTests",
+   "BaseLib_BaseDefsTests",
+   "BaseLib_BoxedValueObjectTests",
+   "BaseLib_ContainerHelperTests",
+   "BaseLib_CopyDirectoryWithContentTests",
+   "BaseLib_DataBlockCheckedSettersTests",
+   "BaseLib_DataBlockPoolAndCopyTests",
+   "BaseLib_DataBlockReadWriteCodecTests",
+   "BaseLib_DataBlockTests",
+   "BaseLib_DataEnsureAvailableTests",
+   "BaseLib_Default",
+   "BaseLib_EcUtilsCheckErrorCodeAndRoundTrip",
+   "BaseLib_EcUtilsGetErrorCodeMapping",
+   "BaseLib_EhExceptionHooksTests",
+   "BaseLib_EhGenerateAbort",
+   "BaseLib_EhGenerateAssertionFailure",
+   "BaseLib_EhGenerateCrash",
+   "BaseLib_EhGenerateInvalidParameter",
+   "BaseLib_EhGenerateTermination",
+   "BaseLib_EndpointSelectorImplTests",
+   "BaseLib_EnumUtilsTests",
+   "BaseLib_ExecutionTimerTests",
+   "BaseLib_FloatingPointEqualTests",
+   "BaseLib_GetSPNEGOTokenTests",
+   "BaseLib_GetUserDomainTests",
+   "BaseLib_GroupByTest",
+   "BaseLib_HttpGlobalsTests",
+   "BaseLib_LfnPrefixesTests",
+   "BaseLib_LfnUNCPathTests",
+   "BaseLib_LoggableCounterTests",
+   "BaseLib_LoggingBasicTests",
+   "BaseLib_LoggingConcurrencyTests",
+   "BaseLib_LoggingLevelPrecedenceTests",
+   "BaseLib_LoggingMultiLineTests",
+   "BaseLib_LoggingThreadLocalTest",
+   "BaseLib_LoggingVerboseModeTests",
+   "BaseLib_MachineGlobalTestLockExcludesConcurrentAcquirerTests",
+   "BaseLib_NamedMutexRobustnessTests",
+   "BaseLib_NamedMutexTests",
+   "BaseLib_NetworkByteOrderFunctionsTests",
+   "BaseLib_NetworkHelperFunctionsTests",
+   "BaseLib_OSClientCheckTests",
+   "BaseLib_OSCreateProcessArgvQuotingWindowsTests",
+   "BaseLib_OSCreateProcessDetachedWindowsTests",
+   "BaseLib_OSCreateProcessMergedWithFileCallbackTests",
+   "BaseLib_OSCreateProcessNonAsciiCommandLineWindowsTests",
+   "BaseLib_OSCreateProcessRedirectedMergedTests",
+   "BaseLib_OSCreateProcessRedirectedTests",
+   "BaseLib_OSCreateProcessTests",
+   "BaseLib_OSCreateProcessTests2",
+   "BaseLib_OSCreateProcessThreadHandleLeakWindowsTests",
+   "BaseLib_OSDeletePathTests",
+   "BaseLib_OSGetConsoleSizeTests",
+   "BaseLib_OSGetCurrentExecutablePathTests",
+   "BaseLib_OSGetLocalAppDataDirTests",
+   "BaseLib_OSGetPidTests",
+   "BaseLib_OSGetSetEnvVarTests",
+   "BaseLib_OSGetSetFileCreateTimeTests",
+   "BaseLib_OSGetUserNameTests",
+   "BaseLib_OSHardlinkTests",
+   "BaseLib_OSJunctionPrintNameWindowsTests",
+   "BaseLib_OSJunctionsTests",
+   "BaseLib_OSLargeFileSupportTests",
+   "BaseLib_OSLoggedInUserNamesTests",
+   "BaseLib_OSLongFileNamesAppVerifCrashTests",
+   "BaseLib_OSLongFileNamesWindowsTests",
+   "BaseLib_OSNamedMutexNonAsciiNameWindowsTests",
+   "BaseLib_OSPathPermissionsNonAsciiWindowsTests",
+   "BaseLib_OSReadFromInputTests",
+   "BaseLib_OSRegistryHiveDiagnosticsWindowsTests",
+   "BaseLib_OSRegistryValueTest",
+   "BaseLib_OSResourceLimitsWindowsTests",
+   "BaseLib_OSSharedLibTests",
+   "BaseLib_OSStdioReadWriteErrorTests",
+   "BaseLib_OSTerminateProcessTree",
+   "BaseLib_OSTryAwaitTerminationTests",
+   "BaseLib_OSUserDomainEnvironmentWindowsTests",
+   "BaseLib_OSValidateProcessRedirectFlagsTests",
+   "BaseLib_ParamFwding",
+   "BaseLib_PathUtilsTests",
+   "BaseLib_ProfilesDirectoryTests",
+   "BaseLib_PublicHeadersAreSelfContainedAndInstantiable",
+   "BaseLib_RandomSeedTests",
+   "BaseLib_RandomTests",
+   "BaseLib_RetryOnErrorTests",
+   "BaseLib_SafeCoerceToTests",
+   "BaseLib_SafeStringStreamTests",
+   "BaseLib_SafeUniquePtrAndContainersTests",
+   "BaseLib_SafeUniquePtrTests",
+   "BaseLib_ScalarTypeIniterTests",
+   "BaseLib_SimpleEndpointSelectorImplTests",
+   "BaseLib_SortedVectorHelperTests",
+   "BaseLib_StdioTextLockTests",
+   "BaseLib_StringUtilsDataRateTests",
+   "BaseLib_StringUtilsDeadHelpersTests",
+   "BaseLib_StringUtilsFormatMessageTests",
+   "BaseLib_StringUtilsFormatPercentTests",
+   "BaseLib_StringUtilsGetBeginning",
+   "BaseLib_StringUtilsGetEnding",
+   "BaseLib_StringUtilsJoinFormattedTests",
+   "BaseLib_StringUtilsParsePropertiesListTests",
+   "BaseLib_StringUtilsSecureStringWrapper",
+   "BaseLib_StringUtilsSplitTests",
+   "BaseLib_StringUtilsWipe",
+   "BaseLib_TableTests",
+   "BaseLib_TaggedPoolTests",
+   "BaseLib_TestCheckArgumentMacro",
+   "BaseLib_TestChkErrnoMacro",
+   "BaseLib_TestErrorCodeFromExceptionPtr",
+   "BaseLib_TestErrorCodeToStringAndHasher",
+   "BaseLib_TestErrorHandling",
+   "BaseLib_TestFsUtilsComparatorSelfTests",
+   "BaseLib_TestIsErrorConditionTests",
+   "BaseLib_TestMessageBuffer",
+   "BaseLib_TestNestedExceptionDiagnostics",
+   "BaseLib_TestScopeExitWarnOnFailure",
+   "BaseLib_TestScopeGuard",
+   "BaseLib_TestSystemExceptionCreateTests",
+   "BaseLib_TestUserFriendlyExceptionMacros",
+   "BaseLib_TestUserMessageException",
+   "BaseLib_TestUuid",
+   "BaseLib_TestUuidGeneratorContract",
+   "BaseLib_TestUuidIteratorImpl",
+   "BaseLib_TestUuidPerformance",
+   "BaseLib_TestUuidUniqueness",
+   "BaseLib_TestUuidUniquenessMultiThreaded",
+   "BaseLib_TextFilesEncodingTests",
+   "BaseLib_ThreadPoolDefaultRegistryTests",
+   "BaseLib_ThreadPoolExceptionHandlingTests",
+   "BaseLib_ThreadPoolTests",
+   "BaseLib_TreeTests",
+   "BaseLib_TryCatchLogTests",
+   "BaseLib_URIEncodeDecodeTests",
+   "BaseLib_UniqueHandleTests",
+   "BaseLib_UnorderedMapTests",
+   "BaseLib_Utf8ToIso88591SimpleTests",
+   "BaseLib_UtilsFindLastTests",
+   "BaseLib_UuidTestDeclareMacro",
+   "BaseLib_copyDirectoryPermissions_Tests",
+   "BoostAsioCompat_AsyncConnectIteratorForm",
+   "BoostAsioCompat_AsyncConnectIteratorFormFailurePaths",
+   "BoostAsioCompat_AsyncConnectRangeForm",
+   "BoostAsioCompat_IoContextPostDefersHandler",
+   "BoostAsioCompat_IoServiceWorkHoldsAndReleases",
+   "BoostAsioCompat_ResolverAllMatchingFlag",
+   "BoostAsioCompat_ResolverAsyncHandlerIsStoredByValue",
+   "BoostAsioCompat_ResolverAsyncNumericHostFlagAndFailureIterator",
+   "BoostAsioCompat_ResolverCanonicalNameFlag",
+   "BoostAsioCompat_ResolverIcmpProtocolConstraint",
+   "BoostAsioCompat_ResolverNumericHostFlag",
+   "BoostAsioCompat_ResolverPassiveDefaultFlags",
+   "BoostAsioCompat_ResolverProtocolConstraintAsync",
+   "BoostAsioCompat_ResolverProtocolConstraintSync",
+   "BoostAsioCompat_ResolverQueryAccessors",
+   "BoostAsioCompat_ResolverStringOverloadsRemainVisible",
+   "BoostAsioCompat_ResolverThrowingOverloadRoutesThroughErrorCallback",
+   "BoostAsioErrorCallback_DefaultPathWithNullLocation",
+   "BoostAsioErrorCallback_InstallAndRestore",
+   "DateTimeValidation_GetDateAndGetDateTime",
+   "DateTimeValidation_GetDayOfWeek",
+   "DateTimeValidation_ValidateDayOfWeek",
+   "DateTimeValidation_ValidateStartEndRange",
+   "DateTimeValidation_ValidateTime",
+   "FsUtils_CopyDirectoryWithContentsTests",
+   "FsUtils_JunctionsTests",
+   "FsUtils_SafeFileStreamWrapperSeekTests",
+   "FsUtils_SafeFileStreamWrapperTests",
+   "FsUtils_TestCopyErrorCodeOverload",
+   "FsUtils_TestCreateLockFile",
+   "FsUtils_TestCreateTempDirAndCreateDirectory",
+   "FsUtils_TestMakeHidden",
+   "FsUtils_TestMkdirs",
+   "FsUtils_TestNormalize",
+   "FsUtils_TestSafeRemove",
+   "FsUtils_TestSafeRemoveAll",
+   "NetUtils_IcmpHeaderTests",
+   "NetUtils_Ipv4HeaderTests",
+   "NetUtils_RemoteEndpointIdTests",
+   "NetUtils_tryParseEndpointTest",
+   "ObjModel_BasicTests",
+   "ObjModel_FactoryTests",
+   "ObjModel_GlobalApiTests",
+   "ObjModel_InterfaceDefinitionsTests",
+   "ObjModel_LoaderResetRestoredModuleStateTests",
+   "ObjModel_LoaderResetTests",
+   "ObjModel_MakeSharedTests",
+   "ObjModel_MyObjectImplTests",
+   "ObjModel_ObjPtrDisposableTests",
+   "ObjModel_ProxyImplGuardTests",
+   "ObjModel_ProxyImplStrongRefTests",
+   "ObjModel_ProxyImplTests",
+   "ObjModel_RefCountBalanceTests",
+   "ObjModel_SharedPtrLifetimeTests",
+   "ObjModel_SharedPtrTests",
+   "ObjModel_SingleThreadedObjectImplTests",
+   "TestISOTimeFormat",
+   "TestTimeZoneData",
+   "TestTimeZoneOffsetIsValidPosixSpec",
+   "TestTransaction1",
+   "TestTransaction2",
+   "TestTransaction3",
+   "TestTransaction4",
+   "TestTransaction5",
+   "TestTransactionRollbackFailure",
+   "TestWatchdogArgumentValidation",
+   "TestWatchdogExceedMaxMonitors1",
+   "TestWatchdogExceedMaxMonitors2",
+   "TestWatchdogExpring",
+   "TestWatchdogMultipleMonitorsDeterministic",
+   "TestWatchdogNoTermination",
+   "TestWatchdogNoUpdates",
+   "TestWatchdogOneIteration",
+   "TestWatchdogSetupMonitor",
+   "TestWatchdogSomeUpdates",
+   "TestWindowsToOlsonMappingConsistency"
+  ],
+  "exit": 0,
+  "expected": 218,
+  "failures": null,
+  "incomplete": [],
+  "registered": [
+   "BaseLib_AppInitDoneDefaultPoolsTests",
+   "BaseLib_Base64EncodingTests",
+   "BaseLib_Base64Tests",
+   "BaseLib_Base64UrlTests",
+   "BaseLib_BaseDefsTests",
+   "BaseLib_BoxedValueObjectTests",
+   "BaseLib_ContainerHelperTests",
+   "BaseLib_CopyDirectoryWithContentTests",
+   "BaseLib_DataBlockCheckedSettersTests",
+   "BaseLib_DataBlockPoolAndCopyTests",
+   "BaseLib_DataBlockReadWriteCodecTests",
+   "BaseLib_DataBlockTests",
+   "BaseLib_DataEnsureAvailableTests",
+   "BaseLib_Default",
+   "BaseLib_EcUtilsCheckErrorCodeAndRoundTrip",
+   "BaseLib_EcUtilsGetErrorCodeMapping",
+   "BaseLib_EhExceptionHooksTests",
+   "BaseLib_EhGenerateAbort",
+   "BaseLib_EhGenerateAssertionFailure",
+   "BaseLib_EhGenerateCrash",
+   "BaseLib_EhGenerateInvalidParameter",
+   "BaseLib_EhGenerateTermination",
+   "BaseLib_EndpointSelectorImplTests",
+   "BaseLib_EnumUtilsTests",
+   "BaseLib_ExecutionTimerTests",
+   "BaseLib_FloatingPointEqualTests",
+   "BaseLib_GetSPNEGOTokenTests",
+   "BaseLib_GetUserDomainTests",
+   "BaseLib_GroupByTest",
+   "BaseLib_HttpGlobalsTests",
+   "BaseLib_LfnPrefixesTests",
+   "BaseLib_LfnUNCPathTests",
+   "BaseLib_LoggableCounterTests",
+   "BaseLib_LoggingBasicTests",
+   "BaseLib_LoggingConcurrencyTests",
+   "BaseLib_LoggingLevelPrecedenceTests",
+   "BaseLib_LoggingMultiLineTests",
+   "BaseLib_LoggingThreadLocalTest",
+   "BaseLib_LoggingVerboseModeTests",
+   "BaseLib_MachineGlobalTestLockExcludesConcurrentAcquirerTests",
+   "BaseLib_NamedMutexRobustnessTests",
+   "BaseLib_NamedMutexTests",
+   "BaseLib_NetworkByteOrderFunctionsTests",
+   "BaseLib_NetworkHelperFunctionsTests",
+   "BaseLib_OSClientCheckTests",
+   "BaseLib_OSCreateProcessArgvQuotingWindowsTests",
+   "BaseLib_OSCreateProcessDetachedWindowsTests",
+   "BaseLib_OSCreateProcessMergedWithFileCallbackTests",
+   "BaseLib_OSCreateProcessNonAsciiCommandLineWindowsTests",
+   "BaseLib_OSCreateProcessRedirectedMergedTests",
+   "BaseLib_OSCreateProcessRedirectedTests",
+   "BaseLib_OSCreateProcessTests",
+   "BaseLib_OSCreateProcessTests2",
+   "BaseLib_OSCreateProcessThreadHandleLeakWindowsTests",
+   "BaseLib_OSDeletePathTests",
+   "BaseLib_OSGetConsoleSizeTests",
+   "BaseLib_OSGetCurrentExecutablePathTests",
+   "BaseLib_OSGetLocalAppDataDirTests",
+   "BaseLib_OSGetPidTests",
+   "BaseLib_OSGetSetEnvVarTests",
+   "BaseLib_OSGetSetFileCreateTimeTests",
+   "BaseLib_OSGetUserNameTests",
+   "BaseLib_OSHardlinkTests",
+   "BaseLib_OSJunctionPrintNameWindowsTests",
+   "BaseLib_OSJunctionsTests",
+   "BaseLib_OSLargeFileSupportTests",
+   "BaseLib_OSLoggedInUserNamesTests",
+   "BaseLib_OSLongFileNamesAppVerifCrashTests",
+   "BaseLib_OSLongFileNamesWindowsTests",
+   "BaseLib_OSNamedMutexNonAsciiNameWindowsTests",
+   "BaseLib_OSPathPermissionsNonAsciiWindowsTests",
+   "BaseLib_OSReadFromInputTests",
+   "BaseLib_OSRegistryHiveDiagnosticsWindowsTests",
+   "BaseLib_OSRegistryValueTest",
+   "BaseLib_OSResourceLimitsWindowsTests",
+   "BaseLib_OSSharedLibTests",
+   "BaseLib_OSStdioReadWriteErrorTests",
+   "BaseLib_OSTerminateProcessTree",
+   "BaseLib_OSTryAwaitTerminationTests",
+   "BaseLib_OSUserDomainEnvironmentWindowsTests",
+   "BaseLib_OSValidateProcessRedirectFlagsTests",
+   "BaseLib_ParamFwding",
+   "BaseLib_PathUtilsTests",
+   "BaseLib_ProfilesDirectoryTests",
+   "BaseLib_PublicHeadersAreSelfContainedAndInstantiable",
+   "BaseLib_RandomSeedTests",
+   "BaseLib_RandomTests",
+   "BaseLib_RetryOnErrorTests",
+   "BaseLib_SafeCoerceToTests",
+   "BaseLib_SafeStringStreamTests",
+   "BaseLib_SafeUniquePtrAndContainersTests",
+   "BaseLib_SafeUniquePtrTests",
+   "BaseLib_ScalarTypeIniterTests",
+   "BaseLib_SimpleEndpointSelectorImplTests",
+   "BaseLib_SortedVectorHelperTests",
+   "BaseLib_StdioTextLockTests",
+   "BaseLib_StringUtilsDataRateTests",
+   "BaseLib_StringUtilsDeadHelpersTests",
+   "BaseLib_StringUtilsFormatMessageTests",
+   "BaseLib_StringUtilsFormatPercentTests",
+   "BaseLib_StringUtilsGetBeginning",
+   "BaseLib_StringUtilsGetEnding",
+   "BaseLib_StringUtilsJoinFormattedTests",
+   "BaseLib_StringUtilsParsePropertiesListTests",
+   "BaseLib_StringUtilsSecureStringWrapper",
+   "BaseLib_StringUtilsSplitTests",
+   "BaseLib_StringUtilsWipe",
+   "BaseLib_TableTests",
+   "BaseLib_TaggedPoolTests",
+   "BaseLib_TestCheckArgumentMacro",
+   "BaseLib_TestChkErrnoMacro",
+   "BaseLib_TestErrorCodeFromExceptionPtr",
+   "BaseLib_TestErrorCodeToStringAndHasher",
+   "BaseLib_TestErrorHandling",
+   "BaseLib_TestFsUtilsComparatorSelfTests",
+   "BaseLib_TestIsErrorConditionTests",
+   "BaseLib_TestMessageBuffer",
+   "BaseLib_TestNestedExceptionDiagnostics",
+   "BaseLib_TestScopeExitWarnOnFailure",
+   "BaseLib_TestScopeGuard",
+   "BaseLib_TestSystemExceptionCreateTests",
+   "BaseLib_TestUserFriendlyExceptionMacros",
+   "BaseLib_TestUserMessageException",
+   "BaseLib_TestUuid",
+   "BaseLib_TestUuidGeneratorContract",
+   "BaseLib_TestUuidIteratorImpl",
+   "BaseLib_TestUuidPerformance",
+   "BaseLib_TestUuidUniqueness",
+   "BaseLib_TestUuidUniquenessMultiThreaded",
+   "BaseLib_TextFilesEncodingTests",
+   "BaseLib_ThreadPoolDefaultRegistryTests",
+   "BaseLib_ThreadPoolExceptionHandlingTests",
+   "BaseLib_ThreadPoolTests",
+   "BaseLib_TreeTests",
+   "BaseLib_TryCatchLogTests",
+   "BaseLib_URIEncodeDecodeTests",
+   "BaseLib_UniqueHandleTests",
+   "BaseLib_UnorderedMapTests",
+   "BaseLib_Utf8ToIso88591SimpleTests",
+   "BaseLib_UtilsFindLastTests",
+   "BaseLib_UuidTestDeclareMacro",
+   "BaseLib_copyDirectoryPermissions_Tests",
+   "BoostAsioCompat_AsyncConnectIteratorForm",
+   "BoostAsioCompat_AsyncConnectIteratorFormFailurePaths",
+   "BoostAsioCompat_AsyncConnectRangeForm",
+   "BoostAsioCompat_IoContextPostDefersHandler",
+   "BoostAsioCompat_IoServiceWorkHoldsAndReleases",
+   "BoostAsioCompat_ResolverAllMatchingFlag",
+   "BoostAsioCompat_ResolverAsyncHandlerIsStoredByValue",
+   "BoostAsioCompat_ResolverAsyncNumericHostFlagAndFailureIterator",
+   "BoostAsioCompat_ResolverCanonicalNameFlag",
+   "BoostAsioCompat_ResolverIcmpProtocolConstraint",
+   "BoostAsioCompat_ResolverNumericHostFlag",
+   "BoostAsioCompat_ResolverPassiveDefaultFlags",
+   "BoostAsioCompat_ResolverProtocolConstraintAsync",
+   "BoostAsioCompat_ResolverProtocolConstraintSync",
+   "BoostAsioCompat_ResolverQueryAccessors",
+   "BoostAsioCompat_ResolverStringOverloadsRemainVisible",
+   "BoostAsioCompat_ResolverThrowingOverloadRoutesThroughErrorCallback",
+   "BoostAsioErrorCallback_DefaultPathWithNullLocation",
+   "BoostAsioErrorCallback_InstallAndRestore",
+   "DateTimeValidation_GetDateAndGetDateTime",
+   "DateTimeValidation_GetDayOfWeek",
+   "DateTimeValidation_ValidateDayOfWeek",
+   "DateTimeValidation_ValidateStartEndRange",
+   "DateTimeValidation_ValidateTime",
+   "FsUtils_CopyDirectoryWithContentsTests",
+   "FsUtils_JunctionsTests",
+   "FsUtils_SafeFileStreamWrapperSeekTests",
+   "FsUtils_SafeFileStreamWrapperTests",
+   "FsUtils_TestCopyErrorCodeOverload",
+   "FsUtils_TestCreateLockFile",
+   "FsUtils_TestCreateTempDirAndCreateDirectory",
+   "FsUtils_TestMakeHidden",
+   "FsUtils_TestMkdirs",
+   "FsUtils_TestNormalize",
+   "FsUtils_TestSafeRemove",
+   "FsUtils_TestSafeRemoveAll",
+   "NetUtils_IcmpHeaderTests",
+   "NetUtils_Ipv4HeaderTests",
+   "NetUtils_RemoteEndpointIdTests",
+   "NetUtils_tryParseEndpointTest",
+   "ObjModel_BasicTests",
+   "ObjModel_FactoryTests",
+   "ObjModel_GlobalApiTests",
+   "ObjModel_InterfaceDefinitionsTests",
+   "ObjModel_LoaderResetRestoredModuleStateTests",
+   "ObjModel_LoaderResetTests",
+   "ObjModel_MakeSharedTests",
+   "ObjModel_MyObjectImplTests",
+   "ObjModel_ObjPtrDisposableTests",
+   "ObjModel_ProxyImplGuardTests",
+   "ObjModel_ProxyImplStrongRefTests",
+   "ObjModel_ProxyImplTests",
+   "ObjModel_RefCountBalanceTests",
+   "ObjModel_SharedPtrLifetimeTests",
+   "ObjModel_SharedPtrTests",
+   "ObjModel_SingleThreadedObjectImplTests",
+   "TestISOTimeFormat",
+   "TestTimeZoneData",
+   "TestTimeZoneOffsetIsValidPosixSpec",
+   "TestTransaction1",
+   "TestTransaction2",
+   "TestTransaction3",
+   "TestTransaction4",
+   "TestTransaction5",
+   "TestTransactionRollbackFailure",
+   "TestWatchdogArgumentValidation",
+   "TestWatchdogExceedMaxMonitors1",
+   "TestWatchdogExceedMaxMonitors2",
+   "TestWatchdogExpring",
+   "TestWatchdogMultipleMonitorsDeterministic",
+   "TestWatchdogNoTermination",
+   "TestWatchdogNoUpdates",
+   "TestWatchdogOneIteration",
+   "TestWatchdogSetupMonitor",
+   "TestWatchdogSomeUpdates",
+   "TestWindowsToOlsonMappingConsistency"
+  ],
+  "skipped": []
+ },
+ "utf_baselib_apps": {
+  "cases": {
+   "BlTool_CmdLineTreeTests": {
+    "assertions": 30,
+    "assertions_total": 30,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlTool_CryptoRsaKeyExportRoundTripTests": {
+    "assertions": 20,
+    "assertions_total": 20,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlTool_CryptoRsaKeyProtectionTests": {
+    "assertions": 22,
+    "assertions_total": 22,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlTool_GenerateBase64ResourceTests": {
+    "assertions": 25,
+    "assertions_total": 25,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlTool_HelpSwitchSuppressesExecutionTests": {
+    "assertions": 16,
+    "assertions_total": 16,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlTool_HttpRequestSaveResponseTests": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlTool_PathRemoveTests": {
+    "assertions": 18,
+    "assertions_total": 18,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlTool_ProcessAllFilesFilterTests": {
+    "assertions": 14,
+    "assertions_total": 14,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlTool_ProcessFilesLineFidelityTests": {
+    "assertions": 11,
+    "assertions_total": 11,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlTool_ProcessFilesRemoveMarkedCommentsTests": {
+    "assertions": 9,
+    "assertions_total": 9,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlTool_ProcessFilesUnterminatedCommentTests": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlTool_ProcessFilesUpdateHeaderCommentTests": {
+    "assertions": 10,
+    "assertions_total": 10,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "MessagingApps_HttpGatewayTlsValidationTests": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   }
+  },
+  "clean": true,
+  "entered": [
+   "BlTool_CmdLineTreeTests",
+   "BlTool_CryptoRsaKeyExportRoundTripTests",
+   "BlTool_CryptoRsaKeyProtectionTests",
+   "BlTool_GenerateBase64ResourceTests",
+   "BlTool_HelpSwitchSuppressesExecutionTests",
+   "BlTool_HttpRequestSaveResponseTests",
+   "BlTool_PathRemoveTests",
+   "BlTool_ProcessAllFilesFilterTests",
+   "BlTool_ProcessFilesLineFidelityTests",
+   "BlTool_ProcessFilesRemoveMarkedCommentsTests",
+   "BlTool_ProcessFilesUnterminatedCommentTests",
+   "BlTool_ProcessFilesUpdateHeaderCommentTests",
+   "MessagingApps_HttpGatewayTlsValidationTests"
+  ],
+  "exit": 0,
+  "expected": 13,
+  "failures": null,
+  "incomplete": [],
+  "registered": [
+   "BlTool_CmdLineTreeTests",
+   "BlTool_CryptoRsaKeyExportRoundTripTests",
+   "BlTool_CryptoRsaKeyProtectionTests",
+   "BlTool_GenerateBase64ResourceTests",
+   "BlTool_HelpSwitchSuppressesExecutionTests",
+   "BlTool_HttpRequestSaveResponseTests",
+   "BlTool_PathRemoveTests",
+   "BlTool_ProcessAllFilesFilterTests",
+   "BlTool_ProcessFilesLineFidelityTests",
+   "BlTool_ProcessFilesRemoveMarkedCommentsTests",
+   "BlTool_ProcessFilesUnterminatedCommentTests",
+   "BlTool_ProcessFilesUpdateHeaderCommentTests",
+   "MessagingApps_HttpGatewayTlsValidationTests"
+  ],
+  "skipped": []
+ },
+ "utf_baselib_async": {
+  "cases": {
+   "AsyncCB_BasicTests": {
+    "assertions": 26,
+    "assertions_total": 26,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AsyncCB_CancelBeforeExecuteDeliversAbortedTests": {
+    "assertions": 11,
+    "assertions_total": 11,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AsyncCB_CancelTests": {
+    "assertions": 15641,
+    "assertions_total": 15641,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AsyncCB_CancelWithOperationTaskInProgressTests": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AsyncCB_CanceledControlTokenAbortsOperationTests": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AsyncCB_ConcurrencySlotBoundTests": {
+    "assertions": 10,
+    "assertions_total": 10,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AsyncCB_ConcurrentAsyncBeginIsRejectedTests": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AsyncCB_CreateTaskExceptionIsDeliveredTests": {
+    "assertions": 9,
+    "assertions_total": 9,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AsyncCB_DeferredAssertionsRecorderTests": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AsyncCB_ExecuteExceptionIsDeliveredTests": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AsyncCB_OperationAndStatePoolingTests": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AsyncCB_OperationStateTaskContinuationTests": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AsyncCB_SmallPerfTests": {
+    "assertions": 368642,
+    "assertions_total": 368642,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AsyncOperation_ResultSemanticsTests": {
+    "assertions": 17,
+    "assertions_total": 17,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AsyncV2_BasicTests": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AsyncV2_BlocksOutstandingCapTests": {
+    "assertions": 17,
+    "assertions_total": 17,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AsyncV2_CancelTests": {
+    "assertions": 10239,
+    "assertions_total": 10239,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AsyncV2_ExecutorQueueVerifierTests": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AsyncV2_ReadWriteStorageRoutingTests": {
+    "assertions": 14,
+    "assertions_total": 14,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AsyncV2_SmallPerfTests": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   }
+  },
+  "clean": true,
+  "entered": [
+   "AsyncCB_BasicTests",
+   "AsyncCB_CancelBeforeExecuteDeliversAbortedTests",
+   "AsyncCB_CancelTests",
+   "AsyncCB_CancelWithOperationTaskInProgressTests",
+   "AsyncCB_CanceledControlTokenAbortsOperationTests",
+   "AsyncCB_ConcurrencySlotBoundTests",
+   "AsyncCB_ConcurrentAsyncBeginIsRejectedTests",
+   "AsyncCB_CreateTaskExceptionIsDeliveredTests",
+   "AsyncCB_DeferredAssertionsRecorderTests",
+   "AsyncCB_ExecuteExceptionIsDeliveredTests",
+   "AsyncCB_OperationAndStatePoolingTests",
+   "AsyncCB_OperationStateTaskContinuationTests",
+   "AsyncCB_SmallPerfTests",
+   "AsyncOperation_ResultSemanticsTests",
+   "AsyncV2_BasicTests",
+   "AsyncV2_BlocksOutstandingCapTests",
+   "AsyncV2_CancelTests",
+   "AsyncV2_ExecutorQueueVerifierTests",
+   "AsyncV2_ReadWriteStorageRoutingTests",
+   "AsyncV2_SmallPerfTests"
+  ],
+  "exit": 0,
+  "expected": 20,
+  "failures": null,
+  "incomplete": [],
+  "registered": [
+   "AsyncCB_BasicTests",
+   "AsyncCB_CancelBeforeExecuteDeliversAbortedTests",
+   "AsyncCB_CancelTests",
+   "AsyncCB_CancelWithOperationTaskInProgressTests",
+   "AsyncCB_CanceledControlTokenAbortsOperationTests",
+   "AsyncCB_ConcurrencySlotBoundTests",
+   "AsyncCB_ConcurrentAsyncBeginIsRejectedTests",
+   "AsyncCB_CreateTaskExceptionIsDeliveredTests",
+   "AsyncCB_DeferredAssertionsRecorderTests",
+   "AsyncCB_ExecuteExceptionIsDeliveredTests",
+   "AsyncCB_OperationAndStatePoolingTests",
+   "AsyncCB_OperationStateTaskContinuationTests",
+   "AsyncCB_SmallPerfTests",
+   "AsyncOperation_ResultSemanticsTests",
+   "AsyncV2_BasicTests",
+   "AsyncV2_BlocksOutstandingCapTests",
+   "AsyncV2_CancelTests",
+   "AsyncV2_ExecutorQueueVerifierTests",
+   "AsyncV2_ReadWriteStorageRoutingTests",
+   "AsyncV2_SmallPerfTests"
+  ],
+  "skipped": []
+ },
+ "utf_baselib_basictask": {
+  "cases": {
+   "Tasks_BasicTests": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_LocalThreadPoolScopeTests": {
+    "assertions": 15,
+    "assertions_total": 15,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ScheduleAndExecuteInParallelNoThreadPoolTests": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_SchedulingWithoutUsableThreadPoolTests": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ThreadPoolResizeAndDisposeTests": {
+    "assertions": 10,
+    "assertions_total": 10,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   }
+  },
+  "clean": true,
+  "entered": [
+   "Tasks_BasicTests",
+   "Tasks_LocalThreadPoolScopeTests",
+   "Tasks_ScheduleAndExecuteInParallelNoThreadPoolTests",
+   "Tasks_SchedulingWithoutUsableThreadPoolTests",
+   "Tasks_ThreadPoolResizeAndDisposeTests"
+  ],
+  "exit": 0,
+  "expected": 5,
+  "failures": null,
+  "incomplete": [],
+  "registered": [
+   "Tasks_BasicTests",
+   "Tasks_LocalThreadPoolScopeTests",
+   "Tasks_ScheduleAndExecuteInParallelNoThreadPoolTests",
+   "Tasks_SchedulingWithoutUsableThreadPoolTests",
+   "Tasks_ThreadPoolResizeAndDisposeTests"
+  ],
+  "skipped": []
+ },
+ "utf_baselib_blobtransfer": {
+  "cases": {
+   "BlobTransfer_FilesPackagerInMemoryCancelDownloadTests": {
+    "assertions": 38,
+    "assertions_total": 38,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_FilesPackagerInMemoryCancelRemoveTests": {
+    "assertions": 51,
+    "assertions_total": 51,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_FilesPackagerInMemoryCancelUploadTests": {
+    "assertions": 27,
+    "assertions_total": 27,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_FilesPackagerInMemoryDropWithSessionsFailsUploadTests": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_FilesPackagerInMemoryPeerSessionsTests": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_FilesPackagerInMemoryProxyTests": {
+    "assertions": 12,
+    "assertions_total": 12,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_FilesPackagerInMemoryReauthAfterDropOnLoadTests": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_FilesPackagerInMemoryReauthAfterDropOnRemoveTests": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_FilesPackagerInMemoryReauthAfterDropOnSaveTests": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_FilesPackagerInMemoryTests": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_FilesPackagerInMemoryThrottledSubscribersTests": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_FilesPackagerInMemoryUploadFailureKeepsMetadataMutableTests": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_FilesPackagerInMemoryWithheldChunkTests": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_PackagerCancelledBlockReaderReleasesFileTests": {
+    "assertions": 21,
+    "assertions_total": 21,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_ProxyDataChunkBackendImplTests": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_ProxyDataChunkStorageCanceledTokenTests": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_StartBlobClient": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_StartBlobServer": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_StartBlobServerProxy": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_TransmitterServerUnreachableTests": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_UnpackagerChunkIntegrityTests": {
+    "assertions": 25,
+    "assertions_total": 25,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_UnpackagerDirectoryTimestampsTests": {
+    "assertions": 14,
+    "assertions_total": 14,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_UnpackagerFailureClosesOpenFilesBeforeDiscardingStagingTests": {
+    "assertions": 9,
+    "assertions_total": 9,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_UnpackagerRejectsLateChunksTests": {
+    "assertions": 110,
+    "assertions_total": 110,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_UnpackagerStopClosesOpenFilesTests": {
+    "assertions": 9,
+    "assertions_total": 9,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BlobTransfer_UnpackagerSymlinkTargetPolicyTests": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   }
+  },
+  "clean": true,
+  "entered": [
+   "BlobTransfer_FilesPackagerInMemoryCancelDownloadTests",
+   "BlobTransfer_FilesPackagerInMemoryCancelRemoveTests",
+   "BlobTransfer_FilesPackagerInMemoryCancelUploadTests",
+   "BlobTransfer_FilesPackagerInMemoryDropWithSessionsFailsUploadTests",
+   "BlobTransfer_FilesPackagerInMemoryPeerSessionsTests",
+   "BlobTransfer_FilesPackagerInMemoryProxyTests",
+   "BlobTransfer_FilesPackagerInMemoryReauthAfterDropOnLoadTests",
+   "BlobTransfer_FilesPackagerInMemoryReauthAfterDropOnRemoveTests",
+   "BlobTransfer_FilesPackagerInMemoryReauthAfterDropOnSaveTests",
+   "BlobTransfer_FilesPackagerInMemoryTests",
+   "BlobTransfer_FilesPackagerInMemoryThrottledSubscribersTests",
+   "BlobTransfer_FilesPackagerInMemoryUploadFailureKeepsMetadataMutableTests",
+   "BlobTransfer_FilesPackagerInMemoryWithheldChunkTests",
+   "BlobTransfer_PackagerCancelledBlockReaderReleasesFileTests",
+   "BlobTransfer_ProxyDataChunkBackendImplTests",
+   "BlobTransfer_ProxyDataChunkStorageCanceledTokenTests",
+   "BlobTransfer_StartBlobClient",
+   "BlobTransfer_StartBlobServer",
+   "BlobTransfer_StartBlobServerProxy",
+   "BlobTransfer_TransmitterServerUnreachableTests",
+   "BlobTransfer_UnpackagerChunkIntegrityTests",
+   "BlobTransfer_UnpackagerDirectoryTimestampsTests",
+   "BlobTransfer_UnpackagerFailureClosesOpenFilesBeforeDiscardingStagingTests",
+   "BlobTransfer_UnpackagerRejectsLateChunksTests",
+   "BlobTransfer_UnpackagerStopClosesOpenFilesTests",
+   "BlobTransfer_UnpackagerSymlinkTargetPolicyTests"
+  ],
+  "exit": 0,
+  "expected": 26,
+  "failures": null,
+  "incomplete": [],
+  "registered": [
+   "BlobTransfer_FilesPackagerInMemoryCancelDownloadTests",
+   "BlobTransfer_FilesPackagerInMemoryCancelRemoveTests",
+   "BlobTransfer_FilesPackagerInMemoryCancelUploadTests",
+   "BlobTransfer_FilesPackagerInMemoryDropWithSessionsFailsUploadTests",
+   "BlobTransfer_FilesPackagerInMemoryPeerSessionsTests",
+   "BlobTransfer_FilesPackagerInMemoryProxyTests",
+   "BlobTransfer_FilesPackagerInMemoryReauthAfterDropOnLoadTests",
+   "BlobTransfer_FilesPackagerInMemoryReauthAfterDropOnRemoveTests",
+   "BlobTransfer_FilesPackagerInMemoryReauthAfterDropOnSaveTests",
+   "BlobTransfer_FilesPackagerInMemoryTests",
+   "BlobTransfer_FilesPackagerInMemoryThrottledSubscribersTests",
+   "BlobTransfer_FilesPackagerInMemoryUploadFailureKeepsMetadataMutableTests",
+   "BlobTransfer_FilesPackagerInMemoryWithheldChunkTests",
+   "BlobTransfer_PackagerCancelledBlockReaderReleasesFileTests",
+   "BlobTransfer_ProxyDataChunkBackendImplTests",
+   "BlobTransfer_ProxyDataChunkStorageCanceledTokenTests",
+   "BlobTransfer_StartBlobClient",
+   "BlobTransfer_StartBlobServer",
+   "BlobTransfer_StartBlobServerProxy",
+   "BlobTransfer_TransmitterServerUnreachableTests",
+   "BlobTransfer_UnpackagerChunkIntegrityTests",
+   "BlobTransfer_UnpackagerDirectoryTimestampsTests",
+   "BlobTransfer_UnpackagerFailureClosesOpenFilesBeforeDiscardingStagingTests",
+   "BlobTransfer_UnpackagerRejectsLateChunksTests",
+   "BlobTransfer_UnpackagerStopClosesOpenFilesTests",
+   "BlobTransfer_UnpackagerSymlinkTargetPolicyTests"
+  ],
+  "skipped": [
+   "BlobTransfer_StartBlobClient: requires --is-client (manual run test)",
+   "BlobTransfer_StartBlobServer: requires --is-server (manual run test)",
+   "BlobTransfer_StartBlobServerProxy: requires --is-server (manual run test)"
+  ]
+ },
+ "utf_baselib_cmdline": {
+  "cases": {
+   "CmdLineApp_MainExitCodeMapping": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CmdLineApp_TryParseAndTryExecuteExitCodes": {
+    "assertions": 9,
+    "assertions_total": 9,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CmdLineEhUtils_AsioErrorCallbackBranches": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CmdLineEhUtils_ProcessExceptionWritesPrivateDumpFile": {
+    "assertions": 12,
+    "assertions_total": 12,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CmdLine_BaseServerCmdLineJvmGating": {
+    "assertions": 12,
+    "assertions_total": 12,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CmdLine_CommandTreeRegistration": {
+    "assertions": 50,
+    "assertions_total": 50,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CmdLine_DryRunNotApplicableHidesParentOption": {
+    "assertions": 13,
+    "assertions_total": 13,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CmdLine_ExpandListAndLoadListFile": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CmdLine_HelpMessageComposition": {
+    "assertions": 15,
+    "assertions_total": 15,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CmdLine_MissingRequiredOptionsMessage": {
+    "assertions": 20,
+    "assertions_total": 20,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CmdLine_Parse_Class": {
+    "assertions": 197,
+    "assertions_total": 197,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CmdLine_Parse_CommandMode": {
+    "assertions": 10,
+    "assertions_total": 10,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CmdLine_Parse_CommandMode_Create": {
+    "assertions": 31,
+    "assertions_total": 31,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CmdLine_Parse_CommandMode_Mail": {
+    "assertions": 12,
+    "assertions_total": 12,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CmdLine_Parse_CommandMode_Run": {
+    "assertions": 21,
+    "assertions_total": 21,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CmdLine_ParserInstanceIsSingleUse": {
+    "assertions": 19,
+    "assertions_total": 19,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   }
+  },
+  "clean": true,
+  "entered": [
+   "CmdLineApp_MainExitCodeMapping",
+   "CmdLineApp_TryParseAndTryExecuteExitCodes",
+   "CmdLineEhUtils_AsioErrorCallbackBranches",
+   "CmdLineEhUtils_ProcessExceptionWritesPrivateDumpFile",
+   "CmdLine_BaseServerCmdLineJvmGating",
+   "CmdLine_CommandTreeRegistration",
+   "CmdLine_DryRunNotApplicableHidesParentOption",
+   "CmdLine_ExpandListAndLoadListFile",
+   "CmdLine_HelpMessageComposition",
+   "CmdLine_MissingRequiredOptionsMessage",
+   "CmdLine_Parse_Class",
+   "CmdLine_Parse_CommandMode",
+   "CmdLine_Parse_CommandMode_Create",
+   "CmdLine_Parse_CommandMode_Mail",
+   "CmdLine_Parse_CommandMode_Run",
+   "CmdLine_ParserInstanceIsSingleUse"
+  ],
+  "exit": 0,
+  "expected": 16,
+  "failures": null,
+  "incomplete": [],
+  "registered": [
+   "CmdLineApp_MainExitCodeMapping",
+   "CmdLineApp_TryParseAndTryExecuteExitCodes",
+   "CmdLineEhUtils_AsioErrorCallbackBranches",
+   "CmdLineEhUtils_ProcessExceptionWritesPrivateDumpFile",
+   "CmdLine_BaseServerCmdLineJvmGating",
+   "CmdLine_CommandTreeRegistration",
+   "CmdLine_DryRunNotApplicableHidesParentOption",
+   "CmdLine_ExpandListAndLoadListFile",
+   "CmdLine_HelpMessageComposition",
+   "CmdLine_MissingRequiredOptionsMessage",
+   "CmdLine_Parse_Class",
+   "CmdLine_Parse_CommandMode",
+   "CmdLine_Parse_CommandMode_Create",
+   "CmdLine_Parse_CommandMode_Mail",
+   "CmdLine_Parse_CommandMode_Run",
+   "CmdLine_ParserInstanceIsSingleUse"
+  ],
+  "skipped": []
+ },
+ "utf_baselib_data": {
+  "cases": {
+   "CoreDataModelCanonicalNestedCollectionsTests": {
+    "assertions": 18,
+    "assertions_total": 18,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CoreDataModelTests": {
+    "assertions": 208,
+    "assertions_total": 208,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DataModelDetectUnknownPropertiesTests": {
+    "assertions": 16,
+    "assertions_total": 16,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DataModelLoadRequiresObjectAtTopLevel": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DataModelNullComplexCollectionsMeanAbsent": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DataModelPerformanceComplexDeserialization": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DataModelPerformanceComplexSerialization": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DataModelPerformanceOverheadComplex": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DataModelPerformanceOverheadSimple": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DataModelPerformanceRoundTrip": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DataModelPerformanceSimpleDeserialization": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DataModelPerformanceSimpleSerialization": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DataModelPropertyErrorsCarryPropertyContext": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DataModelRequiredPropertyEnforcementTests": {
+    "assertions": 29,
+    "assertions_total": 29,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DataModelScalarIsSetAndResetTests": {
+    "assertions": 24,
+    "assertions_total": 24,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DataModelSerializationEmplaceBaseline": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DataModelSerializationProfileComplex": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DataModelSerializationProfileSimple": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DataModelSimpleContainerPropertyTests": {
+    "assertions": 42,
+    "assertions_total": 42,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DataModelStringOrArrayPropertyTests": {
+    "assertions": 22,
+    "assertions_total": 22,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DataModelUnmappedInteractionTests": {
+    "assertions": 24,
+    "assertions_total": 24,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ErrorToGraphQLTests": {
+    "assertions": 34,
+    "assertions_total": 34,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ErrorToJsonExceptionTypeMappingTests": {
+    "assertions": 98,
+    "assertions_total": 98,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ErrorToJsonSystemCodeDerivationTests": {
+    "assertions": 33,
+    "assertions_total": 33,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ErrorToJsonTests": {
+    "assertions": 108,
+    "assertions_total": 108,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ErrorToJsonUnmappedErrorInfoTests": {
+    "assertions": 39,
+    "assertions_total": 39,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonAccessorGetBool": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonAccessorGetIntegers": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonAccessorGetReal": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonAccessorGetStr": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonAccessorValueTo": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonArrayConstruction": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonArrayElementAccess": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonArrayIteration": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonDeeplyNestedStructures": {
+    "assertions": 22,
+    "assertions_total": 22,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonEdgeCasesBoundaryValues": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonEdgeCasesEmptyValues": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonEdgeCasesSpecialNumbers": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonEdgeCasesUnicode": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonErrorExceptionContext": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonErrorMalformedInput": {
+    "assertions": 9,
+    "assertions_total": 9,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonErrorTypeMismatch": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonExceptionRemappingAndContext": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonImplCompatibilityCanonical": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonImplCompatibilityRoundTrip": {
+    "assertions": 9,
+    "assertions_total": 9,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonIntegrationDataModel": {
+    "assertions": 11,
+    "assertions_total": 11,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonLargeDocuments": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonNestedComplexStructures": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonNumericDoubleIntoIntegralIsRejected": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonNumericIntegerReadsAsDouble": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonNumericNegativeToUnsignedIsRejected": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonNumericNegativeZero": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonNumericOutOfRangeIntIsRejected": {
+    "assertions": 11,
+    "assertions_total": 11,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonNumericSmallUint64ReadsAsInt64": {
+    "assertions": 12,
+    "assertions_total": 12,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonObjectConstruction": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonObjectIteration": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonObjectJoinQuoteFormattedKeys": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonObjectMacros": {
+    "assertions": 9,
+    "assertions_total": 9,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonObjectPropertyAccess": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonParseDepthBeyondLimitIsRejected": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonParseDepthWithinLimitIsAccepted": {
+    "assertions": 1510,
+    "assertions_total": 1510,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonParseDoublesAreCorrectlyRounded": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonParseDuplicateKeysAreBackendDefined": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonParseEmptyValues": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonParseFromStream": {
+    "assertions": 27,
+    "assertions_total": 27,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonParseInvalidUtf8IsRejected": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonParseLargeNumbers": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonParseMalformed": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonParseNestedStructures": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonParsePrimitives": {
+    "assertions": 9,
+    "assertions_total": 9,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonParseSimpleArray": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonParseSimpleObject": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonParseTrailingDataIsRejected": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonParseUnicode": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonPerformanceBasicParsing": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonPerformanceLargeParsing": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonPerformanceNestedAccess": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonPerformanceObjectAccess": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonPerformanceObjectConstruction": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonPerformanceRoundTrip": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonPerformanceSerialization": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonPrettyPrintEmptyContainers": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonPrettyPrintNestedLayout": {
+    "assertions": 21,
+    "assertions_total": 21,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonRoundTrip": {
+    "assertions": 80,
+    "assertions_total": 80,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonSecurityModels_JwtClaimsSetTests": {
+    "assertions": 37,
+    "assertions_total": 37,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonSerializeAlwaysEmitsRawUtf8": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonSerializeCanonical": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonSerializeCanonicalNestedLayout": {
+    "assertions": 26,
+    "assertions_total": 26,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonSerializeCompact": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonSerializeEscapesControlCharacters": {
+    "assertions": 26,
+    "assertions_total": 26,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonSerializeOptions": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonSerializePretty": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonSerializeRejectsNonFiniteDoubles": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonSerializeStreamAlsoEmitsRawUtf8": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonSerializeToStream": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonSerializeToStreamCanonical": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonValueTypeChecking": {
+    "assertions": 12,
+    "assertions_total": 12,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonValueTypeCreation": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "JsonValueTypeExtraction": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ServerErrorHelpersExceptionCallbackTests": {
+    "assertions": 13,
+    "assertions_total": 13,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ServerErrorHelpersRedactionTests": {
+    "assertions": 70,
+    "assertions_total": 70,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ServerErrorHelpersTests": {
+    "assertions": 88,
+    "assertions_total": 88,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestDataChunkStorageFilesystemMultiFiles": {
+    "assertions": 962,
+    "assertions_total": 962,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestDataChunkStorageFilesystemSingleFile": {
+    "assertions": 964,
+    "assertions_total": 964,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestDataChunkStorageSingleFileCorruptFileTests": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestDataChunkStorageSingleFileDeleteAndReopen": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestDataChunkStorageSingleFileOverwriteAndReopen": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestFilesystemMetadataChecksumAndHashAssociation": {
+    "assertions": 13,
+    "assertions_total": 13,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestFilesystemMetadataComputeStatistics": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestFilesystemMetadataEntryPathValidation": {
+    "assertions": 12,
+    "assertions_total": 12,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestFilesystemMetadataInMemoryImpl": {
+    "assertions": 62,
+    "assertions_total": 62,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestFilesystemMetadataIteratorOutlivesStoreHandle": {
+    "assertions": 25,
+    "assertions_total": 25,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestFilesystemMetadataRejectedMutationsLeaveStoreConsistent": {
+    "assertions": 43,
+    "assertions_total": 43,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   }
+  },
+  "clean": true,
+  "entered": [
+   "CoreDataModelCanonicalNestedCollectionsTests",
+   "CoreDataModelTests",
+   "DataModelDetectUnknownPropertiesTests",
+   "DataModelLoadRequiresObjectAtTopLevel",
+   "DataModelNullComplexCollectionsMeanAbsent",
+   "DataModelPerformanceComplexDeserialization",
+   "DataModelPerformanceComplexSerialization",
+   "DataModelPerformanceOverheadComplex",
+   "DataModelPerformanceOverheadSimple",
+   "DataModelPerformanceRoundTrip",
+   "DataModelPerformanceSimpleDeserialization",
+   "DataModelPerformanceSimpleSerialization",
+   "DataModelPropertyErrorsCarryPropertyContext",
+   "DataModelRequiredPropertyEnforcementTests",
+   "DataModelScalarIsSetAndResetTests",
+   "DataModelSerializationEmplaceBaseline",
+   "DataModelSerializationProfileComplex",
+   "DataModelSerializationProfileSimple",
+   "DataModelSimpleContainerPropertyTests",
+   "DataModelStringOrArrayPropertyTests",
+   "DataModelUnmappedInteractionTests",
+   "ErrorToGraphQLTests",
+   "ErrorToJsonExceptionTypeMappingTests",
+   "ErrorToJsonSystemCodeDerivationTests",
+   "ErrorToJsonTests",
+   "ErrorToJsonUnmappedErrorInfoTests",
+   "JsonAccessorGetBool",
+   "JsonAccessorGetIntegers",
+   "JsonAccessorGetReal",
+   "JsonAccessorGetStr",
+   "JsonAccessorValueTo",
+   "JsonArrayConstruction",
+   "JsonArrayElementAccess",
+   "JsonArrayIteration",
+   "JsonDeeplyNestedStructures",
+   "JsonEdgeCasesBoundaryValues",
+   "JsonEdgeCasesEmptyValues",
+   "JsonEdgeCasesSpecialNumbers",
+   "JsonEdgeCasesUnicode",
+   "JsonErrorExceptionContext",
+   "JsonErrorMalformedInput",
+   "JsonErrorTypeMismatch",
+   "JsonExceptionRemappingAndContext",
+   "JsonImplCompatibilityCanonical",
+   "JsonImplCompatibilityRoundTrip",
+   "JsonIntegrationDataModel",
+   "JsonLargeDocuments",
+   "JsonNestedComplexStructures",
+   "JsonNumericDoubleIntoIntegralIsRejected",
+   "JsonNumericIntegerReadsAsDouble",
+   "JsonNumericNegativeToUnsignedIsRejected",
+   "JsonNumericNegativeZero",
+   "JsonNumericOutOfRangeIntIsRejected",
+   "JsonNumericSmallUint64ReadsAsInt64",
+   "JsonObjectConstruction",
+   "JsonObjectIteration",
+   "JsonObjectJoinQuoteFormattedKeys",
+   "JsonObjectMacros",
+   "JsonObjectPropertyAccess",
+   "JsonParseDepthBeyondLimitIsRejected",
+   "JsonParseDepthWithinLimitIsAccepted",
+   "JsonParseDoublesAreCorrectlyRounded",
+   "JsonParseDuplicateKeysAreBackendDefined",
+   "JsonParseEmptyValues",
+   "JsonParseFromStream",
+   "JsonParseInvalidUtf8IsRejected",
+   "JsonParseLargeNumbers",
+   "JsonParseMalformed",
+   "JsonParseNestedStructures",
+   "JsonParsePrimitives",
+   "JsonParseSimpleArray",
+   "JsonParseSimpleObject",
+   "JsonParseTrailingDataIsRejected",
+   "JsonParseUnicode",
+   "JsonPerformanceBasicParsing",
+   "JsonPerformanceLargeParsing",
+   "JsonPerformanceNestedAccess",
+   "JsonPerformanceObjectAccess",
+   "JsonPerformanceObjectConstruction",
+   "JsonPerformanceRoundTrip",
+   "JsonPerformanceSerialization",
+   "JsonPrettyPrintEmptyContainers",
+   "JsonPrettyPrintNestedLayout",
+   "JsonRoundTrip",
+   "JsonSecurityModels_JwtClaimsSetTests",
+   "JsonSerializeAlwaysEmitsRawUtf8",
+   "JsonSerializeCanonical",
+   "JsonSerializeCanonicalNestedLayout",
+   "JsonSerializeCompact",
+   "JsonSerializeEscapesControlCharacters",
+   "JsonSerializeOptions",
+   "JsonSerializePretty",
+   "JsonSerializeRejectsNonFiniteDoubles",
+   "JsonSerializeStreamAlsoEmitsRawUtf8",
+   "JsonSerializeToStream",
+   "JsonSerializeToStreamCanonical",
+   "JsonValueTypeChecking",
+   "JsonValueTypeCreation",
+   "JsonValueTypeExtraction",
+   "ServerErrorHelpersExceptionCallbackTests",
+   "ServerErrorHelpersRedactionTests",
+   "ServerErrorHelpersTests",
+   "TestDataChunkStorageFilesystemMultiFiles",
+   "TestDataChunkStorageFilesystemSingleFile",
+   "TestDataChunkStorageSingleFileCorruptFileTests",
+   "TestDataChunkStorageSingleFileDeleteAndReopen",
+   "TestDataChunkStorageSingleFileOverwriteAndReopen",
+   "TestFilesystemMetadataChecksumAndHashAssociation",
+   "TestFilesystemMetadataComputeStatistics",
+   "TestFilesystemMetadataEntryPathValidation",
+   "TestFilesystemMetadataInMemoryImpl",
+   "TestFilesystemMetadataIteratorOutlivesStoreHandle",
+   "TestFilesystemMetadataRejectedMutationsLeaveStoreConsistent"
+  ],
+  "exit": 0,
+  "expected": 113,
+  "failures": null,
+  "incomplete": [],
+  "registered": [
+   "CoreDataModelCanonicalNestedCollectionsTests",
+   "CoreDataModelTests",
+   "DataModelDetectUnknownPropertiesTests",
+   "DataModelLoadRequiresObjectAtTopLevel",
+   "DataModelNullComplexCollectionsMeanAbsent",
+   "DataModelPerformanceComplexDeserialization",
+   "DataModelPerformanceComplexSerialization",
+   "DataModelPerformanceOverheadComplex",
+   "DataModelPerformanceOverheadSimple",
+   "DataModelPerformanceRoundTrip",
+   "DataModelPerformanceSimpleDeserialization",
+   "DataModelPerformanceSimpleSerialization",
+   "DataModelPropertyErrorsCarryPropertyContext",
+   "DataModelRequiredPropertyEnforcementTests",
+   "DataModelScalarIsSetAndResetTests",
+   "DataModelSerializationEmplaceBaseline",
+   "DataModelSerializationProfileComplex",
+   "DataModelSerializationProfileSimple",
+   "DataModelSimpleContainerPropertyTests",
+   "DataModelStringOrArrayPropertyTests",
+   "DataModelUnmappedInteractionTests",
+   "ErrorToGraphQLTests",
+   "ErrorToJsonExceptionTypeMappingTests",
+   "ErrorToJsonSystemCodeDerivationTests",
+   "ErrorToJsonTests",
+   "ErrorToJsonUnmappedErrorInfoTests",
+   "JsonAccessorGetBool",
+   "JsonAccessorGetIntegers",
+   "JsonAccessorGetReal",
+   "JsonAccessorGetStr",
+   "JsonAccessorValueTo",
+   "JsonArrayConstruction",
+   "JsonArrayElementAccess",
+   "JsonArrayIteration",
+   "JsonDeeplyNestedStructures",
+   "JsonEdgeCasesBoundaryValues",
+   "JsonEdgeCasesEmptyValues",
+   "JsonEdgeCasesSpecialNumbers",
+   "JsonEdgeCasesUnicode",
+   "JsonErrorExceptionContext",
+   "JsonErrorMalformedInput",
+   "JsonErrorTypeMismatch",
+   "JsonExceptionRemappingAndContext",
+   "JsonImplCompatibilityCanonical",
+   "JsonImplCompatibilityRoundTrip",
+   "JsonIntegrationDataModel",
+   "JsonLargeDocuments",
+   "JsonNestedComplexStructures",
+   "JsonNumericDoubleIntoIntegralIsRejected",
+   "JsonNumericIntegerReadsAsDouble",
+   "JsonNumericNegativeToUnsignedIsRejected",
+   "JsonNumericNegativeZero",
+   "JsonNumericOutOfRangeIntIsRejected",
+   "JsonNumericSmallUint64ReadsAsInt64",
+   "JsonObjectConstruction",
+   "JsonObjectIteration",
+   "JsonObjectJoinQuoteFormattedKeys",
+   "JsonObjectMacros",
+   "JsonObjectPropertyAccess",
+   "JsonParseDepthBeyondLimitIsRejected",
+   "JsonParseDepthWithinLimitIsAccepted",
+   "JsonParseDoublesAreCorrectlyRounded",
+   "JsonParseDuplicateKeysAreBackendDefined",
+   "JsonParseEmptyValues",
+   "JsonParseFromStream",
+   "JsonParseInvalidUtf8IsRejected",
+   "JsonParseLargeNumbers",
+   "JsonParseMalformed",
+   "JsonParseNestedStructures",
+   "JsonParsePrimitives",
+   "JsonParseSimpleArray",
+   "JsonParseSimpleObject",
+   "JsonParseTrailingDataIsRejected",
+   "JsonParseUnicode",
+   "JsonPerformanceBasicParsing",
+   "JsonPerformanceLargeParsing",
+   "JsonPerformanceNestedAccess",
+   "JsonPerformanceObjectAccess",
+   "JsonPerformanceObjectConstruction",
+   "JsonPerformanceRoundTrip",
+   "JsonPerformanceSerialization",
+   "JsonPrettyPrintEmptyContainers",
+   "JsonPrettyPrintNestedLayout",
+   "JsonRoundTrip",
+   "JsonSecurityModels_JwtClaimsSetTests",
+   "JsonSerializeAlwaysEmitsRawUtf8",
+   "JsonSerializeCanonical",
+   "JsonSerializeCanonicalNestedLayout",
+   "JsonSerializeCompact",
+   "JsonSerializeEscapesControlCharacters",
+   "JsonSerializeOptions",
+   "JsonSerializePretty",
+   "JsonSerializeRejectsNonFiniteDoubles",
+   "JsonSerializeStreamAlsoEmitsRawUtf8",
+   "JsonSerializeToStream",
+   "JsonSerializeToStreamCanonical",
+   "JsonValueTypeChecking",
+   "JsonValueTypeCreation",
+   "JsonValueTypeExtraction",
+   "ServerErrorHelpersExceptionCallbackTests",
+   "ServerErrorHelpersRedactionTests",
+   "ServerErrorHelpersTests",
+   "TestDataChunkStorageFilesystemMultiFiles",
+   "TestDataChunkStorageFilesystemSingleFile",
+   "TestDataChunkStorageSingleFileCorruptFileTests",
+   "TestDataChunkStorageSingleFileDeleteAndReopen",
+   "TestDataChunkStorageSingleFileOverwriteAndReopen",
+   "TestFilesystemMetadataChecksumAndHashAssociation",
+   "TestFilesystemMetadataComputeStatistics",
+   "TestFilesystemMetadataEntryPathValidation",
+   "TestFilesystemMetadataInMemoryImpl",
+   "TestFilesystemMetadataIteratorOutlivesStoreHandle",
+   "TestFilesystemMetadataRejectedMutationsLeaveStoreConsistent"
+  ],
+  "skipped": [
+   "DataModelPerformanceComplexDeserialization: requires --is-client (performance benchmark)",
+   "DataModelPerformanceComplexSerialization: requires --is-client (performance benchmark)",
+   "DataModelPerformanceOverheadComplex: requires --is-client (performance benchmark)",
+   "DataModelPerformanceOverheadSimple: requires --is-client (performance benchmark)",
+   "DataModelPerformanceRoundTrip: requires --is-client (performance benchmark)",
+   "DataModelPerformanceSimpleDeserialization: requires --is-client (performance benchmark)",
+   "DataModelPerformanceSimpleSerialization: requires --is-client (performance benchmark)",
+   "DataModelSerializationEmplaceBaseline: requires --is-client (performance benchmark)",
+   "DataModelSerializationProfileComplex: requires --is-client (performance benchmark)",
+   "DataModelSerializationProfileSimple: requires --is-client (performance benchmark)",
+   "JsonPerformanceBasicParsing: requires --is-client (performance benchmark)",
+   "JsonPerformanceLargeParsing: requires --is-client (performance benchmark)",
+   "JsonPerformanceNestedAccess: requires --is-client (performance benchmark)",
+   "JsonPerformanceObjectAccess: requires --is-client (performance benchmark)",
+   "JsonPerformanceObjectConstruction: requires --is-client (performance benchmark)",
+   "JsonPerformanceRoundTrip: requires --is-client (performance benchmark)",
+   "JsonPerformanceSerialization: requires --is-client (performance benchmark)"
+  ]
+ },
+ "utf_baselib_http": {
+  "cases": {
+   "AsioSslStreamWrapper_BeginProtocolShutdownPreconditionTests": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AsioSslStreamWrapper_EnhanceExceptionNoVerifyFailureTests": {
+    "assertions": 16,
+    "assertions_total": 16,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AsioSslStreamWrapper_FreshStateTests": {
+    "assertions": 10,
+    "assertions_total": 10,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_HttpServerBackendFailureStatusTest": {
+    "assertions": 9,
+    "assertions_total": 9,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_HttpServerBackendResponseHeadersTest": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_HttpServerCancelBeforeStartTest": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_HttpServerConnectionTimeoutAndCapTest": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_HttpServerConnectionTimeoutDisabledTest": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_HttpServerDefaultBackendTest": {
+    "assertions": 11,
+    "assertions_total": 11,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_HttpServerDerivedConnectionCapTest": {
+    "assertions": 10,
+    "assertions_total": 10,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_HttpServerImplTest": {
+    "assertions": 10,
+    "assertions_total": 10,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_HttpServerPerfTest": {
+    "assertions": 130,
+    "assertions_total": 130,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_HttpServerStdErrorResponseRedactionTest": {
+    "assertions": 24,
+    "assertions_total": 24,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_HttpSslServerConnectionCapTest": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_HttpSslServerProtocolHandshakeTimeoutTest": {
+    "assertions": 9,
+    "assertions_total": 9,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_ParserHeaderStrictnessTest": {
+    "assertions": 28,
+    "assertions_total": 28,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_ParserHelpersParseHeader": {
+    "assertions": 29,
+    "assertions_total": 29,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_ParserHelpersTestMethodURIProtocol": {
+    "assertions": 28,
+    "assertions_total": 28,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_ParserTest": {
+    "assertions": 58,
+    "assertions_total": 58,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_RequestTest": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_ResponseHeaderValidationTest": {
+    "assertions": 10,
+    "assertions_total": 10,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_ResponseTest": {
+    "assertions": 41,
+    "assertions_total": 41,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_StatusStringsTest": {
+    "assertions": 80,
+    "assertions_total": 80,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_TcpServerPolicySmoothHysteresisTest": {
+    "assertions": 13,
+    "assertions_total": 13,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Client_SimpleHttpContentCharsetTests": {
+    "assertions": 39,
+    "assertions_total": 39,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Client_SimpleHttpContentLengthValidationTests": {
+    "assertions": 37,
+    "assertions_total": 37,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Client_SimpleHttpPerfTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Client_SimpleHttpRequestFramingTests": {
+    "assertions": 25,
+    "assertions_total": 25,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Client_SimpleHttpResponseHeaderParsingTests": {
+    "assertions": 17,
+    "assertions_total": 17,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Client_SimpleHttpResponseSizeLimitTests": {
+    "assertions": 13,
+    "assertions_total": 13,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Client_SimpleHttpSecureModeRedactionTests": {
+    "assertions": 47,
+    "assertions_total": 47,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Client_SimpleHttpStatusLineParsingTests": {
+    "assertions": 20,
+    "assertions_total": 20,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Client_SimpleHttpTests": {
+    "assertions": 86,
+    "assertions_total": 86,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Client_SimpleHttpTimeoutTests": {
+    "assertions": 22,
+    "assertions_total": 22,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Client_SimpleHttpTruncatedResponseTests": {
+    "assertions": 19,
+    "assertions_total": 19,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Client_SimpleSecureHttpSslGetTests": {
+    "assertions": 25,
+    "assertions_total": 25,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TlsHandshake_AllowUntrustedRecordsAndClearsEndpointInfo": {
+    "assertions": 15,
+    "assertions_total": 15,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TlsHandshake_NameMismatchIsReportedThroughErrorInfo": {
+    "assertions": 13,
+    "assertions_total": 13,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TlsHandshake_SniOmittedForAddressLiterals": {
+    "assertions": 14,
+    "assertions_total": 14,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TlsHandshake_UntrustedChainIsReportedThroughErrorInfo": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TlsPeerVerification_AddressLiteralIsNotMatchedAgainstDnsNames": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TlsPeerVerification_CallbackFormFailsClosedWithoutPreverification": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TlsPeerVerification_CommonNameIsNeverConsulted": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TlsPeerVerification_DegenerateInputsAreRefused": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TlsPeerVerification_DnsNamesStillMatch": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TlsPeerVerification_ExistingServerCertificateBehaviourIsUnchanged": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TlsPeerVerification_IpAddressLiteralsAreMatched": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TlsPeerVerification_MultiLabelWildcardsDoNotMatch": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TlsPeerVerification_PartialWildcardsDoNotMatch": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TlsPeerVerification_UnlistedIpAddressIsRefused": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TlsProtocolPolicy_CipherSuitesAreAeadOnly": {
+    "assertions": 92,
+    "assertions_total": 92,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TlsProtocolPolicy_FloorAndSecurityLevelArePinned": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TlsProtocolPolicy_HardeningOptionsArePinned": {
+    "assertions": 14,
+    "assertions_total": 14,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TlsProtocolPolicy_ServerContextRejectsBadKeyMaterial": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TlsProtocolPolicy_Tls10IsRefusedUnderTheDefaultPolicy": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TlsProtocolPolicy_Tls11IsRefusedUnderTheDefaultPolicy": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   }
+  },
+  "clean": true,
+  "entered": [
+   "AsioSslStreamWrapper_BeginProtocolShutdownPreconditionTests",
+   "AsioSslStreamWrapper_EnhanceExceptionNoVerifyFailureTests",
+   "AsioSslStreamWrapper_FreshStateTests",
+   "BaseLib_HttpServerBackendFailureStatusTest",
+   "BaseLib_HttpServerBackendResponseHeadersTest",
+   "BaseLib_HttpServerCancelBeforeStartTest",
+   "BaseLib_HttpServerConnectionTimeoutAndCapTest",
+   "BaseLib_HttpServerConnectionTimeoutDisabledTest",
+   "BaseLib_HttpServerDefaultBackendTest",
+   "BaseLib_HttpServerDerivedConnectionCapTest",
+   "BaseLib_HttpServerImplTest",
+   "BaseLib_HttpServerPerfTest",
+   "BaseLib_HttpServerStdErrorResponseRedactionTest",
+   "BaseLib_HttpSslServerConnectionCapTest",
+   "BaseLib_HttpSslServerProtocolHandshakeTimeoutTest",
+   "BaseLib_ParserHeaderStrictnessTest",
+   "BaseLib_ParserHelpersParseHeader",
+   "BaseLib_ParserHelpersTestMethodURIProtocol",
+   "BaseLib_ParserTest",
+   "BaseLib_RequestTest",
+   "BaseLib_ResponseHeaderValidationTest",
+   "BaseLib_ResponseTest",
+   "BaseLib_StatusStringsTest",
+   "BaseLib_TcpServerPolicySmoothHysteresisTest",
+   "Client_SimpleHttpContentCharsetTests",
+   "Client_SimpleHttpContentLengthValidationTests",
+   "Client_SimpleHttpPerfTests",
+   "Client_SimpleHttpRequestFramingTests",
+   "Client_SimpleHttpResponseHeaderParsingTests",
+   "Client_SimpleHttpResponseSizeLimitTests",
+   "Client_SimpleHttpSecureModeRedactionTests",
+   "Client_SimpleHttpStatusLineParsingTests",
+   "Client_SimpleHttpTests",
+   "Client_SimpleHttpTimeoutTests",
+   "Client_SimpleHttpTruncatedResponseTests",
+   "Client_SimpleSecureHttpSslGetTests",
+   "TlsHandshake_AllowUntrustedRecordsAndClearsEndpointInfo",
+   "TlsHandshake_NameMismatchIsReportedThroughErrorInfo",
+   "TlsHandshake_SniOmittedForAddressLiterals",
+   "TlsHandshake_UntrustedChainIsReportedThroughErrorInfo",
+   "TlsPeerVerification_AddressLiteralIsNotMatchedAgainstDnsNames",
+   "TlsPeerVerification_CallbackFormFailsClosedWithoutPreverification",
+   "TlsPeerVerification_CommonNameIsNeverConsulted",
+   "TlsPeerVerification_DegenerateInputsAreRefused",
+   "TlsPeerVerification_DnsNamesStillMatch",
+   "TlsPeerVerification_ExistingServerCertificateBehaviourIsUnchanged",
+   "TlsPeerVerification_IpAddressLiteralsAreMatched",
+   "TlsPeerVerification_MultiLabelWildcardsDoNotMatch",
+   "TlsPeerVerification_PartialWildcardsDoNotMatch",
+   "TlsPeerVerification_UnlistedIpAddressIsRefused",
+   "TlsProtocolPolicy_CipherSuitesAreAeadOnly",
+   "TlsProtocolPolicy_FloorAndSecurityLevelArePinned",
+   "TlsProtocolPolicy_HardeningOptionsArePinned",
+   "TlsProtocolPolicy_ServerContextRejectsBadKeyMaterial",
+   "TlsProtocolPolicy_Tls10IsRefusedUnderTheDefaultPolicy",
+   "TlsProtocolPolicy_Tls11IsRefusedUnderTheDefaultPolicy"
+  ],
+  "exit": 0,
+  "expected": 56,
+  "failures": null,
+  "incomplete": [],
+  "registered": [
+   "AsioSslStreamWrapper_BeginProtocolShutdownPreconditionTests",
+   "AsioSslStreamWrapper_EnhanceExceptionNoVerifyFailureTests",
+   "AsioSslStreamWrapper_FreshStateTests",
+   "BaseLib_HttpServerBackendFailureStatusTest",
+   "BaseLib_HttpServerBackendResponseHeadersTest",
+   "BaseLib_HttpServerCancelBeforeStartTest",
+   "BaseLib_HttpServerConnectionTimeoutAndCapTest",
+   "BaseLib_HttpServerConnectionTimeoutDisabledTest",
+   "BaseLib_HttpServerDefaultBackendTest",
+   "BaseLib_HttpServerDerivedConnectionCapTest",
+   "BaseLib_HttpServerImplTest",
+   "BaseLib_HttpServerPerfTest",
+   "BaseLib_HttpServerStdErrorResponseRedactionTest",
+   "BaseLib_HttpSslServerConnectionCapTest",
+   "BaseLib_HttpSslServerProtocolHandshakeTimeoutTest",
+   "BaseLib_ParserHeaderStrictnessTest",
+   "BaseLib_ParserHelpersParseHeader",
+   "BaseLib_ParserHelpersTestMethodURIProtocol",
+   "BaseLib_ParserTest",
+   "BaseLib_RequestTest",
+   "BaseLib_ResponseHeaderValidationTest",
+   "BaseLib_ResponseTest",
+   "BaseLib_StatusStringsTest",
+   "BaseLib_TcpServerPolicySmoothHysteresisTest",
+   "Client_SimpleHttpContentCharsetTests",
+   "Client_SimpleHttpContentLengthValidationTests",
+   "Client_SimpleHttpPerfTests",
+   "Client_SimpleHttpRequestFramingTests",
+   "Client_SimpleHttpResponseHeaderParsingTests",
+   "Client_SimpleHttpResponseSizeLimitTests",
+   "Client_SimpleHttpSecureModeRedactionTests",
+   "Client_SimpleHttpStatusLineParsingTests",
+   "Client_SimpleHttpTests",
+   "Client_SimpleHttpTimeoutTests",
+   "Client_SimpleHttpTruncatedResponseTests",
+   "Client_SimpleSecureHttpSslGetTests",
+   "TlsHandshake_AllowUntrustedRecordsAndClearsEndpointInfo",
+   "TlsHandshake_NameMismatchIsReportedThroughErrorInfo",
+   "TlsHandshake_SniOmittedForAddressLiterals",
+   "TlsHandshake_UntrustedChainIsReportedThroughErrorInfo",
+   "TlsPeerVerification_AddressLiteralIsNotMatchedAgainstDnsNames",
+   "TlsPeerVerification_CallbackFormFailsClosedWithoutPreverification",
+   "TlsPeerVerification_CommonNameIsNeverConsulted",
+   "TlsPeerVerification_DegenerateInputsAreRefused",
+   "TlsPeerVerification_DnsNamesStillMatch",
+   "TlsPeerVerification_ExistingServerCertificateBehaviourIsUnchanged",
+   "TlsPeerVerification_IpAddressLiteralsAreMatched",
+   "TlsPeerVerification_MultiLabelWildcardsDoNotMatch",
+   "TlsPeerVerification_PartialWildcardsDoNotMatch",
+   "TlsPeerVerification_UnlistedIpAddressIsRefused",
+   "TlsProtocolPolicy_CipherSuitesAreAeadOnly",
+   "TlsProtocolPolicy_FloorAndSecurityLevelArePinned",
+   "TlsProtocolPolicy_HardeningOptionsArePinned",
+   "TlsProtocolPolicy_ServerContextRejectsBadKeyMaterial",
+   "TlsProtocolPolicy_Tls10IsRefusedUnderTheDefaultPolicy",
+   "TlsProtocolPolicy_Tls11IsRefusedUnderTheDefaultPolicy"
+  ],
+  "skipped": []
+ },
+ "utf_baselib_io": {
+  "cases": {
+   "IO_AuthenticatedConnectAndTransmitDataTests": {
+    "assertions": 159,
+    "assertions_total": 159,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_BasicMessageDispatcherTests": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_BasicTests": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_BinaryProtocolInvariants": {
+    "assertions": 111,
+    "assertions_total": 111,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_BlockTransferClientCommandStateTests": {
+    "assertions": 52,
+    "assertions_total": 52,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_BlockTransferRemoveIgnoreIfNotFoundTests": {
+    "assertions": 15,
+    "assertions_total": 15,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_BlockTransferServerMalformedCommandTests": {
+    "assertions": 53,
+    "assertions_total": 53,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_BlockTransferServerProtocolNegotiationNegativeTests": {
+    "assertions": 28,
+    "assertions_total": 28,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_BrokerDispatchingBackendTaskSelectionTests": {
+    "assertions": 25,
+    "assertions_total": 25,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_ConnectorFailureEndpointErrorInfoTests": {
+    "assertions": 11,
+    "assertions_total": 11,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_DataBlockCrossPoolCapacityTests": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_MaxConnectionsTest": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_MessagingBackendProcessingHelpers": {
+    "assertions": 161,
+    "assertions_total": 161,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_MessagingClientBlockDispatchLocalTests": {
+    "assertions": 5122,
+    "assertions_total": 5122,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_MessagingClientTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_OutgoingAcceptorNotifyRejectionTests": {
+    "assertions": 13,
+    "assertions_total": 13,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_OutgoingBackendStateHeartbeatOutsideLockTests": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_OutgoingBackendStateRegistrationTests": {
+    "assertions": 48,
+    "assertions_total": 48,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_PerfStartClient": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_PerfStartMessageDispatcherServer": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_PerfStartServer": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_SimpleAcceptorStartStopMessageDispatcherTests": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_SimpleAcceptorStartStopTests": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_SimpleConnectAndTransmitDataMessageDispatcherOutgoingTests": {
+    "assertions": 8194,
+    "assertions_total": 8194,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_SimpleConnectAndTransmitDataMessageDispatcherTests": {
+    "assertions": 149,
+    "assertions_total": 149,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_SimpleConnectAndTransmitDataTests": {
+    "assertions": 149,
+    "assertions_total": 149,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_SimplePerfMessageDispatcherTests": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_SimplePerfTests": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_SslSimpleConnectAndTransmitDataMessageDispatcherOutgoingTests": {
+    "assertions": 8195,
+    "assertions_total": 8195,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_SslSimpleConnectAndTransmitDataMessageDispatcherTests": {
+    "assertions": 152,
+    "assertions_total": 152,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_TraceTierSmokeTests": {
+    "assertions": 307,
+    "assertions_total": 307,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Io_TcpBlockTransferChunkFailurePropagationTests": {
+    "assertions": 19,
+    "assertions_total": 19,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   }
+  },
+  "clean": true,
+  "entered": [
+   "IO_AuthenticatedConnectAndTransmitDataTests",
+   "IO_BasicMessageDispatcherTests",
+   "IO_BasicTests",
+   "IO_BinaryProtocolInvariants",
+   "IO_BlockTransferClientCommandStateTests",
+   "IO_BlockTransferRemoveIgnoreIfNotFoundTests",
+   "IO_BlockTransferServerMalformedCommandTests",
+   "IO_BlockTransferServerProtocolNegotiationNegativeTests",
+   "IO_BrokerDispatchingBackendTaskSelectionTests",
+   "IO_ConnectorFailureEndpointErrorInfoTests",
+   "IO_DataBlockCrossPoolCapacityTests",
+   "IO_MaxConnectionsTest",
+   "IO_MessagingBackendProcessingHelpers",
+   "IO_MessagingClientBlockDispatchLocalTests",
+   "IO_MessagingClientTests",
+   "IO_OutgoingAcceptorNotifyRejectionTests",
+   "IO_OutgoingBackendStateHeartbeatOutsideLockTests",
+   "IO_OutgoingBackendStateRegistrationTests",
+   "IO_PerfStartClient",
+   "IO_PerfStartMessageDispatcherServer",
+   "IO_PerfStartServer",
+   "IO_SimpleAcceptorStartStopMessageDispatcherTests",
+   "IO_SimpleAcceptorStartStopTests",
+   "IO_SimpleConnectAndTransmitDataMessageDispatcherOutgoingTests",
+   "IO_SimpleConnectAndTransmitDataMessageDispatcherTests",
+   "IO_SimpleConnectAndTransmitDataTests",
+   "IO_SimplePerfMessageDispatcherTests",
+   "IO_SimplePerfTests",
+   "IO_SslSimpleConnectAndTransmitDataMessageDispatcherOutgoingTests",
+   "IO_SslSimpleConnectAndTransmitDataMessageDispatcherTests",
+   "IO_TraceTierSmokeTests",
+   "Io_TcpBlockTransferChunkFailurePropagationTests"
+  ],
+  "exit": 0,
+  "expected": 32,
+  "failures": null,
+  "incomplete": [],
+  "registered": [
+   "IO_AuthenticatedConnectAndTransmitDataTests",
+   "IO_BasicMessageDispatcherTests",
+   "IO_BasicTests",
+   "IO_BinaryProtocolInvariants",
+   "IO_BlockTransferClientCommandStateTests",
+   "IO_BlockTransferRemoveIgnoreIfNotFoundTests",
+   "IO_BlockTransferServerMalformedCommandTests",
+   "IO_BlockTransferServerProtocolNegotiationNegativeTests",
+   "IO_BrokerDispatchingBackendTaskSelectionTests",
+   "IO_ConnectorFailureEndpointErrorInfoTests",
+   "IO_DataBlockCrossPoolCapacityTests",
+   "IO_MaxConnectionsTest",
+   "IO_MessagingBackendProcessingHelpers",
+   "IO_MessagingClientBlockDispatchLocalTests",
+   "IO_MessagingClientTests",
+   "IO_OutgoingAcceptorNotifyRejectionTests",
+   "IO_OutgoingBackendStateHeartbeatOutsideLockTests",
+   "IO_OutgoingBackendStateRegistrationTests",
+   "IO_PerfStartClient",
+   "IO_PerfStartMessageDispatcherServer",
+   "IO_PerfStartServer",
+   "IO_SimpleAcceptorStartStopMessageDispatcherTests",
+   "IO_SimpleAcceptorStartStopTests",
+   "IO_SimpleConnectAndTransmitDataMessageDispatcherOutgoingTests",
+   "IO_SimpleConnectAndTransmitDataMessageDispatcherTests",
+   "IO_SimpleConnectAndTransmitDataTests",
+   "IO_SimplePerfMessageDispatcherTests",
+   "IO_SimplePerfTests",
+   "IO_SslSimpleConnectAndTransmitDataMessageDispatcherOutgoingTests",
+   "IO_SslSimpleConnectAndTransmitDataMessageDispatcherTests",
+   "IO_TraceTierSmokeTests",
+   "Io_TcpBlockTransferChunkFailurePropagationTests"
+  ],
+  "skipped": [
+   "IO_MaxConnectionsTest: requires --is-client (manual performance run)",
+   "IO_PerfStartClient: requires --is-client (manual performance run)",
+   "IO_PerfStartMessageDispatcherServer: requires --is-server (manual performance run)",
+   "IO_PerfStartServer: requires --is-server (manual performance run)"
+  ]
+ },
+ "utf_baselib_loader": {
+  "cases": {
+   "TestCookie": {
+    "assertions": 19,
+    "assertions_total": 19,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestManifestMissingOrNullPropertyIsRejected": {
+    "assertions": 55,
+    "assertions_total": 55,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestManifestRead": {
+    "assertions": 17,
+    "assertions_total": 17,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestManifestUnsupportedVersionIsRejected": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestManifestWrite": {
+    "assertions": 16,
+    "assertions_total": 16,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestManifestWriteReadRoundTrip": {
+    "assertions": 47,
+    "assertions_total": 47,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestNoOutstandingObjectRefs": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestPersonalityFileSystem": {
+    "assertions": 13,
+    "assertions_total": 13,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestPersonalityFileSystemDiscoveryBranches": {
+    "assertions": 10,
+    "assertions_total": 10,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestPluginAccess": {
+    "assertions": 16,
+    "assertions_total": 16,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestPluginAccessDuplicateRegistration": {
+    "assertions": 13,
+    "assertions_total": 13,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestResolver_CheckFailure": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestResolver_CheckSuccess": {
+    "assertions": 11,
+    "assertions_total": 11,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestResolver_CoreServices": {
+    "assertions": 25,
+    "assertions_total": 25,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestResolver_RegisterHost": {
+    "assertions": 22,
+    "assertions_total": 22,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestResolver_RegisterResolverReportsErrorCode": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestResolver_ServerWithoutPluginClass": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestToolchainMatch": {
+    "assertions": 15,
+    "assertions_total": 15,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestVersionFromStringRejectsMalformedInput": {
+    "assertions": 24,
+    "assertions_total": 24,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestVersionToStringAndRoundTrip": {
+    "assertions": 18,
+    "assertions_total": 18,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   }
+  },
+  "clean": true,
+  "entered": [
+   "TestCookie",
+   "TestManifestMissingOrNullPropertyIsRejected",
+   "TestManifestRead",
+   "TestManifestUnsupportedVersionIsRejected",
+   "TestManifestWrite",
+   "TestManifestWriteReadRoundTrip",
+   "TestNoOutstandingObjectRefs",
+   "TestPersonalityFileSystem",
+   "TestPersonalityFileSystemDiscoveryBranches",
+   "TestPluginAccess",
+   "TestPluginAccessDuplicateRegistration",
+   "TestResolver_CheckFailure",
+   "TestResolver_CheckSuccess",
+   "TestResolver_CoreServices",
+   "TestResolver_RegisterHost",
+   "TestResolver_RegisterResolverReportsErrorCode",
+   "TestResolver_ServerWithoutPluginClass",
+   "TestToolchainMatch",
+   "TestVersionFromStringRejectsMalformedInput",
+   "TestVersionToStringAndRoundTrip"
+  ],
+  "exit": 0,
+  "expected": 20,
+  "failures": null,
+  "incomplete": [],
+  "registered": [
+   "TestCookie",
+   "TestManifestMissingOrNullPropertyIsRejected",
+   "TestManifestRead",
+   "TestManifestUnsupportedVersionIsRejected",
+   "TestManifestWrite",
+   "TestManifestWriteReadRoundTrip",
+   "TestNoOutstandingObjectRefs",
+   "TestPersonalityFileSystem",
+   "TestPersonalityFileSystemDiscoveryBranches",
+   "TestPluginAccess",
+   "TestPluginAccessDuplicateRegistration",
+   "TestResolver_CheckFailure",
+   "TestResolver_CheckSuccess",
+   "TestResolver_CoreServices",
+   "TestResolver_RegisterHost",
+   "TestResolver_RegisterResolverReportsErrorCode",
+   "TestResolver_ServerWithoutPluginClass",
+   "TestToolchainMatch",
+   "TestVersionFromStringRejectsMalformedInput",
+   "TestVersionToStringAndRoundTrip"
+  ],
+  "skipped": []
+ },
+ "utf_baselib_messaging": {
+  "cases": {
+   "BackendProcessingDefaultsTests": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BackendTests": {
+    "assertions": 627,
+    "assertions_total": 627,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BrokerClientTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BrokerErrorCodesTests": {
+    "assertions": 29,
+    "assertions_total": 29,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BrokerFacadeTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "DataModelTests": {
+    "assertions": 16,
+    "assertions_total": 16,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ForwardingBackendBasicTests": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ForwardingBackendConnectFailureTests": {
+    "assertions": 12,
+    "assertions_total": 12,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_BrokerAuthorizationCacheMissTests": {
+    "assertions": 21,
+    "assertions_total": 21,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_ConnectionEstablisherBasicTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_ConnectionEstablisherHangTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_EarlyCancelIssueTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_FlushQueueWithRetriesOnTargetPeerNotFoundTests": {
+    "assertions": 11,
+    "assertions_total": 11,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_MessagingClientBackendProcessingTests": {
+    "assertions": 20,
+    "assertions_total": 20,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_MessagingClientDisposedContractTests": {
+    "assertions": 21,
+    "assertions_total": 21,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_MessagingClientObjectDispatchLocalTests": {
+    "assertions": 4097,
+    "assertions_total": 4097,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_MessagingClientObjectDispatchTcpDispatcherTests": {
+    "assertions": 14865,
+    "assertions_total": 14865,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_MessagingClientReconnectAndChannelIdTests": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_MessagingConversationTaskCancelTests": {
+    "assertions": 9,
+    "assertions_total": 9,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_MessagingDemultiplexingTests": {
+    "assertions": 47,
+    "assertions_total": 47,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_MessagingMessageProcessingOutboundQueueTests": {
+    "assertions": 171,
+    "assertions_total": 171,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_MessagingMessageProcessingTestAckTimeout": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_MessagingMessageProcessingTestMsgTimeout": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_MessagingMessageProcessingTestWrappers": {
+    "assertions": 17,
+    "assertions_total": 17,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_MessagingMessageProcessingTests": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_MessagingMultiplexingTests": {
+    "assertions": 994,
+    "assertions_total": 994,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_MessagingPerfTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_MessagingProxyBackendTests": {
+    "assertions": 217,
+    "assertions_total": 217,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_MessagingSecretsNeverReachTheLogTests": {
+    "assertions": 18,
+    "assertions_total": 18,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "IO_MessagingUtilsTests": {
+    "assertions": 146,
+    "assertions_total": 146,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "MessageTypeWireStringsTest": {
+    "assertions": 21,
+    "assertions_total": 21,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "MessagingAsyncDispatcherWrapperContractTests": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "MessagingHelpersDataIntegrityTest": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "MessagingUtils_BrokerProtocolStreamRedactionTests": {
+    "assertions": 18,
+    "assertions_total": 18,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "MessagingUtils_RetryableBrokerErrorTests": {
+    "assertions": 14,
+    "assertions_total": 14,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "MessagingUtils_TokenTypeConcurrencyTests": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ProxyBrokerClientBasicTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ProxyBrokerFacadeTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "ProxyReceiverBackendMalformedTargetPeerIdTests": {
+    "assertions": 16,
+    "assertions_total": 16,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "RotatingMessagingClientBlockDispatchTests": {
+    "assertions": 54,
+    "assertions_total": 54,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "RotatingMessagingClientObjectDispatchTests": {
+    "assertions": 54,
+    "assertions_total": 54,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Test_AsyncDataChunkStorageStats": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Test_AsyncDataChunkStorageStatsException": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Test_AsyncDataChunkStorageStatsUncodedException": {
+    "assertions": 18,
+    "assertions_total": 18,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Test_BlobServerFacadeStartStop": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Test_BlobServerFatalBackendErrorBlastRadius": {
+    "assertions": 23,
+    "assertions_total": 23,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   }
+  },
+  "clean": true,
+  "entered": [
+   "BackendProcessingDefaultsTests",
+   "BackendTests",
+   "BrokerClientTests",
+   "BrokerErrorCodesTests",
+   "BrokerFacadeTests",
+   "DataModelTests",
+   "ForwardingBackendBasicTests",
+   "ForwardingBackendConnectFailureTests",
+   "IO_BrokerAuthorizationCacheMissTests",
+   "IO_ConnectionEstablisherBasicTests",
+   "IO_ConnectionEstablisherHangTests",
+   "IO_EarlyCancelIssueTests",
+   "IO_FlushQueueWithRetriesOnTargetPeerNotFoundTests",
+   "IO_MessagingClientBackendProcessingTests",
+   "IO_MessagingClientDisposedContractTests",
+   "IO_MessagingClientObjectDispatchLocalTests",
+   "IO_MessagingClientObjectDispatchTcpDispatcherTests",
+   "IO_MessagingClientReconnectAndChannelIdTests",
+   "IO_MessagingConversationTaskCancelTests",
+   "IO_MessagingDemultiplexingTests",
+   "IO_MessagingMessageProcessingOutboundQueueTests",
+   "IO_MessagingMessageProcessingTestAckTimeout",
+   "IO_MessagingMessageProcessingTestMsgTimeout",
+   "IO_MessagingMessageProcessingTestWrappers",
+   "IO_MessagingMessageProcessingTests",
+   "IO_MessagingMultiplexingTests",
+   "IO_MessagingPerfTests",
+   "IO_MessagingProxyBackendTests",
+   "IO_MessagingSecretsNeverReachTheLogTests",
+   "IO_MessagingUtilsTests",
+   "MessageTypeWireStringsTest",
+   "MessagingAsyncDispatcherWrapperContractTests",
+   "MessagingHelpersDataIntegrityTest",
+   "MessagingUtils_BrokerProtocolStreamRedactionTests",
+   "MessagingUtils_RetryableBrokerErrorTests",
+   "MessagingUtils_TokenTypeConcurrencyTests",
+   "ProxyBrokerClientBasicTests",
+   "ProxyBrokerFacadeTests",
+   "ProxyReceiverBackendMalformedTargetPeerIdTests",
+   "RotatingMessagingClientBlockDispatchTests",
+   "RotatingMessagingClientObjectDispatchTests",
+   "Test_AsyncDataChunkStorageStats",
+   "Test_AsyncDataChunkStorageStatsException",
+   "Test_AsyncDataChunkStorageStatsUncodedException",
+   "Test_BlobServerFacadeStartStop",
+   "Test_BlobServerFatalBackendErrorBlastRadius"
+  ],
+  "exit": 0,
+  "expected": 46,
+  "failures": null,
+  "incomplete": [],
+  "registered": [
+   "BackendProcessingDefaultsTests",
+   "BackendTests",
+   "BrokerClientTests",
+   "BrokerErrorCodesTests",
+   "BrokerFacadeTests",
+   "DataModelTests",
+   "ForwardingBackendBasicTests",
+   "ForwardingBackendConnectFailureTests",
+   "IO_BrokerAuthorizationCacheMissTests",
+   "IO_ConnectionEstablisherBasicTests",
+   "IO_ConnectionEstablisherHangTests",
+   "IO_EarlyCancelIssueTests",
+   "IO_FlushQueueWithRetriesOnTargetPeerNotFoundTests",
+   "IO_MessagingClientBackendProcessingTests",
+   "IO_MessagingClientDisposedContractTests",
+   "IO_MessagingClientObjectDispatchLocalTests",
+   "IO_MessagingClientObjectDispatchTcpDispatcherTests",
+   "IO_MessagingClientReconnectAndChannelIdTests",
+   "IO_MessagingConversationTaskCancelTests",
+   "IO_MessagingDemultiplexingTests",
+   "IO_MessagingMessageProcessingOutboundQueueTests",
+   "IO_MessagingMessageProcessingTestAckTimeout",
+   "IO_MessagingMessageProcessingTestMsgTimeout",
+   "IO_MessagingMessageProcessingTestWrappers",
+   "IO_MessagingMessageProcessingTests",
+   "IO_MessagingMultiplexingTests",
+   "IO_MessagingPerfTests",
+   "IO_MessagingProxyBackendTests",
+   "IO_MessagingSecretsNeverReachTheLogTests",
+   "IO_MessagingUtilsTests",
+   "MessageTypeWireStringsTest",
+   "MessagingAsyncDispatcherWrapperContractTests",
+   "MessagingHelpersDataIntegrityTest",
+   "MessagingUtils_BrokerProtocolStreamRedactionTests",
+   "MessagingUtils_RetryableBrokerErrorTests",
+   "MessagingUtils_TokenTypeConcurrencyTests",
+   "ProxyBrokerClientBasicTests",
+   "ProxyBrokerFacadeTests",
+   "ProxyReceiverBackendMalformedTargetPeerIdTests",
+   "RotatingMessagingClientBlockDispatchTests",
+   "RotatingMessagingClientObjectDispatchTests",
+   "Test_AsyncDataChunkStorageStats",
+   "Test_AsyncDataChunkStorageStatsException",
+   "Test_AsyncDataChunkStorageStatsUncodedException",
+   "Test_BlobServerFacadeStartStop",
+   "Test_BlobServerFatalBackendErrorBlastRadius"
+  ],
+  "skipped": [
+   "BrokerClientTests: requires --is-client (manual run test)",
+   "BrokerFacadeTests: requires --is-server (manual run test)",
+   "IO_ConnectionEstablisherBasicTests: requires --is-client (manual run test)",
+   "IO_MessagingPerfTests: requires --is-client (manual run test)",
+   "ProxyBrokerClientBasicTests: requires --is-client (manual run test)",
+   "ProxyBrokerFacadeTests: requires --is-server (manual run test)"
+  ]
+ },
+ "utf_baselib_parsing": {
+  "cases": {
+   "BaseLib_ParsingGetTokens": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BaseLib_ParsingTokenClassificationTests": {
+    "assertions": 12,
+    "assertions_total": 12,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   }
+  },
+  "clean": true,
+  "entered": [
+   "BaseLib_ParsingGetTokens",
+   "BaseLib_ParsingTokenClassificationTests"
+  ],
+  "exit": 0,
+  "expected": 2,
+  "failures": null,
+  "incomplete": [],
+  "registered": [
+   "BaseLib_ParsingGetTokens",
+   "BaseLib_ParsingTokenClassificationTests"
+  ],
+  "skipped": [
+   "BaseLib_ParsingGetTokens: requires --is-client (manual run test)"
+  ]
+ },
+ "utf_baselib_rest": {
+  "cases": {
+   "EchoServerContentTypeHeaderLookupTests": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "RestServerProcessingContextDisposeTests": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "RestServiceGatewayShutsDownWhenBackendDisconnectedTests": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "RestServiceSslBackendAssortedTests": {
+    "assertions": 245,
+    "assertions_total": 245,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "RestServiceSslBackendHttpOnlyTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "RestServiceSslBackendPerfTests": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "RestServiceSslBackendRequestValidationTests": {
+    "assertions": 69,
+    "assertions_total": 69,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "RestServiceSslBackendTests": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "RestServiceSslGatewayGraphQLErrorRenderingTests": {
+    "assertions": 26,
+    "assertions_total": 26,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "RestServiceSslGatewayInboundFilterTests": {
+    "assertions": 31,
+    "assertions_total": 31,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "RestServiceSslGatewayResponseMetadataTests": {
+    "assertions": 28,
+    "assertions_total": 28,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "RestServiceSslGatewayTargetPeerNotFoundTests": {
+    "assertions": 19,
+    "assertions_total": 19,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "RestServiceSslHttpGatewayOnlyTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "RestServiceSslRequestSizeEnvelopeTests": {
+    "assertions": 25,
+    "assertions_total": 25,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "RestUtils_HttpStatusMappingTests": {
+    "assertions": 34,
+    "assertions_total": 34,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   }
+  },
+  "clean": true,
+  "entered": [
+   "EchoServerContentTypeHeaderLookupTests",
+   "RestServerProcessingContextDisposeTests",
+   "RestServiceGatewayShutsDownWhenBackendDisconnectedTests",
+   "RestServiceSslBackendAssortedTests",
+   "RestServiceSslBackendHttpOnlyTests",
+   "RestServiceSslBackendPerfTests",
+   "RestServiceSslBackendRequestValidationTests",
+   "RestServiceSslBackendTests",
+   "RestServiceSslGatewayGraphQLErrorRenderingTests",
+   "RestServiceSslGatewayInboundFilterTests",
+   "RestServiceSslGatewayResponseMetadataTests",
+   "RestServiceSslGatewayTargetPeerNotFoundTests",
+   "RestServiceSslHttpGatewayOnlyTests",
+   "RestServiceSslRequestSizeEnvelopeTests",
+   "RestUtils_HttpStatusMappingTests"
+  ],
+  "exit": 0,
+  "expected": 15,
+  "failures": null,
+  "incomplete": [],
+  "registered": [
+   "EchoServerContentTypeHeaderLookupTests",
+   "RestServerProcessingContextDisposeTests",
+   "RestServiceGatewayShutsDownWhenBackendDisconnectedTests",
+   "RestServiceSslBackendAssortedTests",
+   "RestServiceSslBackendHttpOnlyTests",
+   "RestServiceSslBackendPerfTests",
+   "RestServiceSslBackendRequestValidationTests",
+   "RestServiceSslBackendTests",
+   "RestServiceSslGatewayGraphQLErrorRenderingTests",
+   "RestServiceSslGatewayInboundFilterTests",
+   "RestServiceSslGatewayResponseMetadataTests",
+   "RestServiceSslGatewayTargetPeerNotFoundTests",
+   "RestServiceSslHttpGatewayOnlyTests",
+   "RestServiceSslRequestSizeEnvelopeTests",
+   "RestUtils_HttpStatusMappingTests"
+  ],
+  "skipped": [
+   "RestServiceSslBackendHttpOnlyTests: requires --is-client (manual run test)",
+   "RestServiceSslHttpGatewayOnlyTests: requires --is-server (manual run test)"
+  ]
+ },
+ "utf_baselib_security": {
+  "cases": {
+   "AuthorizationCacheImplBasicTests": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AuthorizationCacheImplCapAndClockTests": {
+    "assertions": 55,
+    "assertions_total": 55,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AuthorizationCacheImplFullTests": {
+    "assertions": 314,
+    "assertions_total": 314,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AuthorizationCacheImplNoTokenRotationTests": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AuthorizationCacheImplTokenRotationTests": {
+    "assertions": 19,
+    "assertions_total": 19,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AuthorizationCacheRestImplBasicTests": {
+    "assertions": 48,
+    "assertions_total": 48,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AuthorizationCacheRestImplFullTests": {
+    "assertions": 315,
+    "assertions_total": 315,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AuthorizationCacheRestImplManualInvoke": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AuthorizationServiceRest_ExtractIsPerCallStateTests": {
+    "assertions": 22,
+    "assertions_total": 22,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AuthorizationServiceRest_ResponseParsingGuards": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AuthorizationServiceRest_StatusCategoryGateTests": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AuthorizationServiceRest_TemplateEscapingTests": {
+    "assertions": 17,
+    "assertions_total": 17,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AuthorizationServiceRest_TokenShapeTests": {
+    "assertions": 14,
+    "assertions_total": 14,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "AuthorizationServiceRest_TokenTextRejectionTests": {
+    "assertions": 13,
+    "assertions_total": 13,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BignumBase64UrlTest": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BignumBase64Url_DegenerateValues": {
+    "assertions": 16,
+    "assertions_total": 16,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "BignumBase64Url_FullWidthRoundTrip": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CryptoErrorHandling_ExceptionCarriesOpenSslReasonAndDrainsQueue": {
+    "assertions": 17,
+    "assertions_total": 17,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CryptoErrorHandling_OpenSslCategoryDoesNotSurviveServerErrorRoundTrip": {
+    "assertions": 17,
+    "assertions_total": 17,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CryptoUtils_AllBundledTrustedRootsAreLoadable": {
+    "assertions": 58,
+    "assertions_total": 58,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CryptoUtils_InitSsl": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CryptoUtils_RsaTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CryptoUtils_ToIntSizeBoundary": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CryptoUtils_TrustedRootRegistrationOrdering": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CryptoUtils_UntrustedEndpointsBookkeeping": {
+    "assertions": 13,
+    "assertions_total": 13,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CryptoUtils_X509ValidityBounds": {
+    "assertions": 11,
+    "assertions_total": 11,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "CryptoUtils_X509tests": {
+    "assertions": 26,
+    "assertions_total": 26,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Crypto_HmacSha256KnownAnswerTests": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "HashUtils_HashSet": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "HashUtils_Test384": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "HashUtils_Test512": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "HashUtils_Test512Update": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "HashUtils_TestPerformance": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "PemKeyFormats_EmittedFormatsAreSpkiAndPkcs8": {
+    "assertions": 9,
+    "assertions_total": 9,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "PemKeyFormats_EncryptedExportUsesStrongKeyDerivation": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "PemKeyFormats_EncryptedPkcs8PrivateKey": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "PemKeyFormats_InconsistentPrivateKeyIsRejected": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "PemKeyFormats_JwkRoundTripAndPolicyTests": {
+    "assertions": 15,
+    "assertions_total": 15,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "PemKeyFormats_LegacyPkcs1PublicKeyLoads": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "PemKeyFormats_MalformedPemThrows": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "PemKeyFormats_ModulusBelowMinimumIsRejected": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "PemKeyFormats_NonRsaKeysAreRejected": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "PemKeyFormats_Pkcs8PrivateKeyMatchesLegacy": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "PemKeyFormats_SmallPublicExponentIsRejected": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "PemKeyFormats_SpkiPublicKeyMatchesLegacy": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "RsaEncryption_MessageSizeBounds": {
+    "assertions": 11,
+    "assertions_total": 11,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "RsaEncryption_encryptAsBase64Tests": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "RsaEncryption_encryptTests": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestRsaSignVerifyDegenerateSignatures": {
+    "assertions": 13,
+    "assertions_total": 13,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestRsaSignVerifyNegative": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "TestRsaSignVerifyPositive": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   }
+  },
+  "clean": true,
+  "entered": [
+   "AuthorizationCacheImplBasicTests",
+   "AuthorizationCacheImplCapAndClockTests",
+   "AuthorizationCacheImplFullTests",
+   "AuthorizationCacheImplNoTokenRotationTests",
+   "AuthorizationCacheImplTokenRotationTests",
+   "AuthorizationCacheRestImplBasicTests",
+   "AuthorizationCacheRestImplFullTests",
+   "AuthorizationCacheRestImplManualInvoke",
+   "AuthorizationServiceRest_ExtractIsPerCallStateTests",
+   "AuthorizationServiceRest_ResponseParsingGuards",
+   "AuthorizationServiceRest_StatusCategoryGateTests",
+   "AuthorizationServiceRest_TemplateEscapingTests",
+   "AuthorizationServiceRest_TokenShapeTests",
+   "AuthorizationServiceRest_TokenTextRejectionTests",
+   "BignumBase64UrlTest",
+   "BignumBase64Url_DegenerateValues",
+   "BignumBase64Url_FullWidthRoundTrip",
+   "CryptoErrorHandling_ExceptionCarriesOpenSslReasonAndDrainsQueue",
+   "CryptoErrorHandling_OpenSslCategoryDoesNotSurviveServerErrorRoundTrip",
+   "CryptoUtils_AllBundledTrustedRootsAreLoadable",
+   "CryptoUtils_InitSsl",
+   "CryptoUtils_RsaTests",
+   "CryptoUtils_ToIntSizeBoundary",
+   "CryptoUtils_TrustedRootRegistrationOrdering",
+   "CryptoUtils_UntrustedEndpointsBookkeeping",
+   "CryptoUtils_X509ValidityBounds",
+   "CryptoUtils_X509tests",
+   "Crypto_HmacSha256KnownAnswerTests",
+   "HashUtils_HashSet",
+   "HashUtils_Test384",
+   "HashUtils_Test512",
+   "HashUtils_Test512Update",
+   "HashUtils_TestPerformance",
+   "PemKeyFormats_EmittedFormatsAreSpkiAndPkcs8",
+   "PemKeyFormats_EncryptedExportUsesStrongKeyDerivation",
+   "PemKeyFormats_EncryptedPkcs8PrivateKey",
+   "PemKeyFormats_InconsistentPrivateKeyIsRejected",
+   "PemKeyFormats_JwkRoundTripAndPolicyTests",
+   "PemKeyFormats_LegacyPkcs1PublicKeyLoads",
+   "PemKeyFormats_MalformedPemThrows",
+   "PemKeyFormats_ModulusBelowMinimumIsRejected",
+   "PemKeyFormats_NonRsaKeysAreRejected",
+   "PemKeyFormats_Pkcs8PrivateKeyMatchesLegacy",
+   "PemKeyFormats_SmallPublicExponentIsRejected",
+   "PemKeyFormats_SpkiPublicKeyMatchesLegacy",
+   "RsaEncryption_MessageSizeBounds",
+   "RsaEncryption_encryptAsBase64Tests",
+   "RsaEncryption_encryptTests",
+   "TestRsaSignVerifyDegenerateSignatures",
+   "TestRsaSignVerifyNegative",
+   "TestRsaSignVerifyPositive"
+  ],
+  "exit": 0,
+  "expected": 51,
+  "failures": null,
+  "incomplete": [],
+  "registered": [
+   "AuthorizationCacheImplBasicTests",
+   "AuthorizationCacheImplCapAndClockTests",
+   "AuthorizationCacheImplFullTests",
+   "AuthorizationCacheImplNoTokenRotationTests",
+   "AuthorizationCacheImplTokenRotationTests",
+   "AuthorizationCacheRestImplBasicTests",
+   "AuthorizationCacheRestImplFullTests",
+   "AuthorizationCacheRestImplManualInvoke",
+   "AuthorizationServiceRest_ExtractIsPerCallStateTests",
+   "AuthorizationServiceRest_ResponseParsingGuards",
+   "AuthorizationServiceRest_StatusCategoryGateTests",
+   "AuthorizationServiceRest_TemplateEscapingTests",
+   "AuthorizationServiceRest_TokenShapeTests",
+   "AuthorizationServiceRest_TokenTextRejectionTests",
+   "BignumBase64UrlTest",
+   "BignumBase64Url_DegenerateValues",
+   "BignumBase64Url_FullWidthRoundTrip",
+   "CryptoErrorHandling_ExceptionCarriesOpenSslReasonAndDrainsQueue",
+   "CryptoErrorHandling_OpenSslCategoryDoesNotSurviveServerErrorRoundTrip",
+   "CryptoUtils_AllBundledTrustedRootsAreLoadable",
+   "CryptoUtils_InitSsl",
+   "CryptoUtils_RsaTests",
+   "CryptoUtils_ToIntSizeBoundary",
+   "CryptoUtils_TrustedRootRegistrationOrdering",
+   "CryptoUtils_UntrustedEndpointsBookkeeping",
+   "CryptoUtils_X509ValidityBounds",
+   "CryptoUtils_X509tests",
+   "Crypto_HmacSha256KnownAnswerTests",
+   "HashUtils_HashSet",
+   "HashUtils_Test384",
+   "HashUtils_Test512",
+   "HashUtils_Test512Update",
+   "HashUtils_TestPerformance",
+   "PemKeyFormats_EmittedFormatsAreSpkiAndPkcs8",
+   "PemKeyFormats_EncryptedExportUsesStrongKeyDerivation",
+   "PemKeyFormats_EncryptedPkcs8PrivateKey",
+   "PemKeyFormats_InconsistentPrivateKeyIsRejected",
+   "PemKeyFormats_JwkRoundTripAndPolicyTests",
+   "PemKeyFormats_LegacyPkcs1PublicKeyLoads",
+   "PemKeyFormats_MalformedPemThrows",
+   "PemKeyFormats_ModulusBelowMinimumIsRejected",
+   "PemKeyFormats_NonRsaKeysAreRejected",
+   "PemKeyFormats_Pkcs8PrivateKeyMatchesLegacy",
+   "PemKeyFormats_SmallPublicExponentIsRejected",
+   "PemKeyFormats_SpkiPublicKeyMatchesLegacy",
+   "RsaEncryption_MessageSizeBounds",
+   "RsaEncryption_encryptAsBase64Tests",
+   "RsaEncryption_encryptTests",
+   "TestRsaSignVerifyDegenerateSignatures",
+   "TestRsaSignVerifyNegative",
+   "TestRsaSignVerifyPositive"
+  ],
+  "skipped": [
+   "AuthorizationCacheRestImplManualInvoke: requires --is-client (manual run test)"
+  ]
+ },
+ "utf_baselib_setprio": {
+  "cases": {
+   "BaseLib_AbstractPriorityTests": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   }
+  },
+  "clean": true,
+  "entered": [
+   "BaseLib_AbstractPriorityTests"
+  ],
+  "exit": 0,
+  "expected": 1,
+  "failures": null,
+  "incomplete": [],
+  "registered": [
+   "BaseLib_AbstractPriorityTests"
+  ],
+  "skipped": []
+ },
+ "utf_baselib_tasks": {
+  "cases": {
+   "Tasks_AdjustableTimerTaskTests": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_AlgorithmsFailedTests": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_AlgorithmsTests": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_EarlyCancelTests": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExcludedPathsControlTokenTests": {
+    "assertions": 17,
+    "assertions_total": 17,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecuteQueueAndCancelOnFailureTests": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueAllTasksCompletedAdmissionTests": {
+    "assertions": 24,
+    "assertions_total": 24,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueAllTasksCompletedDisposalCompatibilityTest": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueAllTasksCompletedDisposalSerializedTest": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueAllTasksCompletedNotGeneratedByCancelOrFlushTests": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueAllTasksCompletedObserverSelectionTests": {
+    "assertions": 13,
+    "assertions_total": 13,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueAllTasksCompletedObsoleteCandidateTest": {
+    "assertions": 12,
+    "assertions_total": 12,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueAllTasksCompletedReentrantTests": {
+    "assertions": 14,
+    "assertions_total": 14,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueAllTasksCompletedSurvivesRemovedAdmissionTest": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueCancelRandomTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueCancelTests": {
+    "assertions": 20,
+    "assertions_total": 20,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueCancelWaitVersusNoWaitKeepCanceledTest": {
+    "assertions": 13,
+    "assertions_total": 13,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueDisposalOnReadySaturatedQueueTest": {
+    "assertions": 11,
+    "assertions_total": 11,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueDisposeIdempotenceTests": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueFlushThrowDiscardsReadyTest": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueNotificationBlockingReentrySerializedTest": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueNotificationBlockingReentryTest": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueNotificationConcurrentDeliveryTest": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueNotificationEventsMaskTests": {
+    "assertions": 24,
+    "assertions_total": 24,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueNotificationSerializedCrossQueueReentryTest": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueNotificationSerializedDeliveryTest": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueNotifyDisconnectIsNotABarrierTests": {
+    "assertions": 10,
+    "assertions_total": 10,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueObserverThrottleSurvivesDisconnectTest": {
+    "assertions": 10,
+    "assertions_total": 10,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueOptionsTests": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueOwnershipCycleTests": {
+    "assertions": 14,
+    "assertions_total": 14,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueuePartitionObserversTest": {
+    "assertions": 41,
+    "assertions_total": 41,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueuePopWaitOnDrainedQueueTest": {
+    "assertions": 10,
+    "assertions_total": 10,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueuePrioritizeAndPushFrontOrderingTest": {
+    "assertions": 13,
+    "assertions_total": 13,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueRaisedThrottleLimitAdmitsPendingTasksTest": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueReadyTasksCountTowardsObserverThrottleTest": {
+    "assertions": 32,
+    "assertions_total": 32,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueReregisteredObserverLimitAdmitsPendingTasksTest": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueThrottleFromObserverTest": {
+    "assertions": 10,
+    "assertions_total": 10,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueThrottleLimitLoweredAndResetTest": {
+    "assertions": 17,
+    "assertions_total": 17,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueWaitNoPrioritizeTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExecutionQueueWaitOnAbsentTaskTests": {
+    "assertions": 10,
+    "assertions_total": 10,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExternalCompletionTaskCancelTests": {
+    "assertions": 21,
+    "assertions_total": 21,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ExternalCompletionTaskTests": {
+    "assertions": 357,
+    "assertions_total": 357,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_FilesPackagerUnitTests": {
+    "assertions": 1718,
+    "assertions_total": 1718,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_LambdaCapture": {
+    "assertions": 200,
+    "assertions_total": 200,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_OnTaskStoppedRemapTests": {
+    "assertions": 12,
+    "assertions_total": 12,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ParallelMap_1024": {
+    "assertions": 1025,
+    "assertions_total": 1025,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ParallelMap_4": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ParallelMap_ErrorsAndBoundaries": {
+    "assertions": 15,
+    "assertions_total": 15,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_PingerAutoAddInvalidHostTests": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_PingerAutoAddUnreachableTests": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_PingerAutoTests": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_PingerManualTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_PingerMatchersTests": {
+    "assertions": 8,
+    "assertions_total": 8,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_PingerOrderingTests": {
+    "assertions": 20,
+    "assertions_total": 20,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ProcessPingerInvalidHostTests": {
+    "assertions": 12,
+    "assertions_total": 12,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ProcessingUnitBindInputConnectorOverloadsTests": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ProcessingUnitTests": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ProcessingUnitWithObserverTests": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ReactiveDisconnectObservableTests": {
+    "assertions": 9,
+    "assertions_total": 9,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ReactiveDisconnectObserverTests": {
+    "assertions": 12,
+    "assertions_total": 12,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ReactiveFanoutChildTaskFailureTests": {
+    "assertions": 11,
+    "assertions_total": 11,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ReactiveFanoutFailBeforeFirstIterationTests": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ReactiveInputConnectorPropagatesUpstreamErrorTests": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ReactiveInputConnectorTests": {
+    "assertions": 61,
+    "assertions_total": 61,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ReactiveNotifyOnNextThrottleTests": {
+    "assertions": 48,
+    "assertions_total": 48,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ReactiveObservableDisposeLifetimeTests": {
+    "assertions": 14,
+    "assertions_total": 14,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ReactiveObservableRequestCancelTests": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ReactiveOnCompletedExactlyOnceAndLifecycleTests": {
+    "assertions": 24,
+    "assertions_total": 24,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ReactiveSubscriberFailureRoutingTests": {
+    "assertions": 11,
+    "assertions_total": 11,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ReactiveSubscriptionHandleLifetimeTests": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ReactiveTests": {
+    "assertions": 29,
+    "assertions_total": 29,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ReactiveTestsWithException": {
+    "assertions": 12,
+    "assertions_total": 12,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ReactiveTestsWithThrottle": {
+    "assertions": 29,
+    "assertions_total": 29,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ReactiveUnsubscribeFromCallbackHelper": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ReactiveUnsubscribeFromCallbackTests": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_RecursiveDirectoryScannerTests": {
+    "assertions": 10,
+    "assertions_total": 10,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_RetryableWrapperTaskCancelDuringRetrySleepTests": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_RetryableWrapperTaskCancelStressTests": {
+    "assertions": 20,
+    "assertions_total": 20,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_RetryableWrapperTaskCancelTests": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_RetryableWrapperTaskTests": {
+    "assertions": 30,
+    "assertions_total": 30,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ScanDirectoryTaskErrorPolicyTests": {
+    "assertions": 9,
+    "assertions_total": 9,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ScanDirectoryTaskFailureTests": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ScanDirectoryTaskFilteringTests": {
+    "assertions": 12,
+    "assertions_total": 12,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ScanDirectoryTaskTests": {
+    "assertions": 411,
+    "assertions_total": 411,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_SchedulingFailureTests": {
+    "assertions": 1,
+    "assertions_total": 1,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ShutdownContinuationTests": {
+    "assertions": 36,
+    "assertions_total": 36,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ShutdownTaskCancelTests": {
+    "assertions": 6,
+    "assertions_total": 6,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_ShutdownTaskSignalTests": {
+    "assertions": 0,
+    "assertions_total": 0,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_SimpleTaskControlTokenTests": {
+    "assertions": 16,
+    "assertions_total": 16,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_SimpleTimerTaskTests": {
+    "assertions": 4,
+    "assertions_total": 4,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_SimpleTimerTests": {
+    "assertions": 21,
+    "assertions_total": 21,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_StrandTests": {
+    "assertions": 50,
+    "assertions_total": 50,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_TaskBaseInterfaceTests": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_TaskContinuationsTests": {
+    "assertions": 21,
+    "assertions_total": 21,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_TaskContinuationsWithContextTests": {
+    "assertions": 7,
+    "assertions_total": 7,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_TaskFailureStateTests": {
+    "assertions": 16,
+    "assertions_total": 16,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_TaskRestartTests": {
+    "assertions": 16,
+    "assertions_total": 16,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_TaskSingleQueueOwnershipTests": {
+    "assertions": 16,
+    "assertions_total": 16,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_TestSmartDumpOfNonBoostException": {
+    "assertions": 5,
+    "assertions_total": 5,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_TimerTaskCancelBeforeStartTests": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_TimerTaskHonoursLocalThreadPoolTests": {
+    "assertions": 9,
+    "assertions_total": 9,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_TimerTaskRunNowAndWakeUpTests": {
+    "assertions": 3,
+    "assertions_total": 3,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_WaitCancelAndPrioritizeTests": {
+    "assertions": 2,
+    "assertions_total": 2,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "Tasks_WaitForSuccessFilteringTests": {
+    "assertions": 19,
+    "assertions_total": 19,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   }
+  },
+  "clean": true,
+  "entered": [
+   "Tasks_AdjustableTimerTaskTests",
+   "Tasks_AlgorithmsFailedTests",
+   "Tasks_AlgorithmsTests",
+   "Tasks_EarlyCancelTests",
+   "Tasks_ExcludedPathsControlTokenTests",
+   "Tasks_ExecuteQueueAndCancelOnFailureTests",
+   "Tasks_ExecutionQueueAllTasksCompletedAdmissionTests",
+   "Tasks_ExecutionQueueAllTasksCompletedDisposalCompatibilityTest",
+   "Tasks_ExecutionQueueAllTasksCompletedDisposalSerializedTest",
+   "Tasks_ExecutionQueueAllTasksCompletedNotGeneratedByCancelOrFlushTests",
+   "Tasks_ExecutionQueueAllTasksCompletedObserverSelectionTests",
+   "Tasks_ExecutionQueueAllTasksCompletedObsoleteCandidateTest",
+   "Tasks_ExecutionQueueAllTasksCompletedReentrantTests",
+   "Tasks_ExecutionQueueAllTasksCompletedSurvivesRemovedAdmissionTest",
+   "Tasks_ExecutionQueueCancelRandomTests",
+   "Tasks_ExecutionQueueCancelTests",
+   "Tasks_ExecutionQueueCancelWaitVersusNoWaitKeepCanceledTest",
+   "Tasks_ExecutionQueueDisposalOnReadySaturatedQueueTest",
+   "Tasks_ExecutionQueueDisposeIdempotenceTests",
+   "Tasks_ExecutionQueueFlushThrowDiscardsReadyTest",
+   "Tasks_ExecutionQueueNotificationBlockingReentrySerializedTest",
+   "Tasks_ExecutionQueueNotificationBlockingReentryTest",
+   "Tasks_ExecutionQueueNotificationConcurrentDeliveryTest",
+   "Tasks_ExecutionQueueNotificationEventsMaskTests",
+   "Tasks_ExecutionQueueNotificationSerializedCrossQueueReentryTest",
+   "Tasks_ExecutionQueueNotificationSerializedDeliveryTest",
+   "Tasks_ExecutionQueueNotifyDisconnectIsNotABarrierTests",
+   "Tasks_ExecutionQueueObserverThrottleSurvivesDisconnectTest",
+   "Tasks_ExecutionQueueOptionsTests",
+   "Tasks_ExecutionQueueOwnershipCycleTests",
+   "Tasks_ExecutionQueuePartitionObserversTest",
+   "Tasks_ExecutionQueuePopWaitOnDrainedQueueTest",
+   "Tasks_ExecutionQueuePrioritizeAndPushFrontOrderingTest",
+   "Tasks_ExecutionQueueRaisedThrottleLimitAdmitsPendingTasksTest",
+   "Tasks_ExecutionQueueReadyTasksCountTowardsObserverThrottleTest",
+   "Tasks_ExecutionQueueReregisteredObserverLimitAdmitsPendingTasksTest",
+   "Tasks_ExecutionQueueThrottleFromObserverTest",
+   "Tasks_ExecutionQueueThrottleLimitLoweredAndResetTest",
+   "Tasks_ExecutionQueueWaitNoPrioritizeTests",
+   "Tasks_ExecutionQueueWaitOnAbsentTaskTests",
+   "Tasks_ExternalCompletionTaskCancelTests",
+   "Tasks_ExternalCompletionTaskTests",
+   "Tasks_FilesPackagerUnitTests",
+   "Tasks_LambdaCapture",
+   "Tasks_OnTaskStoppedRemapTests",
+   "Tasks_ParallelMap_1024",
+   "Tasks_ParallelMap_4",
+   "Tasks_ParallelMap_ErrorsAndBoundaries",
+   "Tasks_PingerAutoAddInvalidHostTests",
+   "Tasks_PingerAutoAddUnreachableTests",
+   "Tasks_PingerAutoTests",
+   "Tasks_PingerManualTests",
+   "Tasks_PingerMatchersTests",
+   "Tasks_PingerOrderingTests",
+   "Tasks_ProcessPingerInvalidHostTests",
+   "Tasks_ProcessingUnitBindInputConnectorOverloadsTests",
+   "Tasks_ProcessingUnitTests",
+   "Tasks_ProcessingUnitWithObserverTests",
+   "Tasks_ReactiveDisconnectObservableTests",
+   "Tasks_ReactiveDisconnectObserverTests",
+   "Tasks_ReactiveFanoutChildTaskFailureTests",
+   "Tasks_ReactiveFanoutFailBeforeFirstIterationTests",
+   "Tasks_ReactiveInputConnectorPropagatesUpstreamErrorTests",
+   "Tasks_ReactiveInputConnectorTests",
+   "Tasks_ReactiveNotifyOnNextThrottleTests",
+   "Tasks_ReactiveObservableDisposeLifetimeTests",
+   "Tasks_ReactiveObservableRequestCancelTests",
+   "Tasks_ReactiveOnCompletedExactlyOnceAndLifecycleTests",
+   "Tasks_ReactiveSubscriberFailureRoutingTests",
+   "Tasks_ReactiveSubscriptionHandleLifetimeTests",
+   "Tasks_ReactiveTests",
+   "Tasks_ReactiveTestsWithException",
+   "Tasks_ReactiveTestsWithThrottle",
+   "Tasks_ReactiveUnsubscribeFromCallbackHelper",
+   "Tasks_ReactiveUnsubscribeFromCallbackTests",
+   "Tasks_RecursiveDirectoryScannerTests",
+   "Tasks_RetryableWrapperTaskCancelDuringRetrySleepTests",
+   "Tasks_RetryableWrapperTaskCancelStressTests",
+   "Tasks_RetryableWrapperTaskCancelTests",
+   "Tasks_RetryableWrapperTaskTests",
+   "Tasks_ScanDirectoryTaskErrorPolicyTests",
+   "Tasks_ScanDirectoryTaskFailureTests",
+   "Tasks_ScanDirectoryTaskFilteringTests",
+   "Tasks_ScanDirectoryTaskTests",
+   "Tasks_SchedulingFailureTests",
+   "Tasks_ShutdownContinuationTests",
+   "Tasks_ShutdownTaskCancelTests",
+   "Tasks_ShutdownTaskSignalTests",
+   "Tasks_SimpleTaskControlTokenTests",
+   "Tasks_SimpleTimerTaskTests",
+   "Tasks_SimpleTimerTests",
+   "Tasks_StrandTests",
+   "Tasks_TaskBaseInterfaceTests",
+   "Tasks_TaskContinuationsTests",
+   "Tasks_TaskContinuationsWithContextTests",
+   "Tasks_TaskFailureStateTests",
+   "Tasks_TaskRestartTests",
+   "Tasks_TaskSingleQueueOwnershipTests",
+   "Tasks_TestSmartDumpOfNonBoostException",
+   "Tasks_TimerTaskCancelBeforeStartTests",
+   "Tasks_TimerTaskHonoursLocalThreadPoolTests",
+   "Tasks_TimerTaskRunNowAndWakeUpTests",
+   "Tasks_WaitCancelAndPrioritizeTests",
+   "Tasks_WaitForSuccessFilteringTests"
+  ],
+  "exit": 0,
+  "expected": 104,
+  "failures": null,
+  "incomplete": [],
+  "registered": [
+   "Tasks_AdjustableTimerTaskTests",
+   "Tasks_AlgorithmsFailedTests",
+   "Tasks_AlgorithmsTests",
+   "Tasks_EarlyCancelTests",
+   "Tasks_ExcludedPathsControlTokenTests",
+   "Tasks_ExecuteQueueAndCancelOnFailureTests",
+   "Tasks_ExecutionQueueAllTasksCompletedAdmissionTests",
+   "Tasks_ExecutionQueueAllTasksCompletedDisposalCompatibilityTest",
+   "Tasks_ExecutionQueueAllTasksCompletedDisposalSerializedTest",
+   "Tasks_ExecutionQueueAllTasksCompletedNotGeneratedByCancelOrFlushTests",
+   "Tasks_ExecutionQueueAllTasksCompletedObserverSelectionTests",
+   "Tasks_ExecutionQueueAllTasksCompletedObsoleteCandidateTest",
+   "Tasks_ExecutionQueueAllTasksCompletedReentrantTests",
+   "Tasks_ExecutionQueueAllTasksCompletedSurvivesRemovedAdmissionTest",
+   "Tasks_ExecutionQueueCancelRandomTests",
+   "Tasks_ExecutionQueueCancelTests",
+   "Tasks_ExecutionQueueCancelWaitVersusNoWaitKeepCanceledTest",
+   "Tasks_ExecutionQueueDisposalOnReadySaturatedQueueTest",
+   "Tasks_ExecutionQueueDisposeIdempotenceTests",
+   "Tasks_ExecutionQueueFlushThrowDiscardsReadyTest",
+   "Tasks_ExecutionQueueNotificationBlockingReentrySerializedTest",
+   "Tasks_ExecutionQueueNotificationBlockingReentryTest",
+   "Tasks_ExecutionQueueNotificationConcurrentDeliveryTest",
+   "Tasks_ExecutionQueueNotificationEventsMaskTests",
+   "Tasks_ExecutionQueueNotificationSerializedCrossQueueReentryTest",
+   "Tasks_ExecutionQueueNotificationSerializedDeliveryTest",
+   "Tasks_ExecutionQueueNotifyDisconnectIsNotABarrierTests",
+   "Tasks_ExecutionQueueObserverThrottleSurvivesDisconnectTest",
+   "Tasks_ExecutionQueueOptionsTests",
+   "Tasks_ExecutionQueueOwnershipCycleTests",
+   "Tasks_ExecutionQueuePartitionObserversTest",
+   "Tasks_ExecutionQueuePopWaitOnDrainedQueueTest",
+   "Tasks_ExecutionQueuePrioritizeAndPushFrontOrderingTest",
+   "Tasks_ExecutionQueueRaisedThrottleLimitAdmitsPendingTasksTest",
+   "Tasks_ExecutionQueueReadyTasksCountTowardsObserverThrottleTest",
+   "Tasks_ExecutionQueueReregisteredObserverLimitAdmitsPendingTasksTest",
+   "Tasks_ExecutionQueueThrottleFromObserverTest",
+   "Tasks_ExecutionQueueThrottleLimitLoweredAndResetTest",
+   "Tasks_ExecutionQueueWaitNoPrioritizeTests",
+   "Tasks_ExecutionQueueWaitOnAbsentTaskTests",
+   "Tasks_ExternalCompletionTaskCancelTests",
+   "Tasks_ExternalCompletionTaskTests",
+   "Tasks_FilesPackagerUnitTests",
+   "Tasks_LambdaCapture",
+   "Tasks_OnTaskStoppedRemapTests",
+   "Tasks_ParallelMap_1024",
+   "Tasks_ParallelMap_4",
+   "Tasks_ParallelMap_ErrorsAndBoundaries",
+   "Tasks_PingerAutoAddInvalidHostTests",
+   "Tasks_PingerAutoAddUnreachableTests",
+   "Tasks_PingerAutoTests",
+   "Tasks_PingerManualTests",
+   "Tasks_PingerMatchersTests",
+   "Tasks_PingerOrderingTests",
+   "Tasks_ProcessPingerInvalidHostTests",
+   "Tasks_ProcessingUnitBindInputConnectorOverloadsTests",
+   "Tasks_ProcessingUnitTests",
+   "Tasks_ProcessingUnitWithObserverTests",
+   "Tasks_ReactiveDisconnectObservableTests",
+   "Tasks_ReactiveDisconnectObserverTests",
+   "Tasks_ReactiveFanoutChildTaskFailureTests",
+   "Tasks_ReactiveFanoutFailBeforeFirstIterationTests",
+   "Tasks_ReactiveInputConnectorPropagatesUpstreamErrorTests",
+   "Tasks_ReactiveInputConnectorTests",
+   "Tasks_ReactiveNotifyOnNextThrottleTests",
+   "Tasks_ReactiveObservableDisposeLifetimeTests",
+   "Tasks_ReactiveObservableRequestCancelTests",
+   "Tasks_ReactiveOnCompletedExactlyOnceAndLifecycleTests",
+   "Tasks_ReactiveSubscriberFailureRoutingTests",
+   "Tasks_ReactiveSubscriptionHandleLifetimeTests",
+   "Tasks_ReactiveTests",
+   "Tasks_ReactiveTestsWithException",
+   "Tasks_ReactiveTestsWithThrottle",
+   "Tasks_ReactiveUnsubscribeFromCallbackHelper",
+   "Tasks_ReactiveUnsubscribeFromCallbackTests",
+   "Tasks_RecursiveDirectoryScannerTests",
+   "Tasks_RetryableWrapperTaskCancelDuringRetrySleepTests",
+   "Tasks_RetryableWrapperTaskCancelStressTests",
+   "Tasks_RetryableWrapperTaskCancelTests",
+   "Tasks_RetryableWrapperTaskTests",
+   "Tasks_ScanDirectoryTaskErrorPolicyTests",
+   "Tasks_ScanDirectoryTaskFailureTests",
+   "Tasks_ScanDirectoryTaskFilteringTests",
+   "Tasks_ScanDirectoryTaskTests",
+   "Tasks_SchedulingFailureTests",
+   "Tasks_ShutdownContinuationTests",
+   "Tasks_ShutdownTaskCancelTests",
+   "Tasks_ShutdownTaskSignalTests",
+   "Tasks_SimpleTaskControlTokenTests",
+   "Tasks_SimpleTimerTaskTests",
+   "Tasks_SimpleTimerTests",
+   "Tasks_StrandTests",
+   "Tasks_TaskBaseInterfaceTests",
+   "Tasks_TaskContinuationsTests",
+   "Tasks_TaskContinuationsWithContextTests",
+   "Tasks_TaskFailureStateTests",
+   "Tasks_TaskRestartTests",
+   "Tasks_TaskSingleQueueOwnershipTests",
+   "Tasks_TestSmartDumpOfNonBoostException",
+   "Tasks_TimerTaskCancelBeforeStartTests",
+   "Tasks_TimerTaskHonoursLocalThreadPoolTests",
+   "Tasks_TimerTaskRunNowAndWakeUpTests",
+   "Tasks_WaitCancelAndPrioritizeTests",
+   "Tasks_WaitForSuccessFilteringTests"
+  ],
+  "skipped": [
+   "Tasks_PingerManualTests: requires --is-client (manual run test)",
+   "Tasks_ShutdownTaskSignalTests: signal delivery is only validated on UNIX"
+  ]
+ },
+ "utf_baselib_utils": {
+  "cases": {
+   "StringTemplateEscaperTests": {
+    "assertions": 22,
+    "assertions_total": 22,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "StringTemplateTests": {
+    "assertions": 51,
+    "assertions_total": 51,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   },
+   "UtfExceptionMacrosTests": {
+    "assertions": 9,
+    "assertions_total": 9,
+    "entered": true,
+    "left": true,
+    "outcome": "passed"
+   }
+  },
+  "clean": true,
+  "entered": [
+   "StringTemplateEscaperTests",
+   "StringTemplateTests",
+   "UtfExceptionMacrosTests"
+  ],
+  "exit": 0,
+  "expected": 3,
+  "failures": null,
+  "incomplete": [],
+  "registered": [
+   "StringTemplateEscaperTests",
+   "StringTemplateTests",
+   "UtfExceptionMacrosTests"
+  ],
+  "skipped": []
+ }
+}

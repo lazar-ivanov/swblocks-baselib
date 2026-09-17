@@ -18,3 +18,4 @@
 #include <utests/baselib/UtfMain.h>
 
 #include "TestRestDefault.h"
+#include "TestRestDefault2.h"

@@ -17,6 +17,11 @@
 #define UTF_TEST_MODULE utf_baselib_apps
 #include <utests/baselib/UtfMain.h>
 
+/*
+ * The bl-tool application tests. The messaging HTTP gateway cases now live in utf_baselib_apps2,
+ * so that no single test translation unit exhausts a 32-bit compiler host - see
+ * notes/reviews/major/update_2026/test-module-split-plan.md
+ */
+
 #include "TestBlTool.h"
 #include "TestBlToolProcessFiles.h"
-#include "TestMessagingApps.h"
