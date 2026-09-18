@@ -412,6 +412,77 @@ namespace utest
         typedef bl::om::ObjectImpl< TlsConnectOrderProbeT< RetryableHandshakeStream > >
             TlsRetryingProbeImpl;
 
+        /**
+         * @brief The same probe with a pre-handshake stage which invokes the continuation at once
+         *
+         * Unlike the plain stream, the continuation does not complete inside the stage here:
+         * beginProtocolHandshake starts an async handshake and returns true, so what the stage can
+         * observe is that no handshake had happened before it ran and that its own call is what
+         * started one
+         */
+
+        template
+        <
+            typename STREAM
+        >
+        class TlsStageProbeT : public TlsConnectOrderProbeT< STREAM >
+        {
+        public:
+
+            typedef TlsConnectOrderProbeT< STREAM >                             base_type;
+
+        protected:
+
+            bl::cpp::ScalarTypeIniter< bool >                                   m_wasHandshakeCompletedAtStage;
+            bl::cpp::ScalarTypeIniter< bool >                                   m_didStageStartTheHandshake;
+
+            TlsStageProbeT(
+                SAA_in                  std::string&&                           host,
+                SAA_in                  const unsigned short                    port,
+                SAA_in                  const std::size_t                       maxRetryCount
+                )
+                :
+                base_type( BL_PARAM_FWD( host ), port, maxRetryCount )
+            {
+            }
+
+            virtual bool beginPreHandshakeStage(
+                SAA_in                  const bl::cpp::bool_callback_t&         continueCallback
+                )
+                OVERRIDE
+            {
+                base_type::record( "stageEntered" );
+
+                m_wasHandshakeCompletedAtStage = base_type::hasHandshakeCompletedSuccessfully();
+
+                const bool result = continueCallback();
+
+                m_didStageStartTheHandshake = result;
+
+                base_type::record( "stageLeft" );
+
+                return result;
+            }
+
+        public:
+
+            bool wasHandshakeCompletedAtStage() const NOEXCEPT
+            {
+                return m_wasHandshakeCompletedAtStage;
+            }
+
+            bool didStageStartTheHandshake() const NOEXCEPT
+            {
+                return m_didStageStartTheHandshake;
+            }
+        };
+
+        typedef bl::om::ObjectImpl< TlsStageProbeT< bl::tasks::TcpSslSocketAsyncBase > >
+            TlsStageProbeImpl;
+
+        typedef bl::om::ObjectImpl< TlsStageProbeT< RetryableHandshakeStream > >
+            TlsRetryingStageProbeImpl;
+
     } // prehandshake
 
 } // utest
@@ -517,6 +588,105 @@ UTF_AUTO_TEST_CASE( TcpPreHandshakeStageTls_RetryableHandshakeErrorTests )
      */
 
     UTF_REQUIRE_EQUAL( probe -> countOf( "resolved" ), 2U );
+    UTF_REQUIRE_EQUAL( probe -> countOf( "continueAfterConnected" ), 0U );
+}
+
+UTF_AUTO_TEST_CASE( TcpPreHandshakeStageTls_StageRunsBeforeHandshakeTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest::prehandshake;
+
+    /*
+     * The TLS half of the default hook contract: the stage runs after the connect and *before* any
+     * handshake - nothing had completed one when it was entered - and it is the stage's own call to
+     * the continuation, made synchronously inside the connect handler, which starts one. The
+     * handshake then completes before continueAfterConnected, exactly as it does without a stage
+     */
+
+    TlsLoopbackPeer peer;
+
+    const auto probe = TlsStageProbeImpl::createInstance(
+        std::string( "localhost" ),
+        peer.port(),
+        0U                                                  /* maxRetryCount */
+        );
+
+    const auto task = om::qi< Task >( probe );
+
+    scheduleAndExecuteInParallel(
+        [ &peer, &task ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+        {
+            eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+            eq -> push_back( task );
+
+            peer.acceptAndHandshake();
+
+            eq -> wait( task );
+
+            UTF_REQUIRE( eq -> isEmpty() );
+        }
+        );
+
+    UTF_REQUIRE( ! task -> isFailed() );
+    UTF_REQUIRE( ! task -> exception() );
+
+    const auto events = probe -> events();
+
+    UTF_REQUIRE_EQUAL( events.size(), 4U );
+    UTF_REQUIRE_EQUAL( events[ 0 ], std::string( "resolved" ) );
+    UTF_REQUIRE_EQUAL( events[ 1 ], std::string( "stageEntered" ) );
+    UTF_REQUIRE_EQUAL( events[ 2 ], std::string( "stageLeft" ) );
+    UTF_REQUIRE_EQUAL( events[ 3 ], std::string( "continueAfterConnected" ) );
+
+    UTF_REQUIRE( ! probe -> wasHandshakeCompletedAtStage() );
+    UTF_REQUIRE( probe -> didStageStartTheHandshake() );
+    UTF_REQUIRE( probe -> wasHandshakeCompletedAtContinuation() );
+}
+
+UTF_AUTO_TEST_CASE( TcpPreHandshakeStageTls_StageRunsOncePerAttemptTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest::prehandshake;
+
+    /*
+     * The stage is part of the transaction the handshake retry restarts, so it runs once per
+     * attempt - as many times as the connect does, and never twice for one connect. A stage which
+     * ran once for the whole task would leave the second attempt tunnelling through nothing
+     */
+
+    TlsLoopbackPeer peer;
+
+    const auto probe = TlsRetryingStageProbeImpl::createInstance(
+        std::string( "localhost" ),
+        peer.port(),
+        1U                                                  /* maxRetryCount */
+        );
+
+    const auto task = om::qi< Task >( probe );
+
+    scheduleAndExecuteInParallel(
+        [ &peer, &task ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+        {
+            eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+            eq -> push_back( task );
+
+            peer.acceptAndShutdown();
+            peer.acceptAndShutdown();
+
+            eq -> wait( task );
+
+            UTF_REQUIRE( eq -> isEmpty() );
+        }
+        );
+
+    UTF_REQUIRE( task -> isFailed() );
+
+    UTF_REQUIRE_EQUAL( probe -> countOf( "resolved" ), 2U );
+    UTF_REQUIRE_EQUAL( probe -> countOf( "stageEntered" ), 2U );
     UTF_REQUIRE_EQUAL( probe -> countOf( "continueAfterConnected" ), 0U );
 }
 

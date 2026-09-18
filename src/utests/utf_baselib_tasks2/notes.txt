@@ -1,3 +1,8 @@
 --log_level=message --run_test=TcpPreHandshakeStage_TodaysConnectOrderTests
 --log_level=message --run_test=TcpPreHandshakeStage_ContinuationRunsInConnectHandlerTests
 --log_level=message --run_test=TcpPreHandshakeStage_CancelBeforeConnectCompletesTests
+--log_level=message --run_test=TcpPreHandshakeStage_SynchronousStageTests
+--log_level=message --run_test=TcpPreHandshakeStage_AsynchronousStageTests
+--log_level=message --run_test=TcpPreHandshakeStage_StageFailureTests
+--log_level=message --run_test=TcpPreHandshakeStage_CancelDuringStageTests
+--log_level=message --run_test=TcpPreHandshakeStage_CancelBeforeConnectSkipsStageTests

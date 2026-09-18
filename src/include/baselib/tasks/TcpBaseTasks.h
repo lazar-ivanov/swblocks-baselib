@@ -1312,6 +1312,47 @@ namespace bl
                 return false;
             }
 
+            /**
+             * @brief Starts the protocol handshake; this is the continuation the pre-handshake
+             * stage below is given
+             */
+
+            bool continueAfterPreHandshakeStage()
+            {
+                return base_type::beginProtocolHandshake(
+                    cpp::bind(
+                        &this_type::continueAfterConnected,
+                        om::ObjPtrCopyable< this_type >::acquireRef( this )
+                        )
+                    );
+            }
+
+            /**
+             * @brief A stage which runs after the connection is established and before the
+             * protocol handshake begins - e.g. a tunnel negotiated in cleartext on the lowest
+             * layer of the stream
+             *
+             * There is no such stage by default and the continuation callback is simply invoked,
+             * which makes the default behavior preserving: the handshake is started synchronously,
+             * from the same connect handler and under the same lock, exactly as it was before this
+             * hook existed
+             *
+             * An override returns true if it has started async operations, and must then invoke
+             * the continuation callback later from its own handler - inside the task handler
+             * macros, the way TcpSslSocketAsyncBase::onHandshakeCompleted does; if it completes
+             * synchronously it returns the continuation's result. It fails the stage by throwing,
+             * which fails the task before any handshake is attempted
+             *
+             * Note that scheduleTaskFinishContinuation below restarts the whole resolve and
+             * connect transaction on a retryable handshake error, so the stage runs once per
+             * attempt and must carry no state from one attempt to the next
+             */
+
+            virtual bool beginPreHandshakeStage( SAA_in const cpp::bool_callback_t& continueCallback )
+            {
+                return continueCallback();
+            }
+
             void onConnectionEstablished(
                 SAA_in                              const eh::error_code&               ec,
                 SAA_in                              typename tcp_resolver_type::iterator endpoints
@@ -1330,9 +1371,9 @@ namespace bl
                     ( void ) base_type::tryConfigureConnectedStream( base_type::getStream() );
 
                     const bool continueTask =
-                        base_type::beginProtocolHandshake(
+                        beginPreHandshakeStage(
                             cpp::bind(
-                                &this_type::continueAfterConnected,
+                                &this_type::continueAfterPreHandshakeStage,
                                 om::ObjPtrCopyable< this_type >::acquireRef( this )
                                 )
                             );

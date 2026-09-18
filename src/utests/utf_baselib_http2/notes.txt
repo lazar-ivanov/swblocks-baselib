@@ -22,3 +22,5 @@
 
 --log_level=message --run_test=TcpPreHandshakeStageTls_TodaysHandshakeOrderTests
 --log_level=message --run_test=TcpPreHandshakeStageTls_RetryableHandshakeErrorTests
+--log_level=message --run_test=TcpPreHandshakeStageTls_StageRunsBeforeHandshakeTests
+--log_level=message --run_test=TcpPreHandshakeStageTls_StageRunsOncePerAttemptTests
