@@ -496,6 +496,30 @@ namespace utest
 
                 base_type::cancelTask();
             }
+
+            virtual auto onTaskStoppedNothrow(
+                SAA_in_opt              const std::exception_ptr&               eptrIn = nullptr,
+                SAA_inout_opt           bool*                                   isExpectedException = nullptr
+                ) NOEXCEPT
+                -> std::exception_ptr OVERRIDE
+            {
+                BL_NOEXCEPT_BEGIN()
+
+                /*
+                 * The continuation the stage is given holds a reference to the task, so a stage
+                 * which parks it in a member and a task which owns the stage are a reference
+                 * cycle and neither is ever released - the suite's exit time leak check is what
+                 * catches it. Releasing it when the task stops is the same discipline
+                 * TcpConnectionEstablisherAcceptor applies to its acceptor and back-off timer,
+                 * and a real stage has to do it too
+                 */
+
+                m_continueCallback = bl::cpp::bool_callback_t();
+
+                BL_NOEXCEPT_END()
+
+                return base_type::onTaskStoppedNothrow( eptrIn, isExpectedException );
+            }
         };
 
         typedef bl::om::ObjectImpl< StageProbe > StageProbeImpl;
