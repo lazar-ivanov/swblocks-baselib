@@ -588,9 +588,26 @@ UTF_AUTO_TEST_CASE( TlsHandshake_SniOmittedForAddressLiterals )
     {
         asio::io_service ioService;
 
+        /*
+         * An IPv6 literal resolves to an IPv6 endpoint, so the peer has to listen on the same
+         * family for the connector to reach it at all; everything else listens on IPv4 as before
+         */
+
+        eh::error_code hostEc;
+
+        const auto hostAddress =
+            #if ( ( BOOST_VERSION / 100 ) >= 1066 )
+            asio::ip::make_address( host, hostEc );
+            #else
+            asio::ip::address::from_string( host, hostEc );
+            #endif
+
+        const auto protocol =
+            ( ! hostEc && hostAddress.is_v6() ) ? asio::ip::tcp::v6() : asio::ip::tcp::v4();
+
         asio::ip::tcp::acceptor acceptor(
             ioService,
-            asio::ip::tcp::endpoint( asio::ip::tcp::v4(), test::UtfArgsParser::port() )
+            asio::ip::tcp::endpoint( protocol, test::UtfArgsParser::port() )
             );
 
         std::vector< char > received;
@@ -772,6 +789,24 @@ UTF_AUTO_TEST_CASE( TlsHandshake_SniOmittedForAddressLiterals )
         UTF_REQUIRE_EQUAL( 0x16, static_cast< unsigned char >( clientHello[ 0 ] ) );
 
         UTF_REQUIRE( ! fnContains( clientHello, "127.0.0.1" ) );
+    }
+
+    {
+        /*
+         * ... and so must an IPv6 literal, which reaches the same branch because what decides is
+         * whether the host parses as an address and not which family it belongs to
+         *
+         * The fully expanded form of ::1 is used deliberately: the needle has to be long enough
+         * that it cannot turn up by chance in the client random, the session id or a key share,
+         * and a three character one would be a false positive waiting to happen
+         */
+
+        const auto clientHello = fnCaptureClientHello( "0:0:0:0:0:0:0:1" );
+
+        UTF_REQUIRE( clientHello.size() > 0U );
+        UTF_REQUIRE_EQUAL( 0x16, static_cast< unsigned char >( clientHello[ 0 ] ) );
+
+        UTF_REQUIRE( ! fnContains( clientHello, "0:0:0:0:0:0:0:1" ) );
     }
 }
 
