@@ -1343,6 +1343,13 @@ namespace bl
              * synchronously it returns the continuation's result. It fails the stage by throwing,
              * which fails the task before any handshake is attempted
              *
+             * The continuation holds a reference to this task, so an override which keeps it
+             * across an async operation must release it when the task stops, or the two are a
+             * reference cycle and neither is ever destroyed. The same goes for any async object
+             * the stage owns, which it must also cancel from cancelTask() - the base only knows
+             * about the socket, and a stage with no socket I/O in flight would otherwise never
+             * be woken by a cancel
+             *
              * Note that scheduleTaskFinishContinuation below restarts the whole resolve and
              * connect transaction on a retryable handshake error, so the stage runs once per
              * attempt and must carry no state from one attempt to the next
