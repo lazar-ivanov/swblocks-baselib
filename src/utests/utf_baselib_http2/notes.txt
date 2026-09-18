@@ -24,3 +24,6 @@
 --log_level=message --run_test=TcpPreHandshakeStageTls_RetryableHandshakeErrorTests
 --log_level=message --run_test=TcpPreHandshakeStageTls_StageRunsBeforeHandshakeTests
 --log_level=message --run_test=TcpPreHandshakeStageTls_StageRunsOncePerAttemptTests
+
+--log_level=message --run_test=TlsHandshakeRetryClassifier_RetryableErrorSetTests
+--log_level=message --run_test=TlsHandshakeRetryClassifier_TruncationAgreementTests

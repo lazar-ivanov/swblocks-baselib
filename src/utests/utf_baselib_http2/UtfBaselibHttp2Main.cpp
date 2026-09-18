@@ -32,3 +32,4 @@
 #include "TestTlsPeerVerification.h"
 #include "TestAsioSslStreamWrapper.h"
 #include "TestTcpPreHandshakeStageTls.h"
+#include "TestTlsHandshakeRetryClassifier.h"

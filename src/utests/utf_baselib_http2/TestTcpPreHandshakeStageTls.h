@@ -256,58 +256,6 @@ namespace utest
         };
 
         /**
-         * @brief The TLS stream policy with the handshake retry actually reachable
-         *
-         * TcpSslSocketAsyncBase::isProtocolHandshakeRetryableError only classifies
-         * asio::error::eof and g_sslErrorShortRead - the OpenSSL packed SSL_R_SHORT_READ - as
-         * retryable (TcpSslBaseTasks.h:290). A peer which closes the connection during the
-         * handshake on boost 1.90 with OpenSSL 3.5 reports asio.ssl.stream:1 instead, which
-         * isExpectedSslErrorCode recognizes as a truncation but that classifier does not, so the
-         * retry of TcpBaseTasks.h:1389 cannot be reached with a real peer on this stack at all
-         *
-         * This policy widens the classification to the truncation the peer really produces, and
-         * nothing else. Hiding is the right mechanism because the stream policy's static interface
-         * is resolved by template composition rather than virtually, so the establisher which
-         * composes on it calls this one. Whether the production classifier should be widened the
-         * same way is a question about TcpSslBaseTasks.h, not about the establisher under test
-         * here, and it is deliberately left alone
-         */
-
-        class RetryableHandshakeStream : public bl::tasks::TcpSslSocketAsyncBase
-        {
-        public:
-
-            typedef bl::tasks::TcpSslSocketAsyncBase                            base_type;
-
-        protected:
-
-            bool isProtocolHandshakeRetryableError( SAA_in const std::exception_ptr& eptr )
-            {
-                if( base_type::isProtocolHandshakeRetryableError( eptr ) )
-                {
-                    return true;
-                }
-
-                try
-                {
-                    bl::cpp::safeRethrowException( eptr );
-                }
-                catch( bl::eh::system_error& e )
-                {
-                    return base_type::isStreamTruncationError( e.code() );
-                }
-                catch( std::exception& )
-                {
-                    /*
-                     * Ignore other exceptions, exactly as the policy being widened does
-                     */
-                }
-
-                return false;
-            }
-        };
-
-        /**
          * @brief A TLS connection establisher which records the order it was driven in
          *
          * Only the virtuals which exist today are used, so the same probe observes the same
@@ -411,9 +359,6 @@ namespace utest
         typedef bl::om::ObjectImpl< TlsConnectOrderProbeT< bl::tasks::TcpSslSocketAsyncBase > >
             TlsConnectOrderProbeImpl;
 
-        typedef bl::om::ObjectImpl< TlsConnectOrderProbeT< RetryableHandshakeStream > >
-            TlsRetryingProbeImpl;
-
         /**
          * @brief The same probe with a pre-handshake stage which invokes the continuation at once
          *
@@ -483,9 +428,6 @@ namespace utest
 
         typedef bl::om::ObjectImpl< TlsStageProbeT< bl::tasks::TcpSslSocketAsyncBase > >
             TlsStageProbeImpl;
-
-        typedef bl::om::ObjectImpl< TlsStageProbeT< RetryableHandshakeStream > >
-            TlsRetryingStageProbeImpl;
 
     } // prehandshake
 
@@ -560,7 +502,7 @@ UTF_AUTO_TEST_CASE( TcpPreHandshakeStageTls_RetryableHandshakeErrorTests )
 
     TlsLoopbackPeer peer;
 
-    const auto probe = TlsRetryingProbeImpl::createInstance(
+    const auto probe = TlsConnectOrderProbeImpl::createInstance(
         std::string( "localhost" ),
         peer.port(),
         1U                                                  /* maxRetryCount */
@@ -663,7 +605,7 @@ UTF_AUTO_TEST_CASE( TcpPreHandshakeStageTls_StageRunsOncePerAttemptTests )
 
     TlsLoopbackPeer peer;
 
-    const auto probe = TlsRetryingStageProbeImpl::createInstance(
+    const auto probe = TlsStageProbeImpl::createInstance(
         std::string( "localhost" ),
         peer.port(),
         1U                                                  /* maxRetryCount */
