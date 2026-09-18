@@ -84,24 +84,64 @@ not own, and the reports say that when the timer is destroyed, that service - or
 has already been freed. This is a **destruction-order defect**: the timers outlive the asio service
 they were constructed against.
 
-The reports are spread through the run (log lines 49 to 1552 of 1628), in batches rather than all at
-the end, which matches one batch per scenario of `runMultiOperationSuite` as each scenario's probe
-goes out of scope - not a single end-of-process teardown.
+The mechanism is **structural and deterministic**, and no exception is involved in it. All line
+numbers below are as of the run commit `1d88c3f`; the header has grown since, so they do not match
+the current tip.
 
-The freeing stack in each case is `free` from `__cxa_end_catch`, inside the test case's own frame
-(`TestMultiOperationTask.h:1087`). The probable mechanism is therefore that destroying the caught
-exception at the end of one of the throwing scenarios releases the last reference keeping the pool -
-and with it the `io_service` - alive, and the timers are destroyed after that. **This is stated as the
-probable mechanism, not as a proven one**: what is proven is the ordering (timers destroyed against a
-freed service), not which reference was the last one.
+`runMultiOperationProbe` (`:769`) creates the probe at `:779`, creates the thread pool **as its own
+local** at `:781` - `const auto tpLocal = om::lockDisposable( ThreadPoolImpl::createInstance ... )` -
+and ends with `return taskImpl;` at `:808`. So on every return the local `ObjPtrDisposable< ThreadPool >`
+disposes the pool, which destroys the `io_context` and with it the `deadline_timer_service` the timers
+were built against, and the probe is handed back **alive, with `m_timers` still populated**. Each
+caller then holds it in a `const auto taskImpl` until its own scope ends and destroys it there. That
+destruction is the read, and it is the same in all nine `heap-use-after-free` reports:
+`deadline_timer_service::cancel` / `timer_queue::cancel_timer` <- `~basic_deadline_timer` <- the
+`~vector` of `m_timers` <- `~MultiOperationProbeT` (`:532`) <- `~ObjPtr< ... >` <-
+`runMultiOperationSuite` at a scenario's closing brace. **No exception frame appears on the read side
+of any report.**
+
+The free side splits 5/4, and the split is not a second mechanism:
+
+- **Five** (log lines 189, 307, 524, 644, 963) carry a 41-frame free stack that names the freed block
+  outright: `operator delete` <- `execution_context::allocator_impl::deallocate` <-
+  `service_registry::destroy_allocated< deadline_timer_service >` <- `service_registry::destroy_services`
+  <- `~execution_context` <- `~io_context` <- `ThreadPoolImplT::disposeInternal` <- `dispose` <-
+  `~ObjPtrDisposable< ThreadPool >` <- **`runMultiOperationProbe`** <- `runMultiOperationSuite:924`.
+  What was freed is the `deadline_timer_service` itself, and what freed it is the helper's return.
+- **Four** (log lines 49, 118, 1483, 1552) carry a 20-frame stack whose frame `#0` is the `free`
+  interceptor - not `operator delete` - called from `__cxa_end_catch`. Frame `#0` alone shows this is
+  a *different* deallocation, not the same one rendered differently. These four belong to the two
+  scenarios that end with `UTF_REQUIRE_THROW_MESSAGE( ... )` immediately before the closing brace
+  (`:898`-`:902` and `:987`-`:991`), while the scenario behind the five long stacks (`:924`-`:930`)
+  contains no throw at all. So what `__cxa_end_catch` frees is the caught exception object, allocated
+  over the service's already-freed memory and freed again before the probe is destroyed; ThreadSanitizer
+  prints the *last* free recorded for a granule, so that later free masks the service's own. The reads
+  are at the same two fields of the same object either way. These stacks are also missing the
+  `runMultiOperationSuite` frame between `__cxa_end_catch` and `test_method:1087`, so they are
+  truncated, and inconsistent with a real free at that point in a `-O0` build.
+
+The single-threaded control run (`phaseB-control-singlethreaded-tsan.log`) reproduces the split
+exactly - the same three scenarios, the same 2/5/2 distribution, the same 20/41 frame counts, the same
+frame `#0` in each, and the same two addresses for the four short-stack reports. The split is
+deterministic and independent of the thread count.
+
+The reports fall in three batches (log lines 49-118, 189-1374 and 1483-1552 of 1628) at three scenario
+scope ends - `:903`, `:930` and `:992` - not a single end-of-process teardown. All seven mutex-misuse
+reports sit in the middle batch, so `:930` accounts for 12 of the 16. Seven of the suite's eight
+scenarios call the helper and so all seven carry the defect; only three report it, because
+ThreadSanitizer can call the read a use-after-free only while the freed region is still unallocated at
+that moment, and in the other four it has been handed to a live allocation in between. That is a
+property of when the tool can see the defect, not of whether it is there.
 
 ## 4. Why it was not fixed
 
-F-L0-3 is a validation lane; its brief forbids changing production or test source. Beyond that, the
-fix belongs to whoever owns the probe: the ordering wants the timers destroyed (or at least
-`m_timers.clear()`ed) while the pool is still alive, which is a change to the probe's scope
-structure, not a one-line edit, and it should be made by someone who can re-run the whole
-`utf_baselib_tasks2` module behind it.
+F-L0-3 is a validation lane; its brief forbids changing production or test source. That is the whole
+reason, and not the size of the fix: with the mechanism pinned, the fix is small and mechanical. The
+pool has to stay alive as long as the probe, and exactly one place decides otherwise -
+`runMultiOperationProbe` owns the pool as a local (`:781`) and returns only the probe (`:808`). Either
+hand the pool back alongside the probe or create it in `runMultiOperationSuite` and pass it in: one
+helper signature and its seven call sites, with the probe itself untouched. It should still be made by
+someone who can re-run the whole `utf_baselib_tasks2` module behind it.
 
 It is worth saying plainly that this is a **test-harness defect, not a library one**. Nothing here
 implicates `MultiOperationTask`, `TaskBase` or `ThreadPool`. But it is a genuine use-after-free, not
