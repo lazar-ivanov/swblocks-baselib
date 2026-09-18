@@ -213,6 +213,8 @@ namespace utest
         class ConnectOrderProbe :
             public bl::tasks::TcpConnectionEstablisherConnector< bl::tasks::TcpSocketAsyncBase >
         {
+            BL_DECLARE_OBJECT_IMPL( ConnectOrderProbe )
+
         public:
 
             typedef bl::tasks::TcpConnectionEstablisherConnector< bl::tasks::TcpSocketAsyncBase >
@@ -361,6 +363,8 @@ namespace utest
 
         class StageProbe : public ConnectOrderProbe
         {
+            BL_DECLARE_OBJECT_IMPL( StageProbe )
+
         public:
 
             typedef ConnectOrderProbe                                           base_type;

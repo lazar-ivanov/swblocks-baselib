@@ -321,6 +321,8 @@ namespace utest
         class TlsConnectOrderProbeT :
             public bl::tasks::TcpConnectionEstablisherConnector< STREAM >
         {
+            BL_DECLARE_OBJECT_IMPL( TlsConnectOrderProbeT )
+
         public:
 
             typedef bl::tasks::TcpConnectionEstablisherConnector< STREAM >      base_type;
@@ -427,6 +429,8 @@ namespace utest
         >
         class TlsStageProbeT : public TlsConnectOrderProbeT< STREAM >
         {
+            BL_DECLARE_OBJECT_IMPL( TlsStageProbeT )
+
         public:
 
             typedef TlsConnectOrderProbeT< STREAM >                             base_type;
