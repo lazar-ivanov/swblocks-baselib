@@ -25,3 +25,4 @@
 #include "TestTasks6.h"
 #include "TestTasks7.h"
 #include "TestTasks8.h"
+#include "TestMultiOperationTask.h"
