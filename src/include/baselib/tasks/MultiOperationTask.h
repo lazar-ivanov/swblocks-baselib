@@ -65,20 +65,27 @@ namespace bl
          * safe to call from a handler body, where the task lock IS held. That asymmetry is
          * deliberate: notifyReady() must never be called while holding the task lock (see the
          * invariants at the top of TaskBase.h) and this is what guarantees it
+         *
+         * The class is parameterized on its base rather than deriving from TaskBase directly, so
+         * that it can be mixed into a task which already has TaskBase in its chain - a connection
+         * task deriving from TcpConnectionEstablisherConnector< STREAM >, for one. Hard-wiring
+         * TaskBase here would give such a task two TaskBase subobjects, which is to say the mix-in
+         * could not be mixed into it at all. MultiOperationTask, the mix-in over a plain TaskBase,
+         * is what a task with no other base uses
          */
 
         template
         <
-            typename E = void
+            typename BASE = TaskBase
         >
-        class MultiOperationTaskT : public TaskBase
+        class MultiOperationTaskT : public BASE
         {
             BL_DECLARE_OBJECT_IMPL( MultiOperationTaskT )
 
         public:
 
-            typedef MultiOperationTaskT< E >                                        this_type;
-            typedef TaskBase                                                        base_type;
+            typedef MultiOperationTaskT< BASE >                                     this_type;
+            typedef BASE                                                            base_type;
 
         private:
 
@@ -93,12 +100,12 @@ namespace bl
              */
 
             mutable os::mutex                                                       m_operationsLock;
-            std::size_t                                                             m_pendingOperations;
-            bool                                                                    m_closing;
-            bool                                                                    m_closeInitiated;
-            bool                                                                    m_terminalTaken;
-            std::exception_ptr                                                      m_firstError;
-            bool                                                                    m_firstErrorIsExpected;
+            std::size_t                                                             m_pendingOperations = 0U;
+            bool                                                                    m_closing = false;
+            bool                                                                    m_closeInitiated = false;
+            bool                                                                    m_terminalTaken = false;
+            std::exception_ptr                                                      m_firstError = nullptr;
+            bool                                                                    m_firstErrorIsExpected = false;
 
             /**
              * @brief Claims the single terminal path, if it is due; the accounting lock is held
@@ -153,18 +160,17 @@ namespace bl
                 }
             }
 
-        protected:
+            /*
+             * The constructor forwards whatever it is given to the base, and its body is empty -
+             * which is why the accounting members above are initialized in class
+             *
+             * BL_VARIADIC_CTOR emits the access label it is given and leaves the class in a
+             * private section, hence the label after it
+             */
 
-            MultiOperationTaskT()
-                :
-                m_pendingOperations( 0U ),
-                m_closing( false ),
-                m_closeInitiated( false ),
-                m_terminalTaken( false ),
-                m_firstError( nullptr ),
-                m_firstErrorIsExpected( false )
-            {
-            }
+            BL_VARIADIC_CTOR( MultiOperationTaskT, base_type, protected )
+
+        protected:
 
             /**
              * @brief Accounts for one asynchronous operation which is about to be started
@@ -194,6 +200,26 @@ namespace bl
 
                 m_closing = true;
             }
+
+        public:
+
+            /**
+             * @brief Whether the task has entered the closing state - because an operation failed
+             * or because beginClose() was called
+             *
+             * It is public rather than protected because it is the one piece of the accounting a
+             * task has to expose: the loops which re-arm operations consult it to decide whether
+             * to start another one
+             */
+
+            bool isClosing() const NOEXCEPT
+            {
+                BL_MUTEX_GUARD( m_operationsLock );
+
+                return m_closing;
+            }
+
+        protected:
 
             /**
              * @brief The number of operations which have been begun and have not completed yet
