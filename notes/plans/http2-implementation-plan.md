@@ -328,36 +328,46 @@ as an estimate for a different module until someone builds it.
 **Decisions still owed after L0**, kept here because each is a prerequisite for something later and
 none belongs to a single slice:
 
-1. **The 1.1.1w flavor and D2** - see the note in the design's §0.1. Owed before L1 builds on D2.
-2. **Whether to widen the handshake retry classifier** - a one-line change with a suite-wide blast
-   radius, so its own gated change-set (`tls-handshake-retry-unreachable-record.md`). The HTTP/2
-   establishment path of §5.1 relies on that retry.
-3. **The `ThreadPoolImpl` race** - pre-existing, core, found by F-L0-3's TSan work
-   (`tsan-baseline-and-threadpool-resize-race-record.md`). Also its own gated change-set: `size()` is
-   `NOEXCEPT`, so the fix is not a one-liner.
-4. **Refreshing the frozen `notes/reviews/major/update_2026/baseline/inventory.json`.** Measured, not
-   assumed: at the pre-L0 commit `1bcde00` that manifest compares **clean** - `utf_inventory.py
-   --compare` reports PASS, 772 cases across 29 modules. At the current tip it reports **21
-   violations**: 19 `C1 case ADDED`, one `C2 case BODY CHANGED`
-   (`TlsHandshake_SniOmittedForAddressLiterals`, which S0.3 deliberately extended with the IPv6 pin)
-   and one `C6 helper member LOST` (`namespace tlspolicy`, which L0's `5f33d25` extended with
-   `countTrustAnchors` - +106/-0, nothing removed). That last report is the tool's naming, not a
-   loss: `utf_inventory.py` cuts a helper block into members at bracket depth zero, so a nested
-   namespace is one member, and the no-loss half of C6 keys each member on its content hash
-   (`utf_inventory.py:720-728`) - an edited helper namespace therefore reports as LOST. Expect the
-   same report from every slice that touches one, and do not "fix" it: the tool proves that a split
-   moved helpers unchanged, so content-hash keying is the right invariant, and the duplicate half of
-   C6 - the one that catches real ODR violations - keys the same way. It misreads only when the
-   baseline spans commits that legitimately edit helpers, which is what a stale manifest is. So the
-   manifest is **not rotten - it is simply out of date by exactly this work**, and every violation
-   is L0's own legitimate change.
-   Refreshing it is therefore bookkeeping rather than a judgement call, but it has to be done
-   deliberately, because **§13's tier-1 check depends on that comparison being clean** and a manifest
-   left stale makes tier 1 unreadable for every slice from here on - a lane cannot tell its own
-   regression from the accumulated backlog. Narrower and sharper: until then the no-loss half of C6
-   is blind for every helper member already reporting LOST - a genuine deletion inside `tlspolicy`
-   would produce the same single report and be indistinguishable from the benign edit. That is a gap
-   in coverage, not noise.
+1. ~~**The 1.1.1w flavor and D2**~~ - **closed 2026-09-18 as deferred**,
+   `notes/plans/issues/openssl-1x-flavor-deferral.md`. It does not gate L1. Every slice that touches
+   OpenSSL adds to the owed evidence rather than creating a new question; say so in the slice's
+   acceptance instead of claiming both flavors.
+2. ~~**Whether to widen the handshake retry classifier**~~ - **closed 2026-09-18: widened**, as its
+   own gated change-set (`tls-handshake-retry-unreachable-record.md`, now CLOSED). It asks the STREAM
+   policy's `isStreamTruncationError` rather than comparing codes, so the retry follows whatever the
+   policy in use calls a truncation. The evidence is a deletion: S0.2's test-only stream policy, which
+   existed only because production did not recognize the real error, is gone and its cases pass
+   unchanged. **Note for §5.1:** `MAX_RETRY_COUNT` is 5, so a peer which *consistently* truncates now
+   costs six full resolve/connect/handshake attempts where it cost one. That is the regime `eof`
+   already had and what a pooled connection wants, but nothing in the suite times it.
+3. ~~**The `ThreadPoolImpl` race**~~ - **closed 2026-09-18: fixed**, as its own gated change-set
+   (`tsan-baseline-and-threadpool-resize-race-record.md`, §3 now FIXED). `size()` takes
+   `BL_MUTEX_GUARD( m_lock )` and `resize()` reads through it, following the five `NOEXCEPT` getters
+   of `ExecutionQueueImpl`; the claim that `NOEXCEPT` made this hard was wrong. Data-race reports on
+   `utf_baselib_basictask` went 3 to 1 with `ThreadPoolImpl` named in none. **Still open in that
+   record's §4:** an unrelated two-line race on a dead `bool` in `TestBaselibBasicTask.h:127`, left
+   out deliberately rather than folded into a gated core change. `aioService()` is racy in the same
+   family and a lock cannot fix it - it returns a reference - so that is a separate design question
+   about the disposable lock.
+4. ~~**Refreshing the frozen `notes/reviews/major/update_2026/baseline/inventory.json`**~~ -
+   **done 2026-09-18.** It was not rotten, merely out of date by exactly this work: at the pre-L0
+   commit `1bcde00` it compared clean, and every violation since was L0's own legitimate change - 19
+   `C1 case ADDED`, one `C2 case BODY CHANGED` (S0.3's deliberate IPv6 pin) and one `C6 helper member
+   LOST`. Re-captured at 795 cases, 124 helper blocks, 30 modules; `check_split.sh --tier1` now passes
+   end to end, which is what §13's tier-1 check depends on.
+
+   **Keep the C6 behaviour in mind rather than re-deriving it.** `utf_inventory.py` cuts a helper
+   block into members at bracket depth zero, so a nested namespace is one member, and the no-loss half
+   of C6 keys each member on its content hash - an *edited* helper namespace therefore reports as
+   LOST. Expect that from every slice that touches one, and do not "fix" it: the tool exists to prove
+   a split moved helpers unchanged, so content-hash keying is the invariant both halves of C6 stand
+   on, including the duplicate half that catches real ODR violations.
+
+   **The other baseline artifacts were not refreshed**, and are a separate question: `runlog.json`
+   holds 17 modules and 741 cases against 30 and 795 today, and was built for the split work's
+   family-scoped comparisons rather than as a whole-tree gate.
+
+**All four are now closed, so nothing on this list gates L1.**
 
 A fifth item was a decision and has been **settled**: the context-dump probe of S0.4 lives in the
 repository at `scripts/utests/tls_context_dump.{cpp,sh}`, beside `utf_ppstream.py`, with **no makefile
