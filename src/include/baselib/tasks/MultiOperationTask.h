@@ -161,8 +161,9 @@ namespace bl
             }
 
             /*
-             * The constructor forwards whatever it is given to the base, and its body is empty -
-             * which is why the accounting members above are initialized in class
+             * The constructor forwards whatever it is given to the base, and BL_VARIADIC_CTOR
+             * owns its definition - so the accounting members above are initialized in class
+             * rather than in an init list there is no way to write
              *
              * BL_VARIADIC_CTOR emits the access label it is given and leaves the class in a
              * private section, hence the label after it
