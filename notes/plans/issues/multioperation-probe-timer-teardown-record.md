@@ -1,10 +1,12 @@
-# The multi-operation stress case is clean under TSan; its probe has a teardown defect
+# The multi-operation stress case is clean under TSan; its probe had a teardown defect
 
 **Origin:** follow-up **F-L0-3** phase B of the HTTP/2 client plan
 (`notes/plans/http2-implementation-plan.md` §2), which asks for the multi-operation stress case of
-design §3.8 commit 1 to be run under ThreadSanitizer. **Date:** 2026-09-18. **Status:** the
-concurrency question is answered - **the accounting is clean**; the teardown defect in the test probe
-is OPEN and deliberately not fixed here.
+design §3.8 commit 1 to be run under ThreadSanitizer. **Date:** 2026-09-18. **Status:** **RESOLVED.**
+The concurrency question is answered - **the accounting is clean** - and the teardown defect in the
+test probe, which sections 1 to 4 below diagnose and which was deliberately left open there, was
+fixed in **`c3cba44`** on `http2-lane-3`. Section 6 carries the fix and its evidence. Sections 1 to 5
+are kept as written, because they are the reason the fix is what it is.
 
 Run against the merged L0 follow-up tip `1d88c3f` (F-L0-1 `da9a444` + F-L0-2 `e2a0830`), so this is
 the code that ships: `MultiOperationTaskT` in its `template< typename BASE = TaskBase > : public BASE`
@@ -133,7 +135,13 @@ ThreadSanitizer can call the read a use-after-free only while the freed region i
 that moment, and in the other four it has been handed to a live allocation in between. That is a
 property of when the tool can see the defect, not of whether it is there.
 
-## 4. Why it was not fixed
+**Correction, made while fixing it.** "Seven of the suite's eight" understates it: the eighth
+scenario - the one which builds its own pool instead of calling the helper - declares the probe
+*before* the pool, so its pool is disposed first too. Same defect, same mechanism, expressed as a
+declaration order rather than as a return. The `runIsClosingSuite` scenario of the same shape carries
+it as well. Eleven sites, not nine.
+
+## 4. Why it was not fixed in F-L0-3
 
 F-L0-3 is a validation lane; its brief forbids changing production or test source. That is the whole
 reason, and not the size of the fix: with the mechanism pinned, the fix is small and mechanical. The
@@ -154,5 +162,72 @@ cosmetic, and it is the reason a clean accounting still exits 66.
 - Anyone re-running this module under TSan will see 16 warnings and should not re-derive the above.
   The number to watch is the **`data race` count, which must stay 0**; a change in the other 16 is a
   change in the probe's teardown, and a `data race` appearing at all is a real regression.
+  *(Superseded by section 6: since `c3cba44` the whole module reports nothing at all. The `data race`
+  count is still the number to watch, and any warning is now a regression.)*
 - These reports must **not** go into `projects/make/toolchain/tsan-suppressions.txt`. That file is
   for patterns that cannot occur in practice; this one occurs, and it is fixable in the test.
+
+## 6. How it was fixed, and the evidence
+
+**Commit `c3cba44`** on `http2-lane-3`, follow-up **R4-A**, against tip `2d2d9ee`. One file,
+`src/utests/utf_baselib_tasks2/TestMultiOperationTask.h`, +55/-15. No production header was touched -
+section 4's "test-harness defect, not a library one" is what the fix confirms.
+
+### The shape
+
+`runMultiOperationProbe` now returns a small aggregate that carries the pool with the probe:
+
+    struct MultiOperationProbeRun
+    {
+        bl::om::ObjPtrDisposable< bl::ThreadPool >    threadPool;
+        bl::om::ObjPtr< MultiOperationProbeImpl >     taskImpl;
+    };
+
+Members are destroyed in reverse order of declaration, so the pool being declared **first** is what
+makes the probe - and with it `m_timers` - be destroyed **before** the `deadline_timer_service` goes
+away. Each call site gains one line, `const auto& taskImpl = probeRun.taskImpl;`, and every scenario
+body below it is unchanged: this is a lifetime fix, not a restructuring. The two scenarios which build
+their own pool got the declaration swap instead, with a comment pointing here.
+
+Section 4 offered two options. The aggregate was chosen over "create the pool in
+`runMultiOperationSuite` and pass it in" because the latter repeats the pool boilerplate at nine call
+sites and restates the ordering invariant implicitly at each of them, where a tenth caller can forget
+it; with the aggregate a caller **cannot obtain the probe without also holding the pool**, and the
+reason is written once, next to the member order that enforces it. A third option - have the probe
+release its timers before the helper returns - was rejected: it needs a public method on the probe
+purely for teardown and leaves the same trap for the next helper.
+
+### The measurement
+
+Both sides measured on this host, `clang2010` `debug`, `BL_CLANG_ENABLE_RA_TSAN=1`, running the
+**whole module** with `--log_level=test_suite` and `TSAN_OPTIONS` set by hand, from a `bld/` wiped
+before the instrumented build (the sanitizer is absent from `PLAT`, so instrumented and ordinary
+objects share one tree and mix silently).
+
+| | before (`2d2d9ee`) | after (`c3cba44`) |
+|---|---:|---:|
+| total TSan warnings | 32 | **0** |
+| `data race` | 0 | **0** |
+| `lock-order-inversion` | 0 | 0 |
+| `heap-use-after-free` | 18 | 0 |
+| `use of an invalid mutex` | 12 | 0 |
+| `unlock of an unlocked mutex` | 2 | 0 |
+| exit code | 66 | **0** |
+| cases entered / left | 13 / 13 | 13 / 13 |
+| `leaked` / `FATAL` | none | none |
+| Boost.Test | `*** No errors detected` | `*** No errors detected` |
+
+The before figure of 32 is section 1's **16 in `Tasks_MultiOperationTaskMultiThreadedTests` plus 16 in
+`Tasks_MultiOperationTaskSingleThreadedTests`** - attributed per case, and exactly the count and split
+section 2 recorded at `1d88c3f`, so the defect had not moved. Every other case, including
+`Tasks_MultiOperationTaskIsClosingTests`, the composition case and all eight `TcpPreHandshakeStage`
+cases, reported nothing on either side. After the fix the string `ThreadSanitizer` does not appear in
+the log at all, and a second run reproduces that exactly.
+
+The ordinary (uninstrumented) `clang2010` `debug` build, from a tree wiped again afterwards, compiles
+clean under `-Werror` and its run is green: 13 cases entered and left, nothing `leaked`, no `FATAL`,
+exit 0.
+
+Logs, outside the repository, in `../http2-l0-state/logs/lane3/`: `R4-before-build-tsan.log`,
+`R4-before-run-full-tsan.log`, `R4-after-build-tsan.log`, `R4-after-run-full-tsan.log`,
+`R4-after-run-full-tsan-rerun.log`, `R4-after-build-plain.log`, `R4-after-run-plain.log`.

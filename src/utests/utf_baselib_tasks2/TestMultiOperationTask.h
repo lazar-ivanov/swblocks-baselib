@@ -806,7 +806,26 @@ namespace
     typedef bl::om::ObjectImpl< MultiOperationProbeT<> > MultiOperationProbeImpl;
 
     /**
-     * @brief Runs one probe on a pool of the given size and hands the task back for inspection
+     * @brief A probe together with the pool it ran on
+     *
+     * The probe holds its timers by value and they were constructed against the pool's
+     * io_service, so destroying the probe destroys them and each destructor reaches into the
+     * deadline_timer_service to cancel. The pool therefore has to outlive the probe, and the
+     * two cannot be handed back separately without the caller having to know that.
+     *
+     * Members are destroyed in reverse order of declaration, so declaring the pool first is
+     * what makes the probe - and with it the timers - go first. Do not reorder them.
+     */
+
+    struct MultiOperationProbeRun
+    {
+        bl::om::ObjPtrDisposable< bl::ThreadPool >                          threadPool;
+        bl::om::ObjPtr< MultiOperationProbeImpl >                           taskImpl;
+    };
+
+    /**
+     * @brief Runs one probe on a pool of the given size and hands the task back for inspection,
+     * with the pool it ran on so that it outlives the task
      *
      * cancelAfterMs, when non zero, requests a cancel that many milliseconds after the push -
      * long enough for the task to be executing and short enough for its timers to be pending
@@ -817,14 +836,14 @@ namespace
         SAA_in                  const std::size_t                           threadsCount,
         SAA_in_opt              const std::size_t                           cancelAfterMs = 0U
         )
-        -> bl::om::ObjPtr< MultiOperationProbeImpl >
+        -> MultiOperationProbeRun
     {
         using namespace bl;
         using namespace bl::tasks;
 
         auto taskImpl = MultiOperationProbeImpl::createInstance( options );
 
-        const auto tpLocal = om::lockDisposable(
+        auto tpLocal = om::lockDisposable(
             ThreadPoolImpl::createInstance< ThreadPool >( os::AbstractPriority::Normal, threadsCount )
             );
 
@@ -851,7 +870,7 @@ namespace
             eq -> flushNoThrowIfFailed();
         }
 
-        return taskImpl;
+        return MultiOperationProbeRun { std::move( tpLocal ), std::move( taskImpl ) };
     }
 
     /**
@@ -877,7 +896,8 @@ namespace
 
             options.closeWhenAllSucceed = true;
 
-            const auto taskImpl = runMultiOperationProbe( options, threadsCount );
+            const auto probeRun = runMultiOperationProbe( options, threadsCount );
+            const auto& taskImpl = probeRun.taskImpl;
             const auto outcome = taskImpl -> outcome();
 
             UTF_REQUIRE( ! taskImpl -> isFailedOrFailing() );
@@ -902,7 +922,8 @@ namespace
             options.firstDelayMs = 50U;
             options.restDelayMs = 5000U;
 
-            const auto taskImpl = runMultiOperationProbe( options, threadsCount );
+            const auto probeRun = runMultiOperationProbe( options, threadsCount );
+            const auto& taskImpl = probeRun.taskImpl;
             const auto outcome = taskImpl -> outcome();
 
             UTF_REQUIRE( taskImpl -> isFailed() );
@@ -932,7 +953,8 @@ namespace
             options.failStepMs = 60U;
             options.initiateCloseCancels = false;
 
-            const auto taskImpl = runMultiOperationProbe( options, threadsCount );
+            const auto probeRun = runMultiOperationProbe( options, threadsCount );
+            const auto& taskImpl = probeRun.taskImpl;
             const auto outcome = taskImpl -> outcome();
 
             UTF_REQUIRE( taskImpl -> isFailed() );
@@ -967,7 +989,8 @@ namespace
             options.failStepMs = 60U;
             options.initiateCloseCancels = false;
 
-            const auto taskImpl = runMultiOperationProbe( options, threadsCount );
+            const auto probeRun = runMultiOperationProbe( options, threadsCount );
+            const auto& taskImpl = probeRun.taskImpl;
             const auto outcome = taskImpl -> outcome();
 
             UTF_REQUIRE_EQUAL( outcome.finishContinuationCalls, 1U );
@@ -986,7 +1009,8 @@ namespace
 
             options.restDelayMs = 5000U;
 
-            const auto taskImpl = runMultiOperationProbe( options, threadsCount, 150U /* cancelAfterMs */ );
+            const auto probeRun = runMultiOperationProbe( options, threadsCount, 150U /* cancelAfterMs */ );
+            const auto& taskImpl = probeRun.taskImpl;
             const auto outcome = taskImpl -> outcome();
 
             UTF_REQUIRE( taskImpl -> isFailed() );
@@ -1021,7 +1045,8 @@ namespace
             options.restDelayMs = 400U;
             options.initiateCloseThrows = true;
 
-            const auto taskImpl = runMultiOperationProbe( options, threadsCount );
+            const auto probeRun = runMultiOperationProbe( options, threadsCount );
+            const auto& taskImpl = probeRun.taskImpl;
             const auto outcome = taskImpl -> outcome();
 
             UTF_REQUIRE( taskImpl -> isFailed() );
@@ -1049,7 +1074,8 @@ namespace
             options.firstDelayMs = 100U;
             options.restDelayMs = 150U;
 
-            const auto taskImpl = runMultiOperationProbe( options, threadsCount );
+            const auto probeRun = runMultiOperationProbe( options, threadsCount );
+            const auto& taskImpl = probeRun.taskImpl;
             const auto outcome = taskImpl -> outcome();
 
             UTF_REQUIRE( taskImpl -> isFailed() );
@@ -1072,11 +1098,17 @@ namespace
 
             options.closeWhenAllSucceed = true;
 
-            const auto taskImpl = MultiOperationProbeImpl::createInstance( options );
+            /*
+             * The pool is declared before the probe so that it is destroyed after it, for the
+             * reason MultiOperationProbeRun states: the probe's timers are built against this
+             * pool's io_service and reach into it as they are destroyed. Do not reorder these two
+             */
 
             const auto tpLocal = om::lockDisposable(
                 ThreadPoolImpl::createInstance< ThreadPool >( os::AbstractPriority::Normal, threadsCount )
                 );
+
+            const auto taskImpl = MultiOperationProbeImpl::createInstance( options );
 
             {
                 const auto eq = om::lockDisposable(
@@ -1160,7 +1192,8 @@ namespace
 
             options.closeWhenAllSucceed = true;
 
-            const auto taskImpl = runMultiOperationProbe( options, threadsCount );
+            const auto probeRun = runMultiOperationProbe( options, threadsCount );
+            const auto& taskImpl = probeRun.taskImpl;
             const auto outcome = taskImpl -> outcome();
 
             UTF_REQUIRE( ! taskImpl -> isFailedOrFailing() );
@@ -1196,7 +1229,8 @@ namespace
             options.firstDelayMs = 50U;
             options.restDelayMs = 5000U;
 
-            const auto taskImpl = runMultiOperationProbe( options, threadsCount );
+            const auto probeRun = runMultiOperationProbe( options, threadsCount );
+            const auto& taskImpl = probeRun.taskImpl;
             const auto outcome = taskImpl -> outcome();
 
             UTF_REQUIRE( taskImpl -> isFailed() );
@@ -1223,11 +1257,17 @@ namespace
 
             options.closeWhenAllSucceed = true;
 
-            const auto taskImpl = MultiOperationProbeImpl::createInstance( options );
+            /*
+             * The pool is declared before the probe so that it is destroyed after it, for the
+             * reason MultiOperationProbeRun states: the probe's timers are built against this
+             * pool's io_service and reach into it as they are destroyed. Do not reorder these two
+             */
 
             const auto tpLocal = om::lockDisposable(
                 ThreadPoolImpl::createInstance< ThreadPool >( os::AbstractPriority::Normal, threadsCount )
                 );
+
+            const auto taskImpl = MultiOperationProbeImpl::createInstance( options );
 
             {
                 const auto eq = om::lockDisposable(
