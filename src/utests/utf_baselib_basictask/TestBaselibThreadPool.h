@@ -16,6 +16,7 @@
 
 #include <baselib/core/OS.h>
 #include <baselib/core/ThreadPoolImpl.h>
+#include <baselib/core/TimeUtils.h>
 
 #include <utests/baselib/Utf.h>
 
@@ -140,6 +141,23 @@ UTF_AUTO_TEST_CASE( Tasks_ThreadPoolConcurrentSizeReadTests )
                     }
                 }
                 );
+
+            /*
+             * Wait for the reader to have observed the initial size before the pool starts
+             * growing, so that its reads overlap the growth by construction rather than by the
+             * scheduler's favor: on a busy host the three resize calls below can complete before
+             * a freshly created thread has run at all, and the requirement that it read
+             * something would then fail on timing alone
+             *
+             * The wait is bounded so that a reader which never runs fails the assertion below
+             * with its diagnostic rather than hanging the module until the harness timeout kills
+             * it; five seconds is far beyond the tick this is waiting for
+             */
+
+            for( std::size_t waited = 0U; 0U == reads.load() && waited < 5000U; ++waited )
+            {
+                os::sleep( time::milliseconds( 1 ) );
+            }
 
             tp -> resize( 4U );
             tp -> resize( 8U );

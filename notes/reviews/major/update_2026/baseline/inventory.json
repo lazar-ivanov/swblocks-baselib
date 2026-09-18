@@ -8347,13 +8347,13 @@
    "namespaces": []
   },
   {
-   "body_sha": "dfba42bc7880630e7a52b68ac1634b86",
+   "body_sha": "b1c0c9177a274d9420e770b9eeb37893",
    "doc_sha": null,
    "file": "utf_baselib_basictask/TestBaselibThreadPool.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 83,
+   "line": 84,
    "module": "utf_baselib_basictask",
    "name": "Tasks_ThreadPoolConcurrentSizeReadTests",
    "namespaces": []
@@ -8377,7 +8377,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 33,
+   "line": 34,
    "module": "utf_baselib_basictask",
    "name": "Tasks_ThreadPoolSizeContractTests",
    "namespaces": []
@@ -14288,6 +14288,7 @@
      "includes": [
       "<baselib/core/OS.h>",
       "<baselib/core/ThreadPoolImpl.h>",
+      "<baselib/core/TimeUtils.h>",
       "<utests/baselib/Utf.h>",
       "<atomic>",
       "<cstddef>"
