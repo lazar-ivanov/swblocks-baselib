@@ -463,9 +463,9 @@ plugins - must be the same before and after.
 One difference is expected and it is constant. The edit moves the lines of `TaskBase.h` beneath it,
 and `BL_EXCEPTION` records `__LINE__` (`core/ErrorHandling.h:50`), so integer literals which come from
 expansion sites *inside* `TaskBase.h` shift by one fixed amount. The check is therefore a small
-stdlib-only script beside `scripts/utests/utf_inventory.py`: preprocess each translation unit on the
-parent commit and on the change, strip the line markers, tokenize, and require the two streams to be
-equal except for integer literals which differ by exactly that amount.
+stdlib-only script beside `utf_inventory.py` - `scripts/utests/utf_ppstream.py`, as built: preprocess
+each translation unit on the parent commit and on the change, strip the line markers, tokenize, and
+require the two streams to be equal except for integer literals which differ by exactly that amount.
 
 This is worth the trouble because it proves what no test enumerates: that the order of the catch
 clauses, the expected-exception classification and the scope of the task lock all survived. At least

@@ -184,11 +184,12 @@ be observed without the change, commit the test that pins it first, and show it 
   `tasks/MultiOperationTask.h` (`MultiOperationTaskT` mix-in: pending-op counter, first-error capture,
   `initiateClose()`, single terminal `notifyReady`).
 - Depends on: existing baselib. Earliest: t0.
-- Probe (**mechanical proof**): a stdlib-only script beside `scripts/utests/utf_inventory.py` that
-  preprocesses every TU the makefiles build, on the parent commit and on this change, strips line
-  markers, tokenizes, and asserts the streams are equal except for integer literals from expansion sites
-  inside `TaskBase.h`, which shift by one constant (from `BL_EXCEPTION`'s `__LINE__`,
-  `core/ErrorHandling.h:50`). `BL_TASKS_HANDLER_END*` expands at 58 sites in 20 files under `src/`.
+- Probe (**mechanical proof**): `scripts/utests/utf_ppstream.py`, a stdlib-only script beside
+  `utf_inventory.py`, which preprocesses every TU the makefiles build, on the parent commit and on this
+  change, strips line markers, tokenizes, and asserts the streams are equal except for integer literals
+  from expansion sites inside `TaskBase.h`, which shift by one constant (from `BL_EXCEPTION`'s
+  `__LINE__`, `core/ErrorHandling.h:50`). `BL_TASKS_HANDLER_END*` expands at 58 sites in 20 files
+  under `src/`.
 - Acceptance & tests: the mechanical proof passes; new cases in `utf_baselib_tasks` (or a numbered
   sibling) per the table in design §3.8 commit 1 (multi-op success, one/several failures, cancel,
   `initiateClose` throws, finish-continuation entered once, restart, TSan stress, single-threaded run).
@@ -250,10 +251,18 @@ report: no pre-existing case changed outcome or disappeared, and no module exit 
 
 - **`utf_baselib_jni` is compared on two of the gate's four signals, not four.** All 11 of its cases
   are captured `passed` on both sides, so pass/fail and the registered set are real evidence. But its
-  *executed* set is empty and every assertion count is 0, on both sides - the module's own `ARGPARSE`
-  re-initializes logging and suppresses the `Entering test case` lines the tool reads, so those two
-  signals are vacuous rather than verified. Its exit 200 is the known pre-existing `Test setup error`
-  that follows a clean pass of every case; it is identical on both sides and is a host property.
+  *executed* set is empty and every assertion count is 0, on both sides: the binary emits no
+  `Entering test case` lines at all, which is what the tool reads for those two signals, so they are
+  vacuous rather than verified. Its exit 200 is the known pre-existing `Test setup error` that follows
+  a clean pass of every case; it is identical on both sides and is a host property.
+
+  **Why the progress log is missing is not known.** With identical flags
+  (`--log_level=test_suite --report_level=detailed`) `utf_baselib_utils` emits 3 `Entering` lines and
+  `utf_baselib_jni` emits 0 while still reporting 12 `has passed`. Ruled out: the cases are ordinary
+  `UTF_AUTO_TEST_CASE` declarations, and `UTF_TEST_APP_INIT_DEACTIVATE_THREAD_POOLS` - the only thing
+  distinguishing that module's `…Main.cpp` - is not the cause, because `utf_baselib_basictask` sets
+  the same macro and logs normally. Whoever needs those two signals for JNI should start there rather
+  than re-deriving it.
 - **The 1.1.1w half was not produced**, and cannot be on this machine - see the D2 note in the
   design's section 0.1. The "both flavors for TLS" clause of this gate is unmet, not waived.
 
@@ -284,9 +293,13 @@ and a test module; the third runs an existing case under a sanitizer), and all t
   because a lane validates one toolchain and variant only. `BL_CLANG_ENABLE_RA_TSAN=1`
   (`projects/make/toolchain/clang-analysis.mk:214`), one focused build of one module.
 
-A fourth item is a **decision, not a task**: the context-dump probe of S0.4 lives outside the
-repository and is needed again for the 1.1.1w debt and by S3.4's knob-availability probe. Either
-commit it as a probe app or accept that it is rewritten from its description each time.
+A fourth item was a decision and has been **settled**: the context-dump probe of S0.4 lives in the
+repository at `scripts/utests/tls_context_dump.{cpp,sh}`, beside `utf_ppstream.py`, with **no makefile
+target** - the two mechanical proofs of L0 are now treated alike, and S3.4 and the 1.1.1w debt both
+inherit a working probe rather than a description to reimplement. Its build flags are a capture from
+`make -n`, not a derivation, so they go stale when the devenv moves; the dist root, the tool versions
+and the architecture tag are environment overrides, the target triplet and the clang resource
+directory are not, and the header says to recapture rather than patch one flag at a time.
 
 ---
 
@@ -745,7 +758,7 @@ orders is for development and is generally earlier.
 
 | Wave | Integrates | Gate |
 |---|---|---|
-| 0 | L0.S1-S4 (four commits) | **S0.5: whole suite, baseline-relative, both flavors for TLS.** Nothing G1-dependent merges before this passes. **Done 2026-09-18: passed at `gcc1520` debug, with the two limits recorded in §2 - `utf_baselib_jni` ran no cases, and the 1.1.1w half is unmet. Wave 1 and beyond are unblocked.** |
+| 0 | L0.S1-S4 (four commits) | **S0.5: whole suite, baseline-relative, both flavors for TLS.** Nothing G1-dependent merges before this passes. **Done 2026-09-18: passed at `gcc1520` debug, with the two limits recorded in §2 - `utf_baselib_jni` is compared on two of the four signals, and the 1.1.1w half is unmet. Wave 1 and beyond are unblocked.** |
 | 0 (concurrent) | L1 all; L2 all (developed against L1) | focused modules per slice |
 | 1 | S3.1 Session; S3.2 stranded plain; S3.6 ClientHello | focused modules |
 | 1 (after S0.5) | S3.3 stranded TLS; S3.4 TLS contexts/floor; S3.5 tunnel | focused modules, both flavors for TLS |

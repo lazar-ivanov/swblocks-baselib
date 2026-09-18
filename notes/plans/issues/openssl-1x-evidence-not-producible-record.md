@@ -57,10 +57,11 @@ reached by anything which includes `crypto/CryptoBase.h`, so the probe hits them
    deprecation policy of its own in `devenv-detect.mk`, or by fixing the call sites.
 3. Re-run, with `BL_USE_OPENSSL_1X=1`:
    - the context-dump probe against the parent commit of the S0.4 split and against it, with the two
-     dumps compared (the probe pins the 3.5.4 paths and would need the 1.1.1w ones). The probe was
-     written for this slice and kept outside the repository, at
-     `/home/lazar/dev/github/http2-l0-state/evidence/tls-context-dump.{cpp,build.sh}`; discharging
-     this debt needs it committed somewhere durable first, or rewritten from the description above;
+     dumps compared. The probe is `scripts/utests/tls_context_dump.{cpp,sh}`, which takes a worktree
+     root, so it is built once per revision - against two worktrees, or one checkout at each
+     revision. Its build flags are a capture pinning a toolchain, a Boost and an OpenSSL; the dist
+     root and the versions are environment overrides, so the 1.1.1w run is
+     `BL_OPENSSL_VERSION=1.1.1w` plus a dist that actually carries it;
    - `make -k -j1 utf_baselib_http2`, and the run.
 
 ## How much risk the gap actually carries
