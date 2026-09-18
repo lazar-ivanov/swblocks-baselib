@@ -1,0 +1,735 @@
+# HTTP/2 Client Library: Implementation Plan
+
+**Status:** plan, not implemented. Written 2026-09-17. Nothing here has been built, run or probed; every
+probe is folded into the slice that needs it, to be run by the implementing agent at execution time.
+
+**Spec.** This plan implements `notes/plans/http2-design.md` ("the design"). The design is the
+specification; this plan is the work breakdown, the dependency graph, the parallelization schedule and
+the verification method. Where a slice says "implements §X", read that section of the design for what to
+build - the plan does not restate it. Decision ids `D1`-`D26` are the design's ledger (its section 0).
+
+**Companion deferrals** (do not implement): `notes/plans/issues/http2-server-side-deferral.md`,
+`notes/plans/issues/http-content-decoders-deferral.md`.
+
+---
+
+## 0. How to execute this plan
+
+**A slice is one unit of work.** Each has a work order below: what it implements, its deliverables, what
+it depends on, its earliest possible start, any probes, and its acceptance criteria and tests. A slice
+is sized for one agent; three slices are large enough to want a sub-team but are still one integration
+unit (S2.2 HPACK, S3.1 Session, S5.2 ConnectionPool).
+
+**Layers and slices.** Work is grouped into layers L0-L8. A layer's slices are, with annotated
+exceptions, parallel with each other. A layer depends only on layers below it. Every cross-slice edge is
+named in the work order and summarized in §12, so the true schedule is explicit rather than implied by
+layer order.
+
+**Development parallelism is higher than integration parallelism.** Agents work in isolated worktrees.
+A slice's *development* can begin as soon as the code it builds on exists in some branch, even before
+that branch is integrated. A slice's *integration* follows the gating order of §12. The "earliest start"
+field is for development; the wave table in §12 is for integration.
+
+**Before you start any slice, read:** the root `AGENTS.md` (loaded automatically), `src/utests/AGENTS.md`,
+the design's section 0 and the sections your work order names, and every existing header your work
+order cites by path - the library's idioms are learned from those files, not from this plan.
+
+**This plan governs sequencing.** Where its layering differs from the design's §10 "Lands in" column or
+§11 phase table (it consolidates, for example, every additive change to `AsioSslStreamWrapper.h` into
+one L1 slice with one owner), this plan is what is executed and §13 records the mapping. Everything
+else - what to build and why - is the design's, and the plan never overrides a decision `D1`-`D26`.
+
+**The build boundary.** Creating this plan ran no build. Executing it does: each slice is built and its
+focused test module run. The default cadence, matching how this maintainer implements a plan, is
+**gcc1520 debug build-and-run of the affected module while developing a slice, then one clang2010 release
+pass over the affected modules at the end of a layer.** The exception is the G1 gate (L0), which is the
+full suite - its breadth is the maintainer's call at execution time; do not assume it, ask. Do not
+untar any dist, and do not widen a build beyond this without being asked: this repository forbids
+unrequested full-repo builds, a build of more than one module is never parallelized (`-j1`), and tests
+run at most five modules concurrently (`-j5`). Fuzz harnesses named below are optional: build them as a
+standalone test app or a case gated behind an environment variable; do not add a makefile target for
+them without asking.
+
+**Git.** This maintainer commits his own work. Hand back working-tree changes per slice with the
+evidence its acceptance asks for; do not `git add`/`commit`/`push` unless asked. The integration order of
+§12 is a merge DAG for the maintainer (or a coordinating step) to drive, not a licence to commit.
+
+**Test modules (D20, §8.1 of the design).** Four modules: `utf_baselib_h2core`, `utf_baselib_h2client`,
+`utf_baselib_httpclient`, `utf_baselib_h2profiles`. `utf_baselib_http2` is **taken** (it is the numbered
+sibling of `utf_baselib_http`) - do not use it. Conventions, so parallel agents do not collide:
+
+- **S1.8 scaffolds all four module directories first** (a `…Main.cpp`, a `devenv7_only` marker, an empty
+  `notes.txt`). A feature slice then adds its own `Test<Feature>.h` and appends **one** `#include` line
+  to that module's `…Main.cpp`. Different slices append different lines; a collision there is a trivial
+  merge. No slice edits another slice's `Test*.h`.
+- **Never `#include` a test header across module directories** (`src/utests/AGENTS.md`).
+- **Watch object size.** After a slice lands tests, run `make utests-sizes`. `h2core` (Session +
+  HPACK conformance) is the likely first to approach the 40 MB target; if it does, split into
+  `utf_baselib_h2core2` per `src/utests/AGENTS.md` - the plan budgets for this in S3.1's acceptance.
+
+**Header-only and idioms.** Every production header follows the library idiom: `template< typename E =
+void > class FooT`, `typedef FooT<> Foo`, `typedef om::ObjectImpl< Foo > FooImpl` where it is an object,
+statics via `BL_DEFINE_STATIC_MEMBER`. New Boost usage is isolated the way the library already isolates
+Boost (one `core/detail/*BoostImports.h` header, `using` declarations, a facade in library terms - see
+S1.5). OpenSSL stays an optional dependency: headers needing it are separate and out of any
+`PreCompiled.h` (design §1.5, §9).
+
+**Verifying against the design.** Two mechanisms: every slice's acceptance names the design section and
+the test that proves it; and §13 is a traceability matrix from every decision `D1`-`D26` and every design
+section to the slice(s) and evidence. S8.3 is the slice that fills the matrix in at the end.
+
+---
+
+## 1. Layer and slice map
+
+| Layer | Theme | Slices | Depends on |
+|---|---|---|---|
+| **L0** | Gated core change-set (G1) | S0.1-S0.5 | existing baselib |
+| **L1** | Foundation leaves | S1.1-S1.9 | existing baselib |
+| **L2** | Independent components | S2.1-S2.9 | L1 |
+| **L3** | Session engine & transport seam | S3.1-S3.6 | L0, L1, L2 |
+| **L4** | I/O shell & test peer | S4.1-S4.4 | L2, L3 |
+| **L5** | Client orchestration | S5.1-S5.2 | L2, L4 |
+| **L6** | Session | S6.1 | L1, L2, L5 |
+| **L7** | Impersonation | S7.1-S7.5 | L2, L3, L6 |
+| **L8** | Facade, tooling, verification | S8.1-S8.3 | all |
+
+**The two long arms, and where they meet.** The single biggest parallelization win is that the slow,
+risky arm (L0, gated on the whole suite) and the largest build arm (L1 → L2 → S3.1 Session) are
+independent and run concurrently. They rejoin at L4, where the connection task needs both the gated core
+(via the stranded TLS policy, the hook, the floor check, the multi-op task) and the Session engine. The
+critical path then runs up the impersonation chain:
+
+```
+  L1.leaves ─► L2.primitives ─► S3.1 Session ──────────────┐
+                                                           ▼
+  L0.S1-4 ─► S0.5 GATE ─► S3.3/S3.4/S3.5 (transport) ─► S4.1 establish ─► S4.2 h2 driver
+                                                                              │
+                                          S5.2 pool ◄─── S4.3 h1 driver ◄─────┤
+                                              │                               │
+                                              ▼                               ▼
+                                          S6.1 session ─► S7.3 apply ─► S7.4 report ─► S7.5 vectors
+```
+
+The TLS fidelity spike (S7.1) branches off after L3 and runs alongside L4-L6, because it needs only the
+TLS context factory and the ClientHello capture, not the client stack.
+
+### 1.1 Slice index
+
+For assigning agents. Size is relative effort (S under a day of focused work, M a few days, L a week
+or more, for one agent); "earliest" is the integration wave of §12 - development may start earlier.
+
+| Slice | Name | Size | Depends on | Earliest |
+|---|---|---|---|---|
+| S0.1 | Handler macro + MultiOperationTask | M | - | 0 |
+| S0.2 | Pre-handshake hook | S | - | 0 |
+| S0.3 | configureClientStream extraction | S | - | 0 |
+| S0.4 | initNativeSslContext split | M | - | 0 |
+| S0.5 | The G1 gate | M | S0.1-S0.4 | 0 |
+| S1.1 | net::Uri | M | - | 0 |
+| S1.2 | http::HeaderList | S | - | 0 |
+| S1.3 | Error info & exceptions | S | - | 0 |
+| S1.4 | Profile shape types + data models | M | - | 0 |
+| S1.5 | Beast import header | S | - | 0 |
+| S1.6 | AsioSslStreamWrapper additive extensions | M | - | 0 |
+| S1.7 | Build integration | S | - | 0 |
+| S1.8 | Test-module scaffolding | S | S1.7 | 0 |
+| S1.9 | HTTP/2 Globals | S | - | 0 |
+| S2.1 | FrameCodec | M | S1.3, S1.9 | 0 |
+| S2.2 | HPACK | L | S1.2, S1.3, S1.9 | 0 |
+| S2.3 | FlowControlWindow | S | S1.3, S1.9 | 0 |
+| S2.4 | StreamStateMachine | M | S1.3, S1.9 | 0 |
+| S2.5 | HTTP/1.1 codec | L | S1.2, S1.3, S1.5 | 0 |
+| S2.6 | Client contracts | M | S1.1, S1.2, S1.3 | 0 |
+| S2.7 | Cookie jar | M | S1.1 | 0 |
+| S2.8 | Redirect policy | S | S1.1 | 0 |
+| S2.9 | Content-decoder seam | S | S1.2 | 0 |
+| S3.1 | HTTP/2 Session engine | L | S2.1-S2.4, S1.2, S1.3, S1.9 | 1 |
+| S3.2 | Stranded plain stream policy | S | - | 1 |
+| S3.3 | Stranded TLS stream policy | M | S0.3, S1.6 | 1 (after S0.5) |
+| S3.4 | TLS client profiles, contexts, floor | M | S0.4, S1.4 | 1 (after S0.5) |
+| S3.5 | Tunnel stage | M | S0.2 | 1 (after S0.5) |
+| S3.6 | ClientHello capture + JA3/JA4 | M | S1.6 | 1 |
+| S4.1 | Connection establishment + ALPN dispatch | M | S3.2-S3.5, S0.1, S2.6 | 2 |
+| S4.2 | HTTP/2 driver | L | S4.1, S3.1 | 2 |
+| S4.3 | HTTP/1.1 driver | M | S4.1, S2.5 | 2 |
+| S4.4 | Test peer | M | S3.1 | 2 |
+| S5.1 | HttpClientRequestTask | M | S2.6, S0.1 | 3 |
+| S5.2 | ConnectionPool | L | S4.1-S4.3, S2.6 | 3 |
+| S6.1 | ClientSession | M | S5.1, S5.2, S1.1, S1.4, S2.7-S2.9 | 4 |
+| S7.1 | TLS fidelity spike | M | S3.4, S3.6 | 2 |
+| S7.2 | Profile content + loader | M | S1.4, S3.4, S7.1 | 5 |
+| S7.3 | Apply profile across layers | M | S3.4, S3.1, S6.1, S2.9, S7.2 | 5 |
+| S7.4 | Fidelity report + fingerprint | M | S3.6, S3.1, S7.3 | 5 |
+| S7.5 | Capture procedure + vectors | M | S7.2, S7.4 | 5 |
+| S8.1 | Compatibility facade | S | S6.1 | 6 |
+| S8.2 | bl-tool command (optional) | S | S6.1 | 6 |
+| S8.3 | Final verification | M | all | 6 |
+
+---
+
+## 2. Layer L0 — Gated core change-set (G1)
+
+Implements design §3.8. This is the one change to code existing users run through. It is developed as
+four independent commits and passes **one** gate on the whole suite (D19, D26). No feature code of any
+later layer is in the tree for that gate. **Characterize before you change:** where existing behavior can
+be observed without the change, commit the test that pins it first, and show it passing on both sides.
+
+### S0.1 — Handler macro + MultiOperationTask (§3.2, §3.8 commit 1)
+- Deliverables: in `tasks/TaskBase.h`, `BL_TASKS_HANDLER_END_IMPL_EX( onSuccess, onFailure )` with
+  `BL_TASKS_HANDLER_END_IMPL` forwarding to it, and `BL_TASKS_HANDLER_END_MULTIOP`; new
+  `tasks/MultiOperationTask.h` (`MultiOperationTaskT` mix-in: pending-op counter, first-error capture,
+  `initiateClose()`, single terminal `notifyReady`).
+- Depends on: existing baselib. Earliest: t0.
+- Probe (**mechanical proof**): a stdlib-only script beside `scripts/utests/utf_inventory.py` that
+  preprocesses every TU the makefiles build, on the parent commit and on this change, strips line
+  markers, tokenizes, and asserts the streams are equal except for integer literals from expansion sites
+  inside `TaskBase.h`, which shift by one constant (from `BL_EXCEPTION`'s `__LINE__`,
+  `core/ErrorHandling.h:50`). `BL_TASKS_HANDLER_END*` expands at 58 sites in 20 files under `src/`.
+- Acceptance & tests: the mechanical proof passes; new cases in `utf_baselib_tasks` (or a numbered
+  sibling) per the table in design §3.8 commit 1 (multi-op success, one/several failures, cancel,
+  `initiateClose` throws, finish-continuation entered once, restart, TSan stress, single-threaded run).
+- Pitfall: `notifyReadyImpl` runs finish-continuation and `onTaskStoppedNothrow` before its
+  `m_notifyCalled` guard (`TaskBase.h:547`) - the mix-in must make the terminal path idempotent.
+
+### S0.2 — Pre-handshake hook (§3.6, §3.8 commit 2)
+- Deliverables: in `tasks/TcpBaseTasks.h`, protected virtual `beginPreHandshakeStage( continueCallback )`
+  on `TcpConnectionEstablisherConnector`, default invokes the callback immediately;
+  `onConnectionEstablished` (`:1315`) routed through it.
+- Depends on: existing baselib. Earliest: t0.
+- Acceptance & tests: contract in design §3.6/§3.8 commit 2 - with the default hook the call order and
+  lock scope are unchanged; characterization of today's connect→handshake order via the existing
+  `continueAfterConnected` virtual is committed first; new cases cover async stage, stage failure before
+  handshake, cancel during stage, one-run-per-retry-attempt (`TcpBaseTasks.h:1389`).
+
+### S0.3 — configureClientStream extraction (§3.1, §3.8 commit 3)
+- Deliverables: in `tasks/TcpSslBaseTasks.h`, extract the SNI logic of `createSocket` (`:227-251`) into
+  `configureClientStream()`; `createSocket` calls it. Pure refactor.
+- Depends on: existing baselib. Earliest: t0.
+- Acceptance & tests: `TlsHandshake_SniOmittedForAddressLiterals`
+  (`utf_baselib_http/TestTlsHandshakeVerification.h:558`) passes unchanged (already characterizes both
+  halves for a name and an IPv4 literal); **add first** the same assertion for an IPv6 literal.
+
+### S0.4 — initNativeSslContext split (§3.3, §3.8 commit 4)
+- Deliverables: in `crypto/CryptoBase.h`, split `initNativeSslContext` (`:257`) into three composable
+  steps (floor/options/level; cipher policy; trust), with the global client context and every server
+  context calling all three exactly as today. **Refactor only** - no new factory here.
+- Depends on: existing baselib. Earliest: t0. Security-critical.
+- Probe (**mechanical proof**): a probe dumping, for the global client context and a server context, the
+  option bits, min/max protocol version, security level, the ordered cipher and TLS 1.3 suite lists, the
+  session-cache mode, verify mode/depth and trust-anchor count; identical on the parent commit and this
+  change. Run on **both OpenSSL flavors** (3.5.4 and 1.1.1w under `BL_USE_OPENSSL_1X`).
+- Acceptance & tests: `TestTlsProtocolPolicy.h` in `utf_baselib_http2` passes unchanged; **add first**
+  the trust-anchor count and per-role session-cache-mode assertions (design §3.8 commit 4).
+
+### S0.5 — The gate (§3.8 "The gate")
+- Deliverables: the gate run and its evidence. One gate on the tip of S0.1-S0.4.
+- Depends on: S0.1-S0.4. Earliest: after they exist.
+- Method: the entire `utf_*` suite, baseline-relative via `scripts/utests/utf_runlog.py` (capture the
+  parent commit twice for the nondeterministic-case list, capture the change, `--compare`); the two
+  mechanical proofs of S0.1 and S0.4; TLS modules on both OpenSSL flavors. Matrix breadth is the
+  maintainer's call. An intermittent failure is reproduced or explained against `notes/plans/issues/`,
+  never re-run until green.
+- Acceptance: for every pre-existing case the registered set, executed set, pass/fail and deterministic
+  assertion counts are unchanged, and the new cases pass. **Nothing from L3+ that depends on G1 is
+  integrated before this passes.**
+
+---
+
+## 3. Layer L1 — Foundation leaves
+
+All depend only on existing baselib and are mutually parallel. Earliest start t0 for all.
+
+### S1.1 — net::Uri (§3.4, D16, D24)
+- Deliver: `core/Uri.h` (`bl::net::UriT`): parse; RFC 3986 §5 reference resolution; normalization;
+  `origin()`, `authority()`, `pathAndQuery()`. Strict (control chars, whitespace, backslash are errors);
+  no IDNA (non-ASCII host is an error). Complements `str::uriEncode`/`uriDecode`.
+- Accept: RFC 3986 cases incl. IPv6 literals, dot-segment removal, resolution; strictness rejections.
+  Tests → beside `TestNetUtils.h` in `utf_baselib2` (headroom permitting), else a new module.
+
+### S1.2 — http::HeaderList (§3.5)
+- Deliver: `http/HeaderList.h` (`bl::http::HeaderListT`): ordered name/value pairs, original case,
+  case-insensitive lookup, multi-value, conversion to/from `http::HeadersMap`; validation helpers
+  (reject CR/LF/NUL in values, non-token names).
+- Accept: order and case preserved; repeated names retained; round-trip with `HeadersMap`. Tests →
+  `utf_baselib_httpclient/TestHeaderList.h`.
+
+### S1.3 — Error info & exceptions (§3.7)
+- Deliver: additive to `core/ErrorHandling.h` - the `errinfo_http2_*`, `errinfo_http_alpn_selected`,
+  `errinfo_tls_negotiated_*` typedefs and `BL_DECLARE_EXCEPTION( Http2ProtocolException )` /
+  `Http2StreamException` next to the existing `errinfo_http_*` (`:473`).
+- Accept: compiles; each errinfo attaches/reads. No existing code path changes. Tested indirectly by
+  consumers; a smoke test in `h2core`.
+
+### S1.4 — Profile shape types (§6.2)
+- Deliver: the pure-data config types - `crypto/TlsClientProfile.h` (`TlsClientProfile`), the
+  `Http2Profile` struct in `http2/`, the `HeaderProfile` struct + request-kind enum in `httpclient/`,
+  and `data/models/HttpClientProfiles.h` (`bl::dm::httpclient`, the `BL_DM_*` models incl.
+  `BrowserProfile`). **Types and models only; no content, no loader** (those are S7.2).
+- Accept: types compile and the DM round-trips through JSON. Tests → `h2profiles`.
+
+### S1.5 — Beast import header (§5.5, D15)
+- Deliver: `core/detail/BeastBoostImports.h` in the form of `TimeBoostImports.h` - the only file that
+  includes `<boost/beast/...>` (narrow headers, guarded by `BoostIncludeGuardPush/Pop.h`), bringing the
+  exact names the codec will use into `bl::beast`/`bl::beast::http` by individual `using`. Not reachable
+  from `BaseIncludes.h` or any `PreCompiled.h`.
+- Probe: confirm `<boost/beast/http/basic_parser.hpp>` is present in the dist include tree. Beast is
+  header-only, so if absent it can be vendored; record the finding for S2.5's decision.
+- Accept: a translation unit including only this header compiles on all four toolchains.
+
+### S1.6 — AsioSslStreamWrapper additive extensions (§3.1, §3.3, §3.7)
+- Deliver: additive to `tasks/AsioSslStreamWrapper.h` - a strand-taking constructor overload; ALPN offer
+  (`SSL_set_alpn_protos`) and selected-protocol getter (`SSL_get0_alpn_selected`); negotiated version and
+  cipher getters; a ClientHello capture hook (`SSL_set_msg_callback`); a client-context constructor
+  distinct from the server-flag one. All overloads/additions; the existing constructor and its
+  "non-null context ⇒ server" rule (`:341`) are untouched.
+- Depends on: existing wrapper only (leaf). Earliest: t0.
+- Pitfall: `SSL_set_alpn_protos` returns **0 on success** - do not route through `BL_CHK_CRYPTO_API_NM`.
+- Accept: extends `TestAsioSslStreamWrapper.h` in `utf_baselib_http2` - new getters default sanely
+  pre-handshake; ALPN offer sets without error; existing wrapper cases pass unchanged.
+
+### S1.7 — Build integration (§9, D1)
+- Deliver: the `devenv7_only` marker mechanism and one `filter-out` block in `projects/make/common.mk`
+  using the negative filter (mirroring `jni_enabled` at `:290`). The **only** makefile change.
+- Header guards: new headers do **not** test `BL_DEVENV_VERSION` - only the project makefiles define
+  it, and the devenv7 release notes record that no public header may require it
+  (`notes/plans/issues/devenv7-breaking-changes-release-notes.md:352`). They guard on the capability
+  they need, with a clear `#error`: `BOOST_VERSION >= 107000` for executor-bound I/O objects (the stranded
+  policies), `OPENSSL_VERSION_NUMBER >= 0x30500000L` for impersonation (D2). The design's §9 says the
+  same after this review.
+- Accept: a module directory carrying the marker builds on devenv7 and is filtered out on devenv2-6; a
+  new header included on too old a Boost fails with the `#error`, not a cryptic template error.
+
+### S1.8 — Test-module scaffolding (§8.1, D20)
+- Deliver: the four module directories - `utf_baselib_h2core`, `utf_baselib_h2client`,
+  `utf_baselib_httpclient`, `utf_baselib_h2profiles` - each with a `…Main.cpp` skeleton (defines
+  `UTF_TEST_MODULE`, includes `<utests/baselib/UtfMain.h>`), a `devenv7_only` marker, an empty
+  `notes.txt`. Document the append convention (§0) at the top of each `Main.cpp`. Also
+  `http2/PreCompiled.h` and `httpclient/PreCompiled.h` in the form of `http/PreCompiled.h` (no OpenSSL
+  header in either), included by these four modules only.
+- **Do not add the new `PreCompiled.h` files to `src/utests/include/utests/baselib/UtfBaseLibCommon.h`.**
+  That header is included by every test module on every devenv (`:23-29`); adding devenv7-only headers
+  to it would break every module on devenv2-6 and pull the new code into every existing module's
+  translation unit, which the size policy forbids.
+- Depends on: S1.7 (marker). Accept: each empty module builds and runs zero cases on devenv7; no
+  existing module's preprocessed output changes.
+
+### S1.9 — HTTP/2 Globals (§4.1, §4.6, design §2.2 `http2/Globals.h`)
+- Deliver: `http2/Globals.h` - the constants every HTTP/2 slice shares and none may redefine: frame types,
+  frame flags, settings ids, error codes (with a `toString`), the connection preface bytes, protocol
+  constants (`2^31-1`, `16384`, `2^24-1`, default window and table sizes) and the default values of the
+  §4.6 limits table, in the `GlobalsT< E >`/`BL_DEFINE_STATIC_*` idiom of `http/Globals.h`.
+- Why a slice of its own: S2.1-S2.4 and S3.1 are developed in parallel; without a single owner each
+  would invent its own enums and the merge would be a conflict and an inconsistency. This is small and
+  must land before the L2 primitives start.
+- Depends on: existing baselib. Earliest: t0. Accept: compiles; every constant has the RFC 9113 value;
+  a smoke test in `h2core`.
+
+---
+
+## 4. Layer L2 — Independent components
+
+All depend only on L1 and are mutually parallel. The four HTTP/2 primitives (S2.1-S2.4) are deliberately
+**not** templated on any stream and know nothing of Asio, OpenSSL, tasks or locks (design §2.1).
+
+### S2.1 — HTTP/2 FrameCodec (§4.1)
+- Deliver: `http2/FrameCodec.h` - incremental 9-byte header parse across read boundaries; all ten frame
+  types parsed/validated with per-type length, stream-id and padding rules; serialization of what we
+  send (incl. optional `PRIORITY` fields, padding).
+- Dep: S1.3, S1.9. Accept: byte-level parse/serialize vectors; oversize-frame and bad-padding rejections.
+  Tests → `h2core/TestFrameCodec.h`.
+
+### S2.2 — HTTP/2 HPACK (§4.2)
+- Deliver: `http2/HpackDecoder.h`, `HpackEncoder.h`, `HpackHuffman.h`, `HpackDynamicTable.h` - static +
+  dynamic tables with RFC size accounting; integer/string codecs with overflow limits; Huffman with the
+  **decode state machine generated from the code table at static-init** (not a second literal table),
+  padding validated; decoder enforces decoded-size bound *during* decoding and keeps the table in sync
+  on overflow; encoder policy (indexed / incremental / literal / never-indexed, Huffman-if-shorter,
+  cookie crumbling switch).
+- Dep: S1.2, S1.3, S1.9. Accept: **RFC 7541 Appendix C vectors** pass; `COMPRESSION_ERROR` and mid-decode
+  bound cases; a libFuzzer harness (optional). Tests → `h2core/TestHpack.h`.
+
+### S2.3 — HTTP/2 FlowControlWindow (§4.4)
+- Deliver: `http2/FlowControlWindow.h` - signed 32-bit windows both levels/directions;
+  `INITIAL_WINDOW_SIZE` re-adjustment (may go negative); zero-increment and overflow errors; consumer-
+  driven `WINDOW_UPDATE` at the half-window threshold.
+- Dep: S1.3, S1.9. Accept: adjustment, negative-window, overflow, threshold cases. Tests →
+  `h2core/TestFlowControl.h`.
+
+### S2.4 — HTTP/2 StreamStateMachine (§4.3)
+- Deliver: `http2/StreamStateMachine.h` - RFC 9113 §5.1 machine parameterized by role; reserved states
+  present but unreachable (D11); recently-closed set (bounded time); **DATA on a closed stream still
+  credits the connection window**; id exhaustion drains the connection.
+- Dep: S1.3, S1.9. Accept: legal/illegal transition tables per role; closed-stream DATA accounting. Tests
+  → `h2core/TestStreamStates.h`.
+
+### S2.5 — HTTP/1.1 codec (§5.5, D15)
+- Deliver: `httpclient/Http1Codec.h` (facade in library terms, no Beast type in any signature) +
+  `httpclient/detail/Http1CodecBeastImpl.h` (backend deriving from Beast's `http::basic_parser`, sans-
+  I/O) + an in-house request serializer honoring profile header order/case. Response defenses: conflicting
+  `Content-Length` = error; `Transfer-Encoding` + `Content-Length` per RFC 9112 §6.3; reject obsolete
+  folding; 64 KB header cap.
+- Dep: S1.2, S1.3, S1.5. **Probe/decision (D15):** confirm `basic_parser` (sans-I/O) covers chunked +
+  trailers, read-until-close, bodiless (1xx/204/304/HEAD), limits; and measure the object-size delta of a
+  test module with and without Beast against the 40 MB target (`make utests-sizes`). Keep Beast if all
+  four D15 criteria hold; otherwise write the backend in-house behind the same facade - **nothing above
+  the facade changes either way.** Record the verdict (for S8.3 and the design's §5.5).
+- Accept: status line, headers, chunked+trailers, read-until-close, bodiless, smuggling defenses. Tests →
+  `httpclient/TestHttp1Codec.h`.
+
+### S2.6 — Client contracts (§5.2, §5.3, §5.4)
+- Why this slice exists: S4.1-S4.3, S5.1 and S5.2 are built in parallel against these interfaces. If
+  they are vague, those five slices drift apart and meet in an integration failure. So this slice
+  publishes the contracts **first** and they are then frozen; a change to them is a change to every
+  consumer and is negotiated, not made unilaterally.
+- Deliver, all decoupled from `Session` (plain parameters, never Session event types):
+  - `httpclient/ClientTypes.h` - `ClientRequest` (method, `net::Uri`, `HeaderList`, body or
+    `BodySource`, request kind, per-request timeouts/priority) and `ClientResponse` (status, `HeaderList`,
+    body or `BodySink`, trailers, HTTP version, negotiated ALPN, the impersonation report handle);
+    `BodySource` (pull: `read( DataBlock& ) -> size/eof`, `canRewind()`, `rewind()`) and `BodySink`
+    (push: `onData( DataBlock ) -> consumed`, `onComplete`), per design §5.3.
+  - `httpclient/ClientConnection.h` - the role interface both drivers implement: `submit( request,
+    eventSink ) -> streamHandle`, `cancel( handle, errorCode )`, `consumed( handle, bytes )`,
+    `provideBody( handle, DataBlock, endStream )`, and the queries the pool needs (`freeStreamSlots()`,
+    `state()`: Connecting/Ready/Draining/Closed, `protocol()`). Every call is asynchronous - it posts
+    to the connection's strand and returns (design §5.2 L3); none may block or call back synchronously.
+  - The **stream event sink** the request task implements and the driver feeds via the mailbox:
+    `onHeaders( HeaderList, isInterim )`, `onData( DataBlock )`, `onTrailers( HeaderList )`,
+    `onClosed( errorCode, isRetryable )`. Delivered in order, never under the connection's lock.
+  - The **pool interface** the request task consumes: `acquire( key, request, onReady )` where `onReady`
+    is posted with a `ClientConnection` or an error; `release( connection, handle, outcome )`; the
+    replayability rule (design §5.4) is a query on `ClientRequest`, not on the pool.
+  - The **driver factory** S4.1 uses after ALPN: `createDriver( protocol, connectedStream, ... )`.
+- Dep: S1.1, S1.2, S1.3. Earliest: t0; **integrate before any of S4.x/S5.x starts.**
+- Accept: interfaces compile against a stub implementation; value objects round-trip; a stub
+  `ClientConnection` + sink pair exists in `httpclient` tests for S5.1 to develop against.
+
+### S2.7 — Cookie jar (§5.6)
+- Deliver: `httpclient/CookieJar.h` - RFC 6265 domain/path matching, `Secure`/`HttpOnly`/expiry/`Max-Age`,
+  host-only cookies, per-domain and total caps; no public-suffix list (reject a `Domain` with no dot or a
+  bare TLD; document the multi-label residual risk). Thread safe.
+- Dep: S1.1. Accept: match/store/expiry/rejection cases. Tests → `httpclient/TestCookieJar.h`.
+
+### S2.8 — Redirect policy (§5.6)
+- Deliver: `httpclient/RedirectPolicy.h` - hop limit; 303 and (POST) 301/302 → GET without body; 307/308
+  preserve method+body (require replayable body); drop `Authorization`+cookies cross-origin; refuse
+  https→http downgrade unless allowed. Targets resolve via `net::Uri`. Off by default.
+- Dep: S1.1. Accept: method rewrite, credential-drop, downgrade-refusal cases. Tests →
+  `httpclient/TestRedirectPolicy.h`.
+
+### S2.9 — Content-decoder seam (§5.6, D9)
+- Deliver: `httpclient/ContentDecoder.h` - the streaming transform interface keyed by content-coding, a
+  per-session registry, and the two bomb caps (absolute output, expansion ratio). **No decompressor
+  ships.**
+- Dep: S1.2. Accept: a test-only identity/echo decoder registers and streams; caps trip. Tests →
+  `httpclient/TestContentDecoder.h`.
+
+---
+
+## 5. Layer L3 — Session engine & transport seam
+
+Depends on L0 (gated), L1, L2. Slices are mutually parallel except as noted.
+
+### S3.1 — HTTP/2 Session engine (§4.5, §4.6)
+- Deliver: `http2/Session.h` (`SessionT`, role-neutral, single-threaded by contract): `feed(bytes)` →
+  event queue (no callbacks out of `feed`); `wantsWrite()`/`produce(buffer)`; commands (submit, body,
+  reset, consumed, ping, goaway, settings); message validation (RFC 9113 §8.1-8.3); write scheduling
+  (control first, atomic header+CONTINUATION, DATA by RFC 9218 urgency within windows, bodies pulled);
+  the limits table of §4.6; `ENABLE_PUSH=0` and `PUSH_PROMISE` = connection error (D11); the retryable
+  flag on stream-closed events (feeds D6).
+- Dep: S2.1, S2.2, S2.3, S2.4, S1.2, S1.3, S1.9. Earliest: after L2 primitives (can precede the G1
+  gate).
+- Accept: conformance as byte scripts incl. every §4.6 limit, message-validation rejections, early-
+  response success, SETTINGS ack/timeout; a `feed` libFuzzer harness (optional). Tests → `h2core`;
+  **run `make utests-sizes` and split to `utf_baselib_h2core2` if over target** (design §8.1).
+
+### S3.2 — Stranded plain stream policy (§3.1, D13)
+- Deliver: `tasks/TcpStrandedStreams.h` (`TcpSocketAsyncStrandedBaseT`) deriving from the existing plain
+  policy, hiding `createSocket` to build the socket on `asio::make_strand`; adds `getStrand()`,
+  `createTimer()`, `postToStrand()`; `cancelTask` posts the shutdown to the strand.
+- Dep: existing `TcpBaseTasks.h` only (no new dep). Earliest: t0.
+- Accept: a task using it does concurrent read+write+timer on the plain socket with no data race under
+  TSan. Tests → `h2client`.
+
+### S3.3 — Stranded TLS stream policy (§3.1, D13)
+- Deliver: `tasks/TcpSslStrandedStreams.h` (`TcpSslSocketAsyncStrandedBaseT`) - as S3.2 but over the TLS
+  stream, constructing the `AsioSslStreamWrapper` on the strand via its strand constructor and using
+  `configureClientStream()`.
+- Dep: **L0.S0.3** (configureClientStream), S1.6 (strand ctor). Integrate after the G1 gate.
+- Accept: concurrent read+write+timer over TLS with Asio's internal SSL handlers serialized; TSan clean.
+  Tests → `h2client`.
+
+### S3.4 — TLS client profiles, contexts, floor (§3.3, D4, D22)
+- Deliver: in `crypto/` (extending the S0.4 split), `createAsioSslClientContext( profile )` (step 1
+  common, profile step 2, shared trust via `SSL_CTX_set1_cert_store`); the cipher-name **allowlist**
+  validator (no `@`,`!`,`+`,`-`,`:`; assert level still 2 after applying); the post-handshake floor check
+  `chkNegotiatedParametersMeetFloor(...)` (≥ TLS 1.2 and TLS 1.3-suite-or-ECDHE/DHE+AEAD); advertise
+  `session_ticket` when the profile does, never resume (cache stays off).
+- Dep: **L0.S0.4**, S1.4. **Probe:** verify the API availability assumed on **both** flavors (3.5.4 and
+  1.1.1w); gate impersonation-only APIs to `OPENSSL_VERSION_NUMBER >= 0x30500000L` (D2).
+- Accept: a profile context reports level 2 and TLS 1.2 min and shares the global trust store; a
+  `@SECLEVEL`-bearing cipher string is refused; the floor check rejects a below-floor negotiated suite;
+  on 1.1.1w the impersonation entry point throws `NotSupportedException`. Tests → `h2profiles`.
+
+### S3.5 — Tunnel stage: CONNECT + SOCKS5 (§3.6, D5)
+- Deliver: `tasks/TcpTunnelStage.h` - HTTP `CONNECT` (optional Basic auth, bounded status/header read) and
+  SOCKS5 (RFC 1928/1929, no-auth and user/pass, `DOMAINNAME`), run via `beginPreHandshakeStage`; resolver
+  targets the proxy while SNI/verification stay with the origin. HTTPS proxies excluded.
+- Dep: **L0.S0.2** (hook). Integrate after the G1 gate.
+- Accept: against in-process fake proxies - success, auth, failure, cancel; origin SNI preserved. Tests →
+  `httpclient` (fake-proxy fixtures).
+
+### S3.6 — ClientHello capture + JA3/JA4 (§3.3, §6.3)
+- Deliver: `crypto/TlsClientHello.h` - consume the S1.6 capture hook; parse the ClientHello bytes;
+  compute JA3 and JA4 strings.
+- Dep: S1.6. Accept: JA3/JA4 computed from a captured ClientHello match hand-worked values for a known
+  input. Tests → `h2profiles`.
+
+*(Note: the wrapper additive changes these three TLS slices rely on are all in S1.6, one owner of
+`AsioSslStreamWrapper.h`, so S3.3/S3.6 have no intra-L3 edge to each other.)*
+
+---
+
+## 6. Layer L4 — I/O shell & test peer
+
+Depends on L2, L3. S4.1 is the layer prerequisite for S4.2/S4.3 (one documented edge); S4.4 is parallel
+with all of them.
+
+### S4.1 — Connection establishment base + ALPN dispatch (§5.1, §5.5, §5.7)
+- Deliver: a connection task base over `TcpConnectionEstablisherConnector< STREAM >` with the stranded
+  policy and `MultiOperationTaskT`: resolve → connect → tunnel → handshake → floor check → read ALPN,
+  then construct the h2 driver or hand the connected stream to the h1 driver (via a factory in S2.6);
+  connect/handshake/SETTINGS-ack timers on the strand.
+- Dep: S3.2, S3.3, S3.4 (floor), S3.5 (tunnel), S0.1 (multi-op), S2.6. Integrate after G1 gate.
+- Accept: establishes plain and TLS; selects driver by ALPN; forced-http/1.1 path works; floor failure
+  aborts before any HTTP byte. Tests → `h2client`.
+
+### S4.2 — HTTP/2 driver (§5.1, §5.2, §5.7)
+- Deliver: `http2/Http2ConnectionTask.h` - the opening coalesced write (preface+SETTINGS+WINDOW_UPDATE+
+  PRIORITY+first HEADERS); the read loop into pooled `data::DataBlock`s (payloads copied once) →
+  `Session::feed` → drain; the single-in-flight write pump; the connection-level timers of §5.7 on the
+  strand - optional keepalive `PING` and its reply deadline, the connection idle timer (its lifetime
+  value comes from the pool policy, S5.2); GOAWAY drain and graceful close (`GOAWAY( NO_ERROR )`
+  best-effort, then the inherited TLS shutdown once no operation is pending). Concurrency rules L1-L4
+  of §5.2 (own state on the strand; talk to request tasks by posting + mailbox).
+- Dep: S4.1, S3.1. Accept: request/response over h2 against the test peer; full-duplex upload+download;
+  keepalive and idle close observed; TSan clean; **and h2 over TLS on the default hardened context
+  passes on both OpenSSL flavors** - that is D2's promise that everything but impersonation works on
+  1.1.1w. Tests → `h2client`.
+
+### S4.3 — HTTP/1.1 driver (§5.5)
+- Deliver: `httpclient/Http1ConnectionTask.h` - one request at a time over `Http1Codec`; returns to the
+  pool if fully consumed and neither side said close.
+- Dep: S4.1, S2.5. Accept: request/response over h1; keep-alive reuse; against the library's own
+  `HttpServer`. Tests → `httpclient`.
+
+### S4.4 — Test peer (§8.2, D8)
+- Deliver: in `src/utests/include/utests/baselib/` - `Http2TestServer` (`TcpServerBase< STREAM >` + a
+  server-role `Session`, scriptable: delays, GOAWAY after N, `REFUSED_STREAM`, window stalls, trailers,
+  1xx) and `RawFrameScriptPeer` (byte-exact malformed input). No production hardening (that is the server
+  deferral). **Never included from `src/include/`.**
+- Dep: S3.1 (server role). Earliest: after S3.1 - parallel with S4.1. Accept: drives each scripted
+  behavior; used by S4.2 tests.
+
+---
+
+## 7. Layer L5 — Client orchestration
+
+Depends on L2, L4. S5.1 and S5.2 are parallel via the S2.6 contracts.
+
+### S5.1 — HttpClientRequestTask (§5.3, §5.7)
+- Deliver: `httpclient/HttpClientRequestTask.h` - one per request, protocol-agnostic against
+  `ClientConnection`; `scheduleTask` only posts a start handler (honors `TaskBase.h:857`); a mailbox with
+  ordered drain under the task lock; buffered (default, 64 MB cap) and streaming body modes; backpressure
+  = report-consumed drives `WINDOW_UPDATE`; the request-level timers of §5.7 (total incl. pool wait,
+  default 30 min; response-headers and stream-idle, off by default) → on expiry `RST_STREAM(CANCEL)` +
+  `TimeoutException` with the existing message shape, connection untouched. Handlers run on
+  `ThreadPoolId::GeneralPurpose` (design §5.2).
+- Dep: S2.6, S0.1. Earliest: against the S2.6 interface (integration needs S5.2/L4). Accept: completion,
+  timeout, cancel, backpressure against a stub connection then the real drivers. Tests → `h2client`.
+
+### S5.2 — ConnectionPool (§5.4, D6, D21)
+- Deliver: `httpclient/ConnectionPool.h` - key (scheme/host/port/proxy/TLS-profile/h2-profile/verify);
+  `Connecting` placeholder inserted under the pool lock before release so concurrent requests queue;
+  dispatch to a `Ready` connection with a free stream slot (peer `MAX_CONCURRENT_STREAMS`, assume 100
+  until SETTINGS); retry of provably-unprocessed + replayable requests (GOAWAY last-id, `REFUSED_STREAM`,
+  pre-write failure), bounded; GOAWAY draining incl. the common double-GOAWAY; coalescing **designed,
+  default off** (D21); disposal fails queued requests, GOAWAYs, flushes. Leaf-lock discipline of §5.2 L4.
+- Dep: S4.1, S4.2, S4.3, S2.6. Accept: queueing behind a placeholder, slot limiting, retry matrix, GOAWAY
+  handling, disposal; TSan clean. Tests → `h2client`.
+
+---
+
+## 8. Layer L6 — Session
+
+### S6.1 — ClientSession (§5.6, §5.8)
+- Deliver: `httpclient/ClientSession.h` (`ClientSessionImpl`) - holds pool, active profile, proxy config,
+  cookie jar, redirect policy, decoder registry; creates request tasks; applies the profile's header set
+  by request kind and the `accept-encoding` = profile-list ∩ registered-decoders rule (strict mode returns
+  raw bytes); the API of design §5.8.
+- Dep: S5.1, S5.2, S1.1, S1.4, S2.7, S2.8, S2.9. Accept: end-to-end GET/POST over h2 and h1 through the
+  session against the test peer and the library `HttpServer`; redirects, cookies, strict decode. Tests →
+  `httpclient`.
+
+---
+
+## 9. Layer L7 — Impersonation
+
+Depends on L2, L3, L6. This layer has a real internal DAG (spike → content → apply → report → vectors);
+it is the least parallel layer, which is expected at the top. Requires OpenSSL 3.5+ (D2); on 1.1.1w the
+entry point throws (asserted by S3.4). Illustrative values in the design are **not** to be trusted -
+capture them (S7.5).
+
+### S7.1 — TLS fidelity spike (§6.3, D3, D23)
+- Deliver: recorded spike results per profile. Earliest: after S3.4 + S3.6 - **runs in parallel with
+  L4-L6.**
+- Probe (**the measured spike**): dump each profile's ClientHello (S3.6), compute JA3/JA4; verify every
+  "yes" in the design §6.3 knob table against the real 3.5.4; evaluate - **default off** - whether
+  `SSL_CTX_add_custom_ext` can add GREASE / ECH-GREASE / an inert ALPS decoy toward Chrome's JA4, and
+  record each workaround's interop risk. **Never** emulate `delegated_credentials`. Adopt nothing without
+  evidence.
+- Accept: a written result table feeding profile grades and deviation lists; no adopted workaround lacks a
+  recorded interop check.
+
+### S7.2 — Profile content + loader + validation (§6.2, §6.3-6.5, D10)
+- Deliver: the Chrome/Edge/Firefox/Safari shapes (TLS/HTTP/2/header), version strings separate from
+  shape, JSON literals parsed at first use, each with its grade (from S7.1) and deviation list; the loader
+  validating untrusted input (cipher allowlist via S3.4; setting ids/values in range; header names as
+  tokens, values free of CR/LF/NUL; bounded lists).
+- Dep: S1.4, S3.4, S7.1 (grades). Accept: each built-in profile loads and validates; malformed profiles
+  are rejected. Tests → `h2profiles`.
+
+### S7.3 — Apply profile across layers (§6.3-6.5)
+- Deliver: the wiring - TLS profile → `createAsioSslClientContext` (S3.4); HTTP/2 profile → Session
+  settings order / connection WINDOW_UPDATE / PRIORITY / pseudo-header order (S3.1); header profile →
+  session header set by request kind (S6.1); `accept-encoding` intersection (S2.9/S6.1).
+- Dep: S3.4, S3.1, S6.1, S2.9, S7.2. Accept: a request under a profile emits the profile's settings,
+  pseudo-order and headers. Tests → `h2profiles`.
+
+### S7.4 — Fidelity report + fingerprint renderer (§6.4, §6.6)
+- Deliver: `http2/Fingerprint.h` (renders the frames a session actually produced in the
+  `SETTINGS|WINDOW_UPDATE|PRIORITY|pseudo-order` form) and the report on the connection and each response
+  (profile+grade, backend+version, per-knob Honored/Approximated/Unsupported, the JA3/JA4 actually sent,
+  the HTTP/2 fingerprint sent, the `accept-encoding` sent, the deviation list).
+- Dep: S3.6, S3.1, S7.3. Accept: the report reflects what was sent, not what was requested. Tests →
+  `h2profiles`.
+
+### S7.5 — Capture procedure + test vectors (§6.7)
+- Deliver: the documented capture procedure and, per profile, the pinned vectors - exact opening bytes
+  from `Session`, the fingerprint string, header order per request kind, and the effective JA3/JA4 pinned
+  against OpenSSL 3.5.x with the browser's own values recorded beside them.
+- Dep: S7.2, S7.4. Accept: vectors committed and asserted; the `NotSupportedException` contract on 1.1.1w
+  re-asserted. Tests → `h2profiles`.
+
+---
+
+## 10. Layer L8 — Facade, tooling, verification
+
+### S8.1 — Compatibility facade (§5.8)
+- Deliver: `SimpleHttp2GetTaskImpl` etc. with the constructor shape of `BL_TASKS_DECLARE_HTTP_TASK_*` and
+  the same getters (`getResponse`, `getHttpStatus`, `getResponseHeaders`, `isSecureMode`,
+  `addExpectedHttpStatuses`) over a process-default session.
+- Dep: S6.1. Accept: an existing-style call works by changing only a type name. Tests → `h2client`.
+
+### S8.2 — bl-tool command (optional, §11 P7)
+- Deliver: an `http2`/`httpclient` command in `bl-tool` for manual runs and interop, mirroring
+  `HttpRequest.h`. Dep: S6.1. Accept: manual GET/POST; not a unit-test dependency.
+
+### S8.3 — Final verification against the design
+- Deliver: fill in the traceability matrix of §13 (every `D1`-`D26` and every design section → slice →
+  evidence); confirm the security checklist (design §7) and the non-goals (D25, design §12); run the
+  whole suite on the matrix breadth the maintainer approves; confirm no `boost::beast` name outside
+  S1.5's layers and no OpenSSL include in a `PreCompiled.h`.
+- Dep: all. Accept: the matrix has no empty cell; §7 and §12 hold; grep invariants pass.
+
+---
+
+## 11. Probes folded into the plan
+
+Every probe is owned by a slice and drives a decision at execution time; none is run to write this plan.
+
+| Probe | Slice | Decides | Fallback if it fails |
+|---|---|---|---|
+| Token-stream equality of the handler macro | S0.1 | macro refactor is behavior-preserving | fix the macro until equal |
+| `SSL_CTX` config dump equality, both flavors | S0.4 | context split is behavior-preserving | fix the split until equal |
+| Beast headers present in the dist | S1.5 | Beast is usable at all | vendor Beast headers (header-only) |
+| `basic_parser` sans-I/O coverage + object-size delta | S2.5 | keep Beast vs in-house backend (D15) | in-house backend behind the same facade |
+| OpenSSL knob availability on 3.5.4 and 1.1.1w | S3.4 | which APIs are guarded to 3.5+ | guard/omit the unavailable knob, record deviation |
+| ClientHello dump + JA3/JA4 + knob-table verification | S7.1 | each profile's grade and deviations | grade `Approximate`, list the gap |
+| GREASE / ECH-GREASE / ALPS custom-ext viability | S7.1 | adopt a workaround (default off, D23) | leave off, record interop risk |
+| `make utests-sizes` on `h2core` | S3.1 | split to `h2core2` or not | split per `src/utests/AGENTS.md` |
+
+---
+
+## 12. Integration and gating order
+
+Development runs in parallel worktrees; this is the **integration** DAG. "Earliest start" in the work
+orders is for development and is generally earlier.
+
+| Wave | Integrates | Gate |
+|---|---|---|
+| 0 | L0.S1-S4 (four commits) | **S0.5: whole suite, baseline-relative, both flavors for TLS.** Nothing G1-dependent merges before this passes. |
+| 0 (concurrent) | L1 all; L2 all (developed against L1) | focused modules per slice |
+| 1 | S3.1 Session; S3.2 stranded plain; S3.6 ClientHello | focused modules |
+| 1 (after S0.5) | S3.3 stranded TLS; S3.4 TLS contexts/floor; S3.5 tunnel | focused modules, both flavors for TLS |
+| 2 | S4.1 establish; S4.2 h2 driver; S4.3 h1 driver; S4.4 test peer | `h2client`/`httpclient`, TSan on the drivers |
+| 3 | S5.1 request task; S5.2 pool | `h2client`, TSan on the pool |
+| 4 | S6.1 session | `httpclient` end-to-end |
+| 5 | S7.1 spike (may begin at wave 2); S7.2 content; S7.3 apply; S7.4 report; S7.5 vectors | `h2profiles`, both flavors |
+| 6 | S8.1 facade; S8.2 bl-tool; S8.3 verification | whole suite, matrix breadth per maintainer |
+
+**Critical path:** L1 → L2 primitives → S3.1 Session → S4.1 → S4.2 → S5.2 → S6.1 → S7.3 → S7.4 → S7.5,
+with the G1 gate (wave 0) as a parallel arm that must land before wave 1's TLS slices and wave 2. The
+spike (S7.1) is off the critical path if started at wave 2.
+
+**Two whole-suite gates only:** S0.5 (G1) and S8.3 (final). Every other slice is verified by focused
+modules per the cadence in §0, so parallel work is not serialized behind the suite.
+
+---
+
+## 13. Traceability matrix (to be completed by S8.3)
+
+**Decisions.** Every decision maps to at least one slice; S8.3 records the proving evidence.
+
+| D | Slice(s) | D | Slice(s) |
+|---|---|---|---|
+| D1 devenv7-only | S1.7, all headers | D14 layout | all file placements |
+| D2 OpenSSL flavors | S3.4, S7.2 | D15 Beast isolated+criteria | S1.5, S2.5 |
+| D3 seam+OpenSSL | S1.6, S3.3-S3.6 | D16 in-house URI | S1.1 |
+| D4 advertise/verify/refuse | S3.4 | D17 handler macro | S0.1 |
+| D5 client layers | S2.5,S3.5,S2.7-S2.9 | D18 pre-handshake hook | S0.2 |
+| D6 retry unprocessed | S3.1, S5.2 | D19 gated change-set | S0.5 |
+| D7 generic placement | S1.1,S1.2,S1.6,S3.5 | D20 module names | S1.8 |
+| D8 role-neutral+peer | S3.1, S4.4 | D21 coalescing off | S5.2 |
+| D9 decoder seam only | S2.9 | D22 resumption advertise-only | S3.4 |
+| D10 four graded profiles | S7.2 | D23 custom-ext off | S7.1 |
+| D11 no push/h2c | S2.4, S3.1 | D24 URI strict | S1.1 |
+| D12 docs location | done | D25 non-goals | S8.3 |
+| D13 executor-bound | S3.2, S3.3 | D26 refactors gated | S0.3,S0.4,S0.5 |
+
+**Design sections.** §3.1→S3.2/S3.3(+S1.6); §3.2→S0.1; §3.3→S3.4(+S0.4); §3.4→S1.1; §3.5→S1.2;
+§3.6→S3.5(+S0.2); §3.7→S1.3; §3.8→S0.1-S0.5; §4.1→S2.1; §4.2→S2.2; §4.3→S2.4; §4.4→S2.3; §4.5/§4.6→S3.1;
+§5.1→S4.1/S4.2; §5.2→S4.2/S5.2 (TSan); §5.3→S5.1; §5.4→S5.2; §5.5→S4.3/S2.5; §5.6→S6.1/S2.7-S2.9;
+§5.7→S4.1/S5.1; §5.8→S6.1/S8.1; §6.1-6.8→S7.1-S7.5; §7 security→S8.3; §8 testing→S1.8+each slice;
+§9 build→S1.7; §10→S0.*+additive slices; §12 curl parity→S8.3.
+
+**Verification protocol.** Verification is itself a task an independent agent can run, per slice and
+then for the whole. For each slice:
+
+1. **Placement** - every deliverable exists at the path the design's §2.2 gives it and nowhere else;
+   nothing generic lives under `http2/` or `httpclient/` (D7); no `boost::beast` outside S1.5's layers;
+   no OpenSSL header in any `PreCompiled.h`; no `BL_DEVENV_VERSION` in a new header.
+2. **Idiom** - the `T< E = void >` / `ObjectImpl` / `BL_DEFINE_STATIC_*` forms; `SAA_*` annotations;
+   `BL_*` error and logging macros; no `boost::` name outside an import header.
+3. **Behavior** - the work order's acceptance cases exist as tests in the named module and pass under
+   the cadence of §0; a probe's recorded result exists where the work order names one.
+4. **Design conformance** - read the design sections the work order names and list every point the
+   implementation deviates from, with the reason; an unexplained deviation fails the slice.
+5. **Decisions** - the `D` ids the slice maps to in the matrix above are honored; in particular D11
+   (no push, no `h2c` upgrade), D21 (coalescing off), D22 (no resumption) and D23 (workarounds off) are
+   easy to violate by "improving" the code and must be checked by reading it.
+
+**Final acceptance (S8.3):** every cell above has recorded evidence; the two whole-suite gates passed;
+the security checklist (§7) and non-goals (§12/D25) hold; the grep invariants of step 1 pass across
+the tree; the D15 verdict, the S7.1 spike results and any `h2core` split are recorded back into the
+design.
