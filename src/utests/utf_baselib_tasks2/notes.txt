@@ -6,3 +6,8 @@
 --log_level=message --run_test=TcpPreHandshakeStage_StageFailureTests
 --log_level=message --run_test=TcpPreHandshakeStage_CancelDuringStageTests
 --log_level=message --run_test=TcpPreHandshakeStage_CancelBeforeConnectSkipsStageTests
+--log_level=message --run_test=Tasks_HandlerMacroCatchClauseTests
+--log_level=message --run_test=Tasks_MultiOperationTaskSingleThreadedTests
+--log_level=message --run_test=Tasks_MultiOperationTaskMultiThreadedTests
+--log_level=message --run_test=Tasks_MultiOperationTaskIsClosingTests
+--log_level=message --run_test=Tasks_MultiOperationTaskOverConnectionEstablisherTests

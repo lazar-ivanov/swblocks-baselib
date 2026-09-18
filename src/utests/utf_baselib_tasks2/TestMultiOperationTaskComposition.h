@@ -33,7 +33,6 @@
 
 #include <baselib/core/ObjModel.h>
 #include <baselib/core/OS.h>
-#include <baselib/core/ThreadPool.h>
 #include <baselib/core/TimeUtils.h>
 #include <baselib/core/BaseIncludes.h>
 
@@ -155,9 +154,37 @@ namespace utest
 
                 m_closingAtConnected = base_type::isClosing();
 
-                const auto threadPool = ThreadPoolDefault::getDefault( base_type::getThreadPoolId() );
+                /*
+                 * The timer is built on the socket's own executor, not on the default thread pool's
+                 * io_service. Design 3.1 (D13) is that every operation of a connection task - the
+                 * reads, the writes and the timers alike - runs on the one executor the stream was
+                 * constructed on, so that a stranded stream policy serializes all of them without a
+                 * single handler being wrapped by hand
+                 *
+                 * The two are the same io_context today whatever the case does - the establisher
+                 * creates its socket on ThreadPoolDefault::getDefault( getThreadPoolId() )
+                 * (TcpBaseTasks.h:1414) and, unlike TimerTaskBaseT::resetTimer, does not honour a
+                 * queue-local pool - so this is not a fix. It is the shape: under the stranded
+                 * policies of 3.1 getSocket().get_executor() IS the strand, and a timer built on
+                 * the pool's io_service instead would run its handler off that strand, which is
+                 * exactly the race D13 exists to make unrepresentable
+                 *
+                 * It also settles the timer's lifetime by construction: the timer can no longer be
+                 * built against any service other than the one the stream itself lives on, which is
+                 * the pattern behind
+                 * notes/plans/issues/multioperation-probe-timer-teardown-record.md - the sibling
+                 * probe builds its timers on a queue-local pool which dies before they do
+                 */
 
-                m_operationTimer.reset( new asio::deadline_timer( threadPool -> aioService() ) );
+                m_operationTimer.reset(
+                    new asio::deadline_timer(
+                        #if ( ( BOOST_VERSION / 100 ) >= 1072 )
+                        base_type::getSocket().get_executor()
+                        #else
+                        base_type::getSocket().get_io_service()
+                        #endif
+                        )
+                    );
 
                 m_operationTimer -> expires_from_now(
                     time::milliseconds( OPERATION_IN_MILLISECONDS )
