@@ -5,7 +5,7 @@
 stress case of design §3.8 commit 1 to be run under ThreadSanitizer. Before that case could be run,
 the question was whether TSan works on this machine at all - nothing here had ever been built with
 it. **Date:** 2026-09-18. **Status:** the environment question is answered; the race in
-`ThreadPoolImpl` is OPEN and deliberately not fixed here.
+`ThreadPoolImpl` (§3) is **FIXED** - see §8. The race in the test code (§4) is still open.
 
 Host: `ub24-a64-dev-d2-rosetta`, Linux 6.8.0-139, aarch64, 2 cores.
 Toolchain: devenv7, clang2010, `VARIANT=debug`, `BL_CLANG_ENABLE_RA_TSAN=1`.
@@ -197,3 +197,71 @@ Small things, each of which cost time to find:
 - Exit code under a report is **66**, and it comes from the sanitizer after Boost.Test has already
   printed `*** No errors detected`. Checking a TSan run therefore needs the same discipline the
   leak check needed: grep for `ThreadSanitizer`, not just the exit code and not just `error`.
+
+## 8. The production defect is closed
+
+Fixed on 2026-09-18 by `dc74102` (the characterization cases) and `31f9463` (the change), as the
+gated core change-set §5 asked for.
+
+**The change is two reads.** `size()` takes `BL_MUTEX_GUARD( m_lock )` before returning
+`m_threads.size()`, and `resize()`'s own read at `:456` goes through the now-locked `size()` instead
+of reading the vector directly. `return size()` at `:485` needed nothing once `size()` locks.
+
+**§5's two reasons for thinking this was not a one-liner did not survive contact with the code.**
+
+- *"`size()` is `NOEXCEPT` and acquiring a mutex can throw."* True but not an obstacle:
+  `ExecutionQueueImpl` already has five `NOEXCEPT OVERRIDE` getters which take
+  `BL_MUTEX_GUARD( m_lock )` directly, including a `size()` of exactly this shape
+  (`ExecutionQueueImpl.h:1219`). The fix follows them, and does **not** wrap the body in
+  `BL_NOEXCEPT_BEGIN`/`BL_NOEXCEPT_END`: `os::mutex` is `std::mutex` (`OSBoostImports.h:95`), whose
+  `lock()` only fails when the process state is already broken, and a bare `NOEXCEPT` escape and a
+  `BL_RIP_MSG` both abort after printing `what()`. The value-returning form of that macro also needs
+  a result variable outside the block, which would turn a two-line getter into six.
+- *"Making `resize`'s read consistent with the growth decision really wants the check and the growth
+  under one acquisition."* It does not, and it must not: `m_lock` is not recursive and
+  `createThreads` acquires it itself, so `resize` must not hold the lock across that call.
+  `createThreads` already re-reads the size under the lock (`:321`) and makes the authoritative
+  decision there, so `resize`'s read is advisory - it only picks the branch and the message logged in
+  it. `size()` has no other caller inside the class, and while `m_lock` is held the class makes no
+  outbound call which can re-enter it, so locking the getter cannot self-deadlock.
+
+**One correction to the reasoning, which does not change the fix.** "The pool only ever grows" is
+true of `createThreads`, the only writer which appends, but not of the vector: `disposeInternal`
+swaps it out (`:391`), taking it to empty. So a concurrent `dispose()` can make `resize`'s advisory
+read stale *high*, not only low. It is harmless in both directions - stale low makes `createThreads`
+re-decide correctly under the lock, and stale high only skips a growth while the pool is being
+disposed, which is the wanted outcome - but the safe-direction argument rests on `createThreads`
+re-deciding under the lock, not on monotonic growth.
+
+**`aioService()` is deliberately still unlocked.** It reads `m_ioservice`, which `disposeInternal`
+resets under the lock (`:433`), so it is racy in the same family. A guard there would not fix it: the
+function returns a reference to the pointee, so the lock would be released before the caller touched
+the object. What protects that call is the disposable lock, and changing it is a different design
+decision. TSan does not report it on this module's baseline.
+
+### The measured delta, `utf_baselib_basictask`, `BL_CLANG_ENABLE_RA_TSAN=1`
+
+| tree | runs | `data race` total | of which `ThreadPoolImpl` | of which test code (§4) |
+|---|---:|---|---:|---:|
+| unmodified (§2's baseline, re-measured) | 3 | 3, 3, 3 | **2, 2, 2** | 1 each |
+| with the characterization cases, before the fix | 3 | 6, 6, 8 | **5, 5, 7** | 1 each |
+| after the fix | 5 | 1, 1, 1, 1, 1 | **0** | 1 each |
+
+The counts rise in the middle row because `Tasks_ThreadPoolConcurrentSizeReadTests` is the first case
+to call `size()` concurrently with growth, so `ThreadPoolImpl.h:440` starts appearing in the
+`SUMMARY` lines alongside `:325` and `:456`. After the fix none of the three appears as an access in
+any report; `ThreadPoolImpl` frames remain only as intermediate stack frames of §4's report.
+
+Boost.Test passed on every run above except one: **the characterization case caught the defect for
+real**, failing 1 instrumented run of 3 on `EQUAL( 0U, outOfRange.load() )` - `size()` returned a
+value outside `[ 2, 12 ]`, which is §3's "a value that was never a size" observed rather than argued.
+The same binary built without the sanitizer passed 5 runs of 5 before the fix, so the instrumented
+`-O0` build is what widens the window; the defect is the same one either way.
+
+### What §6 now means
+
+Its guidance inverts for this module: a race reported in `ThreadPoolImpl::size` or
+`ThreadPoolImpl::resize` **is** a finding from now on - it would be a regression of `31f9463`, not
+this record. §4's report at `TestBaselibBasicTask.h:127` is what remains of the baseline, and it is
+still the reason a TSan result on `utf_baselib_basictask` must be read as a delta rather than as
+pass/fail on the exit code.
