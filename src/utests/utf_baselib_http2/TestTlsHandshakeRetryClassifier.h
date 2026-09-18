@@ -197,13 +197,13 @@ UTF_AUTO_TEST_CASE( TlsHandshakeRetryClassifier_RetryableErrorSetTests )
 
     /*
      * (3) The modern truncation form - asio.ssl.stream:1, which is what boost 1.90 with
-     * OpenSSL 3.5 really reports when a peer closes during the handshake. It is NOT retried
-     * today, which is the defect of
-     * notes/plans/issues/tls-handshake-retry-unreachable-record.md, and this row is the whole
-     * behavioural delta of widening the predicate
+     * OpenSSL 3.5 really reports when a peer closes during the handshake. Accepting it is what
+     * makes the retry reachable against a real peer on that stack at all; while it was not
+     * accepted the retry was dead code - see
+     * notes/plans/issues/tls-handshake-retry-unreachable-record.md
      */
 
-    UTF_REQUIRE( ! probe -> isRetryable( handshakeFailure( truncationModern() ) ) );
+    UTF_REQUIRE( probe -> isRetryable( handshakeFailure( truncationModern() ) ) );
 
     /*
      * (4) The negatives. The two category rows pin that neither category is accepted wholesale -
@@ -282,13 +282,14 @@ UTF_AUTO_TEST_CASE( TlsHandshakeRetryClassifier_TruncationAgreementTests )
     const auto probe = RetryClassifierProbeImpl::createInstance();
 
     /*
-     * (1) The modern truncation form. It is expected by the first classifier and, today, not
-     * retryable by the second - the same condition classified two ways, which is why the retry
-     * is unreachable against a real peer on boost 1.90 with OpenSSL 3.5
+     * (1) The modern truncation form, where the two agree because the retry predicate asks
+     * isStreamTruncationError(), which forwards to the first classifier. They once did not,
+     * and a condition which one called expected and the other did not recognize is exactly
+     * what made the retry unreachable against a real peer
      */
 
     UTF_REQUIRE( TcpSslSocketAsyncBase::isExpectedSslErrorCode( truncationModern() ) );
-    UTF_REQUIRE( ! probe -> isRetryable( handshakeFailure( truncationModern() ) ) );
+    UTF_REQUIRE( probe -> isRetryable( handshakeFailure( truncationModern() ) ) );
 
     /*
      * (2) The legacy truncation form, where the two have always agreed
