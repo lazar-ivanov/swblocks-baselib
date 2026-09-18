@@ -44,10 +44,14 @@ established that `BL_USE_OPENSSL_1X=1` does not build today, for reasons that pr
 gets no equivalent, so `-Werror,-Wdeprecated-declarations` fails on `RSA_free`, the `SHA512_*` and
 `SHA384_*` family and the `RSA`/`EVP_PKEY` conversions - headers reached by anything that includes
 `crypto/CryptoBase.h`. Separately, no devenv7 dist on the development machine carries 1.1.1w at all.
-So D2's promise cannot be demonstrated for **any** part of this work until that is resolved, which is
-a decision the author owes before L1 builds on D2: either give the 1.1.1w configuration a deprecation
-policy of its own in `devenv-detect.mk` and provision the dist, or retire the flavor promise and
-amend D2. Recorded at `notes/plans/issues/openssl-1x-evidence-not-producible-record.md`.
+So D2's promise cannot be demonstrated for **any** part of this work until that is resolved.
+
+**Decided 2026-09-18: deferred, not abandoned** - `notes/plans/issues/openssl-1x-flavor-deferral.md`.
+D2 stands as design intent; it is simply unverified on one of its two flavors, for the whole library
+rather than for this feature. Nothing here waits on it. A slice that touches OpenSSL still guards by
+version where this design already says to, and states in its acceptance that the second flavor is
+owed rather than claiming both. The evidence of what could not be produced, and why, stays at
+`notes/plans/issues/openssl-1x-evidence-not-producible-record.md`.
 
 ### 0.2 Decided on review, 2026-09-17
 
