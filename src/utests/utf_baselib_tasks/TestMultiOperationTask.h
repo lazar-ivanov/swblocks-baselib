@@ -16,20 +16,22 @@
 
 #include <baselib/tasks/ExecutionQueue.h>
 #include <baselib/tasks/ExecutionQueueImpl.h>
+#include <baselib/tasks/MultiOperationTask.h>
 #include <baselib/tasks/Task.h>
 #include <baselib/tasks/TaskBase.h>
 
 #include <baselib/core/ObjModel.h>
 #include <baselib/core/OS.h>
+#include <baselib/core/ThreadPoolImpl.h>
 #include <baselib/core/TimeUtils.h>
 #include <baselib/core/BaseIncludes.h>
 
 #include <atomic>
 #include <cstddef>
 #include <stdexcept>
+#include <vector>
 
 #include <utests/baselib/Utf.h>
-#include <utests/baselib/UtfConcurrent.h>
 
 /************************************************************************
  * The handler macros of TaskBase.h, and the multi-operation task mix-in
@@ -437,4 +439,650 @@ UTF_AUTO_TEST_CASE( Tasks_HandlerMacroCatchClauseTests )
         UTF_REQUIRE_EQUAL( accepted.enhanceCalls, 0U );
         UTF_REQUIRE_EQUAL( accepted.hookCalls, 1U );
     }
+}
+
+/************************************************************************
+ * tasks::MultiOperationTaskT
+ */
+
+namespace
+{
+    /**
+     * @brief How a probe task behaves on one run
+     *
+     * Timer i expires after firstDelayMs + i * failStepMs if it is one of the failing ones, and
+     * after restDelayMs otherwise, which is what lets a case decide whether a failure lands while
+     * the others are still pending or after they have already fired
+     */
+
+    struct MultiOperationProbeOptions
+    {
+        std::size_t                                                         operations;
+        std::size_t                                                         failures;
+        std::size_t                                                         firstDelayMs;
+        std::size_t                                                         failStepMs;
+        std::size_t                                                         restDelayMs;
+        bool                                                                closeWhenAllSucceed;
+        bool                                                                initiateCloseCancels;
+        bool                                                                initiateCloseThrows;
+
+        MultiOperationProbeOptions(
+            SAA_in                  const std::size_t                           operationsIn,
+            SAA_in                  const std::size_t                           failuresIn
+            )
+            :
+            operations( operationsIn ),
+            failures( failuresIn ),
+            firstDelayMs( 50U ),
+            failStepMs( 0U ),
+            restDelayMs( 50U ),
+            closeWhenAllSucceed( false ),
+            initiateCloseCancels( true ),
+            initiateCloseThrows( false )
+        {
+        }
+    };
+
+    /**
+     * @brief What the mix-in did over one run
+     */
+
+    struct MultiOperationOutcome
+    {
+        std::size_t                                                         stopCalls;
+        std::size_t                                                         initiateCloseCalls;
+        std::size_t                                                         finishContinuationCalls;
+        std::size_t                                                         pendingAtFinishContinuation;
+        std::size_t                                                         pendingAtStop;
+        std::size_t                                                         bodiesAtStop;
+        std::size_t                                                         bodiesEntered;
+        bool                                                                stoppedWithException;
+        bool                                                                stoppedIsExpected;
+
+        MultiOperationOutcome()
+            :
+            stopCalls( 0U ),
+            initiateCloseCalls( 0U ),
+            finishContinuationCalls( 0U ),
+            pendingAtFinishContinuation( 0U ),
+            pendingAtStop( 0U ),
+            bodiesAtStop( 0U ),
+            bodiesEntered( 0U ),
+            stoppedWithException( false ),
+            stoppedIsExpected( false )
+        {
+        }
+    };
+
+    /**
+     * @brief A task with several timers in flight at once, which is the smallest thing that
+     * exercises the accounting of tasks::MultiOperationTaskT
+     *
+     * Timers rather than sockets because they are the library's own asynchronous operation with
+     * no external dependency, they can be made to complete in a chosen order, and cancelling one
+     * delivers operation_aborted through exactly the path a socket read would
+     */
+
+    template
+    <
+        typename E = void
+    >
+    class MultiOperationProbeT : public bl::tasks::MultiOperationTask
+    {
+        BL_DECLARE_OBJECT_IMPL( MultiOperationProbeT )
+
+    public:
+
+        typedef MultiOperationProbeT< E >                                   this_type;
+        typedef bl::tasks::MultiOperationTask                               base_type;
+
+    protected:
+
+        const MultiOperationProbeOptions                                    m_options;
+
+        /*
+         * Written by scheduleTask() under the task lock and read by cancelTask(), which the task
+         * layer also calls under it, and by initiateClose(), which runs after a handler has
+         * acquired and released it - so the write is ordered before every read
+         */
+
+        std::vector< bl::cpp::SafeUniquePtr< bl::asio::deadline_timer > >   m_timers;
+
+        /*
+         * Atomic throughout: the handlers run on pool threads and the test thread reads these
+         * once the queue has been flushed
+         */
+
+        std::atomic< std::size_t >                                          m_bodiesEntered;
+        std::atomic< std::size_t >                                          m_bodiesSucceeded;
+        std::atomic< std::size_t >                                          m_stopCalls;
+        std::atomic< std::size_t >                                          m_initiateCloseCalls;
+        std::atomic< std::size_t >                                          m_finishContinuationCalls;
+        std::atomic< std::size_t >                                          m_pendingAtFinishContinuation;
+        std::atomic< std::size_t >                                          m_pendingAtStop;
+        std::atomic< std::size_t >                                          m_bodiesAtStop;
+        std::atomic< bool >                                                 m_stoppedWithException;
+        std::atomic< bool >                                                 m_stoppedIsExpected;
+
+        MultiOperationProbeT( SAA_in const MultiOperationProbeOptions& options )
+            :
+            m_options( options ),
+            m_bodiesEntered( 0U ),
+            m_bodiesSucceeded( 0U ),
+            m_stopCalls( 0U ),
+            m_initiateCloseCalls( 0U ),
+            m_finishContinuationCalls( 0U ),
+            m_pendingAtFinishContinuation( 0U ),
+            m_pendingAtStop( 0U ),
+            m_bodiesAtStop( 0U ),
+            m_stoppedWithException( false ),
+            m_stoppedIsExpected( false )
+        {
+        }
+
+        std::size_t delayMs( SAA_in const std::size_t index ) const NOEXCEPT
+        {
+            if( index < m_options.failures )
+            {
+                return m_options.firstDelayMs + index * m_options.failStepMs;
+            }
+
+            return m_options.restDelayMs;
+        }
+
+        void onTimer(
+            SAA_in                  const std::size_t                           index,
+            SAA_in                  const bl::eh::error_code&                   ec
+            ) NOEXCEPT
+        {
+            BL_TASKS_HANDLER_BEGIN()
+
+            ++m_bodiesEntered;
+
+            BL_TASKS_HANDLER_CHK_EC( ec );
+
+            if( index < m_options.failures )
+            {
+                BL_THROW( bl::UnexpectedException(), BL_MSG() << "multiop-failure-" << index );
+            }
+
+            ++m_bodiesSucceeded;
+
+            if( m_options.closeWhenAllSucceed && m_bodiesSucceeded == m_options.operations )
+            {
+                /*
+                 * The deliberate end of a run which had no error. Note this is called from a
+                 * handler body, so the task lock IS held - which is the case beginClose() is
+                 * designed for
+                 */
+
+                base_type::beginClose();
+            }
+
+            BL_TASKS_HANDLER_END_MULTIOP()
+        }
+
+        virtual void initiateClose() OVERRIDE
+        {
+            using namespace bl;
+
+            ++m_initiateCloseCalls;
+
+            if( m_options.initiateCloseThrows )
+            {
+                BL_THROW( bl::UnexpectedException(), BL_MSG() << "multiop-initiate-close" );
+            }
+
+            if( ! m_options.initiateCloseCancels )
+            {
+                /*
+                 * The operations still in flight are left to finish on their own, which is how
+                 * a case gets several genuine failures instead of one failure and a fan of
+                 * operation_aborted
+                 */
+
+                return;
+            }
+
+            for( auto& timer : m_timers )
+            {
+                if( timer )
+                {
+                    eh::error_code ec;
+
+                    timer -> cancel( ec );
+                }
+            }
+        }
+
+        virtual void cancelTask() OVERRIDE
+        {
+            using namespace bl;
+
+            for( auto& timer : m_timers )
+            {
+                if( timer )
+                {
+                    eh::error_code ec;
+
+                    timer -> cancel( ec );
+                }
+            }
+        }
+
+        virtual void scheduleTask( SAA_in const std::shared_ptr< bl::tasks::ExecutionQueue >& eq ) OVERRIDE
+        {
+            using namespace bl;
+
+            m_timers.clear();
+            m_bodiesEntered = 0U;
+            m_bodiesSucceeded = 0U;
+
+            const auto threadPool = base_type::getThreadPool( eq );
+
+            auto& aioService = threadPool -> aioService();
+
+            m_timers.resize( m_options.operations );
+
+            for( std::size_t i = 0U; i < m_options.operations; ++i )
+            {
+                m_timers[ i ].reset( new asio::deadline_timer( aioService ) );
+            }
+
+            for( std::size_t i = 0U; i < m_options.operations; ++i )
+            {
+                m_timers[ i ] -> expires_from_now(
+                    time::milliseconds( static_cast< long >( delayMs( i ) ) )
+                    );
+
+                base_type::beginOperation();
+
+                m_timers[ i ] -> async_wait(
+                    cpp::bind(
+                        &this_type::onTimer,
+                        om::ObjPtrCopyable< this_type >::acquireRef( this ),
+                        i,
+                        asio::placeholders::error
+                        )
+                    );
+            }
+        }
+
+        virtual bool scheduleTaskFinishContinuation(
+            SAA_in_opt              const std::exception_ptr&                   eptrIn = nullptr
+            ) OVERRIDE
+        {
+            BL_UNUSED( eptrIn );
+
+            ++m_finishContinuationCalls;
+
+            m_pendingAtFinishContinuation = base_type::pendingOperations();
+
+            return false;
+        }
+
+        virtual auto onTaskStoppedNothrow(
+            SAA_in_opt              const std::exception_ptr&                   eptrIn = nullptr,
+            SAA_inout_opt           bool*                                       isExpectedException = nullptr
+            ) NOEXCEPT
+            -> std::exception_ptr OVERRIDE
+        {
+            ++m_stopCalls;
+
+            m_pendingAtStop = base_type::pendingOperations();
+            m_bodiesAtStop = m_bodiesEntered.load();
+            m_stoppedWithException = ( nullptr != eptrIn );
+            m_stoppedIsExpected = ( isExpectedException && *isExpectedException );
+
+            return base_type::onTaskStoppedNothrow( eptrIn, isExpectedException );
+        }
+
+    public:
+
+        MultiOperationOutcome outcome() const NOEXCEPT
+        {
+            MultiOperationOutcome result;
+
+            result.stopCalls = m_stopCalls;
+            result.initiateCloseCalls = m_initiateCloseCalls;
+            result.finishContinuationCalls = m_finishContinuationCalls;
+            result.pendingAtFinishContinuation = m_pendingAtFinishContinuation;
+            result.pendingAtStop = m_pendingAtStop;
+            result.bodiesAtStop = m_bodiesAtStop;
+            result.bodiesEntered = m_bodiesEntered;
+            result.stoppedWithException = m_stoppedWithException;
+            result.stoppedIsExpected = m_stoppedIsExpected;
+
+            return result;
+        }
+    };
+
+    typedef bl::om::ObjectImpl< MultiOperationProbeT<> > MultiOperationProbeImpl;
+
+    /**
+     * @brief Runs one probe on a pool of the given size and hands the task back for inspection
+     *
+     * cancelAfterMs, when non zero, requests a cancel that many milliseconds after the push -
+     * long enough for the task to be executing and short enough for its timers to be pending
+     */
+
+    auto runMultiOperationProbe(
+        SAA_in                  const MultiOperationProbeOptions&           options,
+        SAA_in                  const std::size_t                           threadsCount,
+        SAA_in_opt              const std::size_t                           cancelAfterMs = 0U
+        )
+        -> bl::om::ObjPtr< MultiOperationProbeImpl >
+    {
+        using namespace bl;
+        using namespace bl::tasks;
+
+        auto taskImpl = MultiOperationProbeImpl::createInstance( options );
+
+        const auto tpLocal = om::lockDisposable(
+            ThreadPoolImpl::createInstance< ThreadPool >( os::AbstractPriority::Normal, threadsCount )
+            );
+
+        {
+            /*
+             * The queue lives in the inner scope so it is disposed before the pool it points at
+             */
+
+            const auto eq = om::lockDisposable(
+                ExecutionQueueImpl::createInstance< ExecutionQueue >( ExecutionQueue::OptionKeepNone )
+                );
+
+            eq -> setLocalThreadPool( tpLocal.get() );
+
+            eq -> push_back( om::qi< Task >( taskImpl ) );
+
+            if( cancelAfterMs )
+            {
+                os::sleep( time::milliseconds( static_cast< long >( cancelAfterMs ) ) );
+
+                taskImpl -> requestCancel();
+            }
+
+            eq -> flushNoThrowIfFailed();
+        }
+
+        return taskImpl;
+    }
+
+    /**
+     * @brief The whole multi-operation suite, on a pool of the given size
+     *
+     * Every case is run with one thread and with four. Nothing here may depend on a second
+     * thread: the model TaskBase.h asks for is one where a task never blocks on another, so a
+     * single threaded pool has to be enough
+     */
+
+    void runMultiOperationSuite( SAA_in const std::size_t threadsCount )
+    {
+        using namespace bl;
+        using namespace bl::tasks;
+
+        {
+            /*
+             * Every operation succeeds. The last handler asks for the close, and the task
+             * completes once - with no error - when the count reaches zero
+             */
+
+            MultiOperationProbeOptions options( 3U, 0U /* failures */ );
+
+            options.closeWhenAllSucceed = true;
+
+            const auto taskImpl = runMultiOperationProbe( options, threadsCount );
+            const auto outcome = taskImpl -> outcome();
+
+            UTF_REQUIRE( ! taskImpl -> isFailedOrFailing() );
+            UTF_REQUIRE( ! taskImpl -> exception() );
+            UTF_REQUIRE_EQUAL( outcome.stopCalls, 1U );
+            UTF_REQUIRE( ! outcome.stoppedWithException );
+            UTF_REQUIRE_EQUAL( outcome.bodiesEntered, 3U );
+            UTF_REQUIRE_EQUAL( outcome.pendingAtStop, 0U );
+            UTF_REQUIRE_EQUAL( outcome.initiateCloseCalls, 1U );
+        }
+
+        {
+            /*
+             * One operation fails while the other two are still pending. initiateClose() runs
+             * once and cancels them, the task completes only after all three handlers have run,
+             * and the error it reports is the first one - not the operation_aborted of the two
+             * which were cancelled because of it
+             */
+
+            MultiOperationProbeOptions options( 3U, 1U /* failures */ );
+
+            options.firstDelayMs = 50U;
+            options.restDelayMs = 5000U;
+
+            const auto taskImpl = runMultiOperationProbe( options, threadsCount );
+            const auto outcome = taskImpl -> outcome();
+
+            UTF_REQUIRE( taskImpl -> isFailed() );
+            UTF_REQUIRE_EQUAL( outcome.stopCalls, 1U );
+            UTF_REQUIRE_EQUAL( outcome.initiateCloseCalls, 1U );
+            UTF_REQUIRE_EQUAL( outcome.bodiesEntered, 3U );
+            UTF_REQUIRE_EQUAL( outcome.bodiesAtStop, 3U );
+            UTF_REQUIRE_EQUAL( outcome.pendingAtStop, 0U );
+
+            UTF_REQUIRE_THROW_MESSAGE(
+                cpp::safeRethrowException( taskImpl -> exception() ),
+                bl::UnexpectedException,
+                "multiop-failure-0"
+                );
+        }
+
+        {
+            /*
+             * Three operations fail, one after another, with nothing cancelled - so all three
+             * errors are genuine and arrive while the task is already closing. The first one
+             * wins and there is still exactly one completion
+             */
+
+            MultiOperationProbeOptions options( 3U, 3U /* failures */ );
+
+            options.firstDelayMs = 50U;
+            options.failStepMs = 60U;
+            options.initiateCloseCancels = false;
+
+            const auto taskImpl = runMultiOperationProbe( options, threadsCount );
+            const auto outcome = taskImpl -> outcome();
+
+            UTF_REQUIRE( taskImpl -> isFailed() );
+            UTF_REQUIRE_EQUAL( outcome.stopCalls, 1U );
+            UTF_REQUIRE_EQUAL( outcome.initiateCloseCalls, 1U );
+            UTF_REQUIRE_EQUAL( outcome.bodiesEntered, 3U );
+            UTF_REQUIRE_EQUAL( outcome.pendingAtStop, 0U );
+
+            UTF_REQUIRE_THROW_MESSAGE(
+                cpp::safeRethrowException( taskImpl -> exception() ),
+                bl::UnexpectedException,
+                "multiop-failure-0"
+                );
+        }
+
+        {
+            /*
+             * The same configuration is the direct regression test for the defect this mix-in
+             * exists for: notifyReadyImpl() runs scheduleTaskFinishContinuation() and
+             * onTaskStoppedNothrow() BEFORE it consults m_notifyCalled, so under the plain
+             * handler epilog each of the three failing handlers would re-enter the finish path
+             * of a task which is already finishing
+             *
+             * The finish continuation must be entered exactly once, and only once nothing is
+             * outstanding - which is what keeps an asynchronous shutdown continuation from
+             * starting while a read or a write is still pending
+             */
+
+            MultiOperationProbeOptions options( 3U, 3U /* failures */ );
+
+            options.firstDelayMs = 50U;
+            options.failStepMs = 60U;
+            options.initiateCloseCancels = false;
+
+            const auto taskImpl = runMultiOperationProbe( options, threadsCount );
+            const auto outcome = taskImpl -> outcome();
+
+            UTF_REQUIRE_EQUAL( outcome.finishContinuationCalls, 1U );
+            UTF_REQUIRE_EQUAL( outcome.pendingAtFinishContinuation, 0U );
+            UTF_REQUIRE_EQUAL( outcome.stopCalls, 1U );
+        }
+
+        {
+            /*
+             * Cancel with three operations pending. Each handler is entered with
+             * operation_aborted, which the macro classifies as expected, and the task still
+             * completes exactly once
+             */
+
+            MultiOperationProbeOptions options( 3U, 0U /* failures */ );
+
+            options.restDelayMs = 5000U;
+
+            const auto taskImpl = runMultiOperationProbe( options, threadsCount, 150U /* cancelAfterMs */ );
+            const auto outcome = taskImpl -> outcome();
+
+            UTF_REQUIRE( taskImpl -> isFailed() );
+            UTF_REQUIRE_EQUAL( outcome.stopCalls, 1U );
+            UTF_REQUIRE_EQUAL( outcome.bodiesEntered, 3U );
+            UTF_REQUIRE_EQUAL( outcome.pendingAtStop, 0U );
+            UTF_REQUIRE( outcome.stoppedWithException );
+            UTF_REQUIRE( outcome.stoppedIsExpected );
+
+            try
+            {
+                cpp::safeRethrowException( taskImpl -> exception() );
+
+                UTF_FAIL( "A cancelled multi-operation task must complete with an exception" );
+            }
+            catch( bl::SystemException& e )
+            {
+                UTF_REQUIRE( asio::error::operation_aborted == e.code() );
+            }
+        }
+
+        {
+            /*
+             * initiateClose() itself throws. Nothing is cancelled, so the other two operations
+             * run to completion on their own, and the task still completes exactly once - with
+             * the original error rather than the one the close attempt raised
+             */
+
+            MultiOperationProbeOptions options( 3U, 1U /* failures */ );
+
+            options.firstDelayMs = 50U;
+            options.restDelayMs = 400U;
+            options.initiateCloseThrows = true;
+
+            const auto taskImpl = runMultiOperationProbe( options, threadsCount );
+            const auto outcome = taskImpl -> outcome();
+
+            UTF_REQUIRE( taskImpl -> isFailed() );
+            UTF_REQUIRE_EQUAL( outcome.stopCalls, 1U );
+            UTF_REQUIRE_EQUAL( outcome.initiateCloseCalls, 1U );
+            UTF_REQUIRE_EQUAL( outcome.bodiesEntered, 3U );
+            UTF_REQUIRE_EQUAL( outcome.pendingAtStop, 0U );
+
+            UTF_REQUIRE_THROW_MESSAGE(
+                cpp::safeRethrowException( taskImpl -> exception() ),
+                bl::UnexpectedException,
+                "multiop-failure-0"
+                );
+        }
+
+        {
+            /*
+             * Stress: many operations, half of them failing at the same instant, so several
+             * threads run onOperationCompleted() concurrently and race for the first error and
+             * for the single terminal path
+             */
+
+            MultiOperationProbeOptions options( 32U, 16U /* failures */ );
+
+            options.firstDelayMs = 100U;
+            options.restDelayMs = 150U;
+
+            const auto taskImpl = runMultiOperationProbe( options, threadsCount );
+            const auto outcome = taskImpl -> outcome();
+
+            UTF_REQUIRE( taskImpl -> isFailed() );
+            UTF_REQUIRE_EQUAL( outcome.stopCalls, 1U );
+            UTF_REQUIRE_EQUAL( outcome.initiateCloseCalls, 1U );
+            UTF_REQUIRE_EQUAL( outcome.finishContinuationCalls, 1U );
+            UTF_REQUIRE_EQUAL( outcome.bodiesEntered, 32U );
+            UTF_REQUIRE_EQUAL( outcome.bodiesAtStop, 32U );
+            UTF_REQUIRE_EQUAL( outcome.pendingAtStop, 0U );
+        }
+
+        {
+            /*
+             * A completed task is pushed again. scheduleNothrow() resets the accounting the same
+             * way it resets the exception, m_notifyCalled and the cancel latch - and a stale
+             * terminal flag would be invisible except as a second run which never completes
+             */
+
+            MultiOperationProbeOptions options( 2U, 0U /* failures */ );
+
+            options.closeWhenAllSucceed = true;
+
+            const auto taskImpl = MultiOperationProbeImpl::createInstance( options );
+
+            const auto tpLocal = om::lockDisposable(
+                ThreadPoolImpl::createInstance< ThreadPool >( os::AbstractPriority::Normal, threadsCount )
+                );
+
+            {
+                const auto eq = om::lockDisposable(
+                    ExecutionQueueImpl::createInstance< ExecutionQueue >( ExecutionQueue::OptionKeepAll )
+                    );
+
+                eq -> setLocalThreadPool( tpLocal.get() );
+
+                const auto task = om::qi< Task >( taskImpl );
+
+                eq -> push_back( task );
+
+                UTF_REQUIRE_NO_THROW( eq -> flush() );
+
+                UTF_REQUIRE_EQUAL( Task::Completed, task -> getState() );
+                UTF_REQUIRE_EQUAL( taskImpl -> outcome().stopCalls, 1U );
+
+                while( eq -> pop( false /* wait */ ) )
+                {
+                    /*
+                     * Drain the ready queue so the task is pushed again as a fresh entry
+                     */
+                }
+
+                eq -> push_back( task );
+
+                UTF_REQUIRE_NO_THROW( eq -> flush() );
+
+                UTF_REQUIRE_EQUAL( Task::Completed, task -> getState() );
+
+                const auto outcome = taskImpl -> outcome();
+
+                UTF_REQUIRE( ! task -> isFailed() );
+                UTF_REQUIRE_EQUAL( outcome.stopCalls, 2U );
+                UTF_REQUIRE_EQUAL( outcome.bodiesEntered, 2U );
+                UTF_REQUIRE_EQUAL( outcome.bodiesAtStop, 2U );
+                UTF_REQUIRE_EQUAL( outcome.pendingAtStop, 0U );
+                UTF_REQUIRE_EQUAL( outcome.initiateCloseCalls, 2U );
+
+                eq -> flushAndDiscardReady();
+            }
+        }
+    }
+
+} // __unnamed
+
+UTF_AUTO_TEST_CASE( Tasks_MultiOperationTaskSingleThreadedTests )
+{
+    runMultiOperationSuite( 1U /* threadsCount */ );
+}
+
+UTF_AUTO_TEST_CASE( Tasks_MultiOperationTaskMultiThreadedTests )
+{
+    runMultiOperationSuite( 4U /* threadsCount */ );
 }
