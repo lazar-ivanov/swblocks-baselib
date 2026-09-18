@@ -496,8 +496,12 @@ namespace
         std::size_t                                                         pendingAtStop;
         std::size_t                                                         bodiesAtStop;
         std::size_t                                                         bodiesEntered;
+        std::size_t                                                         bodiesSeeingClosing;
         bool                                                                stoppedWithException;
         bool                                                                stoppedIsExpected;
+        bool                                                                closingAtScheduleTask;
+        bool                                                                closingAfterBeginClose;
+        bool                                                                closingAtInitiateClose;
 
         MultiOperationOutcome()
             :
@@ -508,8 +512,12 @@ namespace
             pendingAtStop( 0U ),
             bodiesAtStop( 0U ),
             bodiesEntered( 0U ),
+            bodiesSeeingClosing( 0U ),
             stoppedWithException( false ),
-            stoppedIsExpected( false )
+            stoppedIsExpected( false ),
+            closingAtScheduleTask( false ),
+            closingAfterBeginClose( false ),
+            closingAtInitiateClose( false )
         {
         }
     };
@@ -555,6 +563,7 @@ namespace
 
         std::atomic< std::size_t >                                          m_bodiesEntered;
         std::atomic< std::size_t >                                          m_bodiesSucceeded;
+        std::atomic< std::size_t >                                          m_bodiesSeeingClosing;
         std::atomic< std::size_t >                                          m_stopCalls;
         std::atomic< std::size_t >                                          m_initiateCloseCalls;
         std::atomic< std::size_t >                                          m_finishContinuationCalls;
@@ -563,12 +572,16 @@ namespace
         std::atomic< std::size_t >                                          m_bodiesAtStop;
         std::atomic< bool >                                                 m_stoppedWithException;
         std::atomic< bool >                                                 m_stoppedIsExpected;
+        std::atomic< bool >                                                 m_closingAtScheduleTask;
+        std::atomic< bool >                                                 m_closingAfterBeginClose;
+        std::atomic< bool >                                                 m_closingAtInitiateClose;
 
         MultiOperationProbeT( SAA_in const MultiOperationProbeOptions& options )
             :
             m_options( options ),
             m_bodiesEntered( 0U ),
             m_bodiesSucceeded( 0U ),
+            m_bodiesSeeingClosing( 0U ),
             m_stopCalls( 0U ),
             m_initiateCloseCalls( 0U ),
             m_finishContinuationCalls( 0U ),
@@ -576,7 +589,10 @@ namespace
             m_pendingAtStop( 0U ),
             m_bodiesAtStop( 0U ),
             m_stoppedWithException( false ),
-            m_stoppedIsExpected( false )
+            m_stoppedIsExpected( false ),
+            m_closingAtScheduleTask( false ),
+            m_closingAfterBeginClose( false ),
+            m_closingAtInitiateClose( false )
         {
         }
 
@@ -599,6 +615,17 @@ namespace
 
             ++m_bodiesEntered;
 
+            /*
+             * Whether the accessor already reports the closing state when this body is entered.
+             * It is read before the error check so that a body which was cancelled by
+             * initiateClose() is counted too - those are the ones which must see it
+             */
+
+            if( base_type::isClosing() )
+            {
+                ++m_bodiesSeeingClosing;
+            }
+
             BL_TASKS_HANDLER_CHK_EC( ec );
 
             if( index < m_options.failures )
@@ -617,6 +644,8 @@ namespace
                  */
 
                 base_type::beginClose();
+
+                m_closingAfterBeginClose = base_type::isClosing();
             }
 
             BL_TASKS_HANDLER_END_MULTIOP()
@@ -627,6 +656,8 @@ namespace
             using namespace bl;
 
             ++m_initiateCloseCalls;
+
+            m_closingAtInitiateClose = base_type::isClosing();
 
             if( m_options.initiateCloseThrows )
             {
@@ -677,6 +708,9 @@ namespace
             m_timers.clear();
             m_bodiesEntered = 0U;
             m_bodiesSucceeded = 0U;
+            m_bodiesSeeingClosing = 0U;
+            m_closingAfterBeginClose = false;
+            m_closingAtInitiateClose = false;
 
             const auto threadPool = base_type::getThreadPool( eq );
 
@@ -706,6 +740,14 @@ namespace
                         )
                     );
             }
+
+            /*
+             * Read with every operation already in flight and the task lock still held, so no
+             * handler body can have run yet: this is what the accessor must report on a task
+             * which is running and has not closed
+             */
+
+            m_closingAtScheduleTask = base_type::isClosing();
         }
 
         virtual bool scheduleTaskFinishContinuation(
@@ -750,8 +792,12 @@ namespace
             result.pendingAtStop = m_pendingAtStop;
             result.bodiesAtStop = m_bodiesAtStop;
             result.bodiesEntered = m_bodiesEntered;
+            result.bodiesSeeingClosing = m_bodiesSeeingClosing;
             result.stoppedWithException = m_stoppedWithException;
             result.stoppedIsExpected = m_stoppedIsExpected;
+            result.closingAtScheduleTask = m_closingAtScheduleTask;
+            result.closingAfterBeginClose = m_closingAfterBeginClose;
+            result.closingAtInitiateClose = m_closingAtInitiateClose;
 
             return result;
         }
@@ -1075,6 +1121,155 @@ namespace
         }
     }
 
+    /**
+     * @brief What isClosing() reports, on a pool of the given size
+     *
+     * The accessor is the one piece of the accounting the mix-in publishes, because a task whose
+     * loops re-arm operations has to ask whether it is still worth starting another one. It is
+     * therefore the member most likely to be quietly reduced to a field which nothing maintains,
+     * and these assertions are about the state it tracks rather than about the value it returns
+     */
+
+    void runIsClosingSuite( SAA_in const std::size_t threadsCount )
+    {
+        using namespace bl;
+        using namespace bl::tasks;
+
+        {
+            /*
+             * A task which has never run is not closing
+             */
+
+            const auto taskImpl = MultiOperationProbeImpl::createInstance(
+                MultiOperationProbeOptions( 1U /* operations */, 0U /* failures */ )
+                );
+
+            UTF_REQUIRE( ! taskImpl -> isClosing() );
+        }
+
+        {
+            /*
+             * The deliberate path. Nothing is closing while the three operations are in flight;
+             * beginClose() is what enters the state, and the accessor reports it immediately -
+             * from inside the very handler body which called it, with the task lock held; the
+             * accounting then agrees, because it decides to call initiateClose() only when the
+             * same flag is set
+             */
+
+            MultiOperationProbeOptions options( 3U /* operations */, 0U /* failures */ );
+
+            options.closeWhenAllSucceed = true;
+
+            const auto taskImpl = runMultiOperationProbe( options, threadsCount );
+            const auto outcome = taskImpl -> outcome();
+
+            UTF_REQUIRE( ! taskImpl -> isFailedOrFailing() );
+            UTF_REQUIRE( ! outcome.closingAtScheduleTask );
+            UTF_REQUIRE( outcome.closingAfterBeginClose );
+            UTF_REQUIRE( outcome.closingAtInitiateClose );
+            UTF_REQUIRE_EQUAL( outcome.initiateCloseCalls, 1U );
+            UTF_REQUIRE_EQUAL( outcome.pendingAtStop, 0U );
+
+            /*
+             * The accounting is per run, not per completion: the state the run ended in is still
+             * readable once the queue has been flushed
+             */
+
+            UTF_REQUIRE( taskImpl -> isClosing() );
+        }
+
+        {
+            /*
+             * The error path. beginClose() is never called here - the first error is what enters
+             * the closing state, inside onOperationCompleted() and under the accounting lock -
+             * and the accessor has to report that too
+             *
+             * The other two operations are five seconds out, so the only reason their handlers
+             * ever run is that initiateClose() cancelled them because of the first error. Each of
+             * them therefore enters after the state was entered and must see it, while the one
+             * which failed entered before anything had closed and must not: two bodies out of
+             * three, on any pool size
+             */
+
+            MultiOperationProbeOptions options( 3U /* operations */, 1U /* failures */ );
+
+            options.firstDelayMs = 50U;
+            options.restDelayMs = 5000U;
+
+            const auto taskImpl = runMultiOperationProbe( options, threadsCount );
+            const auto outcome = taskImpl -> outcome();
+
+            UTF_REQUIRE( taskImpl -> isFailed() );
+            UTF_REQUIRE( ! outcome.closingAtScheduleTask );
+            UTF_REQUIRE( ! outcome.closingAfterBeginClose );
+            UTF_REQUIRE( outcome.closingAtInitiateClose );
+            UTF_REQUIRE_EQUAL( outcome.initiateCloseCalls, 1U );
+            UTF_REQUIRE_EQUAL( outcome.bodiesEntered, 3U );
+            UTF_REQUIRE_EQUAL( outcome.bodiesSeeingClosing, 2U );
+            UTF_REQUIRE_EQUAL( outcome.pendingAtStop, 0U );
+
+            UTF_REQUIRE( taskImpl -> isClosing() );
+        }
+
+        {
+            /*
+             * A completed task is pushed again. scheduleNothrow() clears the closing state along
+             * with the rest of the accounting, and the accessor has to follow it - a task which
+             * came back still reporting that it is closing would refuse to start any operation on
+             * its second run
+             */
+
+            MultiOperationProbeOptions options( 2U /* operations */, 0U /* failures */ );
+
+            options.closeWhenAllSucceed = true;
+
+            const auto taskImpl = MultiOperationProbeImpl::createInstance( options );
+
+            const auto tpLocal = om::lockDisposable(
+                ThreadPoolImpl::createInstance< ThreadPool >( os::AbstractPriority::Normal, threadsCount )
+                );
+
+            {
+                const auto eq = om::lockDisposable(
+                    ExecutionQueueImpl::createInstance< ExecutionQueue >( ExecutionQueue::OptionKeepAll )
+                    );
+
+                eq -> setLocalThreadPool( tpLocal.get() );
+
+                const auto task = om::qi< Task >( taskImpl );
+
+                eq -> push_back( task );
+
+                UTF_REQUIRE_NO_THROW( eq -> flush() );
+
+                UTF_REQUIRE_EQUAL( Task::Completed, task -> getState() );
+                UTF_REQUIRE( taskImpl -> isClosing() );
+
+                while( eq -> pop( false /* wait */ ) )
+                {
+                    /*
+                     * Drain the ready queue so the task is pushed again as a fresh entry
+                     */
+                }
+
+                eq -> push_back( task );
+
+                UTF_REQUIRE_NO_THROW( eq -> flush() );
+
+                UTF_REQUIRE_EQUAL( Task::Completed, task -> getState() );
+
+                const auto outcome = taskImpl -> outcome();
+
+                UTF_REQUIRE( ! task -> isFailed() );
+                UTF_REQUIRE( ! outcome.closingAtScheduleTask );
+                UTF_REQUIRE( outcome.closingAfterBeginClose );
+                UTF_REQUIRE_EQUAL( outcome.stopCalls, 2U );
+
+                eq -> flushAndDiscardReady();
+            }
+        }
+    }
+
 } // __unnamed
 
 UTF_AUTO_TEST_CASE( Tasks_MultiOperationTaskSingleThreadedTests )
@@ -1085,4 +1280,10 @@ UTF_AUTO_TEST_CASE( Tasks_MultiOperationTaskSingleThreadedTests )
 UTF_AUTO_TEST_CASE( Tasks_MultiOperationTaskMultiThreadedTests )
 {
     runMultiOperationSuite( 4U /* threadsCount */ );
+}
+
+UTF_AUTO_TEST_CASE( Tasks_MultiOperationTaskIsClosingTests )
+{
+    runIsClosingSuite( 1U /* threadsCount */ );
+    runIsClosingSuite( 4U /* threadsCount */ );
 }
