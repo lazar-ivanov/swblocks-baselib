@@ -32,3 +32,4 @@
  */
 
 #include "TestTcpPreHandshakeStage.h"
+#include "TestMultiOperationTask.h"
