@@ -18,13 +18,18 @@
 #include <utests/baselib/UtfMain.h>
 
 /*
- * The plain stream connection establisher tests
+ * The plain stream connection establisher tests, and the multi-operation task tests
  *
  * They are here rather than in utf_baselib_tasks because that module is 67.7MB (vc143) / 67.9MB
  * (ccl16) on win-x86 debug - 90% of the 75MB ceiling and well past the 40MB target - and it
  * instantiates no TCP connection establisher today, so these cases would add a fresh stack to the
  * tightest object in the tree. See src/utests/AGENTS.md and
  * notes/reviews/major/update_2026/test-module-split-ledger.md
+ *
+ * The multi-operation tests were moved here for that reason after they had first been added to
+ * utf_baselib_tasks; the composition case then instantiates the mix-in over the establisher this
+ * module already builds, which is why it costs so little here and would have cost a fresh stack
+ * there
  *
  * None of these cases takes the machine global test lock or binds the fixed test port: the peer is
  * a listening socket on an ephemeral loopback port, so the module runs in parallel with everything
