@@ -224,6 +224,11 @@ namespace bl
                         )
                     );
                 
+                configureClientStream( hostName );
+            }
+
+            void configureClientStream( SAA_in const std::string& hostName )
+            {
                 if( ! m_serverContext )
                 {
                     /*
