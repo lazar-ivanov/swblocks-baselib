@@ -289,8 +289,9 @@ and a test module; the third runs an existing case under a sanitizer). **All thr
 - **F-L0-1 (done, `da9a444`): `MultiOperationTaskT` is parameterized on its base.** It had been built
   as `template< typename E = void > : public TaskBase`, which cannot be combined with
   `TcpConnectionEstablisherConnector` - see design §3.2, which now states the required shape. It is now
-  `template< typename BASE = TaskBase > : public BASE` with `BL_VARIADIC_CTOR` forwarding to the base
-  and the accounting members initialized in class, following the `ProcessingUnit.h` idiom.
+  `template< typename BASE = TaskBase > : public BASE`, with `BL_VARIADIC_CTOR` forwarding to the
+  base as `ProcessingUnit.h` does, and the accounting members initialized in class - the macro owns
+  the constructor definition, so there is no init list to write (design §3.2).
   `typedef MultiOperationTaskT<> MultiOperationTask` is kept, so the existing tests compiled with no
   edit at all, and the public `isClosing()` that design §5.1's read loop needs is added. **S4.1 is
   unblocked.**
@@ -339,12 +340,24 @@ none belongs to a single slice:
    --compare` reports PASS, 772 cases across 29 modules. At the current tip it reports **21
    violations**: 19 `C1 case ADDED`, one `C2 case BODY CHANGED`
    (`TlsHandshake_SniOmittedForAddressLiterals`, which S0.3 deliberately extended with the IPv6 pin)
-   and one `C6 helper member LOST` (`namespace tlspolicy`). So the manifest is **not rotten - it is
-   simply out of date by exactly this work**, and every violation is L0's own legitimate change.
+   and one `C6 helper member LOST` (`namespace tlspolicy`, which L0's `5f33d25` extended with
+   `countTrustAnchors` - +106/-0, nothing removed). That last report is the tool's naming, not a
+   loss: `utf_inventory.py` cuts a helper block into members at bracket depth zero, so a nested
+   namespace is one member, and the no-loss half of C6 keys each member on its content hash
+   (`utf_inventory.py:720-728`) - an edited helper namespace therefore reports as LOST. Expect the
+   same report from every slice that touches one, and do not "fix" it: the tool proves that a split
+   moved helpers unchanged, so content-hash keying is the right invariant, and the duplicate half of
+   C6 - the one that catches real ODR violations - keys the same way. It misreads only when the
+   baseline spans commits that legitimately edit helpers, which is what a stale manifest is. So the
+   manifest is **not rotten - it is simply out of date by exactly this work**, and every violation
+   is L0's own legitimate change.
    Refreshing it is therefore bookkeeping rather than a judgement call, but it has to be done
    deliberately, because **§13's tier-1 check depends on that comparison being clean** and a manifest
    left stale makes tier 1 unreadable for every slice from here on - a lane cannot tell its own
-   regression from the accumulated backlog.
+   regression from the accumulated backlog. Narrower and sharper: until then the no-loss half of C6
+   is blind for every helper member already reporting LOST - a genuine deletion inside `tlspolicy`
+   would produce the same single report and be indistinguishable from the benign edit. That is a gap
+   in coverage, not noise.
 
 A fifth item was a decision and has been **settled**: the context-dump probe of S0.4 lives in the
 repository at `scripts/utests/tls_context_dump.{cpp,sh}`, beside `utf_ppstream.py`, with **no makefile
