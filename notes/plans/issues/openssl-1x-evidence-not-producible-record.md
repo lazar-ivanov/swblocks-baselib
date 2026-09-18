@@ -56,9 +56,11 @@ reached by anything which includes `crypto/CryptoBase.h`, so the probe hits them
 2. Clear the `-Wdeprecated-declarations` blocker above - either by giving the 1.1.1w configuration a
    deprecation policy of its own in `devenv-detect.mk`, or by fixing the call sites.
 3. Re-run, with `BL_USE_OPENSSL_1X=1`:
-   - `notes/reviews/http2-l0/evidence/tls-context-dump.build.sh` against the parent commit of the
-     S0.4 split and against it, with the two dumps compared (the script pins the 3.5.4 paths and
-     would need the 1.1.1w ones);
+   - the context-dump probe against the parent commit of the S0.4 split and against it, with the two
+     dumps compared (the probe pins the 3.5.4 paths and would need the 1.1.1w ones). The probe was
+     written for this slice and kept outside the repository, at
+     `/home/lazar/dev/github/http2-l0-state/evidence/tls-context-dump.{cpp,build.sh}`; discharging
+     this debt needs it committed somewhere durable first, or rewritten from the description above;
    - `make -k -j1 utf_baselib_http2`, and the run.
 
 ## How much risk the gap actually carries
