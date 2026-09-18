@@ -1,7 +1,10 @@
 # HTTP/2 Client Library: Implementation Plan
 
-**Status:** plan, not implemented. Written 2026-09-17. Nothing here has been built, run or probed; every
-probe is folded into the slice that needs it, to be run by the implementing agent at execution time.
+**Status:** written 2026-09-17 as a plan with nothing built, run or probed. **Layer L0 was executed on
+2026-09-17/18** - slices S0.1-S0.4 implemented in parallel worktrees, merged, release-validated, and
+the G1 gate (S0.5) passed at `gcc1520` debug; see §2 for the result, its two stated limits and the
+three follow-ups it left. **L1 onwards is still unexecuted.** Every probe outside L0 remains folded
+into the slice that needs it, to be run by the implementing agent at execution time.
 
 **Spec.** This plan implements `notes/plans/http2-design.md` ("the design"). The design is the
 specification; this plan is the work breakdown, the dependency graph, the parallelization schedule and
@@ -233,6 +236,57 @@ be observed without the change, commit the test that pins it first, and show it 
 - Acceptance: for every pre-existing case the registered set, executed set, pass/fail and deterministic
   assertion counts are unchanged, and the new cases pass. **Nothing from L3+ that depends on G1 is
   integrated before this passes.**
+
+**Executed 2026-09-18 - PASSED, at `gcc1520` debug only** (breadth narrowed by the author, as this
+section allows). `utf_runlog --compare` exits 1 with 36 differences, all accounted for: 34 are the 17
+new cases, each reported as both `REGISTRATION ADDED` and `NEWLY RUNS`, and all 17 verified `passed`;
+one is `TlsHandshake_SniOmittedForAddressLiterals` 14 -> 21 assertions, which is S0.3's added
+IPv6-literal pin; one is `BaseLib_Base64UrlTests` 16390 -> 16396 in an untouched module, proven a
+false alarm by running the **unchanged baseline binary** eight times (16384, 16384, 16390, 16396,
+16396, 16390, 16396, 16366 - the flagged value three times in eight). Verified beyond the tool's own
+report: no pre-existing case changed outcome or disappeared, and no module exit code differs.
+
+**Two limits of this gate, both to be stated wherever its result is cited:**
+
+- **`utf_baselib_jni` is compared on two of the gate's four signals, not four.** All 11 of its cases
+  are captured `passed` on both sides, so pass/fail and the registered set are real evidence. But its
+  *executed* set is empty and every assertion count is 0, on both sides - the module's own `ARGPARSE`
+  re-initializes logging and suppresses the `Entering test case` lines the tool reads, so those two
+  signals are vacuous rather than verified. Its exit 200 is the known pre-existing `Test setup error`
+  that follows a clean pass of every case; it is identical on both sides and is a host property.
+- **The 1.1.1w half was not produced**, and cannot be on this machine - see the D2 note in the
+  design's section 0.1. The "both flavors for TLS" clause of this gate is unmet, not waived.
+
+The false alarm above exposed a weakness in the gate method itself, recorded at
+`notes/plans/issues/utf-runlog-nondeterministic-sampling-record.md`: `utf_runlog.py` derives its
+nondeterministic-case list from two baseline runs, which misclassifies a case whose variation is a
+rare event. Any future gate should read that record before trusting an assertion-count difference.
+
+### L0 follow-ups - after the gate, before S4.1
+
+Three items fall out of executing L0. None is gated (the first two touch a header with no consumer
+and a test module; the third runs an existing case under a sanitizer), and all three are small.
+
+- **F-L0-1: `MultiOperationTaskT` must be parameterized on its base.** It was built as
+  `template< typename E = void > : public TaskBase`, which cannot be combined with
+  `TcpConnectionEstablisherConnector` - see design §3.2, which now states the required shape. Change
+  it to `template< typename BASE = TaskBase > : public BASE` with a forwarding constructor, keeping
+  `typedef MultiOperationTaskT<> MultiOperationTask` so the existing tests compile unchanged, and add
+  the public `isClosing()` the read loop of design §5.1 needs. **Blocking for S4.1/S4.2**; free to do
+  now, since nothing in production includes the header.
+- **F-L0-2: move `TestMultiOperationTask.h` to `utf_baselib_tasks2`.** It was added to
+  `utf_baselib_tasks`, which is 67.7 MB on win-x86 debug - 90% of the enforced 75 MB ceiling and far
+  past the 40 MB target - which `src/utests/AGENTS.md` forbids adding to. The measured a64 delta is
+  0.76 MB (1.3%), so this is a rule-consistency fix rather than an emergency, but the two lanes
+  applied the same rule differently in the same layer: S0.2 created `utf_baselib_tasks2` for exactly
+  this reason and S0.1 did not. One file move and one include line.
+- **F-L0-3: run the TSan stress case of S0.1.** The case exists and is ready; it was never run,
+  because a lane validates one toolchain and variant only. `BL_CLANG_ENABLE_RA_TSAN=1`
+  (`projects/make/toolchain/clang-analysis.mk:214`), one focused build of one module.
+
+A fourth item is a **decision, not a task**: the context-dump probe of S0.4 lives outside the
+repository and is needed again for the 1.1.1w debt and by S3.4's knob-availability probe. Either
+commit it as a probe app or accept that it is rewritten from its description each time.
 
 ---
 
@@ -478,6 +532,16 @@ Depends on L0 (gated), L1, L2. Slices are mutually parallel except as noted.
 - Dep: **L0.S0.2** (hook). Integrate after the G1 gate.
 - Accept: against in-process fake proxies - success, auth, failure, cancel; origin SNI preserved. Tests →
   `httpclient` (fake-proxy fixtures).
+- **Two obligations inherited from S0.2**, found there by the suite's own leak check and documented on
+  the hook itself (commit `fea3a38`) - neither is optional and both are easy to miss:
+  1. A stage that parks the continuation across an async operation forms a **reference cycle** with the
+     task, because the continuation holds an `ObjPtrCopyable` reference to it. It must release the
+     continuation when the task stops, or the task leaks.
+  2. A stage with no socket I/O in flight is **never woken by the base `cancelTask()`**, which cancels
+     socket operations. It must cancel its own async objects - timers, resolvers - itself.
+- Note that the handshake retry this stage must be re-entrant against is **currently unreachable with a
+  real peer** - see `notes/plans/issues/tls-handshake-retry-unreachable-record.md`. Write the
+  once-per-attempt behavior to the contract, not to what the retry happens to do today.
 
 ### S3.6 — ClientHello capture + JA3/JA4 (§3.3, §6.3)
 - Deliver: `crypto/TlsClientHello.h` - consume the S1.6 capture hook; parse the ClientHello bytes;
@@ -501,6 +565,12 @@ with all of them.
   then construct the h2 driver or hand the connected stream to the h1 driver (via a factory in S2.6);
   connect/handshake/SETTINGS-ack timers on the strand.
 - Dep: S3.2, S3.3, S3.4 (floor), S3.5 (tunnel), S0.1 (multi-op), S2.6. Integrate after G1 gate.
+- **Blocked on follow-up F-L0-1** (§2): as L0 delivered it, `MultiOperationTaskT` derives from
+  `TaskBase` directly and cannot be combined with `TcpConnectionEstablisherConnector` at all. Do that
+  change first, not as part of this slice. It also adds the public `isClosing()` this slice's read loop
+  needs to decide whether to re-arm.
+- Keep the task's **two paths out consistent** (design §3.2): `cancelTask()` for an external cancel and
+  `initiateClose()` for the error path, both converging on the single terminal `notifyReady`.
 - Accept: establishes plain and TLS; selects driver by ALPN; forced-http/1.1 path works; floor failure
   aborts before any HTTP byte. Tests → `h2client`.
 
@@ -659,6 +729,13 @@ Every probe is owned by a slice and drives a decision at execution time; none is
 | GREASE / ECH-GREASE / ALPS custom-ext viability | S7.1 | adopt a workaround (default off, D23) | leave off, record interop risk |
 | `make utests-sizes` on `h2core` | S3.1 | split to `h2core2` or not | split per `src/utests/AGENTS.md` |
 
+**The two flavor-dependent probes above cannot run as written until D2 is resolved.** S0.4's dump was
+produced on 3.5.4 only, and S3.4's knob-availability probe faces the same wall: `BL_USE_OPENSSL_1X=1`
+does not build, and no dist here carries 1.1.1w - see the D2 note in the design's section 0.1. Treat
+"both flavors" in those two rows as owed evidence, and do not let a slice report them as done on one
+flavor without saying so. S0.4's probe source is currently outside the repository; see the fourth
+item under "L0 follow-ups" in §2.
+
 ---
 
 ## 12. Integration and gating order
@@ -668,7 +745,7 @@ orders is for development and is generally earlier.
 
 | Wave | Integrates | Gate |
 |---|---|---|
-| 0 | L0.S1-S4 (four commits) | **S0.5: whole suite, baseline-relative, both flavors for TLS.** Nothing G1-dependent merges before this passes. |
+| 0 | L0.S1-S4 (four commits) | **S0.5: whole suite, baseline-relative, both flavors for TLS.** Nothing G1-dependent merges before this passes. **Done 2026-09-18: passed at `gcc1520` debug, with the two limits recorded in §2 - `utf_baselib_jni` ran no cases, and the 1.1.1w half is unmet. Wave 1 and beyond are unblocked.** |
 | 0 (concurrent) | L1 all; L2 all (developed against L1) | focused modules per slice |
 | 1 | S3.1 Session; S3.2 stranded plain; S3.6 ClientHello | focused modules |
 | 1 (after S0.5) | S3.3 stranded TLS; S3.4 TLS contexts/floor; S3.5 tunnel | focused modules, both flavors for TLS |

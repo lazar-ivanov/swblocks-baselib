@@ -38,6 +38,17 @@ in `notes/plans/issues/tls-legacy-protocol-opt-in-removal-decision.md`.
 | D11 | **Legacy HTTP/2 features: neither.** No server push (always `SETTINGS_ENABLE_PUSH = 0`; a `PUSH_PROMISE` is a connection error, per RFC 9113 section 8.4). No `h2c` via `Upgrade`. Cleartext HTTP/2 by prior knowledge is supported. |
 | D12 | **Documents** live under `notes/plans/`, deferrals under `notes/plans/issues/`. |
 
+**D2 is not currently satisfiable, and this is not specific to this design.** Executing 3.8 commit 4
+established that `BL_USE_OPENSSL_1X=1` does not build today, for reasons that predate this work: the
+3.x configuration is compiled with `-DOPENSSL_API_COMPAT=0x10100000L` and the 1.1.1w configuration
+gets no equivalent, so `-Werror,-Wdeprecated-declarations` fails on `RSA_free`, the `SHA512_*` and
+`SHA384_*` family and the `RSA`/`EVP_PKEY` conversions - headers reached by anything that includes
+`crypto/CryptoBase.h`. Separately, no devenv7 dist on the development machine carries 1.1.1w at all.
+So D2's promise cannot be demonstrated for **any** part of this work until that is resolved, which is
+a decision the author owes before L1 builds on D2: either give the 1.1.1w configuration a deprecation
+policy of its own in `devenv-detect.mk` and provision the dist, or retire the flavor promise and
+amend D2. Recorded at `notes/plans/issues/openssl-1x-evidence-not-producible-record.md`.
+
 ### 0.2 Decided on review, 2026-09-17
 
 The first draft of this document raised twelve open items, O1-O12. The author settled all of them.
@@ -251,6 +262,19 @@ exprOnFailure )`. The expansion for every existing user is identical. A new
 - `onOperationCompleted( eptr, isExpected )` decrements it, records the *first* error, and on the first
   error calls the virtual `initiateClose()` - cancel the socket operations and the timers.
 - `notifyReady( firstError )` is called exactly once, when the counter reaches zero while closing.
+- `isClosing()` is public, because the read loop of 5.1 needs it to decide whether to re-arm.
+
+**It is parameterized on its base, not on nothing.** The shape is
+`template< typename BASE = TaskBase > class MultiOperationTaskT : public BASE`, with a forwarding
+constructor and `typedef MultiOperationTaskT<> MultiOperationTask`. This is what the word "mixed in"
+in 5.1 requires: `Http2ConnectionTaskT` derives from `TcpConnectionEstablisherConnector< STREAM >`,
+which already has `TaskBase` in its chain, so a mix-in hard-wired to `TaskBase` would give that task
+two `TaskBase` subobjects and could not be combined with the establisher at all. Stated here because
+the first implementation of 3.8 commit 1 built it as `template< typename E = void > : public TaskBase`
+and the gap was only found when S4.1 was read against it.
+
+**A derived task has two paths out and they must stay consistent:** `cancelTask()` for an external
+cancel, and `initiateClose()` for the error path. Both converge on the single terminal `notifyReady`.
 
 The rule this enforces: **a connection task has one terminal path, and takes it only after every
 outstanding operation has completed or been cancelled.** That also keeps the TLS shutdown
