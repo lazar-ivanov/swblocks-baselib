@@ -266,7 +266,9 @@ exprOnFailure )`. The expansion for every existing user is identical. A new
 
 **It is parameterized on its base, not on nothing.** The shape is
 `template< typename BASE = TaskBase > class MultiOperationTaskT : public BASE`, with a forwarding
-constructor and `typedef MultiOperationTaskT<> MultiOperationTask`. This is what the word "mixed in"
+constructor - `BL_VARIADIC_CTOR`, which owns the constructor definition, so the accounting members
+are initialized in class rather than in an init list there is no way to write - and
+`typedef MultiOperationTaskT<> MultiOperationTask`. This is what the word "mixed in"
 in 5.1 requires: `Http2ConnectionTaskT` derives from `TcpConnectionEstablisherConnector< STREAM >`,
 which already has `TaskBase` in its chain, so a mix-in hard-wired to `TaskBase` would give that task
 two `TaskBase` subobjects and could not be combined with the establisher at all. Stated here because

@@ -266,6 +266,15 @@ report: no pre-existing case changed outcome or disappeared, and no module exit 
 - **The 1.1.1w half was not produced**, and cannot be on this machine - see the D2 note in the
   design's section 0.1. The "both flavors for TLS" clause of this gate is unmet, not waived.
 
+**Re-run 2026-09-18 after the L0 follow-ups and the review round - PASSED again**, same breadth, same
+baseline (the parent commit has not moved, so only the change side was rebuilt: 20 minutes rather
+than 1h48m). 40 differences, all accounted for: 38 are the **19** new cases counted twice - L0's 17
+plus phase 2's two - all verified `passed`; one is S0.3's IPv6 pin again; one is the same
+`BaseLib_Base64UrlTests` nondeterminism, whose flagged value the unchanged baseline binary is already
+proven to produce. No pre-existing case changed outcome or disappeared, and no module exit code
+differs. **F-L0-2's move of three cases between modules produced no difference at all**, because the
+comparison keys on case name rather than path - worth knowing before the next module split is gated.
+
 The false alarm above exposed a weakness in the gate method itself, recorded at
 `notes/plans/issues/utf-runlog-nondeterministic-sampling-record.md`: `utf_runlog.py` derives its
 nondeterministic-case list from two baseline runs, which misclassifies a case whose variation is a
@@ -273,27 +282,71 @@ rare event. Any future gate should read that record before trusting an assertion
 
 ### L0 follow-ups - after the gate, before S4.1
 
-Three items fall out of executing L0. None is gated (the first two touch a header with no consumer
-and a test module; the third runs an existing case under a sanitizer), and all three are small.
+Three items fell out of executing L0. None was gated (the first two touch a header with no consumer
+and a test module; the third runs an existing case under a sanitizer). **All three are done, executed
+2026-09-18 in three parallel worktrees plus one follow-on phase, and merged into `lazari2`.**
 
-- **F-L0-1: `MultiOperationTaskT` must be parameterized on its base.** It was built as
-  `template< typename E = void > : public TaskBase`, which cannot be combined with
-  `TcpConnectionEstablisherConnector` - see design §3.2, which now states the required shape. Change
-  it to `template< typename BASE = TaskBase > : public BASE` with a forwarding constructor, keeping
-  `typedef MultiOperationTaskT<> MultiOperationTask` so the existing tests compile unchanged, and add
-  the public `isClosing()` the read loop of design §5.1 needs. **Blocking for S4.1/S4.2**; free to do
-  now, since nothing in production includes the header.
-- **F-L0-2: move `TestMultiOperationTask.h` to `utf_baselib_tasks2`.** It was added to
-  `utf_baselib_tasks`, which is 67.7 MB on win-x86 debug - 90% of the enforced 75 MB ceiling and far
-  past the 40 MB target - which `src/utests/AGENTS.md` forbids adding to. The measured a64 delta is
-  0.76 MB (1.3%), so this is a rule-consistency fix rather than an emergency, but the two lanes
-  applied the same rule differently in the same layer: S0.2 created `utf_baselib_tasks2` for exactly
-  this reason and S0.1 did not. One file move and one include line.
-- **F-L0-3: run the TSan stress case of S0.1.** The case exists and is ready; it was never run,
-  because a lane validates one toolchain and variant only. `BL_CLANG_ENABLE_RA_TSAN=1`
-  (`projects/make/toolchain/clang-analysis.mk:214`), one focused build of one module.
+- **F-L0-1 (done, `da9a444`): `MultiOperationTaskT` is parameterized on its base.** It had been built
+  as `template< typename E = void > : public TaskBase`, which cannot be combined with
+  `TcpConnectionEstablisherConnector` - see design §3.2, which now states the required shape. It is now
+  `template< typename BASE = TaskBase > : public BASE` with `BL_VARIADIC_CTOR` forwarding to the base
+  and the accounting members initialized in class, following the `ProcessingUnit.h` idiom.
+  `typedef MultiOperationTaskT<> MultiOperationTask` is kept, so the existing tests compiled with no
+  edit at all, and the public `isClosing()` that design §5.1's read loop needs is added. **S4.1 is
+  unblocked.**
+- **F-L0-2 (done, `e2a0830`): `TestMultiOperationTask.h` moved to `utf_baselib_tasks2`.** It had been
+  added to `utf_baselib_tasks`, which is 67.7 MB on win-x86 debug - 90% of the enforced 75 MB ceiling
+  and far past the 40 MB target - which `src/utests/AGENTS.md` forbids adding to, while S0.2 created
+  `utf_baselib_tasks2` for exactly that reason in the same layer. A pure rename (git records `R100`,
+  identical blob), one include line each side. No case lost: 115 before and after, three changing
+  module, each keeping its exact assertion count.
+- **F-L0-3 (done, `0760ad4`): the TSan stress case is run, and the accounting is clean.** **Zero data
+  races** on a four-thread pool, so nothing touches the pending count, the closing and terminal flags
+  or the first-error capture. Design §3.8 commit 1's stress row is satisfied. Two findings came with
+  it, both recorded and neither fixed: a pre-existing production race in `core/ThreadPoolImpl.h`,
+  where `createThreads` mutates `m_threads` under `m_lock` while `size()` and `resize()` read it with
+  none (`tsan-baseline-and-threadpool-resize-race-record.md`), and a test-probe teardown defect where
+  the probe's timers outlive the asio service they were built against
+  (`multioperation-probe-timer-teardown-record.md`). **The number to watch on any re-run is the
+  data-race count staying at 0**; the other reports are the probe's teardown, not the library's.
 
-A fourth item was a decision and has been **settled**: the context-dump probe of S0.4 lives in the
+**Phase 2 (done, `51aa812`, `8501770`): the composition is pinned in the tree.** The two tests that
+needed both F-L0-1 and F-L0-2 could not be written while those lanes ran in parallel, so they landed
+after. `Tasks_MultiOperationTaskOverConnectionEstablisherTests` derives from
+`MultiOperationTaskT< TcpConnectionEstablisherConnector< TcpSocketAsyncBase > >`, so a regression to
+`public TaskBase` is now a **compile error rather than a silent pass**, with a `static_cast< TaskBase* >`
+pinning that there is exactly one `TaskBase` subobject and the recorded event order proving the
+terminal `notifyReady` runs through the establisher chain. Not having that check is what let the wrong
+shape through the first time. `utf_baselib_tasks2` ends at 25.9 MB on `ub24-a64-clang2010-debug`,
+where nothing is enforced; the 40 MB target and 75 MB ceiling are calibrated for `win-x86-*-debug`
+(`src/utests/AGENTS.md`). Nothing has been built for win-x86 here, so the figure there is
+**extrapolated, not measured** - scaling by the only ratio available, `utf_baselib_tasks` at 67.7
+against 56.8 MB, puts it near 31 MB, roughly 77% of target. Comfortable either way, but treat 31 MB
+as an estimate for a different module until someone builds it.
+
+**Decisions still owed after L0**, kept here because each is a prerequisite for something later and
+none belongs to a single slice:
+
+1. **The 1.1.1w flavor and D2** - see the note in the design's §0.1. Owed before L1 builds on D2.
+2. **Whether to widen the handshake retry classifier** - a one-line change with a suite-wide blast
+   radius, so its own gated change-set (`tls-handshake-retry-unreachable-record.md`). The HTTP/2
+   establishment path of §5.1 relies on that retry.
+3. **The `ThreadPoolImpl` race** - pre-existing, core, found by F-L0-3's TSan work
+   (`tsan-baseline-and-threadpool-resize-race-record.md`). Also its own gated change-set: `size()` is
+   `NOEXCEPT`, so the fix is not a one-liner.
+4. **Refreshing the frozen `notes/reviews/major/update_2026/baseline/inventory.json`.** Measured, not
+   assumed: at the pre-L0 commit `1bcde00` that manifest compares **clean** - `utf_inventory.py
+   --compare` reports PASS, 772 cases across 29 modules. At the current tip it reports **21
+   violations**: 19 `C1 case ADDED`, one `C2 case BODY CHANGED`
+   (`TlsHandshake_SniOmittedForAddressLiterals`, which S0.3 deliberately extended with the IPv6 pin)
+   and one `C6 helper member LOST` (`namespace tlspolicy`). So the manifest is **not rotten - it is
+   simply out of date by exactly this work**, and every violation is L0's own legitimate change.
+   Refreshing it is therefore bookkeeping rather than a judgement call, but it has to be done
+   deliberately, because **§13's tier-1 check depends on that comparison being clean** and a manifest
+   left stale makes tier 1 unreadable for every slice from here on - a lane cannot tell its own
+   regression from the accumulated backlog.
+
+A fifth item was a decision and has been **settled**: the context-dump probe of S0.4 lives in the
 repository at `scripts/utests/tls_context_dump.{cpp,sh}`, beside `utf_ppstream.py`, with **no makefile
 target** - the two mechanical proofs of L0 are now treated alike, and S3.4 and the 1.1.1w debt both
 inherit a working probe rather than a description to reimplement. Its build flags are a capture from
@@ -555,6 +608,14 @@ Depends on L0 (gated), L1, L2. Slices are mutually parallel except as noted.
 - Note that the handshake retry this stage must be re-entrant against is **currently unreachable with a
   real peer** - see `notes/plans/issues/tls-handshake-retry-unreachable-record.md`. Write the
   once-per-attempt behavior to the contract, not to what the retry happens to do today.
+- **Do not begin multi-operation work in the stage without resetting the accounting.** This is the one
+  place the hazard becomes real: `MultiOperationTaskT` clears its accounting only in `scheduleNothrow`,
+  while `scheduleTaskFinishContinuation` (`TcpBaseTasks.h:1437`) retries the transaction **in place**.
+  A tunnel that calls `beginOperation()` or ends a handler with `BL_TASKS_HANDLER_END_MULTIOP` runs
+  *before* the handshake, so a retry would restart it with a non-zero pending count - and if the
+  terminal had been taken, the task would never complete. Either keep the accounting out of the stage
+  or reset it per attempt. The hook's own doc comment already requires the stage to carry no state
+  from one attempt to the next; this accounting is exactly such state.
 
 ### S3.6 — ClientHello capture + JA3/JA4 (§3.3, §6.3)
 - Deliver: `crypto/TlsClientHello.h` - consume the S1.6 capture hook; parse the ClientHello bytes;
@@ -578,12 +639,35 @@ with all of them.
   then construct the h2 driver or hand the connected stream to the h1 driver (via a factory in S2.6);
   connect/handshake/SETTINGS-ack timers on the strand.
 - Dep: S3.2, S3.3, S3.4 (floor), S3.5 (tunnel), S0.1 (multi-op), S2.6. Integrate after G1 gate.
-- **Blocked on follow-up F-L0-1** (§2): as L0 delivered it, `MultiOperationTaskT` derives from
-  `TaskBase` directly and cannot be combined with `TcpConnectionEstablisherConnector` at all. Do that
-  change first, not as part of this slice. It also adds the public `isClosing()` this slice's read loop
-  needs to decide whether to re-arm.
+- **F-L0-1 unblocked this slice** (§2). `MultiOperationTaskT` now takes its base as a template
+  parameter, and the composition is pinned in the tree by
+  `Tasks_MultiOperationTaskOverConnectionEstablisherTests`, which derives exactly the shape this slice
+  needs. The mix-in needed nothing further: `isClosing()`, `beginOperation()`, `beginClose()`,
+  `pendingOperations()` and the virtual `initiateClose()` are all reachable from the derived task, and
+  `BL_VARIADIC_CTOR` forwards the establisher's three-argument constructor unchanged.
 - Keep the task's **two paths out consistent** (design §3.2): `cancelTask()` for an external cancel and
   `initiateClose()` for the error path, both converging on the single terminal `notifyReady`.
+- **The accounting is reset per schedule, not per connect attempt.** The mix-in clears it only in its
+  `scheduleNothrow` override (`MultiOperationTask.h:311-341`), while
+  `TcpConnectionEstablisherConnector::scheduleTaskFinishContinuation` (`TcpBaseTasks.h:1437`) restarts
+  the whole resolve/connect/handshake transaction **in place** and never passes through it. Harmless
+  only because that branch is guarded on `! hasHandshakeCompletedSuccessfully()` and this slice's loops
+  start at `continueAfterConnected()`. If anything here calls `beginOperation()` or ends a handler with
+  `BL_TASKS_HANDLER_END_MULTIOP` **before** the handshake completes, a retry restarts with a non-zero
+  pending count, and if the terminal was taken the task never completes. See also S3.5.
+- **Declare your own `this_type`/`base_type`.** The mix-in's are public and hide the establisher's
+  protected ones, so redeclare the pair - which is what every derived task here does anyway
+  (`SimpleHttpTask.h:57-58`), so it is the house idiom rather than a workaround.
+- **Build every timer on `getSocket().get_executor()`, never on a thread pool's `aioService()`.**
+  Under the stranded policies of design §3.1 that executor *is* the strand, and the pool's
+  `io_service` is not - so a timer built on the pool runs its handler off the strand, which is the
+  race D13 exists to make unrepresentable. The two happen to be the same `io_context` for a TCP task
+  today, because `continueAfterResolved` creates the socket on
+  `ThreadPoolDefault::getDefault( getThreadPoolId() )` (`TcpBaseTasks.h:1414`) and, unlike
+  `TimerTaskBaseT::resetTimer` (`TaskBase.h:1749`), does **not** honour a queue-local pool - so the
+  mistake is invisible until a stranded policy is in play, which is precisely this slice.
+  `Tasks_MultiOperationTaskOverConnectionEstablisherTests` models it correctly; copy from there.
+  Use the `BOOST_VERSION` guard of `SimpleHttpTask.h:301`.
 - Accept: establishes plain and TLS; selects driver by ALPN; forced-http/1.1 path works; floor failure
   aborts before any HTTP byte. Tests → `h2client`.
 
