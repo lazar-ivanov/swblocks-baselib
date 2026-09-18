@@ -718,6 +718,12 @@ retry is already task logic; the handler macros give exception enhancement, expe
 classification and logging; and an execution queue of connection tasks gives the pool the shutdown
 semantics `TcpServerBase` already relies on for `m_eqConnections` (`TcpBaseTasks.h:1733`).
 
+**Retry budget.** That handshake retry is reachable with a real peer since the classifier was
+widened after L0 (see the plan, §2 decision 2): it restarts the whole resolve/connect/handshake
+transaction on a truncated handshake as well as on `eof`, with no delay, up to `MAX_RETRY_COUNT`
+(5), so a peer which consistently truncates costs six attempts. `m_maxRetryCount` is the derived
+task's to set; S4.1 chooses the h2 task's budget and records it in its acceptance.
+
 **Lifecycle.** Resolve, connect, optional tunnel, TLS handshake, floor check, ALPN result.
 `continueAfterConnected()` returns `true` - the task keeps running - and starts:
 

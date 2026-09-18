@@ -275,6 +275,22 @@ proven to produce. No pre-existing case changed outcome or disappeared, and no m
 differs. **F-L0-2's move of three cases between modules produced no difference at all**, because the
 comparison keys on case name rather than path - worth knowing before the next module split is gated.
 
+**Third run 2026-09-18, the gate of the two post-L0 core change-sets - PASSED.** The
+retry-classifier widening (`9182fd0`) and the `ThreadPoolImpl` lock (`31f9463`) share this run, as
+the four L0 core commits shared G1. It was made after `10c1031`, the last commit that changes any
+source - the two above it are a record and the regenerated manifest - so the code at the tip is what
+it tested. Same breadth, same baseline. 48 differences, all accounted for: 46 are the **23** new
+cases counted twice - L0's 17, phase 2's two and this round's four
+(`Tasks_ThreadPoolSizeContractTests`, `Tasks_ThreadPoolConcurrentSizeReadTests`,
+`TlsHandshakeRetryClassifier_RetryableErrorSetTests`,
+`TlsHandshakeRetryClassifier_TruncationAgreementTests`); the other two are the IPv6 pin and the
+`BaseLib_Base64UrlTests` nondeterminism again. **No pre-existing case changed outcome or assertion
+count**, which is the signal that matters for two behavioural changes on paths the whole suite
+exercises. The totals read 774 ran / 785 registered against the 795 cases of the refreshed manifest:
+the 11 not run are `utf_baselib_jni`'s, as before, and the 10 not registered are `utf_baselib` cases
+compiled out on this host - nine under `#if defined( _WIN32 )` and one under
+`BL_DEVENV_VERSION < 6` - not a missing module.
+
 The false alarm above exposed a weakness in the gate method itself, recorded at
 `notes/plans/issues/utf-runlog-nondeterministic-sampling-record.md`: `utf_runlog.py` derives its
 nondeterministic-case list from two baseline runs, which misclassifies a case whose variation is a
@@ -691,6 +707,15 @@ with all of them.
   mistake is invisible until a stranded policy is in play, which is precisely this slice.
   `Tasks_MultiOperationTaskOverConnectionEstablisherTests` models it correctly; copy from there.
   Use the `BOOST_VERSION` guard of `SimpleHttpTask.h:301`.
+- **Choose the retry budget; a consistently truncating peer now costs six attempts, not one.** The
+  handshake retry is reachable with a real peer since the classifier was widened after L0 (§2,
+  decision 2): `scheduleTaskFinishContinuation` restarts the whole resolve/connect/handshake
+  transaction on `asio.ssl.stream:1` as well as on `eof`, immediately and with no delay between
+  attempts, up to `MAX_RETRY_COUNT` = 5 (`TcpBaseTasks.h:1276`). A hard TLS rejection which closes
+  the connection without an alert therefore fails after six handshakes where it failed after one,
+  and nothing in the suite times it. `m_maxRetryCount` is the derived task's to set - the TLS probes
+  of `TestTcpPreHandshakeStageTls.h` pass 1 - so decide the h2 task's budget here and record it in
+  the acceptance.
 - Accept: establishes plain and TLS; selects driver by ALPN; forced-http/1.1 path works; floor failure
   aborts before any HTTP byte. Tests → `h2client`.
 
