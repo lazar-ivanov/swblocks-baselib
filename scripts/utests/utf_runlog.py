@@ -23,12 +23,13 @@
 # effect it used to inherit from a sibling case in the same process still registers and still
 # passes, but asserts fewer times
 #
-# Three signals are compared, all normalized so that a case legitimately moving to another file
+# Four signals are compared, all normalized so that a case legitimately moving to another file
 # or line does not register as a difference:
 #
 #   registered   the case list from <binary> --list_content, which exits without running anything
 #   executed     the Entering/Leaving pairs and the SKIPPED CASES block from the run log
 #   assertions   the per-case counts from --report_level=detailed
+#   verdict      the per-case pass/fail/abort lines, and the module's own exit code and totals
 #
 # Assertion counts are not deterministic for every case - retry loops and perf cases vary - so a
 # baseline is captured twice and any case that disagrees with itself is recorded and thereafter
@@ -63,10 +64,17 @@ MODULE_RE = re.compile( r'^(?:Entering|Leaving) test module "([^"]+)"' )
 # A case which checked nothing reports 'has passed' with no trailing 'with:' and no assertion
 # line, so the trailing group is what distinguishes the two shapes
 #
+# One formatter writes both of these lines and it chooses between five verdicts, three of which do
+# not take 'has': 'has passed', 'has failed', 'was aborted', 'was skipped' and 'has timed out'. A
+# case killed by a failing UTF_REQUIRE is 'was aborted', so matching only 'has' missed it outright
+# and the fallthrough at the end of parse_run then recorded that case as passed
+#
 
-REPORT_CASE_RE = re.compile( r'^\s*Test case "([^"]+)" has (passed|failed|aborted)(\s+with:)?\s*$' )
+REPORT_VERDICT = r'(?:has|was) (passed|failed|aborted|skipped|timed out)'
+
+REPORT_CASE_RE = re.compile( r'^\s*Test case "([^"]+)" ' + REPORT_VERDICT + r'(\s+with:)?\s*$' )
 REPORT_ASSERT_RE = re.compile( r'^\s*(\d+) assertions? out of (\d+) passed' )
-REPORT_MODULE_RE = re.compile( r'^\s*Test module "([^"]+)" has (passed|failed|aborted)' )
+REPORT_MODULE_RE = re.compile( r'^\s*Test module "([^"]+)" ' + REPORT_VERDICT )
 
 #
 # Note this mid-run line carries the case name unquoted, unlike every line in the final report
@@ -101,6 +109,7 @@ def parse_run( text ):
     expected = None
     failures = None
     clean = False
+    reported = False
 
     in_skipped = False
     pending = None
@@ -152,6 +161,7 @@ def parse_run( text ):
         if matched:
             name = matched.group( 1 )
             cases.setdefault( name, {} )[ 'outcome' ] = matched.group( 2 )
+            reported = True
             if matched.group( 3 ):
                 # an assertion line follows and belongs to this case
                 pending = name
@@ -178,9 +188,17 @@ def parse_run( text ):
         if matched:
             failures = int( matched.group( 1 ) )
 
+    #
+    # Entering and leaving is scored passed only when the run printed no case verdicts at all,
+    # which is what the default report level does; clean, failures and exit then carry the whole
+    # of the module's verdict. When the run did print verdicts and this case has none, a line went
+    # unrecognised, and scoring that passed is how a critically-failed case used to read as green
+    #
+
     for name in entered:
         cases.setdefault( name, {} )
-        cases[ name ].setdefault( 'outcome', 'passed' if name in left else 'incomplete' )
+        cases[ name ].setdefault( 'outcome',
+            ( 'unknown' if reported else 'passed' ) if name in left else 'incomplete' )
         cases[ name ][ 'entered' ] = True
         cases[ name ][ 'left' ] = name in left
 
@@ -452,6 +470,31 @@ def compare( before, after, unstable, unmeasured = None ):
         if record.get( 'incomplete' ):
             failures.append( 'MODULE %s left %d case(s) incomplete: %s' % (
                 module, len( record[ 'incomplete' ] ), ', '.join( record[ 'incomplete' ][ :5 ] ) ) )
+
+    #
+    # exit, clean and failures are module-wide signals parse_run captures and compare() read none
+    # of them. They are all a comparison has when the run printed no case verdicts, and they are
+    # the backstop for every case the fallthrough above had to score
+    #
+    # All three are compared differentially, never against zero: a --parse-logs snapshot has no
+    # exit at all, and utf_baselib_jni exits 200 on some hosts after every one of its cases has
+    # passed, so only a change between the two sides is a difference worth reporting
+    #
+
+    for module in sorted( set( before ) & set( after ) ):
+
+        old, new = before[ module ], after[ module ]
+
+        if old.get( 'exit' ) is not None and new.get( 'exit' ) is not None:
+            if old[ 'exit' ] != new[ 'exit' ]:
+                failures.append( 'MODULE EXIT CHANGED: %s (%s -> %s)' % (
+                    module, old[ 'exit' ], new[ 'exit' ] ) )
+
+        if bool( old.get( 'clean' ) ) != bool( new.get( 'clean' ) ) or \
+                old.get( 'failures' ) != new.get( 'failures' ):
+            failures.append( 'MODULE VERDICT CHANGED: %s (clean %s -> %s, failures %s -> %s)' % (
+                module, bool( old.get( 'clean' ) ), bool( new.get( 'clean' ) ),
+                old.get( 'failures' ), new.get( 'failures' ) ) )
 
     return failures
 
