@@ -1,0 +1,11 @@
+# each slice appends the recipes for the cases it lands here
+
+--log_level=message --run_test=TcpTunnelStage_ProxyConfigurationTests
+--log_level=message --run_test=TcpTunnelStage_HttpConnectNegotiationTests
+--log_level=message --run_test=TcpTunnelStage_Socks5NegotiationTests
+--log_level=message --run_test=TcpTunnelStage_HttpConnectTunnelTests
+--log_level=message --run_test=TcpTunnelStage_Socks5TunnelTests
+--log_level=message --run_test=TcpTunnelStage_TunnelRefusedTests
+--log_level=message --run_test=TcpTunnelStage_CancelDuringTunnelTests
+--log_level=message --run_test=TcpTunnelStage_OriginAndProxyStaySeparateTests
+--log_level=message --run_test=TcpTunnelStage_StageRunsOncePerAttemptTests
