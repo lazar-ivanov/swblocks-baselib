@@ -25,6 +25,15 @@
 #include <baselib/httpclient/ContentDecoder.h>
 
 /*
+ * httpclient/Http1Codec.h is NOT here, deliberately. It includes the HTTP/1.1 codec backend, which
+ * includes core/detail/BeastBoostImports.h, and design 5.5 states as a property that the Beast
+ * import header is not reachable from core/BaseIncludes.h or from any PreCompiled.h - exactly as
+ * core/AsioSSL.h is not. Appending it above would make every module which includes this umbrella
+ * compile Boost.Beast, whether or not it speaks HTTP/1.1. A consumer of the codec includes
+ * <baselib/httpclient/Http1Codec.h> directly, and pays for it there
+ */
+
+/*
  * The version-neutral HTTP client umbrella. Each slice which adds an httpclient/ header appends
  * its #include above, in the form of http/PreCompiled.h
  *

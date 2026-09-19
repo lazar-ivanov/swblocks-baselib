@@ -36,3 +36,10 @@
 --log_level=message --run_test=ContentDecoder_RegistrationAndLookupTests
 --log_level=message --run_test=ContentDecoder_StreamingThroughTheSeamTests
 --log_level=message --run_test=ContentDecoder_BombCapsTripTests
+
+--log_level=message --run_test=Http1Codec_StatusLineHeadersAndBodyTests
+--log_level=message --run_test=Http1Codec_ChunkedAndTrailersTests
+--log_level=message --run_test=Http1Codec_ReadUntilCloseAndBodilessTests
+--log_level=message --run_test=Http1Codec_SmugglingDefencesTests
+--log_level=message --run_test=Http1Codec_LimitsTests
+--log_level=message --run_test=Http1Codec_RequestSerializerTests
