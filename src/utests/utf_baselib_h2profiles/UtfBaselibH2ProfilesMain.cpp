@@ -47,3 +47,5 @@
 /*
  * Test headers - one appended line per slice, at the end
  */
+
+#include "TestHttpClientProfiles.h"

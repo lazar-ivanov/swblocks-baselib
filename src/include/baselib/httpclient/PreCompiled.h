@@ -34,4 +34,6 @@
  * pre-compiled headers
  */
 
+#include <baselib/httpclient/HeaderProfile.h>
+
 #endif /* __BL_HTTPCLIENT_PRECOMPILED_H_ */

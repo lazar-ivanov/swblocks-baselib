@@ -30,4 +30,6 @@
  * pre-compiled headers
  */
 
+#include <baselib/http2/Http2Profile.h>
+
 #endif /* __BL_HTTP2_PRECOMPILED_H_ */
