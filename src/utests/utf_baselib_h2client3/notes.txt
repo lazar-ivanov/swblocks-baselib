@@ -1,0 +1,5 @@
+# each slice appends the recipes for the cases it lands here
+
+# S4.2 - the HTTP/2 driver over TLS (design 5.1, 5.5, 3.3)
+--log_level=test_suite --run_test=H2Driver_TlsAlpnSelectsHttp2Tests
+--log_level=test_suite --run_test=H2Driver_TlsAlpnServerPreferenceWinsTests
