@@ -8145,6 +8145,18 @@
    "namespaces": []
   },
   {
+   "body_sha": "61b800cc2aa2f0ce0e072770a3a5e8ed",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestSession.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 2978,
+   "module": "utf_baselib_h2core",
+   "name": "Session_DuplicateProfileSettingTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "693a2192c93fcd0e0a3b4719d7ded268",
    "doc_sha": null,
    "file": "utf_baselib_h2core/TestSession.h",
@@ -8175,7 +8187,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 3178,
+   "line": 3248,
    "module": "utf_baselib_h2core",
    "name": "Session_GoAwayAndRetryTests",
    "namespaces": []
@@ -8259,7 +8271,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 3435,
+   "line": 3505,
    "module": "utf_baselib_h2core",
    "name": "Session_ProfileShapingTests",
    "namespaces": []
@@ -8271,7 +8283,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 2978,
+   "line": 3048,
    "module": "utf_baselib_h2core",
    "name": "Session_PushPromiseAndPingTests",
    "namespaces": []
@@ -9003,7 +9015,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1325,
+   "line": 1450,
    "module": "utf_baselib_tasks2",
    "name": "Tasks_MultiOperationTaskIsClosingTests",
    "namespaces": []
@@ -9015,7 +9027,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1320,
+   "line": 1445,
    "module": "utf_baselib_tasks2",
    "name": "Tasks_MultiOperationTaskMultiThreadedTests",
    "namespaces": []
@@ -9039,7 +9051,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1315,
+   "line": 1440,
    "module": "utf_baselib_tasks2",
    "name": "Tasks_MultiOperationTaskSingleThreadedTests",
    "namespaces": []
@@ -9999,7 +10011,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1181,
+   "line": 1190,
    "module": "utf_baselib_h2client",
    "name": "TcpStrandedStreams_PlainCancelPostsShutdownToStrandTests",
    "namespaces": []
@@ -10011,7 +10023,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1163,
+   "line": 1172,
    "module": "utf_baselib_h2client",
    "name": "TcpStrandedStreams_PlainFullDuplexTests",
    "namespaces": []
@@ -10023,7 +10035,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1716,
+   "line": 1737,
    "module": "utf_baselib_httpclient2",
    "name": "TcpTunnelStage_CancelDuringTunnelTests",
    "namespaces": []
@@ -10035,19 +10047,19 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 819,
+   "line": 840,
    "module": "utf_baselib_httpclient2",
    "name": "TcpTunnelStage_HttpConnectNegotiationTests",
    "namespaces": []
   },
   {
-   "body_sha": "b93f59f8d8d3e0f366e9b0532f39d4a1",
+   "body_sha": "4baa97fc81a2df40e67f3df647dfaa85",
    "doc_sha": null,
    "file": "utf_baselib_httpclient2/TestTcpTunnelStage.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1494,
+   "line": 1515,
    "module": "utf_baselib_httpclient2",
    "name": "TcpTunnelStage_HttpConnectTunnelTests",
    "namespaces": []
@@ -10059,7 +10071,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1792,
+   "line": 1813,
    "module": "utf_baselib_httpclient2",
    "name": "TcpTunnelStage_OriginAndProxyStaySeparateTests",
    "namespaces": []
@@ -10071,7 +10083,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 717,
+   "line": 738,
    "module": "utf_baselib_httpclient2",
    "name": "TcpTunnelStage_ProxyConfigurationTests",
    "namespaces": []
@@ -10083,31 +10095,31 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1160,
+   "line": 1181,
    "module": "utf_baselib_httpclient2",
    "name": "TcpTunnelStage_Socks5NegotiationTests",
    "namespaces": []
   },
   {
-   "body_sha": "e9dda6a16876584c66933d741f9f776e",
+   "body_sha": "5321012b59cec7783f3409e6843b5d06",
    "doc_sha": null,
    "file": "utf_baselib_httpclient2/TestTcpTunnelStage.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1567,
+   "line": 1588,
    "module": "utf_baselib_httpclient2",
    "name": "TcpTunnelStage_Socks5TunnelTests",
    "namespaces": []
   },
   {
-   "body_sha": "e1d37aaa875930636af8e6cc72fa3c56",
+   "body_sha": "dabbb110262bf1e58f5992514fc4c7f0",
    "doc_sha": null,
    "file": "utf_baselib_httpclient2/TestTcpTunnelStage.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1893,
+   "line": 1914,
    "module": "utf_baselib_httpclient2",
    "name": "TcpTunnelStage_StageRunsOncePerAttemptTests",
    "namespaces": []
@@ -10119,7 +10131,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1634,
+   "line": 1655,
    "module": "utf_baselib_httpclient2",
    "name": "TcpTunnelStage_TunnelRefusedTests",
    "namespaces": []
@@ -13154,7 +13166,7 @@
    "line": 73,
    "module": "utf_baselib_h2client",
    "ns": "utest",
-   "sha": "f3743a78f3075beff3097a1a39a6dee8"
+   "sha": "128b3fe2e8a00af81e0b4289397ebff1"
   },
   {
    "file": "utf_baselib_h2core/TestFlowControl.h",
@@ -13506,7 +13518,7 @@
    "line": 56,
    "module": "utf_baselib_httpclient2",
    "ns": "utest",
-   "sha": "00cf62af7c45485460d05bc1e6c0dfe1"
+   "sha": "c679e9c7a3a00ddd25ecc6d73a9e9c46"
   },
   {
    "file": "utf_baselib_io/TestIO.h",
@@ -15346,12 +15358,12 @@
    "line": 458,
    "module": "utf_baselib_tasks2",
    "ns": "<anonymous>",
-   "sha": "0bd1c6c15f0c29730d9d2e12905e8807"
+   "sha": "edf95ae824e3c02fe8c6ec7c6d2356a4"
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
    "label": "/**",
-   "line": 486,
+   "line": 496,
    "module": "utf_baselib_tasks2",
    "ns": "<anonymous>",
    "sha": "fe13c6681110fdc9ef7e9a24082bc155"
@@ -15359,7 +15371,7 @@
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
    "label": "struct MultiOperationOutcome",
-   "line": 490,
+   "line": 500,
    "module": "utf_baselib_tasks2",
    "ns": "<anonymous>",
    "sha": "d31f0cf3bda0ec29df33ef48e55d12fb"
@@ -15367,7 +15379,7 @@
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
    "label": "/**",
-   "line": 525,
+   "line": 535,
    "module": "utf_baselib_tasks2",
    "ns": "<anonymous>",
    "sha": "725a4dd0146517f93b3834026927d7d9"
@@ -15375,15 +15387,15 @@
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
    "label": "template",
-   "line": 534,
+   "line": 544,
    "module": "utf_baselib_tasks2",
    "ns": "<anonymous>",
-   "sha": "62a56ea4b4406f17370eab5cfde2c6fa"
+   "sha": "bde5711caaa8167284d231ef1b11d857"
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
    "label": "typedef bl::om::ObjectImpl< MultiOperationProbeT<> > MultiOp",
-   "line": 806,
+   "line": 833,
    "module": "utf_baselib_tasks2",
    "ns": "<anonymous>",
    "sha": "b54b8f1809a6481079beb93583b7c95e"
@@ -15391,7 +15403,7 @@
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
    "label": "/**",
-   "line": 808,
+   "line": 835,
    "module": "utf_baselib_tasks2",
    "ns": "<anonymous>",
    "sha": "70f0a421777b5cc78511ba132935f1e8"
@@ -15399,7 +15411,7 @@
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
    "label": "struct MultiOperationProbeRun",
-   "line": 820,
+   "line": 847,
    "module": "utf_baselib_tasks2",
    "ns": "<anonymous>",
    "sha": "22489f66d0e0fe7f8a81be59d895d4d8"
@@ -15407,7 +15419,7 @@
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
    "label": "/**",
-   "line": 826,
+   "line": 853,
    "module": "utf_baselib_tasks2",
    "ns": "<anonymous>",
    "sha": "28a30d8dd5b53799e3c81cf7bc87a03f"
@@ -15415,7 +15427,7 @@
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
    "label": "auto runMultiOperationProbe(",
-   "line": 834,
+   "line": 861,
    "module": "utf_baselib_tasks2",
    "ns": "<anonymous>",
    "sha": "03dc9e4ddb789f966afb3ce4758f0e54"
@@ -15423,7 +15435,7 @@
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
    "label": "/**",
-   "line": 876,
+   "line": 903,
    "module": "utf_baselib_tasks2",
    "ns": "<anonymous>",
    "sha": "6ff7f7085888ca7d1d96ab5d76376efb"
@@ -15431,15 +15443,15 @@
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
    "label": "void runMultiOperationSuite( SAA_in const std::size_t thread",
-   "line": 884,
+   "line": 911,
    "module": "utf_baselib_tasks2",
    "ns": "<anonymous>",
-   "sha": "98088199cc84b977cf658615c78b16fb"
+   "sha": "eee8b71c2f4d651f1aabc94347934565"
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
    "label": "/**",
-   "line": 1156,
+   "line": 1281,
    "module": "utf_baselib_tasks2",
    "ns": "<anonymous>",
    "sha": "205c72b1c4de8802afd006f30c1fa4e8"
@@ -15447,7 +15459,7 @@
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
    "label": "void runIsClosingSuite( SAA_in const std::size_t threadsCoun",
-   "line": 1165,
+   "line": 1290,
    "module": "utf_baselib_tasks2",
    "ns": "<anonymous>",
    "sha": "5eb2e0e692c0a5a932e3c633bf12f0e8"
@@ -16719,6 +16731,9 @@
     "Http2Globals_FrameTypesAndFlagsTests",
     "Http2Globals_ProtocolConstantsAndLimitsTests",
     "Http2Globals_SettingsAndErrorCodesTests",
+    "Session_DataPathValidationTests",
+    "Session_DecodedHeaderListBoundTests",
+    "Session_DuplicateProfileSettingTests",
     "Session_EarlyResponseTests",
     "Session_FlowControlTests",
     "Session_GoAwayAndRetryTests",
@@ -18948,7 +18963,7 @@
    "line": 71,
    "module": "utf_baselib_h2client",
    "name": "utest",
-   "sha": "d3e667a051f971c7d2c650149e21f455"
+   "sha": "567600a6c6ae4d86eb8b4ec4f686fd31"
   },
   {
    "file": "utf_baselib_h2core/TestFlowControl.h",
@@ -19123,7 +19138,7 @@
    "line": 54,
    "module": "utf_baselib_httpclient2",
    "name": "utest",
-   "sha": "7bbd0b818dea859ab766050873ef23e9"
+   "sha": "622950e6aea7fac30ed74100f8103903"
   },
   {
    "file": "utf_baselib_io/TestIO.h",
@@ -19522,7 +19537,7 @@
    "line": 448,
    "module": "utf_baselib_tasks2",
    "name": "<anonymous>",
-   "sha": "566f9558ca3cc6357cd37ca8b65e5ff0"
+   "sha": "78ac3974e2c8aeff16c502678bfe9b8c"
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTaskComposition.h",

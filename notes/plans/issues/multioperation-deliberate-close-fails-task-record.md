@@ -1,9 +1,9 @@
 # A deliberate `beginClose()` with operations in flight completes the task FAILED
 
 **Found:** 2026-09-19, by the S3.2 lane, under ThreadSanitizer — which was slow enough to flip a
-race the ordinary build never lost. **Status:** **DECIDED 2026-09-19 by the maintainer — fix shape 1
-below, the narrow one. Not yet implemented.** It lands as its own change-set gated on the whole
-suite, before S4.1, because `MultiOperationTask.h` is landed gated core. **Not a data race.** It is a contract gap in
+race the ordinary build never lost. **Status:** **CLOSED 2026-09-19.** Decided by the maintainer as fix
+shape 1 below, implemented as its own change-set, and merged at `f4d51a2`. What it resolved and how
+is at the end of this record. **Not a data race.** It is a contract gap in
 `src/include/baselib/tasks/MultiOperationTask.h`, which is landed, gated core, so a fix is its own
 tested change-set (AGENTS.md).
 
@@ -127,3 +127,56 @@ existing `isExpectedSslErrorCode` and the S0.1 classifier are the precedent to f
 invent against. What `cancelTask()`, the *external* cancel, should report, since it also produces
 `operation_aborted` but for a reason the caller asked for. And a case for the quadrant S0.1 never
 covered — deliberate close with operations outstanding — which is what would have caught this.
+
+
+## How it was closed (2026-09-19)
+
+Merged at `f4d51a2`, its own change-set touching only `tasks/MultiOperationTask.h` and
+`utf_baselib_tasks2/TestMultiOperationTask.h`, as the rule for landed gated core requires.
+
+**The guard as it landed**, with the term that does the work highlighted:
+
+```cpp
+const bool isSelfInflictedAbort =
+    m_closingDeliberate && ! base_type::isCanceled() && isOperationAborted( eptr );
+```
+
+**The three things the shape left open, and how they were answered.**
+
+1. **`isOperationAborted` follows precedent rather than inventing a mechanism**:
+   `eh::errorCodeFromExceptionPtr( eptr ) == asio::error::operation_aborted`. That helper is
+   pre-existing and `NOEXCEPT`, already used on a task-completion `eptr` in
+   `messaging/MessagingClientImpl.h`, and already unit-tested for all three forms. An exception
+   carrying **no** code yields an empty code, which never equals `operation_aborted` - so a genuine
+   failure without a code is still recorded, which is the wanted answer. The rethrow is not free, so
+   the call sits last behind the cheap tests and is never reached on the success path.
+2. **`cancelTask()` still reports failed, deliberately**, and the `! isCanceled()` term is what
+   makes that hold: without it, a cancel landing on a task which had already begun closing
+   deliberately would silently flip from failed to succeeded - exactly the silent change this record
+   warned against. Verified rather than assumed that there is no window in which an abort arrives
+   while the flag is invisible: `requestCancelInternal()` sets the flag **before** calling
+   `cancelTask()`, and all three internal call sites of the latch are `requestCancel()` overrides.
+   `isCanceled()` is an atomic read taking no lock, so the leaf-lock rule is intact.
+3. **The uncovered quadrant is covered.** Two cases inside `runMultiOperationSuite()`, so they run
+   under both the 1-thread and 4-thread configurations and add no new case name: a deliberate close
+   with two operations outstanding asserting the task does **not** fail, and the same shape plus
+   `requestCancel()` asserting it **does** fail with `operation_aborted` - the pin for answer 2.
+
+**The negative control.** With the new cases in place and the header reverted to pristine, the
+module exits 201 with exactly two failures, both the new case, in both runs. The header was then
+restored and the working diff verified byte-identical.
+
+## One thing this closed elsewhere
+
+The S3.2 probe's `chkToClose()` carried a comment saying a deliberate `beginClose()` from the read
+handler "fails on its own clean close". That was the finding, and it stopped being true here. The
+probe still takes the close decision only in the timer handler - that is still where it knows both
+halves are done - but the restriction is now **sufficient rather than necessary**, and the comment
+says so rather than citing a reason that no longer holds (`0a87721`).
+
+## What this record cannot tell you
+
+**Tier 3 cannot speak to this change at all.** `notes/reviews/major/update_2026/baseline/runlog.json`
+dates from 2026-09-17 and carries no `utf_baselib_tasks2` key, nor any h2 module - it predates every
+case involved here. That is pre-existing staleness rather than anything this change introduced, and
+the absolute counts recorded above are what a refresh would capture.
