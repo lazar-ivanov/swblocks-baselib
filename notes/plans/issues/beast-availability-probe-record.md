@@ -3,6 +3,12 @@
 **Probed:** 2026-09-18, by slice S1.5. **Status:** ANSWERED, affirmative. No action follows from it;
 this record exists because decision **D15** is taken later, by S2.5, and is taken partly on this.
 
+> **D15 has since been taken: Beast stays.** The three criteria this record leaves open were all
+> answered affirmative by S2.5 - see `d15-http1-codec-backend-verdict.md`, which carries the
+> coverage probe, the measured object-size delta and the three leniencies the facade closes. The
+> residual toolchain risk stated at the bottom of this record was answered negative for gcc by
+> `l1-gcc-toolchain-coverage-record.md`; Windows remains argued.
+
 The plan's risk table carries the row *"Beast headers present in the dist | S1.5 | Beast is usable at
 all | vendor Beast headers (header-only)"*. **The fallback is not needed.**
 
