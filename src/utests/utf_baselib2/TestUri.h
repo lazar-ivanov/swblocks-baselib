@@ -782,3 +782,114 @@ UTF_AUTO_TEST_CASE( Uri_AuthorityOriginAndTargetTests )
         std::string( "/a?" )
         );
 }
+
+/*
+ * origin() is the one accessor which fabricates structure - the "://" - instead of rendering
+ * what the reference actually carries, and what it fabricates is a security decision: which
+ * connection is reused ( the pool key ) and which cookies are in scope. So it refuses a
+ * reference which has no origin rather than rendering a plausible looking one
+ *
+ * Its neighbours deliberately do NOT refuse, because an empty string or a zero port is the
+ * faithful rendering of what a relative reference carries and the has...() accessors are the
+ * documented way to test for it. The second half of this case pins that, so that the guard
+ * above is not later "completed" by spreading it over accessors which do not need it
+ */
+
+UTF_AUTO_TEST_CASE( Uri_OriginRequiresAbsoluteUriTests )
+{
+    /*
+     * A relative reference has neither a scheme nor a host and would have rendered "://"
+     */
+
+    UTF_CHECK_THROW( bl::net::Uri::parse( "b/c" ).origin(), bl::ArgumentException );
+    UTF_CHECK_THROW( bl::net::Uri::parse( "?q" ).origin(), bl::ArgumentException );
+    UTF_CHECK_THROW( bl::net::Uri::parse( "#f" ).origin(), bl::ArgumentException );
+
+    /*
+     * A network-path reference carries a host but no scheme and would have rendered "://host",
+     * a pool key and a cookie scope shared by every scheme for that host
+     */
+
+    UTF_CHECK_THROW( bl::net::Uri::parse( "//host/x" ).origin(), bl::ArgumentException );
+    UTF_CHECK_THROW( bl::net::Uri::parse( "//host:8080/x" ).origin(), bl::ArgumentException );
+
+    /*
+     * A URI with a scheme and no authority, and one whose authority has an empty host, would
+     * have rendered "mailto://", "http://:80" and "file://" - origins with no host at all,
+     * which every other such URI would share
+     */
+
+    UTF_CHECK_THROW(
+        bl::net::Uri::parse( "mailto:user@example.com" ).origin(),
+        bl::ArgumentException
+        );
+
+    UTF_CHECK_THROW( bl::net::Uri::parse( "http:///x" ).origin(), bl::ArgumentException );
+    UTF_CHECK_THROW( bl::net::Uri::parse( "file:///p" ).origin(), bl::ArgumentException );
+
+    /*
+     * The value tryParse( ... ) leaves behind when it fails has no origin either
+     */
+
+    {
+        bl::net::Uri uri;
+
+        UTF_CHECK( ! bl::net::Uri::tryParse( "http://a/ b", uri ) );
+        UTF_CHECK_THROW( uri.origin(), bl::ArgumentException );
+    }
+
+    /*
+     * A reference with no origin still renders every component it does carry. authority() in
+     * particular returns the empty string rather than throwing - it invents no delimiter, and
+     * toString() recomposes an empty authority through it ( RFC 3986 section 5.3 )
+     */
+
+    {
+        const auto uri = bl::net::Uri::parse( "b/c" );
+
+        UTF_CHECK_EQUAL( uri.authority(), std::string( "" ) );
+        UTF_CHECK_EQUAL( uri.pathAndQuery(), std::string( "b/c" ) );
+        UTF_CHECK_EQUAL( uri.effectivePort(), 0 );
+        UTF_CHECK_EQUAL( uri.toString(), std::string( "b/c" ) );
+    }
+
+    {
+        const auto uri = bl::net::Uri::parse( "//host:8080/x" );
+
+        UTF_CHECK( uri.hasAuthority() );
+        UTF_CHECK_EQUAL( uri.authority(), std::string( "host:8080" ) );
+        UTF_CHECK_EQUAL( uri.pathAndQuery(), std::string( "/x" ) );
+        UTF_CHECK_EQUAL( uri.effectivePort(), 8080 );
+        UTF_CHECK_EQUAL( uri.toString(), std::string( "//host:8080/x" ) );
+    }
+
+    {
+        const auto uri = bl::net::Uri::parse( "file:///p" );
+
+        UTF_CHECK( uri.hasAuthority() );
+        UTF_CHECK_EQUAL( uri.authority(), std::string( "" ) );
+        UTF_CHECK_EQUAL( uri.effectivePort(), 0 );
+        UTF_CHECK_EQUAL( uri.toString(), std::string( "file:///p" ) );
+    }
+
+    {
+        const auto uri = bl::net::Uri::parse( "mailto:user@example.com" );
+
+        UTF_CHECK( ! uri.hasAuthority() );
+        UTF_CHECK_EQUAL( uri.authority(), std::string( "" ) );
+        UTF_CHECK_EQUAL( uri.pathAndQuery(), std::string( "user@example.com" ) );
+        UTF_CHECK_EQUAL( uri.toString(), std::string( "mailto:user@example.com" ) );
+    }
+
+    /*
+     * ... and a relative reference still resolves against an absolute base, which is how a
+     * caller turns one into a URI which does have an origin
+     */
+
+    {
+        const auto resolved = bl::net::Uri::parse( "https://example.com/a/b" ).resolve( "../c" );
+
+        UTF_CHECK_EQUAL( resolved.origin(), std::string( "https://example.com:443" ) );
+        UTF_CHECK_EQUAL( resolved.toString(), std::string( "https://example.com/c" ) );
+    }
+}
