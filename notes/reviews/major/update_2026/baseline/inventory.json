@@ -5083,15 +5083,231 @@
    "namespaces": []
   },
   {
-   "body_sha": "5fe8840dc0a1c47256a25ae43d7a2d3c",
-   "doc_sha": "f3a28f252cc7bb43e398999d631a4498",
-   "file": "utf_baselib_h2client/TestH2ClientPlaceholder.h",
+   "body_sha": "5a9a76cb2e67698779bc0f19e8bc4f89",
+   "doc_sha": null,
+   "file": "utf_baselib_h2client/TestClientConnectionTaskBase.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 46,
+   "line": 782,
    "module": "utf_baselib_h2client",
-   "name": "H2Client_PlaceholderUntilS41Tests",
+   "name": "H2Connect_CleartextDispatchesWithoutAlpnTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "2047c82cd22d1970504d8eca4d9a3b2c",
+   "doc_sha": null,
+   "file": "utf_baselib_h2client/TestClientConnectionTaskBase.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1127,
+   "module": "utf_baselib_h2client",
+   "name": "H2Connect_FloorCheckPrecedesEverythingTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "d06651d180708ab3c29c8aebb683bbb5",
+   "doc_sha": null,
+   "file": "utf_baselib_h2client/TestClientConnectionTaskBase.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1078,
+   "module": "utf_baselib_h2client",
+   "name": "H2Connect_NoDriverForNegotiatedProtocolIsRefusedTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "6fd10d505545f2464fef4417bebe2da2",
+   "doc_sha": null,
+   "file": "utf_baselib_h2client/TestClientConnectionTaskBase.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1184,
+   "module": "utf_baselib_h2client",
+   "name": "H2Connect_SilentProxyHitsTheConnectDeadlineTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "6d043884ce907e56b8039028b85814e1",
+   "doc_sha": null,
+   "file": "utf_baselib_h2client/TestClientConnectionTaskBase.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 869,
+   "module": "utf_baselib_h2client",
+   "name": "H2Connect_TlsAlpnSelectsHttp2Tests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "4b379a2d590ef7d26d34e38864dedf60",
+   "doc_sha": null,
+   "file": "utf_baselib_h2client/TestClientConnectionTaskBase.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 917,
+   "module": "utf_baselib_h2client",
+   "name": "H2Connect_TlsForcedHttp11Tests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "a47c962c1bc798f27d05db1cef767374",
+   "doc_sha": null,
+   "file": "utf_baselib_h2client/TestClientConnectionTaskBase.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1015,
+   "module": "utf_baselib_h2client",
+   "name": "H2Connect_TlsUnknownAlpnIsRefusedTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "6a0eed30e58bb732acffce2d7978d9ed",
+   "doc_sha": null,
+   "file": "utf_baselib_h2client/TestClientConnectionTaskBase.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 965,
+   "module": "utf_baselib_h2client",
+   "name": "H2Connect_TlsWithNoAlpnSelectionFallsBackTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "be20acde338fbfded58f75b3ec99ddcc",
+   "doc_sha": "8ca9a59a7dbda5f77892cc3a412dbd69",
+   "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 777,
+   "module": "utf_baselib_h2client2",
+   "name": "H2Driver_CancelResetsOneStreamOnlyTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "a6f9d885b27982fde31a0274bc759f11",
+   "doc_sha": "1c9ff3c65a2684ccc33e28f2f1c30ba4",
+   "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 325,
+   "module": "utf_baselib_h2client2",
+   "name": "H2Driver_FullDuplexUploadAndDownloadTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "eaffe6fec979e75d909f0a9243a78656",
+   "doc_sha": "8b765df6204f4e8afbd53c639983e0a8",
+   "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 876,
+   "module": "utf_baselib_h2client2",
+   "name": "H2Driver_GoAwayDrainsAndClosesCleanlyTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "f802617b4fae7b7df1b8fe426c32d26f",
+   "doc_sha": "9acaebc0cebcd79056894150820841bd",
+   "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 454,
+   "module": "utf_baselib_h2client2",
+   "name": "H2Driver_KeepAliveAndIdleCloseTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "33af69bc8aef363772c5757252e90467",
+   "doc_sha": "f5efe9185a1ddb48ff7478fd44b5a87a",
+   "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 541,
+   "module": "utf_baselib_h2client2",
+   "name": "H2Driver_KeepAlivePingDeadlineTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "41b6f8a02215dbeffd6ebcc699940d26",
+   "doc_sha": "2c4d0791edb09b7050097006d259d0cf",
+   "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 199,
+   "module": "utf_baselib_h2client2",
+   "name": "H2Driver_OpeningWriteIsOneWriteTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "77d9021f826e0e42f4467b69b5e065a6",
+   "doc_sha": "0c242d1f6dc56b34906b262e9056d2d3",
+   "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 690,
+   "module": "utf_baselib_h2client2",
+   "name": "H2Driver_RefusedStreamIsRetryableTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "cd73d56ba580474a357bdec9e46a710c",
+   "doc_sha": "a5d173201463aab84ce142dc6c5ec9e3",
+   "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 75,
+   "module": "utf_baselib_h2client2",
+   "name": "H2Driver_RequestAndResponseTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "7dc67f8cca08c29aeb4b15ce6731f8ec",
+   "doc_sha": "ff87468b274222458b0f5bf577a21502",
+   "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 602,
+   "module": "utf_baselib_h2client2",
+   "name": "H2Driver_SettingsAcknowledgementTimeoutTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "88ec20ad904ec1ff1b39b269d15fc557",
+   "doc_sha": "d66557736a0a09d9b6f891e440a3ff76",
+   "file": "utf_baselib_h2client3/TestHttp2ConnectionTaskTls.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 146,
+   "module": "utf_baselib_h2client3",
+   "name": "H2Driver_TlsAlpnSelectsHttp2Tests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "ca90975dfac05339c7e90d4a6fed912c",
+   "doc_sha": "997612b3e324870c0bafe3d740dc1239",
+   "file": "utf_baselib_h2client3/TestHttp2ConnectionTaskTls.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 241,
+   "module": "utf_baselib_h2client3",
+   "name": "H2Driver_TlsAlpnServerPreferenceWinsTests",
    "namespaces": []
   },
   {
@@ -5503,6 +5719,78 @@
    "namespaces": []
   },
   {
+   "body_sha": "c0958d01247dfbb32abe76c577506da1",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient3/TestHttp1ConnectionTask.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1632,
+   "module": "utf_baselib_httpclient3",
+   "name": "Http1Driver_AgainstTheLibraryHttpServerTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "9286d025b7e707f4f97f7330a72119c2",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient3/TestHttp1ConnectionTask.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1371,
+   "module": "utf_baselib_httpclient3",
+   "name": "Http1Driver_ChunkedTrailersAndBodilessTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "b3f55a16c40c9423dfd73e35a969306c",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient3/TestHttp1ConnectionTask.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1315,
+   "module": "utf_baselib_httpclient3",
+   "name": "Http1Driver_InterimResponsesPrecedeTheFinalBlockTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "7a51e001669764f8f5ce6859bef2df62",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient3/TestHttp1ConnectionTask.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1027,
+   "module": "utf_baselib_httpclient3",
+   "name": "Http1Driver_RequestResponseAndKeepAliveReuseTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "b6bf57082df9eb047336bba7420bde1a",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient3/TestHttp1ConnectionTask.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1482,
+   "module": "utf_baselib_httpclient3",
+   "name": "Http1Driver_RequestsThisDriverRefusesTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "a6f2deb73b3a7d04964d3daeeb24276e",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient3/TestHttp1ConnectionTask.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1214,
+   "module": "utf_baselib_httpclient3",
+   "name": "Http1Driver_ReuseVerdictInputsTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "16cfaf034d8ef173cd4c4496a320b113",
    "doc_sha": null,
    "file": "utf_baselib_h2core/TestHttp2ErrorInfo.h",
@@ -5560,6 +5848,66 @@
    "line": 131,
    "module": "utf_baselib_h2core",
    "name": "Http2Globals_SettingsAndErrorCodesTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "3dff0d4885d9f5975c2062d35f9a7e46",
+   "doc_sha": "93dff753fec3878464694d8839415140",
+   "file": "utf_baselib_h2core/TestHttp2TestPeer.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 927,
+   "module": "utf_baselib_h2core",
+   "name": "Http2TestPeer_RawFrameScriptTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "a3b82921e0274a01fe4c62aea76df50f",
+   "doc_sha": "445b36701de2b2001fd227771db9a93d",
+   "file": "utf_baselib_h2core/TestHttp2TestPeer.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 747,
+   "module": "utf_baselib_h2core",
+   "name": "Http2TestPeer_RefusedStreamAndGoAwayTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "5befb1940009b8e4db581a97dafde400",
+   "doc_sha": "d00b870441c4866d04ee5570d2d815b8",
+   "file": "utf_baselib_h2core/TestHttp2TestPeer.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 565,
+   "module": "utf_baselib_h2core",
+   "name": "Http2TestPeer_RequestAndResponseTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "1cc43a9bd3820ddb3aaffde048fca092",
+   "doc_sha": "1bbf6854bbf81b11353c6e06e650f569",
+   "file": "utf_baselib_h2core/TestHttp2TestPeer.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 670,
+   "module": "utf_baselib_h2core",
+   "name": "Http2TestPeer_ScriptedResponseStepsTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "74333dbf98b62d3bcae6aeead3001c73",
+   "doc_sha": "b64f9b9405537a01b667d759605ccfb9",
+   "file": "utf_baselib_h2core/TestHttp2TestPeer.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 843,
+   "module": "utf_baselib_h2core",
+   "name": "Http2TestPeer_WindowStallTests",
    "namespaces": []
   },
   {
@@ -13153,6 +13501,14 @@
    "sha": "26af6aced467e12ea2a30d091b896180"
   },
   {
+   "file": "utf_baselib_h2client/TestClientConnectionTaskBase.h",
+   "label": "namespace clientconnect",
+   "line": 73,
+   "module": "utf_baselib_h2client",
+   "ns": "utest",
+   "sha": "df1a6c68df10fe0495fd3f67f1fee7f0"
+  },
+  {
    "file": "utf_baselib_h2client/TestTcpSslStrandedStreams.h",
    "label": "namespace strandedstreams",
    "line": 51,
@@ -13167,6 +13523,22 @@
    "module": "utf_baselib_h2client",
    "ns": "utest",
    "sha": "128b3fe2e8a00af81e0b4289397ebff1"
+  },
+  {
+   "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
+   "label": "namespace h2driver",
+   "line": 45,
+   "module": "utf_baselib_h2client2",
+   "ns": "utest",
+   "sha": "687966b48c567f384c1296077166b6ab"
+  },
+  {
+   "file": "utf_baselib_h2client3/TestHttp2ConnectionTaskTls.h",
+   "label": "namespace h2driver",
+   "line": 50,
+   "module": "utf_baselib_h2client3",
+   "ns": "utest",
+   "sha": "0806c195fb4849295d69c1bc2933350a"
   },
   {
    "file": "utf_baselib_h2core/TestFlowControl.h",
@@ -13207,6 +13579,14 @@
    "module": "utf_baselib_h2core",
    "ns": "utest",
    "sha": "a7d38ff90e7cd9291a015ee6ecede71b"
+  },
+  {
+   "file": "utf_baselib_h2core/TestHttp2TestPeer.h",
+   "label": "namespace h2peertest",
+   "line": 59,
+   "module": "utf_baselib_h2core",
+   "ns": "utest",
+   "sha": "8a9d98319cccef57365fecc2adb18656"
   },
   {
    "file": "utf_baselib_h2core/TestSession.h",
@@ -13519,6 +13899,14 @@
    "module": "utf_baselib_httpclient2",
    "ns": "utest",
    "sha": "c679e9c7a3a00ddd25ecc6d73a9e9c46"
+  },
+  {
+   "file": "utf_baselib_httpclient3/TestHttp1ConnectionTask.h",
+   "label": "namespace http1driver",
+   "line": 83,
+   "module": "utf_baselib_httpclient3",
+   "ns": "utest",
+   "sha": "66359d5c4b64832f9270b0e19cb0322f"
   },
   {
    "file": "utf_baselib_io/TestIO.h",
@@ -16513,11 +16901,30 @@
    "files": [
     {
      "includes": [
-      "<baselib/http2/Globals.h>",
+      "<baselib/httpclient/ClientConnectionTaskBase.h>",
+      "<baselib/httpclient/ClientConnection.h>",
+      "<baselib/httpclient/ClientTypes.h>",
+      "<baselib/tasks/TcpStrandedStreams.h>",
+      "<baselib/tasks/TcpSslStrandedStreams.h>",
+      "<baselib/tasks/TcpTunnelStage.h>",
+      "<baselib/tasks/Algorithms.h>",
+      "<baselib/tasks/ExecutionQueue.h>",
+      "<baselib/tasks/ExecutionQueueImpl.h>",
+      "<baselib/tasks/Task.h>",
+      "<baselib/crypto/CryptoBase.h>",
+      "<baselib/core/AsioSSL.h>",
+      "<baselib/core/ObjModel.h>",
+      "<baselib/core/OS.h>",
+      "<baselib/core/TimeUtils.h>",
       "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<memory>",
+      "<string>",
+      "<vector>",
+      "<utests/baselib/UtfCrypto.h>",
       "<utests/baselib/Utf.h>"
      ],
-     "path": "utf_baselib_h2client/TestH2ClientPlaceholder.h"
+     "path": "utf_baselib_h2client/TestClientConnectionTaskBase.h"
     },
     {
      "includes": [
@@ -16561,19 +16968,94 @@
      "includes": [
       "<utests/baselib/UtfMain.h>",
       "<baselib/http2/PreCompiled.h>",
-      "\"TestH2ClientPlaceholder.h\"",
       "\"TestTcpStrandedStreams.h\"",
-      "\"TestTcpSslStrandedStreams.h\""
+      "\"TestTcpSslStrandedStreams.h\"",
+      "\"TestClientConnectionTaskBase.h\""
      ],
      "path": "utf_baselib_h2client/UtfBaselibH2ClientMain.cpp"
     }
    ],
    "notes_cases": [
-    "H2Client_PlaceholderUntilS41Tests",
+    "H2Connect_CleartextDispatchesWithoutAlpnTests",
+    "H2Connect_FloorCheckPrecedesEverythingTests",
+    "H2Connect_NoDriverForNegotiatedProtocolIsRefusedTests",
+    "H2Connect_SilentProxyHitsTheConnectDeadlineTests",
+    "H2Connect_TlsAlpnSelectsHttp2Tests",
+    "H2Connect_TlsForcedHttp11Tests",
+    "H2Connect_TlsUnknownAlpnIsRefusedTests",
+    "H2Connect_TlsWithNoAlpnSelectionFallsBackTests",
     "TcpSslStrandedStreams_TlsCancelPostsShutdownToStrandTests",
     "TcpSslStrandedStreams_TlsFullDuplexTests",
     "TcpStrandedStreams_PlainCancelPostsShutdownToStrandTests",
     "TcpStrandedStreams_PlainFullDuplexTests"
+   ]
+  },
+  "utf_baselib_h2client2": {
+   "data_files": {},
+   "data_literals": [
+    "127.0.0.1"
+   ],
+   "data_refs": [],
+   "files": [
+    {
+     "includes": [
+      "<baselib/tasks/TcpStrandedStreams.h>",
+      "<utests/baselib/Http2DriverTestUtils.h>",
+      "<utests/baselib/RawFrameScriptPeer.h>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_h2client2/TestHttp2ConnectionTask.h"
+    },
+    {
+     "includes": [
+      "<utests/baselib/UtfMain.h>",
+      "<baselib/http2/PreCompiled.h>",
+      "<baselib/httpclient/PreCompiled.h>",
+      "\"TestHttp2ConnectionTask.h\""
+     ],
+     "path": "utf_baselib_h2client2/UtfBaselibH2Client2Main.cpp"
+    }
+   ],
+   "notes_cases": [
+    "H2Driver_CancelResetsOneStreamOnlyTests",
+    "H2Driver_FullDuplexUploadAndDownloadTests",
+    "H2Driver_GoAwayDrainsAndClosesCleanlyTests",
+    "H2Driver_KeepAliveAndIdleCloseTests",
+    "H2Driver_KeepAlivePingDeadlineTests",
+    "H2Driver_OpeningWriteIsOneWriteTests",
+    "H2Driver_RefusedStreamIsRetryableTests",
+    "H2Driver_RequestAndResponseTests",
+    "H2Driver_SettingsAcknowledgementTimeoutTests"
+   ]
+  },
+  "utf_baselib_h2client3": {
+   "data_files": {},
+   "data_literals": [],
+   "data_refs": [],
+   "files": [
+    {
+     "includes": [
+      "<baselib/tasks/TcpSslStrandedStreams.h>",
+      "<baselib/crypto/CryptoBase.h>",
+      "<utests/baselib/Http2DriverTestUtils.h>",
+      "<utests/baselib/UtfCrypto.h>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_h2client3/TestHttp2ConnectionTaskTls.h"
+    },
+    {
+     "includes": [
+      "<utests/baselib/UtfMain.h>",
+      "<baselib/http2/PreCompiled.h>",
+      "<baselib/httpclient/PreCompiled.h>",
+      "\"TestHttp2ConnectionTaskTls.h\""
+     ],
+     "path": "utf_baselib_h2client3/UtfBaselibH2Client3Main.cpp"
+    }
+   ],
+   "notes_cases": [
+    "H2Driver_TlsAlpnSelectsHttp2Tests",
+    "H2Driver_TlsAlpnServerPreferenceWinsTests"
    ]
   },
   "utf_baselib_h2core": {
@@ -16654,6 +17136,25 @@
     },
     {
      "includes": [
+      "<utests/baselib/Http2TestServer.h>",
+      "<utests/baselib/RawFrameScriptPeer.h>",
+      "<baselib/tasks/Algorithms.h>",
+      "<baselib/tasks/ExecutionQueue.h>",
+      "<baselib/tasks/ExecutionQueueImpl.h>",
+      "<baselib/tasks/SimpleTaskControlToken.h>",
+      "<baselib/tasks/TasksUtils.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<baselib/core/ObjModel.h>",
+      "<baselib/core/TimeUtils.h>",
+      "<cstdint>",
+      "<string>",
+      "<vector>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_h2core/TestHttp2TestPeer.h"
+    },
+    {
+     "includes": [
       "<baselib/http2/Session.h>",
       "<baselib/core/BaseIncludes.h>",
       "<baselib/core/ErrorHandling.h>",
@@ -16689,7 +17190,8 @@
       "\"TestFlowControl.h\"",
       "\"TestStreamStates.h\"",
       "\"TestHpack.h\"",
-      "\"TestSession.h\""
+      "\"TestSession.h\"",
+      "\"TestHttp2TestPeer.h\""
      ],
      "path": "utf_baselib_h2core/UtfBaselibH2CoreMain.cpp"
     }
@@ -16731,6 +17233,11 @@
     "Http2Globals_FrameTypesAndFlagsTests",
     "Http2Globals_ProtocolConstantsAndLimitsTests",
     "Http2Globals_SettingsAndErrorCodesTests",
+    "Http2TestPeer_RawFrameScriptTests",
+    "Http2TestPeer_RefusedStreamAndGoAwayTests",
+    "Http2TestPeer_RequestAndResponseTests",
+    "Http2TestPeer_ScriptedResponseStepsTests",
+    "Http2TestPeer_WindowStallTests",
     "Session_DataPathValidationTests",
     "Session_DecodedHeaderListBoundTests",
     "Session_DuplicateProfileSettingTests",
@@ -17249,6 +17756,59 @@
     "TcpTunnelStage_Socks5TunnelTests",
     "TcpTunnelStage_StageRunsOncePerAttemptTests",
     "TcpTunnelStage_TunnelRefusedTests"
+   ]
+  },
+  "utf_baselib_httpclient3": {
+   "data_files": {},
+   "data_literals": [
+    "127.0.0.1"
+   ],
+   "data_refs": [],
+   "files": [
+    {
+     "includes": [
+      "<baselib/httpclient/Http1ConnectionTask.h>",
+      "<baselib/httpclient/ClientConnectionTaskBase.h>",
+      "<baselib/httpclient/ClientConnection.h>",
+      "<baselib/httpclient/ClientTypes.h>",
+      "<baselib/httpserver/HttpServer.h>",
+      "<baselib/tasks/TcpStrandedStreams.h>",
+      "<baselib/tasks/TcpSslStrandedStreams.h>",
+      "<baselib/tasks/Algorithms.h>",
+      "<baselib/tasks/ExecutionQueue.h>",
+      "<baselib/tasks/ExecutionQueueImpl.h>",
+      "<baselib/tasks/Task.h>",
+      "<baselib/http/HeaderList.h>",
+      "<baselib/data/DataBlock.h>",
+      "<baselib/core/ObjModel.h>",
+      "<baselib/core/OS.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<memory>",
+      "<string>",
+      "<vector>",
+      "<utests/baselib/HttpServerHelpers.h>",
+      "<utests/baselib/UtfArgsParser.h>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_httpclient3/TestHttp1ConnectionTask.h"
+    },
+    {
+     "includes": [
+      "<utests/baselib/UtfMain.h>",
+      "<baselib/httpclient/PreCompiled.h>",
+      "\"TestHttp1ConnectionTask.h\""
+     ],
+     "path": "utf_baselib_httpclient3/UtfBaselibHttpClient3Main.cpp"
+    }
+   ],
+   "notes_cases": [
+    "Http1Driver_AgainstTheLibraryHttpServerTests",
+    "Http1Driver_ChunkedTrailersAndBodilessTests",
+    "Http1Driver_InterimResponsesPrecedeTheFinalBlockTests",
+    "Http1Driver_RequestResponseAndKeepAliveReuseTests",
+    "Http1Driver_RequestsThisDriverRefusesTests",
+    "Http1Driver_ReuseVerdictInputsTests"
    ]
   },
   "utf_baselib_io": {
@@ -18952,6 +19512,13 @@
    "sha": "f6e77a1d1be2dc6c111c35f14f2a3036"
   },
   {
+   "file": "utf_baselib_h2client/TestClientConnectionTaskBase.h",
+   "line": 71,
+   "module": "utf_baselib_h2client",
+   "name": "utest",
+   "sha": "3b0eab9cd72ca4e446b531e6130b1a9b"
+  },
+  {
    "file": "utf_baselib_h2client/TestTcpSslStrandedStreams.h",
    "line": 49,
    "module": "utf_baselib_h2client",
@@ -18964,6 +19531,20 @@
    "module": "utf_baselib_h2client",
    "name": "utest",
    "sha": "567600a6c6ae4d86eb8b4ec4f686fd31"
+  },
+  {
+   "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
+   "line": 43,
+   "module": "utf_baselib_h2client2",
+   "name": "utest",
+   "sha": "6709565b8b9b3e81fea56f7a4e784968"
+  },
+  {
+   "file": "utf_baselib_h2client3/TestHttp2ConnectionTaskTls.h",
+   "line": 48,
+   "module": "utf_baselib_h2client3",
+   "name": "utest",
+   "sha": "8c116efb83c088f731561c8d51665652"
   },
   {
    "file": "utf_baselib_h2core/TestFlowControl.h",
@@ -18999,6 +19580,13 @@
    "module": "utf_baselib_h2core",
    "name": "utest",
    "sha": "1e3ae105cb8de116755f0e69d8493e5b"
+  },
+  {
+   "file": "utf_baselib_h2core/TestHttp2TestPeer.h",
+   "line": 57,
+   "module": "utf_baselib_h2core",
+   "name": "utest",
+   "sha": "3523a4df03e009b655be75e3b8084135"
   },
   {
    "file": "utf_baselib_h2core/TestSession.h",
@@ -19139,6 +19727,13 @@
    "module": "utf_baselib_httpclient2",
    "name": "utest",
    "sha": "622950e6aea7fac30ed74100f8103903"
+  },
+  {
+   "file": "utf_baselib_httpclient3/TestHttp1ConnectionTask.h",
+   "line": 81,
+   "module": "utf_baselib_httpclient3",
+   "name": "utest",
+   "sha": "4d159e5eb51acebcd7bf4f0100fdb56d"
   },
   {
    "file": "utf_baselib_io/TestIO.h",
