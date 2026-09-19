@@ -50,3 +50,4 @@
 
 #include "TestHttpClientProfiles.h"
 #include "TestTlsClientContext.h"
+#include "TestTlsClientHello.h"

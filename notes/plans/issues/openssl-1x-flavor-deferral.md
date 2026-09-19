@@ -65,6 +65,28 @@ until this is reopened:
       three suites `TlsClientContext_NegotiatedParametersFloorTests` names -
       `AES128-GCM-SHA256`, `ECDHE-RSA-AES128-SHA` and `ECDHE-RSA-AES128-GCM-SHA256` - are
       resolvable there; the case fails with a clear message naming the suite if one is not.
+  - **S3.6 has landed** - `crypto/TlsClientHello.h`, the ClientHello parser and the JA3 and JA4
+    fingerprints. It is the least version-sensitive thing in this list and it still owes the same
+    run:
+    - The parser is arithmetic over bytes with no OpenSSL call in it at all, and the two hand-built
+      vectors its cases assert against are byte arrays written in the test. Those assertions cannot
+      differ between flavors.
+    - The two digests do use OpenSSL, through `MD5_Init` / `SHA256_Init` and their `_Update` and
+      `_Final` - the same low-level idiom `HashCalculator.h` already uses for `SHA512_Init`.
+      **That is where this header is most likely to hit the pre-existing 1.x build failure**, since
+      the `SHA512_*` and `SHA384_*` family is named above as exactly what
+      `-Werror,-Wdeprecated-declarations` fails on there. That is a prediction about a known defect
+      and not a finding; read the diagnostic that actually appears.
+    - **Still owed, and specific:** `TlsClientHello_CapturedFromRealHandshakeTests` is the one case
+      here whose expected values belong to the linked OpenSSL rather than to the test. It parses a
+      hello the library really emitted and requires a `supported_versions` extension carrying
+      0x0304, a server name, and the ALPN offer in order. Whether the older branch emits a hello of
+      that shape is not known here and is not assumed; the case is where it would show. On 3.5.4 it
+      prints the fingerprints it computed - JA3 hash `7f6ef6ebeba3cb0b7fe0b727b1fa8bba` and JA4
+      `t13d0511h2_1f640057409a_c3976d268853` for the profile its sibling case builds - so the two
+      flavors can be compared directly once the second one runs.
+    - It consumes S1.6's `enableClientHelloCapture()`, so it inherits that slice's debt above
+      rather than creating a second one.
 
 ## Why deferring is reasonable, and where the risk actually sits
 
