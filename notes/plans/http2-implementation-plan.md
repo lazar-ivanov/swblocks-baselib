@@ -1197,6 +1197,37 @@ with all of them.
   deferral). **Never included from `src/include/`.**
 - Dep: S3.1 (server role). Earliest: after S3.1 - parallel with S4.1. Accept: drives each scripted
   behavior; used by S4.2 tests.
+- **Executed 2026-09-19.** `utf_baselib_h2core` 61 -> 66 cases, clean under clang and gcc at
+  release. **S3.1's role-neutrality holds** - nothing in the engine needed changing to build a
+  server on it, which is the claim the slice existed to test.
+- **The port is ephemeral and it cost no core change.** `continueAfterResolved()` is virtual and
+  `m_acceptor` is protected, so the bound port is read back there and signalled. No fixed port, no
+  `MachineGlobalTestLock`, several peers at once, **no readiness probe** - which at this peer would
+  arrive as a connection - and no sleep, so `h2core` keeps its runs-in-parallel property.
+- **Three defects it found by being run rather than reasoned about.** (1) **A window stall is an
+  event, not a duration**: scripted as a delay plus a credit it hung 15 s on the first run, because
+  the credit is an unpredictable number and a client still short of window re-stalls with the
+  one-shot credit spent. The step now does not advance while the stream receive window is positive.
+  (2) **An opening delay was undone by the first thing the client said**, because every read path
+  ends in `pumpWrites()` - which matters exactly because a peer that accepts and says nothing is
+  what S4.1's connect-through-preface deadline catches. (3) **The assertion count was unstable**
+  (25/26/27) because a helper asserted once per write; tier 3 compares per-case counts, so that was
+  a red gate waiting rather than a cosmetic wobble.
+- **BLOCKING FOR S4.2's TLS ACCEPTANCE: the server half of ALPN does not exist.** The tree has
+  `SSL_set_alpn_protos` and `SSL_get0_alpn_selected` - the client half - and **no**
+  `SSL_CTX_set_alpn_select_cb` anywhere in `src/include/`, which is the callback a server needs to
+  choose `h2`. So **no TLS test peer is possible** until it is added and S4.4's peer is
+  cleartext-only by necessity, not by choice. **Assigned to S4.2**, riding with that slice rather
+  than taking its own gated change-set, because it is *additive API* rather than a modification of
+  an existing core path - the standing distinction in this project. If it cannot be kept additive,
+  that changes the answer and it becomes its own change-set.
+- **Cost to whoever includes it:** about **+8.6 MB clang debug and +19 MB gcc release**, measured.
+  `RawFrameScriptPeer.h` includes `Http2TestServer.h` - one rendezvous implementation, deliberately -
+  so a module wanting only the raw peer pays the same. `utf_baselib_h2core` itself went 26.1 -> 34.68
+  MB clang debug and 69.2 -> **88.21 MB gcc release** (whole-object ratio 2.54). Nothing is
+  violated: 34.68 is under the 40 MB target, and the size gate is `win-x86-*-debug` only. It is not
+  the largest object in the tree either - `utf_baselib_http` is 101.3 MB gcc release - but it is the
+  largest in this feature.
 
 ---
 
