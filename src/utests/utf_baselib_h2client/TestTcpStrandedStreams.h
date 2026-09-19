@@ -607,19 +607,28 @@ namespace utest
              * @brief The deliberate end of the run - everything echoed back and the timer has
              * ticked enough times to have been genuinely concurrent with it
              *
-             * It is called ONLY from the timer handler, and that is load bearing rather than
-             * arbitrary. MultiOperationTaskT records the FIRST error, and the operation_aborted
-             * of an operation which initiateClose() cancelled is an error like any other unless
-             * some genuine error preceded it. A deliberate beginClose() taken from the read
-             * handler, with the timer still armed, therefore cancels that timer and completes the
-             * task with operation_aborted - it fails on its own clean close. Taken from the timer
-             * handler instead, the timer is the operation which is completing, nothing else is in
-             * flight by then, and initiateClose() has nothing to cancel
+             * It is called ONLY from the timer handler. That WAS load bearing and is now merely
+             * sufficient, and the history is worth keeping because it is how the defect was found.
              *
-             * This is reported to the maintainer as a finding against S0.1 rather than worked
-             * around silently: S4.1's connection task closes deliberately - GOAWAY, an idle
-             * deadline, the last stream finishing - while a read and its timers are outstanding,
-             * which is exactly the shape that fails here
+             * When this probe was written, MultiOperationTaskT recorded the FIRST error, and the
+             * operation_aborted of an operation which initiateClose() cancelled was an error like
+             * any other unless some genuine error preceded it. A deliberate beginClose() from the
+             * read handler, with the timer still armed, therefore cancelled that timer and
+             * completed the task with operation_aborted - it failed on its own clean close. Taken
+             * from the timer handler instead, the timer is the operation completing, nothing else
+             * is in flight, and initiateClose() has nothing to cancel. That is why it is here.
+             *
+             * It was reported as a finding against S0.1 rather than worked around silently, and
+             * the mix-in was then fixed as its own gated change-set: beginClose() marks the run
+             * deliberately closing and onOperationCompleted() no longer records an
+             * operation_aborted arriving under that mark
+             * (notes/plans/issues/multioperation-deliberate-close-fails-task-record.md). So a
+             * deliberate close from the read handler would no longer fail the task, and this
+             * restriction is no longer required for correctness.
+             *
+             * It is kept because the timer handler is still the point at which this probe knows
+             * both halves are done, not because the alternative is broken. Do not cite the old
+             * reason for it.
              */
 
             void chkToClose() NOEXCEPT
