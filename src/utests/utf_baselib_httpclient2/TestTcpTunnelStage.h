@@ -961,6 +961,67 @@ UTF_AUTO_TEST_CASE( TcpTunnelStage_HttpConnectNegotiationTests )
     }
 
     /*
+     * ...but that refusal is for a 2xx only. A proxy which says no is entitled to a body, and
+     * because the reader asks for at most READ_CHUNK_SIZE octets at a time the read which
+     * completes the header section normally carries the first bytes of that HTML explanation with
+     * it. None of the reasoning above applies: no tunnel was established, nothing is about to
+     * handshake. So what must come out is the HttpException carrying 407 - the thing which lets a
+     * caller ask for credentials - and not the framing error the trailing body would otherwise
+     * produce
+     */
+
+    {
+        HttpConnectNegotiation negotiation(
+            ProxyConfig::httpConnect( "proxy.example.com", 3128U ),
+            "origin.example.com",
+            443U
+            );
+
+        ( void ) negotiation.onWriteCompleted();
+
+        const std::string response(
+            "HTTP/1.1 407 Proxy Authentication Required\r\n"
+            "Proxy-Authenticate: Basic realm=\"x\"\r\n"
+            "Content-Type: text/html\r\n"
+            "Content-Length: 43\r\n"
+            "\r\n"
+            "<html><body>Proxy credentials</body></html>"
+            );
+
+        bool thrown = false;
+
+        try
+        {
+            ( void ) negotiation.onDataRead( response.c_str(), response.size() );
+        }
+        catch( HttpException& e )
+        {
+            thrown = true;
+
+            const auto* statusCode = eh::get_error_info< eh::errinfo_http_status_code >( e );
+
+            UTF_REQUIRE( statusCode );
+            UTF_REQUIRE_EQUAL( *statusCode, 407 );
+
+            UTF_REQUIRE(
+                cpp::contains(
+                    std::string( e.what() ),
+                    std::string( "The proxy refused a CONNECT request with status 407" )
+                    )
+                );
+        }
+        catch( InvalidDataFormatException& )
+        {
+            UTF_FAIL(
+                "A refused CONNECT which carries a body must fail with its status, not as a "
+                "framing error"
+                );
+        }
+
+        UTF_REQUIRE( thrown );
+    }
+
+    /*
      * Something which is not a status line is refused before its middle three characters are read
      * as a status code
      */

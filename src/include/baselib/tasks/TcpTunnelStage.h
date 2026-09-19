@@ -702,6 +702,20 @@ namespace bl
                 const auto endOfHeaders = terminator + 4U;
 
                 /*
+                 * THE STATUS IS JUDGED FIRST, so the trailing-bytes check below only ever runs on
+                 * a 2xx. A refusal is entitled to a body - a 407 asking for credentials or a 403
+                 * refusing them normally explains itself in HTML, and since the reader asks for at
+                 * most READ_CHUNK_SIZE octets at a time the read which completes the header
+                 * section usually carries the first bytes of that body with it. None of the
+                 * reasoning below applies to a refusal: no tunnel was established, nothing is
+                 * about to handshake, and the connection is finished. What the failure has to
+                 * carry is the status, and judging the trailing bytes first would replace it with
+                 * a framing error
+                 */
+
+                chkStatusIsSuccess();
+
+                /*
                  * THE PROXY MUST NOT HAVE SENT ANYTHING PAST THE HEADER SECTION, and this is the
                  * one place that can be noticed. Everything after CRLF CRLF on an established
                  * tunnel belongs to the ORIGIN, and the bytes are already consumed from the socket
@@ -720,8 +734,6 @@ namespace bl
                     BL_MSG()
                         << "The proxy sent data past the end of the CONNECT response headers"
                     );
-
-                chkStatusIsSuccess();
 
                 return TunnelStep::done();
             }
