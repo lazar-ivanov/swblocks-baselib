@@ -22,6 +22,10 @@
 #include <baselib/http2/FrameCodec.h>
 #include <baselib/http2/FlowControlWindow.h>
 #include <baselib/http2/StreamStateMachine.h>
+#include <baselib/http2/HpackHuffman.h>
+#include <baselib/http2/HpackDynamicTable.h>
+#include <baselib/http2/HpackDecoder.h>
+#include <baselib/http2/HpackEncoder.h>
 
 /*
  * The HTTP/2 umbrella. Each slice which adds an http2/ header appends its #include above, in the
