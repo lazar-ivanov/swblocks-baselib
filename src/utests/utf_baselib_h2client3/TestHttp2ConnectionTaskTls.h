@@ -284,4 +284,72 @@ UTF_AUTO_TEST_CASE( H2Driver_TlsAlpnServerPreferenceWinsTests )
         );
 }
 
+/**
+ * @brief No overlap at all - the handshake completes and NOTHING is selected
+ *
+ * The client offers "http/1.1" alone and the peer prefers "h2" alone, so
+ * alpnSelectCallback( ) walks its whole list, matches none of it and answers
+ * SSL_TLSEXT_ERR_NOACK - the branch neither case above reaches, since both of them overlap.
+ *
+ * WHAT THIS PINS THAT THE FALLBACK CASE IN utf_baselib_h2client DOES NOT. That case drives the
+ * client against a raw test callback which returns NOACK unconditionally; this one drives it
+ * against the library's own setAlpnServerPreference, so the no-overlap path through
+ * crypto::CryptoBase is what produces the empty selection. The two halves then meet:
+ * getAlpnSelected( ) is empty, negotiatedProtocol maps empty to withoutAlpn( Http11 ) rather than
+ * reaching fromAlpn( "" ), and design 5.5's fallback takes the stream with an EMPTY identifier -
+ * which is the outcome that could not be represented at all if this entry point sent RFC 7301
+ * section 3.2's fatal no_application_protocol alert instead
+ */
+
+UTF_AUTO_TEST_CASE( H2Driver_TlsAlpnNoOverlapSelectsNothingTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest;
+    using namespace utest::h2driver;
+
+    std::vector< std::string > preference;
+
+    preference.push_back( "h2" );
+
+    const auto peer = makeTlsPeer( preference );
+
+    withPeer(
+        peer,
+        [ & ]( SAA_in const unsigned short port ) -> void
+        {
+            const auto record = std::make_shared< FallbackRecord >();
+
+            ClientConnectionConfig config;
+
+            config.alpnOffer.clear();
+            config.alpnOffer.push_back( "http/1.1" );
+
+            const auto driver = TlsDriverImpl::createInstance(
+                makeKey( "https", "localhost", port ),
+                makeFallbackFactory< TcpSslSocketAsyncStrandedBase >( record ),
+                Http2ConnectionConfig(),
+                config
+                );
+
+            runDriver( driver, []() -> void {} );
+
+            chkTaskSucceeded( om::qi< Task >( driver ) );
+
+            const auto connection = om::qi< httpclient::ClientConnection >( driver );
+
+            /*
+             * Nothing was selected, so the protocol is the one withoutAlpn( ) names and the
+             * identifier is EMPTY - not "http/1.1", which is what a selection would have carried
+             */
+
+            UTF_REQUIRE( HttpProtocol::Http11 == connection -> negotiated().protocol() );
+            UTF_REQUIRE( connection -> negotiated().alpn().empty() );
+
+            UTF_REQUIRE_EQUAL( record -> creations, 1U );
+            UTF_REQUIRE( record -> alpn.empty() );
+        }
+        );
+}
+
 #endif /* __UTEST_TESTHTTP2CONNECTIONTASKTLS_H_ */
