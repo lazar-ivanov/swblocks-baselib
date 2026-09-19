@@ -969,9 +969,16 @@ of the empty string.
      continuation when the task stops, or the task leaks.
   2. A stage with no socket I/O in flight is **never woken by the base `cancelTask()`**, which cancels
      socket operations. It must cancel its own async objects - timers, resolvers - itself.
-- Note that the handshake retry this stage must be re-entrant against is **currently unreachable with a
-  real peer** - see `notes/plans/issues/tls-handshake-retry-unreachable-record.md`. Write the
-  once-per-attempt behavior to the contract, not to what the retry happens to do today.
+- **The handshake retry this stage must be re-entrant against is REACHABLE.** An earlier version of
+  this note said it was unreachable with a real peer; that was true when it was written and stopped
+  being true on **2026-09-18**, when the classifier was widened as its own gated change-set
+  (`notes/plans/issues/tls-handshake-retry-unreachable-record.md`, **CLOSED**). The note outlived
+  the defect and was passed on to S3.5's work order before it was caught. Write the once-per-attempt
+  behavior to the contract regardless - which is what S3.5 did, structurally, by constructing a
+  fresh negotiation in `beginPreHandshakeStage` so nothing from the previous attempt is reachable -
+  but do not reason from "the retry never fires", because it does. (The lane reported that S4.1 and
+  S5.2 carry the same stale note; they do not - they do not reference the record at all, and the
+  only other mention of it, under S0.3, already says CLOSED.)
 - **Do not begin multi-operation work in the stage without resetting the accounting.** This is the one
   place the hazard becomes real: `MultiOperationTaskT` clears its accounting only in `scheduleNothrow`,
   while `scheduleTaskFinishContinuation` (`TcpBaseTasks.h:1437`) retries the transaction **in place**.
