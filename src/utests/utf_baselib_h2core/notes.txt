@@ -66,6 +66,7 @@
 --log_level=message --run_test=Session_DuplicateProfileSettingTests
 --log_level=message --run_test=Session_PushPromiseAndPingTests
 --log_level=message --run_test=Session_GoAwayAndRetryTests
+--log_level=message --run_test=Session_GoAwayDropsQueuedHeaderBlockTests
 --log_level=message --run_test=Session_ProfileShapingTests
 
 --log_level=message --run_test=Http2TestPeer_RequestAndResponseTests
