@@ -56,3 +56,4 @@
  */
 
 #include "TestHttp2ConnectionTask.h"
+#include "TestHttp2ConnectionTaskTls.h"
