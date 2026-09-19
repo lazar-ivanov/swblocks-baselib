@@ -2080,6 +2080,46 @@ UTF_AUTO_TEST_CASE( Hpack_DecodedSizeLimitTests )
         UTF_REQUIRE_EQUAL( decoder.dynamicTable().entryCount(), 2U );
         UTF_REQUIRE_EQUAL( decoder.dynamicTable().size(), 110U );
     }
+
+    {
+        /*
+         * THE PART THAT IS EASY TO GET WRONG, and which the blocks above cannot show. A decoder
+         * which stops at the field that broke the bound is still wrong, because the peer's
+         * encoder ran the whole block and its table moved for all of it. This is C.5.1 - four
+         * literal representations with incremental indexing, every one of them an insertion -
+         * with a limit which is already gone at the SECOND of them. All four still have to
+         * reach the table
+         */
+
+        decoder_t decoder( 256U );
+
+        const auto response = octets(
+            "4803 3330 3258 0770 7269 7661 7465 611d"
+            "4d6f 6e2c 2032 3120 4f63 7420 3230 3133"
+            "2032 303a 3133 3a32 3120 474d 546e 1768"
+            "7474 7073 3a2f 2f77 7777 2e65 7861 6d70"
+            "6c65 2e63 6f6d"
+            );
+
+        fields_t fields;
+
+        UTF_REQUIRE(
+            decoder.decode( response.data(), response.size(), 50U, fields ) ==
+                decoder_t::Outcome::ExceededDecodedSizeLimit
+            );
+
+        UTF_REQUIRE( fields.empty() );
+
+        static const ExpectedEntry g_table[] =
+        {
+            { "location",       "https://www.example.com",          63U },
+            { "date",           "Mon, 21 Oct 2013 20:13:21 GMT",     65U },
+            { "cache-control",  "private",                           52U },
+            { ":status",        "302",                               42U },
+        };
+
+        requireTable( decoder.dynamicTable(), g_table, 222U );
+    }
 }
 
 UTF_AUTO_TEST_CASE( Hpack_DynamicTableAfterMidBlockFailureTests )
