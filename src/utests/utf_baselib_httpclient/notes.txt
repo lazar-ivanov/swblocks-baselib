@@ -43,3 +43,4 @@
 --log_level=message --run_test=Http1Codec_SmugglingDefencesTests
 --log_level=message --run_test=Http1Codec_LimitsTests
 --log_level=message --run_test=Http1Codec_RequestSerializerTests
+--log_level=message --run_test=Http1Codec_LocaleIndependenceTests

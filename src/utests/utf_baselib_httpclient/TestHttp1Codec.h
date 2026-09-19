@@ -22,6 +22,7 @@
 #include <baselib/core/BaseIncludes.h>
 
 #include <cstddef>
+#include <locale>
 #include <string>
 #include <vector>
 
@@ -177,6 +178,205 @@ namespace utest
             profile.callerHeaderPlacement = ht::CallerHeaderPlacement::Appended;
 
             return profile;
+        }
+
+        /**
+         * @brief A std::ctype facet which is wrong on purpose, so the codec can be run under it
+         *
+         * A test which only asserts that the codec is ASCII-correct while the C locale is
+         * installed proves nothing about the hazard, because the C locale is the one case where
+         * the locale-dependent spelling and the ASCII one agree. So the hazard is BUILT here and
+         * the codec is run inside it
+         *
+         * The facet is constructed rather than taken from the system, which makes the case
+         * self-contained - no locale has to be generated on the host - and it perturbs the two
+         * classifications the two fixed call sites used to consult:
+         *
+         *   - ',' and one obs-text octet are classified as WHITESPACE, which is what turns a trim
+         *     through std::locale() into a way past the 'Transfer-Encoding is exactly chunked'
+         *     gate: 'chunked,' is what a front end produces when it joins two Transfer-Encoding
+         *     fields, and a locale-folded trim reduces it to the single token the gate accepts
+         *   - 'I' LOWERS to a dotless i, which is what a Turkish locale really does and what
+         *     turns a case-map key built through std::locale() into a lookup miss
+         *
+         * WHICH OF THE TWO SPACE OCTETS ACTUALLY BITES IS A STANDARD-LIBRARY PROPERTY. libc++,
+         * which this toolchain uses, short-circuits ctype< char >::is( ... ) to false for every
+         * non-ASCII octet, so the obs-text spelling the review named is not reachable there;
+         * libstdc++ indexes its table for all 256 and it is. ',' is reachable on both, so it is
+         * what the perturbation is REQUIREd on below, and the gate is then shown holding for both
+         * spellings
+         *
+         * Beast itself is not locale-dependent - it carries its own ascii_tolower and the one
+         * stream it builds imbues std::locale::classic() - so what these cases exercise is the
+         * facade's own code, which is where the defect was
+         */
+
+        class HostileCtype FINAL : public std::ctype< char >
+        {
+        public:
+
+            enum : unsigned char
+            {
+                g_spaceChar         = static_cast< unsigned char >( ',' ),
+                g_obsTextSpace      = 0x8AU,
+                g_dotlessI          = 0xFDU,
+            };
+
+            HostileCtype()
+                :
+                std::ctype< char >( hostileTable(), false /* del */, 0U /* refs */ )
+            {
+            }
+
+        protected:
+
+            char do_tolower( char ch ) const OVERRIDE
+            {
+                return 'I' == ch ?
+                    static_cast< char >( g_dotlessI ) : std::ctype< char >::do_tolower( ch );
+            }
+
+            const char* do_tolower( char* low, const char* high ) const OVERRIDE
+            {
+                for( ; low != high; ++low )
+                {
+                    *low = do_tolower( *low );
+                }
+
+                return high;
+            }
+
+        private:
+
+            static const mask* hostileTable()
+            {
+                static std::vector< mask > g_table = makeTable();
+
+                return &g_table[ 0 ];
+            }
+
+            static std::vector< mask > makeTable()
+            {
+                std::vector< mask > table( classic_table(), classic_table() + table_size );
+
+                markAsSpace( table, g_spaceChar );
+                markAsSpace( table, g_obsTextSpace );
+
+                return table;
+            }
+
+            static void markAsSpace(
+                std::vector< mask >&                                            table,
+                const unsigned char                                             octet
+                )
+            {
+                table[ octet ] = static_cast< mask >( table[ octet ] | std::ctype_base::space );
+            }
+        };
+
+        inline std::locale hostileLocale()
+        {
+            return std::locale( std::locale::classic(), new HostileCtype() );
+        }
+
+        /**
+         * @brief Installs a global locale for the life of the object and puts the old one back
+         *
+         * std::locale::global is process-wide, so the window it is installed for is kept as small
+         * as it can be and nothing inside it formats anything
+         */
+
+        class GlobalLocaleGuard FINAL
+        {
+            BL_NO_COPY_OR_MOVE( GlobalLocaleGuard )
+
+        public:
+
+            explicit GlobalLocaleGuard( const std::locale& installed )
+                :
+                m_saved( std::locale::global( installed ) )
+            {
+            }
+
+            ~GlobalLocaleGuard() NOEXCEPT
+            {
+                BL_NOEXCEPT_BEGIN()
+
+                std::locale::global( m_saved );
+
+                BL_NOEXCEPT_END()
+            }
+
+        private:
+
+            const std::locale                                                   m_saved;
+        };
+
+        /**
+         * @brief What one response parse answered - captured, so it can be compared later
+         *
+         * Two parses of the same bytes under two different global locales must answer the same
+         * thing, and that comparison is the property these cases are about
+         */
+
+        struct ParseAnswer
+        {
+            bool                                                                refused;
+            bool                                                                complete;
+            ht::Http1CodecError                                                 reason;
+
+            ParseAnswer() NOEXCEPT
+                :
+                refused( false ),
+                complete( false ),
+                reason( ht::Http1CodecError::None )
+            {
+            }
+        };
+
+        inline ParseAnswer answerFor( const std::string& wire )
+        {
+            bl::httpclient::Http1ResponseParser parser;
+
+            const auto outcome = feed( parser, wire, true /* eofAfter */ );
+
+            ParseAnswer answer;
+
+            answer.refused = outcome.hasError.value();
+            answer.complete = parser.isComplete();
+            answer.reason = outcome.codecError.value();
+
+            return answer;
+        }
+
+        /**
+         * @brief Renders a ParseAnswer, so a mismatch names what differed rather than 'false'
+         *
+         * The decimal conversion is spelled out because every stream and every lexical_cast in
+         * this library carries a locale, and a case about locale independence should not be
+         * reporting its own results through one
+         */
+
+        inline std::string answerAsText( const ParseAnswer& answer )
+        {
+            auto value = static_cast< unsigned >( answer.reason );
+
+            std::string digits;
+
+            do
+            {
+                digits += static_cast< char >( '0' + ( value % 10U ) );
+                value /= 10U;
+            }
+            while( 0U != value );
+
+            std::string result = answer.refused ? "refused" : "accepted";
+
+            result += answer.complete ? ";complete" : ";not-complete";
+            result += ";reason=";
+            result += std::string( digits.rbegin(), digits.rend() );
+
+            return result;
         }
 
     } // http1codec
@@ -1220,4 +1420,176 @@ UTF_AUTO_TEST_CASE( Http1Codec_RequestSerializerTests )
 
         UTF_CHECK_NO_THROW( httpclient::Http1RequestSerializer::serialize( "GET", "/p", lowerHost ) );
     }
+}
+
+/*
+ * S2.5, the L2 review's finding 3 - the codec must not fold case or trim whitespace through
+ * std::locale()
+ *
+ * The two sites this pins are Http1Codec.h's Transfer-Encoding gate and its http1CaseMap lookup.
+ * Both used to go through str::trim_copy and str::to_lower_copy, which are boost's and take
+ * std::locale(), so the answer of a SECURITY CHECK depended on a global the embedding process can
+ * change - and the perturbation runs toward leniency, which is the dangerous direction
+ *
+ * Every result below is COMPUTED inside the hostile locale and ASSERTED outside it. The global
+ * locale is process-wide, so running the test framework's own formatting under a facet which is
+ * wrong on purpose would prove nothing and risk a good deal
+ */
+
+UTF_AUTO_TEST_CASE( Http1Codec_LocaleIndependenceTests )
+{
+    using namespace bl;
+    using namespace utest::http1codec;
+
+    const std::string obsText( 1U, static_cast< char >( HostileCtype::g_obsTextSpace ) );
+
+    /*
+     * Three Transfer-Encoding values, each parsed twice - once under the classic locale and once
+     * under the hostile one. The first must be accepted and the other two refused, and the two
+     * runs must answer the same thing, which is the property the fix is about
+     *
+     * The labels travel separately because the third value carries a raw obs-text octet and a
+     * failure message should not be printing that
+     */
+
+    std::vector< std::string > codings;
+    std::vector< std::string > labels;
+
+    codings.push_back( "chunked" );
+    labels.push_back( "TE-plain-chunked" );
+
+    codings.push_back( "chunked," );
+    labels.push_back( "TE-trailing-comma" );
+
+    codings.push_back( "chunked" + obsText );
+    labels.push_back( "TE-plus-obs-text" );
+
+    const std::string wirePrefix = "HTTP/1.1 200 OK\r\nTransfer-Encoding: ";
+    const std::string wireSuffix = "\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
+
+    /*
+     * The case-map half. The caller spells the name in upper case, the profile maps the lower-case
+     * spelling to its own casing, and 'If-Modified-Since' is chosen because it carries the one
+     * letter a Turkish locale gets wrong
+     */
+
+    auto profile = sampleProfile();
+
+    profile.http1CaseMap[ "if-modified-since" ] = "If-Modified-Since";
+
+    http::HeaderList caller;
+
+    caller.append( "host", "example.com" );
+    caller.append( "IF-MODIFIED-SINCE", "0" );
+
+    std::vector< ParseAnswer > classicAnswers;
+
+    for( std::size_t i = 0U; i < codings.size(); ++i )
+    {
+        classicAnswers.push_back( answerFor( wirePrefix + codings[ i ] + wireSuffix ) );
+    }
+
+    const auto classicRendered =
+        headersAsText( httpclient::Http1RequestSerializer::orderHeaders( caller, profile ) );
+
+    bool trimIsPerturbed = false;
+    bool foldIsPerturbed = false;
+
+    std::vector< ParseAnswer > hostileAnswers;
+
+    std::string hostileRendered;
+
+    {
+        const GlobalLocaleGuard guard( hostileLocale() );
+
+        /*
+         * First, that the facet really does bite - without this the rest of the case is vacuous,
+         * because a locale which changes nothing cannot demonstrate anything. These two lines are
+         * the DEFECT, executed: they are exactly what the two fixed call sites used to do, and
+         * the first of them turns 'chunked,' into the single token the gate would have accepted
+         */
+
+        trimIsPerturbed = ( "chunked" == str::trim_copy( std::string( "chunked," ) ) );
+
+        foldIsPerturbed =
+            ( "if-modified-since" != str::to_lower_copy( std::string( "IF-MODIFIED-SINCE" ) ) );
+
+        for( std::size_t i = 0U; i < codings.size(); ++i )
+        {
+            hostileAnswers.push_back( answerFor( wirePrefix + codings[ i ] + wireSuffix ) );
+        }
+
+        hostileRendered =
+            headersAsText( httpclient::Http1RequestSerializer::orderHeaders( caller, profile ) );
+    }
+
+    /*
+     * The global locale is back, so from here on the framework formats under whatever the process
+     * was started with
+     */
+
+    UTF_REQUIRE( trimIsPerturbed );
+    UTF_REQUIRE( foldIsPerturbed );
+
+    /*
+     * ---- The Transfer-Encoding gate ------------------------------------------------------------
+     *
+     * The hostile locale changes nothing about what the codec answers. 'chunked,' is not the single
+     * token 'chunked' and is refused under both, although a locale-folded trim reduces it to
+     * 'chunked' exactly as the REQUIRE above shows - and 'chunked' itself is still accepted under
+     * the same locale, which is the other side of the boundary a refuse-everything gate would also
+     * satisfy
+     */
+
+    UTF_REQUIRE_EQUAL( hostileAnswers.size(), classicAnswers.size() );
+
+    for( std::size_t i = 0U; i < hostileAnswers.size(); ++i )
+    {
+        UTF_CHECK_EQUAL(
+            labels[ i ] + ":" + answerAsText( hostileAnswers[ i ] ),
+            labels[ i ] + ":" + answerAsText( classicAnswers[ i ] )
+            );
+
+        const auto& answer = hostileAnswers[ i ];
+
+        if( 0U == i )
+        {
+            UTF_CHECK_EQUAL(
+                labels[ i ] + ( answer.refused ? ":REFUSED" : ":accepted" ),
+                labels[ i ] + ":accepted"
+                );
+
+            continue;
+        }
+
+        UTF_CHECK_EQUAL(
+            labels[ i ] + ( answer.refused ? ":refused" : ":ACCEPTED" ),
+            labels[ i ] + ":refused"
+            );
+
+        UTF_CHECK_EQUAL(
+            labels[ i ] +
+                (
+                    httpclient::Http1CodecError::UnsupportedTransferCoding == answer.reason ?
+                        ":right-reason" : ":WRONG-REASON"
+                ),
+            labels[ i ] + ":right-reason"
+            );
+    }
+
+    /*
+     * ---- The http1CaseMap lookup ---------------------------------------------------------------
+     *
+     * Not a smuggling gate, the same class of defect: the key is built with an ASCII fold, so the
+     * profile's casing is what goes on the wire whatever locale the embedder installed. Through a
+     * locale-folded key, 'IF-MODIFIED-SINCE' misses the table and the request goes out in the
+     * caller's casing instead - which is exactly the fingerprint the profile exists to reproduce
+     */
+
+    UTF_CHECK_EQUAL( hostileRendered, classicRendered );
+
+    UTF_CHECK_EQUAL(
+        hostileRendered,
+        std::string( "Host=example.com;User-Agent=ProfileUA;Accept=*/*;Accept-Language=en;If-Modified-Since=0;" )
+        );
 }
