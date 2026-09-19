@@ -18,6 +18,11 @@
 #define __BL_HTTPCLIENT_PRECOMPILED_H_
 
 #include <baselib/httpclient/HeaderProfile.h>
+#include <baselib/httpclient/ClientTypes.h>
+#include <baselib/httpclient/ClientConnection.h>
+#include <baselib/httpclient/CookieJar.h>
+#include <baselib/httpclient/RedirectPolicy.h>
+#include <baselib/httpclient/ContentDecoder.h>
 
 /*
  * The version-neutral HTTP client umbrella. Each slice which adds an httpclient/ header appends

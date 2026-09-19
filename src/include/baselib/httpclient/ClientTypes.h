@@ -1,0 +1,515 @@
+/*
+ * This file is part of the swblocks-baselib library.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#ifndef __BL_HTTPCLIENT_CLIENTTYPES_H_
+#define __BL_HTTPCLIENT_CLIENTTYPES_H_
+
+#include <baselib/httpclient/HeaderProfile.h>
+
+#include <baselib/http/HeaderList.h>
+
+#include <baselib/data/DataBlock.h>
+
+#include <baselib/core/Uri.h>
+#include <baselib/core/TimeUtils.h>
+#include <baselib/core/ObjModel.h>
+#include <baselib/core/BaseIncludes.h>
+
+#include <cstddef>
+#include <cstdint>
+#include <string>
+
+BL_IID_DECLARE( BodySource, "7fba12d0-9957-4e42-b0df-5960b87dcb93" )
+BL_IID_DECLARE( BodySink, "f81600a3-7a8d-4c95-a0e8-1c5ade384cf8" )
+
+namespace bl
+{
+    namespace httpclient
+    {
+        /*
+         * The value objects and the body seams of the HTTP client - notes/plans/http2-design.md
+         * 5.3, and the work order of slice S2.6
+         *
+         * THE CONTRACT THIS FILE EXISTS TO FREEZE. S4.1-S4.3, S5.1 and S5.2 are built in parallel
+         * against these declarations and against ClientConnection.h. If they are vague those five
+         * slices drift apart and meet in an integration failure, so they are published first and
+         * then frozen: a change here is a change to every consumer and is negotiated rather than
+         * made unilaterally
+         *
+         * DECOUPLED FROM THE SESSION ENGINE, DELIBERATELY AND WITHOUT EXCEPTION. Nothing declared
+         * in this file or in ClientConnection.h names an http2::Session type - not an event, not a
+         * command, not a stream id, not an error code of the protocol's own enumeration. Everything
+         * crossing these interfaces is a plain value: a std::string, a net::Uri, an
+         * http::HeaderList, a data::DataBlock, an eh::error_code, a time::time_duration or one of
+         * the small enumerations below
+         *
+         * That is not tidiness. The I/O shell (S4.x, S5.x) and the session engine (S3.1) are built
+         * against each other; if the contracts the shell is written against were expressed in the
+         * engine's types then neither could be compiled, tested or reviewed until the other
+         * existed. A plain value is what breaks that cycle, and it is also what lets the HTTP/1.1
+         * driver - which has no Session at all - implement the very same interfaces (design 5.5)
+         */
+
+        /**
+         * @brief The wire protocol a response arrived over, and which a connection speaks
+         *
+         * 'Unknown' is the state of a connection before ALPN has resolved; it is never the
+         * protocol of a delivered response
+         */
+
+        enum class HttpProtocol : std::uint8_t
+        {
+            Unknown,
+            Http11,
+            Http2,
+        };
+
+        /**
+         * @brief The RFC 9218 priority signal of one request
+         *
+         * Carried as the two parameters of the scheme rather than as a rendered header value,
+         * because HTTP/2 sends them in a PRIORITY_UPDATE frame and HTTP/1.1 sends them not at all;
+         * the browser profile's own per-kind 'priority' header value is a separate thing and lives
+         * in HeaderProfileForKind
+         */
+
+        struct RequestPriority
+        {
+            /**
+             * The urgency, 0 (most urgent) through 7; RFC 9218 section 4.1 makes 3 the default
+             */
+
+            cpp::ScalarTypeIniter< std::uint8_t >                               urgency;
+
+            /**
+             * Whether the response is usable incrementally (RFC 9218 section 4.2)
+             */
+
+            cpp::ScalarTypeIniter< bool >                                       isIncremental;
+
+            enum : std::uint8_t
+            {
+                DEFAULT_URGENCY                     = 3U,
+                MAX_URGENCY                         = 7U,
+            };
+
+            RequestPriority() NOEXCEPT
+            {
+                urgency = DEFAULT_URGENCY;
+            }
+        };
+
+        /**
+         * @brief What one pull from a BodySource produced
+         *
+         * The size and the end-of-stream flag are separate because they are independent: a source
+         * may legitimately produce zero bytes without being finished (it is waiting on something),
+         * and it may produce the last bytes and know it is finished in the same pull. Returning
+         * "zero means end of stream" would conflate the two and would make the common case - the
+         * final non-empty chunk - cost one extra pull
+         */
+
+        struct BodyReadResult
+        {
+            cpp::ScalarTypeIniter< std::size_t >                                size;
+            cpp::ScalarTypeIniter< bool >                                       isEndOfStream;
+        };
+
+        /**
+         * @brief The pull side of a streaming request body (design 5.3)
+         *
+         * The driver pulls when it has window to send into, so the source is the point at which a
+         * slow producer slows the request rather than buffering the whole upload
+         *
+         * canRewind() is what decides replayability, and through it whether a request may be
+         * retried on another connection after a provably unprocessed failure (design 5.4, D6). A
+         * source which cannot rewind makes the request unretryable; that is a correctness
+         * statement about the source, not a hint, so it is asked before a retry and never guessed
+         */
+
+        class BodySource : public om::Object
+        {
+            BL_DECLARE_INTERFACE( BodySource )
+
+        public:
+
+            /**
+             * @brief Fills 'target' with up to its remaining capacity and reports what was
+             * produced
+             *
+             * The source appends at target -> size() and grows it; it never touches offset1(),
+             * which belongs to the consumer
+             */
+
+            virtual BodyReadResult read( SAA_inout data::DataBlock& target ) = 0;
+
+            /**
+             * @brief Whether rewind() can restart this source from its first byte
+             */
+
+            virtual bool canRewind() const NOEXCEPT = 0;
+
+            /**
+             * @brief Restarts the source from its first byte
+             *
+             * @throw NotSupportedException when canRewind() is false
+             */
+
+            virtual void rewind() = 0;
+        };
+
+        /**
+         * @brief The push side of a streaming response body (design 5.3)
+         *
+         * onData( ... ) returns the number of bytes it consumed, and that number is what the
+         * request task reports to the connection as consumed - which is what credits the stream's
+         * flow control window. So a sink which consumes less than it was offered applies
+         * backpressure all the way to the server, and one which lies about it breaks flow control.
+         * A sink which consumes nothing is not an error; the remainder is offered again
+         */
+
+        class BodySink : public om::Object
+        {
+            BL_DECLARE_INTERFACE( BodySink )
+
+        public:
+
+            /**
+             * @brief Offers the bytes between data -> offset1() and data -> size()
+             *
+             * @return the number of bytes consumed, at most the number offered
+             */
+
+            virtual std::size_t onData( SAA_in const om::ObjPtr< data::DataBlock >& data ) = 0;
+
+            /**
+             * @brief The body is complete; no further onData( ... ) will follow
+             */
+
+            virtual void onComplete() = 0;
+        };
+
+        /**
+         * @brief One client request - a value object, copyable and movable
+         *
+         * Copyable because the retry rule of design 5.4 replays a request on another connection and
+         * a redirect (5.6) derives a second request from the first, so a request is duplicated by
+         * the layers above rather than mutated in place. The body block and the body source are
+         * therefore held by om::ObjPtrCopyable
+         *
+         * The body is EITHER a buffered block OR a source, never both, and setting one clears the
+         * other. That is an invariant of the type rather than a convention, because a driver which
+         * found both would have no defined answer to which one goes on the wire
+         */
+
+        class ClientRequest FINAL
+        {
+        private:
+
+            std::string                                                         m_method;
+            net::Uri                                                            m_url;
+            http::HeaderList                                                    m_headers;
+
+            om::ObjPtrCopyable< data::DataBlock >                               m_body;
+            om::ObjPtrCopyable< BodySource >                                    m_bodySource;
+
+            cpp::ScalarTypeIniter< HttpRequestKind >                            m_kind;
+            RequestPriority                                                     m_priority;
+
+            time::time_duration                                                 m_totalTimeout;
+            time::time_duration                                                 m_responseHeadersTimeout;
+
+        public:
+
+            ClientRequest()
+                :
+                m_method( "GET" ),
+                m_totalTimeout( time::neg_infin ),
+                m_responseHeadersTimeout( time::neg_infin )
+            {
+                m_kind = HttpRequestKind::Fetch;
+            }
+
+            const std::string& method() const NOEXCEPT
+            {
+                return m_method;
+            }
+
+            void method( SAA_in std::string method )
+            {
+                m_method = BL_PARAM_FWD( method );
+            }
+
+            const net::Uri& url() const NOEXCEPT
+            {
+                return m_url;
+            }
+
+            void url( SAA_in net::Uri url )
+            {
+                m_url = BL_PARAM_FWD( url );
+            }
+
+            const http::HeaderList& headers() const NOEXCEPT
+            {
+                return m_headers;
+            }
+
+            http::HeaderList& headers() NOEXCEPT
+            {
+                return m_headers;
+            }
+
+            void headers( SAA_in http::HeaderList headers )
+            {
+                m_headers = BL_PARAM_FWD( headers );
+            }
+
+            const om::ObjPtrCopyable< data::DataBlock >& body() const NOEXCEPT
+            {
+                return m_body;
+            }
+
+            /**
+             * @brief Sets the buffered body, clearing any body source
+             */
+
+            void body( SAA_in_opt om::ObjPtrCopyable< data::DataBlock > body ) NOEXCEPT
+            {
+                m_body = BL_PARAM_FWD( body );
+                m_bodySource.reset();
+            }
+
+            const om::ObjPtrCopyable< BodySource >& bodySource() const NOEXCEPT
+            {
+                return m_bodySource;
+            }
+
+            /**
+             * @brief Sets the streaming body source, clearing any buffered body
+             */
+
+            void bodySource( SAA_in_opt om::ObjPtrCopyable< BodySource > bodySource ) NOEXCEPT
+            {
+                m_bodySource = BL_PARAM_FWD( bodySource );
+                m_body.reset();
+            }
+
+            bool hasBody() const NOEXCEPT
+            {
+                return nullptr != m_body || nullptr != m_bodySource;
+            }
+
+            HttpRequestKind kind() const NOEXCEPT
+            {
+                return m_kind;
+            }
+
+            void kind( SAA_in const HttpRequestKind kind ) NOEXCEPT
+            {
+                m_kind = kind;
+            }
+
+            const RequestPriority& priority() const NOEXCEPT
+            {
+                return m_priority;
+            }
+
+            void priority( SAA_in const RequestPriority& priority ) NOEXCEPT
+            {
+                m_priority = priority;
+            }
+
+            /**
+             * @brief The deadline for the whole request, pool wait included
+             *
+             * A special value - the default is time::neg_infin - means "unset, apply the session
+             * default", which is the sentinel this library already uses for an optional duration
+             * ( HttpServerBackendMessagingBridge.h:1125, HttpServer.h:94 ). The session default is
+             * 30 minutes ( design 5.7 )
+             */
+
+            const time::time_duration& totalTimeout() const NOEXCEPT
+            {
+                return m_totalTimeout;
+            }
+
+            void totalTimeout( SAA_in const time::time_duration& totalTimeout )
+            {
+                m_totalTimeout = totalTimeout;
+            }
+
+            /**
+             * @brief The deadline for the response headers alone
+             *
+             * A special value means unset, and this one is off by default ( design 5.7 )
+             */
+
+            const time::time_duration& responseHeadersTimeout() const NOEXCEPT
+            {
+                return m_responseHeadersTimeout;
+            }
+
+            void responseHeadersTimeout( SAA_in const time::time_duration& responseHeadersTimeout )
+            {
+                m_responseHeadersTimeout = responseHeadersTimeout;
+            }
+
+            /**
+             * @brief Whether this request may be sent a second time, on another connection
+             *
+             * The replayability half of the retry rule of design 5.4 - the other half, whether the
+             * failure proves the request was unprocessed, belongs to the connection and to the
+             * pool. It is a query on the request and NOT on the pool, because only the request
+             * knows what its body is: a request with no body or a buffered one can always be
+             * written again, and a streaming one can only if its source can rewind
+             */
+
+            bool isReplayable() const NOEXCEPT
+            {
+                return nullptr == m_bodySource || m_bodySource -> canRewind();
+            }
+        };
+
+        /**
+         * @brief One client response - a value object, copyable and movable
+         *
+         * The body is buffered by default and streamed when the caller installed a sink on the
+         * request task, in which case body() is empty and the bytes went to the sink as they
+         * arrived (design 5.3). Both forms are representable here so that a consumer does not
+         * change shape with the mode
+         */
+
+        class ClientResponse FINAL
+        {
+        private:
+
+            cpp::ScalarTypeIniter< unsigned >                                   m_status;
+            http::HeaderList                                                    m_headers;
+            http::HeaderList                                                    m_trailers;
+
+            om::ObjPtrCopyable< data::DataBlock >                               m_body;
+
+            /*
+             * HttpProtocol::Unknown is the zero value, so a default constructed response reports
+             * no protocol rather than claiming one
+             */
+
+            cpp::ScalarTypeIniter< HttpProtocol >                               m_protocol;
+            std::string                                                         m_negotiatedAlpn;
+
+            /*
+             * The fidelity report of design 6.6, which S7.x defines and this layer must not
+             * depend on. It is carried as the base object interface and retrieved by the consumer
+             * with om::qi< ... >, which is what keeps L2 free of a type that does not exist yet
+             * and keeps this contract frozen when it does
+             */
+
+            om::ObjPtrCopyable< om::Object >                                    m_impersonationReport;
+
+        public:
+
+            unsigned status() const NOEXCEPT
+            {
+                return m_status;
+            }
+
+            void status( SAA_in const unsigned status ) NOEXCEPT
+            {
+                m_status = status;
+            }
+
+            const http::HeaderList& headers() const NOEXCEPT
+            {
+                return m_headers;
+            }
+
+            http::HeaderList& headers() NOEXCEPT
+            {
+                return m_headers;
+            }
+
+            void headers( SAA_in http::HeaderList headers )
+            {
+                m_headers = BL_PARAM_FWD( headers );
+            }
+
+            const http::HeaderList& trailers() const NOEXCEPT
+            {
+                return m_trailers;
+            }
+
+            http::HeaderList& trailers() NOEXCEPT
+            {
+                return m_trailers;
+            }
+
+            void trailers( SAA_in http::HeaderList trailers )
+            {
+                m_trailers = BL_PARAM_FWD( trailers );
+            }
+
+            const om::ObjPtrCopyable< data::DataBlock >& body() const NOEXCEPT
+            {
+                return m_body;
+            }
+
+            void body( SAA_in_opt om::ObjPtrCopyable< data::DataBlock > body ) NOEXCEPT
+            {
+                m_body = BL_PARAM_FWD( body );
+            }
+
+            HttpProtocol protocol() const NOEXCEPT
+            {
+                return m_protocol;
+            }
+
+            void protocol( SAA_in const HttpProtocol protocol ) NOEXCEPT
+            {
+                m_protocol = protocol;
+            }
+
+            /**
+             * @brief The ALPN protocol the peer selected, verbatim ("h2", "http/1.1"), or empty
+             * for a cleartext connection where no ALPN took place
+             */
+
+            const std::string& negotiatedAlpn() const NOEXCEPT
+            {
+                return m_negotiatedAlpn;
+            }
+
+            void negotiatedAlpn( SAA_in std::string negotiatedAlpn )
+            {
+                m_negotiatedAlpn = BL_PARAM_FWD( negotiatedAlpn );
+            }
+
+            const om::ObjPtrCopyable< om::Object >& impersonationReport() const NOEXCEPT
+            {
+                return m_impersonationReport;
+            }
+
+            void impersonationReport( SAA_in_opt om::ObjPtrCopyable< om::Object > report ) NOEXCEPT
+            {
+                m_impersonationReport = BL_PARAM_FWD( report );
+            }
+        };
+
+    } // httpclient
+
+} // bl
+
+#endif /* __BL_HTTPCLIENT_CLIENTTYPES_H_ */

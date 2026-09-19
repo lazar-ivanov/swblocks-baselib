@@ -7,3 +7,32 @@
 --log_level=message --run_test=HeaderList_ValueInjectionRejectionTests
 --log_level=message --run_test=HeaderList_ErrorMessageRedactionTests
 --log_level=message --run_test=HeaderList_HeadersMapRoundTripTests
+
+--log_level=message --run_test=ClientContracts_RequestAndResponseRoundTripTests
+--log_level=message --run_test=ClientContracts_ReplayabilityIsAQueryOnTheRequestTests
+--log_level=message --run_test=ClientContracts_BodySourceAndSinkStreamingTests
+--log_level=message --run_test=ClientContracts_StubConnectionAndEventSinkTests
+--log_level=message --run_test=ClientContracts_ConnectionKeyAndPoolTests
+--log_level=message --run_test=ClientContracts_DriverFactoryDispatchTests
+
+--log_level=message --run_test=CookieJar_DomainMatchRuleTests
+--log_level=message --run_test=CookieJar_PathMatchAndDefaultPathTests
+--log_level=message --run_test=CookieJar_DomainAttributeRejectionTests
+--log_level=message --run_test=CookieJar_SecureAndHttpOnlyTests
+--log_level=message --run_test=CookieJar_ExpiryAndMaxAgePrecedenceTests
+--log_level=message --run_test=CookieJar_HostOnlyStorageAndOrderTests
+--log_level=message --run_test=CookieJar_CapsAndEvictionTests
+--log_level=message --run_test=CookieJar_RelativeRequestUriIsRefusedTests
+--log_level=message --run_test=CookieJar_ThreadSafetyTests
+
+--log_level=message --run_test=RedirectPolicy_OffByDefaultTests
+--log_level=message --run_test=RedirectPolicy_MethodRewriteMatrixTests
+--log_level=message --run_test=RedirectPolicy_CredentialDropIsCrossOriginTests
+--log_level=message --run_test=RedirectPolicy_DowngradeAndSchemeRefusalTests
+--log_level=message --run_test=RedirectPolicy_HopLimitAndBodyReplayTests
+--log_level=message --run_test=RedirectPolicy_TargetResolutionAndLocationTests
+
+--log_level=message --run_test=ContentDecoder_NoDecompressorShipsTests
+--log_level=message --run_test=ContentDecoder_RegistrationAndLookupTests
+--log_level=message --run_test=ContentDecoder_StreamingThroughTheSeamTests
+--log_level=message --run_test=ContentDecoder_BombCapsTripTests
