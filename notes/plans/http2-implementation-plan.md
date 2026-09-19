@@ -786,6 +786,20 @@ debug. Four things from that round are carried here rather than left in the lane
   `TlsClientProfile` but are not applied yet; that is **S7.3**, after the §6.3 spike, and the header
   says so.
 
+**The debug-to-release ratio is not 2x, and should not be used as one.** Three modules measured on
+the same day, same host, same toolchains: `h2profiles` 24.9 -> 49.9 MB (2.00), `h2client` 31.8 ->
+59.1 (1.86), `h2core` 25.9 -> **69.2** (2.67). The layer protocol's "roughly 2x" rule of thumb
+under-predicted `h2core` by 17 MB. **A slice deciding whether to split measures the gcc release
+object; it does not convert the clang debug one.**
+
+`h2core` at 69.2 MB gcc release is the largest object in this feature, and **it is not a violation of
+anything.** The 40 MB target and the 75 MB ceiling are calibrated on *debug* objects, and the size
+gate is enforced on `win-x86-*-debug` only - `src/utests/object-size-limits.json` is at rollout stage
+0 and records `win-x86-vc143-release` at 96.77 MB building fine against that 75 MB debug ceiling.
+The number that governs `h2core` is its **25.9 MB clang debug**, against a 40 MB target, which is
+comfortable. The gcc release figure is recorded because it is the largest we have measured and
+because S3.1's own acceptance asked the question, not because it fails a rule.
+
 **S3.2 and S3.3 landed next** (`322f1bb`, `59e4885`, merged at `b66cc72`). `utf_baselib_h2client`
 1 → 5 cases, 2 → 146 assertions, TSan clean over three runs, object 31.8 MB clang debug. The probe
 and both case bodies are templates on the stream policy, so S3.3's test header adds only a TLS echo
