@@ -786,6 +786,21 @@ debug. Four things from that round are carried here rather than left in the lane
   `TlsClientProfile` but are not applied yet; that is **S7.3**, after the §6.3 spike, and the header
   says so.
 
+**S3.2 and S3.3 landed next** (`322f1bb`, `59e4885`, merged at `b66cc72`). `utf_baselib_h2client`
+1 → 5 cases, 2 → 146 assertions, TSan clean over three runs, object 31.8 MB clang debug. The probe
+and both case bodies are templates on the stream policy, so S3.3's test header adds only a TLS echo
+peer - "S3.3 is S3.2 but over TLS" is a property of the code and not only of the prose. Four
+negative controls, one per case, each exiting 201 with exactly the predicted failure, so no case is
+vacuous. **That round also found the S4.1 blocker recorded above.**
+
+Two smaller things from it worth keeping: `m_wasSocketShutdownForcefully` must be set synchronously
+with only the socket call posted, because `isShutdownNeeded()` and `scheduleTaskFinishContinuation`
+both read it to decide whether a TLS shutdown is owed and a stale read would start an
+`async_shutdown` on a stream about to be shut down under it; and the plain policy installs its
+socket through the public `attachStream()` because the base holds `m_socket` private, which costs
+one extra `onStreamChanging` per socket creation that the base's own `createSocket` does not make.
+The TLS stream is protected, so that policy mirrors the base exactly.
+
 The JA3 and JA4 of a stock 3.5.4 client context, for the S7.1 spike to compare a browser against:
 
 ```
@@ -931,6 +946,17 @@ with all of them.
   `BL_VARIADIC_CTOR` forwards the establisher's three-argument constructor unchanged.
 - Keep the task's **two paths out consistent** (design §3.2): `cancelTask()` for an external cancel and
   `initiateClose()` for the error path, both converging on the single terminal `notifyReady`.
+- **BLOCKER for this slice, found in S3.2 and undecided: a deliberate `beginClose()` with operations
+  in flight completes the task FAILED.** `beginClose()` records no error, so the first
+  `operation_aborted` from what `initiateClose()` cancelled becomes the task's error and the task
+  reports `isFailed()` on its own clean close. This slice's connection task closes deliberately as a
+  matter of course - GOAWAY, idle deadline, last stream finishing - with a read and timers
+  outstanding, so it hits this every time, and S5.2's pool would count a clean shutdown as a failed
+  connection. `MultiOperationTask.h` is landed gated core, so the fix is **its own tested
+  change-set** and the decision is the maintainer's.
+  `notes/plans/issues/multioperation-deliberate-close-fails-task-record.md` has the diagnosis, why
+  the existing S0.1 coverage does not reach it, and three candidate fixes with a recommendation.
+  **Do not start S4.1 before this is settled.**
 - **The accounting is reset per schedule, not per connect attempt.** The mix-in clears it only in its
   `scheduleNothrow` override (`MultiOperationTask.h:311-341`), while
   `TcpConnectionEstablisherConnector::scheduleTaskFinishContinuation` (`TcpBaseTasks.h:1437`) restarts
