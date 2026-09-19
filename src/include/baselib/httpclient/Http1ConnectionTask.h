@@ -179,6 +179,7 @@ namespace bl
 
             bool                                                                m_headersDelivered = false;
             bool                                                                m_requestBytesWritten = false;
+            bool                                                                m_requestSaidClose = false;
 
             /*
              * The leaf lock of design 5.2 rule L4. It guards what an off-strand caller reads or
@@ -359,7 +360,10 @@ namespace bl
              *     below HTTP/1.1 (RFC 9112 section 9.3)
              *   - any response carrying 'Connection: close', and equally any REQUEST which carried
              *     it: design 5.5 says neither side may have said close, and the request's word
-             *     binds this client whatever the server answers
+             *     binds this client whatever the server answers. The request's own verdict is read
+             *     from m_requestSaidClose rather than from m_request, because m_request is guarded
+             *     by m_stateLock and this runs on the stream's executor holding nothing - see
+             *     onStartRequest( ), which is the one place the request may be read
              *   - a body framed by the connection closing, which needsEof() reports. There is no
              *     end to such a message other than the close, so there is nothing to reuse
              *   - a 101, which is a final response that hands the connection to another protocol.
@@ -376,6 +380,11 @@ namespace bl
             bool deriveIsReusable() const NOEXCEPT
             {
                 BL_NOEXCEPT_BEGIN()
+
+                if( m_requestSaidClose )
+                {
+                    return false;
+                }
 
                 if( ! m_parser || ! m_parser -> isComplete() )
                 {
@@ -502,6 +511,20 @@ namespace bl
                         hasRequest = true;
 
                         request = m_request;
+
+                        /*
+                         * RECORDED HERE BECAUSE THIS IS THE ONE PLACE THE REQUEST MAY BE READ. A
+                         * request which says 'Connection: close' goes out with that token on it -
+                         * serializeRequestHead( ) does not strip it - and RFC 9112 section 9.6
+                         * makes that word binding on this client whatever the server answers: it
+                         * MUST NOT send another request on this connection, and the server MUST
+                         * close after the final response whether or not it echoes the token back.
+                         * deriveIsReusable( ) runs on the stream's executor and takes no lock, so
+                         * it cannot read m_request - which m_stateLock guards and finishStream( )
+                         * clears - and consults this instead
+                         */
+
+                        m_requestSaidClose = hasConnectionToken( request.headers(), "close" );
                     }
                 }
 
@@ -1051,6 +1074,7 @@ namespace bl
                 m_bodyChunk.clear();
                 m_headersDelivered = false;
                 m_requestBytesWritten = false;
+                m_requestSaidClose = false;
 
                 if( sink && httpclient::ClientConnection::INVALID_STREAM_HANDLE != handle )
                 {
