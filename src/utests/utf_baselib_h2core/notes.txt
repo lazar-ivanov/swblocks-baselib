@@ -6,3 +6,14 @@
 
 --log_level=message --run_test=Http2ErrorInfo_AttachAndReadTests
 --log_level=message --run_test=Http2ErrorInfo_DistinctTagsTests
+
+--log_level=message --run_test=FrameCodec_FrameHeaderTests
+--log_level=message --run_test=FrameCodec_IncrementalParseAcrossReadBoundariesTests
+--log_level=message --run_test=FrameCodec_PayloadParseVectorsTests
+--log_level=message --run_test=FrameCodec_SerializeVectorsTests
+--log_level=message --run_test=FrameCodec_SerializeAndParseRoundTripTests
+--log_level=message --run_test=FrameCodec_OversizeAndLengthRejectionTests
+--log_level=message --run_test=FrameCodec_PaddingRejectionTests
+--log_level=message --run_test=FrameCodec_StreamIdentifierRuleTests
+--log_level=message --run_test=FrameCodec_HeaderBlockContinuityTests
+--log_level=message --run_test=FrameCodec_ReaderContractTests
