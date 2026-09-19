@@ -505,9 +505,17 @@ namespace bl
          * template with static creators taking typename STREAM::stream_ref&&
          *
          * WHY THE CREATORS ARE REGISTERED RATHER THAN NAMED. This slice publishes the contract
-         * before either driver exists, and it may not name them; S4.1 registers the h2 creator and
-         * S2.5/S4.3 the http/1.1 one. That also makes the dispatch testable now, against a stub
-         * creator and a stub stream, which is the point of publishing the contract first
+         * before either driver exists, and it may not name them. That also makes the dispatch
+         * testable now, against a stub creator and a stub stream, which is the point of publishing
+         * the contract first
+         *
+         * WHAT ACTUALLY GOES THROUGH THIS FACTORY, corrected in S4.1 after the original claim that
+         * "S4.1 registers the h2 creator" did not survive contact. **The h2 task does not go
+         * through the factory for itself at all.** A driver which attachStream()s a stream created
+         * elsewhere loses that policy's m_strand - TcpStrandedStreams.h states this - so the h2
+         * task must BE the object which created the socket, not one handed a stream afterwards.
+         * The factory is what the FALLBACK goes through: the connection task base hands off to it
+         * for the protocol it does not itself speak, and the session is what populates it
          *
          * Not thread safe, and deliberately so: a factory is populated once at session
          * construction and read afterwards, so a lock here would be a lock on the path of every

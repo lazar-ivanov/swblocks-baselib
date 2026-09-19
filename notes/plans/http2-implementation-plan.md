@@ -1125,6 +1125,34 @@ with all of them.
   returns a reference and is read by the pool and the request task off the strand - a member that
   is ever reassigned after construction would be a data race on a `std::string`. Constructed after
   ALPN, a driver never reports `Unknown`; that value belongs to the pool's `Connecting` placeholder.
+- **Executed 2026-09-19, and one thing written here did not survive contact.** "S4.1 registers the
+  h2 creator" (it was in `ClientConnection.h`'s own comment, now corrected) is **wrong**: the h2
+  task does not go through the factory for itself at all. A driver which `attachStream()`s a stream
+  created elsewhere **loses that policy's `m_strand`** - `TcpStrandedStreams.h` says so - so the h2
+  task must BE the object which created the socket, not one handed a stream afterwards. The factory
+  is what the **fallback** goes through, and what the session populates. `createDriver` above is
+  therefore the fall-back path, not both paths.
+- **The blocker S4.1 hit first was in S3.5, not here** (fixed in the same round, `ffcc805`):
+  `TcpTunnelStageT` over a TLS stream policy had never compiled, because the stage's three socket
+  operations went through `getSocket()`, which for a TLS policy forwards to the wrapper's
+  `lowest_layer_type` - an `asio::basic_socket<tcp>` with no `async_read_some` and no
+  `async_write_size`. The intent was right and its comment said so; the type could not carry it.
+  `next_layer()` is the object which is both cleartext and an `AsyncStream`. **Nothing had
+  instantiated that combination**, so S3.5's release validation under both toolchains passed over an
+  uninstantiated template - the same class of gap as `BeastBoostImports.h`.
+- **Two decisions worth carrying.** The retry budget is **1**, not the establisher's 5: six
+  handshakes with no backoff against a consistently rejecting peer is not a retry policy, and the
+  real one belongs to the pool (§5.4). And the deadline and the ALPN offer are taken in a
+  `beginPreHandshakeStage` override **before** the base call - after it there is an `async_connect`
+  in flight, so anything throwing then completes the task with an operation outstanding, in a phase
+  outside the mix-in's accounting where the mix-in would not catch it. Resolve and TCP connect are
+  therefore outside the deadline; both are OS-bounded, and the tunnel is the part bounded by
+  nothing else.
+- **`utf_baselib_h2client` is CLOSED to new slices.** With S4.1 it is **37.1 MB clang debug and
+  73.1 MB gcc release**, measured on the committed revision. It stays - the target and ceiling are
+  calibrated on debug objects and 37.1 is under the 40 MB target - but the marginal ratio of this
+  slice alone was **2.64**, so converting the debug delta would have under-predicted the release one
+  by 8 MB. **S4.2 goes to `utf_baselib_h2client2`.**
 
 ### S4.2 — HTTP/2 driver (§5.1, §5.2, §5.7)
 - Deliver: `http2/Http2ConnectionTask.h` - the opening coalesced write (preface+SETTINGS+WINDOW_UPDATE+
