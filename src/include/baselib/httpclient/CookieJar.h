@@ -108,7 +108,8 @@ namespace bl
 
             /**
              * The Domain attribute is one this client will not accept for this request - it does
-             * not domain-match the request host, or it is a bare TLD or has no embedded dot
+             * not domain-match the request host, or it is an IP address, a bare TLD or has no
+             * embedded dot, and is not the request host itself
              */
 
             RejectedDomain,
@@ -145,7 +146,20 @@ namespace bl
          *  - a Domain attribute must domain-match the request host (RFC 6265 section 5.3 step 6),
          *    so a page cannot set a cookie for an unrelated site; and
          *  - a Domain attribute with no embedded dot, or which is a single label, is rejected, so
-         *    "Domain=com" and "Domain=localhost" are refused
+         *    "Domain=com" from a page under com, and "Domain=localhost" from a page under
+         *    localhost, are both refused
+         *
+         * A third rule sits beside them and is not about suffixes at all: an IP address is refused
+         * as a scope, because an address has no hierarchy for a domain cookie to span.
+         *
+         * ... and all three carry the one exception RFC 6265 section 5.3 step 5 states: an
+         * attribute they refuse, but which is IDENTICAL to the canonicalized request host, becomes
+         * a HOST-ONLY cookie instead of a rejection. That is what makes "Domain=localhost" on
+         * localhost and "Domain=1.2.3.4" on 1.2.3.4 work, which are the ordinary local-development
+         * and bare-address cases, and it grants nothing: a host-only cookie goes back to that
+         * exact host and to no other, so the same exception applied to the pathological
+         * "Domain=com" on a host literally named com scopes the cookie to com alone rather than to
+         * everything beneath it.
          *
          * WHAT REMAINS: a multi-label public suffix - co.uk, com.au, github.io - has an embedded
          * dot and domain-matches a host beneath it, so a page at a.co.uk CAN still set
@@ -834,13 +848,21 @@ namespace bl
                             : domainAttribute
                         );
 
-                    if( ! isAcceptableDomainAttribute( host, domain ) )
+                    bool isHostOnly = false;
+
+                    if( ! isAcceptableDomainAttribute( host, domain, isHostOnly ) )
                     {
                         return CookieStoreResult::RejectedDomain;
                     }
 
+                    /*
+                     * 'isHostOnly' is set only by RFC 6265 section 5.3 step 5's exception, and in
+                     * that case 'domain' IS the request host - so this branch and the empty
+                     * attribute branch above store the same thing, which is the point of the step
+                     */
+
                     cookie.domain = domain;
-                    cookie.isHostOnly = false;
+                    cookie.isHostOnly = isHostOnly;
                 }
 
                 cookie.path = ( pathAttribute.empty() || '/' != pathAttribute[ 0 ] )
@@ -1044,13 +1066,20 @@ namespace bl
 
             /**
              * @brief The two checks which stand in for a public suffix list - see the header note
+             *
+             * 'isHostOnly' is an output: it is set for the single case in which the dot test below
+             * refuses an attribute and RFC 6265 section 5.3 step 5 keeps the cookie anyway. It is
+             * meaningless when this returns false
              */
 
             static bool isAcceptableDomainAttribute(
                 SAA_in          const std::string&                              host,
-                SAA_in          const std::string&                              domain
+                SAA_in          const std::string&                              domain,
+                SAA_out         bool&                                           isHostOnly
                 )
             {
+                isHostOnly = false;
+
                 if( domain.empty() )
                 {
                     return false;
@@ -1068,27 +1097,71 @@ namespace bl
                 }
 
                 /*
-                 * An IP address is only ever a host-only cookie; "Domain=1.2.3.4" would otherwise
-                 * be accepted as the degenerate identical-strings case of the domain-match rule
-                 * and stored as a domain cookie, which for an address is meaningless
-                 */
-
-                if( isIpAddressLike( domain ) )
-                {
-                    return false;
-                }
-
-                /*
-                 * No embedded dot, or a single label - "com", "localhost" - is refused. Standing
-                 * in for a public suffix list, incompletely and knowingly: see the header note on
+                 * THE TWO ATTRIBUTES WHICH ARE NOT A USABLE SCOPE, AND THE ONE ANSWER THEY SHARE
+                 *
+                 * An IP address is refused because an address has no hierarchy at all, so
+                 * "Domain=1.2.3.4" as a DOMAIN cookie is meaningless - it would otherwise be
+                 * accepted as the degenerate identical-strings case of the domain-match rule
+                 * above. No embedded dot, or a single label - "com", "localhost" - is refused
+                 * because it is a registry suffix or near enough to one: this is the stand-in for
+                 * a public suffix list, incomplete and knowingly so, and the header note carries
                  * the residual risk for a multi-label suffix such as co.uk
                  */
 
                 const auto dot = domain.find( '.' );
 
-                if( std::string::npos == dot || 0U == dot || domain.size() - 1U == dot )
+                const bool isNotAUsableScope =
+                    isIpAddressLike( domain ) ||
+                    std::string::npos == dot ||
+                    0U == dot ||
+                    domain.size() - 1U == dot;
+
+                if( isNotAUsableScope )
                 {
-                    return false;
+                    /*
+                     * RFC 6265 section 5.3 step 5, which answers both of the above the same way,
+                     * and whose answer is NOT a flat rejection - an attribute identical to the
+                     * canonicalized request host is stored HOST-ONLY, i.e. exactly as if the
+                     * Set-Cookie had carried no Domain attribute at all. Without this,
+                     * Domain=localhost on localhost - every local test server there is - and
+                     * Domain=1.2.3.4 from a client talking to a bare address both silently lose
+                     * their cookies, and for the address the refusal contradicted its own reason:
+                     * "only ever a host-only cookie" is what this now stores.
+                     *
+                     * The test is equality with the request host and nothing weaker, so what these
+                     * rules exist to stop is untouched. A page on app.localhost sending
+                     * Domain=localhost is not identical to its host and is still refused, the same
+                     * shape as a page under com sending Domain=com. An address is refused against
+                     * every host but itself, and mostly before it gets here, because domainMatches
+                     * never lets one address be a suffix of another. What the exception does admit
+                     * is Domain=com from a host literally NAMED com - and there it grants nothing,
+                     * because host-only is matched by string equality on the request host ( see
+                     * cookiesForRequest ), so the cookie returns to com alone and never to
+                     * anything beneath it.
+                     *
+                     * ON SPELLING, because equality over addresses is where this could be doing
+                     * less work than it looks. The comparison is between two ASCII-lowercased
+                     * SPELLINGS and not between two parsed addresses, so 1.2.3.4 and 01.2.3.4
+                     * differ here, and so do ::1 and 0:0:0:0:0:0:0:1. That is the safe direction:
+                     * an unfamiliar spelling costs a cookie, it can never widen one. The store and
+                     * the match sides cannot drift apart either, because both compare
+                     * toLowerAsciiCopy( net::Uri::host() ) against the same stored string - so
+                     * whatever net::Uri does or does not canonicalize is applied identically to
+                     * both. Two spellings ARE reconciled, by that shared fold and by the parser:
+                     * hex case in an IPv6 literal, and a percent-encoded unreserved octet in the
+                     * host, which net::Uri decodes ( Uri.h normalizeComponent ). And a ':' reaches
+                     * host() ONLY through the bracketed IP-literal branch, which chkIpLiteral has
+                     * validated - so although isIpAddressLike calls any colon-bearing string an
+                     * address, equality can only ever admit one net::Uri itself accepted as an
+                     * IPv6 literal, unbracketed
+                     */
+
+                    if( host != domain )
+                    {
+                        return false;
+                    }
+
+                    isHostOnly = true;
                 }
 
                 return true;
