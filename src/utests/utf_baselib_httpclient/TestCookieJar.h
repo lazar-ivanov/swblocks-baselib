@@ -212,13 +212,21 @@ UTF_AUTO_TEST_CASE( CookieJar_DomainAttributeRejectionTests )
         );
 
     /*
-     * An IP address is only ever host-only; "Domain=1.2.3.4" is refused rather than stored as a
-     * domain cookie, which for an address would be meaningless
+     * An IP address is never a DOMAIN cookie, because an address has no hierarchy for one to span.
+     * An address which is not the request host is refused outright - and an address has no parent
+     * case either, so the nearest thing to one, a dot-preceded suffix of the host, is refused too.
+     * The accepted counterpart, the address identical to the request host, is pinned in
+     * CookieJar_AddressDomainAttributeTests below
      */
 
     UTF_CHECK(
         CookieStoreResult::RejectedDomain ==
-            jar.setCookie( uri( "http://1.2.3.4/p" ), "a=1; Domain=1.2.3.4", true, now )
+            jar.setCookie( uri( "http://5.6.7.8/p" ), "a=1; Domain=1.2.3.4", true, now )
+        );
+
+    UTF_CHECK(
+        CookieStoreResult::RejectedDomain ==
+            jar.setCookie( uri( "http://1.2.3.4/p" ), "a=1; Domain=2.3.4", true, now )
         );
 
     UTF_CHECK_EQUAL( jar.size(), 0U );
@@ -472,6 +480,167 @@ UTF_AUTO_TEST_CASE( CookieJar_SingleLabelDomainAttributeTests )
                 now
                 ),
             std::string( "s=1" )
+            );
+    }
+}
+
+UTF_AUTO_TEST_CASE( CookieJar_AddressDomainAttributeTests )
+{
+    using namespace bl;
+    using namespace bl::httpclient;
+    using namespace utest::cookiejar;
+
+    const auto now = fixedNow();
+
+    /*
+     * The SAME exception, RFC 6265 section 5.3 step 5, applied to the other attribute this jar
+     * refuses as a scope: an IP address
+     *
+     * An address is refused as a DOMAIN cookie because it has no hierarchy for one to span - but
+     * the refusal is of the scope, not of the cookie, and step 5 stores an attribute identical to
+     * the request host host-only instead. A client talking to a bare address used to lose its
+     * cookies here for exactly the reason localhost did
+     *
+     * An address has no parent, so there is no "widening" direction to worry about at all; what
+     * has to be pinned instead is SPELLING, because the comparison is over two ASCII-lowercased
+     * strings and not over two parsed addresses
+     */
+
+    {
+        CookieJar v4;
+
+        UTF_CHECK(
+            CookieStoreResult::Stored ==
+                v4.setCookie( uri( "http://1.2.3.4/p" ), "a=1; Domain=1.2.3.4", true, now )
+            );
+
+        const auto stored = v4.allCookies();
+
+        UTF_CHECK_EQUAL( stored.size(), 1U );
+        UTF_CHECK_EQUAL( stored[ 0 ].domain, std::string( "1.2.3.4" ) );
+        UTF_CHECK( stored[ 0 ].isHostOnly.value() );
+
+        UTF_CHECK_EQUAL(
+            v4.cookieHeaderValue( uri( "http://1.2.3.4/p" ), true /* isHttpApi */, now ),
+            std::string( "a=1" )
+            );
+
+        /*
+         * Returned to that address and to no other. domainMatches already refuses one address as a
+         * suffix of another, so this is belt and braces over the store-side refusals in
+         * CookieJar_DomainAttributeRejectionTests - and it is the property that actually matters
+         */
+
+        UTF_CHECK_EQUAL(
+            v4.cookieHeaderValue( uri( "http://5.6.7.8/p" ), true /* isHttpApi */, now ),
+            std::string()
+            );
+
+        UTF_CHECK_EQUAL(
+            v4.cookieHeaderValue( uri( "http://1.2.3.40/p" ), true /* isHttpApi */, now ),
+            std::string()
+            );
+
+        /*
+         * SPELLING, REFUSED SIDE. "01.2.3.4" is the same address as "1.2.3.4" to inet_aton and a
+         * different string here, so it is refused. That is the safe direction - an unfamiliar
+         * spelling costs a cookie, it can never widen one - and it is pinned so that a later move
+         * to parsed-address equality shows up as a deliberate change
+         */
+
+        UTF_CHECK(
+            CookieStoreResult::RejectedDomain ==
+                v4.setCookie( uri( "http://1.2.3.4/p" ), "b=2; Domain=01.2.3.4", true, now )
+            );
+
+        UTF_CHECK_EQUAL( v4.size(), 1U );
+    }
+
+    /*
+     * IPv6, where net::Uri::host() hands over the literal with its brackets removed - so the
+     * attribute which can be identical to it is the UNBRACKETED one
+     */
+
+    {
+        CookieJar v6;
+
+        UTF_CHECK(
+            CookieStoreResult::Stored ==
+                v6.setCookie( uri( "http://[::1]/p" ), "a=1; Domain=::1", true, now )
+            );
+
+        const auto stored = v6.allCookies();
+
+        UTF_CHECK_EQUAL( stored.size(), 1U );
+        UTF_CHECK_EQUAL( stored[ 0 ].domain, std::string( "::1" ) );
+        UTF_CHECK( stored[ 0 ].isHostOnly.value() );
+
+        UTF_CHECK_EQUAL(
+            v6.cookieHeaderValue( uri( "http://[::1]/p" ), true /* isHttpApi */, now ),
+            std::string( "a=1" )
+            );
+
+        /*
+         * SPELLING, REFUSED SIDE, twice. The expanded form of the same address is a different
+         * string, and so is the bracketed form of it - brackets are URI syntax and never reach
+         * host()
+         */
+
+        UTF_CHECK(
+            CookieStoreResult::RejectedDomain ==
+                v6.setCookie( uri( "http://[::1]/p" ), "b=2; Domain=0:0:0:0:0:0:0:1", true, now )
+            );
+
+        UTF_CHECK(
+            CookieStoreResult::RejectedDomain ==
+                v6.setCookie( uri( "http://[::1]/p" ), "c=3; Domain=[::1]", true, now )
+            );
+
+        UTF_CHECK_EQUAL( v6.size(), 1U );
+    }
+
+    /*
+     * SPELLING, RECONCILED SIDE - the one difference that IS absorbed. Hex case in an IPv6 literal
+     * is folded on both sides, by net::Uri on the host and by the jar's own ASCII lower on the
+     * attribute, so these two spellings ARE identical by the time they are compared
+     */
+
+    {
+        CookieJar v6case;
+
+        UTF_CHECK(
+            CookieStoreResult::Stored ==
+                v6case.setCookie(
+                    uri( "http://[2001:DB8::1]/p" ),
+                    "a=1; Domain=2001:db8::1",
+                    true    /* isHttpApi */,
+                    now
+                    )
+            );
+
+        UTF_CHECK(
+            CookieStoreResult::Stored ==
+                v6case.setCookie(
+                    uri( "http://[2001:db8::1]/p" ),
+                    "b=2; Domain=2001:DB8::1",
+                    true    /* isHttpApi */,
+                    now
+                    )
+            );
+
+        const auto stored = v6case.allCookies();
+
+        UTF_CHECK_EQUAL( stored.size(), 2U );
+
+        for( std::size_t pos = 0U; pos < stored.size(); ++pos )
+        {
+            UTF_CHECK_EQUAL( stored[ pos ].domain, std::string( "2001:db8::1" ) );
+            UTF_CHECK( stored[ pos ].isHostOnly.value() );
+        }
+
+        UTF_CHECK_EQUAL(
+            v6case.cookieHeaderValue( uri( "http://[2001:db8::1]/p" ), true, now ),
+            std::string( "a=1; b=2" )
             );
     }
 }
