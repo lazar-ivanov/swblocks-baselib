@@ -293,9 +293,11 @@ namespace bl
          *
          * Resolve, connect, optional tunnel, TLS handshake, floor check, ALPN, and then the driver
          * the negotiated protocol calls for. STREAM is one of the stranded stream policies of
-         * design 3.1, although nothing here requires that: every timer is built on the socket's
-         * own executor, which is the strand under a stranded policy and the I/O service under a
-         * plain one, so the same code is correct over all four
+         * design 3.1. Nothing WRITTEN here requires that - every timer is built on the socket's own
+         * executor, which is the strand under a stranded policy and the I/O service under a plain
+         * one - but nothing instantiates a plain one either, and a template nothing instantiates is
+         * not compiled, let alone correct. So what is claimed is what is compiled: the two STRANDED
+         * policies, which the probes of TestClientConnectionTaskBase.h name
          *
          * WHAT THE CHAIN IS, AND WHY IN THAT ORDER. MultiOperationTaskT is the outermost, because
          * its accounting has to see the completion of every operation the task will run; the
