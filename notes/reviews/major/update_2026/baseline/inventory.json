@@ -3557,6 +3557,78 @@
    "namespaces": []
   },
   {
+   "body_sha": "1574d23fa1080657c1aeb48ad51e587b",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestClientContracts.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 822,
+   "module": "utf_baselib_httpclient",
+   "name": "ClientContracts_BodySourceAndSinkStreamingTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "b4360c0c8a53618a45400c02f58fe9df",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestClientContracts.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 997,
+   "module": "utf_baselib_httpclient",
+   "name": "ClientContracts_ConnectionKeyAndPoolTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "a8ea5cb7af42a241892354e3c25ecf1d",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestClientContracts.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1129,
+   "module": "utf_baselib_httpclient",
+   "name": "ClientContracts_DriverFactoryDispatchTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "8546248518ac6fe837acc7f522e74813",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestClientContracts.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 761,
+   "module": "utf_baselib_httpclient",
+   "name": "ClientContracts_ReplayabilityIsAQueryOnTheRequestTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "7556c6471621c985624e0d39e63312b7",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestClientContracts.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 655,
+   "module": "utf_baselib_httpclient",
+   "name": "ClientContracts_RequestAndResponseRoundTripTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "b63555a52fb30f369d203a00211ed71a",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestClientContracts.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 900,
+   "module": "utf_baselib_httpclient",
+   "name": "ClientContracts_StubConnectionAndEventSinkTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "91ef82f3f4d7975bf2733a214b941ea2",
    "doc_sha": null,
    "file": "utf_baselib_http/TestClientHttpTasks.h",
@@ -3890,6 +3962,162 @@
    "line": 581,
    "module": "utf_baselib_cmdline",
    "name": "CmdLine_ParserInstanceIsSingleUse",
+   "namespaces": []
+  },
+  {
+   "body_sha": "3ac07eda35b86f95d5f5a019dfa19310",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestContentDecoder.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 520,
+   "module": "utf_baselib_httpclient",
+   "name": "ContentDecoder_BombCapsTripTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "c1f2aa3ca737cf796ccfe7fb5f336c0d",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestContentDecoder.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 226,
+   "module": "utf_baselib_httpclient",
+   "name": "ContentDecoder_NoDecompressorShipsTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "05dfdd5955afebfaa8428af5fd377ea4",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestContentDecoder.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 275,
+   "module": "utf_baselib_httpclient",
+   "name": "ContentDecoder_RegistrationAndLookupTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "7c59a06b3a41f544dda75418569bf275",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestContentDecoder.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 388,
+   "module": "utf_baselib_httpclient",
+   "name": "ContentDecoder_StreamingThroughTheSeamTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "ac21224e20c3f1bde46b9acbc6fde81e",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestCookieJar.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 750,
+   "module": "utf_baselib_httpclient",
+   "name": "CookieJar_CapsAndEvictionTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "e2166f5340480735ab1e2ea1b5d30fd7",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestCookieJar.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 165,
+   "module": "utf_baselib_httpclient",
+   "name": "CookieJar_DomainAttributeRejectionTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "ce144cc67f5949b260343cfea1ef8c94",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestCookieJar.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 63,
+   "module": "utf_baselib_httpclient",
+   "name": "CookieJar_DomainMatchRuleTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "8085020f4bfa7f0291029057153b8daf",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestCookieJar.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 379,
+   "module": "utf_baselib_httpclient",
+   "name": "CookieJar_ExpiryAndMaxAgePrecedenceTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "886b7f79f549e9633eb48ddad355eac2",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestCookieJar.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 571,
+   "module": "utf_baselib_httpclient",
+   "name": "CookieJar_HostOnlyStorageAndOrderTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "d0816159561e0629333a602bd3c9a708",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestCookieJar.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 128,
+   "module": "utf_baselib_httpclient",
+   "name": "CookieJar_PathMatchAndDefaultPathTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "0bc40708bfc0dbe5a9801862da5c45a4",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestCookieJar.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 888,
+   "module": "utf_baselib_httpclient",
+   "name": "CookieJar_RelativeRequestUriIsRefusedTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "c8f9288afd534ef30e124e67c2d3b2cc",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestCookieJar.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 281,
+   "module": "utf_baselib_httpclient",
+   "name": "CookieJar_SecureAndHttpOnlyTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "5d66cea01158cb4da849351a219050ff",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestCookieJar.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 937,
+   "module": "utf_baselib_httpclient",
+   "name": "CookieJar_ThreadSafetyTests",
    "namespaces": []
   },
   {
@@ -4421,6 +4649,78 @@
    "namespaces": []
   },
   {
+   "body_sha": "dfb17769544c8fad72e50e4b6ef0bd3b",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestFlowControl.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 312,
+   "module": "utf_baselib_h2core",
+   "name": "FlowControl_InitialWindowSizeAdjustmentTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "6d03b9671993e0034ce4c242b17fff05",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestFlowControl.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 433,
+   "module": "utf_baselib_h2core",
+   "name": "FlowControl_NegativeWindowTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "41cb3bbe4b6ff7733429130bc4dd4b69",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestFlowControl.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 639,
+   "module": "utf_baselib_h2core",
+   "name": "FlowControl_ReceiveAccountingTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "4af5b6cde2bc1b189def3c672fa2fec2",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestFlowControl.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 525,
+   "module": "utf_baselib_h2core",
+   "name": "FlowControl_ReceiveThresholdTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "98fa6d081c8566f26f03e8b4348085ef",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestFlowControl.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 97,
+   "module": "utf_baselib_h2core",
+   "name": "FlowControl_WindowArithmeticTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "c7c4e7f47664b90e0a281108715c08ed",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestFlowControl.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 189,
+   "module": "utf_baselib_h2core",
+   "name": "FlowControl_WindowUpdateTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "53759de3e7d39feb08ac0829ca3f8793",
    "doc_sha": null,
    "file": "utf_baselib_messaging/TestMessagingDefault.h",
@@ -4442,6 +4742,126 @@
    "line": 3481,
    "module": "utf_baselib_messaging",
    "name": "ForwardingBackendConnectFailureTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "1674889435c2ad179491f8f963e2a781",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestFrameCodec.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 477,
+   "module": "utf_baselib_h2core",
+   "name": "FrameCodec_FrameHeaderTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "a090815166216b745fa4520086befb9c",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestFrameCodec.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1905,
+   "module": "utf_baselib_h2core",
+   "name": "FrameCodec_HeaderBlockContinuityTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "bdc314ca087e17881ba9f5ef22d1c39f",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestFrameCodec.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 564,
+   "module": "utf_baselib_h2core",
+   "name": "FrameCodec_IncrementalParseAcrossReadBoundariesTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "5a46fa44262a892a7093e019c5dd416a",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestFrameCodec.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1450,
+   "module": "utf_baselib_h2core",
+   "name": "FrameCodec_OversizeAndLengthRejectionTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "59ddf319b73a82dbb6a88a6396f133b6",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestFrameCodec.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1632,
+   "module": "utf_baselib_h2core",
+   "name": "FrameCodec_PaddingRejectionTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "4865c9b53292889dcb9ec39dea851afa",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestFrameCodec.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 702,
+   "module": "utf_baselib_h2core",
+   "name": "FrameCodec_PayloadParseVectorsTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "d6487d68cc3bf7379a4bea35b0e6a88b",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestFrameCodec.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 2067,
+   "module": "utf_baselib_h2core",
+   "name": "FrameCodec_ReaderContractTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "4827fdf83a7555f6ec9e0a137ad580b2",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestFrameCodec.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1348,
+   "module": "utf_baselib_h2core",
+   "name": "FrameCodec_SerializeAndParseRoundTripTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "86f02ac76df3fa1594892f4792701a84",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestFrameCodec.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1035,
+   "module": "utf_baselib_h2core",
+   "name": "FrameCodec_SerializeVectorsTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "777eb823998a9aa972d2ed09b5d694ab",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestFrameCodec.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1746,
+   "module": "utf_baselib_h2core",
+   "name": "FrameCodec_StreamIdentifierRuleTests",
    "namespaces": []
   },
   {
@@ -4756,6 +5176,258 @@
    "line": 357,
    "module": "utf_baselib_httpclient",
    "name": "HeaderList_ValueInjectionRejectionTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "fc35077bb9bfbd22ed98beddd6f0e025",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestHpack.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1704,
+   "module": "utf_baselib_h2core",
+   "name": "Hpack_CompressionErrorTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "9c732f1da50b035d21cb2b058e155b68",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestHpack.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1944,
+   "module": "utf_baselib_h2core",
+   "name": "Hpack_DecodedSizeLimitTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "fd2932fdf77078d91a4fc7dc66d42339",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestHpack.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 943,
+   "module": "utf_baselib_h2core",
+   "name": "Hpack_DynamicTableAccountingTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "6d3308d9f9d499eb87fa8f1b11a53197",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestHpack.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 2125,
+   "module": "utf_baselib_h2core",
+   "name": "Hpack_DynamicTableAfterMidBlockFailureTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "165c3992cdb867a7eb83581175f3a21b",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestHpack.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 2247,
+   "module": "utf_baselib_h2core",
+   "name": "Hpack_EncoderPolicyTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "9361ef74f1d9a042d56370a999ae790e",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestHpack.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 518,
+   "module": "utf_baselib_h2core",
+   "name": "Hpack_HuffmanCodeTableTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "d7f0a358fe371ab2cbd847cb12a095c5",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestHpack.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 676,
+   "module": "utf_baselib_h2core",
+   "name": "Hpack_HuffmanCodingAndPaddingTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "b6127c0ebaf9eb4d6f47c69b05e6f90d",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestHpack.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 362,
+   "module": "utf_baselib_h2core",
+   "name": "Hpack_IntegerRepresentationTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "033b5831e330784d3caa4814163417c3",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestHpack.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1054,
+   "module": "utf_baselib_h2core",
+   "name": "Hpack_RepresentationVectorsTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "d8e90c53390356c9d5f4b6583ba81893",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestHpack.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1329,
+   "module": "utf_baselib_h2core",
+   "name": "Hpack_RequestVectorsWithHuffmanTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "6d71193c37e6892b43a85e1d14f9187d",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestHpack.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1216,
+   "module": "utf_baselib_h2core",
+   "name": "Hpack_RequestVectorsWithoutHuffmanTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "4647076abd9447ebd7a9d42e3bd2df46",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestHpack.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1574,
+   "module": "utf_baselib_h2core",
+   "name": "Hpack_ResponseVectorsWithHuffmanTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "5c4d5c01b39f96527ae92bedb7409755",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestHpack.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1432,
+   "module": "utf_baselib_h2core",
+   "name": "Hpack_ResponseVectorsWithoutHuffmanTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "75572a06d7c6fe74ff8febca69d3fad9",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestHpack.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1825,
+   "module": "utf_baselib_h2core",
+   "name": "Hpack_SizeUpdateTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "c3dfae00ae6dfd4e88ccb5f28c335ccc",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestHpack.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 816,
+   "module": "utf_baselib_h2core",
+   "name": "Hpack_StaticTableTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "a94faa5a96afa8a20dc0f5924d202ce3",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestHttp1Codec.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 330,
+   "module": "utf_baselib_httpclient",
+   "name": "Http1Codec_ChunkedAndTrailersTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "5541ef472eeef9ff8ca2e6cb438a14aa",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestHttp1Codec.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 933,
+   "module": "utf_baselib_httpclient",
+   "name": "Http1Codec_LimitsTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "9a89b57bcd03161e27ec89113d8b077a",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestHttp1Codec.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 464,
+   "module": "utf_baselib_httpclient",
+   "name": "Http1Codec_ReadUntilCloseAndBodilessTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "bbdd79199a718d139e3ecbdd434016a6",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestHttp1Codec.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1038,
+   "module": "utf_baselib_httpclient",
+   "name": "Http1Codec_RequestSerializerTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "cdcd4649042db5805d0aadcd3b9f3913",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestHttp1Codec.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 625,
+   "module": "utf_baselib_httpclient",
+   "name": "Http1Codec_SmugglingDefencesTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "6783bcdbacd59d50ceb25320ecf39f6f",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestHttp1Codec.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 186,
+   "module": "utf_baselib_httpclient",
+   "name": "Http1Codec_StatusLineHeadersAndBodyTests",
    "namespaces": []
   },
   {
@@ -7041,6 +7713,78 @@
    "namespaces": []
   },
   {
+   "body_sha": "d820a4ffd927874d4529f395165edf36",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestRedirectPolicy.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 273,
+   "module": "utf_baselib_httpclient",
+   "name": "RedirectPolicy_CredentialDropIsCrossOriginTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "77b20729c3c641177866d43581e77c73",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestRedirectPolicy.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 405,
+   "module": "utf_baselib_httpclient",
+   "name": "RedirectPolicy_DowngradeAndSchemeRefusalTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "eba2641461dd9b3109eb3f89aa0b3ec2",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestRedirectPolicy.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 514,
+   "module": "utf_baselib_httpclient",
+   "name": "RedirectPolicy_HopLimitAndBodyReplayTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "603395aba4c0df1ff80cc355471d13e6",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestRedirectPolicy.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 134,
+   "module": "utf_baselib_httpclient",
+   "name": "RedirectPolicy_MethodRewriteMatrixTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "aefa56e6d5c9a1a84d86d0c7cd2bac95",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestRedirectPolicy.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 67,
+   "module": "utf_baselib_httpclient",
+   "name": "RedirectPolicy_OffByDefaultTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "ea677114e339010ae609eb60b7612f68",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestRedirectPolicy.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 639,
+   "module": "utf_baselib_httpclient",
+   "name": "RedirectPolicy_TargetResolutionAndLocationTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "c9128b217ca371fccb93ef5a832feb4d",
    "doc_sha": null,
    "file": "utf_baselib_rest/TestRestDefault2.h",
@@ -7302,6 +8046,90 @@
    "line": 1187,
    "module": "utf_baselib_data",
    "name": "ServerErrorHelpersTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "2ee337d17b50d5d8e92d9dd881824e07",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestStreamStates.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 851,
+   "module": "utf_baselib_h2core",
+   "name": "StreamStates_ClosedStreamDataAccountingTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "1e4db8d96e8e8e8b548ab05ea26c0b3a",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestStreamStates.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 475,
+   "module": "utf_baselib_h2core",
+   "name": "StreamStates_LifecycleTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "767673bb64072ad243a9ae2af3c52fa5",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestStreamStates.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1032,
+   "module": "utf_baselib_h2core",
+   "name": "StreamStates_RecentlyClosedSetTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "88c75e444ab313ed03dc6d8ad2ffe745",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestStreamStates.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 629,
+   "module": "utf_baselib_h2core",
+   "name": "StreamStates_ReservedStatesTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "a74f4e569c7a13f7841b84cb99bdc723",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestStreamStates.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 714,
+   "module": "utf_baselib_h2core",
+   "name": "StreamStates_StreamIdentifierTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "868680865195c3a8ab0c853a5af29a92",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestStreamStates.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 199,
+   "module": "utf_baselib_h2core",
+   "name": "StreamStates_TransitionTableTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "0f2aad39359e0fc917e358b9402a2427",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestStreamStates.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1195,
+   "module": "utf_baselib_h2core",
+   "name": "StreamStates_UnknownStreamIdentifierTests",
    "namespaces": []
   },
   {
@@ -11765,6 +12593,30 @@
    "sha": "26af6aced467e12ea2a30d091b896180"
   },
   {
+   "file": "utf_baselib_h2core/TestFlowControl.h",
+   "label": "namespace flowcontrol",
+   "line": 46,
+   "module": "utf_baselib_h2core",
+   "ns": "utest",
+   "sha": "90c1c9016e3d0ad28b2e26c8b271b43c"
+  },
+  {
+   "file": "utf_baselib_h2core/TestFrameCodec.h",
+   "label": "namespace framecodec",
+   "line": 51,
+   "module": "utf_baselib_h2core",
+   "ns": "utest",
+   "sha": "9e7091f3978248ab7041a5f550dbf0e8"
+  },
+  {
+   "file": "utf_baselib_h2core/TestHpack.h",
+   "label": "namespace hpack",
+   "line": 66,
+   "module": "utf_baselib_h2core",
+   "ns": "utest",
+   "sha": "e97424d2892183909c71f1af53473857"
+  },
+  {
    "file": "utf_baselib_h2core/TestHttp2ErrorInfo.h",
    "label": "namespace http2errorinfo",
    "line": 44,
@@ -11779,6 +12631,14 @@
    "module": "utf_baselib_h2core",
    "ns": "utest",
    "sha": "a7d38ff90e7cd9291a015ee6ecede71b"
+  },
+  {
+   "file": "utf_baselib_h2core/TestStreamStates.h",
+   "label": "namespace streamstates",
+   "line": 48,
+   "module": "utf_baselib_h2core",
+   "ns": "utest",
+   "sha": "cbf0014cebdee2130b6a2f421805786e"
   },
   {
    "file": "utf_baselib_h2profiles/TestHttpClientProfiles.h",
@@ -12011,6 +12871,46 @@
    "module": "utf_baselib_http2",
    "ns": "utest",
    "sha": "ca1d6019280da9850e87effa9d46254e"
+  },
+  {
+   "file": "utf_baselib_httpclient/TestClientContracts.h",
+   "label": "namespace clientcontracts",
+   "line": 53,
+   "module": "utf_baselib_httpclient",
+   "ns": "utest",
+   "sha": "2997d9209f7a1056dbde6d37568493a3"
+  },
+  {
+   "file": "utf_baselib_httpclient/TestContentDecoder.h",
+   "label": "namespace contentdecoder",
+   "line": 48,
+   "module": "utf_baselib_httpclient",
+   "ns": "utest",
+   "sha": "de03c99b8b0dd1fab4ad7db75d747373"
+  },
+  {
+   "file": "utf_baselib_httpclient/TestCookieJar.h",
+   "label": "namespace cookiejar",
+   "line": 44,
+   "module": "utf_baselib_httpclient",
+   "ns": "utest",
+   "sha": "e6f68904ec6563277e632bd47ec7f271"
+  },
+  {
+   "file": "utf_baselib_httpclient/TestHttp1Codec.h",
+   "label": "namespace http1codec",
+   "line": 45,
+   "module": "utf_baselib_httpclient",
+   "ns": "utest",
+   "sha": "0ef9bf210c9b1584bfdbc36937cff978"
+  },
+  {
+   "file": "utf_baselib_httpclient/TestRedirectPolicy.h",
+   "label": "namespace redirectpolicy",
+   "line": 44,
+   "module": "utf_baselib_httpclient",
+   "ns": "utest",
+   "sha": "506860a6f444845a8a686d9354191e88"
   },
   {
    "file": "utf_baselib_io/TestIO.h",
@@ -15022,10 +15922,55 @@
   "utf_baselib_h2core": {
    "data_files": {},
    "data_literals": [
-    "TLSv1.3"
+    "TLSv1.3",
+    "www.example.com"
    ],
    "data_refs": [],
    "files": [
+    {
+     "includes": [
+      "<baselib/http2/FlowControlWindow.h>",
+      "<baselib/http2/Globals.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<baselib/core/ErrorHandling.h>",
+      "<cstdint>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_h2core/TestFlowControl.h"
+    },
+    {
+     "includes": [
+      "<baselib/http2/FrameCodec.h>",
+      "<baselib/http2/Globals.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<baselib/core/ErrorHandling.h>",
+      "<algorithm>",
+      "<cstddef>",
+      "<cstdint>",
+      "<initializer_list>",
+      "<string>",
+      "<vector>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_h2core/TestFrameCodec.h"
+    },
+    {
+     "includes": [
+      "<baselib/http2/HpackDecoder.h>",
+      "<baselib/http2/HpackEncoder.h>",
+      "<baselib/http2/HpackHuffman.h>",
+      "<baselib/http2/HpackDynamicTable.h>",
+      "<baselib/http2/Globals.h>",
+      "<baselib/http/HeaderList.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<baselib/core/ErrorHandling.h>",
+      "<cstdint>",
+      "<string>",
+      "<vector>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_h2core/TestHpack.h"
+    },
     {
      "includes": [
       "<baselib/http2/Globals.h>",
@@ -15051,20 +15996,76 @@
     },
     {
      "includes": [
+      "<baselib/http2/StreamStateMachine.h>",
+      "<baselib/http2/FlowControlWindow.h>",
+      "<baselib/http2/Globals.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<baselib/core/ErrorHandling.h>",
+      "<baselib/core/TimeUtils.h>",
+      "<cstdint>",
+      "<string>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_h2core/TestStreamStates.h"
+    },
+    {
+     "includes": [
       "<utests/baselib/UtfMain.h>",
       "<baselib/http2/PreCompiled.h>",
       "\"TestHttp2Globals.h\"",
-      "\"TestHttp2ErrorInfo.h\""
+      "\"TestHttp2ErrorInfo.h\"",
+      "\"TestFrameCodec.h\"",
+      "\"TestFlowControl.h\"",
+      "\"TestStreamStates.h\"",
+      "\"TestHpack.h\""
      ],
      "path": "utf_baselib_h2core/UtfBaselibH2CoreMain.cpp"
     }
    ],
    "notes_cases": [
+    "FlowControl_InitialWindowSizeAdjustmentTests",
+    "FlowControl_NegativeWindowTests",
+    "FlowControl_ReceiveAccountingTests",
+    "FlowControl_ReceiveThresholdTests",
+    "FlowControl_WindowArithmeticTests",
+    "FlowControl_WindowUpdateTests",
+    "FrameCodec_FrameHeaderTests",
+    "FrameCodec_HeaderBlockContinuityTests",
+    "FrameCodec_IncrementalParseAcrossReadBoundariesTests",
+    "FrameCodec_OversizeAndLengthRejectionTests",
+    "FrameCodec_PaddingRejectionTests",
+    "FrameCodec_PayloadParseVectorsTests",
+    "FrameCodec_ReaderContractTests",
+    "FrameCodec_SerializeAndParseRoundTripTests",
+    "FrameCodec_SerializeVectorsTests",
+    "FrameCodec_StreamIdentifierRuleTests",
+    "Hpack_CompressionErrorTests",
+    "Hpack_DecodedSizeLimitTests",
+    "Hpack_DynamicTableAccountingTests",
+    "Hpack_DynamicTableAfterMidBlockFailureTests",
+    "Hpack_EncoderPolicyTests",
+    "Hpack_HuffmanCodeTableTests",
+    "Hpack_HuffmanCodingAndPaddingTests",
+    "Hpack_IntegerRepresentationTests",
+    "Hpack_RepresentationVectorsTests",
+    "Hpack_RequestVectorsWithHuffmanTests",
+    "Hpack_RequestVectorsWithoutHuffmanTests",
+    "Hpack_ResponseVectorsWithHuffmanTests",
+    "Hpack_ResponseVectorsWithoutHuffmanTests",
+    "Hpack_SizeUpdateTests",
+    "Hpack_StaticTableTests",
     "Http2ErrorInfo_AttachAndReadTests",
     "Http2ErrorInfo_DistinctTagsTests",
     "Http2Globals_FrameTypesAndFlagsTests",
     "Http2Globals_ProtocolConstantsAndLimitsTests",
-    "Http2Globals_SettingsAndErrorCodesTests"
+    "Http2Globals_SettingsAndErrorCodesTests",
+    "StreamStates_ClosedStreamDataAccountingTests",
+    "StreamStates_LifecycleTests",
+    "StreamStates_RecentlyClosedSetTests",
+    "StreamStates_ReservedStatesTests",
+    "StreamStates_StreamIdentifierTests",
+    "StreamStates_TransitionTableTests",
+    "StreamStates_UnknownStreamIdentifierTests"
    ]
   },
   "utf_baselib_h2profiles": {
@@ -15310,10 +16311,68 @@
   "utf_baselib_httpclient": {
    "data_files": {},
    "data_literals": [
-    "example.com"
+    "1.2.3.4",
+    "1.2.3.4a",
+    "10.0.0.7",
+    "168.0.1",
+    "192.168.0.1",
+    "2.3.4",
+    "5.0",
+    "EXAMPLE.com",
+    "a.b.example.com",
+    "badexample.com",
+    "example.COM",
+    "example.com",
+    "notexample.com",
+    "www.example.com"
    ],
    "data_refs": [],
    "files": [
+    {
+     "includes": [
+      "<baselib/httpclient/ClientConnection.h>",
+      "<baselib/httpclient/ClientTypes.h>",
+      "<baselib/http/HeaderList.h>",
+      "<baselib/data/DataBlock.h>",
+      "<baselib/core/Uri.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<algorithm>",
+      "<cstddef>",
+      "<cstring>",
+      "<deque>",
+      "<string>",
+      "<vector>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_httpclient/TestClientContracts.h"
+    },
+    {
+     "includes": [
+      "<baselib/httpclient/ContentDecoder.h>",
+      "<baselib/data/DataBlock.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<cstring>",
+      "<string>",
+      "<vector>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_httpclient/TestContentDecoder.h"
+    },
+    {
+     "includes": [
+      "<baselib/httpclient/CookieJar.h>",
+      "<baselib/core/Uri.h>",
+      "<baselib/core/TimeUtils.h>",
+      "<baselib/core/OS.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<string>",
+      "<vector>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_httpclient/TestCookieJar.h"
+    },
     {
      "includes": [
       "<baselib/http/HeaderList.h>",
@@ -15327,21 +16386,83 @@
     },
     {
      "includes": [
+      "<baselib/httpclient/Http1Codec.h>",
+      "<baselib/http/HeaderList.h>",
+      "<baselib/core/Uri.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<string>",
+      "<vector>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_httpclient/TestHttp1Codec.h"
+    },
+    {
+     "includes": [
+      "<baselib/httpclient/RedirectPolicy.h>",
+      "<baselib/http/HeaderList.h>",
+      "<baselib/core/Uri.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<string>",
+      "<vector>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_httpclient/TestRedirectPolicy.h"
+    },
+    {
+     "includes": [
       "<utests/baselib/UtfMain.h>",
       "<baselib/httpclient/PreCompiled.h>",
-      "\"TestHeaderList.h\""
+      "\"TestHeaderList.h\"",
+      "\"TestClientContracts.h\"",
+      "\"TestCookieJar.h\"",
+      "\"TestRedirectPolicy.h\"",
+      "\"TestContentDecoder.h\"",
+      "\"TestHttp1Codec.h\""
      ],
      "path": "utf_baselib_httpclient/UtfBaselibHttpClientMain.cpp"
     }
    ],
    "notes_cases": [
+    "ClientContracts_BodySourceAndSinkStreamingTests",
+    "ClientContracts_ConnectionKeyAndPoolTests",
+    "ClientContracts_DriverFactoryDispatchTests",
+    "ClientContracts_ReplayabilityIsAQueryOnTheRequestTests",
+    "ClientContracts_RequestAndResponseRoundTripTests",
+    "ClientContracts_StubConnectionAndEventSinkTests",
+    "ContentDecoder_BombCapsTripTests",
+    "ContentDecoder_NoDecompressorShipsTests",
+    "ContentDecoder_RegistrationAndLookupTests",
+    "ContentDecoder_StreamingThroughTheSeamTests",
+    "CookieJar_CapsAndEvictionTests",
+    "CookieJar_DomainAttributeRejectionTests",
+    "CookieJar_DomainMatchRuleTests",
+    "CookieJar_ExpiryAndMaxAgePrecedenceTests",
+    "CookieJar_HostOnlyStorageAndOrderTests",
+    "CookieJar_PathMatchAndDefaultPathTests",
+    "CookieJar_RelativeRequestUriIsRefusedTests",
+    "CookieJar_SecureAndHttpOnlyTests",
+    "CookieJar_ThreadSafetyTests",
     "HeaderList_CaseInsensitiveLookupTests",
     "HeaderList_ErrorMessageRedactionTests",
     "HeaderList_HeadersMapRoundTripTests",
     "HeaderList_NameValidationTests",
     "HeaderList_OrderCaseAndRepeatsTests",
     "HeaderList_SetRemoveAndBoundsTests",
-    "HeaderList_ValueInjectionRejectionTests"
+    "HeaderList_ValueInjectionRejectionTests",
+    "Http1Codec_ChunkedAndTrailersTests",
+    "Http1Codec_LimitsTests",
+    "Http1Codec_ReadUntilCloseAndBodilessTests",
+    "Http1Codec_RequestSerializerTests",
+    "Http1Codec_SmugglingDefencesTests",
+    "Http1Codec_StatusLineHeadersAndBodyTests",
+    "RedirectPolicy_CredentialDropIsCrossOriginTests",
+    "RedirectPolicy_DowngradeAndSchemeRefusalTests",
+    "RedirectPolicy_HopLimitAndBodyReplayTests",
+    "RedirectPolicy_MethodRewriteMatrixTests",
+    "RedirectPolicy_OffByDefaultTests",
+    "RedirectPolicy_TargetResolutionAndLocationTests"
    ]
   },
   "utf_baselib_io": {
@@ -17038,6 +18159,27 @@
    "sha": "f6e77a1d1be2dc6c111c35f14f2a3036"
   },
   {
+   "file": "utf_baselib_h2core/TestFlowControl.h",
+   "line": 44,
+   "module": "utf_baselib_h2core",
+   "name": "utest",
+   "sha": "8096d5cc4b3bb6bf08729f34aa4f1d56"
+  },
+  {
+   "file": "utf_baselib_h2core/TestFrameCodec.h",
+   "line": 49,
+   "module": "utf_baselib_h2core",
+   "name": "utest",
+   "sha": "f29c7dd9ca95323bb0c4af5cf363c887"
+  },
+  {
+   "file": "utf_baselib_h2core/TestHpack.h",
+   "line": 64,
+   "module": "utf_baselib_h2core",
+   "name": "utest",
+   "sha": "d2f90cbc40b7c7e26a69081b1e54e270"
+  },
+  {
    "file": "utf_baselib_h2core/TestHttp2ErrorInfo.h",
    "line": 42,
    "module": "utf_baselib_h2core",
@@ -17050,6 +18192,13 @@
    "module": "utf_baselib_h2core",
    "name": "utest",
    "sha": "1e3ae105cb8de116755f0e69d8493e5b"
+  },
+  {
+   "file": "utf_baselib_h2core/TestStreamStates.h",
+   "line": 46,
+   "module": "utf_baselib_h2core",
+   "name": "utest",
+   "sha": "60091bbb3792d118d935dcdd54eabff3"
   },
   {
    "file": "utf_baselib_h2profiles/TestHttpClientProfiles.h",
@@ -17120,6 +18269,41 @@
    "module": "utf_baselib_http2",
    "name": "utest",
    "sha": "7f001ad4f3c6a836912b11f87a97d7f8"
+  },
+  {
+   "file": "utf_baselib_httpclient/TestClientContracts.h",
+   "line": 51,
+   "module": "utf_baselib_httpclient",
+   "name": "utest",
+   "sha": "618c67a3ef9a596c78e214483548db36"
+  },
+  {
+   "file": "utf_baselib_httpclient/TestContentDecoder.h",
+   "line": 46,
+   "module": "utf_baselib_httpclient",
+   "name": "utest",
+   "sha": "d7ada71854a537caa5209589ae9b602b"
+  },
+  {
+   "file": "utf_baselib_httpclient/TestCookieJar.h",
+   "line": 42,
+   "module": "utf_baselib_httpclient",
+   "name": "utest",
+   "sha": "04d5bb3cb8e9f2ec552ea5b934b25eff"
+  },
+  {
+   "file": "utf_baselib_httpclient/TestHttp1Codec.h",
+   "line": 43,
+   "module": "utf_baselib_httpclient",
+   "name": "utest",
+   "sha": "8395198797cc2e6f0f373de09f889efd"
+  },
+  {
+   "file": "utf_baselib_httpclient/TestRedirectPolicy.h",
+   "line": 42,
+   "module": "utf_baselib_httpclient",
+   "name": "utest",
+   "sha": "78f15ef8282c52ac305bde9405ee9648"
   },
   {
    "file": "utf_baselib_io/TestIO.h",

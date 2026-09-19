@@ -62,7 +62,7 @@ The old numbers are kept in the second column because earlier notes refer to the
 |---|---|---|---|
 | D13 | O1 | **Executor-bound sockets.** Stream objects are constructed on a strand; handlers are not wrapped one by one. | 3.1 |
 | D14 | O2 | **Layout:** `http2/`, `httpclient/`, and generic pieces where they belong. | 2.2 |
-| D15 | O3 | **The HTTP/1.1 codec starts on Boost.Beast**, to see where it goes, with stated criteria deciding whether it stays. The Beast interfaces used are **abstracted and isolated in the `bl` namespace the same way the library's other Boost interfaces are.** | 5.5 |
+| D15 | O3 | **The HTTP/1.1 codec starts on Boost.Beast**, to see where it goes, with stated criteria deciding whether it stays. The Beast interfaces used are **abstracted and isolated in the `bl` namespace the same way the library's other Boost interfaces are.** **Settled 2026-09-19 by S2.5: Beast stays**, all four criteria measured - `notes/plans/issues/d15-http1-codec-backend-verdict.md`. | 5.5 |
 | D16 | O4 | **In-house URI parser.** Boost.URL is rejected because it is not header-only. | 3.4 |
 | D17 | O5 | **`BL_TASKS_HANDLER_END_IMPL` is generalized** for multi-operation tasks - subject to D19. | 3.2 |
 | D18 | O6 | **`TcpConnectionEstablisherConnector` gains the pre-handshake hook** - subject to D19. | 3.6 |
@@ -852,7 +852,7 @@ folding is rejected; headers are capped at 64 KB, matching `SimpleHttpTask.h:77`
 `Http1ConnectionTaskT< STREAM >` serves one request at a time and returns to the pool if the response
 was fully consumed and neither side said `Connection: close`.
 
-**Boost.Beast (D15).** The codec starts on Beast, to see where it goes. Beast is header-only, so there
+**Boost.Beast (D15).** The codec starts on Beast, to see where it goes - and, as of S2.5, stays there. Beast is header-only, so there
 is no dist rebuild; it is C++11, usable sans-I/O, and heavily fuzzed; and HTTP/1.1 response parsing is
 exactly where hand-written code goes subtly wrong. Against it: Beast is template-heavy, and test module
 object size is a real constraint here. The library also already has a hand-written request parser
@@ -876,6 +876,12 @@ compile.
    names the codec uses** into `bl::beast` and `bl::beast::http` with individual `using` declarations,
    so the surface we depend on is explicit and can be read off one file. Like `core/AsioSSL.h` it is
    not reachable from `BaseIncludes.h` or any `PreCompiled.h`; only the codec backend includes it.
+   **S2.5 found this and the plan's umbrella convention point opposite ways**, since the facade
+   includes the backend, so listing the facade in `httpclient/PreCompiled.h` would make Beast
+   reachable from an umbrella. The property wins: it is a stated isolation guarantee with a
+   compile-cost reason, while the convention is merge hygiene. The consequence is written into that
+   umbrella rather than left implicit - **`httpclient/PreCompiled.h` is not a complete index of
+   `httpclient/`**, and a reader looking for the codec will not find it listed there.
 2. **A compatibility shim**, `core/detail/BoostBeastCompat.h`, in the form of `BoostAsioCompat.h`, if
    and only if a Beast API difference between Boost versions ever needs absorbing.
 3. **A facade in the library's own terms**, `httpclient/Http1Codec.h`. No Beast type appears in any of
@@ -886,6 +892,17 @@ compile.
 
 The rule which follows, and which a `grep` can check: **no `boost::beast` name appears outside layers
 1 and 2, and no `bl::beast` name appears outside the backend header.**
+
+**Settled 2026-09-19: Beast stays.** S2.5 measured all four criteria rather than arguing them - the
+chunked and trailers question probed with a TU deriving from `basic_parser` and 33 responses, the
+object-size delta measured on *both* toolchains because L1 found the clang debug figure is the small
+one (+0.27 MB there, +0.68 MB on gcc release, both noise against a 40 MB target). The verdict and its
+evidence are in `notes/plans/issues/d15-http1-codec-backend-verdict.md`. What the facade turned out
+to be for is not portability but **safety**: Beast accepts three things a client must not, and the
+facade closes them - obsolete line folding, which Beast silently unfolds so it cannot be seen from
+the callbacks at all; a `Transfer-Encoding` which is not exactly `chunked`, including `chunked, gzip`
+which it converts to read-until-close over the raw chunk framing; and a `Content-Length` of `5, 5`,
+which is what a proxy produces when it joins two fields.
 
 **The criteria for "see where it goes".** Beast stays if all four hold; otherwise the in-house backend
 is written behind the same facade, and nothing above the facade changes.

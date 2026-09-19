@@ -661,6 +661,20 @@ All depend only on L1 and are mutually parallel. The four HTTP/2 primitives (S2.
 Depends on L0 (gated), L1, L2. Slices are mutually parallel except as noted.
 
 ### S3.1 — HTTP/2 Session engine (§4.5, §4.6)
+- **Two contracts L2 imposes on this slice, neither of which the design pins.** Both were found while
+  building the pieces this engine drives, and both are silent failures if missed.
+  1. **Call the state machine once per completed header block, not once per frame.** CONTINUATION is
+     deliberately not routable to it - a field block is one message and the `END_STREAM` transition
+     belongs to the message, not to the frame carrying the last of it. Without this, a `HEADERS`
+     carrying `END_STREAM` but not `END_HEADERS` closes the stream out from under its own
+     CONTINUATION frames. The frame reader already owns block continuity (S2.1).
+  2. **Decide how the HPACK decoder's capacity is set when a profile advertises below 4096.** S2.2's
+     decoder takes one constructor parameter serving as both starting capacity and size-update
+     ceiling, with no setter - correct for 4096 and for advertising *more*, but a profile advertising
+     *less* leaves a window between our `SETTINGS` going out and the peer's ack in which the peer is
+     still entitled to 4096 and we would reject a legal size update. Either add a setter there or
+     construct the decoder after the ack; S2.2 flagged this as the item it would have stopped on had
+     the default path not been correct.
 - Deliver: `http2/Session.h` (`SessionT`, role-neutral, single-threaded by contract): `feed(bytes)` →
   event queue (no callbacks out of `feed`); `wantsWrite()`/`produce(buffer)`; commands (submit, body,
   reset, consumed, ping, goaway, settings); message validation (RFC 9113 §8.1-8.3); write scheduling
