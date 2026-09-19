@@ -1176,6 +1176,38 @@ with all of them.
   pool if fully consumed and neither side said close.
 - Dep: S4.1, S2.5. Accept: request/response over h1; keep-alive reuse; against the library's own
   `HttpServer`. Tests → `httpclient`.
+- **CORRECTION, found in execution: "keep-alive reuse against the library's own `HttpServer`" is not
+  achievable**, and the library says so itself. `httpserver/Response.h` puts `Connection: close` on
+  every response, with the comment *"Currently the HTTP server implementation does not support HTTP
+  1.1 persistent connections (Keep-Alive) and pipelining, so we request that the connection is
+  closed"*. The evidence is therefore split, and the split is **better** than the criterion it
+  replaces because it exercises both directions: `HttpServer` proves the request/response path and
+  the **negative** half of the derivation against a real peer with a real parser, while a scripted
+  loopback peer proves reuse, HTTP/1.0 with and without keep-alive, read-until-close, interims and
+  chunked trailers.
+- **Executed 2026-09-19.** Tests went to a **new `utf_baselib_httpclient3`**, not `httpclient`:
+  S4.3 alone takes that module 25.49 -> **44.54 MB** clang debug, past the 40 MB target, in a module
+  design §8.1 still has the session and the pool landing in. The new module is **39.66 MB** and is
+  declared CLOSED to new slices in its own main; a slice that would add there takes
+  `utf_baselib_httpclient4`. Clean under clang and gcc at release, 6/6 and 44/44.
+- **Three defects the tests found by being run**, the third being the one that matters most:
+  trailers were never delivered at all; a request the driver refused to render left the connection
+  draining, because reuse was derived from the absence of an error code rather than from whether the
+  socket had been touched; and **a begun-but-never-started read would HANG the task rather than fail
+  it** - `beginOperation()` followed by a throwing `async_read_some` leaves the pending count
+  permanently above zero and the terminal is taken only at zero. Both read and write now balance the
+  accounting in a catch.
+- **Notes carried for L5.** The driver receives an **attached** stream, so the policy's `m_strand`
+  is null and `getStrand()`/`createTimer()`/`postToStrand()` all assert - the strand survives as the
+  **socket's executor**, and everything posts through `getSocket().get_executor()`. The always-armed
+  idle read is load-bearing, because the mix-in takes its terminal from `onOperationCompleted()` so
+  a pending count of zero while not closing can never be completed by `beginClose()`. State is
+  settled **before** `onClosed` is delivered, since the request task calls `releaseStream` from its
+  handling of `onClosed` and the pool then asks `state()`. Trailers are delivered from the two
+  message-completion sites and **not** from inside `finishStream`, which is NOEXCEPT - a sink
+  throwing out of `onTrailers` there would hit `BL_RIP_MSG`. And **`cancel()` ends the connection**:
+  HTTP/1.1 has no stream reset, so this is the one place §5.7's "cancelling a request never closes
+  the connection" cannot hold.
 - **Reuse is derived here, not reported by the codec** (L2 review). `Http1ResponseParser` exposes
   `httpVersion()`, `needsEof()` and the header list but no keep-alive verdict, and Beast's own
   `keep_alive()` is deliberately not re-exported. An HTTP/1.0 response without
