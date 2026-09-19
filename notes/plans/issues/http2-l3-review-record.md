@@ -10,8 +10,43 @@ of RFC 9113 for Appendix A, with two independent transcriptions beside it); one 
 `curl` fetched the RFC text. Two defects are worth fixing before
 the slices that consume the code they sit in (findings 2 and 3); one hardening item on the floor
 check (finding 1) is not exploitable while security level 2 is pinned; nothing found blocks L4 from
-starting once those are scheduled. Unlike the L2 record, nothing here has been fixed - the findings
-are reported, not carried out - and the notes for later work orders are in section 7.
+starting once those are scheduled. The notes for later work orders are in section 7.
+
+**All of findings 1 through 6 were carried out the same day**, in a three-lane fix round merged at
+`d7e1046`, `13f51fd` and `a102b23`, each validated under clang and gcc at release. The bodies below
+are left as written, so the reasoning that led to each fix survives; what changed is recorded here.
+
+- **Finding 1** — the authentication axis is in the floor, `:!aNULL:!eNULL` is appended to the TLS
+  1.2 list, `ADH-AES128-GCM-SHA256` is pinned as refused, and design §3.3 names all three axes with
+  its Appendix A arithmetic shown. **The implementing lane corrected this finding's own
+  recommendation:** the proposed set of `rsa`/`ecdsa`/`any` would have had the library refuse,
+  post-handshake, the `DHE-DSS-AES128-GCM-SHA256` its own hardened list offers at level 2, so
+  `NID_auth_dss` is in the set. It is written as a positive set rather than a refusal of
+  `NID_auth_null`, so it depends on no mask-to-NID mapping and fails closed on an unfamiliar method.
+  No negative control was possible - the harness refused a temporary removal of the axis as a
+  security weakening - so the proof is in the case, which asserts the two conjuncts the old
+  predicate consisted of.
+- **Finding 2** — `SessionLimits::maxDecodedHeaderListSize` with a 64 KB default, applied from
+  construction as `max( row, advertised )`; the ACK still applies an advertised value. Contract 3's
+  text now names this setting as the one it does not govern, since §6.5.2 makes it advisory.
+- **Finding 3** — the status is judged before the trailing-bytes check, so a refusal carrying a body
+  keeps its status. **The lane then found a pre-existing 1-in-16 flake in the same suite** and fixed
+  it separately: `FakeProxy` had no happens-before between the proxy worker's last record and the
+  assertion, and one site had been papered over with a 300-iteration poll. It would have reddened
+  the layer gate.
+- **Finding 4** — `judgeDataFrame()` applies the decode/judge/transition ordering on the DATA path.
+  **The lane verified nghttp2 rather than trusting the recall here, and found the recall
+  understated it**: nghttp2 answers DATA-before-HEADERS with a *connection* error. RFC 9113 §8.1.1
+  asks only for a stream error, which is what was implemented, with nghttp2's stricter choice
+  recorded in the comment.
+- **Finding 5** — both justifications corrected in the header and the plan; neither decision changed.
+- **Finding 6** — all six S3.1 nits fixed. `settingsTimeoutInSeconds` was deliberately left at 10
+  and written into S4.2's work order, since that value is S4.2's to set. On §6.8 the lane read the
+  RFC rather than adding an error: "MUST NOT increase" is a *sender* rule with no receiver error
+  prescribed, so a raised second GOAWAY is clamped to the first value.
+
+**Finding 1 was filed as High and withdrawn the same day**; the correction note above the findings
+has the measurement and the mechanism.
 
 **Corrected the same day.** The first draft rated finding 1 High on the premise that OpenSSL's
 security level 2 admits anonymous suites. The coordinator measured the opposite on the dist's
