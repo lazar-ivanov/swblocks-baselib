@@ -1049,13 +1049,25 @@ namespace bl
                  * server selects" - and it is the only order under which a server's preference
                  * means anything at all
                  *
-                 * WHAT NO OVERLAP DOES. SSL_TLSEXT_ERR_NOACK: no ALPN extension in the ServerHello
-                 * and the handshake completes with nothing selected. RFC 7301 section 3.2 also
-                 * allows a fatal no_application_protocol alert, and that is deliberately NOT
-                 * implemented here - design 5.5's fallback needs "the peer completed the handshake
-                 * and chose nothing" to be a representable outcome, and it is what
-                 * NegotiatedProtocol::withoutAlpn exists to describe. A caller which wants the
-                 * alert wants a second entry point, argued on its own
+                 * WHAT NO OVERLAP DOES, AND WHICH SERVER THAT MODELS. SSL_TLSEXT_ERR_NOACK: no
+                 * ALPN extension in the ServerHello, and the handshake completes with nothing
+                 * selected. That is RFC 7301 section 3.1's server, which "MAY return a suitable
+                 * protocol selection response" and did not - a server which did not act on the
+                 * extension, which is what this library's own HttpServer is.
+                 *
+                 * IT IS NOT WHAT SECTION 3.2 ASKS OF A SERVER WHICH IMPLEMENTS ALPN. That section
+                 * says a server supporting none of the protocols the client advertises "SHALL
+                 * respond with a fatal 'no_application_protocol' alert". The alert is not an
+                 * alternative the section permits; it is what it requires. So a PRODUCTION server
+                 * built on this entry point would be non-conforming on no overlap, and a caller
+                 * which wants the alert wants a second entry point, argued on its own.
+                 *
+                 * WHY NOACK IS STILL THE RIGHT BEHAVIOUR FOR WHAT THIS SERVES, WHICH IS A TEST
+                 * PEER. Design 5.5's fallback needs "the peer completed the handshake and chose
+                 * nothing" to be a representable outcome on the CLIENT side - it is what
+                 * NegotiatedProtocol::withoutAlpn exists to describe - and a peer which answers
+                 * with the alert cannot produce it. The only caller today is the TLS test peer of
+                 * utf_baselib_h2client3, and that is the case it has to be able to drive
                  */
 
                 static void freeAlpnPreference(
@@ -1244,6 +1256,25 @@ namespace bl
 
                     const auto index = alpnPreferenceExIndex();
 
+                    /*
+                     * A SECOND CALL ON THE SAME CONTEXT IS REFUSED, AND NOT BECAUSE IT WOULD LEAK.
+                     * ::SSL_CTX_set_ex_data overwrites the slot's pointer and freeAlpnPreference
+                     * runs once, at ::SSL_CTX_free, on whatever pointer is in the slot then - so
+                     * an overwritten list would indeed leak. But freeing it here would be worse
+                     * than leaking it: alpnSelectCallback hands OpenSSL a pointer INTO that list
+                     * and OpenSSL reads it after the callback has returned, so a handshake on
+                     * another thread may be reading the very list a second call would delete.
+                     * There is no safe replacement, so there is no replacement - a context is
+                     * configured once, and this says so with a check rather than with a comment
+                     */
+
+                    BL_CHK(
+                        false,
+                        nullptr == ::SSL_CTX_get_ex_data( context.native_handle(), index ),
+                        BL_MSG()
+                            << "An ALPN server preference has already been set on this context"
+                        );
+
                     auto stored = cpp::SafeUniquePtr< std::vector< std::string > >::attach(
                         new std::vector< std::string >( preference )
                         );
@@ -1251,9 +1282,7 @@ namespace bl
                     /*
                      * ::SSL_CTX_set_ex_data returns 1 on success; the list is released to the
                      * context only once it has taken it, so a failure here frees it rather than
-                     * leaking it. Any list stored by a previous call on this context is freed by
-                     * the ex_data free callback when the context goes away, and replacing one is
-                     * not attempted - a context is configured once
+                     * leaking it
                      */
 
                     BL_CHK_CRYPTO_API_NM(
@@ -1501,14 +1530,19 @@ namespace bl
              * offering "h2, http/1.1" therefore gets http/1.1 from a server which prefers it
              *
              * A client offering nothing in common completes the handshake with NOTHING selected -
-             * no ALPN extension in the ServerHello - rather than being refused with the fatal
-             * no_application_protocol alert RFC 7301 also permits. Design 5.5's fallback is
-             * written against that outcome being representable
+             * no ALPN extension in the ServerHello. That is section 3.1's ALPN-unaware server, and
+             * it is NOT what section 3.2 asks of a server which implements ALPN: such a server
+             * SHALL answer no overlap with a fatal no_application_protocol alert. So this entry
+             * point serves a TEST PEER, whose job is to let design 5.5's client-side fallback be
+             * driven at all, and a production server on it would be non-conforming. The reasoning
+             * in full is on the detail class
              *
-             * The preference list is copied and its lifetime becomes the context's
+             * The preference list is copied and its lifetime becomes the context's, and it may be
+             * set only ONCE on a given context
              *
-             * @throw UnexpectedException for an empty list or a name outside 1 .. 255 bytes -
-             * the same refusal, from the same BL_CHK, as the client offer's
+             * @throw UnexpectedException for an empty list, a name outside 1 .. 255 bytes - the
+             * same refusal, from the same BL_CHK, as the client offer's - or a context which
+             * already carries a preference
              */
 
             static void setAlpnServerPreference(
