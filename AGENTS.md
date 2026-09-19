@@ -102,6 +102,29 @@ module (112.7MB) once made two x86 build combinations impossible to compile at a
 Read `src/utests/AGENTS.md` before adding or splitting a test module — it carries the full rules,
 the new-module checklist, and the verification tiers.
 
+### Monitoring A Long Build Or Test Run
+
+**A running process is not a progressing process. Never report the first as if it were the second.**
+
+Checking `pgrep` and reporting "still running" is not a status. Check that the work is *advancing*:
+the build or run log's size and mtime moving against the wall clock, the checkpoint or phase files
+appearing, the test-module binary under execution changing. This is the whole check, and it costs
+one command.
+
+Two traps that make a stuck job look busy:
+
+1. **`pgrep -f PATTERN` matches the watcher's own command line.** A shell invoked as `bash -c`
+   carries the entire script text as its argv, so any pattern drawn from that script — including the
+   `pgrep` line itself — matches the watching process and the guard never fires. Write the pattern so
+   it cannot match its own literal: `pgrep -f "[g]1-gate.sh"`, not `pgrep -f "g1-gate.sh"`.
+2. **A log written only at the end of a phase never moves during it.** Log freshness is the wrong
+   progress signal for a phase that buffers or writes on completion; pick a signal that actually
+   changes while that phase runs.
+
+Prefer a watcher that reports on a stall — alive but not advancing — over one that only reports
+completion. A job that hangs sends no completion notification, which is exactly when a watcher is
+needed and exactly when a completion-only watcher is silent.
+
 ---
 
 ## Configuration File Changes
@@ -280,10 +303,11 @@ For detailed build system documentation, see `scripts/devenv7/AGENTS.md`:
 
 ---
 
-**Document Version:** 2.7
-**Last Updated:** 2026-09-17
+**Document Version:** 2.8
+**Last Updated:** 2026-09-19
 
 **Changelog:**
+- v2.8 (2026-09-19): Added Monitoring A Long Build Or Test Run — check progress, not liveness
 - v2.7 (2026-09-17): Added the parallel-work-across-worktrees split of the toolchain and variant mix
 - v2.6 (2026-09-14): Noted that the test module size ceiling is now enforced by the build
 - v2.5 (2026-09-13): Added the Test Module Size rule and referenced src/utests/AGENTS.md
