@@ -394,6 +394,21 @@ namespace bl
                 time::ptime                                     sentAt;
             };
 
+            /**
+             * @brief A serialized header block waiting to be written, and the stream it is for
+             *
+             * The identifier travels WITH the block because the queue outlives the decision to
+             * send it. A stream force closed by a peer's GOAWAY is reported RETRYABLE - the caller
+             * may replay that request elsewhere - so its block must be dropped rather than written
+             * behind the GOAWAY, and a bare buffer carries nothing to recognize it by
+             */
+
+            struct QueuedHeaderBlock
+            {
+                std::uint32_t                                   streamId = 0U;
+                wire_buffer_t                                   frames;
+            };
+
             typedef std::map< std::uint32_t, StreamContext >     streams_t;
 
             cpp::ScalarTypeIniter< StreamRole >                                 m_role;
@@ -412,7 +427,7 @@ namespace bl
             streams_t                                                           m_streams;
 
             wire_buffer_t                                                       m_controlQueue;
-            std::deque< wire_buffer_t >                                         m_headerBlockQueue;
+            std::deque< QueuedHeaderBlock >                                     m_headerBlockQueue;
             std::deque< SessionEvent >                                          m_events;
             std::deque< UnacknowledgedSettings >                                m_unackedSettings;
 
@@ -837,7 +852,7 @@ namespace bl
 
                 while( ! m_headerBlockQueue.empty() )
                 {
-                    const auto& block = m_headerBlockQueue.front();
+                    const auto& block = m_headerBlockQueue.front().frames;
 
                     out.insert( out.end(), block.begin(), block.end() );
 
@@ -3378,16 +3393,49 @@ namespace bl
             }
 
             /**
+             * @brief Drops whatever this stream has queued and not yet written
+             *
+             * raiseConnectionError( )'s clear, for one stream. The ORDER of what remains is
+             * untouched, which is what keeps every surviving block whole and ahead of the blocks
+             * queued after it - entries leave, nothing moves past anything else
+             */
+
+            void dropQueuedHeaderBlocks( SAA_in const std::uint32_t streamId )
+            {
+                auto it = m_headerBlockQueue.begin();
+
+                while( it != m_headerBlockQueue.end() )
+                {
+                    if( it -> streamId == streamId )
+                    {
+                        it = m_headerBlockQueue.erase( it );
+                    }
+                    else
+                    {
+                        ++it;
+                    }
+                }
+            }
+
+            /**
              * @brief Takes a stream out of the registry without putting a frame on the wire
              *
              * A GOAWAY or a connection error ends every stream, and there is nothing to send about
              * it: a RST_STREAM after a GOAWAY is pointless and after a connection error is
              * forbidden. The registry only closes a stream in response to a frame, so a
              * RST_STREAM is reported to it and the bytes are not queued
+             *
+             * Nor is anything already queued for it still owed the wire. A block queued while a
+             * write was in flight, for a stream a peer's GOAWAY then dooms, would otherwise be
+             * written AFTER our own GOAWAY: RFC 9113 6.8 says a conforming peer ignores it, but
+             * the bytes of a request the caller has already been told is RETRYABLE would reach
+             * the origin anyway, and a peer which acts on them turns the replay into a duplicate
              */
 
             void forceCloseStream( SAA_in const std::uint32_t streamId )
             {
+                dropQueuedHeaderBlocks( streamId );
+
                 auto* const machine = m_registry.findStream( streamId );
 
                 if( machine == nullptr )
@@ -3589,8 +3637,9 @@ namespace bl
                     offset += chunk;
                 }
 
-                m_headerBlockQueue.push_back( wire_buffer_t() );
-                m_headerBlockQueue.back().swap( frames );
+                m_headerBlockQueue.push_back( QueuedHeaderBlock() );
+                m_headerBlockQueue.back().streamId = streamId;
+                m_headerBlockQueue.back().frames.swap( frames );
 
                 m_registry.onFrameSent(
                     streamId,

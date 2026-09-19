@@ -482,6 +482,51 @@ namespace utest
         }
 
         /**
+         * @brief The stream identifier of every frame in a buffer, in order
+         *
+         * frameTypes( )'s sibling. WHICH stream a frame is for is the whole question once one
+         * stream out of several has been doomed and the others have not
+         */
+
+        inline std::vector< std::uint32_t > frameStreamIds( SAA_in const std::string& bytes )
+        {
+            std::vector< std::uint32_t > ids;
+
+            std::size_t offset = 0U;
+
+            while( offset + 9U <= bytes.size() )
+            {
+                const auto length =
+                    ( static_cast< std::uint32_t >(
+                        static_cast< unsigned char >( bytes[ offset ] ) ) << 16 ) |
+                    ( static_cast< std::uint32_t >(
+                        static_cast< unsigned char >( bytes[ offset + 1U ] ) ) << 8 ) |
+                      static_cast< std::uint32_t >(
+                        static_cast< unsigned char >( bytes[ offset + 2U ] ) );
+
+                const auto streamId =
+                    ( static_cast< std::uint32_t >(
+                        static_cast< unsigned char >( bytes[ offset + 5U ] ) ) << 24 ) |
+                    ( static_cast< std::uint32_t >(
+                        static_cast< unsigned char >( bytes[ offset + 6U ] ) ) << 16 ) |
+                    ( static_cast< std::uint32_t >(
+                        static_cast< unsigned char >( bytes[ offset + 7U ] ) ) << 8 ) |
+                      static_cast< std::uint32_t >(
+                        static_cast< unsigned char >( bytes[ offset + 8U ] ) );
+
+                /*
+                 * The high bit is the reserved bit of RFC 9113 4.1 and is not part of the value
+                 */
+
+                ids.push_back( streamId & 0x7FFFFFFFU );
+
+                offset += 9U + length;
+            }
+
+            return ids;
+        }
+
+        /**
          * @brief Establishes a connection - the opening write is produced and the peer's SETTINGS
          * and its acknowledgement are fed, so the session is in its steady state
          */
@@ -3499,6 +3544,132 @@ UTF_AUTO_TEST_CASE( Session_GoAwayAndRetryTests )
 
         UTF_REQUIRE_EQUAL( countFrames( out, Globals::FRAME_TYPE_GOAWAY ), 1U );
         UTF_REQUIRE_EQUAL( countFrames( out, Globals::FRAME_TYPE_HEADERS ), 0U );
+    }
+}
+
+UTF_AUTO_TEST_CASE( Session_GoAwayDropsQueuedHeaderBlockTests )
+{
+    using namespace bl;
+    using namespace bl::http2;
+    using namespace utest::session;
+
+    const auto now = baseTime();
+
+    /*
+     * A PEER's GOAWAY ends the work queued for the streams it dooms, exactly as a connection
+     * error does for all of them
+     *
+     * A request submitted while a write is in flight has its block queued and not yet written. If
+     * a GOAWAY then names a last identifier below that stream, the engine closes the stream
+     * RETRYABLE - which tells a pool it may replay the request on another connection. The block
+     * must therefore not go on the wire afterwards: RFC 9113 6.8 says a conforming peer ignores
+     * it, but the bytes of a request already declared unprocessed would still reach the origin,
+     * and a peer which acts on them turns the replay into a duplicate
+     *
+     * The queue ORDER is not what changes here. A block still leaves the queue whole, with its
+     * own CONTINUATION frames and nothing between them, and the blocks which survive keep their
+     * order. What changes is that a doomed block does not leave the queue at all
+     */
+
+    {
+        Session session( StreamRole::Client, now );
+
+        settle( session, now );
+
+        const auto first = session.submitRequest( makeRequest() );
+
+        UTF_REQUIRE_EQUAL( first, 1U );
+
+        /*
+         * The first request goes out; the second is submitted while that write is in flight, so
+         * its block is still queued when the GOAWAY lands
+         */
+
+        UTF_REQUIRE_EQUAL(
+            countFrames( produceText( session, now ), Globals::FRAME_TYPE_HEADERS ),
+            1U
+            );
+
+        const auto second = session.submitRequest( makeRequest() );
+
+        UTF_REQUIRE_EQUAL( second, 3U );
+        UTF_REQUIRE( session.wantsWrite() );
+
+        feedText( session, goAwayFrame( first, Globals::ERROR_CODE_NO_ERROR ), now );
+
+        const auto events = drain( session );
+
+        UTF_REQUIRE_EQUAL( events.size(), 2U );
+
+        UTF_REQUIRE( events[ 0 ].type == SessionEventType::GoAwayReceived );
+        UTF_REQUIRE_EQUAL( events[ 0 ].lastStreamId.value(), first );
+
+        UTF_REQUIRE( events[ 1 ].type == SessionEventType::StreamClosed );
+        UTF_REQUIRE_EQUAL( events[ 1 ].streamId.value(), second );
+        UTF_REQUIRE( events[ 1 ].isRetryable );
+
+        /*
+         * Nothing is owed the wire any more, and the next write carries no HEADERS at all
+         */
+
+        UTF_REQUIRE( ! session.wantsWrite() );
+
+        const auto out = produceText( session, now );
+
+        UTF_REQUIRE_EQUAL( countFrames( out, Globals::FRAME_TYPE_HEADERS ), 0U );
+        UTF_REQUIRE( out.empty() );
+    }
+
+    /*
+     * Only the doomed stream's block is dropped. A block queued for a stream at or below the last
+     * identifier is still written - the peer is still answering that one
+     */
+
+    {
+        Session session( StreamRole::Client, now );
+        PeerEncoder peer;
+
+        settle( session, now );
+
+        const auto first = session.submitRequest( makeRequest() );
+        const auto second = session.submitRequest( makeRequest() );
+
+        UTF_REQUIRE_EQUAL( first, 1U );
+        UTF_REQUIRE_EQUAL( second, 3U );
+
+        /*
+         * Neither block has been written yet - both are queued when the GOAWAY arrives
+         */
+
+        feedText( session, goAwayFrame( first, Globals::ERROR_CODE_NO_ERROR ), now );
+
+        const auto events = drain( session );
+
+        UTF_REQUIRE_EQUAL( events.size(), 2U );
+        UTF_REQUIRE( events[ 1 ].type == SessionEventType::StreamClosed );
+        UTF_REQUIRE_EQUAL( events[ 1 ].streamId.value(), second );
+
+        const auto out = produceText( session, now );
+
+        UTF_REQUIRE_EQUAL( countFrames( out, Globals::FRAME_TYPE_HEADERS ), 1U );
+
+        const auto ids = frameStreamIds( out );
+
+        UTF_REQUIRE_EQUAL( ids.size(), 1U );
+        UTF_REQUIRE_EQUAL( ids[ 0 ], first );
+
+        /*
+         * And that stream is live: the peer answers it and it completes in the ordinary way
+         */
+
+        feedText( session, headersFrame( first, peer.response( "200" ), true, true ), now );
+
+        const auto finished = drain( session );
+
+        UTF_REQUIRE_EQUAL( finished.size(), 2U );
+        UTF_REQUIRE( finished[ 0 ].type == SessionEventType::Headers );
+        UTF_REQUIRE( finished[ 1 ].type == SessionEventType::StreamClosed );
+        UTF_REQUIRE( ! finished[ 1 ].isRetryable );
     }
 }
 
