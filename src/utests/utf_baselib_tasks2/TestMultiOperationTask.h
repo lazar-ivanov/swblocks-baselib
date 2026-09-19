@@ -462,6 +462,15 @@ namespace
         std::size_t                                                         firstDelayMs;
         std::size_t                                                         failStepMs;
         std::size_t                                                         restDelayMs;
+
+        /*
+         * closeWhenAllSucceed asks for the deliberate close once every operation has succeeded,
+         * so nothing is left in flight for initiateClose() to cancel. closeAfterSuccesses, when
+         * non zero, asks for it after that many successes instead - which leaves the rest
+         * outstanding, and that is the quadrant the two differ on
+         */
+
+        std::size_t                                                         closeAfterSuccesses;
         bool                                                                closeWhenAllSucceed;
         bool                                                                initiateCloseCancels;
         bool                                                                initiateCloseThrows;
@@ -476,6 +485,7 @@ namespace
             firstDelayMs( 50U ),
             failStepMs( 0U ),
             restDelayMs( 50U ),
+            closeAfterSuccesses( 0U ),
             closeWhenAllSucceed( false ),
             initiateCloseCancels( true ),
             initiateCloseThrows( false )
@@ -598,7 +608,15 @@ namespace
 
         std::size_t delayMs( SAA_in const std::size_t index ) const NOEXCEPT
         {
-            if( index < m_options.failures )
+            /*
+             * The early operations are the failing ones, and then the successes a
+             * closeAfterSuccesses case needs to land before the rest. They expire on the
+             * firstDelayMs ladder; everything else waits restDelayMs, which is what leaves it
+             * outstanding. With closeAfterSuccesses at its default of zero this is the ladder
+             * the failing operations alone were already on
+             */
+
+            if( index < m_options.failures + m_options.closeAfterSuccesses )
             {
                 return m_options.firstDelayMs + index * m_options.failStepMs;
             }
@@ -635,7 +653,16 @@ namespace
 
             ++m_bodiesSucceeded;
 
-            if( m_options.closeWhenAllSucceed && m_bodiesSucceeded == m_options.operations )
+            /*
+             * After how many successes the run closes deliberately - every one of them, or the
+             * chosen number which leaves the rest of the operations in flight
+             */
+
+            const std::size_t closeAfter = m_options.closeWhenAllSucceed
+                ? m_options.operations
+                : m_options.closeAfterSuccesses;
+
+            if( closeAfter && m_bodiesSucceeded == closeAfter )
             {
                 /*
                  * The deliberate end of a run which had no error. Note this is called from a
@@ -907,6 +934,104 @@ namespace
             UTF_REQUIRE_EQUAL( outcome.bodiesEntered, 3U );
             UTF_REQUIRE_EQUAL( outcome.pendingAtStop, 0U );
             UTF_REQUIRE_EQUAL( outcome.initiateCloseCalls, 1U );
+        }
+
+        {
+            /*
+             * The deliberate close with operations still OUTSTANDING - the quadrant the case
+             * above does not reach, because there everything had already succeeded and
+             * initiateClose() had nothing to cancel
+             *
+             * The first operation succeeds and asks for the close while the other two are still
+             * pending, initiateClose() cancels them, and both arrive with operation_aborted.
+             * Those aborts are self inflicted: the task caused them by closing, nothing failed,
+             * and the task must complete SUCCESSFULLY. Without the fix in MultiOperationTask.h
+             * the first of them becomes the task's error and the task reports isFailed() on its
+             * own clean shutdown, which is what this case exists to hold down
+             *
+             * This is the shape design 5.1's connection task closes in as a matter of course -
+             * on GOAWAY, on the idle deadline, when the last stream finishes - with a read and
+             * its timers outstanding
+             */
+
+            MultiOperationProbeOptions options( 3U, 0U /* failures */ );
+
+            options.firstDelayMs = 50U;
+            options.restDelayMs = 5000U;
+            options.closeAfterSuccesses = 1U;
+
+            const auto probeRun = runMultiOperationProbe( options, threadsCount );
+            const auto& taskImpl = probeRun.taskImpl;
+            const auto outcome = taskImpl -> outcome();
+
+            UTF_REQUIRE( ! taskImpl -> isFailedOrFailing() );
+            UTF_REQUIRE( ! taskImpl -> exception() );
+            UTF_REQUIRE( ! outcome.stoppedWithException );
+            UTF_REQUIRE_EQUAL( outcome.stopCalls, 1U );
+            UTF_REQUIRE_EQUAL( outcome.initiateCloseCalls, 1U );
+            UTF_REQUIRE_EQUAL( outcome.finishContinuationCalls, 1U );
+
+            /*
+             * All three handlers ran - one succeeded and two were cancelled - and the task took
+             * its terminal path only once nothing was left outstanding. Without these the case
+             * could pass on a run where the two timers were never armed at all
+             */
+
+            UTF_REQUIRE_EQUAL( outcome.bodiesEntered, 3U );
+            UTF_REQUIRE_EQUAL( outcome.bodiesAtStop, 3U );
+            UTF_REQUIRE_EQUAL( outcome.pendingAtStop, 0U );
+            UTF_REQUIRE( outcome.closingAfterBeginClose );
+            UTF_REQUIRE( outcome.closingAtInitiateClose );
+
+            /*
+             * The two cancelled bodies are entered while the task is already closing, which is
+             * what says they were in flight when beginClose() was called
+             */
+
+            UTF_REQUIRE( outcome.bodiesSeeingClosing >= 2U );
+        }
+
+        {
+            /*
+             * The same shape, plus an external cancel - which must still report failed
+             *
+             * initiateClose() is told not to cancel, so the two operations the deliberate close
+             * left outstanding are still pending when requestCancel() arrives and cancelTask()
+             * cancels them. The operation_aborted they then report is NOT self inflicted: the
+             * caller asked for it, and a caller which cancels a task must not be told the task
+             * finished normally just because the task had privately decided to close. This pins
+             * the one thing the close fix must not silently change
+             */
+
+            MultiOperationProbeOptions options( 3U, 0U /* failures */ );
+
+            options.firstDelayMs = 50U;
+            options.restDelayMs = 5000U;
+            options.closeAfterSuccesses = 1U;
+            options.initiateCloseCancels = false;
+
+            const auto probeRun = runMultiOperationProbe( options, threadsCount, 300U /* cancelAfterMs */ );
+            const auto& taskImpl = probeRun.taskImpl;
+            const auto outcome = taskImpl -> outcome();
+
+            UTF_REQUIRE( taskImpl -> isFailed() );
+            UTF_REQUIRE( outcome.stoppedWithException );
+            UTF_REQUIRE( outcome.stoppedIsExpected );
+            UTF_REQUIRE_EQUAL( outcome.stopCalls, 1U );
+            UTF_REQUIRE_EQUAL( outcome.initiateCloseCalls, 1U );
+            UTF_REQUIRE_EQUAL( outcome.bodiesEntered, 3U );
+            UTF_REQUIRE_EQUAL( outcome.pendingAtStop, 0U );
+
+            try
+            {
+                cpp::safeRethrowException( taskImpl -> exception() );
+
+                UTF_FAIL( "A cancelled multi-operation task must complete with an exception" );
+            }
+            catch( bl::SystemException& e )
+            {
+                UTF_REQUIRE( asio::error::operation_aborted == e.code() );
+            }
         }
 
         {
