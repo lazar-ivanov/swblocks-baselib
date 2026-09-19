@@ -34,6 +34,16 @@
  */
 
 /*
+ * httpclient/ClientConnectionTaskBase.h is NOT here either, for the reason the closing note below
+ * gives: it includes crypto/CryptoBase.h for the negotiated-parameter floor check of design 3.3,
+ * so it reaches OpenSSL, and an optional dependency does not belong in a pre-compiled header.
+ * A consumer includes it directly
+ *
+ * So this umbrella is not a complete index of httpclient/, and there are now two headers it does
+ * not list rather than one
+ */
+
+/*
  * The version-neutral HTTP client umbrella. Each slice which adds an httpclient/ header appends
  * its #include above, in the form of http/PreCompiled.h
  *
