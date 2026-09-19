@@ -232,6 +232,56 @@ stripped attribute of `.` is empty, and the RFC's wording is soft).
 negative control's exit code and five failing assertions were not reproduced. The manifest refresh
 (`6b4c6d1`) was not read.
 
+## The two second-pass notes, closed (2026-09-19)
+
+The second pass reported clean and said L3 may start, and classified its four notes as notes rather
+than defects. Two of them were incompletenesses of fixes made in that same fix round, and both were
+closed immediately - while the files still have no consumers and the change is therefore free.
+
+**`ClientResponse` holds one `NegotiatedProtocol` and not two fields** (`059658b`). Both setters are
+gone. The one door is `negotiated( ... )`, taking the pair whole, so the only way to populate a
+response is with a value already constructed consistently by `fromAlpn` or `withoutAlpn`.
+`protocol()` and `negotiatedAlpn()` survive as read-only forwarders - which is what the contract docs
+name and what every existing reader uses - so no consumer changed shape. The property the review
+said "stops at the connection" no longer does: the two lines a contradictory response would need do
+not compile. 43 -> 44 cases, clean under clang release and gcc release, 44/44 both.
+
+A compile-time detector asserting the setters are still absent was considered and declined. The test
+suite has no member-detector precedent, the build is `-std=c++11` so there is no `std::void_t` to
+write one cheaply, and it would guard only half the property - a re-added public `NegotiatedProtocol`
+constructor would bypass it. The invariant is stated in the class note, the member comment and the
+case text instead.
+
+**`Uri` folds the scheme and the IP literal with the ASCII fold** (`cd01896`), closing the L1
+residual at what were `:735` and `:850`. Two corrections to how this had been recorded:
+
+- **The separate-gating rule for core paths does not apply here.** The addendum deferred it on the
+  same ground as `SimpleHttpTask` - core code on a path every existing user takes. `Uri.h` is not
+  that: it was added by this work in `b2c0d3e`, neither `core/PreCompiled.h` nor
+  `core/BaseIncludes.h` names it, and every includer is an httpclient header or a test from this
+  feature. It was the same free fix the five sibling classes got.
+- **"Fail-safe under a perturbed locale" is true, but not for the reason given.** Both sites validate
+  *before* folding, so a hostile locale cannot widen what is accepted at all - it corrupts the
+  normalized spelling that comes out. The fail-safe is downstream, where every consumer compares
+  against a known ASCII spelling which a corrupted one fails to match. What is actually at stake is
+  that the parse be a property of its input rather than of a global.
+
+The negative control earns the case rather than assuming it: reverting both call sites fails exactly
+four of the six references - one per reference that touches a site - while the two that touch
+neither still pass, so the facet perturbs these folds specifically and neither half of the case is
+vacuous. Two things learned there are worth carrying. The facet keeps `classic_table()` and
+overrides `do_tolower` only, which sidesteps the libc++/libstdc++ divergence entirely: that
+divergence affects only perturbations spelled through the mask table, while a `do_tolower` override
+is a virtual the fold reaches on both. And one rule could not reach both sites - `'I'` is not a
+hexadecimal digit, so the Turkish rule reaches an IP literal only through the exotic IPvFuture shape
+- so the facet carries a second rule leaving the six hexadecimal letters unfolded. 48 -> 49 cases in
+`utf_baselib2`.
+
+**The other two notes are for later slices and stay open as such**: a driver must store the
+negotiated value in a `const` member, which is what makes the reference-returning accessor safe
+under off-strand reads (S4.1); and S4.3 delivers interim responses from the parser's list once the
+final header section completes, there being no per-interim callback.
+
 ## What was not checked
 
 - **No build and no test run.** The lanes' claims that the cases pass were not re-executed; the

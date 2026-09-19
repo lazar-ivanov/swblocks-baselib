@@ -53,7 +53,28 @@ each is correct, but the duplication is the kind that drifts. The generic home i
 public surface or a small ASCII companion beside `str`. Consolidating touches headers that several
 slices are writing in, so it belongs to a quiet moment rather than to a layer in flight.
 
-**Addendum, L2 second pass (2026-09-19).** `Uri` carries the ASCII fold for the reg-name host but
-still folds the scheme (`Uri.h:850`) and an IPv6 literal (`:735`) through `str::to_lower_copy`. Both
-are fail-safe under a perturbed locale and are recorded under S1.1 in the plan rather than fixed
-here, for the same reason as above; they are the two sites the consolidation should sweep up.
+**Addendum, L2 second pass (2026-09-19), and its correction.** The second pass found that `Uri`
+carried the ASCII fold for its reg-name host but still folded the scheme (`Uri.h:850`) and an IP
+literal (`:735`) through `str::to_lower_copy`, and deferred them here for the same reason as
+`SimpleHttpTask`. **That deferral was wrong on its own terms and both sites are now fixed**
+(`cd01896`): `Uri.h` is not pre-existing core code. It was added by this work in `b2c0d3e`, neither
+`core/PreCompiled.h` nor `core/BaseIncludes.h` names it, and every includer is an `httpclient/`
+header or a test from this feature - so reason 1 above, the rule about core paths every existing
+user takes, does not reach it. It was the same free fix the sibling classes got, and `Uri` now
+carries `toLowerAsciiCopy` under the same name and signature as the others.
+
+The reason they were called fail-safe also needs restating, because it matters to whoever fixes
+`SimpleHttpTask`: **both `Uri` sites validate before folding**, so a perturbed locale cannot widen
+what is accepted at all - it corrupts the normalized spelling that comes out, and the fail-safe is
+downstream, where consumers compare against a known ASCII spelling which a corrupted one fails to
+match. `SimpleHttpTask`'s `Content-Length` is **not** of that shape: `lexical_cast` parses and
+converts in one step, so there the locale reaches the accept/reject decision itself. It is the more
+urgent of the two, not the less.
+
+Two things from `Uri_LocaleIndependenceTests` are worth copying, beyond what the `Http1Codec` control
+already shows. Overriding `do_tolower` while keeping `classic_table()` sidesteps the
+libc++/libstdc++ divergence entirely - that divergence affects only perturbations spelled through
+the mask table, while a `do_tolower` override is a virtual the fold reaches on both. And one
+perturbation rule may not reach every site: `'I'` is not a hexadecimal digit, so the Turkish rule
+never reaches an IPv6 address, and the facet needs a second rule leaving the six hexadecimal
+letters unfolded.

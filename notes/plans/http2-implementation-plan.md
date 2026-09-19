@@ -477,15 +477,17 @@ permanently red teaches people to ignore red, which costs more than the placehol
   no IDNA (non-ASCII host is an error). Complements `str::uriEncode`/`uriDecode`.
 - Accept: RFC 3986 cases incl. IPv6 literals, dot-segment removal, resolution; strictness rejections.
   Tests → beside `TestNetUtils.h` in `utf_baselib2` (headroom permitting), else a new module.
-- **Residual, found by the L2 second pass (2026-09-19):** `Uri.h:735` (the IPv6 literal) and `:850`
-  (the scheme) fold through `str::to_lower_copy`, which takes `std::locale()`, while the reg-name
-  host goes through the header's own ASCII `toLowerAscii`. Same class as the S2.5 defect fixed in
-  the L2 follow-up, and the reason it is a residual rather than a fix: the perturbation is
-  fail-safe here (a folded scheme that is not `http`/`https` is refused everywhere it is compared,
-  and a hex literal's letters are A-F), but S2.7's IPv6 case-fold case now leans on this fold, and
-  the seam note in `notes/plans/issues/simplehttptask-locale-dependent-framing-record.md` lists
-  `Uri` among the classes already carrying the ASCII fold. Two-line change to the fold already in
-  the file; lands with the next change to `Uri.h`, not as a slice of its own.
+- **Residual found by the L2 second pass (2026-09-19), CLOSED the same day (`cd01896`).** `Uri.h:735`
+  (the IP literal) and `:850` (the scheme) folded through `str::to_lower_copy`, which takes
+  `std::locale()`, while the reg-name host already went through the header's own ASCII fold. Both
+  now call `toLowerAsciiCopy`, added beside `toLowerAscii` under the same name and signature the
+  five sibling classes use. It was deferred at first as a core-path change needing its own gated
+  change-set; that was wrong - `Uri.h` was added by this work in `b2c0d3e`, is named by neither
+  `core/PreCompiled.h` nor `core/BaseIncludes.h`, and every includer is an `httpclient/` header or a
+  test from this feature, so it was the same free fix the siblings got. `Uri_LocaleIndependenceTests`
+  pins it with a negative control that fails exactly the four of six references touching a fold site
+  when the change is reverted. 48 -> 49 cases in `utf_baselib2`, 27.0 MB, clean under clang and gcc
+  release.
 
 ### S1.2 — http::HeaderList (§3.5)
 - Deliver: `http/HeaderList.h` (`bl::http::HeaderListT`): ordered name/value pairs, original case,
@@ -594,6 +596,14 @@ cookie predicate (checked at the boundary: it admits exactly the attribute-equal
 nothing either original rule refused), and the `NegotiatedProtocol` replacement of `protocol()`,
 which was the right call. What the pass left are notes, carried into S2.6, S4.1, S4.3 and S5.1, and
 one L1 residual of the locale class recorded under S1.1. The record has the detail. **L3 may start.**
+
+**Both notes that were incompletenesses of the fix round were then closed before L3** (`059658b`,
+`cd01896`), while the files still have no consumers and the change was therefore free:
+`ClientResponse` now holds one `NegotiatedProtocol` with both setters removed, and `Uri` folds the
+scheme and the IP literal without the locale. 43 -> 44 cases in `utf_baselib_httpclient` and 48 -> 49
+in `utf_baselib2`, both clean under clang release and gcc release. The two notes that belong to
+later slices - the driver's `const` member (S4.1) and interim responses from the parser's list
+(S4.3) - stay open there.
 
 ### S2.1 — HTTP/2 FrameCodec (§4.1)
 - Deliver: `http2/FrameCodec.h` - incremental 9-byte header parse across read boundaries; all ten frame
@@ -709,13 +719,14 @@ one L1 residual of the locale class recorded under S1.1. The record has the deta
   and leaves the identifier empty; a default value is `Unknown` with none. `protocolOfAlpn( ... )` is
   the single place the mapping lives, and refuses `h2c`, `h3` and anything else this build does not
   speak. S4.1 constructs the value and both drivers report it unchanged.
-- **Second pass (L2 review): the "cannot disagree" property stops at the connection.**
-  `ClientResponse` still carries `protocol()` and `negotiatedAlpn()` as two independently settable
-  fields, so a response holding `Http2` beside `"http/1.1"` is representable there although no
-  connection can produce it. Not a defect - S5.1 is the only writer and fills both from one
-  `negotiated()` - but the property is cheaper to carry through now than after S5.1 exists: either a
-  single `NegotiatedProtocol` member on `ClientResponse` in place of the two, or one setter taking
-  it. Whoever touches `ClientTypes.h` next should do it; S5.1 must not set the two separately.
+- **Second pass (L2 review): the "cannot disagree" property stopped at the connection - CLOSED**
+  (`059658b`). `ClientResponse` held `protocol()` and `negotiatedAlpn()` as two independently
+  settable fields, so a response holding `Http2` beside `"http/1.1"` was representable there although
+  no connection could produce it. It now holds one `NegotiatedProtocol` member and **both setters are
+  gone**; the one door is `negotiated( ... )`, taking the pair whole. `protocol()` and
+  `negotiatedAlpn()` survive as read-only forwarders, so no reader changed shape. **S5.1 therefore
+  cannot set the two separately** - it fills the response with the value its connection already
+  publishes, unchanged.
 
 ### S2.7 — Cookie jar (§5.6)
 - Deliver: `httpclient/CookieJar.h` - RFC 6265 domain/path matching, `Secure`/`HttpOnly`/expiry/`Max-Age`,
