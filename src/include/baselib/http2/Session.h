@@ -1274,15 +1274,31 @@ namespace bl
                 SAA_in          const std::uint32_t                  fallback
                 ) NOEXCEPT
             {
+                /*
+                 * The LAST entry for an id, not the first. 6.5.3 - "the values in the SETTINGS
+                 * frame MUST be processed in the order they appear" - so a repeated identifier
+                 * means the later value is the one in force, which is what the peer will make of
+                 * the frame we are about to send it and what applyPeerSettings( ) and
+                 * applyAcknowledgedSettings( ) already do by processing the list in order.
+                 *
+                 * The profile is ours, so a repeat in it is a configuration mistake rather than
+                 * hostile input - but it is not a protocol violation to refuse, because 6.5.3
+                 * defines what it means. Agreeing with the peer is the whole point: reading the
+                 * first entry would have the session use one number while it advertised another,
+                 * and change its mind at the ack
+                 */
+
+                std::uint32_t result = fallback;
+
                 for( std::size_t i = 0U; i < profile.settings.size(); ++i )
                 {
                     if( profile.settings[ i ].id == id )
                     {
-                        return profile.settings[ i ].value;
+                        result = profile.settings[ i ].value;
                     }
                 }
 
-                return fallback;
+                return result;
             }
 
             /**

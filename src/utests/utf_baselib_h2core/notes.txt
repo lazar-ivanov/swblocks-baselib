@@ -63,6 +63,7 @@
 --log_level=message --run_test=Session_WriteSchedulingTests
 --log_level=message --run_test=Session_LimitsTests
 --log_level=message --run_test=Session_DecodedHeaderListBoundTests
+--log_level=message --run_test=Session_DuplicateProfileSettingTests
 --log_level=message --run_test=Session_PushPromiseAndPingTests
 --log_level=message --run_test=Session_GoAwayAndRetryTests
 --log_level=message --run_test=Session_ProfileShapingTests
