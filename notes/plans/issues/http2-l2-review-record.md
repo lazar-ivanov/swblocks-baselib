@@ -154,6 +154,84 @@ in the verdict table's "basis" column. Verified by reading the library: `om::Obj
 composition drawn from the L2 code and the RFC, not observed failures - there is no Session yet to
 observe them in.
 
+## Second pass: the fix round `cfa9159..6b4c6d1`, tip `6b4c6d1` (2026-09-19)
+
+**Verdict: clean.** Every fix does what was agreed; nothing introduced is a defect; L3 may start. Read
+in full: the four production diffs (`ClientConnection.h`, `ClientTypes.h`, `CookieJar.h`,
+`Http1Codec.h`), the three test diffs, the design and plan diffs, and the new SimpleHttpTask record.
+
+**The status parameter (`5652fbe`).** `onHeaders( handle, status, HeaderList&&, isInterim )`.
+Keeping `isInterim` is right: 101 is 1xx and final, the codec's own `isInterimStatus` says the same
+(100-199 except 101), and the stub now enforces agreement with a `BL_CHK_T` so no request task can
+be developed against a delivery no driver produces. Every block carrying its own status - 103 with
+the hints, the final with the response's - is the correct model and the case pins that an interim
+never overwrites the final.
+
+**The locale gate (`97820b5`).** `trimOwsCopy` (SP and HTAB only) and `toLowerAsciiCopy` replace
+the two `str::` calls; a grep at tip finds no locale-dependent `str::` call left in any L2 header.
+The hazard is executed, not argued: a `std::ctype< char >` facet built from the classic table with
+`,` and one obs-text octet marked as space and `I` lowered to a dotless i, installed under an RAII
+guard around a window in which nothing formats, with a `REQUIRE` that the facet actually perturbs
+`str::trim_copy` and `str::to_lower_copy` before anything else is asserted - so the case cannot pass
+vacuously. The lane also corrected my first-pass framing with evidence: libc++ short-circuits
+`ctype< char >::is` for non-ASCII octets, so the obs-text spelling I named is unreachable through a
+locale there; a comma is reachable on both standard libraries and is what a front end leaves when it
+joins two `Transfer-Encoding` fields. That correction is right and the record above stands
+corrected by it. The negative control's claim (pre-fix, `chunked,` accepted and framed chunked) is
+consistent with Beast's token-list parse, which tolerates an empty element; I did not re-run it.
+
+**The cookie predicate (`c760f5f`, `197d5d6`) - the boundary, checked.** The merged predicate is:
+domain-match first, unchanged; then `isNotAUsableScope` = IP-like, no dot, leading dot or trailing
+dot; and inside that branch, `host != domain` refuses and equality stores host-only. So the set of
+newly admitted attributes is exactly {equal to the canonicalized request host} intersected with
+{what the two original rules refused}, and nothing outside it: an IP-like attribute that is a
+strict suffix of a non-address host is still refused (`a.1.2.3` with `Domain=1.2.3`), an address
+against another address never reaches the branch because `domainMatches` refuses one address as a
+suffix of another, `app.localhost` with `Domain=localhost` is refused because it is not equal, and a
+multi-label attribute equal to its host (`Domain=example.com` on `example.com`) never enters the
+branch and stays a domain cookie - the case pinned so that the fix is seen to key on failing the
+dot test rather than on equality. The two odd admissions the exception creates, a doubled leading
+dot or a trailing dot equal to a host spelled that way, are host-only to that exact string and
+grant nothing. Equality over addresses is string equality after the shared ASCII fold, pinned from
+the refused side (`01.2.3.4`, the expanded IPv6 form, the bracketed form) and the reconciled side
+(hex case). The supercookie residual is unwidened and now asserted host-only false. **Verified.**
+The IP-address branch fix one level up was a real find: the comment said "only ever a host-only
+cookie" while the code rejected.
+
+**`NegotiatedProtocol` replacing `protocol()` (`7b9e9f4`) - the right call.** The defect is real
+and of the same class as the status gap: `negotiatedAlpn()` promises the peer's identifier
+verbatim and a derivation from protocol plus scheme is wrong for the one case the field exists to
+distinguish. Replacing the enum accessor rather than adding a second one is justified on the
+contract's own terms - two queries could disagree and one of them would have to be nominated
+authoritative - and the cost, `negotiated().protocol()` at every consumer, is trivial while there
+are no consumers. The private two-argument constructor is confirmed; `fromAlpn` is the only door
+to a non-empty identifier and derives the protocol from it. A consequence worth stating because it
+is what makes the reference-returning getter safe: `createDriver` now hands the value to the driver
+at construction, so a driver holds it immutable for its life and the off-strand reads by the pool
+and the request task are race-free - provided the driver stores it in a `const` member, which is
+now S4.1's note in the plan. Two more consequences, neither a defect: `fromAlpn( "" )` throws, so
+an empty TLS selection must go through `withoutAlpn( Http11 )` (S4.1 note); and the property stops
+at the connection, since `ClientResponse` still holds `protocol` and `negotiatedAlpn` as two
+independently settable fields (S2.6 second-pass note - carry it through with one member or one
+setter before S5.1 writes them).
+
+**New since the first pass.** `simplehttptask-locale-dependent-framing-record.md` is accurate where
+I checked it (`SimpleHttpTask.h:780` is the `lexical_cast` on `Content-Length`; `boost::lexical_cast`
+honours the global locale's `numpunct` grouping unless `BOOST_LEXICAL_CAST_ASSUME_C_LOCALE` is
+defined) and is right to record rather than fix, per the project's rule on core paths. Its seam
+list names `Uri` among the classes carrying the ASCII fold; `Uri.h:735` and `:850` still fold
+through `str::to_lower_copy` (the IPv6 literal and the scheme), an L1 residual of the same class,
+fail-safe in direction, recorded under S1.1 in the plan and as an addendum to that record.
+
+**Accepted deviations, judged.** `impersonationReport()` deferred to S7.x by the field's own comment
+and `httpVersion()` on S5.1's list are both right; `Domain=.` staying rejected is right too (a
+stripped attribute of `.` is empty, and the RFC's wording is soft).
+
+**Not checked in this pass.** No build and no test run; the coordinator's tier-1, `-Werror` and
+43-case figures are taken as reported (the `notes.txt` recipe count is 43, consistent). The
+negative control's exit code and five failing assertions were not reproduced. The manifest refresh
+(`6b4c6d1`) was not read.
+
 ## What was not checked
 
 - **No build and no test run.** The lanes' claims that the cases pass were not re-executed; the

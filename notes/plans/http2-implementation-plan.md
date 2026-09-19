@@ -477,6 +477,15 @@ permanently red teaches people to ignore red, which costs more than the placehol
   no IDNA (non-ASCII host is an error). Complements `str::uriEncode`/`uriDecode`.
 - Accept: RFC 3986 cases incl. IPv6 literals, dot-segment removal, resolution; strictness rejections.
   Tests → beside `TestNetUtils.h` in `utf_baselib2` (headroom permitting), else a new module.
+- **Residual, found by the L2 second pass (2026-09-19):** `Uri.h:735` (the IPv6 literal) and `:850`
+  (the scheme) fold through `str::to_lower_copy`, which takes `std::locale()`, while the reg-name
+  host goes through the header's own ASCII `toLowerAscii`. Same class as the S2.5 defect fixed in
+  the L2 follow-up, and the reason it is a residual rather than a fix: the perturbation is
+  fail-safe here (a folded scheme that is not `http`/`https` is refused everywhere it is compared,
+  and a hex literal's letters are A-F), but S2.7's IPv6 case-fold case now leans on this fold, and
+  the seam note in `notes/plans/issues/simplehttptask-locale-dependent-framing-record.md` lists
+  `Uri` among the classes already carrying the ASCII fold. Two-line change to the fold already in
+  the file; lands with the next change to `Uri.h`, not as a slice of its own.
 
 ### S1.2 — http::HeaderList (§3.5)
 - Deliver: `http/HeaderList.h` (`bl::http::HeaderListT`): ordered name/value pairs, original case,
@@ -577,6 +586,14 @@ hazard S1.2 documents and avoids, and one of the two gates a smuggling defence; 
 `Domain` identical to a single-label request host where RFC 6265 5.3 step 5 stores it host-only,
 so a test server on `localhost` lost its cookies. The rest are notes carried into the work orders
 they affect (S3.1, S4.3, S5.1, S5.2, S6.1). Nothing found blocks L3.
+
+**Second pass, 2026-09-19, over the fix round `cfa9159..6b4c6d1`: clean.** Each fix does what was
+agreed and nothing it introduced is a defect - the status parameter and the enforcing stub, the
+ASCII-only gate with the hazard executed under a hostile `ctype` facet rather than argued, the merged
+cookie predicate (checked at the boundary: it admits exactly the attribute-equals-host case and
+nothing either original rule refused), and the `NegotiatedProtocol` replacement of `protocol()`,
+which was the right call. What the pass left are notes, carried into S2.6, S4.1, S4.3 and S5.1, and
+one L1 residual of the locale class recorded under S1.1. The record has the detail. **L3 may start.**
 
 ### S2.1 — HTTP/2 FrameCodec (§4.1)
 - Deliver: `http2/FrameCodec.h` - incremental 9-byte header parse across read boundaries; all ten frame
@@ -692,6 +709,13 @@ they affect (S3.1, S4.3, S5.1, S5.2, S6.1). Nothing found blocks L3.
   and leaves the identifier empty; a default value is `Unknown` with none. `protocolOfAlpn( ... )` is
   the single place the mapping lives, and refuses `h2c`, `h3` and anything else this build does not
   speak. S4.1 constructs the value and both drivers report it unchanged.
+- **Second pass (L2 review): the "cannot disagree" property stops at the connection.**
+  `ClientResponse` still carries `protocol()` and `negotiatedAlpn()` as two independently settable
+  fields, so a response holding `Http2` beside `"http/1.1"` is representable there although no
+  connection can produce it. Not a defect - S5.1 is the only writer and fills both from one
+  `negotiated()` - but the property is cheaper to carry through now than after S5.1 exists: either a
+  single `NegotiatedProtocol` member on `ClientResponse` in place of the two, or one setter taking
+  it. Whoever touches `ClientTypes.h` next should do it; S5.1 must not set the two separately.
 
 ### S2.7 — Cookie jar (§5.6)
 - Deliver: `httpclient/CookieJar.h` - RFC 6265 domain/path matching, `Secure`/`HttpOnly`/expiry/`Max-Age`,
@@ -881,6 +905,15 @@ with all of them.
   the acceptance.
 - Accept: establishes plain and TLS; selects driver by ALPN; forced-http/1.1 path works; floor failure
   aborts before any HTTP byte. Tests → `h2client`.
+- **Constructing the `NegotiatedProtocol`** (L2 second pass). `fromAlpn( "" )` throws by design, so
+  an empty ALPN selection on a TLS connection - the peer completed the handshake without choosing -
+  goes through `withoutAlpn( HttpProtocol::Http11 )`, as does every cleartext connection (`Http11`,
+  or `Http2` by prior knowledge); only a non-empty `SSL_get0_alpn_selected` result goes through
+  `fromAlpn`. Then hand the value to `createDriver`, which is the one moment it is in hand: the
+  driver receives it at construction and stores it in a **`const`** member, because `negotiated()`
+  returns a reference and is read by the pool and the request task off the strand - a member that
+  is ever reassigned after construction would be a data race on a `std::string`. Constructed after
+  ALPN, a driver never reports `Unknown`; that value belongs to the pool's `Connecting` placeholder.
 
 ### S4.2 — HTTP/2 driver (§5.1, §5.2, §5.7)
 - Deliver: `http2/Http2ConnectionTask.h` - the opening coalesced write (preface+SETTINGS+WINDOW_UPDATE+
@@ -906,6 +939,13 @@ with all of them.
   `Connection: keep-alive`, any response carrying `Connection: close`, and any body framed by the
   close (`needsEof()`) all mean the connection is not returned to the pool. `statusCode()` goes to
   the sink through the `status` parameter of `onHeaders` (S2.6, fixed after the L2 review).
+- **Interim responses arrive after the fact** (L2 second pass). `Http1ResponseParser` files a 1xx
+  into `interimResponses()` and restarts on the same buffer; it has no per-interim callback. So this
+  driver delivers each filed interim as `onHeaders( handle, interim.statusCode, headers, true )`
+  in order, *before* the final block, once the final header section completes - which keeps the
+  sink's ordering guarantee and the stub's status/flag invariant (1xx except 101). A 103 Early
+  Hints therefore reaches the request task later than it reached the wire; nothing in this client
+  acts on hints, so that is accepted rather than fixed with a parser callback.
 
 ### S4.4 — Test peer (§8.2, D8)
 - Deliver: in `src/utests/include/utests/baselib/` - `Http2TestServer` (`TcpServerBase< STREAM >` + a
@@ -934,7 +974,9 @@ Depends on L2, L4. S5.1 and S5.2 are parallel via the S2.6 contracts.
 - **Two things S2.6 did not carry as first published** (L2 review): the response status, which
   `onHeaders` now carries as a `status` parameter (fixed after the review - see S2.6), and the
   stream-idle timeout of design §5.7, which is not on `ClientRequest` (only `totalTimeout` and
-  `responseHeadersTimeout` are). It is off by
+  `responseHeadersTimeout` are). Fill `ClientResponse::protocol()` and `negotiatedAlpn()` from the
+  one `negotiated()` value and never separately - see the second-pass note under S2.6 - and take
+  the response's status from the final `onHeaders` only; an interim's status is that interim's own. It is off by
   default, so a session-level knob read here is enough; putting it on the frozen request type is a
   negotiated change like any other.
 

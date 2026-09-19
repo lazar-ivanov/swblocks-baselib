@@ -52,3 +52,8 @@ Six classes now carry a private copy of the same ASCII fold — `HeaderList`, `C
 each is correct, but the duplication is the kind that drifts. The generic home is `HeaderList`'s
 public surface or a small ASCII companion beside `str`. Consolidating touches headers that several
 slices are writing in, so it belongs to a quiet moment rather than to a layer in flight.
+
+**Addendum, L2 second pass (2026-09-19).** `Uri` carries the ASCII fold for the reg-name host but
+still folds the scheme (`Uri.h:850`) and an IPv6 literal (`:735`) through `str::to_lower_copy`. Both
+are fail-safe under a perturbed locale and are recorded under S1.1 in the plan rather than fixed
+here, for the same reason as above; they are the two sites the consolidation should sweep up.
