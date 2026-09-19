@@ -447,6 +447,15 @@ message callback are exactly the kind of code where gcc's warning set differs fr
 everything is `-Werror`. A targeted gcc pass over the affected modules is the cheap way to retire
 that before L2 builds on them, and is not the "full release verification" the round rule excluded.
 
+**Both came back negative**: six modules under gcc release with `-Werror`, zero warnings, 133 of 133
+cases, and `utf_baselib_http` passing against the extended wrapper under both toolchains
+(`notes/plans/issues/l1-gcc-toolchain-coverage-record.md`). Two details there are worth carrying into
+L2 rather than rediscovering. `BeastBoostImports.h` is included by nothing yet, so **no module build
+compiles it in either toolchain** - it needs its own probe, and since `basic_parser` is abstract that
+probe has to *derive* from it to instantiate anything. And a toolchain pass taken while other lanes
+are still merging measures the tree it started from: that one did, its `utf_baselib2` row was a
+commit behind, and it was re-run rather than annotated.
+
 **`utf_baselib_h2client` carries one placeholder case** so that `make testutf` and any whole-suite
 run are not red for two whole layers. That deviates from S1.8's work order, which said empty modules,
 and the case says so in its own text: **S4.1 replaces it** with the first real one. A suite that is

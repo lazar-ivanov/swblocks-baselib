@@ -1,6 +1,7 @@
 # Layer L1 under gcc, and utf_baselib_http against the extended SSL stream wrapper
 
-**Measured:** 2026-09-18, after L1 closed at `c1a3af4`. **Status:** ANSWERED, affirmative on both
+**Measured:** 2026-09-18, after L1 closed at `c1a3af4`, and extended the same evening - see "The one
+row which needed re-running" at the end. **Status:** ANSWERED, affirmative on both
 counts. No action follows from it; no code was changed.
 
 Layer L1 ran under a round rule of **clang2010 debug, focused modules only**. That was a deliberate
@@ -33,6 +34,7 @@ zero warnings and ran clean - 133 of 133 cases.**
 | `utf_baselib_httpclient` | rc 0, 0 warnings | 37.3MB | 7 in, 7 out | `No errors detected`, 0/0/0 |
 | `utf_baselib_h2profiles` | rc 0, 0 warnings | 42.2MB | 5 in, 5 out | `No errors detected`, 0/0/0 |
 | `utf_baselib2` | rc 0, 0 warnings | 62.1MB | 47 in, 47 out | `No errors detected`, 0/0/0 |
+| `utf_baselib2` **re-run, see below** | rc 0, 0 warnings | 62.2MB | **48 in, 48 out** | `No errors detected`, 0/0/0 |
 | `utf_baselib_http` | rc 0, 0 warnings | 101.3MB | 37 in, 37 out | `No errors detected`, 0/0/0 |
 
 The three counts in the run column are `leaked` / `FATAL` / `ThreadSanitizer`, all of which print
@@ -112,3 +114,24 @@ calibrated on *debug* objects and the gate is `off` on Linux
 (`src/utests/object-size-limits.json`). That file already records the same shape on Windows, where
 win-x86-vc143-release measured 96.77MB against a 75MB debug ceiling and built perfectly well. A
 release object is simply not the number that target is about.
+
+## The one row which needed re-running
+
+This pass branched from `c1a3af4`, which was **not** the tip by the time it finished: `75e50fc`, the
+`Uri::origin()` guard, landed on another lane while this was building. So the `utf_baselib2` row
+above compiled a `Uri.h` without the guard - 47 cases rather than 48 - and the guard had been seen by
+clang debug only.
+
+The risk was nil, two `BL_CHK_T`s in a header gcc had already compiled. But a coverage record which
+quietly does not cover something is worse than one which says so, and this was a three minute build,
+so it was re-run rather than annotated:
+
+    utf_baselib2, gcc1520 release, at the tip carrying the guard
+      build  rc 0, 0 warnings, 62.2MB
+      run    rc 0, 48 entered / 48 left, *** No errors detected, 0 leaked
+      includes Uri_OriginRequiresAbsoluteUriTests
+
+**So every line of L1, the post-review guard included, is covered by gcc release.** The lesson is
+worth more than the row: a toolchain pass taken against a tip which other lanes are still moving
+describes the tree it started from, not the tree that ships. Either take it last, or say which commit
+it measured - this record now does the latter.
