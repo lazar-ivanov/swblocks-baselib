@@ -900,3 +900,97 @@ UTF_AUTO_TEST_CASE( TlsClientContext_ClientProfilesRequireOpenSsl35Tests )
             << "]"
         );
 }
+
+/**
+ * @brief An ALPN server preference may be set ONCE on a context, and a second call is refused
+ *
+ * THE REFUSAL IS THE WHOLE POINT AND IT IS NOT ABOUT LEAKING. ::SSL_CTX_set_ex_data would simply
+ * overwrite the slot, so a second list would indeed leak - but freeing the first one is worse than
+ * leaking it, because alpnSelectCallback hands OpenSSL a pointer INTO that list and OpenSSL reads
+ * it again after the callback has returned (tls_handle_alpn duplicates and compares the selected
+ * pointer at ssl/statem/statem_srvr.c:2258, :2273 and :2290 on the openssl-3.5 branch). A
+ * handshake on another thread may therefore be reading the very list a second call would delete,
+ * and nothing in OpenSSL synchronises a context's ex_data against its own handshakes. There is no
+ * safe replacement, so there is no replacement
+ *
+ * This is the pin for that refusal. It is a SERVER entry point on a bare context, which is why it
+ * is here rather than beside the TLS driver: utf_baselib_h2client3 is the only other caller of
+ * setAlpnServerPreference and that module is closed at 39.7 MB (src/utests/AGENTS.md), and nothing
+ * in this case needs a socket, a port or a handshake - the whole behaviour is on the SSL_CTX
+ *
+ * WHAT IT DOES NOT PIN. The check reads the ex_data slot WITHOUT the global crypto lock, so two
+ * threads making the FIRST call on one fresh context concurrently could both pass it and one list
+ * would leak. That is a misuse of a misuse - a context is configured by whoever built it, before
+ * it is handed to anything which handshakes - and it is recorded in the L4 review record rather
+ * than fixed here. No case below is concurrent and none should be read as excluding it
+ */
+
+UTF_AUTO_TEST_CASE( TlsClientContext_AlpnServerPreferenceIsSetOnceTests )
+{
+    using namespace bl;
+
+    const std::vector< std::string > preference =
+    {
+        std::string( "h2" ),
+        std::string( "http/1.1" ),
+    };
+
+    asio::ssl::context context( asio::ssl::context::sslv23 );
+
+    /*
+     * The first call takes, and it is the call the TLS driver suite already drives end to end
+     */
+
+    UTF_REQUIRE_NO_THROW(
+        crypto::CryptoBase::setAlpnServerPreference( context, preference )
+        );
+
+    /*
+     * The second is refused. This is the assertion the whole case exists for: without the check
+     * the call below simply succeeds, overwrites the slot and leaks the first list
+     */
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        crypto::CryptoBase::setAlpnServerPreference( context, preference ),
+        UnexpectedException,
+        "An ALPN server preference has already been set on this context"
+        );
+
+    /*
+     * And it is refused whatever the second list says, so what is refused is the STATE of the
+     * context rather than a repeat of a value - "the same list again" would be the one case a
+     * leak-driven check could have been tempted to allow
+     */
+
+    const std::vector< std::string > other =
+    {
+        std::string( "http/1.1" ),
+    };
+
+    UTF_REQUIRE_THROW_MESSAGE(
+        crypto::CryptoBase::setAlpnServerPreference( context, other ),
+        UnexpectedException,
+        "An ALPN server preference has already been set on this context"
+        );
+
+    /*
+     * The refusal is PER CONTEXT and not a process-wide latch: a fresh context still takes its own
+     * first call. Without this the case would pass just as well against a global "already set"
+     * flag, which would have made every server context after the first unconfigurable
+     */
+
+    {
+        asio::ssl::context fresh( asio::ssl::context::sslv23 );
+
+        UTF_REQUIRE_NO_THROW(
+            crypto::CryptoBase::setAlpnServerPreference( fresh, other )
+            );
+    }
+
+    /*
+     * The refusals are checks and not OpenSSL failures, so nothing was pushed onto the error queue
+     * for the next handshake on this thread to trip over
+     */
+
+    UTF_CHECK( 0 == crypto::detail::getFirstError().value() );
+}
