@@ -206,6 +206,12 @@ namespace utest
 
             /**
              * @brief What a script threw, if anything; empty when every connection ran to the end
+             *
+             * READ IT AFTER waitForRecordsOf, for the same reason records() is read there: this is
+             * written by the worker thread, and nothing orders the client's task finishing against
+             * the worker leaving a connection. The direction is benign - a read taken before the
+             * rendezvous can only miss a failure the script has yet to make, never invent one - but
+             * missing happens-before is exactly what this file now exists to demonstrate
              */
 
             auto failure() const -> std::string
@@ -634,6 +640,11 @@ namespace utest
          * writing the records, so every assertion on a record count is preceded by this. The
          * failure names both counts because "EQUAL( records.size(), 2U ) has failed" is what this
          * race looked like for as long as it went undiagnosed
+         *
+         * It also names what the script threw, when it threw one: a script which throws before its
+         * last record never notifies the condition variable, so a thrown script arrives HERE, and
+         * this failure is fatal - the case's own failure() check, which follows this call, is
+         * never reached to report it
          */
 
         inline void waitForRecordsOf(
@@ -651,6 +662,15 @@ namespace utest
                 return;
             }
 
+            /*
+             * Neither read below holds a lock on entry and neither can be made to wait on one for
+             * long: waitForRecords released m_lock when it returned, and the worker takes that
+             * same lock only to push a record or to store what it threw - never across a read or
+             * a write of the socket
+             */
+
+            const auto failure = proxy.failure();
+
             UTF_FAIL(
                 BL_MSG()
                     << "The proxy script recorded "
@@ -658,6 +678,7 @@ namespace utest
                     << " entries where the case expects "
                     << expected
                     << "; it did not reach the end of its script in time"
+                    << ( failure.empty() ? std::string() : " - the script failed with: " + failure )
                 );
         }
 
@@ -1533,9 +1554,9 @@ UTF_AUTO_TEST_CASE( TcpTunnelStage_HttpConnectTunnelTests )
     UTF_REQUIRE_EQUAL( events[ 0 ], std::string( "stageEntered" ) );
     UTF_REQUIRE_EQUAL( events[ 1 ], std::string( "handshakePathReached" ) );
 
-    UTF_REQUIRE( proxy.failure().empty() );
-
     waitForRecordsOf( proxy, 2U );
+
+    UTF_REQUIRE( proxy.failure().empty() );
 
     const auto records = proxy.records();
 
@@ -1613,9 +1634,9 @@ UTF_AUTO_TEST_CASE( TcpTunnelStage_Socks5TunnelTests )
 
     UTF_REQUIRE_EQUAL( probe -> countOf( "handshakePathReached" ), 1U );
 
-    UTF_REQUIRE( proxy.failure().empty() );
-
     waitForRecordsOf( proxy, 4U );
+
+    UTF_REQUIRE( proxy.failure().empty() );
 
     const auto records = proxy.records();
 
@@ -1956,8 +1977,6 @@ UTF_AUTO_TEST_CASE( TcpTunnelStage_StageRunsOncePerAttemptTests )
     UTF_REQUIRE_EQUAL( events[ 2 ], std::string( "stageEntered" ) );
     UTF_REQUIRE_EQUAL( events[ 3 ], std::string( "handshakePathReached" ) );
 
-    UTF_REQUIRE( proxy.failure().empty() );
-
     /*
      * This one site is already ordered without the wait - both records are made by readHeaders,
      * and the second of them precedes the 200 the client needs to finish - so the call here is
@@ -1967,6 +1986,8 @@ UTF_AUTO_TEST_CASE( TcpTunnelStage_StageRunsOncePerAttemptTests )
      */
 
     waitForRecordsOf( proxy, 2U );
+
+    UTF_REQUIRE( proxy.failure().empty() );
 
     const auto records = proxy.records();
 
