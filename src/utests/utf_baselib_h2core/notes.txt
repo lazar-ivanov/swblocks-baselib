@@ -6,3 +6,29 @@
 
 --log_level=message --run_test=Http2ErrorInfo_AttachAndReadTests
 --log_level=message --run_test=Http2ErrorInfo_DistinctTagsTests
+
+--log_level=message --run_test=FrameCodec_FrameHeaderTests
+--log_level=message --run_test=FrameCodec_IncrementalParseAcrossReadBoundariesTests
+--log_level=message --run_test=FrameCodec_PayloadParseVectorsTests
+--log_level=message --run_test=FrameCodec_SerializeVectorsTests
+--log_level=message --run_test=FrameCodec_SerializeAndParseRoundTripTests
+--log_level=message --run_test=FrameCodec_OversizeAndLengthRejectionTests
+--log_level=message --run_test=FrameCodec_PaddingRejectionTests
+--log_level=message --run_test=FrameCodec_StreamIdentifierRuleTests
+--log_level=message --run_test=FrameCodec_HeaderBlockContinuityTests
+--log_level=message --run_test=FrameCodec_ReaderContractTests
+
+--log_level=message --run_test=FlowControl_WindowArithmeticTests
+--log_level=message --run_test=FlowControl_WindowUpdateTests
+--log_level=message --run_test=FlowControl_InitialWindowSizeAdjustmentTests
+--log_level=message --run_test=FlowControl_NegativeWindowTests
+--log_level=message --run_test=FlowControl_ReceiveThresholdTests
+--log_level=message --run_test=FlowControl_ReceiveAccountingTests
+
+--log_level=message --run_test=StreamStates_TransitionTableTests
+--log_level=message --run_test=StreamStates_LifecycleTests
+--log_level=message --run_test=StreamStates_ReservedStatesTests
+--log_level=message --run_test=StreamStates_StreamIdentifierTests
+--log_level=message --run_test=StreamStates_ClosedStreamDataAccountingTests
+--log_level=message --run_test=StreamStates_RecentlyClosedSetTests
+--log_level=message --run_test=StreamStates_UnknownStreamIdentifierTests
