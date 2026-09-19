@@ -787,6 +787,15 @@ L2 review found it and the plan records the fix. **Each header block carries its
 interim block brings the 1xx it is (103 Early Hints being the one that matters) and the final block
 brings the response's; the request task fills `ClientResponse::status()` from the final one only.
 
+`ClientResponse::negotiatedAlpn()` was unfillable for the same reason and is fixed the same way: the
+connection reports a **`NegotiatedProtocol`** - the protocol together with the identifier the peer
+selected verbatim - rather than the protocol alone, and that one value fills both response fields.
+The identifier is **empty whenever ALPN did not decide the connection**, which a cleartext connection
+and a TLS connection whose peer selected nothing both are; a connection which fell back must not
+report `"http/1.1"` as though the peer had chosen it, and that is the one case a value derived from
+the protocol gets wrong. Because the only constructor which sets a non-empty identifier derives the
+protocol from it, the two halves cannot disagree and neither has to be named authoritative.
+
 `scheduleTask` only posts a start handler and returns, so nothing pool-related runs under the user's
 queue lock, honoring the contract at `TaskBase.h:857-869`. The start handler asks the pool for a
 connection; the pool answers by posting back. Completion is `notifyReady` from the request's own drain

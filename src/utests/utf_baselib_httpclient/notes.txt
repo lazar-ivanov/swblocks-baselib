@@ -13,6 +13,7 @@
 --log_level=message --run_test=ClientContracts_BodySourceAndSinkStreamingTests
 --log_level=message --run_test=ClientContracts_StubConnectionAndEventSinkTests
 --log_level=message --run_test=ClientContracts_ResponseStatusCrossesTheSinkTests
+--log_level=message --run_test=ClientContracts_NegotiatedAlpnReachesTheResponseTests
 --log_level=message --run_test=ClientContracts_ConnectionKeyAndPoolTests
 --log_level=message --run_test=ClientContracts_DriverFactoryDispatchTests
 

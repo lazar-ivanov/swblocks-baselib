@@ -294,10 +294,22 @@ namespace bl
             virtual ConnectionState state() const NOEXCEPT = 0;
 
             /**
-             * @brief What this connection speaks; Unknown until ALPN has resolved
+             * @brief What this connection speaks, and the ALPN identifier which settled it
+             *
+             * ONE QUERY AND NOT TWO, so that the protocol and the identifier cannot disagree -
+             * NegotiatedProtocol's own note says why, and says why an empty identifier is a
+             * statement rather than a gap. Unknown with no identifier until ALPN has resolved
+             *
+             * This is what fills BOTH ClientResponse::protocol() and
+             * ClientResponse::negotiatedAlpn(). Publishing only the protocol left the second of
+             * those unfillable: a request task can derive "h2" or "http/1.1" from the protocol and
+             * the URL scheme, but that derivation is wrong for a TLS connection whose peer
+             * selected nothing, which must report empty and would derive as "http/1.1" - the one
+             * case the field exists to distinguish. The same defect as the missing status, found
+             * in the same review
              */
 
-            virtual HttpProtocol protocol() const NOEXCEPT = 0;
+            virtual const NegotiatedProtocol& negotiated() const NOEXCEPT = 0;
         };
 
         /**
@@ -517,11 +529,19 @@ namespace bl
              *
              * The stream is passed by rvalue reference because ownership moves: after the call the
              * driver owns it and the connection establisher does not
+             *
+             * The WHOLE NegotiatedProtocol travels, not the protocol it dispatches on, because the
+             * driver has to answer negotiated() afterwards and this is the only moment at which the
+             * identifier the peer actually selected is in hand. Passing the enum alone is where
+             * that identifier used to be dropped, and it cannot be recovered downstream: the
+             * creator is registered once per session and cannot capture a per-connection value.
+             * Being handed the value is also what stops a driver inventing one which disagrees
              */
 
             typedef cpp::function
             <
                 om::ObjPtr< ClientConnection > (
+                    SAA_in          const NegotiatedProtocol&                   negotiated,
                     SAA_inout       stream_ref&&                                connectedStream,
                     SAA_in          const ConnectionKey&                        key
                     )
@@ -581,12 +601,12 @@ namespace bl
              */
 
             om::ObjPtr< ClientConnection > createDriver(
-                SAA_in          const HttpProtocol                              protocol,
+                SAA_in          const NegotiatedProtocol&                       negotiated,
                 SAA_inout       stream_ref&&                                    connectedStream,
                 SAA_in          const ConnectionKey&                            key
                 )
             {
-                const auto pos = m_creators.find( protocol );
+                const auto pos = m_creators.find( negotiated.protocol() );
 
                 BL_CHK_T(
                     true,
@@ -596,7 +616,7 @@ namespace bl
                         << "No HTTP client driver is registered for the negotiated protocol"
                     );
 
-                return pos -> second( BL_PARAM_FWD( connectedStream ), key );
+                return pos -> second( negotiated, BL_PARAM_FWD( connectedStream ), key );
             }
         };
 
