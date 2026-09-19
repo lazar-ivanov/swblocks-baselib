@@ -331,13 +331,40 @@ original did not name although they separate tokens exactly as `:` does.
 
 **The floor check.** After the handshake and before `continueAfterConnected()` - therefore before the
 HTTP/2 preface or any HTTP byte - the negotiated parameters are checked: version at least TLS 1.2, and
-the suite either a TLS 1.3 suite or ephemeral key exchange with an AEAD cipher
-(`SSL_CIPHER_get_kx_nid` in `{ NID_kx_ecdhe, NID_kx_dhe, NID_kx_any }` and `SSL_CIPHER_is_aead`). A
+an **authenticated ephemeral AEAD** suite, which is three axes and not two -
+`SSL_CIPHER_get_kx_nid` in `{ NID_kx_ecdhe, NID_kx_dhe, NID_kx_any }`, `SSL_CIPHER_get_auth_nid` in
+`{ NID_auth_rsa, NID_auth_ecdsa, NID_auth_dss, NID_auth_any }`, and `SSL_CIPHER_is_aead`. A TLS 1.3
+suite satisfies all three without being special-cased, reporting `NID_kx_any` and `NID_auth_any`. A
 failure throws `SecurityException` carrying the negotiated suite and version as error info. It is
 enforced whenever a non-default client context is in use.
 
+**The authentication axis was added in the L3 review round** and it is what makes the next sentence
+true. Without it the predicate admitted `ADH-AES128-GCM-SHA256` and `ADH-AES256-GCM-SHA384` - ephemeral
+and AEAD, authenticating nobody - which Appendix A names as
+`TLS_DH_anon_WITH_AES_128_GCM_SHA256` and `TLS_DH_anon_WITH_AES_256_GCM_SHA384`. Nothing was ever
+exposed by that, because OpenSSL's `ssl_security_default_callback` refuses an unauthenticated suite at
+every security level above 0 whatever its strength (`ssl/ssl_cert.c`, the `SSL_aNULL` arm of
+`SSL_SECOP_CIPHER_*`), and every context this library builds pins level 2 - but that is a behaviour of
+OpenSSL which this document never named, while D4 names the floor check.
+The axis is stated as the accepted authentications rather than as a refusal of `NID_auth_null`, so the
+property does not depend on which NID a given OpenSSL maps an anonymous suite to and an unfamiliar
+authentication method fails closed. The PSK and SRP families need no axis of their own: their key
+exchanges are `NID_kx_psk`, `NID_kx_dhe_psk`, `NID_kx_ecdhe_psk`, `NID_kx_rsa_psk` and `NID_kx_srp`,
+none of which the first axis accepts.
+
+A second, independent layer sits in front of it: `createAsioSslClientContext` appends `!aNULL:!eNULL`
+after the profile's names in the TLS 1.2 cipher list, so the suites are not offered in the first place.
+The tokens are the builder's own text, not a profile's, so the name allowlist above is untouched; they
+go on the TLS 1.2 list only, because `SSL_CTX_set_ciphersuites` reads its argument as suite names and
+silently ignores anything else.
+
 This is strictly stronger than the cipher blocklist of RFC 9113 Appendix A, so
-`INADEQUATE_SECURITY` never needs to be raised by us.
+`INADEQUATE_SECURITY` never needs to be raised by us. Read off the appendix text: everything it lists
+that is not AEAD is refused by `SSL_CIPHER_is_aead`, and its 56 AEAD entries carry exactly eight name
+prefixes - `RSA`, `DH_RSA`, `DH_DSS`, `ECDH_ECDSA`, `ECDH_RSA`, `PSK`, `RSA_PSK` and `DH_anon`. The
+first seven are a key exchange outside `{ NID_kx_ecdhe, NID_kx_dhe, NID_kx_any }`; the eighth is what
+the authentication axis exists for. Nothing ephemeral, authenticated and AEAD is in the appendix at
+all, which is how it was generated.
 
 **ALPN.** `SSL_set_alpn_protos` per connection; `SSL_get0_alpn_selected` after the handshake. Trap
 worth recording: `SSL_set_alpn_protos` returns **0 on success**, the inverse of most of the API, so it

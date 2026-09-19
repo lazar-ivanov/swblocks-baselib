@@ -954,6 +954,17 @@ of the empty string.
 - Accept: a profile context reports level 2 and TLS 1.2 min and shares the global trust store; a
   `@SECLEVEL`-bearing cipher string is refused; the floor check rejects a below-floor negotiated suite;
   on 1.1.1w the impersonation entry point throws `NotSupportedException`. Tests → `h2profiles`.
+- **The floor is three axes, not two, since the L3 review round.** `SSL_CIPHER_get_auth_nid` was added
+  beside the key exchange and the AEAD check, accepting `{ NID_auth_rsa, NID_auth_ecdsa, NID_auth_dss,
+  NID_auth_any }`, and `createAsioSslClientContext` appends `!aNULL:!eNULL` after the profile's names in
+  the **TLS 1.2** list only. Finding 1 of `notes/plans/issues/http2-l3-review-record.md` is the account;
+  it is hardening rather than a fix - security level 2 already refused every unauthenticated suite, as
+  measured on the dist's own 3.5.4 - and what it buys is that §3.3's "strictly stronger than RFC 9113
+  Appendix A" is now true of the check D4 names rather than of an OpenSSL behaviour nothing named.
+- **Nit carried from the review:** `CryptoBase.h:22` includes `crypto/TlsClientProfile.h`, so every
+  OpenSSL user in the library now compiles it. That header is `BaseIncludes.h` plus `<string>` and
+  `<vector>`, so the compile cost is nil - but it is an **include edge added to core**, not merely a new
+  name, and S7.3 should not widen it further without saying so.
 
 ### S3.5 — Tunnel stage: CONNECT + SOCKS5 (§3.6, D5)
 - Deliver: `tasks/TcpTunnelStage.h` - HTTP `CONNECT` (optional Basic auth, bounded status/header read) and

@@ -466,6 +466,40 @@ UTF_AUTO_TEST_CASE( TlsClientContext_ProfileContextKeepsTheLibraryFloorTests )
         );
 
     /*
+     * The profile's names are not the whole of the TLS 1.2 list: the library's own exclusion
+     * tokens follow them, which is the layer that keeps an anonymous or a NULL suite from being
+     * offered at all - the floor check being the layer that would refuse one if it were. They go
+     * on the TLS 1.2 list only, because SSL_CTX_set_ciphersuites reads its argument as a list of
+     * suite names and would silently ignore them
+     *
+     * The empty list must stay empty, because that is what tells the builder to keep the hardened
+     * library default rather than apply a list of nothing but exclusions - which is what the two
+     * assertions on the emptyProfile context below would no longer be testing if it did not
+     *
+     * The names asserted against are the assertion's own rather than the test profile's, so that
+     * editing that profile cannot silently change what this pins
+     */
+
+    const std::vector< std::string > twoNames( { "ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-GCM-SHA384" } );
+
+    UTF_REQUIRE_EQUAL(
+        std::string( "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:!aNULL:!eNULL" ),
+        crypto::detail::CryptoInit::buildCipherListFromNames( twoNames, true /* appendExclusions */ )
+        );
+
+    UTF_REQUIRE_EQUAL(
+        std::string( "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384" ),
+        crypto::detail::CryptoInit::buildCipherListFromNames( twoNames, false /* appendExclusions */ )
+        );
+
+    UTF_REQUIRE(
+        crypto::detail::CryptoInit::buildCipherListFromNames(
+            std::vector< std::string >(),
+            true /* appendExclusions */
+            ).empty()
+        );
+
+    /*
      * The ticket extension is off unless the profile asks for it, and asking for it clears
      * exactly one option bit and leaves the cache alone
      */
@@ -597,13 +631,23 @@ UTF_AUTO_TEST_CASE( TlsClientContext_NegotiatedParametersFloorTests )
     using namespace utest::tlsclientctx;
 
     /*
-     * The two arms of the floor, each refused on its own. Both of these suites exist and can be
-     * negotiated; what disqualifies them is the key exchange in the first case and the cipher in
-     * the second, so a floor which had lost either half would let one of them through
+     * The three arms of the floor, each refused on its own. All of these suites exist and can be
+     * negotiated; what disqualifies them is the key exchange in the first case, the cipher in the
+     * second and the authentication in the third, so a floor which had lost any one of the three
+     * would let one of them through
+     *
+     * The anonymous one is the arm the floor gained last, and it is the one that matters most:
+     * it is ephemeral and it is AEAD, so the other two arms pass it, and RFC 9113 Appendix A
+     * names it - TLS_DH_anon_WITH_AES_128_GCM_SHA256 - as a suite an HTTP/2 implementation may
+     * treat as INADEQUATE_SECURITY. Its absence from this case is what let the floor go on
+     * admitting it while the design claimed the floor was stronger than that appendix. OpenSSL's
+     * own security level 2 refuses it too, which is why nothing was ever exposed - but the level
+     * is not what D4 names as the check, and this is
      */
 
     const auto staticRsaAead = createBelowFloorContext( "AES128-GCM-SHA256", false /* isServer */ );
     const auto ephemeralCbc = createBelowFloorContext( "ECDHE-RSA-AES128-SHA", false /* isServer */ );
+    const auto anonymousAead = createBelowFloorContext( "ADH-AES128-GCM-SHA256", false /* isServer */ );
     const auto ephemeralAead = createBelowFloorContext( "ECDHE-RSA-AES128-GCM-SHA256", false /* isServer */ );
 
     UTF_REQUIRE(
@@ -619,6 +663,26 @@ UTF_AUTO_TEST_CASE( TlsClientContext_NegotiatedParametersFloorTests )
             findCipherByName( ephemeralCbc.get(), "ECDHE-RSA-AES128-SHA" )
             )
         );
+
+    {
+        const auto* const anonymous = findCipherByName( anonymousAead.get(), "ADH-AES128-GCM-SHA256" );
+
+        UTF_REQUIRE(
+            ! crypto::detail::CryptoInit::doNegotiatedParametersMeetFloor( TLS1_2_VERSION, anonymous )
+            );
+
+        /*
+         * And it is refused for the stated reason rather than incidentally: the suite really does
+         * satisfy the other two arms, so the assertion above cannot be passing because the linked
+         * OpenSSL resolved 'ADH-AES128-GCM-SHA256' to something other than an ephemeral AEAD
+         * suite. This says nothing about which NID an unauthenticated suite maps to, which is
+         * deliberate - the predicate accepts a set of authentications rather than refusing one
+         */
+
+        UTF_REQUIRE_EQUAL( NID_kx_dhe, ::SSL_CIPHER_get_kx_nid( anonymous ) );
+
+        UTF_REQUIRE( 0 != ::SSL_CIPHER_is_aead( anonymous ) );
+    }
 
     UTF_REQUIRE(
         crypto::detail::CryptoInit::doNegotiatedParametersMeetFloor(
