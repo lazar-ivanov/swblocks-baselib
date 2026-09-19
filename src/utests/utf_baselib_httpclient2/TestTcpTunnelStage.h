@@ -206,6 +206,12 @@ namespace utest
 
             /**
              * @brief What a script threw, if anything; empty when every connection ran to the end
+             *
+             * READ IT AFTER waitForRecordsOf, for the same reason records() is read there: this is
+             * written by the worker thread, and nothing orders the client's task finishing against
+             * the worker leaving a connection. The direction is benign - a read taken before the
+             * rendezvous can only miss a failure the script has yet to make, never invent one - but
+             * missing happens-before is exactly what this file now exists to demonstrate
              */
 
             auto failure() const -> std::string
@@ -1533,9 +1539,9 @@ UTF_AUTO_TEST_CASE( TcpTunnelStage_HttpConnectTunnelTests )
     UTF_REQUIRE_EQUAL( events[ 0 ], std::string( "stageEntered" ) );
     UTF_REQUIRE_EQUAL( events[ 1 ], std::string( "handshakePathReached" ) );
 
-    UTF_REQUIRE( proxy.failure().empty() );
-
     waitForRecordsOf( proxy, 2U );
+
+    UTF_REQUIRE( proxy.failure().empty() );
 
     const auto records = proxy.records();
 
@@ -1613,9 +1619,9 @@ UTF_AUTO_TEST_CASE( TcpTunnelStage_Socks5TunnelTests )
 
     UTF_REQUIRE_EQUAL( probe -> countOf( "handshakePathReached" ), 1U );
 
-    UTF_REQUIRE( proxy.failure().empty() );
-
     waitForRecordsOf( proxy, 4U );
+
+    UTF_REQUIRE( proxy.failure().empty() );
 
     const auto records = proxy.records();
 
@@ -1956,8 +1962,6 @@ UTF_AUTO_TEST_CASE( TcpTunnelStage_StageRunsOncePerAttemptTests )
     UTF_REQUIRE_EQUAL( events[ 2 ], std::string( "stageEntered" ) );
     UTF_REQUIRE_EQUAL( events[ 3 ], std::string( "handshakePathReached" ) );
 
-    UTF_REQUIRE( proxy.failure().empty() );
-
     /*
      * This one site is already ordered without the wait - both records are made by readHeaders,
      * and the second of them precedes the 200 the client needs to finish - so the call here is
@@ -1967,6 +1971,8 @@ UTF_AUTO_TEST_CASE( TcpTunnelStage_StageRunsOncePerAttemptTests )
      */
 
     waitForRecordsOf( proxy, 2U );
+
+    UTF_REQUIRE( proxy.failure().empty() );
 
     const auto records = proxy.records();
 
