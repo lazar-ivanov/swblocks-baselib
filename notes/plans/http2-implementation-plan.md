@@ -1143,11 +1143,17 @@ with all of them.
 - **Two decisions worth carrying.** The retry budget is **1**, not the establisher's 5: six
   handshakes with no backoff against a consistently rejecting peer is not a retry policy, and the
   real one belongs to the pool (§5.4). And the deadline and the ALPN offer are taken in a
-  `beginPreHandshakeStage` override **before** the base call - after it there is an `async_connect`
-  in flight, so anything throwing then completes the task with an operation outstanding, in a phase
-  outside the mix-in's accounting where the mix-in would not catch it. Resolve and TCP connect are
-  therefore outside the deadline; both are OS-bounded, and the tunnel is the part bounded by
-  nothing else.
+  `beginPreHandshakeStage` override **before** the base call - after it the tunnel's first write, or
+  the TLS `async_handshake` the default hook starts synchronously, is in flight, so anything throwing
+  then completes the task with an operation outstanding, in a phase outside the mix-in's accounting
+  where the mix-in would not catch it. (This bullet said "an `async_connect` in flight" until the L4
+  review. There is none: the connect completed before the hook was entered. The header at
+  `ClientConnectionTaskBase.h:511-519` states the argument correctly - it is about arming in
+  `continueAfterResolved`, where an `async_connect` really would be in flight - and the conclusion
+  holds unchanged for the write and the handshake.) Resolve and TCP connect are therefore outside
+  the deadline; both are OS-bounded, and the tunnel is the part bounded by nothing else. §5.7's row
+  was amended to say "TCP connected through preface" in the L4 fix round, and records what the OS
+  bound actually costs.
 - **`utf_baselib_h2client` is CLOSED to new slices.** With S4.1 it is **37.1 MB clang debug and
   73.1 MB gcc release**, measured on the committed revision. It stays - the target and ceiling are
   calibrated on debug objects and 37.1 is under the 40 MB target - but the marginal ratio of this

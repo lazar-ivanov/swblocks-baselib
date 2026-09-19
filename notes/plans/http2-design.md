@@ -1031,17 +1031,50 @@ defenses. A registry per session. No decoder ships (D9). The consequences, and t
 
 | Timeout | Default | Owner |
 |---|---|---|
-| Connect: resolve through preface | 60 s | connection task |
+| Connect: **TCP connected** through preface | 60 s, per attempt | connection task |
 | TLS handshake and shutdown | 60 s, inherited (`TcpSslBaseTasks.h:73`) | stream policy |
 | Request total, including pool wait | 30 min, matching `http/Globals.h:186` | request task |
 | Response headers | off | request task |
 | Stream idle | off | request task |
 | `SETTINGS` acknowledgement | **10 s** | connection task |
 | Keepalive `PING` reply | 15 s, when keepalive is on | connection task |
+| Drain: a close waiting on its `GOAWAY` | 10 s | connection task |
 | Connection idle | 5 min | pool |
 
-**This row said 30 s until S4.2 while the engine said 10; it now says 10, and there is one number
-rather than two.** `SessionLimits::settingsTimeoutInSeconds` is that number and the connection task
+**The connect row said "resolve through preface" until the L4 review and bounded neither end of
+it.** Both ends were corrected there, one in the code and one here.
+
+The back end was the code's: the h2 driver disarmed the deadline as the first statement of
+`onProtocolNegotiated()`, so in cleartext with no proxy it was armed and cancelled inside one
+synchronous chain and covered nothing at all. It is now disarmed when the opening write completes,
+which is the first moment the preface really is away, so "through preface" is true as written.
+
+The front end is this row's. The deadline is armed inside the TCP connect completion handler, so
+the resolve and the `async_connect` are outside it and the row may not claim them. What bounds them
+is the operating system, which is neither 60 s nor one number: the resolver query is `all_matching`,
+so `async_connect` walks every address returned and each black-holed one costs a full SYN timeout -
+**measured at 134 s** on a Linux host with the default `tcp_syn_retries` of 6. A host whose
+addresses drop SYNs therefore holds the task for minutes per address, before the deadline is armed
+at all, and `DEFAULT_HANDSHAKE_RETRY_COUNT` of 1 then buys a second attempt which re-arms a fresh
+60 s on a new socket. So the establishment bound is `resolve + connect + 60 s`, twice, and not 60 s.
+
+Arming at schedule time instead - one deadline across the retry, on `aioService()`, the way the TLS
+protocol timer of `TcpSslBaseTasks.h:120` already is - would let the row keep its original wording.
+It is not forbidden by the strand rule, since `onConnectDeadline` touches no stream state. It is
+deferred rather than rejected: an overall establishment bound belongs with the retry policy, which
+design 5.4 gives to the pool, and the pool is where a caller's deadline for "get me a connection"
+is actually known.
+
+**The drain row is a backstop and not a protocol deadline.** A close is taken only through the
+write pump, which returns while a write is in flight, so a peer that stops reading with our send
+buffer full would otherwise hold a closing connection open for as long as TCP keeps retransmitting.
+`Http2ConnectionConfig::drainTimeout` bounds it, and on expiry the connection is cancelled rather
+than closed - a peer which is not reading will not read a `GOAWAY` either, which is the same
+reasoning the keepalive `PING` deadline already follows. RFC 9113 section 5.4.1 asks for the
+`GOAWAY` with a SHOULD, and it is still sent first on every path where it can be.
+
+**The `SETTINGS` row said 30 s until S4.2 while the engine said 10; it now says 10, and there is one
+number rather than two.** `SessionLimits::settingsTimeoutInSeconds` is that number and the connection task
 holds no second one of its own - it arms its deadline from the limits it was given and lets
 `Session::onTimer()` decide, which is what stops the two drifting apart again. Three reasons for
 taking the engine's value rather than this table's. RFC 9113 gives `SETTINGS_TIMEOUT` no numeric
