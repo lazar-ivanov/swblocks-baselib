@@ -67,3 +67,9 @@
 --log_level=message --run_test=Session_PushPromiseAndPingTests
 --log_level=message --run_test=Session_GoAwayAndRetryTests
 --log_level=message --run_test=Session_ProfileShapingTests
+
+--log_level=message --run_test=Http2TestPeer_RequestAndResponseTests
+--log_level=message --run_test=Http2TestPeer_ScriptedResponseStepsTests
+--log_level=message --run_test=Http2TestPeer_RefusedStreamAndGoAwayTests
+--log_level=message --run_test=Http2TestPeer_WindowStallTests
+--log_level=message --run_test=Http2TestPeer_RawFrameScriptTests
