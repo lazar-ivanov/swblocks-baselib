@@ -222,6 +222,14 @@ namespace utest
             bl::cpp::ScalarTypeIniter< std::size_t >                            m_closedCount;
             bl::cpp::ScalarTypeIniter< bool >                                   m_lastIsRetryable;
 
+            /*
+             * The status side, kept apart the way a request task keeps it: the final block's
+             * status is the response's and an interim one is that interim response's own
+             */
+
+            bl::cpp::ScalarTypeIniter< unsigned >                               m_finalStatus;
+            std::vector< unsigned >                                             m_interimStatuses;
+
             StubStreamEventSinkT() NOEXCEPT
             {
             }
@@ -231,6 +239,16 @@ namespace utest
             const std::vector< std::string >& trace() const NOEXCEPT
             {
                 return m_trace;
+            }
+
+            unsigned finalStatus() const NOEXCEPT
+            {
+                return m_finalStatus;
+            }
+
+            const std::vector< unsigned >& interimStatuses() const NOEXCEPT
+            {
+                return m_interimStatuses;
             }
 
             std::size_t closedCount() const NOEXCEPT
@@ -258,15 +276,27 @@ namespace utest
 
             virtual void onHeaders(
                 SAA_in          const bl::httpclient::stream_handle_t           handle,
+                SAA_in          const unsigned                                  status,
                 SAA_in          bl::http::HeaderList&&                          headers,
                 SAA_in          const bool                                      isInterim
                 ) OVERRIDE
             {
                 const bl::http::HeaderList taken( BL_PARAM_FWD( headers ) );
 
+                if( isInterim )
+                {
+                    m_interimStatuses.push_back( status );
+                }
+                else
+                {
+                    m_finalStatus = status;
+                }
+
                 m_trace.push_back(
                     ( isInterim ? "interim:" : "headers:" ) +
                     std::to_string( handle ) +
+                    ":" +
+                    std::to_string( status ) +
                     ":" +
                     std::to_string( taken.size() )
                     );
@@ -396,11 +426,28 @@ namespace utest
 
             void deliverHeaders(
                 const stream_handle_t                                           handle,
+                const unsigned                                                  status,
                 bl::http::HeaderList                                            headers,
                 const bool                                                      isInterim
                 )
             {
-                sinkFor( handle ) -> onHeaders( handle, BL_PARAM_FWD( headers ), isInterim );
+                /*
+                 * The stub ENFORCES the contract's own invariant rather than trusting the case:
+                 * isInterim is true exactly when the status is 1xx and is not 101. A stub which
+                 * let the two contradict each other would let a request task be developed against
+                 * a stream no driver can produce - and 101 is the one that catches people out,
+                 * being 1xx and yet a final response
+                 */
+
+                BL_CHK_T(
+                    false,
+                    isInterim == ( status >= 100U && status <= 199U && 101U != status ),
+                    bl::ArgumentException(),
+                    BL_MSG()
+                        << "The interim flag contradicts the response status code"
+                    );
+
+                sinkFor( handle ) -> onHeaders( handle, status, BL_PARAM_FWD( headers ), isInterim );
             }
 
             void deliverData(
@@ -946,15 +993,15 @@ UTF_AUTO_TEST_CASE( ClientContracts_StubConnectionAndEventSinkTests )
     bl::http::HeaderList trailers;
     trailers.append( "x-checksum", "abc" );
 
-    stub -> deliverHeaders( handle, std::move( interim ), true /* isInterim */ );
-    stub -> deliverHeaders( handle, std::move( headers ), false /* isInterim */ );
+    stub -> deliverHeaders( handle, 103U /* status */, std::move( interim ), true /* isInterim */ );
+    stub -> deliverHeaders( handle, 200U /* status */, std::move( headers ), false /* isInterim */ );
     stub -> deliverData( handle, "hello" );
     stub -> deliverTrailers( handle, std::move( trailers ) );
     stub -> deliverClosed( handle, eh::error_code(), false /* isRetryable */ );
 
     UTF_CHECK_EQUAL(
         sinkImpl -> traceText(),
-        std::string( "interim:1:1|headers:1:2|data:1:hello|trailers:1:1|closed:1:ok:final|" )
+        std::string( "interim:1:103:1|headers:1:200:2|data:1:hello|trailers:1:1|closed:1:ok:final|" )
         );
 
     UTF_CHECK_EQUAL( sinkImpl -> closedCount(), 1U );
@@ -992,6 +1039,117 @@ UTF_AUTO_TEST_CASE( ClientContracts_StubConnectionAndEventSinkTests )
     stub -> setState( ConnectionState::Draining );
     UTF_CHECK( ConnectionState::Draining == connection -> state() );
     UTF_CHECK_EQUAL( connection -> freeStreamSlots(), 0U );
+}
+
+UTF_AUTO_TEST_CASE( ClientContracts_ResponseStatusCrossesTheSinkTests )
+{
+    using namespace bl;
+    using namespace bl::httpclient;
+    using namespace utest::clientcontracts;
+
+    /*
+     * THE DEFECT THIS CASE EXISTS FOR. As first published the sink's only header event was
+     * onHeaders( handle, HeaderList&&, isInterim ), and http::HeaderList refuses ':status' by
+     * design - a colon is not a token character - so no driver could put the status anywhere a
+     * request task could read it and ClientResponse::status() could not be filled at all. The gap
+     * survived because nothing asserted the status; this case asserts it, end to end
+     */
+
+    http::HeaderList refuses;
+
+    UTF_CHECK( ! http::HeaderList::isValidHeaderName( ":status" ) );
+    UTF_CHECK_THROW( refuses.append( ":status", "200" ), InvalidDataFormatException );
+    UTF_CHECK_EQUAL( refuses.size(), 0U );
+
+    const auto stub = StubClientConnection::createInstance( HttpProtocol::Http2, 4U /* freeSlots */ );
+    const auto connection = om::qi< ClientConnection >( stub );
+
+    const auto sinkImpl = StubStreamEventSink::createInstance();
+    const auto sink = om::qi< ClientStreamEventSink >( sinkImpl );
+
+    ClientRequest request;
+    request.url( net::Uri::parse( "https://example.com/" ) );
+
+    const auto handle = connection -> submit( request, sink );
+
+    /*
+     * EVERY header block carries its own status. 100 Continue and 103 Early Hints are interim and
+     * each brings its own code; the response that follows brings the final one
+     */
+
+    http::HeaderList cont;
+
+    http::HeaderList hints;
+    hints.append( "link", "</style.css>; rel=preload; as=style" );
+
+    http::HeaderList headers;
+    headers.append( "content-type", "text/html" );
+
+    stub -> deliverHeaders( handle, 100U /* status */, std::move( cont ), true /* isInterim */ );
+    stub -> deliverHeaders( handle, 103U /* status */, std::move( hints ), true /* isInterim */ );
+    stub -> deliverHeaders( handle, 404U /* status */, std::move( headers ), false /* isInterim */ );
+    stub -> deliverClosed( handle, eh::error_code(), false /* isRetryable */ );
+
+    UTF_REQUIRE_EQUAL( sinkImpl -> interimStatuses().size(), 2U );
+    UTF_CHECK_EQUAL( sinkImpl -> interimStatuses()[ 0 ], 100U );
+    UTF_CHECK_EQUAL( sinkImpl -> interimStatuses()[ 1 ], 103U );
+
+    /*
+     * ... and an interim status never becomes the response's: the final block's does
+     */
+
+    UTF_CHECK_EQUAL( sinkImpl -> finalStatus(), 404U );
+
+    UTF_CHECK_EQUAL(
+        sinkImpl -> traceText(),
+        std::string( "interim:1:100:0|interim:1:103:1|headers:1:404:1|closed:1:ok:final|" )
+        );
+
+    /*
+     * What S5.1 will do with it, done here so that the contract is proven to compose: the status
+     * the sink received fills ClientResponse::status(), which is the field that had no source
+     */
+
+    ClientResponse response;
+
+    UTF_CHECK_EQUAL( response.status(), 0U );
+
+    response.status( sinkImpl -> finalStatus() );
+    response.protocol( connection -> protocol() );
+
+    UTF_CHECK_EQUAL( response.status(), 404U );
+    UTF_CHECK( HttpProtocol::Http2 == response.protocol() );
+
+    /*
+     * The two parameters must agree, and the stub refuses a delivery in which they do not. 101 is
+     * the case worth pinning: it is 1xx and yet a FINAL response (RFC 9110 15.2), so a driver
+     * which treated "1xx" as "interim" would wait for a header block that never comes
+     */
+
+    const auto second = connection -> submit( request, sink );
+
+    UTF_CHECK_THROW(
+        stub -> deliverHeaders( second, 101U, http::HeaderList(), true /* isInterim */ ),
+        ArgumentException
+        );
+
+    UTF_CHECK_THROW(
+        stub -> deliverHeaders( second, 200U, http::HeaderList(), true /* isInterim */ ),
+        ArgumentException
+        );
+
+    UTF_CHECK_THROW(
+        stub -> deliverHeaders( second, 103U, http::HeaderList(), false /* isInterim */ ),
+        ArgumentException
+        );
+
+    http::HeaderList switching;
+    switching.append( "upgrade", "websocket" );
+
+    stub -> deliverHeaders( second, 101U /* status */, std::move( switching ), false /* isInterim */ );
+
+    UTF_CHECK_EQUAL( sinkImpl -> finalStatus(), 101U );
+    UTF_CHECK_EQUAL( sinkImpl -> interimStatuses().size(), 2U );
 }
 
 UTF_AUTO_TEST_CASE( ClientContracts_ConnectionKeyAndPoolTests )

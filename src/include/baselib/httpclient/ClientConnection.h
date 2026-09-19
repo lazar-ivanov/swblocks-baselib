@@ -150,14 +150,33 @@ namespace bl
         public:
 
             /**
-             * @brief A response header block
+             * @brief A response header block, and the status of the response it belongs to
+             *
+             * 'status' is the response status code - the three-digit ':status' pseudo-header for
+             * HTTP/2 and the status-line code for HTTP/1.1. It is a PARAMETER and not a field of
+             * 'headers' because http::HeaderList cannot hold ':status': a colon is not a token
+             * character, so the list refuses that name by design (S1.2), and the session engine
+             * strips the pseudo-headers when it validates a decoded block in any case. Without it
+             * ClientResponse::status() has nothing to be filled from, which is how this contract
+             * was first published and what the L2 review found
+             *
+             * EVERY header block carries its OWN status, interim ones included: a 103 Early Hints
+             * block arrives as onHeaders( handle, 103, hints, true ) and the response that follows
+             * as onHeaders( handle, 200, headers, false ). The consumer takes the status of the
+             * final block as the response's; an interim status is that interim response's own and
+             * never overwrites it
              *
              * 'isInterim' marks a 1xx response other than 101 (RFC 9110 section 15.2), which is
-             * followed by a further header block rather than by the body
+             * followed by a further header block rather than by the body. It stays although the
+             * status makes it derivable - it is true exactly when 'status' is in [100, 199] and is
+             * not 101 - because it states the STRUCTURAL fact the ordering guarantee above is
+             * written in terms of, that another header block follows, and a consumer should not
+             * have to re-derive that from a number. A driver states both, and the two must agree
              */
 
             virtual void onHeaders(
                 SAA_in          const stream_handle_t                           handle,
+                SAA_in          const unsigned                                  status,
                 SAA_in          http::HeaderList&&                              headers,
                 SAA_in          const bool                                      isInterim
                 ) = 0;

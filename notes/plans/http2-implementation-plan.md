@@ -663,6 +663,14 @@ they affect (S3.1, S4.3, S5.1, S5.2, S6.1). Nothing found blocks L3.
   a hope. **The fix: `onHeaders` gains a `status` parameter** - an `unsigned`, the three-digit
   `:status` for h2 and the status-line code for h1 - with the stub and its case updated in the same
   change. S4.2 and S4.3 deliver it; S5.1 consumes it. Nothing in L3 touches it.
+- **As landed:** `onHeaders( handle, status, HeaderList&&, isInterim )`. **Every header block carries
+  its own status**, interim ones included, so 103 Early Hints arrives as `( 103, hints, true )` and
+  the response after it as `( 200, headers, false )`; the consumer takes the FINAL block's status as
+  the response's and an interim one never overwrites it. `isInterim` **stays** although the status
+  makes it derivable (true exactly when the status is in `[100, 199]` and is not 101): it states the
+  structural fact the sink's ordering guarantee is written in terms of, and a consumer must not have
+  to re-derive that from a number. A driver states both and the two must agree - the stub connection
+  refuses a delivery in which they contradict, which is what pins 101 as a *final* response.
 
 ### S2.7 — Cookie jar (§5.6)
 - Deliver: `httpclient/CookieJar.h` - RFC 6265 domain/path matching, `Secure`/`HttpOnly`/expiry/`Max-Age`,
