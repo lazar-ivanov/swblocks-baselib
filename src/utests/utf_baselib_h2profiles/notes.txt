@@ -3,3 +3,11 @@
 --log_level=message --run_test=HttpClientProfiles_BrowserProfileRoundTripTests
 --log_level=message --run_test=HttpClientProfiles_SettingValueSpansFullUint32RangeTests
 --log_level=message --run_test=HttpClientProfiles_RequiredPropertiesAreEnforcedOnLoadTests
+--log_level=message --run_test=TlsClientContext_ProfileContextKeepsTheLibraryFloorTests
+--log_level=message --run_test=TlsClientContext_UnsafeCipherSuiteNamesAreRefusedTests
+--log_level=message --run_test=TlsClientContext_NegotiatedParametersFloorTests
+--log_level=message --run_test=TlsClientContext_ClientProfilesRequireOpenSsl35Tests
+--log_level=message --run_test=TlsClientHello_Ja3AndJa4MatchHandWorkedValuesTests
+--log_level=message --run_test=TlsClientHello_GreaseAndAbsentExtensionsAreHandledTests
+--log_level=message --run_test=TlsClientHello_CapturedFromRealHandshakeTests
+--log_level=message --run_test=TlsClientHello_MalformedMessagesAreRefusedTests
