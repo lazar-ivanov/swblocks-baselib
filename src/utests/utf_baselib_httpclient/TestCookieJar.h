@@ -198,9 +198,17 @@ UTF_AUTO_TEST_CASE( CookieJar_DomainAttributeRejectionTests )
             jar.setCookie( request, "a=1; Domain=com", true /* isHttpApi */, now )
         );
 
+    /*
+     * A single label the request host merely sits BENEATH is refused exactly as "com" is above -
+     * "localhost" is to "app.localhost" what "com" is to "www.example.com". This is the refusal
+     * which keeps RFC 6265 section 5.3 step 5's exception, pinned in
+     * CookieJar_SingleLabelDomainAttributeTests below, from widening anything: the exception asks
+     * for equality with the request host, and this is the nearest case which is not equal
+     */
+
     UTF_CHECK(
         CookieStoreResult::RejectedDomain ==
-            jar.setCookie( uri( "http://localhost/p" ), "a=1; Domain=localhost", true, now )
+            jar.setCookie( uri( "http://app.localhost/p" ), "a=1; Domain=localhost", true, now )
         );
 
     /*
@@ -258,6 +266,18 @@ UTF_AUTO_TEST_CASE( CookieJar_DomainAttributeRejectionTests )
                 )
         );
 
+    /*
+     * The gap is a DOMAIN cookie and stays one. "co.uk" has an embedded dot, so it never reaches
+     * section 5.3 step 5's exception at all - which is how this case shows that the exception did
+     * not widen the residual risk: if it ever did, the flag below would go the other way and the
+     * reach assertion after it would fail rather than pass
+     */
+
+    const auto supercookieStored = supercookie.allCookies();
+
+    UTF_CHECK_EQUAL( supercookieStored.size(), 1U );
+    UTF_CHECK( ! supercookieStored[ 0 ].isHostOnly.value() );
+
     UTF_CHECK_EQUAL(
         supercookie.cookieHeaderValue( uri( "https://b.co.uk/p" ), true /* isHttpApi */, now ),
         std::string( "tracker=1" )
@@ -276,6 +296,184 @@ UTF_AUTO_TEST_CASE( CookieJar_DomainAttributeRejectionTests )
         CookieStoreResult::RejectedMalformed ==
             jar.setCookie( request, "  =1; Path=/", true /* isHttpApi */, now )
         );
+}
+
+UTF_AUTO_TEST_CASE( CookieJar_SingleLabelDomainAttributeTests )
+{
+    using namespace bl;
+    using namespace bl::httpclient;
+    using namespace utest::cookiejar;
+
+    const auto now = fixedNow();
+
+    /*
+     * RFC 6265 section 5.3 step 5 - the exception to the dot test of the case above, and the ONLY
+     * exception to it
+     *
+     * The dot test stands in for a public suffix list, and step 5's answer for an attribute which
+     * IS a public suffix is not a flat rejection: an attribute identical to the canonicalized
+     * request host becomes a host-only cookie, exactly as if no Domain attribute had been sent.
+     * Without that, "Domain=localhost" on localhost - the ordinary local development case - loses
+     * its cookies silently
+     *
+     * This is a security rule, so the boundary is pinned from both sides below: what equality with
+     * the request host admits, and what it must still refuse
+     */
+
+    {
+        CookieJar jar;
+
+        UTF_CHECK(
+            CookieStoreResult::Stored ==
+                jar.setCookie( uri( "http://localhost/p" ), "a=1; Domain=localhost", true, now )
+            );
+
+        /*
+         * The leading dot the RFC says to ignore, and the case fold, are both part of
+         * "canonicalized" - so both of these are identical to the request host too
+         */
+
+        UTF_CHECK(
+            CookieStoreResult::Stored ==
+                jar.setCookie( uri( "http://localhost/p" ), "b=2; Domain=.localhost", true, now )
+            );
+
+        UTF_CHECK(
+            CookieStoreResult::Stored ==
+                jar.setCookie( uri( "http://localhost/p" ), "c=3; Domain=LOCALHOST", true, now )
+            );
+
+        const auto stored = jar.allCookies();
+
+        UTF_CHECK_EQUAL( stored.size(), 3U );
+
+        for( std::size_t pos = 0U; pos < stored.size(); ++pos )
+        {
+            /*
+             * HOST-ONLY, not a domain cookie - which is the whole of what step 5 grants
+             */
+
+            UTF_CHECK_EQUAL( stored[ pos ].domain, std::string( "localhost" ) );
+            UTF_CHECK( stored[ pos ].isHostOnly.value() );
+        }
+
+        UTF_CHECK_EQUAL(
+            jar.cookieHeaderValue( uri( "http://localhost/p" ), true /* isHttpApi */, now ),
+            std::string( "a=1; b=2; c=3" )
+            );
+
+        /*
+         * ... and host-only is matched by equality on the request host, so nothing beneath
+         * localhost and nothing beside it sees the cookies. This is the containment which makes
+         * the exception safe rather than a hole in the dot test
+         */
+
+        UTF_CHECK_EQUAL(
+            jar.cookieHeaderValue( uri( "http://app.localhost/p" ), true /* isHttpApi */, now ),
+            std::string()
+            );
+
+        UTF_CHECK_EQUAL(
+            jar.cookieHeaderValue( uri( "http://otherhost/p" ), true /* isHttpApi */, now ),
+            std::string()
+            );
+    }
+
+    /*
+     * THE PATHOLOGICAL SHAPE, PINNED FROM BOTH SIDES. "Domain=com" is the case the dot test was
+     * written for, and a host literally named com satisfies "identical to the request host" just
+     * as localhost does. The exception therefore admits it - and it has to be shown that this
+     * grants nothing, because host-only scopes the cookie to that one name and a registry suffix
+     * has no host-only reach at all
+     */
+
+    {
+        CookieJar bareTld;
+
+        UTF_CHECK(
+            CookieStoreResult::Stored ==
+                bareTld.setCookie( uri( "http://com/p" ), "t=1; Domain=com", true, now )
+            );
+
+        const auto stored = bareTld.allCookies();
+
+        UTF_CHECK_EQUAL( stored.size(), 1U );
+        UTF_CHECK_EQUAL( stored[ 0 ].domain, std::string( "com" ) );
+        UTF_CHECK( stored[ 0 ].isHostOnly.value() );
+
+        UTF_CHECK_EQUAL(
+            bareTld.cookieHeaderValue( uri( "http://com/p" ), true /* isHttpApi */, now ),
+            std::string( "t=1" )
+            );
+
+        /*
+         * The scoping the dot test exists to stop. Neither of these is reached, which is what
+         * separates "stored host-only" from "scoped to the TLD"
+         */
+
+        UTF_CHECK_EQUAL(
+            bareTld.cookieHeaderValue( uri( "http://example.com/p" ), true /* isHttpApi */, now ),
+            std::string()
+            );
+
+        UTF_CHECK_EQUAL(
+            bareTld.cookieHeaderValue(
+                uri( "http://www.example.com/p" ),
+                true    /* isHttpApi */,
+                now
+                ),
+            std::string()
+            );
+
+        /*
+         * ... and the refusal side of the same pair: a page which merely SITS under com cannot set
+         * it, because its attribute is not identical to its host. The two assertions together are
+         * the boundary
+         */
+
+        UTF_CHECK(
+            CookieStoreResult::RejectedDomain ==
+                bareTld.setCookie( uri( "http://www.example.com/p" ), "t=2; Domain=com", true, now )
+            );
+
+        UTF_CHECK_EQUAL( bareTld.size(), 1U );
+    }
+
+    /*
+     * EQUALITY ALONE IS NOT WHAT TRIGGERS THE EXCEPTION - failing the dot test is. A Domain
+     * identical to a multi-label request host is an ordinary DOMAIN cookie, as section 5.3 step 6
+     * says and as it always was here, and it still reaches hosts beneath it. If the fix had keyed
+     * on equality instead, every "Domain=example.com" from example.com would silently have stopped
+     * reaching www.example.com
+     */
+
+    {
+        CookieJar multiLabel;
+
+        UTF_CHECK(
+            CookieStoreResult::Stored ==
+                multiLabel.setCookie(
+                    uri( "https://example.com/p" ),
+                    "s=1; Domain=example.com",
+                    true    /* isHttpApi */,
+                    now
+                    )
+            );
+
+        const auto stored = multiLabel.allCookies();
+
+        UTF_CHECK_EQUAL( stored.size(), 1U );
+        UTF_CHECK( ! stored[ 0 ].isHostOnly.value() );
+
+        UTF_CHECK_EQUAL(
+            multiLabel.cookieHeaderValue(
+                uri( "https://www.example.com/p" ),
+                true    /* isHttpApi */,
+                now
+                ),
+            std::string( "s=1" )
+            );
+    }
 }
 
 UTF_AUTO_TEST_CASE( CookieJar_SecureAndHttpOnlyTests )

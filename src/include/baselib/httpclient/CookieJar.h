@@ -108,7 +108,8 @@ namespace bl
 
             /**
              * The Domain attribute is one this client will not accept for this request - it does
-             * not domain-match the request host, or it is a bare TLD or has no embedded dot
+             * not domain-match the request host, or it is a bare TLD or has no embedded dot and
+             * is not the request host itself
              */
 
             RejectedDomain,
@@ -145,7 +146,16 @@ namespace bl
          *  - a Domain attribute must domain-match the request host (RFC 6265 section 5.3 step 6),
          *    so a page cannot set a cookie for an unrelated site; and
          *  - a Domain attribute with no embedded dot, or which is a single label, is rejected, so
-         *    "Domain=com" and "Domain=localhost" are refused
+         *    "Domain=com" from a page under com, and "Domain=localhost" from a page under
+         *    localhost, are both refused
+         *
+         * ... with the one exception RFC 6265 section 5.3 step 5 states: an attribute the rule
+         * above refuses, but which is IDENTICAL to the canonicalized request host, becomes a
+         * HOST-ONLY cookie instead of a rejection. That is what makes "Domain=localhost" on
+         * localhost work, which is the ordinary local-development case, and it grants nothing: a
+         * host-only cookie goes back to that exact host and to no other, so the same exception
+         * applied to the pathological "Domain=com" on a host literally named com scopes the cookie
+         * to com alone rather than to everything beneath it.
          *
          * WHAT REMAINS: a multi-label public suffix - co.uk, com.au, github.io - has an embedded
          * dot and domain-matches a host beneath it, so a page at a.co.uk CAN still set
@@ -834,13 +844,21 @@ namespace bl
                             : domainAttribute
                         );
 
-                    if( ! isAcceptableDomainAttribute( host, domain ) )
+                    bool isHostOnly = false;
+
+                    if( ! isAcceptableDomainAttribute( host, domain, isHostOnly ) )
                     {
                         return CookieStoreResult::RejectedDomain;
                     }
 
+                    /*
+                     * 'isHostOnly' is set only by RFC 6265 section 5.3 step 5's exception, and in
+                     * that case 'domain' IS the request host - so this branch and the empty
+                     * attribute branch above store the same thing, which is the point of the step
+                     */
+
                     cookie.domain = domain;
-                    cookie.isHostOnly = false;
+                    cookie.isHostOnly = isHostOnly;
                 }
 
                 cookie.path = ( pathAttribute.empty() || '/' != pathAttribute[ 0 ] )
@@ -1044,13 +1062,20 @@ namespace bl
 
             /**
              * @brief The two checks which stand in for a public suffix list - see the header note
+             *
+             * 'isHostOnly' is an output: it is set for the single case in which the dot test below
+             * refuses an attribute and RFC 6265 section 5.3 step 5 keeps the cookie anyway. It is
+             * meaningless when this returns false
              */
 
             static bool isAcceptableDomainAttribute(
                 SAA_in          const std::string&                              host,
-                SAA_in          const std::string&                              domain
+                SAA_in          const std::string&                              domain,
+                SAA_out         bool&                                           isHostOnly
                 )
             {
+                isHostOnly = false;
+
                 if( domain.empty() )
                 {
                     return false;
@@ -1088,7 +1113,30 @@ namespace bl
 
                 if( std::string::npos == dot || 0U == dot || domain.size() - 1U == dot )
                 {
-                    return false;
+                    /*
+                     * RFC 6265 section 5.3 step 5: the rule above is this client's stand-in for
+                     * "the attribute is a public suffix", and the step's answer to that is NOT a
+                     * flat rejection - an attribute identical to the canonicalized request host
+                     * is stored HOST-ONLY, i.e. exactly as if the Set-Cookie had carried no Domain
+                     * attribute at all. Without this, Domain=localhost on localhost - every local
+                     * test server there is - silently loses its cookies.
+                     *
+                     * The test is equality with the request host and nothing weaker, so the case
+                     * this rule exists to stop is untouched: a page on app.localhost sending
+                     * Domain=localhost is not identical to its host and is still refused, which is
+                     * the same shape as a page under com sending Domain=com. What the exception
+                     * does admit is Domain=com from a host literally NAMED com - and there it
+                     * grants nothing, because host-only is matched by string equality on the
+                     * request host ( see cookiesForRequest ), so the cookie returns to com alone
+                     * and never to anything beneath it
+                     */
+
+                    if( host != domain )
+                    {
+                        return false;
+                    }
+
+                    isHostOnly = true;
                 }
 
                 return true;

@@ -18,6 +18,7 @@
 --log_level=message --run_test=CookieJar_DomainMatchRuleTests
 --log_level=message --run_test=CookieJar_PathMatchAndDefaultPathTests
 --log_level=message --run_test=CookieJar_DomainAttributeRejectionTests
+--log_level=message --run_test=CookieJar_SingleLabelDomainAttributeTests
 --log_level=message --run_test=CookieJar_SecureAndHttpOnlyTests
 --log_level=message --run_test=CookieJar_ExpiryAndMaxAgePrecedenceTests
 --log_level=message --run_test=CookieJar_HostOnlyStorageAndOrderTests
