@@ -65,9 +65,20 @@ namespace bl
          * getStrand(), createTimer() and postToStrand() all assert - TcpStrandedStreams.h says so in
          * as many words. What is NOT lost is the strand itself: it belongs to the socket, as its
          * executor, and the socket is what moved. So every post in this class goes through
-         * getSocket().get_executor(), which is the strand under a stranded policy and the I/O
-         * service under a plain one, and therefore correct over all four policies. The same
-         * expression ClientConnectionTaskBaseT::armConnectDeadline() uses, for the same reason.
+         * getSocket().get_executor(), which is the expression
+         * ClientConnectionTaskBaseT::armConnectDeadline() uses, for the same reason.
+         *
+         * STREAM IS ONE OF THE STRANDED POLICIES OF DESIGN 3.1, AND THE CLAIM IS NARROWED TO THEM
+         * DELIBERATELY. getSocket().get_executor() is the strand under a stranded policy and the
+         * I/O service under a plain one, and a post to an I/O service is not a serialization:
+         * onStartRequest() runs from a plain post holding no task lock and touches m_parser,
+         * m_requestHead, m_requestBody and m_bodyChunk, which onReadCompleted() - holding the task
+         * lock, on whatever I/O thread the read completed on - touches too. Under a plain policy
+         * those two can run at once. Design 5.1 prescribes a strand for exactly this class, the
+         * cases below run it over the cleartext stranded policy and the explicit instantiation
+         * compiles it over the TLS stranded one, so 'correct over the stranded policies' is what is
+         * written here and what is true. Making it correct over a plain policy is not a comment
+         * change - it would need the request start to hold the task lock.
          *
          * cancelTask() is overridden for the same reason and nothing else: the stranded policies
          * fall back to a SYNCHRONOUS forced shutdown when m_strand is null, which is a socket call
@@ -168,6 +179,7 @@ namespace bl
 
             bool                                                                m_headersDelivered = false;
             bool                                                                m_requestBytesWritten = false;
+            bool                                                                m_requestSaidClose = false;
 
             /*
              * The leaf lock of design 5.2 rule L4. It guards what an off-strand caller reads or
@@ -348,7 +360,10 @@ namespace bl
              *     below HTTP/1.1 (RFC 9112 section 9.3)
              *   - any response carrying 'Connection: close', and equally any REQUEST which carried
              *     it: design 5.5 says neither side may have said close, and the request's word
-             *     binds this client whatever the server answers
+             *     binds this client whatever the server answers. The request's own verdict is read
+             *     from m_requestSaidClose rather than from m_request, because m_request is guarded
+             *     by m_stateLock and this runs on the stream's executor holding nothing - see
+             *     onStartRequest( ), which is the one place the request may be read
              *   - a body framed by the connection closing, which needsEof() reports. There is no
              *     end to such a message other than the close, so there is nothing to reuse
              *   - a 101, which is a final response that hands the connection to another protocol.
@@ -365,6 +380,11 @@ namespace bl
             bool deriveIsReusable() const NOEXCEPT
             {
                 BL_NOEXCEPT_BEGIN()
+
+                if( m_requestSaidClose )
+                {
+                    return false;
+                }
 
                 if( ! m_parser || ! m_parser -> isComplete() )
                 {
@@ -491,6 +511,20 @@ namespace bl
                         hasRequest = true;
 
                         request = m_request;
+
+                        /*
+                         * RECORDED HERE BECAUSE THIS IS THE ONE PLACE THE REQUEST MAY BE READ. A
+                         * request which says 'Connection: close' goes out with that token on it -
+                         * serializeRequestHead( ) does not strip it - and RFC 9112 section 9.6
+                         * makes that word binding on this client whatever the server answers: it
+                         * MUST NOT send another request on this connection, and the server MUST
+                         * close after the final response whether or not it echoes the token back.
+                         * deriveIsReusable( ) runs on the stream's executor and takes no lock, so
+                         * it cannot read m_request - which m_stateLock guards and finishStream( )
+                         * clears - and consults this instead
+                         */
+
+                        m_requestSaidClose = hasConnectionToken( request.headers(), "close" );
                     }
                 }
 
@@ -1040,6 +1074,7 @@ namespace bl
                 m_bodyChunk.clear();
                 m_headersDelivered = false;
                 m_requestBytesWritten = false;
+                m_requestSaidClose = false;
 
                 if( sink && httpclient::ClientConnection::INVALID_STREAM_HANDLE != handle )
                 {

@@ -893,11 +893,13 @@ namespace utest
         }
 
         /**
-         * @brief What one request / response exchange produced
+         * @brief What one request / response exchange produced - including the request the peer
+         * read off the wire, for the cases whose subject is what this driver sent
          */
 
         struct ExchangeResult
         {
+            std::string                                                         request;
             std::vector< std::string >                                          events;
             std::vector< HeaderBlock >                                          blocks;
             std::string                                                         body;
@@ -919,13 +921,18 @@ namespace utest
          * 'closeImmediately' is what a read-until-close response needs - the message has no end
          * other than the close - and everything else holds the connection open until the case has
          * read the verdict off it
+         *
+         * 'requestHeaders' are appended to the request exactly as given, which is how a case makes
+         * the REQUEST an input of the exchange rather than only the response
          */
 
         inline auto runExchange(
             SAA_in          const std::string&                                  response,
             SAA_in          const bool                                          closeImmediately = false,
             SAA_in          const std::string&                                  method = "GET",
-            SAA_in          const std::string&                                  target = "/resource"
+            SAA_in          const std::string&                                  target = "/resource",
+            SAA_in          const bl::http::HeaderList&                         requestHeaders =
+                                bl::http::HeaderList()
             )
             -> ExchangeResult
         {
@@ -949,7 +956,13 @@ namespace utest
                         ScriptedPeer::closeSocket( socket );
                     }
 
-                    self.record( "served:" + ScriptedPeer::requestLineOf( request ) );
+                    /*
+                     * The WHOLE request and not only its line: a case whose subject is a request
+                     * header needs to see that the header reached the wire, and record( ) is what
+                     * publishes it under the peer's own lock
+                     */
+
+                    self.record( bl::cpp::copy( request ) );
 
                     if( ! closeImmediately )
                     {
@@ -961,7 +974,7 @@ namespace utest
             const auto sink = RecordingSinkImpl::createInstance();
 
             scheduleAndExecuteInParallel(
-                [ &peer, &sink, &result, &method, &target ](
+                [ &peer, &sink, &result, &method, &target, &requestHeaders ](
                     SAA_in      const om::ObjPtr< ExecutionQueue >&             eq
                     ) -> void
                 {
@@ -972,8 +985,18 @@ namespace utest
 
                     eq -> push_back( driverTask );
 
+                    auto request = makeRequest( peer.port(), target, method );
+
+                    for( auto it = requestHeaders.begin(); it != requestHeaders.end(); ++it )
+                    {
+                        request.headers().append(
+                            cpp::copy( it -> name() ),
+                            cpp::copy( it -> value() )
+                            );
+                    }
+
                     const auto handle = driver -> submit(
-                        makeRequest( peer.port(), target, method ),
+                        request,
                         om::qi< httpclient::ClientStreamEventSink >( sink )
                         );
 
@@ -997,6 +1020,13 @@ namespace utest
                 );
 
             UTF_REQUIRE_EQUAL( peer.failure(), std::string() );
+
+            chkOrFail(
+                peer.waitForRecords( 1U ),
+                "the peer never recorded the request it read"
+                );
+
+            result.request = peer.records().front();
 
             result.events = sink -> events();
             result.blocks = sink -> blocks();
@@ -1308,6 +1338,53 @@ UTF_AUTO_TEST_CASE( Http1Driver_ReuseVerdictInputsTests )
         UTF_REQUIRE_EQUAL( result.body, std::string( "until-the-close" ) );
         UTF_REQUIRE_EQUAL( result.blocks.size(), 1U );
         UTF_REQUIRE_EQUAL( result.blocks[ 0 ].status, 200U );
+        UTF_REQUIRE( httpclient::ConnectionState::Ready != result.stateAfterResponse );
+    }
+
+    {
+        /*
+         * THE ONE INPUT WHICH IS NOT THE RESPONSE'S, AND THE ONLY WAY TO TELL IT APART IS A SERVER
+         * WHICH DOES NOT ECHO. The request said close; the response says nothing about the
+         * connection, is HTTP/1.1, is framed by a Content-Length and leaves no bytes over - so
+         * every response-side input says reusable and only the request says otherwise. RFC 9112
+         * section 9.6 puts the rule on the sender: a client which sent close MUST NOT send another
+         * request on that connection, and the server MUST close after its final response while
+         * only SHOULD echoing the token. A driver which derived this verdict from the response
+         * alone would report Ready here, the pool would hand the connection to the next request,
+         * and that request would reach a socket the server was already closing - and fail
+         * NON-retryably, because its bytes did go out
+         */
+
+        http::HeaderList requestHeaders;
+
+        requestHeaders.append( "Connection", "close" );
+
+        const auto result = runExchange(
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Length: 3\r\n"
+            "\r\n"
+            "abc",
+            false /* closeImmediately */,
+            "GET",
+            "/resource",
+            requestHeaders
+            );
+
+        UTF_REQUIRE_EQUAL( result.body, std::string( "abc" ) );
+
+        /*
+         * The token reached the wire untouched - serializeRequestHead( ) passes the caller's fields
+         * through - which is what puts the server under the rule in the first place. Without this
+         * the case could pass on a driver which refused the header instead of honouring it
+         */
+
+        UTF_REQUIRE( ScriptedPeer::requestHasField( result.request, "Connection" ) );
+
+        UTF_REQUIRE(
+            std::string::npos !=
+                ScriptedPeer::toLowerAscii( result.request ).find( "\r\nconnection: close\r\n" )
+            );
+
         UTF_REQUIRE( httpclient::ConnectionState::Ready != result.stateAfterResponse );
     }
 }
