@@ -320,6 +320,13 @@ UTF_AUTO_TEST_CASE( H2Driver_OpeningWriteIsOneWriteTests )
  * and the peer withholds its WINDOW_UPDATEs until the client has actually run out of window. The
  * stall is an EVENT and not a duration: awaitWindowStall( ) fires at the exact octet the client
  * cannot go past, so the case is deterministic rather than a race with a timer
+ *
+ * THE SCRIPT'S SECOND RENDEZVOUS IS THE ONE THIS CASE WAS FLAKY WITHOUT. awaitStreamClosed( )
+ * between endStream( ) and closeConnection( ) is what stops the peer tearing the connection down
+ * while the client's upload half is still open - the peer's own END_STREAM closes only the
+ * response half, and full duplex is precisely the case where the request half outlives it. Without
+ * it the close raced the upload and won about once in forty under load, and the assertions below
+ * about what the peer RECEIVED are exactly what is lost when it does
  */
 
 UTF_AUTO_TEST_CASE( H2Driver_FullDuplexUploadAndDownloadTests )
@@ -354,6 +361,7 @@ UTF_AUTO_TEST_CASE( H2Driver_FullDuplexUploadAndDownloadTests )
                 .headers( 200U )
                 .data( download )
                 .endStream()
+                .awaitStreamClosed()
                 .closeConnection();
         }
         );
