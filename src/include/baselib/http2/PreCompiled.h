@@ -26,6 +26,7 @@
 #include <baselib/http2/HpackDynamicTable.h>
 #include <baselib/http2/HpackDecoder.h>
 #include <baselib/http2/HpackEncoder.h>
+#include <baselib/http2/Session.h>
 
 /*
  * The HTTP/2 umbrella. Each slice which adds an http2/ header appends its #include above, in the

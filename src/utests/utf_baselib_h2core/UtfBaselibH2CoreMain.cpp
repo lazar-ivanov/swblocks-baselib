@@ -53,3 +53,4 @@
 #include "TestFlowControl.h"
 #include "TestStreamStates.h"
 #include "TestHpack.h"
+#include "TestSession.h"

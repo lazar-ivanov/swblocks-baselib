@@ -48,3 +48,19 @@
 --log_level=message --run_test=Hpack_DecodedSizeLimitTests
 --log_level=message --run_test=Hpack_DynamicTableAfterMidBlockFailureTests
 --log_level=message --run_test=Hpack_EncoderPolicyTests
+
+--log_level=message --run_test=Session_OpeningWriteTests
+--log_level=message --run_test=Session_RequestAndResponseTests
+--log_level=message --run_test=Session_HeaderBlockGranularityTests
+--log_level=message --run_test=Session_HpackDecoderCeilingTests
+--log_level=message --run_test=Session_LocalSettingsTakeEffectOnAckTests
+--log_level=message --run_test=Session_SettingsTimeoutTests
+--log_level=message --run_test=Session_StreamErrorOnClosedStreamTests
+--log_level=message --run_test=Session_MessageValidationTests
+--log_level=message --run_test=Session_EarlyResponseTests
+--log_level=message --run_test=Session_FlowControlTests
+--log_level=message --run_test=Session_WriteSchedulingTests
+--log_level=message --run_test=Session_LimitsTests
+--log_level=message --run_test=Session_PushPromiseAndPingTests
+--log_level=message --run_test=Session_GoAwayAndRetryTests
+--log_level=message --run_test=Session_ProfileShapingTests
