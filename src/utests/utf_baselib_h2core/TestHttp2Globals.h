@@ -263,11 +263,14 @@ UTF_AUTO_TEST_CASE( Http2Globals_ProtocolConstantsAndLimitsTests )
         );
 
     /*
-     * The client-side limits of the design's 4.6 table, in the order the table lists them. Its
-     * first row, the decoded header list size, has no constant to check: it is whatever the
-     * active profile advertises as our SETTINGS_MAX_HEADER_LIST_SIZE
+     * The client-side limits of the design's 4.6 table, in the order the table lists them. The
+     * first row is the decoded header list size: the RFC gives SETTINGS_MAX_HEADER_LIST_SIZE no
+     * initial value and a profile may advertise none, so this default is what bounds the decoded
+     * list when nothing else does - and HPACK expands far enough for that to be the difference
+     * between a bound and no bound at all
      */
 
+    UTF_REQUIRE_EQUAL( Globals::MAX_DECODED_HEADER_LIST_SIZE_DEFAULT,               65536U );
     UTF_REQUIRE_EQUAL( Globals::MAX_COMPRESSED_HEADER_BLOCK_SIZE_DEFAULT,           262144U );
     UTF_REQUIRE_EQUAL( Globals::MAX_CONTINUATION_FRAMES_PER_BLOCK_DEFAULT,          64U );
     UTF_REQUIRE_EQUAL( Globals::MAX_QUEUED_CONTROL_FRAME_BYTES_DEFAULT,             65536U );

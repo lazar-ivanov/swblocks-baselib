@@ -240,15 +240,29 @@ namespace bl
              * meant to be configurable; what the table fixes is the value taken when nothing says
              * otherwise. A client needs fewer defenses than a server, not none
              *
-             * The table's first row, the decoded header list size, deliberately has no constant
-             * here. Its value is "our SETTINGS_MAX_HEADER_LIST_SIZE", which is whatever the
-             * active profile advertises (design 6.4) rather than a fixed number - and RFC 9113
-             * 6.5.2 gives that setting no numeric initial value either. The decoder takes it as
-             * a parameter; nothing in this header may invent one
+             * The table's first row, the decoded header list size, is the one whose value the
+             * RFC leaves open: 6.5.2 gives SETTINGS_MAX_HEADER_LIST_SIZE no numeric initial value
+             * ("the initial value of this setting is unlimited") and a profile may advertise
+             * whatever it likes (design 6.4). What that setting cannot be is the ONLY bound, so
+             * the row has a default here like every other row, and the session applies the larger
+             * of the two. The decoder still takes the number as a parameter
              */
 
             enum : std::uint32_t
             {
+                /*
+                 * Decoded header-list octets - the sum of every field's name, value and the 32
+                 * octets of overhead RFC 9113 6.5.2 defines. Exceeding it is a STREAM reset with
+                 * ENHANCE_YOUR_CALM, because the block was still decoded to the last octet
+                 *
+                 * The number is a defense and not a promise: HPACK expands, so a compressed block
+                 * well within the row below can decode to a thousand times its size, and that is
+                 * the bomb this row exists to close. 64 KB is orders of magnitude above any real
+                 * header section and orders of magnitude below what an attack needs
+                 */
+
+                MAX_DECODED_HEADER_LIST_SIZE_DEFAULT            = 64U * 1024U,
+
                 /*
                  * Compressed header-block bytes per block, and CONTINUATION frames per block.
                  * Exceeding either is a connection error, the first with ENHANCE_YOUR_CALM

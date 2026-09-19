@@ -752,6 +752,50 @@ UTF_AUTO_TEST_CASE( Session_RequestAndResponseTests )
     UTF_REQUIRE_EQUAL( withTrailers[ 2 ].fields.size(), 1U );
     UTF_REQUIRE( withTrailers[ 3 ].type == SessionEventType::StreamClosed );
     UTF_REQUIRE( withTrailers[ 3 ].isMessageComplete );
+
+    /*
+     * The other side of the same call (D8): a server answering with END_STREAM closes a stream
+     * which was HalfClosedRemote, and the closure is an event its caller is owed AT ONCE - not
+     * whenever the next produce( ) or feed( ) happens to reap
+     */
+
+    {
+        Session server( StreamRole::Server, now );
+        PeerEncoder client;
+
+        ( void ) produceText( server, now );
+
+        feedText(
+            server,
+            Globals::g_connectionPreface + settingsFrame( std::vector< Http2Setting >() ),
+            now
+            );
+
+        HpackFieldList request;
+
+        request.push_back( field( ":method", "GET" ) );
+        request.push_back( field( ":scheme", "https" ) );
+        request.push_back( field( ":authority", "example.com" ) );
+        request.push_back( field( ":path", "/" ) );
+
+        feedText( server, headersFrame( 1U, client.encode( request ), true, true ), now );
+
+        ( void ) drain( server );
+
+        HpackFieldList response;
+
+        response.push_back( field( ":status", "200" ) );
+
+        server.submitHeaders( 1U, response, true /* endStream */ );
+
+        const auto answered = drain( server );
+
+        UTF_REQUIRE_EQUAL( answered.size(), 1U );
+        UTF_REQUIRE( answered[ 0 ].type == SessionEventType::StreamClosed );
+        UTF_REQUIRE_EQUAL( answered[ 0 ].streamId.value(), 1U );
+        UTF_REQUIRE_EQUAL( answered[ 0 ].errorCode.value(), Globals::ERROR_CODE_NO_ERROR );
+        UTF_REQUIRE_EQUAL( server.activeStreamCount(), 0U );
+    }
 }
 
 UTF_AUTO_TEST_CASE( Session_HeaderBlockGranularityTests )
@@ -1163,8 +1207,12 @@ UTF_AUTO_TEST_CASE( Session_LocalSettingsTakeEffectOnAckTests )
     }
 
     /*
-     * SETTINGS_MAX_HEADER_LIST_SIZE is the decoded-size limit of the design's 4.6 table, and it
-     * too arrives with the ack
+     * SETTINGS_MAX_HEADER_LIST_SIZE is the decoded-size limit of the design's 4.6 table, and it is
+     * the ONE setting this contract does not govern - the L3 review found the rule over-applied
+     * here. 6.5.2 makes it advisory, so there is no frame the peer sent legally under an older
+     * value to protect, and a bound enforced only from the ack is no bound at all for a profile
+     * which advertises none. The limits row is therefore in force from construction, and what the
+     * ack does is replace it with the number we advertised
      */
 
     {
@@ -1176,7 +1224,7 @@ UTF_AUTO_TEST_CASE( Session_LocalSettingsTakeEffectOnAckTests )
 
         UTF_REQUIRE_EQUAL(
             session.maxDecodedHeaderListSize(),
-            ( std::numeric_limits< std::size_t >::max )()
+            static_cast< std::size_t >( Globals::MAX_DECODED_HEADER_LIST_SIZE_DEFAULT )
             );
 
         settle( session, now );
@@ -1291,6 +1339,40 @@ UTF_AUTO_TEST_CASE( Session_SettingsTimeoutTests )
         session.onTimer( now + time::seconds( 2 ) );
 
         UTF_REQUIRE( session.isClosed() );
+    }
+
+    /*
+     * The deadline belongs to the FRAME, not to the session. Sending another SETTINGS while an
+     * older one is still unacknowledged must not push the older one's deadline out - a peer which
+     * never acknowledges anything would otherwise never time out at all, as long as we keep
+     * sending
+     */
+
+    {
+        Session session( StreamRole::Client, now );
+
+        ( void ) produceText( session, now );
+
+        session.onTimer( now + time::seconds( 5 ) );
+
+        UTF_REQUIRE( ! session.isClosed() );
+
+        std::vector< Http2Setting > more;
+
+        more.push_back( setting( Globals::SETTINGS_INITIAL_WINDOW_SIZE, 65535U ) );
+
+        session.applyLocalSettings( more );
+
+        UTF_REQUIRE_EQUAL( session.unacknowledgedSettingsCount(), 2U );
+
+        /*
+         * Ten seconds after the OPENING frame, five after the second one
+         */
+
+        session.onTimer( now + time::seconds( 10 ) );
+
+        UTF_REQUIRE( session.isClosed() );
+        UTF_REQUIRE_EQUAL( session.connectionErrorCode(), Globals::ERROR_CODE_SETTINGS_TIMEOUT );
     }
 }
 
@@ -1693,15 +1775,33 @@ UTF_AUTO_TEST_CASE( Session_MessageValidationTests )
 
         feedText( session, dataFrame( streamId, "short", true ), now );
 
+        /*
+         * TWO events and not three: the frame which ends a message short is judged BEFORE the
+         * registry is told about it (contract 1 on the DATA path), so it is never delivered - the
+         * body of a malformed message is not the caller's to use, and the alternative order puts
+         * the delivery before the judgement
+         */
+
         const auto events = drain( session );
 
-        UTF_REQUIRE_EQUAL( events.size(), 3U );
-        UTF_REQUIRE( events[ 2 ].type == SessionEventType::StreamClosed );
+        UTF_REQUIRE_EQUAL( events.size(), 2U );
+        UTF_REQUIRE( events[ 0 ].type == SessionEventType::Headers );
+        UTF_REQUIRE( events[ 1 ].type == SessionEventType::StreamClosed );
         UTF_REQUIRE_EQUAL(
-            events[ 2 ].errorCode.value(),
+            events[ 1 ].errorCode.value(),
             Globals::ERROR_CODE_PROTOCOL_ERROR
             );
-        UTF_REQUIRE( ! events[ 2 ].isMessageComplete );
+        UTF_REQUIRE( ! events[ 1 ].isMessageComplete );
+
+        /*
+         * AND THE PEER IS TOLD, which is what the ordering buys. The stream was HalfClosedLocal -
+         * the ordinary client case - so judging after the transition would have closed it and 5.1
+         * would forbid the RST_STREAM 8.1.1 demands; the caller would know and the peer would not
+         */
+
+        const auto out = produceText( session, now );
+
+        UTF_REQUIRE_EQUAL( countFrames( out, Globals::FRAME_TYPE_RST_STREAM ), 1U );
     }
 
     {
@@ -1801,6 +1901,167 @@ UTF_AUTO_TEST_CASE( Session_MessageValidationTests )
         UTF_REQUIRE( events[ 0 ].type == SessionEventType::Headers );
         UTF_REQUIRE( events[ 1 ].isMessageComplete );
     }
+
+    /*
+     * And its value is a TOKEN, which RFC 9110 5.6.2 makes case-insensitive, so "Trailers" is the
+     * same permitted value. A case-sensitive compare would make a legal message malformed
+     */
+
+    {
+        Session session( StreamRole::Client, now );
+        PeerEncoder peer;
+
+        settle( session, now );
+
+        const auto streamId = session.submitRequest( makeRequest() );
+
+        ( void ) produceText( session, now );
+
+        HpackFieldList extra;
+
+        extra.push_back( field( "te", "Trailers" ) );
+
+        feedText(
+            session,
+            headersFrame( streamId, peer.response( "200", extra ), true, true ),
+            now
+            );
+
+        const auto events = drain( session );
+
+        UTF_REQUIRE_EQUAL( events.size(), 2U );
+        UTF_REQUIRE( events[ 0 ].type == SessionEventType::Headers );
+        UTF_REQUIRE( events[ 1 ].isMessageComplete );
+
+        /*
+         * The fold is ASCII and exact: anything else on that field is still malformed
+         */
+
+        Session second( StreamRole::Client, now );
+        PeerEncoder secondPeer;
+
+        settle( second, now );
+
+        const auto other = second.submitRequest( makeRequest() );
+
+        ( void ) produceText( second, now );
+
+        HpackFieldList chunked;
+
+        chunked.push_back( field( "te", "trailers, deflate" ) );
+
+        feedText(
+            second,
+            headersFrame( other, secondPeer.response( "200", chunked ), true, true ),
+            now
+            );
+
+        const auto refused = drain( second );
+
+        UTF_REQUIRE_EQUAL( refused.size(), 1U );
+        UTF_REQUIRE( refused[ 0 ].type == SessionEventType::StreamClosed );
+        UTF_REQUIRE_EQUAL(
+            refused[ 0 ].errorCode.value(),
+            Globals::ERROR_CODE_PROTOCOL_ERROR
+            );
+    }
+}
+
+/**
+ * @brief The message shape RFC 9113 8.1 defines, judged on the DATA path
+ *
+ * A message is an optional informational HEADERS, then ONE HEADERS, then zero or more DATA, then
+ * optional trailers. Body octets before that header section are an invalid sequence of HTTP
+ * messages, which 8.1.1 makes malformed - a stream error. nghttp2 refuses the same frame and goes
+ * further, terminating the connection with PROTOCOL_ERROR ("DATA: stream not opened",
+ * session_on_data_received_fail_fast); a stream error is what 8.1.1 asks for and it leaves the
+ * other streams on the connection alone, so that is what this engine does
+ */
+
+UTF_AUTO_TEST_CASE( Session_DataPathValidationTests )
+{
+    using namespace bl;
+    using namespace bl::http2;
+    using namespace utest::session;
+
+    const auto now = baseTime();
+
+    /*
+     * DATA before any response at all: refused, and not delivered - the consumer must never see
+     * body octets with no status to attach them to
+     */
+
+    {
+        Session session( StreamRole::Client, now );
+
+        settle( session, now );
+
+        const auto streamId = session.submitRequest( makeRequest() );
+
+        ( void ) produceText( session, now );
+
+        feedText( session, dataFrame( streamId, "body", false ), now );
+
+        UTF_REQUIRE( ! session.isClosed() );
+
+        const auto events = drain( session );
+
+        UTF_REQUIRE_EQUAL( events.size(), 1U );
+        UTF_REQUIRE( events[ 0 ].type == SessionEventType::StreamClosed );
+        UTF_REQUIRE_EQUAL(
+            events[ 0 ].errorCode.value(),
+            Globals::ERROR_CODE_PROTOCOL_ERROR
+            );
+
+        const auto out = produceText( session, now );
+
+        UTF_REQUIRE_EQUAL( countFrames( out, Globals::FRAME_TYPE_RST_STREAM ), 1U );
+    }
+
+    /*
+     * An informational response is not the header section - 8.1 has the final HEADERS still to
+     * come - so DATA after a 1xx is the same violation
+     */
+
+    {
+        Session session( StreamRole::Client, now );
+        PeerEncoder peer;
+
+        settle( session, now );
+
+        const auto streamId = session.submitRequest( makeRequest() );
+
+        ( void ) produceText( session, now );
+
+        feedText(
+            session,
+            headersFrame( streamId, peer.response( "103" ), false, true ),
+            now
+            );
+
+        feedText( session, dataFrame( streamId, "body", false ), now );
+
+        UTF_REQUIRE( ! session.isClosed() );
+
+        const auto events = drain( session );
+
+        UTF_REQUIRE_EQUAL( events.size(), 2U );
+        UTF_REQUIRE( events[ 0 ].type == SessionEventType::Headers );
+        UTF_REQUIRE( events[ 0 ].isInformational );
+        UTF_REQUIRE( events[ 1 ].type == SessionEventType::StreamClosed );
+        UTF_REQUIRE_EQUAL(
+            events[ 1 ].errorCode.value(),
+            Globals::ERROR_CODE_PROTOCOL_ERROR
+            );
+    }
+
+    /*
+     * The judgement does NOT take the state machine's place: a frame the stream may not receive
+     * at all is still the registry's to answer, with the code 5.1 names for it, and judging first
+     * there would answer a late DATA frame with PROTOCOL_ERROR where the peer is owed
+     * STREAM_CLOSED. Session_StreamErrorOnClosedStreamTests pins that, on a HalfClosedRemote
+     * stream and on one the peer had ended, and it is what the canReceive( ) guard here protects
+     */
 }
 
 UTF_AUTO_TEST_CASE( Session_EarlyResponseTests )
@@ -2358,6 +2619,11 @@ UTF_AUTO_TEST_CASE( Session_LimitsTests )
 
     {
         UTF_REQUIRE_EQUAL(
+            SessionLimits().maxDecodedHeaderListSize,
+            static_cast< std::uint32_t >( 64U * 1024U )
+            );
+
+        UTF_REQUIRE_EQUAL(
             SessionLimits().maxCompressedHeaderBlockSize,
             static_cast< std::uint32_t >( 256U * 1024U )
             );
@@ -2582,10 +2848,131 @@ UTF_AUTO_TEST_CASE( Session_LimitsTests )
     }
 
     /*
+     * Row 6, the remembered closed streams, has its defaults asserted above and its behaviour in
+     * the registry's own cases (S2.4) rather than here - it is the one row of the table whose
+     * breach is not a frame this engine answers
+     *
      * The two rows which are deliberately NOT the session's - the buffered response body cap
      * belongs to the request task (design 5.3) and the retry budget to the pool (D6). What the
      * engine owes the second is the retryable flag, which Session_GoAwayAndRetryTests pins
      */
+}
+
+/**
+ * @brief Design 4.6 row 1 again, from the other side: what bounds the decoded list when the
+ * profile advertises NOTHING
+ *
+ * The L3 review found the bound applied only on the peer's acknowledgement of a
+ * SETTINGS_MAX_HEADER_LIST_SIZE we advertised, so the default profile - which advertises none -
+ * never got one, and no profile had one before the ack. HPACK expands: one 4 KB dynamic entry
+ * named by a one-octet index some quarter of a million times is a 256 KB block and a gigabyte of
+ * fields. That is the bomb this row exists to close, and the limits row closes it from
+ * construction
+ */
+
+UTF_AUTO_TEST_CASE( Session_DecodedHeaderListBoundTests )
+{
+    using namespace bl;
+    using namespace bl::http2;
+    using namespace utest::session;
+
+    const auto now = baseTime();
+
+    /*
+     * The DEFAULT profile, which advertises nothing at all, is bounded from construction
+     */
+
+    {
+        Session session( StreamRole::Client, now );
+
+        UTF_REQUIRE_EQUAL(
+            session.maxDecodedHeaderListSize(),
+            static_cast< std::size_t >( Globals::MAX_DECODED_HEADER_LIST_SIZE_DEFAULT )
+            );
+
+        settle( session, now );
+
+        UTF_REQUIRE_EQUAL(
+            session.maxDecodedHeaderListSize(),
+            static_cast< std::size_t >( Globals::MAX_DECODED_HEADER_LIST_SIZE_DEFAULT )
+            );
+    }
+
+    /*
+     * And the bound bites: the same block the advertised-value case uses, refused on the default
+     * profile with a small row and no SETTINGS_MAX_HEADER_LIST_SIZE anywhere. The stream dies,
+     * the connection does not, and the dynamic table is still in step afterwards
+     */
+
+    {
+        SessionLimits limits;
+
+        limits.maxDecodedHeaderListSize = 80U;
+
+        Session session( StreamRole::Client, now, Http2Profile(), limits );
+        PeerEncoder peer;
+
+        settle( session, now );
+
+        const auto first = session.submitRequest( makeRequest() );
+        const auto second = session.submitRequest( makeRequest() );
+
+        ( void ) produceText( session, now );
+
+        HpackFieldList big;
+
+        big.push_back( field( ":status", "200" ) );
+        big.push_back( field( "x-long", std::string( 120U, 'v' ) ) );
+
+        feedText( session, headersFrame( first, peer.encode( big ), true, true ), now );
+
+        UTF_REQUIRE( ! session.isClosed() );
+
+        const auto events = drain( session );
+
+        UTF_REQUIRE_EQUAL( events.size(), 1U );
+        UTF_REQUIRE( events[ 0 ].type == SessionEventType::StreamClosed );
+        UTF_REQUIRE_EQUAL(
+            events[ 0 ].errorCode.value(),
+            Globals::ERROR_CODE_ENHANCE_YOUR_CALM
+            );
+
+        const auto out = produceText( session, now );
+
+        UTF_REQUIRE_EQUAL( countFrames( out, Globals::FRAME_TYPE_RST_STREAM ), 1U );
+
+        feedText( session, headersFrame( second, peer.encode( big ), true, true ), now );
+
+        UTF_REQUIRE( ! session.isClosed() );
+    }
+
+    /*
+     * A profile which advertises MORE than the row raises it, and from construction - we told the
+     * peer it may send that much, and a peer which read our SETTINGS may do so before it has
+     * acknowledged them
+     */
+
+    {
+        Http2Profile generous;
+
+        generous.settings.push_back(
+            setting( Globals::SETTINGS_MAX_HEADER_LIST_SIZE, 100000U )
+            );
+
+        Session session( StreamRole::Client, now, generous );
+
+        UTF_REQUIRE_EQUAL(
+            session.maxDecodedHeaderListSize(),
+            static_cast< std::size_t >( 100000 )
+            );
+
+        settle( session, now );
+
+        UTF_REQUIRE_EQUAL(
+            session.maxDecodedHeaderListSize(),
+            static_cast< std::size_t >( 100000 )
+            );
+    }
 }
 
 UTF_AUTO_TEST_CASE( Session_PushPromiseAndPingTests )
@@ -2965,6 +3352,83 @@ UTF_AUTO_TEST_CASE( Session_GoAwayAndRetryTests )
             );
 
         UTF_REQUIRE( session.isDraining() );
+
+        /*
+         * And a graceful GOAWAY of ours does NOT close the session: the streams at or below the
+         * last identifier are still being answered, which is what the comment on isClosed( ) now
+         * says and what 6.8 requires
+         */
+
+        UTF_REQUIRE( ! session.isClosed() );
+    }
+
+    /*
+     * A second GOAWAY is legal and may narrow the first, but 6.8 forbids RAISING its last stream
+     * identifier - the streams above it may already have been retried on another connection. A
+     * peer which raises it anyway is held to the value it first gave, because believing the
+     * larger number would contradict the retryable closures we have already reported
+     */
+
+    {
+        Session session( StreamRole::Client, now );
+
+        settle( session, now );
+
+        const auto first = session.submitRequest( makeRequest() );
+
+        ( void ) session.submitRequest( makeRequest() );
+
+        ( void ) produceText( session, now );
+
+        feedText( session, goAwayFrame( first, Globals::ERROR_CODE_NO_ERROR ), now );
+
+        const auto narrowed = drain( session );
+
+        UTF_REQUIRE_EQUAL( narrowed.size(), 2U );
+        UTF_REQUIRE( narrowed[ 0 ].type == SessionEventType::GoAwayReceived );
+        UTF_REQUIRE_EQUAL( narrowed[ 0 ].lastStreamId.value(), first );
+        UTF_REQUIRE( narrowed[ 1 ].type == SessionEventType::StreamClosed );
+        UTF_REQUIRE( narrowed[ 1 ].isRetryable );
+
+        feedText( session, goAwayFrame( 99U, Globals::ERROR_CODE_NO_ERROR ), now );
+
+        const auto raised = drain( session );
+
+        UTF_REQUIRE_EQUAL( raised.size(), 1U );
+        UTF_REQUIRE( raised[ 0 ].type == SessionEventType::GoAwayReceived );
+        UTF_REQUIRE_EQUAL( raised[ 0 ].lastStreamId.value(), first );
+
+        UTF_REQUIRE( ! session.isClosed() );
+    }
+
+    /*
+     * A connection error ends the work QUEUED before it as well: a header block queued but not
+     * yet written belongs to a stream that error has just closed, and produce( ) would otherwise
+     * write it AFTER the GOAWAY - new work on a connection we have told the peer is over
+     */
+
+    {
+        Session session( StreamRole::Client, now );
+
+        settle( session, now );
+
+        ( void ) session.submitRequest( makeRequest() );
+
+        UTF_REQUIRE( session.wantsWrite() );
+
+        /*
+         * An acknowledgement with nothing outstanding - settle( ) consumed the opening one
+         */
+
+        feedText( session, settingsAckFrame(), now );
+
+        UTF_REQUIRE( session.isClosed() );
+        UTF_REQUIRE_EQUAL( session.connectionErrorCode(), Globals::ERROR_CODE_PROTOCOL_ERROR );
+
+        const auto out = produceText( session, now );
+
+        UTF_REQUIRE_EQUAL( countFrames( out, Globals::FRAME_TYPE_GOAWAY ), 1U );
+        UTF_REQUIRE_EQUAL( countFrames( out, Globals::FRAME_TYPE_HEADERS ), 0U );
     }
 }
 
