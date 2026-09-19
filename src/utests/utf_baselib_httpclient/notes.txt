@@ -31,3 +31,8 @@
 --log_level=message --run_test=RedirectPolicy_DowngradeAndSchemeRefusalTests
 --log_level=message --run_test=RedirectPolicy_HopLimitAndBodyReplayTests
 --log_level=message --run_test=RedirectPolicy_TargetResolutionAndLocationTests
+
+--log_level=message --run_test=ContentDecoder_NoDecompressorShipsTests
+--log_level=message --run_test=ContentDecoder_RegistrationAndLookupTests
+--log_level=message --run_test=ContentDecoder_StreamingThroughTheSeamTests
+--log_level=message --run_test=ContentDecoder_BombCapsTripTests

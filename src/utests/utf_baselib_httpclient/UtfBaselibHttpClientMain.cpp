@@ -52,3 +52,4 @@
 #include "TestClientContracts.h"
 #include "TestCookieJar.h"
 #include "TestRedirectPolicy.h"
+#include "TestContentDecoder.h"
