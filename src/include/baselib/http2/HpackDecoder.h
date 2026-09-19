@@ -60,11 +60,12 @@ namespace bl
          *    the size of, so it is checked as each field is decoded
          *
          * THE DECODED SIZE LIMIT IS A PARAMETER OF decode( ), not a constant of this library.
-         * It is whatever the active profile advertises as SETTINGS_MAX_HEADER_LIST_SIZE, and
-         * RFC 9113 section 6.5.2 gives that setting no numeric initial value at all - "the
-         * initial value of this setting is unlimited" - which is exactly why http2::Globals
-         * deliberately defines none. A caller with no limit passes the largest std::size_t; a
-         * header block is bounded long before that by the frame layer's compressed-block cap
+         * RFC 9113 section 6.5.2 gives SETTINGS_MAX_HEADER_LIST_SIZE no numeric initial value at
+         * all - "the initial value of this setting is unlimited" - so what to pass is the caller's
+         * to decide: SessionT passes the larger of its own limits row and what the active profile
+         * advertises, from construction. A caller with no limit passes the largest std::size_t,
+         * which bounds nothing - the frame layer's compressed-block cap does not bound this one,
+         * because HPACK expands
          *
          * A MID-BLOCK FAILURE LEAVES THE DYNAMIC TABLE EXACTLY AS THE BLOCK FOUND IT. Every
          * decode( ) runs inside an HpackDynamicTable::Transaction, so a throw from anywhere -
@@ -148,8 +149,13 @@ namespace bl
              * IT DOES NOT SHRINK THE TABLE, deliberately. The table's capacity follows the peer's
              * own dynamic table size update, which RFC 7541 section 4.2 requires at the start of
              * the first block after the change - and that update is what evicts, on both sides, at
-             * the same point in the stream of blocks. Evicting here instead would drop entries the
-             * peer's encoder still indexes, and the next block would fail to decode
+             * the same point in the stream of blocks. Evicting here instead would NOT break a
+             * conforming peer: section 4.3 has its encoder evict whenever its maximum is reduced,
+             * and section 4.2 has it signal that reduction at the start of its next block, so a
+             * conforming peer has itself stopped naming exactly what an eviction here would drop.
+             * What not evicting buys is tolerance of a peer which reduced late or not at all - it
+             * goes on naming entries we still hold - and the table is bounded by what we once
+             * advertised either way
              */
 
             void setMaxDynamicTableSize( SAA_in const std::size_t maxDynamicTableSize ) NOEXCEPT

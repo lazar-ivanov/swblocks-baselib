@@ -883,7 +883,9 @@ of the empty string.
   response success, SETTINGS ack/timeout; a `feed` libFuzzer harness (optional). Tests → `h2core`;
   **run `make utests-sizes` and split to `utf_baselib_h2core2` if over target** (design §8.1).
 - **Executed 2026-09-19.** `http2/Session.h` delivered; 15 cases in
-  `utf_baselib_h2core/TestSession.h`, one per contract and one per §4.6 row. Object 21.5 → **25.9
+  `utf_baselib_h2core/TestSession.h`, one per contract and one per §4.6 row — except row 6, the
+  remembered closed streams, whose defaults are asserted in `Session_LimitsTests` and whose
+  behaviour is pinned by S2.4's registry cases rather than here. Object 21.5 → **25.9
   MB** (a64 clang debug), 5th of nine and smaller than four unsplit modules, so **not split** — the
   next slice to add substantially to `h2core` re-measures. The four contracts, decided:
   1. **Header-block granularity.** Fragments are accumulated and exactly one
@@ -899,7 +901,10 @@ of the empty string.
      was rejected as *wrong*, not merely awkward: at the ACK the peer's table is not empty, so a
      fresh decoder loses entries the peer still indexes. The setter never evicts — the table's
      capacity follows the peer's own size update (RFC 7541 §4.2), which is what keeps the two in
-     step.
+     step. **Corrected in the L3 fix round:** not evicting is not what saves a *conforming* peer,
+     which §4.3 has evict on the reduction and §4.2 has signal it at the start of its next block,
+     so it has already stopped naming what an eviction here would drop. What it buys is tolerance
+     of a peer which reduced late or not at all.
   3. **Local SETTINGS apply on the peer's ACK.** Two sets, in-effect and in-flight, with a FIFO of
      unacknowledged frames; the ACK applies MAX_FRAME_SIZE (`FrameReader::setMaxFrameSize`),
      INITIAL_WINDOW_SIZE (receive windows), HEADER_TABLE_SIZE and MAX_HEADER_LIST_SIZE, and stops
@@ -910,7 +915,10 @@ of the empty string.
   4. **A stream error on a closed stream is Ignored** — no RST_STREAM, registry not told.
      `canSend( RST_STREAM )` is false once closed, so the naive path is an `UnexpectedException`
      against a peer that is merely late; §5.1 already requires tolerating frames on a stream the
-     peer reset; answering a reset with a reset invites a loop; nghttp2 does the same. The
+     peer reset; nghttp2 does the same. (The "answering a reset with a reset invites a loop"
+     argument this once carried was rhetoric and is withdrawn: §5.1 has a peer which sent
+     RST_STREAM ignore ours, so there is no loop. The prohibition and the crash are the reasons.)
+     The
      connection window is credited back whatever the disposition. `HalfClosedRemote` is not closed
      and answers normally. The same rule is applied consistently wherever a RST_STREAM would be
      illegal: the reason is recorded on the `StreamClosed` event even when no frame goes out.
@@ -926,6 +934,34 @@ of the empty string.
   SETTINGS are a `BL_CHK` at `applyLocalSettings()` rather than a protocol error when the ACK lands.
   Rows 7 and 8 of the §4.6 table (buffered response body, retry budget) are deliberately **not** the
   session's — they belong to S5.1 and S5.2; what the engine owes the second is the retryable flag.
+- **L3 review fixes, 2026-09-19** (record: `notes/plans/issues/http2-l3-review-record.md`, findings
+  2, 4, 5 and the S3.1 rows of 6). 17 cases now, the two new ones being
+  `Session_DecodedHeaderListBoundTests` and `Session_DataPathValidationTests`:
+  1. **The decoded header list is bounded from construction** (finding 2, Medium). Contract 3 was
+     over-applied: §6.5.2 makes `SETTINGS_MAX_HEADER_LIST_SIZE` **advisory**, so there is no frame
+     the peer sent legally under an older value to protect, and applying the bound only on the ACK
+     left the default profile — which advertises none — unbounded forever and every profile
+     unbounded until the ACK. HPACK expands, so that is the bomb §4.6 row 1 exists to close. Row 1
+     now has a `SessionLimits::maxDecodedHeaderListSize` and a
+     `Globals::MAX_DECODED_HEADER_LIST_SIZE_DEFAULT` of **64 KB**; the session starts at
+     `max( row, advertised )` and the ACK applies the advertised value.
+  2. **Contract 1's ordering holds on the DATA path** (finding 4). `handleData()` judges the frame
+     — stream window fit, a header section before any DATA (§8.1), the content-length running
+     total and, for END_STREAM, the final total — *before* `StreamRegistry::onFrameReceived`, so
+     the RST_STREAM §8.1.1 demands is still sendable on a stream the frame is about to close.
+     Judged only where `canReceive( DATA )` holds, so a frame the stream may not receive keeps the
+     registry's own STREAM_CLOSED answer. Consequence pinned in the tests: a DATA frame which ends
+     a message short is no longer delivered before the closure.
+     **nghttp2 verified rather than recalled:** `session_on_data_received_fail_fast` refuses DATA
+     before the response HEADERS ("DATA: stream not opened") but terminates the **connection**;
+     §8.1.1 asks only for a stream error and that is what this engine sends.
+  3. **The S3.1 nits of finding 6**, all fixed: the SETTINGS_TIMEOUT is measured from the oldest
+     unacknowledged frame (the send time now travels with the frame); `isClosed()`'s comment no
+     longer claims a GOAWAY of ours sets it; `submitHeaders()` reaps, so a server's closing answer
+     emits its `StreamClosed` at once; `te` is compared case-insensitively (RFC 9110 token); a
+     second GOAWAY cannot raise `lastStreamId` (§6.8) and is held to the first value; a connection
+     error drops the header blocks queued before it rather than writing them after the GOAWAY.
+  4. **Not changed:** `SessionLimits::settingsTimeoutInSeconds` stays at 10 s — see S4.2 below.
 
 ### S3.2 — Stranded plain stream policy (§3.1, D13)
 - Deliver: `tasks/TcpStrandedStreams.h` (`TcpSocketAsyncStrandedBaseT`) deriving from the existing plain
@@ -1098,6 +1134,10 @@ with all of them.
   value comes from the pool policy, S5.2); GOAWAY drain and graceful close (`GOAWAY( NO_ERROR )`
   best-effort, then the inherited TLS shutdown once no operation is pending). Concurrency rules L1-L4
   of §5.2 (own state on the strand; talk to request tasks by posting + mailbox).
+- **Obligation carried from the L3 review (finding 6).** `SessionLimits::settingsTimeoutInSeconds`
+  is **10** and design §5.7 lists the SETTINGS acknowledgement timeout as **30 s**. The engine's
+  comment says the number is its own, and S3.1 deliberately left it alone; this slice owns the
+  reconciliation — set it from §5.7 or amend §5.7 to record 10, but decide it here.
 - Dep: S4.1, S3.1. Accept: request/response over h2 against the test peer; full-duplex upload+download;
   keepalive and idle close observed; TSan clean; **and h2 over TLS on the default hardened context
   passes on both OpenSSL flavors** - that is D2's promise that everything but impersonation works on

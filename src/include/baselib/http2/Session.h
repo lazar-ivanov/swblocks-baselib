@@ -76,6 +76,10 @@ namespace bl
          *  - the retry budget belongs to the connection pool (D6, design 5.4). What this engine
          *    owes that budget is the RETRYABLE FLAG on a stream-closed event, and it carries it
          *
+         * 'maxDecodedHeaderListSize' is the row a profile can also speak to: it is the floor this
+         * client enforces whatever the profile advertises as SETTINGS_MAX_HEADER_LIST_SIZE, and a
+         * profile advertising MORE raises it, because that is what we told the peer we accept
+         *
          * 'settingsTimeoutInSeconds' is not from that table and not from the RFC, which gives
          * SETTINGS_TIMEOUT no numeric value. It is this engine's own, and onTimer( ) is what
          * enforces it
@@ -83,6 +87,9 @@ namespace bl
 
         struct SessionLimits
         {
+            std::uint32_t   maxDecodedHeaderListSize =
+                                Globals::MAX_DECODED_HEADER_LIST_SIZE_DEFAULT;
+
             std::uint32_t   maxCompressedHeaderBlockSize =
                                 Globals::MAX_COMPRESSED_HEADER_BLOCK_SIZE_DEFAULT;
 
@@ -226,6 +233,12 @@ namespace bl
          *    are silent when they are wrong - the first fails one connection later, the second
          *    just stops answering - which is why they are stated here
          *
+         *    THE ORDERING HALF OF THIS HOLDS ON THE DATA PATH TOO. A DATA frame carrying
+         *    END_STREAM ends an ordinary client stream, which was HalfClosedLocal, so anything
+         *    the frame is judged for AFTER the transition - a content-length total that does not
+         *    add up, a stream window it does not fit - is diagnosed on a stream that can no longer
+         *    carry the RST_STREAM. handleData( ) judges first, for exactly the reason above
+         *
          * 2. THE HPACK DECODER'S CAPACITY WHEN WE ADVERTISE BELOW 4096. Decided: a setter was
          *    added to HpackDecoderT, the decoder is constructed at max( advertised, 4096 ), and
          *    the ceiling drops to what we advertised when the peer ACKNOWLEDGES our SETTINGS
@@ -246,6 +259,15 @@ namespace bl
          *    SETTINGS_INITIAL_WINDOW_SIZE to the RECEIVE windows, what lowers the HPACK ceiling of
          *    contract 2, and what stops the SETTINGS_TIMEOUT timer
          *
+         *    SETTINGS_MAX_HEADER_LIST_SIZE IS THE ONE THAT DOES NOT BELONG TO THIS RULE, and the
+         *    rule was over-applied to it once. The settings above all say what the peer may
+         *    LEGALLY send, so the peer is entitled to the old value until it acknowledges; 6.5.2
+         *    makes this one advisory - exceeding it is no violation and a block over it is ours to
+         *    refuse whenever we like. Enforced only from the ack it is not enforced at all for a
+         *    profile which advertises none, and HPACK expands far enough for that to matter, so
+         *    the bound is a limits row applied FROM CONSTRUCTION and the ack merely applies what
+         *    we advertised on top of it
+         *
          *    The receive-side window is the instance of this rule that bites: applied at send
          *    time, a window we have just made smaller makes onDataReceived( ) raise
          *    FLOW_CONTROL_ERROR on data the peer sent legally under the old value, because every
@@ -260,9 +282,11 @@ namespace bl
          *    naive path is an UnexpectedException against a peer that is merely late
          *
          *    Ignoring is what nghttp2 does and it is the reading that survives contact with a real
-         *    peer: answering a reset with a reset invites a loop in which each end resets the
-         *    other's reset. The connection flow-control window is still credited back, whatever
-         *    the disposition - InboundFrameResult carries those octets for exactly this reason.
+         *    peer. The reason is the prohibition and the crash above, not a reset loop - a peer
+         *    which has sent RST_STREAM must ignore ours (5.1), so there is no loop to invite and
+         *    that argument should not be made. The connection flow-control window is still
+         *    credited back, whatever the disposition - InboundFrameResult carries those octets
+         *    for exactly this reason.
          *    HalfClosedRemote is NOT closed and has no such problem, so a stream error there is
          *    answered with RST_STREAM in the ordinary way
          *
@@ -355,6 +379,21 @@ namespace bl
                 bool                isInformational     = false;
             };
 
+            /**
+             * @brief A SETTINGS frame of ours the peer has not acknowledged yet
+             *
+             * The send time travels WITH the frame because the SETTINGS_TIMEOUT is a property of
+             * the frame and not of the session: kept as one timestamp overwritten by every send,
+             * a peer which withholds the acknowledgement of an early frame has its deadline
+             * pushed out by every later frame we send
+             */
+
+            struct UnacknowledgedSettings
+            {
+                std::vector< Http2Setting >                     settings;
+                time::ptime                                     sentAt;
+            };
+
             typedef std::map< std::uint32_t, StreamContext >     streams_t;
 
             cpp::ScalarTypeIniter< StreamRole >                                 m_role;
@@ -375,7 +414,7 @@ namespace bl
             wire_buffer_t                                                       m_controlQueue;
             std::deque< wire_buffer_t >                                         m_headerBlockQueue;
             std::deque< SessionEvent >                                          m_events;
-            std::deque< std::vector< Http2Setting > >                           m_unackedSettings;
+            std::deque< UnacknowledgedSettings >                                m_unackedSettings;
 
             /*
              * The header block being assembled out of HEADERS plus its CONTINUATION frames
@@ -401,7 +440,9 @@ namespace bl
 
             /*
              * What WE advertised and the peer has acknowledged - contract 3. Everything in this
-             * group changes only in applyAcknowledgedSettings( )
+             * group changes only in applyAcknowledgedSettings( ), with the one exception named
+             * there: the decoded-list bound is a limits row and is already in force at
+             * construction, because 6.5.2 makes that setting advisory
              */
 
             std::uint32_t   m_localInitialWindowSize =
@@ -423,7 +464,6 @@ namespace bl
 
             time::ptime                                                         m_now;
             time::ptime                                                         m_rateWindowStart;
-            time::ptime                                                         m_settingsSentAt;
 
         public:
 
@@ -449,10 +489,9 @@ namespace bl
                     Globals::STREAM_ID_CONNECTION,
                     connectionReceiveWindowSize( profile )
                     ),
-                m_localMaxHeaderListSize( std::numeric_limits< std::size_t >::max() ),
+                m_localMaxHeaderListSize( initialMaxDecodedHeaderListSize( profile, limits ) ),
                 m_now( now ),
-                m_rateWindowStart( now ),
-                m_settingsSentAt( now )
+                m_rateWindowStart( now )
             {
                 HpackEncoder::Policy policy;
 
@@ -492,8 +531,11 @@ namespace bl
             }
 
             /**
-             * @brief True once a connection error or a GOAWAY of ours has ended the connection -
-             * nothing further is parsed, and what is queued is still worth writing
+             * @brief True once a CONNECTION ERROR has ended the connection - nothing further is
+             * parsed, and the GOAWAY it queued is still worth writing
+             *
+             * A graceful goAway( ) of ours does NOT set this: 6.8 has the streams below the last
+             * identifier finish, so the session goes on parsing and writing for them
              */
 
             bool isClosed() const NOEXCEPT
@@ -740,8 +782,13 @@ namespace bl
                     return;
                 }
 
+                /*
+                 * The OLDEST unacknowledged frame is the one whose deadline can have passed - a
+                 * peer acknowledges in order, so nothing behind it can be acknowledged first
+                 */
+
                 if(
-                    now - m_settingsSentAt >=
+                    now - m_unackedSettings.front().sentAt >=
                         time::seconds( m_limits.settingsTimeoutInSeconds )
                     )
                 {
@@ -910,6 +957,14 @@ namespace bl
                 Http2HeadersPriority noPriority;
 
                 queueHeaderBlock( streamId, fields, endStream, noPriority );
+
+                /*
+                 * A block with END_STREAM on a HalfClosedRemote stream - the ordinary server
+                 * answer - closes it, and the closure is an event the caller is owed NOW rather
+                 * than whenever the next produce( ) or feed( ) happens to reap
+                 */
+
+                reapClosedStreams();
             }
 
             /**
@@ -1115,9 +1170,12 @@ namespace bl
 
                 checkControlQueueBound();
 
-                m_unackedSettings.push_back( settings );
+                UnacknowledgedSettings unacked;
 
-                m_settingsSentAt = m_now;
+                unacked.settings = settings;
+                unacked.sentAt = m_now;
+
+                m_unackedSettings.push_back( unacked );
             }
 
         private:
@@ -1146,6 +1204,30 @@ namespace bl
                         advertised,
                         static_cast< std::uint32_t >( Globals::HEADER_TABLE_SIZE_DEFAULT )
                         )
+                    );
+            }
+
+            static std::size_t initialMaxDecodedHeaderListSize(
+                SAA_in          const Http2Profile&                  profile,
+                SAA_in          const SessionLimits&                 limits
+                )
+            {
+                /*
+                 * NOT contract 3, and the one place that rule does not reach - see contract 3
+                 * above. The bound is in force from here: the limits row, or what the profile
+                 * advertises when that is larger, because a peer which has read our SETTINGS may
+                 * legitimately send up to the number it saw. applyAcknowledgedSettings( ) applies
+                 * the advertised value exactly when the peer acknowledges it
+                 */
+
+                const auto advertised = findSetting(
+                    profile,
+                    Globals::SETTINGS_MAX_HEADER_LIST_SIZE,
+                    0U /* fallback - the profile advertises none */
+                    );
+
+                return static_cast< std::size_t >(
+                    std::max< std::uint32_t >( advertised, limits.maxDecodedHeaderListSize )
                     );
             }
 
@@ -1389,6 +1471,15 @@ namespace bl
 
                 queueGoAway( errorCode, std::string() );
 
+                /*
+                 * The header blocks queued before the error are for streams closeEveryStream( )
+                 * is about to close, and produce( ) would otherwise write them AFTER the GOAWAY -
+                 * new work on a connection we have just told the peer is over. The control queue
+                 * is kept: the GOAWAY is in it, and it is the one thing still owed
+                 */
+
+                m_headerBlockQueue.clear();
+
                 closeEveryStream( errorCode );
 
                 SessionEvent event;
@@ -1439,9 +1530,10 @@ namespace bl
                     /*
                      * CONTRACT 4. The stream is closed, or gone, or was never ours - RFC 9113 5.1
                      * forbids sending anything but PRIORITY on it, and telling the registry
-                     * otherwise is an UnexpectedException. So the error is dropped: the peer has
-                     * already reset this stream and answering its reset with ours invites a loop.
-                     * The connection window was credited back by the caller either way
+                     * otherwise is an UnexpectedException. Those two are the whole reason the
+                     * error is dropped; a peer which has sent RST_STREAM must ignore ours (5.1),
+                     * so there is no reset loop to avoid here and that is not the argument. The
+                     * connection window was credited back by the caller either way
                      */
 
                     return;
@@ -1678,6 +1770,29 @@ namespace bl
 
                 noteHighestPeerStreamId( streamId );
 
+                const auto it = m_streams.find( streamId );
+
+                const auto* const machine = m_registry.findStream( streamId );
+
+                /*
+                 * CONTRACT 1, THE ORDERING HALF, ON THIS PATH TOO - judged before the registry is
+                 * told, because a DATA frame carrying END_STREAM closes an ordinary client stream
+                 * and 5.1 then forbids the RST_STREAM 8.1.1 demands
+                 *
+                 * Only for a frame the stream may receive at all: when it may not, the registry
+                 * owes the peer its own answer - STREAM_CLOSED for a stream the peer has already
+                 * ended - and judging first would answer with ours instead
+                 */
+
+                if(
+                    it != m_streams.end() && machine != nullptr &&
+                    machine -> canReceive( Globals::FRAME_TYPE_DATA ) &&
+                    ! judgeDataFrame( streamId, it -> second, length, dataSize, payload.endStream )
+                    )
+                {
+                    return;
+                }
+
                 const auto result = m_registry.onFrameReceived(
                     streamId,
                     Globals::FRAME_TYPE_DATA,
@@ -1685,8 +1800,6 @@ namespace bl
                     length,
                     m_now
                     );
-
-                const auto it = m_streams.find( streamId );
 
                 if( result.disposition != FrameDisposition::Accepted || it == m_streams.end() )
                 {
@@ -1710,28 +1823,6 @@ namespace bl
 
                 auto& context = it -> second;
 
-                if( length > context.receiveWindow.size() )
-                {
-                    /*
-                     * The peer overran the STREAM window, which 6.9.1 lets us answer at the level
-                     * of the window it overran. Asked rather than caught, because the octets are
-                     * the connection's to reclaim either way and a throw from the window would
-                     * leave them charged to the connection and credited to nobody
-                     */
-
-                    m_receiveConnectionWindow.onConsumed( dataSize );
-
-                    flushConnectionWindowUpdate( false /* force */ );
-
-                    rejectStream(
-                        streamId,
-                        Globals::ERROR_CODE_FLOW_CONTROL_ERROR,
-                        "a DATA frame does not fit the flow-control window of its stream (6.9.1)"
-                        );
-
-                    return;
-                }
-
                 context.receiveWindow.onDataReceived( length );
 
                 if( length != dataSize )
@@ -1740,20 +1831,6 @@ namespace bl
                 }
 
                 context.receivedDataBytes = context.receivedDataBytes + dataSize;
-
-                if(
-                    context.sawContentLength &&
-                    ! context.expectsNoContent &&
-                    context.receivedDataBytes > context.declaredContentLength
-                    )
-                {
-                    rejectMalformedMessage(
-                        streamId,
-                        "more DATA arrived than the content-length field declared"
-                        );
-
-                    return;
-                }
 
                 SessionEvent event;
 
@@ -1984,7 +2061,7 @@ namespace bl
                     rejectStream(
                         streamId,
                         Globals::ERROR_CODE_ENHANCE_YOUR_CALM,
-                        "the decoded header list is larger than we advertised"
+                        "the decoded header list is larger than this client accepts"
                         );
 
                     return false;
@@ -2000,6 +2077,88 @@ namespace bl
                 }
 
                 return true;
+            }
+
+            /**
+             * @brief Judges a DATA frame and, when it is bad, resets the stream - returns whether
+             * to carry on
+             *
+             * The DATA-path half of contract 1: everything here is decided from what the frame
+             * brings and what the stream has already received, so it can be decided BEFORE the
+             * registry is told, which is the only point at which the RST_STREAM is still sendable
+             */
+
+            bool judgeDataFrame(
+                SAA_in          const std::uint32_t                  streamId,
+                SAA_in          const StreamContext&                 context,
+                SAA_in          const std::int32_t                   length,
+                SAA_in          const std::int32_t                   dataSize,
+                SAA_in          const bool                           endStream
+                )
+            {
+                std::uint32_t errorCode = Globals::ERROR_CODE_PROTOCOL_ERROR;
+
+                const char* reason = nullptr;
+
+                const std::int64_t total =
+                    context.receivedDataBytes + static_cast< std::int64_t >( dataSize );
+
+                const bool lengthIsChecked =
+                    context.sawContentLength && ! context.expectsNoContent;
+
+                if( length > context.receiveWindow.size() )
+                {
+                    /*
+                     * The peer overran the STREAM window, which 6.9.1 lets us answer at the level
+                     * of the window it overran. Asked rather than caught, because the octets are
+                     * the connection's to reclaim either way and a throw from the window would
+                     * leave them charged to the connection and credited to nobody
+                     */
+
+                    errorCode = Globals::ERROR_CODE_FLOW_CONTROL_ERROR;
+                    reason =
+                        "a DATA frame does not fit the flow-control window of its stream (6.9.1)";
+                }
+                else if( ! context.headersReceived )
+                {
+                    /*
+                     * 8.1 - a message is an optional informational HEADERS, then ONE HEADERS, then
+                     * the DATA. Body octets before the header section are an invalid sequence and
+                     * 8.1.1 makes that malformed. nghttp2 refuses it too, and goes further than
+                     * this: it terminates the connection ("DATA: stream not opened"), where 8.1.1
+                     * asks only for a stream error. The stream is enough - the other streams on
+                     * this connection have done nothing wrong
+                     */
+
+                    reason = "DATA arrived before the header section of its message (8.1)";
+                }
+                else if( lengthIsChecked && total > context.declaredContentLength )
+                {
+                    reason = "more DATA arrived than the content-length field declared";
+                }
+                else if( endStream && lengthIsChecked && total != context.declaredContentLength )
+                {
+                    reason = "the DATA total does not match the content-length field (8.1.1)";
+                }
+
+                if( reason == nullptr )
+                {
+                    return true;
+                }
+
+                /*
+                 * Nobody will consume these octets - no Data event is emitted for a frame judged
+                 * bad - so the connection window is credited back here, exactly as it is for a
+                 * frame the registry refuses
+                 */
+
+                m_receiveConnectionWindow.onConsumed( dataSize );
+
+                flushConnectionWindowUpdate( false /* force */ );
+
+                rejectStream( streamId, errorCode, reason );
+
+                return false;
             }
 
             void handleRstStream( SAA_in const FrameView& frame )
@@ -2060,7 +2219,7 @@ namespace bl
                             );
                     }
 
-                    const auto settings = m_unackedSettings.front();
+                    const auto settings = m_unackedSettings.front().settings;
 
                     m_unackedSettings.pop_front();
 
@@ -2122,8 +2281,21 @@ namespace bl
             {
                 const auto payload = FrameCodec::parseGoAway( frame );
 
+                /*
+                 * A second GOAWAY is legal (6.8) and usually narrows the first, but "endpoints
+                 * MUST NOT increase the value they send in the last stream identifier" - the
+                 * streams above it may already have been retried elsewhere. A peer which raises
+                 * it anyway is held to the value it first gave rather than believed: the RFC
+                 * gives the receiver no error to raise here, and believing the larger number
+                 * would say that streams we have already reported RETRYABLE were processed
+                 */
+
+                const auto lastStreamId = m_goAwayReceived ?
+                    std::min< std::uint32_t >( m_goAwayLastStreamId, payload.lastStreamId ) :
+                    payload.lastStreamId.value();
+
                 m_goAwayReceived = true;
-                m_goAwayLastStreamId = payload.lastStreamId;
+                m_goAwayLastStreamId = lastStreamId;
 
                 m_registry.markDraining();
 
@@ -2131,7 +2303,7 @@ namespace bl
 
                 event.type = SessionEventType::GoAwayReceived;
                 event.errorCode = payload.errorCode;
-                event.lastStreamId = payload.lastStreamId;
+                event.lastStreamId = lastStreamId;
 
                 if( payload.debugDataSize != 0U )
                 {
@@ -2150,7 +2322,7 @@ namespace bl
                  * alone; the peer is still answering them
                  */
 
-                closeStreamsAbove( payload.lastStreamId, payload.errorCode );
+                closeStreamsAbove( lastStreamId, payload.errorCode );
             }
 
             void handleWindowUpdate( SAA_in const FrameView& frame )
@@ -2377,6 +2549,14 @@ namespace bl
                             break;
 
                         case Globals::SETTINGS_MAX_HEADER_LIST_SIZE:
+
+                            /*
+                             * The exception to this function's rule, and the only setting here
+                             * which was already in force before the ack: 6.5.2 makes it advisory,
+                             * so the limits row bounded the decoded list from construction and
+                             * this is where the advertised number replaces it
+                             */
+
                             m_localMaxHeaderListSize = static_cast< std::size_t >( value );
                             break;
 
@@ -2477,6 +2657,36 @@ namespace bl
                     ( method[ 1 ] == 'E' || method[ 1 ] == 'e' ) &&
                     ( method[ 2 ] == 'A' || method[ 2 ] == 'a' ) &&
                     ( method[ 3 ] == 'D' || method[ 3 ] == 'd' );
+            }
+
+            /**
+             * @brief An ASCII case-insensitive comparison against a lowercase literal
+             *
+             * Hand-rolled and local, like isHeadMethod( ) above: the shared str::ascii fold this
+             * wants lives in core and is a change-set of its own
+             */
+
+            static bool equalsAsciiToken(
+                SAA_in          const std::string&                   value,
+                SAA_in          const char* const                    lowercase
+                ) NOEXCEPT
+            {
+                std::size_t i = 0U;
+
+                for( ; i < value.size(); ++i )
+                {
+                    const auto ch = value[ i ];
+
+                    const char folded = ( ch >= 'A' && ch <= 'Z' ) ?
+                        static_cast< char >( ch - 'A' + 'a' ) : ch;
+
+                    if( lowercase[ i ] == '\0' || folded != lowercase[ i ] )
+                    {
+                        return false;
+                    }
+                }
+
+                return lowercase[ i ] == '\0';
             }
 
             /**
@@ -2612,7 +2822,12 @@ namespace bl
 
                     if( name == "te" )
                     {
-                        if( value != "trailers" )
+                        /*
+                         * The value is a token, and RFC 9110 makes a token case-insensitive, so
+                         * "te: Trailers" is the same permitted value as "te: trailers"
+                         */
+
+                        if( ! equalsAsciiToken( value, "trailers" ) )
                         {
                             return "the te field carries something other than trailers (8.2.2)";
                         }
@@ -2939,9 +3154,11 @@ namespace bl
             /**
              * @brief The peer has ended its half - is what arrived a complete message?
              *
-             * The content-length check here is the DATA path's close-out. A message ended by a
-             * HEADERS block has already been judged by judgeHeaderBlock( ), which reaches the same
-             * verdict from the same two numbers
+             * Both paths have already closed the content-length out by the time they reach here,
+             * and both for contract 1's reason: judgeHeaderBlock( ) for a message ended by a
+             * HEADERS block, judgeDataFrame( ) for one ended by a DATA frame, each judging before
+             * its own transition. The same verdict is kept here, from the same two numbers, as
+             * the one place that cannot be reached with a half-checked message
              */
 
             void onPeerEndStream(
