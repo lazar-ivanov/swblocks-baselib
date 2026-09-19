@@ -535,12 +535,14 @@ namespace bl
             om::ObjPtrCopyable< data::DataBlock >                               m_body;
 
             /*
-             * HttpProtocol::Unknown is the zero value, so a default constructed response reports
-             * no protocol rather than claiming one
+             * ONE MEMBER AND NOT TWO, for the reason NegotiatedProtocol's own note gives: held as
+             * two fields with two setters, a response could be given Http2 beside "http/1.1" and
+             * the property the connection enforces would be lost one hop later. A default
+             * constructed value is already HttpProtocol::Unknown with no identifier, so a default
+             * constructed response reports no protocol rather than claiming one
              */
 
-            cpp::ScalarTypeIniter< HttpProtocol >                               m_protocol;
-            std::string                                                         m_negotiatedAlpn;
+            NegotiatedProtocol                                                  m_negotiated;
 
             /*
              * The fidelity report of design 6.6, which S7.x defines and this layer must not
@@ -603,14 +605,29 @@ namespace bl
                 m_body = BL_PARAM_FWD( body );
             }
 
-            HttpProtocol protocol() const NOEXCEPT
+            /**
+             * @brief What this response arrived over, and the ALPN identifier which settled it
+             *
+             * THE ONLY DOOR, and that is the point. There is no setter for either half on its
+             * own, so the only way to populate a response is with a value which was already
+             * constructed consistently - by fromAlpn( ... ), which derives the protocol from the
+             * identifier, or by withoutAlpn( ... ), which leaves the identifier empty. A request
+             * task fills it with the value its connection already publishes, unchanged
+             */
+
+            const NegotiatedProtocol& negotiated() const NOEXCEPT
             {
-                return m_protocol;
+                return m_negotiated;
             }
 
-            void protocol( SAA_in const HttpProtocol protocol ) NOEXCEPT
+            void negotiated( SAA_in NegotiatedProtocol negotiated )
             {
-                m_protocol = protocol;
+                m_negotiated = BL_PARAM_FWD( negotiated );
+            }
+
+            HttpProtocol protocol() const NOEXCEPT
+            {
+                return m_negotiated.protocol();
             }
 
             /**
@@ -620,12 +637,7 @@ namespace bl
 
             const std::string& negotiatedAlpn() const NOEXCEPT
             {
-                return m_negotiatedAlpn;
-            }
-
-            void negotiatedAlpn( SAA_in std::string negotiatedAlpn )
-            {
-                m_negotiatedAlpn = BL_PARAM_FWD( negotiatedAlpn );
+                return m_negotiated.alpn();
             }
 
             const om::ObjPtrCopyable< om::Object >& impersonationReport() const NOEXCEPT
