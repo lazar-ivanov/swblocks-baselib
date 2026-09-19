@@ -50,3 +50,4 @@
 
 #include "TestH2ClientPlaceholder.h"
 #include "TestTcpStrandedStreams.h"
+#include "TestTcpSslStrandedStreams.h"
