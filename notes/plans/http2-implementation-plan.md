@@ -439,6 +439,15 @@ building fine against a 75 MB debug ceiling). But a slice reading "20 MB, plenty
 clang debug build is reading the generous number. **S2.5 in particular should know this**, since its
 Beast-versus-in-house decision turns on an object-size delta.
 
+**Gated 2026-09-18, and it passed.** The whole-suite baseline-relative comparison was run once after
+the layer closed, which the round rules had excluded. 112 differences, all accounted for: 110 are the
+55 new cases counted twice - L0's 23 plus this layer's 32, every one verified `passed` - and the
+other two are S0.3's IPv6 pin and the `BaseLib_Base64UrlTests` nondeterminism, which reported yet
+another of the values its unchanged baseline binary is proven to produce. **No pre-existing case
+changed outcome, disappeared or moved its assertion count, and no module exit code differs** - which
+is the evidence focused testing could not give for `ErrorHandling.h`, reaching every translation
+unit, and `AsioSslStreamWrapper.h`, reaching nine modules.
+
 **Two gaps this layer's round rules left, closed immediately after it.** Focused testing meant
 `utf_baselib_http` - the module with the real TLS client and server tasks over the stream wrapper
 S1.6 extended - was never rebuilt against it, and **nothing in L1 was built with gcc at all**. Both
