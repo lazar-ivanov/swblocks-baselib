@@ -5185,7 +5185,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 785,
+   "line": 971,
    "module": "utf_baselib_h2client2",
    "name": "H2Driver_CancelResetsOneStreamOnlyTests",
    "namespaces": []
@@ -5197,7 +5197,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 332,
+   "line": 518,
    "module": "utf_baselib_h2client2",
    "name": "H2Driver_FullDuplexUploadAndDownloadTests",
    "namespaces": []
@@ -5209,7 +5209,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 884,
+   "line": 1070,
    "module": "utf_baselib_h2client2",
    "name": "H2Driver_GoAwayDrainsAndClosesCleanlyTests",
    "namespaces": []
@@ -5221,7 +5221,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 462,
+   "line": 648,
    "module": "utf_baselib_h2client2",
    "name": "H2Driver_KeepAliveAndIdleCloseTests",
    "namespaces": []
@@ -5233,7 +5233,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 549,
+   "line": 735,
    "module": "utf_baselib_h2client2",
    "name": "H2Driver_KeepAlivePingDeadlineTests",
    "namespaces": []
@@ -5245,7 +5245,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 199,
+   "line": 385,
    "module": "utf_baselib_h2client2",
    "name": "H2Driver_OpeningWriteIsOneWriteTests",
    "namespaces": []
@@ -5257,7 +5257,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 698,
+   "line": 884,
    "module": "utf_baselib_h2client2",
    "name": "H2Driver_RefusedStreamIsRetryableTests",
    "namespaces": []
@@ -5269,7 +5269,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 75,
+   "line": 261,
    "module": "utf_baselib_h2client2",
    "name": "H2Driver_RequestAndResponseTests",
    "namespaces": []
@@ -5281,7 +5281,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 610,
+   "line": 796,
    "module": "utf_baselib_h2client2",
    "name": "H2Driver_SettingsAcknowledgementTimeoutTests",
    "namespaces": []
@@ -5320,6 +5320,18 @@
    "line": 241,
    "module": "utf_baselib_h2client3",
    "name": "H2Driver_TlsAlpnServerPreferenceWinsTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "5c0a2de135c31de7e38e10d8bc25f83a",
+   "doc_sha": "0988c833a94c984965ff425f7a436da0",
+   "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1175,
+   "module": "utf_baselib_h2client2",
+   "name": "H2Driver_UnwrittenStreamIsRetryableOnPeerCloseTests",
    "namespaces": []
   },
   {
@@ -11231,6 +11243,18 @@
    "namespaces": []
   },
   {
+   "body_sha": "822ec2f0cecf90c78e630fbfe54303fe",
+   "doc_sha": "139fb530b30225fb98bccdaa6ca8ba23",
+   "file": "utf_baselib_h2profiles/TestTlsClientContext.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 928,
+   "module": "utf_baselib_h2profiles",
+   "name": "TlsClientContext_AlpnServerPreferenceIsSetOnceTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "dda0cf88f7edeb1243a4ac7c83c1fca6",
    "doc_sha": null,
    "file": "utf_baselib_h2profiles/TestTlsClientContext.h",
@@ -13554,7 +13578,7 @@
    "line": 45,
    "module": "utf_baselib_h2client2",
    "ns": "utest",
-   "sha": "687966b48c567f384c1296077166b6ab"
+   "sha": "1a76b4a2aa785117aaa5f14499f81ee8"
   },
   {
    "file": "utf_baselib_h2client3/TestHttp2ConnectionTaskTls.h",
@@ -17049,7 +17073,8 @@
     "H2Driver_OpeningWriteIsOneWriteTests",
     "H2Driver_RefusedStreamIsRetryableTests",
     "H2Driver_RequestAndResponseTests",
-    "H2Driver_SettingsAcknowledgementTimeoutTests"
+    "H2Driver_SettingsAcknowledgementTimeoutTests",
+    "H2Driver_UnwrittenStreamIsRetryableOnPeerCloseTests"
    ]
   },
   "utf_baselib_h2client3": {
@@ -17353,6 +17378,7 @@
     "HttpClientProfiles_SettingValueSpansFullUint32RangeTests",
     "HttpClientProfiles_ShapeTypesDefaultToDefinedValuesTests",
     "HttpClientProfiles_ShapeTypesPreserveOrderTests",
+    "TlsClientContext_AlpnServerPreferenceIsSetOnceTests",
     "TlsClientContext_ClientProfilesRequireOpenSsl35Tests",
     "TlsClientContext_NegotiatedParametersFloorTests",
     "TlsClientContext_ProfileContextKeepsTheLibraryFloorTests",
@@ -19563,7 +19589,7 @@
    "line": 43,
    "module": "utf_baselib_h2client2",
    "name": "utest",
-   "sha": "6709565b8b9b3e81fea56f7a4e784968"
+   "sha": "182c32bb54f426fd236b3dca21d9e422"
   },
   {
    "file": "utf_baselib_h2client3/TestHttp2ConnectionTaskTls.h",
