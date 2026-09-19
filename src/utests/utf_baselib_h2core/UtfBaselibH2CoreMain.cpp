@@ -46,3 +46,6 @@
 /*
  * Test headers - one appended line per slice, at the end
  */
+
+#include "TestHttp2Globals.h"
+#include "TestHttp2ErrorInfo.h"

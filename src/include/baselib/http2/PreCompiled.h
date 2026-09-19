@@ -17,9 +17,11 @@
 #ifndef __BL_HTTP2_PRECOMPILED_H_
 #define __BL_HTTP2_PRECOMPILED_H_
 
+#include <baselib/http2/Globals.h>
+
 /*
- * The HTTP/2 umbrella. Empty until the first http2/ header lands; each slice which adds one
- * appends its #include here, in the form of http/PreCompiled.h
+ * The HTTP/2 umbrella. Each slice which adds an http2/ header appends its #include above, in the
+ * form of http/PreCompiled.h
  *
  * This header is included by the devenv7-only test modules and by nothing else. In particular it
  * is deliberately NOT added to utests/baselib/UtfBaseLibCommon.h: every test module on every

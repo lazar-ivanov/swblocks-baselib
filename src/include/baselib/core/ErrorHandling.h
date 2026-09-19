@@ -475,6 +475,27 @@ namespace bl
         typedef error_info< struct errinfo_http_status_code_, int >                             errinfo_http_status_code;
         typedef error_info< struct errinfo_http_response_headers_, std::string >                errinfo_http_response_headers;
         typedef error_info< struct errinfo_http_request_details_, std::string >                 errinfo_http_request_details;
+
+        /*
+         * The HTTP/2, ALPN and TLS information an HTTP/2 client failure carries
+         *
+         * The error code, the stream id and the GOAWAY last-stream-id are the RFC 9113 fields of
+         * the frame which ended the stream or the connection, and the debug data is the opaque
+         * payload of that GOAWAY; is_retryable says whether the peer had provably not processed
+         * the stream, which is what makes a transparent retry legitimate rather than a guess
+         *
+         * An HTTP status failure keeps using errinfo_http_status_code above, exactly as today
+         */
+
+        typedef error_info< struct errinfo_http2_error_code_, std::uint32_t >                   errinfo_http2_error_code;
+        typedef error_info< struct errinfo_http2_stream_id_, std::uint32_t >                    errinfo_http2_stream_id;
+        typedef error_info< struct errinfo_http2_goaway_last_stream_id_, std::uint32_t >        errinfo_http2_goaway_last_stream_id;
+        typedef error_info< struct errinfo_http2_debug_data_, std::string >                     errinfo_http2_debug_data;
+        typedef error_info< struct errinfo_http2_is_retryable_, bool >                          errinfo_http2_is_retryable;
+        typedef error_info< struct errinfo_http_alpn_selected_, std::string >                   errinfo_http_alpn_selected;
+        typedef error_info< struct errinfo_tls_negotiated_cipher_, std::string >                errinfo_tls_negotiated_cipher;
+        typedef error_info< struct errinfo_tls_negotiated_version_, std::string >               errinfo_tls_negotiated_version;
+
         typedef error_info< struct errinfo_parser_file_, std::string >                          errinfo_parser_file;
         typedef error_info< struct errinfo_parser_line_, unsigned int >                         errinfo_parser_line;
         typedef error_info< struct errinfo_parser_column_, unsigned int >                       errinfo_parser_column;
@@ -754,6 +775,8 @@ BL_DECLARE_EXCEPTION( CacheException )
 BL_DECLARE_EXCEPTION( ExternalCommandException )
 BL_DECLARE_EXCEPTION( HttpException )
 BL_DECLARE_EXCEPTION( HttpServerException )
+BL_DECLARE_EXCEPTION( Http2ProtocolException )
+BL_DECLARE_EXCEPTION( Http2StreamException )
 BL_DECLARE_EXCEPTION( InvalidDataFormatException )
 BL_DECLARE_EXCEPTION( JavaException )
 BL_DECLARE_EXCEPTION( JsonException )
