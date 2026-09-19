@@ -50,3 +50,4 @@
 
 #include "TestHeaderList.h"
 #include "TestClientContracts.h"
+#include "TestCookieJar.h"

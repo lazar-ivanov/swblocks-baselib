@@ -14,3 +14,13 @@
 --log_level=message --run_test=ClientContracts_StubConnectionAndEventSinkTests
 --log_level=message --run_test=ClientContracts_ConnectionKeyAndPoolTests
 --log_level=message --run_test=ClientContracts_DriverFactoryDispatchTests
+
+--log_level=message --run_test=CookieJar_DomainMatchRuleTests
+--log_level=message --run_test=CookieJar_PathMatchAndDefaultPathTests
+--log_level=message --run_test=CookieJar_DomainAttributeRejectionTests
+--log_level=message --run_test=CookieJar_SecureAndHttpOnlyTests
+--log_level=message --run_test=CookieJar_ExpiryAndMaxAgePrecedenceTests
+--log_level=message --run_test=CookieJar_HostOnlyStorageAndOrderTests
+--log_level=message --run_test=CookieJar_CapsAndEvictionTests
+--log_level=message --run_test=CookieJar_RelativeRequestUriIsRefusedTests
+--log_level=message --run_test=CookieJar_ThreadSafetyTests
