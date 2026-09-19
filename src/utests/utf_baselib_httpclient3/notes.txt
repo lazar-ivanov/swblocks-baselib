@@ -1,0 +1,8 @@
+# each slice appends the recipes for the cases it lands here
+
+--log_level=message --run_test=Http1Driver_RequestResponseAndKeepAliveReuseTests
+--log_level=message --run_test=Http1Driver_ReuseVerdictInputsTests
+--log_level=message --run_test=Http1Driver_InterimResponsesPrecedeTheFinalBlockTests
+--log_level=message --run_test=Http1Driver_ChunkedTrailersAndBodilessTests
+--log_level=message --run_test=Http1Driver_RequestsThisDriverRefusesTests
+--log_level=message --run_test=Http1Driver_AgainstTheLibraryHttpServerTests
