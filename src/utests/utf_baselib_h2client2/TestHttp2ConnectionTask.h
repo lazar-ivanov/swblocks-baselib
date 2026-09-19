@@ -60,6 +60,192 @@ namespace utest
             return h2peer::Http2TestServer::createInstance<>( controlToken );
         }
 
+        /**
+         * @brief class UnwrittenStreamProbeT - puts one stream on each side of "was it written"
+         * and then takes the peer-closed path, with NOTHING TIMED
+         *
+         * WHY A PROBE AND NOT A SCRIPT. A stream whose header block is still in the engine's
+         * header block queue exists only between applySubmit( ) and the next pumpWrites( ), and
+         * those two are adjacent in every strand handler except while a write is in flight -
+         * pumpWrites( ) is the only thing that produces a block, and m_isWriteInFlight is the only
+         * thing that stops it. So the state finding 4 is about is reachable from a case only by
+         * submitting DURING a write, and on loopback a write completes in microseconds. Holding it
+         * open long enough for a peer's FIN to arrive would need the client's socket to stall,
+         * which needs an SO_SNDBUF clamp and a peer that stops reading - the same apparatus the L4
+         * review record says the preface and drain deadlines are owed. A case built on "the FIN
+         * usually wins" would be a coin toss wearing an assertion.
+         *
+         * So the ORDER is taken rather than raced, and asio's strand is what makes it an order.
+         * onWriteScheduled( ) runs on the strand inside pumpWrites( ), AFTER onHeaderBlocksProduced(
+         * ) has marked the first stream produced and BEFORE async_write is even issued. Both of the
+         * things below are therefore queued on the strand strictly before the write starts, so both
+         * run before its completion handler can:
+         *
+         *   1. submit( ) posts the second request. When its onCommandsPosted( ) runs, the write IS
+         *      in flight, so applySubmit( ) opens the stream and pumpWrites( ) declines to produce
+         *      it - exactly the state a submit made behind a write leaves behind, reached through
+         *      the ordinary public entry point and the ordinary command mailbox.
+         *   2. a second post then takes the peer-closed path.
+         *
+         * WHAT IS SIMULATED AND WHAT IS NOT. Only the arrival of the close is: onPeerClosed( ) is
+         * called directly rather than reached from a read returning eof. Everything it then decides
+         * is the production code's - the stream table it walks, the per-stream isHeadersProduced it
+         * reads, the error code, the sinks it answers and the close it begins. The case measures
+         * the wire as well as the flags, so "the second block never reached a write" is a
+         * measurement and not the premise.
+         */
+
+        template
+        <
+            typename E = void
+        >
+        class UnwrittenStreamProbeT :
+            public DriverProbeT< bl::tasks::TcpSocketAsyncStrandedBase >
+        {
+            BL_DECLARE_OBJECT_IMPL( UnwrittenStreamProbeT )
+
+        public:
+
+            typedef UnwrittenStreamProbeT< E >                                  this_type;
+            typedef DriverProbeT< bl::tasks::TcpSocketAsyncStrandedBase >       base_type;
+
+            /*
+             * Qualified by Task for the same reason the driver's own is: the task hierarchy
+             * reaches om::Object by more than one path, so an unqualified ObjPtrCopyable finds
+             * addRef in several base subobjects and is ambiguous
+             */
+
+            typedef bl::om::ObjPtrCopyable< this_type, bl::tasks::Task >        self_ref_t;
+
+        protected:
+
+            mutable bl::os::mutex                                               m_probeLock;
+
+            ClientRequest                                                       m_secondRequest;
+            bl::om::ObjPtr< ClientStreamEventSink >                             m_secondSink;
+
+            bool                                                                m_isArmed;
+            std::size_t                                                         m_liveStreamsAtClose;
+
+            UnwrittenStreamProbeT(
+                SAA_in          ConnectionKey                                   key,
+                SAA_in          typename base_type::factory_ptr_t               driverFactory,
+                SAA_in          Http2ConnectionConfig                           h2config,
+                SAA_in          ClientConnectionConfig                          config
+                )
+                :
+                base_type(
+                    BL_PARAM_FWD( key ),
+                    BL_PARAM_FWD( driverFactory ),
+                    BL_PARAM_FWD( h2config ),
+                    BL_PARAM_FWD( config )
+                    ),
+                m_isArmed( false ),
+                m_liveStreamsAtClose( 0U )
+            {
+            }
+
+            virtual void onWriteScheduled(
+                SAA_in          const bl::http2::Session::wire_buffer_t&        buffer
+                ) OVERRIDE
+            {
+                base_type::onWriteScheduled( buffer );
+
+                if( ! m_isArmed )
+                {
+                    return;
+                }
+
+                /*
+                 * The write which carries a header block, and not merely the first write. Which
+                 * write the first request's HEADERS join depends on whether its submit reached the
+                 * mailbox before the strand was ready, and that is a race this case must not have
+                 * an opinion about - waiting for the block itself removes it
+                 */
+
+                const std::string wire(
+                    reinterpret_cast< const char* >( buffer.empty() ? nullptr : &buffer[ 0 ] ),
+                    buffer.size()
+                    );
+
+                if(
+                    ! containsFrameType(
+                        frameTypesOf( wire ),
+                        bl::http2::Globals::FRAME_TYPE_HEADERS
+                        )
+                    )
+                {
+                    return;
+                }
+
+                m_isArmed = false;
+
+                ( void ) base_type::submit( m_secondRequest, m_secondSink );
+
+                /*
+                 * The accounting of postCommand( ): the operation is begun here and ended by the
+                 * handler's own END_MULTIOP
+                 */
+
+                base_type::beginOperation();
+
+                base_type::postToStrand(
+                    bl::cpp::bind(
+                        &this_type::onPeerClosedOnStrand,
+                        self_ref_t::acquireRef( this )
+                        )
+                    );
+            }
+
+            void onPeerClosedOnStrand() NOEXCEPT
+            {
+                BL_TASKS_HANDLER_BEGIN()
+
+                /*
+                 * The precondition, measured on the strand at the instant the close is taken: how
+                 * many streams are LIVE. A submission the task had refused would never have
+                 * reached m_streams at all - failSubmission( ) answers its sink with exactly the
+                 * same error code and the same retryable flag - so without this number the case
+                 * could pass for the wrong reason and read the same either way
+                 */
+
+                {
+                    BL_MUTEX_GUARD( m_probeLock );
+
+                    m_liveStreamsAtClose = base_type::m_streams.size();
+                }
+
+                base_type::onPeerClosed();
+
+                BL_TASKS_HANDLER_END_MULTIOP()
+            }
+
+        public:
+
+            /**
+             * @brief Called before the task is scheduled; the strand reads it afterwards
+             */
+
+            void armSecondSubmit(
+                SAA_in          const ClientRequest&                            request,
+                SAA_in          const bl::om::ObjPtr< ClientStreamEventSink >&  sink
+                )
+            {
+                m_secondRequest = request;
+                m_secondSink = bl::om::copy( sink.get() );
+                m_isArmed = true;
+            }
+
+            std::size_t liveStreamsAtClose() const
+            {
+                BL_MUTEX_GUARD( m_probeLock );
+
+                return m_liveStreamsAtClose;
+            }
+        };
+
+        typedef bl::om::ObjectImpl< UnwrittenStreamProbeT<> > UnwrittenStreamProbe;
+
     } // h2driver
 
 } // utest
@@ -959,6 +1145,141 @@ UTF_AUTO_TEST_CASE( H2Driver_GoAwayDrainsAndClosesCleanlyTests )
                         om::qi< httpclient::ClientStreamEventSink >( late )
                         )
                 );
+        }
+        );
+}
+
+/**
+ * @brief A peer close decides retryability PER STREAM, from whether the header block was written
+ *
+ * Design 5.4's third limb is "the connection failed before any byte of the request was written",
+ * and that is a property of a STREAM and not of a connection: two requests can be live on one
+ * connection with only the first one's header block on the wire, and replaying the second is safe
+ * while replaying the first is not. onPeerClosed( ) used to report every live stream
+ * non-retryable, which is right for the first and wrong for the second.
+ *
+ * The two streams here are put on opposite sides of that line by the probe above - deterministically
+ * and by strand ordering rather than by timing; its comment says how and says what it simulates.
+ * What the case then MEASURES is all three facts the claim rests on:
+ *
+ *   - two streams were live when the close was taken, so the second request really did open a
+ *     stream rather than being refused on the way in;
+ *   - exactly ONE header block reached the wire, across every write the driver made;
+ *   - and the sinks were answered accordingly - the written stream not retryable, the unwritten
+ *     one retryable, both with the same error code.
+ *
+ * Against the unfixed engine the third bullet is what fails: it closed both with a blanket
+ * false.
+ */
+
+UTF_AUTO_TEST_CASE( H2Driver_UnwrittenStreamIsRetryableOnPeerCloseTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest;
+    using namespace utest::h2driver;
+
+    const auto peer = makePeer();
+
+    withPeer(
+        peer,
+        [ & ]( SAA_in const unsigned short port ) -> void
+        {
+            const auto record = std::make_shared< FallbackRecord >();
+
+            const auto driver = UnwrittenStreamProbe::createInstance(
+                makeKey( "http", "127.0.0.1", port ),
+                makeFallbackFactory< TcpSocketAsyncStrandedBase >( record ),
+                Http2ConnectionConfig(),
+                cleartextHttp2Config()
+                );
+
+            const auto connection = om::qi< httpclient::ClientConnection >( driver );
+
+            const auto written = RecordingSink::createInstance();
+            const auto unwritten = RecordingSink::createInstance();
+
+            /*
+             * Armed before the task is scheduled, so the strand reads it with the push_back below
+             * ordered in front of it
+             */
+
+            driver -> armSecondSubmit(
+                makeRequest( "http://127.0.0.1/behind-the-write" ),
+                om::qi< httpclient::ClientStreamEventSink >( unwritten )
+                );
+
+            runDriver(
+                driver,
+                [ & ]() -> void
+                {
+                    ( void ) connection -> submit(
+                        makeRequest( "http://127.0.0.1/on-the-wire" ),
+                        om::qi< httpclient::ClientStreamEventSink >( written )
+                        );
+
+                    written -> waitForClosed();
+                    unwritten -> waitForClosed();
+                }
+                );
+
+            /*
+             * A peer close ends the task through the deliberate door of design 3.2, exactly as the
+             * idle close does - the connection did not fail, it ended
+             */
+
+            chkTaskSucceeded( om::qi< Task >( driver ) );
+
+            UTF_REQUIRE( ConnectionState::Closed == connection -> state() );
+
+            /*
+             * The precondition: both requests were live streams on this connection when the close
+             * was taken
+             */
+
+            UTF_REQUIRE_EQUAL( driver -> liveStreamsAtClose(), 2U );
+
+            /*
+             * And only one header block ever reached a write. This is the fact the flag is
+             * supposed to be derived from, measured on the wire rather than assumed
+             */
+
+            std::size_t headerBlocks = 0U;
+
+            const auto writes = driver -> writes();
+
+            for( std::size_t i = 0U; i < writes.size(); ++i )
+            {
+                const auto types = frameTypesOf( writes[ i ] );
+
+                for( std::size_t j = 0U; j < types.size(); ++j )
+                {
+                    if( http2::Globals::FRAME_TYPE_HEADERS == types[ j ] )
+                    {
+                        ++headerBlocks;
+                    }
+                }
+            }
+
+            UTF_REQUIRE_EQUAL( headerBlocks, 1U );
+
+            /*
+             * Neither stream was answered, so neither carries a status - what tells them apart is
+             * the retryable flag and nothing else
+             */
+
+            UTF_REQUIRE_EQUAL( written -> status(), 0U );
+            UTF_REQUIRE_EQUAL( unwritten -> status(), 0U );
+
+            UTF_REQUIRE( written -> errorCode() );
+            UTF_REQUIRE_EQUAL( written -> errorCode(), unwritten -> errorCode() );
+
+            /*
+             * THE ASSERTION THE CASE EXISTS FOR
+             */
+
+            UTF_REQUIRE( ! written -> isRetryable() );
+            UTF_REQUIRE( unwritten -> isRetryable() );
         }
         );
 }
