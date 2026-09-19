@@ -53,3 +53,4 @@
 #include "TestCookieJar.h"
 #include "TestRedirectPolicy.h"
 #include "TestContentDecoder.h"
+#include "TestHttp1Codec.h"
