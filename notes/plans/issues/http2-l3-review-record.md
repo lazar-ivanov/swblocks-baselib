@@ -387,3 +387,151 @@ recommends a positive test for certificate authentication with the peer-certific
 - **Windows**, and the **1.1.1w flavor**, whose debt the deferral record states correctly for every
   L3 slice which touches OpenSSL.
 - **The `httpclient2` split** and the gcc release sizes were not re-measured.
+
+## Second pass: the fix round `174e78b..3e8f723`, tip `3e8f723` (2026-09-19)
+
+**Verdict: clean; nothing new and nothing unresolved; three nits.** All six findings are carried
+out as the summary above describes, each of the four places where a lane departed from what was
+proposed is right, and two of those departures corrected this record. Read in full: the three
+merges' production diffs (`CryptoBase.h`, `TcpTunnelStage.h`, `Session.h`, `Globals.h`,
+`HpackDecoder.h`), the three test diffs, the design and plan diffs, the deferral record's addition
+and the summary prepended to this record. Nothing was built or run beyond one read-only
+`openssl ciphers` query; the module results under both release toolchains and the 941-case manifest
+are taken as reported - the manifest diff shows exactly the two new `h2core` cases and changed
+bodies where cases were extended, and nothing lost.
+
+**Departure 1 - the authentication set includes `NID_auth_dss`, and it had to.** Measured on the
+dist's own 3.5.4 with `-s` at level 2, the hardened default list
+`EECDH+AESGCM:EDH+AESGCM:!aNULL:!eNULL:...` supports eight TLS 1.2 suites and two of them are
+`DHE-DSS-AES128-GCM-SHA256` and `DHE-DSS-AES256-GCM-SHA384` (`Au=DSS`), still present at level 3.
+The set proposed in finding 1 would have had `chkNegotiatedParametersMeetFloor` refuse, after the
+handshake, a suite the library's own default context had offered; the lane was right to widen it
+and right about why. Whether DSS admits anything in Appendix A was checked mechanically against the
+RFC text rather than argued: of the appendix's 276 entries, 56 are AEAD (GCM, CCM, CHACHA20), and
+their prefixes are exactly `RSA` (10), `PSK` (10), `RSA_PSK`, `ECDH_RSA`, `ECDH_ECDSA`, `DH_anon`,
+`DH_RSA` and `DH_DSS` (6 each) - which is the design's new sentence, verified to the digit. No
+`DHE_DSS`, `DHE_RSA`, `ECDHE_RSA` or `ECDHE_ECDSA` AEAD entry exists in the appendix; every
+`DHE_DSS` entry there is CBC, DES, 3DES, SEED, ARIA-CBC or Camellia-CBC and falls to the AEAD axis,
+and the static `DH_DSS` ones fall to the key-exchange axis (and do not exist in OpenSSL 1.1.0 or
+later at all). The axis is a positive set - `rsa`, `ecdsa`, `dss`, `any` - so `NID_undef`,
+`NID_auth_null`, the PSK and SRP families and any method not yet seen all fail closed, and it depends
+on no mapping from an anonymous suite to a particular NID; the case asserts the refused suite's two
+other conjuncts, so the refusal is for the stated reason. `:!aNULL:!eNULL` is appended to a
+non-empty TLS 1.2 list only, after the profile's names, which cannot reorder them, and the built
+string is pinned. Every hunk in `CryptoBase.h` lies inside the block S3.4 added (`:448` onwards);
+the S0.4 steps are untouched, so nothing gated moved.
+
+**Departure 2 - 64 KB from construction is legitimate, and contract 3 is intact.** §6.5.2, quoted
+from the text: *"For any given request, a lower limit than what is advertised MAY be enforced. The
+initial value of this setting is unlimited."* Enforcing our own bound, advertised or not, is
+therefore explicitly permitted, and the breach is a stream reset with the block consumed, so the
+dynamic table stays in step (pinned: the second block indexing what the refused one added still
+decodes). `initialMaxDecodedHeaderListSize` is `max( row, advertised )`, so a profile which
+advertises more - the browser shapes advertise 256 KB - is not throttled below what it told the
+peer, from construction; a profile advertising less is held to the row until the ACK and to its own
+number after, which is the "lowers only" finding 2 asked for. The three settings contract 3 does
+govern are untouched by the diff - `MAX_FRAME_SIZE` to the reader, `INITIAL_WINDOW_SIZE` to the
+receive windows, `HEADER_TABLE_SIZE` to the ceiling, all still on the ACK and still FIFO - and the
+settings FIFO's only change is that the send time now travels with each frame. Not an
+over-correction. One asymmetry, a nit: a *later* `applyLocalSettings` which raises the value takes
+effect only at the ACK, whereas the constructor's own reasoning - "a peer which has read our
+SETTINGS may legitimately send up to the number it saw" - would raise it at send time; the same MAY
+permits both, so nothing is wrong, but the two places argue differently.
+
+**Departure 3 - judging the DATA frame before the transition is right, the three-to-two change is
+its correct consequence, and on nghttp2 the lane corrected this record.** `judgeDataFrame` decides
+everything from what the frame brings and what the stream has already received - the stream window
+fit, a header section before any DATA, the running total and, for END_STREAM, the final total -
+before `StreamRegistry::onFrameReceived`, on the same reasoning as the HEADERS path, and only where
+`canReceive( DATA )` holds, so a stream the peer has ended keeps the registry's own `STREAM_CLOSED`
+answer (`Session_StreamErrorOnClosedStreamTests` is unchanged). The accounting on a refused frame is
+right: `handleData` charged the connection window the whole payload and credited the padding, the
+judge credits the data octets, and the stream window is never charged, so `emitStreamClosed` credits
+only earlier frames. Not delivering the frame is the point rather than a side effect: a message
+judged malformed has no body the caller may use, and the alternative order is delivery before
+judgement, which is what contract 1 exists to forbid. Nothing else depended on the old order - every
+other case that feeds DATA against a length or a window was read: `Session_EarlyResponseTests`
+(total equals declared; delivered), the stream-overrun block of `Session_FlowControlTests` (two
+events before and after) and the "far too much" block (two before and after) are untouched by the
+diff; only "short" moved from three events to two, and it now also asserts the RST_STREAM on the
+wire, which is the thing the ordering buys. The stream-window overrun moved in front of the
+transition as well, which the first pass did not ask for and which is an improvement of the same
+kind. **On nghttp2 the lane is right and the first pass was wrong in scope**: the failure path of
+`session_on_data_received_fail_fast` terminates the session, so "DATA: stream not opened" is a
+connection error there and not the stream error recalled in finding 4. The lane's reading is the
+one to keep: §8.1.1 defines a malformed message as "an otherwise valid sequence of HTTP/2 frames but
+... invalid due to the presence of extraneous frames", a DATA frame before the header section is
+exactly that, "malformed requests or responses that are detected MUST be treated as a stream error
+of type PROTOCOL_ERROR", and §5.4.2's definition of a stream error - "an error related to a
+specific stream that does not affect processing of other streams" - is the property the engine
+keeps and nghttp2 gives up. nghttp2's choice is stricter, not more correct. The lane's verification
+of nghttp2 is theirs; every fetch of `nghttp2_session.c` here truncated before that function, so
+this agreement rests on recollection of its structure and on §8.1.1's text.
+
+**Departure 4 - the GOAWAY clamp is the right receiver behaviour.** §6.8, quoted: *"Endpoints MUST
+NOT increase the value they send in the last stream identifier, since the peers might already have
+retried unprocessed requests on another connection."* A sender rule with no receiver error, as the
+lane read it, and the reason the RFC gives is the reason a receiver must not believe a raised value:
+the streams above the first value have already been reported retryable, and `isRetryable` and
+`closeStreamsAbove` both work from the clamped number, so nothing the engine has said is
+contradicted. The alternative - nghttp2, as recalled and not verified, answers a raised
+`last_stream_id` with a connection error `PROTOCOL_ERROR` ("GOAWAY: invalid last_stream_id") - is
+stricter and permitted; the clamp is tolerant and permitted, and it never widens what is believed
+processed, which is the only thing that could go wrong here. One nit: the `GoAwayReceived` event
+carries the clamped value and drops the raw one, so a driver which wanted to log the peer's
+misbehaviour cannot see it.
+
+**The flake fix closes the window; it does not merely narrow it.** The mechanism is an ordering
+edge, not a margin: `record()` pushes under `m_lock` and notifies, `waitForRecords` waits on the
+same mutex with a predicate, and a predicate wait re-checks under the lock before it sleeps, so a
+record made before the wait is seen without any notification and one made after it wakes the
+waiter - no lost wakeup and no spurious one (`os::condition_variable` and `os::mutex_unique_lock`
+are `std::` under `OSBoostImports.h:98`, `:121`). The only timing element left is the 10 s bound,
+which turns a script that never finishes into a diagnosed failure instead of a hang; the success
+path has no timing in it. The artificial control is then sufficient evidence, because it tests the
+right thing: with the worker held 500 ms the old assertion fails deterministically and the new one
+passes deterministically, which is what "the pass depends on the wait and not on scheduling" looks
+like. Coverage was checked by grep at tip: every `records()` count assertion in the four cases that
+make one is behind `waitForRecordsOf` (`TestTcpTunnelStage.h:1538`, `:1618`, `:1766`, `:1784`,
+`:1969`), and the two cases which record but assert nothing on the records need none. Two notes:
+the three `proxy.failure().empty()` reads (`:1536`, `:1616`, `:1959`) sit *before* the rendezvous -
+benign in direction, since a failure recorded late can only be missed, and a script which threw
+closes its socket and fails the task anyway, but they belong after the wait; and the 500 ms control
+is not in the tree, so it is the lane's account and not a case anyone can re-run.
+
+**The rest of the round, checked.** `submitHeaders` reaps and the server-role case asserts the
+immediate `StreamClosed`; the SETTINGS deadline travels with each frame and `onTimer` reads the
+oldest, which is the right one since acknowledgements arrive in order, and the case pins ten seconds
+after the opening frame with a second frame five seconds younger; `isClosed()`'s comment now matches
+`goAway()` and a case asserts it; `te` is folded ASCII-only by a local `equalsAsciiToken` which
+requires both strings to end together, with `Trailers` accepted and `trailers, deflate` refused; a
+connection error now clears the header-block queue and the case asserts no HEADERS after the
+GOAWAY; the two justification corrections of finding 5 are in the header and the plan; `Globals.h`
+carries the row and its test; the deferral record adds `SSL_CIPHER_get_auth_nid` to the 1.1.1w debt
+with the argument that it shares the two existing accessors' availability, which is the right shape.
+
+**Three nits, none blocking.** The two new `h2core` cases, `Session_DataPathValidationTests` and
+`Session_DecodedHeaderListBoundTests`, have no `--run_test=` recipe in
+`utf_baselib_h2core/notes.txt` - the file is untouched in the range - which the module convention
+asks for and which tier 1 does not catch, since C8 checks only that recipes resolve. `findSetting`
+returns the *first* entry for an id where RFC 9113 §6.5.3 has the peer apply the *last*, so a
+profile listing `SETTINGS_MAX_HEADER_LIST_SIZE` or `SETTINGS_HEADER_TABLE_SIZE` twice would compute
+one number here and advertise another - pre-existing in `advertisedHeaderTableSize`, now shared by
+`initialMaxDecodedHeaderListSize`, and unlikely in any real profile. And the `failure()` reads
+above.
+
+**Verified versus inferred in this pass.** Verified by reading: every diff named above, and every
+`TestSession.h` case which feeds DATA against a length or a window, for what changed and what did
+not. Verified from the RFC text held since the first pass: §6.5.2's advisory clause, §6.8's sender
+rule, §8.1's message structure, §8.1.1's definition and its MUST, §5.4.2's definition of a stream
+error; the Appendix A count, the AEAD count and the prefix set, by `awk` over the list. Verified by
+one read-only `openssl ciphers -s` query on the dist's 3.5.4: the two `DHE-DSS` GCM suites in the
+hardened default at levels 2 and 3. Verified by grep at tip: the rendezvous coverage, the absence of
+the negative control from the tree, the `std::` imports behind `os::condition_variable`. Inferred or
+recalled: nghttp2's two behaviours (the connection error for DATA before HEADERS, which the lane
+verified and this record now defers to; the connection error for a raised `last_stream_id`, which
+nobody has verified here); `ssl.h:1645` and `util/libssl.num` in the dist were not opened.
+
+**Not checked in this pass.** No build and no test run; the toolchain results and the manifest
+count are as reported. The 500 ms negative control was not reproduced. The 1.1.1w flavor, as
+before.
