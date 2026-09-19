@@ -123,6 +123,7 @@ namespace utest
             Delay,              /* wait, without stopping the connection reading */
             Refuse,             /* RST_STREAM this stream - nothing further is sent ON IT */
             AwaitWindowStall,   /* wait until the receive window for this stream is exhausted */
+            AwaitStreamClosed,  /* wait until BOTH halves of this stream have closed */
             CreditWindow,       /* credit everything received so far on this stream */
             GoAway,             /* end the connection gracefully - RFC 9113 6.8 */
             Close,              /* close the connection once everything queued is written */
@@ -158,6 +159,19 @@ namespace utest
          *  - trailers are held back until the body queued before them has actually been written.
          *    Session::produce( ) writes header blocks BEFORE data, so trailers queued while a body
          *    is still pending would go out in front of it
+         *
+         * AND ONE THE PEER CANNOT ENFORCE FOR YOU, because only the case knows whether it wants
+         * it: closeConnection( ) tears the connection down as soon as what the PEER queued has
+         * been written, and says nothing about what the CLIENT is still sending. On a script whose
+         * request half may still be open - any case which uploads a body - that close can land
+         * while the client is mid-upload, and then the rest of the request, its END_STREAM and the
+         * stream closure never arrive at all. This is the trailers rule one level up: the script
+         * advancing past something the other side has not finished.
+         *
+         * awaitStreamClosed( ) before closeConnection( ) is the rendezvous for it, and it is an
+         * EVENT and not a duration for the same reason awaitWindowStall( ) is. A case whose client
+         * sends its whole request in the HEADERS - every GET - does not need it: that stream's
+         * request half was closed before the responder ever ran.
          */
 
         template
@@ -315,6 +329,38 @@ namespace utest
                 Http2Step step;
 
                 step.kind = Http2StepKind::AwaitWindowStall;
+
+                m_steps.push_back( step );
+
+                return *this;
+            }
+
+            /**
+             * @brief Waits until both halves of this stream have actually closed
+             *
+             * THE RENDEZVOUS FOR A SCRIPT WHICH CLOSES THE CONNECTION UNDER AN UPLOAD. The peer's
+             * own endStream( ) closes only the RESPONSE half; the request half closes when the
+             * client's END_STREAM arrives, on the client's schedule and not on the script's. A
+             * closeConnection( ) placed straight after endStream( ) therefore races the client's
+             * upload, and under load it wins - the connection goes down mid-upload and the request
+             * body, its END_STREAM and the stream closure are never seen. Put this between them
+             * and the close waits for the thing a case like that goes on to assert.
+             *
+             * An EVENT and not a duration, exactly like awaitWindowStall( ): the step re-reads on
+             * every read AND every write, which is when the answer can have changed, and nothing
+             * polls. The condition is the session's own StreamClosed for this stream - the same
+             * record requireStreamClosedAtPeer( ) waits for, so the script waits on precisely what
+             * the case asserts
+             *
+             * Harmless where it is not needed: a GET's request half is closed before the responder
+             * runs, so the step passes as soon as the peer's own half does
+             */
+
+            this_type& awaitStreamClosed()
+            {
+                Http2Step step;
+
+                step.kind = Http2StepKind::AwaitStreamClosed;
 
                 m_steps.push_back( step );
 
@@ -704,6 +750,14 @@ namespace utest
 
                 bool                                                            isDelaying = false;
                 bool                                                            isDone = false;
+
+                /*
+                 * Set when the session reports this stream closed - what awaitStreamClosed( )
+                 * waits for. It is remembered rather than re-derived because the session drops a
+                 * closed stream, so there is nothing left to ask afterwards
+                 */
+
+                bool                                                            isClosedAtPeer = false;
             };
 
             const std::shared_ptr< Http2TestRecorder >                          m_recorder;
@@ -1003,6 +1057,21 @@ namespace utest
                                 " closed with error " +
                                 bl::utils::lexical_cast< std::string >( event.errorCode.value() )
                                 );
+
+                            /*
+                             * Whatever the error code: awaitStreamClosed( ) is a rendezvous on the
+                             * stream being over, and a stream the client reset is over too - a
+                             * script which waited only for a clean closure would hang on one
+                             */
+
+                            {
+                                const auto it = m_scripts.find( event.streamId );
+
+                                if( it != m_scripts.end() )
+                                {
+                                    it -> second.isClosedAtPeer = true;
+                                }
+                            }
 
                             break;
 
@@ -1325,6 +1394,24 @@ namespace utest
                                 /*
                                  * Not stalled yet - the next DATA frame brings the script back
                                  * here, and there is no other way for the answer to change
+                                 */
+
+                                return;
+                            }
+
+                            break;
+
+                        case Http2StepKind::AwaitStreamClosed:
+
+                            if( ! state.isClosedAtPeer )
+                            {
+                                /*
+                                 * Not over yet. Every read and every write advances the script
+                                 * again, and the client's END_STREAM arrives on a read while the
+                                 * peer's own last frame is reported on the write that carried it,
+                                 * so both halves bring the script back here - and pumpWrites( )
+                                 * still runs after this return, which is what lets the peer finish
+                                 * writing the response this step is waiting behind
                                  */
 
                                 return;
