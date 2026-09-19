@@ -297,6 +297,17 @@ TESTAPPS    := $(filter-out $(TESTAPPS_JNI_ENABLED), $(TESTAPPS))
 UTESTS      := $(filter-out $(UTESTS_JNI_ENABLED), $(UTESTS))
 endif
 
+# test modules which require devenv7 or later; the marker excludes the module, while the headers
+# under test guard themselves on the capability they need (BOOST_VERSION, OPENSSL_VERSION_NUMBER)
+# and never on BL_DEVENV_VERSION, which only these makefiles define
+UTESTS_DEVENV7_ONLY     := $(patsubst $(SRCDIR)/utests/%/devenv7_only, %, $(wildcard $(SRCDIR)/utests/utf*/devenv7_only))
+
+# exclude the devenv7+ only targets when building with an older devenv
+# Use negative filtering: devenv7+ by default, devenv2-6 explicitly handled
+ifneq ($(filter devenv2 devenv3 devenv4 devenv5 devenv6,$(DEVENV_VERSION_TAG)),)
+UTESTS      := $(filter-out $(UTESTS_DEVENV7_ONLY), $(UTESTS))
+endif
+
 # toolchain setup - toolchain default, toolchain, arch/variant specific includes
 # all includes are optional
 -include $(MKDIR)/toolchain/$(TOOLCHAIN_DEFAULT).mk
