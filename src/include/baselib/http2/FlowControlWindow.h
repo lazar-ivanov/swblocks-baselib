@@ -516,6 +516,29 @@ namespace bl
                 m_updateThreshold = threshold;
             }
 
+            /**
+             * @brief The RFC 9113 6.9.2 re-adjustment, applied to the window we granted
+             *
+             * The send-side counterpart is applied when the PEER's SETTINGS arrives. This one is
+             * applied when the peer ACKNOWLEDGES ours (6.5.3), and the difference is not a detail:
+             * until the acknowledgement the peer is entitled to the old value, and every octet it
+             * sent under it precedes the acknowledgement on the wire. Applied at send time
+             * instead, a window lowered by our own SETTINGS makes onDataReceived( ) raise
+             * FLOW_CONTROL_ERROR on data the peer sent perfectly legally
+             *
+             * Neither 'outstanding' nor 'pendingCredit' moves: what arrived still arrived and what
+             * the consumer took is still owed to the peer. Only the granted window shifts by the
+             * difference, which is exactly what the peer did to its own send window
+             */
+
+            void applyInitialWindowSizeChange(
+                SAA_in          const std::uint32_t                  previousValue,
+                SAA_in          const std::uint32_t                  newValue
+                )
+            {
+                m_window.applyInitialWindowSizeChange( previousValue, newValue );
+            }
+
             std::int64_t outstanding() const NOEXCEPT
             {
                 return m_outstanding;

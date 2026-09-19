@@ -135,6 +135,28 @@ namespace bl
                 return m_maxDynamicTableSize;
             }
 
+            /**
+             * @brief Lowers or raises the ceiling above, WITHOUT touching the table's capacity
+             *
+             * This is what the session calls when the peer acknowledges our SETTINGS (RFC 9113
+             * section 6.5.3), and it is the answer to the window the comment above describes: the
+             * decoder is constructed at the larger of what we advertise and the protocol's 4096,
+             * so that a size update the peer was still entitled to send cannot be refused, and the
+             * ceiling drops to what we advertised only once the acknowledgement proves the peer
+             * has applied it
+             *
+             * IT DOES NOT SHRINK THE TABLE, deliberately. The table's capacity follows the peer's
+             * own dynamic table size update, which RFC 7541 section 4.2 requires at the start of
+             * the first block after the change - and that update is what evicts, on both sides, at
+             * the same point in the stream of blocks. Evicting here instead would drop entries the
+             * peer's encoder still indexes, and the next block would fail to decode
+             */
+
+            void setMaxDynamicTableSize( SAA_in const std::size_t maxDynamicTableSize ) NOEXCEPT
+            {
+                m_maxDynamicTableSize = maxDynamicTableSize;
+            }
+
             const HpackDynamicTable& dynamicTable() const NOEXCEPT
             {
                 return m_dynamicTable;
