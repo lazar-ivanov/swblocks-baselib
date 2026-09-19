@@ -38,6 +38,33 @@ until this is reopened:
     getters deliberately do not forward is *more* misleading on 3.5.4, which reports "TLSv1.3" for a
     stream that has never handshaked, than the "unknown" 1.x documents, so the rule those getters
     use - report nothing until there is a current cipher - holds on both.
+  - **S3.4 has landed, and the debt it adds is `utf_baselib_h2profiles` on 1.1.1w.** What the slice
+    did to keep the debt small, and what it deliberately did not claim:
+    - Every OpenSSL entry point it calls was read in the dist's own 3.5.4 headers rather than
+      recalled - `SSL_CTX_set1_cert_store` (`ssl.h:1625`), `SSL_CTX_set_ciphersuites` (`:1668`),
+      `SSL_CIPHER_get_kx_nid` (`:1644`), `SSL_CIPHER_is_aead` (`:1647`), `SSL_CTX_clear_options`
+      (`:623`), and `NID_kx_ecdhe` / `NID_kx_dhe` / `NID_kx_any` in `obj_mac.h`. **Nothing was read
+      or inferred for 1.1.1w**, because no header for it exists here.
+    - The new names in `crypto/CryptoBase.h` are declared only from `OPENSSL_VERSION_NUMBER >=
+      0x10100000L`, since `CryptoBase.h` is built on every devenv and the floor check's two cipher
+      accessors do not exist on 1.0.x. Inside that, the body of `createAsioSslClientContext` is
+      behind `>= 0x30500000L`, so on the 1.1.1w flavor that function is the
+      `NotSupportedException` throw and nothing else. That is a property of this source which can
+      be read off it; it is **not** a claim that the flavor was compiled, and the surrounding
+      header may still fail there for the pre-existing reasons above.
+    - The version rule is a function of a version number
+      (`isTlsClientProfileSupportedOnOpenSslVersion`) rather than a bare `#if`, so
+      `TlsClientContext_ClientProfilesRequireOpenSsl35Tests` asserts **both** answers on whichever
+      flavor is linked. The numbers it passes are points either side of the threshold and are not
+      a claim about the value any release's header carries.
+    - **Still owed:** build and run `utf_baselib_h2profiles` under `BL_USE_OPENSSL_1X=1`. Three
+      things only that run can settle. First, that the entry point really does take the
+      `NotSupportedException` branch there - the `else` arm of that case never executes on 3.5.4.
+      Second, that `SSL_CIPHER_get_kx_nid` and `SSL_CIPHER_is_aead` classify the same suites the
+      same way, which is a property of the linked OpenSSL and not of this source. Third, that the
+      three suites `TlsClientContext_NegotiatedParametersFloorTests` names -
+      `AES128-GCM-SHA256`, `ECDHE-RSA-AES128-SHA` and `ECDHE-RSA-AES128-GCM-SHA256` - are
+      resolvable there; the case fails with a clear message naming the suite if one is not.
 
 ## Why deferring is reasonable, and where the risk actually sits
 

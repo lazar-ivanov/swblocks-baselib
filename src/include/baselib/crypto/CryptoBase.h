@@ -19,6 +19,7 @@
 
 #include <baselib/crypto/OpenSSLTypes.h>
 #include <baselib/crypto/ErrorHandling.h>
+#include <baselib/crypto/TlsClientProfile.h>
 #include <baselib/crypto/TrustedRoots.h>
 
 #include <baselib/core/AsioSSL.h>
@@ -441,6 +442,357 @@ namespace bl
                     ( void ) loadAllKnownCertificateAuthorities( nativeSslContext );
                 }
 
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+
+                /*
+                 * Everything below is the TLS client profile support of
+                 * notes/plans/http2-design.md 3.3 and it is declared only from OpenSSL 1.1.0
+                 * onwards, which is where the APIs it is built on exist:
+                 * ::SSL_CIPHER_get_kx_nid and ::SSL_CIPHER_is_aead for the floor check and
+                 * ::SSL_CTX_set_ciphersuites for the TLS 1.3 suite list
+                 *
+                 * The feature itself is devenv7 and later (D1), i.e. OpenSSL 3.5.4 or 1.1.1w, so
+                 * nothing which can reach these names is compiled on an older branch; declaring
+                 * them there would only add a runtime failure where a build failure is clearer
+                 */
+
+                /**
+                 * @brief The OpenSSL version from which a TLS client profile is honored (D2)
+                 *
+                 * Below it a profile is refused rather than approximated. The knobs which shape a
+                 * current browser's ClientHello - the hybrid key exchange group and more than one
+                 * key share in particular - do not exist on the older branch, so a context built
+                 * there would be a materially different client rather than a slightly different
+                 * one; see notes/plans/http2-design.md 6.3, which tabulates what each branch has
+                 *
+                 * The rule is a function of a version number rather than a bare #if so that both
+                 * of its answers can be asserted on whichever flavor happens to be linked; the
+                 * entry point below is what applies it to OPENSSL_VERSION_NUMBER
+                 */
+
+                static bool isTlsClientProfileSupportedOnOpenSslVersion(
+                    SAA_in              const unsigned long                     openSslVersionNumber
+                    ) NOEXCEPT
+                {
+                    return openSslVersionNumber >= 0x30500000UL;
+                }
+
+                static void chkTlsClientProfileSupportedOnOpenSslVersion(
+                    SAA_in              const unsigned long                     openSslVersionNumber
+                    )
+                {
+                    if( isTlsClientProfileSupportedOnOpenSslVersion( openSslVersionNumber ) )
+                    {
+                        return;
+                    }
+
+                    BL_THROW(
+                        NotSupportedException(),
+                        BL_MSG()
+                            << "A TLS client profile requires OpenSSL 3.5 or later"
+                        );
+                }
+
+                /**
+                 * @brief Whether a string is a plain cipher suite name, i.e. safe to place in an
+                 * OpenSSL cipher list
+                 *
+                 * Profiles are loaded from JSON (design 6.2), so every name in one is untrusted
+                 * input, and an OpenSSL cipher list is a small language rather than a list of
+                 * names: ':', ',' and ' ' separate tokens, a leading '!', '-' or '+' deletes or
+                 * reorders, and '@' introduces a control token. '@SECLEVEL=0' is one of those and
+                 * it silently overrides ::SSL_CTX_set_security_level - see the "Cipher lists"
+                 * section of notes/plans/issues/tls-legacy-protocol-opt-in-removal-decision.md -
+                 * which is the injection this exists to stop
+                 *
+                 * The allowlist is a non-empty string of ASCII letters, digits, '_' and '-',
+                 * beginning with a letter or a digit
+                 *
+                 * '-' is accepted inside a name and refused as the first character, which is a
+                 * deliberate departure from the literal wording of design 3.3 ("no @, !, +, -, :
+                 * inside a name"). Every TLS 1.2 suite name OpenSSL knows carries hyphens -
+                 * ECDHE-RSA-AES128-GCM-SHA256 - so refusing the character outright would leave the
+                 * TLS 1.2 list of every profile empty and the feature unable to express anything.
+                 * Only a leading '-' is an operator, so that is what is refused. ',' and ' ' are
+                 * refused as well although 3.3 does not name them; they separate tokens exactly as
+                 * ':' does
+                 *
+                 * This is the outermost of three layers and not the one which is relied upon: the
+                 * context builder asserts the security level is still 2 after the list has been
+                 * applied, and the post-handshake floor check refuses a below-floor suite whatever
+                 * was advertised
+                 */
+
+                static bool isCipherSuiteNameSafe( SAA_in const std::string& name ) NOEXCEPT
+                {
+                    if( name.empty() )
+                    {
+                        return false;
+                    }
+
+                    for( std::size_t i = 0U; i < name.size(); ++i )
+                    {
+                        const char ch = name[ i ];
+
+                        if(
+                            ( ch >= 'A' && ch <= 'Z' ) ||
+                            ( ch >= 'a' && ch <= 'z' ) ||
+                            ( ch >= '0' && ch <= '9' )
+                            )
+                        {
+                            continue;
+                        }
+
+                        if( 0U == i || ( '_' != ch && '-' != ch ) )
+                        {
+                            return false;
+                        }
+                    }
+
+                    return true;
+                }
+
+                /**
+                 * @brief Validates every name and joins them into an OpenSSL cipher list
+                 *
+                 * The empty list is a valid answer and means the profile named no suites for that
+                 * protocol, which the caller reads as "keep the library default"
+                 */
+
+                static auto buildCipherListFromNames(
+                    SAA_in              const std::vector< std::string >&       names
+                    )
+                    -> std::string
+                {
+                    std::string result;
+
+                    for( const auto& name : names )
+                    {
+                        if( ! isCipherSuiteNameSafe( name ) )
+                        {
+                            BL_THROW(
+                                SecurityException()
+                                    << eh::errinfo_string_value( name ),
+                                BL_MSG()
+                                    << "A TLS client profile carries a cipher suite name which is not a plain suite name"
+                                );
+                        }
+
+                        if( ! result.empty() )
+                        {
+                            result += ':';
+                        }
+
+                        result += name;
+                    }
+
+                    return result;
+                }
+
+                /**
+                 * @brief Whether a negotiated protocol version and cipher suite meet the library
+                 * floor (D4)
+                 *
+                 * The floor is TLS 1.2 or better, with either a TLS 1.3 suite or an ephemeral key
+                 * exchange and an AEAD cipher. It is strictly stronger than the cipher blocklist
+                 * of RFC 9113 Appendix A, which is why this library never has to raise
+                 * INADEQUATE_SECURITY of its own accord
+                 *
+                 * The version comparison is guarded by the major version byte, which is the idiom
+                 * OpenSSL's own tls1.h uses (SSL_get_secure_renegotiation_support and the macros
+                 * beside it): a DTLS version is numerically far larger than any TLS version -
+                 * DTLS 1.0 is 0xFEFF - and would sail through a bare >= comparison
+                 *
+                 * A TLS 1.3 suite is not special cased. OpenSSL reports a key exchange of
+                 * NID_kx_any for one, because TLS 1.3 settles the key exchange outside the suite,
+                 * and every TLS 1.3 suite is AEAD - which is asserted by a handshake rather than
+                 * assumed here
+                 */
+
+                static bool doNegotiatedParametersMeetFloor(
+                    SAA_in              const int                               protocolVersion,
+                    SAA_in_opt          const ::SSL_CIPHER*                     cipher
+                    ) NOEXCEPT
+                {
+                    if( nullptr == cipher )
+                    {
+                        return false;
+                    }
+
+                    if(
+                        TLS1_VERSION_MAJOR != ( protocolVersion >> 8 ) ||
+                        protocolVersion < TLS1_2_VERSION
+                        )
+                    {
+                        return false;
+                    }
+
+                    const int keyExchange = ::SSL_CIPHER_get_kx_nid( cipher );
+
+                    const bool isEphemeralKeyExchange =
+                        NID_kx_ecdhe == keyExchange ||
+                        NID_kx_dhe == keyExchange ||
+                        NID_kx_any == keyExchange;
+
+                    return isEphemeralKeyExchange && 0 != ::SSL_CIPHER_is_aead( cipher );
+                }
+
+                /**
+                 * @brief Refuses a connection whose negotiated parameters are below the floor (D4)
+                 *
+                 * This runs after the handshake and before the first byte of HTTP is written or
+                 * read, so a server which steered the connection below the floor never sees a
+                 * request. It is what makes "advertise, verify, refuse" the whole of D4: a profile
+                 * may advertise a browser's suite list, but what was actually negotiated is
+                 * checked here against the library's own floor rather than against the profile's
+                 */
+
+                static void chkNegotiatedParametersMeetFloor( SAA_inout ::SSL* ssl )
+                {
+                    BL_ASSERT( ssl );
+
+                    const ::SSL_CIPHER* const cipher = ::SSL_get_current_cipher( ssl );
+
+                    if( doNegotiatedParametersMeetFloor( ::SSL_version( ssl ), cipher ) )
+                    {
+                        return;
+                    }
+
+                    const char* const cipherName = cipher ? ::SSL_CIPHER_get_name( cipher ) : nullptr;
+                    const char* const versionName = ::SSL_get_version( ssl );
+
+                    BL_THROW(
+                        SecurityException()
+                            << eh::errinfo_tls_negotiated_cipher( cipherName ? cipherName : "<none>" )
+                            << eh::errinfo_tls_negotiated_version( versionName ? versionName : "<none>" ),
+                        BL_MSG()
+                            << "The TLS parameters negotiated with the peer are below the security floor of the library"
+                        );
+                }
+
+                /**
+                 * @brief Creates a client context which advertises a TLS client profile (D4, D22)
+                 *
+                 * The context is step 1 of initNativeSslContext above - the protocol floor, the
+                 * hardening options and security level 2, none of which a profile can move - then
+                 * the profile's own cipher policy in place of step 2, then the same trust anchors
+                 *
+                 * Trust is shared rather than copied: ::SSL_CTX_set1_cert_store takes a reference
+                 * to the store of the process global client context, so a root registered after a
+                 * profile context was built is visible through it and the default path and the
+                 * profiles can never diverge
+                 *
+                 * Session tickets are advertised when the profile asks for them, because a
+                 * browser's first ClientHello carries the extension, and nothing is ever resumed:
+                 * the session cache is off, as it is on the global client context. A real
+                 * browser's later connections carry pre_shared_key and ours will not - that is a
+                 * known and accepted fidelity gap (D22)
+                 *
+                 * What this deliberately does NOT yet apply, although TlsClientProfile carries it:
+                 * the group list and its key share marks, the signature algorithms, and the
+                 * status_request, SCT and padding switches. Wiring a profile across the layers is
+                 * S7.3 in notes/plans/http2-implementation-plan.md, after the measured fidelity
+                 * spike of 6.3 has established what each knob really does on this OpenSSL. A
+                 * context from here is therefore shaped by its cipher lists alone
+                 */
+
+                static auto createAsioSslClientContext(
+                    SAA_in              const TlsClientProfile&                 profile
+                    )
+                    -> cpp::SafeUniquePtr< asio::ssl::context >
+                {
+                    chkTlsClientProfileSupportedOnOpenSslVersion( OPENSSL_VERSION_NUMBER );
+
+#if OPENSSL_VERSION_NUMBER >= 0x30500000L
+                    auto context = cpp::SafeUniquePtr< asio::ssl::context >::attach(
+                        new asio::ssl::context( asio::ssl::context::sslv23 )
+                        );
+
+                    ::SSL_CTX* const nativeSslContext = context -> native_handle();
+
+                    /*
+                     * Step 1 - common, and never parameterized by the profile
+                     */
+
+                    initNativeSslProtocolPolicy( nativeSslContext );
+
+                    /*
+                     * Step 2 - the profile's cipher policy, or the hardened library default when
+                     * the profile names no TLS 1.2 suites
+                     *
+                     * Both lists are validated before either is applied, so a bad name in the
+                     * TLS 1.3 list cannot leave a half configured context behind
+                     */
+
+                    const auto cipherListTls12 = buildCipherListFromNames( profile.cipherSuitesTls12 );
+                    const auto cipherListTls13 = buildCipherListFromNames( profile.cipherSuitesTls13 );
+
+                    if( cipherListTls12.empty() )
+                    {
+                        initNativeSslDefaultCipherPolicy( nativeSslContext );
+                    }
+                    else
+                    {
+                        BL_CHK_CRYPTO_API_NM(
+                            ::SSL_CTX_set_cipher_list( nativeSslContext, cipherListTls12.c_str() )
+                            );
+
+                        chkUsableCipherSuitesAvailable( nativeSslContext );
+                    }
+
+                    if( ! cipherListTls13.empty() )
+                    {
+                        BL_CHK_CRYPTO_API_NM(
+                            ::SSL_CTX_set_ciphersuites( nativeSslContext, cipherListTls13.c_str() )
+                            );
+                    }
+
+                    /*
+                     * The check which actually catches a '@SECLEVEL' token that got past the name
+                     * allowlist: a cipher list carrying one moves the level, and the level is
+                     * readable, so the only thing which has to be true is that it is still what
+                     * step 1 set it to
+                     */
+
+                    BL_CHK_CRYPTO_API(
+                        2 == ::SSL_CTX_get_security_level( nativeSslContext ),
+                        "The cipher policy of a TLS client profile moved the OpenSSL security level"
+                        );
+
+                    /*
+                     * Step 3 - the trust anchors, shared with the process global client context
+                     */
+
+                    ::X509_STORE* const trustStore =
+                        ::SSL_CTX_get_cert_store( getAsioSslContext().native_handle() );
+
+                    BL_CHK_CRYPTO_API_NM( trustStore );
+
+                    ( void ) ::SSL_CTX_set1_cert_store( nativeSslContext, trustStore );
+
+                    if( profile.sessionTicket )
+                    {
+                        ( void ) ::SSL_CTX_clear_options( nativeSslContext, SSL_OP_NO_TICKET );
+                    }
+
+                    ( void ) ::SSL_CTX_set_session_cache_mode( nativeSslContext, SSL_SESS_CACHE_OFF );
+
+                    return context;
+#else
+                    BL_UNUSED( profile );
+
+                    /*
+                     * Unreachable - the check above throws on every version below the threshold.
+                     * It is spelled out rather than left to fall off the end of the function so
+                     * that the compiler on that flavor sees a terminating path
+                     */
+
+                    BL_RIP_MSG( "A TLS client profile requires OpenSSL 3.5 or later" );
+#endif
+                }
+
+#endif // OPENSSL_VERSION_NUMBER >= 0x10100000L
+
                 static void initSsl()
                 {
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L
@@ -826,6 +1178,61 @@ namespace bl
 
                 return detail::CryptoInit::createAsioSslServerContext( privateKeyPem, certificatePem );
             }
+
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+
+            /**
+             * @brief Whether this build of OpenSSL can honor a TLS client profile (D2)
+             *
+             * A caller which offers impersonation as an option asks this rather than catching the
+             * NotSupportedException which createAsioSslClientContext below throws
+             */
+
+            static bool isTlsClientProfileSupported() NOEXCEPT
+            {
+                return detail::CryptoInit::isTlsClientProfileSupportedOnOpenSslVersion( OPENSSL_VERSION_NUMBER );
+            }
+
+            /**
+             * @brief Whether a name is a plain cipher suite name and can be placed in a profile
+             *
+             * This is the validator a profile loader applies to untrusted input; see the comment
+             * on the implementation for what the allowlist is and why
+             */
+
+            static bool isCipherSuiteNameSafe( SAA_in const std::string& name ) NOEXCEPT
+            {
+                return detail::CryptoInit::isCipherSuiteNameSafe( name );
+            }
+
+            /**
+             * @brief Creates a client context shaped by a TLS client profile (design 3.3)
+             *
+             * Throws NotSupportedException on an OpenSSL below 3.5 and SecurityException when the
+             * profile carries a cipher suite name which is not a plain name
+             */
+
+            static auto createAsioSslClientContext( SAA_in const TlsClientProfile& profile )
+                -> cpp::SafeUniquePtr< asio::ssl::context >
+            {
+                init();
+
+                return detail::CryptoInit::createAsioSslClientContext( profile );
+            }
+
+            /**
+             * @brief Refuses a connection whose negotiated TLS parameters are below the floor (D4)
+             *
+             * Called after the handshake and before any HTTP byte; throws SecurityException
+             * carrying the negotiated suite and version
+             */
+
+            static void chkNegotiatedParametersMeetFloor( SAA_inout ::SSL* ssl )
+            {
+                detail::CryptoInit::chkNegotiatedParametersMeetFloor( ssl );
+            }
+
+#endif // OPENSSL_VERSION_NUMBER >= 0x10100000L
 
             /**
              * @brief Whether a client connection whose peer certificate could not be verified
