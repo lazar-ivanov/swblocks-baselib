@@ -23,6 +23,17 @@ until this is reopened:
 - **S1.6 onwards.** Every slice adding OpenSSL calls - the ALPN offer and selected-protocol getters,
   the ClientHello capture hook, the TLS client contexts of S3.4 - adds to this debt rather than
   creating a new one.
+  - **S1.6 has landed, and it named one concrete thing to expect.** On 3.5.4 `SSL_set_msg_callback`
+    is a function with the exact callback prototype; on 1.1.1w it is a **macro** which casts the
+    callback to `void (*)(void)`, which is what `-Wcast-function-type` fires on, and every
+    configuration here is `-Werror`. So `enableClientHelloCapture()` in
+    `tasks/AsioSslStreamWrapper.h` is a candidate to fail to *compile* on the second flavor rather
+    than merely to behave differently on it; build `utf_baselib_http2` first and expect that
+    diagnostic rather than be surprised by it. Nothing else S1.6 added is version-sensitive - the
+    ALPN pair is 1.0.2 and the rest older still - and the pre-handshake `SSL_get_version` value its
+    getters deliberately do not forward is *more* misleading on 3.5.4, which reports "TLSv1.3" for a
+    stream that has never handshaked, than the "unknown" 1.x documents, so the rule those getters
+    use - report nothing until there is a current cipher - holds on both.
 
 ## Why deferring is reasonable, and where the risk actually sits
 
