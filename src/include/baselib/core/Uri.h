@@ -1187,6 +1187,11 @@ namespace bl
              *
              * The userinfo is deliberately excluded; RFC 9113 section 8.3.1 forbids it in
              * ":authority", and hasUserInfo() is how a caller detects a URI which carries one
+             *
+             * Unlike origin() below this does NOT refuse a reference without an authority: it
+             * invents no delimiter, so the empty string it returns is the faithful rendering of
+             * an absent or empty authority, and it is what toString() recomposes "file:///p"
+             * from ( RFC 3986 section 5.3 )
              */
 
             std::string authority() const
@@ -1209,10 +1214,43 @@ namespace bl
              * The effective port is always rendered when it is known, so that a reference which
              * spells out the default port for its scheme and one which leaves it out produce
              * the same origin
+             *
+             * A reference which has no origin is refused rather than rendered, because this
+             * string decides which connection is reused and which cookies are in scope, and a
+             * plausible looking "://host" for a network-path reference or "http://:80" for a
+             * URI with an empty host would collide or widen a scope silently. A reference has an
+             * origin exactly when isAbsolute() holds and host() is not empty, which is how a
+             * caller tests for one in advance
+             *
+             * @throw ArgumentException when the reference is not an absolute URI with a host
              */
 
             std::string origin() const
             {
+                BL_CHK_T(
+                    true,
+                    m_scheme.empty(),
+                    ArgumentException(),
+                    BL_MSG()
+                        << "The origin of a URI reference is only defined for an absolute URI, "
+                        << "and this reference carries no scheme"
+                    );
+
+                /*
+                 * The host is only ever set while parsing an authority, so this single check
+                 * covers both the reference which carries no authority at all and the one whose
+                 * authority has an empty host
+                 */
+
+                BL_CHK_T(
+                    true,
+                    m_host.empty(),
+                    ArgumentException(),
+                    BL_MSG()
+                        << "The origin of a URI reference is only defined for a URI with a host, "
+                        << "and this one carries none"
+                    );
+
                 std::string result = m_scheme;
 
                 result += "://";
