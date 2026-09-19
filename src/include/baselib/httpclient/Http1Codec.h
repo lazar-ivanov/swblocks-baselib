@@ -84,6 +84,15 @@
  * sits next to the one for differing values so the boundary is visible
  *
  *
+ * NO PART OF THIS CODEC FOLDS CASE OR TRIMS WHITESPACE THROUGH std::locale(). str::iequals,
+ * str::to_lower_copy and str::trim_copy all take std::locale() and are therefore a global the
+ * embedding process can change under a check which has already been written. Every fold and every
+ * trim below is ASCII-only and spelled out here - http::HeaderList::equalsIgnoreCase, isOws and
+ * trimOwsCopy, toLowerAsciiCopy - which is also the more correct rule, since a field name is a
+ * token and OWS is SP and HTAB (RFC 9110 sections 5.1 and 5.6.3). The reasoning is the one at the
+ * head of http::HeaderList, and 5.5 states it for the codec as a whole
+ *
+ *
  * THE 64 KB HEADER CAP IS SET HERE, NOT INHERITED. The backend's own default is 8 KB, which is
  * smaller than this design requires and would refuse ordinary responses; 5.5 asks for 64 KB, which
  * is what http::SimpleHttpTask's g_maxResponseHeadersSize already uses on the server side
@@ -817,6 +826,51 @@ namespace bl
                 return false;
             }
 
+            /**
+             * @brief RFC 9110 section 5.6.3 - OWS is SP and HTAB, and nothing else
+             */
+
+            static bool isOws( SAA_in const char ch ) NOEXCEPT
+            {
+                return ' ' == ch || '\t' == ch;
+            }
+
+            /**
+             * @brief Strips leading and trailing OWS - and only OWS - from a field value
+             *
+             * DELIBERATELY NOT str::trim_copy, which is boost::algorithm::trim_copy and therefore
+             * takes std::locale(): what counted as whitespace would be whatever global locale the
+             * embedding process last installed, and the one caller below is the gate which decides
+             * that a Transfer-Encoding is exactly 'chunked'. The perturbation runs toward
+             * LENIENCY - in a locale whose ctype calls some other octet a space, 'chunked' followed
+             * by that octet passes a gate the C locale refuses, and the backend then frames the
+             * message its own way, which is the two-readings differential this file exists to
+             * close. The case which pins it uses 'chunked,', because a comma is what a front end
+             * leaves behind when it joins two Transfer-Encoding fields. A security check must not
+             * depend on an embedder's std::locale::global
+             *
+             * This is the rule http::HeaderList states at the head of its own file, for the same
+             * reason; the fold here is also the more correct one, since OWS is SP and HTAB
+             */
+
+            static std::string trimOwsCopy( SAA_in const std::string& value )
+            {
+                std::size_t begin = 0U;
+                std::size_t end = value.size();
+
+                while( begin < end && isOws( value[ begin ] ) )
+                {
+                    ++begin;
+                }
+
+                while( end > begin && isOws( value[ end - 1U ] ) )
+                {
+                    --end;
+                }
+
+                return value.substr( begin, end - begin );
+            }
+
             bool chkFieldSyntax(
                 SAA_in          const std::string&                              name,
                 SAA_in          const std::string&                              value,
@@ -882,7 +936,7 @@ namespace bl
                 }
                 else if( http::HeaderList::equalsIgnoreCase( fieldName, "transfer-encoding" ) )
                 {
-                    if( ! http::HeaderList::equalsIgnoreCase( str::trim_copy( fieldValue ), "chunked" ) )
+                    if( ! http::HeaderList::equalsIgnoreCase( trimOwsCopy( fieldValue ), "chunked" ) )
                     {
                         fail( Http1CodecError::UnsupportedTransferCoding, ec );
 
@@ -1141,12 +1195,42 @@ namespace bl
 
         private:
 
+            /**
+             * @brief The ASCII-only fold the case-map lookup uses - never str::to_lower_copy
+             *
+             * A field name is a token, so it is ASCII by construction, and http1CaseMap is keyed
+             * on the lower-case spelling. str::to_lower_copy is boost::to_lower_copy and takes
+             * std::locale(), so the key this lookup builds would be whatever global locale the
+             * embedding process last installed - in a Turkish locale 'If-Modified-Since' lowers
+             * to a key which is not in the table at all, and the request silently goes out with
+             * the caller's casing instead of the profile's, which is a fingerprint the profile
+             * exists to reproduce exactly. The rule is http::HeaderList's, see the head of that
+             * file, and it is the rule the whole codec follows (design 5.5)
+             */
+
+            static std::string toLowerAsciiCopy( SAA_in const std::string& value )
+            {
+                std::string result = value;
+
+                for( std::size_t i = 0U; i < result.size(); ++i )
+                {
+                    const auto octet = static_cast< unsigned char >( result[ i ] );
+
+                    if( octet >= 'A' && octet <= 'Z' )
+                    {
+                        result[ i ] = static_cast< char >( octet - 'A' + 'a' );
+                    }
+                }
+
+                return result;
+            }
+
             static std::string renderName(
                 SAA_in          const std::string&                              name,
                 SAA_in          const HeaderProfileForKind&                     profile
                 )
             {
-                const auto pos = profile.http1CaseMap.find( str::to_lower_copy( name ) );
+                const auto pos = profile.http1CaseMap.find( toLowerAsciiCopy( name ) );
 
                 return pos == profile.http1CaseMap.end() ? cpp::copy( name ) : cpp::copy( pos -> second );
             }
