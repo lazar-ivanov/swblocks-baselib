@@ -19,6 +19,10 @@
 
 #include <baselib/http2/Globals.h>
 #include <baselib/http2/Http2Profile.h>
+#include <baselib/http2/HpackHuffman.h>
+#include <baselib/http2/HpackDynamicTable.h>
+#include <baselib/http2/HpackDecoder.h>
+#include <baselib/http2/HpackEncoder.h>
 
 /*
  * The HTTP/2 umbrella. Each slice which adds an http2/ header appends its #include above, in the
