@@ -160,6 +160,8 @@ namespace utest
                 BL_MUTEX_GUARD( m_lock );
 
                 m_records.push_back( BL_PARAM_FWD( what ) );
+
+                m_cvRecorded.notify_all();
             }
 
             auto records() const -> std::vector< std::string >
@@ -167,6 +169,39 @@ namespace utest
                 BL_MUTEX_GUARD( m_lock );
 
                 return m_records;
+            }
+
+            /**
+             * @brief Blocks until the script has made 'expected' records, or the bound expires
+             *
+             * THE RENDEZVOUS A COUNT ASSERTION NEEDS, and the reason it is not optional: a
+             * script's last record is normally the result of waitForPeerToClose, and what wakes
+             * that read is the CLIENT closing its socket. A case which waits for its own task and
+             * then reads records() is therefore racing the worker thread across those two points.
+             * records() takes the lock, so nothing is ever torn and this is not a data race - what
+             * is missing is the ordering, and this is what supplies it
+             *
+             * Bounded rather than unbounded on purpose: a script which genuinely never gets there
+             * has to fail the case with a diagnosis rather than hang the suite
+             *
+             * @return true when 'expected' records had arrived before the bound expired
+             */
+
+            bool waitForRecords(
+                SAA_in              const std::size_t                           expected,
+                SAA_in              const std::size_t                           timeoutInMilliseconds
+                ) const
+            {
+                bl::os::mutex_unique_lock guard( m_lock );
+
+                return m_cvRecorded.wait_for(
+                    guard,
+                    bl::os::chrono::milliseconds( timeoutInMilliseconds ),
+                    [ this, expected ]() -> bool
+                    {
+                        return m_records.size() >= expected;
+                    }
+                    );
             }
 
             /**
@@ -300,6 +335,7 @@ namespace utest
             const std::size_t                                                   m_connections;
             std::atomic< bool >                                                 m_stopRequested;
             mutable bl::os::mutex                                               m_lock;
+            mutable bl::os::condition_variable                                  m_cvRecorded;
             std::vector< std::string >                                          m_records;
             std::string                                                         m_failure;
             bl::cpp::SafeUniquePtr< bl::os::thread >                            m_thread;
@@ -587,6 +623,41 @@ namespace utest
 
                     UTF_REQUIRE( eq -> isEmpty() );
                 }
+                );
+        }
+
+        /**
+         * @brief Waits for the proxy's script to have recorded 'expected' entries, and says what
+         * it did record when it has not
+         *
+         * runProbeToCompletion waits for the CLIENT, which is a different thread from the one
+         * writing the records, so every assertion on a record count is preceded by this. The
+         * failure names both counts because "EQUAL( records.size(), 2U ) has failed" is what this
+         * race looked like for as long as it went undiagnosed
+         */
+
+        inline void waitForRecordsOf(
+            SAA_in              const FakeProxy&                                proxy,
+            SAA_in              const std::size_t                               expected
+            )
+        {
+            /*
+             * Generous, because it is only ever reached when something is already wrong: every
+             * wait here is satisfied in under a millisecond when the script is behaving
+             */
+
+            if( proxy.waitForRecords( expected, 10U * 1000U /* timeoutInMilliseconds */ ) )
+            {
+                return;
+            }
+
+            UTF_FAIL(
+                BL_MSG()
+                    << "The proxy script recorded "
+                    << proxy.records().size()
+                    << " entries where the case expects "
+                    << expected
+                    << "; it did not reach the end of its script in time"
                 );
         }
 
@@ -1464,6 +1535,8 @@ UTF_AUTO_TEST_CASE( TcpTunnelStage_HttpConnectTunnelTests )
 
     UTF_REQUIRE( proxy.failure().empty() );
 
+    waitForRecordsOf( proxy, 2U );
+
     const auto records = proxy.records();
 
     UTF_REQUIRE_EQUAL( records.size(), 2U );
@@ -1541,6 +1614,8 @@ UTF_AUTO_TEST_CASE( TcpTunnelStage_Socks5TunnelTests )
     UTF_REQUIRE_EQUAL( probe -> countOf( "handshakePathReached" ), 1U );
 
     UTF_REQUIRE( proxy.failure().empty() );
+
+    waitForRecordsOf( proxy, 4U );
 
     const auto records = proxy.records();
 
@@ -1656,8 +1731,8 @@ UTF_AUTO_TEST_CASE( TcpTunnelStage_CancelDuringTunnelTests )
      * only because its outstanding operation is on the SOCKET, which the base cancelTask() shuts
      * down - a stage parked on an async object of its own would hang here instead
      *
-     * The proxy never answers, so the cancel is the only thing which can end the task and the
-     * bounded poll below is a rendezvous rather than a sleep
+     * The proxy never answers, so the cancel is the only thing which can end the task, and
+     * waitForRecordsOf is what says the request had actually reached the proxy before it landed
      */
 
     FakeProxy proxy(
@@ -1688,10 +1763,7 @@ UTF_AUTO_TEST_CASE( TcpTunnelStage_CancelDuringTunnelTests )
 
             eq -> push_back( task );
 
-            for( std::size_t i = 0U; i < 300U && proxy.records().empty(); ++i )
-            {
-                os::sleep( time::milliseconds( 10 ) );
-            }
+            waitForRecordsOf( proxy, 1U );
 
             UTF_REQUIRE_EQUAL( proxy.records().size(), 1U );
 
@@ -1708,6 +1780,8 @@ UTF_AUTO_TEST_CASE( TcpTunnelStage_CancelDuringTunnelTests )
 
     UTF_REQUIRE_EQUAL( probe -> countOf( "stageEntered" ), 1U );
     UTF_REQUIRE_EQUAL( probe -> countOf( "handshakePathReached" ), 0U );
+
+    waitForRecordsOf( proxy, 2U );
 
     const auto records = proxy.records();
 
@@ -1883,6 +1957,16 @@ UTF_AUTO_TEST_CASE( TcpTunnelStage_StageRunsOncePerAttemptTests )
     UTF_REQUIRE_EQUAL( events[ 3 ], std::string( "handshakePathReached" ) );
 
     UTF_REQUIRE( proxy.failure().empty() );
+
+    /*
+     * This one site is already ordered without the wait - both records are made by readHeaders,
+     * and the second of them precedes the 200 the client needs to finish - so the call here is
+     * the invariant rather than a fix: EVERY count assertion goes through the rendezvous, so that
+     * adding a record after waitForPeerToClose to this script, as three of the others do, cannot
+     * quietly make it racy again
+     */
+
+    waitForRecordsOf( proxy, 2U );
 
     const auto records = proxy.records();
 
