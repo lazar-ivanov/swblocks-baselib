@@ -66,6 +66,13 @@ namespace bl
                 static os::mutex                                g_untrustedEndpointsInfoLock;
                 static std::atomic< bool >                      g_allowUntrustedCertificates;
 
+                /*
+                 * The server-side ALPN preference slot - see alpnPreferenceExIndex( ) below
+                 */
+
+                static os::mutex                                g_alpnPreferenceLock;
+                static int                                      g_alpnPreferenceExIndex;
+
                 static void initRandomEngine()
                 {
                     /*
@@ -1025,6 +1032,243 @@ namespace bl
                     return context;
                 }
 
+                /*********************************************************************************
+                 * The SERVER half of ALPN
+                 *
+                 * The client half - ::SSL_set_alpn_protos and ::SSL_get0_alpn_selected - lives in
+                 * tasks/AsioSslStreamWrapper.h and is a property of the STREAM, because two
+                 * connections on one context may offer different lists. The server half is a
+                 * property of the CONTEXT: OpenSSL has only ::SSL_CTX_set_alpn_select_cb and no
+                 * per-SSL variant of it (verified in the dist's own 3.5.4 ssl.h:845, with the
+                 * callback typedef at :839), so this is where it has to go
+                 *
+                 * WHOSE ORDER DECIDES. The server's. The callback walks the preference list in
+                 * the order the caller gave it and takes the first entry the client also offered,
+                 * so a client offering "h2, http/1.1" to a server preferring "http/1.1, h2" is
+                 * answered with http/1.1. That is the reading of RFC 7301 section 3.2 - "the
+                 * server selects" - and it is the only order under which a server's preference
+                 * means anything at all
+                 *
+                 * WHAT NO OVERLAP DOES. SSL_TLSEXT_ERR_NOACK: no ALPN extension in the ServerHello
+                 * and the handshake completes with nothing selected. RFC 7301 section 3.2 also
+                 * allows a fatal no_application_protocol alert, and that is deliberately NOT
+                 * implemented here - design 5.5's fallback needs "the peer completed the handshake
+                 * and chose nothing" to be a representable outcome, and it is what
+                 * NegotiatedProtocol::withoutAlpn exists to describe. A caller which wants the
+                 * alert wants a second entry point, argued on its own
+                 */
+
+                static void freeAlpnPreference(
+                    SAA_inout_opt       void*                               parent,
+                    SAA_inout_opt       void*                               ptr,
+                    SAA_inout_opt       ::CRYPTO_EX_DATA*                   ad,
+                    SAA_in              int                                 idx,
+                    SAA_in              long                                argl,
+                    SAA_inout_opt       void*                               argp
+                    )
+                {
+                    BL_UNUSED( parent );
+                    BL_UNUSED( ad );
+                    BL_UNUSED( idx );
+                    BL_UNUSED( argl );
+                    BL_UNUSED( argp );
+
+                    BL_NOEXCEPT_BEGIN()
+
+                    delete static_cast< std::vector< std::string >* >( ptr );
+
+                    BL_NOEXCEPT_END()
+                }
+
+                /**
+                 * @brief The ex_data slot in which a server context keeps its ALPN preference list
+                 *
+                 * The list's lifetime is the CONTEXT's, which is what the ex_data free callback
+                 * above buys and what a raw opaque pointer would not: the selected name is
+                 * returned to OpenSSL by pointer and is read after the callback has returned, so
+                 * it has to outlive the call
+                 *
+                 * The index is allocated once, lazily, under its own lock rather than inside
+                 * initSsl( ) - this is additive and does not alter the existing initialization
+                 * path. A negative result means OpenSSL could not allocate one
+                 */
+
+                static int alpnPreferenceExIndex()
+                {
+                    BL_MUTEX_GUARD( g_alpnPreferenceLock );
+
+                    if( g_alpnPreferenceExIndex < 0 )
+                    {
+                        const auto index = ::SSL_CTX_get_ex_new_index(
+                            0L                          /* argl */,
+                            nullptr                     /* argp */,
+                            nullptr                     /* new_func */,
+                            nullptr                     /* dup_func */,
+                            &freeAlpnPreference
+                            );
+
+                        BL_CHK_CRYPTO_API(
+                            index >= 0,
+                            "Failed to allocate an SSL_CTX ex_data index for the ALPN preference"
+                            );
+
+                        g_alpnPreferenceExIndex = index;
+                    }
+
+                    return g_alpnPreferenceExIndex;
+                }
+
+                /**
+                 * @brief The OpenSSL server-side ALPN selection callback
+                 *
+                 * A plain function because it is a C callback and cannot capture; the preference
+                 * list is recovered from the context the handshake is running on rather than from
+                 * the opaque argument, so one callback serves every context
+                 *
+                 * 'in' is the client's offer in RFC 7301 wire format - a sequence of entries, each
+                 * one length octet followed by that many name octets. A malformed offer cannot
+                 * reach here (OpenSSL parses the extension before calling), but the walk is still
+                 * bounded by 'inLen' rather than trusting the lengths
+                 */
+
+                static int alpnSelectCallback(
+                    SAA_inout           ::SSL*                              ssl,
+                    SAA_out             const unsigned char**               out,
+                    SAA_out             unsigned char*                      outLen,
+                    SAA_in              const unsigned char*                in,
+                    SAA_in              const unsigned int                  inLen,
+                    SAA_inout_opt       void*                               arg
+                    ) NOEXCEPT
+                {
+                    BL_UNUSED( arg );
+
+                    /*
+                     * A failure here means "nothing selected" and not a dead process: this is a
+                     * C callback on the handshake path and the same choice AsioSslStreamWrapper's
+                     * own ::SSL_set_msg_callback handler makes
+                     */
+
+                    BL_WARN_NOEXCEPT_BEGIN()
+
+                    if( nullptr == ssl || nullptr == in )
+                    {
+                        return SSL_TLSEXT_ERR_NOACK;
+                    }
+
+                    auto* const context = ::SSL_get_SSL_CTX( ssl );
+
+                    if( nullptr == context )
+                    {
+                        return SSL_TLSEXT_ERR_NOACK;
+                    }
+
+                    const auto* const preference =
+                        static_cast< const std::vector< std::string >* >(
+                            ::SSL_CTX_get_ex_data( context, alpnPreferenceExIndex() )
+                            );
+
+                    if( nullptr == preference )
+                    {
+                        return SSL_TLSEXT_ERR_NOACK;
+                    }
+
+                    for( std::size_t i = 0U; i < preference -> size(); ++i )
+                    {
+                        const auto& candidate = ( *preference )[ i ];
+
+                        unsigned int offset = 0U;
+
+                        while( offset < inLen )
+                        {
+                            const unsigned int size = in[ offset ];
+
+                            if( 0U == size || offset + 1U + size > inLen )
+                            {
+                                break;
+                            }
+
+                            if(
+                                size == candidate.size() &&
+                                0 == candidate.compare(
+                                    0U,
+                                    candidate.size(),
+                                    reinterpret_cast< const char* >( in + offset + 1U ),
+                                    size
+                                    )
+                                )
+                            {
+                                *out = reinterpret_cast< const unsigned char* >( candidate.c_str() );
+                                *outLen = static_cast< unsigned char >( size );
+
+                                return SSL_TLSEXT_ERR_OK;
+                            }
+
+                            offset += 1U + size;
+                        }
+                    }
+
+                    BL_WARN_NOEXCEPT_END( "CryptoInitT<...>::alpnSelectCallback" )
+
+                    return SSL_TLSEXT_ERR_NOACK;
+                }
+
+                static void setAlpnServerPreference(
+                    SAA_inout           asio::ssl::context&                 context,
+                    SAA_in              const std::vector< std::string >&   preference
+                    )
+                {
+                    BL_CHK(
+                        true,
+                        preference.empty(),
+                        BL_MSG()
+                            << "An ALPN server preference must name at least one protocol"
+                        );
+
+                    for( std::size_t i = 0U; i < preference.size(); ++i )
+                    {
+                        /*
+                         * The same bound as the client offer in AsioSslStreamWrapper.h, and for
+                         * the same reason: a name outside 1 .. 255 bytes has no representation in
+                         * the RFC 7301 wire format, so it could never be matched against one
+                         */
+
+                        BL_CHK(
+                            false,
+                            ( ! preference[ i ].empty() ) && preference[ i ].size() <= 255U,
+                            BL_MSG()
+                                << "An ALPN protocol name must be between 1 and 255 bytes long: '"
+                                << preference[ i ]
+                                << "'"
+                            );
+                    }
+
+                    const auto index = alpnPreferenceExIndex();
+
+                    auto stored = cpp::SafeUniquePtr< std::vector< std::string > >::attach(
+                        new std::vector< std::string >( preference )
+                        );
+
+                    /*
+                     * ::SSL_CTX_set_ex_data returns 1 on success; the list is released to the
+                     * context only once it has taken it, so a failure here frees it rather than
+                     * leaking it. Any list stored by a previous call on this context is freed by
+                     * the ex_data free callback when the context goes away, and replacing one is
+                     * not attempted - a context is configured once
+                     */
+
+                    BL_CHK_CRYPTO_API_NM(
+                        ::SSL_CTX_set_ex_data( context.native_handle(), index, stored.get() )
+                        );
+
+                    ( void ) stored.release();
+
+                    ::SSL_CTX_set_alpn_select_cb(
+                        context.native_handle(),
+                        &alpnSelectCallback,
+                        nullptr /* arg - the list travels on the context, not here */
+                        );
+                }
+
                 static bool hasUntrustedEndpoints() NOEXCEPT
                 {
                     BL_MUTEX_GUARD( g_untrustedEndpointsInfoLock );
@@ -1129,6 +1373,9 @@ namespace bl
             CryptoInitT< E >::g_untrustedEndpointsInfo;
 
             BL_DEFINE_STATIC_MEMBER( CryptoInitT, os::mutex, g_untrustedEndpointsInfoLock );
+
+            BL_DEFINE_STATIC_MEMBER( CryptoInitT, os::mutex, g_alpnPreferenceLock );
+            BL_DEFINE_STATIC_MEMBER( CryptoInitT, int, g_alpnPreferenceExIndex ) = -1;
 
             typedef CryptoInitT<> CryptoInit;
 
@@ -1239,6 +1486,39 @@ namespace bl
                 init();
 
                 return detail::CryptoInit::createAsioSslServerContext( privateKeyPem, certificatePem );
+            }
+
+            /**
+             * @brief Makes a SERVER context select an ALPN protocol, in the given order of
+             * preference (RFC 7301 section 3.2)
+             *
+             * The client half of ALPN - the offer and the selected-protocol getter - is on the
+             * stream, in tasks/AsioSslStreamWrapper.h. This is the other half, and it is on the
+             * context because OpenSSL publishes no per-SSL form of it
+             *
+             * THE ORDER IS THE SERVER'S. The first name in 'preference' which the client also
+             * offered is the one selected, whatever order the client offered them in. A client
+             * offering "h2, http/1.1" therefore gets http/1.1 from a server which prefers it
+             *
+             * A client offering nothing in common completes the handshake with NOTHING selected -
+             * no ALPN extension in the ServerHello - rather than being refused with the fatal
+             * no_application_protocol alert RFC 7301 also permits. Design 5.5's fallback is
+             * written against that outcome being representable
+             *
+             * The preference list is copied and its lifetime becomes the context's
+             *
+             * @throw UnexpectedException for an empty list or a name outside 1 .. 255 bytes -
+             * the same refusal, from the same BL_CHK, as the client offer's
+             */
+
+            static void setAlpnServerPreference(
+                SAA_inout           asio::ssl::context&                 context,
+                SAA_in              const std::vector< std::string >&   preference
+                )
+            {
+                init();
+
+                detail::CryptoInit::setAlpnServerPreference( context, preference );
             }
 
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L

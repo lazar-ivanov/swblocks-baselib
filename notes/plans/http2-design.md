@@ -192,6 +192,15 @@ pushes the rest outward, and the author accepted the result:
 Dependency direction is one way: `httpclient/` depends on `http2/`; `http2/` depends on
 `http/HeaderList.h`, `core/` and, for its task only, `tasks/`. Nothing generic depends on either.
 
+**`http2/Http2ConnectionTask.h` is the one exception, and it was always going to be** (recorded in
+S4.2, when it landed). It is the HTTP/2 driver, so it has to derive from the establishment base and
+implement the connection contract - `httpclient/ClientConnectionTaskBase.h` and
+`httpclient/ClientConnection.h`, both of which S2.6 and S4.1 put in `httpclient/`. The row above
+already places this header in `bl::tasks` rather than in `bl::http2` for the same reason: it is the
+I/O shell and not the protocol. Everything else under `http2/` - the codec, HPACK, the state
+machine, the flow control and the session engine - depends on nothing in `httpclient/` and must not
+start to. That is the direction which matters, because it is what keeps the engine sans-I/O.
+
 `http/` is left as the legacy simple client plus shared low-level types. Putting the new
 version-neutral client into a separate `httpclient/` keeps the legacy code visibly untouched.
 
@@ -1027,14 +1036,37 @@ defenses. A registry per session. No decoder ships (D9). The consequences, and t
 | Request total, including pool wait | 30 min, matching `http/Globals.h:186` | request task |
 | Response headers | off | request task |
 | Stream idle | off | request task |
-| `SETTINGS` acknowledgement | 30 s | connection task |
+| `SETTINGS` acknowledgement | **10 s** | connection task |
 | Keepalive `PING` reply | 15 s, when keepalive is on | connection task |
 | Connection idle | 5 min | pool |
+
+**This row said 30 s until S4.2 while the engine said 10; it now says 10, and there is one number
+rather than two.** `SessionLimits::settingsTimeoutInSeconds` is that number and the connection task
+holds no second one of its own - it arms its deadline from the limits it was given and lets
+`Session::onTimer()` decide, which is what stops the two drifting apart again. Three reasons for
+taking the engine's value rather than this table's. RFC 9113 gives `SETTINGS_TIMEOUT` no numeric
+value at all, so neither number was ever a standard. The keepalive `PING` reply deadline in the row
+below is **15 s**, so a 30 s `SETTINGS` deadline would make the *first* control frame a peer must
+answer, on a connection which has only just been established, twice as lenient as the steady-state
+liveness check on the same connection - which is backwards. And a `SETTINGS` acknowledgement is
+emitted by the peer's protocol layer rather than by its application, so it is not subject to the
+scheduling delays which justify a generous application-level timeout; 10 s is already two orders of
+magnitude above a wide-area round trip.
 
 A request timeout, or `requestCancel()` on a request task, posts a `RST_STREAM( CANCEL )` to the
 connection and completes the request - with `TimeoutException` and the existing message shape in the
 first case. **Cancelling a request never closes the connection.** Cancelling a connection task fails
 every stream on it, each flagged retryable or not by the rule in 5.4.
+
+**A `RST_STREAM( CANCEL )` must not overtake the request it cancels** (found in S4.2).
+`Session::produce()` writes the control queue before the header block queue, so a reset queued while
+the stream's own `HEADERS` are still waiting goes out in front of them, and the peer sees a
+`RST_STREAM` on a stream it has never heard of - a connection error of type `PROTOCOL_ERROR` by
+RFC 9113 section 5.1. "Submit, then cancel" is the ordinary shape of a request whose deadline expired
+while it was queued, so this is reachable rather than theoretical. `Http2ConnectionTaskT` holds such
+a cancel back until the block has actually been handed to a write. The ordering is the driver's and
+not the engine's, deliberately: the engine's queue order is what serializes a header block with its
+own `CONTINUATION` frames and is not the thing to change.
 
 ### 5.8 API sketch
 
