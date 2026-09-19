@@ -48,6 +48,6 @@
  * Test headers - one appended line per slice, at the end
  */
 
-#include "TestH2ClientPlaceholder.h"
 #include "TestTcpStrandedStreams.h"
 #include "TestTcpSslStrandedStreams.h"
+#include "TestClientConnectionTaskBase.h"

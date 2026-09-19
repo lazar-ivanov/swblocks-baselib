@@ -1,8 +1,5 @@
 # each slice appends the recipes for the cases it lands here
 
-# the placeholder which keeps the suite green until S4.1 - see TestH2ClientPlaceholder.h
---log_level=message --run_test=H2Client_PlaceholderUntilS41Tests
-
 # S3.2 - the stranded plain stream policy (design 3.1, D13)
 --log_level=test_suite --run_test=TcpStrandedStreams_PlainFullDuplexTests
 --log_level=test_suite --run_test=TcpStrandedStreams_PlainCancelPostsShutdownToStrandTests
@@ -10,3 +7,13 @@
 # S3.3 - the stranded TLS stream policy (design 3.1, D13)
 --log_level=test_suite --run_test=TcpSslStrandedStreams_TlsFullDuplexTests
 --log_level=test_suite --run_test=TcpSslStrandedStreams_TlsCancelPostsShutdownToStrandTests
+
+# S4.1 - connection establishment and ALPN dispatch (design 5.1, 5.5, 5.7)
+--log_level=test_suite --run_test=H2Connect_CleartextDispatchesWithoutAlpnTests
+--log_level=test_suite --run_test=H2Connect_TlsAlpnSelectsHttp2Tests
+--log_level=test_suite --run_test=H2Connect_TlsForcedHttp11Tests
+--log_level=test_suite --run_test=H2Connect_TlsWithNoAlpnSelectionFallsBackTests
+--log_level=test_suite --run_test=H2Connect_TlsUnknownAlpnIsRefusedTests
+--log_level=test_suite --run_test=H2Connect_NoDriverForNegotiatedProtocolIsRefusedTests
+--log_level=test_suite --run_test=H2Connect_FloorCheckPrecedesEverythingTests
+--log_level=test_suite --run_test=H2Connect_SilentProxyHitsTheConnectDeadlineTests
