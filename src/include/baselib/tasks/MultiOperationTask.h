@@ -99,13 +99,46 @@ namespace bl
              * lock would therefore deadlock on the first re-entry, since it is not recursive
              */
 
+            /*
+             * m_closingDeliberate is deliberately NOT the same flag as m_closing. Both doors set
+             * m_closing - a first error, and beginClose() - so m_closing alone cannot tell a task
+             * which is closing because it failed from one which is closing because it is done.
+             * Only the second may excuse the operation_aborted its own initiateClose() produces
+             *
+             * m_closingDeliberate implies m_closing: beginClose() sets both, nothing else sets
+             * m_closingDeliberate, and scheduleNothrow() clears both
+             */
+
             mutable os::mutex                                                       m_operationsLock;
             std::size_t                                                             m_pendingOperations = 0U;
             bool                                                                    m_closing = false;
+            bool                                                                    m_closingDeliberate = false;
             bool                                                                    m_closeInitiated = false;
             bool                                                                    m_terminalTaken = false;
             std::exception_ptr                                                      m_firstError = nullptr;
             bool                                                                    m_firstErrorIsExpected = false;
+
+            /**
+             * @brief Whether an operation completed with the asio::error::operation_aborted of a
+             * cancelled operation
+             *
+             * The error arrives as an std::exception_ptr and not as a code, so the code has to be
+             * recovered from it. eh::errorCodeFromExceptionPtr() is the library's own way to do
+             * that and this follows it rather than inventing a second mechanism, the same way
+             * TcpSslBaseTasks classifies through isExpectedSslErrorCode(): it reads
+             * eh::system_error::code(), which is what BL_TASKS_HANDLER_CHK_EC() throws, and
+             * otherwise the errinfo_error_code of a BaseException. An exception carrying neither
+             * yields an empty code, which never compares equal to operation_aborted - so an
+             * exception with no code at all is a genuine error, which is the answer wanted here
+             *
+             * It recovers the code by rethrowing, which is NOT free. Every caller must therefore
+             * keep it behind the cheap tests - see onOperationCompleted()
+             */
+
+            static bool isOperationAborted( SAA_in const std::exception_ptr& eptr ) NOEXCEPT
+            {
+                return asio::error::operation_aborted == eh::errorCodeFromExceptionPtr( eptr );
+            }
 
             /**
              * @brief Claims the single terminal path, if it is due; the accounting lock is held
@@ -137,10 +170,12 @@ namespace bl
                 if( close )
                 {
                     /*
-                     * A failure to cancel must not cost the task its terminal path - and it is
-                     * already failing when this runs, so the original error is the interesting
-                     * one. Errors are logged and discarded, exactly as TaskBase does for the
-                     * cancelTask() call of requestCancelInternal()
+                     * A failure to cancel must not cost the task its terminal path. When the task
+                     * is closing because it failed, the original error is the interesting one;
+                     * when it is closing deliberately, it has already decided it is done and a
+                     * cancel which did not take is not a reason to fail it. Errors are logged and
+                     * discarded either way, exactly as TaskBase does for the cancelTask() call of
+                     * requestCancelInternal()
                      */
 
                     utils::tryCatchLog(
@@ -193,6 +228,12 @@ namespace bl
              * This is how a task ends deliberately - it has nothing left to do, or a deadline has
              * expired. The task then completes once the operations still in flight have completed
              * or been cancelled; the first error path enters the same state by itself
+             *
+             * A task which closes this way completes SUCCESSFULLY even when initiateClose() had
+             * operations to cancel: the operation_aborted each of those reports is self inflicted
+             * and is not recorded as the task's error. A genuine failure while closing still is,
+             * and so is the operation_aborted of an external cancelTask() - see
+             * onOperationCompleted()
              */
 
             void beginClose() NOEXCEPT
@@ -200,6 +241,7 @@ namespace bl
                 BL_MUTEX_GUARD( m_operationsLock );
 
                 m_closing = true;
+                m_closingDeliberate = true;
             }
 
         public:
@@ -259,6 +301,22 @@ namespace bl
              * whose expected / unexpected classification is reported. Errors arriving after it,
              * including the operation_aborted of everything initiateClose() cancelled, are
              * accounted for but not reported
+             *
+             * That accounts for a task which is closing BECAUSE something failed. A task which
+             * called beginClose() because it was done has no first error, so without more the
+             * operation_aborted of the first operation its own initiateClose() cancelled would
+             * become one - and the task would complete isFailed() on its own clean shutdown.
+             * Such an abort is self inflicted and says nothing about the run, so it is not
+             * recorded. Only operation_aborted is excused this way: a genuine I/O failure which
+             * arrives while the task is closing is still the task's error
+             *
+             * An external cancelTask() is deliberately NOT excused. A cancelled task completes
+             * isFailed() with operation_aborted exactly as it did before this, including when the
+             * cancel lands on a task which had already begun closing deliberately: that abort is
+             * not self inflicted, the caller asked for it, and the caller cannot know the task
+             * had decided to close, so it must not be told the task finished normally. It is the
+             * benign failure it always was - TasksUtils::waitForSuccess() and ExecutionQueue
+             * already recognize operation_aborted from a cancel and filter it
              */
 
             void onOperationCompleted(
@@ -285,10 +343,29 @@ namespace bl
 
                     if( eptr && ! m_firstError )
                     {
-                        m_firstError = eptr;
-                        m_firstErrorIsExpected = isExpectedException;
+                        /*
+                         * The tests are ordered so that isOperationAborted(), which recovers the
+                         * code by rethrowing, is reached only where it can change the answer:
+                         * never on the success path, never once an error has been recorded, and
+                         * never on a task which is not closing deliberately - which is to say
+                         * never on the path of a task which is simply failing
+                         *
+                         * isCanceled() reads an atomic and takes no lock, so consulting it does
+                         * not break the leaf lock rule this accounting is written to
+                         */
 
-                        m_closing = true;
+                        const bool isSelfInflictedAbort =
+                            m_closingDeliberate &&
+                            ! base_type::isCanceled() &&
+                            isOperationAborted( eptr );
+
+                        if( ! isSelfInflictedAbort )
+                        {
+                            m_firstError = eptr;
+                            m_firstErrorIsExpected = isExpectedException;
+
+                            m_closing = true;
+                        }
                     }
 
                     if( m_closing && ! m_closeInitiated )
@@ -330,6 +407,7 @@ namespace bl
 
                     m_pendingOperations = 0U;
                     m_closing = false;
+                    m_closingDeliberate = false;
                     m_closeInitiated = false;
                     m_terminalTaken = false;
                     m_firstError = nullptr;
