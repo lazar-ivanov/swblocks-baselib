@@ -1243,9 +1243,13 @@ with all of them.
 - **Reuse is derived here, not reported by the codec** (L2 review). `Http1ResponseParser` exposes
   `httpVersion()`, `needsEof()` and the header list but no keep-alive verdict, and Beast's own
   `keep_alive()` is deliberately not re-exported. An HTTP/1.0 response without
-  `Connection: keep-alive`, any response carrying `Connection: close`, and any body framed by the
-  close (`needsEof()`) all mean the connection is not returned to the pool. `statusCode()` goes to
+  `Connection: keep-alive`, a `Connection: close` **from either side - the request's own word binds
+  too**, a body framed by the close (`needsEof()`), a 101, and any byte left unconsumed after the
+  message all mean the connection is not returned to the pool. `statusCode()` goes to
   the sink through the `status` parameter of `onHeaders` (S2.6, fixed after the L2 review).
+  **The request-side limb was claimed here, in the header comment, in design §5.5 and in a merge
+  message while the code consulted only the response** - found by the L4 review, fixed in
+  `ff8693c`. The enumeration above is now the code's, input for input.
 - **Interim responses arrive after the fact** (L2 second pass). `Http1ResponseParser` files a 1xx
   into `interimResponses()` and restarts on the same buffer; it has no per-interim callback. So this
   driver delivers each filed interim as `onHeaders( handle, interim.statusCode, headers, true )`
