@@ -140,6 +140,15 @@ None of these is a current requirement. The existing servers work, and the clien
    server's defaults.
 3. ALPN selection on the server context (`SSL_CTX_set_alpn_select_cb`) in
    `CryptoInitT::createAsioSslServerContext`, offering `http/1.1` only until the rest is ready.
+   **It must answer no overlap with the fatal `no_application_protocol` alert, which
+   `CryptoBase::setAlpnServerPreference` does not.** That entry point answers
+   `SSL_TLSEXT_ERR_NOACK` - no ALPN extension in the ServerHello, handshake completes, nothing
+   selected. RFC 7301 section 3.2 says a server which implements ALPN and finds no overlap *SHALL*
+   respond with the alert, so NOACK is section 3.1's ALPN-*unaware* server and a production server
+   built on that entry point would be non-conforming. It is right for what it serves - the TLS test
+   peer, which exists so that design 5.5's client-side fallback can be driven at all, and a peer
+   which sent the alert could not produce that outcome. A conforming server therefore needs a
+   second entry point rather than this one. (L4 review, finding 5.)
 4. The server connection task and the per-stream mapping onto `Request`, `Response` and
    `ServerBackendProcessing`.
 5. The hardening table above, each row with a test that mounts the attack against the real server and
