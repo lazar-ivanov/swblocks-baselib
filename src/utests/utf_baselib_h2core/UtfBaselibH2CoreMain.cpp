@@ -54,3 +54,4 @@
 #include "TestStreamStates.h"
 #include "TestHpack.h"
 #include "TestSession.h"
+#include "TestHttp2TestPeer.h"
