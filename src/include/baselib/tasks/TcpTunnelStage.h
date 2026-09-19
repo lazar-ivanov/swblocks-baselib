@@ -1337,6 +1337,64 @@ namespace bl
             return result;
         }
 
+        namespace detail
+        {
+            /**
+             * @brief The cleartext byte stream a tunnel is negotiated over, selected at compile
+             * time from BASE::isProtocolHandshakeNeeded
+             *
+             * A tunnel is spoken IN CLEARTEXT ON THE LOWEST LAYER of the stream, before any
+             * handshake (design 3.6), and the object which carries it has to be an AsyncReadStream
+             * and an AsyncWriteStream. getSocket() is that object for a cleartext policy, where it
+             * is the asio::ip::tcp::socket itself - but NOT for a TLS one, where it is
+             * AsioSslStreamWrapper::lowest_layer(), an asio::basic_socket with no async_read_some
+             * and no async_write_some at all. The socket underneath the TLS engine is the ssl
+             * stream's NEXT layer, and that is what this returns
+             *
+             * The same mechanism, and for the same reason, as detail::HandshakeTaskHelper in
+             * TcpBaseTasks.h: the stream policy is a static interface resolved by template
+             * composition, so a runtime branch on the constant would not compile
+             */
+
+            template
+            <
+                typename BASE,
+                bool ProtocolHandshakeNeeded = BASE::isProtocolHandshakeNeeded
+            >
+            class TunnelCleartextLayer;
+
+            template
+            <
+                typename BASE
+            >
+            class TunnelCleartextLayer< BASE, false >
+            {
+            public:
+
+                static auto get( SAA_inout typename BASE::stream_t& stream ) NOEXCEPT
+                    -> asio::ip::tcp::socket&
+                {
+                    return stream;
+                }
+            };
+
+            template
+            <
+                typename BASE
+            >
+            class TunnelCleartextLayer< BASE, true >
+            {
+            public:
+
+                static auto get( SAA_inout typename BASE::stream_t& stream ) NOEXCEPT
+                    -> asio::ip::tcp::socket&
+                {
+                    return stream.getStream().next_layer();
+                }
+            };
+
+        } // detail
+
         /******************************************************************************************
          * ======================================= TcpTunnelStage =================================
          */
@@ -1411,6 +1469,19 @@ namespace bl
          * the cases of this slice do drive the stage through a second attempt. The reasoning stands
          * on its own either way: it is what the hook requires of an override, not what a particular
          * version of the retry happens to exercise.
+         *
+         * ------------------------------------------------------------------------------------
+         * THE TUNNEL IS SPOKEN ON THE STREAM'S LOWEST CLEARTEXT LAYER, AND getSocket() IS NOT IT
+         * ------------------------------------------------------------------------------------
+         *
+         * Every read and write below goes through tunnelStream(), never through getSocket(). For a
+         * cleartext policy the two are the same object; for a TLS one getSocket() is the ssl
+         * stream's lowest_layer(), an asio::basic_socket with no async_read_some and no
+         * async_write_some, and a stage which read or wrote through it did not compile for such a
+         * policy at all. It was written that way and nothing noticed, because the suite of the
+         * slice which delivered it instantiates exactly one probe and that probe is cleartext - so
+         * these members were never instantiated over a TLS policy until S4.1 put the stage into a
+         * connection task which is. See detail::TunnelCleartextLayer.
          */
 
         template
@@ -1429,6 +1500,7 @@ namespace bl
         protected:
 
             typedef typename base_type::tcp_resolver_type                       tcp_resolver_type;
+            typedef detail::TunnelCleartextLayer< base_type >                   cleartext_layer_t;
 
             const ProxyConfig                                                   m_proxyConfig;
             const std::string                                                   m_originHost;
@@ -1579,6 +1651,20 @@ namespace bl
         private:
 
             /**
+             * @brief The socket the tunnel is spoken on - the stream's lowest CLEARTEXT layer
+             *
+             * Not getSocket(). Under a TLS policy that is the ssl stream's lowest_layer(), an
+             * asio::basic_socket which is neither an AsyncReadStream nor an AsyncWriteStream, and
+             * a stage which reads and writes through it does not compile at all for such a policy
+             * - see detail::TunnelCleartextLayer above
+             */
+
+            auto tunnelStream() NOEXCEPT -> asio::ip::tcp::socket&
+            {
+                return cleartext_layer_t::get( base_type::getStream() );
+            }
+
+            /**
              * @brief Starts the socket operation a step asks for
              */
 
@@ -1596,7 +1682,7 @@ namespace bl
                         const auto& outgoing = m_negotiation -> outgoing();
 
                         asio::async_write(
-                            base_type::getSocket(),
+                            tunnelStream(),
                             asio::buffer( outgoing.c_str(), outgoing.size() ),
                             base_type::untilCanceled(),
                             cpp::bind(
@@ -1616,7 +1702,7 @@ namespace bl
                         chkReadLength( step.length() );
 
                         asio::async_read(
-                            base_type::getSocket(),
+                            tunnelStream(),
                             asio::buffer( m_readBuffer.data(), step.length() ),
                             base_type::untilCanceled(),
                             cpp::bind(
@@ -1641,7 +1727,7 @@ namespace bl
                          * ReadExactly step it is the connection ending mid-message
                          */
 
-                        base_type::getSocket().async_read_some(
+                        tunnelStream().async_read_some(
                             asio::buffer( m_readBuffer.data(), step.length() ),
                             cpp::bind(
                                 &this_type::onTunnelDataRead,
