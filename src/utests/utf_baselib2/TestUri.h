@@ -17,7 +17,10 @@
 #include <baselib/core/Uri.h>
 #include <baselib/core/BaseIncludes.h>
 
+#include <cstddef>
+#include <locale>
 #include <string>
+#include <vector>
 
 #include <utests/baselib/Utf.h>
 
@@ -891,5 +894,276 @@ UTF_AUTO_TEST_CASE( Uri_OriginRequiresAbsoluteUriTests )
 
         UTF_CHECK_EQUAL( resolved.origin(), std::string( "https://example.com:443" ) );
         UTF_CHECK_EQUAL( resolved.toString(), std::string( "https://example.com/c" ) );
+    }
+}
+
+/*
+ * Section 6.2.2.1 lower-cases the scheme and the host, and the parser does it with its own ASCII
+ * fold rather than with str::to_lower_copy, which folds through std::locale( ) - a process-wide
+ * global any embedder may replace. The case below installs one which is wrong on purpose and
+ * asserts that the parse does not move, which is the property the fold exists for
+ */
+
+namespace utest
+{
+    namespace uri
+    {
+        /**
+         * @brief A std::ctype facet which is wrong on purpose, so the parser can be run under it
+         *
+         * A case which only asserts that the parser is ASCII-correct while the C locale is
+         * installed proves nothing about the hazard, because the C locale is the one case where
+         * the locale-dependent spelling and the ASCII one agree. So the hazard is BUILT here and
+         * the parser is run inside it
+         *
+         * The facet is constructed rather than taken from the system, which keeps the case
+         * self-contained - no locale has to be generated on the host - and only do_tolower is
+         * overridden, because that is the virtual a fold through std::locale( ) reaches on every
+         * standard library. The mask table is deliberately left as the classic one: libc++
+         * short-circuits ctype< char >::is( ... ) to false for every non-ASCII octet while
+         * libstdc++ indexes all 256, so a perturbation spelled through the table is not reachable
+         * on both - see the same note on utf_baselib_httpclient's codec cases
+         *
+         * Two rules, one per call site:
+         *
+         *   - 'I' LOWERS to a dotless i, which is what a Turkish locale really does. This is the
+         *     rule which reaches the scheme, and it is the one the codec cases use for what is
+         *     the same class of defect
+         *   - the six hexadecimal letters are not folded at all. 'I' is not a hexadecimal digit
+         *     and cannot appear in an IPv6 address, so the Turkish rule alone would reach the IP
+         *     literal only through the exotic IPvFuture shape; this rule reaches the shape which
+         *     actually occurs
+         */
+
+        class HostileCtype FINAL : public std::ctype< char >
+        {
+        public:
+
+            enum : unsigned char
+            {
+                g_dotlessI          = 0xFDU,
+            };
+
+            HostileCtype()
+                :
+                std::ctype< char >( classic_table(), false /* del */, 0U /* refs */ )
+            {
+            }
+
+        protected:
+
+            char do_tolower( char ch ) const OVERRIDE
+            {
+                if( 'I' == ch )
+                {
+                    return static_cast< char >( g_dotlessI );
+                }
+
+                if( ch >= 'A' && ch <= 'F' )
+                {
+                    return ch;
+                }
+
+                return std::ctype< char >::do_tolower( ch );
+            }
+
+            const char* do_tolower( char* low, const char* high ) const OVERRIDE
+            {
+                for( ; low != high; ++low )
+                {
+                    *low = do_tolower( *low );
+                }
+
+                return high;
+            }
+        };
+
+        inline std::locale hostileLocale()
+        {
+            return std::locale( std::locale::classic(), new HostileCtype() );
+        }
+
+        /**
+         * @brief Installs a global locale for the life of the object and puts the old one back
+         *
+         * std::locale::global is process-wide, so the window it is installed for is kept as small
+         * as it can be and nothing inside it formats anything
+         */
+
+        class GlobalLocaleGuard FINAL
+        {
+            BL_NO_COPY_OR_MOVE( GlobalLocaleGuard )
+
+        public:
+
+            explicit GlobalLocaleGuard( const std::locale& installed )
+                :
+                m_saved( std::locale::global( installed ) )
+            {
+            }
+
+            ~GlobalLocaleGuard() NOEXCEPT
+            {
+                BL_NOEXCEPT_BEGIN()
+
+                std::locale::global( m_saved );
+
+                BL_NOEXCEPT_END()
+            }
+
+        private:
+
+            const std::locale                                                   m_saved;
+        };
+    }
+}
+
+UTF_AUTO_TEST_CASE( Uri_LocaleIndependenceTests )
+{
+    using namespace utest::uri;
+
+    /*
+     * Every octet which is not printable ASCII is escaped, so that a failing comparison prints
+     * plain text instead of a raw perturbed byte
+     */
+
+    const auto escaped = []( const std::string& text ) -> std::string
+    {
+        static const char g_digits[] = "0123456789abcdef";
+
+        std::string result;
+
+        for( std::size_t pos = 0U; pos < text.size(); ++pos )
+        {
+            const auto octet = static_cast< unsigned char >( text[ pos ] );
+
+            if( octet >= 0x20U && octet < 0x7FU )
+            {
+                result += text[ pos ];
+
+                continue;
+            }
+
+            result += "\\x";
+            result += g_digits[ octet >> 4U ];
+            result += g_digits[ octet & 0x0FU ];
+        }
+
+        return result;
+    };
+
+    /*
+     * The answer is the normalized scheme, the normalized host and the recomposed reference -
+     * or "REFUSED", because what the parser accepts must not move under a locale either
+     */
+
+    const auto answerFor = [ &escaped ]( const std::string& text ) -> std::string
+    {
+        bl::net::Uri uri;
+
+        if( ! bl::net::Uri::tryParse( text, uri ) )
+        {
+            return std::string( "REFUSED" );
+        }
+
+        return escaped( uri.scheme() + "|" + uri.host() + "|" + uri.toString() );
+    };
+
+    std::vector< std::string > references;
+    std::vector< std::string > labels;
+    std::vector< std::string > expected;
+
+    references.push_back( "FTP://Example.COM/x" );
+    labels.push_back( "scheme-hex-letter" );
+    expected.push_back( "ftp|example.com|ftp://example.com/x" );
+
+    references.push_back( "SIP:user@example.com" );
+    labels.push_back( "scheme-turkish-I" );
+    expected.push_back( "sip||sip:user@example.com" );
+
+    references.push_back( "http://[2001:DB8::CAFE]:8080/x" );
+    labels.push_back( "ipv6-literal" );
+    expected.push_back( "http|2001:db8::cafe|http://[2001:db8::cafe]:8080/x" );
+
+    references.push_back( "http://[V7.ABCI:goes]/" );
+    labels.push_back( "ipvfuture-literal" );
+    expected.push_back( "http|v7.abci:goes|http://[v7.abci:goes]/" );
+
+    references.push_back( "HTTP://WWW.Example.COM/x" );
+    labels.push_back( "reg-name-host" );
+    expected.push_back( "http|www.example.com|http://www.example.com/x" );
+
+    references.push_back( "http://[::G]/" );
+    labels.push_back( "refused-ipv6" );
+    expected.push_back( "REFUSED" );
+
+    std::vector< std::string > classicAnswers;
+
+    for( std::size_t i = 0U; i < references.size(); ++i )
+    {
+        classicAnswers.push_back( answerFor( references[ i ] ) );
+    }
+
+    bool schemeFoldIsPerturbed = false;
+    bool turkishFoldIsPerturbed = false;
+    bool literalFoldIsPerturbed = false;
+
+    std::vector< std::string > hostileAnswers;
+
+    {
+        const GlobalLocaleGuard guard( hostileLocale() );
+
+        /*
+         * First, that the facet really does bite - without this the rest of the case is vacuous,
+         * because a locale which changes nothing cannot demonstrate anything. These three lines
+         * are the DEFECT, executed: they are exactly what the two call sites used to do, on
+         * exactly the strings the references below hand them
+         */
+
+        schemeFoldIsPerturbed =
+            ( "ftp" != bl::str::to_lower_copy( std::string( "FTP" ) ) );
+
+        turkishFoldIsPerturbed =
+            ( "sip" != bl::str::to_lower_copy( std::string( "SIP" ) ) );
+
+        literalFoldIsPerturbed =
+            ( "2001:db8::cafe" != bl::str::to_lower_copy( std::string( "2001:DB8::CAFE" ) ) );
+
+        for( std::size_t i = 0U; i < references.size(); ++i )
+        {
+            hostileAnswers.push_back( answerFor( references[ i ] ) );
+        }
+    }
+
+    /*
+     * The global locale is back, so from here on the framework formats under whatever the process
+     * was started with
+     */
+
+    UTF_REQUIRE( schemeFoldIsPerturbed );
+    UTF_REQUIRE( turkishFoldIsPerturbed );
+    UTF_REQUIRE( literalFoldIsPerturbed );
+
+    UTF_REQUIRE_EQUAL( hostileAnswers.size(), classicAnswers.size() );
+
+    /*
+     * The hostile locale changes nothing about what the parser answers - neither the normalized
+     * spelling nor whether the reference is accepted at all. The second assertion pins the
+     * classic answer to the RFC spelling as well, so that the pair cannot agree by both being
+     * wrong, and the refused reference is there because a fold can only run after the grammar
+     * has been checked: a perturbed locale is never able to widen what gets through
+     */
+
+    for( std::size_t i = 0U; i < hostileAnswers.size(); ++i )
+    {
+        UTF_CHECK_EQUAL(
+            labels[ i ] + ":" + hostileAnswers[ i ],
+            labels[ i ] + ":" + classicAnswers[ i ]
+            );
+
+        UTF_CHECK_EQUAL(
+            labels[ i ] + ":" + classicAnswers[ i ],
+            labels[ i ] + ":" + expected[ i ]
+            );
     }
 }

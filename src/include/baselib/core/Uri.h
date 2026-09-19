@@ -215,6 +215,38 @@ namespace bl
                 return ( ch >= 'A' && ch <= 'Z' ) ? static_cast< char >( ch - 'A' + 'a' ) : ch;
             }
 
+            /**
+             * @brief The whole-string ASCII fold section 6.2.2.1 asks for - never str::to_lower_copy
+             *
+             * str::to_lower_copy is boost::to_lower_copy and folds through std::locale( ), a
+             * process-wide global any embedder may replace, so the same reference would normalize
+             * differently depending on what the process last installed. Everything a reference may
+             * carry is ASCII by construction here - there is no IDNA support and a non-ASCII byte
+             * is an error anywhere in a reference - so the ASCII fold is also the correct rule.
+             * This is the same fold, under the same name, as http::HeaderList, Http1Codec,
+             * CookieJar and HpackEncoder carry; the reasoning is the one at the head of
+             * http::HeaderList
+             *
+             * Note that neither call site is a security boundary: both validate BEFORE folding,
+             * so a perturbed locale can never widen what is accepted, and every consumer compares
+             * the result against a known ASCII spelling ( "http" and "https" below, the stored
+             * cookie domains in CookieJar ), which a corrupted spelling fails to match rather
+             * than matching something it should not. What is at stake is only that the parse be
+             * a property of its input instead of a property of a global
+             */
+
+            static std::string toLowerAsciiCopy( SAA_in const std::string& text )
+            {
+                std::string result( text );
+
+                for( std::size_t pos = 0U; pos < result.size(); ++pos )
+                {
+                    result[ pos ] = toLowerAscii( result[ pos ] );
+                }
+
+                return result;
+            }
+
             /*************************************************************************
              * Diagnostics
              *
@@ -732,7 +764,7 @@ namespace bl
 
                     chkIpLiteral( literal );
 
-                    m_host = str::to_lower_copy( literal );
+                    m_host = toLowerAsciiCopy( literal );
                     m_isIpLiteral = true;
 
                     const auto remainder = hostAndPort.substr( closePos + 1U );
@@ -847,7 +879,7 @@ namespace bl
                             );
                     }
 
-                    m_scheme = str::to_lower_copy( candidate );
+                    m_scheme = toLowerAsciiCopy( candidate );
 
                     rest.erase( 0, colonPos + 1U );
                 }
