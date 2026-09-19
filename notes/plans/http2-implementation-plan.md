@@ -1050,6 +1050,14 @@ with all of them.
   mistake is invisible until a stranded policy is in play, which is precisely this slice.
   `Tasks_MultiOperationTaskOverConnectionEstablisherTests` models it correctly; copy from there.
   Use the `BOOST_VERSION` guard of `SimpleHttpTask.h:301`.
+- **The §5.7 "resolve through preface" deadline is this slice's, and it must be armed BEFORE the
+  tunnel stage rather than after it.** S3.5 owns no timer: a proxy which accepts the TCP connection
+  and then never answers holds the task until an external cancel. That is deliberate and consistent
+  - the establisher has no connect deadline of its own either - and the stage's class comment
+  records why, since a timer inside it would acquire obligation 2 of `beginPreHandshakeStage` with
+  it (`TcpTunnelStage.h`, the three obligations). So the 60 s connect timer is the only thing which
+  bounds a silent proxy, and one armed after `beginPreHandshakeStage` has returned is never reached
+  on that path. L3 review, `notes/plans/issues/http2-l3-review-record.md` §6 and §7.
 - **Choose the retry budget; a consistently truncating peer now costs six attempts, not one.** The
   handshake retry is reachable with a real peer since the classifier was widened after L0 (§2,
   decision 2): `scheduleTaskFinishContinuation` restarts the whole resolve/connect/handshake
