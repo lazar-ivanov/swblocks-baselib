@@ -87,6 +87,19 @@ SKIPPED_HEADER_RE = re.compile( r'^SKIPPED CASES \((\d+)\):' )
 NO_ERRORS_RE = re.compile( r'^\*\*\* No errors detected' )
 FAILURE_RE = re.compile( r'^\*\*\* (\d+) failure' )
 
+#
+# Boost colours the confirmation report, and only that report, so both lines above arrive behind an
+# escape sequence whenever the run had a terminal - the report lines further up are never coloured,
+# which is why anchoring worked for them and not for these two. Of the logs in this tree, 200 of
+# the 207 saying 'No errors detected' and 21 of the 23 carrying a failure count were missed
+#
+# A capture taken by --run reads a pipe and Boost emits no colour into it, so this only ever adds
+# signal to logs make or an operator produced. Stripped for every line rather than tolerated in
+# these two patterns, since an escape can precede any of them
+#
+
+ANSI_RE = re.compile( r'\x1b\[[0-9;]*[A-Za-z]' )
+
 UTF_FLAGS = [
     '--log_level=test_suite',
     '--catch_system_errors=no',
@@ -116,7 +129,7 @@ def parse_run( text ):
 
     for line in text.split( '\n' ):
 
-        stripped = line.rstrip()
+        stripped = ANSI_RE.sub( '', line ).rstrip()
 
         if in_skipped:
             if stripped.startswith( '    ' ) and stripped.strip():
@@ -466,19 +479,57 @@ def compare( before, after, unstable, unmeasured = None ):
             failures.append( 'ASSERTION COUNT CHANGED: %s (%s -> %s)' % (
                 name, a.get( 'assertions' ), b.get( 'assertions' ) ) )
 
+    #
+    # Everything above this point is differential, and a module the baseline never saw has nothing
+    # to be differed against - its cases are absent from the intersection and so is the module. A
+    # round which adds a module can therefore fail inside it in complete silence, and every layer
+    # of this feature has added one. That is how a gate read clean with utf_baselib_h2client2
+    # exiting 201
+    #
+    # So the two below - the case outcomes, and the module's own verdict - are absolute, read from
+    # the after side alone. What makes that safe is that each rests on something the run actually
+    # printed rather than on the absence of it; exit is the one signal which cannot, and it is
+    # left differential further down
+    #
+
     for module, record in sorted( after.items() ):
+
         if record.get( 'incomplete' ):
             failures.append( 'MODULE %s left %d case(s) incomplete: %s' % (
                 module, len( record[ 'incomplete' ] ), ', '.join( record[ 'incomplete' ][ :5 ] ) ) )
 
+        #
+        # skipped is a verdict in its own right and a change to it is caught differentially above.
+        # incomplete already has the message just above and is not reported twice here
+        #
+
+        for name in sorted( record.get( 'cases', {} ) ):
+            outcome = record[ 'cases' ][ name ].get( 'outcome' )
+            if outcome not in ( 'passed', 'skipped', 'incomplete' ):
+                failures.append( 'CASE DID NOT PASS: %s (%s, in %s)' % ( name, outcome, module ) )
+
+        #
+        # The module's own verdict, which is the only one a confirmation-level log carries at all.
+        # Once the escapes are stripped clean stops being an absence - across the 312 run logs in
+        # this tree only 29 are unclean and every one of them has a real failure behind it - so it
+        # can be read from the after side alone. A module which reported nothing is covered too,
+        # which is what a timeout or a truncated capture looks like
+        #
+        # One message per module: a failure count always implies the module was not clean
+        #
+
+        if record.get( 'failures' ):
+            failures.append( 'MODULE REPORTED FAILURES: %s (%s)' % ( module, record[ 'failures' ] ) )
+        elif not record.get( 'clean' ):
+            failures.append( 'MODULE DID NOT REPORT CLEAN: %s (and printed no failure count)'
+                             % module )
+
     #
-    # exit, clean and failures are module-wide signals parse_run captures and compare() read none
-    # of them. They are all a comparison has when the run printed no case verdicts, and they are
-    # the backstop for every case the fallthrough above had to score
-    #
-    # All three are compared differentially, never against zero: a --parse-logs snapshot has no
-    # exit at all, and utf_baselib_jni exits 200 on some hosts after every one of its cases has
-    # passed, so only a change between the two sides is a difference worth reporting
+    # exit is the one module-wide signal which still cannot be read from a single side, because it
+    # does not distinguish a bad value from a benign one. A --parse-logs snapshot has none at all,
+    # and utf_baselib_jni exits 200 on some hosts having reported no errors and run no cases, so
+    # only a change between the two sides means anything. The module's own verdict above is what
+    # covers a new module exiting non-zero, and it does so without this ambiguity
     #
 
     for module in sorted( set( before ) & set( after ) ):
@@ -489,12 +540,6 @@ def compare( before, after, unstable, unmeasured = None ):
             if old[ 'exit' ] != new[ 'exit' ]:
                 failures.append( 'MODULE EXIT CHANGED: %s (%s -> %s)' % (
                     module, old[ 'exit' ], new[ 'exit' ] ) )
-
-        if bool( old.get( 'clean' ) ) != bool( new.get( 'clean' ) ) or \
-                old.get( 'failures' ) != new.get( 'failures' ):
-            failures.append( 'MODULE VERDICT CHANGED: %s (clean %s -> %s, failures %s -> %s)' % (
-                module, bool( old.get( 'clean' ) ), bool( new.get( 'clean' ) ),
-                old.get( 'failures' ), new.get( 'failures' ) ) )
 
     return failures
 
