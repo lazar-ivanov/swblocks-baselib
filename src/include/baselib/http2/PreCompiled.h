@@ -18,6 +18,7 @@
 #define __BL_HTTP2_PRECOMPILED_H_
 
 #include <baselib/http2/Globals.h>
+#include <baselib/http2/Http2Profile.h>
 
 /*
  * The HTTP/2 umbrella. Each slice which adds an http2/ header appends its #include above, in the
@@ -31,7 +32,5 @@
  * Optional dependencies like OpenSSL should not be added to the
  * pre-compiled headers
  */
-
-#include <baselib/http2/Http2Profile.h>
 
 #endif /* __BL_HTTP2_PRECOMPILED_H_ */
