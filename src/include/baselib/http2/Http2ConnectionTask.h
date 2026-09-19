@@ -995,6 +995,40 @@ namespace bl
                 BL_NOEXCEPT_END()
             }
 
+            /**
+             * @brief Closes every live stream, deciding retryability per stream
+             *
+             * Design 5.4's third limb is "the connection failed before any byte of the request was
+             * written", and isHeadersProduced is exactly that fact: a stream whose opening header
+             * block is still in the header block queue - which is what a submit made while a write
+             * was in flight leaves behind - has had nothing of it put on the wire, so it is
+             * PROVABLY unprocessed and the layer above may replay it. closeSubmissions( ) already
+             * says the same thing one step earlier, for a command which never reached a stream
+             *
+             * The flag is the conservative side of the line and not a guess: a block which WAS
+             * handed to a write, and that write then failed part way, is not provably unwritten,
+             * and such a stream stays non-retryable
+             */
+
+            void closeAllStreamsUnwrittenRetryable(
+                SAA_in              const eh::error_code&                       errorCode
+                ) NOEXCEPT
+            {
+                BL_NOEXCEPT_BEGIN()
+
+                while( ! m_streams.empty() )
+                {
+                    const auto it = m_streams.begin();
+
+                    const auto handle = it -> first;
+                    const bool isRetryable = ! it -> second.isHeadersProduced;
+
+                    closeStream( handle, errorCode, isRetryable );
+                }
+
+                BL_NOEXCEPT_END()
+            }
+
             /*************************************************************************************
              * The session event queue, drained after every feed( ) and after every write
              */
@@ -1317,9 +1351,11 @@ namespace bl
             /**
              * @brief The peer went away without a GOAWAY, or after one
              *
-             * Every stream still live was written and may have been processed, so none of them is
-             * provably unprocessed and none is retryable - that is the rule of design 5.4 and not
-             * a pessimism. A stream the peer DID prove unprocessed, by putting it above a GOAWAY's
+             * A stream whose header block reached a write may have been processed, so it is not
+             * provably unprocessed and it is not retryable - that is the rule of design 5.4 and
+             * not a pessimism. A stream whose block never reached one is the rule's third limb and
+             * IS retryable, which is what closeAllStreamsUnwrittenRetryable( ) decides per stream.
+             * A stream the peer DID prove unprocessed, by putting it above a GOAWAY's
              * last-stream-id, was already closed with its retryable flag when the GOAWAY arrived
              */
 
@@ -1327,9 +1363,8 @@ namespace bl
             {
                 publishState( ConnectionState::Draining );
 
-                closeAllStreams(
-                    eh::errc::make_error_code( eh::errc::connection_aborted ),
-                    false /* isRetryable */
+                closeAllStreamsUnwrittenRetryable(
+                    eh::errc::make_error_code( eh::errc::connection_aborted )
                     );
 
                 closeSubmissions();
@@ -2139,7 +2174,7 @@ namespace bl
                     eh::error_code( asio::error::operation_aborted ) :
                     eh::errc::make_error_code( eh::errc::connection_aborted );
 
-                closeAllStreams( errorCode, false /* isRetryable */ );
+                closeAllStreamsUnwrittenRetryable( errorCode );
 
                 publishState( ConnectionState::Closed );
 
