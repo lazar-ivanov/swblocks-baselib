@@ -70,11 +70,26 @@ until this is reopened:
     - **Still owed:** build and run `utf_baselib_h2profiles` under `BL_USE_OPENSSL_1X=1`. Three
       things only that run can settle. First, that the entry point really does take the
       `NotSupportedException` branch there - the `else` arm of that case never executes on 3.5.4.
-      Second, that `SSL_CIPHER_get_kx_nid` and `SSL_CIPHER_is_aead` classify the same suites the
-      same way, which is a property of the linked OpenSSL and not of this source. Third, that the
-      three suites `TlsClientContext_NegotiatedParametersFloorTests` names -
-      `AES128-GCM-SHA256`, `ECDHE-RSA-AES128-SHA` and `ECDHE-RSA-AES128-GCM-SHA256` - are
-      resolvable there; the case fails with a clear message naming the suite if one is not.
+      Second, that `SSL_CIPHER_get_kx_nid`, `SSL_CIPHER_get_auth_nid` and `SSL_CIPHER_is_aead`
+      classify the same suites the same way, which is a property of the linked OpenSSL and not of
+      this source. Third, that the four suites `TlsClientContext_NegotiatedParametersFloorTests`
+      names - `AES128-GCM-SHA256`, `ECDHE-RSA-AES128-SHA`, `ADH-AES128-GCM-SHA256` and
+      `ECDHE-RSA-AES128-GCM-SHA256` - are resolvable there; the case fails with a clear message
+      naming the suite if one is not. `ADH-AES128-GCM-SHA256` is the one of the four most likely
+      not to be, since it is reachable only through the `@SECLEVEL=0` the test context appends.
+    - **The L3 review round added a third axis to the floor, and exactly one API to this debt.**
+      `SSL_CIPHER_get_auth_nid`, with `NID_auth_rsa` / `NID_auth_ecdsa` / `NID_auth_dss` /
+      `NID_auth_any`, was read in the dist's own 3.5.4 headers like every entry point before it -
+      the declaration at `ssl.h:1645`, one line below `SSL_CIPHER_get_kx_nid`, and the four NIDs
+      in `obj_mac.h` - and **nothing was read or inferred for 1.1.1w**. What can honestly be said
+      about that flavor with no header for it is only this: the dist's own `util/libssl.num`
+      stamps `SSL_CIPHER_get_auth_nid`, `SSL_CIPHER_get_kx_nid` and `SSL_CIPHER_is_aead` with one
+      and the same version, and `ssl_ciph.c` implements the three adjacently off a table each, so
+      the new accessor carries **the same** availability question as the two the existing
+      `OPENSSL_VERSION_NUMBER >= 0x10100000L` guard already assumed, rather than a new one. It is
+      declared inside that same block. The `!aNULL:!eNULL` the builder now appends to the TLS 1.2
+      list adds no API at all - it is cipher-list text, and the hardened default list has carried
+      both tokens on every flavor since `ae6f305` in 2018.
   - **S3.6 has landed** - `crypto/TlsClientHello.h`, the ClientHello parser and the JA3 and JA4
     fingerprints. It is the least version-sensitive thing in this list and it still owes the same
     run:

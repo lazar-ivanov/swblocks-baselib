@@ -448,8 +448,8 @@ namespace bl
                  * Everything below is the TLS client profile support of
                  * notes/plans/http2-design.md 3.3 and it is declared only from OpenSSL 1.1.0
                  * onwards, which is where the APIs it is built on exist:
-                 * ::SSL_CIPHER_get_kx_nid and ::SSL_CIPHER_is_aead for the floor check and
-                 * ::SSL_CTX_set_ciphersuites for the TLS 1.3 suite list
+                 * ::SSL_CIPHER_get_kx_nid, ::SSL_CIPHER_get_auth_nid and ::SSL_CIPHER_is_aead for
+                 * the floor check and ::SSL_CTX_set_ciphersuites for the TLS 1.3 suite list
                  *
                  * The feature itself is devenv7 and later (D1), i.e. OpenSSL 3.5.4 or 1.1.1w, so
                  * nothing which can reach these names is compiled on an older branch; declaring
@@ -557,10 +557,29 @@ namespace bl
                  *
                  * The empty list is a valid answer and means the profile named no suites for that
                  * protocol, which the caller reads as "keep the library default"
+                 *
+                 * appendExclusions asks for the library's own exclusion tokens to be appended
+                 * after the profile's names, so a profile cannot offer an unauthenticated or a
+                 * NULL suite in the first place - the same '!aNULL:!eNULL' the hardened default
+                 * list above already carries. They are the builder's own text rather than a
+                 * profile's, so the name allowlist is untouched by them; and they are the outer
+                 * of the two layers which keep an anonymous suite out, the inner being the
+                 * authentication axis of the floor check below
+                 *
+                 * Only the TLS 1.2 list asks for them. ::SSL_CTX_set_ciphersuites does not speak
+                 * the cipher list language at all - it splits the string on ':' and looks up each
+                 * element as a suite name, silently ignoring one it does not know - so the tokens
+                 * would be dead text in the TLS 1.3 list, and there is nothing there for them to
+                 * remove either, every TLS 1.3 suite reporting NID_auth_any
+                 *
+                 * Note that the tokens are appended only to a non-empty list, because an empty
+                 * one is what tells the caller to keep the library default, and a list of nothing
+                 * but exclusions would not be empty
                  */
 
                 static auto buildCipherListFromNames(
-                    SAA_in              const std::vector< std::string >&       names
+                    SAA_in              const std::vector< std::string >&       names,
+                    SAA_in              const bool                              appendExclusions
                     )
                     -> std::string
                 {
@@ -586,6 +605,11 @@ namespace bl
                         result += name;
                     }
 
+                    if( appendExclusions && ! result.empty() )
+                    {
+                        result += ":!aNULL:!eNULL";
+                    }
+
                     return result;
                 }
 
@@ -593,10 +617,11 @@ namespace bl
                  * @brief Whether a negotiated protocol version and cipher suite meet the library
                  * floor (D4)
                  *
-                 * The floor is TLS 1.2 or better, with either a TLS 1.3 suite or an ephemeral key
-                 * exchange and an AEAD cipher. It is strictly stronger than the cipher blocklist
-                 * of RFC 9113 Appendix A, which is why this library never has to raise
-                 * INADEQUATE_SECURITY of its own accord
+                 * The floor is TLS 1.2 or better, with an ephemeral key exchange, certificate
+                 * authentication and an AEAD cipher - three axes, all of which a TLS 1.3 suite
+                 * satisfies. It is strictly stronger than the cipher blocklist of RFC 9113
+                 * Appendix A, which is why this library never has to raise INADEQUATE_SECURITY of
+                 * its own accord
                  *
                  * The version comparison is guarded by the major version byte, which is the idiom
                  * OpenSSL's own tls1.h uses (SSL_get_secure_renegotiation_support and the macros
@@ -604,9 +629,29 @@ namespace bl
                  * DTLS 1.0 is 0xFEFF - and would sail through a bare >= comparison
                  *
                  * A TLS 1.3 suite is not special cased. OpenSSL reports a key exchange of
-                 * NID_kx_any for one, because TLS 1.3 settles the key exchange outside the suite,
-                 * and every TLS 1.3 suite is AEAD - which is asserted by a handshake rather than
-                 * assumed here
+                 * NID_kx_any and an authentication of NID_auth_any for one, because TLS 1.3
+                 * settles both outside the suite, and every TLS 1.3 suite is AEAD - which is
+                 * asserted by a handshake rather than assumed here
+                 *
+                 * The authentication axis is what makes the Appendix A claim above true rather
+                 * than nearly true: the anonymous AEAD suites that appendix names - among them
+                 * TLS_DH_anon_WITH_AES_128_GCM_SHA256 and its 256-bit sibling, which OpenSSL
+                 * spells ADH-AES128-GCM-SHA256 and ADH-AES256-GCM-SHA384 - are ephemeral and AEAD
+                 * and pass the other two axes. OpenSSL's security level 2 refuses an
+                 * unauthenticated suite as well, whatever its strength, and every context this
+                 * library builds pins that level - but the level is not where D4 says the check
+                 * lives, and a floor which asked nothing about authentication would be resting on
+                 * a behaviour of OpenSSL rather than on itself
+                 *
+                 * The axis is written as the set of authentications which are accepted rather
+                 * than as a refusal of NID_auth_null, so that it does not depend on which NID a
+                 * given OpenSSL maps an unauthenticated suite to, and so that an authentication
+                 * method this library has never seen fails closed. The four accepted values are
+                 * the certificate ones: NID_auth_rsa, NID_auth_ecdsa, NID_auth_dss - which the
+                 * hardened default list above really does offer, as DHE-DSS-AES128-GCM-SHA256 -
+                 * and NID_auth_any for TLS 1.3. The PSK and SRP families never reach this test:
+                 * their key exchanges are NID_kx_psk, NID_kx_dhe_psk, NID_kx_ecdhe_psk,
+                 * NID_kx_rsa_psk and NID_kx_srp, and none of those is accepted above
                  */
 
                 static bool doNegotiatedParametersMeetFloor(
@@ -634,7 +679,18 @@ namespace bl
                         NID_kx_dhe == keyExchange ||
                         NID_kx_any == keyExchange;
 
-                    return isEphemeralKeyExchange && 0 != ::SSL_CIPHER_is_aead( cipher );
+                    const int authentication = ::SSL_CIPHER_get_auth_nid( cipher );
+
+                    const bool isCertificateAuthentication =
+                        NID_auth_rsa == authentication ||
+                        NID_auth_ecdsa == authentication ||
+                        NID_auth_dss == authentication ||
+                        NID_auth_any == authentication;
+
+                    return
+                        isEphemeralKeyExchange &&
+                        isCertificateAuthentication &&
+                        0 != ::SSL_CIPHER_is_aead( cipher );
                 }
 
                 /**
@@ -722,10 +778,16 @@ namespace bl
                      *
                      * Both lists are validated before either is applied, so a bad name in the
                      * TLS 1.3 list cannot leave a half configured context behind
+                     *
+                     * The TLS 1.2 list carries the library's exclusion tokens after the profile's
+                     * names and the TLS 1.3 one does not; buildCipherListFromNames says why
                      */
 
-                    const auto cipherListTls12 = buildCipherListFromNames( profile.cipherSuitesTls12 );
-                    const auto cipherListTls13 = buildCipherListFromNames( profile.cipherSuitesTls13 );
+                    const auto cipherListTls12 =
+                        buildCipherListFromNames( profile.cipherSuitesTls12, true /* appendExclusions */ );
+
+                    const auto cipherListTls13 =
+                        buildCipherListFromNames( profile.cipherSuitesTls13, false /* appendExclusions */ );
 
                     if( cipherListTls12.empty() )
                     {
