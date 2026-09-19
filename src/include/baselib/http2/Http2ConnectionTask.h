@@ -58,11 +58,15 @@ namespace bl
          * A value the caller copies into the task, for the same reason ClientConnectionConfig is
          * one: two connections under two profiles must not share it
          *
-         * THE THREE DURATIONS ARE OFF BY DEFAULT WHERE DESIGN 5.7 GIVES THEM NO OWNER HERE. The
+         * THE DURATIONS ARE OFF BY DEFAULT WHERE DESIGN 5.7 GIVES THEM NO OWNER HERE. The
          * keepalive PING is optional by design, and the connection idle lifetime is the POOL's
          * (design 5.4 lists it as a pool policy knob and 5.7's table names the pool as its owner),
          * so this task takes it as a parameter rather than inventing the five minutes the table
          * quotes. A special or non-positive duration disables the timer it belongs to
+         *
+         * drainTimeout is the exception and is ON by default: it is this task's own backstop
+         * rather than a policy anyone above it sets, and a connection with it off can wait on a
+         * write the peer controls for as long as TCP will let it - see armDrainDeadline( )
          */
 
         class Http2ConnectionConfig FINAL
@@ -77,6 +81,16 @@ namespace bl
                  */
 
                 DEFAULT_PING_REPLY_TIMEOUT_IN_SECONDS       = 15L,
+
+                /**
+                 * How long the GOAWAY of a close may take to reach a peer before the connection
+                 * is cancelled instead - see armDrainDeadline( ). Ten seconds is the SETTINGS
+                 * acknowledgement deadline of design 5.7, and for the same reason: a peer which
+                 * cannot absorb a few hundred bytes of control frame in that time is gone,
+                 * whatever its socket still says
+                 */
+
+                DEFAULT_DRAIN_TIMEOUT_IN_SECONDS           = 10L,
             };
 
             enum : std::size_t
@@ -96,6 +110,7 @@ namespace bl
             time::time_duration                                                 keepAliveInterval;
             time::time_duration                                                 keepAlivePingReplyTimeout;
             time::time_duration                                                 idleTimeout;
+            time::time_duration                                                 drainTimeout;
 
             cpp::ScalarTypeIniter< std::size_t >                                readBufferSize;
 
@@ -112,7 +127,8 @@ namespace bl
                 keepAlivePingReplyTimeout(
                     time::seconds( DEFAULT_PING_REPLY_TIMEOUT_IN_SECONDS )
                     ),
-                idleTimeout( time::neg_infin )
+                idleTimeout( time::neg_infin ),
+                drainTimeout( time::seconds( DEFAULT_DRAIN_TIMEOUT_IN_SECONDS ) )
             {
                 readBufferSize = DEFAULT_READ_BUFFER_SIZE;
             }
@@ -326,6 +342,7 @@ namespace bl
             cpp::SafeUniquePtr< asio::deadline_timer >                          m_keepAliveTimer;
             cpp::SafeUniquePtr< asio::deadline_timer >                          m_pingDeadlineTimer;
             cpp::SafeUniquePtr< asio::deadline_timer >                          m_idleTimer;
+            cpp::SafeUniquePtr< asio::deadline_timer >                          m_drainTimer;
 
             cpp::ScalarTypeIniter< bool >                                       m_isWriteInFlight;
             cpp::ScalarTypeIniter< bool >                                       m_isPrefaceWritePending;
@@ -1264,6 +1281,8 @@ namespace bl
 
                 cancelKeepAliveTimers();
                 cancelIdleTimer();
+
+                armDrainDeadline();
             }
 
             /*************************************************************************************
@@ -1847,7 +1866,97 @@ namespace bl
                     m_idleTimer -> cancel( ec );
                 }
 
+                if( m_drainTimer )
+                {
+                    m_drainTimer -> cancel( ec );
+                }
+
                 BL_NOEXCEPT_END()
+            }
+
+            /**
+             * @brief Bounds the drain, so that a close is never waiting on a write the peer
+             * controls
+             *
+             * THE CLOSE IS TAKEN THROUGH THE WRITE PUMP AND ONLY THROUGH IT: chkFinishClose( ) is
+             * called from pumpWrites( ), and pumpWrites( ) returns immediately while a write is in
+             * flight. That is fine for the GOAWAY and for a peer whose socket accepts the few
+             * hundred bytes of it - but a peer which stops reading with our send buffer full
+             * leaves the async_write outstanding for as long as TCP keeps retransmitting, and
+             * against a zero-window peer indefinitely. Nothing else would end the task: the idle
+             * timer's closeGracefully( ), a request's cancel and a connection error all end in
+             * pumpWrites( ) returning
+             *
+             * So the drain has a deadline of its own, armed wherever m_isCloseWhenDrained is set
+             * and disarmed by cancelTimers( ) once the close is taken. On expiry the task is
+             * cancelled, which is the PING deadline's ending and for the same reason - a peer
+             * which is not reading will not read a GOAWAY either
+             */
+
+            void armDrainDeadline()
+            {
+                /*
+                 * m_drainTimer is created here and nowhere else, so its presence is what says the
+                 * drain has already been bounded - a connection drains once
+                 */
+
+                if(
+                    m_drainTimer ||
+                    ! isEnabled( m_h2config.drainTimeout ) ||
+                    base_type::isClosing()
+                    )
+                {
+                    return;
+                }
+
+                m_drainTimer = base_type::createTimer();
+
+                m_drainTimer -> expires_from_now( m_h2config.drainTimeout );
+
+                base_type::beginOperation();
+
+                m_drainTimer -> async_wait(
+                    cpp::bind(
+                        &this_type::onDrainDeadline,
+                        self_ref_t::acquireRef( this ),
+                        asio::placeholders::error
+                        )
+                    );
+            }
+
+            void onDrainDeadline( SAA_in const eh::error_code& ec ) NOEXCEPT
+            {
+                BL_TASKS_HANDLER_BEGIN()
+
+                if( ! ec && ! base_type::isClosing() )
+                {
+                    BL_LOG(
+                        Logging::debug(),
+                        BL_MSG()
+                            << "An HTTP/2 connection to '"
+                            << base_type::key().host
+                            << "' did not drain within "
+                            << m_h2config.drainTimeout
+                        );
+
+                    /*
+                     * Every live stream is failed and the task is cancelled, which completes the
+                     * connection FAILED - it did not end because it was done, it ended because the
+                     * peer stopped taking what we had already decided to say
+                     */
+
+                    closeAllStreamsUnwrittenRetryable(
+                        eh::errc::make_error_code( eh::errc::timed_out )
+                        );
+
+                    closeSubmissions();
+
+                    publishState( ConnectionState::Closed );
+
+                    TaskBase::requestCancelInternal();
+                }
+
+                BL_TASKS_HANDLER_END_MULTIOP()
             }
 
             /*************************************************************************************
@@ -1877,6 +1986,8 @@ namespace bl
 
                 cancelTimers();
                 closeSubmissions();
+
+                armDrainDeadline();
 
                 if( m_session && ! m_session -> isClosed() )
                 {
