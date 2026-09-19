@@ -3,3 +3,6 @@
 --log_level=message --run_test=Http2Globals_FrameTypesAndFlagsTests
 --log_level=message --run_test=Http2Globals_SettingsAndErrorCodesTests
 --log_level=message --run_test=Http2Globals_ProtocolConstantsAndLimitsTests
+
+--log_level=message --run_test=Http2ErrorInfo_AttachAndReadTests
+--log_level=message --run_test=Http2ErrorInfo_DistinctTagsTests
