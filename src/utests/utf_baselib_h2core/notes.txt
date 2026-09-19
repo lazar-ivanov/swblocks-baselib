@@ -6,3 +6,19 @@
 
 --log_level=message --run_test=Http2ErrorInfo_AttachAndReadTests
 --log_level=message --run_test=Http2ErrorInfo_DistinctTagsTests
+
+--log_level=message --run_test=Hpack_IntegerRepresentationTests
+--log_level=message --run_test=Hpack_HuffmanCodeTableTests
+--log_level=message --run_test=Hpack_HuffmanCodingAndPaddingTests
+--log_level=message --run_test=Hpack_StaticTableTests
+--log_level=message --run_test=Hpack_DynamicTableAccountingTests
+--log_level=message --run_test=Hpack_RepresentationVectorsTests
+--log_level=message --run_test=Hpack_RequestVectorsWithoutHuffmanTests
+--log_level=message --run_test=Hpack_RequestVectorsWithHuffmanTests
+--log_level=message --run_test=Hpack_ResponseVectorsWithoutHuffmanTests
+--log_level=message --run_test=Hpack_ResponseVectorsWithHuffmanTests
+--log_level=message --run_test=Hpack_CompressionErrorTests
+--log_level=message --run_test=Hpack_SizeUpdateTests
+--log_level=message --run_test=Hpack_DecodedSizeLimitTests
+--log_level=message --run_test=Hpack_DynamicTableAfterMidBlockFailureTests
+--log_level=message --run_test=Hpack_EncoderPolicyTests
