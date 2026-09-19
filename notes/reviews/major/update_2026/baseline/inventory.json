@@ -3563,7 +3563,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 877,
+   "line": 876,
    "module": "utf_baselib_httpclient",
    "name": "ClientContracts_BodySourceAndSinkStreamingTests",
    "namespaces": []
@@ -3575,7 +3575,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1277,
+   "line": 1365,
    "module": "utf_baselib_httpclient",
    "name": "ClientContracts_ConnectionKeyAndPoolTests",
    "namespaces": []
@@ -3587,19 +3587,19 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1409,
+   "line": 1497,
    "module": "utf_baselib_httpclient",
    "name": "ClientContracts_DriverFactoryDispatchTests",
    "namespaces": []
   },
   {
-   "body_sha": "74315c544091dae7f106e36aa407c8e3",
+   "body_sha": "7d2e024bb0ce6834008b341571fd417d",
    "doc_sha": null,
    "file": "utf_baselib_httpclient/TestClientContracts.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1163,
+   "line": 1162,
    "module": "utf_baselib_httpclient",
    "name": "ClientContracts_NegotiatedAlpnReachesTheResponseTests",
    "namespaces": []
@@ -3611,13 +3611,13 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 816,
+   "line": 815,
    "module": "utf_baselib_httpclient",
    "name": "ClientContracts_ReplayabilityIsAQueryOnTheRequestTests",
    "namespaces": []
   },
   {
-   "body_sha": "7556c6471621c985624e0d39e63312b7",
+   "body_sha": "ab3f65242b9d2b14a47cef9f7352ab7c",
    "doc_sha": null,
    "file": "utf_baselib_httpclient/TestClientContracts.h",
    "fixture": null,
@@ -3629,13 +3629,25 @@
    "namespaces": []
   },
   {
-   "body_sha": "c0bb9cfeab4e450b5ae27fc89be2f330",
+   "body_sha": "dee269310520e73ca352b65535ddb3d9",
    "doc_sha": null,
    "file": "utf_baselib_httpclient/TestClientContracts.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1052,
+   "line": 1276,
+   "module": "utf_baselib_httpclient",
+   "name": "ClientContracts_ResponseCannotContradictItselfTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "25fe234e3d0c495081232cae52b34376",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestClientContracts.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1051,
    "module": "utf_baselib_httpclient",
    "name": "ClientContracts_ResponseStatusCrossesTheSinkTests",
    "namespaces": []
@@ -3647,7 +3659,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 955,
+   "line": 954,
    "module": "utf_baselib_httpclient",
    "name": "ClientContracts_StubConnectionAndEventSinkTests",
    "namespaces": []
@@ -10777,7 +10789,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 677,
+   "line": 680,
    "module": "utf_baselib2",
    "name": "Uri_AuthorityOriginAndTargetTests",
    "namespaces": []
@@ -10789,9 +10801,21 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 249,
+   "line": 252,
    "module": "utf_baselib2",
    "name": "Uri_IpLiteralTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "f70c4974fbed04cd19a2d40386f1d5d3",
+   "doc_sha": null,
+   "file": "utf_baselib2/TestUri.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1021,
+   "module": "utf_baselib2",
+   "name": "Uri_LocaleIndependenceTests",
    "namespaces": []
   },
   {
@@ -10801,7 +10825,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 176,
+   "line": 179,
    "module": "utf_baselib2",
    "name": "Uri_NormalizationTests",
    "namespaces": []
@@ -10813,7 +10837,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 798,
+   "line": 801,
    "module": "utf_baselib2",
    "name": "Uri_OriginRequiresAbsoluteUriTests",
    "namespaces": []
@@ -10825,7 +10849,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 32,
+   "line": 35,
    "module": "utf_baselib2",
    "name": "Uri_ParseComponentsTests",
    "namespaces": []
@@ -10837,7 +10861,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 597,
+   "line": 600,
    "module": "utf_baselib2",
    "name": "Uri_ResolutionEdgeCaseTests",
    "namespaces": []
@@ -10849,7 +10873,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 526,
+   "line": 529,
    "module": "utf_baselib2",
    "name": "Uri_Rfc3986AbnormalResolutionTests",
    "namespaces": []
@@ -10861,7 +10885,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 485,
+   "line": 488,
    "module": "utf_baselib2",
    "name": "Uri_Rfc3986NormalResolutionTests",
    "namespaces": []
@@ -10873,7 +10897,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 353,
+   "line": 356,
    "module": "utf_baselib2",
    "name": "Uri_StrictnessTests",
    "namespaces": []
@@ -11643,6 +11667,14 @@
    "module": "utf_baselib2",
    "ns": "<anonymous>",
    "sha": "cd2cc2fede5414bb5fc310bab9c1b310"
+  },
+  {
+   "file": "utf_baselib2/TestUri.h",
+   "label": "namespace uri",
+   "line": 909,
+   "module": "utf_baselib2",
+   "ns": "utest",
+   "sha": "adb02625611f8b758af16f29d86b1e7e"
   },
   {
    "file": "utf_baselib_apps/TestBlTool.h",
@@ -15506,7 +15538,10 @@
      "includes": [
       "<baselib/core/Uri.h>",
       "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<locale>",
       "<string>",
+      "<vector>",
       "<utests/baselib/Utf.h>"
      ],
      "path": "utf_baselib2/TestUri.h"
@@ -16494,6 +16529,7 @@
     "ClientContracts_NegotiatedAlpnReachesTheResponseTests",
     "ClientContracts_ReplayabilityIsAQueryOnTheRequestTests",
     "ClientContracts_RequestAndResponseRoundTripTests",
+    "ClientContracts_ResponseCannotContradictItselfTests",
     "ClientContracts_ResponseStatusCrossesTheSinkTests",
     "ClientContracts_StubConnectionAndEventSinkTests",
     "ContentDecoder_BombCapsTripTests",
@@ -18043,6 +18079,13 @@
    "module": "utf_baselib2",
    "name": "<anonymous>",
    "sha": "29ca6a4577f2ff4906f25b01c63a7ac8"
+  },
+  {
+   "file": "utf_baselib2/TestUri.h",
+   "line": 907,
+   "module": "utf_baselib2",
+   "name": "utest",
+   "sha": "fc4f3ad7dd0f8420a99e658529b2e6d4"
   },
   {
    "file": "utf_baselib_apps/TestBlTool.h",
