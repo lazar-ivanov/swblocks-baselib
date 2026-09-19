@@ -628,7 +628,9 @@ All of this is `bl::http2`, sans-I/O, role-neutral. RFC 9113 throughout, RFC 754
   error.
 - Decoder: dynamic table size updates only at the start of a block and never above what we advertised;
   anything else is `COMPRESSION_ERROR`.
-- **Bounded work.** Cumulative decoded size is checked against our `SETTINGS_MAX_HEADER_LIST_SIZE`
+- **Bounded work.** Cumulative decoded size is checked against the section 4.6 row - our
+  `SETTINGS_MAX_HEADER_LIST_SIZE` when the profile advertises more than the row, the row otherwise,
+  and in force from construction because that setting is advisory (RFC 9113 section 6.5.2) -
   *during* decoding. On overflow the decoder keeps consuming the block - the dynamic table must stay
   in sync - but discards the fields, and the stream is reset. Separately, compressed header-block
   bytes and `CONTINUATION` frame count per block are capped; exceeding either is a connection error
@@ -699,7 +701,7 @@ A client needs fewer defenses than a server, not none. All are configurable, wit
 
 | Limit | Default | On breach |
 |---|---|---|
-| Decoded header list size | our `SETTINGS_MAX_HEADER_LIST_SIZE` | stream reset; block still consumed |
+| Decoded header list size | 64 KB, or our `SETTINGS_MAX_HEADER_LIST_SIZE` when the profile advertises more | stream reset; block still consumed |
 | Compressed header block bytes | 256 KB | connection error, `ENHANCE_YOUR_CALM` |
 | `CONTINUATION` frames per block | 64 | connection error |
 | Queued control-frame bytes (acks owed to a peer that will not read) | 64 KB | connection error |
