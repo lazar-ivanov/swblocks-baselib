@@ -412,3 +412,288 @@ range tries every endpoint in turn is from the Asio documentation as remembered.
 - **Windows**, and the **1.1.1w flavor**, whose debt the deferral record states correctly for the
   one new OpenSSL entry point.
 - **The object sizes** were not re-measured; the h2client3 "0.6 MB of headroom" is the lane's.
+
+## Second pass: the fix round `97fd06c..013ed0b`, tip `013ed0b` (2026-09-19)
+
+**Verdict: the six findings are carried out as described and every departure from what was
+specified is the right call; nothing new in the production code; three things unresolved, all
+about evidence rather than behaviour, and one premise in the tooling merge which the tree does not
+support.** Read in full: the five merges' production diffs (`Http2ConnectionTask.h` 183/10,
+`Session.h` 53/4, `CryptoBase.h` 50/16, `Http1ConnectionTask.h` 39/4, `ClientConnectionTaskBase.h`
+5/3, comment-only), the six test diffs, the tooling diff and the whole of `utf_runlog.py` and
+`check_split.sh` around it, the design, plan and deferral-record diffs, and every commit message in
+the range. Two external sources were fetched and one local one read: OpenSSL's `openssl-3.5` branch
+`ssl/statem/statem_srvr.c` (for departure 3), Boost 1.90's `plain_report_formatter.ipp` from the
+devenv7 dist itself (for departure 5), and the two tracked runlog baselines, loaded read-only with
+`python3` to list their modules. Nothing was built and nothing was run; the module results
+(12/12, 9/9, 3/3, 67/67, 6/6 under both release toolchains) and the 973-case manifest are as
+reported, and the manifest diff shows exactly the two new cases and nothing lost.
+
+**Departure 1 - finding 1b: the doc amendment over arming at schedule time is the right call, 5.7
+now describes the code, and the deferral has no owner.** The row reads *Connect: TCP connected
+through preface - 60 s, per attempt*, and that is what the code does: armed in the connect
+completion handler (unchanged), disarmed when the opening write completes -
+`m_isPrefaceWritePending` is set in `onProtocolNegotiated` (`Http2ConnectionTask.h:2178`) and read
+on `onWrite`'s success path (`:1473-1484`), so a write which never completes is ended by the
+deadline and one which fails is ended by the handler with the base disarming from
+`onTaskStoppedNothrow` (`:642` in the base, unchanged) - and re-armed per attempt by the override,
+as before. The paragraph under the row states the front-end gap exactly, names the query as
+`all_matching`, the per-address multiplication and the retry's second 60 s, and records the
+schedule-time alternative as deferred with the reason, not rejected. On the merits the lane's
+ground is better than the finding's: `onConnectDeadline` is a per-task backstop for a phase the
+task owns, while a bound on "get me a connection" is a per-key policy which has to be weighed
+against the retry limb of 5.4 and the request's own 30-minute total - and that is the pool's, which
+does not exist yet. The process ground (the arming point lies in a module the lane's brief did not
+assign, so the change could not have been validated where it matters) is sound too.
+
+Two things follow from deferring and one of them is missing. Until S5.2 builds a pool-level bound,
+a black-holed origin holds a `Connecting` placeholder - and, by 5.4, every request for that key
+queued behind it - for `addresses x ~134 s`, twice on a TLS retry, with the request's 30-minute
+total the only bound. That is the cost of the deferral and it is acceptable; but S5.2's work order
+(plan section 7) carries nothing about it - grepped for "establish", "deadline", "schedule",
+"Connecting": the only hits are the placeholder sentence and the retry bullet. Design 5.7 says the
+bound "belongs with the retry policy, which design 5.4 gives to the pool"; neither 5.4's knob list
+nor S5.2's deliver line has it. A deferral with a reason and no ledger entry is half of what the
+house rule asks for. **Unresolved: one bullet in S5.2 - "an establishment bound across resolve,
+connect and retry, on the pool's `aioService()`, the way `TcpSslBaseTasks.h:120` builds its
+protocol timer; the connection task's own deadline starts at TCP connected (5.7)".** A nit beside
+it: `ClientConnectionTaskBase.h:521-523` still reads "Both are bounded by the operating system"
+with no multiplication and no pointer to 5.7, which now carries the number.
+
+**Departure 2 - finding 1c: bounding the drain rather than taking the PING path is right, and the
+flagged consequence is real, diagnostic only, and cheaply avoidable.** The reasoning checks.
+`H2Driver_SettingsAcknowledgementTimeoutTests` asserts `sawGoAway` (`TestHttp2ConnectionTask.h:662-679`),
+so a `SETTINGS_TIMEOUT` which cancelled the socket at once would have failed a pinned property -
+the GOAWAY first, RFC 9113 5.4.1's SHOULD - and the finding's own text had conceded that GOAWAY. And
+the two other setters of `m_isCloseWhenDrained` end in `pumpWrites` returning exactly as the error
+path does, so a fix on `SETTINGS_TIMEOUT` alone would have left the idle close, the GOAWAY-received
+close and a cancel's reset unbounded. There are exactly two setters and both arm the drain:
+`closeGracefully` (`:1983`, armed at `:1990` after `cancelTimers()` at `:1987`, which is the right
+order since `cancelTimers()` now cancels the drain timer too, `:1869-1872`) and
+`onConnectionErrorEvent` (`:1278`, armed at `:1285`). `armDrainDeadline` creates the timer once
+(`m_drainTimer ||` is the "a connection drains once" guard), on the strand, inside the accounting;
+the disarm path is `chkFinishClose` -> `beginClose()` -> the handler's `END_MULTIOP` ->
+`initiateClose()` -> `cancelTimers()` (`:2245-2255`), and the cancelled wait's own `END_MULTIOP`
+balances the `beginOperation()`. On the strand the two orders of "GOAWAY write completes" and
+"drain deadline fires" both resolve cleanly: `chkFinishClose` first makes `isClosing()` true and the
+later `onDrainDeadline` skips; the deadline first cancels, and the already-successful `onWrite`
+throws `operation_aborted` from `BL_TASKS_HANDLER_CHK_CANCEL_IMPL`. `DEFAULT_DRAIN_TIMEOUT_IN_SECONDS
+= 10L` (`:93`), on by default (`:131`), with the reason written at `:64-68` - the one duration here
+which is the task's own backstop rather than a policy from above, which is the right distinction.
+The row in 5.7 says the same and says the GOAWAY is still sent first wherever it can be, which is
+true on every path.
+
+The consequence the lane flagged is exactly as stated, and slightly worse than "the reason is lost".
+`onDrainDeadline` ends the task through `TaskBase::requestCancelInternal()` (the PING path's
+ending), so the write's abort is recorded as the task's first error **with `isCanceled()` true**,
+which `TcpConnectionEstablisherConnector::isExpectedException` (`TcpBaseTasks.h:1478-1488`)
+classifies as an *expected* exception: a peer which stopped reading is reported to the queue and to
+the log as a benign cancel, and `m_connectionErrorReason` is never thrown because `chkFinishClose`
+(`:2004-2044`) is never reached. The pool is not misled - `isFailed()` is true, `state()` is
+`Closed`, the streams carry `timed_out` - so it is Low, diagnostics and classification. The shape
+`chkFinishClose` already uses avoids it at no cost: in `onDrainDeadline`, `base_type::beginClose()`
+and then `BL_THROW` an `Http2ProtocolException` carrying `m_connectionErrorReason` when there is
+one and "did not drain" when there is not. The exception is not an abort, so it becomes the first
+error; `initiateClose()` then cancels the socket and the timers; the write's abort arrives after a
+first error and is not reported; `isCanceled()` stays false. Two notes, neither a defect:
+`onDrainDeadline`'s `closeAllStreamsUnwrittenRetryable( timed_out )` is a no-op in practice, since
+every path to `m_isCloseWhenDrained` has an empty stream table by then (the engine's `StreamClosed`
+events precede its `ConnectionError`, and the three callers of `closeGracefully` all test
+`m_streams.empty()`); and the drain deadline is unpinned, for a reason given under "evidence".
+
+**Departure 3 - finding 5.2: refusing a second call is the right shape, and the use-after-free
+argument is verified in OpenSSL's source, not just plausible.** `tls_handle_alpn`
+(`ssl/statem/statem_srvr.c:2243-2298` on the `openssl-3.5` branch, fetched) calls the callback at
+`:2250-2254` and then, after it has returned, reads the pointer it was handed **three times**:
+`OPENSSL_memdup( selected, selected_len )` at `:2258`, `memcmp( selected, ... )` at `:2273`, and a
+second `OPENSSL_memdup` at `:2290`. Those reads are on the handshake's own thread, so a list freed by
+`setAlpnServerPreference` on another thread between the callback's return and `:2290` is a
+use-after-free, and so is a free during any concurrent handshake's walk of the list inside the
+callback. Nothing in OpenSSL synchronises a context's ex_data against its handshakes, so there is no
+safe moment to free and therefore no safe replacement; the `BL_CHK` on the slot being null
+(`CryptoBase.h:1259-1276`) is the only correct answer short of a lock every ClientHello would take.
+The comment's phrasing - "OpenSSL reads it after the callback has returned" - is literally true of
+`:2258`. Two notes: the check reads the slot without the global lock, so two threads making the
+*first* call on one fresh context concurrently could both pass it - a misuse of a misuse, noted and
+not counted; and the refusal is unpinned (no case calls twice), also under "evidence". The citation
+half is right in all three places (`:1052-1070`, `:1532-1545`, the deferral record's item 3): 3.1's
+"MAY return" server is what NOACK models, 3.2's SHALL is what a conforming server owes, and the
+sentence a production server would need a second entry point is where it belongs.
+
+**Departure 4 - the 134 s figure is stated as this host's, not as a universal.** 5.7 says
+*"measured at 134 s on a Linux host with the default `tcp_syn_retries` of 6"*, which qualifies it by
+operating system and by the sysctl that produces it, and the sentence before it makes the general
+claim ("neither 60 s nor one number") rather than the number. The arithmetic is consistent: six
+retransmissions at 1, 2, 4, 8, 16 and 32 s and the final 64 s wait give 127 s nominal, and 134.4 s
+is that plus timer granularity and the connect call's own accounting - from memory of the Linux
+schedule, not measured here. One clause would close the last reading it admits: other operating
+systems use shorter SYN schedules (Windows retransmits twice, macOS for about 75 s - recalled, not
+verified), so the multiplication by address count is the point and the number is illustrative.
+Nit.
+
+**Departure 5 - the tooling change-set went past its brief in the right direction, and not far
+enough in the one that matters; and one of its premises is not in the tree.**
+
+*The wording coverage is complete.* Boost 1.90's `plain_report_formatter::test_unit_report_start`
+(`boost/test/impl/plain_report_formatter.ipp:107-116`, read from the devenv7 dist) chooses between
+exactly five strings - `has passed`, `was skipped`, `has timed out`, `was aborted`, `has failed` -
+and `REPORT_VERDICT` (`utf_runlog.py:73`) names all five. Covering all five rather than the two the
+brief named was right: `has timed out` would have fallen through the same way.
+
+*The `reported` guard is sound for what it guards.* A case with an `Entering`/`Leaving` pair and no
+recognised verdict is scored `unknown` when the run printed any verdict at all (`:198-201`), and
+`unknown` differs from every baseline outcome, so a wording drift on a baselined case surfaces as
+`OUTCOME CHANGED` instead of reading green. Keeping the `passed` default for a run which printed no
+verdicts is also right: make's own `UTF_FLAGS` (`projects/make/common.mk:204-205`) carry
+`--log_level=test_suite` and `--catch_system_errors=no` and **no `--report_level`**, so every log
+`check_split.sh` parses in its `--parse-logs` branch (`:206-213`) is at Boost's default `confirm`
+level, at which `test_unit_report_start` is never called for a case - the only lines are
+`*** No errors detected` or `*** N failure(s) ... detected` (`plain_report_formatter.ipp:170-200`).
+Flipping the default would indeed have reported 741 outcome changes on every such comparison.
+
+*The differential choice is right for `exit` and wrong for `clean` and `failures`, and its stated
+premise is not where it says it is.* `exit` must be differential: a `--parse-logs` snapshot has none,
+and `utf_baselib_jni` does exit 200 on this host after every case passes - a known host property,
+recorded in this project's memory. But "utf_baselib_jni exits 200 in both committed baselines" is
+not true of the tree: the two tracked baselines, `runlog.json` and `runlog-pass2.json`, hold the
+same 17 modules, all 741 cases `passed`, **every module at exit 0, and no `utf_baselib_jni` at all**
+(loaded and listed; `grep -c jni` on both files is 0), and the plan already records that this
+baseline "holds 17 modules and 741 cases against 30 and 795 today, and was built for the split
+work's family-scoped comparisons rather than as a whole-tree gate" (`:383-385`). Whatever captures
+the lane examined live outside the tree, and the merge message should say so. And the jni fact
+justifies only the `exit` half: a run which exits 200 after every case passed prints
+`*** No errors detected` (Boost's 200 is `exit_exception_failure`, an exception outside the test
+cases - recalled, not verified against Boost's source), so its `clean` is true and its `failures`
+is `None`, and an *absolute* check on those two would never have fired on it. Making all three
+differential gave away the one verdict a confirm-level log carries.
+
+*Can a run still be scored green that should not be? Yes, and by the same route the L4 gate took.*
+`compare()` (`:406-499`) is differential in every branch that can see a failed case: outcomes are
+compared over `set( old_cases ) & set( new_cases )` (`:443`), and the new exit, clean and failures
+checks over `set( before ) & set( after )` (`:484`). Nothing absent from the baseline side can ever
+fail it. A module added in a round - which is what every layer of this feature has done and what
+the plan already tells S5.2 to do with `utf_baselib_h2client4` - has no case in `old_cases` and no
+record in `before`; its `aborted`, `failed`, `timed out` or `unknown` outcomes are never looked at,
+its `*** 1 failure is detected` is never looked at, and the one absolute check in the function,
+`incomplete` (`:469-472`), fires only when a case entered and never left, which an aborted case
+does not do. What such a module produces is a `NEWLY RUNS` line per case - a *failure* line
+(`:433-434`), so the tool exits 1 - and a reader who knows the module is new reads past exactly
+those lines, which is how a round that adds a module trains its reader to accept a red tool as
+green. That is the shape of the L4 gate's miss, and the fix round has narrowed it (the aborted case
+would now carry `aborted` instead of `passed`) without closing it (nothing compares that `aborted`
+to anything). **Fix, two one-line absolute checks on the `after` side, both immune to the jni
+case:** any case whose `outcome` is not `passed` or `skipped` is a failure (`OUTCOME: aborted`
+reads differently in kind from `NEWLY RUNS`), and any module whose `failures` is a positive number
+is a failure. Either alone would have turned the L4 gate red on the h2client2 abort: the first from
+a `--run` log, the second from a make log. Keep the three differential checks beside them for the
+change-detection they were added for.
+
+*One more, structural.* Because the committed runlog baseline predates the whole feature, every
+HTTP/2 module is compared per case only against whatever capture the previous layer's gate left
+outside the tree, and never against anything committed; the inventory manifest is committed and
+refreshed every round, the runtime baseline is not. Capturing `runlog.json` at each layer tip - or
+at least committing the L4 capture beside `inventory.json` - would give the next gate a baseline
+that contains the modules it is gating.
+
+**The rest of the round, checked.** Finding 2: `m_requestSaidClose` (`Http1ConnectionTask.h:182`)
+is set in `onStartRequest` from the local copy taken under `m_stateLock` (`:514-527`), consulted
+first in `deriveIsReusable` (`:384-387`), cleared in `finishStream` with `m_requestBytesWritten`
+(`:1077`); it is strand-owned like its neighbour, so the lock argument is the right one and
+`serializeRequestHead` is rightly untouched. The sixth input (`TestHttp1ConnectionTask.h:1344-1389`)
+is the case the finding asked for - a request saying close, a response saying nothing - and it
+asserts the token reached the wire before asserting the verdict, which is what makes the negative
+control the lane describes precise; `runExchange` grew a defaulted `requestHeaders` parameter and
+records the whole request through the peer's own lock. Finding 3: `QueuedHeaderBlock` carries the
+id (`Session.h:406-410`, `:430`, set at `:3640-3642`), `produce()` reads `.frames` (`:855`),
+`dropQueuedHeaderBlocks` erases in place and moves nothing past anything (`:3404-3418`), and it is
+called first in `forceCloseStream` (`:3436`) so `closeEveryStream`'s callers are covered by
+construction, as the merge says; `Session_GoAwayDropsQueuedHeaderBlockTests`
+(`TestSession.h:3550-3675`) pins both halves - the doomed block gone and `wantsWrite()` false, and
+a surviving block for a stream at or below the last id still written, by stream id, with that
+stream then completing normally. Finding 4: `closeAllStreamsUnwrittenRetryable`
+(`Http2ConnectionTask.h:1030-1047`) derives per stream from `! isHeadersProduced`, is used from
+`onPeerClosed` (`:1385`), `onTaskStoppedNothrow` (`:2288`) and the new `onDrainDeadline`, and the
+two-argument form is kept for `chkFinishClose` and the PING deadline, where "handed to a write"
+is the right answer; the corrected comment at `:1373-1379` is accurate. Finding 5.3: the no-overlap
+case (`TestHttp2ConnectionTaskTls.h:304-354`) offers `http/1.1` alone against `h2` alone, so
+`alpnSelectCallback`'s `NOACK` return is reached through `setAlpnServerPreference`, and it asserts
+the empty identifier at both the task and the fallback record, with the overlapping sibling as the
+counterfactual; the recipe is in `notes.txt`. Finding 6: comment-only in both headers, the h1
+sentence now says why a plain policy would be a lock change and not a comment change
+(`Http1ConnectionTask.h:68-81`), and the base's says what is compiled
+(`ClientConnectionTaskBase.h:294-300`); the lane's refusal to instantiate over a plain policy is
+better than the finding's hint, for the reason it gives. The plan's S4.3 enumeration is now the
+code's, input for input (`e382777`); the S4.1 bullet no longer claims an `async_connect` in flight
+and says the header always had it right; the deferral record's item 3 carries finding 5's first
+point. The flake fix (`c5da33e`): `awaitStreamClosed()` is a script step
+(`Http2TestServer.h:359-368`) re-evaluated on every read and write (`:1404-1420`), waiting on the
+peer session's own `StreamClosed` for the stream (`:1061-1074`, any error code), placed between
+`endStream()` and `closeConnection()` in the one case which uploads (`TestHttp2ConnectionTask.h:364`);
+the diagnosis - `endStream()` closes the response half, the request half closes on the client's
+schedule, `closeConnection()` tears down when the peer's queue is written - is right, the driver is
+not at fault, and the lane's candour that the 160 green runs are a regression check and not a
+reproduction is the standard this record asks for. The manifest: 973 cases, exactly the two new
+names, nothing lost.
+
+**New or unresolved.**
+
+- *Unresolved, ledger:* the deferred establishment bound has no owner - one bullet in S5.2
+  (departure 1).
+- *Unresolved, evidence:* four behaviours the round added are pinned by no case, and the round was
+  not run under TSan (below).
+- *New, tooling:* `compare()` has no absolute after-side check, so a module absent from the
+  baseline cannot fail it; the jni premise is mis-cited; `clean` and `failures` are differential
+  without need (departure 5).
+- *New, Low:* a drain-deadline expiry reports `operation_aborted`, classified expected, and drops
+  the connection-error reason (departure 2).
+- *Nits:* `ClientConnectionTaskBase.h:521-523` and the one clause on the 134 s; the unlocked
+  first-call race on the ALPN slot.
+
+**What else in this layer rests on evidence that thin.** Measured against the rule the layer set
+for itself - S4.1's "a template nothing instantiates is not compiled" and S4.3's "a claim into a
+fact" - the following are claims:
+
+1. **Four of the round's own behaviours have no pin**, grepped: no case names `drainTimeout`,
+   `isPrefaceWritePending`, the retryable flag on peer close, or a second `setAlpnServerPreference`.
+   Two are hard to pin on loopback and the record should say why rather than leave it implicit:
+   the preface-cancel (1a) and the drain deadline (1c) are observable only when a write stalls,
+   which loopback does not produce without clamping the client socket's `SO_SNDBUF` below the
+   opening write - possible through `tryConfigureConnectedStream`, and worth one case if a stalled
+   peer is ever to be more than reasoning. Two are cheap and should be added: finding 4 (submit a
+   second request behind an in-flight write, have the peer close, assert the second sink's
+   `isRetryable`) and the refusal (call twice, expect the throw). Each was validated only by the
+   existing suites not regressing, which pins nothing about it.
+2. **No TSan run is recorded for the fix round.** S4.2's "clean over four runs" predates a new
+   timer, a new flag on the strand and a new per-stream loop; the strand model makes a new race
+   unlikely, and the release-only validation the round reports cannot see one.
+3. **The runtime baseline** (departure 5): every HTTP/2 module's per-case outcomes have only ever
+   been compared against an out-of-tree capture, and a module added in a round against nothing.
+4. **The flake's trigger is the gate's normal condition.** The lane found that even loadavg 12 did
+   not reproduce it while a concurrent compile did, and the orchestrator compiles while lanes test.
+   Any peer script which still advances past something the other side has not finished is
+   therefore exposed by the gate itself, not by a stress run. The lane checked the one shape it
+   fixed (`closeConnection()` under an upload) across the tree; the sibling shapes - a script
+   ending on a `Delay` a client may outlast, a `GoAway` step under a stream the client is still
+   writing - were not checked here and are the next place a 1-in-40 will come from.
+5. **`utf_baselib_h2client3` at 39.6 MB** holds three cases with 0.4 MB of headroom; the module is
+   closed on arrival, as its main says, and the next TLS-side case is a new module.
+6. **Unchanged from the first pass:** the 1.1.1w half of S4.2's acceptance is owed; the negative
+   controls exist in lane accounts and not in the tree; Windows has not run any of it.
+
+**Verified versus inferred in this pass.** Verified by reading: every diff named above and the tip
+code around each, including the exactly-two setters of `m_isCloseWhenDrained`, the disarm path
+through `initiateClose`, the classification of a cancelled task's abort, and the four grep-negative
+results for pins. Verified by fetching: `tls_handle_alpn` on OpenSSL's `openssl-3.5` branch, lines
+2243-2298. Verified by reading the dist's own Boost 1.90: the five verdict strings and the
+confirm-level output. Verified by loading the two tracked runlog baselines: 17 modules, all exit 0,
+no jni, no HTTP/2 module; and `common.mk:204-205` for the flags make passes. Inferred or recalled:
+the Linux SYN schedule arithmetic and the other operating systems' schedules; that Boost's exit 200
+is `exit_exception_failure` and leaves the report clean; that the L4 gate compared against a
+capture kept outside the tree; that loopback does not stall a small write; that TSan was not run,
+from its absence in every message of the round.
+
+**Not checked in this pass.** No build and no test run; the 297-log old-versus-new parse, the
+byte-identical baseline comparisons, the 160 and 240 runs and the 500 ms control are the lane's.
+`check_split.sh` tiers 1 and 2 were read, not run. The peer's re-evaluation of `AwaitStreamClosed`
+on the write path was read at the cited lines only. The sibling script shapes in item 4 above were
+not surveyed. Windows, and the 1.1.1w flavor, as before.
