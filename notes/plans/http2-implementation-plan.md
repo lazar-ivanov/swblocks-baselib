@@ -754,6 +754,51 @@ later slices - the driver's `const` member (S4.1) and interim responses from the
 
 Depends on L0 (gated), L1, L2. Slices are mutually parallel except as noted.
 
+**Execution, 2026-09-19.** Three lanes from `65bd2a8`, split by **test module rather than by subject**
+- two lanes appending to one `…Main.cpp` collide on every merge, which cost three manual resolutions
+in L2. lane1 = S3.1 (`h2core`), lane2 = S3.2 then S3.3 (`h2client`), lane3 = S3.4 then S3.6
+(`h2profiles`) and then S3.5 (`httpclient`, the only slice touching it).
+
+**S3.4 and S3.6 landed first** (`f570d5e`, `f0bcbeb`, merged at `69a8f6b`). `utf_baselib_h2profiles`
+5 → 13 cases, zero warnings under `-Werror -Wall -Wpedantic -Wextra`, object 22.3 → 24.9 MB clang
+debug. Four things from that round are carried here rather than left in the lane journal:
+
+- **Design §10 beats §2.2 on where the profile context lives.** §10 puts
+  `createAsioSslClientContext` in `crypto/CryptoBase.h` while §2.2 puts "per-profile contexts, floor
+  check" in `TlsClientProfile.h`. They conflict, and §10 wins because that second header's own
+  comment makes *carrying no OpenSSL header* a property of the file, while the floor check takes an
+  `SSL*`. All 407 lines are additive and nothing existing was touched, which is what D26 requires of
+  a post-G1 slice.
+- **The cipher allowlist had to depart from §3.3's literal wording, and the design is amended.** The
+  original said "no `@`, `!`, `+`, `-`, `:` inside a name", which rejects every TLS 1.2 suite name
+  OpenSSL knows and would leave every profile's TLS 1.2 list empty. The rule is now positive:
+  non-empty, `[A-Za-z0-9_-]` throughout, first character alphanumeric. Strictly stronger than the
+  original intent — it also refuses `,` and space.
+- **`utf_baselib_h2profiles` is the module to watch for size.** 24.9 MB clang debug is comfortable
+  against the 40 MB target, but the protocol's own 2x conversion puts it near **47 MB gcc release**,
+  and it was already past 40 there before this round. Nothing fails (the target is calibrated on
+  debug objects and the gate is off on Linux) so it was not split — but S7.3 adds to this module and
+  should check `make utests-sizes` before assuming room.
+- **The context builder deliberately shapes a context by its cipher lists alone.** The group list and
+  key-share marks, the signature algorithms, and the `status_request`/SCT/padding switches exist in
+  `TlsClientProfile` but are not applied yet; that is **S7.3**, after the §6.3 spike, and the header
+  says so.
+
+The JA3 and JA4 of a stock 3.5.4 client context, for the S7.1 spike to compare a browser against:
+
+```
+JA3      771,4865-4866-49195-49199-49200,65281-0-11-10-16-22-23-13-43-45-51,4588-29-23-30-24-25-256-257,0-1-2
+JA3 hash 7f6ef6ebeba3cb0b7fe0b727b1fa8bba
+JA4      t13d0511h2_1f640057409a_c3976d268853      (1503 bytes)
+```
+
+Five JA4 details that hand-working the vectors caught, and which a reimplementation will get wrong:
+`supported_versions` is length-prefixed with **one** byte where every other list uses two; the
+extension **count** includes SNI and ALPN while the extension **hash** excludes them; signature
+algorithms are appended **unsorted** while everything else in a JA4 is sorted; with no sigalgs the
+trailing underscore is not written; and an empty section hashes to **twelve zeros**, not to the hash
+of the empty string.
+
 ### S3.1 — HTTP/2 Session engine (§4.5, §4.6)
 - **Two contracts L2 imposes on this slice, neither of which the design pins.** Both were found while
   building the pieces this engine drives, and both are silent failures if missed.

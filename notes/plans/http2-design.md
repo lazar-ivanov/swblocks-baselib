@@ -315,8 +315,19 @@ is unchanged - it is set per stream by `AsioSslStreamWrapper`.
 **Profiles are loadable from JSON (6.2), so cipher strings are an injection surface.** A cipher string
 can carry `@SECLEVEL=0`, which overrides `SSL_CTX_set_security_level`
 (`tls-legacy-protocol-opt-in-removal-decision.md`, "Cipher lists"). The loader therefore accepts only
-explicit suite names matched against an allowlist of characters - no `@`, `!`, `+`, `-`, `:` inside a
-name, no aliases - and the context builder asserts the level is still 2 after applying the list.
+explicit suite names matched against an allowlist of characters, no aliases - and the context builder
+asserts the level is still 2 after applying the list.
+
+**The allowlist is a positive rule, not a list of forbidden characters.** Amended in S3.4, which found
+the original wording unusable: it said "no `@`, `!`, `+`, `-`, `:` inside a name", and taken literally
+that rejects **every TLS 1.2 suite name OpenSSL knows** - they are all of the form
+`ECDHE-RSA-AES128-GCM-SHA256` - which would leave every profile's TLS 1.2 list empty. The rule is
+instead: **a name is non-empty, every character is `[A-Za-z0-9_-]`, and the first character is
+alphanumeric.** That refuses everything the original meant to and more. `@`, `!`, `+` and `:` cannot
+appear at all, so `@SECLEVEL=0` and the alias operators are unreachable. `-` is admitted inside a
+name, where it is part of the spelling, but not in first position - which is the only place OpenSSL
+reads it as the "remove these ciphers" operator. And `,` and space are refused as well, which the
+original did not name although they separate tokens exactly as `:` does.
 
 **The floor check.** After the handshake and before `continueAfterConnected()` - therefore before the
 HTTP/2 preface or any HTTP byte - the negotiated parameters are checked: version at least TLS 1.2, and
@@ -1072,6 +1083,15 @@ injection); priority fields in range; every list bounded in length.
 
 What each knob maps to. **The OpenSSL column is from the API and changelog and has not been probed**:
 the devenv7 dist is not unpacked on the design machine. Verifying it is the first task of the spike.
+
+**Two rows are now confirmed against a real 3.5.4, in S3.6** (2026-09-19). A genuine ClientHello was
+captured through the shipped `enableClientHelloCapture()` with **no peer at all** - `SSL_do_handshake`
+on a never-connected client writes its hello into the stream's own memory BIO and then asks for a
+read it never gets, by which time the callback has already fired. In it: extension `65281` (0xFF01)
+is `renegotiation_info`, so the `0x00ff` SCSV is indeed not sent; and the offered group list carries
+`4588` (0x11EC), `X25519MLKEM768`, so the hybrid group really is offered. The rest of the 3.5.4
+column is still inferred, and **the 1.1.1w column is entirely unprobed and cannot be probed here** -
+see `notes/plans/issues/openssl-1x-flavor-deferral.md`.
 
 | ClientHello element | Mechanism | 3.5.4 | 1.1.1w |
 |---|---|---|---|
