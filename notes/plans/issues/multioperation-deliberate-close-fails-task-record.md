@@ -1,8 +1,9 @@
 # A deliberate `beginClose()` with operations in flight completes the task FAILED
 
 **Found:** 2026-09-19, by the S3.2 lane, under ThreadSanitizer — which was slow enough to flip a
-race the ordinary build never lost. **Status:** OPEN, and it is a **decision for the maintainer**,
-not an implementation detail. **Not a data race.** It is a contract gap in
+race the ordinary build never lost. **Status:** **DECIDED 2026-09-19 by the maintainer — fix shape 1
+below, the narrow one. Not yet implemented.** It lands as its own change-set gated on the whole
+suite, before S4.1, because `MultiOperationTask.h` is landed gated core. **Not a data race.** It is a contract gap in
 `src/include/baselib/tasks/MultiOperationTask.h`, which is landed, gated core, so a fix is its own
 tested change-set (AGENTS.md).
 
@@ -71,7 +72,7 @@ of D6.
    how.
 3. **`initiateClose()` records which operations it cancelled and excuses exactly those.**
 
-**Recommended: 1, with one refinement.** It needs a flag distinct from `m_closing`, because
+**CHOSEN: 1, with the refinement below.** It needs a flag distinct from `m_closing`, because
 `m_closing` is already set by *both* doors — an error and `beginClose()` — and the fix has to tell
 them apart. And it should excuse `asio::error::operation_aborted` **specifically**, not every error
 arriving after a deliberate close: an abort during a deliberate close is self-inflicted and means
@@ -89,3 +90,40 @@ since that path produces `operation_aborted` too but for a reason the caller ask
 The S3.2 probe takes the close decision **only in the timer handler**, where the timer is the
 operation completing and nothing else is in flight. That is a workaround in a test probe, not a fix,
 and it is documented at `chkToClose()` so that a later reader does not "simplify" it away.
+
+
+## The decision, 2026-09-19
+
+Shape **1**, with both refinements: a flag **distinct from `m_closing`** (which both doors already
+set, so it cannot tell a deliberate close from a failing one), and excusing
+`asio::error::operation_aborted` **specifically** rather than every error arriving after a deliberate
+close — a genuine I/O failure while closing still reports.
+
+```cpp
+bool m_closingDeliberate = false;          // distinct from m_closing
+
+void beginClose() NOEXCEPT
+{
+    BL_MUTEX_GUARD( m_operationsLock );
+    m_closing = true;
+    m_closingDeliberate = true;
+}
+
+// in onOperationCompleted, under m_operationsLock:
+const bool isSelfInflictedAbort = m_closingDeliberate && isOperationAborted( eptr );
+
+if( eptr && ! m_firstError && ! isSelfInflictedAbort )
+{
+    m_firstError = eptr;
+    ...
+}
+```
+
+`m_closingDeliberate` resets in `scheduleNothrow` with the rest of the per-run accounting.
+
+**Three things the implementation must settle, none of them decided by the shape.** What
+`isOperationAborted` tests, given the error arrives as an `std::exception_ptr` and not a code — the
+existing `isExpectedSslErrorCode` and the S0.1 classifier are the precedent to follow rather than
+invent against. What `cancelTask()`, the *external* cancel, should report, since it also produces
+`operation_aborted` but for a reason the caller asked for. And a case for the quadrant S0.1 never
+covered — deliberate close with operations outstanding — which is what would have caught this.
