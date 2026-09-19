@@ -4603,6 +4603,18 @@
    "namespaces": []
   },
   {
+   "body_sha": "5fe8840dc0a1c47256a25ae43d7a2d3c",
+   "doc_sha": "f3a28f252cc7bb43e398999d631a4498",
+   "file": "utf_baselib_h2client/TestH2ClientPlaceholder.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 46,
+   "module": "utf_baselib_h2client",
+   "name": "H2Client_PlaceholderUntilS41Tests",
+   "namespaces": []
+  },
+  {
    "body_sha": "3b097ca697b0fca9397ee970f76d208f",
    "doc_sha": null,
    "file": "utf_baselib_security/TestHashUtils.h",
@@ -9907,6 +9919,18 @@
    "namespaces": []
   },
   {
+   "body_sha": "1a731054d84d6443376184f67c18f39e",
+   "doc_sha": "86a550f17cbfe5ff7d3c4c811ae8d52a",
+   "file": "utf_baselib2/TestUri.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 798,
+   "module": "utf_baselib2",
+   "name": "Uri_OriginRequiresAbsoluteUriTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "fdd9157283869c32455d58106ba70213",
    "doc_sha": "3bf86c2ccd290caad933ba553a8ea8e7",
    "file": "utf_baselib2/TestUri.h",
@@ -14976,13 +15000,24 @@
    "files": [
     {
      "includes": [
+      "<baselib/http2/Globals.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_h2client/TestH2ClientPlaceholder.h"
+    },
+    {
+     "includes": [
       "<utests/baselib/UtfMain.h>",
-      "<baselib/http2/PreCompiled.h>"
+      "<baselib/http2/PreCompiled.h>",
+      "\"TestH2ClientPlaceholder.h\""
      ],
      "path": "utf_baselib_h2client/UtfBaselibH2ClientMain.cpp"
     }
    ],
-   "notes_cases": []
+   "notes_cases": [
+    "H2Client_PlaceholderUntilS41Tests"
+   ]
   },
   "utf_baselib_h2core": {
    "data_files": {},

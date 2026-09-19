@@ -17,9 +17,11 @@
 #ifndef __BL_HTTPCLIENT_PRECOMPILED_H_
 #define __BL_HTTPCLIENT_PRECOMPILED_H_
 
+#include <baselib/httpclient/HeaderProfile.h>
+
 /*
  * The version-neutral HTTP client umbrella. Each slice which adds an httpclient/ header appends
- * its #include here, in the form of http/PreCompiled.h
+ * its #include above, in the form of http/PreCompiled.h
  *
  * It carries httpclient/ headers only, the way every other umbrella here carries its own directory
  * only. httpclient/ depends on http2/ (design 2.2), but that dependency belongs to the headers
@@ -33,7 +35,5 @@
  * Optional dependencies like OpenSSL should not be added to the
  * pre-compiled headers
  */
-
-#include <baselib/httpclient/HeaderProfile.h>
 
 #endif /* __BL_HTTPCLIENT_PRECOMPILED_H_ */

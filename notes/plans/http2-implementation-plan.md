@@ -412,10 +412,16 @@ Four things the layer settled that later slices should not rediscover:
   variants - so nothing needs vendoring and **S2.5 chooses its backend on §5.5's other criteria**
   (`notes/plans/issues/beast-availability-probe-record.md`, which also records that Beast's `put()`
   is not eager by default and that a response-only parser must still override `on_request_impl`).
-- **Pseudo-headers are not representable in `http::HeaderList`** - a colon is not a token character,
-  so `":method"` is rejected by design. The session engine derives them and their order comes from
-  the profile (§6.4). **If S2.2 or S3.1 assumes it can carry them in a `HeaderList`, that is the
-  assumption to revisit**, and it is cheaper to settle now than at L3.
+- **Pseudo-headers are not representable in `http::HeaderList`**, and this is a constraint on S2.2
+  rather than a question for it. A colon is not a token character, so `":method"` is rejected by
+  design - correct for the *request* side, where the session derives the pseudo-headers and their
+  order comes from the profile (§6.4). But the **decoder's output is a different type**: design §4.5
+  validates "pseudo-headers first and only the defined ones" and "exactly one three-digit `:status`"
+  on a decoded block, so what S2.2 produces must carry pseudo-headers **in wire order**, and
+  `HeaderList` as delivered cannot be it. The shape is S2.2's to choose with the codec in front of
+  it - a separate decoded-field sequence, or a `HeaderList` mode which admits them - but that it
+  cannot simply reuse `HeaderList` is settled here. §1.1's dependency row `S2.2 → S1.2` should be
+  read as "consumes the encoder side", not "reuses the type for output".
 - **The decoded header-list limit is a parameter, not a constant.** It is what the active profile
   advertises, and RFC 9113 gives the setting no numeric initial value, so S1.9 deliberately defines
   none and the decoder takes it as an argument. `SETTINGS_MAX_CONCURRENT_STREAMS` is the same shape.
@@ -423,9 +429,28 @@ Four things the layer settled that later slices should not rediscover:
   may legally go negative and an unsigned maximum would make every comparison in S2.3 a
   `-Wsign-compare` failure under `-Werror`.
 
-**`utf_baselib_h2client` still has no case and therefore still exits 200**, until S4.1/S4.2 give it
-one. Any whole-suite run before L4 has to account for that; the other three new modules closed within
-this layer.
+**Object sizes are toolchain-dependent by about a factor of two, and the numbers a lane reports
+are the small ones.** Every size in this layer was measured on `clang2010 debug`; the same modules
+under `gcc1520 release` are roughly twice as large - `utf_baselib_http2` 28.6 -> 57.4 MB,
+`utf_baselib_h2profiles` 22.3 -> 42.2, `utf_baselib_http` 44.2 -> **101.3**. Nothing fails, because
+the 40 MB target and 75 MB ceiling are calibrated on *debug* objects and the gate is off on Linux
+(`src/utests/object-size-limits.json`, which already records `win-x86-vc143-release` at 96.77 MB
+building fine against a 75 MB debug ceiling). But a slice reading "20 MB, plenty of headroom" off a
+clang debug build is reading the generous number. **S2.5 in particular should know this**, since its
+Beast-versus-in-house decision turns on an object-size delta.
+
+**Two gaps this layer's round rules left, closed immediately after it.** Focused testing meant
+`utf_baselib_http` - the module with the real TLS client and server tasks over the stream wrapper
+S1.6 extended - was never rebuilt against it, and **nothing in L1 was built with gcc at all**. Both
+are low risk because every production change is additive, but `BeastBoostImports.h` and the wrapper's
+message callback are exactly the kind of code where gcc's warning set differs from clang's and
+everything is `-Werror`. A targeted gcc pass over the affected modules is the cheap way to retire
+that before L2 builds on them, and is not the "full release verification" the round rule excluded.
+
+**`utf_baselib_h2client` carries one placeholder case** so that `make testutf` and any whole-suite
+run are not red for two whole layers. That deviates from S1.8's work order, which said empty modules,
+and the case says so in its own text: **S4.1 replaces it** with the first real one. A suite that is
+permanently red teaches people to ignore red, which costs more than the placeholder does.
 
 ### S1.1 — net::Uri (§3.4, D16, D24)
 - Deliver: `core/Uri.h` (`bl::net::UriT`): parse; RFC 3986 §5 reference resolution; normalization;
