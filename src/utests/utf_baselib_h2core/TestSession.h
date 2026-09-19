@@ -2975,6 +2975,76 @@ UTF_AUTO_TEST_CASE( Session_DecodedHeaderListBoundTests )
     }
 }
 
+UTF_AUTO_TEST_CASE( Session_DuplicateProfileSettingTests )
+{
+    using namespace bl;
+    using namespace bl::http2;
+    using namespace utest::session;
+
+    const auto now = baseTime();
+
+    /*
+     * RFC 9113 6.5.3 - "The values in the SETTINGS frame MUST be processed in the order they
+     * appear" - so a profile which names an id twice advertises the LAST of the two, and that is
+     * the value every reader of the profile has to use. A profile is ours, so a repeat in it is a
+     * configuration mistake and not hostile input; what makes it worth a case is that reading the
+     * first entry is SILENT - the session would use one number, advertise another, and then
+     * change its mind at the acknowledgement, which processes the list in order and so lands on
+     * the last value anyway
+     */
+
+    Http2Profile profile;
+
+    profile.settings.push_back( setting( Globals::SETTINGS_HEADER_TABLE_SIZE, 65536U ) );
+    profile.settings.push_back( setting( Globals::SETTINGS_MAX_HEADER_LIST_SIZE, 200000U ) );
+    profile.settings.push_back( setting( Globals::SETTINGS_HEADER_TABLE_SIZE, 32768U ) );
+    profile.settings.push_back( setting( Globals::SETTINGS_MAX_HEADER_LIST_SIZE, 100000U ) );
+
+    Session session( StreamRole::Client, now, profile );
+
+    /*
+     * Both construction-time readers of the profile take the later entry for their own id.
+     * Reading the first would give 65536 and 200000 here
+     */
+
+    UTF_REQUIRE_EQUAL( session.hpackDecoderCeiling(), static_cast< std::size_t >( 32768 ) );
+    UTF_REQUIRE_EQUAL(
+        session.maxDecodedHeaderListSize(),
+        static_cast< std::size_t >( 100000 )
+        );
+
+    /*
+     * And the duplicate still goes out verbatim, in the profile's own order: the list is a
+     * fingerprint, which is why deduplicating it or refusing it is not an option, and why the
+     * engine's job is to read it the way the peer will
+     */
+
+    const auto opening = produceText( session, now );
+
+    std::string expected = Globals::g_connectionPreface;
+
+    auto advertised = profile.settings;
+
+    advertised.push_back( setting( Globals::SETTINGS_ENABLE_PUSH, 0U ) );
+
+    expected += settingsFrame( advertised );
+
+    UTF_REQUIRE_EQUAL( opening, expected );
+
+    /*
+     * The acknowledgement applies the same last value to both, so nothing moves when it arrives -
+     * which is the agreement the first-entry read gave up
+     */
+
+    settle( session, now );
+
+    UTF_REQUIRE_EQUAL( session.hpackDecoderCeiling(), static_cast< std::size_t >( 32768 ) );
+    UTF_REQUIRE_EQUAL(
+        session.maxDecodedHeaderListSize(),
+        static_cast< std::size_t >( 100000 )
+        );
+}
+
 UTF_AUTO_TEST_CASE( Session_PushPromiseAndPingTests )
 {
     using namespace bl;

@@ -57,10 +57,13 @@
 --log_level=message --run_test=Session_SettingsTimeoutTests
 --log_level=message --run_test=Session_StreamErrorOnClosedStreamTests
 --log_level=message --run_test=Session_MessageValidationTests
+--log_level=message --run_test=Session_DataPathValidationTests
 --log_level=message --run_test=Session_EarlyResponseTests
 --log_level=message --run_test=Session_FlowControlTests
 --log_level=message --run_test=Session_WriteSchedulingTests
 --log_level=message --run_test=Session_LimitsTests
+--log_level=message --run_test=Session_DecodedHeaderListBoundTests
+--log_level=message --run_test=Session_DuplicateProfileSettingTests
 --log_level=message --run_test=Session_PushPromiseAndPingTests
 --log_level=message --run_test=Session_GoAwayAndRetryTests
 --log_level=message --run_test=Session_ProfileShapingTests
