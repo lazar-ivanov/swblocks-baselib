@@ -1079,9 +1079,15 @@ questions and is left out of the first version.
 
 `Http2Profile`: an ordered list of `( id, value )` settings, allowing ids the library does not itself
 interpret; the connection `WINDOW_UPDATE` increment; a list of `PRIORITY` frames to send on idle
-streams after `SETTINGS`; optional priority fields on `HEADERS`; pseudo-header order; the RFC 9218
-`priority` header value by request kind; HPACK encoder table size, indexing policy and cookie
-crumbling; the `WINDOW_UPDATE` threshold.
+streams after `SETTINGS`; optional priority fields on `HEADERS`; pseudo-header order; HPACK encoder
+table size, indexing policy and cookie crumbling; the `WINDOW_UPDATE` threshold.
+
+**The RFC 9218 `priority` header value by request kind lives in `httpclient/`, not here.** This
+paragraph originally placed it under `Http2Profile`, which cannot hold: it is keyed by the request
+kind, whose enum §6.2 puts in `httpclient/`, and §2.2 says that dependency runs one way,
+`httpclient/` → `http2/`. Of the three, the placement is the one that gives. S1.4 built it as
+`httpclient::HeaderProfileForKind` and recorded the reason in both headers, so neither reads as an
+oversight.
 
 `http2/Fingerprint.h` renders the frames a session *actually produced* in the conventional
 `SETTINGS|WINDOW_UPDATE|PRIORITY|pseudo-order` form, for the report and the tests.

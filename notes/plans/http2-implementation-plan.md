@@ -399,6 +399,34 @@ directory are not, and the header says to recapture rather than patch one flag a
 
 All depend only on existing baselib and are mutually parallel. Earliest start t0 for all.
 
+**Executed 2026-09-18/19 - all nine slices implemented, merged and focus-validated.** Three lanes,
+two waves: S1.7 then S1.8 first because they gate the four new test modules that S1.2, S1.3, S1.4 and
+S1.9 put their tests in, with S1.1 and S1.6 running alongside them and the rest following. Per the
+maintainer's instruction this layer ran **focused testing only** - each slice built and ran the
+modules its acceptance names, clang debug - with **no release pass and no whole-suite gate**. The
+tree ends at 825 cases across 34 modules, tier 1 clean.
+
+Four things the layer settled that later slices should not rediscover:
+
+- **The Beast probe of S1.5 answered PRESENT** - complete and byte-identical across all four dist
+  variants - so nothing needs vendoring and **S2.5 chooses its backend on §5.5's other criteria**
+  (`notes/plans/issues/beast-availability-probe-record.md`, which also records that Beast's `put()`
+  is not eager by default and that a response-only parser must still override `on_request_impl`).
+- **Pseudo-headers are not representable in `http::HeaderList`** - a colon is not a token character,
+  so `":method"` is rejected by design. The session engine derives them and their order comes from
+  the profile (§6.4). **If S2.2 or S3.1 assumes it can carry them in a `HeaderList`, that is the
+  assumption to revisit**, and it is cheaper to settle now than at L3.
+- **The decoded header-list limit is a parameter, not a constant.** It is what the active profile
+  advertises, and RFC 9113 gives the setting no numeric initial value, so S1.9 deliberately defines
+  none and the decoder takes it as an argument. `SETTINGS_MAX_CONCURRENT_STREAMS` is the same shape.
+- **`MAX_FLOW_CONTROL_WINDOW_SIZE` and `INITIAL_WINDOW_SIZE_DEFAULT` are signed**, because a window
+  may legally go negative and an unsigned maximum would make every comparison in S2.3 a
+  `-Wsign-compare` failure under `-Werror`.
+
+**`utf_baselib_h2client` still has no case and therefore still exits 200**, until S4.1/S4.2 give it
+one. Any whole-suite run before L4 has to account for that; the other three new modules closed within
+this layer.
+
 ### S1.1 — net::Uri (§3.4, D16, D24)
 - Deliver: `core/Uri.h` (`bl::net::UriT`): parse; RFC 3986 §5 reference resolution; normalization;
   `origin()`, `authority()`, `pathAndQuery()`. Strict (control chars, whitespace, backslash are errors);

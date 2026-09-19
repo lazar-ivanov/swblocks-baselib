@@ -1,15 +1,51 @@
 {
  "cases": [
   {
+   "body_sha": "a72609770d2b5f57c116bb1a031e7e51",
+   "doc_sha": null,
+   "file": "utf_baselib_http2/TestAsioSslStreamWrapper.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 397,
+   "module": "utf_baselib_http2",
+   "name": "AsioSslStreamWrapper_AlpnProtocolOfferTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "bd1fd7afe5657bc4d78da2b76ce32e9a",
    "doc_sha": null,
    "file": "utf_baselib_http2/TestAsioSslStreamWrapper.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 164,
+   "line": 233,
    "module": "utf_baselib_http2",
    "name": "AsioSslStreamWrapper_BeginProtocolShutdownPreconditionTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "291f693dde87aaa3350dcbe41fa3283c",
+   "doc_sha": null,
+   "file": "utf_baselib_http2/TestAsioSslStreamWrapper.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 555,
+   "module": "utf_baselib_http2",
+   "name": "AsioSslStreamWrapper_ClientContextConstructorTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "e9e83ca71b63d74ac6d0a9bf4972b068",
+   "doc_sha": null,
+   "file": "utf_baselib_http2/TestAsioSslStreamWrapper.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 471,
+   "module": "utf_baselib_http2",
+   "name": "AsioSslStreamWrapper_ClientHelloCaptureTests",
    "namespaces": []
   },
   {
@@ -19,7 +55,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 211,
+   "line": 280,
    "module": "utf_baselib_http2",
    "name": "AsioSslStreamWrapper_EnhanceExceptionNoVerifyFailureTests",
    "namespaces": []
@@ -31,9 +67,35 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 125,
+   "line": 194,
    "module": "utf_baselib_http2",
    "name": "AsioSslStreamWrapper_FreshStateTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "affe182361236625724b7b648c085567",
+   "doc_sha": null,
+   "file": "utf_baselib_http2/TestAsioSslStreamWrapper.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 353,
+   "module": "utf_baselib_http2",
+   "name": "AsioSslStreamWrapper_NegotiatedParametersAreEmptyBeforeHandshakeTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "c7d7116b1c725681fff549ee5fbbe169",
+   "doc_sha": null,
+   "file": "utf_baselib_http2/TestAsioSslStreamWrapper.h",
+   "fixture": null,
+   "guards": [
+    "if ( ( BOOST_VERSION / 100 ) >= 1072 )"
+   ],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 612,
+   "module": "utf_baselib_http2",
+   "name": "AsioSslStreamWrapper_StrandConstructorTests",
    "namespaces": []
   },
   {
@@ -4598,6 +4660,210 @@
    "line": 128,
    "module": "utf_baselib_security",
    "name": "HashUtils_TestPerformance",
+   "namespaces": []
+  },
+  {
+   "body_sha": "eb1fa627945a576fba75288d0794be2f",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestHeaderList.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 127,
+   "module": "utf_baselib_httpclient",
+   "name": "HeaderList_CaseInsensitiveLookupTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "12b5657085a6d9bd775e5ce668548352",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestHeaderList.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 460,
+   "module": "utf_baselib_httpclient",
+   "name": "HeaderList_ErrorMessageRedactionTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "f4d1fb9c4869ab34ba607e9f6b47e92c",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestHeaderList.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 506,
+   "module": "utf_baselib_httpclient",
+   "name": "HeaderList_HeadersMapRoundTripTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "78bd592d62bbfd95bc67946acefe592e",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestHeaderList.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 265,
+   "module": "utf_baselib_httpclient",
+   "name": "HeaderList_NameValidationTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "fe848892c22d275edf84b4e535d38876",
+   "doc_sha": "990c0b97cc2d48aa63e0cf96ffd87f87",
+   "file": "utf_baselib_httpclient/TestHeaderList.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 39,
+   "module": "utf_baselib_httpclient",
+   "name": "HeaderList_OrderCaseAndRepeatsTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "f8bbd6351fcd0f3ac1a678aa998284df",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestHeaderList.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 184,
+   "module": "utf_baselib_httpclient",
+   "name": "HeaderList_SetRemoveAndBoundsTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "df81f2c380240da78953f33fc6ae8415",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestHeaderList.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 357,
+   "module": "utf_baselib_httpclient",
+   "name": "HeaderList_ValueInjectionRejectionTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "16cfaf034d8ef173cd4c4496a320b113",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestHttp2ErrorInfo.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 71,
+   "module": "utf_baselib_h2core",
+   "name": "Http2ErrorInfo_AttachAndReadTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "17ea5a62b3ccdb133587ec291f34cb64",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestHttp2ErrorInfo.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 195,
+   "module": "utf_baselib_h2core",
+   "name": "Http2ErrorInfo_DistinctTagsTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "be7247a75a95ce1cdc899a746503ccbf",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestHttp2Globals.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 80,
+   "module": "utf_baselib_h2core",
+   "name": "Http2Globals_FrameTypesAndFlagsTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "576f1083bfa97eaf1b55f9d859e3c019",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestHttp2Globals.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 201,
+   "module": "utf_baselib_h2core",
+   "name": "Http2Globals_ProtocolConstantsAndLimitsTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "20936ae26e41af1ff359e556db51dc91",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestHttp2Globals.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 131,
+   "module": "utf_baselib_h2core",
+   "name": "Http2Globals_SettingsAndErrorCodesTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "0e840bab4dfc33a4aed983ecc6f9cc63",
+   "doc_sha": null,
+   "file": "utf_baselib_h2profiles/TestHttpClientProfiles.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 311,
+   "module": "utf_baselib_h2profiles",
+   "name": "HttpClientProfiles_BrowserProfileRoundTripTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "a257e6671fc388792c4e5eaf9ce78db4",
+   "doc_sha": null,
+   "file": "utf_baselib_h2profiles/TestHttpClientProfiles.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 483,
+   "module": "utf_baselib_h2profiles",
+   "name": "HttpClientProfiles_RequiredPropertiesAreEnforcedOnLoadTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "41733628be4b1a59f1ca857514676e6a",
+   "doc_sha": null,
+   "file": "utf_baselib_h2profiles/TestHttpClientProfiles.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 454,
+   "module": "utf_baselib_h2profiles",
+   "name": "HttpClientProfiles_SettingValueSpansFullUint32RangeTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "ab6acd09e13279526045e9a62aba9cd2",
+   "doc_sha": null,
+   "file": "utf_baselib_h2profiles/TestHttpClientProfiles.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 171,
+   "module": "utf_baselib_h2profiles",
+   "name": "HttpClientProfiles_ShapeTypesDefaultToDefinedValuesTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "412a77f40d53d20a4790693801898fd8",
+   "doc_sha": null,
+   "file": "utf_baselib_h2profiles/TestHttpClientProfiles.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 246,
+   "module": "utf_baselib_h2profiles",
+   "name": "HttpClientProfiles_ShapeTypesPreserveOrderTests",
    "namespaces": []
   },
   {
@@ -9605,6 +9871,102 @@
    "namespaces": []
   },
   {
+   "body_sha": "98a15078009b1f26cd03a6d93dad9361",
+   "doc_sha": null,
+   "file": "utf_baselib2/TestUri.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 677,
+   "module": "utf_baselib2",
+   "name": "Uri_AuthorityOriginAndTargetTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "7c728d1b36a9854610cab02b10aa4dcb",
+   "doc_sha": null,
+   "file": "utf_baselib2/TestUri.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 249,
+   "module": "utf_baselib2",
+   "name": "Uri_IpLiteralTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "991c13ad1890856e1e2dd461639248ee",
+   "doc_sha": null,
+   "file": "utf_baselib2/TestUri.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 176,
+   "module": "utf_baselib2",
+   "name": "Uri_NormalizationTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "fdd9157283869c32455d58106ba70213",
+   "doc_sha": "3bf86c2ccd290caad933ba553a8ea8e7",
+   "file": "utf_baselib2/TestUri.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 32,
+   "module": "utf_baselib2",
+   "name": "Uri_ParseComponentsTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "e7810d5918961c322c5a939f7d263a81",
+   "doc_sha": null,
+   "file": "utf_baselib2/TestUri.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 597,
+   "module": "utf_baselib2",
+   "name": "Uri_ResolutionEdgeCaseTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "71ce1dc126e4d8a9a369a8f04b98dccf",
+   "doc_sha": null,
+   "file": "utf_baselib2/TestUri.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 526,
+   "module": "utf_baselib2",
+   "name": "Uri_Rfc3986AbnormalResolutionTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "49e9cd8783e42729c10cf4d39c81ebc3",
+   "doc_sha": null,
+   "file": "utf_baselib2/TestUri.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 485,
+   "module": "utf_baselib2",
+   "name": "Uri_Rfc3986NormalResolutionTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "781e55b40fc48a6529ec4f71e8345ee5",
+   "doc_sha": null,
+   "file": "utf_baselib2/TestUri.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 353,
+   "module": "utf_baselib2",
+   "name": "Uri_StrictnessTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "abfaf02d31359232dae279ad3ccbc22d",
    "doc_sha": "03f6ba63b1d9b6a7696a7dc8d5aadbfa",
    "file": "utf_baselib_utils/TestBaselibUtils.h",
@@ -11379,6 +11741,54 @@
    "sha": "26af6aced467e12ea2a30d091b896180"
   },
   {
+   "file": "utf_baselib_h2core/TestHttp2ErrorInfo.h",
+   "label": "namespace http2errorinfo",
+   "line": 44,
+   "module": "utf_baselib_h2core",
+   "ns": "utest",
+   "sha": "fd4affa6537b74fc39dbec1dbce8cd2a"
+  },
+  {
+   "file": "utf_baselib_h2core/TestHttp2Globals.h",
+   "label": "namespace http2globals",
+   "line": 46,
+   "module": "utf_baselib_h2core",
+   "ns": "utest",
+   "sha": "a7d38ff90e7cd9291a015ee6ecede71b"
+  },
+  {
+   "file": "utf_baselib_h2profiles/TestHttpClientProfiles.h",
+   "label": "/**",
+   "line": 55,
+   "module": "utf_baselib_h2profiles",
+   "ns": "<anonymous>",
+   "sha": "ab4b3f630ee4e7170b4afb6f44065227"
+  },
+  {
+   "file": "utf_baselib_h2profiles/TestHttpClientProfiles.h",
+   "label": "const char* g_browserProfileJson =",
+   "line": 62,
+   "module": "utf_baselib_h2profiles",
+   "ns": "<anonymous>",
+   "sha": "0a4722a8e7b429885c95c07f45e95189"
+  },
+  {
+   "file": "utf_baselib_h2profiles/TestHttpClientProfiles.h",
+   "label": "/**",
+   "line": 148,
+   "module": "utf_baselib_h2profiles",
+   "ns": "<anonymous>",
+   "sha": "65c690f339f631990d80b133d5f2142d"
+  },
+  {
+   "file": "utf_baselib_h2profiles/TestHttpClientProfiles.h",
+   "label": "template",
+   "line": 156,
+   "module": "utf_baselib_h2profiles",
+   "ns": "<anonymous>",
+   "sha": "64447e15ca049090f977775b427149a1"
+  },
+  {
    "file": "utf_baselib_http/TestClientHttpTasks.h",
    "label": "/**",
    "line": 21,
@@ -11533,10 +11943,10 @@
   {
    "file": "utf_baselib_http2/TestAsioSslStreamWrapper.h",
    "label": "namespace sslstreamwrapper",
-   "line": 44,
+   "line": 49,
    "module": "utf_baselib_http2",
    "ns": "utest",
-   "sha": "12a2c9763c14cb6274ae7b6216dba38e"
+   "sha": "3ef7c9554f2571c73104b7d236b2c4cd"
   },
   {
    "file": "utf_baselib_http2/TestTcpPreHandshakeStageTls.h",
@@ -14032,6 +14442,7 @@
   "utf_baselib2": {
    "data_files": {},
    "data_literals": [
+    "010.1.1.999",
     "10.1.2.3",
     "10.4.5.6",
     "127.0.0.1",
@@ -14039,7 +14450,10 @@
     "20020131T235959.000159",
     "20020131T235959.145",
     "3.2.0",
-    "3.5.0"
+    "3.5.0",
+    "example.com",
+    "www.example.com",
+    "xn--exmple-cua.com"
    ],
    "data_refs": [],
    "files": [
@@ -14106,13 +14520,23 @@
     },
     {
      "includes": [
+      "<baselib/core/Uri.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<string>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib2/TestUri.h"
+    },
+    {
+     "includes": [
       "<utests/baselib/UtfMain.h>",
       "\"TestTimeZoneData.h\"",
       "\"TestDateTimeValidationUtils.h\"",
       "\"TestTransaction.h\"",
       "\"TestNetUtils.h\"",
       "\"TestBoostAsioCompat.h\"",
-      "\"TestBoostAsioErrorCallback.h\""
+      "\"TestBoostAsioErrorCallback.h\"",
+      "\"TestUri.h\""
      ],
      "path": "utf_baselib2/UtfBaselib2Main.cpp"
     }
@@ -14545,6 +14969,106 @@
     "TestFilesystemMetadataRejectedMutationsLeaveStoreConsistent"
    ]
   },
+  "utf_baselib_h2client": {
+   "data_files": {},
+   "data_literals": [],
+   "data_refs": [],
+   "files": [
+    {
+     "includes": [
+      "<utests/baselib/UtfMain.h>",
+      "<baselib/http2/PreCompiled.h>"
+     ],
+     "path": "utf_baselib_h2client/UtfBaselibH2ClientMain.cpp"
+    }
+   ],
+   "notes_cases": []
+  },
+  "utf_baselib_h2core": {
+   "data_files": {},
+   "data_literals": [
+    "TLSv1.3"
+   ],
+   "data_refs": [],
+   "files": [
+    {
+     "includes": [
+      "<baselib/http2/Globals.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<baselib/core/ErrorHandling.h>",
+      "<cstdint>",
+      "<exception>",
+      "<string>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_h2core/TestHttp2ErrorInfo.h"
+    },
+    {
+     "includes": [
+      "<baselib/http2/Globals.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<cstdint>",
+      "<limits>",
+      "<string>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_h2core/TestHttp2Globals.h"
+    },
+    {
+     "includes": [
+      "<utests/baselib/UtfMain.h>",
+      "<baselib/http2/PreCompiled.h>",
+      "\"TestHttp2Globals.h\"",
+      "\"TestHttp2ErrorInfo.h\""
+     ],
+     "path": "utf_baselib_h2core/UtfBaselibH2CoreMain.cpp"
+    }
+   ],
+   "notes_cases": [
+    "Http2ErrorInfo_AttachAndReadTests",
+    "Http2ErrorInfo_DistinctTagsTests",
+    "Http2Globals_FrameTypesAndFlagsTests",
+    "Http2Globals_ProtocolConstantsAndLimitsTests",
+    "Http2Globals_SettingsAndErrorCodesTests"
+   ]
+  },
+  "utf_baselib_h2profiles": {
+   "data_files": {},
+   "data_literals": [
+    "0.8",
+    "0.9"
+   ],
+   "data_refs": [],
+   "files": [
+    {
+     "includes": [
+      "<baselib/crypto/TlsClientProfile.h>",
+      "<baselib/http2/Http2Profile.h>",
+      "<baselib/httpclient/HeaderProfile.h>",
+      "<baselib/data/models/HttpClientProfiles.h>",
+      "<baselib/data/DataModelObject.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_h2profiles/TestHttpClientProfiles.h"
+    },
+    {
+     "includes": [
+      "<utests/baselib/UtfMain.h>",
+      "<baselib/httpclient/PreCompiled.h>",
+      "\"TestHttpClientProfiles.h\""
+     ],
+     "path": "utf_baselib_h2profiles/UtfBaselibH2ProfilesMain.cpp"
+    }
+   ],
+   "notes_cases": [
+    "HttpClientProfiles_BrowserProfileRoundTripTests",
+    "HttpClientProfiles_RequiredPropertiesAreEnforcedOnLoadTests",
+    "HttpClientProfiles_SettingValueSpansFullUint32RangeTests",
+    "HttpClientProfiles_ShapeTypesDefaultToDefinedValuesTests",
+    "HttpClientProfiles_ShapeTypesPreserveOrderTests"
+   ]
+  },
   "utf_baselib_http": {
    "data_files": {},
    "data_literals": [
@@ -14614,6 +15138,7 @@
     "10.11.12.13",
     "127.0.0.1",
     "192.168.1.1",
+    "TLSv1.3",
     "a.b.example.test",
     "a.b.mycompany.com",
     "asio.ssl.stream",
@@ -14715,9 +15240,14 @@
     }
    ],
    "notes_cases": [
+    "AsioSslStreamWrapper_AlpnProtocolOfferTests",
     "AsioSslStreamWrapper_BeginProtocolShutdownPreconditionTests",
+    "AsioSslStreamWrapper_ClientContextConstructorTests",
+    "AsioSslStreamWrapper_ClientHelloCaptureTests",
     "AsioSslStreamWrapper_EnhanceExceptionNoVerifyFailureTests",
     "AsioSslStreamWrapper_FreshStateTests",
+    "AsioSslStreamWrapper_NegotiatedParametersAreEmptyBeforeHandshakeTests",
+    "AsioSslStreamWrapper_StrandConstructorTests",
     "TcpPreHandshakeStageTls_RetryableHandshakeErrorTests",
     "TcpPreHandshakeStageTls_StageRunsBeforeHandshakeTests",
     "TcpPreHandshakeStageTls_StageRunsOncePerAttemptTests",
@@ -14740,6 +15270,43 @@
     "TlsProtocolPolicy_ServerContextRejectsBadKeyMaterial",
     "TlsProtocolPolicy_Tls10IsRefusedUnderTheDefaultPolicy",
     "TlsProtocolPolicy_Tls11IsRefusedUnderTheDefaultPolicy"
+   ]
+  },
+  "utf_baselib_httpclient": {
+   "data_files": {},
+   "data_literals": [
+    "example.com"
+   ],
+   "data_refs": [],
+   "files": [
+    {
+     "includes": [
+      "<baselib/http/HeaderList.h>",
+      "<baselib/http/Globals.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<string>",
+      "<vector>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_httpclient/TestHeaderList.h"
+    },
+    {
+     "includes": [
+      "<utests/baselib/UtfMain.h>",
+      "<baselib/httpclient/PreCompiled.h>",
+      "\"TestHeaderList.h\""
+     ],
+     "path": "utf_baselib_httpclient/UtfBaselibHttpClientMain.cpp"
+    }
+   ],
+   "notes_cases": [
+    "HeaderList_CaseInsensitiveLookupTests",
+    "HeaderList_ErrorMessageRedactionTests",
+    "HeaderList_HeadersMapRoundTripTests",
+    "HeaderList_NameValidationTests",
+    "HeaderList_OrderCaseAndRepeatsTests",
+    "HeaderList_SetRemoveAndBoundsTests",
+    "HeaderList_ValueInjectionRejectionTests"
    ]
   },
   "utf_baselib_io": {
@@ -16436,6 +17003,27 @@
    "sha": "f6e77a1d1be2dc6c111c35f14f2a3036"
   },
   {
+   "file": "utf_baselib_h2core/TestHttp2ErrorInfo.h",
+   "line": 42,
+   "module": "utf_baselib_h2core",
+   "name": "utest",
+   "sha": "8939122c86d1265bd0b56302688a5ed2"
+  },
+  {
+   "file": "utf_baselib_h2core/TestHttp2Globals.h",
+   "line": 44,
+   "module": "utf_baselib_h2core",
+   "name": "utest",
+   "sha": "1e3ae105cb8de116755f0e69d8493e5b"
+  },
+  {
+   "file": "utf_baselib_h2profiles/TestHttpClientProfiles.h",
+   "line": 53,
+   "module": "utf_baselib_h2profiles",
+   "name": "<anonymous>",
+   "sha": "4c4a10d0a70fd068d16291b6d6d19656"
+  },
+  {
    "file": "utf_baselib_http/TestClientHttpTasks.h",
    "line": 19,
    "module": "utf_baselib_http",
@@ -16458,10 +17046,10 @@
   },
   {
    "file": "utf_baselib_http2/TestAsioSslStreamWrapper.h",
-   "line": 42,
+   "line": 47,
    "module": "utf_baselib_http2",
    "name": "utest",
-   "sha": "51323dc7b8c563a9e878e84e88784e73"
+   "sha": "7bd356f6dc963ed5a9e6fbc060cda279"
   },
   {
    "file": "utf_baselib_http2/TestTcpPreHandshakeStageTls.h",
