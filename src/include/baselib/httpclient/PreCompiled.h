@@ -21,6 +21,7 @@
 #include <baselib/httpclient/ClientTypes.h>
 #include <baselib/httpclient/ClientConnection.h>
 #include <baselib/httpclient/CookieJar.h>
+#include <baselib/httpclient/RedirectPolicy.h>
 
 /*
  * The version-neutral HTTP client umbrella. Each slice which adds an httpclient/ header appends

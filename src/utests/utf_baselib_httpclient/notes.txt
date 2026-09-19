@@ -24,3 +24,10 @@
 --log_level=message --run_test=CookieJar_CapsAndEvictionTests
 --log_level=message --run_test=CookieJar_RelativeRequestUriIsRefusedTests
 --log_level=message --run_test=CookieJar_ThreadSafetyTests
+
+--log_level=message --run_test=RedirectPolicy_OffByDefaultTests
+--log_level=message --run_test=RedirectPolicy_MethodRewriteMatrixTests
+--log_level=message --run_test=RedirectPolicy_CredentialDropIsCrossOriginTests
+--log_level=message --run_test=RedirectPolicy_DowngradeAndSchemeRefusalTests
+--log_level=message --run_test=RedirectPolicy_HopLimitAndBodyReplayTests
+--log_level=message --run_test=RedirectPolicy_TargetResolutionAndLocationTests
