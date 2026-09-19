@@ -1,0 +1,14 @@
+# each slice appends the recipes for the cases it lands here
+
+# S4.2 - the HTTP/2 driver (design 5.1, 5.2, 5.7)
+--log_level=test_suite --run_test=H2Driver_RequestAndResponseTests
+--log_level=test_suite --run_test=H2Driver_OpeningWriteIsOneWriteTests
+--log_level=test_suite --run_test=H2Driver_FullDuplexUploadAndDownloadTests
+--log_level=test_suite --run_test=H2Driver_KeepAliveAndIdleCloseTests
+--log_level=test_suite --run_test=H2Driver_KeepAlivePingDeadlineTests
+--log_level=test_suite --run_test=H2Driver_SettingsAcknowledgementTimeoutTests
+--log_level=test_suite --run_test=H2Driver_RefusedStreamIsRetryableTests
+--log_level=test_suite --run_test=H2Driver_CancelResetsOneStreamOnlyTests
+--log_level=test_suite --run_test=H2Driver_GoAwayDrainsAndClosesCleanlyTests
+--log_level=test_suite --run_test=H2Driver_TlsAlpnSelectsHttp2Tests
+--log_level=test_suite --run_test=H2Driver_TlsAlpnServerPreferenceWinsTests
