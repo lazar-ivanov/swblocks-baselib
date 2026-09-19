@@ -793,6 +793,13 @@ peer - "S3.3 is S3.2 but over TLS" is a property of the code and not only of the
 negative controls, one per case, each exiting 201 with exactly the predicted failure, so no case is
 vacuous. **That round also found the S4.1 blocker recorded above.**
 
+**`utf_baselib_h2client` is now the largest module in this feature: 31.8 MB clang debug, 59.1 MB gcc
+release measured** (the 2x rule of thumb predicted about 64). Most of that is a floor - the module
+carries roughly 21 MB clang debug with no cases in it at all - so five cases did not buy it, but the
+number is the number and **it is 16 MB from the 75 MB hard ceiling**. S4.1 adds the connection task,
+the pool, the retry matrix and a stress suite to this same module. **Measure with gcc release before
+adding to it, not with clang debug, and expect `utf_baselib_h2client2` to be the answer.**
+
 Two smaller things from it worth keeping: `m_wasSocketShutdownForcefully` must be set synchronously
 with only the socket call posted, because `isShutdownNeeded()` and `scheduleTaskFinishContinuation`
 both read it to decide whether a TLS shutdown is owed and a stale read would start an
