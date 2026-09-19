@@ -5185,19 +5185,19 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 777,
+   "line": 785,
    "module": "utf_baselib_h2client2",
    "name": "H2Driver_CancelResetsOneStreamOnlyTests",
    "namespaces": []
   },
   {
-   "body_sha": "a6f9d885b27982fde31a0274bc759f11",
-   "doc_sha": "1c9ff3c65a2684ccc33e28f2f1c30ba4",
+   "body_sha": "d0b4f809020b69ad863b61a81e7e53a5",
+   "doc_sha": "7c191569cb8fdc8b4f71f0abf2455d23",
    "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 325,
+   "line": 332,
    "module": "utf_baselib_h2client2",
    "name": "H2Driver_FullDuplexUploadAndDownloadTests",
    "namespaces": []
@@ -5209,7 +5209,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 876,
+   "line": 884,
    "module": "utf_baselib_h2client2",
    "name": "H2Driver_GoAwayDrainsAndClosesCleanlyTests",
    "namespaces": []
@@ -5221,7 +5221,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 454,
+   "line": 462,
    "module": "utf_baselib_h2client2",
    "name": "H2Driver_KeepAliveAndIdleCloseTests",
    "namespaces": []
@@ -5233,7 +5233,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 541,
+   "line": 549,
    "module": "utf_baselib_h2client2",
    "name": "H2Driver_KeepAlivePingDeadlineTests",
    "namespaces": []
@@ -5257,7 +5257,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 690,
+   "line": 698,
    "module": "utf_baselib_h2client2",
    "name": "H2Driver_RefusedStreamIsRetryableTests",
    "namespaces": []
@@ -5281,9 +5281,21 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 602,
+   "line": 610,
    "module": "utf_baselib_h2client2",
    "name": "H2Driver_SettingsAcknowledgementTimeoutTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "b0eb7ae9012e122c7a5262c3c4fd6207",
+   "doc_sha": "3d8ff6f4644682056f0d4c7d9045d4de",
+   "file": "utf_baselib_h2client3/TestHttp2ConnectionTaskTls.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 304,
+   "module": "utf_baselib_h2client3",
+   "name": "H2Driver_TlsAlpnNoOverlapSelectsNothingTests",
    "namespaces": []
   },
   {
@@ -5725,7 +5737,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1632,
+   "line": 1709,
    "module": "utf_baselib_httpclient3",
    "name": "Http1Driver_AgainstTheLibraryHttpServerTests",
    "namespaces": []
@@ -5737,7 +5749,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1371,
+   "line": 1448,
    "module": "utf_baselib_httpclient3",
    "name": "Http1Driver_ChunkedTrailersAndBodilessTests",
    "namespaces": []
@@ -5749,7 +5761,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1315,
+   "line": 1392,
    "module": "utf_baselib_httpclient3",
    "name": "Http1Driver_InterimResponsesPrecedeTheFinalBlockTests",
    "namespaces": []
@@ -5761,7 +5773,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1027,
+   "line": 1057,
    "module": "utf_baselib_httpclient3",
    "name": "Http1Driver_RequestResponseAndKeepAliveReuseTests",
    "namespaces": []
@@ -5773,19 +5785,19 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1482,
+   "line": 1559,
    "module": "utf_baselib_httpclient3",
    "name": "Http1Driver_RequestsThisDriverRefusesTests",
    "namespaces": []
   },
   {
-   "body_sha": "a6f2deb73b3a7d04964d3daeeb24276e",
+   "body_sha": "b8d6ff5562a0cb195b9fd7a1ea3c76dd",
    "doc_sha": null,
    "file": "utf_baselib_httpclient3/TestHttp1ConnectionTask.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1214,
+   "line": 1244,
    "module": "utf_baselib_httpclient3",
    "name": "Http1Driver_ReuseVerdictInputsTests",
    "namespaces": []
@@ -8475,7 +8487,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1981,
+   "line": 2026,
    "module": "utf_baselib_h2core",
    "name": "Session_DataPathValidationTests",
    "namespaces": []
@@ -8487,7 +8499,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 2873,
+   "line": 2918,
    "module": "utf_baselib_h2core",
    "name": "Session_DecodedHeaderListBoundTests",
    "namespaces": []
@@ -8499,7 +8511,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 2978,
+   "line": 3023,
    "module": "utf_baselib_h2core",
    "name": "Session_DuplicateProfileSettingTests",
    "namespaces": []
@@ -8511,7 +8523,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 2067,
+   "line": 2112,
    "module": "utf_baselib_h2core",
    "name": "Session_EarlyResponseTests",
    "namespaces": []
@@ -8523,7 +8535,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 2127,
+   "line": 2172,
    "module": "utf_baselib_h2core",
    "name": "Session_FlowControlTests",
    "namespaces": []
@@ -8535,9 +8547,21 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 3248,
+   "line": 3293,
    "module": "utf_baselib_h2core",
    "name": "Session_GoAwayAndRetryTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "f28fafd6fed845baa552e7fac87b6b77",
+   "doc_sha": null,
+   "file": "utf_baselib_h2core/TestSession.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 3550,
+   "module": "utf_baselib_h2core",
+   "name": "Session_GoAwayDropsQueuedHeaderBlockTests",
    "namespaces": []
   },
   {
@@ -8547,7 +8571,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 801,
+   "line": 846,
    "module": "utf_baselib_h2core",
    "name": "Session_HeaderBlockGranularityTests",
    "namespaces": []
@@ -8559,7 +8583,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 963,
+   "line": 1008,
    "module": "utf_baselib_h2core",
    "name": "Session_HpackDecoderCeilingTests",
    "namespaces": []
@@ -8571,7 +8595,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 2607,
+   "line": 2652,
    "module": "utf_baselib_h2core",
    "name": "Session_LimitsTests",
    "namespaces": []
@@ -8583,7 +8607,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1090,
+   "line": 1135,
    "module": "utf_baselib_h2core",
    "name": "Session_LocalSettingsTakeEffectOnAckTests",
    "namespaces": []
@@ -8595,7 +8619,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1503,
+   "line": 1548,
    "module": "utf_baselib_h2core",
    "name": "Session_MessageValidationTests",
    "namespaces": []
@@ -8607,7 +8631,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 509,
+   "line": 554,
    "module": "utf_baselib_h2core",
    "name": "Session_OpeningWriteTests",
    "namespaces": []
@@ -8619,7 +8643,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 3505,
+   "line": 3676,
    "module": "utf_baselib_h2core",
    "name": "Session_ProfileShapingTests",
    "namespaces": []
@@ -8631,7 +8655,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 3048,
+   "line": 3093,
    "module": "utf_baselib_h2core",
    "name": "Session_PushPromiseAndPingTests",
    "namespaces": []
@@ -8643,7 +8667,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 638,
+   "line": 683,
    "module": "utf_baselib_h2core",
    "name": "Session_RequestAndResponseTests",
    "namespaces": []
@@ -8655,7 +8679,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1271,
+   "line": 1316,
    "module": "utf_baselib_h2core",
    "name": "Session_SettingsTimeoutTests",
    "namespaces": []
@@ -8667,7 +8691,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1379,
+   "line": 1424,
    "module": "utf_baselib_h2core",
    "name": "Session_StreamErrorOnClosedStreamTests",
    "namespaces": []
@@ -8679,7 +8703,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 2332,
+   "line": 2377,
    "module": "utf_baselib_h2core",
    "name": "Session_WriteSchedulingTests",
    "namespaces": []
@@ -13594,7 +13618,7 @@
    "line": 52,
    "module": "utf_baselib_h2core",
    "ns": "utest",
-   "sha": "d44496ae8865835067c4899e0125672e"
+   "sha": "5913d4ec62ef43e5b9c55a03955b3f93"
   },
   {
    "file": "utf_baselib_h2core/TestStreamStates.h",
@@ -13906,7 +13930,7 @@
    "line": 83,
    "module": "utf_baselib_httpclient3",
    "ns": "utest",
-   "sha": "66359d5c4b64832f9270b0e19cb0322f"
+   "sha": "cc5d527a09c7925bc009d92aa4780fa9"
   },
   {
    "file": "utf_baselib_io/TestIO.h",
@@ -17054,6 +17078,7 @@
     }
    ],
    "notes_cases": [
+    "H2Driver_TlsAlpnNoOverlapSelectsNothingTests",
     "H2Driver_TlsAlpnSelectsHttp2Tests",
     "H2Driver_TlsAlpnServerPreferenceWinsTests"
    ]
@@ -17244,6 +17269,7 @@
     "Session_EarlyResponseTests",
     "Session_FlowControlTests",
     "Session_GoAwayAndRetryTests",
+    "Session_GoAwayDropsQueuedHeaderBlockTests",
     "Session_HeaderBlockGranularityTests",
     "Session_HpackDecoderCeilingTests",
     "Session_LimitsTests",
@@ -19593,7 +19619,7 @@
    "line": 50,
    "module": "utf_baselib_h2core",
    "name": "utest",
-   "sha": "26207f864198e7ff90473fd79d0b7677"
+   "sha": "21a03789f42368ad37bb6362932ebd06"
   },
   {
    "file": "utf_baselib_h2core/TestStreamStates.h",
@@ -19733,7 +19759,7 @@
    "line": 81,
    "module": "utf_baselib_httpclient3",
    "name": "utest",
-   "sha": "4d159e5eb51acebcd7bf4f0100fdb56d"
+   "sha": "1589d1eb764399f8da5755dd1d3542aa"
   },
   {
    "file": "utf_baselib_io/TestIO.h",
