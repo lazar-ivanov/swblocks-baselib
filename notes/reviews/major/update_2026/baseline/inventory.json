@@ -3563,33 +3563,45 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 822,
+   "line": 877,
    "module": "utf_baselib_httpclient",
    "name": "ClientContracts_BodySourceAndSinkStreamingTests",
    "namespaces": []
   },
   {
-   "body_sha": "b4360c0c8a53618a45400c02f58fe9df",
+   "body_sha": "261dfb34f82877a49c454ab0a892a406",
    "doc_sha": null,
    "file": "utf_baselib_httpclient/TestClientContracts.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 997,
+   "line": 1277,
    "module": "utf_baselib_httpclient",
    "name": "ClientContracts_ConnectionKeyAndPoolTests",
    "namespaces": []
   },
   {
-   "body_sha": "a8ea5cb7af42a241892354e3c25ecf1d",
+   "body_sha": "0fd869849fa77058986736b9783a08af",
    "doc_sha": null,
    "file": "utf_baselib_httpclient/TestClientContracts.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1129,
+   "line": 1409,
    "module": "utf_baselib_httpclient",
    "name": "ClientContracts_DriverFactoryDispatchTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "74315c544091dae7f106e36aa407c8e3",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestClientContracts.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1163,
+   "module": "utf_baselib_httpclient",
+   "name": "ClientContracts_NegotiatedAlpnReachesTheResponseTests",
    "namespaces": []
   },
   {
@@ -3599,7 +3611,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 761,
+   "line": 816,
    "module": "utf_baselib_httpclient",
    "name": "ClientContracts_ReplayabilityIsAQueryOnTheRequestTests",
    "namespaces": []
@@ -3611,19 +3623,31 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 655,
+   "line": 710,
    "module": "utf_baselib_httpclient",
    "name": "ClientContracts_RequestAndResponseRoundTripTests",
    "namespaces": []
   },
   {
-   "body_sha": "b63555a52fb30f369d203a00211ed71a",
+   "body_sha": "c0bb9cfeab4e450b5ae27fc89be2f330",
    "doc_sha": null,
    "file": "utf_baselib_httpclient/TestClientContracts.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 900,
+   "line": 1052,
+   "module": "utf_baselib_httpclient",
+   "name": "ClientContracts_ResponseStatusCrossesTheSinkTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "eb64ca45776d1bf718c4abb180dc75c8",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestClientContracts.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 955,
    "module": "utf_baselib_httpclient",
    "name": "ClientContracts_StubConnectionAndEventSinkTests",
    "namespaces": []
@@ -4013,19 +4037,31 @@
    "namespaces": []
   },
   {
+   "body_sha": "fb6ae5c3f9d632b029db993329d79c2d",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestCookieJar.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 487,
+   "module": "utf_baselib_httpclient",
+   "name": "CookieJar_AddressDomainAttributeTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "ac21224e20c3f1bde46b9acbc6fde81e",
    "doc_sha": null,
    "file": "utf_baselib_httpclient/TestCookieJar.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 750,
+   "line": 1117,
    "module": "utf_baselib_httpclient",
    "name": "CookieJar_CapsAndEvictionTests",
    "namespaces": []
   },
   {
-   "body_sha": "e2166f5340480735ab1e2ea1b5d30fd7",
+   "body_sha": "b466c72d33ac762651c9b45976b390b3",
    "doc_sha": null,
    "file": "utf_baselib_httpclient/TestCookieJar.h",
    "fixture": null,
@@ -4055,7 +4091,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 379,
+   "line": 746,
    "module": "utf_baselib_httpclient",
    "name": "CookieJar_ExpiryAndMaxAgePrecedenceTests",
    "namespaces": []
@@ -4067,7 +4103,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 571,
+   "line": 938,
    "module": "utf_baselib_httpclient",
    "name": "CookieJar_HostOnlyStorageAndOrderTests",
    "namespaces": []
@@ -4091,7 +4127,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 888,
+   "line": 1255,
    "module": "utf_baselib_httpclient",
    "name": "CookieJar_RelativeRequestUriIsRefusedTests",
    "namespaces": []
@@ -4103,9 +4139,21 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 281,
+   "line": 648,
    "module": "utf_baselib_httpclient",
    "name": "CookieJar_SecureAndHttpOnlyTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "5d2c56a80b554479d880017d545eb128",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient/TestCookieJar.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 309,
+   "module": "utf_baselib_httpclient",
+   "name": "CookieJar_SingleLabelDomainAttributeTests",
    "namespaces": []
   },
   {
@@ -4115,7 +4163,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 937,
+   "line": 1304,
    "module": "utf_baselib_httpclient",
    "name": "CookieJar_ThreadSafetyTests",
    "namespaces": []
@@ -5365,7 +5413,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 330,
+   "line": 530,
    "module": "utf_baselib_httpclient",
    "name": "Http1Codec_ChunkedAndTrailersTests",
    "namespaces": []
@@ -5377,9 +5425,21 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 933,
+   "line": 1133,
    "module": "utf_baselib_httpclient",
    "name": "Http1Codec_LimitsTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "25e135eed33814ba5f6a36d2cb8586ad",
+   "doc_sha": "a6451e86f859ecdaaa2fbb4c65268352",
+   "file": "utf_baselib_httpclient/TestHttp1Codec.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1439,
+   "module": "utf_baselib_httpclient",
+   "name": "Http1Codec_LocaleIndependenceTests",
    "namespaces": []
   },
   {
@@ -5389,7 +5449,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 464,
+   "line": 664,
    "module": "utf_baselib_httpclient",
    "name": "Http1Codec_ReadUntilCloseAndBodilessTests",
    "namespaces": []
@@ -5401,7 +5461,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1038,
+   "line": 1238,
    "module": "utf_baselib_httpclient",
    "name": "Http1Codec_RequestSerializerTests",
    "namespaces": []
@@ -5413,7 +5473,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 625,
+   "line": 825,
    "module": "utf_baselib_httpclient",
    "name": "Http1Codec_SmugglingDefencesTests",
    "namespaces": []
@@ -5425,7 +5485,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 186,
+   "line": 386,
    "module": "utf_baselib_httpclient",
    "name": "Http1Codec_StatusLineHeadersAndBodyTests",
    "namespaces": []
@@ -12878,7 +12938,7 @@
    "line": 53,
    "module": "utf_baselib_httpclient",
    "ns": "utest",
-   "sha": "2997d9209f7a1056dbde6d37568493a3"
+   "sha": "c2c93a322760ef51ea376a9c5f2c9471"
   },
   {
    "file": "utf_baselib_httpclient/TestContentDecoder.h",
@@ -12899,10 +12959,10 @@
   {
    "file": "utf_baselib_httpclient/TestHttp1Codec.h",
    "label": "namespace http1codec",
-   "line": 45,
+   "line": 46,
    "module": "utf_baselib_httpclient",
    "ns": "utest",
-   "sha": "0ef9bf210c9b1584bfdbc36937cff978"
+   "sha": "7959e21e804eb676a6f1b99a0e44532f"
   },
   {
    "file": "utf_baselib_httpclient/TestRedirectPolicy.h",
@@ -16311,6 +16371,7 @@
   "utf_baselib_httpclient": {
    "data_files": {},
    "data_literals": [
+    "01.2.3.4",
     "1.2.3.4",
     "1.2.3.4a",
     "10.0.0.7",
@@ -16321,6 +16382,7 @@
     "EXAMPLE.com",
     "a.b.example.com",
     "badexample.com",
+    "co.uk",
     "example.COM",
     "example.com",
     "notexample.com",
@@ -16391,6 +16453,7 @@
       "<baselib/core/Uri.h>",
       "<baselib/core/BaseIncludes.h>",
       "<cstddef>",
+      "<locale>",
       "<string>",
       "<vector>",
       "<utests/baselib/Utf.h>"
@@ -16428,13 +16491,16 @@
     "ClientContracts_BodySourceAndSinkStreamingTests",
     "ClientContracts_ConnectionKeyAndPoolTests",
     "ClientContracts_DriverFactoryDispatchTests",
+    "ClientContracts_NegotiatedAlpnReachesTheResponseTests",
     "ClientContracts_ReplayabilityIsAQueryOnTheRequestTests",
     "ClientContracts_RequestAndResponseRoundTripTests",
+    "ClientContracts_ResponseStatusCrossesTheSinkTests",
     "ClientContracts_StubConnectionAndEventSinkTests",
     "ContentDecoder_BombCapsTripTests",
     "ContentDecoder_NoDecompressorShipsTests",
     "ContentDecoder_RegistrationAndLookupTests",
     "ContentDecoder_StreamingThroughTheSeamTests",
+    "CookieJar_AddressDomainAttributeTests",
     "CookieJar_CapsAndEvictionTests",
     "CookieJar_DomainAttributeRejectionTests",
     "CookieJar_DomainMatchRuleTests",
@@ -16443,6 +16509,7 @@
     "CookieJar_PathMatchAndDefaultPathTests",
     "CookieJar_RelativeRequestUriIsRefusedTests",
     "CookieJar_SecureAndHttpOnlyTests",
+    "CookieJar_SingleLabelDomainAttributeTests",
     "CookieJar_ThreadSafetyTests",
     "HeaderList_CaseInsensitiveLookupTests",
     "HeaderList_ErrorMessageRedactionTests",
@@ -16453,6 +16520,7 @@
     "HeaderList_ValueInjectionRejectionTests",
     "Http1Codec_ChunkedAndTrailersTests",
     "Http1Codec_LimitsTests",
+    "Http1Codec_LocaleIndependenceTests",
     "Http1Codec_ReadUntilCloseAndBodilessTests",
     "Http1Codec_RequestSerializerTests",
     "Http1Codec_SmugglingDefencesTests",
@@ -18275,7 +18343,7 @@
    "line": 51,
    "module": "utf_baselib_httpclient",
    "name": "utest",
-   "sha": "618c67a3ef9a596c78e214483548db36"
+   "sha": "277aeaf64550e126ac03982879c743f1"
   },
   {
    "file": "utf_baselib_httpclient/TestContentDecoder.h",
@@ -18293,10 +18361,10 @@
   },
   {
    "file": "utf_baselib_httpclient/TestHttp1Codec.h",
-   "line": 43,
+   "line": 44,
    "module": "utf_baselib_httpclient",
    "name": "utest",
-   "sha": "8395198797cc2e6f0f373de09f889efd"
+   "sha": "b2622671b673392d4f764da3848f047b"
   },
   {
    "file": "utf_baselib_httpclient/TestRedirectPolicy.h",
