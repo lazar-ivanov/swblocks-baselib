@@ -112,6 +112,30 @@ until this is reopened:
       flavors can be compared directly once the second one runs.
     - It consumes S1.6's `enableClientHelloCapture()`, so it inherits that slice's debt above
       rather than creating a second one.
+  - **S4.2 has landed, and it added the SERVER half of ALPN** - the first OpenSSL entry point in
+    `src/include/` which is not a client one. `crypto::CryptoBase::setAlpnServerPreference`, which
+    a TLS test peer needs in order to choose `h2` at all; before it, no TLS peer existed or could.
+    What it owes, and what it deliberately does not claim:
+    - Every OpenSSL entry point it calls was read in the dist's own 3.5.4 headers rather than
+      recalled - `SSL_CTX_set_alpn_select_cb` and the `SSL_CTX_alpn_select_cb_func` typedef
+      (`ssl.h:845` and `:839`), `SSL_CTX_set_ex_data` / `SSL_CTX_get_ex_data` / the
+      `SSL_CTX_get_ex_new_index` macro over `CRYPTO_get_ex_new_index` (`ssl.h:2220`, `:2221`,
+      `:2218`), `SSL_get_SSL_CTX` (`:2188`), the `CRYPTO_EX_free` typedef (`crypto.h:252`) and the
+      four `SSL_TLSEXT_ERR_*` values (`tls1.h:332-335`). **Nothing was read or inferred for
+      1.1.1w**, because no header for it exists here.
+    - No new version guard was added, and that is a decision rather than an oversight: the client
+      half S1.6 added (`SSL_set_alpn_protos`, `SSL_get0_alpn_selected`) carries none either, and
+      `SSL_CTX_set_alpn_select_cb` belongs to the same ALPN API as those two. The ex_data family is
+      older still. So this entry point carries **the same** availability question as the ALPN pair
+      already in the tree rather than a new one - but that is an argument from where the API sits,
+      not a measurement, and it is what the run would settle.
+    - **Still owed:** build and run `utf_baselib_h2client2` under `BL_USE_OPENSSL_1X=1`. Two things
+      only that run can settle. That the callback binds at all on the older branch - it is passed
+      as a function pointer with no cast, exactly as `SSL_set_msg_callback` is, and that is the
+      shape which was wrongly predicted to fail on 3.5.4 above. And that
+      `H2Driver_TlsAlpnSelectsHttp2Tests` and `H2Driver_TlsAlpnServerPreferenceWinsTests` behave the
+      same there: they are this feature's answer to the plan's "h2 over TLS on the default hardened
+      context passes on both OpenSSL flavors", and only the 3.5.4 half has been produced.
 
 ## Why deferring is reasonable, and where the risk actually sits
 
