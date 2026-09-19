@@ -328,6 +328,7 @@ namespace bl
             cpp::SafeUniquePtr< asio::deadline_timer >                          m_idleTimer;
 
             cpp::ScalarTypeIniter< bool >                                       m_isWriteInFlight;
+            cpp::ScalarTypeIniter< bool >                                       m_isPrefaceWritePending;
             cpp::ScalarTypeIniter< bool >                                       m_isCloseWhenDrained;
             cpp::ScalarTypeIniter< bool >                                       m_isSettingsTimerArmed;
             cpp::ScalarTypeIniter< bool >                                       m_isDrainingEvents;
@@ -1415,6 +1416,18 @@ namespace bl
 
                 m_isWriteInFlight = false;
 
+                if( m_isPrefaceWritePending )
+                {
+                    /*
+                     * The preface is away, which is exactly where design 5.7's connect deadline
+                     * ends - see onProtocolNegotiated( ) for why it is not disarmed there
+                     */
+
+                    m_isPrefaceWritePending = false;
+
+                    base_type::cancelConnectDeadline();
+                }
+
                 /*
                  * produce( ) is what reaps a stream our own last frame closed, so its events are
                  * drained here as well as on the read path - a peer which says nothing further
@@ -2002,7 +2015,21 @@ namespace bl
                     return base_type::onProtocolNegotiated();
                 }
 
-                base_type::cancelConnectDeadline();
+                /*
+                 * THE CONNECT DEADLINE IS NOT DISARMED HERE, AND THAT IS THE WHOLE POINT OF THE
+                 * FLAG. Design 5.7's row ends at the preface and the base says the same ("a
+                 * derived driver calls it once the preface is away"), so cancelling at the top of
+                 * this function would end the deadline before the read block exists, before the
+                 * session exists and before the opening write has been issued - and on a cleartext
+                 * connection with no proxy the arm and the cancel sit in ONE synchronous chain, so
+                 * the deadline would cover nothing at all. onWrite( ) disarms it instead, which is
+                 * the first moment the preface really is away
+                 *
+                 * If that write never completes, the deadline is what ends the task; if it fails,
+                 * the handler completes the task and the base disarms from onTaskStoppedNothrow( )
+                 */
+
+                m_isPrefaceWritePending = true;
 
                 m_readBlock = data::DataBlock::get(
                     m_h2config.dataBlocksPool,
