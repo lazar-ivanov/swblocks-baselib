@@ -3,7 +3,8 @@
 **Status:** written 2026-09-17 as a plan with nothing built, run or probed. **Layer L0 was executed on
 2026-09-17/18** - slices S0.1-S0.4 implemented in parallel worktrees, merged, release-validated, and
 the G1 gate (S0.5) passed at `gcc1520` debug; see §2 for the result, its two stated limits and the
-three follow-ups it left. **L1 onwards is still unexecuted.** Every probe outside L0 remains folded
+three follow-ups it left. **L1 and L2 were executed on 2026-09-18/19** (§3, §4); **L3 onwards is still
+unexecuted.** Every probe outside L0-L2 remains folded
 into the slice that needs it, to be run by the implementing agent at execution time.
 
 **Spec.** This plan implements `notes/plans/http2-design.md` ("the design"). The design is the
@@ -562,6 +563,21 @@ permanently red teaches people to ignore red, which costs more than the placehol
 All depend only on L1 and are mutually parallel. The four HTTP/2 primitives (S2.1-S2.4) are deliberately
 **not** templated on any stream and know nothing of Asio, OpenSSL, tasks or locks (design §2.1).
 
+**Executed 2026-09-18/19 - all nine slices implemented, merged and focus-validated** (S2.1, S2.3 and
+S2.4 in `d70d577`; S2.6 through S2.9 in `598b890`; S2.2 in `8040ec8`; S2.5 with the D15 verdict in
+`a7a36a5`). **Reviewed 2026-09-19 against the design and these work orders**, read-only -
+`notes/plans/issues/http2-l2-review-record.md` carries the verdict per slice, the findings ranked, and
+what the review did not check. Every slice does what its work order says; the RFC values were checked
+mechanically where they could be (all 257 rows of the Huffman table and every Appendix C vector
+against the RFC text) and by transcription elsewhere (the section 5.1 transition tables, the static
+table, the frame rules). **Three defects, fixed in the review's follow-up rather than carried:** the
+S2.6 contract could not convey the response status (recorded under S2.6, with the fix); S2.5's
+`Transfer-Encoding` gate and profile case-map lookup folded through `std::locale()`, which is the
+hazard S1.2 documents and avoids, and one of the two gates a smuggling defence; and S2.7 rejected a
+`Domain` identical to a single-label request host where RFC 6265 5.3 step 5 stores it host-only,
+so a test server on `localhost` lost its cookies. The rest are notes carried into the work orders
+they affect (S3.1, S4.3, S5.1, S5.2, S6.1). Nothing found blocks L3.
+
 ### S2.1 — HTTP/2 FrameCodec (§4.1)
 - Deliver: `http2/FrameCodec.h` - incremental 9-byte header parse across read boundaries; all ten frame
   types parsed/validated with per-type length, stream-id and padding rules; serialization of what we
@@ -633,6 +649,20 @@ All depend only on L1 and are mutually parallel. The four HTTP/2 primitives (S2.
 - Dep: S1.1, S1.2, S1.3. Earliest: t0; **integrate before any of S4.x/S5.x starts.**
 - Accept: interfaces compile against a stub implementation; value objects round-trip; a stub
   `ClientConnection` + sink pair exists in `httpclient` tests for S5.1 to develop against.
+- **DEFECT, FIXED AFTER THE L2 REVIEW (2026-09-19): the contract as first published had no path for
+  the response status code.** `ClientStreamEventSink::onHeaders( handle, http::HeaderList&&,
+  isInterim )` was the only header event, and `http::HeaderList` rejects `:status` by design - a
+  colon is not a token character (S1.2) - so no driver could put the status in the list and the
+  request task had nothing to fill `ClientResponse::status()` from; the stub sink in
+  `TestClientContracts.h` recorded a header *count*. The line above,
+  "`onHeaders( HeaderList, isInterim )`", is where it was lost, and design §5.3 did not say how the
+  status crosses (it does now). This was a defect and not a decision: the contract could not work
+  as written, and the option space was already closed - a `HeaderList` mode admitting pseudo-headers
+  was rejected in S2.2 for reasons that still hold, and a separate `onStatus` event would add a
+  fourth ordering guarantee to a sink whose comment exists to make the order a guarantee rather than
+  a hope. **The fix: `onHeaders` gains a `status` parameter** - an `unsigned`, the three-digit
+  `:status` for h2 and the status-line code for h1 - with the stub and its case updated in the same
+  change. S4.2 and S4.3 deliver it; S5.1 consumes it. Nothing in L3 touches it.
 
 ### S2.7 — Cookie jar (§5.6)
 - Deliver: `httpclient/CookieJar.h` - RFC 6265 domain/path matching, `Secure`/`HttpOnly`/expiry/`Max-Age`,
@@ -675,6 +705,25 @@ Depends on L0 (gated), L1, L2. Slices are mutually parallel except as noted.
      still entitled to 4096 and we would reject a legal size update. Either add a setter there or
      construct the decoder after the ack; S2.2 flagged this as the item it would have stopped on had
      the default path not been correct.
+  3. **Apply our own SETTINGS to local state when the peer's ACK arrives, not when they are sent**
+     (RFC 9113 §6.5.3; L2 review). Item 2 is one instance of a general rule: until the ACK the peer
+     is entitled to the old values, and every frame it sent under them precedes the ACK on the wire.
+     The same holds for `SETTINGS_INITIAL_WINDOW_SIZE` on the *receive* side - S2.3's
+     `applyInitialWindowSizeChange` applied to the receive windows at send time makes `consume`
+     raise FLOW_CONTROL_ERROR on data the peer sent legally under the old window - and for
+     `SETTINGS_MAX_FRAME_SIZE`, which is S2.1's `FrameReader::setMaxFrameSize`. The design says
+     when the peer's settings apply and when ours time out, not when ours take effect; this is the
+     answer, and it also decides where the SETTINGS_TIMEOUT timer stops.
+  4. **A stream error reported on a closed stream cannot be answered through the registry** (L2
+     review). S2.4 returns `FrameDisposition::StreamError( STREAM_CLOSED )` for a frame on a stream
+     the peer reset, as §5.1 says, and §5.4.2 says a stream error is answered with RST_STREAM - but
+     the same machine's `canSend( RST_STREAM )` is false once closed ("MUST NOT send frames other
+     than PRIORITY on a closed stream"), so `StreamRegistry::onFrameSent( RST_STREAM, ... )` on it
+     throws `UnexpectedException`. The RFC contradicts itself here and nghttp2 resolves it by
+     ignoring the frame. Either treat StreamError on a stream that `isClosed()` as Ignored, or
+     write the RST_STREAM without telling the registry - but decide it, because the naive path is
+     an unexpected-exception crash against a peer that is merely late. The `HalfClosedRemote`
+     case has no such problem: RST_STREAM may be sent there.
 - Deliver: `http2/Session.h` (`SessionT`, role-neutral, single-threaded by contract): `feed(bytes)` →
   event queue (no callbacks out of `feed`); `wantsWrite()`/`produce(buffer)`; commands (submit, body,
   reset, consumed, ping, goaway, settings); message validation (RFC 9113 §8.1-8.3); write scheduling
@@ -822,6 +871,12 @@ with all of them.
   pool if fully consumed and neither side said close.
 - Dep: S4.1, S2.5. Accept: request/response over h1; keep-alive reuse; against the library's own
   `HttpServer`. Tests → `httpclient`.
+- **Reuse is derived here, not reported by the codec** (L2 review). `Http1ResponseParser` exposes
+  `httpVersion()`, `needsEof()` and the header list but no keep-alive verdict, and Beast's own
+  `keep_alive()` is deliberately not re-exported. An HTTP/1.0 response without
+  `Connection: keep-alive`, any response carrying `Connection: close`, and any body framed by the
+  close (`needsEof()`) all mean the connection is not returned to the pool. `statusCode()` goes to
+  the sink through the `status` parameter of `onHeaders` (S2.6, fixed after the L2 review).
 
 ### S4.4 — Test peer (§8.2, D8)
 - Deliver: in `src/utests/include/utests/baselib/` - `Http2TestServer` (`TcpServerBase< STREAM >` + a
@@ -847,6 +902,12 @@ Depends on L2, L4. S5.1 and S5.2 are parallel via the S2.6 contracts.
   `ThreadPoolId::GeneralPurpose` (design §5.2).
 - Dep: S2.6, S0.1. Earliest: against the S2.6 interface (integration needs S5.2/L4). Accept: completion,
   timeout, cancel, backpressure against a stub connection then the real drivers. Tests → `h2client`.
+- **Two things S2.6 did not carry as first published** (L2 review): the response status, which
+  `onHeaders` now carries as a `status` parameter (fixed after the review - see S2.6), and the
+  stream-idle timeout of design §5.7, which is not on `ClientRequest` (only `totalTimeout` and
+  `responseHeadersTimeout` are). It is off by
+  default, so a session-level knob read here is enough; putting it on the frozen request type is a
+  negotiated change like any other.
 
 ### S5.2 — ConnectionPool (§5.4, D6, D21)
 - Deliver: `httpclient/ConnectionPool.h` - key (scheme/host/port/proxy/TLS-profile/h2-profile/verify);
@@ -857,6 +918,10 @@ Depends on L2, L4. S5.1 and S5.2 are parallel via the S2.6 contracts.
   default off** (D21); disposal fails queued requests, GOAWAYs, flushes. Leaf-lock discipline of §5.2 L4.
 - Dep: S4.1, S4.2, S4.3, S2.6. Accept: queueing behind a placeholder, slot limiting, retry matrix, GOAWAY
   handling, disposal; TSan clean. Tests → `h2client`.
+- **Set the draining reserve** (L2 review). S2.4's `StreamRegistry::isDraining()` fires only once the
+  identifier space is spent unless `setDrainingReserve( ... )` is called: the margin of design
+  §4.3's "approaching 2^31-1" was left to the pool on purpose, and the default is none. Choose it
+  from what this pool queues ahead, and pin it.
 
 ---
 
@@ -870,6 +935,18 @@ Depends on L2, L4. S5.1 and S5.2 are parallel via the S2.6 contracts.
 - Dep: S5.1, S5.2, S1.1, S1.4, S2.7, S2.8, S2.9. Accept: end-to-end GET/POST over h2 and h1 through the
   session against the test peer and the library `HttpServer`; redirects, cookies, strict decode. Tests →
   `httpclient`.
+- **Three things L2 leaves to this slice** (L2 review). (1) An HTTP/1.1 request carries ONE `Cookie`
+  field (RFC 6265 §5.4): the jar's `cookieHeaderValue` and any caller-supplied `Cookie` header have
+  to be merged, not both sent - and on a same-origin redirect the caller's header survives
+  `dropCredentialHeaders` while the jar recomputes, so the merge is where the two meet. (2)
+  `RedirectPolicy::dropCredentialHeaders` also drops `Proxy-Authorization` on a cross-origin hop,
+  beyond the work order's "Authorization + cookies": harmless while proxy credentials are session
+  configuration applied by the tunnel stage (S3.5), wrong if a caller-supplied header is ever what
+  carries them - keep the two consistent. (3) `CookieJar`'s `isHttpApi` is always `true` from this
+  client; the jar does not implement RFC 6265 §5.3 step 11's non-HTTP-API clause (a non-HTTP set
+  must not replace an existing HttpOnly cookie), which matters only if something ever passes
+  `false`. Design §5.6 now records what the jar settled on Secure cookies set over `http`; if this
+  session speaks both schemes to one host, that is the item to take up.
 
 ---
 

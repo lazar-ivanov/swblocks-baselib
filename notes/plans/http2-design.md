@@ -780,7 +780,10 @@ handling, redirects and eventually decompression are not I/O.
 ### 5.3 `HttpClientRequestTaskT` and backpressure
 
 One per request, protocol-agnostic: it talks to a `ClientConnection` interface that both connection
-tasks implement (submit, cancel, consumed).
+tasks implement (submit, cancel, consumed). The header event the driver delivers carries the response
+status **beside** the header list, because `HeaderList` cannot hold `:status` (3.5) and the session
+engine strips the pseudo-headers when it validates - S2.6 as first published omitted the status; the
+L2 review found it and the plan records the fix.
 
 `scheduleTask` only posts a start handler and returns, so nothing pool-related runs under the user's
 queue lock, honoring the contract at `TaskBase.h:857-869`. The start handler asks the pool for a
@@ -846,8 +849,16 @@ does not care.
 response parser handling the status line, headers, `Content-Length`, chunked transfer coding with
 trailers, read-until-close, and bodiless responses (1xx, 204, 304, `HEAD`). Response-side smuggling
 defenses: conflicting `Content-Length` values are an error; `Transfer-Encoding` together with
-`Content-Length` follows RFC 9112 section 6.3 and closes the connection afterwards; obsolete line
-folding is rejected; headers are capped at 64 KB, matching `SimpleHttpTask.h:77`.
+`Content-Length` is refused outright - RFC 9112 section 6.3 says such a message "ought to be handled
+as an error", and S2.5 took that reading rather than letting the coding win and closing afterwards;
+obsolete line folding is rejected in the header section (a fold in a chunked trailer section is
+unfolded by the backend and not detected - the trailer fields are restricted to a safe subset, so
+this is recorded rather than closed); headers are capped at 64 KB, matching `SimpleHttpTask.h:77`.
+Every check in the codec folds case and trims whitespace ASCII-only, never through `std::locale()` -
+the rule `http/HeaderList.h` states, for the reason it gives: a global locale an embedder installs
+must not be able to change what a security check compares. The L2 review found the
+`Transfer-Encoding` gate (`str::trim_copy`) and the profile case-map lookup (`str::to_lower_copy`)
+had broken it; both were fixed.
 
 `Http1ConnectionTaskT< STREAM >` serves one request at a time and returns to the pool if the response
 was fully consumed and neither side said `Connection: close`.
@@ -927,13 +938,29 @@ redirect policy and the decoder registry, and creates request tasks.
 `POST`, `301`/`302` rewritten to `GET` without a body; `307`/`308` preserve method and body, so they
 require a replayable body; `Authorization` and cookies for the old origin are dropped on a cross-origin
 hop; an `https` to `http` downgrade is refused unless explicitly allowed. Targets resolve through
-`net::Uri`.
+`net::Uri`. S2.8 added, and the L2 review judged sound: `HEAD` is exempt from the `303` rewrite (WHATWG
+Fetch, and what browsers and curl do); a target whose scheme is not `http` or `https` is refused; a
+response carrying two `Location` fields is refused rather than resolved; and `Proxy-Authorization`
+is dropped with the other credentials, which is more than this section asks and is noted for S6.1.
 
 **Cookie jar.** RFC 6265: domain and path matching, `Secure`, `HttpOnly`, expiry and `Max-Age`,
 host-only cookies, per-domain and total caps. There is no public suffix list, so a cookie whose
-`Domain` has no dot, or equals a bare TLD, is rejected, and the residual supercookie risk for
+`Domain` has no dot, or equals a bare TLD, is rejected - unless it is identical to the request host,
+which RFC 6265 section 5.3 step 5 makes a host-only cookie - and the residual supercookie risk for
 multi-label public suffixes such as `co.uk` is documented rather than hidden. The jar is per session
 and thread safe.
+
+Three points on which RFC 6265 is not the last word, and what S2.7 settled (L2 review): replacement
+identity includes the host-only flag, per RFC 6265bis section 5.6 rather than 6265's name, domain and
+path - 6265's rule lets a page widen its own host-only cookie into a domain cookie silently; a
+`Domain` attribute identical to a single-label request host (`Domain=localhost` on `localhost`) was
+rejected by S2.7 as first landed rather than stored host-only, which is what 6265's step 5 does for
+a public suffix, so a test server on `localhost` lost the cookie - a defect, fixed after the L2
+review, and the sentence above now states the rule; and Secure cookies follow 6265 alone, so
+RFC 6265bis section 5.5's "leave secure cookies alone" - an `http` response can neither set nor
+overwrite a `Secure` cookie - is **not** implemented. The last is a session-fixation surface for a
+session which speaks both schemes to one host, and it is left as a decision for a later slice rather
+than added silently.
 
 **Decoder seam.** `httpclient::ContentDecoder` is a streaming transform interface keyed by
 content-coding token, with an output-size cap and an expansion-ratio cap as decompression-bomb
