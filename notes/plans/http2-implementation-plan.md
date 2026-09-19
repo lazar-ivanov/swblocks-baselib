@@ -1169,7 +1169,39 @@ with all of them.
 - Dep: S4.1, S3.1. Accept: request/response over h2 against the test peer; full-duplex upload+download;
   keepalive and idle close observed; TSan clean; **and h2 over TLS on the default hardened context
   passes on both OpenSSL flavors** - that is D2's promise that everything but impersonation works on
-  1.1.1w. Tests → `h2client`.
+  1.1.1w. Tests → **`utf_baselib_h2client2` (cleartext) and `utf_baselib_h2client3` (TLS)**, not
+  `h2client`, which S4.1 closed.
+- **Executed 2026-09-19.** 11 cases, TSan clean over four runs (the known-open `ThreadPoolImpl`
+  report did not appear, nothing here resizing a pool, so it is clean rather than merely unchanged),
+  clean under clang and gcc at release. The 1.1.1w half of the acceptance is **owed, not claimed**.
+- **The server half of ALPN was added here**, strictly additive - `setAlpnServerPreference`, 280
+  insertions and zero deletions in `CryptoBase.h`. The **server's** preference order wins, and no
+  overlap answers `SSL_TLSEXT_ERR_NOACK` rather than the fatal alert RFC 7301 §3.2 also permits,
+  because design §5.5's fallback needs "handshake completed, nothing selected" to be representable.
+- **SETTINGS timeout reconciled at 10 s** and design §5.7 amended. The engine's number wins on its
+  merits: RFC 9113 gives `SETTINGS_TIMEOUT` no value, and the keepalive PING reply deadline in the
+  row below is 15 s - so 30 would make the *first* control frame a new connection must answer twice
+  as lenient as the steady-state liveness check.
+- **An ordering hazard, handled in the driver and recorded in §5.7.** `Session::produce()` writes
+  the control queue before the header-block queue, so a `RST_STREAM` queued while a stream's own
+  `HEADERS` are still waiting **overtakes them**, and the peer sees a reset for a stream it never
+  heard of - a connection error under §5.1. "Submit, then cancel" is the ordinary shape of a request
+  whose deadline expired while queued. The driver holds such a cancel back; the engine's queue order
+  is deliberately unchanged, since that order is what keeps a header block with its own CONTINUATION
+  frames.
+- **Two hazards worth carrying to any lane writing tests.** `UTF_FAIL( msg )` takes
+  `UtfGlobals::g_lock` and **then** evaluates `msg`, and `bl::os::mutex` is not recursive - so a
+  `UTF_REQUIRE` inside a `UTF_FAIL` message **self-deadlocks the binary** rather than failing it.
+  And a wait whose predicate differs from the assertion's is a flake: `waitForRecordsOf( recorder, 1 )`
+  was satisfied by the peer's own "connected" record, so a case asserted on a GOAWAY before it
+  existed - passing three times, then failing. **Make the wait predicate the same predicate as the
+  assertion**, and there is no count to guess.
+- **Module sizes, measured.** Before the split 46.8 MB clang debug (117 % of target) / 98.4 MB gcc
+  release; after, `h2client2` 37.0 / 75.0 and `h2client3` **39.4** / 77.7. The second is *at* the
+  target with 0.6 MB of headroom holding two cases, so it is closed on arrival. The figure which
+  decides splittability is `before - (a + b)` = **-29.6 MB**: a split relocates size and pays the
+  TU floor plus the common instantiation weight twice, it does not reduce. This is the phenomenon
+  `test-instantiation-weight-deferral.md` records. **S5.2 starts `utf_baselib_h2client4`.**
 
 ### S4.3 — HTTP/1.1 driver (§5.5)
 - Deliver: `httpclient/Http1ConnectionTask.h` - one request at a time over `Http1Codec`; returns to the
@@ -1268,6 +1300,15 @@ with all of them.
 Depends on L2, L4. S5.1 and S5.2 are parallel via the S2.6 contracts.
 
 ### S5.1 — HttpClientRequestTask (§5.3, §5.7)
+- **A GAP IN THE S2.6 CONTRACT, found by S4.2 and left for this slice to resolve.**
+  `ClientConnection` has **no "the connection wants more body" event**, so a streaming upload cannot
+  be *pulled*: the driver holds whatever `provideBody()` hands it until the windows take it. Design
+  §5.3 says an upload "never buffers ahead of the peer", and with the contract as published the
+  buffering moved **into the driver** rather than staying with the source. Documented at
+  `pumpBody()` in `http2/Http2ConnectionTask.h`. Closing it means changing a landed contract, so it
+  was deliberately not done in L4 - **this slice either adds the event to S2.6's interface as its
+  own change-set, or records why buffering in the driver is acceptable and amends §5.3.** Do not
+  leave both standing.
 - Deliver: `httpclient/HttpClientRequestTask.h` - one per request, protocol-agnostic against
   `ClientConnection`; `scheduleTask` only posts a start handler (honors `TaskBase.h:857`); a mailbox with
   ordered drain under the task lock; buffered (default, 64 MB cap) and streaming body modes; backpressure
