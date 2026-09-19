@@ -775,10 +775,12 @@ debug. Four things from that round are carried here rather than left in the lane
   non-empty, `[A-Za-z0-9_-]` throughout, first character alphanumeric. Strictly stronger than the
   original intent — it also refuses `,` and space.
 - **`utf_baselib_h2profiles` is the module to watch for size.** 24.9 MB clang debug is comfortable
-  against the 40 MB target, but the protocol's own 2x conversion puts it near **47 MB gcc release**,
-  and it was already past 40 there before this round. Nothing fails (the target is calibrated on
-  debug objects and the gate is off on Linux) so it was not split — but S7.3 adds to this module and
-  should check `make utests-sizes` before assuming room.
+  against the 40 MB target, but the same object under gcc release **measures 49.9 MB** - not an
+  estimate from the 2x rule of thumb, which predicted about 47; it was already past 40 there before
+  this round. Nothing fails, because the target is calibrated on debug objects and the size gate is
+  off on Linux, so it was not split. But it is the closest module in this feature to the 75 MB hard
+  ceiling, and **S7.3 adds to this same module** - check `make utests-sizes` and the gcc release
+  object before assuming room, and split to `utf_baselib_h2profiles2` rather than raising anything.
 - **The context builder deliberately shapes a context by its cipher lists alone.** The group list and
   key-share marks, the signature algorithms, and the `status_request`/SCT/padding switches exist in
   `TlsClientProfile` but are not applied yet; that is **S7.3**, after the §6.3 spike, and the header
