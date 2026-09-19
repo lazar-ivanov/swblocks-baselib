@@ -788,6 +788,50 @@ Depends on L0 (gated), L1, L2. Slices are mutually parallel except as noted.
 - Accept: conformance as byte scripts incl. every §4.6 limit, message-validation rejections, early-
   response success, SETTINGS ack/timeout; a `feed` libFuzzer harness (optional). Tests → `h2core`;
   **run `make utests-sizes` and split to `utf_baselib_h2core2` if over target** (design §8.1).
+- **Executed 2026-09-19.** `http2/Session.h` delivered; 15 cases in
+  `utf_baselib_h2core/TestSession.h`, one per contract and one per §4.6 row. Object 21.5 → **25.9
+  MB** (a64 clang debug), 5th of nine and smaller than four unsplit modules, so **not split** — the
+  next slice to add substantially to `h2core` re-measures. The four contracts, decided:
+  1. **Header-block granularity.** Fragments are accumulated and exactly one
+     `onFrameReceived( HEADERS, flags-of-the-opening-frame )` is made on END_HEADERS. The ordering
+     inside that completion is a second, equally silent contract: **decode, then judge, then
+     transition.** Decode first or the dynamic table desynchronises and the *next* stream's block
+     dies of COMPRESSION_ERROR; judge before the transition because a malformed *final* response
+     carries END_STREAM, and transitioning first closes the stream, after which §5.1 forbids the
+     RST_STREAM §8.1 demands.
+  2. **HPACK decoder capacity below 4096 — a setter was added** (`HpackDecoderT::
+     setMaxDynamicTableSize`, additive, ceiling only). The decoder is constructed at
+     `max( advertised, 4096 )` and the ceiling drops on the peer's ACK. "Construct after the ACK"
+     was rejected as *wrong*, not merely awkward: at the ACK the peer's table is not empty, so a
+     fresh decoder loses entries the peer still indexes. The setter never evicts — the table's
+     capacity follows the peer's own size update (RFC 7541 §4.2), which is what keeps the two in
+     step.
+  3. **Local SETTINGS apply on the peer's ACK.** Two sets, in-effect and in-flight, with a FIFO of
+     unacknowledged frames; the ACK applies MAX_FRAME_SIZE (`FrameReader::setMaxFrameSize`),
+     INITIAL_WINDOW_SIZE (receive windows), HEADER_TABLE_SIZE and MAX_HEADER_LIST_SIZE, and stops
+     the SETTINGS_TIMEOUT timer. The receive side needed
+     `ReceiveFlowControlWindowT::applyInitialWindowSizeChange` (additive, forwards to the inner
+     window) — applied at send time instead, a window we shrank makes `onDataReceived` raise
+     FLOW_CONTROL_ERROR on data the peer sent legally under the old value.
+  4. **A stream error on a closed stream is Ignored** — no RST_STREAM, registry not told.
+     `canSend( RST_STREAM )` is false once closed, so the naive path is an `UnexpectedException`
+     against a peer that is merely late; §5.1 already requires tolerating frames on a stream the
+     peer reset; answering a reset with a reset invites a loop; nghttp2 does the same. The
+     connection window is credited back whatever the disposition. `HalfClosedRemote` is not closed
+     and answers normally. The same rule is applied consistently wherever a RST_STREAM would be
+     illegal: the reason is recorded on the `StreamClosed` event even when no frame goes out.
+- Decisions taken beyond the four, each written at its site in the header: PRIORITY received is
+  dropped and never routed to the registry (§4.7, and it is legal on an *idle* stream, which the
+  registry would report as a frame on an identifier we never opened); the profile's idle-stream
+  PRIORITY frames are fingerprint shaping only and are not registered (their numbering versus the
+  request stream ids is S7.3's); DATA padding is credited back at once on both windows so
+  `consumed()` is about the octets the caller received; a closing stream credits everything still
+  outstanding to the connection window and `consumed()` on a gone stream is a no-op; a SETTINGS ACK
+  with nothing outstanding is a connection PROTOCOL_ERROR; `ENABLE_PUSH=0` is appended to a client
+  profile that omits it and a client profile setting it non-zero is a `BL_CHK`; our own out-of-range
+  SETTINGS are a `BL_CHK` at `applyLocalSettings()` rather than a protocol error when the ACK lands.
+  Rows 7 and 8 of the §4.6 table (buffered response body, retry budget) are deliberately **not** the
+  session's — they belong to S5.1 and S5.2; what the engine owes the second is the retryable flag.
 
 ### S3.2 — Stranded plain stream policy (§3.1, D13)
 - Deliver: `tasks/TcpStrandedStreams.h` (`TcpSocketAsyncStrandedBaseT`) deriving from the existing plain
