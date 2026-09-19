@@ -254,7 +254,16 @@ namespace bl
 #endif
                 }
 
-                static void initNativeSslContext( SAA_inout ::SSL_CTX* nativeSslContext )
+                /**
+                 * @brief Step 1 of the context configuration - the protocol floor, the option
+                 * bits which harden the context, and the security level
+                 *
+                 * This step is common to every context the library builds and it is never
+                 * parameterized: there is no caller supplied input which can lower the floor,
+                 * clear one of the hardening bits or move the security level
+                 */
+
+                static void initNativeSslProtocolPolicy( SAA_inout ::SSL_CTX* nativeSslContext )
                 {
                     auto options = ::SSL_CTX_get_options( nativeSslContext );
 
@@ -359,7 +368,19 @@ namespace bl
                         "The OpenSSL security level could not be set"
                         );
 #endif
+                }
 
+                /**
+                 * @brief Step 2 of the context configuration - the cipher policy
+                 *
+                 * This is the hardened default list, which every context the library builds
+                 * receives; it is a step of its own because it is the one part of the policy a
+                 * TLS client profile is meant to be able to provide for itself, whereas steps 1
+                 * and 3 are not negotiable
+                 */
+
+                static void initNativeSslDefaultCipherPolicy( SAA_inout ::SSL_CTX* nativeSslContext )
+                {
                     /*
                      * Enable only forward-secret AEAD suites (ephemeral ECDH or DH key exchange
                      * with AES-GCM) for the protocols up to and including TLS 1.2; the CBC
@@ -398,6 +419,24 @@ namespace bl
                         );
 
                     chkUsableCipherSuitesAvailable( nativeSslContext );
+                }
+
+                /**
+                 * @brief Configures a native SSL context with the TLS policy of the library
+                 *
+                 * The three steps are composable on purpose - step 3 is the trust anchors, i.e.
+                 * loadAllKnownCertificateAuthorities above. A per-profile client context is
+                 * step 1, then the profile's own cipher policy in place of step 2, then the
+                 * same trust anchors; every context the library builds today - the process
+                 * global client context and every server context - is all three of them in this
+                 * order, exactly as when this was a single function
+                 */
+
+                static void initNativeSslContext( SAA_inout ::SSL_CTX* nativeSslContext )
+                {
+                    initNativeSslProtocolPolicy( nativeSslContext );
+
+                    initNativeSslDefaultCipherPolicy( nativeSslContext );
 
                     ( void ) loadAllKnownCertificateAuthorities( nativeSslContext );
                 }

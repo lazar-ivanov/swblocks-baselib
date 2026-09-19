@@ -75,6 +75,18 @@ Before making ANY file change, verify:
 - Linux: `gcc` and `clang`. Windows: `msvc` and `clang`. Select with `TOOLCHAIN=`.
 - Both `VARIANT=debug` and `VARIANT=release`.
 
+**Parallel work across worktrees.** When work is split across lane worktrees with one orchestrating
+agent merging into the main worktree, the toolchain and variant mix above is **divided between lane
+and orchestrator**, never repeated in both:
+
+- A lane worktree validates with **clang debug only**, and builds and runs **only the focused test
+  modules its slice affects, one module at a time**. A lane never builds the repo, never compiles two
+  modules concurrently, and never builds a second toolchain or variant.
+- The orchestrator validates with **clang release and gcc release**, in the main worktree, after it
+  merges a lane's commit. That is where variant and toolchain coverage is earned.
+- These limits are what keep the machine viable. With every lane confined to one focused module at a
+  time, no more than about two test modules are ever compiling at once across all worktrees.
+
 ### Test Module Size
 
 **Each test module is a single translation unit and must not grow without a bound.** One oversized
@@ -268,10 +280,11 @@ For detailed build system documentation, see `scripts/devenv7/AGENTS.md`:
 
 ---
 
-**Document Version:** 2.4
-**Last Updated:** 2026-09-11
+**Document Version:** 2.7
+**Last Updated:** 2026-09-17
 
 **Changelog:**
+- v2.7 (2026-09-17): Added the parallel-work-across-worktrees split of the toolchain and variant mix
 - v2.6 (2026-09-14): Noted that the test module size ceiling is now enforced by the build
 - v2.5 (2026-09-13): Added the Test Module Size rule and referenced src/utests/AGENTS.md
 - v2.4 (2026-09-11): Referenced the ARM64 SVE capability reporting guidance under Technical Reference

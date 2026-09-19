@@ -1,0 +1,5 @@
+--log_level=message --run_test=HttpClientProfiles_ShapeTypesDefaultToDefinedValuesTests
+--log_level=message --run_test=HttpClientProfiles_ShapeTypesPreserveOrderTests
+--log_level=message --run_test=HttpClientProfiles_BrowserProfileRoundTripTests
+--log_level=message --run_test=HttpClientProfiles_SettingValueSpansFullUint32RangeTests
+--log_level=message --run_test=HttpClientProfiles_RequiredPropertiesAreEnforcedOnLoadTests

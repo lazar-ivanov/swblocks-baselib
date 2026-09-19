@@ -1,0 +1,4 @@
+# each slice appends the recipes for the cases it lands here
+
+# the placeholder which keeps the suite green until S4.1 - see TestH2ClientPlaceholder.h
+--log_level=message --run_test=H2Client_PlaceholderUntilS41Tests

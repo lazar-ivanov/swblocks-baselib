@@ -192,7 +192,7 @@
     BL_TASKS_HANDLER_BEGIN() \
     BL_TASKS_HANDLER_CHK_ASYNC_RESULT_IMPL( result )
 
-#define BL_TASKS_HANDLER_END_IMPL( expr ) \
+#define BL_TASKS_HANDLER_END_IMPL_EX( exprOnSuccess, exprOnFailure ) \
             } \
             while( false ); \
         } \
@@ -255,13 +255,32 @@
     } \
     if( __eptr42 ) \
     { \
-        bl::tasks::TaskBase::notifyReady( __eptr42, __isExpectedException42 ); \
+        exprOnFailure \
     } \
     else \
     { \
-        expr \
+        exprOnSuccess \
     } \
     BL_NOEXCEPT_END() \
+
+#define BL_TASKS_HANDLER_END_IMPL( expr ) \
+    BL_TASKS_HANDLER_END_IMPL_EX( expr, bl::tasks::TaskBase::notifyReady( __eptr42, __isExpectedException42 ); ) \
+
+/**
+ * @brief This macro implements the handler epilog code for a task which can have several
+ * asynchronous operations in flight at once
+ *
+ * Both paths are routed into the accounting of tasks::MultiOperationTaskT, which is what decides
+ * when the task is allowed to complete - on the success path the exception is null and the flag
+ * is false, so the two expressions are deliberately the same call. A task which uses this must
+ * never complete itself from a handler; see tasks/MultiOperationTask.h
+ */
+
+#define BL_TASKS_HANDLER_END_MULTIOP() \
+    BL_TASKS_HANDLER_END_IMPL_EX( \
+        this -> onOperationCompleted( __eptr42, __isExpectedException42 );, \
+        this -> onOperationCompleted( __eptr42, __isExpectedException42 ); \
+        ) \
 
 #define BL_TASKS_HANDLER_END() \
     BL_TASKS_HANDLER_END_IMPL( bl::tasks::TaskBase::notifyReady(); ) \

@@ -309,6 +309,44 @@ namespace utest
             return text;
         }
 
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+
+        /**
+         * @brief Counts the X.509 trust anchors which are present in a context's certificate store
+         *
+         * ::X509_STORE_get0_objects and ::X509_OBJECT_get_type are the accessors which expose the
+         * contents of a store and they exist from OpenSSL 1.1.0 onwards; there is no equivalent on
+         * the older versions, which is why the case which uses this is compiled out there
+         *
+         * Note that sk_X509_OBJECT_num and sk_X509_OBJECT_value are macros and therefore they must
+         * not be qualified with the global namespace operator
+         */
+
+        inline auto countTrustAnchors( SAA_in ::SSL_CTX* nativeSslContext ) -> std::size_t
+        {
+            ::X509_STORE* const store = ::SSL_CTX_get_cert_store( nativeSslContext );
+
+            BL_CHK_CRYPTO_API_NM( store );
+
+            STACK_OF( X509_OBJECT )* const objects = ::X509_STORE_get0_objects( store );
+
+            BL_CHK_CRYPTO_API_NM( objects );
+
+            std::size_t count = 0U;
+
+            for( int i = 0, size = sk_X509_OBJECT_num( objects ); i < size; ++i )
+            {
+                if( X509_LU_X509 == ::X509_OBJECT_get_type( sk_X509_OBJECT_value( objects, i ) ) )
+                {
+                    ++count;
+                }
+            }
+
+            return count;
+        }
+
+#endif // OPENSSL_VERSION_NUMBER >= 0x10100000L
+
     } // tlspolicy
 
 } // utest
@@ -559,6 +597,74 @@ UTF_AUTO_TEST_CASE( TlsProtocolPolicy_CipherSuitesAreAeadOnly )
             UTF_REQUIRE( NID_auth_null != ::SSL_CIPHER_get_auth_nid( cipher ) );
         }
     }
+}
+
+#endif // OPENSSL_VERSION_NUMBER >= 0x10100000L
+
+UTF_AUTO_TEST_CASE( TlsProtocolPolicy_SessionCacheModeIsPerRole )
+{
+    using namespace utest::tlspolicy;
+
+    /*
+     * The session cache mode is the one part of a context's configuration which is decided by the
+     * role rather than by the shared initialization: the process global client context turns
+     * caching off explicitly and a server context turns the server side cache on (and installs the
+     * session id context which makes it usable)
+     *
+     * It is pinned because the client value is a property future per-profile client contexts are
+     * required to inherit - a client which cached sessions would resume them across profiles - so
+     * a change which turned caching on for the client role has to fail here rather than be
+     * discovered as a behavioral difference much later
+     *
+     * SSL_CTX_get_session_cache_mode is a macro over SSL_CTX_ctrl and therefore it must not be
+     * qualified with the global namespace operator
+     */
+
+    const auto serverContext = createServerContext();
+
+    auto& clientContext = bl::crypto::CryptoBase::getAsioSslContext();
+
+    UTF_REQUIRE_EQUAL(
+        SSL_CTX_get_session_cache_mode( clientContext.native_handle() ),
+        static_cast< long >( SSL_SESS_CACHE_OFF )
+        );
+
+    UTF_REQUIRE_EQUAL(
+        SSL_CTX_get_session_cache_mode( serverContext -> native_handle() ),
+        static_cast< long >( SSL_SESS_CACHE_SERVER )
+        );
+}
+
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+
+UTF_AUTO_TEST_CASE( TlsProtocolPolicy_TrustAnchorsAreTheRegisteredRoots )
+{
+    using namespace utest::tlspolicy;
+
+    /*
+     * Both roles verify against the registered trust anchors and nothing else - the platform
+     * certificate store is deliberately not consulted - so the certificate store of every context
+     * the library builds must hold exactly the roots which were registered
+     *
+     * The count is what is asserted rather than the contents: which roots are bundled is expected
+     * to change, whereas 'every registered root reached every context' is the invariant. A context
+     * which silently ended up with an empty or a partial store would verify nothing and would
+     * still complete a handshake against a peer whose chain it cannot actually establish
+     *
+     * The server context is created first because it is what initializes the library, and
+     * bl::crypto::trustedRoots() rips the process when it is called before that
+     */
+
+    const auto serverContext = createServerContext();
+
+    auto& clientContext = bl::crypto::CryptoBase::getAsioSslContext();
+
+    const auto expectedCount = bl::crypto::trustedRoots().size();
+
+    UTF_REQUIRE( expectedCount > 0U );
+
+    UTF_REQUIRE_EQUAL( countTrustAnchors( clientContext.native_handle() ), expectedCount );
+    UTF_REQUIRE_EQUAL( countTrustAnchors( serverContext -> native_handle() ), expectedCount );
 }
 
 #endif // OPENSSL_VERSION_NUMBER >= 0x10100000L

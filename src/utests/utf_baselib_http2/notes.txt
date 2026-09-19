@@ -19,3 +19,16 @@
 --log_level=message --run_test=AsioSslStreamWrapper_FreshStateTests
 --log_level=message --run_test=AsioSslStreamWrapper_BeginProtocolShutdownPreconditionTests
 --log_level=message --run_test=AsioSslStreamWrapper_EnhanceExceptionNoVerifyFailureTests
+--log_level=message --run_test=AsioSslStreamWrapper_NegotiatedParametersAreEmptyBeforeHandshakeTests
+--log_level=message --run_test=AsioSslStreamWrapper_AlpnProtocolOfferTests
+--log_level=message --run_test=AsioSslStreamWrapper_ClientHelloCaptureTests
+--log_level=message --run_test=AsioSslStreamWrapper_ClientContextConstructorTests
+--log_level=message --run_test=AsioSslStreamWrapper_StrandConstructorTests
+
+--log_level=message --run_test=TcpPreHandshakeStageTls_TodaysHandshakeOrderTests
+--log_level=message --run_test=TcpPreHandshakeStageTls_RetryableHandshakeErrorTests
+--log_level=message --run_test=TcpPreHandshakeStageTls_StageRunsBeforeHandshakeTests
+--log_level=message --run_test=TcpPreHandshakeStageTls_StageRunsOncePerAttemptTests
+
+--log_level=message --run_test=TlsHandshakeRetryClassifier_RetryableErrorSetTests
+--log_level=message --run_test=TlsHandshakeRetryClassifier_TruncationAgreementTests

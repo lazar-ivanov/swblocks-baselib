@@ -437,6 +437,15 @@ namespace bl
 
         virtual std::size_t size() const NOEXCEPT OVERRIDE
         {
+            /*
+             * The thread vector is written under the lock by createThreads() and by
+             * disposeInternal(), so it must be read under the lock too - an unguarded
+             * vector::size() subtracts a pointer pair which is not updated atomically
+             * and can return a value which was never the size of anything
+             */
+
+            BL_MUTEX_GUARD( m_lock );
+
             return m_threads.size();
         }
 
@@ -453,7 +462,17 @@ namespace bl
              * it cannot be stopped and removed easily.
              */
 
-            const auto currentSize = m_threads.size();
+            /*
+             * The read below goes through size(), which takes the lock, rather than
+             * taking the lock here - m_lock is not recursive and createThreads() below
+             * acquires it itself, so the lock must not be held across that call
+             *
+             * It need not be: createThreads() re-reads the size under the lock and makes
+             * the authoritative decision there, so the value read here is advisory and
+             * only selects the branch and the message logged in it
+             */
+
+            const auto currentSize = size();
 
             if( threadCount < currentSize )
             {

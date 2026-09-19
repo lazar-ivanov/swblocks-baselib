@@ -88,6 +88,14 @@ namespace bl
             std::string                                                             m_lastVerifyErrorMessage;
             std::string                                                             m_lastVerifySubjectName;
 
+            /*
+             * The ClientHello this stream sent, captured only if enableClientHelloCapture() armed
+             * it; it is empty otherwise, and a ClientHello is never empty, so emptiness is also
+             * how the callback recognizes that it has not captured one yet
+             */
+
+            std::vector< unsigned char >                                            m_capturedClientHello;
+
             static bool rfc2818NoVerifyImplementation(
                 SAA_in          const std::string&                                  hostName,
                 SAA_in          const bool                                          preVerified,
@@ -327,6 +335,85 @@ namespace bl
                 transferCallback( ec );
             }
 
+            /**
+             * @brief The OpenSSL message callback which captures the ClientHello this stream sends
+             *
+             * OpenSSL calls this for every protocol message in both directions, so everything
+             * which is not the first handshake message of type ClientHello that we write is
+             * ignored. Capturing is a diagnostic - it is what makes a fidelity report state what
+             * was actually sent rather than what was requested - so a failure here logs and
+             * leaves the buffer empty instead of taking the process down
+             */
+
+            static void onSslMessageCallback(
+                SAA_in          const int                                           writeP,
+                SAA_in          const int                                           version,
+                SAA_in          const int                                           contentType,
+                SAA_in          const void*                                         buffer,
+                SAA_in          const std::size_t                                   size,
+                SAA_in          SSL*                                                ssl,
+                SAA_in_opt      void*                                               arg
+                ) NOEXCEPT
+            {
+                BL_UNUSED( version );
+                BL_UNUSED( ssl );
+
+                BL_WARN_NOEXCEPT_BEGIN()
+
+                if(
+                    0 == writeP ||
+                    SSL3_RT_HANDSHAKE != contentType ||
+                    nullptr == buffer ||
+                    nullptr == arg ||
+                    size < static_cast< std::size_t >( SSL3_HM_HEADER_LENGTH )
+                    )
+                {
+                    return;
+                }
+
+                const auto* const bytes = static_cast< const unsigned char* >( buffer );
+
+                if( SSL3_MT_CLIENT_HELLO != bytes[ 0 ] )
+                {
+                    return;
+                }
+
+                auto* const wrapper = static_cast< this_type* >( arg );
+
+                if( ! wrapper -> m_capturedClientHello.empty() )
+                {
+                    /*
+                     * Only the first ClientHello is kept: a TLS 1.3 HelloRetryRequest makes the
+                     * client send a second one, and it is the first which JA3 and JA4 are defined
+                     * on and which a peer fingerprints
+                     */
+
+                    return;
+                }
+
+                wrapper -> m_capturedClientHello.assign( bytes, bytes + size );
+
+                BL_WARN_NOEXCEPT_END( "AsioSslStreamWrapperT<...>::onSslMessageCallback" )
+            }
+
+            /**
+             * @brief Whether the connection's parameters have actually been negotiated
+             *
+             * ::SSL_get_version cannot answer this on its own, and reading it as if it could is
+             * the trap this exists to close: on a stream which has not handshaked it reports the
+             * highest version the method *could* negotiate - OpenSSL 3.5.4 says "TLSv1.3" for a
+             * fresh stream on TLS_method - which is indistinguishable from a negotiated result
+             *
+             * The current cipher is the honest signal: OpenSSL has one exactly when it has a
+             * session, which is once the peer's ServerHello has been processed and therefore
+             * once the version is settled too
+             */
+
+            bool hasNegotiatedSession() const NOEXCEPT
+            {
+                return nullptr != ::SSL_get_current_cipher( getStream().native_handle() );
+            }
+
         public:
 
             AsioSslStreamWrapperT(
@@ -344,6 +431,75 @@ namespace bl
                         new sslstream_t(
                             aioService,
                             sslServerContextPtr ? *sslServerContextPtr : crypto::CryptoBase::getAsioSslContext()
+                            )
+                        )
+                    )
+            {
+            }
+
+            #if ( ( BOOST_VERSION / 100 ) >= 1072 )
+
+            /**
+             * @brief The same, but with the stream bound to a strand
+             *
+             * asio::ssl::stream forwards its first constructor argument to the next layer, so the
+             * socket underneath is constructed on the strand and the strand becomes the default
+             * executor for every handler of every operation on it - including the intermediate
+             * handlers of the composed operations, which no call site can wrap by hand
+             *
+             * The guard is on the capability rather than on a devenv version: asio::strand_t is
+             * the executor strand only from Boost 1.72 onwards (core/detail/OSBoostImports.h),
+             * which is the same condition the executor_type typedef above is guarded by
+             */
+
+            AsioSslStreamWrapperT(
+                SAA_in          const asio::strand_t&                               strand,
+                SAA_in          const std::string&                                  hostName,
+                SAA_in          const std::string&                                  serviceName,
+                SAA_in_opt      asio::ssl::context*                                 sslServerContextPtr
+                )
+                :
+                m_hostName( hostName ),
+                m_serviceName( serviceName ),
+                m_isServer( sslServerContextPtr != nullptr ),
+                m_sslStream(
+                    cpp::SafeUniquePtr< sslstream_t >::attach(
+                        new sslstream_t(
+                            strand,
+                            sslServerContextPtr ? *sslServerContextPtr : crypto::CryptoBase::getAsioSslContext()
+                            )
+                        )
+                    )
+            {
+            }
+
+            #endif /* ( ( BOOST_VERSION / 100 ) >= 1072 ) */
+
+            /**
+             * @brief The client role with a context of its own
+             *
+             * The constructor above takes the context as an optional pointer and reads a non-null
+             * one as the server's, which is why a client that wants its own context - a per-profile
+             * one, say - cannot express that through it. Here the context is taken by reference:
+             * it is not optional, the role is always the client's, and the pointer/reference
+             * asymmetry is what keeps the two constructors apart without a tag argument
+             */
+
+            AsioSslStreamWrapperT(
+                SAA_inout       asio::io_service&                                   aioService,
+                SAA_in          const std::string&                                  hostName,
+                SAA_in          const std::string&                                  serviceName,
+                SAA_in          asio::ssl::context&                                 sslClientContext
+                )
+                :
+                m_hostName( hostName ),
+                m_serviceName( serviceName ),
+                m_isServer( false ),
+                m_sslStream(
+                    cpp::SafeUniquePtr< sslstream_t >::attach(
+                        new sslstream_t(
+                            aioService,
+                            sslClientContext
                             )
                         )
                     )
@@ -606,6 +762,166 @@ namespace bl
                 {
                     crypto::CryptoBase::clearUntrustedEndpointInfo( endpointId() );
                 }
+            }
+
+            /**
+             * @brief Offers the given protocol names via ALPN, in descending order of preference
+             *
+             * To be called before the handshake is started; the offer is a property of the stream
+             * and not of the context, so two streams on the same context can offer different lists
+             */
+
+            void setAlpnProtocolOffer( SAA_in const std::vector< std::string >& protocolNames )
+            {
+                BL_CHK(
+                    true,
+                    protocolNames.empty(),
+                    BL_MSG()
+                        << "An ALPN protocol offer must name at least one protocol"
+                    );
+
+                /*
+                 * The wire format is the sequence of names, each prefixed with its length in a
+                 * single byte (RFC 7301), so a name outside 1 .. 255 bytes cannot be encoded at
+                 * all and is rejected here rather than silently truncated into a malformed
+                 * extension - profiles are loadable from data, so this list is not always ours
+                 */
+
+                std::vector< unsigned char > wireFormat;
+
+                for( const auto& protocolName : protocolNames )
+                {
+                    BL_CHK(
+                        false,
+                        ( ! protocolName.empty() ) && protocolName.size() <= 255U,
+                        BL_MSG()
+                            << "An ALPN protocol name must be between 1 and 255 bytes long: '"
+                            << protocolName
+                            << "'"
+                        );
+
+                    wireFormat.push_back( static_cast< unsigned char >( protocolName.size() ) );
+
+                    wireFormat.insert( wireFormat.end(), protocolName.cbegin(), protocolName.cend() );
+                }
+
+                /*
+                 * ::SSL_set_alpn_protos returns *zero on success* and non-zero on failure, which is
+                 * the inverse of nearly every other OpenSSL call. It must therefore never be handed
+                 * to BL_CHK_CRYPTO_API_NM, which would read every success as a failure; what is
+                 * checked is the comparison below, so the OpenSSL error queue still ends up in the
+                 * exception exactly as it would for any other crypto call
+                 */
+
+                BL_CHK_CRYPTO_API(
+                    0 == ::SSL_set_alpn_protos(
+                        getStream().native_handle(),
+                        wireFormat.data(),
+                        static_cast< unsigned int >( wireFormat.size() )
+                        ),
+                    "Failed to set the ALPN protocol offer on the SSL stream"
+                    );
+            }
+
+            /**
+             * @brief The protocol the peer selected from the ALPN offer
+             *
+             * Empty before the handshake, and also after one in which the peer selected nothing -
+             * which for this library's purposes means HTTP/1.1
+             */
+
+            std::string getAlpnSelected() const
+            {
+                const unsigned char* data = nullptr;
+                unsigned int size = 0U;
+
+                ::SSL_get0_alpn_selected( getStream().native_handle(), &data, &size );
+
+                if( nullptr == data || 0U == size )
+                {
+                    return std::string();
+                }
+
+                return std::string( reinterpret_cast< const char* >( data ), size );
+            }
+
+            /**
+             * @brief The negotiated TLS version, empty before the handshake
+             */
+
+            std::string getNegotiatedVersion() const
+            {
+                /*
+                 * Reported only once something really has been negotiated, so that "nothing yet"
+                 * reads the same way across all three of these getters - see
+                 * hasNegotiatedSession() for why this call cannot simply be forwarded
+                 */
+
+                if( ! hasNegotiatedSession() )
+                {
+                    return std::string();
+                }
+
+                const char* const version = ::SSL_get_version( getStream().native_handle() );
+
+                return nullptr == version ? std::string() : std::string( version );
+            }
+
+            /**
+             * @brief The negotiated cipher suite name, empty before the handshake
+             */
+
+            std::string getNegotiatedCipher() const
+            {
+                /*
+                 * The same rule as above, applied to the call it is derived from: a null cipher
+                 * is the "nothing has been negotiated yet" case rather than an error
+                 */
+
+                const auto* const cipher = ::SSL_get_current_cipher( getStream().native_handle() );
+
+                if( nullptr == cipher )
+                {
+                    return std::string();
+                }
+
+                const char* const name = ::SSL_CIPHER_get_name( cipher );
+
+                return nullptr == name ? std::string() : std::string( name );
+            }
+
+            /**
+             * @brief Arms the capture of the ClientHello this stream sends
+             *
+             * Arming discards whatever an earlier handshake on this object captured, so a wrapper
+             * which is reused reports the ClientHello of its current handshake
+             *
+             * Unlike the verify callback, which the destructor resets because it is handed a
+             * reference to this object that OpenSSL would otherwise keep, this one needs no
+             * teardown: the SSL object it is installed on is owned by this object and dies with
+             * it, and ::SSL_free sends no protocol message, so the callback cannot be entered
+             * after this object is gone
+             */
+
+            void enableClientHelloCapture()
+            {
+                m_capturedClientHello.clear();
+
+                ::SSL_set_msg_callback( getStream().native_handle(), &this_type::onSslMessageCallback );
+
+                ( void ) SSL_set_msg_callback_arg( getStream().native_handle(), this );
+            }
+
+            /**
+             * @brief The exact bytes of the ClientHello this stream sent
+             *
+             * Empty unless enableClientHelloCapture() was called before the handshake; the bytes
+             * are the complete handshake message, its four byte header included
+             */
+
+            const std::vector< unsigned char >& getCapturedClientHello() const NOEXCEPT
+            {
+                return m_capturedClientHello;
             }
         };
 

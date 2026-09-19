@@ -224,6 +224,11 @@ namespace bl
                         )
                     );
                 
+                configureClientStream( hostName );
+            }
+
+            void configureClientStream( SAA_in const std::string& hostName )
+            {
                 if( ! m_serverContext )
                 {
                     /*
@@ -287,7 +292,21 @@ namespace bl
                 }
                 catch( eh::system_error& e )
                 {
-                    return ( e.code() == g_sslErrorShortRead || e.code() == asio::error::eof );
+                    /*
+                     * A handshake which ended because the peer went away is retried; anything
+                     * else is not
+                     *
+                     * The truncation is asked of isStreamTruncationError() below rather than
+                     * compared here, because which codes mean a truncated stream is knowledge
+                     * the stream policy already owns and it depends on the ASIO and OpenSSL
+                     * versions baselib was built against - g_sslErrorShortRead alone recognizes
+                     * only the legacy form, so on a recent stack the peer's truncation was
+                     * reported as asio.ssl.stream:1, this returned false and the retry of
+                     * TcpConnectionEstablisherConnector::scheduleTaskFinishContinuation was
+                     * unreachable
+                     */
+
+                    return ( isStreamTruncationError( e.code() ) || e.code() == asio::error::eof );
                 }
                 catch( std::exception& )
                 {

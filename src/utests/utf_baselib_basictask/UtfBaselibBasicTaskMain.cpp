@@ -20,3 +20,4 @@
 #include <utests/baselib/UtfMain.h>
 
 #include "TestBaselibBasicTask.h"
+#include "TestBaselibThreadPool.h"
