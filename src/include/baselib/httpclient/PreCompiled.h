@@ -18,8 +18,8 @@
 #define __BL_HTTPCLIENT_PRECOMPILED_H_
 
 /*
- * The version-neutral HTTP client umbrella. Empty until the first httpclient/ header lands; each
- * slice which adds one appends its #include here, in the form of http/PreCompiled.h
+ * The version-neutral HTTP client umbrella. Each slice which adds an httpclient/ header appends
+ * its #include here, in the form of http/PreCompiled.h
  *
  * It carries httpclient/ headers only, the way every other umbrella here carries its own directory
  * only. httpclient/ depends on http2/ (design 2.2), but that dependency belongs to the headers

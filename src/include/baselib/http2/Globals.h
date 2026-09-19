@@ -121,6 +121,13 @@ namespace bl
              * The identifier of a setting is two octets and its value four (section 6.5.1). An
              * unknown or unsupported identifier MUST be ignored (section 6.5.2), so a profile is
              * free to send ids the library does not itself interpret (design 6.4)
+             *
+             * The six below are all the RFC defines, and this header deliberately carries no
+             * others. That profile table already shows two such ids - 8
+             * (SETTINGS_ENABLE_CONNECT_PROTOCOL, RFC 8441) and 9
+             * (SETTINGS_NO_RFC7540_PRIORITIES, RFC 9218), in the Safari shape, which S2.4 and
+             * S3.1 will meet from real peers - and they travel in the profile's settings list,
+             * passed through unread, so no codec may add a constant for them of its own
              */
 
             enum SettingId : unsigned int

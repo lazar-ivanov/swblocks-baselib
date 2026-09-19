@@ -646,8 +646,8 @@ namespace bl
 
         typedef HeaderListT<> HeaderList;
 
-    } // __bl_http
+    } // http
 
-} // __bl
+} // bl
 
 #endif /* __BL_HTTP_HEADERLIST_H_ */
