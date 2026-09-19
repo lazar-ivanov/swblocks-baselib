@@ -49,3 +49,4 @@
  */
 
 #include "TestHeaderList.h"
+#include "TestClientContracts.h"
