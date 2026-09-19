@@ -1,1 +1,9 @@
 # no --run_test= recipes yet; each slice appends the recipe for the cases it lands here
+
+--log_level=message --run_test=HeaderList_OrderCaseAndRepeatsTests
+--log_level=message --run_test=HeaderList_CaseInsensitiveLookupTests
+--log_level=message --run_test=HeaderList_SetRemoveAndBoundsTests
+--log_level=message --run_test=HeaderList_NameValidationTests
+--log_level=message --run_test=HeaderList_ValueInjectionRejectionTests
+--log_level=message --run_test=HeaderList_ErrorMessageRedactionTests
+--log_level=message --run_test=HeaderList_HeadersMapRoundTripTests
