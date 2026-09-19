@@ -222,6 +222,14 @@ namespace utest
             bl::cpp::ScalarTypeIniter< std::size_t >                            m_closedCount;
             bl::cpp::ScalarTypeIniter< bool >                                   m_lastIsRetryable;
 
+            /*
+             * The status side, kept apart the way a request task keeps it: the final block's
+             * status is the response's and an interim one is that interim response's own
+             */
+
+            bl::cpp::ScalarTypeIniter< unsigned >                               m_finalStatus;
+            std::vector< unsigned >                                             m_interimStatuses;
+
             StubStreamEventSinkT() NOEXCEPT
             {
             }
@@ -231,6 +239,16 @@ namespace utest
             const std::vector< std::string >& trace() const NOEXCEPT
             {
                 return m_trace;
+            }
+
+            unsigned finalStatus() const NOEXCEPT
+            {
+                return m_finalStatus;
+            }
+
+            const std::vector< unsigned >& interimStatuses() const NOEXCEPT
+            {
+                return m_interimStatuses;
             }
 
             std::size_t closedCount() const NOEXCEPT
@@ -258,15 +276,27 @@ namespace utest
 
             virtual void onHeaders(
                 SAA_in          const bl::httpclient::stream_handle_t           handle,
+                SAA_in          const unsigned                                  status,
                 SAA_in          bl::http::HeaderList&&                          headers,
                 SAA_in          const bool                                      isInterim
                 ) OVERRIDE
             {
                 const bl::http::HeaderList taken( BL_PARAM_FWD( headers ) );
 
+                if( isInterim )
+                {
+                    m_interimStatuses.push_back( status );
+                }
+                else
+                {
+                    m_finalStatus = status;
+                }
+
                 m_trace.push_back(
                     ( isInterim ? "interim:" : "headers:" ) +
                     std::to_string( handle ) +
+                    ":" +
+                    std::to_string( status ) +
                     ":" +
                     std::to_string( taken.size() )
                     );
@@ -349,18 +379,25 @@ namespace utest
             bl::cpp::ScalarTypeIniter< stream_handle_t >                        m_nextHandle;
             bl::cpp::ScalarTypeIniter< std::size_t >                            m_freeSlots;
             bl::cpp::ScalarTypeIniter< bl::httpclient::ConnectionState >        m_state;
-            bl::cpp::ScalarTypeIniter< bl::httpclient::HttpProtocol >           m_protocol;
             bl::cpp::ScalarTypeIniter< std::size_t >                            m_consumedTotal;
 
+            /*
+             * Held as the one value the interface reports, so that this stub cannot model a
+             * connection whose protocol and ALPN identifier disagree - no driver can either
+             */
+
+            bl::httpclient::NegotiatedProtocol                                  m_negotiated;
+
             StubClientConnectionT(
-                const bl::httpclient::HttpProtocol                              protocol,
+                bl::httpclient::NegotiatedProtocol                              negotiated,
                 const std::size_t                                               freeSlots
-                ) NOEXCEPT
+                )
+                :
+                m_negotiated( BL_PARAM_FWD( negotiated ) )
             {
                 m_nextHandle = 1U;
                 m_freeSlots = freeSlots;
                 m_state = bl::httpclient::ConnectionState::Ready;
-                m_protocol = protocol;
             }
 
         public:
@@ -396,11 +433,28 @@ namespace utest
 
             void deliverHeaders(
                 const stream_handle_t                                           handle,
+                const unsigned                                                  status,
                 bl::http::HeaderList                                            headers,
                 const bool                                                      isInterim
                 )
             {
-                sinkFor( handle ) -> onHeaders( handle, BL_PARAM_FWD( headers ), isInterim );
+                /*
+                 * The stub ENFORCES the contract's own invariant rather than trusting the case:
+                 * isInterim is true exactly when the status is 1xx and is not 101. A stub which
+                 * let the two contradict each other would let a request task be developed against
+                 * a stream no driver can produce - and 101 is the one that catches people out,
+                 * being 1xx and yet a final response
+                 */
+
+                BL_CHK_T(
+                    false,
+                    isInterim == ( status >= 100U && status <= 199U && 101U != status ),
+                    bl::ArgumentException(),
+                    BL_MSG()
+                        << "The interim flag contradicts the response status code"
+                    );
+
+                sinkFor( handle ) -> onHeaders( handle, status, BL_PARAM_FWD( headers ), isInterim );
             }
 
             void deliverData(
@@ -501,9 +555,10 @@ namespace utest
                 return m_state;
             }
 
-            virtual auto protocol() const NOEXCEPT -> bl::httpclient::HttpProtocol OVERRIDE
+            virtual auto negotiated() const NOEXCEPT
+                -> const bl::httpclient::NegotiatedProtocol& OVERRIDE
             {
-                return m_protocol;
+                return m_negotiated;
             }
 
         protected:
@@ -909,12 +964,12 @@ UTF_AUTO_TEST_CASE( ClientContracts_StubConnectionAndEventSinkTests )
      * and ClientStreamEventSink can be developed before either driver exists
      */
 
-    const auto stub = StubClientConnection::createInstance( HttpProtocol::Http2, 2U /* freeSlots */ );
+    const auto stub = StubClientConnection::createInstance( NegotiatedProtocol::fromAlpn( "h2" ), 2U /* freeSlots */ );
 
     const auto connection = om::qi< ClientConnection >( stub );
 
     UTF_CHECK( ConnectionState::Ready == connection -> state() );
-    UTF_CHECK( HttpProtocol::Http2 == connection -> protocol() );
+    UTF_CHECK( HttpProtocol::Http2 == connection -> negotiated().protocol() );
     UTF_CHECK_EQUAL( connection -> freeStreamSlots(), 2U );
 
     const auto sinkImpl = StubStreamEventSink::createInstance();
@@ -946,15 +1001,15 @@ UTF_AUTO_TEST_CASE( ClientContracts_StubConnectionAndEventSinkTests )
     bl::http::HeaderList trailers;
     trailers.append( "x-checksum", "abc" );
 
-    stub -> deliverHeaders( handle, std::move( interim ), true /* isInterim */ );
-    stub -> deliverHeaders( handle, std::move( headers ), false /* isInterim */ );
+    stub -> deliverHeaders( handle, 103U /* status */, std::move( interim ), true /* isInterim */ );
+    stub -> deliverHeaders( handle, 200U /* status */, std::move( headers ), false /* isInterim */ );
     stub -> deliverData( handle, "hello" );
     stub -> deliverTrailers( handle, std::move( trailers ) );
     stub -> deliverClosed( handle, eh::error_code(), false /* isRetryable */ );
 
     UTF_CHECK_EQUAL(
         sinkImpl -> traceText(),
-        std::string( "interim:1:1|headers:1:2|data:1:hello|trailers:1:1|closed:1:ok:final|" )
+        std::string( "interim:1:103:1|headers:1:200:2|data:1:hello|trailers:1:1|closed:1:ok:final|" )
         );
 
     UTF_CHECK_EQUAL( sinkImpl -> closedCount(), 1U );
@@ -992,6 +1047,231 @@ UTF_AUTO_TEST_CASE( ClientContracts_StubConnectionAndEventSinkTests )
     stub -> setState( ConnectionState::Draining );
     UTF_CHECK( ConnectionState::Draining == connection -> state() );
     UTF_CHECK_EQUAL( connection -> freeStreamSlots(), 0U );
+}
+
+UTF_AUTO_TEST_CASE( ClientContracts_ResponseStatusCrossesTheSinkTests )
+{
+    using namespace bl;
+    using namespace bl::httpclient;
+    using namespace utest::clientcontracts;
+
+    /*
+     * THE DEFECT THIS CASE EXISTS FOR. As first published the sink's only header event was
+     * onHeaders( handle, HeaderList&&, isInterim ), and http::HeaderList refuses ':status' by
+     * design - a colon is not a token character - so no driver could put the status anywhere a
+     * request task could read it and ClientResponse::status() could not be filled at all. The gap
+     * survived because nothing asserted the status; this case asserts it, end to end
+     */
+
+    http::HeaderList refuses;
+
+    UTF_CHECK( ! http::HeaderList::isValidHeaderName( ":status" ) );
+    UTF_CHECK_THROW( refuses.append( ":status", "200" ), InvalidDataFormatException );
+    UTF_CHECK_EQUAL( refuses.size(), 0U );
+
+    const auto stub = StubClientConnection::createInstance( NegotiatedProtocol::fromAlpn( "h2" ), 4U /* freeSlots */ );
+    const auto connection = om::qi< ClientConnection >( stub );
+
+    const auto sinkImpl = StubStreamEventSink::createInstance();
+    const auto sink = om::qi< ClientStreamEventSink >( sinkImpl );
+
+    ClientRequest request;
+    request.url( net::Uri::parse( "https://example.com/" ) );
+
+    const auto handle = connection -> submit( request, sink );
+
+    /*
+     * EVERY header block carries its own status. 100 Continue and 103 Early Hints are interim and
+     * each brings its own code; the response that follows brings the final one
+     */
+
+    http::HeaderList cont;
+
+    http::HeaderList hints;
+    hints.append( "link", "</style.css>; rel=preload; as=style" );
+
+    http::HeaderList headers;
+    headers.append( "content-type", "text/html" );
+
+    stub -> deliverHeaders( handle, 100U /* status */, std::move( cont ), true /* isInterim */ );
+    stub -> deliverHeaders( handle, 103U /* status */, std::move( hints ), true /* isInterim */ );
+    stub -> deliverHeaders( handle, 404U /* status */, std::move( headers ), false /* isInterim */ );
+    stub -> deliverClosed( handle, eh::error_code(), false /* isRetryable */ );
+
+    UTF_REQUIRE_EQUAL( sinkImpl -> interimStatuses().size(), 2U );
+    UTF_CHECK_EQUAL( sinkImpl -> interimStatuses()[ 0 ], 100U );
+    UTF_CHECK_EQUAL( sinkImpl -> interimStatuses()[ 1 ], 103U );
+
+    /*
+     * ... and an interim status never becomes the response's: the final block's does
+     */
+
+    UTF_CHECK_EQUAL( sinkImpl -> finalStatus(), 404U );
+
+    UTF_CHECK_EQUAL(
+        sinkImpl -> traceText(),
+        std::string( "interim:1:100:0|interim:1:103:1|headers:1:404:1|closed:1:ok:final|" )
+        );
+
+    /*
+     * What S5.1 will do with it, done here so that the contract is proven to compose: the status
+     * the sink received fills ClientResponse::status(), which is the field that had no source
+     */
+
+    ClientResponse response;
+
+    UTF_CHECK_EQUAL( response.status(), 0U );
+
+    response.status( sinkImpl -> finalStatus() );
+    response.protocol( connection -> negotiated().protocol() );
+
+    UTF_CHECK_EQUAL( response.status(), 404U );
+    UTF_CHECK( HttpProtocol::Http2 == response.protocol() );
+
+    /*
+     * The two parameters must agree, and the stub refuses a delivery in which they do not. 101 is
+     * the case worth pinning: it is 1xx and yet a FINAL response (RFC 9110 15.2), so a driver
+     * which treated "1xx" as "interim" would wait for a header block that never comes
+     */
+
+    const auto second = connection -> submit( request, sink );
+
+    UTF_CHECK_THROW(
+        stub -> deliverHeaders( second, 101U, http::HeaderList(), true /* isInterim */ ),
+        ArgumentException
+        );
+
+    UTF_CHECK_THROW(
+        stub -> deliverHeaders( second, 200U, http::HeaderList(), true /* isInterim */ ),
+        ArgumentException
+        );
+
+    UTF_CHECK_THROW(
+        stub -> deliverHeaders( second, 103U, http::HeaderList(), false /* isInterim */ ),
+        ArgumentException
+        );
+
+    http::HeaderList switching;
+    switching.append( "upgrade", "websocket" );
+
+    stub -> deliverHeaders( second, 101U /* status */, std::move( switching ), false /* isInterim */ );
+
+    UTF_CHECK_EQUAL( sinkImpl -> finalStatus(), 101U );
+    UTF_CHECK_EQUAL( sinkImpl -> interimStatuses().size(), 2U );
+}
+
+UTF_AUTO_TEST_CASE( ClientContracts_NegotiatedAlpnReachesTheResponseTests )
+{
+    using namespace bl;
+    using namespace bl::httpclient;
+    using namespace utest::clientcontracts;
+
+    /*
+     * THE SECOND FIELD WITH NO SOURCE. ClientResponse::negotiatedAlpn() promises the identifier the
+     * peer selected VERBATIM, and ClientConnection published only the protocol - so a request task
+     * could at best derive "h2"/"http/1.1" from the protocol and the URL scheme. This case pins the
+     * path instead, and in particular the case the derivation gets wrong
+     */
+
+    /*
+     * ALPN decided it: the identifier is kept exactly as the peer sent it, and the protocol is
+     * derived FROM it rather than set beside it
+     */
+
+    const auto overTls = NegotiatedProtocol::fromAlpn( "h2" );
+
+    UTF_CHECK( HttpProtocol::Http2 == overTls.protocol() );
+    UTF_CHECK_EQUAL( overTls.alpn(), std::string( "h2" ) );
+    UTF_CHECK( overTls.hasAlpn() );
+
+    const auto oneOne = NegotiatedProtocol::fromAlpn( "http/1.1" );
+
+    UTF_CHECK( HttpProtocol::Http11 == oneOne.protocol() );
+    UTF_CHECK_EQUAL( oneOne.alpn(), std::string( "http/1.1" ) );
+
+    /*
+     * DISAGREEMENT IS UNREPRESENTABLE, not merely discouraged: fromAlpn( ... ) is the only door
+     * which sets a non-empty identifier and it computes the protocol itself, so there is no way to
+     * build a value whose two halves contradict - and therefore no need to say which one wins
+     */
+
+    UTF_CHECK( NegotiatedProtocol::protocolOfAlpn( overTls.alpn() ) == overTls.protocol() );
+    UTF_CHECK( NegotiatedProtocol::protocolOfAlpn( oneOne.alpn() ) == oneOne.protocol() );
+
+    /*
+     * An identifier this build does not speak is refused rather than mapped to something near it.
+     * 'h2c' is in the list on purpose: it is a real IANA identifier for cleartext upgrade which
+     * RFC 7540 3.3 forbids in an ALPN extension over TLS, so it is the plausible wrong answer
+     */
+
+    UTF_CHECK_THROW( NegotiatedProtocol::fromAlpn( "h2c" ), NotSupportedException );
+    UTF_CHECK_THROW( NegotiatedProtocol::fromAlpn( "h3" ), NotSupportedException );
+    UTF_CHECK_THROW( NegotiatedProtocol::fromAlpn( "http/1.0" ), NotSupportedException );
+    UTF_CHECK_THROW( NegotiatedProtocol::fromAlpn( "HTTP/1.1" ), NotSupportedException );
+    UTF_CHECK_THROW( NegotiatedProtocol::fromAlpn( "" ), NotSupportedException );
+
+    /*
+     * ALPN did NOT decide it - and this is the case a derivation gets wrong. All three of these
+     * must report an EMPTY identifier although each has a perfectly good protocol
+     */
+
+    const auto cleartextOneOne = NegotiatedProtocol::withoutAlpn( HttpProtocol::Http11 );
+
+    UTF_CHECK( HttpProtocol::Http11 == cleartextOneOne.protocol() );
+    UTF_CHECK( cleartextOneOne.alpn().empty() );
+    UTF_CHECK( ! cleartextOneOne.hasAlpn() );
+
+    const auto priorKnowledge = NegotiatedProtocol::withoutAlpn( HttpProtocol::Http2 );
+
+    UTF_CHECK( HttpProtocol::Http2 == priorKnowledge.protocol() );
+    UTF_CHECK( priorKnowledge.alpn().empty() );
+
+    /*
+     * Not resolved yet - what a Connecting connection reports
+     */
+
+    const NegotiatedProtocol unresolved;
+
+    UTF_CHECK( HttpProtocol::Unknown == unresolved.protocol() );
+    UTF_CHECK( unresolved.alpn().empty() );
+
+    /*
+     * End to end through the interface, which is what actually closes the gap. First the ordinary
+     * case: h2 over TLS fills both response fields, and the identifier is the peer's own bytes
+     */
+
+    const auto h2Stub = StubClientConnection::createInstance( overTls, 1U /* freeSlots */ );
+    const auto h2Connection = om::qi< ClientConnection >( h2Stub );
+
+    ClientResponse overTlsResponse;
+
+    UTF_CHECK( overTlsResponse.negotiatedAlpn().empty() );
+
+    overTlsResponse.protocol( h2Connection -> negotiated().protocol() );
+    overTlsResponse.negotiatedAlpn( h2Connection -> negotiated().alpn() );
+
+    UTF_CHECK( HttpProtocol::Http2 == overTlsResponse.protocol() );
+    UTF_CHECK_EQUAL( overTlsResponse.negotiatedAlpn(), std::string( "h2" ) );
+
+    /*
+     * Then the case the whole field exists for. A connection which fell back to HTTP/1.1 - no TLS,
+     * or a peer which selected nothing - reports HTTP/1.1 AND an empty identifier. A response built
+     * by deriving the identifier from the protocol would say "http/1.1" here and would be claiming
+     * the peer chose it, which is the misreport this asserts cannot happen
+     */
+
+    const auto fellBackStub = StubClientConnection::createInstance( cleartextOneOne, 1U /* freeSlots */ );
+    const auto fellBack = om::qi< ClientConnection >( fellBackStub );
+
+    ClientResponse fellBackResponse;
+
+    fellBackResponse.protocol( fellBack -> negotiated().protocol() );
+    fellBackResponse.negotiatedAlpn( fellBack -> negotiated().alpn() );
+
+    UTF_CHECK( HttpProtocol::Http11 == fellBackResponse.protocol() );
+    UTF_CHECK( fellBackResponse.negotiatedAlpn().empty() );
+
+    UTF_CHECK( fellBackResponse.negotiatedAlpn() != std::string( "http/1.1" ) );
 }
 
 UTF_AUTO_TEST_CASE( ClientContracts_ConnectionKeyAndPoolTests )
@@ -1061,7 +1341,7 @@ UTF_AUTO_TEST_CASE( ClientContracts_ConnectionKeyAndPoolTests )
      * calling into the request task under the pool lock, which is rule L4 of design 5.2
      */
 
-    const auto stub = StubClientConnection::createInstance( HttpProtocol::Http2, 4U /* freeSlots */ );
+    const auto stub = StubClientConnection::createInstance( NegotiatedProtocol::fromAlpn( "h2" ), 4U /* freeSlots */ );
 
     const auto poolImpl = StubConnectionPool::createInstance(
         om::qi< ClientConnection >( stub )
@@ -1152,7 +1432,11 @@ UTF_AUTO_TEST_CASE( ClientContracts_DriverFactoryDispatchTests )
         factory.registerDriver(
             HttpProtocol::Unknown,
             fake_driver_factory_t::creator_t(
-                []( SAA_inout fake_driver_factory_t::stream_ref&&, SAA_in const ConnectionKey& )
+                [](
+                    SAA_in          const NegotiatedProtocol&,
+                    SAA_inout       fake_driver_factory_t::stream_ref&&,
+                    SAA_in          const ConnectionKey&
+                    )
                     -> om::ObjPtr< ClientConnection >
                 {
                     return nullptr;
@@ -1169,11 +1453,13 @@ UTF_AUTO_TEST_CASE( ClientContracts_DriverFactoryDispatchTests )
 
     std::string handedOverStream;
     std::string handedOverHost;
+    std::string handedOverAlpn;
 
     factory.registerDriver(
         HttpProtocol::Http2,
         fake_driver_factory_t::creator_t(
-            [ &handedOverStream, &handedOverHost ](
+            [ &handedOverStream, &handedOverHost, &handedOverAlpn ](
+                SAA_in          const NegotiatedProtocol&                       negotiated,
                 SAA_inout       fake_driver_factory_t::stream_ref&&             connectedStream,
                 SAA_in          const ConnectionKey&                            key
                 )
@@ -1189,8 +1475,16 @@ UTF_AUTO_TEST_CASE( ClientContracts_DriverFactoryDispatchTests )
                 handedOverStream = *taken;
                 handedOverHost = key.host;
 
+                /*
+                 * The identifier the peer selected reaches the driver, which is the only moment it
+                 * is in hand: the creator is registered once and cannot capture a per-connection
+                 * value, so a factory which passed the protocol alone would drop it for good
+                 */
+
+                handedOverAlpn = negotiated.alpn();
+
                 return om::qi< ClientConnection >(
-                    StubClientConnection::createInstance( HttpProtocol::Http2, 100U /* freeSlots */ )
+                    StubClientConnection::createInstance( negotiated, 100U /* freeSlots */ )
                     );
             }
             )
@@ -1203,10 +1497,16 @@ UTF_AUTO_TEST_CASE( ClientContracts_DriverFactoryDispatchTests )
 
     auto stream = fake_driver_factory_t::stream_ref::attach( new std::string( "the-connected-stream" ) );
 
-    const auto driver = factory.createDriver( HttpProtocol::Http2, std::move( stream ), key );
+    const auto driver = factory.createDriver(
+        NegotiatedProtocol::fromAlpn( "h2" ),
+        std::move( stream ),
+        key
+        );
 
     UTF_CHECK( nullptr != driver );
-    UTF_CHECK( HttpProtocol::Http2 == driver -> protocol() );
+    UTF_CHECK( HttpProtocol::Http2 == driver -> negotiated().protocol() );
+    UTF_CHECK_EQUAL( driver -> negotiated().alpn(), std::string( "h2" ) );
+    UTF_CHECK_EQUAL( handedOverAlpn, std::string( "h2" ) );
     UTF_CHECK_EQUAL( handedOverStream, std::string( "the-connected-stream" ) );
     UTF_CHECK_EQUAL( handedOverHost, std::string( "example.com" ) );
     UTF_CHECK( nullptr == stream );
@@ -1220,7 +1520,7 @@ UTF_AUTO_TEST_CASE( ClientContracts_DriverFactoryDispatchTests )
     auto other = fake_driver_factory_t::stream_ref::attach( new std::string( "another-stream" ) );
 
     UTF_CHECK_THROW(
-        factory.createDriver( HttpProtocol::Http11, std::move( other ), key ),
+        factory.createDriver( NegotiatedProtocol::fromAlpn( "http/1.1" ), std::move( other ), key ),
         NotSupportedException
         );
 }

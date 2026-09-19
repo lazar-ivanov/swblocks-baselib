@@ -150,14 +150,33 @@ namespace bl
         public:
 
             /**
-             * @brief A response header block
+             * @brief A response header block, and the status of the response it belongs to
+             *
+             * 'status' is the response status code - the three-digit ':status' pseudo-header for
+             * HTTP/2 and the status-line code for HTTP/1.1. It is a PARAMETER and not a field of
+             * 'headers' because http::HeaderList cannot hold ':status': a colon is not a token
+             * character, so the list refuses that name by design (S1.2), and the session engine
+             * strips the pseudo-headers when it validates a decoded block in any case. Without it
+             * ClientResponse::status() has nothing to be filled from, which is how this contract
+             * was first published and what the L2 review found
+             *
+             * EVERY header block carries its OWN status, interim ones included: a 103 Early Hints
+             * block arrives as onHeaders( handle, 103, hints, true ) and the response that follows
+             * as onHeaders( handle, 200, headers, false ). The consumer takes the status of the
+             * final block as the response's; an interim status is that interim response's own and
+             * never overwrites it
              *
              * 'isInterim' marks a 1xx response other than 101 (RFC 9110 section 15.2), which is
-             * followed by a further header block rather than by the body
+             * followed by a further header block rather than by the body. It stays although the
+             * status makes it derivable - it is true exactly when 'status' is in [100, 199] and is
+             * not 101 - because it states the STRUCTURAL fact the ordering guarantee above is
+             * written in terms of, that another header block follows, and a consumer should not
+             * have to re-derive that from a number. A driver states both, and the two must agree
              */
 
             virtual void onHeaders(
                 SAA_in          const stream_handle_t                           handle,
+                SAA_in          const unsigned                                  status,
                 SAA_in          http::HeaderList&&                              headers,
                 SAA_in          const bool                                      isInterim
                 ) = 0;
@@ -275,10 +294,22 @@ namespace bl
             virtual ConnectionState state() const NOEXCEPT = 0;
 
             /**
-             * @brief What this connection speaks; Unknown until ALPN has resolved
+             * @brief What this connection speaks, and the ALPN identifier which settled it
+             *
+             * ONE QUERY AND NOT TWO, so that the protocol and the identifier cannot disagree -
+             * NegotiatedProtocol's own note says why, and says why an empty identifier is a
+             * statement rather than a gap. Unknown with no identifier until ALPN has resolved
+             *
+             * This is what fills BOTH ClientResponse::protocol() and
+             * ClientResponse::negotiatedAlpn(). Publishing only the protocol left the second of
+             * those unfillable: a request task can derive "h2" or "http/1.1" from the protocol and
+             * the URL scheme, but that derivation is wrong for a TLS connection whose peer
+             * selected nothing, which must report empty and would derive as "http/1.1" - the one
+             * case the field exists to distinguish. The same defect as the missing status, found
+             * in the same review
              */
 
-            virtual HttpProtocol protocol() const NOEXCEPT = 0;
+            virtual const NegotiatedProtocol& negotiated() const NOEXCEPT = 0;
         };
 
         /**
@@ -498,11 +529,19 @@ namespace bl
              *
              * The stream is passed by rvalue reference because ownership moves: after the call the
              * driver owns it and the connection establisher does not
+             *
+             * The WHOLE NegotiatedProtocol travels, not the protocol it dispatches on, because the
+             * driver has to answer negotiated() afterwards and this is the only moment at which the
+             * identifier the peer actually selected is in hand. Passing the enum alone is where
+             * that identifier used to be dropped, and it cannot be recovered downstream: the
+             * creator is registered once per session and cannot capture a per-connection value.
+             * Being handed the value is also what stops a driver inventing one which disagrees
              */
 
             typedef cpp::function
             <
                 om::ObjPtr< ClientConnection > (
+                    SAA_in          const NegotiatedProtocol&                   negotiated,
                     SAA_inout       stream_ref&&                                connectedStream,
                     SAA_in          const ConnectionKey&                        key
                     )
@@ -562,12 +601,12 @@ namespace bl
              */
 
             om::ObjPtr< ClientConnection > createDriver(
-                SAA_in          const HttpProtocol                              protocol,
+                SAA_in          const NegotiatedProtocol&                       negotiated,
                 SAA_inout       stream_ref&&                                    connectedStream,
                 SAA_in          const ConnectionKey&                            key
                 )
             {
-                const auto pos = m_creators.find( protocol );
+                const auto pos = m_creators.find( negotiated.protocol() );
 
                 BL_CHK_T(
                     true,
@@ -577,7 +616,7 @@ namespace bl
                         << "No HTTP client driver is registered for the negotiated protocol"
                     );
 
-                return pos -> second( BL_PARAM_FWD( connectedStream ), key );
+                return pos -> second( negotiated, BL_PARAM_FWD( connectedStream ), key );
             }
         };
 

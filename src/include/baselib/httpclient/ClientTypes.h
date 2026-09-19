@@ -78,6 +78,137 @@ namespace bl
         };
 
         /**
+         * @brief How a connection's protocol was settled, and the ALPN identifier that settled it
+         *
+         * WHY THIS IS ONE VALUE AND NOT TWO QUERIES. ClientResponse carries the protocol AND the
+         * identifier the peer selected verbatim, and the two are not independent - a non-empty
+         * identifier names the protocol. Published as two accessors on ClientConnection they could
+         * disagree, and a consumer holding Http2 beside "http/1.1" would have no defined answer as
+         * to which to believe. Here disagreement is UNREPRESENTABLE rather than merely discouraged:
+         * the only door which sets a non-empty identifier is fromAlpn( ... ), which derives the
+         * protocol FROM that identifier, so the two cannot be set independently at all and there is
+         * no need to nominate one of them as authoritative
+         *
+         * THE EMPTY IDENTIFIER IS A STATEMENT AND NOT A GAP. It means ALPN did not decide this
+         * connection: either no TLS took place - a cleartext HTTP/1.1 connection, or HTTP/2 by
+         * prior knowledge - or the peer completed the handshake without selecting anything and we
+         * fell back to HTTP/1.1. That last case is precisely why ClientResponse::negotiatedAlpn()
+         * says "verbatim": a connection which fell back must NOT report "http/1.1" as though the
+         * peer had chosen it, and a value derived from the protocol alone says exactly that. It is
+         * the one case such a derivation gets wrong, and it is the case the field exists for
+         *
+         * A default constructed value is the state of a connection before ALPN has resolved -
+         * HttpProtocol::Unknown, with no identifier
+         */
+
+        class NegotiatedProtocol FINAL
+        {
+        private:
+
+            cpp::ScalarTypeIniter< HttpProtocol >                               m_protocol;
+            std::string                                                         m_alpn;
+
+            NegotiatedProtocol(
+                SAA_in          const HttpProtocol                              protocol,
+                SAA_in          std::string                                     alpn
+                )
+                :
+                m_alpn( BL_PARAM_FWD( alpn ) )
+            {
+                m_protocol = protocol;
+            }
+
+        public:
+
+            NegotiatedProtocol() NOEXCEPT
+            {
+            }
+
+            /**
+             * @brief The protocol an ALPN identifier names, or Unknown for one we do not speak
+             *
+             * The single place the mapping lives, so that the connection establisher which picks
+             * a driver and the driver which reports the identifier cannot disagree about what it
+             * means. 'h2c' is deliberately absent: it identifies cleartext upgrade and RFC 7540
+             * section 3.3 forbids sending it in an ALPN extension over TLS
+             */
+
+            static HttpProtocol protocolOfAlpn( SAA_in const std::string& selected ) NOEXCEPT
+            {
+                if( "h2" == selected )
+                {
+                    return HttpProtocol::Http2;
+                }
+
+                if( "http/1.1" == selected )
+                {
+                    return HttpProtocol::Http11;
+                }
+
+                return HttpProtocol::Unknown;
+            }
+
+            /**
+             * @brief The peer selected this identifier through ALPN; the protocol follows from it
+             *
+             * @throw NotSupportedException when it names nothing this build speaks - a refusal
+             * rather than a fallback, for the reason ClientDriverFactoryT::createDriver gives
+             */
+
+            static NegotiatedProtocol fromAlpn( SAA_in std::string selected )
+            {
+                const auto protocol = protocolOfAlpn( selected );
+
+                /*
+                 * The identifier is not echoed into the message: it is what a peer put on the
+                 * wire, and this library already declines to log a rejected header name for the
+                 * same reason ( http::HeaderList::validateHeader )
+                 */
+
+                BL_CHK_T(
+                    true,
+                    HttpProtocol::Unknown == protocol,
+                    NotSupportedException(),
+                    BL_MSG()
+                        << "The peer selected an ALPN protocol which this build does not speak"
+                    );
+
+                return NegotiatedProtocol( protocol, BL_PARAM_FWD( selected ) );
+            }
+
+            /**
+             * @brief ALPN did not decide this connection, so it carries no identifier
+             *
+             * Both a cleartext connection and a TLS connection whose peer selected nothing are
+             * this; the protocol was settled some other way and the identifier stays empty
+             */
+
+            static NegotiatedProtocol withoutAlpn( SAA_in const HttpProtocol protocol )
+            {
+                return NegotiatedProtocol( protocol, std::string() );
+            }
+
+            HttpProtocol protocol() const NOEXCEPT
+            {
+                return m_protocol;
+            }
+
+            /**
+             * @brief The identifier the peer selected, verbatim, or empty when ALPN did not decide
+             */
+
+            const std::string& alpn() const NOEXCEPT
+            {
+                return m_alpn;
+            }
+
+            bool hasAlpn() const NOEXCEPT
+            {
+                return ! m_alpn.empty();
+            }
+        };
+
+        /**
          * @brief The RFC 9218 priority signal of one request
          *
          * Carried as the two parameters of the scheme rather than as a rendered header value,

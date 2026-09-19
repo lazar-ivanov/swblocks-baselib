@@ -645,7 +645,8 @@ they affect (S3.1, S4.3, S5.1, S5.2, S6.1). Nothing found blocks L3.
   - The **pool interface** the request task consumes: `acquire( key, request, onReady )` where `onReady`
     is posted with a `ClientConnection` or an error; `release( connection, handle, outcome )`; the
     replayability rule (design §5.4) is a query on `ClientRequest`, not on the pool.
-  - The **driver factory** S4.1 uses after ALPN: `createDriver( protocol, connectedStream, ... )`.
+  - The **driver factory** S4.1 uses after ALPN: `createDriver( negotiated, connectedStream, ... )` -
+    the `NegotiatedProtocol`, not the bare enum; see the second defect note below.
 - Dep: S1.1, S1.2, S1.3. Earliest: t0; **integrate before any of S4.x/S5.x starts.**
 - Accept: interfaces compile against a stub implementation; value objects round-trip; a stub
   `ClientConnection` + sink pair exists in `httpclient` tests for S5.1 to develop against.
@@ -663,6 +664,34 @@ they affect (S3.1, S4.3, S5.1, S5.2, S6.1). Nothing found blocks L3.
   a hope. **The fix: `onHeaders` gains a `status` parameter** - an `unsigned`, the three-digit
   `:status` for h2 and the status-line code for h1 - with the stub and its case updated in the same
   change. S4.2 and S4.3 deliver it; S5.1 consumes it. Nothing in L3 touches it.
+- **As landed:** `onHeaders( handle, status, HeaderList&&, isInterim )`. **Every header block carries
+  its own status**, interim ones included, so 103 Early Hints arrives as `( 103, hints, true )` and
+  the response after it as `( 200, headers, false )`; the consumer takes the FINAL block's status as
+  the response's and an interim one never overwrites it. `isInterim` **stays** although the status
+  makes it derivable (true exactly when the status is in `[100, 199]` and is not 101): it states the
+  structural fact the sink's ordering guarantee is written in terms of, and a consumer must not have
+  to re-derive that from a number. A driver states both and the two must agree - the stub connection
+  refuses a delivery in which they contradict, which is what pins 101 as a *final* response.
+- **SECOND DEFECT OF THE SAME CLASS, FIXED IN THE SAME FOLLOW-UP (2026-09-19):
+  `ClientResponse::negotiatedAlpn()` was unfillable too.** The field promises the identifier the peer
+  selected *verbatim*, and `ClientConnection.h` named ALPN nowhere: `protocol()` returned the
+  `HttpProtocol` enum and `createDriver( protocol, ... )` dropped the identifier at the factory
+  boundary, where it cannot be recovered because a creator is registered once per session and cannot
+  capture a per-connection value. Deriving `"h2"`/`"http/1.1"` from the protocol and the URL scheme
+  gets the common cases right and is wrong for **exactly** the case the field exists to distinguish -
+  a TLS connection whose peer selected nothing, which must read empty and would derive as
+  `"http/1.1"`. Reported by lane 1 with the status fix and widened into it by the coordinator, on the
+  same argument: this is the one moment before the implementers exist.
+  **The fix: a `NegotiatedProtocol` value in `ClientTypes.h`**, carrying the protocol and the
+  identifier together, with `protocol()` on `ClientConnection` **replaced by**
+  `negotiated()` returning it and `createDriver` taking it in place of the enum (it still dispatches
+  on `negotiated.protocol()`). Two queries were not added beside each other on purpose:
+  `fromAlpn( ... )` is the only door which sets a non-empty identifier and it derives the protocol
+  *from* it, so the two **cannot disagree** and no authority has to be nominated between them.
+  `withoutAlpn( protocol )` is the other door - cleartext, or a TLS peer which selected nothing -
+  and leaves the identifier empty; a default value is `Unknown` with none. `protocolOfAlpn( ... )` is
+  the single place the mapping lives, and refuses `h2c`, `h3` and anything else this build does not
+  speak. S4.1 constructs the value and both drivers report it unchanged.
 
 ### S2.7 — Cookie jar (§5.6)
 - Deliver: `httpclient/CookieJar.h` - RFC 6265 domain/path matching, `Secure`/`HttpOnly`/expiry/`Max-Age`,
