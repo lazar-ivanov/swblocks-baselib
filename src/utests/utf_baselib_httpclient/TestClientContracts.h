@@ -797,8 +797,7 @@ UTF_AUTO_TEST_CASE( ClientContracts_RequestAndResponseRoundTripTests )
     UTF_CHECK( nullptr == response.impersonationReport() );
 
     response.status( 200U );
-    response.protocol( HttpProtocol::Http2 );
-    response.negotiatedAlpn( "h2" );
+    response.negotiated( NegotiatedProtocol::fromAlpn( "h2" ) );
     response.headers().append( "server", "nginx" );
     response.trailers().append( "x-checksum", "abc" );
     response.body( body );
@@ -1123,7 +1122,7 @@ UTF_AUTO_TEST_CASE( ClientContracts_ResponseStatusCrossesTheSinkTests )
     UTF_CHECK_EQUAL( response.status(), 0U );
 
     response.status( sinkImpl -> finalStatus() );
-    response.protocol( connection -> negotiated().protocol() );
+    response.negotiated( connection -> negotiated() );
 
     UTF_CHECK_EQUAL( response.status(), 404U );
     UTF_CHECK( HttpProtocol::Http2 == response.protocol() );
@@ -1167,10 +1166,12 @@ UTF_AUTO_TEST_CASE( ClientContracts_NegotiatedAlpnReachesTheResponseTests )
     using namespace utest::clientcontracts;
 
     /*
-     * THE SECOND FIELD WITH NO SOURCE. ClientResponse::negotiatedAlpn() promises the identifier the
-     * peer selected VERBATIM, and ClientConnection published only the protocol - so a request task
-     * could at best derive "h2"/"http/1.1" from the protocol and the URL scheme. This case pins the
-     * path instead, and in particular the case the derivation gets wrong
+     * THE IDENTIFIER TRAVELS, IT IS NEVER DERIVED. ClientResponse::negotiatedAlpn() promises the
+     * identifier the peer selected VERBATIM, so the value is carried whole from the connection
+     * into the response rather than reconstructed there from the protocol and the URL scheme.
+     * That reconstruction gets exactly one case wrong, and it is the case this pins: a connection
+     * which fell back to HTTP/1.1 reports an EMPTY identifier, and a derivation would make it say
+     * "http/1.1" as though the peer had chosen it
      */
 
     /*
@@ -1237,7 +1238,7 @@ UTF_AUTO_TEST_CASE( ClientContracts_NegotiatedAlpnReachesTheResponseTests )
 
     /*
      * End to end through the interface, which is what actually closes the gap. First the ordinary
-     * case: h2 over TLS fills both response fields, and the identifier is the peer's own bytes
+     * case: h2 over TLS fills the response's value, and the identifier is the peer's own bytes
      */
 
     const auto h2Stub = StubClientConnection::createInstance( overTls, 1U /* freeSlots */ );
@@ -1247,8 +1248,7 @@ UTF_AUTO_TEST_CASE( ClientContracts_NegotiatedAlpnReachesTheResponseTests )
 
     UTF_CHECK( overTlsResponse.negotiatedAlpn().empty() );
 
-    overTlsResponse.protocol( h2Connection -> negotiated().protocol() );
-    overTlsResponse.negotiatedAlpn( h2Connection -> negotiated().alpn() );
+    overTlsResponse.negotiated( h2Connection -> negotiated() );
 
     UTF_CHECK( HttpProtocol::Http2 == overTlsResponse.protocol() );
     UTF_CHECK_EQUAL( overTlsResponse.negotiatedAlpn(), std::string( "h2" ) );
@@ -1265,13 +1265,101 @@ UTF_AUTO_TEST_CASE( ClientContracts_NegotiatedAlpnReachesTheResponseTests )
 
     ClientResponse fellBackResponse;
 
-    fellBackResponse.protocol( fellBack -> negotiated().protocol() );
-    fellBackResponse.negotiatedAlpn( fellBack -> negotiated().alpn() );
+    fellBackResponse.negotiated( fellBack -> negotiated() );
 
     UTF_CHECK( HttpProtocol::Http11 == fellBackResponse.protocol() );
     UTF_CHECK( fellBackResponse.negotiatedAlpn().empty() );
 
     UTF_CHECK( fellBackResponse.negotiatedAlpn() != std::string( "http/1.1" ) );
+}
+
+UTF_AUTO_TEST_CASE( ClientContracts_ResponseCannotContradictItselfTests )
+{
+    using namespace bl;
+    using namespace bl::httpclient;
+    using namespace utest::clientcontracts;
+
+    /*
+     * WHAT IS NOT EXPRESSIBLE HERE, which is the property and cannot be written as an assertion.
+     * ClientResponse has NO protocol( ... ) setter and NO negotiatedAlpn( ... ) setter; the one
+     * door is negotiated( ... ), which takes the pair as a single value. So there is no sequence
+     * of calls on a response which leaves Http2 beside "http/1.1", nor one which updates one half
+     * and forgets the other - the two lines this case would need in order to build such a response
+     * do not compile. The connection enforced the same property at ClientConnection::negotiated()
+     * and it is no longer lost one hop later
+     *
+     * The assertions below are the positive half: the pair arrives whole, reads back consistently
+     * through both accessors, survives a copy, and is REPLACED whole
+     */
+
+    const auto h2Stub = StubClientConnection::createInstance(
+        NegotiatedProtocol::fromAlpn( "h2" ),
+        1U      /* freeSlots */
+        );
+
+    const auto h2Connection = om::qi< ClientConnection >( h2Stub );
+
+    const auto fellBackStub = StubClientConnection::createInstance(
+        NegotiatedProtocol::withoutAlpn( HttpProtocol::Http11 ),
+        1U      /* freeSlots */
+        );
+
+    const auto fellBack = om::qi< ClientConnection >( fellBackStub );
+
+    /*
+     * A response nobody has populated claims nothing, because a default constructed
+     * NegotiatedProtocol is Unknown with no identifier
+     */
+
+    const ClientResponse blank;
+
+    UTF_CHECK( HttpProtocol::Unknown == blank.protocol() );
+    UTF_CHECK( blank.negotiatedAlpn().empty() );
+    UTF_CHECK( HttpProtocol::Unknown == blank.negotiated().protocol() );
+    UTF_CHECK( ! blank.negotiated().hasAlpn() );
+
+    /*
+     * Populated from a connection: the two reads and the value they forward to all agree, and the
+     * identifier still names the protocol after the hop
+     */
+
+    ClientResponse response;
+
+    response.negotiated( h2Connection -> negotiated() );
+
+    UTF_CHECK( HttpProtocol::Http2 == response.protocol() );
+    UTF_CHECK_EQUAL( response.negotiatedAlpn(), std::string( "h2" ) );
+
+    UTF_CHECK( response.protocol() == response.negotiated().protocol() );
+    UTF_CHECK_EQUAL( response.negotiatedAlpn(), response.negotiated().alpn() );
+    UTF_CHECK( response.negotiated().hasAlpn() );
+
+    UTF_CHECK( NegotiatedProtocol::protocolOfAlpn( response.negotiatedAlpn() ) == response.protocol() );
+
+    /*
+     * A copy carries the pair, not one half of it - design 5.4 replays a request and a redirect
+     * derives a second one, so responses are copied
+     */
+
+    const ClientResponse copied( response );
+
+    UTF_CHECK( HttpProtocol::Http2 == copied.protocol() );
+    UTF_CHECK_EQUAL( copied.negotiatedAlpn(), std::string( "h2" ) );
+    UTF_CHECK( NegotiatedProtocol::protocolOfAlpn( copied.negotiatedAlpn() ) == copied.protocol() );
+
+    /*
+     * And the one with teeth: populating the SAME response a second time replaces both halves at
+     * once. Two setters would have let a caller update the protocol and leave the stale "h2"
+     * behind it, which is exactly the disagreement this shape rules out
+     */
+
+    response.negotiated( fellBack -> negotiated() );
+
+    UTF_CHECK( HttpProtocol::Http11 == response.protocol() );
+    UTF_CHECK( response.negotiatedAlpn().empty() );
+    UTF_CHECK( ! response.negotiated().hasAlpn() );
+
+    UTF_CHECK( response.negotiatedAlpn() != std::string( "h2" ) );
 }
 
 UTF_AUTO_TEST_CASE( ClientContracts_ConnectionKeyAndPoolTests )
