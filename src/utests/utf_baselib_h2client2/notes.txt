@@ -10,5 +10,3 @@
 --log_level=test_suite --run_test=H2Driver_RefusedStreamIsRetryableTests
 --log_level=test_suite --run_test=H2Driver_CancelResetsOneStreamOnlyTests
 --log_level=test_suite --run_test=H2Driver_GoAwayDrainsAndClosesCleanlyTests
---log_level=test_suite --run_test=H2Driver_TlsAlpnSelectsHttp2Tests
---log_level=test_suite --run_test=H2Driver_TlsAlpnServerPreferenceWinsTests
