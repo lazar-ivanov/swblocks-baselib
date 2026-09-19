@@ -42,3 +42,4 @@ using namespace bl;
 #include "TestNetUtils.h"
 #include "TestBoostAsioCompat.h"
 #include "TestBoostAsioErrorCallback.h"
+#include "TestUri.h"
