@@ -127,17 +127,18 @@ namespace bl
                  * + 1 streams, about 1.07 billion. Reserving 1024 of them gives up under one
                  * millionth of the connection's life.
                  *
-                 * WHY BEING STINGY COSTS SOMETHING. A connection whose identifiers run out does
-                 * not stop looking usable: Http2ConnectionTaskT::publishFreeStreamSlots( ) is
-                 * "limit minus streams in flight" and does not consult isDraining( ), and nothing
-                 * publishes Draining on identifier exhaustion - only a GOAWAY, a connection error
-                 * and the close paths do. So the pool would keep dispatching onto it and the
-                 * driver would bounce every submission back as retryable ( applySubmit( )'s
-                 * canOpenStream( ) branch ), spending a retry budget of three per request on a
-                 * connection which can never take another. The reserve is what makes the pool see
-                 * it coming, by turning identifier exhaustion into the Draining state the pool
-                 * already knows how to retire a connection for, while there are still identifiers
-                 * left to carry what it has committed
+                 * WHY BEING STINGY COSTS SOMETHING. The margin is what the pool is told about:
+                 * the driver publishes Draining as soon as the registry begins draining, and
+                 * offers no slots from then on, so a connection at its margin is one the pool
+                 * retires rather than one it dispatches to ( Http2ConnectionTaskT::
+                 * chkPublishDraining( ), called at both answers of applySubmit( ) - it did not
+                 * exist until the L5 review, and without it this reserve announced nothing ).
+                 * What the SIZE of the margin buys is identifiers for what the pool has already
+                 * committed: a request is committed at acquire( ) and does not take an identifier
+                 * until the driver's strand reaches it, so a margin too small to cover that
+                 * window sends every request in it back through applySubmit( )'s canOpenStream( )
+                 * branch as a retryable bounce, spending a retry budget of three per request at
+                 * the one moment a connection has none to give
                  */
 
                 DEFAULT_DRAINING_RESERVE                    = 1024U,

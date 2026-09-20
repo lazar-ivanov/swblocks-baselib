@@ -1403,6 +1403,18 @@ see this; it is a composition defect, and S6.1's first end-to-end case would hav
   the request task because `acquire`/`releaseStream` carry no request identity, and there is no
   connection→pool readiness notification, so the pool polls on a backing-off maintenance tick which
   is the seam such a notification would plug into.
+- **The reserve as the L5 review left it, and how far the number actually travels.** The review
+  (finding 3) found the margin chosen, settable and pinned, and **acted on by nothing**: the driver
+  neither published `Draining` for it nor stopped offering slots, so past the margin a connection
+  still read `Ready` with slots free and every submit bounced retryably - the behaviour the reserve
+  was chosen to prevent, one reserve later. Fixed in the driver (`chkPublishDraining()` at both
+  answers of `applySubmit()`, and `publishFreeStreamSlots()` zero whenever `canOpenStream()` is
+  false), pinned by `H2Driver_DrainingReserveIsPublishedToThePoolTests` in `h2client2` with the
+  reserve set to "all but one" and a measured negative control. **`ConnectionPoolPolicy::
+  drainingReserve` is still read by nothing**: both ends of the path exist - the policy field here
+  and `Http2ConnectionConfig::limits.drainingReserve` there - and what is missing is the factory
+  that joins them, which is S6.1's by construction (see the `connection_factory_t` comment, which
+  names the session as the thing that opens connections) and is recorded as an obligation there.
 
 ---
 
@@ -1416,6 +1428,14 @@ see this; it is a composition defect, and S6.1's first end-to-end case would hav
 - Dep: S5.1, S5.2, S1.1, S1.4, S2.7, S2.8, S2.9. Accept: end-to-end GET/POST over h2 and h1 through the
   session against the test peer and the library `HttpServer`; redirects, cookies, strict decode. Tests →
   `httpclient`.
+- **The connection factory is this slice's, and it is what carries the pool's policy into a driver**
+  (L5 review, finding 3). `connection_factory_t` takes `( key, policy )` for exactly that reason, and
+  today **nothing implements it outside the pool's own tests**, so two policy knobs reach nothing:
+  `drainingReserve` → `Http2ConnectionConfig::limits.drainingReserve`, and `idleTimeout` →
+  `Http2ConnectionConfig::idleTimeout`, which is off by default and which no code sets. Both ends of
+  both paths already exist; the assignment is the missing piece, and a case which opens a connection
+  through the session and reads the driver's configuration back is what turns it from a knob into a
+  behaviour.
 - **Three things L2 leaves to this slice** (L2 review). (1) An HTTP/1.1 request carries ONE `Cookie`
   field (RFC 6265 §5.4): the jar's `cookieHeaderValue` and any caller-supplied `Cookie` header have
   to be merged, not both sent - and on a same-origin redirect the caller's header survives

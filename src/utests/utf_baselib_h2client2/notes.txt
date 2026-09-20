@@ -12,3 +12,6 @@
 --log_level=test_suite --run_test=H2Driver_GoAwayDrainsAndClosesCleanlyTests
 --log_level=test_suite --run_test=H2Driver_UnwrittenStreamIsRetryableOnPeerCloseTests
 --log_level=test_suite --run_test=H2Driver_UploadIsPulledFromTheSinkTests
+
+# S5.2 fix - the draining reserve, published to the pool by the driver (design 4.3, 5.4)
+--log_level=test_suite --run_test=H2Driver_DrainingReserveIsPublishedToThePoolTests
