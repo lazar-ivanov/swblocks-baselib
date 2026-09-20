@@ -1650,13 +1650,6 @@ UTF_AUTO_TEST_CASE( H2Pool_PolicyDefaultsTests )
 
     UTF_REQUIRE( policy.establishmentTimeout.total_seconds() < 134L );
 
-    /*
-     * THE SETTLE WINDOW - one second, which is how long the pool waits for a peer to say what it
-     * allows before taking the driver's assumption of it as the answer
-     */
-
-    UTF_REQUIRE_EQUAL( policy.settingsSettleTimeout.total_milliseconds(), 1000L );
-
     UTF_REQUIRE_EQUAL(
         static_cast< std::size_t >(
             httpclient::ConnectionPoolPolicy::UNCONFIRMED_MAX_CONCURRENT_STREAMS
@@ -1665,23 +1658,25 @@ UTF_AUTO_TEST_CASE( H2Pool_PolicyDefaultsTests )
         );
 
     /*
-     * THE ASSUMPTION IS ONE NUMBER KEPT IN TWO PLACES, AND THE BAND ARGUMENT DEPENDS ON THEM
-     * BEING EQUAL. learnPeerLimit( ) takes a reading outside [ assumed - slotsInUse, assumed ] as
-     * the peer's, and what makes that sound is that the DRIVER derives its pre-SETTINGS reading
-     * from the same number; a driver assuming more than the pool does would report inside the
-     * pool's band and be believed. Neither header can assert it - the driver does not include the
-     * pool and the pool must not include the driver, which is what keeps it protocol agnostic -
-     * so the pin is here, in the one translation unit which sees both. It is a static_assert
+     * THE SENTINEL IS ONE NUMBER KEPT IN TWO PLACES, AND THE WHOLE INFERENCE DEPENDS ON THEM
+     * BEING EQUAL. learnPeerLimit( ) takes any reading ABOVE this number as the peer's, and what
+     * makes that sound is that a driver which has not heard the peer's SETTINGS reports no more
+     * than the same number; a driver offering more than the pool's sentinel would have that
+     * reading believed as the peer's. Neither header can assert it - the driver does not include
+     * the pool and the pool must not include the driver, which is what keeps it protocol agnostic
+     * - so the pin is here, in the one translation unit which sees both. It is a static_assert
      * rather than a check, because a divergence should not reach a test run at all
      */
 
     static_assert(
-        static_cast< std::size_t >( httpclient::ConnectionPoolPolicy::ASSUMED_MAX_CONCURRENT_STREAMS ) ==
+        static_cast< std::size_t >(
+            httpclient::ConnectionPoolPolicy::UNCONFIRMED_MAX_CONCURRENT_STREAMS
+            ) ==
             static_cast< std::size_t >(
                 tasks::Http2ConnectionTaskT< tasks::TcpSocketAsyncStrandedBase >
-                    ::ASSUMED_MAX_CONCURRENT_STREAMS
+                    ::UNCONFIRMED_MAX_CONCURRENT_STREAMS
                 ),
-        "The pool's assumed concurrency limit and the h2 driver's must be the same number"
+        "The pool's unconfirmed concurrency limit and the h2 driver's must be the same number"
         );
     UTF_REQUIRE_EQUAL( policy.requestTimeout.total_seconds(), 30L * 60L );
     UTF_REQUIRE_EQUAL( policy.idleTimeout.total_seconds(), 300L );
@@ -1911,24 +1906,19 @@ UTF_AUTO_TEST_CASE( H2Pool_AssumedLimitIsNotDispatchedAgainstTests )
     const auto answers = std::make_shared< Answers >();
 
     /*
-     * A connection which is Ready and reports exactly the assumed number is what the h2 driver
+     * A connection which is Ready and offers the one slot of the preface rider is what a driver
      * looks like between its Ready - published BEFORE the preface is written, so that the first
      * request's HEADERS can join it - and the peer's SETTINGS one round trip later. The reading
-     * is the driver's assumption and says nothing whatever about the peer
+     * says nothing whatever about the peer, which is the point: a silent driver may not report
+     * more than this ( ClientConnection::freeStreamSlots( ) ), so the pool has nothing to infer
+     * from and nothing it may assume
      */
 
     factory -> initialState = httpclient::ConnectionState::Ready;
     factory -> initialFreeSlots =
-        httpclient::ConnectionPoolPolicy::ASSUMED_MAX_CONCURRENT_STREAMS;
+        httpclient::ConnectionPoolPolicy::UNCONFIRMED_MAX_CONCURRENT_STREAMS;
 
-    httpclient::ConnectionPoolPolicy policy;
-
-    /*
-     * Long enough that the settle window plays no part in this case - what is being pinned here
-     * is what the pool does while it does not know, and the window is the other case
-     */
-
-    policy.settingsSettleTimeout = time::seconds( 60 );
+    const httpclient::ConnectionPoolPolicy policy;
 
     const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
 
@@ -1962,9 +1952,9 @@ UTF_AUTO_TEST_CASE( H2Pool_AssumedLimitIsNotDispatchedAgainstTests )
 
     /*
      * Now the peer's SETTINGS arrive and say three, of which the one stream already dispatched
-     * holds one. That reading - two free with one out - could not have come from the assumption,
-     * which cannot report below ninety-nine while one stream is out, so the pool knows it is the
-     * peer's and dispatches two more and not four
+     * holds one. That reading - two free with one out - is one a driver which had not heard the
+     * peer could not have published, since such a driver may offer at most one; so the pool knows
+     * it is the peer's and dispatches two more and not four
      */
 
     factory -> taskAt( 0U ) -> setReady( 2U );
@@ -2002,17 +1992,18 @@ UTF_AUTO_TEST_CASE( H2Pool_PeerLimitLearnedFromACompletedResponseTests )
     const auto answers = std::make_shared< Answers >();
 
     /*
-     * This stub reports the assumed number for ever, which is the one peer no reading can tell
-     * apart from a driver which has not heard from it: a peer whose own limit IS the assumption
+     * This stub never reports more than the one slot a driver which has not heard from the peer
+     * may offer, which is the one peer no reading can distinguish: a peer whose own limit is one,
+     * or one whose limit is two while the single request the pool allowed itself is still out.
+     * For such a peer the completed response below is the only proof available
      */
 
     factory -> initialState = httpclient::ConnectionState::Ready;
     factory -> initialFreeSlots =
-        httpclient::ConnectionPoolPolicy::ASSUMED_MAX_CONCURRENT_STREAMS;
+        httpclient::ConnectionPoolPolicy::UNCONFIRMED_MAX_CONCURRENT_STREAMS;
 
     httpclient::ConnectionPoolPolicy policy;
 
-    policy.settingsSettleTimeout = time::seconds( 60 );
     policy.maxStreamsPerConnection = 4U;
 
     const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
@@ -2037,81 +2028,33 @@ UTF_AUTO_TEST_CASE( H2Pool_PeerLimitLearnedFromACompletedResponseTests )
     /*
      * A response came back in full. A peer's SETTINGS is the first frame it sends and a driver
      * applies frames in the order they arrive, so the peer has certainly spoken by now and every
-     * reading from here on is the peer's - the pool's own ceiling is what limits it after that
+     * reading from here on is the peer's.
+     *
+     * AND WHAT STANDS IS THE READING, NOT THE CEILING, which is what this asserts: the proof says
+     * the number is the peer's, it does not say the number is large. A pool which took "known" to
+     * mean "my own maximum applies" would answer four of these five acquires here; this one
+     * answers exactly the one whose slot came back, because one is what the connection reports.
+     *
+     * What the case cannot see is the mark itself - for a peer whose reading never rises above
+     * the sentinel, capacityOf( ) answers one either way. The two other cases here cover the mark
+     * where it does change an answer
      */
 
     pool -> releaseStream( connection, 1U, httpclient::RequestOutcome::Completed );
 
-    UTF_REQUIRE( answers -> waitFor( 5U ) );
+    UTF_REQUIRE( answers -> waitFor( 2U ) );
 
-    UTF_REQUIRE_EQUAL( pool -> waiterCount(), 0U );
+    UTF_REQUIRE( ! answers -> waitFor( 3U, 500L /* timeoutInMilliseconds */ ) );
 
-    UTF_REQUIRE_EQUAL( pool -> dispatchCapacity( connection ), 4U );
-    UTF_REQUIRE_EQUAL( pool -> slotsInUse( connection ), 4U );
+    UTF_REQUIRE_EQUAL( pool -> waiterCount(), 3U );
 
-    pool -> dispose();
-}
-
-/************************************************************************
- * The settle window, for the peer which never distinguishes itself
- */
-
-UTF_AUTO_TEST_CASE( H2Pool_AssumptionIsTakenAfterTheSettleWindowTests )
-{
-    using namespace bl;
-    using namespace utest::connpool;
-
-    const auto factory = std::make_shared< StubFactory >();
-    const auto answers = std::make_shared< Answers >();
-
-    factory -> initialState = httpclient::ConnectionState::Ready;
-    factory -> initialFreeSlots =
-        httpclient::ConnectionPoolPolicy::ASSUMED_MAX_CONCURRENT_STREAMS;
-
-    httpclient::ConnectionPoolPolicy policy;
-
-    /*
-     * The same stub as the case above, which never says anything the assumption could not have
-     * said, and no response to prove the peer spoke. Without the window such a connection would
-     * carry one request at a time for as long as its first response takes - which for a download
-     * or an event stream is not a round trip but minutes
-     */
-
-    policy.settingsSettleTimeout = time::milliseconds( 200 );
-    policy.maxStreamsPerConnection = 3U;
-
-    const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
-
-    const PoolGuard guard( pool );
-
-    const auto key = makeKey();
-
-    for( std::size_t i = 0U; i < 5U; ++i )
-    {
-        acquireInto( pool, key, makeRequest(), answers, i );
-    }
-
-    /*
-     * The window expires and the pool takes the reading as the peer's, which is what this code
-     * did unconditionally before - so what the window costs is the round trip and nothing else
-     */
-
-    UTF_REQUIRE( answers -> waitFor( 3U ) );
-
-    UTF_REQUIRE( ! answers -> waitFor( 4U, 500L /* timeoutInMilliseconds */ ) );
-
-    UTF_REQUIRE_EQUAL( answers -> count(), 3U );
-    UTF_REQUIRE_EQUAL( pool -> waiterCount(), 2U );
-
-    const auto connection = om::qi< httpclient::ClientConnection >( factory -> taskAt( 0U ) );
-
-    UTF_REQUIRE_EQUAL( pool -> dispatchCapacity( connection ), 3U );
+    UTF_REQUIRE_EQUAL( pool -> dispatchCapacity( connection ), 1U );
+    UTF_REQUIRE_EQUAL( pool -> slotsInUse( connection ), 1U );
 
     pool -> dispose();
 
     /*
-     * The two still queued are answered by the disposal, which is what this asserts - see
-     * H2Pool_SlotLimitingTests for the shape it used to be load bearing against
+     * The three still queued are answered by the disposal - see H2Pool_SlotLimitingTests
      */
 
     UTF_REQUIRE( answers -> waitFor( 5U ) );
@@ -2130,18 +2073,15 @@ UTF_AUTO_TEST_CASE( H2Pool_PeerLimitIsTakenFreshOnceItIsKnownTests )
     const auto answers = std::make_shared< Answers >();
 
     /*
-     * Ready at exactly the assumed number, which is what a driver reports until the peer's
-     * SETTINGS arrive - so the pool stores that reading at its one idle moment while it still
-     * knows nothing about the peer
+     * Ready at the one slot a driver which has not heard the peer may offer - so the pool stores
+     * that reading at its one idle moment while it still knows nothing about the peer
      */
 
     factory -> initialState = httpclient::ConnectionState::Ready;
     factory -> initialFreeSlots =
-        httpclient::ConnectionPoolPolicy::ASSUMED_MAX_CONCURRENT_STREAMS;
+        httpclient::ConnectionPoolPolicy::UNCONFIRMED_MAX_CONCURRENT_STREAMS;
 
-    httpclient::ConnectionPoolPolicy policy;
-
-    policy.settingsSettleTimeout = time::seconds( 60 );
+    const httpclient::ConnectionPoolPolicy policy;
 
     const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
 
@@ -2158,14 +2098,14 @@ UTF_AUTO_TEST_CASE( H2Pool_PeerLimitIsTakenFreshOnceItIsKnownTests )
     UTF_REQUIRE_EQUAL( pool -> dispatchCapacity( connection ), 1U );
 
     /*
-     * Now the peer says two hundred and fifty, which no assumption could have reported - so this
-     * reading is the peer's and the connection can carry 250 + the one already out. What the pool
-     * must NOT do is keep the hundred it stored before: the stored limit is only ever taken
-     * DOWNWARD, and the only moment which stores a reading outright is slotsInUse == 0, which
-     * under steady load never comes - so a kept assumption would cap a peer allowing 250 at 100
-     * for the life of the connection. Under-dispatch rather than over-dispatch, which is why it
-     * is a wrinkle and not a defect, and it is still the pool leaving two thirds of the peer's
-     * capacity unused
+     * Now the peer says two hundred and fifty, which a driver that had not heard the peer could
+     * not have reported - so this reading is the peer's and the connection can carry 250 + the
+     * one already out. What the pool must NOT do is keep the one it stored before: the stored
+     * limit is only ever taken DOWNWARD, and the only moment which stores a reading outright is
+     * slotsInUse == 0, which under steady load never comes - so a kept sentinel would cap a peer
+     * allowing 250 at one for the life of the connection. Under-dispatch rather than
+     * over-dispatch, which is why it is a wrinkle and not a defect, and it is still the pool
+     * leaving almost all of the peer's capacity unused
      */
 
     factory -> taskAt( 0U ) -> setReady( 250U );

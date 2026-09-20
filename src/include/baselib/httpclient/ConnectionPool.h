@@ -93,22 +93,20 @@ namespace bl
                 DEFAULT_MAX_RETRIES_PER_REQUEST             = 3U,
 
                 /**
-                 * Design 5.4 - what a connection is assumed to allow until the peer's SETTINGS
-                 * have arrived. The same number the h2 driver assumes, and it HAS to be, for a
-                 * reason which is load bearing rather than incidental: the pool cannot ask
-                 * whether the peer has spoken, so the only thing which tells it that a reading of
-                 * freeStreamSlots( ) is the PEER's number and not the driver's assumption of it
-                 * is that the reading could not have been derived from this one - refreshEntry( )
-                 */
-
-                ASSUMED_MAX_CONCURRENT_STREAMS              = 100U,
-
-                /**
                  * What the pool will put on one connection while the peer's limit is still
                  * unknown. This is design 5.1's own rule - "exactly one rides the preface,
                  * because until the peer's SETTINGS arrive nothing else is known" - applied by
                  * the layer which dispatches rather than only by the one which writes; the note
-                 * on the peer's limit at ConnectionPoolImplT says why the pool may not assume
+                 * on the peer's limit at ConnectionPoolImplT says why the pool may not assume.
+                 *
+                 * IT IS ALSO THE NUMBER THE POOL INFERS FROM, and that half is load bearing
+                 * rather than incidental: the pool cannot ask whether the peer has spoken, so the
+                 * only thing which tells it that a reading of freeStreamSlots( ) is the PEER's is
+                 * that a driver which has not heard from the peer may not report more than this.
+                 * ClientConnection::freeStreamSlots( ) is where that is required of every driver,
+                 * the h2 driver's own UNCONFIRMED_MAX_CONCURRENT_STREAMS is the same number - the
+                 * pool's cases pin the two together with a static_assert - and HTTP/1.1 reports
+                 * one or none in any case
                  */
 
                 UNCONFIRMED_MAX_CONCURRENT_STREAMS          = 1U,
@@ -182,25 +180,6 @@ namespace bl
                  */
 
                 DEFAULT_REQUEST_TIMEOUT_IN_SECONDS          = 30L * 60L,
-
-                /**
-                 * @brief HOW LONG THE POOL WAITS FOR THE PEER'S SETTINGS BEFORE IT ASSUMES
-                 *
-                 * refreshEntry( ) can tell the peer's concurrency limit from the driver's
-                 * assumption of it for every peer whose limit is not exactly the assumed number,
-                 * and for no peer whose limit is. This is the answer for that one: after this
-                 * long a connection which is otherwise usable has its reading taken as the
-                 * peer's, which is what this code did unconditionally before.
-                 *
-                 * A peer's SETTINGS is the first frame it sends ( RFC 9113 3.4 ), so it is one
-                 * round trip behind our preface. A second is longer than the round trip of any
-                 * path on which multiplexing is worth having, and what expiry restores is the
-                 * old behaviour - so the window cannot cost anything the old behaviour did not
-                 * already cost, and it buys back the round trip in which the peer can speak for
-                 * itself. Set it to time::neg_infin and the pool waits for proof for ever
-                 */
-
-                DEFAULT_SETTINGS_SETTLE_IN_MILLISECONDS     = 1000L,
             };
 
             enum : long
@@ -277,13 +256,6 @@ namespace bl
             time::time_duration                                                 requestTimeout;
 
             /**
-             * @brief How long a connection may go without telling the pool its own limit before
-             * the pool assumes one - see DEFAULT_SETTINGS_SETTLE_IN_MILLISECONDS
-             */
-
-            time::time_duration                                                 settingsSettleTimeout;
-
-            /**
              * @brief Retrying a request the server MAY have processed, after the connection was
              * lost - design 5.4's separate knob, default off
              *
@@ -328,10 +300,7 @@ namespace bl
                     time::seconds( DEFAULT_ESTABLISHMENT_TIMEOUT_IN_SECONDS )
                     ),
                 idleTimeout( time::seconds( DEFAULT_IDLE_TIMEOUT_IN_SECONDS ) ),
-                requestTimeout( time::seconds( DEFAULT_REQUEST_TIMEOUT_IN_SECONDS ) ),
-                settingsSettleTimeout(
-                    time::milliseconds( DEFAULT_SETTINGS_SETTLE_IN_MILLISECONDS )
-                    )
+                requestTimeout( time::seconds( DEFAULT_REQUEST_TIMEOUT_IN_SECONDS ) )
             {
                 maxConnectionsPerKey = DEFAULT_MAX_CONNECTIONS_PER_KEY;
                 maxConnectionsPerKeyHttp11 = DEFAULT_MAX_CONNECTIONS_PER_KEY_HTTP11;
@@ -585,33 +554,45 @@ namespace bl
          * The driver publishes Ready BEFORE the opening write, so that the first request's HEADERS
          * can join the preface - that is design 5.1's rule and the establishment contract S4.1 and
          * S5.2 both read. It means Ready comes one whole round trip BEFORE the peer's SETTINGS,
-         * and until those arrive freeStreamSlots( ) is derived from the driver's assumption of 100
-         * rather than from anything the peer said. A pool which takes that reading as the peer's
-         * limit sends a burst of up to 100 to a peer which allows 16, and the 84 over the limit
-         * come back as REFUSED_STREAM or, from a strict peer, as a connection error.
+         * and until those arrive freeStreamSlots( ) says nothing whatever about the peer. A pool
+         * which took such a reading as the peer's limit would send a burst to a peer which allows
+         * far fewer, and everything over the limit comes back as REFUSED_STREAM or, from a strict
+         * peer, as a connection error.
          *
          * WHAT IT WOULD COST TO BE WRONG, WHICH IS WHY THE ANSWER IS NOT "BROWSERS ASSUME 100 TOO".
          * They do, and RFC 9113 6.5.2 recommends no less than 100, so the assumption is not
-         * unreasonable - but a browser hedges it by REPLAYING what a REFUSED_STREAM bounced, and
-         * that half of the retry does not exist here. Design 5.4's retry covers the requests which
-         * are still QUEUED in the pool; a request already dispatched comes back through
-         * releaseStream( ) and a fresh acquire( ), and today nothing counts its attempts or makes
-         * it. So every request over the peer's limit is a lost request, not a retried one, and an
-         * unhedged bet is one the pool may not make on the caller's behalf.
+         * unreasonable - but a browser hedges it by REPLAYING what a REFUSED_STREAM bounced. So
+         * does this library, since S6.1 - SessionRequestTaskT::chkPrepareRetry( ) counts a
+         * request's attempts and replays it through a fresh acquire( ). The hedge is BOUNDED,
+         * though: a request whose body cannot rewind, one whose three attempts are spent, and one
+         * a strict peer answers with a connection error are lost. A burst above the peer's limit
+         * is paid in round trips and retry budget, and at the edges in requests themselves.
          *
          * SO THE POOL WAITS UNTIL IT KNOWS, and while it does not know it dispatches ONE - design
          * 5.1's own preface rule, applied where the dispatching happens. Nothing is ever put on a
          * connection under an assumption except the single request which rides the preface, so
          * there is never a burst to unwind - which matters, because a burst cannot be unwound: the
-         * HEADERS are gone. The three things which end "does not know" are in refreshEntry( ) and
-         * releaseStream( ), and the fourth - the settle window, for the peer whose limit IS the
-         * assumed number and which therefore cannot distinguish itself - is in the policy.
+         * HEADERS are gone.
          *
-         * WHAT IT COSTS: a connection whose peer allows exactly 100 carries one request at a time
-         * for the settle window, a second, before the rest of a queued burst follows. The driver
-         * reporting one free slot until peerLimitsConcurrentStreams( ) - L5 finding 5(c), the
-         * driver's change-set - removes even that, because a reading of one is a reading the
-         * assumption cannot produce and the pool would then know at Ready.
+         * WHAT ENDS "DOES NOT KNOW" IS A READING NO SILENT DRIVER COULD HAVE PUBLISHED, which is
+         * what L5 finding 5(c) bought: a driver which has not heard the peer's SETTINGS reports at
+         * most UNCONFIRMED_MAX_CONCURRENT_STREAMS - one - so ANY reading above one is the peer's
+         * and learnPeerLimit( ) takes it as such. The second route is a completed response, in
+         * releaseStream( ), which proves the peer has spoken whatever it reported.
+         *
+         * THIS IS WHY THERE IS NO LONGER A SETTLE WINDOW. Before 5(c) a silent driver reported the
+         * assumed 100, which no reading could be told apart from a peer allowing about 100, and a
+         * one second window was the answer for that peer: after it, the pool took the reading as
+         * the peer's. Under 5(c) that same window would take the SENTINEL as the peer's limit for
+         * any peer slower than a second and pin the connection at one stream until an idle moment,
+         * while the peer it existed for now distinguishes itself the moment it speaks.
+         *
+         * WHAT IT COSTS, AND WHO PAYS: a peer which allows exactly two. Its reading while the one
+         * stream the pool allowed itself is open is one, which is what a silent driver reports, so
+         * the pool cannot tell and carries one at a time until that request finishes - and a first
+         * request which never finishes, an event stream or a long download, holds the key there
+         * for its whole life, since neither route to known can fire and the HTTP/2 default is one
+         * connection per key. Under-dispatch, never over-dispatch.
          *
          * ------------------------------------------------------------------------------------
          * WHAT IT WATCHES, AND WHAT IT CANNOT
@@ -739,13 +720,6 @@ namespace bl
                 cpp::ScalarTypeIniter< bool >                                   isCancelRequested;
 
                 time::ptime                                                     establishBy;
-
-                /**
-                 * When the pool gives up waiting for the peer to speak for itself and takes the
-                 * driver's reading as the peer's. Armed the first time the connection reads Ready
-                 */
-
-                time::ptime                                                     settleBy;
 
                 auto current() const NOEXCEPT -> const om::ObjPtrCopyable< ClientConnection >&
                 {
@@ -1000,7 +974,7 @@ namespace bl
              *
              * ONE UNTIL THE PEER'S LIMIT IS KNOWN, which is the whole of the note on the peer's
              * limit at the top of this class: a number the pool has not been told is not a number
-             * it may dispatch a burst against, because nothing replays what comes back refused
+             * it may dispatch a burst against, since what comes back refused costs a retry at best
              */
 
             std::size_t capacityOf( SAA_in const Entry& entry ) const NOEXCEPT
@@ -1019,13 +993,13 @@ namespace bl
             /**
              * @brief The peer's limit has just become known, and what is stored is not it
              *
-             * Every reading taken before this moment came from the driver's assumption, and
+             * Every reading taken before this moment was a silent driver's sentinel, and
              * learnPeerLimit( ) only ever takes the stored value DOWNWARD - so a peer which allows
-             * more than the assumption would stay capped at the assumption for as long as the
-             * connection lived, since the one moment which stores a reading outright is
+             * more than the bound taken over that sentinel would stay capped at it for as long as
+             * the connection lived, since the one moment which stores a reading outright is
              * slotsInUse == 0 and under steady load that moment never comes. Dropping the stored
-             * reading here makes the next one the fresh one; until it is taken - which for the two
-             * routes inside learnPeerLimit( ) is the next line, and for a completed response is
+             * reading here makes the next one the fresh one; until it is taken - which for the
+             * inference inside learnPeerLimit( ) is the next line, and for a completed response is
              * the refresh of the examine which follows it - capacityOf( ) answers one stream,
              * which is what it was answering a moment ago
              */
@@ -1054,49 +1028,39 @@ namespace bl
              * moment and under steady load it never comes, so the upper bound is what keeps the
              * pool honest between such moments: it is only ever taken DOWNWARD, since a reading
              * lower than expected is a peer which lowered its SETTINGS ( or one whose SETTINGS
-             * arrived after the pool had assumed ), while a higher one is the pool's own in-flight
+             * arrived after a bound was stored ), while a higher one is the pool's own in-flight
              * dispatches not yet counted by the driver. It also bounds a single examine, which is
              * the burst finding 5 named: the loop in examineKey( ) dispatches while slotsInUse is
              * under this capacity, so it cannot dispatch more than the slots this reading reported.
              *
              * WHETHER THE READING IS THE PEER'S is a different question and this is where it is
-             * answered. Until the peer's SETTINGS arrive the driver derives its reading from
-             * ASSUMED_MAX_CONCURRENT_STREAMS, so it can only report a number in
-             * [ assumed - slotsInUse, assumed ]. ANY reading outside that band could not have come
-             * from the assumption and is therefore the peer's - which covers every peer except one
-             * whose limit is the assumed number exactly, for whom no reading can ever distinguish
-             * itself and the settle window below is the answer.
+             * answered. A driver which has not heard the peer's SETTINGS may not report more than
+             * UNCONFIRMED_MAX_CONCURRENT_STREAMS - that is the contract at ClientConnection::
+             * freeStreamSlots( ) and design 5.1's rule at the layer which knows - so ANY reading
+             * above that number is one no silent driver could have published and is therefore the
+             * peer's. A reading of one or none proves nothing either way - a silent driver with
+             * its rider out reports it, and so does a peer allowing one, two or ( legally ) none.
+             * It waits for a completed response - or, allowing two, for an idle reading of two.
              *
              * THE DOWNWARD RULE APPLIES ONLY TO READINGS WHICH ARE THE PEER'S, which is what
-             * markPeerLimitKnown( ) is for: what was stored while the limit was unknown came from
-             * the driver's assumption, and keeping it would cap a peer allowing more than the
-             * assumption at the assumption until an idle moment the pool may never see
+             * markPeerLimitKnown( ) is for: what was stored while the limit was unknown was a
+             * bound over the sentinel rather than anything the peer said, and keeping it would cap
+             * the connection at about one stream until an idle moment the pool may never see
              */
 
             void learnPeerLimit(
                 SAA_in          const entry_ptr_t&                              entry,
-                SAA_in          const std::size_t                               slots,
-                SAA_in          const time::ptime&                              timeNow
+                SAA_in          const std::size_t                               slots
                 ) NOEXCEPT
             {
                 const auto inUse = entry -> slotsInUse.value();
 
-                const auto assumed =
-                    static_cast< std::size_t >( ConnectionPoolPolicy::ASSUMED_MAX_CONCURRENT_STREAMS );
-
-                if( slots > assumed || slots + inUse < assumed )
-                {
-                    markPeerLimitKnown( entry );
-                }
-
-                if( entry -> settleBy.is_special() )
-                {
-                    if( isEnabled( m_policy.settingsSettleTimeout ) )
-                    {
-                        entry -> settleBy = timeNow + m_policy.settingsSettleTimeout;
-                    }
-                }
-                else if( timeNow >= entry -> settleBy )
+                if(
+                    slots >
+                        static_cast< std::size_t >(
+                            ConnectionPoolPolicy::UNCONFIRMED_MAX_CONCURRENT_STREAMS
+                            )
+                    )
                 {
                     markPeerLimitKnown( entry );
                 }
@@ -1291,7 +1255,7 @@ namespace bl
                          * learnPeerLimit( ) says what can be concluded from it and what cannot
                          */
 
-                        learnPeerLimit( entry, connection -> freeStreamSlots(), timeNow );
+                        learnPeerLimit( entry, connection -> freeStreamSlots() );
                     }
                     else if( ConnectionState::Draining == state || ConnectionState::Closed == state )
                     {
@@ -2254,10 +2218,11 @@ namespace bl
                              * the order they arrive, so a fully received response cannot have been
                              * delivered before the peer's SETTINGS were applied. From here on
                              * freeStreamSlots( ) is the peer's number, whatever it reads - which
-                             * is the one proof available for a peer whose limit is exactly the
-                             * assumed one and which therefore never distinguishes itself. What was
-                             * stored before this moment was not the peer's, so it goes with the
-                             * assumption it came from - markPeerLimitKnown( )
+                             * is the one proof available for a peer restrictive enough that its
+                             * readings stay at or below the sentinel and which therefore never
+                             * distinguishes itself. What was stored before this moment was not the
+                             * peer's, so it goes with the sentinel it was taken over -
+                             * markPeerLimitKnown( )
                              */
 
                             markPeerLimitKnown( entry );

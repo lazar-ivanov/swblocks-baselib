@@ -254,12 +254,29 @@ namespace bl
             enum : std::size_t
             {
                 /**
-                 * What freeStreamSlots( ) answers before the peer's SETTINGS have arrived -
-                 * design 5.4: "until the peer's SETTINGS arrives, 100 is assumed - the first
-                 * request goes out with the preface, as browsers do it"
+                 * What freeStreamSlots( ) answers for a peer which HAS spoken and set no limit of
+                 * its own - SETTINGS_MAX_CONCURRENT_STREAMS has no initial value and is unlimited
+                 * until a peer sends one ( RFC 9113 6.5.2 ), so this is OUR ceiling for such a
+                 * peer rather than the peer's, and design 5.4's assumed 100 is where it comes from
                  */
 
                 ASSUMED_MAX_CONCURRENT_STREAMS      = 100U,
+
+                /**
+                 * What freeStreamSlots( ) answers UNTIL the peer's SETTINGS have arrived - design
+                 * 5.1's own rule, "exactly one rides the preface, because until the peer's
+                 * SETTINGS arrive nothing else is known", published by the layer which knows
+                 * whether the peer has spoken ( L5 finding 5(c) ).
+                 *
+                 * AND IT IS WHAT THE POOL INFERS FROM, which is why it may not be exceeded.
+                 * ConnectionPoolPolicy::UNCONFIRMED_MAX_CONCURRENT_STREAMS is the same number and
+                 * has to be: the pool cannot ask whether the peer has spoken, so the only thing
+                 * which tells it that a reading is the PEER's is that this driver could not have
+                 * published that reading before the peer spoke. Anything above this number,
+                 * published before the peer's SETTINGS arrive, is believed
+                 */
+
+                UNCONFIRMED_MAX_CONCURRENT_STREAMS  = 1U,
             };
 
         protected:
@@ -357,6 +374,16 @@ namespace bl
             cpp::ScalarTypeIniter< bool >                                       m_isCloseWhenDrained;
             cpp::ScalarTypeIniter< bool >                                       m_isSettingsTimerArmed;
             cpp::ScalarTypeIniter< bool >                                       m_isDrainingEvents;
+
+            /**
+             * Whether the peer's SETTINGS have arrived at this driver - strand state, read by
+             * publishFreeStreamSlots( ) and set by the event which carries them. It is not the
+             * same question as Session::peerLimitsConcurrentStreams( ), which a peer that sends
+             * no SETTINGS_MAX_CONCURRENT_STREAMS leaves false for ever
+             */
+
+            cpp::ScalarTypeIniter< bool >                                       m_isPeerSettingsSeen;
+
             cpp::ScalarTypeIniter< std::uint64_t >                              m_pingCounter;
             cpp::ScalarTypeIniter< std::uint32_t >                              m_connectionErrorCode;
 
@@ -1236,6 +1263,14 @@ namespace bl
                         break;
 
                     case http2::SessionEventType::SettingsReceived:
+
+                        /*
+                         * The peer has spoken, whether or not its SETTINGS named a concurrency
+                         * limit - which is the fact publishFreeStreamSlots( ) needs and which the
+                         * session's peerLimitsConcurrentStreams( ) does not answer
+                         */
+
+                        m_isPeerSettingsSeen = true;
 
                         publishFreeStreamSlots();
                         break;
@@ -2311,9 +2346,27 @@ namespace bl
                     return;
                 }
 
+                /*
+                 * ONE UNTIL THE PEER HAS SPOKEN ( design 5.1, L5 finding 5(c) ), and the three
+                 * answers are three different facts. A peer which has named a concurrency limit
+                 * is honoured at its own number; a peer which has sent its SETTINGS without that
+                 * setting has told us it has no limit, so our own ceiling applies; and a peer
+                 * which has not spoken at all has told us nothing, so exactly one stream - the one
+                 * which rides the preface - is offered.
+                 *
+                 * THE THIRD ANSWER IS WHAT THE POOL READS THE PEER'S LIMIT FROM. Reporting ASSUMED
+                 * there instead, as this did, publishes a number the pool cannot tell apart from a
+                 * peer which allows exactly that many - which is what the pool's settle window
+                 * existed for and what it no longer needs
+                 */
+
                 const std::size_t limit = m_session -> peerLimitsConcurrentStreams() ?
                     static_cast< std::size_t >( m_session -> peerMaxConcurrentStreams() ) :
-                    static_cast< std::size_t >( ASSUMED_MAX_CONCURRENT_STREAMS );
+                    (
+                        m_isPeerSettingsSeen ?
+                            static_cast< std::size_t >( ASSUMED_MAX_CONCURRENT_STREAMS ) :
+                            static_cast< std::size_t >( UNCONFIRMED_MAX_CONCURRENT_STREAMS )
+                    );
 
                 const auto used = m_streams.size();
 

@@ -24,8 +24,8 @@
  * WHAT IT IS FOR. Everything the pool decides about CAPACITY is decided from a number a driver
  * publishes - freeStreamSlots( ) - and the pool's own cases publish that number from a stub. That
  * is the right way to pin the rule and it cannot pin the composition: whether a real driver
- * publishes what the pool's band inference assumes it publishes, and whether it publishes it at
- * the moment the peer's SETTINGS arrive rather than only when a response completes. The L6 review
+ * publishes what the pool's inference assumes it publishes, and whether it publishes it at the
+ * moment the peer's SETTINGS arrive rather than only when a response completes. The L6 review
  * found that every composed case in the feature runs its requests SEQUENTIALLY, where the pool
  * learns the peer's limit from releaseStream( )'s markPeerLimitKnown( ) and none of the
  * concurrency logic has to decide anything. This module is the regime that does.

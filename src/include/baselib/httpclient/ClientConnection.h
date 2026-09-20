@@ -336,7 +336,18 @@ namespace bl
              * @brief How many more requests this connection can take right now
              *
              * Bounded by the peer's SETTINGS_MAX_CONCURRENT_STREAMS, or by one in flight for
-             * HTTP/1.1. Zero for a connection which is Connecting, Draining or Closed
+             * HTTP/1.1. Zero for a connection which is Connecting, Draining or Closed.
+             *
+             * AT MOST ONE UNTIL THE PEER HAS SPOKEN, which is a requirement on the implementation
+             * and not a description of one. A pool cannot ask whether a peer has stated its
+             * concurrency limit, so what tells it that this number is the PEER's is that a driver
+             * which has not heard from the peer could not have reported it: while that is so the
+             * answer is at most ConnectionPoolPolicy::UNCONFIRMED_MAX_CONCURRENT_STREAMS, minus
+             * whatever is already open. An implementation which reports more than that before the
+             * peer has spoken will have that number dispatched against as if the peer had promised
+             * it, and what comes back over the peer's real limit costs a round trip and one of the
+             * request's three attempts - or the request itself at the edges of that budget. See
+             * ConnectionPoolImplT's note. HTTP/1.1, having no such moment, never reports above one
              */
 
             virtual std::size_t freeStreamSlots() const NOEXCEPT = 0;
