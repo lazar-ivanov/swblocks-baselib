@@ -581,6 +581,8 @@ namespace bl
                         true /* isRetryable */
                         );
 
+                    chkPublishDraining();
+
                     return;
                 }
 
@@ -634,6 +636,8 @@ namespace bl
                 cancelIdleTimer();
 
                 pumpBody( command.handle );
+
+                chkPublishDraining();
 
                 publishFreeStreamSlots();
             }
@@ -2216,11 +2220,49 @@ namespace bl
                 }
             }
 
+            /**
+             * @brief Turns a session which has begun draining into a Draining CONNECTION
+             *
+             * The registry begins draining on its own, without an event and without telling
+             * anybody: isDraining( ) goes true the moment the identifiers left fall to the reserve
+             * design 4.3 leaves to the pool, and that happens INSIDE submitRequest( ). Every other
+             * way a session drains - our own goAway( ) and a GOAWAY received - already publishes
+             * Draining from the path which caused it, so this is the one transition nothing else
+             * announces.
+             *
+             * WITHOUT IT THE RESERVE BUYS NOTHING. The pool retires a connection it sees Draining,
+             * and has no other way to learn that this one will refuse the next request: the state
+             * would still read Ready with slots free, so the pool would keep dispatching and the
+             * driver would bounce every one of them back through canOpenStream( ) - which is the
+             * stream of retryable bounces the reserve exists to prevent, arriving one reserve
+             * later rather than not at all.
+             *
+             * It is called at BOTH answers of applySubmit( ): after a submission which took the
+             * identifier that crossed the margin, and after one refused because the margin had
+             * already been crossed - the second of which is what a session configured draining
+             * from birth would otherwise never publish
+             */
+
+            void chkPublishDraining() NOEXCEPT
+            {
+                if( m_session && m_session -> isDraining() )
+                {
+                    publishState( ConnectionState::Draining );
+                }
+            }
+
             void publishFreeStreamSlots() NOEXCEPT
             {
                 BL_NOEXCEPT_BEGIN()
 
-                if( ! m_session || ConnectionState::Ready != m_connectionState.load() )
+                /*
+                 * canOpenStream( ) and not just the published state, so that a connection which
+                 * will refuse the next submission never offers a slot for it. The state is a
+                 * coarser thing and lags this by design - Draining is published once, from the
+                 * strand, while the refusal is decided per submission
+                 */
+
+                if( ! canOpenStream() || ConnectionState::Ready != m_connectionState.load() )
                 {
                     m_freeStreamSlots.store( 0U );
 

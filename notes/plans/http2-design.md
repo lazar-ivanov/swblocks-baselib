@@ -914,11 +914,19 @@ upper bound and one connection absorbing every request also means every request 
 is a margin `StreamRegistry` leaves to the pool, and it has to cover what the pool has committed to
 a connection but not yet opened as a stream - bounded by the dispatch ceiling above. 1024 is four
 times that ceiling and costs under one millionth of a connection's 1.07 billion identifiers, while
-a reserve of none turns identifier exhaustion into a stream of retryable bounces: a connection
-whose identifiers are spent still reports `Ready` with slots free, because `freeStreamSlots()` does
-not consult `isDraining()` and nothing publishes `Draining` for exhaustion. It reaches the registry
-through `SessionLimits::drainingReserve`, which S5.2 added for it - the pool configures the driver,
-the driver configures the session, and the session configures the registry.
+a margin too small leaves nothing in hand for what the pool has already committed to that
+connection - a dispatch ceiling's worth of requests, past the pool's own check and not yet opened,
+each of which then bounces back retryable at the one moment a connection can least afford it. It reaches the registry through `SessionLimits::drainingReserve`, which S5.2
+added for it - the pool configures the driver, the driver configures the session, and the session
+configures the registry.
+
+**What makes the margin visible is the driver, and the L5 review found it missing.** The registry
+begins draining silently, so `Http2ConnectionTaskT::applySubmit()` asks `isDraining()` at both of
+its answers and publishes `Draining` for it, and `publishFreeStreamSlots()` stores zero whenever
+`canOpenStream()` is false. Without those the connection went on reading `Ready` with slots free
+past the margin and the pool went on dispatching to it, which is the stream of bounces the reserve
+is chosen to prevent, arriving one reserve later rather than never; the retirement this section
+describes then follows from the existing "last stream closed while `Draining`" path.
 
 **There is no connection-to-pool notification, and rule L2 of 5.2 anticipates one.** A driver
 publishes its state into an atomic and offers nothing to subscribe to, so the pool cannot be told

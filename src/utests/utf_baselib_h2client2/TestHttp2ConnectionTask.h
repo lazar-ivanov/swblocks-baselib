@@ -1451,4 +1451,163 @@ UTF_AUTO_TEST_CASE( H2Driver_UnwrittenStreamIsRetryableOnPeerCloseTests )
         );
 }
 
+/**
+ * @brief The draining reserve of design 4.3, as the POOL has to see it
+ *
+ * WHAT THE RESERVE IS AND WHY THE DRIVER IS WHAT MAKES IT WORK. StreamRegistry::isDraining( ) goes
+ * true once the identifiers left fall to the margin the pool chose - DEFAULT_DRAINING_RESERVE in
+ * httpclient::ConnectionPoolPolicy, which reaches the registry as SessionLimits::drainingReserve -
+ * and the pool retires a connection it sees Draining. The registry announces nothing when it gets
+ * there, and this is the only way a session drains which nothing else already publishes: our own
+ * goAway( ) and a GOAWAY received both publish from the path which caused them. Unpublished, the
+ * connection goes on reading Ready with slots free, the pool goes on dispatching to it, and every
+ * submission bounces back retryable - which is precisely the behaviour the reserve is chosen to
+ * prevent, arriving one reserve of streams later instead of never.
+ *
+ * WHY THE MARGIN IS MOVED RATHER THAN REACHED. A client connection can open ( 2^31 - 1 ) / 2 + 1
+ * identifiers, about 1.07 billion, so no case opens its way to the default margin. The reserve is
+ * configurable exactly so that it can be set instead: one short of the whole space leaves room for
+ * a single stream and puts the session where a spent connection is, which is what the settable
+ * field was added for ( H2Session_DrainingReserveFromLimitsTests pins the same boundary on the
+ * engine alone ).
+ *
+ * NOTHING HERE IS TIMED, and two things make that so. The peer answers with an EMPTY script - it
+ * never responds, never resets and never closes - so the one stream stays open and the connection
+ * cannot retire behind the case's back; and the rendezvous is the peer's own record of the request
+ * arriving, which is made strictly after the applySubmit( ) which took the identifier that crossed
+ * the margin. The idle timeout is left off, its default, so the graceful close at the end is the
+ * draining retirement and can be nothing else.
+ */
+
+UTF_AUTO_TEST_CASE( H2Driver_DrainingReserveIsPublishedToThePoolTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest;
+    using namespace utest::h2driver;
+
+    const auto peer = makePeer();
+
+    peer -> setResponder(
+        []( SAA_in const h2peer::Http2TestRequest& request ) -> h2peer::Http2ResponseScript
+        {
+            BL_UNUSED( request );
+
+            /*
+             * No steps at all - the peer leaves the stream open and goes on reading
+             */
+
+            return h2peer::Http2ResponseScript();
+        }
+        );
+
+    withPeer(
+        peer,
+        [ & ]( SAA_in const unsigned short port ) -> void
+        {
+            const auto record = std::make_shared< FallbackRecord >();
+
+            Http2ConnectionConfig h2config;
+
+            /*
+             * A registry starts with ( MAX_STREAM_ID - 1 ) / 2 + 1 identifiers in hand, so this
+             * reserve is all of them but one
+             */
+
+            h2config.limits.drainingReserve = ( http2::Globals::MAX_STREAM_ID - 1U ) / 2U;
+
+            const auto driver = PlainDriverImpl::createInstance(
+                makeKey( "http", "127.0.0.1", port ),
+                makeFallbackFactory< TcpSocketAsyncStrandedBase >( record ),
+                h2config,
+                cleartextHttp2Config()
+                );
+
+            const auto connection = om::qi< httpclient::ClientConnection >( driver );
+
+            const auto held = RecordingSink::createInstance();
+            const auto refused = RecordingSink::createInstance();
+
+            runDriver(
+                driver,
+                [ & ]() -> void
+                {
+                    /*
+                     * The margin leaves room for exactly one stream, and the peer receiving this
+                     * request is the proof that the connection was still usable for it
+                     */
+
+                    const auto handle = connection -> submit(
+                        makeRequest( "http://127.0.0.1/held" ),
+                        om::qi< httpclient::ClientStreamEventSink >( held )
+                        );
+
+                    UTF_REQUIRE( httpclient::ClientConnection::INVALID_STREAM_HANDLE != handle );
+
+                    requireRecorded( peer -> recorder(), "request GET /held on stream 1" );
+
+                    /*
+                     * THE TWO ASSERTIONS THE CASE EXISTS FOR. That request took the identifier
+                     * which crossed the margin, so what the pool reads from here on must be a
+                     * connection it retires and not one it dispatches to
+                     */
+
+                    UTF_REQUIRE( ConnectionState::Draining == connection -> state() );
+                    UTF_REQUIRE_EQUAL( connection -> freeStreamSlots(), 0U );
+
+                    /*
+                     * And this is what those two are about: a pool which dispatched anyway gets a
+                     * retryable bounce with nothing written - a request failed for a reason the
+                     * connection could have declared before it was ever sent
+                     */
+
+                    const auto bounced = connection -> submit(
+                        makeRequest( "http://127.0.0.1/refused" ),
+                        om::qi< httpclient::ClientStreamEventSink >( refused )
+                        );
+
+                    UTF_REQUIRE( httpclient::ClientConnection::INVALID_STREAM_HANDLE != bounced );
+
+                    refused -> waitForClosed();
+
+                    /*
+                     * The last stream going away is what retires a draining connection; cancelling
+                     * the held one is how the case gets there without waiting for anything
+                     */
+
+                    connection -> cancel( handle, asio::error::operation_aborted );
+
+                    held -> waitForClosed();
+                }
+                );
+
+            /*
+             * The deliberate door of design 3.2, and nothing else could have taken it: the peer
+             * never answered and never closed, and the idle timer is off
+             */
+
+            chkTaskSucceeded( om::qi< Task >( driver ) );
+
+            UTF_REQUIRE( ConnectionState::Closed == connection -> state() );
+
+            requireRecorded( peer -> recorder(), "the client sent GOAWAY with error 0" );
+
+            /*
+             * The refused submission was answered by the driver and never reached the wire - the
+             * peer saw the held request and no other
+             */
+
+            UTF_REQUIRE( refused -> errorCode() );
+            UTF_REQUIRE( refused -> isRetryable() );
+            UTF_REQUIRE_EQUAL( refused -> status(), 0U );
+
+            UTF_REQUIRE(
+                ! hasRecord( peer -> recorder().records(), "request GET /refused on stream 3" )
+                );
+
+            UTF_REQUIRE( peer -> recorder().failure().empty() );
+        }
+        );
+}
+
 #endif /* __UTEST_TESTHTTP2CONNECTIONTASK_H_ */
