@@ -1,0 +1,4 @@
+# each slice appends the recipes for the cases it lands here
+
+# L6 second pass - the pool's capacity logic against a real driver, with two requests at once
+--log_level=test_suite --run_test=H2Pool_TwoRequestsInFlightOnOneConnectionTests
