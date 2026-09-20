@@ -124,6 +124,46 @@ extractor.
 **Tier 3 is the one that catches a case which still registers and still passes while silently doing
 less work.** Do not skip it for a change that moves cases between modules.
 
+**A differential comparison can only speak about things present on both sides.** Tiers 1 and 3
+compare against a baseline, so anything *new* — a module, a case — is unjudgeable by construction,
+and its failures are compared against nothing. Ask of any comparison you rely on: *what can this
+never report?* Read the raw artifacts too — module exit codes, verdict lines, the `clean` and
+`failures` fields — because a tool reporting "clean" is a claim, not a fact.
+
+---
+
+## Writing a test that is worth its green
+
+These four rules were each paid for. Ignoring one costs a defect that survives review.
+
+**Compose the real components early.** A stub faithful to a published interface is not evidence that
+two components agree. Stubs encode assumptions the real thing may not honour — one probe published
+its state before answering its sinks and asserted in a comment that this was "the order a driver
+produces too"; the real driver did the opposite. A whole layer of defects has been found by the
+first case that put real components together, including one the design had *already named* as a
+consequence and which still passed three green modules and two review passes. If a slice composes
+things for the first time, write that case **before** building out the surface, and treat a failure
+there as the exercise working.
+
+**A negative control is the evidence; the run count is not.** Show the case failing against the
+unfixed code. Where a harness refuses a degradation, build the discrimination into the assertion
+instead. Sixty green runs after a 1-in-16 flake happen by luck about 2% of the time — what earns a
+fix is a control that makes the failure *certain*, shown red before and green after.
+
+**Reproduce a flake under load, not idle.** A concurrent compile stalls one thread for hundreds of
+milliseconds; CPU, memory and I/O churn press evenly on all of them and do not reproduce the same
+races. One flake here survived 240 idle runs under synthetic load and reproduced during an ordinary
+parallel build.
+
+**A clean TSan result means nothing without a positive control.** "Clean" and "not instrumented" look
+identical. Build a module with a known report in the same instrumented tree and show it fires — and
+never claim "no ThreadSanitizer line" from a build that was not instrumented.
+
+**Wait for the thing the assertion is about.** A wait whose predicate differs from the assertion's is
+a flake waiting: a wait for "two records" was satisfied by the peer's own *connected* record, so a
+case asserted on a frame before it existed. Never poll or sleep before an assertion — a poll loop
+before an assertion is a missing rendezvous, and the fix belongs in the harness, not the case.
+
 ---
 
 ## Reducing a module that is already too large
