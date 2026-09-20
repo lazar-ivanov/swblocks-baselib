@@ -1098,6 +1098,21 @@ namespace bl
                 m_handles.erase( it -> second.streamId );
                 m_streams.erase( it );
 
+                /*
+                 * BEFORE THE SINK IS TOLD, AND NOT AFTER, because onClosed( ) is what gives the
+                 * pool its slot back ( HttpClientRequestTaskImpl ) and the pool re-reads
+                 * freeStreamSlots( ) in the same breath. Publishing afterwards leaves a window in
+                 * which this driver reports a stream it has already closed out as open, and a
+                 * release landing in that window is read by the pool at slotsInUse == 0 - the one
+                 * moment it takes a reading as the peer's limit outright. The pool then stores a
+                 * number one below the peer's and only another idle moment can raise it again.
+                 *
+                 * It also makes true what the pool's own comment says of this number, that it is
+                 * stale HIGH while dispatches are in flight and never stale low
+                 */
+
+                publishFreeStreamSlots();
+
                 if( sink )
                 {
                     sink -> onClosed( handle, errorCode, isRetryable );
@@ -1332,8 +1347,6 @@ namespace bl
                 }
 
                 closeStream( handle, errorCodeOf( event ), event.isRetryable );
-
-                publishFreeStreamSlots();
 
                 chkArmIdleTimer();
 
