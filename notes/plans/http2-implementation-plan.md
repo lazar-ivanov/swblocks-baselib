@@ -1356,14 +1356,28 @@ Depends on L2, L4. S5.1 and S5.2 are parallel via the S2.6 contracts.
   default, so a session-level knob read here is enough; putting it on the frozen request type is a
   negotiated change like any other.
 
-**The S5.1/S5.2 seam, reconciled at merge (2026-09-19).** Both lanes flagged it independently and
-they agree. S5.1 deliberately does **not** call `releaseStream()` when `submit()` is refused or when
-a deadline expires during the pool wait - there is no stream and no handle to name one by - and
-reports `ConnectionUnusable` with `isRetryable()` true instead. That leaks nothing, because **the
-pool holds no per-connection outstanding counter**: it reads slot availability from the driver's own
-`freeStreamSlots()`, and a refused submit never opened a stream, so that count is already right. The
-two halves of the retry counter are split for the same contract reason and the rule lives in one
-place, `chkRequestMayBeReplayed`.
+**The S5.1/S5.2 seam - THE RECONCILIATION RECORDED HERE ON 2026-09-19 WAS WRONG, AND THE SEAM IS A
+DEFECT.** Corrected the same day by the L5 review, which ranked it High.
+
+What was recorded: that S5.1 not calling `releaseStream()` on a refused `submit()` or a pool-wait
+timeout leaks nothing, "because the pool holds no per-connection outstanding counter".
+
+**It does.** `Entry::slotsInUse` (`ConnectionPool.h:566`) is incremented at every dispatch
+(`:1278`) and decremented **only** in `releaseStream` (`:1858`), and its own comment says so in
+terms: *"It is the POOL's count and not the driver's ... `freeStreamSlots()` is stale high ... and
+cannot be the thing which limits dispatch"*. The error was mine: I grepped for invented field names,
+found nothing, and treated that as evidence of absence rather than reading the type.
+
+**The consequence, per refused submit:** a slot is leaked for the entry's life; the entry is never
+retired, because `:1175` forgets one only when `isRetired && 0U == slotsInUse`; the connection task
+is held alive by `m_byConnection`; and for h2, where a key has one connection, a permanent unit of
+capacity is lost. **Refusals are ordinary**, not exotic: the h2 driver refuses after
+`closeSubmissions()`, and the h1 driver refuses **every** `BodySource` request and any second
+request while one is in flight.
+
+**The rule, and it belongs in S5.1:** every answered `acquire()` pairs with exactly one
+`releaseStream()`, stream or no stream - the pool ignores the handle. Neither lane's module could
+see this; it is a composition defect, and S6.1's first end-to-end case would have run it first.
 
 ### S5.2 — ConnectionPool (§5.4, D6, D21)
 - Deliver: `httpclient/ConnectionPool.h` - key (scheme/host/port/proxy/TLS-profile/h2-profile/verify);
