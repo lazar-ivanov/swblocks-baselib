@@ -1,10 +1,50 @@
 # One until the peer has spoken: the driver's half of L5 finding 5(c), and the end of the settle window
 
-**Landed:** 2026-09-20, as one gated change-set (driver, pool, contract, cases). **Status:** DONE,
-pending the maintainer's own review of the diff and the orchestrator's release pass and gate.
+**Landed:** 2026-09-20, as one gated change-set (driver, pool, contract, cases). **Status:** DONE
+and validated - the release pass and the G1 gate are below. The maintainer reviews the diff himself
+before anything merges.
 
 L5 finding 5(c) asked for one change - the driver reporting one free slot until the peer's limit is
 known. Making it turned out to require three decisions, and the last of them found a defect.
+
+## The validation
+
+**Release pass:** twelve modules against `clang2010` and `gcc1520`, release - **24 of 24 green**,
+rc=0, no leaks. Cases per toolchain: h2client 12, h2client2 13, h2client3 3, h2client4 15,
+h2client5 1, h2profiles 14, httpclient 59, httpclient2 9, httpclient3 6, httpclient4 17,
+httpclient5 2, httpclient6 1.
+
+**G1 gate:** `gcc1520` debug, whole suite, baseline `1bcde00` - 42 modules, **1009 cases ran of 1020
+registered**. (That registered set is not the same quantity as the 1030 the manifest carries, which
+counts cases in the tree.) It was differenced against the timer-fix gate, which ran the same
+baseline, so the delta isolates this change-set: **22 lines, every one accounted for.** The case
+deltas are the three this change-set intends - `H2Pool_AssumptionIsTakenAfterTheSettleWindowTests`
+gone with the mechanism it pinned, `H2Pool_TwoRequestsInFlightOnOneConnectionTests` renamed to
+`H2Pool_RequestsInFlightTogetherOnOneConnectionTests`, and the count 1010 -> 1009 for that one net
+deletion. The two assertion-count lines are **not** this change-set's:
+
+- `BaseLib_Base64UrlTests` 16390 -> 16396, in `utf_baselib`, a module nothing here touches. It is a
+  known false alarm: the case is driven by random data with conditional assertions seeded from
+  `random_device`, and the L1 round ran the **unchanged baseline binary** eight times for
+  16384 / 16384 / 16390 / 16396 / 16396 / 16390 / 16396 / 16366. The line records a different seed,
+  not a different behaviour.
+- `TlsHandshake_SniOmittedForAddressLiterals` 14 -> 21, pre-existing and identical in every earlier
+  gate - S0.3's deliberate IPv6 extension (`d7f5ef0`).
+
+**No pre-existing case changed outcome, disappeared, or moved its assertion count because of this
+change-set.**
+
+**The rounds of wording which followed the pass were checked against the gate's own toolchain**: the
+orchestrator applied the final tree over the one the gate built and rebuilt both test objects at
+`gcc1520` debug - `UtfBaselibH2Client4Main.o` `9d4ea6eec97185c01c6cf8c70158691d` and
+`UtfBaselibH2Client5Main.o` `062715e9e1697968b29c49890e5902e9`, byte-identical - so the pass and the
+gate stand for the text as it finally reads.
+
+**And the defect in section 4 was shown rather than argued.** With the ordering hunk reverted alone
+and nothing else changed, the composed case failed **4 of 40** runs under a concurrent compile; the
+committed code failed **0 of 40** under the same load. With a 200 ms stall in place of the publish
+it fails every time; with the same stall and the publish moved ahead of the sink it passes, which is
+what isolates the ordering from the delay.
 
 ---
 
