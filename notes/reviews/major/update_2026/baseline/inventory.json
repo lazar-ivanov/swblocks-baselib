@@ -3677,7 +3677,7 @@
    "namespaces": []
   },
   {
-   "body_sha": "75da3157b6ca3b595f0342c4f5df0ace",
+   "body_sha": "b11613604151868640a3d9bd70200a9a",
    "doc_sha": "f033333d05e07fd714b6fcd431f1f0ff",
    "file": "utf_baselib_httpclient5/TestClientSessionTls.h",
    "fixture": null,
@@ -3695,7 +3695,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1339,
+   "line": 1605,
    "module": "utf_baselib_httpclient4",
    "name": "ClientSession_AcceptEncodingAndStrictDecodeTests",
    "namespaces": []
@@ -3707,7 +3707,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1650,
+   "line": 1916,
    "module": "utf_baselib_httpclient4",
    "name": "ClientSession_AgainstTheLibraryHttpServerTests",
    "namespaces": []
@@ -3719,7 +3719,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 856,
+   "line": 885,
    "module": "utf_baselib_httpclient4",
    "name": "ClientSession_BodySourceIsNeverCarriedByHttp11Tests",
    "namespaces": []
@@ -3731,7 +3731,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 536,
+   "line": 565,
    "module": "utf_baselib_httpclient4",
    "name": "ClientSession_ConnectionIsReusedAcrossRequestsTests",
    "namespaces": []
@@ -3743,7 +3743,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1225,
+   "line": 1491,
    "module": "utf_baselib_httpclient4",
    "name": "ClientSession_CookiesAreStoredMergedAndSentOnceTests",
    "namespaces": []
@@ -3755,9 +3755,21 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1103,
+   "line": 1369,
    "module": "utf_baselib_httpclient4",
    "name": "ClientSession_CrossOriginRedirectDropsCredentialsTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "0c24c0e333c0c90f6868c093c2a29fe1",
+   "doc_sha": "3f4a14a5ed297e0dd85514b278b610cf",
+   "file": "utf_baselib_httpclient4/TestClientSession.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1052,
+   "module": "utf_baselib_httpclient4",
+   "name": "ClientSession_CrossSchemeRedirectIsRefusedTests",
    "namespaces": []
   },
   {
@@ -3767,7 +3779,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 735,
+   "line": 764,
    "module": "utf_baselib_httpclient4",
    "name": "ClientSession_DrainingReserveReachesTheDriverTests",
    "namespaces": []
@@ -3779,7 +3791,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1775,
+   "line": 2041,
    "module": "utf_baselib_httpclient4",
    "name": "ClientSession_FallbackRiderNeedsTheDispatchedRetryTests",
    "namespaces": []
@@ -3791,7 +3803,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 445,
+   "line": 474,
    "module": "utf_baselib_httpclient4",
    "name": "ClientSession_GetOverHttp2Tests",
    "namespaces": []
@@ -3803,7 +3815,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 666,
+   "line": 695,
    "module": "utf_baselib_httpclient4",
    "name": "ClientSession_GoAwayRetiresTheConnectionTests",
    "namespaces": []
@@ -3815,9 +3827,21 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 799,
+   "line": 828,
    "module": "utf_baselib_httpclient4",
    "name": "ClientSession_IdleTimeoutReachesTheDriverTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "fb8cede9c89047d2231264af3687c698",
+   "doc_sha": "9dbff88e7e3b8dd30a46742542cf460e",
+   "file": "utf_baselib_httpclient6/TestClientSessionIdle.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 335,
+   "module": "utf_baselib_httpclient6",
+   "name": "ClientSession_IdleTimeoutReachesTheHttp11DriverTests",
    "namespaces": []
   },
   {
@@ -3827,7 +3851,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 588,
+   "line": 617,
    "module": "utf_baselib_httpclient4",
    "name": "ClientSession_PostWithBodyOverHttp2Tests",
    "namespaces": []
@@ -3839,7 +3863,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1532,
+   "line": 1798,
    "module": "utf_baselib_httpclient4",
    "name": "ClientSession_ProfileHeaderSetIsByRequestKindTests",
    "namespaces": []
@@ -3851,9 +3875,21 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1012,
+   "line": 1178,
    "module": "utf_baselib_httpclient4",
    "name": "ClientSession_RedirectIsFollowedWhenEnabledTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "42a7050896666bf707d675ce14c2397a",
+   "doc_sha": "312a4e53aae54528081b4605d4f51890",
+   "file": "utf_baselib_httpclient4/TestClientSession.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1284,
+   "module": "utf_baselib_httpclient4",
+   "name": "ClientSession_RequestBudgetIsChainedAcrossHopsTests",
    "namespaces": []
   },
   {
@@ -3863,7 +3899,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 971,
+   "line": 1000,
    "module": "utf_baselib_httpclient4",
    "name": "ClientSession_SpeaksOneSchemeTests",
    "namespaces": []
@@ -5407,6 +5443,18 @@
    "namespaces": []
   },
   {
+   "body_sha": "2d4924831e2a0e6f968faa0c9832543b",
+   "doc_sha": "2f88872e6a2bb02713051117e6ba1d6e",
+   "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1634,
+   "module": "utf_baselib_h2client2",
+   "name": "H2Driver_EstablishmentFailureBouncesAndKeepsItsCauseTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "d0b4f809020b69ad863b61a81e7e53a5",
    "doc_sha": "7c191569cb8fdc8b4f71f0abf2455d23",
    "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
@@ -6433,9 +6481,21 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1832,
+   "line": 2170,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_BodySourceWhichThrowsFailsTheRequestTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "d6c0f39d3621a0d3b912306d148d0fbe",
+   "doc_sha": "28c32463a25576c49aa181ce320c7de5",
+   "file": "utf_baselib_httpclient/TestHttpClientRequestTask.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 2377,
+   "module": "utf_baselib_httpclient",
+   "name": "HttpClientRequestTask_BouncedRequestNamesTheConnectionFailureTests",
    "namespaces": []
   },
   {
@@ -6445,7 +6505,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 889,
+   "line": 1227,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_BufferedCompletionTests",
    "namespaces": []
@@ -6457,9 +6517,21 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1329,
+   "line": 1667,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_CancelResetsTheStreamTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "b8a0ed8deb338d198ec84b67227c4029",
+   "doc_sha": "aadf00818f5b1699bb1c8ac8bc6bb8bd",
+   "file": "utf_baselib_httpclient/TestHttpClientRequestTask.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 2265,
+   "module": "utf_baselib_httpclient",
+   "name": "HttpClientRequestTask_ConnectionLostUnderTheStreamIsReportedUnusableTests",
    "namespaces": []
   },
   {
@@ -6469,7 +6541,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1263,
+   "line": 1601,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_HeadersTimeoutResetsTheStreamOnlyTests",
    "namespaces": []
@@ -6481,7 +6553,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 987,
+   "line": 1325,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_InterimResponsesDoNotOverwriteTheStatusTests",
    "namespaces": []
@@ -6493,7 +6565,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1765,
+   "line": 2103,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_LatePoolAnswerStillReturnsTheSlotTests",
    "namespaces": []
@@ -6505,7 +6577,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1465,
+   "line": 1803,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_RefusedSubmitIsRetryableTests",
    "namespaces": []
@@ -6517,7 +6589,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1533,
+   "line": 1871,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_RefusedSubmitReturnsTheSlotToTheRealPoolTests",
    "namespaces": []
@@ -6529,7 +6601,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1397,
+   "line": 1735,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_ResponseBodyCapResetsTheStreamTests",
    "namespaces": []
@@ -6541,7 +6613,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1053,
+   "line": 1391,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_StreamingSinkCreditsOnlyWhatItTookTests",
    "namespaces": []
@@ -6553,7 +6625,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1208,
+   "line": 1546,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_TotalTimeoutCoversThePoolWaitTests",
    "namespaces": []
@@ -6565,7 +6637,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1619,
+   "line": 1957,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_UnsuitableRequestKeepsTheConnectionPoolableTests",
    "namespaces": []
@@ -6577,7 +6649,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1135,
+   "line": 1473,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_UploadIsAnsweredOncePerPullTests",
    "namespaces": []
@@ -14534,7 +14606,7 @@
    "line": 71,
    "module": "utf_baselib_httpclient",
    "ns": "utest",
-   "sha": "fe99c765cd9df6758a965f3bc41040aa"
+   "sha": "18948912802a68793db3e2495c6fe9e5"
   },
   {
    "file": "utf_baselib_httpclient/TestRedirectPolicy.h",
@@ -14566,7 +14638,7 @@
    "line": 46,
    "module": "utf_baselib_httpclient4",
    "ns": "utest",
-   "sha": "05d9bb6d93b401e14e599301d34cfa06"
+   "sha": "fde7784e3ebdb28b7688ea3fd064622a"
   },
   {
    "file": "utf_baselib_httpclient5/TestClientSessionTls.h",
@@ -14575,6 +14647,14 @@
    "module": "utf_baselib_httpclient5",
    "ns": "utest",
    "sha": "39f0122a50806c2282e523454bfa40e9"
+  },
+  {
+   "file": "utf_baselib_httpclient6/TestClientSessionIdle.h",
+   "label": "namespace sessionidle",
+   "line": 48,
+   "module": "utf_baselib_httpclient6",
+   "ns": "utest",
+   "sha": "2612afbd4063d716fe3780b48db4fc0d"
   },
   {
    "file": "utf_baselib_io/TestIO.h",
@@ -17687,6 +17767,7 @@
    "notes_cases": [
     "H2Driver_CancelResetsOneStreamOnlyTests",
     "H2Driver_DrainingReserveIsPublishedToThePoolTests",
+    "H2Driver_EstablishmentFailureBouncesAndKeepsItsCauseTests",
     "H2Driver_FullDuplexUploadAndDownloadTests",
     "H2Driver_GoAwayDrainsAndClosesCleanlyTests",
     "H2Driver_KeepAliveAndIdleCloseTests",
@@ -18465,8 +18546,10 @@
     "Http1Codec_SmugglingDefencesTests",
     "Http1Codec_StatusLineHeadersAndBodyTests",
     "HttpClientRequestTask_BodySourceWhichThrowsFailsTheRequestTests",
+    "HttpClientRequestTask_BouncedRequestNamesTheConnectionFailureTests",
     "HttpClientRequestTask_BufferedCompletionTests",
     "HttpClientRequestTask_CancelResetsTheStreamTests",
+    "HttpClientRequestTask_ConnectionLostUnderTheStreamIsReportedUnusableTests",
     "HttpClientRequestTask_HeadersTimeoutResetsTheStreamOnlyTests",
     "HttpClientRequestTask_InterimResponsesDoNotOverwriteTheStatusTests",
     "HttpClientRequestTask_LatePoolAnswerStillReturnsTheSlotTests",
@@ -18622,6 +18705,7 @@
     "ClientSession_ConnectionIsReusedAcrossRequestsTests",
     "ClientSession_CookiesAreStoredMergedAndSentOnceTests",
     "ClientSession_CrossOriginRedirectDropsCredentialsTests",
+    "ClientSession_CrossSchemeRedirectIsRefusedTests",
     "ClientSession_DrainingReserveReachesTheDriverTests",
     "ClientSession_FallbackRiderNeedsTheDispatchedRetryTests",
     "ClientSession_GetOverHttp2Tests",
@@ -18630,6 +18714,7 @@
     "ClientSession_PostWithBodyOverHttp2Tests",
     "ClientSession_ProfileHeaderSetIsByRequestKindTests",
     "ClientSession_RedirectIsFollowedWhenEnabledTests",
+    "ClientSession_RequestBudgetIsChainedAcrossHopsTests",
     "ClientSession_SpeaksOneSchemeTests"
    ]
   },
@@ -18662,6 +18747,34 @@
    "notes_cases": [
     "ClientSessionTls_GetOverHttp2Tests",
     "ClientSessionTls_StreamingUploadTakesAnHttp2OnlyConnectionTests"
+   ]
+  },
+  "utf_baselib_httpclient6": {
+   "data_files": {},
+   "data_literals": [],
+   "data_refs": [],
+   "files": [
+    {
+     "includes": [
+      "<baselib/httpclient/ClientSession.h>",
+      "<baselib/tasks/TcpStrandedStreams.h>",
+      "<utests/baselib/Http2TestServer.h>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_httpclient6/TestClientSessionIdle.h"
+    },
+    {
+     "includes": [
+      "<utests/baselib/UtfMain.h>",
+      "<baselib/http2/PreCompiled.h>",
+      "<baselib/httpclient/PreCompiled.h>",
+      "\"TestClientSessionIdle.h\""
+     ],
+     "path": "utf_baselib_httpclient6/UtfBaselibHttpClient6Main.cpp"
+    }
+   ],
+   "notes_cases": [
+    "ClientSession_IdleTimeoutReachesTheHttp11DriverTests"
    ]
   },
   "utf_baselib_io": {
@@ -20579,7 +20692,7 @@
    "line": 69,
    "module": "utf_baselib_httpclient",
    "name": "utest",
-   "sha": "05081a6fcae9a116850a384ef0802e2b"
+   "sha": "96cc892633e1117721646392388fcdce"
   },
   {
    "file": "utf_baselib_httpclient/TestRedirectPolicy.h",
@@ -20607,7 +20720,7 @@
    "line": 44,
    "module": "utf_baselib_httpclient4",
    "name": "utest",
-   "sha": "1b5aa7b8952195bb74400b891732e58b"
+   "sha": "f6d13e1c7a42db3251f94d8e094a4229"
   },
   {
    "file": "utf_baselib_httpclient5/TestClientSessionTls.h",
@@ -20615,6 +20728,13 @@
    "module": "utf_baselib_httpclient5",
    "name": "utest",
    "sha": "b641c6471caddde774f0ad1cb8a76f64"
+  },
+  {
+   "file": "utf_baselib_httpclient6/TestClientSessionIdle.h",
+   "line": 46,
+   "module": "utf_baselib_httpclient6",
+   "name": "utest",
+   "sha": "578eeef3fa8277f8dce79d8753d50d90"
   },
   {
    "file": "utf_baselib_io/TestIO.h",
