@@ -124,6 +124,7 @@ namespace utest
             Refuse,             /* RST_STREAM this stream - nothing further is sent ON IT */
             AwaitWindowStall,   /* wait until the receive window for this stream is exhausted */
             AwaitStreamClosed,  /* wait until BOTH halves of this stream have closed */
+            AwaitRequests,      /* wait until the connection has seen this many requests */
             CreditWindow,       /* credit everything received so far on this stream */
             GoAway,             /* end the connection gracefully - RFC 9113 6.8 */
             Close,              /* close the connection once everything queued is written */
@@ -139,6 +140,7 @@ namespace utest
             bl::cpp::ScalarTypeIniter< unsigned >                               status;
             bl::cpp::ScalarTypeIniter< std::uint32_t >                          errorCode;
             bl::cpp::ScalarTypeIniter< long >                                   delayInMilliseconds;
+            bl::cpp::ScalarTypeIniter< std::uint32_t >                          requestCount;
             bl::cpp::ScalarTypeIniter< bool >                                   endStream;
 
             bl::http2::HpackFieldList                                           fields;
@@ -361,6 +363,40 @@ namespace utest
                 Http2Step step;
 
                 step.kind = Http2StepKind::AwaitStreamClosed;
+
+                m_steps.push_back( step );
+
+                return *this;
+            }
+
+            /**
+             * @brief Waits until this connection has seen at least 'count' requests
+             *
+             * THE RENDEZVOUS FOR A CASE ABOUT CONCURRENCY, and it exists because the naive
+             * spelling of such a case cannot fail. A peer which answers the first request before
+             * the second one arrives lets two requests which were meant to overlap run one after
+             * the other, and nothing a case asserts AFTERWARDS can tell the two apart - both
+             * finish, both are correct, and the client never had two streams open. Put this in
+             * front of the first response and the overlap is forced rather than hoped for: the
+             * stream this script is on cannot close until the request it waits for has arrived,
+             * so the case either sees two streams open at the peer at once or it times out here
+             * and prints what the peer did see.
+             *
+             * An EVENT and not a duration, like awaitWindowStall( ) and awaitStreamClosed( ):
+             * onRead( ) advances every script after every feed( ), and a request arriving IS a
+             * read, so the step is re-read exactly when its answer can have changed. Nothing
+             * polls and nothing sleeps.
+             *
+             * The count is requests ON THIS CONNECTION, the same number Http2TestRequest::
+             * streamIndex carries, so a case which expects the second request names two
+             */
+
+            this_type& awaitRequests( SAA_in const std::uint32_t count )
+            {
+                Http2Step step;
+
+                step.kind = Http2StepKind::AwaitRequests;
+                step.requestCount = count;
 
                 m_steps.push_back( step );
 
@@ -1412,6 +1448,22 @@ namespace utest
                                  * so both halves bring the script back here - and pumpWrites( )
                                  * still runs after this return, which is what lets the peer finish
                                  * writing the response this step is waiting behind
+                                 */
+
+                                return;
+                            }
+
+                            break;
+
+                        case Http2StepKind::AwaitRequests:
+
+                            if( m_streamsSeen < step.requestCount )
+                            {
+                                /*
+                                 * Not yet. A request arrives on a read and every read advances
+                                 * the scripts again, so there is no other way for the answer to
+                                 * change - and pumpWrites( ) still runs after this return, so
+                                 * everything queued BEFORE this step goes out while it waits
                                  */
 
                                 return;
