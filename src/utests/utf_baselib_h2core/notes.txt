@@ -74,3 +74,6 @@
 --log_level=message --run_test=Http2TestPeer_RefusedStreamAndGoAwayTests
 --log_level=message --run_test=Http2TestPeer_WindowStallTests
 --log_level=message --run_test=Http2TestPeer_RawFrameScriptTests
+
+# S5.2 - the draining reserve, from a pool policy to the stream registry (design 4.3, 5.4)
+--log_level=test_suite --run_test=H2Session_DrainingReserveFromLimitsTests
