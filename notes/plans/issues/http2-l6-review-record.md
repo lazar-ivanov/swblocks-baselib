@@ -520,3 +520,357 @@ either); that 4 x 120 s and 16 x 120 s are the bounds (from the constants, not m
   records as owed is the first thing able to report L5 finding 7's two unsynchronised reads, and
   `resolveDriver` (`ConnectionPool.h`, reads `attempt.driver()` under the pool lock whenever
   `driverConnection` is unset, with no state test before it) is the read it would report first.
+
+## Second pass: the fix round `6d91d0c..b43ec06`, tip `b43ec06` (2026-09-20)
+
+**Verdict: the five "not safe to leave" items are carried out and each is pinned by a case which
+was run red against the unfixed code; of the three departures from my prescriptions, two were
+right and my prescriptions were wrong - one of them would have destroyed the ALPN fallback - and
+the third is right on its own terms; the lock argument behind the chained cause holds; the idle
+split is sound and `initiateClose()` runs where the h1 driver says it does. One thing is new and
+it is in the fix for finding 2: the h2 driver answers its sinks BEFORE it publishes `Closed` on two
+routes, so the gate's state read is a race there, and `retryIdempotentOnConnectionLoss` is
+nondeterministic on the write-error path rather than dead (new finding 16, Medium, two one-line
+reorders). Finding 8 is withdrawn: `httpclient6` measured what the arithmetic could not. Nothing
+here blocks a maintainer handover; two things block calling the client usable under load, and they
+are the same two the first pass named.** Read whole: every production diff in the range
+(`ClientSession.h` 176/-, `HttpClientRequestTask.h` 130/-, `Http1ConnectionTask.h` 219/-,
+`ConnectionPool.h` 15/-, `Http2ConnectionTask.h` 9/-), every test diff, the new module, the design
+and plan diffs, all nine commit messages; and, around them, `TaskBase::notifyReadyImpl`,
+`exception()`, `requestCancel`/`requestCancelInternal` and the handler macros;
+`MultiOperationTaskT`'s contract, `onOperationCompleted`, `applyDecision` and `initiateClose`;
+the h2 driver's `onRead`, `onWrite`, `onPeerClosed`, `isPeerClosed`, `onPingDeadline`,
+`onDrainDeadline`, `onSettingsDeadline`, `closeStream`, `closeAllStreamsUnwrittenRetryable`,
+`onTaskStoppedNothrow`, `chkArmIdleTimer` and `cancelTask`; the h1 driver's `finishStream`,
+`closeConnection`, `cancelTask`, `postToStreamExecutor` and request-start path;
+`HttpClientRequestConfig`'s defaults and the pool's waiter deadline. Nothing was built and
+nothing was run; the module results (59/59, 6/6, 17/17, 2/2, 1/1, 13/13 under both release
+toolchains) are as reported. The manifest holds 1030 (counted): the six new names, none removed,
+one body edited (`ClientSessionTls_StreamingUploadTakesAnHttp2OnlyConnectionTests`, the flake fix),
+42 modules.
+
+### The five fixes, walked
+
+**Finding 1 (High) - `69e2f5c`.** `SessionRequestPlan::transportScheme` (`ClientSession.h:275`),
+set from `transportScheme()` in `createRequestTask` (`:1799`), compared in `chkPrepareNextHop`
+against `decision.target.scheme()` after `shouldFollow()` and before any state moves
+(`:1315-1336`); on a mismatch the hop is not taken and the chain ends with the 3xx. `net::Uri`
+lower-cases the scheme at parse (`Uri.h:56`, `:882`) and `resolve` produces a parsed target, so
+the comparison is exact on both sides. The case (`TestClientSession.h:1052-1168`) is the right
+shape: a second peer whose recorder must stay empty, a `Secure` cookie set on the 3xx, the jar
+asked afterwards what it would have sent to the `https` target (`sid=secret`) and to the `http`
+one (nothing), `connectionsCreated == 1`; the commit records the unfixed run at 200 - the cleartext
+session really fetched the `https` URL. **Closed.**
+
+**Finding 3 - `69e2f5c`.** `m_deadline` computed once (`deadlineFor`, `:980-1000`) from the
+request's `totalTimeout()` or `HttpClientRequestConfig::totalTimeout`, whose default is 30 minutes
+(`HttpClientRequestTask.h:35-40`; checked, since a `neg_infin` default there would have meant no
+chain deadline by default); `chkRemainingBudget()` (`:1008-1031`) asked first in `startHop()` and
+the remainder stamped on the request which goes out (`:1095-1109`). Two properties fall out which
+the lane did not claim: the pool's waiter deadline reads the same `request.totalTimeout()`
+(`ConnectionPool.h:2173`), so the pool wait of every later hop is bounded by the chain remainder
+too; and the first pass's finding 10 (the `(N + 1)^2` establishment budget) is now bounded in time
+by the request's own budget, which is the practical fix - downgraded to a note. The case
+(`:1261-1358`) discriminates by arithmetic (`HOP_DELAY < BUDGET < 2 x HOP_DELAY`) and asserts
+`redirectHops() == 1` so a slow machine fails loudly rather than vacuously - good. The
+exhausted-budget throw is a guard no case reaches, recorded as such; `deadlineFor` uses the wall
+clock, as the hop's `deadline_timer` does, so a clock step moves both together (nit). **Closed.**
+
+**Finding 2 - `8539a7c`, departure 1.** `outcomeOnClosed()` (`HttpClientRequestTask.h:1098-1112`):
+`Completed` on no error; `Failed` if `event.isRetryable` or no connection; else `Failed` when the
+connection reads `Ready` and `ConnectionUnusable` otherwise. See "the three departures" below for
+the gate and finding 16 for what it rests on. **Closed as specified; one hole in the drivers.**
+
+**Finding 4b - `8539a7c`, departure 2.** `connectionFailureCause()` (`:1152-1206`) reads the
+connection task's `exception()` and `answerOnClosed` chains it as `errinfo_nested_exception_ptr`
+(`:1224-1247`), the request's own `HttpException` with the error code staying the answer. See
+below for the lock argument, which holds. Pinned twice: at the request task with a connection that
+is a real task failing from `onExecute` and answering the sink from `onTaskStoppedNothrow`
+(`TestHttpClientRequestTask.h:496-720`, `:2337-2458`), and at the driver against a dead port
+(`TestHttp2ConnectionTask.h:1613-1723`), which is also the establishment-failure case the first
+pass said no module ran. **Closed.**
+
+**Finding 5 - `0af7934`.** The h1 driver takes `idleTimeout` as a constructor parameter
+(`Http1ConnectionTask.h:238-239`, default `neg_infin`), arms a timer on the stream's executor at
+the end of a keep-alive response (`:1132`) and, posted, at `scheduleTask()` for a driver the pool
+has no request for (`:1345-1362`), cancels it when a request starts (`:572`) and in
+`initiateClose()` (`:1304`), and closes gracefully when it fires (`:1259-1282`); the session's
+driver factory carries the value (`ClientSession.h:1623-1650`). The case observes the client's FIN
+at a keep-alive peer of its own (`TestClientSessionIdle.h`), in a new module because both session
+modules are over target. See "finding 5's split" below. **Closed.**
+
+### The three departures, checked hardest
+
+**Departure 1 - finding 2's gate. My prescription was wrong and would have broken the fallback.**
+I wrote "read `m_connection -> state()` at close"; taken literally that reports the bounced rider's
+h2 placeholder `ConnectionUnusable`, `releaseStream` retires the entry (`ConnectionPool.h:2226-2233`),
+and the entry is the one holding the adopted h1 driver - `m_byConnection` is written from both
+pointers (re-verified: the task at `startConnection`, the driver at `refreshEntry:1233`). My own
+first-pass verdict table had walked exactly that path and said the bounce's `Failed` outcome is
+what keeps the fallback alive; I then prescribed the thing that would have changed it. The lane's
+gate - ask the connection only when the close does not already prove the request unprocessed -
+is the right one, and it is cheap for the reason the lane gives: `chkRequestMayBeReplayed` returns
+from its `isRetryable` limb without consulting `isConnectionLost`, and a dead connection is retired
+by the pool's own observation on the retry's `acquire` (`examineKey` refreshes before it
+dispatches).
+
+*Is the gate sufficient, and does it leave a genuinely-lost connection reported as merely `Failed`?*
+Two kinds do, and they differ. (a) By design: every lost connection whose stream was never
+written - the rider on an establishment failure, a stream still in the header-block queue at a
+peer close (`closeAllStreamsUnwrittenRetryable`, `Http2ConnectionTask.h:1149`), a GOAWAY above the
+stream's id - is retryable and so `Failed`; harmless for the session (replayed on the retryable
+limb) and for the pool (retired by observation). (b) By a race the gate did not create but now
+depends on: the outcome reads `state()` from the request task's drain thread, so it is right only
+where the driver publishes before it answers. **The h1 driver does** - `finishStream` settles
+`m_state` under `m_stateLock` before `sink -> onClosed` and says that order is its contract with
+the pool (`Http1ConnectionTask.h:1076-1120`), and its task-stopped path stores `Closed` before
+answering (`:1441`, `:1451`). **The h2 driver does on five routes and not on two** - finding 16.
+So the gate is sufficient as a gate; the sentence the lane wrote to justify the read, "every
+connection-level route to a closed stream publishes `Draining` or `Closed` with it", is what does
+not hold, and the unit case cannot see it because its probe publishes before it answers by
+construction (`TestHttpClientRequestTask.h:349-362`, "which is the order a driver produces too" -
+asserted, not verified against the drivers).
+
+**Departure 2 - finding 4b's cause. My prescription was wrong as written; the lane's read is
+deterministic.** I wrote "carry the code `onTaskStoppedNothrow` already computes"; that code is
+`operation_aborted` whenever `eptrIn` is set (`Http2ConnectionTask.h:2430-2432`), which is less
+informative than the `connection_aborted` already there - the lane is right. What I meant was the
+establishment's own error, which is an exception, and chaining the exception is the only way to
+carry it through a contract that has one error code. *The lock argument.* `notifyReadyImpl` takes
+`m_lock` (`TaskBase.h:536`), calls `onTaskStoppedNothrow` inside it (`:604`) - which is where the
+h2 driver's `closeSubmissions()` answers the rider - and stores the exception inside the same
+critical section, after the call (`if( ! m_exception ) setExceptionInternal( eptr )`, `:737-740`),
+releasing only after `m_notifyCalled = true` (`:745`); `cbReady()` runs after the release
+(`:748`). `TaskBase::exception()` takes the same `m_lock` (`:1129-1140`). `onTaskStoppedNothrow` has
+exactly one non-chaining caller in `src/include/`, that line (grepped: 16 hits, 15 are
+`base_type::` chains). So a request task whose drain reaches `connectionFailureCause()` after the
+bounce blocks on the lock and reads the stored cause; it cannot read the gap. **Verified.** Two
+things worth writing down beside it: on the other routes `closeSubmissions()` is called from
+(`onPeerClosed`, `onPingDeadline`, `onDrainDeadline`, the graceful close) the handler holds the
+task lock too (`BL_TASKS_HANDLER_BEGIN` is `BL_MUTEX_GUARD( m_lock )`, `:119-120`) but the task
+has not stopped, so the read returns null and no cause is chained - correct, since those failures
+carry their own code; and the lock order request-task `m_lock` then connection-task `m_lock` closes
+no cycle because the only thing a driver takes on a request task is its mailbox lock through
+`post()` (re-verified in L5) and the pool's edge is pool lock then connection-task lock, from a
+thread holding no request task lock. No deadlock; a drain can stall behind a long strand handler
+(a large `feed()`), which is latency only.
+
+**Departure 3 - finding 1's refusal.** Reporting the 3xx rather than failing is the policy's own
+principle applied where it applies most - a `Location` is entirely server-controlled - and it
+matches what the client does with every other refusal and with redirects off. *Does refusal leave
+any path to plaintext on 443?* Walked: the caller's URL (`createRequestTask`, `:1604-1614`); the
+server's URL (`chkPrepareNextHop`, `:1315-1336`, placed before `m_next` is touched); a relative
+`Location` resolves to the request's own scheme; a `Location` with an upper-case scheme is
+lower-cased by `Uri::parse`; a plan built by anything but `createRequestTask` has an empty
+`transportScheme`, which refuses every hop (the safe direction); the key's scheme is the URL's, so
+it always equals the transport's after these two checks; a TLS session's `https` to `http` hop is
+refused by the policy or, with the downgrade allowed, by the session. No path found. Two nits fall
+out: `RedirectPolicy::allowHttpsToHttpDowngrade` reaches nothing through a session (the session
+refuses any scheme change regardless) and should say so at the knob; and the refusal reason
+(`RedirectDecision::refusal`) is not surfaced on `ClientRequestTask`, so a caller cannot tell "not
+followed: disabled" from "not followed: scheme" without re-deriving it - the existing client's
+`errinfo_http_redirect_url` is the precedent for surfacing the target, and the reason should ride
+with it. Defence in depth, third nit: `SessionRequestTaskT`'s constructor takes any plan and any
+request; one `BL_CHK_T` on the scheme there would make the invariant the type's rather than
+`createRequestTask`'s.
+
+### Finding 5's split, and `initiateClose()`
+
+The split is argued correctly: `forgetConnection()`'s only lever is `requestCancel()`, design 5.4
+names the idle lifetime as the graceful path and the cancel as the abrupt one, and a pool reaper
+would have to keep the maintenance tick alive for every idle `Ready` entry, which inverts
+`hasWorkToWatch()`. The pool keeps the value, each driver the timer; design 5.7's row and the h1
+header now say so, and the h2 config comment is corrected to match.
+
+*The cancellation points, and the thread `initiateClose()` runs on.* The mix-in states that
+`initiateClose()` and the terminal are invoked ONLY from `onOperationCompleted()`, which the
+handler epilog places outside the task lock (`MultiOperationTask.h:62-68`, `:280-293`; the macro
+scoping confirms it, `TaskBase.h:107-118`, `:195-260`), and `onOperationCompleted()`'s only
+callers are those epilogs - which for this driver run on the stream's executor: the read, the
+write and now the timer. The external cancel does not break that: the h1 `cancelTask()` override
+POSTS the socket shutdown to the executor (`Http1ConnectionTask.h:1375-1396`), the pending read
+then fails there, and its epilog is what calls `initiateClose()`. So every touch of `m_idleTimer` -
+the `reset( new ... )` in `chkArmIdleTimer()`, the `cancel()` in `cancelIdleTimer()` from the
+request start and from `initiateClose()`, the handler - is serialised by the executor under a
+stranded policy, which is the only policy this driver is claimed correct over (`:71-81`). The
+arm-after-close hazard the mix-in exists to prevent ("an operation which is never woken is a task
+which never reaches its terminal path") is closed by the same serialisation: `chkArmIdleTimer`'s
+`isClosing()` test and its `beginOperation()` cannot interleave with `initiateClose()` on one
+executor. The accounting balances: every `beginOperation()` (`:1214`) is matched by the handler's
+`BL_TASKS_HANDLER_END_MULTIOP` whether it fired, was cancelled, or its timer object was destroyed
+by a re-arm (asio cancels on destruction and still invokes the handler). **Verified.** The h2
+driver relies on a *different* serialisation for the same pattern - its `cancelTask()` calls
+`cancelTimers()` on the cancelling thread, under the task lock `requestCancel` holds
+(`TaskBase.h:1237`, `:1026-1060`; `Http2ConnectionTask.h:2404-2409`), and its arm runs in handler
+bodies which hold the same lock - so the two drivers are each correct for a reason the other does
+not share; a maintainer copying one idiom into the other would break it. One nit: the posted arm
+from `scheduleTask()` can land after a response has already re-armed, and then replaces a pending
+timer with a new one - balanced but wasteful; `chkArmIdleTimer` should return when a timer is
+already pending.
+
+### Finding 4a, not fixed - do I still agree?
+
+Yes, with one condition. With 4b landed the cost of the rider on a transport that cannot speak h2
+is one wasted dispatch, one bounce and one retry per connection, which the library's own
+`Connection: close` server pays on every request; and `maxRetriesPerRequest = 0` still makes a
+cleartext HTTP/1.1 session unable to make any request. What 4b does *not* help there: the bounce's
+nested cause is null, because the placeholder completed successfully, so a caller who sets zero
+gets "The HTTP request failed: connection aborted" with nothing to explain it. That is not "not
+safe", since the default is three and a caller who needs zero can set one; it IS a knob whose value
+zero disables a protocol, and nothing at the knob says so (grepped: the design records the control
+case, the pool policy comment at `ConnectionPool.h:239` says nothing). Condition for handover: one
+sentence at `maxRetriesPerRequest` naming the consequence, and 4a as the first item of owed work
+with the two-sided shape the lane correctly insists on (pool flag plus session setting it).
+
+### The evidence findings (7, 8) - blocking, or owed?
+
+- **Finding 8 is withdrawn, in the lane's favour, by measurement.** `utf_baselib_httpclient6` is
+  39.0 MB clang debug with one case and no HTTP/2 peer or `HttpServer` in it: the session with both
+  drivers costs about 18 MB over the floor in a TU with nothing else. Then neither half of a split
+  of `httpclient4` along the peer-versus-`HttpServer` seam lands under 40 (about 47 and 45 by the
+  same figures), which is what the lane concluded and what its arithmetic could not show. This is
+  the leave-one-out the rule asks for, done by accident; the module's own header draws the right
+  lesson ("measure before adding one; do not convert from another module's figure"). What follows
+  for a maintainer: every session-level module starts at about 39 MB, so there is room for about one
+  peer per module and the enforcing platform (win-x86 debug) has measured none of them.
+- **The concurrent-request case is the one I would not ship without**, and it is the same answer as
+  the first pass: the pool's capacity logic against a real driver has been run only sequentially.
+  Not blocking for handover with this record; blocking for calling an HTTP/2 client usable, since
+  concurrency is the regime it exists for. Recipe as before: N requests at once, peer limit two,
+  no `REFUSED_STREAM`, one connection.
+- **The narrowing discrimination** (one streaming `PUT` against a peer preferring
+  `[ "http/1.1", "h2" ]`) is owed and small; not blocking.
+- **The establishment-failure path** is now run at the driver (the dead-port case), which is what
+  4b needed. Through the pool and the session it is still not run; the pool's completed-task
+  retirement of a real cancelled connection task (L5 section 9's obligation) is still pinned by
+  reading only. Owed. One nit on the new case: the dead port is an ephemeral port just released,
+  which another process can take between the two calls; improbable on a test host, and a listening
+  socket that never accepts would be the deterministic shape.
+
+### 16. Medium, new - the h2 driver answers its sinks before it publishes `Closed` on two routes, so the outcome the session's knob feeds on is a race there
+
+Finding 2's fix reads `m_connection -> state()` on the request task's drain thread at the moment
+the stream's `onClosed` is applied. The h2 driver publishes before it answers on `onPeerClosed`
+(`Draining` at `Http2ConnectionTask.h:1492`, streams at `:1494`), on a GOAWAY, on a protocol error
+(`onConnectionErrorEvent`, `:1385`, the streams already answered by the engine's events), on the
+graceful close, and on the drain deadline - which answers first (`:2058-2061`) but runs from a
+state already `Draining`. It answers **before** it publishes on two routes: `onPingDeadline`, which
+runs `closeAllStreams` and `closeSubmissions` (`:1832-1836`) and only then `publishState( Closed )`
+(`:1839`), from a state that is `Ready`; and `onTaskStoppedNothrow`, which runs `closeSubmissions`
+and `closeAllStreamsUnwrittenRetryable` (`:2428-2434`) and then `publishState( Closed )` (`:2437`),
+from whatever state was last published. That terminal route is what every write error takes
+(`onWrite` is `BL_TASKS_HANDLER_BEGIN_CHK_EC`, `:1578`), what every read error other than EOF,
+reset or TLS truncation takes (`onRead`, `:1446-1452`; `isPeerClosed`, `:1429-1435`), and what an
+external cancel of a `Ready` connection takes - and on all of those the last published state is
+`Ready`. A peer which resets during an upload is noticed on the write side as `EPIPE` or
+`ECONNRESET` as often as on the read side, so this is the ordinary shape of "connection lost while
+sending". Between the sink's `onClosed` (a post to the request task's mailbox and a thread-pool
+schedule) and the strand's `publishState( Closed )` a few instructions later, the drain may or may
+not have read `state()`: `ConnectionUnusable` or `Failed`, and with it `isConnectionLost` true or
+false. The pool is indifferent (it observes `Closed` either way); the knob is not. So
+`retryIdempotentOnConnectionLoss` is no longer dead; it is nondeterministic on the write-error and
+keepalive-timeout routes. Not a data race - `state()` is an atomic load - and not something
+ThreadSanitizer would report; a stress run of the knob would show it as a coin toss.
+
+**Fix, in the driver, two lines:** move `publishState( ConnectionState::Closed )` above the
+answers in `onPingDeadline` and in `onTaskStoppedNothrow`; `publishState` is monotone
+(`:2200-2215`, the L4 record) and nothing in `closeStream` reads the state, so publishing first
+costs nothing and makes the lane's sentence true. **Pin it at the driver, not the request task:**
+`RecordingSink` already holds the connection (`setConnection`, `Http2DriverTestUtils.h:164`), so
+recording `connection -> state()` inside `onClosed` (`:312-334`) and asserting `Closed` there - in
+the new dead-port case, where today it would read `Connecting`, and in a write-failure case - pins
+the ordering the gate rests on. The request-task case's probe should say that its
+publish-before-answer is the driver's *contract*, and that case is what enforces it.
+
+### What is unresolved from the first pass
+
+- **6** (inter-hop work under the queue lock and the wrapper lock, including caller code): not
+  addressed, not on the not-safe list; owed, with the documentation line at `BodySource::rewind()`
+  and `ContentDecoder` as the minimum.
+- **9** (a cancel between hops completes as success with the 3xx): not addressed; small; owed.
+- **10**: mitigated in time by finding 3's chain deadline; the two budgets remain two budgets;
+  a note now rather than a finding.
+- **11**: design 5.4 still says "both halves use it" (`http2-design.md:970`); the pool does not
+  call the predicate. Text, unresolved.
+- **12** (decode on a failed hop): not addressed; owed.
+- **13** nits: (f) is moot for this round (no lane message claims a ThreadSanitizer run); the rest
+  stand, plus the four new nits above (`allowHttpsToHttpDowngrade` dead through a session, the
+  refusal reason not surfaced, the constructor's missing check, the double arm) and one on process:
+  `e6246fb` is the one merge in the feature with no message.
+- **14, 15**: unchanged; the L8 process-default-session question stands.
+- **Owed and unchanged**: 5(c) at the driver; ThreadSanitizer on any module (the `resolveDriver`
+  read is still the one it would report first); OpenSSL 1.1.1w; Windows; a64.
+
+### What I got wrong in the first pass
+
+Three things, stated so a maintainer weighs the rest accordingly. The finding 2 prescription, taken
+literally, would have retired the fallback entry - the lane caught it. The finding 4b prescription
+named the wrong artefact (a code which is `operation_aborted` on every establishment failure) - the
+lane caught that too. And the TLS join case's `bodyOf( 1U )` read had no happens-before against the
+peer's `appendBody` and lost the race one run in eight; I read that assertion, wrote "fine", and
+did not see it - the lane found it by running, which is the third time in this feature that running
+found what reading did not.
+
+### What I would not ship
+
+- **Finding 16**, before the knob is documented as working: two reorders and one recorded state.
+- **The concurrent-request case**, before the client is described as an HTTP/2 client rather than
+  a serial one. The L5 pool round's capacity logic is composed with a real driver only in the
+  regime where it never decides anything.
+- **A ThreadSanitizer run of `httpclient4` or `httpclient5`** before any a64 deployment: the two
+  unsynchronised reads L5 finding 7 named have now been composed in four modules and observed by
+  none, and the `resolveDriver` read is under the pool lock on every fallback.
+- **`maxRetriesPerRequest = 0` without the sentence at the knob** (4a's condition).
+
+Everything else in the two ledgers is owed work a maintainer can schedule, and the record says
+which.
+
+### Verified versus inferred in this pass
+
+Verified by reading: every diff named above and the tip code around it; the single non-chaining
+caller of `onTaskStoppedNothrow` and its position inside `notifyReadyImpl`'s critical section
+relative to the exception store and the callback; `exception()`'s lock; the handler macros'
+scoping of the epilog outside the task lock; the mix-in's invocation of `initiateClose()` from
+`onOperationCompleted()` only, and the h1 `cancelTask()` post; the order of publish versus answer
+on every h2 route listed in finding 16 and on both h1 routes; the `m_byConnection` writes from both
+pointers; `Uri::parse`'s scheme fold; `HttpClientRequestConfig::totalTimeout`'s 30-minute default
+and the pool's waiter deadline reading the request's own; the manifest's 1030 by counting and the
+one edited body by hash. Verified by grep: `onTaskStoppedNothrow` callers; `requestTimeout`
+readers; the absence of any sentence about `maxRetriesPerRequest = 0` at the knob; "both halves use
+it" still present. Inferred or recalled: that asio invokes a cancelled wait's handler with
+`operation_aborted` on timer destruction (asio's documented behaviour, from memory); that a peer
+reset during an upload surfaces on the write side as often as the read side (from how a RST is
+delivered to a socket with both pending, from memory); that a stress run of the knob would show
+finding 16 as nondeterministic (a claim about timing, not observed); the 47 and 45 figures in the
+withdrawal of finding 8 (arithmetic on the lane's measured 39.0, 8.6 and 5.8, subject to the
+non-additivity the deferral record describes - the direction is what is asserted, not the
+numbers).
+
+### Not checked in this pass
+
+No build and no test run. `Http2TestRecorder::waitForRecordsOf` and the keep-alive peer's read
+semantics under a client FIN (relied on from the case's own description). `closeGracefully`'s use
+of the state in the h2 driver, relied on from L4. The `ClientConnectionTaskBase` `onTaskStoppedNothrow`
+chain (`:648`) for whether it alters `eptrIn`, which would change only the cause's identity, not
+its presence. Windows, 1.1.1w and a64, as before.
+
+### For a maintainer picking this up cold
+
+The client is `httpclient/ClientSession.h` over `ConnectionPool.h`, `HttpClientRequestTask.h`,
+`http2/Http2ConnectionTask.h` and `httpclient/Http1ConnectionTask.h`, and the design is
+`notes/plans/http2-design.md` with the plan beside it; the six review records under
+`notes/plans/issues/http2-l*-review-record.md` are the argued history and each ends with a ledger.
+Five things to know before changing anything. (1) One session speaks one scheme, enforced at two
+entry points; if you add a third way a URL reaches a session, add the check. (2) The retry is two
+halves with one rule: the pool replays what it still holds, the session replays what was
+dispatched, and `chkRequestMayBeReplayed` is the rule the session calls and the pool applies inline.
+(3) A request through a session is a chain with one deadline; every hop task arms only what is
+left. (4) The pool never closes a connection gracefully - it cancels - so the idle lifetime is the
+drivers', and the two drivers serialise their timers differently (executor for h1, task lock for
+h2); do not copy one idiom into the other. (5) The outcome a request task reports reads the
+connection's state at the close, so a driver must publish before it answers its sinks; the h2
+driver does not yet on two routes (finding 16), and that is the first thing to fix. Then the owed
+list, in the order I would take it: finding 16; the concurrent-request case; a ThreadSanitizer run
+of `httpclient4`; 4a with its sentence at the knob; the narrowing case; findings 6, 9, 12; 5(c) at
+the driver; OpenSSL 1.1.1w. Every session-level test module costs about 39 MB before its first
+case, and the size gate that matters has never seen one.
