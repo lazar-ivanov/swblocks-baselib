@@ -895,10 +895,13 @@ requests for the same key queue behind it instead of each opening a connection. 
 pushed onto the pool's private queue (`OptionKeepNone`) outside the pool lock (L4).
 
 **Dispatch.** Prefer a `Ready` connection with a free stream slot. Slots are bounded by the peer's
-`SETTINGS_MAX_CONCURRENT_STREAMS`; until the peer's `SETTINGS` arrives, 100 is assumed - the first
-request goes out with the preface, as browsers do it. Otherwise wait, FIFO, up to the request's own
-deadline. Policy knobs: connections per key (1 for HTTP/2 by default, 6 for HTTP/1.1), total
-connections, idle lifetime, keepalive `PING` interval.
+`SETTINGS_MAX_CONCURRENT_STREAMS`; until the peer's `SETTINGS` arrives the driver offers exactly
+**one** - the request which rides the preface, as a browser's first request does - and a peer whose
+`SETTINGS` names no limit gets the assumed 100, which is our own ceiling rather than the peer's,
+since RFC 9113 section 6.5.2 gives that setting no initial value at all. (As first implemented the
+driver offered 100 before the peer had spoken; L5 finding 5(c), below, is why it no longer does.)
+Otherwise wait, FIFO, up to the request's own deadline. Policy knobs: connections per key (1 for
+HTTP/2 by default, 6 for HTTP/1.1), total connections, idle lifetime, keepalive `PING` interval.
 
 Three things S5.2 settled about that paragraph. The count which limits dispatch is the **pool's
 own**, not `freeStreamSlots()`: a request the pool has answered has not reached the driver's strand
@@ -916,20 +919,52 @@ holds no slot" is right about the arithmetic and wrong about the clock: the driv
 S5.2 both read - so the first such moment precedes the peer's `SETTINGS` by a round trip, and what
 was latched was the driver's assumed 100. A peer which allows 16 was then sent bursts sized to 100
 for as long as the connection stayed busy, and each burst above 16 lost requests rather than
-retrying them, because the dispatched half of the retry below belongs to nobody yet. `Ready` was not
+retrying them, because the dispatched half of the retry below belonged to nobody yet - S6.1 has
+since supplied it, `SessionRequestTaskT::chkPrepareRetry( )`, bounded by the same three attempts.
+`Ready` was not
 moved; the pool changed. It now dispatches **one** stream to a connection whose limit it has not
 been told, which is design 5.1's own preface rule applied by the dispatcher, and it learns the limit
-in one of three ways: a reading outside `[ assumed - dispatched, assumed ]`, which the driver's
-assumption could not have produced; a response which came back in full, since a peer's `SETTINGS` is
-the first frame it sends (RFC 9113 section 3.4) and frames are applied in order; or, for the peer
-whose limit *is* the assumed number and which therefore never distinguishes itself, a one second
-settle window, after which the reading is taken as the peer's - which is what the code did
-unconditionally before, so the window costs only the round trip it buys. Between the exact moments
+in one of two ways: a reading **above one**, which a driver that has not heard the peer's `SETTINGS`
+may not publish; or a response which came back in full, since a peer's `SETTINGS` is the first frame
+it sends (RFC 9113 section 3.4) and frames are applied in order. Between the exact moments
 `freeStreamSlots() + <dispatched>` is an upper bound on the limit which the pool only ever takes
-downward, and that is also what bounds one examine's burst to what the driver last reported. The
-driver reporting one free slot until the peer's `SETTINGS` (L5 finding 5(c), the driver's own
-change-set) would remove the settle window's cost, since a reading of one is one the assumption
-cannot produce.
+downward, and that is also what bounds one examine's burst to what the driver last reported.
+
+**5(c) landed, and it did not merely remove a cost: it removed the band and the settle window, and
+this paragraph used to argue the opposite.** The first round inferred from a band,
+`[ assumed - dispatched, assumed ]`, and gave the peer whose limit *is* the assumed number a one
+second settle window, since no reading could distinguish it. What this section then said of 5(c) -
+that it "would remove the settle window's cost, since a reading of one is one the assumption cannot
+produce" - is false, and the reasoning is worth keeping so that neither mechanism is rebuilt beside
+the sentinel. With the driver reporting one until the peer has spoken, a silent driver's readings
+are `{ 0, 1 }`, and those are a **subset** of what a peer which has spoken can report: a peer
+allowing two with the rider still out reports exactly one. A reading of one is therefore not proof
+of anything - it *is* the sentinel - and a band kept beside the sentinel takes it for the peer's
+number and stores one **or two**: the reading plus what the pool has dispatched *and the driver has
+not yet opened*. It is two only inside the window between the pool's answer and the driver's
+`applySubmit( )`, and one both before any dispatch and once the rider's stream is open. Which of the
+two it stores depends only on where the refresh lands, and both are wrong - one caps the connection
+below the peer's limit, the other **dispatches against a number the peer never gave**, which is the
+expensive half: S6.1's dispatched retry does replay what a `REFUSED_STREAM` bounced
+(`SessionRequestTaskT::chkPrepareRetry( )`), so the ordinary price is a round trip and one of the
+request's three attempts - but a request whose body cannot rewind, one whose attempts are spent, and
+one a strict peer answers with a connection error rather than `REFUSED_STREAM` are lost outright.
+The composed case in `utf_baselib_h2client5` fails on it deterministically, at its negative control
+- taken before the first request is submitted, where the pool answers a second acquire it should
+not have.
+The only sound inference left is a reading of **two or more**. The settle window went with it for a
+stronger reason than redundancy: "after a second, take the reading as the peer's" would take the
+*sentinel* as the peer's number for any peer slower than a second. The peer it existed for now
+distinguishes itself the moment it speaks.
+
+**What 5(c) costs, and it is a real regression for one population.** A peer which allows exactly
+two reports one while the rider's stream is open, which is what a silent driver reports, so the pool
+cannot tell and carries one request at a time until that one finishes. (A peer which allows one pays
+nothing: one is its limit, and one is what the pool carries.) With one connection per key
+and a first request which never finishes - an event stream, a long download - that lasts as long as
+the request does, since neither route to "known" can fire. Under-dispatch, never over-dispatch, and
+accepted deliberately: the alternative is believing a number the peer never gave. See
+`issues/http2-peer-limit-sentinel-record.md`.
 
 **The draining reserve, chosen in S5.2: 1024 identifiers.** Section 4.3's "approaching `2^31 - 1`"
 is a margin `StreamRegistry` leaves to the pool, and it has to cover what the pool has committed to

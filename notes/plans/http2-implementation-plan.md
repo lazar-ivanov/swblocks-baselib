@@ -1418,12 +1418,17 @@ see this; it is a composition defect, and S6.1's first end-to-end case would hav
 - **L5 fix round — both numbers were argued wrongly and one was used wrongly.** Finding 5: the
   peer's limit was latched from a `Ready` the driver publishes *before* the preface, so before the
   peer's `SETTINGS`, which latched the driver's assumed 100 and let the pool burst against a peer
-  allowing fewer - unhedged, since nothing replays what a peer refuses. Fixed in the pool and not by
+  allowing fewer - unhedged, since at that time nothing replayed what a peer refused (S6.1 has since
+  supplied that half, `SessionRequestTaskT::chkPrepareRetry( )`, bounded by three attempts). Fixed
+  in the pool and not by
   moving `Ready`, which S4.1 and S5.2 both read as the establishment contract: the pool now
   dispatches **one** stream to a connection whose limit it has not been told, learns the limit from
-  a reading the assumption could not have produced or from a completed response, and falls back to
-  the assumption only after a settle window (`settingsSettleTimeout`, 1 s) for the peer whose limit
-  *is* the assumed number. Finding 4: 120 s is **kept** and re-argued against the 134 s
+  a reading the assumption could not have produced or from a completed response, and fell back to
+  the assumption after a settle window for the peer whose limit *is* the assumed number. Finding
+  5(c) has since retired that window: the driver reports one free slot until the peer's `SETTINGS`
+  have arrived, so any reading above one is the peer's and that peer distinguishes itself as soon
+  as it speaks - see `notes/plans/issues/http2-peer-limit-sentinel-record.md`. Finding 4: 120 s is
+  **kept** and re-argued against the 134 s
   single-address SYN timeout §5.7 measured rather than against two 60 s deadlines - no overall
   number clears a dead address, the bound is spent once per retry, and the real fix is the
   establisher's per-endpoint connect bound; until it exists a black-holed first address is a

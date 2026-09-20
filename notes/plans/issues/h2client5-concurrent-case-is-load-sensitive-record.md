@@ -1,8 +1,28 @@
 # The concurrent-request case is load-sensitive and is NOT yet trustworthy
 
 **Found:** 2026-09-20, by the orchestrator's release validation of the case the L6 second pass asked
-for. **Status:** OPEN. **The review item "no concurrent-request case" is therefore NOT closed** — a
-case exists, but it does not yet hold under the conditions a gate runs in.
+for. **Status:** CLOSED the same day — see
+`notes/plans/issues/http2-peer-limit-sentinel-record.md` §4, and the correction below before
+anything else here is read.
+
+## CORRECTION — this record named the wrong assertion, and therefore the wrong mechanism
+
+**The failing assertion is `TestConnectionPoolConcurrency.h(675)`**, the last one in the case, taken
+after all three requests had completed and been released. It is NOT the in-flight assertion at
+`:595` this record describes below as "the discriminating assertion". Both preserved failures say so
+in as many words — `logs/orch-l4final-utf_baselib_h2client5-clang2010-release.log:70` and
+`logs/lane1-timerfix-h2client5-prefix-load-25.log:38` — and the two assertions have identical text,
+which is how one was read for the other.
+
+So the reading of 1 is not "the peer's limit was never learned": it was learned, and then a stale
+reading overwrote it at the one moment the pool takes a reading outright. The cause is an ordering
+in the DRIVER — it published its free-slot count after telling a closed stream's sink, so a release
+driven by that sink read a stream which had already closed as still open. Fixed by publishing
+first; the case's last assertion is deterministic from there, with no rendezvous to add.
+
+The guidance below ("reproduce under load", "wait for the thing the assertion is about", "do not
+weaken the assertion") was followed and is what found it. The diagnosis in the two sections above it
+was not.
 
 ## What happened
 
