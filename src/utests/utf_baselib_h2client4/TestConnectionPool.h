@@ -1575,11 +1575,29 @@ UTF_AUTO_TEST_CASE( H2Pool_PolicyDefaultsTests )
     UTF_REQUIRE_EQUAL( policy.maxStreamsPerConnection.value(), 256U );
 
     /*
-     * THE ESTABLISHMENT BOUND - 120 s, which is two of the 60 s per-attempt connect deadlines of
-     * design 5.7 and a twentieth of the request total timeout
+     * THE ESTABLISHMENT BOUND - 120 s, and the number it is chosen against is the 134 s a single
+     * black-holed address costs, not two of design 5.7's 60 s connect deadlines. It is BELOW that
+     * one, deliberately: no overall number clears a dead address without giving up on bounding
+     * anything, and a caller waits this bound once per retry. The pool's long note says the rest
      */
 
     UTF_REQUIRE_EQUAL( policy.establishmentTimeout.total_seconds(), 120L );
+
+    UTF_REQUIRE( policy.establishmentTimeout.total_seconds() < 134L );
+
+    /*
+     * THE SETTLE WINDOW - one second, which is how long the pool waits for a peer to say what it
+     * allows before taking the driver's assumption of it as the answer
+     */
+
+    UTF_REQUIRE_EQUAL( policy.settingsSettleTimeout.total_milliseconds(), 1000L );
+
+    UTF_REQUIRE_EQUAL(
+        static_cast< std::size_t >(
+            httpclient::ConnectionPoolPolicy::UNCONFIRMED_MAX_CONCURRENT_STREAMS
+            ),
+        1U
+        );
     UTF_REQUIRE_EQUAL( policy.requestTimeout.total_seconds(), 30L * 60L );
     UTF_REQUIRE_EQUAL( policy.idleTimeout.total_seconds(), 300L );
 
@@ -1720,6 +1738,211 @@ UTF_AUTO_TEST_CASE( H2Pool_ConcurrentAcquireAndReleaseTests )
 
     UTF_REQUIRE_EQUAL( stats.dispatched.value(), expected );
     UTF_REQUIRE_EQUAL( stats.released.value(), expected );
+
+    pool -> dispose();
+}
+
+/************************************************************************
+ * The peer's limit is not the driver's assumption of it (L5 finding 5)
+ */
+
+UTF_AUTO_TEST_CASE( H2Pool_AssumedLimitIsNotDispatchedAgainstTests )
+{
+    using namespace bl;
+    using namespace utest::connpool;
+
+    StubFactory factory;
+    Answers answers;
+
+    /*
+     * A connection which is Ready and reports exactly the assumed number is what the h2 driver
+     * looks like between its Ready - published BEFORE the preface is written, so that the first
+     * request's HEADERS can join it - and the peer's SETTINGS one round trip later. The reading
+     * is the driver's assumption and says nothing whatever about the peer
+     */
+
+    factory.initialState = httpclient::ConnectionState::Ready;
+    factory.initialFreeSlots =
+        httpclient::ConnectionPoolPolicy::ASSUMED_MAX_CONCURRENT_STREAMS;
+
+    httpclient::ConnectionPoolPolicy policy;
+
+    /*
+     * Long enough that the settle window plays no part in this case - what is being pinned here
+     * is what the pool does while it does not know, and the window is the other case
+     */
+
+    policy.settingsSettleTimeout = time::seconds( 60 );
+
+    const auto pool = pool_impl_t::createInstance( cpp::ref( factory ), policy );
+
+    const PoolGuard guard( pool );
+
+    const auto key = makeKey();
+
+    for( std::size_t i = 0U; i < 5U; ++i )
+    {
+        acquireInto( pool, key, makeRequest(), &answers, i );
+    }
+
+    UTF_REQUIRE( answers.waitFor( 1U ) );
+
+    /*
+     * ONE, and the negative wait is what says it is one rather than one-so-far. Dispatching the
+     * other four would be a burst of five against a peer which has not said it can take two -
+     * and a request refused for being over the peer's limit is a LOST request here, because the
+     * dispatched half of the retry does not exist
+     */
+
+    UTF_REQUIRE( ! answers.waitFor( 2U, 500L /* timeoutInMilliseconds */ ) );
+
+    UTF_REQUIRE_EQUAL( answers.count(), 1U );
+    UTF_REQUIRE_EQUAL( pool -> waiterCount(), 4U );
+
+    const auto connection = om::qi< httpclient::ClientConnection >( factory.taskAt( 0U ) );
+
+    UTF_REQUIRE_EQUAL( pool -> dispatchCapacity( connection ), 1U );
+    UTF_REQUIRE_EQUAL( pool -> slotsInUse( connection ), 1U );
+
+    /*
+     * Now the peer's SETTINGS arrive and say three, of which the one stream already dispatched
+     * holds one. That reading - two free with one out - could not have come from the assumption,
+     * which cannot report below ninety-nine while one stream is out, so the pool knows it is the
+     * peer's and dispatches two more and not four
+     */
+
+    factory.taskAt( 0U ) -> setReady( 2U );
+
+    UTF_REQUIRE( answers.waitFor( 3U ) );
+
+    UTF_REQUIRE( ! answers.waitFor( 4U, 500L /* timeoutInMilliseconds */ ) );
+
+    UTF_REQUIRE_EQUAL( answers.count(), 3U );
+    UTF_REQUIRE_EQUAL( pool -> waiterCount(), 2U );
+
+    UTF_REQUIRE_EQUAL( pool -> dispatchCapacity( connection ), 3U );
+    UTF_REQUIRE_EQUAL( pool -> slotsInUse( connection ), 3U );
+
+    pool -> dispose();
+}
+
+/************************************************************************
+ * A response which came back is proof the peer has spoken (L5 finding 5)
+ */
+
+UTF_AUTO_TEST_CASE( H2Pool_PeerLimitLearnedFromACompletedResponseTests )
+{
+    using namespace bl;
+    using namespace utest::connpool;
+
+    StubFactory factory;
+    Answers answers;
+
+    /*
+     * This stub reports the assumed number for ever, which is the one peer no reading can tell
+     * apart from a driver which has not heard from it: a peer whose own limit IS the assumption
+     */
+
+    factory.initialState = httpclient::ConnectionState::Ready;
+    factory.initialFreeSlots =
+        httpclient::ConnectionPoolPolicy::ASSUMED_MAX_CONCURRENT_STREAMS;
+
+    httpclient::ConnectionPoolPolicy policy;
+
+    policy.settingsSettleTimeout = time::seconds( 60 );
+    policy.maxStreamsPerConnection = 4U;
+
+    const auto pool = pool_impl_t::createInstance( cpp::ref( factory ), policy );
+
+    const PoolGuard guard( pool );
+
+    const auto key = makeKey();
+
+    for( std::size_t i = 0U; i < 5U; ++i )
+    {
+        acquireInto( pool, key, makeRequest(), &answers, i );
+    }
+
+    UTF_REQUIRE( answers.waitFor( 1U ) );
+
+    UTF_REQUIRE( ! answers.waitFor( 2U, 500L /* timeoutInMilliseconds */ ) );
+
+    const auto connection = om::qi< httpclient::ClientConnection >( factory.taskAt( 0U ) );
+
+    UTF_REQUIRE_EQUAL( pool -> dispatchCapacity( connection ), 1U );
+
+    /*
+     * A response came back in full. A peer's SETTINGS is the first frame it sends and a driver
+     * applies frames in the order they arrive, so the peer has certainly spoken by now and every
+     * reading from here on is the peer's - the pool's own ceiling is what limits it after that
+     */
+
+    pool -> releaseStream( connection, 1U, httpclient::RequestOutcome::Completed );
+
+    UTF_REQUIRE( answers.waitFor( 5U ) );
+
+    UTF_REQUIRE_EQUAL( pool -> waiterCount(), 0U );
+
+    UTF_REQUIRE_EQUAL( pool -> dispatchCapacity( connection ), 4U );
+    UTF_REQUIRE_EQUAL( pool -> slotsInUse( connection ), 4U );
+
+    pool -> dispose();
+}
+
+/************************************************************************
+ * The settle window, for the peer which never distinguishes itself
+ */
+
+UTF_AUTO_TEST_CASE( H2Pool_AssumptionIsTakenAfterTheSettleWindowTests )
+{
+    using namespace bl;
+    using namespace utest::connpool;
+
+    StubFactory factory;
+    Answers answers;
+
+    factory.initialState = httpclient::ConnectionState::Ready;
+    factory.initialFreeSlots =
+        httpclient::ConnectionPoolPolicy::ASSUMED_MAX_CONCURRENT_STREAMS;
+
+    httpclient::ConnectionPoolPolicy policy;
+
+    /*
+     * The same stub as the case above, which never says anything the assumption could not have
+     * said, and no response to prove the peer spoke. Without the window such a connection would
+     * carry one request at a time for as long as its first response takes - which for a download
+     * or an event stream is not a round trip but minutes
+     */
+
+    policy.settingsSettleTimeout = time::milliseconds( 200 );
+    policy.maxStreamsPerConnection = 3U;
+
+    const auto pool = pool_impl_t::createInstance( cpp::ref( factory ), policy );
+
+    const PoolGuard guard( pool );
+
+    const auto key = makeKey();
+
+    for( std::size_t i = 0U; i < 5U; ++i )
+    {
+        acquireInto( pool, key, makeRequest(), &answers, i );
+    }
+
+    /*
+     * The window expires and the pool takes the reading as the peer's, which is what this code
+     * did unconditionally before - so what the window costs is the round trip and nothing else
+     */
+
+    UTF_REQUIRE( answers.waitFor( 3U ) );
+
+    UTF_REQUIRE( ! answers.waitFor( 4U, 500L /* timeoutInMilliseconds */ ) );
+
+    UTF_REQUIRE_EQUAL( answers.count(), 3U );
+    UTF_REQUIRE_EQUAL( pool -> waiterCount(), 2U );
+
+    const auto connection = om::qi< httpclient::ClientConnection >( factory.taskAt( 0U ) );
+
+    UTF_REQUIRE_EQUAL( pool -> dispatchCapacity( connection ), 3U );
 
     pool -> dispose();
 }

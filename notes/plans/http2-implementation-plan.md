@@ -1415,6 +1415,22 @@ see this; it is a composition defect, and S6.1's first end-to-end case would hav
   and `Http2ConnectionConfig::limits.drainingReserve` there - and what is missing is the factory
   that joins them, which is S6.1's by construction (see the `connection_factory_t` comment, which
   names the session as the thing that opens connections) and is recorded as an obligation there.
+- **L5 fix round — both numbers were argued wrongly and one was used wrongly.** Finding 5: the
+  peer's limit was latched from a `Ready` the driver publishes *before* the preface, so before the
+  peer's `SETTINGS`, which latched the driver's assumed 100 and let the pool burst against a peer
+  allowing fewer - unhedged, since nothing replays what a peer refuses. Fixed in the pool and not by
+  moving `Ready`, which S4.1 and S5.2 both read as the establishment contract: the pool now
+  dispatches **one** stream to a connection whose limit it has not been told, learns the limit from
+  a reading the assumption could not have produced or from a completed response, and falls back to
+  the assumption only after a settle window (`settingsSettleTimeout`, 1 s) for the peer whose limit
+  *is* the assumed number. Finding 4: 120 s is **kept** and re-argued against the 134 s
+  single-address SYN timeout §5.7 measured rather than against two 60 s deadlines - no overall
+  number clears a dead address, the bound is spent once per retry, and the real fix is the
+  establisher's per-endpoint connect bound; until it exists a black-holed first address is a
+  recorded hard failure. Finding 7's two cheap parts went with them: the maintenance interval is
+  reset to the minimum when the tick is armed from idle, and the header's "nothing is called under
+  the lock" now says what *is* called and why pool-lock-then-driver-lock is safe. Three cases added
+  to `utf_baselib_h2client4`.
 
 ---
 

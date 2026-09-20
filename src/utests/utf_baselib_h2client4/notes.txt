@@ -14,3 +14,8 @@
 
 # design 8.3's concurrency - and the case TSan is pointed at
 --log_level=test_suite --run_test=H2Pool_ConcurrentAcquireAndReleaseTests
+
+# L5 finding 5 - the peer's limit is not the driver's assumption of it
+--log_level=test_suite --run_test=H2Pool_AssumedLimitIsNotDispatchedAgainstTests
+--log_level=test_suite --run_test=H2Pool_PeerLimitLearnedFromACompletedResponseTests
+--log_level=test_suite --run_test=H2Pool_AssumptionIsTakenAfterTheSettleWindowTests
