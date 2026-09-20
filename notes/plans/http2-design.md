@@ -1175,8 +1175,15 @@ defenses. A registry per session. No decoder ships (D9). The consequences, and t
 `ClientDriverFactoryT` all are, and a session which chose the policy at run time would type-erase
 all four here and make every translation unit that named it instantiate both the cleartext and the
 TLS half of each (measured at 9.8 MB for the driver alone, which is why `utf_baselib_h2client3`
-exists). The consequence is that **one session speaks one scheme**: `createRequestTask` refuses a
-URL whose scheme is not the transport's rather than connecting cleartext to a TLS port. That
+exists). The consequence is that **one session speaks one scheme, at both of the entry points a URL
+has**: `createRequestTask` refuses a URL whose scheme is not the transport's rather than connecting
+cleartext to a TLS port, and `chkPrepareNextHop` refuses a redirect target of another scheme rather
+than following it there. The second is not implied by the first - the redirect policy refuses only
+the https-to-http downgrade, so http to https, the commonest redirect on the web, arrives at the
+session as a URL it must decide about, and following it would write the request head in the clear
+to port 443 carrying the `Cookie` field the jar computed for the `https` target, `Secure` cookies
+included. Both refusals report the 3xx to the caller rather than raising, because a `Location` is
+the server's. That
 settles the last paragraph above - the Secure-cookie session-fixation surface needs one session
 speaking both schemes to one host, which this type cannot do - and it settles `isHttpApi`, which is
 always `true` because there is no non-HTTP API here for RFC 6265 section 5.3 step 11 to be about.
@@ -1214,13 +1221,22 @@ off in any case.
 | Connect: **TCP connected** through preface | 60 s, per attempt | connection task |
 | **Establishment: `acquire` through a connection which can carry a request** | **120 s** | **pool** |
 | TLS handshake and shutdown | 60 s, inherited (`TcpSslBaseTasks.h:73`) | stream policy |
-| Request total, including pool wait | 30 min, matching `http/Globals.h:186` | request task |
+| Request total, including pool wait | 30 min, matching `http/Globals.h:186` | request task, **chained by the session** |
 | Response headers | off | request task |
 | Stream idle | off | request task |
 | `SETTINGS` acknowledgement | **10 s** | connection task |
 | Keepalive `PING` reply | 15 s, when keepalive is on | connection task |
 | Drain: a close waiting on its `GOAWAY` | 10 s | connection task |
 | Connection idle | 5 min | pool |
+
+**The request-total row is a deadline for the REQUEST, and through a session a request is a chain.**
+Every hop and every retry is a fresh `HttpClientRequestTaskT` arming its own full total timer, so
+left alone the bound would be 30 minutes times the retry budget times the hop limit - four attempts
+of twenty hops, forty hours, and a peer which answers slowly and then redirects could hold a caller
+for as long as it liked. So the session computes the deadline once, from the caller's
+`totalTimeout()` or the session default, and gives each hop what is left of it; when nothing is
+left the chain ends with the same `TimeoutException`, marked expected. A total timeout which would
+not arm a timer at the hop - unset, `neg_infin` or non-positive - means no chain deadline either.
 
 **The connect row said "resolve through preface" until the L4 review and bounded neither end of
 it.** Both ends were corrected there, one in the code and one here.

@@ -445,6 +445,24 @@ UTF_AUTO_TEST_CASE( ClientSessionTls_StreamingUploadTakesAnHttp2OnlyConnectionTe
             UTF_REQUIRE_EQUAL( statsOf( session ).connectionsCreated.value(), 2U );
 
             /*
+             * THE RENDEZVOUS, and without it this assertion is a race the case loses about once
+             * in eight runs, with an EMPTY body. The peer's responder runs on the request HEADERS
+             * and not on its END_STREAM, so the peer answers 200 and ends its half of the stream
+             * before it has necessarily processed a single DATA frame of the upload; the client's
+             * task then completes, and appendBody( ) is still to run on the peer's strand. The
+             * recorder's own note says to read a body only after a wait, and "end of request body"
+             * is the record onRequestBodyEnd( ) makes for exactly this - so the wait is on the
+             * thing being asserted, which is what requireRecorded( ) is for
+             */
+
+            h2driver::requireRecorded(
+                peer -> recorder(),
+                "end of request body on stream 1, " +
+                    utils::lexical_cast< std::string >( upload.size() ) +
+                    " bytes"
+                );
+
+            /*
              * The recorder keys bodies by the WIRE stream identifier and not by connection, so
              * two connections which both use stream 1 would append into one string - which is
              * safe here and not luck: the first request is a GET and appends nothing

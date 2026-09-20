@@ -258,6 +258,17 @@ namespace bl
 
             ConnectionKey                                                       templateKey;
 
+            /**
+             * @brief The one scheme this session speaks - ClientSessionT::transportScheme( )
+             *
+             * Carried as a field of its own rather than in templateKey.scheme, which keyFor( )
+             * deliberately leaves to the hop's own URL. A REDIRECT TARGET IS A URL THIS SESSION
+             * WAS NOT GIVEN BY ITS CALLER, so the rule createRequestTask( ) enforces has to be
+             * enforced against it too - see chkPrepareNextHop( )
+             */
+
+            std::string                                                         transportScheme;
+
             cpp::ScalarTypeIniter< bool >                                       isStrictContentEncoding;
 
             /**
@@ -909,6 +920,19 @@ namespace bl
 
             cpp::ScalarTypeIniter< std::size_t >                                m_attempts;
 
+            /**
+             * @brief The instant the WHOLE chain must be done by, or not_a_date_time for no bound
+             *
+             * Design 5.7's "request total, including pool wait" is a deadline for the REQUEST, and
+             * a request through a session is a chain of hops and attempts each of which is a fresh
+             * HttpClientRequestTaskT arming its own full total timer. Without a deadline chained
+             * through them the bound is the per-hop timeout times the retry budget times the hop
+             * limit - thirty minutes becomes forty hours, and a peer which answers slowly and then
+             * redirects can hold a caller for as long as it likes
+             */
+
+            const time::ptime                                                   m_deadline;
+
             om::ObjPtr< HttpClientRequestTaskImpl >                             m_hop;
 
             /*
@@ -929,9 +953,76 @@ namespace bl
                 m_plan( BL_PARAM_FWD( plan ) ),
                 m_bodySink( BL_PARAM_FWD( bodySink ) ),
                 m_next( BL_PARAM_FWD( request ) ),
+                m_deadline( deadlineFor( m_next, m_plan.requestConfig ) ),
                 m_cancelRequested( false )
             {
                 startHop();
+            }
+
+            /**
+             * @brief When the chain's budget runs out, from the caller's request and the config
+             *
+             * The effective duration is the request's own when it set one and the session's
+             * otherwise, which is HttpClientRequestTaskT::effectiveTimeout( )'s rule - it is not
+             * reachable from here, and stating it twice is cheaper than opening that class
+             *
+             * A duration which would not ARM A TIMER at the hop means no deadline here either:
+             * unset, neg_infin and non-positive already mean "no total timeout" one layer down,
+             * and a chain deadline which bound what the hop's own timer does not would be a
+             * behaviour this client never had
+             */
+
+            static auto deadlineFor(
+                SAA_in          const ClientRequest&                            request,
+                SAA_in          const HttpClientRequestConfig&                  config
+                )
+                -> time::ptime
+            {
+                const auto total =
+                    request.totalTimeout().is_special()
+                        ? config.totalTimeout
+                        : request.totalTimeout();
+
+                if( ! HttpClientRequestConfig::isArmed( total ) )
+                {
+                    return time::ptime();
+                }
+
+                return time::microsec_clock::universal_time() + total;
+            }
+
+            /**
+             * @brief What is left of the chain's budget, or neg_infin when it has none
+             *
+             * @throw TimeoutException when the budget is spent - which is the chain's own way of
+             * ending, and is marked expected for the reason the hop's timeout is: a deadline
+             * which was reached is not a defect to be logged as a failure
+             */
+
+            auto chkRemainingBudget() const -> time::time_duration
+            {
+                if( m_deadline.is_special() )
+                {
+                    return time::neg_infin;
+                }
+
+                const auto remaining = m_deadline - time::microsec_clock::universal_time();
+
+                BL_CHK_T(
+                    false,
+                    HttpClientRequestConfig::isArmed( remaining ),
+                    TimeoutException() << eh::errinfo_is_expected( true ),
+                    BL_MSG()
+                        << "HTTP "
+                        << m_next.method()
+                        << " request to '"
+                        << m_next.url().toString()
+                        << "' has timed out - the request's budget was spent by the "
+                        << m_hops.value()
+                        << " redirect hop(s) and the attempts before it"
+                    );
+
+                return remaining;
             }
 
             /**
@@ -988,7 +1079,28 @@ namespace bl
 
             void startHop()
             {
+                /*
+                 * ASKED FOR FIRST, because it can throw and nothing of this task's state may have
+                 * moved when it does - the queue turns a throw out of continuationTask( ) into
+                 * this task's failure, and a half started hop would be observed by whatever looks
+                 * at it afterwards
+                 */
+
+                const auto remaining = chkRemainingBudget();
+
                 m_request = prepareRequest( m_next );
+
+                if( HttpClientRequestConfig::isArmed( remaining ) )
+                {
+                    /*
+                     * Stamped on the request which actually GOES OUT and not on m_next, which is
+                     * the caller's own and is carried forward from hop to hop: what each hop gets
+                     * is what was left when it started, and the caller's own value is what the
+                     * whole chain was budgeted from
+                     */
+
+                    m_request.totalTimeout( remaining );
+                }
 
                 m_hop = HttpClientRequestTaskImpl::createInstance(
                     cpp::copy( m_request ),
@@ -1195,6 +1307,28 @@ namespace bl
                     return false;
                 }
 
+                if( decision.target.scheme() != m_plan.transportScheme )
+                {
+                    /*
+                     * ONE SESSION SPEAKS ONE SCHEME, AND A SESSION HAS TWO ENTRY POINTS FOR A URL:
+                     * the caller's, which createRequestTask( ) refuses, and this one. The policy
+                     * refuses only the https-to-http downgrade, so without this an http session
+                     * following the commonest redirect on the web would build an https key, hand
+                     * it to a factory which only has the CLEARTEXT stream policy, and write the
+                     * request head in the clear to port 443 - carrying the Cookie field the jar
+                     * computed for the https target, Secure cookies and all
+                     *
+                     * REFUSED RATHER THAN FAILED, for the reason RedirectPolicy states where it
+                     * refuses a target with no origin: a server must not be able to turn a
+                     * response into an exception, and a Location is the server's. So this behaves
+                     * as every other refusal there does - the chain stops and the caller gets the
+                     * 3xx with its Location, which is what the existing client does with a
+                     * redirect and is the URL to re-issue on a session of the right scheme
+                     */
+
+                    return false;
+                }
+
                 auto headers = m_next.headers();
 
                 if( decision.dropCredentials )
@@ -1332,9 +1466,13 @@ namespace bl
          * exists because of exactly that number). So the policy is the caller's, as it is for
          * SimpleHttpTask and SimpleHttpSslTask, and a module pays for the transport it names
          *
-         * THE CONSEQUENCE IS A PROPERTY AND NOT ONLY A COST: one session speaks ONE scheme.
-         * createRequestTask( ) refuses a URL whose scheme is not the transport's rather than
-         * connecting cleartext to a TLS port, and that is what settles the third item the L2
+         * THE CONSEQUENCE IS A PROPERTY AND NOT ONLY A COST: one session speaks ONE scheme, AT
+         * BOTH OF THE ENTRY POINTS A URL HAS. createRequestTask( ) refuses a URL whose scheme is
+         * not the transport's rather than connecting cleartext to a TLS port, and
+         * chkPrepareNextHop( ) refuses a redirect target of another scheme rather than following
+         * it there - the redirect policy refuses only the https-to-http downgrade, so http to
+         * https, which is the commonest redirect on the web, reaches the session as something it
+         * must decide about. That is what settles the third item the L2
          * review left to this slice. CookieJar's isHttpApi is always true from this client -
          * there is no non-HTTP API here for RFC 6265 5.3 step 11 to be about - and the Secure
          * cookie question design 5.6 records (an http response overwriting a Secure cookie) needs
@@ -1637,6 +1775,8 @@ namespace bl
                 plan.templateKey.http2ProfileId = m_config.http2ProfileId;
                 plan.templateKey.proxyId = m_config.proxyConfig.proxyId();
                 plan.templateKey.verificationFlags = m_config.verificationFlags;
+
+                plan.transportScheme = transportScheme();
 
                 plan.isStrictContentEncoding = m_config.isStrictContentEncoding.value();
                 plan.isProtocolNegotiated = mayProduceHttp2() && mayProduceHttp11();

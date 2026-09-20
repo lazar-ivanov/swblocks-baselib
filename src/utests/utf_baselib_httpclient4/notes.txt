@@ -15,3 +15,5 @@
 --log_level=message --run_test=ClientSession_ProfileHeaderSetIsByRequestKindTests
 --log_level=message --run_test=ClientSession_AgainstTheLibraryHttpServerTests
 --log_level=message --run_test=ClientSession_FallbackRiderNeedsTheDispatchedRetryTests
+--log_level=message --run_test=ClientSession_CrossSchemeRedirectIsRefusedTests
+--log_level=message --run_test=ClientSession_RequestBudgetIsChainedAcrossHopsTests

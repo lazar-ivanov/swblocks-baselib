@@ -177,6 +177,35 @@ namespace utest
         }
 
         /**
+         * @brief Whether a failed task's exception is a TimeoutException
+         *
+         * A deadline which was reached is not a failure to be diagnosed, so the type is what a
+         * case asserts on - the message is the request task's own and belongs to it
+         */
+
+        inline bool isTimeoutException( SAA_in const std::exception_ptr& eptr )
+        {
+            if( ! eptr )
+            {
+                return false;
+            }
+
+            try
+            {
+                std::rethrow_exception( eptr );
+            }
+            catch( bl::TimeoutException& )
+            {
+                return true;
+            }
+            catch( std::exception& )
+            {
+            }
+
+            return false;
+        }
+
+        /**
          * @brief Makes one request through the session, runs it to completion and requires it
          * succeeded - the shape most cases below want
          */
@@ -1002,6 +1031,143 @@ UTF_AUTO_TEST_CASE( ClientSession_SpeaksOneSchemeTests )
 }
 
 /**
+ * @brief ... AND AT THE OTHER ENTRY POINT A URL HAS, which is the redirect target
+ *
+ * THE CASE ABOVE IS ONLY HALF THE RULE. A session is given a URL twice: once by its caller, which
+ * createRequestTask( ) checks, and once by the SERVER, in a Location. RedirectPolicy refuses only
+ * the https-to-http downgrade, so http to https - the commonest redirect on the web - arrives at
+ * the session as something it must decide about, and a session whose only stream policy is
+ * cleartext would build an https key, connect a CLEARTEXT socket to port 443 and write the request
+ * head in the clear. The head carries the Cookie field the jar computed for the https target, so
+ * the credential the Secure attribute exists to protect is what goes out in the clear
+ *
+ * TWO PEERS, and the second one exists to NOT BE CONTACTED: the https target is a peer of its own,
+ * so "no cleartext went to the https origin" is an assertion about that peer and not an inference.
+ * The Secure cookie is real too - the origin sets it on the 3xx, and the jar is asked, at the end,
+ * for what it WOULD have sent to the https target. Against the unfixed session every one of the
+ * four assertions below flips: the chain follows, the target peer records the request, the cookie
+ * is in it, and the pool has made a second connection
+ */
+
+UTF_AUTO_TEST_CASE( ClientSession_CrossSchemeRedirectIsRefusedTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest;
+    using namespace utest::session;
+
+    const auto target = makePeer();
+
+    target -> setResponder( echoHeadersResponder() );
+
+    h2driver::withPeer(
+        target,
+        [ & ]( SAA_in const unsigned short targetPort ) -> void
+        {
+            const auto httpsTarget =
+                "https://127.0.0.1:" +
+                utils::lexical_cast< std::string >( targetPort ) +
+                "/final";
+
+            const auto origin = makePeer();
+
+            origin -> setResponder(
+                [ httpsTarget ]( SAA_in const h2peer::Http2TestRequest& )
+                    -> h2peer::Http2ResponseScript
+                {
+                    http2::HpackFieldList fields;
+
+                    fields.push_back(
+                        http2::HpackField(
+                            std::string( "location" ),
+                            cpp::copy( httpsTarget )
+                            )
+                        );
+
+                    /*
+                     * An http response CAN set a Secure cookie in this jar - the 6265bis rule
+                     * which forbids it is not implemented, and design 5.6 records that
+                     */
+
+                    fields.push_back(
+                        http2::HpackField(
+                            std::string( "set-cookie" ),
+                            std::string( "sid=secret; Path=/; Secure" )
+                            )
+                        );
+
+                    return h2peer::Http2ResponseScript()
+                        .headers( 302U, fields, true /* endStream */ );
+                }
+                );
+
+            h2driver::withPeer(
+                origin,
+                [ & ]( SAA_in const unsigned short originPort ) -> void
+                {
+                    const auto session = makeSession();
+
+                    BL_SCOPE_EXIT_WARN_ON_FAILURE(
+                        {
+                            session -> dispose();
+                        },
+                        "utest::session::ClientSession_CrossSchemeRedirectIsRefusedTests"
+                        );
+
+                    session -> redirectPolicy().isEnabled( true );
+
+                    const auto task = runRequest( session, makeRequest( originPort, "/start" ) );
+
+                    /*
+                     * Refused and REPORTED, which is what every other refusal in the policy does
+                     * and what this client does with a 3xx it does not follow: the caller keeps
+                     * the status and the Location, and can re-issue it on a session of the right
+                     * scheme. A Location is the server's, so it may not raise
+                     */
+
+                    UTF_REQUIRE_EQUAL( task -> response().status(), 302U );
+                    UTF_REQUIRE_EQUAL( task -> redirectHops(), 0U );
+
+                    UTF_REQUIRE_EQUAL(
+                        task -> response().headers().get( "location" ),
+                        httpsTarget
+                        );
+
+                    /*
+                     * Nothing was connected to the https origin, by either measure
+                     */
+
+                    UTF_REQUIRE( target -> recorder().records().empty() );
+
+                    UTF_REQUIRE_EQUAL( statsOf( session ).connectionsCreated.value(), 1U );
+
+                    /*
+                     * And the credential this is about was in the jar and in scope for the target
+                     * all along - so what did not happen is the only reason it stayed in
+                     */
+
+                    UTF_REQUIRE_EQUAL( session -> cookieJar().size(), 1U );
+
+                    UTF_REQUIRE_EQUAL(
+                        session -> cookieJar().cookieHeaderValue( net::Uri::parse( httpsTarget ) ),
+                        std::string( "sid=secret" )
+                        );
+
+                    UTF_REQUIRE(
+                        session -> cookieJar()
+                            .cookieHeaderValue( net::Uri::parse( urlFor( targetPort, "/final" ) ) )
+                            .empty()
+                        );
+
+                    UTF_REQUIRE( origin -> recorder().failure().empty() );
+                    UTF_REQUIRE( target -> recorder().failure().empty() );
+                }
+                );
+        }
+        );
+}
+
+/**
  * @brief A same-origin redirect, followed - and the second hop is a second request task
  *
  * The chain is a WrapperTaskBase continuation, so what the caller scheduled is one task and what
@@ -1086,6 +1252,106 @@ UTF_AUTO_TEST_CASE( ClientSession_RedirectIsFollowedWhenEnabledTests )
             UTF_REQUIRE_EQUAL( stats.connectionsCreated.value(), 1U );
             UTF_REQUIRE_EQUAL( stats.dispatched.value(), 3U );
             UTF_REQUIRE_EQUAL( stats.released.value(), 3U );
+
+            UTF_REQUIRE( peer -> recorder().failure().empty() );
+        }
+        );
+}
+
+/**
+ * @brief THE BUDGET IS THE REQUEST'S, not each hop's - design 5.7's request-total row
+ *
+ * Every hop and every retry is a fresh HttpClientRequestTaskT which arms its own FULL total timer,
+ * so left alone a session request has no deadline at all: four attempts of twenty hops is thirty
+ * minutes times eighty. The session therefore computes the deadline once and gives each hop what
+ * is left of it
+ *
+ * HOW THE NUMBERS DISCRIMINATE, which is the whole of this case. The peer takes HOP_DELAY to
+ * answer EITHER path, and the caller budgets the request at BUDGET, with HOP_DELAY < BUDGET <
+ * 2 * HOP_DELAY. So the first hop fits with a second to spare and the second hop cannot fit at
+ * all - unless it is handed a fresh budget of its own, which is exactly what the unfixed session
+ * does and what makes this case go green against it, with a 200 and no failure
+ *
+ * AND WHY IT ASSERTS THE HOP COUNT AS WELL AS THE FAILURE: a machine slow enough to make the
+ * FIRST hop miss the budget would fail the request too, for the wrong reason. redirectHops( ) is
+ * one exactly when the chain got past the redirect, so that run fails the case loudly instead of
+ * passing it vacuously
+ *
+ * It pins the per-request override on the way past: the session default is thirty minutes, so
+ * nothing here would be bounded by anything if ClientRequest::totalTimeout( ) did not reach the hop
+ */
+
+UTF_AUTO_TEST_CASE( ClientSession_RequestBudgetIsChainedAcrossHopsTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest;
+    using namespace utest::session;
+
+    const long HOP_DELAY_IN_MILLISECONDS = 2000;
+    const long BUDGET_IN_MILLISECONDS = 3000;
+
+    const auto peer = makePeer();
+
+    peer -> setResponder(
+        []( SAA_in const h2peer::Http2TestRequest& request )
+            -> h2peer::Http2ResponseScript
+        {
+            if( "/start" == request.path )
+            {
+                http2::HpackFieldList fields;
+
+                fields.push_back(
+                    http2::HpackField( std::string( "location" ), std::string( "/final" ) )
+                    );
+
+                return h2peer::Http2ResponseScript()
+                    .delay( HOP_DELAY_IN_MILLISECONDS )
+                    .headers( 302U, fields, true /* endStream */ );
+            }
+
+            return h2peer::Http2ResponseScript()
+                .delay( HOP_DELAY_IN_MILLISECONDS )
+                .headers( 200U )
+                .data( request.path )
+                .endStream();
+        }
+        );
+
+    h2driver::withPeer(
+        peer,
+        [ & ]( SAA_in const unsigned short port ) -> void
+        {
+            const auto session = makeSession();
+
+            BL_SCOPE_EXIT_WARN_ON_FAILURE(
+                {
+                    session -> dispose();
+                },
+                "utest::session::ClientSession_RequestBudgetIsChainedAcrossHopsTests"
+                );
+
+            session -> redirectPolicy().isEnabled( true );
+
+            auto request = makeRequest( port, "/start" );
+
+            request.totalTimeout( time::milliseconds( BUDGET_IN_MILLISECONDS ) );
+
+            const auto requestTask = session -> createRequestTask( request );
+
+            const auto task = om::qi< tasks::Task >( requestTask );
+
+            runSessionTask( task );
+
+            UTF_REQUIRE( task -> isFailed() );
+            UTF_REQUIRE( isTimeoutException( task -> exception() ) );
+
+            /*
+             * The chain DID follow the redirect - so what ran out of budget is the second hop and
+             * not the first
+             */
+
+            UTF_REQUIRE_EQUAL( requestTask -> redirectHops(), 1U );
 
             UTF_REQUIRE( peer -> recorder().failure().empty() );
         }
