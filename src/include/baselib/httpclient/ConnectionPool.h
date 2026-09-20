@@ -236,6 +236,23 @@ namespace bl
             cpp::ScalarTypeIniter< std::size_t >                                maxConnectionsPerKeyHttp11;
             cpp::ScalarTypeIniter< std::size_t >                                maxTotalConnections;
             cpp::ScalarTypeIniter< std::size_t >                                maxStreamsPerConnection;
+
+            /**
+             * @brief How many times one request may be re-dispatched - AND ZERO SWITCHES OFF
+             * HTTP/1.1 THROUGH A SESSION RATHER THAN MERELY TIGHTENING THE BUDGET
+             *
+             * The first request on a new connection RIDES THE PREFACE ( findDispatchable( ) ):
+             * it is dispatched onto a task which is still establishing, and one which turns out
+             * to speak http/1.1 bounces it retryable by construction. That bounce spends an
+             * attempt, so with none to spend the first request to every HTTP/1.1 origin fails -
+             * as "connection aborted", with nothing chained to explain it, because the
+             * placeholder itself completed successfully. A caller who needs the budget tight
+             * should set one rather than zero; the default is DEFAULT_MAX_RETRIES_PER_REQUEST
+             *
+             * L6 finding 4a is the real fix and is owed: a policy flag - ride the preface,
+             * default true - which a session turns off when it cannot produce HTTP/2 at all
+             */
+
             cpp::ScalarTypeIniter< std::size_t >                                maxRetriesPerRequest;
 
             cpp::ScalarTypeIniter< std::uint32_t >                              drainingReserve;
