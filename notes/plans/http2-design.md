@@ -910,6 +910,27 @@ costs it milliseconds. And the pool caps what it will put on one connection what
 advertises (`maxStreamsPerConnection`, 256), since RFC 9113 section 6.5.2 gives that setting no
 upper bound and one connection absorbing every request also means every request failing together.
 
+**What the L5 review found in that latch, and what the fix round did.** "At a moment when the pool
+holds no slot" is right about the arithmetic and wrong about the clock: the driver publishes `Ready`
+*before* it writes the preface - which is design 5.1's rule and the establishment contract S4.1 and
+S5.2 both read - so the first such moment precedes the peer's `SETTINGS` by a round trip, and what
+was latched was the driver's assumed 100. A peer which allows 16 was then sent bursts sized to 100
+for as long as the connection stayed busy, and each burst above 16 lost requests rather than
+retrying them, because the dispatched half of the retry below belongs to nobody yet. `Ready` was not
+moved; the pool changed. It now dispatches **one** stream to a connection whose limit it has not
+been told, which is design 5.1's own preface rule applied by the dispatcher, and it learns the limit
+in one of three ways: a reading outside `[ assumed - dispatched, assumed ]`, which the driver's
+assumption could not have produced; a response which came back in full, since a peer's `SETTINGS` is
+the first frame it sends (RFC 9113 section 3.4) and frames are applied in order; or, for the peer
+whose limit *is* the assumed number and which therefore never distinguishes itself, a one second
+settle window, after which the reading is taken as the peer's - which is what the code did
+unconditionally before, so the window costs only the round trip it buys. Between the exact moments
+`freeStreamSlots() + <dispatched>` is an upper bound on the limit which the pool only ever takes
+downward, and that is also what bounds one examine's burst to what the driver last reported. The
+driver reporting one free slot until the peer's `SETTINGS` (L5 finding 5(c), the driver's own
+change-set) would remove the settle window's cost, since a reading of one is one the assumption
+cannot produce.
+
 **The draining reserve, chosen in S5.2: 1024 identifiers.** Section 4.3's "approaching `2^31 - 1`"
 is a margin `StreamRegistry` leaves to the pool, and it has to cover what the pool has committed to
 a connection but not yet opened as a stream - bounded by the dispatch ceiling above. 1024 is four
@@ -950,12 +971,23 @@ automatically; retrying idempotent methods after connection loss is a separate k
 cannot be in one place, because the S2.6 contract gives the pool no request identity: `acquire`
 takes a `ClientRequest` by reference and `releaseStream` names a handle the pool never issued. So a
 request still queued in the pool when the connection it was queued behind failed is replayed and
-counted **by the pool**, which never let go of it; a request which had already been dispatched
-comes back through `releaseStream` and a fresh `acquire`, and its attempts are counted by the
-request task, which has per-request state by construction. The pool's part of the guarantee is that
-such a request cannot land back on the connection which failed it: a connection reported
+counted **by the pool**, which never let go of it. The pool's part of the guarantee is that such a
+request cannot land back on the connection which failed it: a connection reported
 `ConnectionUnusable`, or observed `Draining` or `Closed`, is retired before the next `acquire` is
 answered.
+
+**The other half has no owner yet, and this sentence used to say it did** (L5 finding 5(a)). S5.2
+wrote that a request which had already been dispatched "comes back through `releaseStream` and a
+fresh `acquire`, and its attempts are counted by the request task, which has per-request state by
+construction" - the state exists, the counter does not. `HttpClientRequestTaskT` calls `acquire`
+exactly once and holds no attempt count; it reports `isRetryable()` and `outcome()` and leaves the
+decision to its caller, which today is nobody. So a `REFUSED_STREAM`, a GOAWAY above the stream's
+id or an ALPN bounce of the preface rider **fails** its request while the requests queued behind it
+are retried, and that asymmetry is a property of the tree rather than of the design. **S6.1 owns
+it**: the session is the first thing above the request task which sees a request end and can start
+another, and it is where the two halves of the counter meet. Until it does, the pool must not make
+a bet it cannot pay for - which is why the dispatch section above dispatches one stream to a
+connection whose limit is unknown instead of assuming.
 
 **GOAWAY.** Mark `Draining`, stop dispatching to it, replay what qualifies, let in-flight streams at or
 below the last id finish. Servers commonly send two - first with `2^31 - 1`, then the real id - and
@@ -1159,12 +1191,26 @@ exactly the set nothing else bounds - and on expiry the pool cancels the connect
 the placeholder and retries or fails every request queued behind it. `ClientConnectionTaskBase` is
 unchanged; the connect deadline still means what its row says.
 
-**120 s**, because the legitimate worst case is two attempts of the 60 s per-attempt deadline plus
-two resolve-and-connect legs, and the per-attempt deadline fires first on every path where it
-applies at all - so the pool's bound truncates nothing which would have succeeded, while cutting
-the black hole above from minutes per address to two minutes for the origin. It is a twentieth of
-the request total timeout, so a request which hits it still has time to be tried on a fresh
-connection rather than dying with the one it was waiting for.
+**120 s, and the number it has to be argued against is the 134 above.** S5.2 argued it from two
+attempts of the 60 s per-attempt deadline plus two resolve-and-connect legs, and claimed it
+"truncates nothing which would have succeeded". The L5 review was right that both halves are wrong:
+that sum exceeds 120 by the two legs, and the per-attempt deadline does not cover
+resolve-and-connect at all - which is the whole reason this bound exists. What it truncates is
+measured in SYN timeouts. An origin whose **first** address is black-holed and whose second answers
+- a dual-stack host with a stale `AAAA`, which `getaddrinfo` returns first - would have connected at
+about 135 s and is failed at 120 instead, on each of the three attempts section 4.6 allows.
+
+**It stays at 120 s, as a policy choice and not as a free one.** What is being bounded is
+addresses x SYN timeout x handshake attempts, so a bound which clears one dead address is about
+200 s, two about 330 and three about 470: no single number rescues the ordinary case without giving
+up on bounding anything. And the bound is spent once per retry, so what a caller waits is up to
+three times it - 200 s would be ten minutes of silence for an origin the operating system is going
+to refuse anyway. **So a black-holed first address is a hard failure through the pool**, written
+here rather than left to be discovered. The real fix is not a number in the pool: it is the
+**per-endpoint connect bound** in the establisher, the front end this section already defers (L4
+finding 1, still open), which is what Happy Eyeballs does and what makes a dead address cost a
+second instead of 134. With it every address of an ordinary origin is tried well inside 120 s and
+this bound goes back to being a backstop on an establishment which is going nowhere.
 
 **The drain row is a backstop and not a protocol deadline.** A close is taken only through the
 write pump, which returns while a write is in flight, so a peer that stops reading with our send

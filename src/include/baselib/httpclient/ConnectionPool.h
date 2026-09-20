@@ -94,11 +94,24 @@ namespace bl
 
                 /**
                  * Design 5.4 - what a connection is assumed to allow until the peer's SETTINGS
-                 * have arrived. The same number the h2 driver assumes, and it has to be: the pool
-                 * reads the driver's freeStreamSlots( ) to latch the real one
+                 * have arrived. The same number the h2 driver assumes, and it HAS to be, for a
+                 * reason which is load bearing rather than incidental: the pool cannot ask
+                 * whether the peer has spoken, so the only thing which tells it that a reading of
+                 * freeStreamSlots( ) is the PEER's number and not the driver's assumption of it
+                 * is that the reading could not have been derived from this one - refreshEntry( )
                  */
 
                 ASSUMED_MAX_CONCURRENT_STREAMS              = 100U,
+
+                /**
+                 * What the pool will put on one connection while the peer's limit is still
+                 * unknown. This is design 5.1's own rule - "exactly one rides the preface,
+                 * because until the peer's SETTINGS arrive nothing else is known" - applied by
+                 * the layer which dispatches rather than only by the one which writes; the note
+                 * on the peer's limit at ConnectionPoolImplT says why the pool may not assume
+                 */
+
+                UNCONFIRMED_MAX_CONCURRENT_STREAMS          = 1U,
             };
 
             enum : std::uint32_t
@@ -169,6 +182,25 @@ namespace bl
                  */
 
                 DEFAULT_REQUEST_TIMEOUT_IN_SECONDS          = 30L * 60L,
+
+                /**
+                 * @brief HOW LONG THE POOL WAITS FOR THE PEER'S SETTINGS BEFORE IT ASSUMES
+                 *
+                 * refreshEntry( ) can tell the peer's concurrency limit from the driver's
+                 * assumption of it for every peer whose limit is not exactly the assumed number,
+                 * and for no peer whose limit is. This is the answer for that one: after this
+                 * long a connection which is otherwise usable has its reading taken as the
+                 * peer's, which is what this code did unconditionally before.
+                 *
+                 * A peer's SETTINGS is the first frame it sends ( RFC 9113 3.4 ), so it is one
+                 * round trip behind our preface. A second is longer than the round trip of any
+                 * path on which multiplexing is worth having, and what expiry restores is the
+                 * old behaviour - so the window cannot cost anything the old behaviour did not
+                 * already cost, and it buys back the round trip in which the peer can speak for
+                 * itself. Set it to time::neg_infin and the pool waits for proof for ever
+                 */
+
+                DEFAULT_SETTINGS_SETTLE_IN_MILLISECONDS     = 1000L,
             };
 
             enum : long
@@ -211,6 +243,13 @@ namespace bl
             time::time_duration                                                 establishmentTimeout;
             time::time_duration                                                 idleTimeout;
             time::time_duration                                                 requestTimeout;
+
+            /**
+             * @brief How long a connection may go without telling the pool its own limit before
+             * the pool assumes one - see DEFAULT_SETTINGS_SETTLE_IN_MILLISECONDS
+             */
+
+            time::time_duration                                                 settingsSettleTimeout;
 
             /**
              * @brief Retrying a request the server MAY have processed, after the connection was
@@ -257,7 +296,10 @@ namespace bl
                     time::seconds( DEFAULT_ESTABLISHMENT_TIMEOUT_IN_SECONDS )
                     ),
                 idleTimeout( time::seconds( DEFAULT_IDLE_TIMEOUT_IN_SECONDS ) ),
-                requestTimeout( time::seconds( DEFAULT_REQUEST_TIMEOUT_IN_SECONDS ) )
+                requestTimeout( time::seconds( DEFAULT_REQUEST_TIMEOUT_IN_SECONDS ) ),
+                settingsSettleTimeout(
+                    time::milliseconds( DEFAULT_SETTINGS_SETTLE_IN_MILLISECONDS )
+                    )
             {
                 maxConnectionsPerKey = DEFAULT_MAX_CONNECTIONS_PER_KEY;
                 maxConnectionsPerKeyHttp11 = DEFAULT_MAX_CONNECTIONS_PER_KEY_HTTP11;
@@ -422,12 +464,26 @@ namespace bl
          * THE LOCK DISCIPLINE - DESIGN 5.2 RULE L4, WHICH IS WHY THIS CLASS LOOKS THE WAY IT DOES
          * ------------------------------------------------------------------------------------
          *
-         * The pool lock is a LEAF. Nothing is called while it is held: not a waiter's callback,
-         * not the connection factory, not the execution queue, not a connection, not a timer.
-         * Every entry point therefore has the same shape - take the lock, decide, fill an Actions
-         * value, drop the lock, and only then act. The worked deadlock in design 5.2 is built
-         * entirely out of individually reasonable calls made the other way round, and the only
-         * thing which stops it is that this file never makes one.
+         * The pool lock is a LEAF. Nothing which can call BACK into the pool is called while it is
+         * held: not a waiter's callback, not the connection factory, not the execution queue, not
+         * a timer. Every entry point therefore has the same shape - take the lock, decide, fill an
+         * Actions value, drop the lock, and only then act. The worked deadlock in design 5.2 is
+         * built entirely out of individually reasonable calls made the other way round, and the
+         * only thing which stops it is that this file never makes one.
+         *
+         * WHAT IS CALLED UNDER THE LOCK, SINCE IT IS NOT NOTHING, and the reason it is safe is
+         * worth writing down because a future driver is what would break it. refreshEntry( ),
+         * findDispatchable( ) and effectiveMaxConnectionsPerKey( ) read a connection - state( ),
+         * freeStreamSlots( ), negotiated( ) - and a task - getState( ), exception( ). For the h2
+         * driver the connection reads are atomic loads and a reference; for the h1 driver state( )
+         * and freeStreamSlots( ) take that driver's own state lock, and TaskBase::exception( )
+         * takes the task's. So the real order is POOL LOCK, then a driver's or a task's lock, and
+         * what makes that safe is not that nothing is called but that NOTHING ON THE OTHER SIDE
+         * EVER CALLS THE POOL: a driver and a connection task do not know the pool exists, and the
+         * one thing which does call in - the request task - calls from its deferred phase holding
+         * nothing. A driver which one day calls the pool back from under its own lock, which is
+         * exactly what the connection -> pool notification design 5.2 rule L3 anticipates would
+         * be, closes that cycle. It has to be posted for that reason and not only for L2's.
          *
          * The one thing the pool does under the lock which LOOKS like an exception is inserting
          * the Connecting placeholder before the factory is called. That is the point: the entry
@@ -461,12 +517,69 @@ namespace bl
          * nothing else covers. On expiry the task is cancelled, the entry is retired and the
          * waiters behind it are retried on a fresh connection or failed with a TimeoutException.
          *
-         * 120 seconds, because the legitimate worst case is two attempts of the 60 s per-attempt
-         * deadline plus two resolve-and-connect legs, and the per-attempt deadline fires first on
-         * every path where it applies at all - so this bound truncates nothing which would have
-         * succeeded, while cutting the black hole above from minutes to two. It is one twentieth
-         * of the request total timeout, so a request which hits it still has time to be tried on
-         * a fresh connection rather than simply dying with it.
+         * 120 SECONDS, AND THE NUMBER IT HAS TO BE ARGUED AGAINST IS 134, NOT 2 x 60. The earlier
+         * argument here - two attempts of the 60 s per-attempt deadline plus two connect legs -
+         * contradicted itself, since that sum is more than 120 by the two legs, and it argued
+         * against the wrong quantity: the per-attempt deadline does not cover resolve-and-connect,
+         * which is the gap this bound exists for, so what the bound truncates is measured in SYN
+         * timeouts and one of those is the 134 s above. An origin whose first address is dead and
+         * whose second answers - a dual-stack host with a stale AAAA, which getaddrinfo returns
+         * first - would have connected at about 135 s and is failed at 120 instead, on each of the
+         * three attempts design 4.6 allows. So this bound does truncate something which would have
+         * succeeded, and the claim that it does not was simply wrong.
+         *
+         * IT IS KEPT AT 120 ANYWAY, because no single overall number is right and a larger one is
+         * worse. What is being bounded is addresses x SYN timeout x handshake attempts, so a bound
+         * which clears one dead address is about 200 s, two about 330 and three about 470: there
+         * is no number which rescues the ordinary case without giving up on bounding anything. And
+         * a caller does not wait this once - an establishment which expires retires the placeholder
+         * and the waiters behind it are retried, up to maxRetriesPerRequest - so what a caller
+         * actually waits is up to THREE times the bound, and 200 s would be ten minutes of silence
+         * for an origin the operating system is going to refuse anyway. Two minutes, three times,
+         * ending in a TimeoutException the caller can act on, is the choice this slice makes.
+         *
+         * THE REAL FIX IS NOT A NUMBER HERE. It is a per-endpoint connect bound in the establisher
+         * - L4 finding 1's front end, still open - which is what Happy Eyeballs does and what makes
+         * a dead address cost a second instead of 134. With it, every address of an ordinary origin
+         * is tried well inside 120 s and this bound goes back to being what it is meant to be, a
+         * backstop on an establishment which is going nowhere. Until then a black-holed FIRST
+         * address is a hard failure through the pool - a policy choice, recorded in design 5.7 and
+         * here, rather than a property to be discovered by whoever meets it.
+         *
+         * ------------------------------------------------------------------------------------
+         * THE PEER'S CONCURRENCY LIMIT, AND WHY THE POOL WILL NOT ASSUME IT
+         * ------------------------------------------------------------------------------------
+         *
+         * The driver publishes Ready BEFORE the opening write, so that the first request's HEADERS
+         * can join the preface - that is design 5.1's rule and the establishment contract S4.1 and
+         * S5.2 both read. It means Ready comes one whole round trip BEFORE the peer's SETTINGS,
+         * and until those arrive freeStreamSlots( ) is derived from the driver's assumption of 100
+         * rather than from anything the peer said. A pool which takes that reading as the peer's
+         * limit sends a burst of up to 100 to a peer which allows 16, and the 84 over the limit
+         * come back as REFUSED_STREAM or, from a strict peer, as a connection error.
+         *
+         * WHAT IT WOULD COST TO BE WRONG, WHICH IS WHY THE ANSWER IS NOT "BROWSERS ASSUME 100 TOO".
+         * They do, and RFC 9113 6.5.2 recommends no less than 100, so the assumption is not
+         * unreasonable - but a browser hedges it by REPLAYING what a REFUSED_STREAM bounced, and
+         * that half of the retry does not exist here. Design 5.4's retry covers the requests which
+         * are still QUEUED in the pool; a request already dispatched comes back through
+         * releaseStream( ) and a fresh acquire( ), and today nothing counts its attempts or makes
+         * it. So every request over the peer's limit is a lost request, not a retried one, and an
+         * unhedged bet is one the pool may not make on the caller's behalf.
+         *
+         * SO THE POOL WAITS UNTIL IT KNOWS, and while it does not know it dispatches ONE - design
+         * 5.1's own preface rule, applied where the dispatching happens. Nothing is ever put on a
+         * connection under an assumption except the single request which rides the preface, so
+         * there is never a burst to unwind - which matters, because a burst cannot be unwound: the
+         * HEADERS are gone. The three things which end "does not know" are in refreshEntry( ) and
+         * releaseStream( ), and the fourth - the settle window, for the peer whose limit IS the
+         * assumed number and which therefore cannot distinguish itself - is in the policy.
+         *
+         * WHAT IT COSTS: a connection whose peer allows exactly 100 carries one request at a time
+         * for the settle window, a second, before the rest of a queued burst follows. The driver
+         * reporting one free slot until peerLimitsConcurrentStreams( ) - L5 finding 5(c), the
+         * driver's change-set - removes even that, because a reading of one is a reading the
+         * assumption cannot produce and the pool would then know at Ready.
          *
          * ------------------------------------------------------------------------------------
          * WHAT IT WATCHES, AND WHAT IT CANNOT
@@ -567,18 +680,40 @@ namespace bl
                 cpp::ScalarTypeIniter< std::size_t >                            slotsInUse;
 
                 /**
-                 * The peer's concurrency limit, latched from freeStreamSlots( ) at a moment when
-                 * the pool held no slot on this connection - which is the only moment the two
-                 * agree. Zero until then, and ASSUMED_MAX_CONCURRENT_STREAMS is used instead
+                 * What the pool believes this connection's concurrency limit is: exact when it
+                 * was read at a moment the pool held no slot, and otherwise an upper bound which
+                 * refreshEntry( ) only ever lowers. Zero means nothing has been read yet
                  */
 
                 cpp::ScalarTypeIniter< std::size_t >                            peerLimit;
+
+                /**
+                 * Whether peerLimit above is the PEER's number rather than the driver's
+                 * assumption of it - see the note on the peer's limit at ConnectionPoolImplT.
+                 * capacityOf( ) dispatches one at a time until this is true
+                 */
+
+                cpp::ScalarTypeIniter< bool >                                   isPeerLimitKnown;
 
                 cpp::ScalarTypeIniter< bool >                                   isReady;
                 cpp::ScalarTypeIniter< bool >                                   isRetired;
                 cpp::ScalarTypeIniter< bool >                                   isScheduled;
 
+                /**
+                 * Whether the pool has already asked this entry's tasks to stop - see
+                 * forgetConnection( ), which is where an entry the pool lets go of is stopped
+                 */
+
+                cpp::ScalarTypeIniter< bool >                                   isCancelRequested;
+
                 time::ptime                                                     establishBy;
+
+                /**
+                 * When the pool gives up waiting for the peer to speak for itself and takes the
+                 * driver's reading as the peer's. Armed the first time the connection reads Ready
+                 */
+
+                time::ptime                                                     settleBy;
 
                 auto current() const NOEXCEPT -> const om::ObjPtrCopyable< ClientConnection >&
                 {
@@ -828,17 +963,182 @@ namespace bl
                 return m_policy.maxConnectionsPerKey;
             }
 
+            /**
+             * @brief How many streams the pool will have outstanding on one connection
+             *
+             * ONE UNTIL THE PEER'S LIMIT IS KNOWN, which is the whole of the note on the peer's
+             * limit at the top of this class: a number the pool has not been told is not a number
+             * it may dispatch a burst against, because nothing replays what comes back refused
+             */
+
             std::size_t capacityOf( SAA_in const Entry& entry ) const NOEXCEPT
             {
-                const auto peer = entry.peerLimit ?
-                    entry.peerLimit.value() :
-                    static_cast< std::size_t >( ConnectionPoolPolicy::ASSUMED_MAX_CONCURRENT_STREAMS );
+                if( ! entry.isPeerLimitKnown || ! entry.peerLimit )
+                {
+                    return ConnectionPoolPolicy::UNCONFIRMED_MAX_CONCURRENT_STREAMS;
+                }
 
-                return std::min< std::size_t >( m_policy.maxStreamsPerConnection, peer );
+                return std::min< std::size_t >(
+                    m_policy.maxStreamsPerConnection,
+                    entry.peerLimit.value()
+                    );
             }
 
-            void forgetConnection( SAA_in const entry_ptr_t& entry ) NOEXCEPT
+            /**
+             * @brief Takes one reading of a Ready connection's free slots and learns what it can
+             *
+             * THE READING IS limit - <streams the driver has open>, and the driver's open count is
+             * at most what the pool has dispatched, so:
+             *
+             *   limit  >=  slots                    always, and
+             *   limit  <=  slots + slotsInUse       always, exactly when nothing is in flight -
+             *
+             * which at slotsInUse == 0 makes the reading the limit itself. That is the only exact
+             * moment and under steady load it never comes, so the upper bound is what keeps the
+             * pool honest between such moments: it is only ever taken DOWNWARD, since a reading
+             * lower than expected is a peer which lowered its SETTINGS ( or one whose SETTINGS
+             * arrived after the pool had assumed ), while a higher one is the pool's own in-flight
+             * dispatches not yet counted by the driver. It also bounds a single examine, which is
+             * the burst finding 5 named: the loop in examineKey( ) dispatches while slotsInUse is
+             * under this capacity, so it cannot dispatch more than the slots this reading reported.
+             *
+             * WHETHER THE READING IS THE PEER'S is a different question and this is where it is
+             * answered. Until the peer's SETTINGS arrive the driver derives its reading from
+             * ASSUMED_MAX_CONCURRENT_STREAMS, so it can only report a number in
+             * [ assumed - slotsInUse, assumed ]. ANY reading outside that band could not have come
+             * from the assumption and is therefore the peer's - which covers every peer except one
+             * whose limit is the assumed number exactly, for whom no reading can ever distinguish
+             * itself and the settle window below is the answer
+             */
+
+            void learnPeerLimit(
+                SAA_in          const entry_ptr_t&                              entry,
+                SAA_in          const std::size_t                               slots,
+                SAA_in          const time::ptime&                              timeNow
+                ) NOEXCEPT
             {
+                const auto inUse = entry -> slotsInUse.value();
+
+                const auto assumed =
+                    static_cast< std::size_t >( ConnectionPoolPolicy::ASSUMED_MAX_CONCURRENT_STREAMS );
+
+                if( slots > assumed || slots + inUse < assumed )
+                {
+                    entry -> isPeerLimitKnown = true;
+                }
+
+                if( entry -> settleBy.is_special() )
+                {
+                    if( isEnabled( m_policy.settingsSettleTimeout ) )
+                    {
+                        entry -> settleBy = timeNow + m_policy.settingsSettleTimeout;
+                    }
+                }
+                else if( timeNow >= entry -> settleBy )
+                {
+                    entry -> isPeerLimitKnown = true;
+                }
+
+                if( 0U == inUse )
+                {
+                    entry -> peerLimit = slots;
+
+                    return;
+                }
+
+                const auto bound = slots + inUse;
+
+                if( ! entry -> peerLimit || bound < entry -> peerLimit )
+                {
+                    entry -> peerLimit = bound;
+                }
+            }
+
+            static void chkCancelTask(
+                SAA_in_opt      const om::ObjPtrCopyable< tasks::Task >&        task,
+                SAA_inout       Actions&                                        actions
+                )
+            {
+                if( task && tasks::Task::Completed != task -> getState() )
+                {
+                    actions.cancels.push_back( task );
+                }
+            }
+
+            /**
+             * @brief Asks everything this entry started to stop, once
+             *
+             * The flag is on the ENTRY and not on the task because an entry can be retired long
+             * before it is forgotten - the establishment bound expires while the request which
+             * rode the preface is still out - and asking twice would be untidy rather than wrong
+             */
+
+            void chkCancelEntry(
+                SAA_in          const entry_ptr_t&                              entry,
+                SAA_inout       Actions&                                        actions
+                )
+            {
+                if( entry -> isCancelRequested )
+                {
+                    return;
+                }
+
+                entry -> isCancelRequested = true;
+
+                chkCancelTask( entry -> attempt.task, actions );
+
+                if( entry -> driverConnection )
+                {
+                    auto driverTask = om::tryQI< tasks::Task >( entry -> driverConnection );
+
+                    if( driverTask )
+                    {
+                        chkCancelTask(
+                            om::ObjPtrCopyable< tasks::Task >( driverTask ),
+                            actions
+                            );
+                    }
+                }
+            }
+
+            /**
+             * @brief The pool lets go of one entry, which first means stopping what it started
+             *
+             * A CONNECTION THE POOL FORGETS IS ONE NOTHING ELSE WILL STOP. The task runs on the
+             * pool's own queue, the pool is the only thing which knows it is there, and dropping
+             * it leaves a live connection - socket, TLS session and timers - which nobody will
+             * close until the pool itself is disposed. So the cancel belongs HERE, at the single
+             * point where an entry is let go, and not in any one of the branches which retire it:
+             * a driver which went Draining or Closed, an establishment which expired, an attempt
+             * whose task ended, and a request task which reported the connection unusable all
+             * arrive here, and putting the rule in one of them would leave the same shape in the
+             * others. Two of those routes only became reachable in the L5 fix round - a refused
+             * submit now gives its slot back, so the entry reaches zero and is forgotten, and the
+             * h2 driver now publishes Draining for its identifier reserve.
+             *
+             * IT IS NOT A GRACEFUL CLOSE, and there is no path here by which it could be: a
+             * cancelled connection sends no GOAWAY, which is the same abruptness disposal has and
+             * documents. What it costs is a client GOAWAY (RFC 9113 6.8, a SHOULD) on a connection
+             * which by this point carries NO streams - the pool is the only thing which opens any
+             * and it holds none - and what it buys is that a connection the pool has given up on
+             * stops. A real driver which is Draining with nothing in flight is not on its way out
+             * either: the GOAWAY drain takes itself to Closed through chkFinishClose( ) when its
+             * last stream ends, so a driver still reading Draining here is one staying up - the
+             * identifier reserve is exactly that case. Cancelling a Closed one is harmless, since
+             * Closed is published only once there is nothing left to write.
+             *
+             * If a driver ever offers a public "say GOAWAY and close" - the design says none does,
+             * and disposal names the idle lifetime as the graceful path - this is the second place
+             * which should call it instead of cancelling
+             */
+
+            void forgetConnection(
+                SAA_in          const entry_ptr_t&                              entry,
+                SAA_inout       Actions&                                        actions
+                )
+            {
+                chkCancelEntry( entry, actions );
+
                 if( entry -> taskConnection )
                 {
                     m_byConnection.erase( entry -> taskConnection.get() );
@@ -907,20 +1207,12 @@ namespace bl
                     {
                         entry -> isReady = true;
 
-                        if( 0U == entry -> slotsInUse )
-                        {
-                            /*
-                             * The only moment at which the driver's count and the pool's agree,
-                             * so the only moment at which freeStreamSlots( ) IS the peer's limit
-                             */
+                        /*
+                         * ONE reading per examine, which is what bounds one examine's burst -
+                         * learnPeerLimit( ) says what can be concluded from it and what cannot
+                         */
 
-                            const auto slots = connection -> freeStreamSlots();
-
-                            if( slots )
-                            {
-                                entry -> peerLimit = slots;
-                            }
-                        }
+                        learnPeerLimit( entry, connection -> freeStreamSlots(), timeNow );
                     }
                     else if( ConnectionState::Draining == state || ConnectionState::Closed == state )
                     {
@@ -957,10 +1249,14 @@ namespace bl
 
                     failure = makeTimeoutException( entry -> key );
 
-                    if( entry -> attempt.task )
-                    {
-                        actions.cancels.push_back( entry -> attempt.task );
-                    }
+                    /*
+                     * HERE AND NOT ONLY AT forgetConnection( ), because an entry whose bound
+                     * expired while the request which rode the preface is still out is retired
+                     * now and forgotten only when that request comes back - and the bound's whole
+                     * promise is that the connection stops when it expires
+                     */
+
+                    chkCancelEntry( entry, actions );
 
                     BL_LOG(
                         Logging::debug(),
@@ -1175,7 +1471,7 @@ namespace bl
 
                     if( entry -> isRetired && 0U == entry -> slotsInUse )
                     {
-                        forgetConnection( entry );
+                        forgetConnection( entry, actions );
 
                         if( m_totalConnections )
                         {
@@ -1342,6 +1638,16 @@ namespace bl
                 if( actions.armMaintenance && ! m_isMaintenanceArmed )
                 {
                     m_isMaintenanceArmed = true;
+
+                    /*
+                     * ARMING FROM IDLE STARTS AT THE MINIMUM AGAIN. The interval is the backoff
+                     * of the tick which just stopped, up to the maximum, and a pool which has once
+                     * idled with something to watch would otherwise begin its NEXT establishment a
+                     * quarter of a second late - which is the first dispatch after Ready
+                     */
+
+                    m_maintenanceIntervalMs =
+                        ConnectionPoolPolicy::MIN_MAINTENANCE_INTERVAL_IN_MILLISECONDS;
                 }
                 else
                 {
@@ -1861,7 +2167,21 @@ namespace bl
 
                         ++m_stats.released.lvalue();
 
-                        if( RequestOutcome::ConnectionUnusable == outcome )
+                        if( RequestOutcome::Completed == outcome )
+                        {
+                            /*
+                             * A RESPONSE CAME BACK, SO THE PEER HAS SPOKEN. Its SETTINGS is the
+                             * first frame it sends ( RFC 9113 3.4 ) and a driver applies frames in
+                             * the order they arrive, so a fully received response cannot have been
+                             * delivered before the peer's SETTINGS were applied. From here on
+                             * freeStreamSlots( ) is the peer's number, whatever it reads - which
+                             * is the one proof available for a peer whose limit is exactly the
+                             * assumed one and which therefore never distinguishes itself
+                             */
+
+                            entry -> isPeerLimitKnown = true;
+                        }
+                        else if( RequestOutcome::ConnectionUnusable == outcome )
                         {
                             if( ! entry -> isRetired )
                             {
@@ -1941,6 +2261,21 @@ namespace bl
                     m_byConnection.find( connection.get() ) : m_byConnection.end();
 
                 return it == m_byConnection.end() ? 0U : it -> second -> slotsInUse.value();
+            }
+
+            /**
+             * @brief What the pool believes this connection can carry, and nothing about how it
+             * came to believe it - which is what a case should be asserting
+             */
+
+            std::size_t dispatchCapacity( SAA_in const om::ObjPtr< ClientConnection >& connection ) const NOEXCEPT
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                const auto it = connection ?
+                    m_byConnection.find( connection.get() ) : m_byConnection.end();
+
+                return it == m_byConnection.end() ? 0U : capacityOf( *it -> second );
             }
 
             auto policy() const NOEXCEPT -> const ConnectionPoolPolicy&
