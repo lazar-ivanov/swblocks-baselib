@@ -993,6 +993,19 @@ connection whose limit is unknown instead of assuming.
 below the last id finish. Servers commonly send two - first with `2^31 - 1`, then the real id - and
 both are handled.
 
+**What the pool's forget-cancel costs on this route.** When the last of those streams comes back the
+entry is retired with no slots out, so the pool forgets it and cancels its task - the invariant that
+a connection the pool forgets is one nothing else will stop. On *this* route the driver is already
+closing: the same strand handler which posted that last stream's `onClosed` called
+`closeGracefully()` on an empty table, so by the time the release reaches the pool the GOAWAY is
+queued and the drain deadline armed, and the cancel races that write. The task then ends as a cancel
+marked expected rather than as a success, and the peer sees the GOAWAY only if it had already left
+the socket buffer - which for a nine-byte frame it ordinarily has. That is classification and a
+SHOULD, not correctness, and it is the shape the drain deadline has for the same reason: both go
+through `requestCancelInternal()`. The connection the cancel is really for is the one which is
+`Draining` with nothing to drain - a session refused at birth - or a healthy HTTP/1.1 connection a
+request task reported `ConnectionUnusable`.
+
 **Coalescing (D21).** RFC 9113 section 9.1.1 allows reusing a connection for another host if the
 certificate covers it and the host resolves to the connection's address. The check would reuse
 `TlsPeerVerification::certificateMatchesPeerName` (`crypto/TlsPeerVerification.h:100`) against the

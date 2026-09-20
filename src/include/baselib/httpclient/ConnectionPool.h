@@ -1151,11 +1151,28 @@ namespace bl
              * documents. What it costs is a client GOAWAY (RFC 9113 6.8, a SHOULD) on a connection
              * which by this point carries NO streams - the pool is the only thing which opens any
              * and it holds none - and what it buys is that a connection the pool has given up on
-             * stops. A real driver which is Draining with nothing in flight is not on its way out
-             * either: the GOAWAY drain takes itself to Closed through chkFinishClose( ) when its
-             * last stream ends, so a driver still reading Draining here is one staying up - the
-             * identifier reserve is exactly that case. Cancelling a Closed one is harmless, since
-             * Closed is published only once there is nothing left to write.
+             * stops.
+             *
+             * ON THE Draining ROUTES IT USUALLY FINDS A CLOSE ALREADY IN PROGRESS AND CUTS IT
+             * SHORT. What brings an entry here is its last slot coming back, and the driver's
+             * onStreamClosedEvent( ) posts that stream's onClosed and then, in the SAME strand
+             * handler, calls closeGracefully( ) once its table is empty - so by the time the event
+             * has crossed the mailbox, been drained and reached releaseStream( ), the driver has
+             * queued its GOAWAY, armed its drain deadline and is on its way to Closed. The cancel
+             * races that write: the task ends as a cancel marked expected rather than as a
+             * success, and the GOAWAY reaches the peer only if it had already left the socket
+             * buffer, which for a nine byte frame it ordinarily has. That is classification and a
+             * SHOULD rather than correctness, and it is the shape the drain deadline already has,
+             * since it takes the same requestCancelInternal( ) path.
+             *
+             * THE DRIVER WHICH REALLY DOES STAY UP IS NARROWER than "Draining with nothing in
+             * flight": Draining published from the REFUSED branch of applySubmit( ) with an empty
+             * stream table - a session draining from birth - and a healthy connection which a
+             * request task reported ConnectionUnusable, which for an h1 driver refusing a
+             * BodySource request is a connection with nothing wrong with it. Those are the ones
+             * which would run until the pool itself was disposed, and they are what this cancel is
+             * for. Cancelling a Closed one is harmless, since Closed is published only once there
+             * is nothing left to write.
              *
              * If a driver ever offers a public "say GOAWAY and close" - the design says none does,
              * and disposal names the idle lifetime as the graceful path - this is the second place

@@ -1483,10 +1483,12 @@ UTF_AUTO_TEST_CASE( H2Pool_GoAwayDrainingTests )
     UTF_REQUIRE_EQUAL( pool -> connectionCount(), 1U );
 
     /*
-     * And forgetting it STOPS it. A driver which is still Draining with nothing in flight is not
-     * on its way out - the GOAWAY drain takes itself to Closed when its last stream ends, so one
-     * still reading Draining here is one staying up, and the pool is the only thing which knows
-     * it is there
+     * And forgetting it STOPS it - which is a certainty against this stub and a race against a
+     * real driver. The stub publishes Draining and stays there, which is the narrow case the pool
+     * header names as the one the cancel is really for; a real driver on this route took its own
+     * last stream into closeGracefully( ) in the same strand handler which posted that stream's
+     * onClosed, so what the cancel usually cuts short there is a close already under way. What
+     * this case pins is the pool's half: the entry is forgotten and its task is cancelled
      */
 
     UTF_REQUIRE( factory -> controlAt( 0U ) -> waitForCancel() );
