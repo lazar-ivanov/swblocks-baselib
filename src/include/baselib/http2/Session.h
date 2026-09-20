@@ -109,6 +109,22 @@ namespace bl
                                 Globals::REMEMBERED_CLOSED_STREAM_TIMEOUT_IN_SECONDS_DEFAULT;
 
             std::uint32_t   settingsTimeoutInSeconds = 10U;
+
+            /**
+             * @brief How many stream identifiers are kept in hand before the connection declares
+             * itself draining - StreamRegistry::setDrainingReserve( )
+             *
+             * Zero, the default, means "once the identifier space is spent", which is what the
+             * registry does when nobody sets it. The margin behind design 4.3's "approaching
+             * 2^31-1" is the POOL's to choose, because how much room is needed is a function of
+             * what the pool has already committed to a connection - see
+             * httpclient::ConnectionPoolPolicy::DEFAULT_DRAINING_RESERVE, which is where it is
+             * chosen and argued. This field is how that choice reaches the registry, since the
+             * registry is the session's and a pool never touches one: the pool configures the
+             * driver, the driver configures the session, and the session configures the registry
+             */
+
+            std::uint32_t   drainingReserve = 0U;
         };
 
         /**
@@ -514,6 +530,8 @@ namespace bl
                 policy.crumbleCookies = profile.cookieCrumbling;
 
                 m_encoder.setPolicy( policy );
+
+                m_registry.setDrainingReserve( limits.drainingReserve );
 
                 if( profile.windowUpdateThreshold != 0U )
                 {

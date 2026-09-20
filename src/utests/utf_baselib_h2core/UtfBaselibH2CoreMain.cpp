@@ -55,3 +55,4 @@
 #include "TestHpack.h"
 #include "TestSession.h"
 #include "TestHttp2TestPeer.h"
+#include "TestDrainingReserve.h"
