@@ -1,0 +1,1832 @@
+/*
+ * This file is part of the swblocks-baselib library.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#ifndef __UTEST_TESTCLIENTSESSION_H_
+#define __UTEST_TESTCLIENTSESSION_H_
+
+#include <baselib/httpclient/ClientSession.h>
+
+#include <baselib/tasks/TcpStrandedStreams.h>
+
+#include <utests/baselib/Http2DriverTestUtils.h>
+#include <utests/baselib/HttpServerHelpers.h>
+#include <utests/baselib/Utf.h>
+
+/************************************************************************
+ * S6.1 - the client session (design 5.6 and 5.8)
+ *
+ * THE FIRST CASE IN THIS FILE IS THE MOST VALUABLE TEST IN THE FEATURE, and that is not a claim
+ * about its assertions. Until it ran, the connection pool, the request task and a real driver had
+ * never been composed in anything: S5.1 ran against a probe pool and a probe connection, S5.2
+ * against stub connections, and S4.2's driver against a recording sink. Every one of the five
+ * defects the L5 review found lived in that gap. So the order of work in this slice was the
+ * end-to-end GET first and the session's surface afterwards
+ *
+ * WHAT IS REAL IN EVERY CASE BELOW: ClientSessionT over the stranded cleartext stream policy, the
+ * ConnectionPoolImpl it builds, the Http2ConnectionTaskT its factory creates, the
+ * HttpClientRequestTaskT its request task creates, and the in-process peer of design 8.2. Nothing
+ * here stubs a layer of the client
+ */
+
+namespace utest
+{
+    namespace session
+    {
+        typedef bl::tasks::TcpSocketAsyncStrandedBase                           plain_stream_t;
+
+        typedef bl::httpclient::ClientSessionImplT< plain_stream_t >            PlainSessionImpl;
+
+        /**
+         * @brief The peer of design 8.2, cleartext, on an ephemeral port
+         */
+
+        inline auto makePeer() -> bl::om::ObjPtr< h2peer::Http2TestServer >
+        {
+            using namespace bl::tasks;
+
+            const auto controlToken =
+                SimpleTaskControlTokenImpl::createInstance< TaskControlTokenRW >();
+
+            return h2peer::Http2TestServer::createInstance<>( controlToken );
+        }
+
+        /**
+         * @brief A session which speaks HTTP/2 over cleartext by prior knowledge (RFC 9113 3.3)
+         *
+         * Nothing negotiates a cleartext connection, so the protocol is the configuration's - the
+         * same reason h2driver::cleartextHttp2Config( ) exists for the driver's own cases
+         */
+
+        inline auto makeHttp2SessionConfig() -> bl::httpclient::ClientSessionConfig
+        {
+            bl::httpclient::ClientSessionConfig config;
+
+            config.connectionConfig = h2driver::cleartextHttp2Config();
+
+            return config;
+        }
+
+        inline auto makeSession(
+            SAA_in_opt      bl::httpclient::ClientSessionConfig                 config =
+                                makeHttp2SessionConfig()
+            )
+            -> bl::om::ObjPtr< PlainSessionImpl >
+        {
+            return PlainSessionImpl::createInstance( BL_PARAM_FWD( config ) );
+        }
+
+        inline auto urlFor(
+            SAA_in          const bl::os::port_t                                port,
+            SAA_in_opt      const std::string&                                  target = "/"
+            )
+            -> std::string
+        {
+            return
+                "http://127.0.0.1:" +
+                bl::utils::lexical_cast< std::string >( port ) +
+                target;
+        }
+
+        inline auto makeRequest(
+            SAA_in          const bl::os::port_t                                port,
+            SAA_in_opt      const std::string&                                  target = "/",
+            SAA_in_opt      const std::string&                                  method = "GET"
+            )
+            -> bl::httpclient::ClientRequest
+        {
+            bl::httpclient::ClientRequest request;
+
+            request.method( bl::cpp::copy( method ) );
+            request.url( bl::net::Uri::parse( urlFor( port, target ) ) );
+
+            return request;
+        }
+
+        /**
+         * @brief Runs one session task to completion and hands the case the task back
+         *
+         * The queue keeps the task, so a case can look at how it ended; wait( ) is on the task
+         * itself, which for a redirect chain is the whole chain - a continuation is the same queue
+         * entry
+         */
+
+        inline void runSessionTask( SAA_in const bl::om::ObjPtr< bl::tasks::Task >& task )
+        {
+            using namespace bl;
+            using namespace bl::tasks;
+
+            scheduleAndExecuteInParallel(
+                [ & ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+                {
+                    eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+                    eq -> push_back( task );
+
+                    eq -> wait( task );
+                }
+                );
+        }
+
+        inline auto bodyOf( SAA_in const bl::httpclient::ClientResponse& response ) -> std::string
+        {
+            const auto& block = response.body();
+
+            if( ! block )
+            {
+                return std::string();
+            }
+
+            return std::string(
+                block -> begin() + block -> offset1(),
+                block -> begin() + block -> size()
+                );
+        }
+
+        /**
+         * @brief The response of a request which was expected to succeed - and NOT an assertion
+         * inside another assertion's argument
+         *
+         * Utf.h's own note says why that matters: UTF_FAIL( msg ) takes the globals lock and then
+         * evaluates msg, and bl::os::mutex is not recursive
+         */
+
+        inline void requireTaskSucceeded( SAA_in const bl::om::ObjPtr< bl::tasks::Task >& task )
+        {
+            if( ! task -> isFailed() )
+            {
+                return;
+            }
+
+            UTF_FAIL(
+                "the session request task failed: " +
+                bl::eh::diagnostic_information( task -> exception() )
+                );
+        }
+
+        /**
+         * @brief Makes one request through the session, runs it to completion and requires it
+         * succeeded - the shape most cases below want
+         */
+
+        inline auto runRequest(
+            SAA_in          const bl::om::ObjPtr< PlainSessionImpl >&           session,
+            SAA_in          const bl::httpclient::ClientRequest&                request,
+            SAA_in_opt      const bl::om::ObjPtrCopyable< bl::httpclient::BodySink >& bodySink =
+                                bl::om::ObjPtrCopyable< bl::httpclient::BodySink >()
+            )
+            -> bl::om::ObjPtr< bl::httpclient::ClientRequestTask >
+        {
+            auto requestTask = session -> createRequestTask( request, bodySink );
+
+            const auto task = bl::om::qi< bl::tasks::Task >( requestTask );
+
+            runSessionTask( task );
+
+            requireTaskSucceeded( task );
+
+            return requestTask;
+        }
+
+        inline auto statsOf( SAA_in const bl::om::ObjPtr< PlainSessionImpl >& session )
+            -> bl::httpclient::ConnectionPoolImpl::Stats
+        {
+            return bl::om::qi< bl::httpclient::ConnectionPoolImpl >( session -> pool() ) -> stats();
+        }
+
+        /**
+         * @brief A peer which answers every request with its own path as the body
+         */
+
+        inline auto echoPathResponder() -> h2peer::responder_t
+        {
+            return []( SAA_in const h2peer::Http2TestRequest& request ) -> h2peer::Http2ResponseScript
+            {
+                return h2peer::Http2ResponseScript()
+                    .headers( 200U )
+                    .data( request.path )
+                    .endStream();
+            };
+        }
+
+        /**
+         * @brief What the peer received, as "name: value" lines in the order they arrived
+         *
+         * The pseudo-headers are left out because they are not what the session builds - the
+         * driver derives them from the method and the URI (RFC 9113 8.3), and http::HeaderList
+         * cannot even represent them
+         */
+
+        inline auto fieldsOf( SAA_in const h2peer::Http2TestRequest& request ) -> std::string
+        {
+            std::string result;
+
+            for( std::size_t i = 0U; i < request.fields.size(); ++i )
+            {
+                const auto& name = request.fields[ i ].name();
+
+                if( ! name.empty() && ':' == name[ 0 ] )
+                {
+                    continue;
+                }
+
+                result += name;
+                result += ": ";
+                result += request.fields[ i ].value();
+                result += "\n";
+            }
+
+            return result;
+        }
+
+        /**
+         * @brief A peer which answers every request with the request's own header fields
+         */
+
+        inline auto echoHeadersResponder() -> h2peer::responder_t
+        {
+            return []( SAA_in const h2peer::Http2TestRequest& request ) -> h2peer::Http2ResponseScript
+            {
+                return h2peer::Http2ResponseScript()
+                    .headers( 200U )
+                    .data( fieldsOf( request ) )
+                    .endStream();
+            };
+        }
+
+        inline bool hasLine(
+            SAA_in          const std::string&                                  text,
+            SAA_in          const std::string&                                  line
+            )
+        {
+            return std::string::npos != ( "\n" + text ).find( "\n" + line + "\n" );
+        }
+
+        inline std::size_t countLinesStartingWith(
+            SAA_in          const std::string&                                  text,
+            SAA_in          const std::string&                                  prefix
+            )
+        {
+            std::size_t result = 0U;
+            std::size_t pos = 0U;
+
+            const auto padded = "\n" + text;
+            const auto needle = "\n" + prefix;
+
+            for( ; ; )
+            {
+                pos = padded.find( needle, pos );
+
+                if( std::string::npos == pos )
+                {
+                    break;
+                }
+
+                ++result;
+                ++pos;
+            }
+
+            return result;
+        }
+
+        /**
+         * @brief A content decoder for the test-only coding "x-utest", which turns '~' into a space
+         *
+         * NOT A REAL COMPRESSOR, and it does not pretend to be one: no decoder ships with this
+         * library (D9) and these cases are about the SEAM - that the REGISTERED codings decide
+         * what accept-encoding says, and that a body in a registered coding is decoded before the
+         * caller sees it
+         */
+
+        template
+        <
+            typename E = void
+        >
+        class UtestDecoderT : public bl::httpclient::ContentDecoder
+        {
+            BL_DECLARE_OBJECT_IMPL_ONEIFACE( UtestDecoderT, bl::httpclient::ContentDecoder )
+            BL_CTR_DEFAULT( UtestDecoderT, protected )
+
+        public:
+
+            static const std::string& coding() NOEXCEPT
+            {
+                return g_coding;
+            }
+
+            virtual const std::string& contentCoding() const NOEXCEPT OVERRIDE
+            {
+                return g_coding;
+            }
+
+            virtual void write(
+                SAA_in          const bl::om::ObjPtr< bl::data::DataBlock >&     input,
+                SAA_in          const bl::httpclient::decoder_output_callback_t& output
+                )
+                OVERRIDE
+            {
+                std::string decoded(
+                    input -> begin() + input -> offset1(),
+                    input -> begin() + input -> size()
+                    );
+
+                for( std::size_t i = 0U; i < decoded.size(); ++i )
+                {
+                    if( '~' == decoded[ i ] )
+                    {
+                        decoded[ i ] = ' ';
+                    }
+                }
+
+                output( h2driver::blockOf( decoded ) );
+            }
+
+            virtual void finish(
+                SAA_in          const bl::httpclient::decoder_output_callback_t& output
+                )
+                OVERRIDE
+            {
+                BL_UNUSED( output );
+            }
+
+        private:
+
+            static const std::string                                            g_coding;
+        };
+
+        BL_DEFINE_STATIC_CONST_STRING( UtestDecoderT, g_coding ) = "x-utest";
+
+        typedef bl::om::ObjectImpl< UtestDecoderT<> >                           UtestDecoder;
+
+        /**
+         * @brief A header profile with a different default set per request kind
+         */
+
+        inline auto makeKindProfile() -> bl::httpclient::HeaderProfile
+        {
+            using namespace bl::httpclient;
+
+            HeaderProfile profile;
+
+            HeaderProfileForKind fetch;
+
+            {
+                ProfileHeader header;
+
+                header.name = "x-kind";
+                header.value = "fetch";
+                fetch.defaultHeaders.push_back( header );
+
+                header.name = "accept";
+                header.value = "*/*";
+                fetch.defaultHeaders.push_back( header );
+
+                header.name = "accept-encoding";
+                header.value = "<computed>";
+                fetch.defaultHeaders.push_back( header );
+            }
+
+            HeaderProfileForKind navigation;
+
+            {
+                ProfileHeader header;
+
+                header.name = "x-kind";
+                header.value = "navigation";
+                navigation.defaultHeaders.push_back( header );
+
+                header.name = "accept";
+                header.value = "text/html";
+                navigation.defaultHeaders.push_back( header );
+            }
+
+            profile.byRequestKind[ HttpRequestKind::Fetch ] = fetch;
+            profile.byRequestKind[ HttpRequestKind::Navigation ] = navigation;
+
+            profile.acceptEncoding.push_back( "gzip" );
+            profile.acceptEncoding.push_back( UtestDecoderT<>::coding() );
+
+            return profile;
+        }
+
+    } // session
+
+} // utest
+
+/**
+ * @brief A GET over HTTP/2 through the session - the pool, the request task and a real driver,
+ * composed for the first time
+ *
+ * WHAT THIS CASE IS FOR, beyond the two assertions on the body. Each of the following is a
+ * property no module below could observe, because each of them needs two real components at once:
+ *
+ *   - the session's connection factory produces a connection the pool can use, and the pool's
+ *     Connecting placeholder becomes a Ready connection without the establishment bound firing;
+ *   - the pool dispatches the first request as the preface rider, so one request rides the
+ *     opening write - the pool's UNCONFIRMED_MAX_CONCURRENT_STREAMS path against a driver which
+ *     really does publish Ready before the peer's SETTINGS have arrived;
+ *   - the request task's acquire( ) is answered with a real connection, its submit( ) reaches a
+ *     real driver's mailbox, and the stream events come back over a real strand;
+ *   - and the slot is released once, so the pool ends with nothing outstanding
+ */
+
+UTF_AUTO_TEST_CASE( ClientSession_GetOverHttp2Tests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest;
+    using namespace utest::session;
+
+    const auto peer = makePeer();
+
+    peer -> setResponder(
+        []( SAA_in const h2peer::Http2TestRequest& request ) -> h2peer::Http2ResponseScript
+        {
+            BL_CHK(
+                false,
+                "GET" == request.method && "/hello" == request.path,
+                BL_MSG()
+                    << "The peer was asked for an unexpected request: "
+                    << request.method
+                    << " "
+                    << request.path
+                );
+
+            http2::HpackFieldList fields;
+
+            fields.push_back(
+                http2::HpackField( std::string( "content-type" ), std::string( "text/plain" ) )
+                );
+
+            return h2peer::Http2ResponseScript()
+                .headers( 200U, fields )
+                .data( "hello world" )
+                .endStream();
+        }
+        );
+
+    h2driver::withPeer(
+        peer,
+        [ & ]( SAA_in const unsigned short port ) -> void
+        {
+            const auto session = makeSession();
+
+            BL_SCOPE_EXIT_WARN_ON_FAILURE(
+                {
+                    session -> dispose();
+                },
+                "utest::session::ClientSession_GetOverHttp2Tests"
+                );
+
+            const auto requestTask = runRequest( session, makeRequest( port, "/hello" ) );
+
+            const auto& response = requestTask -> response();
+
+            UTF_REQUIRE_EQUAL( response.status(), 200U );
+            UTF_REQUIRE_EQUAL( bodyOf( response ), std::string( "hello world" ) );
+            UTF_REQUIRE_EQUAL(
+                response.headers().get( "content-type" ),
+                std::string( "text/plain" )
+                );
+
+            UTF_REQUIRE( httpclient::HttpProtocol::Http2 == response.protocol() );
+
+            UTF_REQUIRE_EQUAL( requestTask -> redirectHops(), 0U );
+
+            /*
+             * The pool's own bookkeeping, which is the half of this case no driver test can see:
+             * one dispatch, one release, and nothing outstanding on the connection afterwards
+             */
+
+            const auto stats = statsOf( session );
+
+            UTF_REQUIRE_EQUAL( stats.dispatched.value(), 1U );
+            UTF_REQUIRE_EQUAL( stats.released.value(), 1U );
+            UTF_REQUIRE_EQUAL( stats.connectionsCreated.value(), 1U );
+            UTF_REQUIRE_EQUAL( stats.failures.value(), 0U );
+
+            h2driver::requireStreamClosedAtPeer( peer -> recorder(), 1U );
+
+            UTF_REQUIRE( peer -> recorder().failure().empty() );
+        }
+        );
+}
+
+/**
+ * @brief Two requests, one connection - the pool learning the peer's limit from a real SETTINGS
+ *
+ * THE CONTROL FOR EVERY "A SECOND CONNECTION WAS OPENED" CASE BELOW. The pool dispatches the first
+ * request as the preface rider, against UNCONFIRMED_MAX_CONCURRENT_STREAMS of one, and may
+ * dispatch the second only once it has learnt the peer's real limit - which against a stub can
+ * only be asserted, and here is the peer's own SETTINGS arriving over a socket
+ */
+
+UTF_AUTO_TEST_CASE( ClientSession_ConnectionIsReusedAcrossRequestsTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest;
+    using namespace utest::session;
+
+    const auto peer = makePeer();
+
+    peer -> setResponder( echoPathResponder() );
+
+    h2driver::withPeer(
+        peer,
+        [ & ]( SAA_in const unsigned short port ) -> void
+        {
+            const auto session = makeSession();
+
+            BL_SCOPE_EXIT_WARN_ON_FAILURE(
+                {
+                    session -> dispose();
+                },
+                "utest::session::ClientSession_ConnectionIsReusedAcrossRequestsTests"
+                );
+
+            const auto first = runRequest( session, makeRequest( port, "/one" ) );
+            const auto second = runRequest( session, makeRequest( port, "/two" ) );
+
+            UTF_REQUIRE_EQUAL( bodyOf( first -> response() ), std::string( "/one" ) );
+            UTF_REQUIRE_EQUAL( bodyOf( second -> response() ), std::string( "/two" ) );
+
+            const auto stats = statsOf( session );
+
+            UTF_REQUIRE_EQUAL( stats.connectionsCreated.value(), 1U );
+            UTF_REQUIRE_EQUAL( stats.dispatched.value(), 2U );
+            UTF_REQUIRE_EQUAL( stats.released.value(), 2U );
+
+            /*
+             * Both streams were opened on the SAME connection, which is what the peer sees as two
+             * stream identifiers on one session - 1 and 3 (RFC 9113 5.1.1)
+             */
+
+            h2driver::requireStreamClosedAtPeer( peer -> recorder(), 3U );
+
+            UTF_REQUIRE( peer -> recorder().failure().empty() );
+        }
+        );
+}
+
+/**
+ * @brief A POST with a buffered body, and the peer measures what arrived
+ */
+
+UTF_AUTO_TEST_CASE( ClientSession_PostWithBodyOverHttp2Tests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest;
+    using namespace utest::session;
+
+    const std::string upload( "{\"item\":\"value\"}" );
+
+    const auto peer = makePeer();
+
+    peer -> setResponder(
+        []( SAA_in const h2peer::Http2TestRequest& request ) -> h2peer::Http2ResponseScript
+        {
+            BL_CHK(
+                false,
+                "POST" == request.method && request.hasBody,
+                BL_MSG()
+                    << "The peer expected a POST carrying a body and got "
+                    << request.method
+                );
+
+            return h2peer::Http2ResponseScript()
+                .headers( 201U )
+                .data( "created" )
+                .endStream();
+        }
+        );
+
+    h2driver::withPeer(
+        peer,
+        [ & ]( SAA_in const unsigned short port ) -> void
+        {
+            const auto session = makeSession();
+
+            BL_SCOPE_EXIT_WARN_ON_FAILURE(
+                {
+                    session -> dispose();
+                },
+                "utest::session::ClientSession_PostWithBodyOverHttp2Tests"
+                );
+
+            auto request = makeRequest( port, "/items", "POST" );
+
+            request.headers().append(
+                std::string( "content-type" ),
+                std::string( "application/json" )
+                );
+
+            request.body(
+                om::ObjPtrCopyable< data::DataBlock >( h2driver::blockOf( upload ) )
+                );
+
+            const auto task = runRequest( session, request );
+
+            UTF_REQUIRE_EQUAL( task -> response().status(), 201U );
+            UTF_REQUIRE_EQUAL( bodyOf( task -> response() ), std::string( "created" ) );
+
+            h2driver::requireStreamClosedAtPeer( peer -> recorder(), 1U );
+
+            UTF_REQUIRE_EQUAL( peer -> recorder().bodyOf( 1U ), upload );
+
+            UTF_REQUIRE( peer -> recorder().failure().empty() );
+        }
+        );
+}
+
+/**
+ * @brief A peer which says GOAWAY after one stream - the drained connection is retired, and the
+ * next request opens a new one
+ *
+ * THIS IS THE CASE THE L5 SECOND PASS ASKED FOR. When the last stream of a draining connection
+ * ends, the driver queues its GOAWAY in the SAME strand handler that posts the final onClosed, so
+ * the pool's forget-cancel races that write. Against a stub it is a certainty in one direction;
+ * this is the first time it is run as the race it is. What must hold either way is the pool's
+ * verdict - the connection is gone and the next request does not go to it
+ */
+
+UTF_AUTO_TEST_CASE( ClientSession_GoAwayRetiresTheConnectionTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest;
+    using namespace utest::session;
+
+    const auto peer = makePeer();
+
+    peer -> setResponder( echoPathResponder() );
+    peer -> setGoAwayAfterStreams( 1U );
+
+    h2driver::withPeer(
+        peer,
+        [ & ]( SAA_in const unsigned short port ) -> void
+        {
+            const auto session = makeSession();
+
+            BL_SCOPE_EXIT_WARN_ON_FAILURE(
+                {
+                    session -> dispose();
+                },
+                "utest::session::ClientSession_GoAwayRetiresTheConnectionTests"
+                );
+
+            const auto first = runRequest( session, makeRequest( port, "/one" ) );
+
+            UTF_REQUIRE_EQUAL( bodyOf( first -> response() ), std::string( "/one" ) );
+
+            const auto second = runRequest( session, makeRequest( port, "/two" ) );
+
+            UTF_REQUIRE_EQUAL( bodyOf( second -> response() ), std::string( "/two" ) );
+
+            const auto stats = statsOf( session );
+
+            UTF_REQUIRE_EQUAL( stats.connectionsCreated.value(), 2U );
+            UTF_REQUIRE_EQUAL( stats.dispatched.value(), 2U );
+            UTF_REQUIRE_EQUAL( stats.released.value(), 2U );
+
+            /*
+             * AT LEAST ONE, and not exactly one, for a reason the first run of this case showed:
+             * setGoAwayAfterStreams( ) is a property of the PEER and applies to every connection
+             * it accepts, so the second connection drains too. Whether its retirement has been
+             * observed by the time the second response completes depends on the maintenance tick,
+             * so the count here is 1 or 2 and an equality would be a coin toss. What IS
+             * deterministic is connectionsCreated: the second request could not have used the
+             * first connection
+             */
+
+            UTF_REQUIRE( stats.connectionsRetired.value() >= 1U );
+
+            UTF_REQUIRE( peer -> recorder().failure().empty() );
+        }
+        );
+}
+
+/**
+ * @brief ConnectionPoolPolicy::drainingReserve reaches the driver - obligation 1a
+ *
+ * A KNOB WHICH REACHES NOTHING IS THE SAME DEFECT ONE LAYER UP, and the reserve was exactly that
+ * until the session's connection factory existed: ConnectionPoolPolicy::drainingReserve was read
+ * by nothing at all. The assertion is therefore a BEHAVIOUR and not a configuration read-back -
+ * with a reserve of "everything but one" the connection may open exactly one stream, publishes
+ * Draining, is retired, and the second request has to open a second connection
+ *
+ * ClientSession_ConnectionIsReusedAcrossRequestsTests is the control: the same two requests under
+ * the default reserve share one connection
+ */
+
+UTF_AUTO_TEST_CASE( ClientSession_DrainingReserveReachesTheDriverTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest;
+    using namespace utest::session;
+
+    const auto peer = makePeer();
+
+    peer -> setResponder( echoPathResponder() );
+
+    h2driver::withPeer(
+        peer,
+        [ & ]( SAA_in const unsigned short port ) -> void
+        {
+            auto config = makeHttp2SessionConfig();
+
+            /*
+             * A registry starts with ( MAX_STREAM_ID - 1 ) / 2 + 1 identifiers in hand, so a
+             * reserve of ( MAX_STREAM_ID - 1 ) / 2 leaves exactly one above the margin
+             */
+
+            config.poolPolicy.drainingReserve = ( http2::Globals::MAX_STREAM_ID - 1U ) / 2U;
+
+            const auto session = makeSession( std::move( config ) );
+
+            BL_SCOPE_EXIT_WARN_ON_FAILURE(
+                {
+                    session -> dispose();
+                },
+                "utest::session::ClientSession_DrainingReserveReachesTheDriverTests"
+                );
+
+            const auto first = runRequest( session, makeRequest( port, "/one" ) );
+            const auto second = runRequest( session, makeRequest( port, "/two" ) );
+
+            UTF_REQUIRE_EQUAL( bodyOf( first -> response() ), std::string( "/one" ) );
+            UTF_REQUIRE_EQUAL( bodyOf( second -> response() ), std::string( "/two" ) );
+
+            const auto stats = statsOf( session );
+
+            UTF_REQUIRE_EQUAL( stats.connectionsCreated.value(), 2U );
+
+            /*
+             * The reserve applies to every connection the SESSION opens, so the second one is
+             * draining too - see the note in the GOAWAY case above for why this is not an equality
+             */
+
+            UTF_REQUIRE( stats.connectionsRetired.value() >= 1U );
+
+            UTF_REQUIRE( peer -> recorder().failure().empty() );
+        }
+        );
+}
+
+/**
+ * @brief ConnectionPoolPolicy::idleTimeout reaches the driver - obligation 1b
+ *
+ * The other knob which reached nothing, and its owner is the same factory. Design 5.7 names the
+ * POOL as the owner of the connection idle lifetime and the DRIVER as what enforces it, so the
+ * proof is that an idle connection closes ITSELF: nothing in this case cancels it, and the peer
+ * records the client closing the connection
+ */
+
+UTF_AUTO_TEST_CASE( ClientSession_IdleTimeoutReachesTheDriverTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest;
+    using namespace utest::session;
+
+    const auto peer = makePeer();
+
+    peer -> setResponder( echoPathResponder() );
+
+    h2driver::withPeer(
+        peer,
+        [ & ]( SAA_in const unsigned short port ) -> void
+        {
+            auto config = makeHttp2SessionConfig();
+
+            config.poolPolicy.idleTimeout = time::milliseconds( 300 );
+
+            const auto session = makeSession( std::move( config ) );
+
+            BL_SCOPE_EXIT_WARN_ON_FAILURE(
+                {
+                    session -> dispose();
+                },
+                "utest::session::ClientSession_IdleTimeoutReachesTheDriverTests"
+                );
+
+            const auto task = runRequest( session, makeRequest( port, "/one" ) );
+
+            UTF_REQUIRE_EQUAL( bodyOf( task -> response() ), std::string( "/one" ) );
+
+            /*
+             * A rendezvous on the record and NOT a sleep: requireRecorded( ) waits on the peer's
+             * own condition variable for the close it is about
+             */
+
+            h2driver::requireRecorded(
+                peer -> recorder(),
+                std::string( "the client closed the connection" )
+                );
+
+            UTF_REQUIRE( peer -> recorder().failure().empty() );
+        }
+        );
+}
+
+/**
+ * @brief The BodySource rule - obligation 2
+ *
+ * THE HTTP/1.1 DRIVER REFUSES EVERY REQUEST CARRYING A BodySource, and until this slice the
+ * request was still dispatched there: it burned an attempt against maxRetriesPerRequest and could
+ * land on another HTTP/1.1 connection next time. The session is the only layer which knows both
+ * the request and what a connection for a key will speak, so the rule is in two halves and both
+ * are here
+ */
+
+UTF_AUTO_TEST_CASE( ClientSession_BodySourceIsNeverCarriedByHttp11Tests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest;
+    using namespace utest::session;
+
+    /*
+     * HALF ONE - a session whose transport can never produce an HTTP/2 connection refuses such a
+     * request outright, before an attempt is spent. A cleartext session speaks what its
+     * configuration says and nothing negotiates it, so this is decidable at the moment the
+     * request is made
+     */
+
+    {
+        bl::httpclient::ClientSessionConfig config;
+
+        UTF_REQUIRE(
+            httpclient::HttpProtocol::Http11 == config.connectionConfig.cleartextProtocol.value()
+            );
+
+        const auto session = makeSession( std::move( config ) );
+
+        BL_SCOPE_EXIT_WARN_ON_FAILURE(
+            {
+                session -> dispose();
+            },
+            "utest::session::ClientSession_BodySourceIsNeverCarriedByHttp11Tests"
+            );
+
+        UTF_REQUIRE( ! session -> canCarryBodySource() );
+
+        auto request = makeRequest( 8080U, "/upload", "PUT" );
+
+        request.bodySource(
+            om::ObjPtrCopyable< httpclient::BodySource >(
+                om::qi< httpclient::BodySource >( h2driver::StubBodySource::createInstance() )
+                )
+            );
+
+        UTF_REQUIRE_THROW( session -> createRequestTask( request ), NotSupportedException );
+
+        /*
+         * The same session takes the same request without the source
+         */
+
+        request.body( om::ObjPtrCopyable< data::DataBlock >( h2driver::blockOf( "payload" ) ) );
+
+        UTF_REQUIRE( session -> createRequestTask( request ) );
+    }
+
+    /*
+     * HALF TWO - a session whose transport NEGOTIATES routes such a request to a key of its own,
+     * whose connections do not offer http/1.1 at all. The decision and the narrowing are pinned
+     * here as what they are: two pure functions the connection factory joins
+     */
+
+    {
+        httpclient::ConnectionKey templateKey;
+
+        templateKey.http2ProfileId = "chrome";
+
+        auto plain = makeRequest( 8080U, "/upload", "PUT" );
+
+        auto streaming = plain;
+
+        streaming.bodySource(
+            om::ObjPtrCopyable< httpclient::BodySource >(
+                om::qi< httpclient::BodySource >( h2driver::StubBodySource::createInstance() )
+                )
+            );
+
+        const auto plainKey = httpclient::SessionHeaders::keyFor( plain, templateKey, true );
+        const auto streamingKey = httpclient::SessionHeaders::keyFor( streaming, templateKey, true );
+
+        UTF_REQUIRE( ! httpclient::SessionHeaders::isH2OnlyKey( plainKey ) );
+        UTF_REQUIRE( httpclient::SessionHeaders::isH2OnlyKey( streamingKey ) );
+
+        UTF_REQUIRE( plainKey != streamingKey );
+        UTF_REQUIRE_EQUAL( plainKey.http2ProfileId, std::string( "chrome" ) );
+
+        /*
+         * And a session which cannot produce HTTP/1.1 at all does not split the key, because the
+         * routing would buy nothing and a second connection is not free
+         */
+
+        UTF_REQUIRE(
+            ! httpclient::SessionHeaders::isH2OnlyKey(
+                httpclient::SessionHeaders::keyFor( streaming, templateKey, false )
+                )
+            );
+
+        /*
+         * What the factory does with such a key: a peer may select only from what it was offered
+         * (RFC 7301 3.1), so an offer of "h2" alone settles the protocol before a byte is spoken
+         */
+
+        tasks::ClientConnectionConfig config;
+
+        UTF_REQUIRE_EQUAL( config.alpnOffer.size(), 2U );
+
+        PlainSessionImpl::narrowToHttp2( config );
+
+        UTF_REQUIRE_EQUAL( config.alpnOffer.size(), 1U );
+        UTF_REQUIRE_EQUAL( config.alpnOffer[ 0 ], std::string( "h2" ) );
+        UTF_REQUIRE(
+            httpclient::HttpProtocol::Http2 == config.cleartextProtocol.value()
+            );
+    }
+}
+
+/**
+ * @brief One session speaks one scheme, and says so rather than connecting cleartext to a TLS port
+ */
+
+UTF_AUTO_TEST_CASE( ClientSession_SpeaksOneSchemeTests )
+{
+    using namespace bl;
+    using namespace utest;
+    using namespace utest::session;
+
+    const auto session = makeSession();
+
+    BL_SCOPE_EXIT_WARN_ON_FAILURE(
+        {
+            session -> dispose();
+        },
+        "utest::session::ClientSession_SpeaksOneSchemeTests"
+        );
+
+    UTF_REQUIRE_EQUAL( session -> transportScheme(), std::string( "http" ) );
+
+    auto request = makeRequest( 8080U );
+
+    request.url( net::Uri::parse( "https://example.com/resource" ) );
+
+    UTF_REQUIRE_THROW( session -> createRequestTask( request ), NotSupportedException );
+
+    /*
+     * And a relative reference has no host, so it has no key either - the refusal
+     * ConnectionKey::fromUri( ) exists for
+     */
+
+    request.url( net::Uri::parse( "/resource" ) );
+
+    UTF_REQUIRE_THROW( session -> createRequestTask( request ), ArgumentException );
+}
+
+/**
+ * @brief A same-origin redirect, followed - and the second hop is a second request task
+ *
+ * The chain is a WrapperTaskBase continuation, so what the caller scheduled is one task and what
+ * ran is two HttpClientRequestTaskT of design 5.3 - which is what keeps that class one request
+ * over one connection
+ */
+
+UTF_AUTO_TEST_CASE( ClientSession_RedirectIsFollowedWhenEnabledTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest;
+    using namespace utest::session;
+
+    const auto peer = makePeer();
+
+    peer -> setResponder(
+        []( SAA_in const h2peer::Http2TestRequest& request ) -> h2peer::Http2ResponseScript
+        {
+            if( "/start" == request.path )
+            {
+                http2::HpackFieldList fields;
+
+                fields.push_back(
+                    http2::HpackField( std::string( "location" ), std::string( "/final" ) )
+                    );
+
+                return h2peer::Http2ResponseScript()
+                    .headers( 302U, fields, true /* endStream */ );
+            }
+
+            return h2peer::Http2ResponseScript()
+                .headers( 200U )
+                .data( request.path )
+                .endStream();
+        }
+        );
+
+    h2driver::withPeer(
+        peer,
+        [ & ]( SAA_in const unsigned short port ) -> void
+        {
+            const auto session = makeSession();
+
+            BL_SCOPE_EXIT_WARN_ON_FAILURE(
+                {
+                    session -> dispose();
+                },
+                "utest::session::ClientSession_RedirectIsFollowedWhenEnabledTests"
+                );
+
+            /*
+             * OFF BY DEFAULT, as design 5.6 requires and as the existing client behaves: the 3xx
+             * is reported to the caller rather than followed
+             */
+
+            const auto reported = runRequest( session, makeRequest( port, "/start" ) );
+
+            UTF_REQUIRE_EQUAL( reported -> response().status(), 302U );
+            UTF_REQUIRE_EQUAL( reported -> redirectHops(), 0U );
+
+            session -> redirectPolicy().isEnabled( true );
+
+            const auto followed = runRequest( session, makeRequest( port, "/start" ) );
+
+            UTF_REQUIRE_EQUAL( followed -> response().status(), 200U );
+            UTF_REQUIRE_EQUAL( bodyOf( followed -> response() ), std::string( "/final" ) );
+            UTF_REQUIRE_EQUAL( followed -> redirectHops(), 1U );
+
+            /*
+             * request( ) is the request as it was FINALLY sent, which is the second hop's
+             */
+
+            UTF_REQUIRE_EQUAL( followed -> request().url().path(), std::string( "/final" ) );
+
+            /*
+             * Both hops went over the one connection the pool already had
+             */
+
+            const auto stats = statsOf( session );
+
+            UTF_REQUIRE_EQUAL( stats.connectionsCreated.value(), 1U );
+            UTF_REQUIRE_EQUAL( stats.dispatched.value(), 3U );
+            UTF_REQUIRE_EQUAL( stats.released.value(), 3U );
+
+            UTF_REQUIRE( peer -> recorder().failure().empty() );
+        }
+        );
+}
+
+/**
+ * @brief A cross-origin redirect drops the credentials, and a POST is rewritten to a bodiless GET
+ *
+ * TWO PEERS AND NOT ONE, because an origin is scheme, host AND port (net::Uri::origin), so two
+ * loopback peers on two ephemeral ports are two origins - which is what makes this a real
+ * cross-origin hop rather than a simulated one
+ */
+
+UTF_AUTO_TEST_CASE( ClientSession_CrossOriginRedirectDropsCredentialsTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest;
+    using namespace utest::session;
+
+    const auto target = makePeer();
+
+    target -> setResponder( echoHeadersResponder() );
+
+    h2driver::withPeer(
+        target,
+        [ & ]( SAA_in const unsigned short targetPort ) -> void
+        {
+            const auto origin = makePeer();
+
+            origin -> setResponder(
+                [ targetPort ]( SAA_in const h2peer::Http2TestRequest& request )
+                    -> h2peer::Http2ResponseScript
+                {
+                    BL_CHK(
+                        false,
+                        "POST" == request.method,
+                        BL_MSG()
+                            << "The first hop was expected to be a POST and was "
+                            << request.method
+                        );
+
+                    http2::HpackFieldList fields;
+
+                    fields.push_back(
+                        http2::HpackField(
+                            std::string( "location" ),
+                            urlFor( targetPort, "/moved" )
+                            )
+                        );
+
+                    return h2peer::Http2ResponseScript()
+                        .headers( 303U, fields, true /* endStream */ );
+                }
+                );
+
+            h2driver::withPeer(
+                origin,
+                [ & ]( SAA_in const unsigned short originPort ) -> void
+                {
+                    const auto session = makeSession();
+
+                    BL_SCOPE_EXIT_WARN_ON_FAILURE(
+                        {
+                            session -> dispose();
+                        },
+                        "utest::session::ClientSession_CrossOriginRedirectDropsCredentialsTests"
+                        );
+
+                    session -> redirectPolicy().isEnabled( true );
+
+                    auto request = makeRequest( originPort, "/start", "POST" );
+
+                    request.headers().append(
+                        std::string( "authorization" ),
+                        std::string( "Bearer secret" )
+                        );
+
+                    request.headers().append(
+                        std::string( "cookie" ),
+                        std::string( "sid=fromcaller" )
+                        );
+
+                    request.headers().append(
+                        std::string( "x-kept" ),
+                        std::string( "yes" )
+                        );
+
+                    request.body(
+                        om::ObjPtrCopyable< data::DataBlock >( h2driver::blockOf( "payload" ) )
+                        );
+
+                    const auto task = runRequest( session, request );
+
+                    UTF_REQUIRE_EQUAL( task -> redirectHops(), 1U );
+                    UTF_REQUIRE_EQUAL( task -> response().status(), 200U );
+
+                    /*
+                     * 303 rewrites to GET and drops the body, for every method but HEAD
+                     */
+
+                    UTF_REQUIRE_EQUAL( task -> request().method(), std::string( "GET" ) );
+                    UTF_REQUIRE( ! task -> request().hasBody() );
+
+                    const auto received = bodyOf( task -> response() );
+
+                    UTF_REQUIRE( hasLine( received, "x-kept: yes" ) );
+
+                    UTF_REQUIRE_EQUAL( countLinesStartingWith( received, "authorization:" ), 0U );
+                    UTF_REQUIRE_EQUAL( countLinesStartingWith( received, "cookie:" ), 0U );
+
+                    /*
+                     * Two origins are two keys, so two connections - the property that makes this
+                     * hop cross-origin in the first place
+                     */
+
+                    UTF_REQUIRE_EQUAL( statsOf( session ).connectionsCreated.value(), 2U );
+
+                    UTF_REQUIRE( origin -> recorder().failure().empty() );
+                    UTF_REQUIRE( target -> recorder().failure().empty() );
+                }
+                );
+        }
+        );
+}
+
+/**
+ * @brief The cookie jar round trip, and THE ONE Cookie FIELD - RFC 6265 5.4
+ *
+ * THE MERGE IS THE POINT AND THE REDIRECT IS WHERE THE TWO MEET. On a SAME-ORIGIN hop the caller's
+ * own Cookie header survives dropCredentialHeaders( ) while the jar recomputes for the new target,
+ * so both are in scope at once - and a request which carried both as two fields would be
+ * malformed. So the second half of this case is a redirect, and the assertion is a COUNT
+ */
+
+UTF_AUTO_TEST_CASE( ClientSession_CookiesAreStoredMergedAndSentOnceTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest;
+    using namespace utest::session;
+
+    const auto peer = makePeer();
+
+    peer -> setResponder(
+        []( SAA_in const h2peer::Http2TestRequest& request ) -> h2peer::Http2ResponseScript
+        {
+            if( "/set" == request.path )
+            {
+                http2::HpackFieldList fields;
+
+                fields.push_back(
+                    http2::HpackField(
+                        std::string( "set-cookie" ),
+                        std::string( "sid=fromserver; Path=/" )
+                        )
+                    );
+
+                fields.push_back(
+                    http2::HpackField(
+                        std::string( "set-cookie" ),
+                        std::string( "theme=dark; Path=/" )
+                        )
+                    );
+
+                return h2peer::Http2ResponseScript()
+                    .headers( 200U, fields )
+                    .data( "stored" )
+                    .endStream();
+            }
+
+            if( "/start" == request.path )
+            {
+                http2::HpackFieldList fields;
+
+                fields.push_back(
+                    http2::HpackField( std::string( "location" ), std::string( "/final" ) )
+                    );
+
+                return h2peer::Http2ResponseScript()
+                    .headers( 302U, fields, true /* endStream */ );
+            }
+
+            return h2peer::Http2ResponseScript()
+                .headers( 200U )
+                .data( fieldsOf( request ) )
+                .endStream();
+        }
+        );
+
+    h2driver::withPeer(
+        peer,
+        [ & ]( SAA_in const unsigned short port ) -> void
+        {
+            const auto session = makeSession();
+
+            BL_SCOPE_EXIT_WARN_ON_FAILURE(
+                {
+                    session -> dispose();
+                },
+                "utest::session::ClientSession_CookiesAreStoredMergedAndSentOnceTests"
+                );
+
+            UTF_REQUIRE_EQUAL( session -> cookieJar().size(), 0U );
+
+            ( void ) runRequest( session, makeRequest( port, "/set" ) );
+
+            UTF_REQUIRE_EQUAL( session -> cookieJar().size(), 2U );
+
+            /*
+             * The jar's own cookies, on a request the caller added nothing to
+             */
+
+            const auto plain = runRequest( session, makeRequest( port, "/echo" ) );
+
+            const auto plainFields = bodyOf( plain -> response() );
+
+            UTF_REQUIRE_EQUAL( countLinesStartingWith( plainFields, "cookie:" ), 1U );
+            UTF_REQUIRE( hasLine( plainFields, "cookie: sid=fromserver; theme=dark" ) );
+
+            /*
+             * And the merge, across a same-origin hop: the caller's own pair wins for the name
+             * they share, the jar's other cookie follows, and there is still exactly ONE field
+             */
+
+            session -> redirectPolicy().isEnabled( true );
+
+            auto request = makeRequest( port, "/start" );
+
+            request.headers().append( std::string( "cookie" ), std::string( "sid=fromcaller" ) );
+
+            const auto merged = runRequest( session, request );
+
+            const auto mergedFields = bodyOf( merged -> response() );
+
+            UTF_REQUIRE_EQUAL( merged -> redirectHops(), 1U );
+            UTF_REQUIRE_EQUAL( countLinesStartingWith( mergedFields, "cookie:" ), 1U );
+            UTF_REQUIRE( hasLine( mergedFields, "cookie: sid=fromcaller; theme=dark" ) );
+
+            UTF_REQUIRE( peer -> recorder().failure().empty() );
+        }
+        );
+}
+
+/**
+ * @brief accept-encoding is the profile's list intersected with the REGISTERED decoders, and
+ * strict mode sends the profile's list and hands back the raw body - design 6.5
+ */
+
+UTF_AUTO_TEST_CASE( ClientSession_AcceptEncodingAndStrictDecodeTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest;
+    using namespace utest::session;
+
+    const auto peer = makePeer();
+
+    peer -> setResponder(
+        []( SAA_in const h2peer::Http2TestRequest& request ) -> h2peer::Http2ResponseScript
+        {
+            if( "/coded" == request.path )
+            {
+                http2::HpackFieldList fields;
+
+                fields.push_back(
+                    http2::HpackField(
+                        std::string( "content-encoding" ),
+                        std::string( "x-utest" )
+                        )
+                    );
+
+                return h2peer::Http2ResponseScript()
+                    .headers( 200U, fields )
+                    .data( "hello~world" )
+                    .endStream();
+            }
+
+            return h2peer::Http2ResponseScript()
+                .headers( 200U )
+                .data( fieldsOf( request ) )
+                .endStream();
+        }
+        );
+
+    h2driver::withPeer(
+        peer,
+        [ & ]( SAA_in const unsigned short port ) -> void
+        {
+            /*
+             * WITH NO PROFILE AND NO DECODER the header is not sent at all, which is what every
+             * request of this library does today (SimpleHttpTask sends no accept-encoding either)
+             */
+
+            {
+                const auto session = makeSession();
+
+                BL_SCOPE_EXIT_WARN_ON_FAILURE(
+                    { session -> dispose(); },
+                    "utest::session::ClientSession_AcceptEncodingAndStrictDecodeTests"
+                    );
+
+                const auto task = runRequest( session, makeRequest( port, "/echo" ) );
+
+                UTF_REQUIRE_EQUAL(
+                    countLinesStartingWith( bodyOf( task -> response() ), "accept-encoding:" ),
+                    0U
+                    );
+            }
+
+            /*
+             * WITH A PROFILE AND NO DECODER the header is still omitted - the intersection is
+             * empty, and design 6.5 says the deviation is reported rather than the header faked
+             */
+
+            {
+                auto config = makeHttp2SessionConfig();
+
+                config.headerProfile = makeKindProfile();
+
+                const auto session = makeSession( std::move( config ) );
+
+                BL_SCOPE_EXIT_WARN_ON_FAILURE(
+                    { session -> dispose(); },
+                    "utest::session::ClientSession_AcceptEncodingAndStrictDecodeTests"
+                    );
+
+                const auto task = runRequest( session, makeRequest( port, "/echo" ) );
+
+                UTF_REQUIRE_EQUAL(
+                    countLinesStartingWith( bodyOf( task -> response() ), "accept-encoding:" ),
+                    0U
+                    );
+            }
+
+            /*
+             * WITH A DECODER REGISTERED the header carries exactly what can be decoded, in the
+             * PROFILE's order - the order is the fingerprint, and the registry's order is an
+             * artefact of who registered first - and a body in that coding is decoded before the
+             * caller sees it, with its content-encoding removed because it is no longer true
+             */
+
+            {
+                auto config = makeHttp2SessionConfig();
+
+                config.headerProfile = makeKindProfile();
+
+                const auto session = makeSession( std::move( config ) );
+
+                BL_SCOPE_EXIT_WARN_ON_FAILURE(
+                    { session -> dispose(); },
+                    "utest::session::ClientSession_AcceptEncodingAndStrictDecodeTests"
+                    );
+
+                session -> decoders().registerDecoder(
+                    UtestDecoderT<>::coding(),
+                    []() -> om::ObjPtr< httpclient::ContentDecoder >
+                    {
+                        return om::qi< httpclient::ContentDecoder >(
+                            UtestDecoder::createInstance()
+                            );
+                    }
+                    );
+
+                const auto echoed = runRequest( session, makeRequest( port, "/echo" ) );
+
+                UTF_REQUIRE(
+                    hasLine( bodyOf( echoed -> response() ), "accept-encoding: x-utest" )
+                    );
+
+                const auto coded = runRequest( session, makeRequest( port, "/coded" ) );
+
+                UTF_REQUIRE_EQUAL(
+                    bodyOf( coded -> response() ),
+                    std::string( "hello world" )
+                    );
+
+                UTF_REQUIRE( ! coded -> response().headers().has( "content-encoding" ) );
+            }
+
+            /*
+             * STRICT MODE sends the profile's list EXACTLY - including the coding no decoder
+             * exists for - and hands the body back in whatever coding the server chose, which is
+             * what a caller who decodes it themselves needs
+             */
+
+            {
+                auto config = makeHttp2SessionConfig();
+
+                config.headerProfile = makeKindProfile();
+                config.isStrictContentEncoding = true;
+
+                const auto session = makeSession( std::move( config ) );
+
+                BL_SCOPE_EXIT_WARN_ON_FAILURE(
+                    { session -> dispose(); },
+                    "utest::session::ClientSession_AcceptEncodingAndStrictDecodeTests"
+                    );
+
+                session -> decoders().registerDecoder(
+                    UtestDecoderT<>::coding(),
+                    []() -> om::ObjPtr< httpclient::ContentDecoder >
+                    {
+                        return om::qi< httpclient::ContentDecoder >(
+                            UtestDecoder::createInstance()
+                            );
+                    }
+                    );
+
+                const auto echoed = runRequest( session, makeRequest( port, "/echo" ) );
+
+                UTF_REQUIRE(
+                    hasLine( bodyOf( echoed -> response() ), "accept-encoding: gzip, x-utest" )
+                    );
+
+                const auto coded = runRequest( session, makeRequest( port, "/coded" ) );
+
+                UTF_REQUIRE_EQUAL(
+                    bodyOf( coded -> response() ),
+                    std::string( "hello~world" )
+                    );
+
+                UTF_REQUIRE_EQUAL(
+                    coded -> response().headers().get( "content-encoding" ),
+                    std::string( "x-utest" )
+                    );
+            }
+
+            UTF_REQUIRE( peer -> recorder().failure().empty() );
+        }
+        );
+}
+
+/**
+ * @brief The profile's header set is applied BY REQUEST KIND, and a caller's header keeps the
+ * profile's position - design 6.5
+ *
+ * PLACEMENT IS PART OF THE FINGERPRINT, so a caller header which the browser also sends belongs
+ * where the browser sends it, and one it does not send goes where the profile says caller headers
+ * go. Both are asserted on the bytes the peer received, in order
+ */
+
+UTF_AUTO_TEST_CASE( ClientSession_ProfileHeaderSetIsByRequestKindTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest;
+    using namespace utest::session;
+
+    const auto peer = makePeer();
+
+    peer -> setResponder( echoHeadersResponder() );
+
+    h2driver::withPeer(
+        peer,
+        [ & ]( SAA_in const unsigned short port ) -> void
+        {
+            auto config = makeHttp2SessionConfig();
+
+            config.headerProfile = makeKindProfile();
+
+            const auto session = makeSession( std::move( config ) );
+
+            BL_SCOPE_EXIT_WARN_ON_FAILURE(
+                {
+                    session -> dispose();
+                },
+                "utest::session::ClientSession_ProfileHeaderSetIsByRequestKindTests"
+                );
+
+            /*
+             * Fetch is the default kind of a ClientRequest
+             */
+
+            auto fetch = makeRequest( port, "/fetch" );
+
+            fetch.headers().append( std::string( "x-caller" ), std::string( "1" ) );
+
+            const auto fetched = runRequest( session, fetch );
+
+            UTF_REQUIRE_EQUAL(
+                bodyOf( fetched -> response() ),
+                std::string( "x-kind: fetch\naccept: */*\nx-caller: 1\n" )
+                );
+
+            /*
+             * The same session, the same caller header, a different kind - a different set
+             */
+
+            auto navigation = makeRequest( port, "/navigate" );
+
+            navigation.kind( httpclient::HttpRequestKind::Navigation );
+            navigation.headers().append( std::string( "x-caller" ), std::string( "1" ) );
+
+            const auto navigated = runRequest( session, navigation );
+
+            UTF_REQUIRE_EQUAL(
+                bodyOf( navigated -> response() ),
+                std::string( "x-kind: navigation\naccept: text/html\nx-caller: 1\n" )
+                );
+
+            /*
+             * A caller header the PROFILE also sends takes the caller's value in the PROFILE's
+             * position, and is not sent twice
+             */
+
+            auto override = makeRequest( port, "/override" );
+
+            override.headers().append( std::string( "accept" ), std::string( "application/json" ) );
+
+            const auto overridden = runRequest( session, override );
+
+            UTF_REQUIRE_EQUAL(
+                bodyOf( overridden -> response() ),
+                std::string( "x-kind: fetch\naccept: application/json\n" )
+                );
+
+            /*
+             * PROXY CREDENTIALS ARE SESSION CONFIGURATION AND NEVER A REQUEST HEADER. RFC 9110
+             * 11.7.1 makes Proxy-Authorization hop-by-hop, so a caller-supplied one on a request
+             * which goes through a tunnel would be a credential sent to the ORIGIN. The session
+             * drops it, which is also what makes RedirectPolicy::dropCredentialHeaders( )'s
+             * removal of the same field a no-op by construction
+             */
+
+            auto proxied = makeRequest( port, "/proxied" );
+
+            proxied.headers().append(
+                std::string( "proxy-authorization" ),
+                std::string( "Basic c2VjcmV0" )
+                );
+
+            const auto sent = runRequest( session, proxied );
+
+            UTF_REQUIRE_EQUAL(
+                countLinesStartingWith( bodyOf( sent -> response() ), "proxy-authorization:" ),
+                0U
+                );
+
+            UTF_REQUIRE( peer -> recorder().failure().empty() );
+        }
+        );
+}
+
+/**
+ * @brief GET and POST over HTTP/1.1 through the session, against the library's own HttpServer
+ *
+ * THE OTHER HALF OF THE ACCEPT CRITERION, and a second composition nobody had run: this is the
+ * ALPN FALLBACK reached over cleartext. The session's connection factory builds an
+ * Http2ConnectionTaskT as it always does; the connection is configured HTTP/1.1, so the task hands
+ * the connected stream to the driver factory the session registered, which builds
+ * Http1ConnectionTaskT - and from that moment the DRIVER is the connection while the task's own
+ * state( ) reads Closed. The pool has to prefer the accessor's driver over the task it scheduled,
+ * which is design 5.4's rule and cost the L4 review a defect to learn
+ *
+ * HttpServer puts 'Connection: close' on every response it builds and does not implement
+ * persistent connections (Response.h says so), so it proves the request/response path and the
+ * NEGATIVE half of reuse against something which is not a fake: each request costs a connection
+ */
+
+UTF_AUTO_TEST_CASE( ClientSession_AgainstTheLibraryHttpServerTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest;
+    using namespace utest::session;
+
+    utest::http::HttpServerHelpers::startHttpServerAndExecuteCallback(
+        []() -> void
+        {
+            const auto port = static_cast< os::port_t >( test::UtfArgsParser::port() );
+
+            const auto url =
+                "http://" +
+                test::UtfArgsParser::host() +
+                ":" +
+                utils::lexical_cast< std::string >( port ) +
+                utest::http::g_requestUri;
+
+            /*
+             * A DEFAULT configuration, which is HTTP/1.1 over cleartext - nothing negotiates a
+             * cleartext connection, so the protocol is the configuration's
+             */
+
+            const auto session = makeSession( httpclient::ClientSessionConfig() );
+
+            BL_SCOPE_EXIT_WARN_ON_FAILURE(
+                {
+                    session -> dispose();
+                },
+                "utest::session::ClientSession_AgainstTheLibraryHttpServerTests"
+                );
+
+            UTF_REQUIRE( ! session -> canCarryBodySource() );
+
+            httpclient::ClientRequest request;
+
+            request.method( "GET" );
+            request.url( net::Uri::parse( url ) );
+
+            request.headers().append(
+                std::string( "user-agent" ),
+                std::string( "utf-baselib-httpclient4" )
+                );
+
+            const auto fetched = runRequest( session, request );
+
+            UTF_REQUIRE_EQUAL( fetched -> response().status(), 200U );
+            UTF_REQUIRE_EQUAL(
+                bodyOf( fetched -> response() ),
+                utest::http::g_desiredResult
+                );
+
+            UTF_REQUIRE(
+                httpclient::HttpProtocol::Http11 == fetched -> response().protocol()
+                );
+
+            /*
+             * The server echoes the user-agent it received, so this is the session's own header
+             * set arriving at a real HTTP/1.1 parser rather than at a script
+             */
+
+            UTF_REQUIRE_EQUAL(
+                fetched -> response().headers().get( "request-user-agent-id" ),
+                std::string( "utf-baselib-httpclient4" )
+                );
+
+            /*
+             * And a POST with a body over the same path
+             */
+
+            httpclient::ClientRequest posted;
+
+            posted.method( "POST" );
+            posted.url( net::Uri::parse( url ) );
+            posted.body(
+                om::ObjPtrCopyable< data::DataBlock >( h2driver::blockOf( "payload" ) )
+                );
+
+            const auto created = runRequest( session, posted );
+
+            UTF_REQUIRE_EQUAL( created -> response().status(), 200U );
+            UTF_REQUIRE_EQUAL(
+                bodyOf( created -> response() ),
+                utest::http::g_desiredResult
+                );
+
+            /*
+             * THE NEGATIVE HALF OF REUSE. Two requests, two connections, because the server said
+             * 'Connection: close' both times - against the scripted HTTP/2 peer the same two
+             * requests shared one
+             */
+
+            const auto stats = statsOf( session );
+
+            UTF_REQUIRE_EQUAL( stats.connectionsCreated.value(), 2U );
+
+            /*
+             * FOUR DISPATCHES FOR TWO REQUESTS, AND THIS IS THE FINDING THIS CASE MADE. The pool
+             * dispatches the first request of a key onto the Connecting placeholder so that its
+             * HEADERS ride the preface (design 5.4). Over a FALLBACK connection that placeholder
+             * is the HTTP/2 task, which hands the connected stream to the HTTP/1.1 driver and
+             * completes - answering the rider it is holding with connection_aborted, correctly
+             * flagged retryable because not a byte of it was written. The session then replays it
+             * onto the driver, which is the DISPATCHED half of the retry of design 5.4 and is this
+             * slice's (L5 review, finding 5(a)). Without it EVERY first request over a fallback
+             * connection fails, which is what this case did on its first run
+             */
+
+            UTF_REQUIRE_EQUAL( stats.dispatched.value(), 4U );
+            UTF_REQUIRE_EQUAL( stats.released.value(), 4U );
+        }
+        );
+}
+
+/**
+ * @brief The control for the case above: with the retry budget at zero the fallback rider is fatal
+ *
+ * A COUNT OF GREEN RUNS IS NOT EVIDENCE THAT A FIX BITES. What earns it is a control which makes
+ * the failure certain - here the same request against the same server with maxRetriesPerRequest
+ * of zero, which is the session's dispatched-half retry degraded to nothing. It fails, and it
+ * fails exactly the way the case above did before the retry existed: one dispatch, one release,
+ * no response
+ */
+
+UTF_AUTO_TEST_CASE( ClientSession_FallbackRiderNeedsTheDispatchedRetryTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest;
+    using namespace utest::session;
+
+    utest::http::HttpServerHelpers::startHttpServerAndExecuteCallback(
+        []() -> void
+        {
+            httpclient::ClientSessionConfig config;
+
+            config.poolPolicy.maxRetriesPerRequest = 0U;
+
+            const auto session = makeSession( std::move( config ) );
+
+            BL_SCOPE_EXIT_WARN_ON_FAILURE(
+                {
+                    session -> dispose();
+                },
+                "utest::session::ClientSession_FallbackRiderNeedsTheDispatchedRetryTests"
+                );
+
+            httpclient::ClientRequest request;
+
+            request.method( "GET" );
+
+            request.url(
+                net::Uri::parse(
+                    "http://" +
+                    test::UtfArgsParser::host() +
+                    ":" +
+                    utils::lexical_cast< std::string >(
+                        static_cast< os::port_t >( test::UtfArgsParser::port() )
+                        ) +
+                    utest::http::g_requestUri
+                    )
+                );
+
+            const auto requestTask = session -> createRequestTask( request );
+
+            const auto task = om::qi< Task >( requestTask );
+
+            runSessionTask( task );
+
+            UTF_REQUIRE( task -> isFailed() );
+
+            UTF_REQUIRE_EQUAL( requestTask -> response().status(), 0U );
+
+            const auto stats = statsOf( session );
+
+            UTF_REQUIRE_EQUAL( stats.dispatched.value(), 1U );
+            UTF_REQUIRE_EQUAL( stats.released.value(), 1U );
+        }
+        );
+}
+
+#endif /* __UTEST_TESTCLIENTSESSION_H_ */

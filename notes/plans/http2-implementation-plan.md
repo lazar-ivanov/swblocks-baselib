@@ -1492,6 +1492,49 @@ see this; it is a composition defect, and S6.1's first end-to-end case would hav
   `false`. Design §5.6 now records what the jar settled on Secure cookies set over `http`; if this
   session speaks both schemes to one host, that is the item to take up.
 
+**AS LANDED (S6.1).** `httpclient/ClientSession.h`: `ClientSessionConfig`, the `ClientRequestTask`
+and `ClientSession` interfaces, `SessionHeaders` (the pure header work), `SessionRequestTaskT` (the
+hop chain, a `WrapperTaskBase` continuation) and `ClientSessionT< STREAM >`. Tests →
+`utf_baselib_httpclient4`, a new module, 15 cases, 106 assertions.
+
+- **The end-to-end case was written first and run before any of the session's surface**, which is
+  what the work order asked for. It composes the real pool, a real `Http2ConnectionTaskT` and a
+  real request task against S4.4's peer. It was green on the first run: the preface rider, the
+  `UNCONFIRMED_MAX_CONCURRENT_STREAMS` dispatch against a driver which really does publish `Ready`
+  before the peer's `SETTINGS`, and the `acquire`/`releaseStream` pairing all hold in composition.
+- **What the composition DID find is the fallback rider** — see design §5.4's "Landed in S6.1". The
+  pool dispatches the first request of a key onto the `Connecting` placeholder so its `HEADERS`
+  ride the preface; over a fallback connection that placeholder is the h2 task, which hands the
+  stream to the h1 driver and answers the rider with `connection_aborted`, retryable. Without the
+  dispatched half of the retry **every** first request over a fallback connection fails. The
+  dispatched half is now `SessionRequestTaskT::chkPrepareRetry()`, and the control which makes the
+  failure certain (`maxRetriesPerRequest` of zero) is a case of its own.
+- **Both assigned obligations are pinned as behaviour, not as configuration read-back.**
+  `drainingReserve` → a reserve of "everything but one" makes the second request open a second
+  connection, with the ordinary-reserve reuse case as its control; `idleTimeout` → 300 ms makes an
+  idle connection close *itself*, with the peer's own record as the rendezvous.
+- **The three L2 items are settled in design §5.6**: the one merged `Cookie` field (pinned across a
+  same-origin redirect, asserted as a *count*); `Proxy-Authorization` dropped by the session so the
+  redirect policy's removal is a no-op by construction; and `isHttpApi`, which is settled by
+  `ClientSessionT< STREAM >` speaking one scheme — the Secure-cookie surface needs a session which
+  speaks two.
+- **`ClientSessionT` is parameterized on the stream policy** and `createRequestTask` refuses a URL
+  whose scheme is not the transport's. Design §5.8's sketch is corrected for that and for
+  `ClientRequest` being a value type.
+- **Size, measured on both toolchains and over target with the reason recorded**: 48.0 MB clang
+  debug, 104.3 MB gcc release. Splitting was measured and loses — the only seam is
+  peer-versus-`HttpServer`, and the session with both drivers is paid by both halves on top of two
+  ~21 MB floors. The module's own header carries the arithmetic.
+- **The TLS instantiation is a fact and not a claim**, which the L3 rule requires of a slice
+  delivering a template over a policy. `utf_baselib_httpclient5` names
+  `ClientSessionT< TcpSslSocketAsyncStrandedBase >` and runs it: a GET over h2 and TLS with ALPN
+  choosing `h2`, and the h2-only routing of a streaming upload **joined** rather than pinned as two
+  pure functions — which only a transport that negotiates can run, so it could not live in the
+  cleartext module. 2 cases, 19 assertions, 46.0 MB clang debug / 93.6 MB gcc release.
+- **Not done, and not in scope**: L7 and L8. Owed: the same TLS cases on OpenSSL 1.1.1w, for the
+  reason the openssl-1x deferral record gives; and no ThreadSanitizer run, which the orchestrator's
+  gate is the place for.
+
 ---
 
 ## 9. Layer L7 — Impersonation

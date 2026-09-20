@@ -1,0 +1,17 @@
+# each slice appends the recipes for the cases it lands here
+
+--log_level=message --run_test=ClientSession_GetOverHttp2Tests
+--log_level=message --run_test=ClientSession_ConnectionIsReusedAcrossRequestsTests
+--log_level=message --run_test=ClientSession_PostWithBodyOverHttp2Tests
+--log_level=message --run_test=ClientSession_GoAwayRetiresTheConnectionTests
+--log_level=message --run_test=ClientSession_DrainingReserveReachesTheDriverTests
+--log_level=message --run_test=ClientSession_IdleTimeoutReachesTheDriverTests
+--log_level=message --run_test=ClientSession_BodySourceIsNeverCarriedByHttp11Tests
+--log_level=message --run_test=ClientSession_SpeaksOneSchemeTests
+--log_level=message --run_test=ClientSession_RedirectIsFollowedWhenEnabledTests
+--log_level=message --run_test=ClientSession_CrossOriginRedirectDropsCredentialsTests
+--log_level=message --run_test=ClientSession_CookiesAreStoredMergedAndSentOnceTests
+--log_level=message --run_test=ClientSession_AcceptEncodingAndStrictDecodeTests
+--log_level=message --run_test=ClientSession_ProfileHeaderSetIsByRequestKindTests
+--log_level=message --run_test=ClientSession_AgainstTheLibraryHttpServerTests
+--log_level=message --run_test=ClientSession_FallbackRiderNeedsTheDispatchedRetryTests
