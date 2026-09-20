@@ -138,14 +138,28 @@ namespace bl
          * drain and is cleared only at the moment the mailbox is observed empty under the mailbox
          * lock - so exactly one drain is ever scheduled or running, and no event is stranded
          *
-         * NOTHING IS CALLED OUT WHILE THE TASK LOCK IS HELD. A drain has three phases: apply the
-         * events under the task lock, run what they decided to call out with the lock released,
-         * then decide completion under the lock again and notify with it released. Every call
-         * which leaves - submit( ), consumed( ), provideBody( ), cancel( ), releaseStream( ), the
-         * caller's BodySink and BodySource, and notifyReady( ) itself - is in the middle phase.
-         * That is rule L4 in the direction this task is responsible for, it keeps the caller's own
-         * callbacks off our lock, and it is what makes notifyReady( ) legal at all, since TaskBase
-         * requires it not be called under the lock
+         * ONE CALL LEAVES UNDER THE TASK LOCK AND EVERY OTHER ONE DOES NOT. A drain has three
+         * phases: apply the events under the task lock, run what they decided to call out with the
+         * lock released, then decide completion under the lock again and notify with it released.
+         * consumed( ), provideBody( ), cancel( ), releaseStream( ), the caller's BodySink and
+         * BodySource, and notifyReady( ) itself are all in the middle phase. That is rule L4 in the
+         * direction this task is responsible for, it keeps the caller's own callbacks off our lock,
+         * and it is what makes notifyReady( ) legal at all, since TaskBase requires it not be
+         * called under the lock
+         *
+         * THE ONE EXCEPTION IS submit( ), AND IT IS AN EXCEPTION BY NECESSITY. It returns the
+         * stream handle, and from the moment it is called the connection may deliver events for
+         * that stream - so the handle must be recorded before the next batch is applied, which is
+         * only true while the call and the record are in the same phase. Deferring it would put the
+         * handle behind an event of its own, which any sink event arriving meanwhile would overtake.
+         * It is therefore called under the lock and GUARDED: a throw from it fails this request,
+         * rather than reaching onDrain( )'s NOEXCEPT boundary, which is BL_RIP_MSG and ends the
+         * process over one malformed request
+         *
+         * THE LOCK ORDER THAT FOLLOWS FROM THAT, written down because nothing else records it:
+         * this task's lock is taken before whatever submit( ) takes - the h2 driver's mailbox lock,
+         * the h1 driver's state lock. Neither driver reaches for a request task's lock, so there is
+         * no cycle; that sentence is what has to stay true
          *
          * The middle phase still belongs to the drain, so the state it touches is not shared with
          * anything: only one drain is ever scheduled or running, and the lock is what protects
@@ -439,36 +453,37 @@ namespace bl
                  * takes the process down over a user callback; and it must not stop the actions
                  * behind it either, or a sink which threw would also cost the stream slot that
                  * releaseStream( ) was queued to give back. So each one is guarded on its own and
-                 * the FIRST failure is what the request is failed with
+                 * the FIRST failure is what the request is failed with - and what the stream is
+                 * reset for, below
                  */
 
                 std::exception_ptr deferredException;
 
-                for( std::size_t i = 0U; i < deferred.size(); ++i )
-                {
-                    try
-                    {
-                        deferred[ i ]();
-                    }
-                    catch( std::exception& )
-                    {
-                        if( ! deferredException )
-                        {
-                            deferredException = std::current_exception();
-                        }
-                    }
-                }
+                runDeferred( deferred, deferredException );
 
                 bool complete = false;
                 bool isExpected = false;
 
                 std::exception_ptr eptr;
 
+                std::vector< cpp::void_callback_t > reset;
+
                 {
                     BL_MUTEX_GUARD( base_type::m_lock );
 
                     if( deferredException )
                     {
+                        /*
+                         * THE STREAM IS RESET BEFORE THE REQUEST IS FAILED, which is what every
+                         * other giving-up path does ( applyStopped( ) ) and what this one used to
+                         * omit. A sink or a provideBody( ) which threw leaves a stream the driver
+                         * still holds open: no RST_STREAM, no timer left running to send one, and
+                         * a peer waiting on an upload or a window which is never credited again.
+                         * Failing the caller without it bounds the stream by the PEER's patience
+                         */
+
+                        cancelStream( reset );
+
                         failWith( deferredException, false /* isExpected */ );
                     }
 
@@ -482,9 +497,43 @@ namespace bl
                     }
                 }
 
+                /*
+                 * BEFORE THE CALLER IS TOLD, and off the lock like every other call out. The first
+                 * failure is already what the request failed with, so a second one has nowhere to
+                 * go - and cancel( ) is NOEXCEPT on the contract, so there is not expected to be
+                 * one; the guard is what the std::function machinery around it still owes
+                 */
+
+                runDeferred( reset, deferredException );
+
                 if( complete )
                 {
                     base_type::notifyReady( eptr, isExpected );
+                }
+            }
+
+            /**
+             * @brief Runs one deferred list with each action guarded, keeping the first failure
+             */
+
+            static void runDeferred(
+                SAA_inout       std::vector< cpp::void_callback_t >&            deferred,
+                SAA_inout       std::exception_ptr&                             firstException
+                )
+            {
+                for( std::size_t i = 0U; i < deferred.size(); ++i )
+                {
+                    try
+                    {
+                        deferred[ i ]();
+                    }
+                    catch( std::exception& )
+                    {
+                        if( ! firstException )
+                        {
+                            firstException = std::current_exception();
+                        }
+                    }
                 }
             }
 
@@ -584,7 +633,8 @@ namespace bl
                     /*
                      * The deadline expired while this request sat in the pool's queue, which is
                      * the ordinary shape of a timeout and not an error. The slot is handed
-                     * straight back rather than leaked
+                     * straight back rather than leaked - no stream was ever opened on this path,
+                     * and by the pairing rule at releaseConnectionSlot( ) none is needed
                      */
 
                     releaseConnectionSlot( event.connection, deferred );
@@ -620,10 +670,39 @@ namespace bl
                  * long since been answered
                  */
 
-                const auto handle = m_connection -> submit(
-                    m_request,
-                    om::qi< ClientStreamEventSink >( static_cast< tasks::Task* >( this ) )
-                    );
+                stream_handle_t handle = ClientConnection::INVALID_STREAM_HANDLE;
+
+                try
+                {
+                    handle = m_connection -> submit(
+                        m_request,
+                        om::qi< ClientStreamEventSink >( static_cast< tasks::Task* >( this ) )
+                        );
+                }
+                catch( std::exception& )
+                {
+                    /*
+                     * A THROW IS THE REQUEST'S FAULT WHERE A REFUSAL IS THE CONNECTION'S, and that
+                     * is the one place the two are told apart. A driver which cannot turn THIS
+                     * request into a submission - the h2 driver's ArgumentException over a header
+                     * it will not put on the wire - has nothing wrong with it, so the outcome is
+                     * Failed and the connection stays poolable; a retry would only reproduce the
+                     * same exception on the same request, so it is not marked retryable either
+                     *
+                     * It is caught at all because this call is in phase one: see the class comment.
+                     * An escape here reaches onDrain( )'s BL_NOEXCEPT_END, which is BL_RIP_MSG
+                     */
+
+                    m_outcome = RequestOutcome::Failed;
+
+                    failWith( std::current_exception(), false /* isExpected */ );
+
+                    releaseConnectionSlot( event.connection, deferred );
+
+                    releaseConnection( event.connection, deferred );
+
+                    return;
+                }
 
                 if( ClientConnection::INVALID_STREAM_HANDLE == handle )
                 {
@@ -633,10 +712,14 @@ namespace bl
                      * the outcome is ConnectionUnusable because a connection which cannot take the
                      * request it was handed out for is not one to hand out again
                      *
-                     * NOTHING IS RELEASED HERE, and that is deliberate. releaseStream( ) gives a
-                     * STREAM back, and this request never got one - there is no handle to name it
-                     * by. What the pool has to undo is its own acquire bookkeeping, which is the
-                     * pool's and is reached through the answer it gets from outcome( )
+                     * THE SLOT GOES BACK, and the earlier reading that it could not - "there is no
+                     * stream, so there is nothing releaseStream( ) can name" - was the L5 review's
+                     * finding 1. The pool's count is the POOL's: it is incremented when the pool
+                     * ANSWERS an acquire( ), and releaseStream( ) decrements it for the connection
+                     * it is given and ignores the handle altogether. So the pairing rule is every
+                     * answered acquire( ) against exactly one releaseStream( ), STREAM OR NO
+                     * STREAM, and a path which skipped it leaked a slot for the life of the entry,
+                     * which for h2 - one connection per key - is a permanent unit of capacity
                      */
 
                     m_isRetryable = true;
@@ -651,6 +734,8 @@ namespace bl
                             ),
                         false /* isExpected */
                         );
+
+                    releaseConnectionSlot( event.connection, deferred );
 
                     /*
                      * No stream was opened, so no onClosed( ) will ever arrive to let go of the
@@ -849,40 +934,53 @@ namespace bl
 
                 const auto wanted = std::max< std::size_t >( event.bytes, 1U );
 
-                const auto block = data::DataBlock::get( nullptr /* dataBlocksPool */, wanted );
-
-                const auto result = source -> read( *block );
-
-                /*
-                 * THE BLOCK'S OWN SIZE IS THE AUTHORITY over the reported one. The contract has
-                 * the source APPEND at size( ) and grow the block, so the bytes which exist are
-                 * the ones it grew to; a source whose report ran ahead of what it wrote would
-                 * otherwise put uninitialised memory on the wire
-                 */
-
-                const auto produced = std::min< std::size_t >( result.size, block -> size() );
-
-                if( produced != block -> size() )
-                {
-                    block -> setSize( produced );
-                }
-
                 const om::ObjPtrCopyable< ClientConnection > connection( m_connection );
                 const auto handle = m_handle.value();
 
-                const bool isEnd = result.isEndOfStream;
-
-                om::ObjPtrCopyable< data::DataBlock > payload;
-
-                if( 0U != block -> size() )
-                {
-                    payload = block;
-                }
+                /*
+                 * THE READ IS IN THE MIDDLE PHASE WITH EVERY OTHER CALL OUT, which the class
+                 * comment always claimed and this function used not to do. read( ) is the
+                 * CALLER's code: a file-backed source whose read fails throws, and a throw from
+                 * phase one reaches onDrain( )'s BL_NOEXCEPT_END - BL_RIP_MSG, then fastAbort( ) -
+                 * so an I/O error on an upload used to take the process down. Here it is one more
+                 * guarded deferred action, and the request fails with the source's own exception
+                 *
+                 * The allocation goes with it: a block the size of the pull is as much the
+                 * caller's memory as the bytes are, and there is no reason to take it under a lock
+                 *
+                 * ONE READ PER PULL still holds, and more visibly than before - the read and the
+                 * provideBody( ) which answers it are now the same action
+                 */
 
                 deferred.push_back(
-                    [ connection, handle, payload, isEnd ]() -> void
+                    [ source, connection, handle, wanted ]() -> void
                     {
-                        connection -> provideBody( handle, payload, isEnd );
+                        const auto block = data::DataBlock::get( nullptr /* dataBlocksPool */, wanted );
+
+                        const auto result = source -> read( *block );
+
+                        /*
+                         * THE BLOCK'S OWN SIZE IS THE AUTHORITY over the reported one. The contract
+                         * has the source APPEND at size( ) and grow the block, so the bytes which
+                         * exist are the ones it grew to; a source whose report ran ahead of what it
+                         * wrote would otherwise put uninitialised memory on the wire
+                         */
+
+                        const auto produced = std::min< std::size_t >( result.size, block -> size() );
+
+                        if( produced != block -> size() )
+                        {
+                            block -> setSize( produced );
+                        }
+
+                        om::ObjPtrCopyable< data::DataBlock > payload;
+
+                        if( 0U != block -> size() )
+                        {
+                            payload = block;
+                        }
+
+                        connection -> provideBody( handle, payload, result.isEndOfStream );
                     }
                     );
             }
@@ -1260,12 +1358,31 @@ namespace bl
                     );
             }
 
+            /**
+             * @brief Gives the pool back what it handed out - a CONNECTION SLOT, stream or no stream
+             *
+             * THE PAIRING RULE, which is the S5.1/S5.2 seam and the L5 review's finding 1: every
+             * acquire( ) the pool ANSWERS is paired with exactly one releaseStream( ). The count
+             * being given back is the pool's own - Entry::slotsInUse - and it is incremented at the
+             * moment the pool answers, long before any stream exists; releaseStream( ) decrements
+             * it for the connection it is passed and does not look at the handle at all. So the
+             * guard here is on the CONNECTION and never on the handle: the two paths which hand a
+             * connection back without ever opening a stream - a refused or throwing submit( ), and
+             * an answer which arrives at a request that has already timed out - are exactly the
+             * ones a handle guard used to drop, and each one dropped leaked a slot for the life of
+             * the entry, kept the entry from ever being forgotten, and held its connection task
+             * alive with it
+             *
+             * INVALID_STREAM_HANDLE is what the pool is then told, and that is honest: it names no
+             * stream because there was none, and the pool logs it rather than accounting with it
+             */
+
             void releaseConnectionSlot(
                 SAA_in          const om::ObjPtrCopyable< ClientConnection >&   connection,
                 SAA_inout       std::vector< cpp::void_callback_t >&            deferred
                 )
             {
-                if( ! connection || ClientConnection::INVALID_STREAM_HANDLE == m_handle )
+                if( ! connection )
                 {
                     return;
                 }

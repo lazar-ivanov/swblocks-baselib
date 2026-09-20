@@ -18,6 +18,7 @@
 #define __UTEST_TESTHTTPCLIENTREQUESTTASK_H_
 
 #include <baselib/httpclient/HttpClientRequestTask.h>
+#include <baselib/httpclient/ConnectionPool.h>
 
 #include <baselib/tasks/ExecutionQueue.h>
 #include <baselib/tasks/ExecutionQueueImpl.h>
@@ -52,6 +53,14 @@
  * and no sleep anywhere below, which is the L3 protocol's rule and also the only way these cases
  * are not flakes. The value helpers which ARE reusable - StubBodySource, StubBodySink - are reused
  * rather than copied, which is what the named namespace next door exists for
+ *
+ * AND WHY ONE CASE USES THE REAL ConnectionPool INSTEAD (the L5 fix round). The probe pool can only
+ * record what it was asked; it cannot say whether the pool's own books balance. The seam defect the
+ * L5 review ranked High - a stream slot leaked on every refused submit - was invisible to every
+ * module in the tree precisely because the pool, the request task and a connection had never been
+ * composed in one: S5.1 ran against this probe pool, S5.2 against stub connections. So the case
+ * which pins the pairing rule instantiates ConnectionPoolImpl and asserts on ITS count, and it is
+ * still protocol-agnostic - the pool is given a connection, not a driver, and speaks no HTTP/2
  */
 
 namespace utest
@@ -465,8 +474,11 @@ namespace utest
 
             std::thread::id                                                     m_acquiredOn;
 
+            std::shared_ptr< on_ready_callback_t >                              m_held;
+
             bl::cpp::ScalarTypeIniter< bool >                                   m_isAcquired;
             bl::cpp::ScalarTypeIniter< bool >                                   m_isAnswered;
+            bl::cpp::ScalarTypeIniter< bool >                                   m_isHeld;
 
             ProbePoolT(
                 bl::om::ObjPtr< ClientConnection >                              connection,
@@ -476,6 +488,24 @@ namespace utest
                 m_connection( BL_PARAM_FWD( connection ) )
             {
                 m_isAnswered = isAnswered;
+            }
+
+            /**
+             * @brief The one place an answer is delivered, so held and prompt ones are one path
+             */
+
+            void postAnswer( SAA_in const std::shared_ptr< on_ready_callback_t >& callback ) const
+            {
+                const auto connection = bl::om::ObjPtrCopyable< ClientConnection >( m_connection );
+
+                bl::ThreadPoolDefault::getDefault(
+                    bl::ThreadPoolId::GeneralPurpose
+                    ) -> aioService().post(
+                        [ connection, callback ]() -> void
+                        {
+                            ( *callback )( connection, std::exception_ptr() );
+                        }
+                        );
             }
 
         public:
@@ -499,6 +529,42 @@ namespace utest
                 BL_MUTEX_GUARD( m_lock );
 
                 return m_acquiredOn;
+            }
+
+            /**
+             * @brief Keeps the next answer back, so a case can deliver it LATE
+             *
+             * The request whose deadline expires while it is queued is not answered with nothing -
+             * the pool has no way to know it has given up, so a connection it frees a moment later
+             * is dispatched to a request which has already failed. That answer is the one the pool
+             * must still get its slot back for, and holding the callback is how a case produces it
+             * without a race
+             */
+
+            void holdTheAnswer() NOEXCEPT
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                m_isHeld = true;
+            }
+
+            /**
+             * @brief Delivers the answer that was held, on the pool's own thread as always
+             */
+
+            void answerNow()
+            {
+                std::shared_ptr< on_ready_callback_t > callback;
+
+                {
+                    BL_MUTEX_GUARD( m_lock );
+
+                    callback.swap( m_held );
+                }
+
+                UTF_REQUIRE( nullptr != callback );
+
+                postAnswer( callback );
             }
 
             /**
@@ -533,6 +599,7 @@ namespace utest
                 BL_UNUSED( request );
 
                 bool answer = false;
+                bool hold = false;
 
                 {
                     BL_MUTEX_GUARD( m_lock );
@@ -541,6 +608,7 @@ namespace utest
                     m_acquiredOn = std::this_thread::get_id();
 
                     answer = m_isAnswered;
+                    hold = m_isHeld;
                 }
 
                 if( ! answer )
@@ -553,18 +621,18 @@ namespace utest
                     return;
                 }
 
-                const auto connection = bl::om::ObjPtrCopyable< ClientConnection >( m_connection );
-
                 const auto callback = std::make_shared< on_ready_callback_t >( BL_PARAM_FWD( onReady ) );
 
-                bl::ThreadPoolDefault::getDefault(
-                    bl::ThreadPoolId::GeneralPurpose
-                    ) -> aioService().post(
-                        [ connection, callback ]() -> void
-                        {
-                            ( *callback )( connection, std::exception_ptr() );
-                        }
-                        );
+                if( hold )
+                {
+                    BL_MUTEX_GUARD( m_lock );
+
+                    m_held = callback;
+
+                    return;
+                }
+
+                postAnswer( callback );
             }
 
             virtual void releaseStream(
@@ -595,6 +663,99 @@ namespace utest
         };
 
         typedef bl::om::ObjectImpl< ProbePoolT<> > ProbePool;
+
+        /**
+         * @brief A body source whose read( ) fails, which is the everyday file-backed one
+         *
+         * The deferral record says every source that exists today is "always ready", and a source
+         * over a file is the reason that is not the same as "always succeeds": the file can be
+         * truncated, unlinked or served off a mount which went away between one pull and the next.
+         * read( ) is the CALLER's code and the caller is entitled to throw out of it
+         */
+
+        template
+        <
+            typename E = void
+        >
+        class ThrowingBodySourceT : public bl::httpclient::BodySource
+        {
+            BL_DECLARE_OBJECT_IMPL_ONEIFACE( ThrowingBodySourceT, bl::httpclient::BodySource )
+
+        protected:
+
+            ThrowingBodySourceT() NOEXCEPT
+            {
+            }
+
+        public:
+
+            virtual auto read( SAA_inout bl::data::DataBlock& target )
+                -> bl::httpclient::BodyReadResult OVERRIDE
+            {
+                BL_UNUSED( target );
+
+                BL_THROW(
+                    bl::UnexpectedException(),
+                    BL_MSG()
+                        << "The request body could not be read"
+                    );
+            }
+
+            virtual bool canRewind() const NOEXCEPT OVERRIDE
+            {
+                return false;
+            }
+
+            virtual void rewind() OVERRIDE
+            {
+                BL_THROW(
+                    bl::NotSupportedException(),
+                    BL_MSG()
+                        << "This body source cannot rewind"
+                    );
+            }
+        };
+
+        typedef bl::om::ObjectImpl< ThrowingBodySourceT<> > ThrowingBodySource;
+
+        /**
+         * @brief What the real ConnectionPool asks for, answered with a connection the case holds
+         *
+         * The shape is the ALPN fallback's and not the h2 task's: the attempt carries a task the
+         * pool schedules and an accessor which names the connection, and the pool's own rule -
+         * "prefer what the accessor returns" - makes the probe connection the connection for this
+         * key. That is what lets a case compose the real pool with a ClientConnection which is not
+         * also a task, and it is exercised by the pool's own suite from the other side
+         */
+
+        inline auto connectionFactoryFor( SAA_in const bl::om::ObjPtr< ClientConnection >& connection )
+            -> bl::httpclient::connection_factory_t
+        {
+            const bl::om::ObjPtrCopyable< ClientConnection > held( connection );
+
+            return [ held ](
+                SAA_in          const ConnectionKey&                            key,
+                SAA_in          const bl::httpclient::ConnectionPoolPolicy&     policy
+                )
+                -> bl::httpclient::ConnectionAttempt
+            {
+                BL_UNUSED( key );
+                BL_UNUSED( policy );
+
+                bl::httpclient::ConnectionAttempt attempt;
+
+                attempt.task = bl::om::ObjPtrCopyable< bl::tasks::Task >(
+                    bl::tasks::SimpleTaskImpl::createInstance< bl::tasks::Task >()
+                    );
+
+                attempt.driver = [ held ]() -> bl::om::ObjPtr< ClientConnection >
+                {
+                    return bl::om::copy( held );
+                };
+
+                return attempt;
+            };
+        }
 
         inline auto makeRequest( SAA_in_opt const std::string& method = "GET" ) -> ClientRequest
         {
@@ -1318,6 +1479,241 @@ UTF_AUTO_TEST_CASE( HttpClientRequestTask_RefusedSubmitIsRetryableTests )
     UTF_REQUIRE( connection -> has( "submit:refused" ) );
 
     UTF_REQUIRE( RequestOutcome::ConnectionUnusable == taskImpl -> outcome() );
+
+    /*
+     * The slot the pool handed out comes back even though no stream was ever opened - the probe
+     * records it by the handle it was named with, and INVALID_STREAM_HANDLE is zero. What that
+     * release DOES to the pool's books is the next case, which uses the real one
+     */
+
+    UTF_REQUIRE( pool -> waitForRelease() );
+
+    UTF_REQUIRE_EQUAL( pool -> releases().size(), 1U );
+    UTF_REQUIRE_EQUAL( pool -> releases()[ 0 ], std::string( "0:unusable" ) );
+}
+
+/**
+ * @brief THE SEAM: a refused submit gives the REAL pool its slot back (L5 review, finding 1)
+ *
+ * This is the one case in which the pool under test is ConnectionPoolImpl and not a probe, and the
+ * reason is that nothing else can see the defect. The pool keeps a per-connection count of its own -
+ * Entry::slotsInUse - incremented the moment it ANSWERS an acquire( ) and decremented only by
+ * releaseStream( ), which is given a connection and ignores the handle. S5.1 read "there is no
+ * stream to release" as "there is nothing to give back", so every refused submit left that count
+ * one higher for ever: the entry could never be forgotten (it is forgotten only when retired AND at
+ * zero), the connection task stayed alive in the pool's map, and for h2 - one connection per key -
+ * a unit of capacity was gone for good. Refusals are ordinary: the h2 driver refuses everything
+ * after closeSubmissions( ), the h1 driver refuses every BodySource request
+ *
+ * So the assertions are the POOL's numbers and not a probe's record: one dispatched, one released,
+ * no slot outstanding, and no connection left behind. Against the unfixed task every one of the
+ * last three is wrong
+ */
+
+UTF_AUTO_TEST_CASE( HttpClientRequestTask_RefusedSubmitReturnsTheSlotToTheRealPoolTests )
+{
+    using namespace bl;
+    using namespace bl::httpclient;
+    using namespace utest::requesttask;
+
+    const auto connection = ProbeConnection::createInstance(
+        NegotiatedProtocol::fromAlpn( "h2" ),
+        true /* isSubmitRefused */
+        );
+
+    const auto asConnection = om::qi< ClientConnection >( connection );
+
+    const auto pool = ConnectionPoolImpl::createInstance(
+        connectionFactoryFor( asConnection ),
+        ConnectionPoolPolicy()
+        );
+
+    const auto taskImpl = HttpClientRequestTaskImpl::createInstance(
+        makeRequest(),
+        makeKey(),
+        om::qi< ConnectionPool >( pool )
+        );
+
+    const auto task = om::qi< tasks::Task >( taskImpl );
+
+    runTask( task, []() -> void {} );
+
+    UTF_REQUIRE( task -> isFailed() );
+
+    UTF_REQUIRE( connection -> has( "submit:refused" ) );
+
+    /*
+     * No rendezvous is needed for what follows and none is used: releaseStream( ) is one of the
+     * deferred actions of the same drain that failed the request, and the drain runs every one of
+     * them BEFORE it notifies completion - which is what runTask( ) waited for
+     */
+
+    const auto stats = pool -> stats();
+
+    UTF_REQUIRE_EQUAL( stats.dispatched.value(), 1U );
+    UTF_REQUIRE_EQUAL( stats.released.value(), 1U );
+
+    UTF_REQUIRE_EQUAL( pool -> slotsInUse( asConnection ), 0U );
+
+    /*
+     * ConnectionUnusable retires the entry, and a retired entry at zero slots is forgotten - which
+     * is the consequence the leak used to prevent, and the reason the leak cost a connection and
+     * not only a slot
+     */
+
+    UTF_REQUIRE_EQUAL( stats.connectionsRetired.value(), 1U );
+    UTF_REQUIRE_EQUAL( pool -> connectionCount(), 0U );
+
+    pool -> dispose();
+}
+
+/**
+ * @brief The other unpaired path: an answer which arrives after the request has given up
+ *
+ * The pool cannot know a queued request has timed out, so a connection it frees a moment later is
+ * dispatched to one which has already failed - and that dispatch took a slot. The task's own
+ * comment always said the slot was "handed straight back rather than leaked"; it was not, because
+ * the release was guarded on a stream handle this path never has. Nothing is submitted, which is
+ * the other half of it: the connection is untouched
+ */
+
+UTF_AUTO_TEST_CASE( HttpClientRequestTask_LatePoolAnswerStillReturnsTheSlotTests )
+{
+    using namespace bl;
+    using namespace bl::httpclient;
+    using namespace utest::requesttask;
+
+    const auto connection = ProbeConnection::createInstance(
+        NegotiatedProtocol::fromAlpn( "h2" ),
+        false /* isSubmitRefused */
+        );
+
+    const auto pool = ProbePool::createInstance(
+        om::qi< ClientConnection >( connection ),
+        true /* isAnswered */
+        );
+
+    pool -> holdTheAnswer();
+
+    HttpClientRequestConfig config;
+
+    config.totalTimeout = time::milliseconds( 250 );
+
+    const auto taskImpl = HttpClientRequestTaskImpl::createInstance(
+        makeRequest(),
+        makeKey(),
+        om::qi< ConnectionPool >( pool ),
+        config
+        );
+
+    const auto task = om::qi< tasks::Task >( taskImpl );
+
+    runTask( task, []() -> void {} );
+
+    UTF_REQUIRE( task -> isFailed() );
+
+    requireTrue(
+        messageOf( task ).find( "has timed out" ) != std::string::npos,
+        "the request did not fail with a timeout: " + messageOf( task )
+        );
+
+    UTF_REQUIRE( pool -> releases().empty() );
+
+    /*
+     * The connection the pool freed a moment too late
+     */
+
+    pool -> answerNow();
+
+    UTF_REQUIRE( pool -> waitForRelease() );
+
+    UTF_REQUIRE_EQUAL( pool -> releases().size(), 1U );
+    UTF_REQUIRE_EQUAL( pool -> releases()[ 0 ], std::string( "0:failed" ) );
+
+    UTF_REQUIRE( ! connection -> has( "submit" ) );
+}
+
+/**
+ * @brief A BodySource which throws fails the request instead of ending the process
+ *
+ * read( ) used to be called in the apply phase, under the task lock, inside onDrain( )'s NOEXCEPT
+ * region - so a throw from it reached BL_RIP_MSG and fastAbort( ). Against the unfixed task this
+ * case does not fail, it takes the whole binary down with it. What it pins now is the whole of the
+ * recovery: the caller's own exception is what the request fails with, and the stream is RESET
+ * before the caller is told, which is what the deferred-exception path used to omit - a stream left
+ * open on the driver with no RST_STREAM and no timer is bounded only by the peer's patience
+ */
+
+UTF_AUTO_TEST_CASE( HttpClientRequestTask_BodySourceWhichThrowsFailsTheRequestTests )
+{
+    using namespace bl;
+    using namespace bl::httpclient;
+    using namespace utest::requesttask;
+
+    const auto connection = ProbeConnection::createInstance(
+        NegotiatedProtocol::fromAlpn( "h2" ),
+        false /* isSubmitRefused */
+        );
+
+    const auto pool = ProbePool::createInstance(
+        om::qi< ClientConnection >( connection ),
+        true /* isAnswered */
+        );
+
+    const auto source = ThrowingBodySource::createInstance();
+
+    auto request = makeRequest( "POST" );
+
+    request.bodySource(
+        om::ObjPtrCopyable< BodySource >( om::qi< BodySource >( source ) )
+        );
+
+    const auto taskImpl = HttpClientRequestTaskImpl::createInstance(
+        std::move( request ),
+        makeKey(),
+        om::qi< ConnectionPool >( pool )
+        );
+
+    const auto task = om::qi< tasks::Task >( taskImpl );
+
+    runTask(
+        task,
+        [ & ]() -> void
+        {
+            connection -> waitFor( "submit" );
+
+            connection -> deliverBodyWanted( 4096U );
+
+            connection -> waitFor( "cancel:42" );
+        }
+        );
+
+    UTF_REQUIRE( task -> isFailed() );
+
+    requireTrue(
+        messageOf( task ).find( "The request body could not be read" ) != std::string::npos,
+        "the request did not fail with the source's own exception: " + messageOf( task )
+        );
+
+    /*
+     * Nothing was put on the wire for a read which never produced anything - not even the empty
+     * answer a source is allowed to give
+     */
+
+    UTF_REQUIRE( ! connection -> has( "body:0:more" ) );
+    UTF_REQUIRE( ! connection -> has( "body:0:end" ) );
+
+    /*
+     * The closure the driver sends after the reset, and the slot which comes back with it
+     */
+
+    connection -> deliverClosed(
+        eh::errc::make_error_code( eh::errc::operation_canceled ),
+        false /* isRetryable */
+        );
+
+    UTF_REQUIRE( pool -> waitForRelease() );
+    UTF_REQUIRE_EQUAL( pool -> releases()[ 0 ], std::string( "42:failed" ) );
 }
 
 #endif /* __UTEST_TESTHTTPCLIENTREQUESTTASK_H_ */
