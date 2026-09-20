@@ -21,6 +21,10 @@
 #include <baselib/httpclient/ClientConnection.h>
 #include <baselib/httpclient/ClientTypes.h>
 
+#include <baselib/http2/Http2ConnectionTask.h>
+
+#include <baselib/tasks/TcpStrandedStreams.h>
+
 #include <baselib/tasks/TaskBase.h>
 
 #include <baselib/core/Uri.h>
@@ -1657,6 +1661,26 @@ UTF_AUTO_TEST_CASE( H2Pool_PolicyDefaultsTests )
             ),
         1U
         );
+
+    /*
+     * THE ASSUMPTION IS ONE NUMBER KEPT IN TWO PLACES, AND THE BAND ARGUMENT DEPENDS ON THEM
+     * BEING EQUAL. learnPeerLimit( ) takes a reading outside [ assumed - slotsInUse, assumed ] as
+     * the peer's, and what makes that sound is that the DRIVER derives its pre-SETTINGS reading
+     * from the same number; a driver assuming more than the pool does would report inside the
+     * pool's band and be believed. Neither header can assert it - the driver does not include the
+     * pool and the pool must not include the driver, which is what keeps it protocol agnostic -
+     * so the pin is here, in the one translation unit which sees both. It is a static_assert
+     * rather than a check, because a divergence should not reach a test run at all
+     */
+
+    static_assert(
+        static_cast< std::size_t >( httpclient::ConnectionPoolPolicy::ASSUMED_MAX_CONCURRENT_STREAMS ) ==
+            static_cast< std::size_t >(
+                tasks::Http2ConnectionTaskT< tasks::TcpSocketAsyncStrandedBase >
+                    ::ASSUMED_MAX_CONCURRENT_STREAMS
+                ),
+        "The pool's assumed concurrency limit and the h2 driver's must be the same number"
+        );
     UTF_REQUIRE_EQUAL( policy.requestTimeout.total_seconds(), 30L * 60L );
     UTF_REQUIRE_EQUAL( policy.idleTimeout.total_seconds(), 300L );
 
@@ -2089,6 +2113,69 @@ UTF_AUTO_TEST_CASE( H2Pool_AssumptionIsTakenAfterTheSettleWindowTests )
      */
 
     UTF_REQUIRE( answers -> waitFor( 5U ) );
+}
+
+/************************************************************************
+ * A reading taken before the peer spoke is not kept once it has (L5 second pass)
+ */
+
+UTF_AUTO_TEST_CASE( H2Pool_PeerLimitIsTakenFreshOnceItIsKnownTests )
+{
+    using namespace bl;
+    using namespace utest::connpool;
+
+    const auto factory = std::make_shared< StubFactory >();
+    const auto answers = std::make_shared< Answers >();
+
+    /*
+     * Ready at exactly the assumed number, which is what a driver reports until the peer's
+     * SETTINGS arrive - so the pool stores that reading at its one idle moment while it still
+     * knows nothing about the peer
+     */
+
+    factory -> initialState = httpclient::ConnectionState::Ready;
+    factory -> initialFreeSlots =
+        httpclient::ConnectionPoolPolicy::ASSUMED_MAX_CONCURRENT_STREAMS;
+
+    httpclient::ConnectionPoolPolicy policy;
+
+    policy.settingsSettleTimeout = time::seconds( 60 );
+
+    const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
+
+    const PoolGuard guard( pool );
+
+    const auto key = makeKey();
+
+    acquireInto( pool, key, makeRequest(), answers, 0U );
+
+    UTF_REQUIRE( answers -> waitFor( 1U ) );
+
+    const auto connection = om::qi< httpclient::ClientConnection >( factory -> taskAt( 0U ) );
+
+    UTF_REQUIRE_EQUAL( pool -> dispatchCapacity( connection ), 1U );
+
+    /*
+     * Now the peer says two hundred and fifty, which no assumption could have reported - so this
+     * reading is the peer's and the connection can carry 250 + the one already out. What the pool
+     * must NOT do is keep the hundred it stored before: the stored limit is only ever taken
+     * DOWNWARD, and the only moment which stores a reading outright is slotsInUse == 0, which
+     * under steady load never comes - so a kept assumption would cap a peer allowing 250 at 100
+     * for the life of the connection. Under-dispatch rather than over-dispatch, which is why it
+     * is a wrinkle and not a defect, and it is still the pool leaving two thirds of the peer's
+     * capacity unused
+     */
+
+    factory -> taskAt( 0U ) -> setReady( 250U );
+
+    acquireInto( pool, key, makeRequest(), answers, 1U );
+
+    UTF_REQUIRE( answers -> waitFor( 2U ) );
+
+    UTF_REQUIRE_EQUAL( pool -> dispatchCapacity( connection ), 251U );
+    UTF_REQUIRE_EQUAL( pool -> slotsInUse( connection ), 2U );
+
+    pool -> dispose();
 }
 
 #endif /* __UTEST_TESTCONNECTIONPOOL_H_ */

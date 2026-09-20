@@ -22,3 +22,6 @@
 --log_level=test_suite --run_test=H2Pool_AssumedLimitIsNotDispatchedAgainstTests
 --log_level=test_suite --run_test=H2Pool_PeerLimitLearnedFromACompletedResponseTests
 --log_level=test_suite --run_test=H2Pool_AssumptionIsTakenAfterTheSettleWindowTests
+
+# L5 second pass - the assumption's reading goes when the peer's number arrives
+--log_level=test_suite --run_test=H2Pool_PeerLimitIsTakenFreshOnceItIsKnownTests

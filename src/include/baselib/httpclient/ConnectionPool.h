@@ -985,6 +985,31 @@ namespace bl
             }
 
             /**
+             * @brief The peer's limit has just become known, and what is stored is not it
+             *
+             * Every reading taken before this moment came from the driver's assumption, and
+             * learnPeerLimit( ) only ever takes the stored value DOWNWARD - so a peer which allows
+             * more than the assumption would stay capped at the assumption for as long as the
+             * connection lived, since the one moment which stores a reading outright is
+             * slotsInUse == 0 and under steady load that moment never comes. Dropping the stored
+             * reading here makes the next one the fresh one; until it is taken - which for the two
+             * routes inside learnPeerLimit( ) is the next line, and for a completed response is
+             * the refresh of the examine which follows it - capacityOf( ) answers one stream,
+             * which is what it was answering a moment ago
+             */
+
+            static void markPeerLimitKnown( SAA_in const entry_ptr_t& entry ) NOEXCEPT
+            {
+                if( entry -> isPeerLimitKnown )
+                {
+                    return;
+                }
+
+                entry -> isPeerLimitKnown = true;
+                entry -> peerLimit = 0U;
+            }
+
+            /**
              * @brief Takes one reading of a Ready connection's free slots and learns what it can
              *
              * THE READING IS limit - <streams the driver has open>, and the driver's open count is
@@ -1008,7 +1033,12 @@ namespace bl
              * [ assumed - slotsInUse, assumed ]. ANY reading outside that band could not have come
              * from the assumption and is therefore the peer's - which covers every peer except one
              * whose limit is the assumed number exactly, for whom no reading can ever distinguish
-             * itself and the settle window below is the answer
+             * itself and the settle window below is the answer.
+             *
+             * THE DOWNWARD RULE APPLIES ONLY TO READINGS WHICH ARE THE PEER'S, which is what
+             * markPeerLimitKnown( ) is for: what was stored while the limit was unknown came from
+             * the driver's assumption, and keeping it would cap a peer allowing more than the
+             * assumption at the assumption until an idle moment the pool may never see
              */
 
             void learnPeerLimit(
@@ -1024,7 +1054,7 @@ namespace bl
 
                 if( slots > assumed || slots + inUse < assumed )
                 {
-                    entry -> isPeerLimitKnown = true;
+                    markPeerLimitKnown( entry );
                 }
 
                 if( entry -> settleBy.is_special() )
@@ -1036,7 +1066,7 @@ namespace bl
                 }
                 else if( timeNow >= entry -> settleBy )
                 {
-                    entry -> isPeerLimitKnown = true;
+                    markPeerLimitKnown( entry );
                 }
 
                 if( 0U == inUse )
@@ -2176,10 +2206,12 @@ namespace bl
                              * delivered before the peer's SETTINGS were applied. From here on
                              * freeStreamSlots( ) is the peer's number, whatever it reads - which
                              * is the one proof available for a peer whose limit is exactly the
-                             * assumed one and which therefore never distinguishes itself
+                             * assumed one and which therefore never distinguishes itself. What was
+                             * stored before this moment was not the peer's, so it goes with the
+                             * assumption it came from - markPeerLimitKnown( )
                              */
 
-                            entry -> isPeerLimitKnown = true;
+                            markPeerLimitKnown( entry );
                         }
                         else if( RequestOutcome::ConnectionUnusable == outcome )
                         {
