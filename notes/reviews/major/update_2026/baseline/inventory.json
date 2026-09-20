@@ -5617,33 +5617,21 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1846,
+   "line": 1841,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_AForgottenConnectionIsStoppedTests",
    "namespaces": []
   },
   {
-   "body_sha": "1da732b45b827668609ed257c36fb9d9",
+   "body_sha": "3fa8563c439f70c6f7afcfd91ede9236",
    "doc_sha": "559dd6a56057743788056c3c9339513b",
    "file": "utf_baselib_h2client4/TestConnectionPool.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1905,
+   "line": 1900,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_AssumedLimitIsNotDispatchedAgainstTests",
-   "namespaces": []
-  },
-  {
-   "body_sha": "c82607d7663bb38d855ee4a548d919b2",
-   "doc_sha": "527c398172b853bba70129cf52da604a",
-   "file": "utf_baselib_h2client4/TestConnectionPool.h",
-   "fixture": null,
-   "guards": [],
-   "kind": "UTF_AUTO_TEST_CASE",
-   "line": 2059,
-   "module": "utf_baselib_h2client4",
-   "name": "H2Pool_AssumptionIsTakenAfterTheSettleWindowTests",
    "namespaces": []
   },
   {
@@ -5653,7 +5641,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1723,
+   "line": 1718,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_ConcurrentAcquireAndReleaseTests",
    "namespaces": []
@@ -5731,31 +5719,31 @@
    "namespaces": []
   },
   {
-   "body_sha": "419f15e3aae4e5eb0590073c88039579",
+   "body_sha": "11a9ea48542ec2d1e8c4c14bab25e420",
    "doc_sha": "9a0f454506fe80f7dc7473ca4f0aa2ce",
    "file": "utf_baselib_h2client4/TestConnectionPool.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 2124,
+   "line": 2067,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_PeerLimitIsTakenFreshOnceItIsKnownTests",
    "namespaces": []
   },
   {
-   "body_sha": "2072840d83552ff5a731c1b4cf2c8a2c",
+   "body_sha": "45aab6547eaaba0d68cb6f1dc7d06b56",
    "doc_sha": "175118dd4af4f03df04e427cdbe79e79",
    "file": "utf_baselib_h2client4/TestConnectionPool.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1996,
+   "line": 1986,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_PeerLimitLearnedFromACompletedResponseTests",
    "namespaces": []
   },
   {
-   "body_sha": "e6b1221ecaabd8a90daeecab495530b9",
+   "body_sha": "fddbf5d28c641a3194233f48a1da570e",
    "doc_sha": "56b32f1d1cded5e4509c1734c7ddeea2",
    "file": "utf_baselib_h2client4/TestConnectionPool.h",
    "fixture": null,
@@ -5776,6 +5764,18 @@
    "line": 1020,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_QueueBehindPlaceholderTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "8e1bbad3f343f9b544937f5180324fff",
+   "doc_sha": "86fd9f2a6571788014419c7028eec02c",
+   "file": "utf_baselib_h2client5/TestConnectionPoolConcurrency.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 447,
+   "module": "utf_baselib_h2client5",
+   "name": "H2Pool_RequestsInFlightTogetherOnOneConnectionTests",
    "namespaces": []
   },
   {
@@ -5800,18 +5800,6 @@
    "line": 1088,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_SlotLimitingTests",
-   "namespaces": []
-  },
-  {
-   "body_sha": "16b8baed98d1833e2bfe5d14d4175ebe",
-   "doc_sha": "b727646a4a4d69d7253709d0ea232a6c",
-   "file": "utf_baselib_h2client5/TestConnectionPoolConcurrency.h",
-   "fixture": null,
-   "guards": [],
-   "kind": "UTF_AUTO_TEST_CASE",
-   "line": 446,
-   "module": "utf_baselib_h2client5",
-   "name": "H2Pool_TwoRequestsInFlightOnOneConnectionTests",
    "namespaces": []
   },
   {
@@ -14271,10 +14259,10 @@
   {
    "file": "utf_baselib_h2client5/TestConnectionPoolConcurrency.h",
    "label": "namespace poolconc",
-   "line": 97,
+   "line": 106,
    "module": "utf_baselib_h2client5",
    "ns": "utest",
-   "sha": "a379d2cb8196dd903a90d99d533f692b"
+   "sha": "6a4a52046f5fff19f5be84232b4a1050"
   },
   {
    "file": "utf_baselib_h2core/TestFlowControl.h",
@@ -17873,7 +17861,6 @@
    "notes_cases": [
     "H2Pool_AForgottenConnectionIsStoppedTests",
     "H2Pool_AssumedLimitIsNotDispatchedAgainstTests",
-    "H2Pool_AssumptionIsTakenAfterTheSettleWindowTests",
     "H2Pool_ConcurrentAcquireAndReleaseTests",
     "H2Pool_ConnectingTakesOnlyReplayableTests",
     "H2Pool_DisposalTests",
@@ -17930,7 +17917,7 @@
     }
    ],
    "notes_cases": [
-    "H2Pool_TwoRequestsInFlightOnOneConnectionTests"
+    "H2Pool_RequestsInFlightTogetherOnOneConnectionTests"
    ]
   },
   "utf_baselib_h2core": {
@@ -20585,10 +20572,10 @@
   },
   {
    "file": "utf_baselib_h2client5/TestConnectionPoolConcurrency.h",
-   "line": 95,
+   "line": 104,
    "module": "utf_baselib_h2client5",
    "name": "utest",
-   "sha": "3923927a034b48dda1b50f73e28c6d36"
+   "sha": "ab029238fdf9c13acce6d3f7027a29dd"
   },
   {
    "file": "utf_baselib_h2core/TestFlowControl.h",
