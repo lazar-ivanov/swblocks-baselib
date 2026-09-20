@@ -274,6 +274,28 @@ namespace utest
                 return result;
             }
 
+            /**
+             * @brief The upload pull of S5.1, traced like every other event
+             *
+             * It goes into the SAME trace as the response events and not into a counter of its
+             * own, because the thing worth being able to assert about it is where it falls
+             * relative to them - the contract says it is outside the response ordering and may
+             * arrive before any header, and a trace is what shows that
+             */
+
+            virtual void onBodyWanted(
+                SAA_in          const bl::httpclient::stream_handle_t           handle,
+                SAA_in          const std::size_t                               bytes
+                ) OVERRIDE
+            {
+                m_trace.push_back(
+                    "wanted:" +
+                    std::to_string( handle ) +
+                    ":" +
+                    std::to_string( bytes )
+                    );
+            }
+
             virtual void onHeaders(
                 SAA_in          const bl::httpclient::stream_handle_t           handle,
                 SAA_in          const unsigned                                  status,

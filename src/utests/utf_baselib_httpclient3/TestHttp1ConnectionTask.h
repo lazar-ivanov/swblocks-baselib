@@ -161,6 +161,28 @@ namespace utest
 
         public:
 
+            /**
+             * @brief Recorded so that a case can assert it never happens on this driver
+             *
+             * The HTTP/1.1 driver refuses a BodySource at submit( ), so it can never pull for
+             * upload - see Http1ConnectionTask::provideBody( ). Recording the call rather than
+             * ignoring it is what turns that from a claim into something a case can check
+             */
+
+            virtual void onBodyWanted(
+                SAA_in          const stream_handle_t                           handle,
+                SAA_in          const std::size_t                               bytes
+                ) OVERRIDE
+            {
+                BL_UNUSED( handle );
+
+                BL_MUTEX_GUARD( m_lock );
+
+                m_events.push_back(
+                    "wanted:" + bl::utils::lexical_cast< std::string >( bytes )
+                    );
+            }
+
             virtual void onHeaders(
                 SAA_in          const stream_handle_t                           handle,
                 SAA_in          const unsigned                                  status,

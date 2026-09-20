@@ -318,6 +318,13 @@ namespace bl
                 cpp::ScalarTypeIniter< bool >                                   isHeadersProduced;
                 cpp::ScalarTypeIniter< bool >                                   isCancelPending;
 
+                /*
+                 * Whether an onBodyWanted( ) is out and unanswered - see raiseBodyWanted( ). It is
+                 * what keeps the driver to at most one un-placed chunk per stream
+                 */
+
+                cpp::ScalarTypeIniter< bool >                                   isBodyWantedOutstanding;
+
                 std::string                                                     pendingUpload;
             };
 
@@ -745,6 +752,17 @@ namespace bl
 
                 auto& state = it -> second;
 
+                /*
+                 * This answers whatever pull was outstanding, whether or not one was: a caller
+                 * which pushes body unasked is still served, it simply does not get the bound the
+                 * pull gives
+                 */
+
+                state.isBodyWantedOutstanding = false;
+
+                const bool isEmptyAnswer =
+                    ! command.data || command.data -> size() == command.data -> offset1();
+
                 if( command.data )
                 {
                     state.pendingUpload.append(
@@ -758,17 +776,43 @@ namespace bl
                     state.uploadEnded = true;
                 }
 
+                if( isEmptyAnswer && ! command.endStream && state.pendingUpload.empty() )
+                {
+                    /*
+                     * THE SOURCE HAD NOTHING RIGHT NOW, which ClientStreamEventSink documents as a
+                     * legal answer, AND there is nothing waiting to be placed. Pumping here would
+                     * place nothing and then immediately raise the pull again, and the two layers
+                     * would ping-pong across two thread pools for as long as the source stayed
+                     * empty. The re-raise is left to the next pumpAllBodies( ) instead - a read or
+                     * a write completion, which is to say the next moment at which either the room
+                     * or the source can really have changed
+                     *
+                     * The third condition is what keeps this from swallowing progress: an empty
+                     * answer arriving on top of bytes a caller pushed unasked still pumps those
+                     * bytes, and only a stream with genuinely nothing to place waits
+                     */
+
+                    return;
+                }
+
                 pumpBody( command.handle );
             }
 
             /**
-             * @brief Places as much of a stream's upload into the session as it asks for
+             * @brief Places as much of a stream's upload into the session as it asks for, then
+             * asks the layer above for more when it has room and nothing left to place
              *
              * THE PULL OF DESIGN 4.5 IS OBEYED HERE AND NOWHERE ELSE: bodyBytesWanted( ) is the
-             * contract, and handing over more than it asks for is a BL_CHK in the engine. What
-             * this loop does not do is ask the layer above for more, because the ClientConnection
-             * contract as published has no "the connection wants more body" event - so what a
-             * caller hands over is held here until the windows take it
+             * contract, and handing over more than it asks for is a BL_CHK in the engine. S5.1
+             * carried that pull one hop further up, to ClientStreamEventSink::onBodyWanted( ) -
+             * before it this loop could not ask the layer above for anything, so what a caller
+             * handed over was held here until the windows took it, and a streaming upload was
+             * buffered whole inside the driver
+             *
+             * The raise is AFTER the loop and not inside it, because what makes the event worth
+             * having is that it is raised only when this stream has actually run dry: mid-loop
+             * there is still pending upload to place and asking for more would refill the very
+             * buffer the event exists to keep empty
              */
 
             void pumpBody( SAA_in const stream_handle_t handle )
@@ -818,6 +862,66 @@ namespace bl
                         break;
                     }
                 }
+
+                raiseBodyWanted( handle );
+            }
+
+            /**
+             * @brief Asks this stream's request for more body, when there is room for it
+             *
+             * Four conditions, and each one is load-bearing. The stream must still have an upload
+             * coming ( uploadEnded is set at submit( ) for a request with no BodySource, so a
+             * buffered body is never pulled ); nothing may be waiting to be placed, or the pull
+             * would refill a buffer which is not yet empty; there must be room in the windows to
+             * send into, since an event raised with nothing wanted only moves the wait; and no
+             * pull may already be outstanding, which is what bounds the driver to AT MOST ONE
+             * un-placed chunk per stream and is the whole reason this is a request/answer and not
+             * a notification
+             *
+             * The sink call goes out on the strand, like every other delivery in this file: it
+             * appends to the request's mailbox and returns ( design 5.2 rule L3 ), so it re-enters
+             * nothing and takes no lock of the layer above
+             */
+
+            void raiseBodyWanted( SAA_in const stream_handle_t handle )
+            {
+                const auto it = m_streams.find( handle );
+
+                if( it == m_streams.end() || ! m_session )
+                {
+                    return;
+                }
+
+                auto& state = it -> second;
+
+                if(
+                    state.isEndQueued ||
+                    state.uploadEnded ||
+                    state.isBodyWantedOutstanding ||
+                    ! state.pendingUpload.empty()
+                    )
+                {
+                    return;
+                }
+
+                const auto wanted = m_session -> bodyBytesWanted( state.streamId );
+
+                if( 0U == wanted || ! state.sink )
+                {
+                    return;
+                }
+
+                /*
+                 * The sink is copied out and the flag is set BEFORE the call, so that neither
+                 * depends on 'state' surviving it - every other delivery in this file takes the
+                 * sink by value for the same reason
+                 */
+
+                const auto sink = state.sink;
+
+                state.isBodyWantedOutstanding = true;
+
+                sink -> onBodyWanted( handle, wanted );
             }
 
             void pumpAllBodies()

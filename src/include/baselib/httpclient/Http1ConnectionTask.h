@@ -1403,6 +1403,13 @@ namespace bl
             /**
              * @brief Unreachable by construction - submit( ... ) refuses a streaming body, so no
              * handle this connection ever issued has one
+             *
+             * The same refusal is why this driver never raises the upload pull S5.1 added,
+             * ClientStreamEventSink::onBodyWanted( ). That event exists for a connection which can
+             * take a body in pieces as its windows allow; this one takes the whole body at
+             * submit( ) or takes the request not at all, so there is nothing for it to ask for.
+             * Stated here rather than left to be rediscovered by the next reader who greps for the
+             * event and finds one driver raising it
              */
 
             virtual void provideBody(

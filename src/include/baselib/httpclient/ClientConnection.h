@@ -141,6 +141,11 @@ namespace bl
          * onHeaders( ..., isInterim = false ), then zero or more onData( ... ), then at most one
          * onTrailers( ... ), then exactly one onClosed( ... ). onClosed( ... ) arrives even when
          * the stream failed before any header, and it is always the last event
+         *
+         * onBodyWanted( ... ) is NOT a step in that order. It belongs to the request body rather
+         * than to the response and interleaves freely with everything above it; the order it is
+         * bound by is only that it never follows onClosed( ... ). Its own comment says why it
+         * exists and what answers it
          */
 
         class ClientStreamEventSink : public om::Object
@@ -148,6 +153,51 @@ namespace bl
             BL_DECLARE_INTERFACE( ClientStreamEventSink )
 
         public:
+
+            /**
+             * @brief The connection has room to send more of this stream's request body
+             *
+             * THE UPLOAD SIDE OF THE PULL, added in S5.1 to close a gap S4.2 found and left. The
+             * session engine has always pulled - http2::Session::bodyBytesWanted( ... ) is a hard
+             * contract and handing it more than it asks for is a BL_CHK - but the driver had no
+             * way to ask the layer ABOVE for more, so whatever provideBody( ... ) handed over sat
+             * in the driver until the windows took it. With no such event a request task holding a
+             * BodySource has exactly two possible behaviours: hand the whole source over, which
+             * buffers the entire upload inside the driver and is worse than not streaming at all,
+             * or hand over a bounded amount and then stall, because nothing else on this interface
+             * reports stream progress upwards. The second is not an implementation, so the
+             * contract as first published FORCED the first - and design 5.3's "an upload never
+             * buffers ahead of the peer" was true of the engine and false of the shell
+             *
+             * OUTSIDE THE RESPONSE ORDERING ABOVE, and deliberately so. It is not a fourth step in
+             * that sequence: it concerns the REQUEST body, it may arrive before any header, between
+             * header blocks, or interleaved with onData( ... ), and a consumer must not read the
+             * ordering guarantee as saying anything about it. The one thing it is ordered against
+             * is the end of the stream - it never arrives after onClosed( ... )
+             *
+             * FIRED ONLY FOR A STREAM SUBMITTED WITH A BodySource. A request with no body, or with
+             * a buffered one, has its body in hand at submit( ... ) and is never pulled
+             *
+             * ONE EVENT IS ANSWERED BY EXACTLY ONE provideBody( ... ), and the driver does not ask
+             * again until it has been answered. That is what bounds the buffering: at most one
+             * outstanding chunk per stream. 'bytes' is the room available when the event was
+             * raised and the answer should not exceed it - a larger one is accepted, and held, but
+             * it is the caller re-creating the very problem this event exists to remove
+             *
+             * A SOURCE WHICH HAS NOTHING RIGHT NOW ANSWERS WITH A NULL BLOCK AND endStream FALSE.
+             * That is a legal answer - BodyReadResult exists to distinguish "produced nothing" from
+             * "finished" - and the driver re-raises the event when its room next grows. It is also
+             * where this contract stops: BodySource::read( ... ) is synchronous and has no
+             * readiness signal, so on a connection with no other traffic there is no next growth
+             * and such a source stalls. Closing that needs a readiness event on BodySource itself,
+             * which is a ClientTypes.h change and therefore a negotiated one; it is recorded in
+             * notes/plans/issues/body-source-readiness-deferral.md rather than left implicit
+             */
+
+            virtual void onBodyWanted(
+                SAA_in          const stream_handle_t                           handle,
+                SAA_in          const std::size_t                               bytes
+                ) = 0;
 
             /**
              * @brief A response header block, and the status of the response it belongs to
