@@ -1448,6 +1448,16 @@ see this; it is a composition defect, and S6.1's first end-to-end case would hav
 ## 8. Layer L6 — Session
 
 ### S6.1 — ClientSession (§5.6, §5.8)
+- **OWN THE DISPATCH RULE: never dispatch a `BodySource` request to an HTTP/1.1 connection.** Found
+  ownerless at the L5 second pass, which is the second time a deferral in this feature has had no
+  owner - the establishment bound was the first. The h1 driver refuses **every** `BodySource`
+  request (`Http1ConnectionTask.h:1297`, tested before it takes its own state lock). S5.1 now
+  reports that refusal correctly - `Failed` with the reason, connection stays poolable, and
+  retryable because the request provably never reached the wire - so nothing is destroyed and
+  nothing is mis-stated. **But the request still gets dispatched there in the first place**, burns
+  an attempt against `maxRetriesPerRequest`, and can land on another HTTP/1.1 connection next time.
+  The session is the only layer that knows both the request and the key's protocol, so the rule is
+  this slice's: route a streaming upload to h2, or fail it before dispatch with the same reason.
 - Deliver: `httpclient/ClientSession.h` (`ClientSessionImpl`) - holds pool, active profile, proxy config,
   cookie jar, redirect policy, decoder registry; creates request tasks; applies the profile's header set
   by request kind and the `accept-encoding` = profile-list ∩ registered-decoders rule (strict mode returns

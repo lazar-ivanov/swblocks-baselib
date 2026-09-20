@@ -534,3 +534,271 @@ arming order, not measured).
   (`TestClientContracts.h:98-119`, which bounds itself by `capacity() - size()`).
 - **Windows**, and the **1.1.1w flavor**, as before; **a64**, on which finding 7's unsynchronised
   reads stop being formal.
+
+## Second pass: the fix round `7a6f6ba..4399b0c`, tip `4399b0c` (2026-09-19)
+
+**Verdict: the five findings and the late one are carried out as described; the High is closed on
+every path an `acquire` can be answered on, not only the two that leaked; three of the five
+departures are right, one is right in its conclusion and wrong in its reasoning, and one rests on
+a sentence about the driver which is false on the two routes it names; nothing new in the
+production code beyond one Low and one misstatement, and the flake shape lives in every case of
+the pool suite on its failure path.** Read in full: the three production diffs
+(`HttpClientRequestTask.h` 174/57, `ConnectionPool.h` 388/52, `Http2ConnectionTask.h` 43/1), the
+three test diffs and the eight new cases, the design and plan diffs, every commit message in the
+range, and the tip code around every function the round touched, with `TaskBase::requestCancelInternal`,
+`ExecutionQueueImpl::forceFlushNoThrow` and `StreamRegistry::openLocalStream` read for the
+questions below. Nothing was built and nothing was run; the module results (15/15, 56/56, 12/12,
+3/3 under both release toolchains) are as reported, and the manifest holds 1005 cases (counted from
+the `cases` lists at tip), the eight new names and nothing removed. **No TSan run is recorded for
+the round** in any of its commit messages, against a pool which gained a settle timestamp, a
+known-limit flag and a cancel flag, and a request task whose deferred phase now runs the body read.
+
+**Finding 1 (High) - the pairing rule, walked on every path.** The pool answers an `acquire` in
+exactly five shapes and a slot travels with exactly one of them: a dispatch
+(`answerWaiter( actions, waiter, entry -> current(), nullptr )`, `ConnectionPool.h:1569-1577`,
+after `++slotsInUse`), where `findDispatchable` has already required `current()` non-null
+(`:1327-1331`); a waiter deadline (`:1525-1535`), the attempts bound (`:1537-1562`), disposal
+(`:2012-2021`) and an `acquire` after disposal, all with a null connection and an exception. The
+request task's `applyAcquired` (`HttpClientRequestTask.h:626-760`) has five branches and the
+release is present on every one which can have a slot: completion pending (`:631-644`) releases
+if the connection is non-null; exception-or-null (`:646-660`) releases nothing, which is right
+since no slot came; a throwing `submit()` (`:681-707`) and a refused one (`:709-745`) both
+release the slot and drop the connection; a successful one records the handle and releases at
+`applyClosed`, whose `m_isStreamClosed` guard makes it once. `releaseConnectionSlot` is guarded
+on the connection alone (`:1386-1389`) and `releaseStream` decrements for the connection it is
+handed, both of an entry's pointers being registered (`:1806` for the task, `:1188` for a
+fallback driver) and both erased only at zero (`:1135-1150`). So the rule "every answered acquire,
+exactly one release, stream or no stream" holds by construction on the task side and by lookup on
+the pool side, and it depends on one property of the pool which is true and unstated: an answer
+carries a connection if and only if it carries a slot. The task's branch order tests the exception
+first, so a pool which ever answered with both would leak silently - a robustness nit, one
+reordering, not a defect in this pool. The pin is what the first pass asked for:
+`HttpClientRequestTask_RefusedSubmitReturnsTheSlotToTheRealPoolTests` (`TestHttpClientRequestTask.h:1513-1578`)
+composes `ConnectionPoolImpl`, a real request task and a refusing probe through the fallback shape
+of `connectionFactoryFor` (`:731-757`, a `SimpleTaskImpl` as the attempt and the probe through the
+accessor), and asserts the pool's own `slotsInUse( ) == 0`, one dispatched, one released, one
+retired, `connectionCount( ) == 0`; its "no rendezvous needed" comment is correct, since the
+release is a phase-two action of the drain which notifies in phase three.
+`HttpClientRequestTask_LatePoolAnswerStillReturnsTheSlotTests` (`:1580-1645`) pins the other path
+with a held answer (`holdTheAnswer`/`answerNow`, `:544-570`), asserting `0:failed` and no submit.
+Both are the right assertions.
+
+**One consequence the round left standing, and it is now sharper than before.** The h1 driver's
+refusal of a `BodySource` request still produces `ConnectionUnusable`, which the merge defers as
+"a contract change". For *this* refusal it is not: the request task holds the request (its
+`bodySource()`) and the connection (`negotiated().protocol()`), both on the frozen contract, so
+"an `Http11` connection refused a `BodySource` request" is distinguishable today, and should be
+`Failed`, not retryable, connection kept. What makes it matter is the late finding: a retired entry
+at zero slots is now *cancelled* (`forgetConnection`, `:1135-1150`), so a healthy HTTP/1.1
+connection is killed for every streaming upload a caller sends its way, where before the fix round
+it merely leaked a slot. The plan's S6.1 work order carries the factory and the dispatched-half
+retry as obligations and does not carry this one (grepped: `BodySource` appears in the plan only
+in S2.6, S5.1 and the seam paragraph). **Unresolved, ledger.**
+
+**Departure 1 - finding 5: the "one until known" rule is the right fix and its three ways are
+sound; (a)'s claim holds on two conditions, one of them unenforced; the stored limit has one
+conservative wrinkle.** `capacityOf` returns `UNCONFIRMED_MAX_CONCURRENT_STREAMS` (one) until
+`isPeerLimitKnown` (`:974-985`), and the settle window is checked in the same `learnPeerLimit`
+(`:1014-1056`) which takes the reading, one reading per examine (`:1215`).
+
+*(a) The band.* The pre-`SETTINGS` driver reports `100 - m_streams.size()`
+(`Http2ConnectionTask.h:2254-2275`, the assumed limit at `:261`), and `m_streams.size() <=
+slotsInUse` at every instant because a stream is erased from `m_streams` before its sink's
+`onClosed` is even posted (`closeStream`, `:1093-1098`), and the pool's decrement comes after that
+post, a drain and a `releaseStream`; the slots for requests which never opened a stream only widen
+the band, which is the safe direction. So a reading outside `[ 100 - slotsInUse, 100 ]` cannot be
+the assumption's - verified. The two conditions: the driver's `ASSUMED_MAX_CONCURRENT_STREAMS` and
+the pool's must be the same number, which they are (`:261` and `ConnectionPool.h:104`) and which
+nothing enforces - the pool's comment says it "HAS to be", and a `static_assert` is impossible
+across two headers the driver does not include, so it should at least be a test in
+`H2Pool_PolicyDefaultsTests`; and a zero reading while the state still reads `Ready` - possible
+in the window between an external cancel and `onTaskStoppedNothrow`'s `Closed`, since
+`publishFreeStreamSlots` now stores zero on `! canOpenStream()` (`:2265`) - is taken as "outside
+the band" and latches `peerLimit = slotsInUse`; harmless, because that connection reads `Closed`
+on the next examine and is retired.
+
+*(b) A completed response.* RFC 9113 section 3.4 makes the server's `SETTINGS` the first frame it
+sends (recalled, not re-fetched) and the engine applies frames in order, so `Completed` at
+`releaseStream` (`:2170-2183`) does prove the peer has spoken. Right, and the only proof
+available for a peer at exactly the assumed number.
+
+*(c) The settle window.* Armed at the first `Ready` reading (`:1030-1035`), one-shot, default
+1 s (`:203`); on expiry the reading is taken as the peer's (`:1037-1040`), which is the pre-fix
+behaviour, so the window's worst case is the old behaviour on a path whose `SETTINGS` take longer
+than a second to arrive - a heuristic, and honestly recorded as one. The cost on the peer at
+exactly 100 is one stream for at most a second plus a tick, and less than that whenever the first
+response returns sooner, which is the ordinary case. **5(c) - the driver reporting one slot until
+`peerLimitsConcurrentStreams()` - is still not done**, and the design says in as many words that it
+would remove the window's cost; it is the additive driver change the first pass asked for first.
+Unresolved, but owned.
+
+*The burst.* `peerLimit` is lowered to `slots + slotsInUse` whenever that is lower (`:1049-1054`),
+so a single examine dispatches at most the slots the driver last reported, and a later examine
+against the same stale reading finds `slotsInUse` already at the bound. Verified by walking the
+loop; that closes the burst finding 5 named.
+
+*The wrinkle.* At `slotsInUse == 0` the reading is stored as `peerLimit` unconditionally
+(`:1042-1047`), including when it is the pre-`SETTINGS` assumption; thereafter it is only lowered.
+A peer allowing 250 whose first idle reading was the assumed 100 is therefore capped at 100 (or 101
+with the rider out) until its next idle moment, which under steady load never comes -
+under-dispatch, never over-dispatch, and bounded by `maxStreamsPerConnection` in any case. Low.
+Fix: when `isPeerLimitKnown` transitions in `learnPeerLimit`, take that reading fresh
+(`slots + slotsInUse`, or `slots` at zero) rather than the minimum. The three cases are consistent
+with the code as read: the stub's `freeStreamSlots` never moves on `submit`, which the band
+arithmetic does not need, and `H2Pool_AssumedLimitIsNotDispatchedAgainstTests`'s "two free with
+one out" is precisely a reading below `100 - 1`.
+
+**Departure 2 - finding 4: the truncation is now recorded as a hard failure, the arithmetic
+checks, and the per-endpoint bound is rightly the only real fix.** Design 5.7 `:1194-1213` and
+`ConnectionPool.h:520-548` say what the first pass asked them to say: the old argument
+contradicted itself, the per-attempt deadline does not cover resolve-and-connect, a dual-stack
+host with a stale `AAAA` is failed at 120 s on each of three attempts, and that is a policy
+choice. The figures check: one dead address is 134 + 60 = about 200 s, two about 330, three about
+470; three retries of 200 s are ten minutes. `H2Pool_PolicyDefaultsTests` pins
+`establishmentTimeout < 134`, which pins the admission itself. Naming the establisher's
+per-endpoint connect bound as the only fix is right: the quantity is addresses times SYN timeout,
+and only something applied per address changes it. Two things to add when that fix is scheduled:
+`DEFAULT_HANDSHAKE_RETRY_COUNT` of 1 re-walks the *same* address list, so the retry buys nothing
+against a black hole and doubles the bill; and the cheapest shape of a per-endpoint bound on Linux
+is `TCP_SYNCNT` on the socket before `async_connect`, which caps the SYN schedule without an Asio
+timer (recalled, not verified).
+
+**Departure 3 - the late finding: all four routes are covered, the double cancel is idempotent
+three times over, and the sentence which justifies cancelling a `Draining` driver is false on both
+`Draining` routes.** The four retirements - `Draining`/`Closed` observed (`:1217-1224`), the bound
+expired (`:1238-1272`, with its own `chkCancelEntry`), the attempt task ended (`:1274-1301`), and
+`ConnectionUnusable` reported (`:2184-2191`) - all set `isRetired`, and every one is followed in
+the same call by `examineKey`'s `isRetired && 0U == slotsInUse` check (`:1470-1482`), which is
+the single door to `forgetConnection`; the factory-failure retirement (`:1783-1787`) reaches it too
+with no task to cancel. Idempotence: `isCancelRequested` on the entry (`:1081-1086`),
+`chkCancelTask`'s `Completed` skip (`:1058-1067`), and `TaskBase::requestCancelInternal`'s own
+`m_cancelRequested` and `Running` guards (`TaskBase.h:1032-1041`) - the pool's flag is the tidy
+one, the other two would have made a second cancel harmless anyway. Disposal covers a fallback
+driver the pool scheduled although it collects and cancels only `attempt.task` (`:2033-2035`, `:2070-2072`): the queue flush
+runs with `cancelExecuting` true (`ExecutionQueueImpl.h:1420-1437`).
+
+*The sentence.* `:1124-1130`: *"A real driver which is Draining with nothing in flight is not on
+its way out either: the GOAWAY drain takes itself to Closed through chkFinishClose() when its last
+stream ends, so a driver still reading Draining here is one staying up."* On both `Draining`
+routes the opposite holds. `onStreamClosedEvent` (`Http2ConnectionTask.h:1320-1343`) posts the
+sink's `onClosed` and then, in the same strand handler, calls `closeGracefully()` when
+`m_streams.empty()` and the state is `Draining` - so by the time that `onClosed` has crossed the
+mailbox, been drained, and reached `releaseStream`, the driver has already queued its GOAWAY, armed
+its drain deadline and published `Draining` from `closeGracefully` (`:2080-2095`). A driver
+reading `Draining` at `forgetConnection` on the GOAWAY-received route and on the reserve route is
+one *in the middle of closing*, and the pool's `requestCancel()` races its GOAWAY write. The
+consequence is what L4's second pass established for the drain deadline, which takes the same
+`requestCancelInternal` path: the write's abort ends the task as a cancel marked expected instead
+of a success, and the GOAWAY reaches the peer only if the write had already left the socket
+buffer, which for a nine-byte frame it ordinarily has. Classification and a SHOULD; not
+correctness. The driver which really does stay up is narrower than the comment says: `Draining`
+published from the *refused* branch of `applySubmit` with an empty stream table (a session
+draining from birth, a misconfiguration), and the `ConnectionUnusable` route on a healthy h1
+connection, which is the misclassification above. So the cancel is right as an invariant - "a
+connection the pool forgets is one nothing else will stop" is true, and the establishment bound
+and the h1 case need it - and its comment should say that on the `Draining` routes it usually
+finds a close already in progress and cuts it short. Two pins encode that: `H2Pool_GoAwayDrainingTests`
+now asserts `waitForCancel()` on the GOAWAY route, which with a real driver is the race; and
+`H2Driver_DrainingReserveIsPublishedToThePoolTests` (`TestHttp2ConnectionTask.h:1482-1610`)
+asserts the graceful GOAWAY with error 0 (`:1593`) for the driver alone, which composed with the
+pool is not guaranteed. Neither is wrong; together they describe a race as two certainties. Low,
+comment and design 5.4's GOAWAY paragraph.
+
+**Departure 4 - finding 2's `submit()`: the guard is the right shape; the reasoning that it could
+not be deferred is wrong, and the placement is a choice rather than a necessity.** The class
+comment (`HttpClientRequestTask.h:150-157`) and the merge argue that a deferred `submit()` would
+let a sink event overtake the handle. Sink events cannot overtake the drain: they append to the
+mailbox and are applied by a *later* batch, and phase two of the current batch runs to completion
+before that batch's phase one - the mailbox flag, not the task lock, is what serializes phases,
+and phase-two state is drain-owned by the class's own account (`offerToSink` already reads
+`m_handle` in phase two, `:913`). A `submit()` in phase two which records `m_handle` there is
+therefore ordered before every event the connection can deliver. The hazard that is real is the
+one the comment does not name: two events in the *same* batch, `[ Acquired, Expired ]`, where
+phase one applies the expiry with no handle, defers no reset, and phase two then opens a stream
+for a request already failed - reset only when its response completes. That is avoidable with one
+check of `m_isCompletionPending` inside the deferred submit, so deferring is possible and not
+"wrong"; it is merely not simpler. The chosen placement costs a documented lock-order edge and
+`toSessionRequest` under the request-task lock, and buys same-batch ordering for free. Keep it;
+the guard (`:681-707`, `Failed`, not retryable, slot and connection released) is the right shape
+in either placement; the comment's "BY NECESSITY" should become "by choice, for same-batch
+ordering". Nit.
+
+**Departure 5 - the identifier wrap: the refutation is right.** `openLocalStream`
+(`StreamStateMachine.h:1137-1167`) tests `canOpenLocalStream()` before touching the counter, and
+`canOpenLocalStream()` requires `remainingLocalStreams() != 0`, which requires
+`m_nextLocalStreamId <= MAX_STREAM_ID` (`:1083-1091`). So the advance `streamId + 2U` runs only
+from a value at most `2^31 - 1` and produces at most `2^31 + 1`, representable in the `uint32`
+(`:877`) and rejected by the `> MAX_STREAM_ID` test from then on; the subtraction in
+`remainingLocalStreams` is guarded by the same test. Both roles check: the client's last id is
+`2^31 - 1` itself, the server's `2^31 - 2`, and the value after each is above the maximum. And
+`Session::submitRequest` asks `canOpenLocalStream()` again before calling in (`Session.h:920-926`),
+so the guard is doubled. The new case's reserve arithmetic is consistent with this: `(MAX - 1) / 2`
+leaves `2^30` in hand at birth, one above the reserve, so exactly one stream opens before
+`isDraining()` - as the case asserts. Withdrawn rightly.
+
+**The flake shape, and where else it lives.** The shape is a posted answer holding a raw pointer
+to an `Answers` on the case's stack, via `acquireInto( ..., &answers, ... )`
+(`TestConnectionPool.h:904-923`), and it is in every one of the suite's thirteen acquiring cases
+by construction. On the success path it is live only where a case returns with an answer still in
+flight, and after this round that is nowhere: each case's final `waitFor( N )` equals the number of
+answers it caused, or the case ends with no waiter queued (checked case by case against the
+acquire counts). On the **failure path it is live in every case which has a waiter queued at the
+failing assertion**: a `UTF_REQUIRE` unwinds through `PoolGuard::~PoolGuard`, whose `dispose()`
+posts an aborted answer per waiter (`:2012-2021`), and `answers` is destroyed a few frames later -
+so the guard, written to stop "a second failure which hides the first", produces exactly one
+whenever it has waiters to answer. `H2Pool_ConcurrentAcquireAndReleaseTests` has the same shape
+through `[ &pool, &answers, &released ]` (`:1686`, `:1695`). The sibling shape is the factory:
+`cpp::ref( factory )` hands the pool a reference to a stack `StubFactory`, `startConnection`
+calls it outside the lock from `runActions`, and `disposeInternal` does not join a `runActions`
+already in flight on a tick - narrow, and the same class of hazard. The other two suites are
+clean: `ProbePool` posts a refcounted connection and a `shared_ptr` callback holding the task's
+own reference, and the `[ & ]` lambdas in both are synchronous scopes under `runTask`, `withPeer`
+and `runDriver`. **Fix, structural and two lines:** `Answers` and `StubFactory` held by
+`std::shared_ptr` and captured by value, which removes the shape from both paths at once;
+the three `waitFor( 5U )` rendezvous would then be belt and braces rather than load-bearing.
+
+**New or unresolved.**
+
+- *Unresolved, ledger:* the h1 `BodySource` refusal's outcome - distinguishable on the frozen
+  contract, now fatal to a healthy connection, and on no work order.
+- *Unresolved, owned:* 5(c), the driver reporting one slot until `peerLimitsConcurrentStreams()`,
+  which is what makes the settle window unnecessary.
+- *Unresolved, evidence:* no TSan run recorded for the round; the driver-plus-pool composition
+  still exercised in no module, so the two `Draining`-route pins describe a race as two
+  certainties.
+- *New, Low:* the `Draining`-routes sentence at `ConnectionPool.h:1124-1130` (departure 3).
+- *New, Low:* `peerLimit` stored from a pre-`SETTINGS` idle reading and only ever lowered
+  (departure 1, the wrinkle).
+- *Nits:* the equal-constants assumption unpinned; the answer's connection-and-exception branch
+  order; "BY NECESSITY" in the request task's class comment; `TCP_SYNCNT` and the
+  same-list handshake retry for the per-endpoint bound's work order.
+
+**What else in this round rests on evidence that thin.** The eight new cases pin what they say;
+what remains unpinned is the composition: no case runs the real pool over the real driver, so the
+forget-cancel racing a graceful close, the settle window against a real `SETTINGS` round trip, and
+the band inference against a driver whose `m_streams` really lags `slotsInUse` are all verified
+here by reading. The lane's negative controls (five degradations shown red for finding 2, the
+reverted hunks for finding 3) are as reported. The manifest is committed; the runtime baseline is
+not, as before.
+
+**Verified versus inferred in this pass.** Verified by reading: every diff named above and the
+tip code around each; the five answer shapes and the five `applyAcquired` branches; both
+registrations and the single erasure of an entry's pointers; the erase-before-`onClosed` order
+in `closeStream` that makes the band inference sound; `chkPublishDraining`'s two call sites and
+`publishFreeStreamSlots`'s new predicate; the four retirement routes and the one door; the three
+idempotence guards; the flush's `cancelExecuting`; `openLocalStream`'s guard order and the
+counter's type; `offerToSink`'s phase-two read of `m_handle`; the acquire-versus-wait counts of
+all thirteen pool cases; the absence of `BodySource` from the S6.1 work order and of "sanitizer"
+from the round's messages; the manifest's 1005 by counting. Inferred or recalled: RFC 9113
+section 3.4's ordering of the server preface; that a nine-byte GOAWAY already handed to
+`async_write` ordinarily leaves the socket buffer before a cancel lands (a claim about socket
+buffers, as in L4); `TCP_SYNCNT`'s semantics and the same-list handshake retry's cost; that the
+L4 drain-deadline analysis transfers to an external `requestCancel()`, which follows the same
+`requestCancelInternal` path.
+
+**Not checked in this pass.** No build and no test run. `TcpConnectionEstablisherConnector::cancelTask`
+was not re-read for this round; the drain-deadline reading from the L4 second pass was relied
+on. The h1 driver's `Draining` publication on a non-reusable response and whether it closes
+itself afterwards, which decides whether the `Draining`-route cancel finds a closing h1 driver
+too. `SimpleTaskImpl`'s completion timing in `connectionFactoryFor`, assumed immediate. Windows,
+the 1.1.1w flavor, and a64, as before.
