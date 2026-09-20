@@ -59,10 +59,11 @@ namespace bl
          * one: two connections under two profiles must not share it
          *
          * THE DURATIONS ARE OFF BY DEFAULT WHERE DESIGN 5.7 GIVES THEM NO OWNER HERE. The
-         * keepalive PING is optional by design, and the connection idle lifetime is the POOL's
-         * (design 5.4 lists it as a pool policy knob and 5.7's table names the pool as its owner),
-         * so this task takes it as a parameter rather than inventing the five minutes the table
-         * quotes. A special or non-positive duration disables the timer it belongs to
+         * keepalive PING is optional by design, and the connection idle lifetime's VALUE is the
+         * POOL's (design 5.4 lists it as a pool policy knob and 5.7's table, as the L6 fix round
+         * corrected it, has the pool set it and each driver enforce it), so this task takes it as
+         * a parameter rather than inventing the five minutes the table quotes. A special or
+         * non-positive duration disables the timer it belongs to
          *
          * drainTimeout is the exception and is ON by default: it is this task's own backstop
          * rather than a policy anyone above it sets, and a connection with it off can wait on a

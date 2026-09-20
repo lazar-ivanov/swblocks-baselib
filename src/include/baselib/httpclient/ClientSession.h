@@ -59,6 +59,11 @@ namespace bl
          * connection factory writes them into the Http2ConnectionConfig of every connection it
          * builds - see makeConnectionFactory( ). Setting them in http2Config here instead would be
          * overwritten, and that is deliberate: there is one place each of those two numbers lives
+         *
+         * ::idleTimeout reaches BOTH drivers and has to, which is what L6 finding 5 was: the
+         * HTTP/1.1 driver had no idle timer and the pool has no reaper, so an idle keep-alive
+         * connection obtained through a session was nobody's. The h2 half goes through the
+         * connection factory and the h1 half through the driver factory - see makeDriverFactory( )
          */
 
         struct ClientSessionConfig
@@ -1411,7 +1416,9 @@ namespace bl
             ClientSessionT( SAA_in_opt ClientSessionConfig config = ClientSessionConfig() )
                 :
                 m_config( BL_PARAM_FWD( config ) ),
-                m_driverFactory( makeDriverFactory( m_config.http1Limits ) ),
+                m_driverFactory(
+                    makeDriverFactory( m_config.http1Limits, m_config.poolPolicy.idleTimeout )
+                    ),
                 m_state(
                     om::ObjPtrCopyable< SessionState >(
                         SessionStateImpl::template createInstance< SessionState >()
@@ -1466,16 +1473,26 @@ namespace bl
              * Only HTTP/1.1 is registered, and that is not an omission: an HTTP/2 connection task
              * IS the connection and never goes through the factory for itself, because a driver
              * which attachStream( )s a stream created elsewhere loses that policy's strand
+             *
+             * THE IDLE LIFETIME COMES THROUGH HERE for the same reason it goes through the
+             * connection factory for HTTP/2: it is pool policy which only a driver can enforce,
+             * and this is the only moment at which the session's policy and the driver being
+             * built are both in hand. Capturing it at construction rather than reading it per
+             * connection the way makeConnectionFactory( ) does is not a second rule - the pool
+             * holds its policy by value and const, so the two are the same number
              */
 
-            static auto makeDriverFactory( SAA_in const Http1ResponseLimits& limits )
+            static auto makeDriverFactory(
+                SAA_in          const Http1ResponseLimits&                      limits,
+                SAA_in          const time::time_duration&                      idleTimeout
+                )
                 -> driver_factory_ptr_t
             {
                 auto factory = std::make_shared< driver_factory_t >();
 
                 factory -> registerDriver(
                     HttpProtocol::Http11,
-                    [ limits ](
+                    [ limits, idleTimeout ](
                         SAA_in          const NegotiatedProtocol&               negotiated,
                         SAA_inout       typename STREAM::stream_ref&&           connectedStream,
                         SAA_in          const ConnectionKey&                    key
@@ -1487,7 +1504,8 @@ namespace bl
                                 cpp::copy( negotiated ),
                                 BL_PARAM_FWD( connectedStream ),
                                 cpp::copy( key ),
-                                limits
+                                limits,
+                                idleTimeout
                                 )
                             );
                     }
@@ -1540,7 +1558,9 @@ namespace bl
                     auto h2config = http2Config;
 
                     /*
-                     * THE TWO POLICY KNOBS WHICH REACH NOTHING ELSE - see the class note
+                     * THE TWO POLICY KNOBS WHICH REACH NOTHING ELSE - see the class note. The
+                     * idle timeout has a second half, in makeDriverFactory( ): this one is the
+                     * HTTP/2 connection's and that one is the HTTP/1.1 driver's
                      */
 
                     h2config.limits.drainingReserve = policy.drainingReserve;

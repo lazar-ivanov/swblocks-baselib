@@ -241,7 +241,22 @@ namespace bl
             cpp::ScalarTypeIniter< std::uint32_t >                              drainingReserve;
 
             time::time_duration                                                 establishmentTimeout;
+
+            /**
+             * @brief How long a pooled connection may hold no stream before it closes itself -
+             * SET HERE AND ENFORCED BY THE DRIVERS
+             *
+             * THIS POOL HAS NO REAPER AND IS NOT THE PLACE FOR ONE. Its only lever on a connection
+             * is requestCancel( ) - see forgetConnection( ), which says why that can never be a
+             * graceful close - while design 5.4 names the idle lifetime as the graceful path an
+             * ordinary connection takes. So a session hands this number to every connection it
+             * builds and each driver arms its own timer while it holds no stream. A pool built
+             * with a factory which does not pass it on has no idle lifetime at all, which is what
+             * L6 finding 5 found for HTTP/1.1
+             */
+
             time::time_duration                                                 idleTimeout;
+
             time::time_duration                                                 requestTimeout;
 
             /**
