@@ -1288,13 +1288,13 @@ UTF_AUTO_TEST_CASE( ClientSession_RequestBudgetIsChainedAcrossHopsTests )
     using namespace utest;
     using namespace utest::session;
 
-    const long HOP_DELAY_IN_MILLISECONDS = 2000;
+    static constexpr long HOP_DELAY_IN_MILLISECONDS = 2000;
     const long BUDGET_IN_MILLISECONDS = 3000;
 
     const auto peer = makePeer();
 
     peer -> setResponder(
-        [ HOP_DELAY_IN_MILLISECONDS ]( SAA_in const h2peer::Http2TestRequest& request )
+        []( SAA_in const h2peer::Http2TestRequest& request )
             -> h2peer::Http2ResponseScript
         {
             if( "/start" == request.path )

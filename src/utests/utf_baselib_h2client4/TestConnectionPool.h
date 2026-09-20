@@ -1735,7 +1735,7 @@ UTF_AUTO_TEST_CASE( H2Pool_ConcurrentAcquireAndReleaseTests )
     const auto key = makeKey();
 
     const std::size_t threadCount = 4U;
-    const std::size_t perThread = 25U;
+    static constexpr std::size_t perThread = 25U;
 
     std::vector< os::thread > threads;
 
@@ -1757,7 +1757,7 @@ UTF_AUTO_TEST_CASE( H2Pool_ConcurrentAcquireAndReleaseTests )
     {
         threads.push_back(
             os::thread(
-                [ &poolRef, &key, answers, released, t, perThread ]() -> void
+                [ &poolRef, &key, answers, released, t ]() -> void
                 {
                     for( std::size_t i = 0U; i < perThread; ++i )
                     {

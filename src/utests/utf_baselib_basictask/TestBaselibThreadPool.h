@@ -98,8 +98,8 @@ UTF_AUTO_TEST_CASE( Tasks_ThreadPoolConcurrentSizeReadTests )
      * was created with and the size it is being grown to, and it never goes backwards
      */
 
-    const std::size_t initialSize = 2U;
-    const std::size_t finalSize = 12U;
+    static constexpr std::size_t initialSize = 2U;
+    static constexpr std::size_t finalSize = 12U;
 
     for( std::size_t i = 0U; i < 5U; ++i )
     {
@@ -117,7 +117,7 @@ UTF_AUTO_TEST_CASE( Tasks_ThreadPoolConcurrentSizeReadTests )
             std::atomic< std::size_t > wentBackwards( 0U );
 
             os::thread reader(
-                [ initialSize, finalSize, &tp, &stop, &reads, &outOfRange, &wentBackwards ]() -> void
+                [ &tp, &stop, &reads, &outOfRange, &wentBackwards ]() -> void
                 {
                     std::size_t previous = initialSize;
 
