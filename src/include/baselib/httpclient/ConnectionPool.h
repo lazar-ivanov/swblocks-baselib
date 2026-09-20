@@ -699,6 +699,13 @@ namespace bl
                 cpp::ScalarTypeIniter< bool >                                   isRetired;
                 cpp::ScalarTypeIniter< bool >                                   isScheduled;
 
+                /**
+                 * Whether the pool has already asked this entry's tasks to stop - see
+                 * forgetConnection( ), which is where an entry the pool lets go of is stopped
+                 */
+
+                cpp::ScalarTypeIniter< bool >                                   isCancelRequested;
+
                 time::ptime                                                     establishBy;
 
                 /**
@@ -1047,8 +1054,91 @@ namespace bl
                 }
             }
 
-            void forgetConnection( SAA_in const entry_ptr_t& entry ) NOEXCEPT
+            static void chkCancelTask(
+                SAA_in_opt      const om::ObjPtrCopyable< tasks::Task >&        task,
+                SAA_inout       Actions&                                        actions
+                )
             {
+                if( task && tasks::Task::Completed != task -> getState() )
+                {
+                    actions.cancels.push_back( task );
+                }
+            }
+
+            /**
+             * @brief Asks everything this entry started to stop, once
+             *
+             * The flag is on the ENTRY and not on the task because an entry can be retired long
+             * before it is forgotten - the establishment bound expires while the request which
+             * rode the preface is still out - and asking twice would be untidy rather than wrong
+             */
+
+            void chkCancelEntry(
+                SAA_in          const entry_ptr_t&                              entry,
+                SAA_inout       Actions&                                        actions
+                )
+            {
+                if( entry -> isCancelRequested )
+                {
+                    return;
+                }
+
+                entry -> isCancelRequested = true;
+
+                chkCancelTask( entry -> attempt.task, actions );
+
+                if( entry -> driverConnection )
+                {
+                    auto driverTask = om::tryQI< tasks::Task >( entry -> driverConnection );
+
+                    if( driverTask )
+                    {
+                        chkCancelTask(
+                            om::ObjPtrCopyable< tasks::Task >( driverTask ),
+                            actions
+                            );
+                    }
+                }
+            }
+
+            /**
+             * @brief The pool lets go of one entry, which first means stopping what it started
+             *
+             * A CONNECTION THE POOL FORGETS IS ONE NOTHING ELSE WILL STOP. The task runs on the
+             * pool's own queue, the pool is the only thing which knows it is there, and dropping
+             * it leaves a live connection - socket, TLS session and timers - which nobody will
+             * close until the pool itself is disposed. So the cancel belongs HERE, at the single
+             * point where an entry is let go, and not in any one of the branches which retire it:
+             * a driver which went Draining or Closed, an establishment which expired, an attempt
+             * whose task ended, and a request task which reported the connection unusable all
+             * arrive here, and putting the rule in one of them would leave the same shape in the
+             * others. Two of those routes only became reachable in the L5 fix round - a refused
+             * submit now gives its slot back, so the entry reaches zero and is forgotten, and the
+             * h2 driver now publishes Draining for its identifier reserve.
+             *
+             * IT IS NOT A GRACEFUL CLOSE, and there is no path here by which it could be: a
+             * cancelled connection sends no GOAWAY, which is the same abruptness disposal has and
+             * documents. What it costs is a client GOAWAY (RFC 9113 6.8, a SHOULD) on a connection
+             * which by this point carries NO streams - the pool is the only thing which opens any
+             * and it holds none - and what it buys is that a connection the pool has given up on
+             * stops. A real driver which is Draining with nothing in flight is not on its way out
+             * either: the GOAWAY drain takes itself to Closed through chkFinishClose( ) when its
+             * last stream ends, so a driver still reading Draining here is one staying up - the
+             * identifier reserve is exactly that case. Cancelling a Closed one is harmless, since
+             * Closed is published only once there is nothing left to write.
+             *
+             * If a driver ever offers a public "say GOAWAY and close" - the design says none does,
+             * and disposal names the idle lifetime as the graceful path - this is the second place
+             * which should call it instead of cancelling
+             */
+
+            void forgetConnection(
+                SAA_in          const entry_ptr_t&                              entry,
+                SAA_inout       Actions&                                        actions
+                )
+            {
+                chkCancelEntry( entry, actions );
+
                 if( entry -> taskConnection )
                 {
                     m_byConnection.erase( entry -> taskConnection.get() );
@@ -1159,10 +1249,14 @@ namespace bl
 
                     failure = makeTimeoutException( entry -> key );
 
-                    if( entry -> attempt.task )
-                    {
-                        actions.cancels.push_back( entry -> attempt.task );
-                    }
+                    /*
+                     * HERE AND NOT ONLY AT forgetConnection( ), because an entry whose bound
+                     * expired while the request which rode the preface is still out is retired
+                     * now and forgotten only when that request comes back - and the bound's whole
+                     * promise is that the connection stops when it expires
+                     */
+
+                    chkCancelEntry( entry, actions );
 
                     BL_LOG(
                         Logging::debug(),
@@ -1377,7 +1471,7 @@ namespace bl
 
                     if( entry -> isRetired && 0U == entry -> slotsInUse )
                     {
-                        forgetConnection( entry );
+                        forgetConnection( entry, actions );
 
                         if( m_totalConnections )
                         {

@@ -1431,6 +1431,17 @@ see this; it is a composition defect, and S6.1's first end-to-end case would hav
   reset to the minimum when the tick is armed from idle, and the header's "nothing is called under
   the lock" now says what *is* called and why pool-lock-then-driver-lock is safe. Three cases added
   to `utf_baselib_h2client4`.
+- **And one defect the other two lanes' fixes made reachable: a connection the pool forgot was left
+  running.** `examineKey` erases a retired entry with no slots out, and nothing cancelled its task -
+  which was unreachable while a refused `submit()` leaked its slot and while no driver published
+  `Draining` for the identifier reserve, and is reachable now that both are fixed. The cancel went
+  to `forgetConnection( )`, the one point every retirement route passes through, rather than to the
+  refusal branch: a Draining driver with nothing in flight is staying up, not closing, and the pool
+  is the only thing which knows the task is there. It is not a graceful close and says so - the
+  same abruptness disposal already documents, on a connection which by then carries no streams.
+  Pinned by a new case on the refusal route and one assertion added to the GOAWAY case. The three
+  cases which end with requests still queued now wait for the disposal's answers, which is a
+  pre-existing race in `H2Pool_SlotLimitingTests` this round's cases made likely enough to see.
 
 ---
 
@@ -1452,6 +1463,12 @@ see this; it is a composition defect, and S6.1's first end-to-end case would hav
   both paths already exist; the assignment is the missing piece, and a case which opens a connection
   through the session and reads the driver's configuration back is what turns it from a knob into a
   behaviour.
+- **The dispatched half of the retry is this slice's too** (L5 review, finding 5(a)). Design §5.4
+  said it was "counted by the request task"; no such counter exists - the task calls `acquire` once
+  and reports `isRetryable()`/`outcome()` to a caller which today is nobody, so a `REFUSED_STREAM`
+  or a GOAWAY above the stream's id fails its request while the ones still queued in the pool are
+  retried. §5.4 now says so and names this slice. Until it lands, the pool refuses to dispatch
+  against a peer limit it has not been told, because it has no way to pay for being wrong.
 - **Three things L2 leaves to this slice** (L2 review). (1) An HTTP/1.1 request carries ONE `Cookie`
   field (RFC 6265 §5.4): the jar's `cookieHeaderValue` and any caller-supplied `Cookie` header have
   to be merged, not both sent - and on a same-origin redirect the caller's header survives

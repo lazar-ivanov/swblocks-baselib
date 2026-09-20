@@ -1111,6 +1111,15 @@ UTF_AUTO_TEST_CASE( H2Pool_SlotLimitingTests )
     UTF_REQUIRE_EQUAL( records[ 3 ].index, 3U );
 
     pool -> dispose();
+
+    /*
+     * THE LAST WAITER IS ANSWERED BY THE DISPOSAL, AND THE CASE HAS TO WAIT FOR IT. The answer is
+     * POSTED, and what it is posted to is a lambda holding a pointer to the Answers on this
+     * stack - so a case which returns here races its own destruction against a delivery which is
+     * already on its way, and loses it as a mutex lock on a dead object rather than as a failure
+     */
+
+    UTF_REQUIRE( answers.waitFor( 5U ) );
 }
 
 /************************************************************************
@@ -1428,6 +1437,15 @@ UTF_AUTO_TEST_CASE( H2Pool_GoAwayDrainingTests )
 
     UTF_REQUIRE_EQUAL( pool -> connectionCount(), 1U );
 
+    /*
+     * And forgetting it STOPS it. A driver which is still Draining with nothing in flight is not
+     * on its way out - the GOAWAY drain takes itself to Closed when its last stream ends, so one
+     * still reading Draining here is one staying up, and the pool is the only thing which knows
+     * it is there
+     */
+
+    UTF_REQUIRE( factory.controlAt( 0U ) -> waitForCancel() );
+
     stats = pool -> stats();
 
     UTF_REQUIRE_EQUAL( stats.connectionsRetired.value(), 1U );
@@ -1743,6 +1761,65 @@ UTF_AUTO_TEST_CASE( H2Pool_ConcurrentAcquireAndReleaseTests )
 }
 
 /************************************************************************
+ * A connection the pool forgets is one the pool stops (L5 fix round)
+ */
+
+UTF_AUTO_TEST_CASE( H2Pool_AForgottenConnectionIsStoppedTests )
+{
+    using namespace bl;
+    using namespace utest::connpool;
+
+    StubFactory factory;
+    Answers answers;
+
+    factory.initialState = httpclient::ConnectionState::Ready;
+    factory.initialFreeSlots = 4U;
+
+    httpclient::ConnectionPoolPolicy policy;
+
+    const auto pool = pool_impl_t::createInstance( cpp::ref( factory ), policy );
+
+    const PoolGuard guard( pool );
+
+    acquireInto( pool, makeKey(), makeRequest(), &answers, 0U );
+
+    UTF_REQUIRE( answers.waitFor( 1U ) );
+
+    const auto connection = om::qi< httpclient::ClientConnection >( factory.taskAt( 0U ) );
+
+    UTF_REQUIRE_EQUAL( pool -> slotsInUse( connection ), 1U );
+
+    /*
+     * The route the pairing fix made reachable: a request task which was refused reports the
+     * connection unusable AND gives the slot back, so the entry is retired with nothing out and
+     * is forgotten in the same examine. The task is still RUNNING - the stub's is, and a real
+     * driver's is too, since nothing about a refused submit ends a connection - and the pool's
+     * own queue is the only thing holding it
+     */
+
+    pool -> releaseStream( connection, 1U, httpclient::RequestOutcome::ConnectionUnusable );
+
+    UTF_REQUIRE_EQUAL( pool -> connectionCount(), 0U );
+    UTF_REQUIRE_EQUAL( pool -> slotsInUse( connection ), 0U );
+
+    UTF_REQUIRE( factory.controlAt( 0U ) -> waitForCancel() );
+
+    /*
+     * And the next request opens a second connection rather than finding the first one
+     */
+
+    acquireInto( pool, makeKey(), makeRequest(), &answers, 1U );
+
+    UTF_REQUIRE( factory.waitForCalls( 2U ) );
+
+    UTF_REQUIRE( answers.waitFor( 2U ) );
+
+    UTF_REQUIRE_EQUAL( factory.calls(), 2U );
+
+    pool -> dispose();
+}
+
+/************************************************************************
  * The peer's limit is not the driver's assumption of it (L5 finding 5)
  */
 
@@ -1824,6 +1901,13 @@ UTF_AUTO_TEST_CASE( H2Pool_AssumedLimitIsNotDispatchedAgainstTests )
     UTF_REQUIRE_EQUAL( pool -> slotsInUse( connection ), 3U );
 
     pool -> dispose();
+
+    /*
+     * The two still queued are answered by the disposal, and waiting for them is the rendezvous
+     * this Answers needs before it goes out of scope - see H2Pool_SlotLimitingTests
+     */
+
+    UTF_REQUIRE( answers.waitFor( 5U ) );
 }
 
 /************************************************************************
@@ -1945,6 +2029,13 @@ UTF_AUTO_TEST_CASE( H2Pool_AssumptionIsTakenAfterTheSettleWindowTests )
     UTF_REQUIRE_EQUAL( pool -> dispatchCapacity( connection ), 3U );
 
     pool -> dispose();
+
+    /*
+     * The two still queued are answered by the disposal - see H2Pool_SlotLimitingTests for why
+     * waiting for them is not optional
+     */
+
+    UTF_REQUIRE( answers.waitFor( 5U ) );
 }
 
 #endif /* __UTEST_TESTCONNECTIONPOOL_H_ */

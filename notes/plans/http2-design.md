@@ -971,12 +971,23 @@ automatically; retrying idempotent methods after connection loss is a separate k
 cannot be in one place, because the S2.6 contract gives the pool no request identity: `acquire`
 takes a `ClientRequest` by reference and `releaseStream` names a handle the pool never issued. So a
 request still queued in the pool when the connection it was queued behind failed is replayed and
-counted **by the pool**, which never let go of it; a request which had already been dispatched
-comes back through `releaseStream` and a fresh `acquire`, and its attempts are counted by the
-request task, which has per-request state by construction. The pool's part of the guarantee is that
-such a request cannot land back on the connection which failed it: a connection reported
+counted **by the pool**, which never let go of it. The pool's part of the guarantee is that such a
+request cannot land back on the connection which failed it: a connection reported
 `ConnectionUnusable`, or observed `Draining` or `Closed`, is retired before the next `acquire` is
 answered.
+
+**The other half has no owner yet, and this sentence used to say it did** (L5 finding 5(a)). S5.2
+wrote that a request which had already been dispatched "comes back through `releaseStream` and a
+fresh `acquire`, and its attempts are counted by the request task, which has per-request state by
+construction" - the state exists, the counter does not. `HttpClientRequestTaskT` calls `acquire`
+exactly once and holds no attempt count; it reports `isRetryable()` and `outcome()` and leaves the
+decision to its caller, which today is nobody. So a `REFUSED_STREAM`, a GOAWAY above the stream's
+id or an ALPN bounce of the preface rider **fails** its request while the requests queued behind it
+are retried, and that asymmetry is a property of the tree rather than of the design. **S6.1 owns
+it**: the session is the first thing above the request task which sees a request end and can start
+another, and it is where the two halves of the counter meet. Until it does, the pool must not make
+a bet it cannot pay for - which is why the dispatch section above dispatches one stream to a
+connection whose limit is unknown instead of assuming.
 
 **GOAWAY.** Mark `Draining`, stop dispatching to it, replay what qualifies, let in-flight streams at or
 below the last id finish. Servers commonly send two - first with `2^31 - 1`, then the real id - and
