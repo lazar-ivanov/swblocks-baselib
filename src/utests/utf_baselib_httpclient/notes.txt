@@ -60,3 +60,8 @@
 --log_level=message --run_test=HttpClientRequestTask_CancelResetsTheStreamTests
 --log_level=message --run_test=HttpClientRequestTask_ResponseBodyCapResetsTheStreamTests
 --log_level=message --run_test=HttpClientRequestTask_RefusedSubmitIsRetryableTests
+
+# L5 fix round - the pool pairing rule (review finding 1) and a source which throws (finding 2)
+--log_level=message --run_test=HttpClientRequestTask_RefusedSubmitReturnsTheSlotToTheRealPoolTests
+--log_level=message --run_test=HttpClientRequestTask_LatePoolAnswerStillReturnsTheSlotTests
+--log_level=message --run_test=HttpClientRequestTask_BodySourceWhichThrowsFailsTheRequestTests
