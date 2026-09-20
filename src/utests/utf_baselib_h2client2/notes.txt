@@ -15,3 +15,6 @@
 
 # S5.2 fix - the draining reserve, published to the pool by the driver (design 4.3, 5.4)
 --log_level=test_suite --run_test=H2Driver_DrainingReserveIsPublishedToThePoolTests
+
+# L6 fix round - the establishment failure no case ran, and the cause it leaves on the task
+--log_level=test_suite --run_test=H2Driver_EstablishmentFailureBouncesAndKeepsItsCauseTests

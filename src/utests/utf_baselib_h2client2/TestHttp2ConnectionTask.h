@@ -1610,4 +1610,115 @@ UTF_AUTO_TEST_CASE( H2Driver_DrainingReserveIsPublishedToThePoolTests )
         );
 }
 
+/**
+ * @brief An establishment which never happened bounces what was queued, and keeps WHY on the task
+ *
+ * THE PATH NO CASE RAN (L6 review, finding 7): an establishment failure of any kind. Every other
+ * case here has a live peer, and the pool's rider - the request dispatched onto a connection which
+ * is still Connecting - is answered on exactly this path and nowhere else. It is also the first
+ * thing a real deployment meets, and the review's finding 4b is about what it says when it does.
+ *
+ * TWO HALVES, AND THE SECOND IS THE POINT. The first is the contract this driver already states:
+ * a submission which never reached a stream was provably not written, so it is ANSWERED rather
+ * than dropped, and marked retryable. The second is that closeSubmissions( ) has exactly one error
+ * code for that answer - connection_aborted - so a refused connect, a resolver failure, an expired
+ * establishment bound and a rejected certificate are indistinguishable from the bounce alone. What
+ * separates them is on the TASK, as its exception, and this case is what says so: the request task
+ * chains it from there ( HttpClientRequestTask.h, connectionFailureCause( ) ), and if this driver
+ * ever stopped failing with the establishment's own error that chain would silently carry nothing.
+ *
+ * The dead port is a peer's own, taken after the peer has gone, which is the cheapest refused
+ * connect that depends on nothing outside this process
+ */
+
+UTF_AUTO_TEST_CASE( H2Driver_EstablishmentFailureBouncesAndKeepsItsCauseTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest;
+    using namespace utest::h2driver;
+
+    unsigned short deadPort = 0U;
+
+    withPeer(
+        makePeer(),
+        [ & ]( SAA_in const unsigned short port ) -> void
+        {
+            deadPort = port;
+        }
+        );
+
+    UTF_REQUIRE( 0U != deadPort );
+
+    const auto record = std::make_shared< FallbackRecord >();
+
+    const auto driver = PlainDriverImpl::createInstance(
+        makeKey( "http", "127.0.0.1", deadPort ),
+        makeFallbackFactory< TcpSocketAsyncStrandedBase >( record ),
+        Http2ConnectionConfig(),
+        cleartextHttp2Config()
+        );
+
+    const auto connection = om::qi< httpclient::ClientConnection >( driver );
+
+    const auto sink = RecordingSink::createInstance();
+
+    sink -> setConnection( connection.get() );
+
+    /*
+     * Submitted BEFORE the task is scheduled, which is the rider's own shape: the command sits in
+     * the mailbox because the strand is not ready, and the establishment then fails under it
+     */
+
+    const auto handle = connection -> submit(
+        makeRequest( "http://127.0.0.1/hello" ),
+        om::qi< httpclient::ClientStreamEventSink >( sink )
+        );
+
+    UTF_REQUIRE( httpclient::ClientConnection::INVALID_STREAM_HANDLE != handle );
+
+    runDriver(
+        driver,
+        [ & ]() -> void
+        {
+            sink -> waitForClosed();
+        }
+        );
+
+    sink -> setConnection( nullptr );
+
+    /*
+     * Half one - the bounce, and it says nothing about the cause
+     */
+
+    UTF_REQUIRE( sink -> isRetryable() );
+
+    UTF_REQUIRE(
+        eh::errc::make_error_code( eh::errc::connection_aborted ) == sink -> errorCode()
+        );
+
+    UTF_REQUIRE_EQUAL( sink -> status(), 0U );
+
+    UTF_REQUIRE( ConnectionState::Closed == connection -> state() );
+
+    UTF_REQUIRE_EQUAL( record -> creations, 0U );
+
+    /*
+     * Half two - the cause, on the task, where the request task reads it from
+     */
+
+    const auto task = om::qi< Task >( driver );
+
+    ( void ) chkTaskFailed( task );
+
+    const auto diagnostics = eh::diagnostic_information( task -> exception() );
+
+    if( diagnostics.find( "refused" ) == std::string::npos )
+    {
+        UTF_FAIL(
+            "the connection task's failure does not name the refused connect:\n" + diagnostics
+            );
+    }
+}
+
 #endif /* __UTEST_TESTHTTP2CONNECTIONTASK_H_ */
