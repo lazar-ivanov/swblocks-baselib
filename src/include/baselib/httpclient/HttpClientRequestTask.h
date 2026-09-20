@@ -147,14 +147,28 @@ namespace bl
          * and it is what makes notifyReady( ) legal at all, since TaskBase requires it not be
          * called under the lock
          *
-         * THE ONE EXCEPTION IS submit( ), AND IT IS AN EXCEPTION BY NECESSITY. It returns the
-         * stream handle, and from the moment it is called the connection may deliver events for
-         * that stream - so the handle must be recorded before the next batch is applied, which is
-         * only true while the call and the record are in the same phase. Deferring it would put the
-         * handle behind an event of its own, which any sink event arriving meanwhile would overtake.
-         * It is therefore called under the lock and GUARDED: a throw from it fails this request,
-         * rather than reaching onDrain( )'s NOEXCEPT boundary, which is BL_RIP_MSG and ends the
-         * process over one malformed request
+         * THE ONE EXCEPTION IS submit( ), AND IT IS AN EXCEPTION BY CHOICE, FOR SAME-BATCH
+         * ORDERING. This comment used to say "by necessity", on the argument that a deferred
+         * submit( ) would put the handle behind an event of its own which a sink event could
+         * overtake. That argument does not hold: sink events cannot overtake this drain at all.
+         * They APPEND to the mailbox and are applied by a LATER batch, the drain flag rather than
+         * the task lock is what serializes the phases, and the middle phase already reads m_handle
+         * every time offerToSink( ) hands a response body on
+         *
+         * THE HAZARD DEFERRING IT WOULD REALLY OPEN is one batch carrying [ Acquired, Expired ]:
+         * phase one applies the expiry while there is still no handle, so it defers no reset, and
+         * phase two then opens a stream for a request which has already failed - a stream reset
+         * only when its response completes. One check of m_isCompletionPending inside a deferred
+         * submit( ) would cover that, so the placement is "simpler here", not "impossible there".
+         * It buys the same-batch ordering for nothing, and costs the lock order below and
+         * toSessionRequest( ) under this task's lock
+         *
+         * WHAT IS NOT A CHOICE IS THE GUARD. Called in the apply phase it sits inside onDrain( )'s
+         * NOEXCEPT region with nothing in between, so a throw has to be caught HERE: it fails this
+         * request rather than reaching BL_RIP_MSG, which would end the process over one malformed
+         * request. Deferred, runDeferred( ) would catch it instead and the request would fail in
+         * phase three - the same outcome by another route, which is the other half of why the
+         * placement is a choice
          *
          * THE LOCK ORDER THAT FOLLOWS FROM THAT, written down because nothing else records it:
          * this task's lock is taken before whatever submit( ) takes - the h2 driver's mailbox lock,
@@ -623,6 +637,37 @@ namespace bl
                     );
             }
 
+            /**
+             * @brief Whether a refused submit( ) is about THIS REQUEST and not about the connection
+             *
+             * A driver refuses for one of two reasons and the pool has to be told which one. A
+             * driver on its way out - the h2 driver after closeSubmissions( ), one which is
+             * draining or closed - refuses everything, and the connection is what is wrong. An
+             * HTTP/1.1 driver refuses EVERY request whose body is a BodySource, unconditionally
+             * and before it so much as looks at its own state ( Http1ConnectionTask.h's submit( )
+             * tests it first ): HTTP/1.1 would need request-side chunked framing for a body of
+             * unknown length and the S2.5 serializer has none. That refusal is a statement about
+             * the request, and the connection it was made on is healthy
+             *
+             * BOTH HALVES ARE READ OFF THE FROZEN CONTRACT and nothing was added for this:
+             * ClientRequest::bodySource( ) is the request this task was handed, and
+             * ClientConnection::negotiated( ) is what completeResponse( ) already reads off the
+             * same connection. Both are NOEXCEPT, which is what makes reading them in the apply
+             * phase legal at all
+             *
+             * IT DOES NOT ASK WHETHER THE CONNECTION IS OTHERWISE WELL, because it does not have
+             * to: the refusal is certain from these two values alone, and a connection which is
+             * additionally draining or closed is retired by the pool's own maintenance tick, which
+             * reads state( ) on every pass
+             */
+
+            bool isRequestUnsuitableForConnection() const NOEXCEPT
+            {
+                return
+                    nullptr != m_request.bodySource() &&
+                    HttpProtocol::Http11 == m_connection -> negotiated().protocol();
+            }
+
             void applyAcquired(
                 SAA_inout       Event&                                          event,
                 SAA_inout       std::vector< cpp::void_callback_t >&            deferred
@@ -682,12 +727,13 @@ namespace bl
                 catch( std::exception& )
                 {
                     /*
-                     * A THROW IS THE REQUEST'S FAULT WHERE A REFUSAL IS THE CONNECTION'S, and that
-                     * is the one place the two are told apart. A driver which cannot turn THIS
+                     * A THROW IS ALWAYS THE REQUEST'S FAULT, where a refusal is the connection's
+                     * unless the branch below finds otherwise. A driver which cannot turn THIS
                      * request into a submission - the h2 driver's ArgumentException over a header
                      * it will not put on the wire - has nothing wrong with it, so the outcome is
                      * Failed and the connection stays poolable; a retry would only reproduce the
-                     * same exception on the same request, so it is not marked retryable either
+                     * same exception on the same request, on any connection, so it is not marked
+                     * retryable either
                      *
                      * It is caught at all because this call is in phase one: see the class comment.
                      * An escape here reaches onDrain( )'s BL_NOEXCEPT_END, which is BL_RIP_MSG
@@ -708,32 +754,62 @@ namespace bl
                 {
                     /*
                      * A refusal is RETRYABLE by nature - the request was provably not written -
-                     * which is the half of the retry rule of design 5.4 this layer can state, and
-                     * the outcome is ConnectionUnusable because a connection which cannot take the
-                     * request it was handed out for is not one to hand out again
+                     * which is the half of the retry rule of design 5.4 this layer can state.
+                     * isRetryable( ) answers "the failure proves this request was never
+                     * processed", so it stands on both branches below; what a retry is WORTH is a
+                     * different question and it is the retrying layer's, decided from the outcome
                      *
-                     * THE SLOT GOES BACK, and the earlier reading that it could not - "there is no
-                     * stream, so there is nothing releaseStream( ) can name" - was the L5 review's
-                     * finding 1. The pool's count is the POOL's: it is incremented when the pool
-                     * ANSWERS an acquire( ), and releaseStream( ) decrements it for the connection
-                     * it is given and ignores the handle altogether. So the pairing rule is every
-                     * answered acquire( ) against exactly one releaseStream( ), STREAM OR NO
-                     * STREAM, and a path which skipped it leaked a slot for the life of the entry,
-                     * which for h2 - one connection per key - is a permanent unit of capacity
+                     * THE OUTCOME IS WHERE THE TWO KINDS OF REFUSAL PART. A driver which refuses
+                     * because it is on its way out is not one to hand out again, and that is
+                     * ConnectionUnusable. A driver which refuses because THIS REQUEST is not one
+                     * its protocol can carry - isRequestUnsuitableForConnection( ) above - is
+                     * healthy, and reporting it unusable retires it; since the pool cancels what
+                     * it forgets, that DESTROYS a working HTTP/1.1 connection once per streaming
+                     * upload a caller sends its way. So it is Failed, exactly as the throw above
+                     * is, and the connection stays poolable. The retry is still worth making, on a
+                     * connection which negotiated h2 - which is the one thing that separates this
+                     * from the throw, where the request is malformed for every connection alike
+                     *
+                     * THE SLOT GOES BACK either way, and the earlier reading that it could not -
+                     * "there is no stream, so there is nothing releaseStream( ) can name" - was the
+                     * L5 review's finding 1. The pool's count is the POOL's: it is incremented when
+                     * the pool ANSWERS an acquire( ), and releaseStream( ) decrements it for the
+                     * connection it is given and ignores the handle altogether. So the pairing rule
+                     * is every answered acquire( ) against exactly one releaseStream( ), STREAM OR
+                     * NO STREAM, and a path which skipped it leaked a slot for the life of the
+                     * entry, which for h2 - one connection per key - is a permanent unit of capacity
                      */
 
                     m_isRetryable = true;
-                    m_outcome = RequestOutcome::ConnectionUnusable;
 
-                    failWith(
-                        std::make_exception_ptr(
-                            BL_EXCEPTION(
-                                UnexpectedException(),
-                                "The connection refused the request it was acquired for"
-                                )
-                            ),
-                        false /* isExpected */
-                        );
+                    if( isRequestUnsuitableForConnection() )
+                    {
+                        m_outcome = RequestOutcome::Failed;
+
+                        failWith(
+                            std::make_exception_ptr(
+                                BL_EXCEPTION(
+                                    NotSupportedException(),
+                                    "An HTTP/1.1 connection cannot carry a request whose body is streamed"
+                                    )
+                                ),
+                            false /* isExpected */
+                            );
+                    }
+                    else
+                    {
+                        m_outcome = RequestOutcome::ConnectionUnusable;
+
+                        failWith(
+                            std::make_exception_ptr(
+                                BL_EXCEPTION(
+                                    UnexpectedException(),
+                                    "The connection refused the request it was acquired for"
+                                    )
+                                ),
+                            false /* isExpected */
+                            );
+                    }
 
                     releaseConnectionSlot( event.connection, deferred );
 
