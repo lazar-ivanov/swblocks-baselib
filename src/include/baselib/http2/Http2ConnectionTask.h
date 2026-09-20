@@ -171,9 +171,9 @@ namespace bl
          * ------------------------------------------------------------------------------------
          *
          * L1. The session, the stream table, the write buffer and every timer belong to the
-         *     strand. Only strand handlers touch them, and every strand handler here also holds
-         *     the task lock (BL_TASKS_HANDLER_BEGIN), which is what gives http2::Session the
-         *     single-threaded contract it is written against.
+         *     strand. Only strand handlers touch them, and every one which touches SESSION state
+         *     also holds the task lock (BL_TASKS_HANDLER_BEGIN) - Session's single-threaded
+         *     contract. The handler cancelTask( ) posts is the one exception: no lock, timers only
          *
          * L2/L3. Every ClientConnection call - submit, cancel, consumed, provideBody - arrives
          *     from another thread, appends to THIS connection's command mailbox under a leaf lock
@@ -1956,6 +1956,27 @@ namespace bl
                 BL_TASKS_HANDLER_END_MULTIOP()
             }
 
+            /**
+             * @brief Disarms all five timers, ON THE STRAND - the only context allowed to touch
+             * them
+             *
+             * boost::asio::basic_deadline_timer is documented "Distinct objects: Safe. Shared
+             * objects: Unsafe", and the cost of ignoring it is not formal: cancel( ) returns
+             * early on impl.might_have_pending_waits, so an update lost between the strand's arm
+             * and another thread's cancel leaves a timer which should have been disarmed armed -
+             * and here the drain deadline cancels the task while the PING deadline closes every
+             * stream
+             *
+             * THE INVARIANT IS THAT EVERY CALLER IS ON THE STRAND. onPeerClosed( ),
+             * closeGracefully( ) and every arm run in strand handler bodies; initiateClose( )
+             * runs in a strand handler's epilog; cancelTask( ) arrives on any thread and
+             * therefore posts. onTaskStoppedNothrow( ) is the one caller which is on the strand
+             * by argument rather than by construction, and that argument is at its call site
+             *
+             * notes/plans/issues/http2-driver-timer-cancel-cross-thread-race-record.md is the
+             * ThreadSanitizer report which found this with two contexts
+             */
+
             void cancelTimers() NOEXCEPT
             {
                 BL_NOEXCEPT_BEGIN()
@@ -2408,9 +2429,39 @@ namespace bl
                 }
             }
 
+            /**
+             * @brief The external cancel - it arrives on ANY thread, so the timers are POSTED
+             *
+             * Calling cancelTimers( ) here gave it a second serialisation domain which excludes
+             * nothing: the task lock this is always called under (requestCancelInternal( )) is
+             * not held by initiateClose( ), which cancels the same five timers from the strand.
+             * That is the race of the record above, observed on the drain deadline
+             *
+             * The shape is the h1 driver's - its cancelTask( ) posts shutdownOnStreamExecutor( )
+             * rather than touching its timer - and the stranded stream policy's underneath this
+             * one, which posts shutdownSocketOnStrand( ) for the same reason (TcpStrandedStreams.h)
+             *
+             * The guard is isSocketCreated( ), the same predicate initiateClose( ) above asks for
+             * the socket: both stranded policies create the strand and the socket in one call,
+             * strand first, so a created socket means there is a strand to post to - and with no
+             * socket there is no timer either, since createTimer( ) is built on that same strand
+             *
+             * The post carries a reference to the task, so the handler cannot outlive it, and it
+             * begins NO operation - the accounting is for operations the task waits on, and a
+             * cancel must not add one to a task which is ending
+             */
+
             virtual void cancelTask() OVERRIDE
             {
-                cancelTimers();
+                if( base_type::isSocketCreated() )
+                {
+                    base_type::postToStrand(
+                        cpp::bind(
+                            &this_type::cancelTimers,
+                            self_ref_t::acquireRef( this )
+                            )
+                        );
+                }
 
                 base_type::cancelTask();
             }
@@ -2429,6 +2480,29 @@ namespace bl
                  * completed last, which for this task is always a strand handler. A sink which
                  * was never told its stream ended would leave a request task waiting for an event
                  * that can no longer come
+                 */
+
+                /*
+                 * NOT POSTED, and the one caller of cancelTimers( ) which is not: a handler posted
+                 * from here may never run - the task is completing - so a post could lose the
+                 * disarm altogether. It is a disarm which needs no wake, and the first one on the
+                 * cleartext route; it is not the only one. Without it they would still be disarmed
+                 * when the stream policy's onTaskStoppedNothrow( ) shuts the socket down and the
+                 * read that wakes - aborted or eof - reaches cancelTimers( ) on the strand. Kept
+                 * because it needs nothing to wake, costs nothing, and is safe
+                 *
+                 * Safe because it runs from notifyReadyImpl( ) under the TASK LOCK (TaskBase.h
+                 * says so where onTaskStoppedNothrow( ) is declared), which excludes every handler
+                 * body - every arm, onPeerClosed( ), closeGracefully( ) - and cancelTask( ),
+                 * always reached under that same lock. What is left holds NO lock: initiateClose( )
+                 * and the handler cancelTask( ) posts. Both run on the strand, and so does every
+                 * notifyReady( ) which can reach here with a timer armed - the mix-in's terminal
+                 * one, and the BL_TASKS_HANDLER_END( ) of the establishment handlers
+                 * (onConnectionEstablished( ), onHandshakeCompleted( ), and on a proxied cleartext
+                 * connection the tunnel stage's own two) - the route that arrives with operations
+                 * still pending, after a throw out of onProtocolNegotiated( ). The one off-strand
+                 * route, scheduleNothrow( )'s catch posting notifyReadyImpl( ) to the execution
+                 * queue's pool, is taken only before the handshake, where all five timers are null
                  */
 
                 cancelTimers();
