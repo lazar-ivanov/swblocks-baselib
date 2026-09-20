@@ -897,6 +897,13 @@ UTF_AUTO_TEST_CASE( H2Driver_KeepAliveAndIdleCloseTests )
  * The raw peer reads the opening write, answers the SETTINGS so the connection is established, and
  * then says nothing at all. The reply deadline is the only thing which ends this - and it ends it
  * the OTHER way, failed, because a connection which stopped answering is not one that was done
+ *
+ * IT CARRIES A LIVE STREAM, AND THAT IS THE SECOND THING IT PINS. onPingDeadline( ) is one of the
+ * two routes which used to answer their sinks BEFORE publishing the state that close belongs to
+ * ( L6 review, finding 16 ), and a request task derives its outcome - and with it
+ * retryIdempotentOnConnectionLoss - from exactly that state. Without a stream the route answers
+ * nobody and the breach reads the same as the fix; with one it is an assertion. Unfixed, the sink
+ * reads Ready here
  */
 
 UTF_AUTO_TEST_CASE( H2Driver_KeepAlivePingDeadlineTests )
@@ -940,15 +947,56 @@ UTF_AUTO_TEST_CASE( H2Driver_KeepAlivePingDeadlineTests )
         cleartextHttp2Config()
         );
 
-    runDriver( driver, []() -> void {} );
+    const auto connection = om::qi< httpclient::ClientConnection >( driver );
+
+    const auto sink = RecordingSink::createInstance();
+
+    sink -> setConnection( connection.get() );
+
+    /*
+     * Submitted before the task is scheduled, so the HEADERS ride the preface and the stream is
+     * live in the driver's table when the reply deadline fires at it
+     */
+
+    const auto handle = connection -> submit(
+        makeRequest( "http://127.0.0.1/silent" ),
+        om::qi< httpclient::ClientStreamEventSink >( sink )
+        );
+
+    UTF_REQUIRE( httpclient::ClientConnection::INVALID_STREAM_HANDLE != handle );
+
+    runDriver(
+        driver,
+        [ & ]() -> void
+        {
+            sink -> waitForClosed();
+        }
+        );
+
+    sink -> setConnection( nullptr );
 
     const auto task = om::qi< Task >( driver );
 
     ( void ) chkTaskFailed( task );
 
-    const auto connection = om::qi< httpclient::ClientConnection >( driver );
-
     UTF_REQUIRE( ConnectionState::Closed == connection -> state() );
+
+    /*
+     * The deadline is what failed the stream - not the task stopping afterwards, which would have
+     * carried operation_aborted and, for a stream whose header block was written, the same
+     * non-retryable flag by a different route
+     */
+
+    UTF_REQUIRE( eh::errc::make_error_code( eh::errc::timed_out ) == sink -> errorCode() );
+
+    UTF_REQUIRE( ! sink -> isRetryable() );
+
+    /*
+     * And the connection had published Closed BEFORE it said so, which is the read the request
+     * task's outcome is derived from
+     */
+
+    UTF_REQUIRE( ConnectionState::Closed == sink -> stateOnClosed() );
 }
 
 /**
@@ -1700,6 +1748,15 @@ UTF_AUTO_TEST_CASE( H2Driver_EstablishmentFailureBouncesAndKeepsItsCauseTests )
     UTF_REQUIRE_EQUAL( sink -> status(), 0U );
 
     UTF_REQUIRE( ConnectionState::Closed == connection -> state() );
+
+    /*
+     * And it was Closed ALREADY WHEN THE BOUNCE WAS ANSWERED, which is the read a request task
+     * derives its outcome from ( L6 review, finding 16 ). This is the onTaskStoppedNothrow( )
+     * route - the one every write error and every non-EOF read error takes as well - and unfixed
+     * it publishes after answering, so the sink reads Connecting here
+     */
+
+    UTF_REQUIRE( ConnectionState::Closed == sink -> stateOnClosed() );
 
     UTF_REQUIRE_EQUAL( record -> creations, 0U );
 
