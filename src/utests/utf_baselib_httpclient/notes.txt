@@ -49,3 +49,14 @@
 --log_level=message --run_test=Http1Codec_LimitsTests
 --log_level=message --run_test=Http1Codec_RequestSerializerTests
 --log_level=message --run_test=Http1Codec_LocaleIndependenceTests
+
+# S5.1 - the request task (design 5.3, 5.7)
+--log_level=message --run_test=HttpClientRequestTask_BufferedCompletionTests
+--log_level=message --run_test=HttpClientRequestTask_InterimResponsesDoNotOverwriteTheStatusTests
+--log_level=message --run_test=HttpClientRequestTask_StreamingSinkCreditsOnlyWhatItTookTests
+--log_level=message --run_test=HttpClientRequestTask_UploadIsAnsweredOncePerPullTests
+--log_level=message --run_test=HttpClientRequestTask_TotalTimeoutCoversThePoolWaitTests
+--log_level=message --run_test=HttpClientRequestTask_HeadersTimeoutResetsTheStreamOnlyTests
+--log_level=message --run_test=HttpClientRequestTask_CancelResetsTheStreamTests
+--log_level=message --run_test=HttpClientRequestTask_ResponseBodyCapResetsTheStreamTests
+--log_level=message --run_test=HttpClientRequestTask_RefusedSubmitIsRetryableTests
