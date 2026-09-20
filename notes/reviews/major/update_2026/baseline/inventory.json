@@ -5191,6 +5191,18 @@
    "namespaces": []
   },
   {
+   "body_sha": "f5a0527768926c0b90f8f1067009e46f",
+   "doc_sha": "9c7e33872dd16a7acf797f1beab798d9",
+   "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1482,
+   "module": "utf_baselib_h2client2",
+   "name": "H2Driver_DrainingReserveIsPublishedToThePoolTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "d0b4f809020b69ad863b61a81e7e53a5",
    "doc_sha": "7c191569cb8fdc8b4f71f0abf2455d23",
    "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
@@ -5347,13 +5359,49 @@
    "namespaces": []
   },
   {
+   "body_sha": "13e3b4bede41adf32336e9250644da82",
+   "doc_sha": "88ffd9ac1742002f0643ab5e85ea211c",
+   "file": "utf_baselib_h2client4/TestConnectionPool.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1767,
+   "module": "utf_baselib_h2client4",
+   "name": "H2Pool_AForgottenConnectionIsStoppedTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "a72d0c59fb01aa3a5b4f4e6df5741d12",
+   "doc_sha": "559dd6a56057743788056c3c9339513b",
+   "file": "utf_baselib_h2client4/TestConnectionPool.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1826,
+   "module": "utf_baselib_h2client4",
+   "name": "H2Pool_AssumedLimitIsNotDispatchedAgainstTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "328b6f0402738be9c0735373cf022a2c",
+   "doc_sha": "527c398172b853bba70129cf52da604a",
+   "file": "utf_baselib_h2client4/TestConnectionPool.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1980,
+   "module": "utf_baselib_h2client4",
+   "name": "H2Pool_AssumptionIsTakenAfterTheSettleWindowTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "4285325311cc87003e3ee549258716c7",
    "doc_sha": "7bbfccf8050b4ba77b7d1fd335e2b8bf",
    "file": "utf_baselib_h2client4/TestConnectionPool.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1620,
+   "line": 1656,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_ConcurrentAcquireAndReleaseTests",
    "namespaces": []
@@ -5365,7 +5413,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1120,
+   "line": 1129,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_ConnectingTakesOnlyReplayableTests",
    "namespaces": []
@@ -5377,7 +5425,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1497,
+   "line": 1515,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_DisposalTests",
    "namespaces": []
@@ -5389,7 +5437,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1312,
+   "line": 1321,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_EstablishmentBoundTests",
    "namespaces": []
@@ -5401,7 +5449,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1255,
+   "line": 1264,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_FailedEstablishmentRetriesQueuedRequestsTests",
    "namespaces": []
@@ -5413,31 +5461,43 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1442,
+   "line": 1460,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_FallbackDriverIsPreferredTests",
    "namespaces": []
   },
   {
-   "body_sha": "4e61ce1de72c035a4955d9a96c5aafcb",
+   "body_sha": "837382262b2a06f78b63fca0ba323254",
    "doc_sha": "8ca4dd94ff31b9847d8a1f9d1f4e9987",
    "file": "utf_baselib_h2client4/TestConnectionPool.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1364,
+   "line": 1373,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_GoAwayDrainingTests",
    "namespaces": []
   },
   {
-   "body_sha": "f541e28e912ef1cd50b094623919c708",
+   "body_sha": "d0bad2d67f33522f12a610c7f6b2cae7",
+   "doc_sha": "175118dd4af4f03df04e427cdbe79e79",
+   "file": "utf_baselib_h2client4/TestConnectionPool.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1917,
+   "module": "utf_baselib_h2client4",
+   "name": "H2Pool_PeerLimitLearnedFromACompletedResponseTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "14600cfdd1577544bbb66a47c6933f44",
    "doc_sha": "56b32f1d1cded5e4509c1734c7ddeea2",
    "file": "utf_baselib_h2client4/TestConnectionPool.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1557,
+   "line": 1575,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_PolicyDefaultsTests",
    "namespaces": []
@@ -5461,13 +5521,13 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1181,
+   "line": 1190,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_RetryMatrixTests",
    "namespaces": []
   },
   {
-   "body_sha": "3e5563db710024f81cb4270082bedf35",
+   "body_sha": "4decc18681e9950dce08e4c18d617487",
    "doc_sha": "b19cc15565d76a2922606998980f4061",
    "file": "utf_baselib_h2client4/TestConnectionPool.h",
    "fixture": null,
@@ -6151,13 +6211,25 @@
    "namespaces": []
   },
   {
+   "body_sha": "9cdcc44247dbaafa050818caf09d1b43",
+   "doc_sha": "fbcef0b69e37dd3a1b383155ad399645",
+   "file": "utf_baselib_httpclient/TestHttpClientRequestTask.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1647,
+   "module": "utf_baselib_httpclient",
+   "name": "HttpClientRequestTask_BodySourceWhichThrowsFailsTheRequestTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "50f0f88a13dd27fe9bc26d46df91a3f9",
    "doc_sha": "8a14589e05412efeafab5fe82ea715d7",
    "file": "utf_baselib_httpclient/TestHttpClientRequestTask.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 712,
+   "line": 873,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_BufferedCompletionTests",
    "namespaces": []
@@ -6169,7 +6241,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1152,
+   "line": 1313,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_CancelResetsTheStreamTests",
    "namespaces": []
@@ -6181,7 +6253,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1086,
+   "line": 1247,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_HeadersTimeoutResetsTheStreamOnlyTests",
    "namespaces": []
@@ -6193,21 +6265,45 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 810,
+   "line": 971,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_InterimResponsesDoNotOverwriteTheStatusTests",
    "namespaces": []
   },
   {
-   "body_sha": "c01e4315415b35a0e97ef0453989ae6a",
+   "body_sha": "50815020fc4b54b1515c2224507473a5",
+   "doc_sha": "9786759f056115d032bfd55c149a0fc3",
+   "file": "utf_baselib_httpclient/TestHttpClientRequestTask.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1580,
+   "module": "utf_baselib_httpclient",
+   "name": "HttpClientRequestTask_LatePoolAnswerStillReturnsTheSlotTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "5e46168f3bfed390a22f347bc4c5cb68",
    "doc_sha": "4b75e4dfc366d3c78e33e22f451b02e5",
    "file": "utf_baselib_httpclient/TestHttpClientRequestTask.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1288,
+   "line": 1449,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_RefusedSubmitIsRetryableTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "599b80747c89d290d2821303cdbfffb3",
+   "doc_sha": "c2d7a783fe784fa28d0f35c5da0c196b",
+   "file": "utf_baselib_httpclient/TestHttpClientRequestTask.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1513,
+   "module": "utf_baselib_httpclient",
+   "name": "HttpClientRequestTask_RefusedSubmitReturnsTheSlotToTheRealPoolTests",
    "namespaces": []
   },
   {
@@ -6217,7 +6313,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1220,
+   "line": 1381,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_ResponseBodyCapResetsTheStreamTests",
    "namespaces": []
@@ -6229,7 +6325,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 876,
+   "line": 1037,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_StreamingSinkCreditsOnlyWhatItTookTests",
    "namespaces": []
@@ -6241,7 +6337,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1031,
+   "line": 1192,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_TotalTimeoutCoversThePoolWaitTests",
    "namespaces": []
@@ -6253,7 +6349,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 958,
+   "line": 1119,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_UploadIsAnsweredOncePerPullTests",
    "namespaces": []
@@ -14207,10 +14303,10 @@
   {
    "file": "utf_baselib_httpclient/TestHttpClientRequestTask.h",
    "label": "namespace requesttask",
-   "line": 59,
+   "line": 68,
    "module": "utf_baselib_httpclient",
    "ns": "utest",
-   "sha": "bc9ea3a2cb60012cc4f4ee8ec674289c"
+   "sha": "5b7b2f1e8bfc3cb904604e6e725f5810"
   },
   {
    "file": "utf_baselib_httpclient/TestRedirectPolicy.h",
@@ -17346,6 +17442,7 @@
    ],
    "notes_cases": [
     "H2Driver_CancelResetsOneStreamOnlyTests",
+    "H2Driver_DrainingReserveIsPublishedToThePoolTests",
     "H2Driver_FullDuplexUploadAndDownloadTests",
     "H2Driver_GoAwayDrainsAndClosesCleanlyTests",
     "H2Driver_KeepAliveAndIdleCloseTests",
@@ -17427,6 +17524,9 @@
     }
    ],
    "notes_cases": [
+    "H2Pool_AForgottenConnectionIsStoppedTests",
+    "H2Pool_AssumedLimitIsNotDispatchedAgainstTests",
+    "H2Pool_AssumptionIsTakenAfterTheSettleWindowTests",
     "H2Pool_ConcurrentAcquireAndReleaseTests",
     "H2Pool_ConnectingTakesOnlyReplayableTests",
     "H2Pool_DisposalTests",
@@ -17434,6 +17534,7 @@
     "H2Pool_FailedEstablishmentRetriesQueuedRequestsTests",
     "H2Pool_FallbackDriverIsPreferredTests",
     "H2Pool_GoAwayDrainingTests",
+    "H2Pool_PeerLimitLearnedFromACompletedResponseTests",
     "H2Pool_PolicyDefaultsTests",
     "H2Pool_QueueBehindPlaceholderTests",
     "H2Pool_RetryMatrixTests",
@@ -18030,6 +18131,7 @@
     {
      "includes": [
       "<baselib/httpclient/HttpClientRequestTask.h>",
+      "<baselib/httpclient/ConnectionPool.h>",
       "<baselib/tasks/ExecutionQueue.h>",
       "<baselib/tasks/ExecutionQueueImpl.h>",
       "<baselib/tasks/TasksUtils.h>",
@@ -18113,11 +18215,14 @@
     "Http1Codec_RequestSerializerTests",
     "Http1Codec_SmugglingDefencesTests",
     "Http1Codec_StatusLineHeadersAndBodyTests",
+    "HttpClientRequestTask_BodySourceWhichThrowsFailsTheRequestTests",
     "HttpClientRequestTask_BufferedCompletionTests",
     "HttpClientRequestTask_CancelResetsTheStreamTests",
     "HttpClientRequestTask_HeadersTimeoutResetsTheStreamOnlyTests",
     "HttpClientRequestTask_InterimResponsesDoNotOverwriteTheStatusTests",
+    "HttpClientRequestTask_LatePoolAnswerStillReturnsTheSlotTests",
     "HttpClientRequestTask_RefusedSubmitIsRetryableTests",
+    "HttpClientRequestTask_RefusedSubmitReturnsTheSlotToTheRealPoolTests",
     "HttpClientRequestTask_ResponseBodyCapResetsTheStreamTests",
     "HttpClientRequestTask_StreamingSinkCreditsOnlyWhatItTookTests",
     "HttpClientRequestTask_TotalTimeoutCoversThePoolWaitTests",
@@ -20147,10 +20252,10 @@
   },
   {
    "file": "utf_baselib_httpclient/TestHttpClientRequestTask.h",
-   "line": 57,
+   "line": 66,
    "module": "utf_baselib_httpclient",
    "name": "utest",
-   "sha": "938b7c6f5b983e7a96166cc622ed34dd"
+   "sha": "c55cb59ae7be94c6c8eb3c8ebaa0dfd1"
   },
   {
    "file": "utf_baselib_httpclient/TestRedirectPolicy.h",
