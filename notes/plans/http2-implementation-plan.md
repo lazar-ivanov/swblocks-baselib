@@ -1356,6 +1356,15 @@ Depends on L2, L4. S5.1 and S5.2 are parallel via the S2.6 contracts.
   default, so a session-level knob read here is enough; putting it on the frozen request type is a
   negotiated change like any other.
 
+**The S5.1/S5.2 seam, reconciled at merge (2026-09-19).** Both lanes flagged it independently and
+they agree. S5.1 deliberately does **not** call `releaseStream()` when `submit()` is refused or when
+a deadline expires during the pool wait - there is no stream and no handle to name one by - and
+reports `ConnectionUnusable` with `isRetryable()` true instead. That leaks nothing, because **the
+pool holds no per-connection outstanding counter**: it reads slot availability from the driver's own
+`freeStreamSlots()`, and a refused submit never opened a stream, so that count is already right. The
+two halves of the retry counter are split for the same contract reason and the rule lives in one
+place, `chkRequestMayBeReplayed`.
+
 ### S5.2 — ConnectionPool (§5.4, D6, D21)
 - Deliver: `httpclient/ConnectionPool.h` - key (scheme/host/port/proxy/TLS-profile/h2-profile/verify);
   `Connecting` placeholder inserted under the pool lock before release so concurrent requests queue;
