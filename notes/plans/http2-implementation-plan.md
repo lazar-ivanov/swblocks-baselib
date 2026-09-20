@@ -1513,6 +1513,14 @@ hop chain, a `WrapperTaskBase` continuation) and `ClientSessionT< STREAM >`. Tes
   `drainingReserve` → a reserve of "everything but one" makes the second request open a second
   connection, with the ordinary-reserve reuse case as its control; `idleTimeout` → 300 ms makes an
   idle connection close *itself*, with the peer's own record as the rendezvous.
+- **The idle half of that was pinned for HTTP/2 and unmet for HTTP/1.1** (L6 review, finding 5).
+  The knob reached the h2 driver through the connection factory and reached nothing through the
+  driver factory, while the h1 driver's own header said the lifetime was the pool's and the pool
+  has never had a reaper. The L6 fix round settled the ownership rather than moving it: the pool
+  sets the value and **each driver** enforces it, which is what design §5.7 now says and what the
+  pool cannot do itself, since `requestCancel()` is its only lever and is not a graceful close. The
+  h1 driver got the timer, and the case which observes the close at the peer is in
+  `utf_baselib_httpclient6`, a new module the size policy required.
 - **The three L2 items are settled in design §5.6**: the one merged `Cookie` field (pinned across a
   same-origin redirect, asserted as a *count*); `Proxy-Authorization` dropped by the session so the
   redirect policy's removal is a no-op by construction; and `isHttpApi`, which is settled by

@@ -85,23 +85,37 @@ namespace bl
          * from the cancelling thread racing the strand's own handlers. Posting it to the stream's
          * executor restores what D13 exists to guarantee.
          *
-         * THE OPERATIONS IN FLIGHT. At most two: a read, which is armed for the whole life of the
-         * connection, and a write, while a request is going out. That is why MultiOperationTaskT is
-         * mixed in - with one terminal path taken only once both have completed or been cancelled -
-         * and why the read is armed even when the connection is IDLE. The idle read is not
-         * ceremony: it is what notices a pooled keep-alive connection the server closed, which is
-         * the single most common thing that happens to one, and it is also what keeps the
-         * accounting from falling to zero. A task whose pending count reaches zero while it is not
-         * closing can never be completed by beginClose() at all, because the terminal is taken from
-         * onOperationCompleted() and nothing would be left to complete.
+         * THE OPERATIONS IN FLIGHT. At most three: a read, which is armed for the whole life of
+         * the connection, a write, while a request is going out, and the idle timer, while no
+         * request is. That is why MultiOperationTaskT is mixed in - with one terminal path taken
+         * only once all of them have completed or been cancelled - and why the read is armed even
+         * when the connection is IDLE. The idle read is not ceremony: it is what notices a pooled
+         * keep-alive connection the server closed, which is the single most common thing that
+         * happens to one, and it is also what keeps the accounting from falling to zero. A task
+         * whose pending count reaches zero while it is not closing can never be completed by
+         * beginClose() at all, because the terminal is taken from onOperationCompleted() and
+         * nothing would be left to complete.
          *
          * WHAT IS DELIBERATELY NOT HERE. A streaming request body: the request serializer of S2.5
          * writes a head and nothing else, and HTTP/1.1 would need request-side chunked framing
          * which that slice does not have, so submit( ... ) REFUSES a request carrying a BodySource
          * rather than half-supporting it - and provideBody( ... ) therefore never has a live handle
-         * to act on. Connection pooling, the idle lifetime and the retry policy: they are the
-         * pool's (design 5.4, S5.2); this driver only reports through state( ) whether it may be
-         * reused. Request timeouts: the request task's (design 5.7).
+         * to act on. Connection pooling and the retry policy: they are the pool's (design 5.4,
+         * S5.2); this driver only reports through state( ) whether it may be reused. Request
+         * timeouts: the request task's (design 5.7).
+         *
+         * THE IDLE LIFETIME WAS IN THAT LIST UNTIL THE L6 REVIEW, AND IT WAS NOT TRUE OF ANYTHING.
+         * The pool has no reaper and never had one, so an idle keep-alive connection acquired
+         * through a session stayed open until the peer closed it - while the h2 driver, which was
+         * given the same knob, closed itself. The lifetime is split rather than owned at one end:
+         * the POOL owns the value, which is why it arrives here as a constructor parameter and is
+         * not a constant, and THIS DRIVER owns the timer - chkArmIdleTimer( ). It has to. The
+         * pool's only lever on a connection is requestCancel( ), which it documents as not a
+         * graceful close and has no path by which it could be (ConnectionPool.h,
+         * forgetConnection( )), while design 5.4 names the idle lifetime as the graceful path an
+         * ordinary connection takes and disposal as the abrupt one. A reaper in the pool would
+         * have had to end an idle connection by cancelling it, which is the opposite of what the
+         * lifetime is for, and would have raced the h2 driver's own timer for every h2 connection
          */
 
         template
@@ -163,6 +177,13 @@ namespace bl
             const httpclient::Http1ResponseLimits                               m_limits;
 
             /*
+             * The pool's connection idle lifetime - see the class note. A special or non-positive
+             * duration disables the timer, which is what a driver built outside a pool gets
+             */
+
+            const time::time_duration                                           m_idleTimeout;
+
+            /*
              * Touched only on the stream's executor - the strand under a stranded policy - and in
              * onTaskStoppedNothrow, which runs when the multi-operation accounting has already
              * established that nothing is in flight, so the strand is quiescent by then
@@ -172,6 +193,13 @@ namespace bl
             std::size_t                                                         m_readValid = 0U;
 
             cpp::SafeUniquePtr< httpclient::Http1ResponseParser >               m_parser;
+
+            /*
+             * Armed and re-armed on the stream's executor, and cancelled from initiateClose( ),
+             * which the accounting calls exactly once and never while the task lock is held
+             */
+
+            cpp::SafeUniquePtr< asio::deadline_timer >                          m_idleTimer;
 
             std::string                                                         m_requestHead;
             om::ObjPtrCopyable< data::DataBlock >                               m_requestBody;
@@ -206,12 +234,15 @@ namespace bl
                 SAA_inout           typename STREAM::stream_ref&&               connectedStream,
                 SAA_in              httpclient::ConnectionKey                   key,
                 SAA_in              httpclient::Http1ResponseLimits             limits =
-                                        httpclient::Http1ResponseLimits()
+                                        httpclient::Http1ResponseLimits(),
+                SAA_in              time::time_duration                         idleTimeout =
+                                        time::neg_infin
                 )
                 :
                 m_negotiated( BL_PARAM_FWD( negotiated ) ),
                 m_key( BL_PARAM_FWD( key ) ),
                 m_limits( BL_PARAM_FWD( limits ) ),
+                m_idleTimeout( BL_PARAM_FWD( idleTimeout ) ),
                 m_readBuffer( static_cast< std::size_t >( DEFAULT_READ_BUFFER_SIZE ) )
             {
                 BL_CHK_T(
@@ -532,6 +563,13 @@ namespace bl
                 {
                     return;
                 }
+
+                /*
+                 * The connection is no longer idle - see chkArmIdleTimer( ). A timer which has
+                 * already fired is harmless, since its handler re-checks the state
+                 */
+
+                cancelIdleTimer();
 
                 if( base_type::isClosing() )
                 {
@@ -1085,6 +1123,15 @@ namespace bl
                 {
                     closeConnection();
                 }
+                else
+                {
+                    /*
+                     * The connection is keep-alive and nothing is on it, which is the state the
+                     * idle lifetime measures - see chkArmIdleTimer( )
+                     */
+
+                    chkArmIdleTimer();
+                }
 
                 BL_NOEXCEPT_END()
             }
@@ -1116,6 +1163,125 @@ namespace bl
                 BL_NOEXCEPT_END()
             }
 
+            static bool isEnabled( SAA_in const time::time_duration& duration ) NOEXCEPT
+            {
+                return ! duration.is_special() && duration.total_milliseconds() > 0;
+            }
+
+            /**
+             * @brief The connection idle timer - armed only while no request is in flight
+             *
+             * IDLE IS A STATE AND NOT AN ELAPSED TIME, the same way it is in the HTTP/2 driver:
+             * the timer is armed when a keep-alive response completes and when a connection the
+             * pool has not yet given a request is scheduled, and cancelled when a request starts,
+             * so what it measures is exactly the span design 5.4 calls the idle lifetime. The
+             * value is the pool's and the timer is this driver's - see the class note
+             *
+             * IT RUNS ON THE STREAM'S EXECUTOR AND IS ARMED FROM THERE, so it does not need the
+             * state lock for the timer itself; the handle it reads to decide whether the
+             * connection is idle does, because submit( ) writes it from any thread. It is also
+             * why scheduleTask( ) POSTS this rather than calling it: that one call would otherwise
+             * be the only one racing the read handler it has just armed
+             */
+
+            void chkArmIdleTimer() NOEXCEPT
+            {
+                BL_NOEXCEPT_BEGIN()
+
+                if(
+                    ! isEnabled( m_idleTimeout ) ||
+                    base_type::isClosing() ||
+                    ! base_type::isChannelOpen() ||
+                    httpclient::ClientConnection::INVALID_STREAM_HANDLE != activeHandle()
+                    )
+                {
+                    return;
+                }
+
+                m_idleTimer.reset(
+                    new asio::deadline_timer(
+                        #if ( ( BOOST_VERSION / 100 ) >= 1072 )
+                        base_type::getSocket().get_executor()
+                        #else
+                        base_type::getSocket().get_io_service()
+                        #endif
+                        )
+                    );
+
+                m_idleTimer -> expires_from_now( m_idleTimeout );
+
+                base_type::beginOperation();
+
+                try
+                {
+                    m_idleTimer -> async_wait(
+                        cpp::bind(
+                            &this_type::onIdleDeadline,
+                            selfRef(),
+                            asio::placeholders::error
+                            )
+                        );
+                }
+                catch( std::exception& )
+                {
+                    /*
+                     * The operation was begun and will never complete - the same guard the read
+                     * and the write carry, and for the same reason
+                     */
+
+                    base_type::onOperationCompleted( std::current_exception(), false );
+                }
+
+                BL_NOEXCEPT_END()
+            }
+
+            void cancelIdleTimer() NOEXCEPT
+            {
+                BL_NOEXCEPT_BEGIN()
+
+                if( m_idleTimer )
+                {
+                    eh::error_code ec;
+
+                    m_idleTimer -> cancel( ec );
+                }
+
+                BL_NOEXCEPT_END()
+            }
+
+            /**
+             * @brief The idle lifetime expired - end the connection the graceful way
+             *
+             * The guard is re-checked because a request may have been submitted while this
+             * handler was already queued, and a cancelled timer arrives here too - neither is an
+             * error, so the deadline is not checked with BL_TASKS_HANDLER_CHK_EC( ) and an
+             * expiry which finds the connection busy simply accounts for its own operation
+             */
+
+            void onIdleDeadline( SAA_in const eh::error_code& ec ) NOEXCEPT
+            {
+                BL_TASKS_HANDLER_BEGIN()
+
+                if(
+                    ! ec &&
+                    ! base_type::isClosing() &&
+                    httpclient::ClientConnection::INVALID_STREAM_HANDLE == activeHandle()
+                    )
+                {
+                    BL_LOG(
+                        Logging::trace(),
+                        BL_MSG()
+                            << "Closing an idle HTTP/1.1 connection to '"
+                            << m_key.host
+                            << "'"
+                        );
+
+                    closeConnection();
+                }
+
+                BL_TASKS_HANDLER_END_MULTIOP()
+            }
+
             virtual void initiateClose() OVERRIDE
             {
                 /*
@@ -1129,6 +1295,15 @@ namespace bl
 
                     base_type::getSocket().cancel( ec );
                 }
+
+                /*
+                 * The idle timer is not on the socket, so the cancel above does not wake it - and
+                 * an operation which is never woken is a task which never reaches its terminal
+                 * path. This is the place the base documents for exactly that: called once, with
+                 * no task lock, for the sockets AND the timers
+                 */
+
+                cancelIdleTimer();
             }
 
             /*************************************************************************
@@ -1163,6 +1338,24 @@ namespace bl
                     postToStreamExecutor(
                         cpp::bind(
                             &this_type::onStartRequest,
+                            selfRef()
+                            )
+                        );
+                }
+                else
+                {
+                    /*
+                     * A driver the ALPN fallback built and the pool then had no request for is
+                     * idle from birth, which is the narrow case the retry budget can produce
+                     * (L6 finding 4), so its lifetime starts here rather than at the first
+                     * response. POSTED, because everything else which touches the timer runs on
+                     * the stream's executor and the read armed above may already be completing
+                     * there
+                     */
+
+                    postToStreamExecutor(
+                        cpp::bind(
+                            &this_type::chkArmIdleTimer,
                             selfRef()
                             )
                         );

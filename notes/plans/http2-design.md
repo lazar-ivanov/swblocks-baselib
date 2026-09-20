@@ -1227,7 +1227,7 @@ off in any case.
 | `SETTINGS` acknowledgement | **10 s** | connection task |
 | Keepalive `PING` reply | 15 s, when keepalive is on | connection task |
 | Drain: a close waiting on its `GOAWAY` | 10 s | connection task |
-| Connection idle | 5 min | pool |
+| Connection idle | 5 min | **pool sets it, each driver enforces it** |
 
 **The request-total row is a deadline for the REQUEST, and through a session a request is a chain.**
 Every hop and every retry is a fresh `HttpClientRequestTaskT` arming its own full total timer, so
@@ -1299,6 +1299,16 @@ buffer full would otherwise hold a closing connection open for as long as TCP ke
 than closed - a peer which is not reading will not read a `GOAWAY` either, which is the same
 reasoning the keepalive `PING` deadline already follows. RFC 9113 section 5.4.1 asks for the
 `GOAWAY` with a SHOULD, and it is still sent first on every path where it can be.
+
+**The idle row said "pool" and the pool has never had a reaper** (L6 finding 5). It said so because
+the knob is pool policy, and that half is right: `ConnectionPoolPolicy::idleTimeout` is where the
+number lives and the session writes it into every connection it builds. What was never true is the
+enforcement. The pool cannot perform it: its only lever on a connection is `requestCancel()`, which
+5.4 above names as the abrupt path and this row's own lifetime as the graceful one, and a reaper
+would also have raced the h2 driver's timer on every h2 connection. So the row is split rather than
+moved - the pool sets it, and **each driver** arms a timer while it holds no stream and closes
+itself gracefully when it expires. The h2 driver did this from S4.1; the h1 driver got it in the L6
+fix round, where until then an idle keep-alive HTTP/1.1 connection was closed by nothing of ours.
 
 **The `SETTINGS` row said 30 s until S4.2 while the engine said 10; it now says 10, and there is one
 number rather than two.** `SessionLimits::settingsTimeoutInSeconds` is that number and the connection task
