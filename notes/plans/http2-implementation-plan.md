@@ -1525,11 +1525,15 @@ hop chain, a `WrapperTaskBase` continuation) and `ClientSessionT< STREAM >`. Tes
   debug, 104.3 MB gcc release. Splitting was measured and loses — the only seam is
   peer-versus-`HttpServer`, and the session with both drivers is paid by both halves on top of two
   ~21 MB floors. The module's own header carries the arithmetic.
-- **Not done, and not in scope**: L7 and L8. A TLS session is not instantiated by any module, so
-  the h2-only routing of a `BodySource` request is pinned as its two pure functions rather than
-  end to end; the `ClientSessionT< TcpSslSocketAsyncStrandedBase >` instantiation is owed, and by
-  the rule L3 records ("a template nothing instantiates is not compiled"), owed rather than
-  assumed.
+- **The TLS instantiation is a fact and not a claim**, which the L3 rule requires of a slice
+  delivering a template over a policy. `utf_baselib_httpclient5` names
+  `ClientSessionT< TcpSslSocketAsyncStrandedBase >` and runs it: a GET over h2 and TLS with ALPN
+  choosing `h2`, and the h2-only routing of a streaming upload **joined** rather than pinned as two
+  pure functions — which only a transport that negotiates can run, so it could not live in the
+  cleartext module. 2 cases, 19 assertions, 46.0 MB clang debug / 93.6 MB gcc release.
+- **Not done, and not in scope**: L7 and L8. Owed: the same TLS cases on OpenSSL 1.1.1w, for the
+  reason the openssl-1x deferral record gives; and no ThreadSanitizer run, which the orchestrator's
+  gate is the place for.
 
 ---
 

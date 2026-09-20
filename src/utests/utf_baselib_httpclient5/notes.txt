@@ -1,0 +1,4 @@
+# each slice appends the recipes for the cases it lands here
+
+--log_level=message --run_test=ClientSessionTls_GetOverHttp2Tests
+--log_level=message --run_test=ClientSessionTls_StreamingUploadTakesAnHttp2OnlyConnectionTests
