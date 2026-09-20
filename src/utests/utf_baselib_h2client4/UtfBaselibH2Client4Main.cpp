@@ -44,6 +44,13 @@
  * which pin the draining reserve INTO a session live in utf_baselib_h2core, where a Session is
  * already instantiated and they cost nothing.
  *
+ * THE ONE EXCEPTION IS A CONSTANT. H2Pool_PolicyDefaultsTests static_asserts the pool's assumed
+ * concurrency limit against the h2 driver's, which the pool's band argument depends on and which
+ * nothing else can check - the driver does not include the pool, and the pool must not include the
+ * driver, which is what keeps it protocol agnostic. Reading that enum instantiates the driver class
+ * and no object of it: measured at 0.01 MB of object and about six seconds of compile time. No
+ * other case here may touch the driver.
+ *
  * The cases here take no socket and no port, so they do not take the machine global test lock.
  *
  * The module is devenv7+ only: the devenv7_only marker next to this file is what keeps it out of

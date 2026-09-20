@@ -985,6 +985,31 @@ namespace bl
             }
 
             /**
+             * @brief The peer's limit has just become known, and what is stored is not it
+             *
+             * Every reading taken before this moment came from the driver's assumption, and
+             * learnPeerLimit( ) only ever takes the stored value DOWNWARD - so a peer which allows
+             * more than the assumption would stay capped at the assumption for as long as the
+             * connection lived, since the one moment which stores a reading outright is
+             * slotsInUse == 0 and under steady load that moment never comes. Dropping the stored
+             * reading here makes the next one the fresh one; until it is taken - which for the two
+             * routes inside learnPeerLimit( ) is the next line, and for a completed response is
+             * the refresh of the examine which follows it - capacityOf( ) answers one stream,
+             * which is what it was answering a moment ago
+             */
+
+            static void markPeerLimitKnown( SAA_in const entry_ptr_t& entry ) NOEXCEPT
+            {
+                if( entry -> isPeerLimitKnown )
+                {
+                    return;
+                }
+
+                entry -> isPeerLimitKnown = true;
+                entry -> peerLimit = 0U;
+            }
+
+            /**
              * @brief Takes one reading of a Ready connection's free slots and learns what it can
              *
              * THE READING IS limit - <streams the driver has open>, and the driver's open count is
@@ -1008,7 +1033,12 @@ namespace bl
              * [ assumed - slotsInUse, assumed ]. ANY reading outside that band could not have come
              * from the assumption and is therefore the peer's - which covers every peer except one
              * whose limit is the assumed number exactly, for whom no reading can ever distinguish
-             * itself and the settle window below is the answer
+             * itself and the settle window below is the answer.
+             *
+             * THE DOWNWARD RULE APPLIES ONLY TO READINGS WHICH ARE THE PEER'S, which is what
+             * markPeerLimitKnown( ) is for: what was stored while the limit was unknown came from
+             * the driver's assumption, and keeping it would cap a peer allowing more than the
+             * assumption at the assumption until an idle moment the pool may never see
              */
 
             void learnPeerLimit(
@@ -1024,7 +1054,7 @@ namespace bl
 
                 if( slots > assumed || slots + inUse < assumed )
                 {
-                    entry -> isPeerLimitKnown = true;
+                    markPeerLimitKnown( entry );
                 }
 
                 if( entry -> settleBy.is_special() )
@@ -1036,7 +1066,7 @@ namespace bl
                 }
                 else if( timeNow >= entry -> settleBy )
                 {
-                    entry -> isPeerLimitKnown = true;
+                    markPeerLimitKnown( entry );
                 }
 
                 if( 0U == inUse )
@@ -1121,11 +1151,28 @@ namespace bl
              * documents. What it costs is a client GOAWAY (RFC 9113 6.8, a SHOULD) on a connection
              * which by this point carries NO streams - the pool is the only thing which opens any
              * and it holds none - and what it buys is that a connection the pool has given up on
-             * stops. A real driver which is Draining with nothing in flight is not on its way out
-             * either: the GOAWAY drain takes itself to Closed through chkFinishClose( ) when its
-             * last stream ends, so a driver still reading Draining here is one staying up - the
-             * identifier reserve is exactly that case. Cancelling a Closed one is harmless, since
-             * Closed is published only once there is nothing left to write.
+             * stops.
+             *
+             * ON THE Draining ROUTES IT USUALLY FINDS A CLOSE ALREADY IN PROGRESS AND CUTS IT
+             * SHORT. What brings an entry here is its last slot coming back, and the driver's
+             * onStreamClosedEvent( ) posts that stream's onClosed and then, in the SAME strand
+             * handler, calls closeGracefully( ) once its table is empty - so by the time the event
+             * has crossed the mailbox, been drained and reached releaseStream( ), the driver has
+             * queued its GOAWAY, armed its drain deadline and is on its way to Closed. The cancel
+             * races that write: the task ends as a cancel marked expected rather than as a
+             * success, and the GOAWAY reaches the peer only if it had already left the socket
+             * buffer, which for a nine byte frame it ordinarily has. That is classification and a
+             * SHOULD rather than correctness, and it is the shape the drain deadline already has,
+             * since it takes the same requestCancelInternal( ) path.
+             *
+             * THE DRIVER WHICH REALLY DOES STAY UP IS NARROWER than "Draining with nothing in
+             * flight": Draining published from the REFUSED branch of applySubmit( ) with an empty
+             * stream table - a session draining from birth - and a healthy connection which a
+             * request task reported ConnectionUnusable, which for an h1 driver refusing a
+             * BodySource request is a connection with nothing wrong with it. Those are the ones
+             * which would run until the pool itself was disposed, and they are what this cancel is
+             * for. Cancelling a Closed one is harmless, since Closed is published only once there
+             * is nothing left to write.
              *
              * If a driver ever offers a public "say GOAWAY and close" - the design says none does,
              * and disposal names the idle lifetime as the graceful path - this is the second place
@@ -2176,10 +2223,12 @@ namespace bl
                              * delivered before the peer's SETTINGS were applied. From here on
                              * freeStreamSlots( ) is the peer's number, whatever it reads - which
                              * is the one proof available for a peer whose limit is exactly the
-                             * assumed one and which therefore never distinguishes itself
+                             * assumed one and which therefore never distinguishes itself. What was
+                             * stored before this moment was not the peer's, so it goes with the
+                             * assumption it came from - markPeerLimitKnown( )
                              */
 
-                            entry -> isPeerLimitKnown = true;
+                            markPeerLimitKnown( entry );
                         }
                         else if( RequestOutcome::ConnectionUnusable == outcome )
                         {
