@@ -135,12 +135,20 @@ namespace utest
 
                 if( ! failure.empty() )
                 {
-                    completeLater(
-                        callback,
-                        std::make_exception_ptr(
-                            BL_EXCEPTION( bl::UnexpectedException(), failure )
-                            )
+                    /*
+                     * THE EXCEPTION IS BUILT INTO A NAMED LOCAL FIRST, which is not style. A
+                     * BL_EXCEPTION temporary written inside the call would be destroyed at the end
+                     * of the full expression - AFTER the post - and boost::exception's error-info
+                     * container is reference counted with a plain int, so that destruction would
+                     * race the handler's own on another thread. ThreadSanitizer reports it, and it
+                     * is right to: the temporary has to die before the post, not after it
+                     */
+
+                    const auto eptr = std::make_exception_ptr(
+                        BL_EXCEPTION( bl::UnexpectedException(), failure )
                         );
+
+                    completeLater( callback, eptr );
                 }
             }
 
@@ -162,15 +170,18 @@ namespace utest
 
                 if( callback )
                 {
-                    completeLater(
-                        callback,
-                        std::make_exception_ptr(
-                            BL_EXCEPTION(
-                                bl::UnexpectedException(),
-                                std::string( "the stub connection task was cancelled" )
-                                )
+                    /*
+                     * Named first, for the reason onScheduled( ) gives
+                     */
+
+                    const auto eptr = std::make_exception_ptr(
+                        BL_EXCEPTION(
+                            bl::UnexpectedException(),
+                            std::string( "the stub connection task was cancelled" )
                             )
                         );
+
+                    completeLater( callback, eptr );
                 }
 
                 BL_NOEXCEPT_END()
