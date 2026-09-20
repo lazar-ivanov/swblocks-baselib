@@ -39,7 +39,14 @@
  * so it reaches OpenSSL, and an optional dependency does not belong in a pre-compiled header.
  * A consumer includes it directly
  *
- * So this umbrella is not a complete index of httpclient/, and there are now two headers it does
+ * httpclient/ConnectionPool.h is NOT here either, and its reason is size rather than dependency.
+ * It reaches the whole tasks layer - an execution queue of connection tasks is what design 5.4
+ * asks the pool to keep - and every test module in this feature includes this umbrella, several
+ * of them within a megabyte or two of the 40 MB object target of src/utests/AGENTS.md. A module
+ * which does not pool connections should not pay for the machinery that does, so the pool is
+ * included by the modules which use it
+ *
+ * So this umbrella is not a complete index of httpclient/, and there are now three headers it does
  * not list rather than one
  */
 

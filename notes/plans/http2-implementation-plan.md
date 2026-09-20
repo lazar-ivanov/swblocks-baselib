@@ -1350,6 +1350,17 @@ Depends on L2, L4. S5.1 and S5.2 are parallel via the S2.6 contracts.
   identifier space is spent unless `setDrainingReserve( ... )` is called: the margin of design
   §4.3's "approaching 2^31-1" was left to the pool on purpose, and the default is none. Choose it
   from what this pool queues ahead, and pin it.
+- **As landed.** Tests → **`utf_baselib_h2client4`**, a new module (every sibling was at or near the
+  40 MB target), plus one case in `h2core` where a `Session` is already instantiated. Both numbers
+  this slice owned are chosen and pinned: the **draining reserve is 1024**, four times the pool's
+  own per-connection dispatch ceiling, and it needed a wiring line to be settable at all -
+  `SessionLimits::drainingReserve` is new, and the `Session` constructor passes it to the registry.
+  The **establishment bound is 120 s and belongs to the pool**, which closes §5.7's ownerless
+  deferral; §5.7's table has the row. Two further things the contract could not give the pool are
+  recorded in §5.4 rather than left implicit: the retry **counter** is split between the pool and
+  the request task because `acquire`/`releaseStream` carry no request identity, and there is no
+  connection→pool readiness notification, so the pool polls on a backing-off maintenance tick which
+  is the seam such a notification would plug into.
 
 ---
 

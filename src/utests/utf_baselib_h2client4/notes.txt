@@ -1,0 +1,16 @@
+# each slice appends the recipes for the cases it lands here
+
+# S5.2 - the connection pool (design 5.4, D6, D21)
+--log_level=test_suite --run_test=H2Pool_QueueBehindPlaceholderTests
+--log_level=test_suite --run_test=H2Pool_SlotLimitingTests
+--log_level=test_suite --run_test=H2Pool_ConnectingTakesOnlyReplayableTests
+--log_level=test_suite --run_test=H2Pool_RetryMatrixTests
+--log_level=test_suite --run_test=H2Pool_FailedEstablishmentRetriesQueuedRequestsTests
+--log_level=test_suite --run_test=H2Pool_EstablishmentBoundTests
+--log_level=test_suite --run_test=H2Pool_GoAwayDrainingTests
+--log_level=test_suite --run_test=H2Pool_FallbackDriverIsPreferredTests
+--log_level=test_suite --run_test=H2Pool_DisposalTests
+--log_level=test_suite --run_test=H2Pool_PolicyDefaultsTests
+
+# design 8.3's concurrency - and the case TSan is pointed at
+--log_level=test_suite --run_test=H2Pool_ConcurrentAcquireAndReleaseTests

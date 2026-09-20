@@ -877,6 +877,34 @@ request goes out with the preface, as browsers do it. Otherwise wait, FIFO, up t
 deadline. Policy knobs: connections per key (1 for HTTP/2 by default, 6 for HTTP/1.1), total
 connections, idle lifetime, keepalive `PING` interval.
 
+Three things S5.2 settled about that paragraph. The count which limits dispatch is the **pool's
+own**, not `freeStreamSlots()`: a request the pool has answered has not reached the driver's strand
+yet, so that value is stale *high* for as long as that takes; it is read only for its zero and to
+latch the peer's limit at a moment when the pool holds no slot. The request which rides the preface
+must be **replayable**, because a connection which is still establishing may yet turn out to speak
+`http/1.1` and bounce it - a request which cannot be replayed waits for `Ready` instead, which
+costs it milliseconds. And the pool caps what it will put on one connection whatever the peer
+advertises (`maxStreamsPerConnection`, 256), since RFC 9113 section 6.5.2 gives that setting no
+upper bound and one connection absorbing every request also means every request failing together.
+
+**The draining reserve, chosen in S5.2: 1024 identifiers.** Section 4.3's "approaching `2^31 - 1`"
+is a margin `StreamRegistry` leaves to the pool, and it has to cover what the pool has committed to
+a connection but not yet opened as a stream - bounded by the dispatch ceiling above. 1024 is four
+times that ceiling and costs under one millionth of a connection's 1.07 billion identifiers, while
+a reserve of none turns identifier exhaustion into a stream of retryable bounces: a connection
+whose identifiers are spent still reports `Ready` with slots free, because `freeStreamSlots()` does
+not consult `isDraining()` and nothing publishes `Draining` for exhaustion. It reaches the registry
+through `SessionLimits::drainingReserve`, which S5.2 added for it - the pool configures the driver,
+the driver configures the session, and the session configures the registry.
+
+**There is no connection-to-pool notification, and rule L2 of 5.2 anticipates one.** A driver
+publishes its state into an atomic and offers nothing to subscribe to, so the pool cannot be told
+that a connection became `Ready`, that an establishment is overdue or that a queued request's
+deadline has passed. Until a driver exposes that posted notification, the pool **looks**, on a
+maintenance tick which runs only while it has a waiter or a connection which is not usable yet, and
+whose interval backs off from 10 ms to 250 ms for every tick that changes nothing. That is the seam
+the notification plugs into; nothing above the pool would change.
+
 **Retry (D6).** A request is replayed on another connection when both hold:
 
 - *provably unprocessed*: its stream id is above a GOAWAY's last-stream-id; or it was reset with
@@ -885,6 +913,18 @@ connections, idle lifetime, keepalive `PING` interval.
 
 Bounded by the retry limit (4.6). A request the server may have processed is **not** retried
 automatically; retrying idempotent methods after connection loss is a separate knob, default off.
+
+**Which half of the retry the pool counts, settled in S5.2.** The *rule* is one predicate,
+`chkRequestMayBeReplayed` in `httpclient/ConnectionPool.h`, and both halves use it. The *counter*
+cannot be in one place, because the S2.6 contract gives the pool no request identity: `acquire`
+takes a `ClientRequest` by reference and `releaseStream` names a handle the pool never issued. So a
+request still queued in the pool when the connection it was queued behind failed is replayed and
+counted **by the pool**, which never let go of it; a request which had already been dispatched
+comes back through `releaseStream` and a fresh `acquire`, and its attempts are counted by the
+request task, which has per-request state by construction. The pool's part of the guarantee is that
+such a request cannot land back on the connection which failed it: a connection reported
+`ConnectionUnusable`, or observed `Draining` or `Closed`, is retired before the next `acquire` is
+answered.
 
 **GOAWAY.** Mark `Draining`, stop dispatching to it, replay what qualifies, let in-flight streams at or
 below the last id finish. Servers commonly send two - first with `2^31 - 1`, then the real id - and
@@ -896,8 +936,21 @@ certificate covers it and the host resolves to the connection's address. The che
 saved peer certificate; a `421` forces a dedicated connection and is remembered. It is an optimization
 with security subtlety, so: designed, **default off** in the first version.
 
-**Disposal.** The session is `om::Disposable`. Disposing fails queued requests with
-`operation_aborted`, sends GOAWAY, and flushes the connection queue - the `TcpServerBase` pattern.
+S5.2 ships the knob and **refuses** it rather than ignoring it: a caller who sets
+`enableCoalescing` is told it is not implemented, because the failure mode of believing otherwise
+is a request for one host being sent on another host's connection. The design above is repeated at
+the knob, where whoever implements it will be standing.
+
+**Disposal.** The session is `om::Disposable`, and so is the pool - disposing it fails queued
+requests with `operation_aborted`, cancels the connection tasks, and flushes the connection queue,
+the `TcpServerBase` pattern. What it does **not** do is send a `GOAWAY` first, and that is a
+limitation rather than a choice: a driver has no public "say `GOAWAY` and close" entry point -
+`closeGracefully()` is its own, taken from its idle timer, its drained `GOAWAY` and its last stream
+closing - so the graceful path an ordinary connection takes is the **idle lifetime the pool
+configures**, and disposal is the abrupt one. From the *destructor* the pool answers nobody, on
+purpose: a request which is waiting holds the pool it is waiting on, so a pool being destroyed has
+no listener left, and that destructor can run during process teardown, when posting to the thread
+pool is fatal rather than merely late.
 
 ### 5.5 HTTP/1.1 and ALPN fallback (D5, D15)
 
@@ -1032,6 +1085,7 @@ defenses. A registry per session. No decoder ships (D9). The consequences, and t
 | Timeout | Default | Owner |
 |---|---|---|
 | Connect: **TCP connected** through preface | 60 s, per attempt | connection task |
+| **Establishment: `acquire` through a connection which can carry a request** | **120 s** | **pool** |
 | TLS handshake and shutdown | 60 s, inherited (`TcpSslBaseTasks.h:73`) | stream policy |
 | Request total, including pool wait | 30 min, matching `http/Globals.h:186` | request task |
 | Response headers | off | request task |
@@ -1064,6 +1118,22 @@ It is not forbidden by the strand rule, since `onConnectDeadline` touches no str
 deferred rather than rejected: an overall establishment bound belongs with the retry policy, which
 design 5.4 gives to the pool, and the pool is where a caller's deadline for "get me a connection"
 is actually known.
+
+**The hole that left is closed by S5.2, and the establishment row above is where it went.** The
+deferral was of a mechanism, not of the bound: what the connect deadline does not cover is now
+covered by the pool, which arms its own deadline when it inserts the `Connecting` placeholder and
+satisfies it the first time the connection reads `Ready`. So the bound spans resolve, connect,
+tunnel, handshake, floor, ALPN and the preface, **across the establisher's handshake retry** -
+exactly the set nothing else bounds - and on expiry the pool cancels the connection task, retires
+the placeholder and retries or fails every request queued behind it. `ClientConnectionTaskBase` is
+unchanged; the connect deadline still means what its row says.
+
+**120 s**, because the legitimate worst case is two attempts of the 60 s per-attempt deadline plus
+two resolve-and-connect legs, and the per-attempt deadline fires first on every path where it
+applies at all - so the pool's bound truncates nothing which would have succeeded, while cutting
+the black hole above from minutes per address to two minutes for the origin. It is a twentieth of
+the request total timeout, so a request which hits it still has time to be tried on a fresh
+connection rather than dying with the one it was waiting for.
 
 **The drain row is a backstop and not a protocol deadline.** A close is taken only through the
 write pump, which returns while a write is in flight, so a peer that stops reading with our send
