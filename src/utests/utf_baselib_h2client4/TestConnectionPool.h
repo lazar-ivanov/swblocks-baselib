@@ -523,6 +523,19 @@ namespace utest
          * The wait is a condition variable signalled inside the already-locked record( ), not a
          * poll before an assertion - an answer arrives on a thread pool thread and a case which
          * read the count directly would be reading it while it was still being written
+         *
+         * IT IS HELD BY A shared_ptr AND NEVER BY ITS ADDRESS - see answers_ptr_t below, which is
+         * how every case holds one. An answer is POSTED ( the pool's contract says it must be ),
+         * so a callback holding a pointer to an Answers on the case's stack is a callback which
+         * outlives what it points at whenever the case leaves with a waiter still queued. Waiting
+         * for the answers a case caused closes that on the path where the case passes; on the path
+         * where it FAILS nothing can close it, because a UTF_REQUIRE which fails unwinds through
+         * PoolGuard, whose dispose( ) answers every remaining waiter by posting, and the frame
+         * those answers point into is gone a few frames later. A case which failed one assertion
+         * would then abort with an unrelated message - the second failure hiding the first, which
+         * is what PoolGuard exists to prevent and would here be produced by PoolGuard itself.
+         * Captured BY VALUE a shared_ptr removes the shape from both paths at once, and the waits
+         * which used to carry it become what they read as: assertions about what the pool did
          */
 
         class Answers FINAL
@@ -621,8 +634,16 @@ namespace utest
             }
         };
 
+        typedef std::shared_ptr< Answers >                                      answers_ptr_t;
+
         /**
          * @brief The connection factory a case drives, and the record of what the pool asked it
+         *
+         * HELD BY A shared_ptr TOO, for the sibling of the reason above: the pool calls the
+         * factory OUTSIDE its lock, from runActions( ), and disposal does not join a runActions( )
+         * already in flight on a maintenance tick - so a StubFactory on the case's stack can be
+         * called after the case has left it. factoryOf( ) below is what the pool is given, and it
+         * holds the factory rather than pointing at it
          */
 
         class StubFactory FINAL
@@ -834,6 +855,25 @@ namespace utest
             }
         };
 
+        typedef std::shared_ptr< StubFactory >                                  factory_ptr_t;
+
+        /**
+         * @brief The connection_factory_t a pool is created with, holding the stub by value
+         */
+
+        inline auto factoryOf( SAA_in const factory_ptr_t& factory )
+            -> bl::httpclient::connection_factory_t
+        {
+            return [ factory ](
+                SAA_in          const bl::httpclient::ConnectionKey&            key,
+                SAA_in          const bl::httpclient::ConnectionPoolPolicy&     policy
+                )
+                -> bl::httpclient::ConnectionAttempt
+            {
+                return ( *factory )( key, policy );
+            };
+        }
+
         typedef bl::om::ObjectImpl< bl::httpclient::ConnectionPoolImplT<> >     pool_impl_t;
 
         /**
@@ -905,7 +945,7 @@ namespace utest
             SAA_in          const bl::om::ObjPtr< pool_impl_t >&                pool,
             SAA_in          const bl::httpclient::ConnectionKey&                key,
             SAA_in          const bl::httpclient::ClientRequest&                request,
-            SAA_in          Answers*                                            answers,
+            SAA_in          const answers_ptr_t&                                answers,
             SAA_in          const std::size_t                                   index
             )
         {
@@ -978,12 +1018,12 @@ UTF_AUTO_TEST_CASE( H2Pool_QueueBehindPlaceholderTests )
     using namespace bl;
     using namespace utest::connpool;
 
-    StubFactory factory;
-    Answers answers;
+    const auto factory = std::make_shared< StubFactory >();
+    const auto answers = std::make_shared< Answers >();
 
     httpclient::ConnectionPoolPolicy policy;
 
-    const auto pool = pool_impl_t::createInstance( cpp::ref( factory ), policy );
+    const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
 
     const PoolGuard guard( pool );
 
@@ -991,17 +1031,17 @@ UTF_AUTO_TEST_CASE( H2Pool_QueueBehindPlaceholderTests )
 
     for( std::size_t i = 0U; i < 5U; ++i )
     {
-        acquireInto( pool, key, makeRequest(), &answers, i );
+        acquireInto( pool, key, makeRequest(), answers, i );
     }
 
-    UTF_REQUIRE( factory.waitForCalls( 1U ) );
+    UTF_REQUIRE( factory -> waitForCalls( 1U ) );
 
     /*
      * ONE connection for five concurrent requests - the placeholder was inserted under the pool
      * lock before it was released, so the other four found it instead of each opening one
      */
 
-    UTF_REQUIRE_EQUAL( factory.calls(), 1U );
+    UTF_REQUIRE_EQUAL( factory -> calls(), 1U );
 
     /*
      * And exactly one request went out while it was still connecting: design 5.1's first request
@@ -1009,19 +1049,19 @@ UTF_AUTO_TEST_CASE( H2Pool_QueueBehindPlaceholderTests )
      * about its capacity is known
      */
 
-    UTF_REQUIRE( answers.waitFor( 1U ) );
-    UTF_REQUIRE_EQUAL( answers.count(), 1U );
+    UTF_REQUIRE( answers -> waitFor( 1U ) );
+    UTF_REQUIRE_EQUAL( answers -> count(), 1U );
 
-    const auto task = factory.taskAt( 0U );
+    const auto task = factory -> taskAt( 0U );
 
     task -> setReady( 10U );
 
-    UTF_REQUIRE( answers.waitFor( 5U ) );
+    UTF_REQUIRE( answers -> waitFor( 5U ) );
 
-    UTF_REQUIRE_EQUAL( factory.calls(), 1U );
-    UTF_REQUIRE_EQUAL( answers.count(), 5U );
+    UTF_REQUIRE_EQUAL( factory -> calls(), 1U );
+    UTF_REQUIRE_EQUAL( answers -> count(), 5U );
 
-    const auto records = answers.records();
+    const auto records = answers -> records();
 
     for( const auto& record : records )
     {
@@ -1046,17 +1086,17 @@ UTF_AUTO_TEST_CASE( H2Pool_SlotLimitingTests )
     using namespace bl;
     using namespace utest::connpool;
 
-    StubFactory factory;
-    Answers answers;
+    const auto factory = std::make_shared< StubFactory >();
+    const auto answers = std::make_shared< Answers >();
 
-    factory.initialState = httpclient::ConnectionState::Ready;
-    factory.initialFreeSlots = 2U;
+    factory -> initialState = httpclient::ConnectionState::Ready;
+    factory -> initialFreeSlots = 2U;
 
     httpclient::ConnectionPoolPolicy policy;
 
     policy.maxStreamsPerConnection = 8U;
 
-    const auto pool = pool_impl_t::createInstance( cpp::ref( factory ), policy );
+    const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
 
     const PoolGuard guard( pool );
 
@@ -1064,10 +1104,10 @@ UTF_AUTO_TEST_CASE( H2Pool_SlotLimitingTests )
 
     for( std::size_t i = 0U; i < 5U; ++i )
     {
-        acquireInto( pool, key, makeRequest(), &answers, i );
+        acquireInto( pool, key, makeRequest(), answers, i );
     }
 
-    UTF_REQUIRE( answers.waitFor( 2U ) );
+    UTF_REQUIRE( answers -> waitFor( 2U ) );
 
     /*
      * The stub's freeStreamSlots( ) never changes - it says two for ever. What holds the third
@@ -1075,20 +1115,20 @@ UTF_AUTO_TEST_CASE( H2Pool_SlotLimitingTests )
      * that is right while a dispatch is still on its way to a driver's strand
      */
 
-    UTF_REQUIRE_EQUAL( answers.count(), 2U );
+    UTF_REQUIRE_EQUAL( answers -> count(), 2U );
     UTF_REQUIRE_EQUAL( pool -> waiterCount(), 3U );
 
-    const auto connection = om::qi< httpclient::ClientConnection >( factory.taskAt( 0U ) );
+    const auto connection = om::qi< httpclient::ClientConnection >( factory -> taskAt( 0U ) );
 
     UTF_REQUIRE_EQUAL( pool -> slotsInUse( connection ), 2U );
 
     pool -> releaseStream( connection, 1U, httpclient::RequestOutcome::Completed );
 
-    UTF_REQUIRE( answers.waitFor( 3U ) );
+    UTF_REQUIRE( answers -> waitFor( 3U ) );
 
     pool -> releaseStream( connection, 2U, httpclient::RequestOutcome::Completed );
 
-    UTF_REQUIRE( answers.waitFor( 4U ) );
+    UTF_REQUIRE( answers -> waitFor( 4U ) );
 
     /*
      * FIFO - design 5.4 - asserted on WHICH requests were served and when, not on the order the
@@ -1098,7 +1138,7 @@ UTF_AUTO_TEST_CASE( H2Pool_SlotLimitingTests )
      * got the two slots, and that each slot given back went to the oldest request still waiting
      */
 
-    const auto records = answers.records();
+    const auto records = answers -> records();
 
     UTF_REQUIRE_EQUAL( records.size(), 4U );
 
@@ -1113,13 +1153,14 @@ UTF_AUTO_TEST_CASE( H2Pool_SlotLimitingTests )
     pool -> dispose();
 
     /*
-     * THE LAST WAITER IS ANSWERED BY THE DISPOSAL, AND THE CASE HAS TO WAIT FOR IT. The answer is
-     * POSTED, and what it is posted to is a lambda holding a pointer to the Answers on this
-     * stack - so a case which returns here races its own destruction against a delivery which is
-     * already on its way, and loses it as a mutex lock on a dead object rather than as a failure
+     * THE LAST WAITER IS ANSWERED BY THE DISPOSAL, and this says so. It is an assertion about
+     * what disposal does and nothing more: the answer is POSTED, but what it is posted to holds
+     * the Answers by shared_ptr rather than by its address, so a case which returned here would
+     * leave a delivery in flight rather than a delivery into a dead frame - see the Answers
+     * comment, which is where that stopped depending on every case remembering to wait
      */
 
-    UTF_REQUIRE( answers.waitFor( 5U ) );
+    UTF_REQUIRE( answers -> waitFor( 5U ) );
 }
 
 /************************************************************************
@@ -1140,44 +1181,44 @@ UTF_AUTO_TEST_CASE( H2Pool_ConnectingTakesOnlyReplayableTests )
      */
 
     {
-        StubFactory factory;
-        Answers answers;
+        const auto factory = std::make_shared< StubFactory >();
+        const auto answers = std::make_shared< Answers >();
 
-        const auto pool = pool_impl_t::createInstance( cpp::ref( factory ), policy );
+        const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
 
         const PoolGuard guard( pool );
 
-        acquireInto( pool, makeKey(), makeRequest( true /* isReplayable */ ), &answers, 0U );
+        acquireInto( pool, makeKey(), makeRequest( true /* isReplayable */ ), answers, 0U );
 
-        UTF_REQUIRE( answers.waitFor( 1U ) );
+        UTF_REQUIRE( answers -> waitFor( 1U ) );
 
-        UTF_REQUIRE( httpclient::ConnectionState::Connecting == factory.taskAt( 0U ) -> state() );
+        UTF_REQUIRE( httpclient::ConnectionState::Connecting == factory -> taskAt( 0U ) -> state() );
 
         pool -> dispose();
     }
 
     {
-        StubFactory factory;
-        Answers answers;
+        const auto factory = std::make_shared< StubFactory >();
+        const auto answers = std::make_shared< Answers >();
 
-        const auto pool = pool_impl_t::createInstance( cpp::ref( factory ), policy );
+        const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
 
         const PoolGuard guard( pool );
 
-        acquireInto( pool, makeKey(), makeRequest( false /* isReplayable */ ), &answers, 0U );
+        acquireInto( pool, makeKey(), makeRequest( false /* isReplayable */ ), answers, 0U );
 
-        UTF_REQUIRE( factory.waitForCalls( 1U ) );
+        UTF_REQUIRE( factory -> waitForCalls( 1U ) );
 
         /*
          * It waits instead: a request which cannot be replayed must not be put on a connection
          * which may yet turn out to speak http/1.1 and bounce it
          */
 
-        UTF_REQUIRE( ! answers.waitFor( 1U, 500L /* timeoutInMilliseconds */ ) );
+        UTF_REQUIRE( ! answers -> waitFor( 1U, 500L /* timeoutInMilliseconds */ ) );
 
-        factory.taskAt( 0U ) -> setReady( 4U );
+        factory -> taskAt( 0U ) -> setReady( 4U );
 
-        UTF_REQUIRE( answers.waitFor( 1U ) );
+        UTF_REQUIRE( answers -> waitFor( 1U ) );
 
         pool -> dispose();
     }
@@ -1266,16 +1307,16 @@ UTF_AUTO_TEST_CASE( H2Pool_FailedEstablishmentRetriesQueuedRequestsTests )
     using namespace bl;
     using namespace utest::connpool;
 
-    StubFactory factory;
-    Answers answers;
+    const auto factory = std::make_shared< StubFactory >();
+    const auto answers = std::make_shared< Answers >();
 
-    factory.failWith = "the stub connection attempt failed";
+    factory -> failWith = "the stub connection attempt failed";
 
     httpclient::ConnectionPoolPolicy policy;
 
     policy.maxRetriesPerRequest = 2U;
 
-    const auto pool = pool_impl_t::createInstance( cpp::ref( factory ), policy );
+    const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
 
     const PoolGuard guard( pool );
 
@@ -1285,19 +1326,19 @@ UTF_AUTO_TEST_CASE( H2Pool_FailedEstablishmentRetriesQueuedRequestsTests )
      * Unreplayable, so that neither of them rides the preface and both stay the pool's to answer
      */
 
-    acquireInto( pool, key, makeRequest( false /* isReplayable */ ), &answers, 0U );
-    acquireInto( pool, key, makeRequest( false /* isReplayable */ ), &answers, 1U );
+    acquireInto( pool, key, makeRequest( false /* isReplayable */ ), answers, 0U );
+    acquireInto( pool, key, makeRequest( false /* isReplayable */ ), answers, 1U );
 
-    UTF_REQUIRE( answers.waitFor( 2U ) );
+    UTF_REQUIRE( answers -> waitFor( 2U ) );
 
     /*
      * One attempt, then two retries - and then the requests fail rather than the pool trying for
      * ever
      */
 
-    UTF_REQUIRE_EQUAL( factory.calls(), 3U );
+    UTF_REQUIRE_EQUAL( factory -> calls(), 3U );
 
-    const auto records = answers.records();
+    const auto records = answers -> records();
 
     for( const auto& record : records )
     {
@@ -1323,8 +1364,8 @@ UTF_AUTO_TEST_CASE( H2Pool_EstablishmentBoundTests )
     using namespace bl;
     using namespace utest::connpool;
 
-    StubFactory factory;
-    Answers answers;
+    const auto factory = std::make_shared< StubFactory >();
+    const auto answers = std::make_shared< Answers >();
 
     httpclient::ConnectionPoolPolicy policy;
 
@@ -1337,15 +1378,15 @@ UTF_AUTO_TEST_CASE( H2Pool_EstablishmentBoundTests )
     policy.establishmentTimeout = time::milliseconds( 300 );
     policy.maxRetriesPerRequest = 0U;
 
-    const auto pool = pool_impl_t::createInstance( cpp::ref( factory ), policy );
+    const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
 
     const PoolGuard guard( pool );
 
-    acquireInto( pool, makeKey(), makeRequest( false /* isReplayable */ ), &answers, 0U );
+    acquireInto( pool, makeKey(), makeRequest( false /* isReplayable */ ), answers, 0U );
 
-    UTF_REQUIRE( answers.waitFor( 1U ) );
+    UTF_REQUIRE( answers -> waitFor( 1U ) );
 
-    const auto records = answers.records();
+    const auto records = answers -> records();
 
     UTF_REQUIRE_EQUAL( records.size(), 1U );
     UTF_REQUIRE( nullptr != records[ 0 ].exception );
@@ -1357,7 +1398,7 @@ UTF_AUTO_TEST_CASE( H2Pool_EstablishmentBoundTests )
      * would keep the key occupied
      */
 
-    UTF_REQUIRE( factory.controlAt( 0U ) -> waitForCancel() );
+    UTF_REQUIRE( factory -> controlAt( 0U ) -> waitForCancel() );
 
     const auto stats = pool -> stats();
 
@@ -1375,26 +1416,26 @@ UTF_AUTO_TEST_CASE( H2Pool_GoAwayDrainingTests )
     using namespace bl;
     using namespace utest::connpool;
 
-    StubFactory factory;
-    Answers answers;
+    const auto factory = std::make_shared< StubFactory >();
+    const auto answers = std::make_shared< Answers >();
 
-    factory.initialState = httpclient::ConnectionState::Ready;
-    factory.initialFreeSlots = 4U;
+    factory -> initialState = httpclient::ConnectionState::Ready;
+    factory -> initialFreeSlots = 4U;
 
     httpclient::ConnectionPoolPolicy policy;
 
-    const auto pool = pool_impl_t::createInstance( cpp::ref( factory ), policy );
+    const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
 
     const PoolGuard guard( pool );
 
     const auto key = makeKey();
 
-    acquireInto( pool, key, makeRequest(), &answers, 0U );
-    acquireInto( pool, key, makeRequest(), &answers, 1U );
+    acquireInto( pool, key, makeRequest(), answers, 0U );
+    acquireInto( pool, key, makeRequest(), answers, 1U );
 
-    UTF_REQUIRE( answers.waitFor( 2U ) );
+    UTF_REQUIRE( answers -> waitFor( 2U ) );
 
-    const auto first = factory.taskAt( 0U );
+    const auto first = factory -> taskAt( 0U );
     const auto firstConnection = om::qi< httpclient::ClientConnection >( first );
 
     /*
@@ -1406,18 +1447,18 @@ UTF_AUTO_TEST_CASE( H2Pool_GoAwayDrainingTests )
     first -> setState( httpclient::ConnectionState::Draining );
     first -> setState( httpclient::ConnectionState::Draining );
 
-    acquireInto( pool, key, makeRequest(), &answers, 2U );
+    acquireInto( pool, key, makeRequest(), answers, 2U );
 
-    UTF_REQUIRE( answers.waitFor( 3U ) );
+    UTF_REQUIRE( answers -> waitFor( 3U ) );
 
     /*
      * Nothing new was dispatched to the draining connection - a second one was opened for it, and
      * the two streams still on the first one were left to finish
      */
 
-    UTF_REQUIRE_EQUAL( factory.calls(), 2U );
+    UTF_REQUIRE_EQUAL( factory -> calls(), 2U );
 
-    const auto records = answers.records();
+    const auto records = answers -> records();
 
     UTF_REQUIRE_EQUAL( records.size(), 3U );
     UTF_REQUIRE( records[ 2 ].connection.get() != firstConnection.get() );
@@ -1444,7 +1485,7 @@ UTF_AUTO_TEST_CASE( H2Pool_GoAwayDrainingTests )
      * it is there
      */
 
-    UTF_REQUIRE( factory.controlAt( 0U ) -> waitForCancel() );
+    UTF_REQUIRE( factory -> controlAt( 0U ) -> waitForCancel() );
 
     stats = pool -> stats();
 
@@ -1462,8 +1503,8 @@ UTF_AUTO_TEST_CASE( H2Pool_FallbackDriverIsPreferredTests )
     using namespace bl;
     using namespace utest::connpool;
 
-    StubFactory factory;
-    Answers answers;
+    const auto factory = std::make_shared< StubFactory >();
+    const auto answers = std::make_shared< Answers >();
 
     /*
      * The task reports itself Closed - which is exactly what an h2 connection task does once it
@@ -1471,27 +1512,27 @@ UTF_AUTO_TEST_CASE( H2Pool_FallbackDriverIsPreferredTests )
      * live connection
      */
 
-    factory.isFallback = true;
-    factory.initialState = httpclient::ConnectionState::Ready;
-    factory.initialFreeSlots = 1U;
+    factory -> isFallback = true;
+    factory -> initialState = httpclient::ConnectionState::Ready;
+    factory -> initialFreeSlots = 1U;
 
     httpclient::ConnectionPoolPolicy policy;
 
-    const auto pool = pool_impl_t::createInstance( cpp::ref( factory ), policy );
+    const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
 
     const PoolGuard guard( pool );
 
-    acquireInto( pool, makeKey(), makeRequest(), &answers, 0U );
+    acquireInto( pool, makeKey(), makeRequest(), answers, 0U );
 
-    UTF_REQUIRE( answers.waitFor( 1U ) );
+    UTF_REQUIRE( answers -> waitFor( 1U ) );
 
-    const auto records = answers.records();
+    const auto records = answers -> records();
 
     const auto taskConnection =
-        om::qi< httpclient::ClientConnection >( factory.taskAt( 0U ) );
+        om::qi< httpclient::ClientConnection >( factory -> taskAt( 0U ) );
 
     const auto driverConnection =
-        om::qi< httpclient::ClientConnection >( factory.driverAt( 0U ) );
+        om::qi< httpclient::ClientConnection >( factory -> driverAt( 0U ) );
 
     UTF_REQUIRE( nullptr == records[ 0 ].exception );
     UTF_REQUIRE( records[ 0 ].connection.get() == driverConnection.get() );
@@ -1503,7 +1544,7 @@ UTF_AUTO_TEST_CASE( H2Pool_FallbackDriverIsPreferredTests )
      * execution queue lock - design 5.2 rule L2
      */
 
-    UTF_REQUIRE( factory.driverControlAt( 0U ) -> waitForScheduled() );
+    UTF_REQUIRE( factory -> driverControlAt( 0U ) -> waitForScheduled() );
 
     pool -> dispose();
 }
@@ -1517,12 +1558,12 @@ UTF_AUTO_TEST_CASE( H2Pool_DisposalTests )
     using namespace bl;
     using namespace utest::connpool;
 
-    StubFactory factory;
-    Answers answers;
+    const auto factory = std::make_shared< StubFactory >();
+    const auto answers = std::make_shared< Answers >();
 
     httpclient::ConnectionPoolPolicy policy;
 
-    const auto pool = pool_impl_t::createInstance( cpp::ref( factory ), policy );
+    const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
 
     const PoolGuard guard( pool );
 
@@ -1530,16 +1571,16 @@ UTF_AUTO_TEST_CASE( H2Pool_DisposalTests )
 
     for( std::size_t i = 0U; i < 3U; ++i )
     {
-        acquireInto( pool, key, makeRequest( false /* isReplayable */ ), &answers, i );
+        acquireInto( pool, key, makeRequest( false /* isReplayable */ ), answers, i );
     }
 
-    UTF_REQUIRE( factory.waitForCalls( 1U ) );
+    UTF_REQUIRE( factory -> waitForCalls( 1U ) );
 
     pool -> dispose();
 
-    UTF_REQUIRE( answers.waitFor( 3U ) );
+    UTF_REQUIRE( answers -> waitFor( 3U ) );
 
-    const auto records = answers.records();
+    const auto records = answers -> records();
 
     for( const auto& record : records )
     {
@@ -1549,17 +1590,17 @@ UTF_AUTO_TEST_CASE( H2Pool_DisposalTests )
         UTF_REQUIRE( eh::error_code( asio::error::operation_aborted ) == errorCodeOf( record.exception ) );
     }
 
-    UTF_REQUIRE( factory.controlAt( 0U ) -> waitForCancel() );
+    UTF_REQUIRE( factory -> controlAt( 0U ) -> waitForCancel() );
 
     /*
      * And a request which arrives afterwards is answered rather than queued for ever
      */
 
-    acquireInto( pool, key, makeRequest(), &answers, 99U );
+    acquireInto( pool, key, makeRequest(), answers, 99U );
 
-    UTF_REQUIRE( answers.waitFor( 4U ) );
+    UTF_REQUIRE( answers -> waitFor( 4U ) );
 
-    UTF_REQUIRE_EQUAL( factory.calls(), 1U );
+    UTF_REQUIRE_EQUAL( factory -> calls(), 1U );
 
     /*
      * Disposing twice is not a second disposal
@@ -1637,14 +1678,14 @@ UTF_AUTO_TEST_CASE( H2Pool_PolicyDefaultsTests )
 
     UTF_REQUIRE( ! policy.enableCoalescing.value() );
 
-    StubFactory factory;
+    const auto factory = std::make_shared< StubFactory >();
 
     auto coalescing = policy;
 
     coalescing.enableCoalescing = true;
 
     UTF_REQUIRE_THROW(
-        pool_impl_t::createInstance( cpp::ref( factory ), coalescing ),
+        pool_impl_t::createInstance( factoryOf( factory ), coalescing ),
         NotSupportedException
         );
 }
@@ -1658,15 +1699,15 @@ UTF_AUTO_TEST_CASE( H2Pool_ConcurrentAcquireAndReleaseTests )
     using namespace bl;
     using namespace utest::connpool;
 
-    StubFactory factory;
-    Answers answers;
+    const auto factory = std::make_shared< StubFactory >();
+    const auto answers = std::make_shared< Answers >();
 
-    factory.initialState = httpclient::ConnectionState::Ready;
-    factory.initialFreeSlots = 8U;
+    factory -> initialState = httpclient::ConnectionState::Ready;
+    factory -> initialFreeSlots = 8U;
 
     httpclient::ConnectionPoolPolicy policy;
 
-    const auto pool = pool_impl_t::createInstance( cpp::ref( factory ), policy );
+    const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
 
     const PoolGuard guard( pool );
 
@@ -1677,22 +1718,34 @@ UTF_AUTO_TEST_CASE( H2Pool_ConcurrentAcquireAndReleaseTests )
 
     std::vector< os::thread > threads;
 
-    std::atomic< std::size_t > released( 0U );
+    /*
+     * WHAT THE ANSWER CALLBACK HOLDS, IT HOLDS BY VALUE - the pool it calls back into and the
+     * counter it keeps, for the reason the Answers comment gives: the callback is posted, and a
+     * case which leaves with a waiter still queued leaves this frame behind it. The threads below
+     * are joined before any assertion, so what THEY capture by reference is safe; what the
+     * callback captures is not
+     */
+
+    const auto poolRef = om::ObjPtrCopyable< httpclient::ConnectionPool >(
+        om::qi< httpclient::ConnectionPool >( pool )
+        );
+
+    const auto released = std::make_shared< std::atomic< std::size_t > >( 0U );
 
     for( std::size_t t = 0U; t < threadCount; ++t )
     {
         threads.push_back(
             os::thread(
-                [ &pool, &key, &answers, &released, t ]() -> void
+                [ &poolRef, &key, answers, released, t ]() -> void
                 {
                     for( std::size_t i = 0U; i < perThread; ++i )
                     {
                         const auto index = t * perThread + i;
 
-                        pool -> acquire(
+                        poolRef -> acquire(
                             key,
                             makeRequest(),
-                            [ &pool, &answers, &released, index ](
+                            [ poolRef, answers, released, index ](
                                 SAA_in_opt      const om::ObjPtr< httpclient::ClientConnection >& connection,
                                 SAA_in_opt      const std::exception_ptr& exception
                                 ) -> void
@@ -1704,13 +1757,13 @@ UTF_AUTO_TEST_CASE( H2Pool_ConcurrentAcquireAndReleaseTests )
                                      * is what a request task does from its own drain
                                      */
 
-                                    pool -> releaseStream(
+                                    poolRef -> releaseStream(
                                         connection,
                                         index + 1U,
                                         httpclient::RequestOutcome::Completed
                                         );
 
-                                    ++released;
+                                    ++( *released );
                                 }
 
                                 /*
@@ -1720,7 +1773,7 @@ UTF_AUTO_TEST_CASE( H2Pool_ConcurrentAcquireAndReleaseTests )
                                  * being written, which is a missing rendezvous rather than a flake
                                  */
 
-                                answers.record( index, connection, exception );
+                                answers -> record( index, connection, exception );
                             }
                             );
                     }
@@ -1736,9 +1789,9 @@ UTF_AUTO_TEST_CASE( H2Pool_ConcurrentAcquireAndReleaseTests )
 
     const auto expected = threadCount * perThread;
 
-    UTF_REQUIRE( answers.waitFor( expected, 30000L /* timeoutInMilliseconds */ ) );
+    UTF_REQUIRE( answers -> waitFor( expected, 30000L /* timeoutInMilliseconds */ ) );
 
-    const auto records = answers.records();
+    const auto records = answers -> records();
 
     UTF_REQUIRE_EQUAL( records.size(), expected );
 
@@ -1748,7 +1801,7 @@ UTF_AUTO_TEST_CASE( H2Pool_ConcurrentAcquireAndReleaseTests )
         UTF_REQUIRE( nullptr != record.connection );
     }
 
-    UTF_REQUIRE_EQUAL( released.load(), expected );
+    UTF_REQUIRE_EQUAL( released -> load(), expected );
 
     UTF_REQUIRE_EQUAL( pool -> waiterCount(), 0U );
 
@@ -1769,23 +1822,23 @@ UTF_AUTO_TEST_CASE( H2Pool_AForgottenConnectionIsStoppedTests )
     using namespace bl;
     using namespace utest::connpool;
 
-    StubFactory factory;
-    Answers answers;
+    const auto factory = std::make_shared< StubFactory >();
+    const auto answers = std::make_shared< Answers >();
 
-    factory.initialState = httpclient::ConnectionState::Ready;
-    factory.initialFreeSlots = 4U;
+    factory -> initialState = httpclient::ConnectionState::Ready;
+    factory -> initialFreeSlots = 4U;
 
     httpclient::ConnectionPoolPolicy policy;
 
-    const auto pool = pool_impl_t::createInstance( cpp::ref( factory ), policy );
+    const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
 
     const PoolGuard guard( pool );
 
-    acquireInto( pool, makeKey(), makeRequest(), &answers, 0U );
+    acquireInto( pool, makeKey(), makeRequest(), answers, 0U );
 
-    UTF_REQUIRE( answers.waitFor( 1U ) );
+    UTF_REQUIRE( answers -> waitFor( 1U ) );
 
-    const auto connection = om::qi< httpclient::ClientConnection >( factory.taskAt( 0U ) );
+    const auto connection = om::qi< httpclient::ClientConnection >( factory -> taskAt( 0U ) );
 
     UTF_REQUIRE_EQUAL( pool -> slotsInUse( connection ), 1U );
 
@@ -1802,19 +1855,19 @@ UTF_AUTO_TEST_CASE( H2Pool_AForgottenConnectionIsStoppedTests )
     UTF_REQUIRE_EQUAL( pool -> connectionCount(), 0U );
     UTF_REQUIRE_EQUAL( pool -> slotsInUse( connection ), 0U );
 
-    UTF_REQUIRE( factory.controlAt( 0U ) -> waitForCancel() );
+    UTF_REQUIRE( factory -> controlAt( 0U ) -> waitForCancel() );
 
     /*
      * And the next request opens a second connection rather than finding the first one
      */
 
-    acquireInto( pool, makeKey(), makeRequest(), &answers, 1U );
+    acquireInto( pool, makeKey(), makeRequest(), answers, 1U );
 
-    UTF_REQUIRE( factory.waitForCalls( 2U ) );
+    UTF_REQUIRE( factory -> waitForCalls( 2U ) );
 
-    UTF_REQUIRE( answers.waitFor( 2U ) );
+    UTF_REQUIRE( answers -> waitFor( 2U ) );
 
-    UTF_REQUIRE_EQUAL( factory.calls(), 2U );
+    UTF_REQUIRE_EQUAL( factory -> calls(), 2U );
 
     pool -> dispose();
 }
@@ -1828,8 +1881,8 @@ UTF_AUTO_TEST_CASE( H2Pool_AssumedLimitIsNotDispatchedAgainstTests )
     using namespace bl;
     using namespace utest::connpool;
 
-    StubFactory factory;
-    Answers answers;
+    const auto factory = std::make_shared< StubFactory >();
+    const auto answers = std::make_shared< Answers >();
 
     /*
      * A connection which is Ready and reports exactly the assumed number is what the h2 driver
@@ -1838,8 +1891,8 @@ UTF_AUTO_TEST_CASE( H2Pool_AssumedLimitIsNotDispatchedAgainstTests )
      * is the driver's assumption and says nothing whatever about the peer
      */
 
-    factory.initialState = httpclient::ConnectionState::Ready;
-    factory.initialFreeSlots =
+    factory -> initialState = httpclient::ConnectionState::Ready;
+    factory -> initialFreeSlots =
         httpclient::ConnectionPoolPolicy::ASSUMED_MAX_CONCURRENT_STREAMS;
 
     httpclient::ConnectionPoolPolicy policy;
@@ -1851,7 +1904,7 @@ UTF_AUTO_TEST_CASE( H2Pool_AssumedLimitIsNotDispatchedAgainstTests )
 
     policy.settingsSettleTimeout = time::seconds( 60 );
 
-    const auto pool = pool_impl_t::createInstance( cpp::ref( factory ), policy );
+    const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
 
     const PoolGuard guard( pool );
 
@@ -1859,10 +1912,10 @@ UTF_AUTO_TEST_CASE( H2Pool_AssumedLimitIsNotDispatchedAgainstTests )
 
     for( std::size_t i = 0U; i < 5U; ++i )
     {
-        acquireInto( pool, key, makeRequest(), &answers, i );
+        acquireInto( pool, key, makeRequest(), answers, i );
     }
 
-    UTF_REQUIRE( answers.waitFor( 1U ) );
+    UTF_REQUIRE( answers -> waitFor( 1U ) );
 
     /*
      * ONE, and the negative wait is what says it is one rather than one-so-far. Dispatching the
@@ -1871,12 +1924,12 @@ UTF_AUTO_TEST_CASE( H2Pool_AssumedLimitIsNotDispatchedAgainstTests )
      * dispatched half of the retry does not exist
      */
 
-    UTF_REQUIRE( ! answers.waitFor( 2U, 500L /* timeoutInMilliseconds */ ) );
+    UTF_REQUIRE( ! answers -> waitFor( 2U, 500L /* timeoutInMilliseconds */ ) );
 
-    UTF_REQUIRE_EQUAL( answers.count(), 1U );
+    UTF_REQUIRE_EQUAL( answers -> count(), 1U );
     UTF_REQUIRE_EQUAL( pool -> waiterCount(), 4U );
 
-    const auto connection = om::qi< httpclient::ClientConnection >( factory.taskAt( 0U ) );
+    const auto connection = om::qi< httpclient::ClientConnection >( factory -> taskAt( 0U ) );
 
     UTF_REQUIRE_EQUAL( pool -> dispatchCapacity( connection ), 1U );
     UTF_REQUIRE_EQUAL( pool -> slotsInUse( connection ), 1U );
@@ -1888,13 +1941,13 @@ UTF_AUTO_TEST_CASE( H2Pool_AssumedLimitIsNotDispatchedAgainstTests )
      * peer's and dispatches two more and not four
      */
 
-    factory.taskAt( 0U ) -> setReady( 2U );
+    factory -> taskAt( 0U ) -> setReady( 2U );
 
-    UTF_REQUIRE( answers.waitFor( 3U ) );
+    UTF_REQUIRE( answers -> waitFor( 3U ) );
 
-    UTF_REQUIRE( ! answers.waitFor( 4U, 500L /* timeoutInMilliseconds */ ) );
+    UTF_REQUIRE( ! answers -> waitFor( 4U, 500L /* timeoutInMilliseconds */ ) );
 
-    UTF_REQUIRE_EQUAL( answers.count(), 3U );
+    UTF_REQUIRE_EQUAL( answers -> count(), 3U );
     UTF_REQUIRE_EQUAL( pool -> waiterCount(), 2U );
 
     UTF_REQUIRE_EQUAL( pool -> dispatchCapacity( connection ), 3U );
@@ -1903,11 +1956,11 @@ UTF_AUTO_TEST_CASE( H2Pool_AssumedLimitIsNotDispatchedAgainstTests )
     pool -> dispose();
 
     /*
-     * The two still queued are answered by the disposal, and waiting for them is the rendezvous
-     * this Answers needs before it goes out of scope - see H2Pool_SlotLimitingTests
+     * The two still queued are answered by the disposal, which is what this asserts - see
+     * H2Pool_SlotLimitingTests
      */
 
-    UTF_REQUIRE( answers.waitFor( 5U ) );
+    UTF_REQUIRE( answers -> waitFor( 5U ) );
 }
 
 /************************************************************************
@@ -1919,16 +1972,16 @@ UTF_AUTO_TEST_CASE( H2Pool_PeerLimitLearnedFromACompletedResponseTests )
     using namespace bl;
     using namespace utest::connpool;
 
-    StubFactory factory;
-    Answers answers;
+    const auto factory = std::make_shared< StubFactory >();
+    const auto answers = std::make_shared< Answers >();
 
     /*
      * This stub reports the assumed number for ever, which is the one peer no reading can tell
      * apart from a driver which has not heard from it: a peer whose own limit IS the assumption
      */
 
-    factory.initialState = httpclient::ConnectionState::Ready;
-    factory.initialFreeSlots =
+    factory -> initialState = httpclient::ConnectionState::Ready;
+    factory -> initialFreeSlots =
         httpclient::ConnectionPoolPolicy::ASSUMED_MAX_CONCURRENT_STREAMS;
 
     httpclient::ConnectionPoolPolicy policy;
@@ -1936,7 +1989,7 @@ UTF_AUTO_TEST_CASE( H2Pool_PeerLimitLearnedFromACompletedResponseTests )
     policy.settingsSettleTimeout = time::seconds( 60 );
     policy.maxStreamsPerConnection = 4U;
 
-    const auto pool = pool_impl_t::createInstance( cpp::ref( factory ), policy );
+    const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
 
     const PoolGuard guard( pool );
 
@@ -1944,14 +1997,14 @@ UTF_AUTO_TEST_CASE( H2Pool_PeerLimitLearnedFromACompletedResponseTests )
 
     for( std::size_t i = 0U; i < 5U; ++i )
     {
-        acquireInto( pool, key, makeRequest(), &answers, i );
+        acquireInto( pool, key, makeRequest(), answers, i );
     }
 
-    UTF_REQUIRE( answers.waitFor( 1U ) );
+    UTF_REQUIRE( answers -> waitFor( 1U ) );
 
-    UTF_REQUIRE( ! answers.waitFor( 2U, 500L /* timeoutInMilliseconds */ ) );
+    UTF_REQUIRE( ! answers -> waitFor( 2U, 500L /* timeoutInMilliseconds */ ) );
 
-    const auto connection = om::qi< httpclient::ClientConnection >( factory.taskAt( 0U ) );
+    const auto connection = om::qi< httpclient::ClientConnection >( factory -> taskAt( 0U ) );
 
     UTF_REQUIRE_EQUAL( pool -> dispatchCapacity( connection ), 1U );
 
@@ -1963,7 +2016,7 @@ UTF_AUTO_TEST_CASE( H2Pool_PeerLimitLearnedFromACompletedResponseTests )
 
     pool -> releaseStream( connection, 1U, httpclient::RequestOutcome::Completed );
 
-    UTF_REQUIRE( answers.waitFor( 5U ) );
+    UTF_REQUIRE( answers -> waitFor( 5U ) );
 
     UTF_REQUIRE_EQUAL( pool -> waiterCount(), 0U );
 
@@ -1982,11 +2035,11 @@ UTF_AUTO_TEST_CASE( H2Pool_AssumptionIsTakenAfterTheSettleWindowTests )
     using namespace bl;
     using namespace utest::connpool;
 
-    StubFactory factory;
-    Answers answers;
+    const auto factory = std::make_shared< StubFactory >();
+    const auto answers = std::make_shared< Answers >();
 
-    factory.initialState = httpclient::ConnectionState::Ready;
-    factory.initialFreeSlots =
+    factory -> initialState = httpclient::ConnectionState::Ready;
+    factory -> initialFreeSlots =
         httpclient::ConnectionPoolPolicy::ASSUMED_MAX_CONCURRENT_STREAMS;
 
     httpclient::ConnectionPoolPolicy policy;
@@ -2001,7 +2054,7 @@ UTF_AUTO_TEST_CASE( H2Pool_AssumptionIsTakenAfterTheSettleWindowTests )
     policy.settingsSettleTimeout = time::milliseconds( 200 );
     policy.maxStreamsPerConnection = 3U;
 
-    const auto pool = pool_impl_t::createInstance( cpp::ref( factory ), policy );
+    const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
 
     const PoolGuard guard( pool );
 
@@ -2009,7 +2062,7 @@ UTF_AUTO_TEST_CASE( H2Pool_AssumptionIsTakenAfterTheSettleWindowTests )
 
     for( std::size_t i = 0U; i < 5U; ++i )
     {
-        acquireInto( pool, key, makeRequest(), &answers, i );
+        acquireInto( pool, key, makeRequest(), answers, i );
     }
 
     /*
@@ -2017,25 +2070,25 @@ UTF_AUTO_TEST_CASE( H2Pool_AssumptionIsTakenAfterTheSettleWindowTests )
      * did unconditionally before - so what the window costs is the round trip and nothing else
      */
 
-    UTF_REQUIRE( answers.waitFor( 3U ) );
+    UTF_REQUIRE( answers -> waitFor( 3U ) );
 
-    UTF_REQUIRE( ! answers.waitFor( 4U, 500L /* timeoutInMilliseconds */ ) );
+    UTF_REQUIRE( ! answers -> waitFor( 4U, 500L /* timeoutInMilliseconds */ ) );
 
-    UTF_REQUIRE_EQUAL( answers.count(), 3U );
+    UTF_REQUIRE_EQUAL( answers -> count(), 3U );
     UTF_REQUIRE_EQUAL( pool -> waiterCount(), 2U );
 
-    const auto connection = om::qi< httpclient::ClientConnection >( factory.taskAt( 0U ) );
+    const auto connection = om::qi< httpclient::ClientConnection >( factory -> taskAt( 0U ) );
 
     UTF_REQUIRE_EQUAL( pool -> dispatchCapacity( connection ), 3U );
 
     pool -> dispose();
 
     /*
-     * The two still queued are answered by the disposal - see H2Pool_SlotLimitingTests for why
-     * waiting for them is not optional
+     * The two still queued are answered by the disposal, which is what this asserts - see
+     * H2Pool_SlotLimitingTests for the shape it used to be load bearing against
      */
 
-    UTF_REQUIRE( answers.waitFor( 5U ) );
+    UTF_REQUIRE( answers -> waitFor( 5U ) );
 }
 
 #endif /* __UTEST_TESTCONNECTIONPOOL_H_ */
