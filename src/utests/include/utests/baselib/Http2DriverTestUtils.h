@@ -776,11 +776,11 @@ namespace utest
         template
         <
             typename PEER,
-            typename CALLBACK
+            typename CALLABLE
         >
         inline void withPeer(
             SAA_in          const bl::om::ObjPtr< PEER >&                       peer,
-            SAA_in          const CALLBACK&                                     callback
+            SAA_in          const CALLABLE&                                     callback
             )
         {
             using namespace bl;
@@ -816,11 +816,11 @@ namespace utest
         template
         <
             typename DRIVER,
-            typename CALLBACK
+            typename CALLABLE
         >
         inline void runDriver(
             SAA_in          const bl::om::ObjPtr< DRIVER >&                     driver,
-            SAA_in          const CALLBACK&                                     callback
+            SAA_in          const CALLABLE&                                     callback
             )
         {
             using namespace bl;

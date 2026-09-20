@@ -1757,7 +1757,7 @@ UTF_AUTO_TEST_CASE( H2Pool_ConcurrentAcquireAndReleaseTests )
     {
         threads.push_back(
             os::thread(
-                [ &poolRef, &key, answers, released, t ]() -> void
+                [ &poolRef, &key, answers, released, t, perThread ]() -> void
                 {
                     for( std::size_t i = 0U; i < perThread; ++i )
                     {

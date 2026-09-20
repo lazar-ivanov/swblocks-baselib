@@ -1212,7 +1212,7 @@ UTF_AUTO_TEST_CASE( StreamStates_UnknownStreamIdentifierTests )
         StreamRegistry registry( StreamRole::Client );
 
         requireHttp2Error< Http2ProtocolException >(
-            [ &registry, &now ]() -> void
+            [ none, &registry, &now ]() -> void
             {
                 registry.onFrameReceived( 5U, Globals::FRAME_TYPE_DATA, none, 8, now );
             },
@@ -1227,7 +1227,7 @@ UTF_AUTO_TEST_CASE( StreamStates_UnknownStreamIdentifierTests )
          */
 
         requireHttp2Error< Http2ProtocolException >(
-            [ &registry, &now ]() -> void
+            [ none, &registry, &now ]() -> void
             {
                 registry.onFrameReceived( 3U, Globals::FRAME_TYPE_HEADERS, none, 0, now );
             },
@@ -1246,7 +1246,7 @@ UTF_AUTO_TEST_CASE( StreamStates_UnknownStreamIdentifierTests )
         StreamRegistry registry( StreamRole::Client );
 
         requireHttp2Error< Http2ProtocolException >(
-            [ &registry, &now ]() -> void
+            [ none, &registry, &now ]() -> void
             {
                 registry.onFrameReceived( 2U, Globals::FRAME_TYPE_HEADERS, none, 0, now );
             },

@@ -1055,11 +1055,11 @@ namespace utest
 
         template
         <
-            typename CALLBACK
+            typename CALLABLE
         >
         inline void runTask(
             SAA_in          const bl::om::ObjPtr< bl::tasks::Task >&            task,
-            SAA_in          const CALLBACK&                                     callback
+            SAA_in          const CALLABLE&                                     callback
             )
         {
             using namespace bl;

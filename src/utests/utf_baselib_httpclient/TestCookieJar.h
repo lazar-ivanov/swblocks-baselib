@@ -1322,7 +1322,7 @@ UTF_AUTO_TEST_CASE( CookieJar_ThreadSafetyTests )
 
     const std::size_t iterations = 200U;
 
-    const auto writer = [ &jar, &now ]( const unsigned id ) -> void
+    const auto writer = [ iterations, &jar, &now ]( const unsigned id ) -> void
     {
         for( std::size_t index = 0U; index < iterations; ++index )
         {
@@ -1335,7 +1335,7 @@ UTF_AUTO_TEST_CASE( CookieJar_ThreadSafetyTests )
         }
     };
 
-    const auto reader = [ &jar, &now ]() -> void
+    const auto reader = [ iterations, &jar, &now ]() -> void
     {
         for( std::size_t index = 0U; index < iterations; ++index )
         {

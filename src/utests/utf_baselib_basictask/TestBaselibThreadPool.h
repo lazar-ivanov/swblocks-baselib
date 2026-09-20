@@ -117,7 +117,7 @@ UTF_AUTO_TEST_CASE( Tasks_ThreadPoolConcurrentSizeReadTests )
             std::atomic< std::size_t > wentBackwards( 0U );
 
             os::thread reader(
-                [ &tp, &stop, &reads, &outOfRange, &wentBackwards ]() -> void
+                [ initialSize, finalSize, &tp, &stop, &reads, &outOfRange, &wentBackwards ]() -> void
                 {
                     std::size_t previous = initialSize;
 

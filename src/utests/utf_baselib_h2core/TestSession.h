@@ -1202,11 +1202,11 @@ UTF_AUTO_TEST_CASE( Session_LocalSettingsTakeEffectOnAckTests )
      */
 
     {
-        Http2Profile small;
+        Http2Profile smaller;
 
-        small.settings.push_back( setting( Globals::SETTINGS_INITIAL_WINDOW_SIZE, 1000U ) );
+        smaller.settings.push_back( setting( Globals::SETTINGS_INITIAL_WINDOW_SIZE, 1000U ) );
 
-        Session session( StreamRole::Client, now, small );
+        Session session( StreamRole::Client, now, smaller );
         PeerEncoder peer;
 
         ( void ) produceText( session, now );
@@ -2303,11 +2303,11 @@ UTF_AUTO_TEST_CASE( Session_FlowControlTests )
      */
 
     {
-        Http2Profile small;
+        Http2Profile smaller;
 
-        small.settings.push_back( setting( Globals::SETTINGS_INITIAL_WINDOW_SIZE, 100U ) );
+        smaller.settings.push_back( setting( Globals::SETTINGS_INITIAL_WINDOW_SIZE, 100U ) );
 
-        Session session( StreamRole::Client, now, small );
+        Session session( StreamRole::Client, now, smaller );
         PeerEncoder peer;
 
         settle( session, now );

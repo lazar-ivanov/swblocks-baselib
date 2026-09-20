@@ -1294,7 +1294,7 @@ UTF_AUTO_TEST_CASE( ClientSession_RequestBudgetIsChainedAcrossHopsTests )
     const auto peer = makePeer();
 
     peer -> setResponder(
-        []( SAA_in const h2peer::Http2TestRequest& request )
+        [ HOP_DELAY_IN_MILLISECONDS ]( SAA_in const h2peer::Http2TestRequest& request )
             -> h2peer::Http2ResponseScript
         {
             if( "/start" == request.path )
