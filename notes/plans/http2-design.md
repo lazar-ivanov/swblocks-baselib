@@ -722,7 +722,9 @@ pseudo-headers. A malformed message is a stream `PROTOCOL_ERROR`.
 `GOAWAY`) precede everything. A header block with its `CONTINUATION` frames is atomic. `DATA` is
 scheduled by RFC 9218 urgency, round-robin within an urgency, each frame bounded by the peer's
 `SETTINGS_MAX_FRAME_SIZE` and both windows. Request bodies are **pulled** only when window and queue
-space allow, so an upload never buffers ahead of the peer.
+space allow, so nothing buffers ahead of the peer *inside the engine*. The qualification is not
+pedantry: this sentence was read as a statement about the client as a whole, and until S5.1 the shell
+above the engine had no pull at all — see §5.3.
 
 **Settings.** Ours are sent from the profile's ordered list (6.4). The peer's are applied and
 acknowledged; unknown ids are ignored; out-of-range values are connection errors. An unacknowledged
@@ -859,6 +861,27 @@ Two body modes. **Buffered**, the default and what `SimpleHttpTask` does: the bo
 the size limit. **Streaming**: a `BodySink` receives `DataBlock`s and acknowledges consumption; a
 `BodySource` is pulled for uploads and declares whether it can rewind, which decides replayability
 (5.4).
+
+**The upload pull reaches the source, and did not until S5.1.** §4.5's "an upload never buffers ahead
+of the peer" was true of the session engine and false of the shell: `Session::bodyBytesWanted()` is a
+hard contract the driver obeys, but the `ClientConnection` contract as S2.6 published it had no event
+running the other way, so the driver could not ask the layer above for more and simply held whatever
+`provideBody()` gave it. A request task therefore had two possible behaviours and only one of them was
+an implementation — hand the whole source over, buffering the entire upload inside the *driver*, or
+hand over a bounded amount and stall for want of any progress signal. S4.2 found this and left it;
+S5.1 closed it by adding `ClientStreamEventSink::onBodyWanted( handle, bytes )`, which carries the
+pull one hop further so the bytes stay with the source until the windows can take them. One pull is
+answered by exactly one `provideBody()`, which bounds the driver to a single un-placed chunk per
+stream; the pull is outside the response ordering guarantee, since it concerns the request body and
+interleaves freely with the response; and the HTTP/1.1 driver never raises it, because it refuses a
+`BodySource` at `submit()` and so has nothing to ask for.
+
+**Where that pull stops.** `BodySource::read()` is synchronous and `BodyReadResult` admits a source
+which yields nothing without being finished. Such a source answers the pull with an empty non-final
+chunk and the driver re-raises when its room next grows — a read or a write completion — so on a
+connection carrying no other traffic it can still stall. Closing that needs a readiness signal on
+`BodySource` itself, a change to the frozen `ClientTypes.h`; it is recorded in
+`issues/body-source-readiness-deferral.md` rather than left implicit.
 
 ### 5.4 `ConnectionPoolT`
 

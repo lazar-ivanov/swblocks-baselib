@@ -1310,15 +1310,34 @@ with all of them.
 Depends on L2, L4. S5.1 and S5.2 are parallel via the S2.6 contracts.
 
 ### S5.1 — HttpClientRequestTask (§5.3, §5.7)
-- **A GAP IN THE S2.6 CONTRACT, found by S4.2 and left for this slice to resolve.**
-  `ClientConnection` has **no "the connection wants more body" event**, so a streaming upload cannot
-  be *pulled*: the driver holds whatever `provideBody()` hands it until the windows take it. Design
-  §5.3 says an upload "never buffers ahead of the peer", and with the contract as published the
-  buffering moved **into the driver** rather than staying with the source. Documented at
-  `pumpBody()` in `http2/Http2ConnectionTask.h`. Closing it means changing a landed contract, so it
-  was deliberately not done in L4 - **this slice either adds the event to S2.6's interface as its
-  own change-set, or records why buffering in the driver is acceptable and amends §5.3.** Do not
-  leave both standing.
+- **A GAP IN THE S2.6 CONTRACT, found by S4.2 and left for this slice to resolve. RESOLVED IN S5.1
+  BY ADDING THE EVENT**, as its own change-set. `ClientConnection` had **no "the connection wants
+  more body" event**, so a streaming upload could not be *pulled*: the driver held whatever
+  `provideBody()` handed it until the windows took it. Documented at `pumpBody()` in
+  `http2/Http2ConnectionTask.h`, and deliberately not fixed in L4 because closing it changes a
+  landed contract.
+  - **Why the event and not an amendment saying buffering is acceptable.** With the contract as
+    published a request task holding a `BodySource` had exactly two possible behaviours, and only
+    one of them was an implementation: hand the whole source over, which buffers the entire upload
+    inside the driver and is *worse* than not streaming, or hand over a bounded amount and then
+    stall, because nothing on that interface reports stream progress upwards - `onData` is response
+    side, `consumed()` goes the other way, `freeStreamSlots()` is connection level. The contract
+    therefore **forced** the first. An amendment recording that as acceptable would have left
+    `BodySource` with no reason to exist over a buffered body; it would have deleted the feature
+    rather than documented it. The event also cost least when taken here: nothing consumes streaming
+    uploads yet, and the three sink implementers are all test code.
+  - **As landed:** `ClientStreamEventSink::onBodyWanted( handle, bytes )`. Raised only for a stream
+    submitted with a `BodySource`; **outside** the sink's response ordering, since it concerns the
+    request body and interleaves freely, and bound only by never following `onClosed`; answered by
+    **exactly one** `provideBody()`, which is what bounds the driver to one un-placed chunk per
+    stream. A null block with `endStream` false is the legal "nothing right now" answer. The h1
+    driver never raises it - it refuses a `BodySource` at `submit()` - and that is stated at its own
+    `provideBody()` rather than left to be rediscovered.
+  - **What it does not close**, recorded rather than glossed: `BodySource::read()` is synchronous and
+    `BodyReadResult` admits a source which yields nothing without being finished, so such a source
+    can still stall an otherwise idle connection until the total timeout. Closing that needs a
+    readiness signal on `BodySource`, a change to the frozen `ClientTypes.h`. See
+    `issues/body-source-readiness-deferral.md`.
 - Deliver: `httpclient/HttpClientRequestTask.h` - one per request, protocol-agnostic against
   `ClientConnection`; `scheduleTask` only posts a start handler (honors `TaskBase.h:857`); a mailbox with
   ordered drain under the task lock; buffered (default, 64 MB cap) and streaming body modes; backpressure

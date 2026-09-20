@@ -637,6 +637,173 @@ UTF_AUTO_TEST_CASE( H2Driver_FullDuplexUploadAndDownloadTests )
 }
 
 /**
+ * @brief The upload PULL of design 5.3 - the driver asks, and the body never arrives unasked
+ *
+ * The case above hands the driver its whole upload in six unasked chunks, which is what the
+ * ClientConnection contract permitted before S5.1 and is exactly the shape that moved the
+ * buffering into the driver. This one never calls provideBody( ) from the case at all: every byte
+ * the peer receives got there because the driver raised onBodyWanted( ) and the sink answered it,
+ * so if the pull did not work the peer would receive an empty body and the stream would never end.
+ *
+ * THE ARITHMETIC IS THE CONTROL, and it is why this case cannot pass for the wrong reason. The
+ * sink hands over AT MOST what it was asked for, so the bytes the peer received are bounded by the
+ * sum of the amounts the driver asked for. The case therefore reads the asked-for amounts back out
+ * of the recorded trace and requires that
+ *
+ *   - no SINGLE pull asked for as much as the whole body, so one pull cannot account for it, and
+ *   - the pulls TOGETHER asked for at least the whole body, so nothing arrived unauthorized,
+ *
+ * which together with a peer that received all 204800 bytes forces the conclusion that every byte
+ * moved because the driver asked for it. A driver that silently stopped pulling would not fail one
+ * assertion by a margin - it would deliver nothing at all and the stream would never close.
+ *
+ * The FIRST pull is also required to precede every response event. That is the contract's
+ * statement that onBodyWanted( ) sits OUTSIDE the sink's response ordering, and it is
+ * deterministic rather than raced: the first raise happens inside applySubmit( ), on the strand,
+ * before a response can have been read.
+ */
+
+UTF_AUTO_TEST_CASE( H2Driver_UploadIsPulledFromTheSinkTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest;
+    using namespace utest::h2driver;
+
+    const std::string upload( 200U * 1024U, 'p' );
+
+    const auto peer = makePeer();
+
+    peer -> setResponder(
+        []( SAA_in const h2peer::Http2TestRequest& request ) -> h2peer::Http2ResponseScript
+        {
+            BL_CHK(
+                false,
+                request.hasBody,
+                BL_MSG()
+                    << "The peer expected a request with a body"
+                );
+
+            return h2peer::Http2ResponseScript()
+                .headers( 200U )
+                .data( "taken" )
+                .endStream()
+                .awaitStreamClosed()
+                .closeConnection();
+        }
+        );
+
+    withPeer(
+        peer,
+        [ & ]( SAA_in const unsigned short port ) -> void
+        {
+            const auto record = std::make_shared< FallbackRecord >();
+
+            const auto driver = PlainDriverImpl::createInstance(
+                makeKey( "http", "127.0.0.1", port ),
+                makeFallbackFactory< TcpSocketAsyncStrandedBase >( record ),
+                Http2ConnectionConfig(),
+                cleartextHttp2Config()
+                );
+
+            const auto connection = om::qi< httpclient::ClientConnection >( driver );
+            const auto sink = RecordingSink::createInstance();
+
+            sink -> setConnection( connection.get() );
+            sink -> setUpload( cpp::copy( upload ) );
+
+            runDriver(
+                driver,
+                [ & ]() -> void
+                {
+                    auto request = makeRequest( "http://127.0.0.1/pulled", "POST" );
+
+                    request.bodySource(
+                        om::ObjPtrCopyable< httpclient::BodySource >(
+                            om::qi< httpclient::BodySource >( StubBodySource::createInstance() )
+                            )
+                        );
+
+                    const auto handle = connection -> submit(
+                        request,
+                        om::qi< httpclient::ClientStreamEventSink >( sink )
+                        );
+
+                    UTF_REQUIRE( httpclient::ClientConnection::INVALID_STREAM_HANDLE != handle );
+
+                    /*
+                     * Nothing is provided from here - the pull is the only thing that can move
+                     * this body
+                     */
+
+                    sink -> waitForClosed();
+                }
+                );
+
+            sink -> setConnection( nullptr );
+
+            chkTaskSucceeded( om::qi< Task >( driver ) );
+
+            requireStreamClosedAtPeer( peer -> recorder(), 1U );
+
+            UTF_REQUIRE( peer -> recorder().failure().empty() );
+
+            UTF_REQUIRE_EQUAL( peer -> recorder().bodyOf( 1U ).size(), upload.size() );
+            UTF_REQUIRE_EQUAL( peer -> recorder().bodyOf( 1U ), upload );
+
+            const auto records = sink -> records();
+
+            const std::string prefix( "wanted " );
+
+            std::size_t wantedCount = 0U;
+            std::size_t wantedTotal = 0U;
+            std::size_t wantedLargest = 0U;
+
+            std::size_t firstWanted = records.size();
+            std::size_t firstResponse = records.size();
+
+            for( std::size_t i = 0U; i < records.size(); ++i )
+            {
+                if( 0U != records[ i ].find( prefix ) )
+                {
+                    if( i < firstResponse )
+                    {
+                        firstResponse = i;
+                    }
+
+                    continue;
+                }
+
+                const auto asked = utils::lexical_cast< std::size_t >(
+                    records[ i ].substr( prefix.size() )
+                    );
+
+                ++wantedCount;
+                wantedTotal += asked;
+                wantedLargest = std::max( wantedLargest, asked );
+
+                if( i < firstWanted )
+                {
+                    firstWanted = i;
+                }
+            }
+
+            UTF_REQUIRE( wantedCount > 1U );
+
+            /*
+             * No one pull could have carried the body, and the pulls together cover every byte of
+             * it - see the arithmetic in the comment above the case
+             */
+
+            UTF_REQUIRE( wantedLargest < upload.size() );
+            UTF_REQUIRE( wantedTotal >= upload.size() );
+
+            UTF_REQUIRE( firstWanted < firstResponse );
+        }
+        );
+}
+
+/**
  * @brief The keepalive PING of design 5.7, and the connection idle close
  *
  * Both are observed rather than inferred: the PING is counted in the writes the driver made, and

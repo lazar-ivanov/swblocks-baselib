@@ -37,7 +37,9 @@
 #include <baselib/core/TimeUtils.h>
 #include <baselib/core/BaseIncludes.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -127,6 +129,15 @@ namespace utest
 
             ClientConnection*                                                   m_connection;
 
+            /*
+             * What this sink answers an onBodyWanted( ) with - the S5.1 upload pull. Empty unless
+             * a case installed an upload with setUpload( ), and a sink with none installed simply
+             * records the pull and answers nothing, which is what a case not testing uploads wants
+             */
+
+            std::string                                                         m_upload;
+            bool                                                                m_hasUpload;
+
             unsigned                                                            m_status;
             bool                                                                m_isClosed;
             bool                                                                m_isRetryable;
@@ -134,6 +145,7 @@ namespace utest
             RecordingSinkT()
                 :
                 m_connection( nullptr ),
+                m_hasUpload( false ),
                 m_status( 0U ),
                 m_isClosed( false ),
                 m_isRetryable( false )
@@ -154,6 +166,77 @@ namespace utest
                 BL_MUTEX_GUARD( m_lock );
 
                 m_connection = connection;
+            }
+
+            /**
+             * @brief Installs the bytes this sink hands over when the driver pulls for body
+             */
+
+            void setUpload( SAA_in std::string upload )
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                m_upload = BL_PARAM_FWD( upload );
+                m_hasUpload = true;
+            }
+
+            /**
+             * @brief Answers the driver's upload pull from the installed upload, at most what it
+             * asked for
+             *
+             * The point of answering with AT MOST 'bytes' rather than with everything left is that
+             * it is what a real request task does, and it is what makes the recorded sequence show
+             * the pull working: one "wanted" record per chunk the windows allowed, rather than one
+             * pull and one enormous hand-over which would prove nothing
+             */
+
+            virtual void onBodyWanted(
+                SAA_in          const stream_handle_t                           handle,
+                SAA_in          const std::size_t                               bytes
+                ) OVERRIDE
+            {
+                ClientConnection* connection = nullptr;
+
+                std::string chunk;
+                bool isLast = false;
+
+                {
+                    BL_MUTEX_GUARD( m_lock );
+
+                    m_records.push_back(
+                        "wanted " + bl::utils::lexical_cast< std::string >( bytes )
+                        );
+
+                    if( ! m_hasUpload )
+                    {
+                        return;
+                    }
+
+                    const auto take = std::min< std::size_t >( bytes, m_upload.size() );
+
+                    chunk = m_upload.substr( 0U, take );
+                    m_upload.erase( 0U, take );
+
+                    isLast = m_upload.empty();
+                    connection = m_connection;
+                }
+
+                if( nullptr == connection )
+                {
+                    return;
+                }
+
+                bl::om::ObjPtr< bl::data::DataBlock > block;
+
+                if( ! chunk.empty() )
+                {
+                    block = bl::data::DataBlock::get( nullptr /* dataBlocksPool */, chunk.size() );
+
+                    std::memcpy( block -> begin(), chunk.c_str(), chunk.size() );
+                    block -> setSize( chunk.size() );
+                }
+
+                connection -> provideBody( handle, block, isLast );
             }
 
             virtual void onHeaders(
@@ -349,8 +432,12 @@ namespace utest
          * @brief The smallest thing which makes ClientRequest::hasBody( ) true without a buffered
          * body, so the HEADERS go out without END_STREAM and the upload arrives by provideBody( )
          *
-         * It is never pulled: pulling a BodySource is the request task's job (design 5.3, S5.1),
-         * and this driver is handed bytes rather than asking for them
+         * IT IS STILL NEVER READ, although S5.1 gave the driver a pull. Reading a BodySource is
+         * the request task's job (design 5.3) and the driver never touches one; what the driver
+         * asks for, through onBodyWanted( ), is answered by the SINK here - RecordingSinkT::
+         * setUpload( ) is where a case puts the bytes. This type exists only to make the request
+         * look like a streaming one, which is what decides that the HEADERS go out without
+         * END_STREAM and that the stream is pulled at all
          */
 
         template
