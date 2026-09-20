@@ -142,13 +142,28 @@ namespace utest
             bool                                                                m_isClosed;
             bool                                                                m_isRetryable;
 
+            /*
+             * WHAT THE CONNECTION HAD PUBLISHED AT THE INSTANT THIS STREAM WAS ANSWERED, and it is
+             * a CONTRACT rather than an observation: a request task derives its outcome by reading
+             * state( ) when it applies onClosed( ), so a driver which answers a sink before it
+             * publishes the state that close belongs to makes that outcome a coin toss ( L6 review,
+             * finding 16 ). A probe sink cannot see the breach - it publishes before it answers by
+             * construction - so only a case AT THE DRIVER pins it, which is why this is recorded
+             *
+             * A sink with no connection installed leaves this at Connecting, which fails such an
+             * assertion rather than passing it - the safe direction
+             */
+
+            ConnectionState                                                     m_stateOnClosed;
+
             RecordingSinkT()
                 :
                 m_connection( nullptr ),
                 m_hasUpload( false ),
                 m_status( 0U ),
                 m_isClosed( false ),
-                m_isRetryable( false )
+                m_isRetryable( false ),
+                m_stateOnClosed( ConnectionState::Connecting )
             {
             }
 
@@ -329,6 +344,11 @@ namespace utest
                 m_isRetryable = isRetryable;
                 m_isClosed = true;
 
+                if( nullptr != m_connection )
+                {
+                    m_stateOnClosed = m_connection -> state();
+                }
+
                 m_cvClosed.notify_all();
 
                 BL_NOEXCEPT_END()
@@ -423,6 +443,13 @@ namespace utest
                 BL_MUTEX_GUARD( m_lock );
 
                 return m_errorCode;
+            }
+
+            auto stateOnClosed() const NOEXCEPT -> ConnectionState
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                return m_stateOnClosed;
             }
         };
 

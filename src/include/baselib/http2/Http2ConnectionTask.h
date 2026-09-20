@@ -1827,7 +1827,16 @@ namespace bl
                      * the GOAWAY would go into the same silence. Every live stream is failed and
                      * the task is cancelled, which is the external-cancel path of design 3.2 and
                      * completes the connection FAILED - which is what the pool has to see
+                     *
+                     * PUBLISHED BEFORE ANYBODY IS ANSWERED, and that order is the contract: a
+                     * request task reads state( ) when it applies onClosed( ) and reports its
+                     * connection unusable on anything but Ready, so answering first would let it
+                     * read the Ready this route is entered from. It costs nothing to publish here
+                     * - publishState( ) is monotone and neither closeAllStreams( ) nor
+                     * closeSubmissions( ) reads the state
                      */
+
+                    publishState( ConnectionState::Closed );
 
                     closeAllStreams(
                         eh::errc::make_error_code( eh::errc::timed_out ),
@@ -1835,8 +1844,6 @@ namespace bl
                         );
 
                     closeSubmissions();
-
-                    publishState( ConnectionState::Closed );
 
                     TaskBase::requestCancelInternal();
                 }
@@ -2426,6 +2433,16 @@ namespace bl
 
                 cancelTimers();
 
+                /*
+                 * PUBLISHED BEFORE ANYBODY IS ANSWERED, and on this route that matters most: it is
+                 * where every write error ends up, and every read error other than a peer close,
+                 * and an external cancel - and the state last published on all of those is Ready.
+                 * A request task reads state( ) when it applies onClosed( ), so publishing after
+                 * the answers would make "the connection was lost" a race against a mailbox post
+                 */
+
+                publishState( ConnectionState::Closed );
+
                 closeSubmissions();
 
                 const eh::error_code errorCode = ( eptrIn || TaskBase::isCanceled() ) ?
@@ -2433,8 +2450,6 @@ namespace bl
                     eh::errc::make_error_code( eh::errc::connection_aborted );
 
                 closeAllStreamsUnwrittenRetryable( errorCode );
-
-                publishState( ConnectionState::Closed );
 
                 BL_NOEXCEPT_END()
 
