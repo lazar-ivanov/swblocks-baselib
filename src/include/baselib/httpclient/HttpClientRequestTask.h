@@ -1061,6 +1061,56 @@ namespace bl
                     );
             }
 
+            /**
+             * @brief Whether a stream which ended in an error took its CONNECTION with it
+             *
+             * THE TWO VERDICTS A CLOSED STREAM CARRIES ARE NOT THE SAME VERDICT. isRetryable is
+             * about THIS REQUEST - "the failure proves it was never processed" - and the outcome
+             * is about the CONNECTION: ConnectionUnusable is "the connection cannot be used again"
+             * ( ClientConnection.h ). Deriving the outcome from the error code alone, as this used
+             * to, made ConnectionUnusable unreachable from a closed stream, and with it the only
+             * feed of ConnectionPoolPolicy::retryIdempotentOnConnectionLoss:
+             * chkRequestMayBeReplayed( ) reads isConnectionLost from exactly this value, so a
+             * caller who turned that knob on got nothing whatsoever. A knob which reaches nothing
+             * is the same defect one layer up, which is the standard this layer set for itself
+             *
+             * THE CONNECTION'S OWN STATE IS THE EVIDENCE, read at the close and not deduced from
+             * the error code - the event carries no more than a code, and the same code reaches
+             * here from a connection which died and from a stream which was reset on a healthy
+             * one. publishState( ) is monotone and every connection-level route to a closed stream
+             * publishes Draining or Closed with it - a GOAWAY, a peer which closed, a keepalive or
+             * drain deadline, the task stopping - while a stream RESET leaves the connection
+             * reading Ready. Anything but Ready is therefore a connection which cannot take this
+             * request again, which is what the outcome says
+             *
+             * IT IS ASKED ONLY OF A CLOSE WHICH DOES NOT ALREADY PROVE THE REQUEST UNPROCESSED,
+             * and that limit is not tidiness. ConnectionUnusable is what makes the pool RETIRE the
+             * entry ( releaseStream( ) ), and the pool indexes one entry by EVERY connection it has
+             * held: on design 5.5's ALPN fallback the bounced rider's connection is the h2
+             * placeholder the pool has already replaced with the adopted HTTP/1.1 driver, and both
+             * point at the same entry - so retiring "that connection" would destroy a healthy
+             * driver and take the fallback path with it. Such a bounce is retryable, so the limit
+             * costs nothing: chkRequestMayBeReplayed( ) returns from its isRetryable limb without
+             * ever consulting isConnectionLost, and a connection which really is dead is retired by
+             * the pool's own maintenance tick, which reads state( ) on every pass
+             */
+
+            auto outcomeOnClosed( SAA_in const Event& event ) const NOEXCEPT -> RequestOutcome
+            {
+                if( ! event.errorCode )
+                {
+                    return RequestOutcome::Completed;
+                }
+
+                if( event.isRetryable || ! m_connection )
+                {
+                    return RequestOutcome::Failed;
+                }
+
+                return ConnectionState::Ready == m_connection -> state() ?
+                    RequestOutcome::Failed : RequestOutcome::ConnectionUnusable;
+            }
+
             void applyClosed(
                 SAA_inout       Event&                                          event,
                 SAA_inout       std::vector< cpp::void_callback_t >&            deferred
@@ -1078,7 +1128,7 @@ namespace bl
 
                 const om::ObjPtrCopyable< ClientConnection > connection( m_connection );
 
-                m_outcome = event.errorCode ? RequestOutcome::Failed : RequestOutcome::Completed;
+                m_outcome = outcomeOnClosed( event );
 
                 if( m_bodySink )
                 {
@@ -1100,6 +1150,61 @@ namespace bl
             }
 
             /**
+             * @brief Why the CONNECTION failed, when it failed, so the answer can name it
+             *
+             * EVERY ESTABLISHMENT FAILURE LOOKS THE SAME FROM HERE AND THAT IS THE PROBLEM. A
+             * request dispatched onto a connection which is still Connecting is answered by the
+             * driver's closeSubmissions( ), which bounces it with connection_aborted whatever
+             * ended the establishment - so ECONNREFUSED, a resolver failure, an expired
+             * establishment bound and a TLS CERTIFICATE VERIFICATION FAILURE all reach the caller
+             * as "The HTTP request failed", after a full retry budget of establishments, with the
+             * cause sitting unread on the connection task. The pool keeps that cause as lastError
+             * for the requests it had QUEUED; the dispatched ones, which is every first request to
+             * an origin, had nowhere to get it from. This is where they get it
+             *
+             * THE CONNECTION IS QUERIED FOR IT rather than told it, because ClientStreamEventSink::
+             * onClosed( ) carries an error code and nothing else, and that contract is frozen.
+             * Every driver is a tasks::Task, which is how the pool already reads one
+             * ( om::tryQI< tasks::Task > in refreshEntry( ) ), and a task's exception( ) is its
+             * failure verbatim
+             *
+             * AND IT IS DETERMINISTIC RATHER THAN A RACE, which is the one thing that makes it
+             * worth pinning. notifyReadyImpl( ) holds the connection task's own lock across
+             * onTaskStoppedNothrow( ) - which is where closeSubmissions( ) answers this sink - and
+             * releases it only after recording the exception, while exception( ) takes that same
+             * lock. So a reader which arrives during the close BLOCKS and then sees the cause; it
+             * cannot see the half-way state. The wait is bounded because that critical section
+             * never blocks on anything ( TaskBase says so in as many words )
+             *
+             * THE LOCK ORDER IS THIS TASK'S THEN THE CONNECTION'S, and it closes no cycle: the
+             * only thing a driver ever takes on a request task is its MAILBOX lock, through
+             * post( ), and the mailbox lock reaches nothing further. It is also the house idiom -
+             * ForwarderTaskBaseT::exception( ) takes the wrapper's lock and then the wrapped
+             * task's, which is the same edge in the same direction
+             */
+
+            auto connectionFailureCause() const NOEXCEPT -> std::exception_ptr
+            {
+                std::exception_ptr cause;
+
+                BL_NOEXCEPT_BEGIN()
+
+                if( m_connection )
+                {
+                    const auto task = om::tryQI< tasks::Task >( m_connection );
+
+                    if( task )
+                    {
+                        cause = task -> exception();
+                    }
+                }
+
+                BL_NOEXCEPT_END()
+
+                return cause;
+            }
+
+            /**
              * @brief What the caller is told about a stream which has just ended
              */
 
@@ -1118,13 +1223,26 @@ namespace bl
 
                 if( event.errorCode )
                 {
+                    auto failure = createException< HttpException >( false /* isExpected */ );
+
+                    failure << eh::errinfo_error_code( event.errorCode );
+
+                    const auto cause = connectionFailureCause();
+
+                    if( cause )
+                    {
+                        /*
+                         * CHAINED AND NOT SUBSTITUTED. The error code above is what this request
+                         * saw and stays the answer; the connection's failure is what EXPLAINS it,
+                         * and eh::diagnostic_information( ) prints a chain
+                         */
+
+                        failure << eh::errinfo_nested_exception_ptr( cause );
+                    }
+
                     failWith(
                         std::make_exception_ptr(
-                            BL_EXCEPTION(
-                                createException< HttpException >( false /* isExpected */ )
-                                    << eh::errinfo_error_code( event.errorCode ),
-                                "The HTTP request failed"
-                                )
+                            BL_EXCEPTION( failure, "The HTTP request failed" )
                             ),
                         false /* isExpected */
                         );

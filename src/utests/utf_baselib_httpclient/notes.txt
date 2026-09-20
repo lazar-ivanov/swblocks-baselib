@@ -68,3 +68,8 @@
 
 # L5 second pass - a refusal about the REQUEST does not retire the connection
 --log_level=message --run_test=HttpClientRequestTask_UnsuitableRequestKeepsTheConnectionPoolableTests
+
+# L6 fix round - the connection-loss outcome the retry knob feeds on (review finding 2), and the
+# establishment cause a bounced request used to lose (review finding 4b)
+--log_level=message --run_test=HttpClientRequestTask_ConnectionLostUnderTheStreamIsReportedUnusableTests
+--log_level=message --run_test=HttpClientRequestTask_BouncedRequestNamesTheConnectionFailureTests

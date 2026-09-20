@@ -121,6 +121,19 @@ namespace utest
             bl::cpp::ScalarTypeIniter< std::size_t >                            m_consumedTotal;
 
             /**
+             * @brief What the connection READS at the moment a stream ends, which is a second
+             * thing a case has to be able to say
+             *
+             * A driver publishes Draining or Closed on every connection-level route out and leaves
+             * it at Ready when it merely resets one stream, and the request task reads it to
+             * decide whether the failure was the connection's. A probe which was always Ready could
+             * not express the difference, so the two closes which have to be told apart would look
+             * the same here
+             */
+
+            bl::cpp::ScalarTypeIniter< ConnectionState >                        m_state;
+
+            /**
              * @brief The two refusals a driver has, and they are not the same refusal
              *
              * isSubmitRefused is the connection's: it refuses everything, which is what a driver on
@@ -143,6 +156,7 @@ namespace utest
                 m_handle = ClientConnection::INVALID_STREAM_HANDLE;
                 m_isSubmitRefused = isSubmitRefused;
                 m_isStreamingRefused = isStreamingRefused;
+                m_state = ConnectionState::Ready;
             }
 
             void record( SAA_in std::string what )
@@ -333,6 +347,21 @@ namespace utest
             }
 
             /**
+             * @brief Publishes the state the connection will READ at the close, before it happens
+             *
+             * Set before deliverClosed( ) and under the same lock state( ) reads, so what the
+             * request task sees is ordered rather than raced - which is what the real thing is
+             * too, since a driver publishes its state on the strand before it answers the sink
+             */
+
+            void publishState( SAA_in const ConnectionState state ) NOEXCEPT
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                m_state = state;
+            }
+
+            /**
              * @brief The last event, and the one which RELEASES the sink
              *
              * "The sink is held for the life of the stream and released after onClosed( ... )" is
@@ -451,7 +480,9 @@ namespace utest
 
             virtual ConnectionState state() const NOEXCEPT OVERRIDE
             {
-                return ConnectionState::Ready;
+                BL_MUTEX_GUARD( m_lock );
+
+                return m_state;
             }
 
             virtual auto negotiated() const NOEXCEPT -> const NegotiatedProtocol& OVERRIDE
@@ -461,6 +492,231 @@ namespace utest
         };
 
         typedef bl::om::ObjectImpl< ProbeConnectionT<> > ProbeConnection;
+
+        /**
+         * @brief A connection which is also a TASK and which fails the way an establishment fails
+         *
+         * WHAT IT IS FOR. Every real driver is a tasks::Task as well as a ClientConnection - the
+         * pool reads one that way already, in refreshEntry( ) - and a request dispatched onto a
+         * connection which is still Connecting is answered, when the establishment fails, by the
+         * driver's closeSubmissions( ): connection_aborted, retryable, and not one word about WHY.
+         * ECONNREFUSED, a resolver failure, an expired establishment bound and a rejected
+         * certificate are indistinguishable at that point. The cause is on the TASK, and whether
+         * the request task reaches it there is the whole question this probe is built to ask
+         *
+         * WHY IT IS A REAL TASK AND NOT A FIELD SOMEBODY SETS. The answer has to be deterministic,
+         * and what makes it deterministic is exactly WHERE in TaskBase's own machinery the sink is
+         * answered: notifyReadyImpl( ) holds the task lock across onTaskStoppedNothrow( ) and
+         * records the exception before it releases it, so a reader arriving during the close waits
+         * and then sees the cause - it cannot see the half-way state. Answering the sink from a
+         * handler body instead would let the reader win that race and the case would flake rather
+         * than fail. So this probe answers from precisely where the h2 driver answers, and the
+         * ordering under test is TaskBase's rather than the probe's
+         */
+
+        template
+        <
+            typename E = void
+        >
+        class FailingConnectionT :
+            public bl::tasks::SimpleTaskBase,
+            public ClientConnection
+        {
+        public:
+
+            typedef FailingConnectionT< E >                                     this_type;
+            typedef bl::tasks::SimpleTaskBase                                   base_type;
+
+        private:
+
+            BL_DECLARE_OBJECT_IMPL( FailingConnectionT )
+
+            BL_QITBL_BEGIN()
+                BL_QITBL_ENTRY( ClientConnection )
+                BL_QITBL_ENTRY_CHAIN_BASE( base_type )
+            BL_QITBL_END( bl::tasks::Task )
+
+        public:
+
+            enum : stream_handle_t
+            {
+                PROBE_HANDLE = 7U,
+            };
+
+        protected:
+
+            mutable bl::os::mutex                                               m_probeLock;
+            mutable bl::os::condition_variable                                  m_cvSubmitted;
+
+            bl::om::ObjPtr< ClientStreamEventSink >                             m_sink;
+
+            const NegotiatedProtocol                                            m_negotiated;
+            const std::string                                                   m_reason;
+
+            bl::cpp::ScalarTypeIniter< bool >                                   m_isSubmitted;
+
+            FailingConnectionT( SAA_in std::string reason )
+                :
+                m_reason( BL_PARAM_FWD( reason ) )
+            {
+            }
+
+            virtual void onExecute() NOEXCEPT OVERRIDE
+            {
+                BL_TASKS_HANDLER_BEGIN()
+
+                /*
+                 * The establishment's own failure, thrown from the task body exactly as a refused
+                 * connect or a rejected certificate reaches TaskBase
+                 */
+
+                BL_THROW(
+                    bl::UnexpectedException(),
+                    BL_MSG()
+                        << m_reason
+                    );
+
+                BL_TASKS_HANDLER_END()
+            }
+
+            virtual auto onTaskStoppedNothrow(
+                SAA_in_opt      const std::exception_ptr&                       eptrIn = nullptr,
+                SAA_inout_opt   bool*                                           isExpectedException = nullptr
+                ) NOEXCEPT
+                -> std::exception_ptr OVERRIDE
+            {
+                BL_NOEXCEPT_BEGIN()
+
+                /*
+                 * closeSubmissions( ) in miniature, and in the same place: what never reached a
+                 * stream is ANSWERED rather than dropped, retryable because it was provably not
+                 * written, and with the one error code the driver has for it
+                 */
+
+                bl::om::ObjPtr< ClientStreamEventSink > sink;
+
+                {
+                    BL_MUTEX_GUARD( m_probeLock );
+
+                    sink = bl::om::copy( m_sink );
+
+                    m_sink.reset();
+                }
+
+                if( sink )
+                {
+                    sink -> onClosed(
+                        PROBE_HANDLE,
+                        bl::eh::errc::make_error_code( bl::eh::errc::connection_aborted ),
+                        true /* isRetryable */
+                        );
+                }
+
+                BL_NOEXCEPT_END()
+
+                return base_type::onTaskStoppedNothrow( eptrIn, isExpectedException );
+            }
+
+        public:
+
+            /**
+             * @brief Waits until the request has been submitted, so the case can then fail the task
+             */
+
+            void waitForSubmit(
+                SAA_in_opt      const std::size_t                               timeoutInMilliseconds =
+                                    DEFAULT_WAIT_IN_MILLISECONDS
+                ) const
+            {
+                bl::os::mutex_unique_lock guard( m_probeLock );
+
+                const auto submitted = m_cvSubmitted.wait_for(
+                    guard,
+                    bl::os::chrono::milliseconds( timeoutInMilliseconds ),
+                    [ this ]() -> bool
+                    {
+                        return m_isSubmitted.value();
+                    }
+                    );
+
+                if( ! submitted )
+                {
+                    UTF_FAIL( "the request task never submitted to the connection" );
+                }
+            }
+
+            /*************************************************************************************
+             * ClientConnection
+             */
+
+            virtual auto submit(
+                SAA_in          const ClientRequest&                            request,
+                SAA_in          const bl::om::ObjPtr< ClientStreamEventSink >&  eventSink
+                )
+                -> stream_handle_t OVERRIDE
+            {
+                BL_UNUSED( request );
+
+                BL_MUTEX_GUARD( m_probeLock );
+
+                m_sink = bl::om::copy( eventSink );
+                m_isSubmitted = true;
+
+                m_cvSubmitted.notify_all();
+
+                return PROBE_HANDLE;
+            }
+
+            virtual void cancel(
+                SAA_in          const stream_handle_t                           handle,
+                SAA_in          const bl::eh::error_code&                       errorCode
+                ) NOEXCEPT OVERRIDE
+            {
+                BL_UNUSED( handle );
+                BL_UNUSED( errorCode );
+            }
+
+            virtual void consumed(
+                SAA_in          const stream_handle_t                           handle,
+                SAA_in          const std::size_t                               bytes
+                ) OVERRIDE
+            {
+                BL_UNUSED( handle );
+                BL_UNUSED( bytes );
+            }
+
+            virtual void provideBody(
+                SAA_in          const stream_handle_t                           handle,
+                SAA_in_opt      const bl::om::ObjPtr< bl::data::DataBlock >&    data,
+                SAA_in          const bool                                      endStream
+                ) OVERRIDE
+            {
+                BL_UNUSED( handle );
+                BL_UNUSED( data );
+                BL_UNUSED( endStream );
+            }
+
+            virtual std::size_t freeStreamSlots() const NOEXCEPT OVERRIDE
+            {
+                return 1U;
+            }
+
+            /**
+             * @brief Connecting - which is what a placeholder the pool dispatched onto reads
+             */
+
+            virtual ConnectionState state() const NOEXCEPT OVERRIDE
+            {
+                return ConnectionState::Connecting;
+            }
+
+            virtual auto negotiated() const NOEXCEPT -> const NegotiatedProtocol& OVERRIDE
+            {
+                return m_negotiated;
+            }
+        };
+
+        typedef bl::om::ObjectImpl< FailingConnectionT<> > FailingConnection;
 
         /**
          * @brief The pool a case plays - it POSTS its answer, or withholds it entirely
@@ -870,6 +1126,88 @@ namespace utest
             }
 
             UTF_FAIL( message );
+        }
+
+        /**
+         * @brief What one request reported about itself and about the connection it died on
+         */
+
+        struct ClosedStreamResult
+        {
+            RequestOutcome                                                      outcome;
+            bool                                                                isRetryable;
+        };
+
+        /**
+         * @brief Runs one request through to a stream which ends in an error, and reports both
+         *
+         * The two inputs are the two things a driver decides independently at a close: what the
+         * CONNECTION reads at that moment, and whether the failure proves THIS REQUEST was never
+         * processed. A case names both and then asks what the task made of them
+         */
+
+        inline auto runToClosedStream(
+            SAA_in          const ConnectionState                               stateAtClose,
+            SAA_in          const bool                                          isRetryable,
+            SAA_in_opt      const std::string&                                  method = "GET"
+            )
+            -> ClosedStreamResult
+        {
+            using namespace bl;
+            using namespace bl::httpclient;
+
+            const auto connection = ProbeConnection::createInstance(
+                NegotiatedProtocol::fromAlpn( "h2" ),
+                false /* isSubmitRefused */
+                );
+
+            const auto pool = ProbePool::createInstance(
+                om::qi< ClientConnection >( connection ),
+                true /* isAnswered */
+                );
+
+            const auto taskImpl = HttpClientRequestTaskImpl::createInstance(
+                makeRequest( method ),
+                makeKey(),
+                om::qi< ConnectionPool >( pool )
+                );
+
+            const auto task = om::qi< tasks::Task >( taskImpl );
+
+            runTask(
+                task,
+                [ & ]() -> void
+                {
+                    connection -> waitFor( "submit" );
+
+                    /*
+                     * Published BEFORE the close and under the lock state( ) reads, which is the
+                     * order a driver produces too - the state goes out on the strand and the sink
+                     * is answered after it
+                     */
+
+                    connection -> publishState( stateAtClose );
+
+                    connection -> deliverClosed(
+                        eh::errc::make_error_code( eh::errc::connection_reset ),
+                        isRetryable
+                        );
+                }
+                );
+
+            requireTrue(
+                task -> isFailed(),
+                "a stream which ended in an error should have failed the request"
+                );
+
+            requireTrue( pool -> waitForRelease(), "the stream slot never came back" );
+
+            ClosedStreamResult result;
+
+            result.outcome = taskImpl -> outcome();
+            result.isRetryable = taskImpl -> isRetryable();
+
+            return result;
         }
 
     } // requesttask
@@ -1899,6 +2237,222 @@ UTF_AUTO_TEST_CASE( HttpClientRequestTask_BodySourceWhichThrowsFailsTheRequestTe
 
     UTF_REQUIRE( pool -> waitForRelease() );
     UTF_REQUIRE_EQUAL( pool -> releases()[ 0 ], std::string( "42:failed" ) );
+}
+
+/**
+ * @brief A connection which died under a stream is reported LOST, and the knob that needs it works
+ *
+ * THE DEFECT THIS PINS (L6 review, finding 2). The outcome used to be read off the error code
+ * alone, so every closed stream which carried one was Failed - and RequestOutcome::
+ * ConnectionUnusable, which is the ONLY thing RetryContext::isConnectionLost is ever derived from,
+ * was reachable from one place in this task: a REFUSED submit, which has already marked itself
+ * retryable and therefore never reaches the limb the knob guards. So
+ * ConnectionPoolPolicy::retryIdempotentOnConnectionLoss - a documented, published policy - changed
+ * nothing whatsoever for any caller who turned it on. The rule was right and the feed was dead
+ *
+ * BOTH DIRECTIONS ARE PINNED BECAUSE ONLY BOTH ARE EVIDENCE. A case which showed the knob firing
+ * would pass just as well against a task which reported everything unusable, and that task would
+ * retire a healthy connection for every reset stream. So the healthy connection is run through the
+ * same close and must stay Failed
+ *
+ * AND THE THIRD LEG IS THE HAZARD, not a curiosity. A retryable bounce off a connection which is
+ * gone is design 5.5's ALPN fallback: the pool has already replaced that h2 placeholder with the
+ * adopted HTTP/1.1 driver and indexes BOTH against one entry, so reporting the placeholder
+ * unusable would retire the entry and destroy a working driver. It stays Failed, and the retry
+ * still happens - on the isRetryable limb, which needs nothing from the outcome
+ */
+
+UTF_AUTO_TEST_CASE( HttpClientRequestTask_ConnectionLostUnderTheStreamIsReportedUnusableTests )
+{
+    using namespace bl;
+    using namespace bl::httpclient;
+    using namespace utest::requesttask;
+
+    /*
+     * One stream reset on a connection with nothing wrong with it
+     */
+
+    const auto onHealthy = runToClosedStream(
+        ConnectionState::Ready,
+        false /* isRetryable */
+        );
+
+    UTF_REQUIRE( RequestOutcome::Failed == onHealthy.outcome );
+
+    /*
+     * The same close, on a connection which went with it - which is what every connection-level
+     * route publishes before it answers the sink
+     */
+
+    const auto onClosed = runToClosedStream(
+        ConnectionState::Closed,
+        false /* isRetryable */
+        );
+
+    UTF_REQUIRE( RequestOutcome::ConnectionUnusable == onClosed.outcome );
+
+    const auto onDraining = runToClosedStream(
+        ConnectionState::Draining,
+        false /* isRetryable */
+        );
+
+    UTF_REQUIRE( RequestOutcome::ConnectionUnusable == onDraining.outcome );
+
+    /*
+     * The bounce off a placeholder: gone, and retryable, and NOT the pool's to retire
+     */
+
+    const auto onBounce = runToClosedStream(
+        ConnectionState::Closed,
+        true /* isRetryable */
+        );
+
+    UTF_REQUIRE( RequestOutcome::Failed == onBounce.outcome );
+    UTF_REQUIRE( onBounce.isRetryable );
+
+    /*
+     * AND WHAT THE FEED NOW REACHES, composed the way a session composes it: the outcome becomes
+     * isConnectionLost, and the predicate is the pool's own
+     */
+
+    ConnectionPoolPolicy policy;
+
+    policy.retryIdempotentOnConnectionLoss = true;
+
+    RetryContext lost;
+
+    lost.isRetryable = onClosed.isRetryable;
+    lost.isConnectionLost = ( RequestOutcome::ConnectionUnusable == onClosed.outcome );
+    lost.attempts = 1U;
+
+    UTF_REQUIRE( ! lost.isRetryable );
+    UTF_REQUIRE( lost.isConnectionLost );
+
+    UTF_REQUIRE( chkRequestMayBeReplayed( makeRequest( "GET" ), lost, policy ) );
+
+    /*
+     * The knob says idempotent, and POST is not one
+     */
+
+    UTF_REQUIRE( ! chkRequestMayBeReplayed( makeRequest( "POST" ), lost, policy ) );
+
+    policy.retryIdempotentOnConnectionLoss = false;
+
+    UTF_REQUIRE( ! chkRequestMayBeReplayed( makeRequest( "GET" ), lost, policy ) );
+
+    /*
+     * And the healthy connection's reset is not a connection loss whatever the knob says, so a
+     * request which may have been processed is still not replayed
+     */
+
+    policy.retryIdempotentOnConnectionLoss = true;
+
+    RetryContext healthy;
+
+    healthy.isRetryable = onHealthy.isRetryable;
+    healthy.isConnectionLost = ( RequestOutcome::ConnectionUnusable == onHealthy.outcome );
+    healthy.attempts = 1U;
+
+    UTF_REQUIRE( ! chkRequestMayBeReplayed( makeRequest( "GET" ), healthy, policy ) );
+}
+
+/**
+ * @brief A request bounced off a failed connection names WHY the connection failed
+ *
+ * THE DEFECT THIS PINS (L6 review, finding 4b). closeSubmissions( ) answers what never reached a
+ * stream with connection_aborted and nothing else, so every establishment failure arrived at the
+ * caller as "The HTTP request failed" - ECONNREFUSED, a resolver failure, an expired establishment
+ * bound and a REJECTED CERTIFICATE alike, after a full retry budget of handshakes, with the cause
+ * sitting unread on the connection task the whole time. The pool keeps that cause for the requests
+ * it had QUEUED; the dispatched ones, which is every first request to an origin, had nowhere to
+ * get it from - so the second request to a dead origin reported a better error than the first
+ *
+ * WHAT IS BEING TESTED IS AN ORDERING as much as a value. The probe answers the sink from inside
+ * onTaskStoppedNothrow( ), where the driver answers it, and that runs under the task lock which
+ * notifyReadyImpl( ) releases only after recording the exception - so the request task's read
+ * either waits or arrives after, and never sees a task which has bounced its request but not yet
+ * published why. Its own class comment says so; this is the case that has to hold for it
+ */
+
+UTF_AUTO_TEST_CASE( HttpClientRequestTask_BouncedRequestNamesTheConnectionFailureTests )
+{
+    using namespace bl;
+    using namespace bl::httpclient;
+    using namespace utest::requesttask;
+
+    const std::string reason( "the peer certificate could not be verified" );
+
+    const auto connection = FailingConnection::createInstance( cpp::copy( reason ) );
+
+    const auto pool = ProbePool::createInstance(
+        om::qi< ClientConnection >( connection ),
+        true /* isAnswered */
+        );
+
+    const auto taskImpl = HttpClientRequestTaskImpl::createInstance(
+        makeRequest(),
+        makeKey(),
+        om::qi< ConnectionPool >( pool )
+        );
+
+    const auto task = om::qi< tasks::Task >( taskImpl );
+    const auto connectionTask = om::qi< tasks::Task >( connection );
+
+    tasks::scheduleAndExecuteInParallel(
+        [ & ]( SAA_in const om::ObjPtr< tasks::ExecutionQueue >& eq ) -> void
+        {
+            eq -> setOptions( tasks::ExecutionQueue::OptionKeepAll );
+
+            eq -> push_back( task );
+
+            /*
+             * The dispatch happens first and the establishment fails under it, which is the order
+             * the pool's rider takes: submitted to a connection which is still Connecting
+             */
+
+            connection -> waitForSubmit();
+
+            eq -> push_back( connectionTask );
+
+            eq -> wait( connectionTask );
+            eq -> wait( task );
+        }
+        );
+
+    UTF_REQUIRE( connectionTask -> isFailed() );
+    UTF_REQUIRE( task -> isFailed() );
+
+    /*
+     * The answer is still the request's own - the error code the driver gave it, and the message
+     * every failed request carries
+     */
+
+    requireTrue(
+        messageOf( task ).find( "The HTTP request failed" ) != std::string::npos,
+        "the request did not fail with its own message: " + messageOf( task )
+        );
+
+    /*
+     * ... and the establishment's failure is CHAINED onto it, which is what an operator reads
+     */
+
+    const auto diagnostics = eh::diagnostic_information( task -> exception() );
+
+    requireTrue(
+        diagnostics.find( reason ) != std::string::npos,
+        "the answer never names the connection's own failure:\n" + diagnostics
+        );
+
+    /*
+     * The bounce itself is unchanged: provably unwritten, so retryable, and the connection it came
+     * off is not reported unusable - see the case above for why that matters
+     */
+
+    UTF_REQUIRE( taskImpl -> isRetryable() );
+    UTF_REQUIRE( RequestOutcome::Failed == taskImpl -> outcome() );
+
+    UTF_REQUIRE( pool -> waitForRelease() );
+    UTF_REQUIRE_EQUAL( pool -> releases()[ 0 ], std::string( "7:failed" ) );
 }
 
 #endif /* __UTEST_TESTHTTPCLIENTREQUESTTASK_H_ */
