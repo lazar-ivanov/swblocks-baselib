@@ -989,6 +989,18 @@ another, and it is where the two halves of the counter meet. Until it does, the 
 a bet it cannot pay for - which is why the dispatch section above dispatches one stream to a
 connection whose limit is unknown instead of assuming.
 
+**Landed in S6.1, and the ALPN bounce named above is not hypothetical - it is what found it.**
+`SessionRequestTaskT::chkPrepareRetry()` holds the per-hop attempt count and applies the same
+`chkRequestMayBeReplayed` predicate, so both halves now count and neither invents a rule. What
+proved it is the session running against the library's own `HttpServer`: the pool dispatches the
+first request of a key onto the `Connecting` placeholder so that its `HEADERS` ride the preface,
+and over a **fallback** connection that placeholder is the HTTP/2 task, which hands the connected
+stream to the HTTP/1.1 driver and completes - answering the rider it still holds with
+`connection_aborted`, correctly flagged retryable because not a byte of it was written. So without
+this half **every** first request over a fallback connection fails, which is what that case did on
+its first run. It is pinned with the control which makes the failure certain: the same request with
+`maxRetriesPerRequest` of zero, asserted red.
+
 **GOAWAY.** Mark `Draining`, stop dispatching to it, replay what qualifies, let in-flight streams at or
 below the last id finish. Servers commonly send two - first with `2^31 - 1`, then the real id - and
 both are handled.
@@ -1156,6 +1168,45 @@ content-coding token, with an output-size cap and an expansion-ratio cap as deco
 defenses. A registry per session. No decoder ships (D9). The consequences, and the interaction with
 `accept-encoding` under impersonation, are in 6.5 and in the companion deferral record.
 
+**What S6.1 settled, and one of them is a property rather than a choice.**
+
+`ClientSessionT` is parameterized on the **stream policy**, as every layer beneath it already is -
+`Http2ConnectionTaskT`, `Http1ConnectionTaskT`, `ClientConnectionTaskBaseT` and
+`ClientDriverFactoryT` all are, and a session which chose the policy at run time would type-erase
+all four here and make every translation unit that named it instantiate both the cleartext and the
+TLS half of each (measured at 9.8 MB for the driver alone, which is why `utf_baselib_h2client3`
+exists). The consequence is that **one session speaks one scheme**: `createRequestTask` refuses a
+URL whose scheme is not the transport's rather than connecting cleartext to a TLS port. That
+settles the last paragraph above - the Secure-cookie session-fixation surface needs one session
+speaking both schemes to one host, which this type cannot do - and it settles `isHttpApi`, which is
+always `true` because there is no non-HTTP API here for RFC 6265 section 5.3 step 11 to be about.
+
+**One `Cookie` field, merged.** RFC 6265 section 5.4 gives a request exactly one, and the jar and a
+caller-supplied header both produce one; they are merged rather than both appended. The caller's
+pair wins for a name they share. The place the two meet is specific and is where the case for it
+lives: on a **same-origin** redirect the caller's header survives `dropCredentialHeaders()` while
+the jar recomputes for the new target, so both are in scope at once.
+
+**`Proxy-Authorization` is never a request header from this client.** The session drops a
+caller-supplied one, which makes `RedirectPolicy::dropCredentialHeaders()`'s removal of the same
+field a no-op by construction rather than a coincidence. Proxy credentials are session
+configuration applied by the tunnel stage (3.6), and RFC 9110 section 11.7.1 makes the field
+hop-by-hop - so a caller-supplied one on a request through a `CONNECT` tunnel would be a credential
+sent to the **origin**.
+
+**A streaming upload is never dispatched to HTTP/1.1.** The HTTP/1.1 driver refuses every request
+carrying a `BodySource`, and the session is the only layer which knows both the request and what a
+connection for a key will speak. A session whose transport can never produce HTTP/2 refuses such a
+request in `createRequestTask`, before an attempt is spent; a session whose transport negotiates
+routes it to a key of its own whose connections offer `h2` alone, since a peer may select only from
+what it was offered (RFC 7301 section 3.1).
+
+**A caller's `BodySink` and a followed redirect are mutually exclusive.** `BodySink` carries no
+status, so a hop's body cannot be told from the final one on the way through, and a streamed 302
+body would reach the caller's sink as if it were the answer. A request with a sink installed
+therefore reports its 3xx rather than following it, which is what this client does with redirects
+off in any case.
+
 ### 5.7 Timeouts and cancellation
 
 | Timeout | Default | Owner |
@@ -1264,15 +1315,17 @@ own `CONTINUATION` frames and is not the thing to change.
 ### 5.8 API sketch
 
 ```cpp
-const auto session = httpclient::ClientSessionImpl::createInstance< httpclient::ClientSession >();
+typedef httpclient::ClientSessionImplT< tasks::TcpSslSocketAsyncStrandedBase >  SessionImpl;
+
+const auto session = SessionImpl::createInstance< httpclient::ClientSession >();
 
 session -> profile( httpclient::BrowserProfiles::get( "chrome" ) );        /* optional */
 
-const auto request = httpclient::ClientRequestImpl::createInstance();
-request -> url( "https://example.com/api/items" );
-request -> method( "POST" );
-request -> headers().add( "content-type", "application/json" );
-request -> body( std::move( json ) );
+httpclient::ClientRequest request;
+request.url( net::Uri::parse( "https://example.com/api/items" ) );
+request.method( "POST" );
+request.headers().append( "content-type", "application/json" );
+request.body( std::move( json ) );
 
 const auto task = session -> createRequestTask( request );
 
@@ -1280,8 +1333,18 @@ eq -> push_back( om::qi< tasks::Task >( task ) );
 eq -> flush();
 
 const auto& response = task -> response();      /* status(), headers(), body(), trailers(),
-                                                   httpVersion(), impersonationReport() */
+                                                   negotiated(), impersonationReport() */
 ```
+
+**Two corrections this sketch carried until S6.1, both of which the layers below had already
+settled.** `ClientRequest` is a **value** type and not an `om` object - L2 froze it that way in
+`httpclient/ClientTypes.h`, because a redirect derives a second request from the first rather than
+mutating it - so it is constructed and passed by reference, and its header list is
+`http::HeaderList`, whose method is `append`. And the session is parameterized on the stream policy,
+so `ClientSessionImpl` is `ClientSessionImplT< STREAM >`: one session speaks one scheme, for the
+reason 5.6 gives. `ClientRequestTask`, which `createRequestTask` returns, is the interface carrying
+`request()`, `response()` and `redirectHops()`; it is scheduled as a `tasks::Task` and it is one
+task however many hops and retries it runs.
 
 **Compatibility facade.** `SimpleHttp2GetTaskImpl`, `...PutTaskImpl` and so on, with the constructor
 shape of `BL_TASKS_DECLARE_HTTP_TASK_*` (`SimpleHttpTask.h:1051`) and the same getters -
