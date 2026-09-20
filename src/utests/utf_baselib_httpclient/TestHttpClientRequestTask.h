@@ -29,8 +29,10 @@
 #include <baselib/core/BaseIncludes.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -54,13 +56,14 @@
  * are not flakes. The value helpers which ARE reusable - StubBodySource, StubBodySink - are reused
  * rather than copied, which is what the named namespace next door exists for
  *
- * AND WHY ONE CASE USES THE REAL ConnectionPool INSTEAD (the L5 fix round). The probe pool can only
+ * AND WHY TWO CASES USE THE REAL ConnectionPool INSTEAD (the L5 fix round). The probe pool can only
  * record what it was asked; it cannot say whether the pool's own books balance. The seam defect the
  * L5 review ranked High - a stream slot leaked on every refused submit - was invisible to every
  * module in the tree precisely because the pool, the request task and a connection had never been
- * composed in one: S5.1 ran against this probe pool, S5.2 against stub connections. So the case
- * which pins the pairing rule instantiates ConnectionPoolImpl and asserts on ITS count, and it is
- * still protocol-agnostic - the pool is given a connection, not a driver, and speaks no HTTP/2
+ * composed in one: S5.1 ran against this probe pool, S5.2 against stub connections. So the cases
+ * which pin the pairing rule and the fate of a refusing connection instantiate ConnectionPoolImpl
+ * and assert on ITS numbers, and they are still protocol-agnostic - the pool is given a connection,
+ * not a driver, and speaks no HTTP/2
  */
 
 namespace utest
@@ -114,17 +117,32 @@ namespace utest
 
             bl::cpp::ScalarTypeIniter< stream_handle_t >                        m_handle;
             bl::cpp::ScalarTypeIniter< bool >                                   m_isSubmitRefused;
+            bl::cpp::ScalarTypeIniter< bool >                                   m_isStreamingRefused;
             bl::cpp::ScalarTypeIniter< std::size_t >                            m_consumedTotal;
+
+            /**
+             * @brief The two refusals a driver has, and they are not the same refusal
+             *
+             * isSubmitRefused is the connection's: it refuses everything, which is what a driver on
+             * its way out does. isStreamingRefused is the HTTP/1.1 driver's rule and only that -
+             * every request whose body is a BodySource is refused, unconditionally and ahead of
+             * every other test its submit( ) makes, because HTTP/1.1 would need request-side
+             * chunked framing for a body of unknown length. A connection which refuses THAT way is
+             * perfectly well, and a case which cannot express the difference cannot ask what the
+             * pool should do about it
+             */
 
             ProbeConnectionT(
                 NegotiatedProtocol                                              negotiated,
-                const bool                                                      isSubmitRefused
+                const bool                                                      isSubmitRefused,
+                const bool                                                      isStreamingRefused = false
                 )
                 :
                 m_negotiated( BL_PARAM_FWD( negotiated ) )
             {
                 m_handle = ClientConnection::INVALID_STREAM_HANDLE;
                 m_isSubmitRefused = isSubmitRefused;
+                m_isStreamingRefused = isStreamingRefused;
             }
 
             void record( SAA_in std::string what )
@@ -349,9 +367,7 @@ namespace utest
                 )
                 -> stream_handle_t OVERRIDE
             {
-                BL_UNUSED( request );
-
-                if( m_isSubmitRefused )
+                if( m_isSubmitRefused || ( m_isStreamingRefused && nullptr != request.bodySource() ) )
                 {
                     record( "submit:refused" );
 
@@ -1495,8 +1511,12 @@ UTF_AUTO_TEST_CASE( HttpClientRequestTask_RefusedSubmitIsRetryableTests )
 /**
  * @brief THE SEAM: a refused submit gives the REAL pool its slot back (L5 review, finding 1)
  *
- * This is the one case in which the pool under test is ConnectionPoolImpl and not a probe, and the
- * reason is that nothing else can see the defect. The pool keeps a per-connection count of its own -
+ * This is the first of the two cases in which the pool under test is ConnectionPoolImpl and not a
+ * probe, and the reason is that nothing else can see the defect. It is the h2 half - a connection
+ * which really is not to be handed out again; the case below is the other, where the connection is
+ * healthy and the REQUEST is what it could not take
+ *
+ * The pool keeps a per-connection count of its own -
  * Entry::slotsInUse - incremented the moment it ANSWERS an acquire( ) and decremented only by
  * releaseStream( ), which is given a connection and ignores the handle. S5.1 read "there is no
  * stream to release" as "there is nothing to give back", so every refused submit left that count
@@ -1563,6 +1583,171 @@ UTF_AUTO_TEST_CASE( HttpClientRequestTask_RefusedSubmitReturnsTheSlotToTheRealPo
 
     UTF_REQUIRE_EQUAL( stats.connectionsRetired.value(), 1U );
     UTF_REQUIRE_EQUAL( pool -> connectionCount(), 0U );
+
+    pool -> dispose();
+}
+
+/**
+ * @brief THE OTHER HALF OF IT: a connection refusing a request IT cannot carry is not a bad
+ * connection (the L5 second pass)
+ *
+ * The HTTP/1.1 driver refuses every request whose body is a BodySource, unconditionally and before
+ * it looks at its own state: HTTP/1.1 would need request-side chunked framing for a body of unknown
+ * length and the S2.5 serializer has none. That refusal says nothing whatever about the connection,
+ * and the task used to report it as ConnectionUnusable anyway - which retires the entry, and since
+ * the fix round made the pool CANCEL what it forgets, destroys a working connection once per
+ * streaming upload a caller sends its way. The fix round made that path worse while mending two
+ * others, which is why this case exists in the same round
+ *
+ * WHAT THE PROBE STANDS IN FOR, and why that is honest: it refuses exactly what the h1 driver
+ * refuses - a request whose body is a BodySource, and nothing else - and it reports HTTP/1.1. That
+ * is the pair the task classifies on, ClientRequest::bodySource( ) and
+ * ClientConnection::negotiated( ), both already on the frozen contract. The real driver's refusal
+ * is its first statement, ahead of every other test it makes, so nothing about a real one would
+ * reach the task differently. Its own suite owns that half; no test header is shared across modules
+ *
+ * THE POOL IS THE REAL ONE for the reason the case above it is: only ConnectionPoolImpl can say
+ * whether the connection survived. connectionsRetired and connectionCount are the direct
+ * observables, and the factory counter is the sharp one - a pool which forgot the connection would
+ * have to establish another for the second request, and this asserts it did not have to. The second
+ * request is an ordinary GET and it succeeds over that same connection, which is what "still
+ * poolable" means. Against the unfixed task the entry is RETIRED - which is where the case stops -
+ * and the rest follows it: retired at zero slots is forgotten, so the count falls to zero and the
+ * second request has to establish a connection of its own
+ */
+
+UTF_AUTO_TEST_CASE( HttpClientRequestTask_UnsuitableRequestKeepsTheConnectionPoolableTests )
+{
+    using namespace bl;
+    using namespace bl::httpclient;
+    using namespace utest::requesttask;
+
+    const auto connection = ProbeConnection::createInstance(
+        NegotiatedProtocol::withoutAlpn( HttpProtocol::Http11 ),
+        false /* isSubmitRefused */,
+        true /* isStreamingRefused */
+        );
+
+    const auto asConnection = om::qi< ClientConnection >( connection );
+
+    /*
+     * Counted rather than captured by reference: the pool calls the factory from its own thread,
+     * outside its lock, and the case reads the number from another
+     */
+
+    const auto established = std::make_shared< std::atomic< std::size_t > >( 0U );
+
+    const auto inner = connectionFactoryFor( asConnection );
+
+    const connection_factory_t factory =
+        [ inner, established ](
+            SAA_in          const ConnectionKey&                                key,
+            SAA_in          const ConnectionPoolPolicy&                         policy
+            )
+            -> ConnectionAttempt
+        {
+            ++( *established );
+
+            return inner( key, policy );
+        };
+
+    const auto pool = ConnectionPoolImpl::createInstance( factory, ConnectionPoolPolicy() );
+
+    const auto source = utest::clientcontracts::StubBodySource::createInstance(
+        std::string( "12345678" ),
+        true /* canRewind */,
+        4U /* chunkSize */
+        );
+
+    auto upload = makeRequest( "POST" );
+
+    upload.bodySource(
+        om::ObjPtrCopyable< BodySource >( om::qi< BodySource >( source ) )
+        );
+
+    const auto taskImpl = HttpClientRequestTaskImpl::createInstance(
+        std::move( upload ),
+        makeKey(),
+        om::qi< ConnectionPool >( pool )
+        );
+
+    const auto task = om::qi< tasks::Task >( taskImpl );
+
+    runTask( task, []() -> void {} );
+
+    UTF_REQUIRE( task -> isFailed() );
+
+    UTF_REQUIRE( connection -> has( "submit:refused" ) );
+
+    /*
+     * Failed and not ConnectionUnusable - the request is what could not be carried - and still
+     * retryable, because nothing was written and a connection which negotiated h2 would take it
+     */
+
+    UTF_REQUIRE( RequestOutcome::Failed == taskImpl -> outcome() );
+
+    UTF_REQUIRE( taskImpl -> isRetryable() );
+
+    requireTrue(
+        messageOf( task ).find( "cannot carry a request whose body is streamed" ) != std::string::npos,
+        "the request did not fail with the protocol's own refusal: " + messageOf( task )
+        );
+
+    const auto afterRefusal = pool -> stats();
+
+    UTF_REQUIRE_EQUAL( afterRefusal.dispatched.value(), 1U );
+    UTF_REQUIRE_EQUAL( afterRefusal.released.value(), 1U );
+
+    UTF_REQUIRE_EQUAL( pool -> slotsInUse( asConnection ), 0U );
+
+    /*
+     * The three the fix is for: the connection was not retired, so it was not forgotten, so it was
+     * not cancelled
+     */
+
+    UTF_REQUIRE_EQUAL( afterRefusal.connectionsRetired.value(), 0U );
+    UTF_REQUIRE_EQUAL( pool -> connectionCount(), 1U );
+    UTF_REQUIRE_EQUAL( established -> load(), 1U );
+
+    /*
+     * And it is not merely present but usable: an ordinary request the protocol CAN carry goes out
+     * over the same connection and comes back
+     */
+
+    const auto secondImpl = HttpClientRequestTaskImpl::createInstance(
+        makeRequest(),
+        makeKey(),
+        om::qi< ConnectionPool >( pool )
+        );
+
+    const auto second = om::qi< tasks::Task >( secondImpl );
+
+    runTask(
+        second,
+        [ & ]() -> void
+        {
+            connection -> waitFor( "submit" );
+
+            connection -> deliverHeaders( 200U, http::HeaderList(), false /* isInterim */ );
+
+            connection -> deliverClosed();
+        }
+        );
+
+    requireSucceeded( second );
+
+    UTF_REQUIRE_EQUAL( secondImpl -> response().status(), 200U );
+
+    const auto afterSecond = pool -> stats();
+
+    UTF_REQUIRE_EQUAL( afterSecond.dispatched.value(), 2U );
+    UTF_REQUIRE_EQUAL( afterSecond.connectionsRetired.value(), 0U );
+
+    /*
+     * ONE connection was ever established, for two requests
+     */
+
+    UTF_REQUIRE_EQUAL( established -> load(), 1U );
 
     pool -> dispose();
 }
