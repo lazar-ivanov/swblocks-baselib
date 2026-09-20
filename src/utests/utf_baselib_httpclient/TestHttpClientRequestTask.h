@@ -350,8 +350,13 @@ namespace utest
              * @brief Publishes the state the connection will READ at the close, before it happens
              *
              * Set before deliverClosed( ) and under the same lock state( ) reads, so what the
-             * request task sees is ordered rather than raced - which is what the real thing is
-             * too, since a driver publishes its state on the strand before it answers the sink
+             * request task sees is ordered rather than raced.
+             *
+             * THAT ORDER IS A CONTRACT THIS PROBE ASSUMES AND CANNOT ENFORCE. A probe publishes
+             * before it answers by construction, so every case here would pass against a driver
+             * which did it the other way round - and the h2 driver did, on two routes, until L6
+             * finding 16. What enforces it is at the drivers: the h2 cases record state( ) inside
+             * the sink's onClosed( ) ( Http2DriverTestUtils.h, stateOnClosed( ) )
              */
 
             void publishState( SAA_in const ConnectionState state ) NOEXCEPT
