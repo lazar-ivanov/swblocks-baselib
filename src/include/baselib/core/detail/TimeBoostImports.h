@@ -112,7 +112,13 @@ namespace bl
         >
         inline time_duration seconds( const T value )
         {
-            return internal::seconds( static_cast< long >( value ) );
+            /*
+             * int64 and not long: long is 32-bit on Windows (LLP64), so a duration of more than
+             * about 68 years silently wrapped NEGATIVE there while being correct on Linux. The
+             * milliseconds and microseconds wrappers below already take int64 for this reason
+             */
+
+            return internal::seconds( static_cast< std::int64_t >( value ) );
         }
 
         template

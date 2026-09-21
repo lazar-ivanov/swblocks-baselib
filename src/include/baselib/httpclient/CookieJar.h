@@ -827,7 +827,7 @@ namespace bl
                     cookie.expiryTime = ( maxAge <= 0 )
                         ? time::ptime( time::neg_infin )
                         : when + time::seconds(
-                            static_cast< long >( std::min< std::int64_t >( maxAge, MAX_MAX_AGE_SECONDS ) )
+                            std::min< std::int64_t >( maxAge, MAX_MAX_AGE_SECONDS )
                             );
                 }
                 else if( haveExpires )
