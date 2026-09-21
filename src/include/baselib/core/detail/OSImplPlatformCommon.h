@@ -964,6 +964,34 @@ namespace bl
             return isAIX;
         }
 
+        /**
+         * @brief Whether this platform reports a peer's orderly close as a connection reset when
+         * data it sent is still unread in the local receive buffer
+         *
+         * This is a property of the TCP stack and not of any protocol above it. When a socket is
+         * closed while its receive buffer still holds data the peer sent, Windows answers the
+         * unread data with an abortive close - it sends RST, and the local side's next read fails
+         * with WSAECONNRESET (system:10054, "An existing connection was forcibly closed by the
+         * remote host"). POSIX sends FIN in the same situation and the local side sees an orderly
+         * end of stream, which surfaces as asio::error::eof or, through a TLS stream, as a
+         * truncation.
+         *
+         * The consequence for callers is that the two conditions "the peer closed" and "the peer
+         * reset" are DISTINGUISHABLE on POSIX and are NOT distinguishable on Windows, because the
+         * stack has already collapsed them into one code before any library sees it. Code which
+         * treats those two conditions differently - a retry policy, say - cannot be written
+         * portably by comparing error codes alone and has to ask this question first.
+         *
+         * Expressed as a behaviour rather than as onWindows() on purpose: the call site is
+         * deciding what an error code means, not which operating system it is running on, and if
+         * another platform ever shares the behaviour only this predicate changes.
+         */
+
+        inline bool peerCloseWithUnreadDataIsReportedAsReset() NOEXCEPT
+        {
+            return isWindows;
+        }
+
         inline void sleep( SAA_in const time::time_duration& duration )
         {
             thread::sleep( get_system_time() + duration );

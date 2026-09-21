@@ -229,13 +229,36 @@ UTF_AUTO_TEST_CASE( TlsHandshakeRetryClassifier_RetryableErrorSetTests )
      * A peer which resets rather than closes is a different condition and must not be retried,
      * and neither must a refusal or the operation_aborted of a cancelled task - retrying a
      * cancellation would defeat the cancellation
+     *
+     * connection_reset is asserted BOTH ways, because what it means is a property of the platform
+     * and not of this predicate. Where the TCP stack sends FIN for a peer's orderly close, a reset
+     * is a genuinely distinct condition and stays non-retryable, which is the row this case has
+     * always pinned. Where the stack sends RST instead whenever data is still unread - Windows -
+     * the orderly close IS this code, the two conditions are indistinguishable by the time any
+     * library sees them, and refusing it would leave the retry unreachable exactly as the missing
+     * truncation form once did. See os::peerCloseWithUnreadDataIsReportedAsReset() and the
+     * measurement recorded in notes/plans/issues/tls-handshake-retry-unreachable-record.md
+     *
+     * Asserting both arms rather than skipping one keeps the case meaningful on every platform:
+     * neither arm can silently become vacuous
      */
 
-    UTF_REQUIRE(
-        ! probe -> isRetryable(
-            handshakeFailure( asio::error::make_error_code( asio::error::connection_reset ) )
-            )
-        );
+    if( os::peerCloseWithUnreadDataIsReportedAsReset() )
+    {
+        UTF_REQUIRE(
+            probe -> isRetryable(
+                handshakeFailure( asio::error::make_error_code( asio::error::connection_reset ) )
+                )
+            );
+    }
+    else
+    {
+        UTF_REQUIRE(
+            ! probe -> isRetryable(
+                handshakeFailure( asio::error::make_error_code( asio::error::connection_reset ) )
+                )
+            );
+    }
 
     UTF_REQUIRE(
         ! probe -> isRetryable(

@@ -108,3 +108,78 @@ So the retry is reachable with a real peer, and it is reachable *without* any te
 Validated clang debug on `utf_baselib_http2` (27 cases), `utf_baselib_http` (37) and
 `utf_baselib_tasks2` (13); all green, no leak line, no `FATAL`, no ThreadSanitizer report. The gate
 of design 3.8 - the whole suite on the full matrix - is the orchestrator's, not this lane's.
+
+---
+
+## Reopened on Windows (2026-09-21), and closed again
+
+**The 2026-09-18 fix above closed this on POSIX only.** The first Windows run of the suite after the
+HTTP/2 and HTTP-client work was pulled found `TcpPreHandshakeStageTls_RetryableHandshakeErrorTests`
+and `..._StageRunsOncePerAttemptTests` failing on **every** Windows combination measured -
+`a64-vc143-debug`, `a64-ccl16-debug`, `a64-vc143-release`, `a64-ccl16-release` and
+`x64-vc143-debug` - with exactly the signature this record describes for the pre-fix state: the
+peer's second `acceptAndShutdown()` is never reached and the case aborts at the 30s accept
+deadline. The two cases took 32.07s each where their non-retrying neighbours took ~2s.
+
+### Why the fix did not carry over
+
+**A TCP stack property, not a protocol or library one.** A peer which accepts and then goes away
+mid-handshake leaves data unread in the local receive buffer. Closing a socket in that state is an
+*abortive* close on Windows - it sends RST, and the next local read fails with `WSAECONNRESET`.
+POSIX sends FIN for the same sequence and the local side sees an orderly end of stream, which is
+`asio::error::eof` or, through the TLS stream, `asio.ssl.stream:1`.
+
+So all three codes the classifier accepted are POSIX spellings of one event, and Windows has a
+fourth spelling for the same event which was not in the set. Measured from inside the predicate on
+`win-a64-vc143-debug`, against the same peer the POSIX rows are written for:
+
+    DIAGNOSTIC isProtocolHandshakeRetryableError:
+        category='system' value=10054
+        message='An existing connection was forcibly closed by the remote host'
+        retryable=0
+
+### What the distinction costs, and why it is platform-conditional
+
+The retry predicate exists to separate **"the peer went away"** - transient, worth another attempt -
+from **"a genuine protocol or certificate failure"** - permanent, not worth one. On POSIX those two
+conditions have different codes and the separation is real, which is why
+`TestTlsHandshakeRetryClassifier.h` pinned `connection_reset` as non-retryable and why that row
+should stay.
+
+**On Windows the separation is not observable.** The stack collapses both into `WSAECONNRESET`
+before any library sees it. Refusing the code there is therefore not a stricter policy; it only
+makes the retry unreachable, which is the very defect this record was opened for.
+
+Hence the condition is asked of the platform and not spelled as an `#ifdef` at the call site:
+
+    os::peerCloseWithUnreadDataIsReportedAsReset()      core/detail/OSImplPlatformCommon.h
+
+a compile-time predicate beside `onWindows()` / `onLinux()`, named for the behaviour rather than
+the operating system so that the call site reads as "can this platform tell me the difference?".
+`TcpSslBaseTasks.h` consults it and retries `connection_reset` only where the answer is no.
+
+**The blast radius is bounded and unchanged in kind.** The predicate is reached only while a
+handshake is incomplete and only while `m_retries < m_maxRetryCount` (`TcpBaseTasks.h:1437`), so a
+peer which resets on every attempt costs `maxRetryCount + 1` attempts and no more - the same bound
+already accepted for a peer which truncates on every attempt. Nothing in RFC 9113 speaks to this;
+handshake retry is transport policy, and both answers are compliant. What is at stake is design
+5.1's establishment contract, which assumes a transient peer-side close is survivable - true on
+POSIX since 2026-09-18, and true on Windows only with this change.
+
+### The test asserts both arms
+
+`TlsHandshakeRetryClassifier_RetryableErrorSetTests` now asserts `connection_reset` retryable where
+the platform reports an orderly close as a reset and non-retryable where it does not, rather than
+skipping the row on one of them. A skipped row goes vacuous silently; two arms cannot.
+
+### Evidence
+
+`win-a64-vc143-debug`, boost 1.90 / OpenSSL 3.5.4:
+
+| | the two retry cases |
+|---|---|
+| before | **abort** at the peer's 30s accept deadline, 32.07s each |
+| after | pass, **4.08s each** - the retry happens instead of the deadline firing |
+
+The drop from 32s to 4s is the load-bearing evidence: it is the deadline no longer being reached,
+not merely an assertion no longer being evaluated.
