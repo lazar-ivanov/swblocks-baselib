@@ -17,3 +17,4 @@
 --log_level=message --run_test=ClientSession_FallbackRiderNeedsTheDispatchedRetryTests
 --log_level=message --run_test=ClientSession_CrossSchemeRedirectIsRefusedTests
 --log_level=message --run_test=ClientSession_RequestBudgetIsChainedAcrossHopsTests
+--log_level=message --run_test=ClientSession_CookieMergeComparesNamesExactlyTests
