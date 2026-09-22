@@ -1616,7 +1616,14 @@ asserts exactly that on that flavor.
 - **Nothing below the floor carries data** (D4). The check precedes the first HTTP byte.
 - **Profiles are untrusted input** (6.2), and a cipher string is a policy-injection vector (3.3).
 - **All peer-controlled sizes are bounded** (4.6): header lists, header blocks, `CONTINUATION` runs,
-  control-frame queues, bodies.
+  control-frame queues, bodies. **Except one, found 2026-09-22 and not yet fixed:** nothing bounds
+  the *aggregate* of informational (1xx) responses. Each block is within the per-block cap, none
+  completes the message, and each is retained - in the engine, in the request mailbox, and for h1 in
+  the codec, which also resets its per-message limits before each one. Memory is unbounded on both
+  protocols; what bounds *elapsed* time differs - on h2 each interim re-arms the idle timer, so a
+  drip runs to the total timeout (thirty minutes by default), while on h1 the interims are held in
+  the codec until the final block, so the response-headers timeout applies instead.
+  See `issues/astra-review-verification-record.md`, H05.
 - **Decoders, when they arrive, are a decompression-bomb surface.** The caps are part of the seam now
   (5.6), so they cannot be forgotten later.
 - **Redirects** drop credentials across origins and refuse downgrades by default (5.6).

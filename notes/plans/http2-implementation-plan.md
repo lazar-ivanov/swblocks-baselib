@@ -1550,6 +1550,65 @@ hop chain, a `WrapperTaskBase` continuation) and `ClientSessionT< STREAM >`. Tes
 
 ---
 
+## 8a. Layer L6R — Remediation of the astra review, before L7
+
+**Added 2026-09-22.** An external architecture and security review of L0–L6
+(`http2-l0-l6-architecture-security-review-2026-09-21.md`) produced 29 findings. All 29 were
+independently re-derived at the source; **29 stand in some form, none was refuted outright, and 11
+are genuinely new**. The verdicts, the corrections to the review, the costs and the grouping are in
+`issues/astra-review-verification-record.md`, which is the work order for this layer — this section
+is the schedule only.
+
+**Why it is a layer and not a footnote.** Two reasons, and an earlier draft of this paragraph
+overstated the first — corrected here because the overstatement was the argument for the layer.
+
+**One new finding is a defect L7 builds directly on top of.** H13 (prioritized HEADERS exceeding the
+peer's maximum frame size) fires only when a profile sets `headersPriority`, and the Chrome/Edge row
+of design 6.4 is exactly that: *"`HEADERS` priority weight 256, exclusive"*. L7's first browser
+profile makes it live.
+
+**H15 and H12 do NOT become live at L7**, contrary to that earlier draft:
+
+- H15 needs a profile advertising an initial window **below** 65535. Every browser profile in design
+  6.4 advertises **above** it - Chrome `4:6291456`, Firefox `4:131072`, Safari `4:2097152`. In that
+  direction the stale threshold only sends WINDOW_UPDATEs too often on the first stream: a cadence
+  deviation, never a wedge. The wedging defect is real and stays in S6R.2 on its own merits.
+- H12 needs a profile setting `hpackEncoderTableSize`. Nothing in the design or plan does. The
+  browser table's `1:65536` is `SETTINGS_HEADER_TABLE_SIZE` - our **decoder's** advertised size - not
+  the encoder knob. H12 goes live only if an L7 author conflates the two, which is an argument for
+  fixing it as a guard, not for calling it imminent.
+
+**The second reason stands on its own:** four of the P1s are memory-safety or data-integrity defects
+in code L7 extends - a silent duplicate POST, a shutdown segfault, buffers mutated under an
+outstanding write, and a thrown sink exception converted into success. Building impersonation on top
+of those is what the layer exists to prevent.
+
+**Slices.** Four change-sets, each gated separately per the core-path rule.
+
+| Slice | Contents | Shape |
+|---|---|---|
+| **S6R.1** | H02, H03a, H13, H14, H17, H26, H04b, H27, H28 | ~60 lines, seven files, all deterministically testable, three one-liners. H03a's cost buys the **segfault** only; "work scheduled after the disposal sweep" survives it. H27's fix must give `mergeCookieValues` its own byte-exact compare and **not** touch the shared `contains( )`, whose `equalsIgnoreCase` is load-bearing for the Accept-Encoding intersection |
+| **S6R.2** | H01, H07, H05, H12, H15, H16, H18, **H03b**, **N1**, **N2** | larger but bounded; H01 carries the only real design content (a write-completion barrier) |
+| **S6R.3** | H06, H08, H11, H09, H10, **H04a** | **decide before implementing** — see §5 of the verification record. H10 will restructure what S6R.1's H13 touched, so sequence them |
+| **S6R.4** | H29, H20, H19, H23, the 4a test-inversion trap, the stale Windows line in the L4 record | documentation and ledger hygiene |
+
+**H21 and H22 are not staged here** — both sit on L6's owed list (4a and finding 9) and belong to
+whichever change-set takes those up.
+
+**H24 and H25 are not in this layer.** Both are latent until a content codec ships and are
+prerequisites of that work, not of L7.
+
+**Acceptance.** Each slice: focused modules under clang debug in the lane, then clang and gcc release
+plus the whole-suite gate by the orchestrator. S6R.1 and S6R.2 additionally owe the cheap
+demonstrations listed in §7 of the verification record — nothing in either the review or the
+verification was established by running anything, and several findings are RFC-derived rather than
+observed.
+
+**Ordering against L7.** S6R.1 and S6R.2 **must precede L7**. S6R.3 may run in parallel with L7 if
+its decisions are taken first. S6R.4 can land at any point.
+
+---
+
 ## 9. Layer L7 — Impersonation
 
 Depends on L2, L3, L6. This layer has a real internal DAG (spike → content → apply → report → vectors);
