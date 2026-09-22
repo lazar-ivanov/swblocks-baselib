@@ -300,13 +300,22 @@ namespace bl
          *      accepted and went away, where Linux reported eof or a truncation. An earlier
          *      version of this comment blamed "RST where POSIX sends FIN on unread data";
          *      that is NOT a platform difference - Linux close( ) with unread data also
-         *      sends RST. The mechanism is NOT settled; see the os:: predicates.
+         *      sends RST. The mechanism is now MEASURED - see the os:: predicates.
          *
-         *   2. A peer ending the conversation can arrive as WSAECONNABORTED (system:10053) rather
-         *      than as an end of stream. This one is MEASURED but its mechanism is NOT settled -
-         *      what is ruled out is a plain FIN on a pending read, which Asio maps to eof. See
-         *      os::peerCloseCanBeReportedAsConnectionAborted( ) for what is known and what is
-         *      only hypothesis, including a data-loss consequence if the hypothesis holds.
+         *   2. A peer ending the conversation can arrive as WSAECONNABORTED (system:10053)
+         *      rather than as an end of stream, when a send of ours followed the peer's
+         *      shutdown. Also MEASURED, and NOT a plain FIN on a pending read - Asio maps that
+         *      to eof.
+         *
+         * Both are ONE mechanism, confirmed by the PeerCloseErrorCodes_* control cases in
+         * utf_baselib_http2: shutdown_both leaves the receive side shut, an arrival after that
+         * resets the connection on Windows, and the RST surfaces as 10054 or as 10053 depending
+         * only on whether a send of ours was outstanding when it landed.
+         *
+         * The reset also DISCARDS what is still unread. The control measured 0 of 16384 bytes
+         * delivered on Windows against all 16384 then eof on Linux, so classifying the close as
+         * a peer close does not recover what the reset threw away - a caller which needed those
+         * bytes has lost them.
          *
          * Neither code means what its POSIX namesake means for a READ. On POSIX a reset reaching a
          * read still hands over whatever was already queued before reporting the error, and

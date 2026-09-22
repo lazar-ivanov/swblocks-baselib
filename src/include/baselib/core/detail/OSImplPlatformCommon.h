@@ -979,13 +979,13 @@ namespace bl
          * That is not a platform difference at all: Linux close( ) with unread data also sends
          * RST (RFC 2525 section 2.17, LINUX_MIB_TCPABORTONCLOSE).
          *
-         * The leading hypothesis is the one recorded for
-         * peerCloseCanBeReportedAsConnectionAborted( ) below, and the two observables are
-         * probably ONE mechanism: tasks shut down with shutdown_both, shutting down the receive
-         * side on Windows resets the connection if anything arrives afterwards, and whether the
-         * resulting RST surfaces as 10054 or as 10053 may depend only on whether a send of ours
-         * was outstanding when it landed. A control would settle it; until then both predicates
-         * name what was observed and not why.
+         * CONFIRMED by a control, PeerCloseErrorCodes_PeerShutsDownWithUnreadDataTests in
+         * utf_baselib_http2. A loopback peer torn down with this library's own shutdownSocket( ) -
+         * shutdown_both - and a reader with bytes it never read produces exactly this code on
+         * Windows and an orderly eof on Linux. So the two observables ARE one mechanism: shutting
+         * down the receive side resets the connection on Windows when anything is left to arrive,
+         * and whether the RST surfaces as 10054 or as 10053 depends only on whether a send of ours
+         * was outstanding when it landed - see peerCloseCanBeReportedAsConnectionAborted( ) below.
          *
          * The consequence for callers is that the two conditions "the peer closed" and "the peer
          * reset" are DISTINGUISHABLE on POSIX and are NOT distinguishable on Windows, because the
@@ -1014,23 +1014,24 @@ namespace bl
          * 10053 is WSAECONNABORTED. The same exchange on Linux reports an orderly end of stream,
          * and the driver failed about one run in eight on Windows until this code was accepted.
          *
-         * WHY it arrives is NOT settled, and this predicate deliberately names the observable
-         * rather than a mechanism. What is ruled out: a plain FIN completing a read which was
-         * already outstanding does NOT produce it - Asio maps a stream-oriented receive that
-         * completes with no error and zero bytes to eof (asio/detail/impl/socket_ops.ipp, the
-         * "Check for connection closed" branch), which is the ordinary graceful path every IOCP
-         * server sees. So 10053 requires the connection to have been genuinely aborted.
+         * WHY it arrives is now CONFIRMED by a control,
+         * PeerCloseErrorCodes_ReaderSendsAfterPeerShutdownTests in utf_baselib_http2. Ruled out
+         * first: a plain FIN completing an already outstanding read does NOT produce it - Asio
+         * maps a stream-oriented receive completing with no error and zero bytes to eof
+         * (asio/detail/impl/socket_ops.ipp, the "Check for connection closed" branch), the
+         * ordinary graceful path every IOCP server sees. 10053 requires a genuine abort.
          *
-         * The leading hypothesis, not yet confirmed by a control: tasks shut down with
-         * shutdown_both (TcpBaseTasks.h, shutdownSocket), and on Windows shutting down the RECEIVE
-         * side makes the stack reset the connection if data arrives afterwards. A frame we send
-         * after the peer has done that - a late WINDOW_UPDATE, say - would draw a RST, and a RST in
-         * reply to our own send is exactly what completes an outstanding receive with 10053.
+         * What the control measures: tasks shut down with shutdown_both (TcpBaseTasks.h,
+         * shutdownSocket), on Windows shutting down the RECEIVE side resets the connection when
+         * anything arrives afterwards, and a send issued after that draws the RST which completes
+         * the read with 10053. That is the driver's late WINDOW_UPDATE, exactly.
          *
-         * If that is right it has a consequence worth knowing before relying on this: a RST also
-         * DISCARDS whatever is still unread in the local receive buffer on Windows, where Linux
-         * hands queued bytes to the application before reporting the error. Accepting the code
-         * makes the connection end gracefully; it does not recover data the reset threw away.
+         * It has a consequence worth knowing before relying on this, and the control MEASURED it
+         * rather than predicting it: the RST discards what is still unread. With 16KB sent and
+         * none of it read, Windows delivered 0 of 16384 bytes before reporting the code, where
+         * Linux delivered all 16384 and then eof. Accepting the code ends the connection
+         * gracefully; it does NOT recover the data the reset threw away, and a caller which needs
+         * those bytes has lost them.
          *
          * Distinct from peerCloseWithUnreadDataIsReportedAsReset() above, which is about the shape
          * of the close on the wire. Both are true on Windows and false on POSIX today, but they

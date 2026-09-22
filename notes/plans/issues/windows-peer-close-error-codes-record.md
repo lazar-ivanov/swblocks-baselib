@@ -39,31 +39,31 @@ claimed it was a pending overlapped read being completed by the local stack on t
 `eof` (`asio/detail/impl/socket_ops.ipp`, the "Check for connection closed" branch), which is the
 ordinary graceful path. `10053` requires the connection to have been genuinely aborted.
 
-The leading hypothesis, **not yet confirmed by a control**, and it would explain BOTH Windows rows
-as one mechanism - whether the RST surfaces as 10054 or 10053 may depend only on whether a send of
-ours was outstanding when it landed: every task shuts down with
-`shutdown_both` (`TcpBaseTasks.h:325`), and on Windows shutting down the RECEIVE side resets the
-connection if data arrives afterwards. A frame sent after the peer did that - a late
-`WINDOW_UPDATE` - would draw a RST, and a RST in reply to our own send completes an outstanding
-receive with `10053`. If that holds it carries a consequence: a RST also **discards unread receive
-data** on Windows, where Linux hands queued bytes over before reporting the error - so accepting
-the code ends the connection gracefully but does not recover what the reset threw away.
+**CONFIRMED by a control**, and it explains both Windows rows as ONE mechanism. Two cases in
+`utf_baselib_http2` - `PeerCloseErrorCodes_PeerShutsDownWithUnreadDataTests` and
+`PeerCloseErrorCodes_ReaderSendsAfterPeerShutdownTests` - stand up a loopback pair and tear the peer
+down with this library's own `TcpSocketCommonBase::shutdownSocket()`, which is `shutdown_both`.
+Measured on `win-x64`, identically under `ccl16` and `vc143`:
 
-**Neither code means on Windows what its POSIX namesake means for a read.** On POSIX a reset
-reaching a read still hands over whatever was already queued before reporting the error, and
-`ECONNABORTED` is an `accept()` error a read never produces at all.
+| Scenario | Windows | Linux |
+|---|---|---|
+| Peer shuts down with bytes still unread | **`system:10054`**, **0 of 16384 bytes delivered** | `eof`, 16384 of 16384 |
+| Reader sends after the peer's shutdown | **`system:10053`**, **0 of 16384 bytes delivered** | `eof`, 16384 of 16384 |
 
-What differs for a read is the receive-buffer discard above: a RST on Windows drops what is still
-unread, where Linux hands queued bytes over before reporting the error.
+So: shutting down the receive side resets the connection on Windows when anything is left to
+arrive, and whether the RST surfaces as `10054` or `10053` depends only on whether a send of ours
+was outstanding when it landed. Not two mechanisms - one, seen twice.
 
-**Mechanism 2 is a race**, which is what makes it expensive to find: whether a read happens to be
-outstanding at the instant the peer closes varies run to run, so code which does not expect the
-code fails INTERMITTENTLY rather than every time. The HTTP/2 driver defect below sat at roughly one
-run in eight and was measured at 7 failures in 60 idle runs and 8 in 60 under load. Those rates are
-close enough that the measurement found no evidence of load sensitivity. That is weaker than it
-first reads: each rate carries a 95% interval of roughly 5-24%, so even a twofold difference would
-survive these samples. What the pairing does support is that the race is between the peer's close
-and our own traffic rather than between the process and the machine.
+**The data loss is total, not partial.** An earlier version of this record said a RST "discards
+unread receive data", which understates what was measured: with 16KB sent and none of it yet read,
+Windows delivered **nothing at all** before reporting the code. Classifying the close as a peer
+close ends the connection gracefully; it does not recover those bytes. A caller which needed them
+has lost them, and on the HTTP/2 driver's read loop that means a response body can be short while
+the task reports success.
+
+The control is a hypothesis test, not a rubber stamp: its Windows arm requires the code to be one
+of the two AND not `eof`, so a stack which reported an orderly end here would fail the case loudly
+rather than pass it.
 
 ## The three defects
 
