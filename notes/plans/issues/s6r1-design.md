@@ -69,7 +69,11 @@ already set, and the "red" run is green. Ordering by thread scheduling is not or
 
 Red before (flag false → `isRetryable == true`), green after.
 
-## 2. H03a — hold the execution queue in the action batch
+## 2. H03a — flush with wait, and never reset the queue outside construction and destruction
+
+*(Retitled. The original heading — "hold the execution queue in the action batch" — named the first
+draft's shape, which the body below rejects. A title naming a rejected fix is a false premise on the
+page for anyone reading by headings.)*
 
 **Defect.** `runActions` dereferences the member `m_eqConnections` outside the pool lock;
 `disposeInternal` flushes and `reset()`s that same non-atomic pointer, also outside the lock. A batch
@@ -100,12 +104,36 @@ stays connected**. The member is then written only in the constructor and destro
 no write to the member outside construction, **there is no reader race left to fix — by construction,
 not by protocol.**
 
+**One precision on "already the path".** That is true of the *timing*, not of the frame. Today a
+never-disposed pool disposes the queue from inside `disposeInternal` in the destructor **body**,
+with every member alive. Under shape (A) a disposed-then-destroyed pool disposes it during **member**
+destruction, after the members declared later — the maintenance timer and its flags, the connection
+count, the disposed flag and the stats — are already gone, while the lock and the two maps are still
+alive. Benign, because no connection task references the pool; stated so the claim stays exact.
+
 **What it trades.** The queue object lingers until the pool is destroyed (bytes), and its `dispose( )`
 moves to the destructor — a path that already exists and is already exercised.
 
-**Residual, stated honestly.** An orphan task still runs to its own idle lifetime rather than being
-admitted or refused; the pool destructor joins it if it is still alive. The admission protocol that
-would refuse it belongs with H04a in S6R.3.
+**Residual — two faces, and an earlier draft of this paragraph stated only one.**
+
+1. *A push landing after the flush returns.* The orphan task runs to its own idle lifetime rather
+   than being admitted or refused; the pool destructor joins it if it is still alive.
+2. *A push landing **during** the flush's wait.* `flushInternal`'s wait is a condition-variable
+   predicate on `! hasPendingOrExecuting( )` which **releases the queue lock**, and the
+   `cancelExecuting` sweep has already run once before it. Such a push is therefore accepted,
+   scheduled, and not cancelled — so **`dispose( )` blocks until that orphan completes on its own**.
+   For an attempt task the sweep already cancelled, that is immediate; for a driver scheduled from
+   the fallback path, which the sweep never touches, it is the driver's idle lifetime —
+   `idleTimeout`, **300 s by default**, and unbounded if a caller disables it.
+
+**Face 2 is pre-existing and this change does not introduce it.** Today's `reset( )` → `dispose( )`
+→ `flushInternal( wait = true )` releases the lock inside the same predicate wait, and the observer
+proxy is nulled only after that flush returns, so a push landing in today's wait produces exactly
+the same delay. What shape (A) removes are the two **crash** faces — the null member and the second
+draft's null-proxy completion. The delay is closed by S6R.3's admission protocol, with H04a.
+
+So the honest claim is: **this buys the crash; in the narrower sub-window a pre-existing shutdown
+delay bounded by the idle lifetime remains.**
 
 **Test.** No deterministic pin exists. **A TSan run over the pool module with a racing `dispose( )`
 is REQUIRED** — the build supports it (`BL_CLANG_ENABLE_RA_TSAN=1`) and the recipe is in the
@@ -287,11 +315,33 @@ connection case wedged.
 - H03a and H04b have no deterministic test; they are justified by construction and that is stated
   rather than papered over.
 - **A TSan run over the pool module, with a racing `dispose( )`, is REQUIRED** — not opportunistic.
-  Build with `BL_CLANG_ENABLE_RA_TSAN=1`; the recipe, including the mandatory positive control, is in
-  `http2-driver-timer-cancel-cross-thread-race-record.md` §5. Record the result with the sentence
+  Build with `BL_CLANG_ENABLE_RA_TSAN=1`. The **recipe** is in
+  `http2-driver-timer-cancel-cross-thread-race-record.md` §5; the **mandatory positive control** —
+  `utf_baselib_basictask`, its known report at `TestBaselibBasicTask.h:127`, exit 66 — is in that
+  record's §1 and closing tables, not in §5. An earlier draft cited §5 for both. Record the result
+  with the sentence
   that **a clean run is not a proof** — detection is interleaving-dependent, and what carries H03a
   and H04b is the construction argument. Under H03a's one-line shape the run should be clean by
   construction, which is what it corroborates.
+
+## 11a. Readiness
+
+**Agreed ready for implementation, 2026-09-22**, by the orchestrator and by the independent design
+review, contingent on exactly the four edits that review named — the H03a retitle, the two-faced
+residual, the "already the path" precision, and the positive-control citation — all of which are
+applied above.
+
+The design took **three shapes for H03a** before this one. The first fixed only the reader; the
+second added a move-out under the lock which was mechanically correct and **still crashed**, moving
+the segfault from shutdown to the orphan task's completion. Both are recorded in §2 with what each
+got wrong. That history is the reason this section exists: the gate is that two readers agree, and
+neither reader got H03a right alone.
+
+**What agreement does and does not mean.** It means the intended change is correct, complete, and
+bounded, and that a lane may start. It does **not** mean anything has been demonstrated — nothing in
+this design has been built or run, and §11 lists what each fix owes before it can be called done.
+
+---
 
 ## 12. Deliberately out of scope
 
