@@ -305,43 +305,29 @@ namespace bl
                      * TcpConnectionEstablisherConnector::scheduleTaskFinishContinuation was
                      * unreachable
                      *
-                     * The connection_reset row is the SAME condition seen on a platform whose TCP
-                     * stack cannot express it any other way, and not a widening of what is retried
+                     * The transport codes are net::isOrderlyPeerCloseErrorCode()'s to know, and
+                     * deliberately not compared here. That is the ORDERLY variant and not
+                     * net::isPeerClosedErrorCode(), which is the distinction this predicate turns
+                     * on: a peer which closed cleanly mid-handshake is transient and worth another
+                     * attempt, while a peer which genuinely reset is refusing and retrying it would
+                     * turn a refusal into an attempt storm. Where the platform can tell those two
+                     * apart a reset therefore stays non-retryable, exactly as before
                      *
-                     * A peer which accepts and then goes away mid-handshake leaves data unread in
-                     * our receive buffer. POSIX answers that with FIN and we see an orderly end of
-                     * stream - eof, or a truncation through the TLS stream, both already above.
-                     * Windows answers it with RST, so the very same peer behaviour arrives as
-                     * system:10054 (WSAECONNRESET) and matches none of the rows above. This was
-                     * measured rather than assumed, by printing the code from this predicate on
-                     * win-a64-vc143-debug: category='system' value=10054 retryable=0, against a
-                     * peer doing exactly what the POSIX rows are written for
+                     * Where it CANNOT - a stack which sends RST for an orderly close with unread
+                     * data, or which completes an outstanding read with an abort - the orderly
+                     * predicate admits those codes, because there refusing them does not make the
+                     * policy stricter, it only makes the retry unreachable in the same way the
+                     * missing truncation form once did everywhere. See core/NetUtils.h and
+                     * notes/plans/issues/windows-peer-close-error-codes-record.md
                      *
-                     * So the distinction this predicate wants to draw - the peer went away, which
-                     * is transient and worth another attempt, versus a genuine protocol or
-                     * certificate failure, which is not - is simply not observable on such a
-                     * platform, and os::peerCloseWithUnreadDataIsReportedAsReset() is the question
-                     * "can this platform tell me the difference?". Where it can, a reset stays
-                     * non-retryable exactly as before; where it cannot, refusing to retry is not a
-                     * stricter policy, it just makes the retry unreachable in the same way the
-                     * missing truncation code once did everywhere
-                     *
-                     * The cost of admitting it is bounded and small: this runs only while a
-                     * handshake is incomplete and only while m_retries < m_maxRetryCount
-                     * (TcpBaseTasks.h:1437), so a peer which resets every time costs
+                     * The cost is bounded and unchanged in kind: this runs only while a handshake
+                     * is incomplete and only while m_retries < m_maxRetryCount
+                     * (TcpBaseTasks.h:1437), so a peer which ends every attempt this way costs
                      * maxRetryCount + 1 attempts and no more - the same bound already accepted for
                      * a peer which truncates every time
                      */
 
-                    if(
-                        os::peerCloseWithUnreadDataIsReportedAsReset() &&
-                        e.code() == asio::error::connection_reset
-                        )
-                    {
-                        return true;
-                    }
-
-                    return ( isStreamTruncationError( e.code() ) || e.code() == asio::error::eof );
+                    return ( isStreamTruncationError( e.code() ) || net::isOrderlyPeerCloseErrorCode( e.code() ) );
                 }
                 catch( std::exception& )
                 {

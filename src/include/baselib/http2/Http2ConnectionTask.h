@@ -1476,10 +1476,29 @@ namespace bl
 
             bool isPeerClosed( SAA_in const eh::error_code& ec ) NOEXCEPT
             {
-                return
-                    asio::error::eof == ec ||
-                    asio::error::connection_reset == ec ||
-                    base_type::isStreamTruncationError( ec );
+                /*
+                 * The question here is whether the conversation is OVER, not whether it ended
+                 * tidily, so this is net::isPeerClosedErrorCode() and not the orderly variant - a
+                 * reset connection is just as finished as a closed one, and the read loop has
+                 * nothing left to do either way
+                 *
+                 * The codes themselves are net's to know, and deliberately not compared here: the
+                 * peer ending the conversation reaches us as eof, as connection_reset or, when the
+                 * close races a read we already have outstanding, as connection_aborted, and which
+                 * of those it is depends on the platform's TCP stack and I/O model rather than on
+                 * anything HTTP/2 does. The connection_aborted case is what failed this driver
+                 * roughly one run in eight on Windows until it was added - see core/NetUtils.h and
+                 * notes/plans/issues/windows-peer-close-error-codes-record.md
+                 *
+                 * operation_aborted is not in either set, which is what keeps the distinction
+                 * above working: it is what our own initiateClose( ) and an external cancelTask( )
+                 * produce, and design 3.2's accounting is what tells those two apart
+                 *
+                 * The truncation is asked of the stream policy because which codes mean a
+                 * truncated TLS stream is knowledge the policy owns and the transport does not
+                 */
+
+                return net::isPeerClosedErrorCode( ec ) || base_type::isStreamTruncationError( ec );
             }
 
             void onRead(

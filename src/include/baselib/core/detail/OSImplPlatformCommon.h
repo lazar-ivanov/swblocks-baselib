@@ -992,6 +992,38 @@ namespace bl
             return isWindows;
         }
 
+        /**
+         * @brief Whether this platform completes a receive which is ALREADY OUTSTANDING with a
+         * connection-abort error when the peer closes underneath it
+         *
+         * The second, separate way the same event - the peer ending the conversation - reaches a
+         * caller under a different name here than it does on POSIX. Windows I/O is overlapped: a
+         * read is lodged with the completion port before the peer's bytes arrive. When the peer
+         * closes at that moment the pending operation is completed by the LOCAL stack rather than
+         * by the peer's FIN, and it is completed with WSAECONNABORTED (system:10053, "An
+         * established connection was aborted by the software in your host machine"). POSIX
+         * delivers an orderly end of stream to a blocked or polled read instead, and reserves
+         * ECONNABORTED for accept().
+         *
+         * Whether a read happens to be outstanding at that instant is a race, so code which does
+         * not expect this code does not fail every time - it fails intermittently, which is how
+         * it is usually discovered. One such defect sat at roughly one run in eight.
+         *
+         * Distinct from peerCloseWithUnreadDataIsReportedAsReset() above: that one is about the
+         * SHAPE OF THE CLOSE on the wire (RST instead of FIN), this one is about WHO COMPLETES a
+         * pending operation. Both are true on Windows and both are false on POSIX, but they are
+         * separate facts and a platform could have one without the other.
+         *
+         * Prefer net::isPeerClosedErrorCode() / net::isOrderlyPeerCloseErrorCode() to asking this
+         * directly - see core/NetUtils.h, which is where these facts are turned into a decision
+         * about an asio error code.
+         */
+
+        inline bool pendingReceiveOnPeerCloseIsReportedAsAborted() NOEXCEPT
+        {
+            return isWindows;
+        }
+
         inline void sleep( SAA_in const time::time_duration& duration )
         {
             thread::sleep( get_system_time() + duration );

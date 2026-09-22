@@ -997,10 +997,15 @@ namespace utest
             {
                 using namespace bl;
 
-                return
-                    asio::error::eof == ec ||
-                    asio::error::connection_reset == ec ||
-                    base_type::isStreamTruncationError( ec );
+                /*
+                 * The same question the driver asks, and asked the same way - see core/NetUtils.h.
+                 * This peer has reads outstanding exactly as the driver does, so a client which
+                 * closes while one is pending renames the close here too, and a hand-written list
+                 * of codes here would be a harness that fails intermittently on Windows while the
+                 * product code it is testing does not
+                 */
+
+                return net::isPeerClosedErrorCode( ec ) || base_type::isStreamTruncationError( ec );
             }
 
             void onRead(

@@ -260,6 +260,37 @@ UTF_AUTO_TEST_CASE( TlsHandshakeRetryClassifier_RetryableErrorSetTests )
             );
     }
 
+    /*
+     * connection_aborted, asserted both ways for the same reason connection_reset is. It is the
+     * SECOND way a platform can rename a peer close: where a receive is already outstanding when
+     * the peer closes, Windows completes that pending operation itself, with WSAECONNABORTED, and
+     * a handshake read is outstanding exactly like any other. POSIX never produces it from a read
+     * at all - it is an accept() error there - so it stays non-retryable
+     *
+     * THIS ROW EXISTS BECAUSE THE TWO PREDICATES ARE INDISTINGUISHABLE ON WINDOWS. net::'s
+     * orderly and closed predicates admit the identical set there, and differ only on a POSIX
+     * reset, so no Windows run of any length can tell whether a call site picked the right one.
+     * The POSIX arm below is what actually discriminates, which makes this a row every ordinary
+     * build checks rather than one only the Windows matrix can reach
+     */
+
+    if( os::pendingReceiveOnPeerCloseIsReportedAsAborted() )
+    {
+        UTF_REQUIRE(
+            probe -> isRetryable(
+                handshakeFailure( asio::error::make_error_code( asio::error::connection_aborted ) )
+                )
+            );
+    }
+    else
+    {
+        UTF_REQUIRE(
+            ! probe -> isRetryable(
+                handshakeFailure( asio::error::make_error_code( asio::error::connection_aborted ) )
+                )
+            );
+    }
+
     UTF_REQUIRE(
         ! probe -> isRetryable(
             handshakeFailure( asio::error::make_error_code( asio::error::operation_aborted ) )

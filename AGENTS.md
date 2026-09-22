@@ -102,6 +102,28 @@ module (112.7MB) once made two x86 build combinations impossible to compile at a
 Read `src/utests/AGENTS.md` before adding or splitting a test module — it carries the full rules,
 the new-module checklist, and the verification tiers.
 
+### Networking Error Codes Are Not Portable
+
+**Never compare an asio transport error code by hand.** "The peer went away" is one event that
+arrives as four different codes depending on platform, I/O model and what the connection was doing.
+Windows sends RST where POSIX sends FIN when data is unread (`connection_reset`), and completes a
+read that was already outstanding with `connection_aborted` — neither of which means on Windows what
+its POSIX namesake means.
+
+- Ask `net::isPeerClosedErrorCode()` — *is the conversation over?* — or
+  `net::isOrderlyPeerCloseErrorCode()` — *did it end cleanly, so is a retry worth it?* They differ
+  only on a reset on POSIX, and picking the wrong one reintroduces a real defect.
+- If neither fits, add a third predicate **in `core/NetUtils.h`** with its reasoning; do not
+  open-code the comparison at the call site.
+- `operation_aborted` belongs to neither: it is our own close or an external cancel.
+- TLS truncation has its own spelling — ask `STREAM::isStreamTruncationError()` as well.
+
+**A Linux-only run cannot catch a breach of this**, and the abort case is a race, so a Windows run
+may need dozens of iterations. Run the Windows matrix for any change to transport error handling,
+and suspect this first when a network test fails intermittently there. This has cost the project
+three separate defects; see
+`notes/plans/issues/windows-peer-close-error-codes-record.md`.
+
 ### Monitoring A Long Build Or Test Run
 
 **A running process is not a progressing process. Never report the first as if it were the second.**
@@ -303,10 +325,11 @@ For detailed build system documentation, see `scripts/devenv7/AGENTS.md`:
 
 ---
 
-**Document Version:** 2.8
-**Last Updated:** 2026-09-19
+**Document Version:** 2.9
+**Last Updated:** 2026-09-22
 
 **Changelog:**
+- v2.9 (2026-09-22): Added Networking Error Codes Are Not Portable — ask net::, never compare transport codes by hand
 - v2.8 (2026-09-19): Added Monitoring A Long Build Or Test Run — check progress, not liveness
 - v2.7 (2026-09-17): Added the parallel-work-across-worktrees split of the toolchain and variant mix
 - v2.6 (2026-09-14): Noted that the test module size ceiling is now enforced by the build

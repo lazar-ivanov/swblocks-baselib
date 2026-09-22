@@ -282,6 +282,92 @@ namespace bl
 
         } // detail
 
+        /**
+         * @brief THE ONE PLACE which decides whether an asio error code means the peer ended the
+         * connection, and the only thing networking code in this library should ask
+         *
+         * ============================================================================
+         * WHY THIS EXISTS - READ BEFORE ADDING A CODE COMPARISON TO NETWORKING CODE
+         * ============================================================================
+         *
+         * The same peer behaviour - "the peer went away" - reaches us under DIFFERENT error codes
+         * on Windows than on POSIX, because the divergence is in the TCP stack and in the I/O
+         * model, below anything this library writes. There are two separate mechanisms:
+         *
+         *   1. A socket closed while data the peer sent is still unread is closed ABORTIVELY on
+         *      Windows: it sends RST where POSIX sends FIN, so the next read fails with
+         *      WSAECONNRESET (system:10054) instead of reporting an orderly end of stream.
+         *
+         *   2. Windows I/O is overlapped, so a read is lodged with the completion port before the
+         *      peer's bytes arrive. A close which lands while one is outstanding is completed by
+         *      the LOCAL stack with WSAECONNABORTED (system:10053), not by the peer's FIN.
+         *
+         * Neither code means what its POSIX namesake means. On POSIX a reset really is a reset and
+         * ECONNABORTED is an accept() error which a read never produces. So code which compares
+         * error codes by hand is correct on the platform it was written on and quietly wrong on
+         * the other - and because mechanism 2 is a race, being wrong shows up as an INTERMITTENT
+         * failure rather than an obvious one.
+         *
+         * This has now been paid for three times in this library: the TLS handshake retry was
+         * unreachable on Windows, the HTTP/2 driver failed a connection its peer had closed
+         * normally, and before that the retry was unreachable everywhere for the related reason
+         * that a truncated TLS stream has its own spelling again. Each was found by a matrix run
+         * and diagnosed from first principles, which is expensive.
+         *
+         * So: do not compare against asio::error::connection_reset, connection_aborted or eof in
+         * networking code. Ask one of the two predicates below, and if neither fits, add a third
+         * HERE with its reasoning rather than open-coding the comparison at the call site.
+         *
+         * See notes/plans/issues/windows-peer-close-error-codes-record.md
+         */
+
+        /**
+         * @brief What an ORDERLY close by the peer looks like on THIS platform
+         *
+         * Use where the question is "did the peer finish cleanly, so is this transient and worth
+         * another attempt?". On POSIX a reset is deliberately NOT one of these: there it is a
+         * genuinely distinct condition and treating it as a clean close would turn a real refusal
+         * into an attempt storm. On Windows it is one of these, because the stack has collapsed
+         * the clean close into it and the distinction POSIX offers is simply not observable.
+         *
+         * Note this does NOT cover a truncated TLS stream, which is spelled by the stream policy
+         * and not by the transport - ask STREAM::isStreamTruncationError() alongside this.
+         */
+
+        inline bool isOrderlyPeerCloseErrorCode( SAA_in const eh::error_code& ec ) NOEXCEPT
+        {
+            if( asio::error::eof == ec )
+            {
+                return true;
+            }
+
+            if( os::peerCloseWithUnreadDataIsReportedAsReset() && asio::error::connection_reset == ec )
+            {
+                return true;
+            }
+
+            if( os::pendingReceiveOnPeerCloseIsReportedAsAborted() && asio::error::connection_aborted == ec )
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        /**
+         * @brief Whether the connection has ENDED, however it ended
+         *
+         * Use where the question is "is the conversation over?" rather than "was it clean?" - a
+         * read loop deciding whether to report a failure or simply stop, say. A reset counts on
+         * every platform here, because a reset connection is just as over as a closed one; the
+         * difference from isOrderlyPeerCloseErrorCode() is only whether the ending was tidy.
+         */
+
+        inline bool isPeerClosedErrorCode( SAA_in const eh::error_code& ec ) NOEXCEPT
+        {
+            return isOrderlyPeerCloseErrorCode( ec ) || asio::error::connection_reset == ec;
+        }
+
         template
         <
             typename T
