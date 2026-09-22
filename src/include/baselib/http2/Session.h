@@ -2201,6 +2201,25 @@ namespace bl
 
                     reason = "DATA arrived before the header section of its message (8.1)";
                 }
+                else if( context.expectsNoContent && dataSize != 0 )
+                {
+                    /*
+                     * A response to HEAD, a 204 and a 304 may not carry content at all (RFC 9110
+                     * 9.3.2, 15.3.5, 15.4.5), and one which does is malformed - 8.1.1 asks for a
+                     * stream error, which is enough: no other stream on this connection has done
+                     * anything wrong. Delivering the octets instead would hand the caller a body
+                     * on a message it was told carries none, and leave two intermediaries free to
+                     * disagree about where the response ended
+                     *
+                     * ON dataSize AND NOT ON THE FRAME, deliberately: a zero-length DATA frame
+                     * carrying END_STREAM is how a bodyless message legally ends, and refusing
+                     * the frame rather than its content would break the ordinary completion of
+                     * every response this rule is about. Padding is not content either, and a
+                     * padded frame with no data is judged by the same number
+                     */
+
+                    reason = "a response which may not carry content sent DATA (RFC 9110 9.3.2)";
+                }
                 else if( lengthIsChecked && total > context.declaredContentLength )
                 {
                     reason = "more DATA arrived than the content-length field declared";

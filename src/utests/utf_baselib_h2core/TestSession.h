@@ -361,11 +361,22 @@ namespace utest
             }
         };
 
-        inline bl::http2::SessionRequest makeRequest( SAA_in_opt const bool hasBody = false )
+        /**
+         * @brief A request for the cases which do not care what it says
+         *
+         * 'method' exists because ONE of them does: a response to HEAD may not carry content, and
+         * the session learns that from the request it was given and from nothing else - so a case
+         * about bodyless responses cannot be written with the GET this helper used to hard-code
+         */
+
+        inline bl::http2::SessionRequest makeRequest(
+            SAA_in_opt      const bool                           hasBody = false,
+            SAA_in_opt      const std::string&                   method = "GET"
+            )
         {
             bl::http2::SessionRequest request;
 
-            request.method = "GET";
+            request.method = method;
             request.scheme = "https";
             request.authority = "example.com";
             request.path = "/";
@@ -2161,6 +2172,124 @@ UTF_AUTO_TEST_CASE( Session_DataPathValidationTests )
         UTF_REQUIRE_EQUAL(
             events[ 1 ].errorCode.value(),
             Globals::ERROR_CODE_PROTOCOL_ERROR
+            );
+    }
+
+    /*
+     * A RESPONSE WHICH MAY NOT CARRY CONTENT AND SENDS SOME IS MALFORMED - RFC 9110 sections
+     * 9.3.2, 15.3.5 and 15.4.5. The three shapes are the response to a HEAD, a 204 and a 304, and
+     * they are one arm rather than three because the session already tracks the single fact
+     * behind them: this message expects no content
+     *
+     * It is not a nicety. A client which delivers a body the peer was not allowed to send is a
+     * client two intermediaries can disagree with about where the response ended, which is the
+     * shape of every response smuggling defect - and the octets arrive on a stream the caller was
+     * told carries none
+     */
+
+    {
+        struct Script
+        {
+            const char*     method;
+            const char*     status;
+        };
+
+        const Script scripts[] =
+        {
+            { "HEAD", "200" },
+            { "GET",  "204" },
+            { "GET",  "304" },
+        };
+
+        for( std::size_t i = 0U; i < sizeof( scripts ) / sizeof( scripts[ 0 ] ); ++i )
+        {
+            Session session( StreamRole::Client, now );
+            PeerEncoder peer;
+
+            settle( session, now );
+
+            const auto streamId = session.submitRequest(
+                makeRequest( false /* hasBody */, scripts[ i ].method )
+                );
+
+            ( void ) produceText( session, now );
+
+            feedText(
+                session,
+                headersFrame( streamId, peer.response( scripts[ i ].status ), false, true ),
+                now
+                );
+
+            feedText( session, dataFrame( streamId, "body", false ), now );
+
+            UTF_REQUIRE( ! session.isClosed() );
+
+            const auto events = drain( session );
+
+            UTF_REQUIRE_EQUAL( events.size(), 2U );
+            UTF_REQUIRE( events[ 0 ].type == SessionEventType::Headers );
+
+            /*
+             * The octets never reach the caller: the stream is closed instead of a Data event
+             */
+
+            UTF_CHECK( events[ 1 ].type == SessionEventType::StreamClosed );
+            UTF_CHECK_EQUAL(
+                events[ 1 ].errorCode.value(),
+                Globals::ERROR_CODE_PROTOCOL_ERROR
+                );
+
+            /*
+             * And the peer is told, which is only possible because the judgement runs BEFORE the
+             * registry is - a DATA frame carrying END_STREAM would otherwise have closed the
+             * stream and 5.1 would forbid the RST_STREAM
+             */
+
+            UTF_CHECK_EQUAL(
+                countFrames( produceText( session, now ), Globals::FRAME_TYPE_RST_STREAM ),
+                1U
+                );
+        }
+    }
+
+    /*
+     * THE CONTROL, AND IT IS THE POINT OF THE ARM'S SHAPE. A zero-length DATA frame carrying
+     * END_STREAM is how a bodyless message legally ends, and rejecting "DATA on a 204" rather
+     * than "content on a 204" would refuse it - breaking the ordinary completion of every
+     * response this rule is about
+     */
+
+    {
+        Session session( StreamRole::Client, now );
+        PeerEncoder peer;
+
+        settle( session, now );
+
+        const auto streamId = session.submitRequest( makeRequest() );
+
+        ( void ) produceText( session, now );
+
+        feedText( session, headersFrame( streamId, peer.response( "204" ), false, true ), now );
+
+        feedText( session, dataFrame( streamId, std::string(), true /* endStream */ ), now );
+
+        UTF_REQUIRE( ! session.isClosed() );
+
+        const auto events = drain( session );
+
+        UTF_REQUIRE_EQUAL( events.size(), 3U );
+        UTF_REQUIRE( events[ 0 ].type == SessionEventType::Headers );
+        UTF_REQUIRE( events[ 1 ].type == SessionEventType::Data );
+        UTF_REQUIRE( events[ 1 ].endStream );
+        UTF_REQUIRE( events[ 1 ].data.empty() );
+
+        UTF_REQUIRE( events[ 2 ].type == SessionEventType::StreamClosed );
+        UTF_REQUIRE_EQUAL( events[ 2 ].errorCode.value(), Globals::ERROR_CODE_NO_ERROR );
+        UTF_REQUIRE( events[ 2 ].isMessageComplete );
+
+        UTF_REQUIRE_EQUAL(
+            countFrames( produceText( session, now ), Globals::FRAME_TYPE_RST_STREAM ),
+            0U
             );
     }
 
