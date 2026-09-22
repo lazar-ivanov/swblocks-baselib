@@ -6241,7 +6241,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 2029,
+   "line": 2041,
    "module": "utf_baselib_httpclient3",
    "name": "Http1Driver_AgainstTheLibraryHttpServerTests",
    "namespaces": []
@@ -6253,7 +6253,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1678,
+   "line": 1690,
    "module": "utf_baselib_httpclient3",
    "name": "Http1Driver_ChunkedTrailersAndBodilessTests",
    "namespaces": []
@@ -6265,7 +6265,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1622,
+   "line": 1634,
    "module": "utf_baselib_httpclient3",
    "name": "Http1Driver_InterimResponsesPrecedeTheFinalBlockTests",
    "namespaces": []
@@ -6277,7 +6277,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1939,
+   "line": 1951,
    "module": "utf_baselib_httpclient3",
    "name": "Http1Driver_RequestOnTheWireIsNotRetryableTests",
    "namespaces": []
@@ -6289,7 +6289,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1287,
+   "line": 1299,
    "module": "utf_baselib_httpclient3",
    "name": "Http1Driver_RequestResponseAndKeepAliveReuseTests",
    "namespaces": []
@@ -6301,7 +6301,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1789,
+   "line": 1801,
    "module": "utf_baselib_httpclient3",
    "name": "Http1Driver_RequestsThisDriverRefusesTests",
    "namespaces": []
@@ -6313,7 +6313,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1474,
+   "line": 1486,
    "module": "utf_baselib_httpclient3",
    "name": "Http1Driver_ReuseVerdictInputsTests",
    "namespaces": []
@@ -14694,7 +14694,7 @@
    "line": 83,
    "module": "utf_baselib_httpclient3",
    "ns": "utest",
-   "sha": "daccb94756764fcf8f2ed2fab939a868"
+   "sha": "adc892a20ba42034b5a276051b520b42"
   },
   {
    "file": "utf_baselib_httpclient4/TestClientSession.h",
@@ -20851,7 +20851,7 @@
    "line": 81,
    "module": "utf_baselib_httpclient3",
    "name": "utest",
-   "sha": "925989e283699265a82006161aa64739"
+   "sha": "7153f0edb51347a3a0ede41ec5d0da43"
   },
   {
    "file": "utf_baselib_httpclient4/TestClientSession.h",

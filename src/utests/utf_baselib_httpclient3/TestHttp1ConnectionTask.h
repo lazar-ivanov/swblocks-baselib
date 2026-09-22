@@ -891,6 +891,18 @@ namespace utest
 
             void peerClosedProbe()
             {
+                /*
+                 * The parser exists because onStartRequest( ) ran first, which is the ordering
+                 * this probe is built on - checked rather than assumed away, so that a future
+                 * change which breaks that ordering fails the case with a diagnosis instead of
+                 * dereferencing a null pointer. onPeerClosed( ) itself already guards it
+                 */
+
+                if( ! base_type::m_parser )
+                {
+                    return;
+                }
+
                 const std::string partial( "HTTP/1.1 200 OK\r\n" );
 
                 bl::eh::error_code ec;
