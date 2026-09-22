@@ -1677,6 +1677,19 @@ namespace bl
                 }
                 else
                 {
+                    /*
+                     * BL_TASKS_HANDLER_BEGIN_CHK_EC( ) is BEGIN + CHK_EC + CHK_CANCEL_IMPL
+                     * (TaskBase.h:165), and splitting the error check out of it above would
+                     * otherwise drop the cancellation check with it. Without this a write which
+                     * completed after requestCancel( ) set the flag, but before the posted socket
+                     * shutdown lands, would drain events and schedule one more write instead of
+                     * ending at once - bounded, since the shutdown runs next on the strand, but a
+                     * silent change to a handler's contract. Http1ConnectionTask.h:703 spells it
+                     * out the same way for the same reason
+                     */
+
+                    BL_TASKS_HANDLER_CHK_CANCEL_IMPL()
+
                     if( m_isPrefaceWritePending )
                     {
                         /*
