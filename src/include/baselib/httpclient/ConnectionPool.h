@@ -956,10 +956,21 @@ namespace bl
                 {
                     const auto& connection = entry -> current();
 
+                    /*
+                     * isReady FIRST, and it is not a style preference. The h2 driver's
+                     * negotiated( ) is not a const member - it IS the establishing task, so the
+                     * value is settled by the handshake - and what replaces the const is a
+                     * publication order plus a rule its class comment states in terms: read
+                     * state( ) first, and a reader which observes Connecting must not look.
+                     * isReady is the pool's own record of having observed Ready, so testing it
+                     * first is that rule; testing it last read the enum of a driver which may
+                     * still have been writing it
+                     */
+
                     if(
+                        entry -> isReady &&
                         connection &&
-                        HttpProtocol::Http11 == connection -> negotiated().protocol() &&
-                        entry -> isReady
+                        HttpProtocol::Http11 == connection -> negotiated().protocol()
                         )
                     {
                         return m_policy.maxConnectionsPerKeyHttp11;
