@@ -183,12 +183,29 @@ Call **both** `flushStreamWindowUpdate` and `flushConnectionWindowUpdate( false 
 post-registry site, after the padding has been credited. The existing `shouldSendWindowUpdate`
 threshold inside each prevents frame spam.
 
-**Why the connection half is not optional.** The connection padding credit has no flush either, and
-none of the four existing `flushConnectionWindowUpdate` sites — `consumed( )`, refused frame,
-judge-rejected, reap-closed-streams — is reachable from an *accepted* padding-only frame. A stream
-receiving only such frames drains the 65535-octet connection window with nobody to refill it: the
-peer's send window is legitimately zero and the **whole connection** wedges, which is worse than the
-stream-level defect this finding names. Verified at the source by the author.
+**The connection half is a no-op, and the justification below it was FALSE.** Corrected 2026-09-22
+by the implementing lane, and settled by its own red run.
+
+The paragraph here used to read: *"The connection padding credit has no flush either, and none of
+the four existing `flushConnectionWindowUpdate` sites — `consumed( )`, refused frame,
+judge-rejected, reap-closed-streams — is reachable from an accepted padding-only frame … the whole
+connection wedges, which is worse than the stream-level defect this finding names. Verified at the
+source by the author."*
+
+**It is reachable.** `handleData( )` ends in `reapClosedStreams( )`, which ends in
+`flushConnectionWindowUpdate( false )`. So the connection window is advertised on every DATA frame,
+padding-only included, and was never wedged. The red run confirms it: the **connection** assertion
+passed and only the **stream** assertion failed.
+
+**How the error was made, since it is the instructive part.** The author enumerated the four call
+sites and concluded none was reachable, without tracing whether `handleData( )`'s own path reaches
+one. Reading call sites in isolation rather than following the function to its end is the same
+failure this project has recorded repeatedly — and here it survived a reviewer who proposed it and an
+author who believed he had verified it.
+
+**The connection flush is kept anyway**, deliberately: it is harmless, threshold-gated, and keeps
+credit and advertisement at a single site. It is not load-bearing, and no future reader should treat
+it as fixing anything.
 
 **Boundary, restated more precisely than the earlier draft.** A padded frame carrying even one real
 byte already unwedges the stream, because `consumed( )` flushes the single `pendingCredit` counter
