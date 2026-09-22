@@ -3881,7 +3881,7 @@
    "namespaces": []
   },
   {
-   "body_sha": "42a7050896666bf707d675ce14c2397a",
+   "body_sha": "6bab77c644bf41ff195e052246b48951",
    "doc_sha": "312a4e53aae54528081b4605d4f51890",
    "file": "utf_baselib_httpclient4/TestClientSession.h",
    "fixture": null,
@@ -4409,7 +4409,7 @@
    "namespaces": []
   },
   {
-   "body_sha": "5d66cea01158cb4da849351a219050ff",
+   "body_sha": "e2ff0a01c23ea945d74ac0300ecf47de",
    "doc_sha": null,
    "file": "utf_baselib_httpclient/TestCookieJar.h",
    "fixture": null,
@@ -5635,7 +5635,7 @@
    "namespaces": []
   },
   {
-   "body_sha": "cc66a0b41f2d0e806c44244b7640e73e",
+   "body_sha": "2d50650f526a4fa79d094270a2ec63a0",
    "doc_sha": "7bbfccf8050b4ba77b7d1fd335e2b8bf",
    "file": "utf_baselib_h2client4/TestConnectionPool.h",
    "fixture": null,
@@ -8635,6 +8635,30 @@
    "namespaces": []
   },
   {
+   "body_sha": "c3bdcfdad006a0f1917cba84ae74528a",
+   "doc_sha": "154611420209941799588486c4e6c87b",
+   "file": "utf_baselib_http2/TestPeerCloseErrorCodes.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 397,
+   "module": "utf_baselib_http2",
+   "name": "PeerCloseErrorCodes_PeerShutsDownWithUnreadDataTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "1535d5783ca71701ecd2f5467ec90d3d",
+   "doc_sha": "c1694b224fef64f8e7f1b3d234d44b36",
+   "file": "utf_baselib_http2/TestPeerCloseErrorCodes.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 442,
+   "module": "utf_baselib_http2",
+   "name": "PeerCloseErrorCodes_ReaderSendsAfterPeerShutdownTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "a335d769dc79079a2e99edde1ceff394",
    "doc_sha": null,
    "file": "utf_baselib_security2/TestPemKeyFormats.h",
@@ -9201,7 +9225,7 @@
    "namespaces": []
   },
   {
-   "body_sha": "191b1710ff6673bcc1a1c3867325f22b",
+   "body_sha": "d6ff97f94963d0363c8309edb4817d95",
    "doc_sha": null,
    "file": "utf_baselib_h2core/TestSession.h",
    "fixture": null,
@@ -9273,7 +9297,7 @@
    "namespaces": []
   },
   {
-   "body_sha": "22c089ed95cb65c1b8b5069777c34740",
+   "body_sha": "178c8579d78e367d7763b1563f6fe089",
    "doc_sha": null,
    "file": "utf_baselib_h2core/TestSession.h",
    "fixture": null,
@@ -9453,7 +9477,7 @@
    "namespaces": []
   },
   {
-   "body_sha": "0f2aad39359e0fc917e358b9402a2427",
+   "body_sha": "c23611a66f36101deffcaf70dcfdcbee",
    "doc_sha": null,
    "file": "utf_baselib_h2core/TestStreamStates.h",
    "fixture": null,
@@ -10059,7 +10083,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1450,
+   "line": 1464,
    "module": "utf_baselib_tasks2",
    "name": "Tasks_MultiOperationTaskIsClosingTests",
    "namespaces": []
@@ -10071,7 +10095,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1445,
+   "line": 1459,
    "module": "utf_baselib_tasks2",
    "name": "Tasks_MultiOperationTaskMultiThreadedTests",
    "namespaces": []
@@ -10095,7 +10119,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1440,
+   "line": 1454,
    "module": "utf_baselib_tasks2",
    "name": "Tasks_MultiOperationTaskSingleThreadedTests",
    "namespaces": []
@@ -10785,7 +10809,7 @@
    "namespaces": []
   },
   {
-   "body_sha": "b1c0c9177a274d9420e770b9eeb37893",
+   "body_sha": "a121c1812a86ab810628e24f986a976e",
    "doc_sha": null,
    "file": "utf_baselib_basictask/TestBaselibThreadPool.h",
    "fixture": null,
@@ -12011,7 +12035,7 @@
    "namespaces": []
   },
   {
-   "body_sha": "a4a7966ddc9ee083af9377a668ea3d8e",
+   "body_sha": "183a4dfed3b67549a489c9272a647bf0",
    "doc_sha": null,
    "file": "utf_baselib_http2/TestTlsHandshakeRetryClassifier.h",
    "fixture": null,
@@ -12029,7 +12053,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 270,
+   "line": 324,
    "module": "utf_baselib_http2",
    "name": "TlsHandshakeRetryClassifier_TruncationAgreementTests",
    "namespaces": []
@@ -14537,6 +14561,14 @@
    "sha": "3ef7c9554f2571c73104b7d236b2c4cd"
   },
   {
+   "file": "utf_baselib_http2/TestPeerCloseErrorCodes.h",
+   "label": "namespace peerclose",
+   "line": 58,
+   "module": "utf_baselib_http2",
+   "ns": "utest",
+   "sha": "ad395437b3a6aa6ec728c7cad3a28e4e"
+  },
+  {
    "file": "utf_baselib_http2/TestTcpPreHandshakeStageTls.h",
    "label": "namespace prehandshake",
    "line": 59,
@@ -14614,7 +14646,7 @@
    "line": 71,
    "module": "utf_baselib_httpclient",
    "ns": "utest",
-   "sha": "23140ef3df07b78fa5980dd9525908e2"
+   "sha": "18ef25a155680c69dc2c7b122b6d0d49"
   },
   {
    "file": "utf_baselib_httpclient/TestRedirectPolicy.h",
@@ -16590,12 +16622,12 @@
    "line": 911,
    "module": "utf_baselib_tasks2",
    "ns": "<anonymous>",
-   "sha": "eee8b71c2f4d651f1aabc94347934565"
+   "sha": "3300c06328cdcf43ec03fdc98118e77a"
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
    "label": "/**",
-   "line": 1281,
+   "line": 1295,
    "module": "utf_baselib_tasks2",
    "ns": "<anonymous>",
    "sha": "205c72b1c4de8802afd006f30c1fa4e8"
@@ -16603,7 +16635,7 @@
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
    "label": "void runIsClosingSuite( SAA_in const std::size_t threadsCoun",
-   "line": 1290,
+   "line": 1304,
    "module": "utf_baselib_tasks2",
    "ns": "<anonymous>",
    "sha": "5eb2e0e692c0a5a932e3c633bf12f0e8"
@@ -18308,6 +18340,19 @@
     },
     {
      "includes": [
+      "<baselib/tasks/TcpBaseTasks.h>",
+      "<baselib/core/NetUtils.h>",
+      "<baselib/core/OS.h>",
+      "<baselib/core/TimeUtils.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<string>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_http2/TestPeerCloseErrorCodes.h"
+    },
+    {
+     "includes": [
       "<baselib/tasks/Algorithms.h>",
       "<baselib/tasks/ExecutionQueue.h>",
       "<baselib/tasks/ExecutionQueueImpl.h>",
@@ -18377,7 +18422,9 @@
       "\"TestTlsPeerVerification.h\"",
       "\"TestAsioSslStreamWrapper.h\"",
       "\"TestTcpPreHandshakeStageTls.h\"",
-      "\"TestTlsHandshakeRetryClassifier.h\""
+      "\"TestTlsHandshakeRetryClassifier.h\"",
+      "\"TestPeerCloseErrorCodes.h\"",
+      "\"TestPeerCloseErrorCodes.h\""
      ],
      "path": "utf_baselib_http2/UtfBaselibHttp2Main.cpp"
     }
@@ -18391,6 +18438,8 @@
     "AsioSslStreamWrapper_FreshStateTests",
     "AsioSslStreamWrapper_NegotiatedParametersAreEmptyBeforeHandshakeTests",
     "AsioSslStreamWrapper_StrandConstructorTests",
+    "PeerCloseErrorCodes_PeerShutsDownWithUnreadDataTests",
+    "PeerCloseErrorCodes_ReaderSendsAfterPeerShutdownTests",
     "TcpPreHandshakeStageTls_RetryableHandshakeErrorTests",
     "TcpPreHandshakeStageTls_StageRunsBeforeHandshakeTests",
     "TcpPreHandshakeStageTls_StageRunsOncePerAttemptTests",
@@ -20683,6 +20732,13 @@
    "sha": "7bd356f6dc963ed5a9e6fbc060cda279"
   },
   {
+   "file": "utf_baselib_http2/TestPeerCloseErrorCodes.h",
+   "line": 56,
+   "module": "utf_baselib_http2",
+   "name": "utest",
+   "sha": "b91dc523fb92e853bbea19d1e0003dd6"
+  },
+  {
    "file": "utf_baselib_http2/TestTcpPreHandshakeStageTls.h",
    "line": 57,
    "module": "utf_baselib_http2",
@@ -20750,7 +20806,7 @@
    "line": 69,
    "module": "utf_baselib_httpclient",
    "name": "utest",
-   "sha": "2e9b4c7d3d0b002b026d37af0d25a658"
+   "sha": "e76c7daa7a1547fdd8eac57143fb1d74"
   },
   {
    "file": "utf_baselib_httpclient/TestRedirectPolicy.h",
@@ -21191,7 +21247,7 @@
    "line": 448,
    "module": "utf_baselib_tasks2",
    "name": "<anonymous>",
-   "sha": "78ac3974e2c8aeff16c502678bfe9b8c"
+   "sha": "21ba359b6a2a4f10d51c55944e51b20c"
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTaskComposition.h",
