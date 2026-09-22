@@ -2101,8 +2101,9 @@ namespace bl
 
                 /*
                  * The connection queue is flushed the way TcpServerBase flushes its own: cancel
-                 * everything, do not wait for it here, and let the queue's own disposal join. A
-                 * connection which is cancelled sends no GOAWAY - a request cancel does not end an
+                 * everything, and take the queue's own join - which happens HERE rather than at a
+                 * reset( ), for the reason below. A connection which is cancelled sends no GOAWAY
+                 * - a request cancel does not end an
                  * h2 connection but a TASK cancel does, and there is no public door on a driver
                  * for "say GOAWAY and close" ( closeGracefully( ) is the driver's own, taken from
                  * its idle timer, its drained GOAWAY and its last stream ). What the pool does
@@ -2115,11 +2116,33 @@ namespace bl
                     task -> requestCancel();
                 }
 
+                /*
+                 * FLUSHED WITH THE WAIT, AND THE MEMBER IS NEVER RESET. runActions( )
+                 * dereferences m_eqConnections OUTSIDE the pool lock - it must, since pushing a
+                 * task to the queue under the lock is what rule L2 forbids - so resetting a
+                 * non-atomic ObjPtr here raced every batch already collected and not yet
+                 * executed: a null dereference, or a use-after-free of the pointer that batch
+                 * had read. Not resetting removes the race BY CONSTRUCTION rather than by
+                 * protocol - the member is then written once, in the constructor, and the queue
+                 * is disposed by its own ObjPtrDisposable when the pool is destroyed, which is
+                 * the path a never-disposed pool already takes.
+                 *
+                 * The join is not new and not moved: forceFlushNoThrow( true ) and the dispose( )
+                 * this used to reach through reset( ) pass flag-for-flag identical arguments to
+                 * flushInternal( ) - wait, discardPending, nothrowIfFailed, discardReady and
+                 * cancelExecuting, all true - so the same wait happens at the same point, with
+                 * the queue's observer proxy still connected through it.
+                 *
+                 * WHAT IT DOES NOT BUY: a push landing during the wait is accepted rather than
+                 * refused, since flushInternal( )'s predicate releases the queue lock and the
+                 * cancel sweep has already run - so disposal can block on an orphan's own idle
+                 * lifetime. That window is pre-existing ( today's reset( ) reaches the same wait
+                 * ) and is closed by the admission protocol of S6R.3, with H04a
+                 */
+
                 if( m_eqConnections )
                 {
-                    m_eqConnections -> forceFlushNoThrow( false /* wait */ );
-
-                    m_eqConnections.reset();
+                    m_eqConnections -> forceFlushNoThrow( true /* wait */ );
                 }
 
                 BL_NOEXCEPT_END()
