@@ -32,3 +32,9 @@
 
 --log_level=message --run_test=TlsHandshakeRetryClassifier_RetryableErrorSetTests
 --log_level=message --run_test=TlsHandshakeRetryClassifier_TruncationAgreementTests
+
+--log_level=message --run_test=PeerCloseErrorCodes_PeerShutsDownWithUnreadDataTests
+--log_level=message --run_test=PeerCloseErrorCodes_ReaderSendsAfterPeerShutdownTests
+
+--log_level=message --run_test=PeerCloseErrorCodes_PeerShutsDownWithUnreadDataTests
+--log_level=message --run_test=PeerCloseErrorCodes_ReaderSendsAfterPeerShutdownTests
