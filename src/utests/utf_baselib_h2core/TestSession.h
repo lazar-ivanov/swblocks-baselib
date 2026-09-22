@@ -482,6 +482,38 @@ namespace utest
         }
 
         /**
+         * @brief The declared length of every frame in a buffer, in order
+         *
+         * frameTypes( )'s sibling, for the cases whose subject is whether a frame FITS - the
+         * peer's SETTINGS_MAX_FRAME_SIZE bounds the Length field, and nothing on the read side of
+         * our own tests would notice a frame five octets over it
+         */
+
+        inline std::vector< std::uint32_t > frameLengths( SAA_in const std::string& bytes )
+        {
+            std::vector< std::uint32_t > lengths;
+
+            std::size_t offset = 0U;
+
+            while( offset + 9U <= bytes.size() )
+            {
+                const auto length =
+                    ( static_cast< std::uint32_t >(
+                        static_cast< unsigned char >( bytes[ offset ] ) ) << 16 ) |
+                    ( static_cast< std::uint32_t >(
+                        static_cast< unsigned char >( bytes[ offset + 1U ] ) ) << 8 ) |
+                      static_cast< std::uint32_t >(
+                        static_cast< unsigned char >( bytes[ offset + 2U ] ) );
+
+                lengths.push_back( length );
+
+                offset += 9U + length;
+            }
+
+            return lengths;
+        }
+
+        /**
          * @brief The stream identifier of every frame in a buffer, in order
          *
          * frameTypes( )'s sibling. WHICH stream a frame is for is the whole question once one
@@ -2451,6 +2483,61 @@ UTF_AUTO_TEST_CASE( Session_WriteSchedulingTests )
                 Globals::FRAME_FLAG_END_HEADERS,
             0U
             );
+    }
+
+    /*
+     * ... AND THE PRIORITY FIELDS ARE INSIDE THAT BUDGET, NOT ON TOP OF IT. A profile which sets
+     * headersPriority adds five octets - E, Stream Dependency and Weight - to the HEADERS frame,
+     * and they are counted in its Length like any other payload (RFC 9113 6.2). A first fragment
+     * sized at the whole of the peer's SETTINGS_MAX_FRAME_SIZE therefore produces a frame the
+     * peer must answer with FRAME_SIZE_ERROR, which is a connection error (4.2)
+     */
+
+    {
+        Http2Profile prioritized;
+
+        prioritized.headersPriority.isSet = true;
+        prioritized.headersPriority.streamDependency = 0U;
+        prioritized.headersPriority.weight = 255U;
+        prioritized.headersPriority.exclusive = true;
+
+        Session session( StreamRole::Client, now, prioritized );
+
+        settle( session, now );
+
+        auto request = makeRequest();
+
+        request.headers.append( "x-large", std::string( 100000U, 'h' ) );
+
+        ( void ) session.submitRequest( request );
+
+        const auto out = produceText( session, now );
+        const auto types = frameTypes( out );
+        const auto lengths = frameLengths( out );
+
+        UTF_REQUIRE( types.size() >= 2U );
+        UTF_REQUIRE_EQUAL( types[ 0 ], Globals::FRAME_TYPE_HEADERS );
+
+        /*
+         * The flag is asserted so that this cannot pass by the priority never being emitted at all
+         */
+
+        UTF_REQUIRE_EQUAL(
+            static_cast< std::uint8_t >( out[ 4U ] ) & Globals::FRAME_FLAG_PRIORITY,
+            static_cast< std::uint8_t >( Globals::FRAME_FLAG_PRIORITY )
+            );
+
+        /*
+         * The first fragment fills the budget exactly - the five octets come out of it rather
+         * than being added to it - and every frame after it is within the same bound
+         */
+
+        UTF_REQUIRE_EQUAL( lengths[ 0 ], session.peerMaxFrameSize() );
+
+        for( std::size_t i = 0U; i < lengths.size(); ++i )
+        {
+            UTF_REQUIRE( lengths[ i ] <= session.peerMaxFrameSize() );
+        }
     }
 
     /*

@@ -3616,10 +3616,21 @@ namespace bl
 
                 const auto maxFragment = static_cast< std::size_t >( m_peerMaxFrameSize );
 
+                /*
+                 * THE PRIORITY FIELDS COME OUT OF THE FIRST FRAGMENT'S BUDGET, NOT ON TOP OF IT.
+                 * They are inside the HEADERS frame's Length (6.2), so a first fragment sized at
+                 * the whole of the peer's SETTINGS_MAX_FRAME_SIZE produces a frame up to five
+                 * octets over it - which 4.2 makes a connection error the peer is entitled to
+                 * raise. No underflow: the setting is never below 16384, which applyPeerSettings( )
+                 * enforces
+                 */
+
+                const auto firstMaxFragment = maxFragment - FrameCodec::prioritySize( priority );
+
                 const auto* const data =
                     block.empty() ? nullptr : reinterpret_cast< const std::uint8_t* >( block.data() );
 
-                const auto first = std::min< std::size_t >( block.size(), maxFragment );
+                const auto first = std::min< std::size_t >( block.size(), firstMaxFragment );
                 const bool endHeaders = first == block.size();
 
                 wire_buffer_t frames;
