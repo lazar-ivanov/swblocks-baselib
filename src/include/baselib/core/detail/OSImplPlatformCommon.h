@@ -965,16 +965,27 @@ namespace bl
         }
 
         /**
-         * @brief Whether this platform reports a peer's orderly close as a connection reset when
-         * data it sent is still unread in the local receive buffer
+         * @brief Whether this platform can report a peer ending the conversation as a connection
+         * RESET rather than as an end of stream
          *
-         * This is a property of the TCP stack and not of any protocol above it. When a socket is
-         * closed while its receive buffer still holds data the peer sent, Windows answers the
-         * unread data with an abortive close - it sends RST, and the local side's next read fails
-         * with WSAECONNRESET (system:10054, "An existing connection was forcibly closed by the
-         * remote host"). POSIX sends FIN in the same situation and the local side sees an orderly
-         * end of stream, which surfaces as asio::error::eof or, through a TLS stream, as a
-         * truncation.
+         * MEASURED: a peer which accepted and then went away during a TLS handshake produced
+         * WSAECONNRESET (system:10054, "An existing connection was forcibly closed by the remote
+         * host") on Windows, where the same exchange on Linux reported an orderly end of stream -
+         * asio::error::eof, or a truncation through a TLS stream. The handshake retry was
+         * unreachable on Windows until this code was accepted.
+         *
+         * WHY is NOT settled, and an earlier version of this comment got it wrong. It said
+         * Windows "sends RST where POSIX sends FIN" when a socket is closed with unread data.
+         * That is not a platform difference at all: Linux close( ) with unread data also sends
+         * RST (RFC 2525 section 2.17, LINUX_MIB_TCPABORTONCLOSE).
+         *
+         * The leading hypothesis is the one recorded for
+         * peerCloseCanBeReportedAsConnectionAborted( ) below, and the two observables are
+         * probably ONE mechanism: tasks shut down with shutdown_both, shutting down the receive
+         * side on Windows resets the connection if anything arrives afterwards, and whether the
+         * resulting RST surfaces as 10054 or as 10053 may depend only on whether a send of ours
+         * was outstanding when it landed. A control would settle it; until then both predicates
+         * name what was observed and not why.
          *
          * The consequence for callers is that the two conditions "the peer closed" and "the peer
          * reset" are DISTINGUISHABLE on POSIX and are NOT distinguishable on Windows, because the

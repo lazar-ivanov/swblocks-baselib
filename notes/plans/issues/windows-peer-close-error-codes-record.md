@@ -13,18 +13,24 @@ Windows matrix run, and the cause was the same.
 "The peer went away" is one event. It reaches a caller under **four** different error codes
 depending on the platform, the I/O model and what the connection was doing at the time.
 
-| How the peer ended it | POSIX | Windows |
+| What was observed | POSIX | Windows |
 |---|---|---|
-| Orderly close, nothing unread | `eof` | `eof` |
-| Orderly close, data still unread locally | `eof` | **`connection_reset`** (WSAECONNRESET, 10054) |
-| Close landing while a read is outstanding | `eof` | **`connection_aborted`** (WSAECONNABORTED, 10053) |
+| Peer closed, ordinary case | `eof` | `eof` |
+| Peer went away during a TLS handshake | `eof` / truncation | **`connection_reset`** (WSAECONNRESET, 10054) |
+| Peer closed during a full-duplex transfer | `eof` | **`connection_aborted`** (WSAECONNABORTED, 10053) |
 | Orderly close of a TLS stream | `asio.ssl.stream:1` or `SSL_R_SHORT_READ` | same |
 
-Two independent mechanisms produce the two Windows-only rows:
+The left column is what was MEASURED in each case, not a claim about every close. The two
+Windows-only rows are two observables and may well be **one mechanism seen twice** - see below.
 
-**1. The close is abortive when data is unread.** Closing a socket whose receive buffer still holds
-bytes the peer sent makes Windows send **RST** where POSIX sends FIN. The local side's next read
-then fails with `WSAECONNRESET` rather than reporting an orderly end of stream.
+**1. A peer close can arrive as a RESET.** Measured: a peer which accepted and then went away
+mid-handshake produced `WSAECONNRESET` on Windows where Linux reported `eof` or a truncation, and
+the handshake retry was unreachable there until the code was accepted.
+
+An earlier version of this record explained it as "Windows sends RST where POSIX sends FIN when
+data is unread". **That is not a platform difference** - Linux `close()` with unread data also sends
+RST (RFC 2525 section 2.17, `LINUX_MIB_TCPABORTONCLOSE`). The mechanism is **not settled**, and the
+hypothesis below covers this row too.
 
 **2. A peer close can arrive as an ABORT rather than an end of stream.** Measured
 (`category='system' value=10053`), mechanism **not settled**. An earlier version of this record
@@ -33,7 +39,9 @@ claimed it was a pending overlapped read being completed by the local stack on t
 `eof` (`asio/detail/impl/socket_ops.ipp`, the "Check for connection closed" branch), which is the
 ordinary graceful path. `10053` requires the connection to have been genuinely aborted.
 
-The leading hypothesis, **not yet confirmed by a control**: every task shuts down with
+The leading hypothesis, **not yet confirmed by a control**, and it would explain BOTH Windows rows
+as one mechanism - whether the RST surfaces as 10054 or 10053 may depend only on whether a send of
+ours was outstanding when it landed: every task shuts down with
 `shutdown_both` (`TcpBaseTasks.h:325`), and on Windows shutting down the RECEIVE side resets the
 connection if data arrives afterwards. A frame sent after the peer did that - a late
 `WINDOW_UPDATE` - would draw a RST, and a RST in reply to our own send completes an outstanding
@@ -45,10 +53,8 @@ the code ends the connection gracefully but does not recover what the reset thre
 reaching a read still hands over whatever was already queued before reporting the error, and
 `ECONNABORTED` is an `accept()` error a read never produces at all.
 
-An earlier version of this record said "Windows sends RST where POSIX sends FIN when data is
-unread". **That is not a Windows/POSIX difference** - Linux `close()` with unread data also sends
-RST (RFC 2525 section 2.17, `LINUX_MIB_TCPABORTONCLOSE`). What differs is `shutdown(SD_RECEIVE)`
-resetting on subsequent arrivals, and the receive-buffer discard above.
+What differs for a read is the receive-buffer discard above: a RST on Windows drops what is still
+unread, where Linux hands queued bytes over before reporting the error.
 
 **Mechanism 2 is a race**, which is what makes it expensive to find: whether a read happens to be
 outstanding at the instant the peer closes varies run to run, so code which does not expect the

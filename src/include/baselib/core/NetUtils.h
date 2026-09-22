@@ -292,11 +292,15 @@ namespace bl
          *
          * The same peer behaviour - "the peer went away" - reaches us under DIFFERENT error codes
          * on Windows than on POSIX, because the divergence is in the TCP stack and in the I/O
-         * model, below anything this library writes. There are two separate mechanisms:
+         * model, below anything this library writes. Two observables, which may well be one
+         * mechanism seen twice:
          *
-         *   1. A socket closed while data the peer sent is still unread is closed ABORTIVELY on
-         *      Windows: it sends RST where POSIX sends FIN, so the next read fails with
-         *      WSAECONNRESET (system:10054) instead of reporting an orderly end of stream.
+         *   1. A peer ending the conversation can arrive as WSAECONNRESET (system:10054)
+         *      rather than as an end of stream. MEASURED, on a TLS handshake whose peer
+         *      accepted and went away, where Linux reported eof or a truncation. An earlier
+         *      version of this comment blamed "RST where POSIX sends FIN on unread data";
+         *      that is NOT a platform difference - Linux close( ) with unread data also
+         *      sends RST. The mechanism is NOT settled; see the os:: predicates.
          *
          *   2. A peer ending the conversation can arrive as WSAECONNABORTED (system:10053) rather
          *      than as an end of stream. This one is MEASURED but its mechanism is NOT settled -
