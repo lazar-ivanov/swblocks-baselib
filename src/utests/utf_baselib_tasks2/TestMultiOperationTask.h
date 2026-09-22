@@ -1068,8 +1068,22 @@ namespace
         {
             /*
              * Three operations fail, one after another, with nothing cancelled - so all three
-             * errors are genuine and arrive while the task is already closing. The first one
-             * wins and there is still exactly one completion
+             * errors are genuine and arrive while the task is already closing, a GENUINE error
+             * is what the task reports, and there is still exactly one completion
+             *
+             * WHICH of the three is reported is deliberately not asserted. The mix-in records the
+             * first error to ARRIVE - MultiOperationTask.h's 'if( eptr && ! m_firstError )' under
+             * the lock - and arrival order is not the timer ladder's order. The ladder only
+             * spaces the timers 60ms apart; a handler stalled longer than that lets the next
+             * operation's error be recorded first, which is legal and is what the mix-in promises.
+             * Asserting "multiop-failure-0" asserted the ladder instead of the contract, and
+             * failed roughly one run in ten on a loaded or emulated host - it was seen on
+             * win-a64-vc143-debug and win-x86-vc143-release in the 2026-09-21 matrix
+             *
+             * Nothing is lost by not naming the index. The property this case exists for is that
+             * all three errors are genuine and one completion happens; that a genuine error beats
+             * the self inflicted operation_aborted of a cancelled sibling is pinned deterministically
+             * by the single-failure case above, which has no ordering to be ambiguous about
              */
 
             MultiOperationProbeOptions options( 3U, 3U /* failures */ );
@@ -1091,7 +1105,7 @@ namespace
             UTF_REQUIRE_THROW_MESSAGE(
                 cpp::safeRethrowException( taskImpl -> exception() ),
                 bl::UnexpectedException,
-                "multiop-failure-0"
+                "multiop-failure-"
                 );
         }
 
