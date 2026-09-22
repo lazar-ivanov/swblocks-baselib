@@ -1642,35 +1642,67 @@ namespace bl
             {
                 BL_UNUSED( bytesTransferred );
 
-                BL_TASKS_HANDLER_BEGIN_CHK_EC()
+                BL_TASKS_HANDLER_BEGIN()
+
+                /*
+                 * A peer close is classified HERE as well as in onRead( ), and for the same
+                 * reason: the conversation can end while a write is outstanding just as easily as
+                 * while a read is, and which of the two notices first is a race rather than a
+                 * meaningful difference
+                 *
+                 * This used to be BL_TASKS_HANDLER_BEGIN_CHK_EC( ), which turns any error into an
+                 * exception, so a peer which went away while we still had a frame in flight failed
+                 * the whole task with a diagnostic identical to the one a genuine write error
+                 * produces. onRead( ) had asked isPeerClosed( ) since the beginning; the write
+                 * path simply never did, which made the classification depend on which handler the
+                 * ending happened to reach first
+                 *
+                 * Nothing is lost by ending gracefully here. A stream whose headers have been
+                 * produced is already non-retryable, and onPeerClosed( ) is what reports every
+                 * still-open stream as ended by the peer
+                 */
 
                 m_isWriteInFlight = false;
 
-                if( m_isPrefaceWritePending )
+                if( ec )
                 {
+                    if( isPeerClosed( ec ) )
+                    {
+                        onPeerClosed();
+                    }
+                    else
+                    {
+                        BL_TASKS_HANDLER_CHK_EC( ec );
+                    }
+                }
+                else
+                {
+                    if( m_isPrefaceWritePending )
+                    {
+                        /*
+                         * The preface is away, which is exactly where design 5.7's connect deadline
+                         * ends - see onProtocolNegotiated( ) for why it is not disarmed there
+                         */
+
+                        m_isPrefaceWritePending = false;
+
+                        base_type::cancelConnectDeadline();
+                    }
+
                     /*
-                     * The preface is away, which is exactly where design 5.7's connect deadline
-                     * ends - see onProtocolNegotiated( ) for why it is not disarmed there
+                     * produce( ) is what reaps a stream our own last frame closed, so its events are
+                     * drained here as well as on the read path - a peer which says nothing further
+                     * would otherwise leave that closure undelivered
                      */
 
-                    m_isPrefaceWritePending = false;
+                    drainSessionEvents();
 
-                    base_type::cancelConnectDeadline();
+                    applyCommands();
+
+                    pumpAllBodies();
+
+                    pumpWrites();
                 }
-
-                /*
-                 * produce( ) is what reaps a stream our own last frame closed, so its events are
-                 * drained here as well as on the read path - a peer which says nothing further
-                 * would otherwise leave that closure undelivered
-                 */
-
-                drainSessionEvents();
-
-                applyCommands();
-
-                pumpAllBodies();
-
-                pumpWrites();
 
                 BL_TASKS_HANDLER_END_MULTIOP()
             }
