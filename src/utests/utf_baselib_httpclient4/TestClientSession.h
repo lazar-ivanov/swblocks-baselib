@@ -1598,6 +1598,62 @@ UTF_AUTO_TEST_CASE( ClientSession_CookiesAreStoredMergedAndSentOnceTests )
 }
 
 /**
+ * @brief A cookie name is CASE SENSITIVE, so the merge may only drop a jar cookie the caller
+ * named byte for byte - RFC 6265 section 4.1.1, and the jar's own identity comparison
+ */
+
+UTF_AUTO_TEST_CASE( ClientSession_CookieMergeComparesNamesExactlyTests )
+{
+    using namespace bl;
+    using namespace bl::httpclient;
+
+    /*
+     * THE JAR ALREADY STORES sid AND SID AS TWO COOKIES and emits both, because its own identity
+     * comparison is byte-exact - so a case-insensitive merge is not a second opinion about
+     * cookie identity, it is the merge losing one of two cookies the jar deliberately kept. A
+     * caller's "sid" would suppress a session cookie named "SID" and the request would go out
+     * without it, which reads to the origin as a signed-out client
+     */
+
+    http::HeaderList caller;
+
+    caller.append( std::string( "cookie" ), std::string( "sid=fromcaller" ) );
+
+    const auto merged = SessionHeaders::buildRequestHeaders(
+        caller,
+        nullptr /* kindProfile */,
+        std::vector< std::string >() /* profileCodings */,
+        std::vector< std::string >() /* registeredCodings */,
+        false /* isStrict */,
+        "SID=fromjar; theme=dark" /* jarCookieValue */
+        );
+
+    const auto* const value = merged.tryGet( std::string( "cookie" ) );
+
+    UTF_REQUIRE( value );
+    UTF_REQUIRE_EQUAL( *value, std::string( "sid=fromcaller; SID=fromjar; theme=dark" ) );
+
+    /*
+     * ... and a name they really do share is still the caller's, which is the behaviour the
+     * exact comparison must not lose
+     */
+
+    const auto overridden = SessionHeaders::buildRequestHeaders(
+        caller,
+        nullptr /* kindProfile */,
+        std::vector< std::string >() /* profileCodings */,
+        std::vector< std::string >() /* registeredCodings */,
+        false /* isStrict */,
+        "sid=fromjar; theme=dark" /* jarCookieValue */
+        );
+
+    const auto* const overriddenValue = overridden.tryGet( std::string( "cookie" ) );
+
+    UTF_REQUIRE( overriddenValue );
+    UTF_REQUIRE_EQUAL( *overriddenValue, std::string( "sid=fromcaller; theme=dark" ) );
+}
+
+/**
  * @brief accept-encoding is the profile's list intersected with the REGISTERED decoders, and
  * strict mode sends the profile's list and hands back the raw body - design 6.5
  */
