@@ -274,7 +274,7 @@ UTF_AUTO_TEST_CASE( TlsHandshakeRetryClassifier_RetryableErrorSetTests )
      * build checks rather than one only the Windows matrix can reach
      */
 
-    if( os::pendingReceiveOnPeerCloseIsReportedAsAborted() )
+    if( os::peerCloseCanBeReportedAsConnectionAborted() )
     {
         UTF_REQUIRE(
             probe -> isRetryable(

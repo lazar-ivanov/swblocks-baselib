@@ -106,9 +106,9 @@ the new-module checklist, and the verification tiers.
 
 **Never compare an asio transport error code by hand.** "The peer went away" is one event that
 arrives as four different codes depending on platform, I/O model and what the connection was doing.
-Windows sends RST where POSIX sends FIN when data is unread (`connection_reset`), and completes a
-read that was already outstanding with `connection_aborted` — neither of which means on Windows what
-its POSIX namesake means.
+On Windows a peer close can arrive as `connection_reset` or as `connection_aborted` where POSIX
+reports an orderly end of stream — both measured. `connection_aborted` is NOT a plain FIN on a
+pending read (Asio maps that to `eof`), so do not reason from the POSIX meaning of either code.
 
 - Ask `net::isPeerClosedErrorCode()` — *is the conversation over?* — or
   `net::isOrderlyPeerCloseErrorCode()` — *did it end cleanly, so is a retry worth it?* They differ

@@ -993,33 +993,43 @@ namespace bl
         }
 
         /**
-         * @brief Whether this platform completes a receive which is ALREADY OUTSTANDING with a
-         * connection-abort error when the peer closes underneath it
+         * @brief Whether this platform can report a peer ending the conversation as a connection
+         * ABORT rather than as an end of stream
          *
-         * The second, separate way the same event - the peer ending the conversation - reaches a
-         * caller under a different name here than it does on POSIX. Windows I/O is overlapped: a
-         * read is lodged with the completion port before the peer's bytes arrive. When the peer
-         * closes at that moment the pending operation is completed by the LOCAL stack rather than
-         * by the peer's FIN, and it is completed with WSAECONNABORTED (system:10053, "An
-         * established connection was aborted by the software in your host machine"). POSIX
-         * delivers an orderly end of stream to a blocked or polled read instead, and reserves
-         * ECONNABORTED for accept().
+         * MEASURED, on win-x64-ccl16-debug, from inside the HTTP/2 driver's own classifier:
          *
-         * Whether a read happens to be outstanding at that instant is a race, so code which does
-         * not expect this code does not fail every time - it fails intermittently, which is how
-         * it is usually discovered. One such defect sat at roughly one run in eight.
+         *     DIAGNOSTIC isPeerClosed: category='system' value=10053 answer=0
          *
-         * Distinct from peerCloseWithUnreadDataIsReportedAsReset() above: that one is about the
-         * SHAPE OF THE CLOSE on the wire (RST instead of FIN), this one is about WHO COMPLETES a
-         * pending operation. Both are true on Windows and both are false on POSIX, but they are
-         * separate facts and a platform could have one without the other.
+         * 10053 is WSAECONNABORTED. The same exchange on Linux reports an orderly end of stream,
+         * and the driver failed about one run in eight on Windows until this code was accepted.
+         *
+         * WHY it arrives is NOT settled, and this predicate deliberately names the observable
+         * rather than a mechanism. What is ruled out: a plain FIN completing a read which was
+         * already outstanding does NOT produce it - Asio maps a stream-oriented receive that
+         * completes with no error and zero bytes to eof (asio/detail/impl/socket_ops.ipp, the
+         * "Check for connection closed" branch), which is the ordinary graceful path every IOCP
+         * server sees. So 10053 requires the connection to have been genuinely aborted.
+         *
+         * The leading hypothesis, not yet confirmed by a control: tasks shut down with
+         * shutdown_both (TcpBaseTasks.h, shutdownSocket), and on Windows shutting down the RECEIVE
+         * side makes the stack reset the connection if data arrives afterwards. A frame we send
+         * after the peer has done that - a late WINDOW_UPDATE, say - would draw a RST, and a RST in
+         * reply to our own send is exactly what completes an outstanding receive with 10053.
+         *
+         * If that is right it has a consequence worth knowing before relying on this: a RST also
+         * DISCARDS whatever is still unread in the local receive buffer on Windows, where Linux
+         * hands queued bytes to the application before reporting the error. Accepting the code
+         * makes the connection end gracefully; it does not recover data the reset threw away.
+         *
+         * Distinct from peerCloseWithUnreadDataIsReportedAsReset() above, which is about the shape
+         * of the close on the wire. Both are true on Windows and false on POSIX today, but they
+         * are separate observables and a platform could have one without the other.
          *
          * Prefer net::isPeerClosedErrorCode() / net::isOrderlyPeerCloseErrorCode() to asking this
-         * directly - see core/NetUtils.h, which is where these facts are turned into a decision
-         * about an asio error code.
+         * directly - see core/NetUtils.h.
          */
 
-        inline bool pendingReceiveOnPeerCloseIsReportedAsAborted() NOEXCEPT
+        inline bool peerCloseCanBeReportedAsConnectionAborted() NOEXCEPT
         {
             return isWindows;
         }

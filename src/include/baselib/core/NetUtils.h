@@ -298,12 +298,15 @@ namespace bl
          *      Windows: it sends RST where POSIX sends FIN, so the next read fails with
          *      WSAECONNRESET (system:10054) instead of reporting an orderly end of stream.
          *
-         *   2. Windows I/O is overlapped, so a read is lodged with the completion port before the
-         *      peer's bytes arrive. A close which lands while one is outstanding is completed by
-         *      the LOCAL stack with WSAECONNABORTED (system:10053), not by the peer's FIN.
+         *   2. A peer ending the conversation can arrive as WSAECONNABORTED (system:10053) rather
+         *      than as an end of stream. This one is MEASURED but its mechanism is NOT settled -
+         *      what is ruled out is a plain FIN on a pending read, which Asio maps to eof. See
+         *      os::peerCloseCanBeReportedAsConnectionAborted( ) for what is known and what is
+         *      only hypothesis, including a data-loss consequence if the hypothesis holds.
          *
-         * Neither code means what its POSIX namesake means. On POSIX a reset really is a reset and
-         * ECONNABORTED is an accept() error which a read never produces. So code which compares
+         * Neither code means what its POSIX namesake means for a READ. On POSIX a reset reaching a
+         * read still hands over whatever was already queued before reporting the error, and
+         * ECONNABORTED is an accept() error a read never produces at all. So code which compares
          * error codes by hand is correct on the platform it was written on and quietly wrong on
          * the other - and because mechanism 2 is a race, being wrong shows up as an INTERMITTENT
          * failure rather than an obvious one.
@@ -346,7 +349,7 @@ namespace bl
                 return true;
             }
 
-            if( os::pendingReceiveOnPeerCloseIsReportedAsAborted() && asio::error::connection_aborted == ec )
+            if( os::peerCloseCanBeReportedAsConnectionAborted() && asio::error::connection_aborted == ec )
             {
                 return true;
             }

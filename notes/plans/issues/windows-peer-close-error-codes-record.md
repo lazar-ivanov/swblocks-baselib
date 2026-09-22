@@ -26,22 +26,38 @@ Two independent mechanisms produce the two Windows-only rows:
 bytes the peer sent makes Windows send **RST** where POSIX sends FIN. The local side's next read
 then fails with `WSAECONNRESET` rather than reporting an orderly end of stream.
 
-**2. A pending overlapped receive is completed by the local stack.** Windows I/O is overlapped, so a
-read is lodged with the completion port before the peer's bytes arrive. A close which lands while
-one is outstanding is completed by the **local** stack with `WSAECONNABORTED`, not by the peer's
-FIN.
+**2. A peer close can arrive as an ABORT rather than an end of stream.** Measured
+(`category='system' value=10053`), mechanism **not settled**. An earlier version of this record
+claimed it was a pending overlapped read being completed by the local stack on the peer's FIN.
+**That is wrong**: Asio maps a stream-oriented receive completing with no error and zero bytes to
+`eof` (`asio/detail/impl/socket_ops.ipp`, the "Check for connection closed" branch), which is the
+ordinary graceful path. `10053` requires the connection to have been genuinely aborted.
 
-**Neither code means on Windows what its POSIX namesake means.** On POSIX a reset really is a reset
-- a refusal, distinguishable from a clean close and worth treating differently - and `ECONNABORTED`
-is an `accept()` error which a read never produces at all.
+The leading hypothesis, **not yet confirmed by a control**: every task shuts down with
+`shutdown_both` (`TcpBaseTasks.h:325`), and on Windows shutting down the RECEIVE side resets the
+connection if data arrives afterwards. A frame sent after the peer did that - a late
+`WINDOW_UPDATE` - would draw a RST, and a RST in reply to our own send completes an outstanding
+receive with `10053`. If that holds it carries a consequence: a RST also **discards unread receive
+data** on Windows, where Linux hands queued bytes over before reporting the error - so accepting
+the code ends the connection gracefully but does not recover what the reset threw away.
+
+**Neither code means on Windows what its POSIX namesake means for a read.** On POSIX a reset
+reaching a read still hands over whatever was already queued before reporting the error, and
+`ECONNABORTED` is an `accept()` error a read never produces at all.
+
+An earlier version of this record said "Windows sends RST where POSIX sends FIN when data is
+unread". **That is not a Windows/POSIX difference** - Linux `close()` with unread data also sends
+RST (RFC 2525 section 2.17, `LINUX_MIB_TCPABORTONCLOSE`). What differs is `shutdown(SD_RECEIVE)`
+resetting on subsequent arrivals, and the receive-buffer discard above.
 
 **Mechanism 2 is a race**, which is what makes it expensive to find: whether a read happens to be
 outstanding at the instant the peer closes varies run to run, so code which does not expect the
 code fails INTERMITTENTLY rather than every time. The HTTP/2 driver defect below sat at roughly one
 run in eight and was measured at 7 failures in 60 idle runs and 8 in 60 under load. Those rates are
-close enough to rule OUT load sensitivity, which is what the measurement was for - the race is
-between the peer's close and our own read, not between us and the machine. They are not identical
-and 60 runs cannot resolve a difference that small.
+close enough that the measurement found no evidence of load sensitivity. That is weaker than it
+first reads: each rate carries a 95% interval of roughly 5-24%, so even a twofold difference would
+survive these samples. What the pairing does support is that the race is between the peer's close
+and our own traffic rather than between the process and the machine.
 
 ## The three defects
 
@@ -92,7 +108,7 @@ Linux build checks what the Windows matrix structurally cannot.
 behaviour rather than the operating system:
 
 - `os::peerCloseWithUnreadDataIsReportedAsReset()` - mechanism 1
-- `os::pendingReceiveOnPeerCloseIsReportedAsAborted()` - mechanism 2
+- `os::peerCloseCanBeReportedAsConnectionAborted()` - mechanism 2
 
 Both are compile-time constants, so the branches fold away and neither platform pays for the other.
 Call sites should not ask these directly; they ask `net::`, which is where a fact about a TCP stack
@@ -123,9 +139,8 @@ iterations because mechanism 2 is a race. A change to transport error handling s
 Windows matrix, and an intermittent network failure there should be suspected of this before
 anything else.
 
-**Known remaining, not cleaned up by this change.** `tasks/TcpBaseTasks.h::isExpectedSocketException`
-still compares these codes by hand AND hard-codes the numeric 10053/10054 for Windows. It predates
-this work and answers a different question - whether an exception is worth logging - so it was left
-alone rather than changed without a test to justify it. It is, however, exactly the pattern this
-rule forbids going forward, and it is the obvious next candidate if anyone applies the rule
-retroactively.
+**Not an outlier, contrary to an earlier version of this record.**
+`tasks/TcpBaseTasks.h::isExpectedSocketException` uses the PORTABLE comparison -
+`eh::isErrorCondition( eh::errc::connection_aborted, ec )` at :190 - which already matches 10053 on
+Windows. The numeric WSA block beneath it is belt-and-braces, redundant rather than wrong. It
+answers a different question anyway (is this exception worth logging), so it needs no change.
