@@ -1,7 +1,8 @@
 # S6R.1 — design for the nine contained fixes
 
 **Status:** design, 2026-09-22. **Nothing implemented.** This is the artifact that must be agreed
-before code is written, per the review loop.
+before code is written, per the review loop. **Agreed 2026-09-22 — see §11a for by whom, on what
+text, and what the agreement does not claim.**
 
 **Scope:** the nine findings grouped as R1 in `astra-review-verification-record.md` — H02, H03a,
 H13, H14, H17, H26, H04b, H27, H28. Chosen because they touch **disjoint functions**, are each
@@ -54,7 +55,8 @@ S6R.2 will revisit these lines.
 policy in the tree, and building one against the `TcpBaseTasks` contract is not cheap.
 
 Use the strand instead — but **both posts must be issued from a handler already running on the
-strand**, which an earlier draft left unsaid and which is the whole of the determinism.
+strand**, which an earlier draft left unsaid and which is the whole of the determinism. (The
+unqualified wording was the reviewer's own, from round 1; the reviewer corrected it in round 2.)
 
 Issue `submit( )` and the probe post from inside a strand handler. Strand FIFO then orders
 `[ onStartRequest, probe ]` before either runs, and asio's rule that a completion handler is never
@@ -87,8 +89,9 @@ lock, no null-check in `runActions`.
 
 **Two earlier drafts of this section were wrong, and the second was worse than it looked.** The
 first changed only the reader, leaving the member's `reset( )` unordered against a batch's copy. The
-second added a move-out under the lock — mechanically correct, but I traced the residual to its end
-and **it still crashes, later and elsewhere**: `dispose( )` does `m_observerThis -> disconnect( );
+second added a move-out under the lock — mechanically correct, but the reviewer traced the residual
+to its end in round 2 (the author then verified both links at the source) and **it still crashes,
+later and elsewhere**: `dispose( )` does `m_observerThis -> disconnect( );
 m_observerThis.reset( );`, a post-dispose push binds that now-null proxy into the ready callback,
 and `onReadyObserver` dereferences it **unguarded** (`observerThis -> tryAcquireRef< >( )`) when the
 orphan task completes. The `if( ! m_observerThis )` guard below it is inside `onReady`, reached only
@@ -124,13 +127,17 @@ moves to the destructor — a path that already exists and is already exercised.
    scheduled, and not cancelled — so **`dispose( )` blocks until that orphan completes on its own**.
    For an attempt task the sweep already cancelled, that is immediate; for a driver scheduled from
    the fallback path, which the sweep never touches, it is the driver's idle lifetime —
-   `idleTimeout`, **300 s by default**, and unbounded if a caller disables it.
+   `ConnectionPoolPolicy::idleTimeout`, **300 s by default**, and unbounded if a caller disables it
+   or builds the pool with a factory that does not pass it on.
 
 **Face 2 is pre-existing and this change does not introduce it.** Today's `reset( )` → `dispose( )`
 → `flushInternal( wait = true )` releases the lock inside the same predicate wait, and the observer
 proxy is nulled only after that flush returns, so a push landing in today's wait produces exactly
-the same delay. What shape (A) removes are the two **crash** faces — the null member and the second
-draft's null-proxy completion. The delay is closed by S6R.3's admission protocol, with H04a.
+the same delay. What shape (A) removes are the **crash** faces: today's null member and the
+use-after-free of a copy racing its `reset( )`, and — had it shipped — the second draft's null-proxy
+completion. (An earlier wording counted "two crash faces, the null member and the second draft's
+null-proxy completion", which listed a face of a rejected draft as if it were in the tree and left
+out the use-after-free that is.) The delay is closed by S6R.3's admission protocol, with H04a.
 
 So the honest claim is: **this buys the crash; in the narrower sub-window a pre-existing shutdown
 delay bounded by the idle lifetime remains.**
@@ -169,7 +176,8 @@ qualifier turns out to matter more than this finding states.
 *(Lane-reported.)*
 
 **Change — BOTH windows.** An earlier draft flushed only the stream, which would have fixed the
-stream and left the **connection** wedged in the same scenario.
+stream and left the **connection** wedged in the same scenario. (Found by the reviewer in round 1;
+verified at the source by the author before the change was made.)
 
 Call **both** `flushStreamWindowUpdate` and `flushConnectionWindowUpdate( false )` at the
 post-registry site, after the padding has been credited. The existing `shouldSendWindowUpdate`
@@ -234,8 +242,17 @@ author.)*
 **Change.** A small render helper that brackets when the host contains `:`, used at both
 concatenations.
 
-**What must not change.** The **unbracketed** form is correct for the resolver, for SNI and for
-certificate verification. Bracket at render time only — do not normalise the stored host.
+**What must not change.** The **unbracketed** form is what the resolver takes, what the SNI
+decision is computed from, and what certificate verification matches. Bracket at render time only —
+do not normalise the stored host.
+
+*(Reviewer's precision, raised in round 1 and applied in round 3. The sentence used to say the
+unbracketed form is "correct for SNI". More exactly: SNI is **not sent** for a host that parses as an
+address — `TcpSslBaseTasks.h` tests `make_address( hostName )` before `SSL_set_tlsext_host_name` —
+and that decision is computed from the bare form; a bracketed host would fail to parse and SNI would
+go out *with* brackets, which is worse than a bare literal. Verification uses the iPAddress SAN
+entries. So the bare stored form is what makes the no-SNI-for-literals rule fire — a stronger reason
+not to normalise it than "correct for SNI" conveyed.)*
 
 **Test.** Nearly free: the existing tunnel test already asserts exact CONNECT bytes for a DNS name;
 add an `"::1"` sibling. Pure unit, no network.
@@ -340,6 +357,39 @@ neither reader got H03a right alone.
 **What agreement does and does not mean.** It means the intended change is correct, complete, and
 bounded, and that a lane may start. It does **not** mean anything has been demonstrated — nothing in
 this design has been built or run, and §11 lists what each fix owes before it can be called done.
+
+**Reviewer's confirmation, 2026-09-22 (Claude Fable 5.1), on commit `7389c7b` read against the
+source.** The four contingent edits are applied and correct. On top of them the reviewer added, under
+the maintainer's process change of the same date and uncommitted for the orchestrator's review: three
+provenance notes (H02's test wording, H03a's residual trace, H14's connection half), two tightenings
+inside face 2 of the H03a residual (the policy field's full name and the factory clause; the crash
+faces recounted), and the H26 SNI precision carried from round 1. None changes a decision. With those
+in, **the reviewer agrees the design is ready for implementation.**
+
+What the final round verified at the source, so this agreement is checkable rather than taken on
+trust:
+
+- the block shape (A) replaces is exactly `ConnectionPool.h:2118-2123`, and after the change `:841`
+  is the only write to `m_eqConnections`;
+- `forceFlushNoThrow( true )` (`ExecutionQueueImpl.h:1420-1432`) and `dispose( )` (`:1540-1555`)
+  pass flag-for-flag identical arguments to `flushInternal`;
+- `flushInternal`'s wait is a predicate loop on `! hasPendingOrExecuting( )` that releases the queue
+  lock and is woken only by `onReady`'s `notify_all( )` (`:569`), with the `cancelExecuting` sweep
+  run once before it — which is both why `forceFlushNoThrow`'s `BL_ASSERT( false == wait ||
+  isEmptyInternal( ) )` cannot trip on a residual push and why face 2 of the residual exists;
+- the crash chain of the rejected second draft: `dispose( )` nulls `m_observerThis` (`:1557-1560`);
+  `pushInternalNoLock` (`:717`) has no disposed gate and ends in `padExecutingQueueNothrow( )`
+  (`:778`), which binds the null proxy (`:697-698`); `om::copyAs( nullptr )` returns null without
+  throwing (`ObjModel.h:144-156`); `notifyReadyImpl` invokes the callback unconditionally
+  (`TaskBase.h:730`); `onReadyObserver` (`:426-448`) dereferences it through `std::unique_ptr`'s
+  unguarded arrow (`SafeUniquePtr` overrides nothing there);
+- the pool's member order behind the destructor-frame precision (`ConnectionPool.h:801-810`);
+- `ConnectionPoolPolicy::idleTimeout` defaults to 300 s (`:175`, `:302`), and both drivers arm it
+  while holding no stream (`Http1ConnectionTask.h:1356-1361`, `Http2ConnectionTask.h:2534`);
+- the H02 probe's premises: `plain_stream_t` is `TcpSocketAsyncStrandedBase`
+  (`TestHttp1ConnectionTask.h:743`) and `submit( )` posts `onStartRequest` through the stream's
+  executor (`Http1ConnectionTask.h:1484-1530`);
+- the H14 placement premise: `reapClosedStreams( )` erases contexts (`Session.h:3304`).
 
 ---
 
