@@ -559,6 +559,38 @@ namespace utest
         }
 
         /**
+         * @brief How many frames of a given type are in a buffer FOR ONE STREAM
+         *
+         * countFrames( ) counts by type alone, which cannot tell a connection-level
+         * WINDOW_UPDATE from a stream's own - and for the window accounting that difference is
+         * the whole question, since the two windows are replenished by different code
+         */
+
+        inline std::size_t countFramesForStream(
+            SAA_in          const std::string&                   bytes,
+            SAA_in          const std::uint8_t                   type,
+            SAA_in          const std::uint32_t                  streamId
+            )
+        {
+            const auto types = frameTypes( bytes );
+            const auto ids = frameStreamIds( bytes );
+
+            UTF_REQUIRE_EQUAL( types.size(), ids.size() );
+
+            std::size_t count = 0U;
+
+            for( std::size_t i = 0U; i < types.size(); ++i )
+            {
+                if( types[ i ] == type && ids[ i ] == streamId )
+                {
+                    ++count;
+                }
+            }
+
+            return count;
+        }
+
+        /**
          * @brief Establishes a connection - the opening write is produced and the peer's SETTINGS
          * and its acknowledgement are fed, so the session is in its steady state
          */
@@ -2212,6 +2244,11 @@ UTF_AUTO_TEST_CASE( Session_FlowControlTests )
     /*
      * A WINDOW_UPDATE is sent when the CONSUMER took the bytes, never when they arrived - which is
      * the backpressure mechanism of the whole client (design 4.4, 5.3)
+     *
+     * ONE EXCEPTION, and the last case below is it: PADDING is credited on arrival, because
+     * nobody will ever consume it. That is not a hole in the backpressure - the octets a consumer
+     * could take are still held until it takes them - it is the only way the window a padding
+     * frame spent can ever come back
      */
 
     {
@@ -2328,6 +2365,87 @@ UTF_AUTO_TEST_CASE( Session_FlowControlTests )
         session.consumed( streamId, 4U );
 
         UTF_REQUIRE( ! session.isClosed() );
+    }
+
+    /*
+     * A PADDING-ONLY FRAME HAS TO ADVERTISE THE CREDIT ITSELF, and it is the one case the rule
+     * above does not reach: crediting is not advertising, and the only site which advertises a
+     * stream's credit is consumed( ) - which a caller reaches by taking bytes. A frame of pure
+     * padding delivers no bytes to take, so nobody ever calls it, and a stream receiving only
+     * such frames never replenishes the window it is spending
+     */
+
+    {
+        Http2Profile eager;
+
+        /*
+         * A threshold of 40 rather than the default half-window, so one frame of the 255 octets
+         * of padding a DATA frame can carry is past it - the rule under test is when the credit
+         * is advertised, not how much has to pile up first
+         */
+
+        eager.windowUpdateThreshold = 40U;
+
+        Session session( StreamRole::Client, now, eager );
+        PeerEncoder peer;
+
+        settle( session, now );
+
+        const auto streamId = session.submitRequest( makeRequest() );
+
+        ( void ) produceText( session, now );
+
+        feedText( session, headersFrame( streamId, peer.response( "200" ), false, true ), now );
+
+        ( void ) drain( session );
+        ( void ) produceText( session, now );
+
+        std::string padded;
+
+        padded.push_back( static_cast< char >( 60 ) );
+        padded.append( 60U, '\0' );
+
+        feedText(
+            session,
+            makeFrame( Globals::FRAME_TYPE_DATA, Globals::FRAME_FLAG_PADDED, streamId, padded ),
+            now
+            );
+
+        const auto events = drain( session );
+
+        UTF_REQUIRE_EQUAL( events.size(), 1U );
+        UTF_REQUIRE( events[ 0 ].type == SessionEventType::Data );
+        UTF_REQUIRE( events[ 0 ].data.empty() );
+
+        const auto out = produceText( session, now );
+
+        /*
+         * PER STREAM IDENTIFIER, because counting WINDOW_UPDATE frames by type alone cannot tell
+         * the stream's from the connection's - and it is the STREAM's which was missing
+         */
+
+        UTF_CHECK_EQUAL(
+            countFramesForStream( out, Globals::FRAME_TYPE_WINDOW_UPDATE, streamId ),
+            1U
+            );
+
+        UTF_CHECK_EQUAL(
+            countFramesForStream(
+                out,
+                Globals::FRAME_TYPE_WINDOW_UPDATE,
+                Globals::STREAM_ID_CONNECTION
+                ),
+            1U
+            );
+
+        /*
+         * And the window really is back where it started, which is what the advertisement means
+         */
+
+        UTF_REQUIRE_EQUAL(
+            session.streamReceiveWindow( streamId ),
+            static_cast< std::int32_t >( Globals::INITIAL_WINDOW_SIZE_DEFAULT )
+            );
     }
 
     /*

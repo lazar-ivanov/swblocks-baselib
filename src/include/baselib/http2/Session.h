@@ -1879,6 +1879,26 @@ namespace bl
                     context.receiveWindow.onConsumed( length - dataSize );
                 }
 
+                /*
+                 * THE PADDING CREDIT IS ADVERTISED HERE, WHICH IS THE ONLY PLACE THAT CAN. It was
+                 * credited a line ago and nobody will ever consume it, so the application-driven
+                 * flush in consumed( ) is not coming - a padding-only DATA frame delivers no
+                 * octets for the caller to take. Without this the stream spends its window on
+                 * padding and never replenishes it, and a stream receiving only such frames stops
+                 * for good
+                 *
+                 * BOTH WINDOWS, and BEFORE reapClosedStreams( ) - which erases the very context
+                 * the stream flush takes by reference. Each is threshold-gated inside, so an
+                 * ordinary frame carrying real octets costs nothing here; and if this frame
+                 * carried END_STREAM, canSend( WINDOW_UPDATE ) fails and the stream flush emits
+                 * nothing, leaving the leftover to reapClosedStreams( ) to credit to the
+                 * connection as it always has
+                 */
+
+                flushStreamWindowUpdate( streamId, context, false /* force */ );
+
+                flushConnectionWindowUpdate( false /* force */ );
+
                 context.receivedDataBytes = context.receivedDataBytes + dataSize;
 
                 SessionEvent event;
