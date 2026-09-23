@@ -2246,8 +2246,31 @@ namespace bl
                  * WHAT IT DOES NOT BUY: a push landing during the wait is accepted rather than
                  * refused, since flushInternal( )'s predicate releases the queue lock and the
                  * cancel sweep has already run - so disposal can block on an orphan's own idle
-                 * lifetime. That window is pre-existing ( today's reset( ) reaches the same wait
-                 * ) and is closed by the admission protocol of S6R.3, with H04a
+                 * lifetime. That window is pre-existing ( today's reset( ) reaches the same wait ).
+                 *
+                 * AND NO ADMISSION PROTOCOL CLOSES IT, WHICH THIS SENTENCE USED TO PROMISE. It read
+                 * "and is closed by the admission protocol of S6R.3, with H04a"; the S6R.3 design
+                 * answers the question that promise assumed, and answers it narrower ( §4.2 ).
+                 * H04a is a READ-SIDE fix in refreshEntry( ) - an acquire on the publishing store
+                 * of the task which writes the driver pointer - while this residual needs an
+                 * admission gate WITH A DRAIN: admit under the pool lock, release it, push, and
+                 * have this function wait for admissions in flight before it flushes. The two
+                 * share the adoption site and nothing else, and the drain is not two lines beside
+                 * a read gate. A disposed gate under the pool lock alone narrows the window
+                 * without closing it, since the batch is collected before it is executed; and the
+                 * check cannot simply move to the push, because m_isDisposed is a
+                 * ScalarTypeIniter< bool > whose read outside the lock is itself a race, while
+                 * taking the pool lock around the queue push would order pool lock -> queue lock,
+                 * which is the edge rule L4 forbids. So the window stands, and closing it is a
+                 * change to this disposal protocol which nothing has taken.
+                 *
+                 * WHAT WOULD SHORTEN IT, for whichever change-set owns that protocol: the sweep
+                 * above collects entry -> attempt.task and NOT entry -> driverConnection, so a
+                 * driver pushed during the wait is not cancel-requested and idles its full
+                 * lifetime. Collecting it too makes such a driver refuse its own schedule -
+                 * TaskBase::scheduleNothrow( ) throws operation_aborted for a task already
+                 * cancel-requested - so it completes at once instead. That is a reduction of the
+                 * window's DURATION and not of the window, and it is not H04a's
                  */
 
                 if( m_eqConnections )
