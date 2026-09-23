@@ -2,7 +2,11 @@
 
 **Status:** design, 2026-09-22. **Nothing implemented. Nothing under `src/` was touched and nothing
 was built** — another lane was compiling on a two-core machine while this was written. This is the
-artifact that must be agreed before code is written, per the review loop.
+artifact that must be agreed before code is written, per the review loop. **Reviewed 2026-09-22 —
+see §17. Not agreed as first written: it left two of the three obligations S6R.1's implementation
+review recorded for this slice undischarged, left one arm of N2 undecided, and put its HTTP/1.1
+cases into a module already over the size target. The corrections are written in place below, each
+dated, and §17 says which are findings and which are proposals.**
 
 **Scope:** the ten findings grouped as R2 in `astra-review-verification-record.md` — H01, H07, H05,
 H12, H15, H16, H18, H03b, N1, N2 — plus the settling of **N3**, the open question §5a of that record
@@ -109,6 +113,16 @@ Three faces, in descending order of certainty:
     (`:1665`). The h1 driver's `async_write` is inside a `try`, so the `catch` clears it too, before
     the existing `onOperationCompleted( )` call (`Http1ConnectionTask.h:677-685`).
 
+    *Placement, added by the 2026-09-22 review.* In `onWriteCompleted( )` the clear is the first
+    statement after `BL_TASKS_HANDLER_BEGIN( )` and **before** `BL_TASKS_HANDLER_CHK_EC( ec )` —
+    where the h2 driver's `onWrite( )` has it (`:1665`, ahead of its `if( ec )`). `CHK_EC` throws to
+    the epilog (`TaskBase.h:139-158`), so anything placed after it never runs for a write that
+    failed. The two clears of (c) and the exact answer of §1a go in the same place, for the same
+    reason: a write that fails with zero octets transferred is exactly the case that must read
+    `m_requestMayHaveBeenSent = false` on its way to `onTaskStoppedNothrow( )`, and a write that
+    fails after transferring some must still let go of the caller's `DataBlock` rather than hold it
+    until the pool forgets the driver.
+
 (b) **A write still in flight makes the connection non-reusable.** `finishStream( )`'s verdict
     becomes
 
@@ -174,11 +188,20 @@ holder buys nothing the flag does not, because face 1 (overlapping writes) needs
   completing behind it; the socket is cancelled only when the pool's `requestCancel( )` → posted
   `shutdownOnStreamExecutor( )` lands (`:1375-1409`). That is pre-existing and unchanged by this
   design, stated so nobody attributes it to the barrier.
+- **A pending write woken by the peer rather than by our cancel ends the task failed, not clean.**
+  `onOperationCompleted( )` excuses only `operation_aborted`, and only while closing deliberately
+  (`MultiOperationTask.h:357-366`); a write that the peer's RST completes with `broken_pipe` or
+  `connection_reset` after the barrier tripped is recorded as the task's first error. The request
+  was answered before that, and the pool retires a Draining connection whether its task ended clean
+  or failed, so nothing is lost — but a test on this path must not `waitForSuccess( )` the driver
+  task. Added by the 2026-09-22 review.
 
 **Test — deterministic, red before and green after, and it does not rely on catching a fault.**
 
-The module is `utf_baselib_httpclient3`, which already carries a scripted blocking TCP peer and the
-`PlainEstablisherImpl` / `PlainDriverImpl` pair (`TestHttp1ConnectionTask.h:700-760`).
+The harness is `TestHttp1ConnectionTask.h`'s scripted blocking TCP peer (`ScriptedPeer`, `:398-730`)
+and the `PlainEstablisherImpl` / `PlainDriverImpl` pair (`:749-751`). The module is **not**
+`utf_baselib_httpclient3` — see §14, corrected 2026-09-22 — and the peer's vocabulary has no
+socket-option step today, so `receive_buffer_size` on the accepted socket is a step the lane adds.
 
 *Case 1 — the barrier.* Script: accept, read only up to the blank line, write a complete
 `413` with `Content-Length: 0` and no `Connection: close`, then stop reading and hold the socket
@@ -198,10 +221,18 @@ module is worth doing on top and is not the evidence.
 
 ### 1a. What S6R.2 does to the lines S6R.1 touched
 
-S6R.1's H02 lands three things in this file: `m_requestMayHaveBeenSent = true` immediately before the
-`async_write`; the kept-but-redundant `if( 0U != bytesTransferred ) m_requestMayHaveBeenSent = true;`
-in `onWriteCompleted( )`; and the rename at the declaration (`:209`) and the three read sites
-(`:974`, `:986`, `:1457`) plus the reset in `finishStream( )` (`:1114`).
+S6R.1's H02 has landed — `6fe658d`, merged at `3bcf21e` — and it put four things in this file, not
+the three this paragraph first counted: `m_requestMayHaveBeenSent = true` before `beginOperation( )`
+and the `async_write` `try` (`:687` on `lazari2`), under a 21-line comment whose last sentence reads
+*"The exact answer - 'zero octets escaped, so this is safe to replay' - needs the write-completion
+barrier of H01 and is S6R.2's"*; the kept-but-redundant `if( 0U != bytesTransferred )
+m_requestMayHaveBeenSent = true;` in `onWriteCompleted( )` (`:725-733`), under a comment that says
+it is redundant; the rename at the declaration (`:209`; `:212` on `lazari2`, now with a comment of
+its own) and the three read sites (`:974`, `:986`, `:1457`; `+33` on `lazari2`) plus the reset in
+`finishStream( )` (`:1114`; `:1147`). **This worktree's `src/` is the tree S6R.1 was designed
+against, not the one it landed on**: every HTTP/1.1-driver line number in this document is the
+lane's, and the lane that implements S6R.2 branches from `lazari2` at `a36b04e` or later. (Corrected
+2026-09-22.)
 
 **S6R.2 changes exactly one of those lines, adds one beside another, and leaves the rest alone.**
 
@@ -221,13 +252,19 @@ in `onWriteCompleted( )`; and the rename at the declaration (`:209`) and the thr
   This is the "zero bytes escaped, so retry is safe" that S6R.1 names and defers here. The rename
   is not undone and no member returns.
 - **The three read sites are untouched.** The rename stands, and so does `finishStream( )`'s reset.
+- **The three comments S6R.1 landed move with the code, or one of them becomes the sixth comment
+  in this feature to outlive what it described.** The set-point comment's last sentence — *"is
+  S6R.2's"* — becomes "is answered in `onWriteCompleted( )`"; the *"Redundant since…"* comment goes
+  with the line it excused; and the member's comment gains its second half: *set before the write is
+  issued, and cleared by a write which transferred nothing*. Added by the 2026-09-22 review.
 
 **Why the exact answer is taken rather than left.** S6R.1's approximation is strictly conservative
 against *today*, and that has a price this design measured at the source:
 `chkRequestMayBeReplayed( )` returns from its `isRetryable` limb or falls to
 `context.isConnectionLost && policy.retryIdempotentOnConnectionLoss && isIdempotentMethod( ... )`
 (`ConnectionPool.h:436-455`), and **`retryIdempotentOnConnectionLoss` defaults to false** — the
-constructor (`:298-310`) sets five fields and not that one, and its own comment says "default off".
+constructor (`:297-310`) sets six fields in its body and three in its initializer list, and not that
+one, and its own comment says "default off" (the count was "five" before the 2026-09-22 review).
 So after S6R.1, a peer that resets an idle pooled connection before a single byte leaves takes the
 request down with it, for GET as much as for POST, with no fallback limb to catch it. Today that
 request is retried, because the flag is false. The exact answer restores exactly that case and
@@ -304,8 +341,18 @@ the cap. Recorded rather than left to be discovered.
 **Test.** Two cases in the request-task module, both pure and deterministic, no network: a sink whose
 `onComplete( )` throws, and a sink whose final `onData( )` throws in the same batch as the close.
 Assert the task is `isFailed( )` and that the exception is the sink's. **Red before**: the task
-completes successfully today and the exception is swallowed. Assert also that the stream was reset —
-`cancelStream( )` already runs on this path (`:497`) and it must not regress.
+completes successfully today and the exception is swallowed.
+
+**Do not assert that the stream was reset — corrected by the 2026-09-22 review.** This paragraph
+used to end: *"Assert also that the stream was reset — `cancelStream( )` already runs on this path
+(`:497`) and it must not regress."* In both cases the stream is already closed by the time the sink
+throws: `applyClosed( )` marks it closed and calls `releaseConnection( )`, which resets
+`m_connection` (`:1289-1296`), before the deferred phase runs the sink at all, and `cancelStream( )`
+returns at once on a null connection (`:1531-1534`). There is nothing to reset and nothing on the
+wire to observe; the `:497` call is for a sink that throws mid-stream, which is a different case.
+Assert instead that `releaseStream( )` was still called exactly once, with `Completed` — the peer
+did speak, the slot goes back, and the connection stays poolable — which is what a lane fixing this
+by reordering `applyClosed( )` would break.
 
 ---
 
@@ -328,6 +375,12 @@ and the per-message cap never accumulates. The request task is a third accumulat
   `maxInterimHeaderBytesPerStream` (proposed 64 KB — one block's worth in total, not per block).
 - `StreamContext` gains the two counters; `deliverHeaderBlock( )` increments them on the
   informational arm, using the same decoded-list size the per-block cap already computes.
+  *Precision, 2026-09-22 review:* that cap is applied inside `m_decoder.decode( )`, which is handed
+  `m_localMaxHeaderListSize` (`Session.h:2030-2035`) and does not hand the measured size back.
+  Unless the decode outcome carries it, measure the list in `deliverHeaderBlock( )` itself — the
+  RFC 9113 §6.5.2 sum, name length plus value length plus 32 per field, if that is what the decoder
+  counts; check rather than assume — and use the same measure on the h1 side, so the two limits
+  name one number.
 - On breach the **stream** is reset, not the connection. A peer flooding one stream costs that
   request; a connection error would cost every other request on the connection for one peer's
   behaviour.
@@ -335,6 +388,12 @@ and the per-message cap never accumulates. The request task is a third accumulat
   existing `fail( )`/`Http1CodecError` path, which the driver already turns into a finished stream
   and a closed connection. h1 has no stream reset — `cancel( )`'s comment says so
   (`Http1ConnectionTask.h:1532-1541`) — so closing is the only lever and is what astra names.
+  *Precision, 2026-09-22 review:* `fileInterimAndRestart( )` takes no `error_code`
+  (`Http1Codec.h:694-716`); its caller `parse( )` does (`:500-505`), so the check runs there, before
+  the restart, or the function gains the parameter. And `Http1CodecError`'s own comment says every
+  value is "a security property somebody will want to assert on directly", so the breach should be
+  a new value — proposed `TooManyInterimResponses`, covering the count and the byte total alike —
+  rather than a reuse of `HeadersTooLarge`, which names a different limit. Proposal, not finding.
 - **Nothing is added to the request task.** With both parsers bounded, `m_interimResponses` is
   bounded by the same numbers. Adding a third cap would put the same rule in three places.
 
@@ -378,7 +437,10 @@ correctly: its `SETTINGS_HEADER_TABLE_SIZE` arm calls
 (`HpackEncoder.h:137-165`, `:186-196`). So after the constructor change the profile's larger capacity
 is applied **exactly when the peer's SETTINGS permits it, and announced** — which is the RFC rule —
 and if the peer never advertises the setting we stay at 4096, which is what RFC 9113 §6.5.2's initial
-value requires.
+value requires. A peer that advertises exactly 4096 is the same case: `setDynamicTableCapacity( )`
+returns without arming an update when the value equals the current capacity
+(`HpackEncoder.h:147-155`), which is what lets the amended test's control at 4096 assert that *no*
+size update appears in the produced bytes. (Added by the 2026-09-22 review.)
 
 **The record's correction is confirmed and matters.** A *smaller* profile capacity is harmless and
 needs no announcement: both tables insert the same entries in the same order, so the peer's table is
@@ -460,12 +522,17 @@ non-empty and then appends every field (`Session.h:906-957`). The h1 renderer by
 `Transfer-Encoding`, supplies `Host` when absent and **sets or removes `Content-Length` from the body
 that will actually be written** (`Http1ConnectionTask.h:475-514`).
 
-**The internal trigger is real and was verified.** `chkFollowRedirect( )` rewrites the method and
-drops the body for a 303 — `m_next.body( om::ObjPtrCopyable< data::DataBlock >( ) )`
-(`ClientSession.h:1346-1352`) — and touches the headers only to drop credentials. A POST with an
-explicit `Content-Length` therefore becomes a GET that still declares one, and the h2 driver sends
-END_STREAM with no DATA. RFC 9113 §8.1.1 makes that malformed. On h1 the same redirect is harmless,
-because `serializeRequestHead( )` removes the field.
+**The internal trigger is real and was verified — and corrected by the 2026-09-22 review.** This
+paragraph used to say *"`chkFollowRedirect( )` rewrites the method and drops the body for a 303"*.
+There is no such function. `chkPrepareNextHop( )` (`ClientSession.h:1290`) drops the body when the
+policy says so — `m_next.body( om::ObjPtrCopyable< data::DataBlock >( ) )` (`:1348-1351`, lane
+numbering) — and touches the headers only to drop credentials on a cross-origin hop
+(`:1339-1342`). The verdict is `RedirectPolicy::rewriteMethod( )`'s (`RedirectPolicy.h:314-347`),
+which sets `dropBody` for a 303 on any method but GET and HEAD **and for a 301 or 302 on POST**, so
+the trigger is three status codes and not one. A POST with an explicit `Content-Length` therefore
+becomes a GET that still declares one, and the h2 driver sends END_STREAM with no DATA. RFC 9113
+§8.1.1 makes that malformed. On h1 the same redirect is harmless, because `serializeRequestHead( )`
+removes the field.
 
 **Change — normalize in `toSessionRequest( )`, reject only what normalization would silently
 misrepresent.** It is static and pure and runs on the caller's thread, which is where h1 does the
@@ -481,6 +548,13 @@ equivalent work, and it keeps the engine role-neutral for the test peer and any 
 4. `host`: drop it when it matches the URL authority case-insensitively — §8.3.1 says a client
    generating HTTP/2 uses `:authority` — and **reject** when it disagrees, because dropping a
    disagreeing `Host` would silently change which origin the request claims.
+   *Precision, 2026-09-22 review — proposal.* "Matches" is a comparison of authorities, not of
+   strings. `:authority` is `request.url( ).authority( )`, which is the host plus `:port` only when
+   the URL spells a port (`Uri.h:1229-1239`), and h1's `hostHeaderValue( )` is the same string
+   (`Http1Codec.h:1091-1094`). A caller who writes `Host: example.com:443` against
+   `https://example.com/` names the same origin and must not be rejected. Parse the caller's value
+   as `uri-host [ ":" port ]` (RFC 9110 §7.2), fold the host's case, default a missing port from the
+   scheme on both sides, and compare the pair.
 
 **Why normalize rather than reject.** A `Connection: keep-alive` from a caller is legal
 protocol-neutral input; rejecting it would make one `ClientRequest` succeed over h1 and fail over h2,
@@ -528,13 +602,27 @@ is not obvious.
 - Our own sessions always send SETTINGS first: `queueOpeningFrames( )` calls `applyLocalSettings( )`,
   which serializes the SETTINGS frame into the control queue, **before** the optional connection
   WINDOW_UPDATE (`Session.h:1342-1405`). That holds in both roles, so the library's own test server
-  (`Http2TestServer.h:834`) satisfies the client's new rule and vice versa.
-- The h2core session tests were surveyed per case: fourteen of sixteen call `settle( )`, whose first
-  act after the opening write is `feedText( session, settingsFrame( ... ) )`
-  (`TestSession.h:530-547`); the two that do not — `Session_HpackDecoderCeilingTests` and
-  `Session_LocalSettingsTakeEffectOnAckTests` — feed a SETTINGS frame directly. So the expected test
-  fallout is **zero**. This survey is per test *case*, not per `Session` object; a case that builds a
-  second session mid-body would not show up in it, and the lane must re-check when it has a compiler.
+  (`Http2TestServer.h:1675-1684`) satisfies the client's new rule and vice versa.
+- **The survey was redone per `Session` object, on `lazari2`, by the 2026-09-22 review**, because
+  the bullet it replaces — *"fourteen of sixteen call `settle( )` … the two that do not —
+  `Session_HpackDecoderCeilingTests` and `Session_LocalSettingsTakeEffectOnAckTests` — feed a
+  SETTINGS frame directly"* — was wrong on both counts: `TestSession.h` has nineteen cases, and those
+  two call `settle( )` as well, in other blocks. Per object: every session that is fed anything is
+  fed a non-ACK SETTINGS first, through `settle( )` (`TestSession.h:609-619` — SETTINGS, then the
+  ACK) or directly (`:1127`, `:1235`, `:1289`, `:3481`, `:3541`, `:3566`, `:3599`); the sessions at
+  `:644`, `:686`, `:1103`, `:1377`, `:1404`, `:1457` and `:1472` are constructed and never fed; and
+  the server-role session at `:749` is fed an HTTP/1.1 request line, which `consumePreface( )`
+  refuses before any frame exists. Expected fallout in `utf_baselib_h2core`: **zero**, now as a fact
+  about objects rather than cases — subject only to the compiler.
+- **The driver modules are not exempt, and were checked too.** Every driver test speaks to one of
+  two peers. `Http2TestServer` gates *all* of its writes behind `m_isWriteAllowed` until its opening
+  SETTINGS is released (`Http2TestServer.h:814-821`, `:887`, `:1680-1684`), so a peer told to delay
+  its opening sends nothing before it, which §3.4 allows. `RawFrameScriptPeer` writes whatever
+  octets a script gives it, and its three scripts all `.send( )` an empty non-ACK SETTINGS first
+  (`TestHttp2ConnectionTask.h:922-933`, `:1023-1033`; `TestHttp2TestPeer.h:932-947`). A future raw
+  script that opens with anything else is refused by the client under test, which is the rule
+  working: that peer's comment says it "sends what a conforming one cannot", and this is one more
+  thing it can send.
 
 **What could go wrong.** A peer that opens with an extension frame is now refused. §3.4 makes SETTINGS
 the first frame the server sends, so that peer is wrong, but it is a real-world risk and it is the
@@ -620,6 +708,14 @@ to it.** `Http1ResponseLimits::maxBodySize` defaults to **no limit**, and the co
 `boost::none` to Beast's `body_limit( boost::optional< std::uint64_t > )`
 (`basic_parser.hpp:299-302`) when it is unset. The field stays as a knob a session may still set.
 
+*Representation — proposal by the 2026-09-22 review.* The field is a
+`ScalarTypeIniter< std::uint64_t >` (`Http1Codec.h:216`) and "unset" has no spelling on it. The
+smaller change keeps the type, defaults it to `std::numeric_limits< std::uint64_t >::max( )`, and
+passes the value through unchanged: Beast's check is `n > *body_limit_`, which the maximum never
+trips, so there is no `boost::none` branch and no sentinel with a second meaning. Zero as a sentinel
+is the alternative, and zero is a value a caller could mean. Either shape satisfies this section;
+the constructor's default is the change.
+
 **Why that is the right layer, and why the obvious shape was rejected.** The first draft of this
 section said the driver should tell the codec whether a sink is installed, "because the request
 carries the sink decision". **That premise is false, and checking it is what killed the shape**:
@@ -663,10 +759,12 @@ which is H06 and H08 in R3. It is independent of both: it changes which limit is
 partial consumption means. Doing it here is correct, and it should be said that it does **not**
 pre-empt R3's decisions.
 
-**Test.** Two cases, and they must be a pair. In `utf_baselib_httpclient3`, with the scripted peer,
-a response body above 64 MB is not something to transfer in a test — so the *driver* case sets a
-small `http1Limits.maxBodySize` explicitly and asserts it is still honoured, which pins that the
-knob survives. The *agreement* case belongs one layer up, in the request-task module: with a body
+**Test.** Two cases, and they must be a pair. In the HTTP/1.1 driver module §14 names, with the
+scripted peer, a response body above 64 MB is not something to transfer in a test — so the *driver*
+case sets a small `http1Limits.maxBodySize` explicitly and asserts it is still honoured, which pins
+that the knob survives — a pin the codec tests already carry twice (`TestHttp1Codec.h:1198`,
+`:1227`, limits of 8 and 5 asserting `BodyTooLarge`), so the driver-level copy is optional and,
+given §14's size note, better omitted (2026-09-22 review). The *agreement* case belongs one layer up, in the request-task module: with a body
 sink installed, a response larger than `maxResponseBodySize` must complete over both protocols, and
 with no sink it must fail with `BufferTooSmallException` over both. **Red before**: the h1 arm of the
 sink case fails today with the codec's `body_limit` error while the h2 arm succeeds, which is the
@@ -716,6 +814,33 @@ of message HTTP/1.1 cannot frame any other way.
     `protocol_error`, the same answer a truncated Content-Length body already gets — while a message
     framed by Content-Length or chunking is unaffected, because Beast decides those.
 
+    **The truncation arm — a gap the 2026-09-22 review found, resolved here as a proposal.** (a)
+    keeps `base_type::isStreamTruncationError( ec )`, and (b) as first written said nothing about
+    it. Today a TLS stream that ends without `close_notify` — `stream_truncated`, which is
+    `isExpectedSslErrorCode( )` under the TLS policy (`TcpSslBaseTasks.h:342-345`) and never true
+    under the plain one (`TcpBaseTasks.h:545-550`) — reaches `onPeerClosed( )` and *completes* a
+    close-delimited message. A (b) that admitted `eof` alone would turn that into a failure for
+    every close-delimited HTTPS response from a server that skips `close_notify`, which RFC 2818
+    §2.2.2 would bless and which nothing in this design set out to change. So the completion
+    predicate is `net::isCleanEndOfStreamErrorCode( ec ) || base_type::isStreamTruncationError( ec )`
+    — the same two-part shape as (a) — on the reasoning the record already gives in its own table,
+    where the truncation spellings sit in the row "Orderly close of a TLS stream". The strict
+    alternative is recorded as not taken, not as wrong.
+
+    **The error code for an unclean end.** This section said the answer is *"`protocol_error`, the
+    same answer a truncated Content-Length body already gets"*. It is not: Beast's
+    `partial_message` passes through `parseEof( )` unchanged — `classifyBackendError( )` records
+    the codec reason and returns with `ec` as Beast set it (`Http1Codec.h:554-560`). More to the
+    point, (a) makes a POSIX reset end the connection task *cleanly*, so `connectionFailureCause( )`
+    in the request task (`HttpClientRequestTask.h:1186-1209`) finds no exception to chain and the
+    caller would lose "connection reset by peer" from the diagnostic. Proposal: on an unclean end
+    `onPeerClosed( )` does not call `parseEof( )` at all and finishes the stream with the
+    transport's own code — `connection_reset` or `connection_aborted` — which is what the caller saw
+    before and what the request's `errinfo_error_code` should keep saying. Retryability is
+    unaffected either way: `outcomeOnClosed( )` reads `isConnectionLost` from the connection's
+    published state and not from the code (`:1098-1111`), and `Draining` is published before
+    `onClosed( )` on every path.
+
 **What could go wrong, and what cannot be checked here.** The premise behind the third predicate's
 Windows column is that an *orderly* server close after a close-delimited body arrives as `eof` on
 Windows, because by then nothing of ours is left unread — the mechanism the record measured requires
@@ -725,10 +850,13 @@ turns ordinary Windows close-delimited responses into failures, which is worse t
 **So N2's acceptance needs the Windows matrix, and this design says so rather than pretending
 otherwise.** The record is explicit: *"A Linux-only run cannot catch a breach of this rule"*, and a
 Windows run may need dozens of iterations because the mechanism is a race. What a Linux run **can**
-check is the negative direction, and it must: on POSIX a `connection_reset` must not be admitted by
-the clean-end predicate, which is the only arm that discriminates. Assert both platform arms of every
-row, the way `TlsHandshakeRetryClassifier_RetryableErrorSetTests` does, so an ordinary Linux build
-checks what a Windows matrix structurally cannot.
+check is the predicate itself, all of it: the third predicate admits the same set on both platforms,
+so unlike the two existing ones it has no arm a Linux run cannot reach. Assert both platform arms of
+every row anyway, the way `TlsHandshakeRetryClassifier_RetryableErrorSetTests` does, so the day a
+platform arm is added the test already has a place for it. What a Linux run cannot check is the
+*premise* above — that an orderly Windows close arrives as `eof` — and no unit test of the predicate
+touches that. (Corrected by the 2026-09-22 review: the sentence this replaces called the POSIX reset
+"the only arm that discriminates", which is true of the two existing predicates and not of this one.)
 
 **Test.** A `net::` unit case for the third predicate asserting both arms of every code; and a driver
 case against the scripted peer where the peer aborts mid-body on a close-delimited response,
@@ -754,7 +882,10 @@ failed" )` (`HttpClientRequestTask.h:1243-1250`) and `outcomeOnClosed( )` never 
 for one (`:1098-1111`). A stream that is no longer live cannot be truncated, because the only way it
 left `m_streams` is the END_STREAM that the completeness check at `Session.h:2188` is gated on. **The
 commit message's inference is wrong for the driver it names**, and the link the record suspected is
-the reason.
+the reason. (*Precision, 2026-09-22 review:* the commit's sentence — "a response body can be short
+while the task reports success" — is true of the h2 **connection** task, which `onPeerClosed( )` ends
+through `beginClose( )` and which therefore completes clean; the record's §5a read "the task" as the
+request, and it is that reading this section refutes.)
 
 **On HTTP/1.1 it can happen, but only where the protocol cannot tell.** `onPeerClosed( )` calls
 `parseEof( )` and then `finishStream( m_parser -> isComplete( ) ? eh::error_code( ) : protocol_error,
@@ -763,6 +894,11 @@ the reason.
 the exact Boost the build uses
 (`.../boost/1.90.0/source-linux/boost/beast/http/impl/basic_parser.ipp`):
 
+- first, `BOOST_ASSERT( got_some( ) )` — a parser that has seen **no octet** aborts a debug build
+  here and, in release, falls through both guards below (`basic_parser.ipp:202-224`; `got_some( )`
+  is `state_ != state::nothing_yet`, `basic_parser.hpp:166-171`). *This arm was missing from the
+  list as first written, and it is the zero-octet shape S6R.1's implementation review handed to
+  this slice — §11a. Added by the 2026-09-22 review;*
 - still in `start_line` or `fields` → `partial_message`;
 - `flagContentLength` or `flagChunked` set and not complete → `partial_message`;
 - otherwise → `state_ = complete`, no error.
@@ -784,6 +920,61 @@ parts and not one, and why its second part needs a third predicate rather than e
 
 **What remains unestablished, stated as such.** Whether an orderly Windows close of a close-delimited
 response really arrives as `eof` — §10's premise — is an inference. It cannot be settled here.
+
+### 11a. The zero-octet close — the third HTTP/1.1 case, and S6R.1's obligation discharged here
+
+Added by the 2026-09-22 review, because the design as first written did not carry it and S6R.1's
+implementation review (`s6r1-design.md` §11b.3) says in terms that S6R.2's design "cannot start
+without" it.
+
+**The defect, verified at the source.** `onPeerClosed( )` returns only for a null parser, and the
+parser exists from `onStartRequest( )` until `finishStream( )`. A peer that reads the request and
+closes without writing one octet — a server dropping a request it will not serve, or the stale
+keep-alive race H01 and H02 exist for — reaches `parseEof( )` → `putEof( )` → `put_eof( )` on a
+parser in `state::nothing_yet`. `putEof( )` guards only on `is_done( )`
+(`Http1CodecBeastImpl.h:208-216`). In a debug build the assert aborts the module; in release
+`put_eof( )` sets `state_ = complete`, `parseEof( )` sees `isDone( )` with `m_statusCode` still 0
+and `isInterimStatus( 0 )` false and marks the message complete (`Http1Codec.h:563-566`),
+`deliverHeaders( )` finds `isHeaderComplete( )` true — Beast's `is_header_done( )` is
+`state_ > fields`, and `complete` is — and delivers `onHeaders( handle, 0, {} )`, and
+`finishStream( )` is reached with an empty code. **The caller receives a status-0, header-less
+success.** It is not close-delimited framing and it is not a Windows matter: it happens on `eof`,
+on every platform, and it is the case §11's "only where the protocol cannot tell" was short by.
+
+**The same defect after an interim.** `fileInterimAndRestart( )` discards the backend and makes a
+fresh one (`:694-716`), which has also seen no octet, and resets `m_statusCode` to 0. A peer that
+sends `103 Early Hints` and then closes takes exactly the path above — an abort in debug, a
+status-0 success in release — although the parser as a whole has seen a whole message.
+
+**Change — refuse in `parseEof( )`, on the current backend.** The backend gains `gotSome( )`,
+forwarding Beast's public `got_some( )`; `parseEof( )` asks it before `putEof( )` and, when it is
+false, refuses through the existing `fail( )` path and returns. Because the check is on the
+*current* backend, the interim case is covered by the same line. `deliverHeaders( )` then finds
+`isHeaderComplete( )` false on `nothing_yet` and delivers nothing; `onPeerClosed( )` finishes the
+stream as a failure carrying `! m_requestMayHaveBeenSent` — after §1a, exact once the write has
+settled and conservative while it is pending — with `isConnectionUsable = false`. A retry is
+therefore the pool's decision under its policy, as for every other "the connection died" answer,
+which is what S6R.1's review said the flag's name and placement were load-bearing for.
+
+*Which `Http1CodecError` — proposal.* A new value, proposed `NoResponse` — "the connection closed
+before a single octet of the status line arrived" — rather than `MalformedMessage`, whose comment
+covers "a truncated message at end of stream" and would let a zero-octet close and a cut-short
+status line assert alike. Either is a failure; the value is what a test can name.
+
+**What could go wrong.** Nothing on the existing paths: a parser that has seen an octet answers
+exactly as before, and a completed message never reaches `onPeerClosed( )` with a parser at all,
+because `onBytesRead( )` resets it on completion. The one visible change is that a close after a
+`1xx` with no final response now fails instead of delivering a status-0 success — a response with
+no final status line is not a response.
+
+**Test — the one that could not exist before this change.** In the HTTP/1.1 driver module §14
+names: the scripted peer reads the request and closes without writing; assert that `onClosed`
+carries a non-empty code, that no `onHeaders` was delivered, and `isRetryable == false` — the write
+completed before the close, so the request is not provably unsent. A second case sends `103 Early
+Hints` and closes. Both **abort a debug module before the change** — the red is the process dying,
+not an assertion — so they land in the same commit as the conversion or after it, never before,
+and the run recipe says so. S6R.1's H02 probe keeps its partial status line, and its comment's
+"also the realistic shape" now has a sibling that states the other one.
 
 ---
 
@@ -813,8 +1004,18 @@ assertion and falsifies its comment (§4); H18 can reject our own peers if the o
 were ever changed, which is why §7 names the two functions that keep it true; and H01's barrier
 depends on the read handler's own epilog to wake the write it refuses to wait for (§1(b)).
 
-**What this change-set must NOT do.** It must not touch `judgeDataFrame( )` or `queueHeaderBlock( )`,
-which S6R.1 is editing for H17 and H13.
+**What this change-set must also do — two amendments S6R.1's implementation review handed to it.**
+The zero-octet conversion of §11a; and the in-tree comment at `Session.h:1890-1896` (`lazari2`),
+which says *"if this frame carried END_STREAM, canSend( WINDOW_UPDATE ) fails and the stream flush
+emits nothing"* and is true only when the END_STREAM **closes** the stream — in half-closed (remote)
+`canSend( )` returns true (`StreamStateMachine.h:359-361`) and a legal, useless WINDOW_UPDATE goes
+out. The review's wording is the amendment: *"and if this frame carried END_STREAM and closed the
+stream, canSend( WINDOW_UPDATE ) fails and the stream flush emits nothing; on a stream whose local
+half is still open it emits a legal WINDOW_UPDATE the peer will ignore"*. H15 changes the predicate
+those flushes are gated on, which is why the comment rides here. (This paragraph replaces *"It must
+not touch `judgeDataFrame( )` or `queueHeaderBlock( )`, which S6R.1 is editing for H17 and H13"* —
+S6R.1 landed at `3bcf21e` before this design was reviewed, and this change-set lands on top of it.
+Updated 2026-09-22.)
 
 ---
 
@@ -844,15 +1045,36 @@ astra.
 - **S6R.1's H02 has a behavioural cost the record does not price.** With
   `retryIdempotentOnConnectionLoss` defaulting to false, the conservative rule removes the automatic
   retry of a reset idle pooled connection for every method. §1a.
+- **N3 has a third HTTP/1.1 case, and it is neither close-delimited nor Windows-only.** A close
+  before any response octet — or after a 1xx with no final response — is a status-0 success in
+  release and an abort in debug, on `eof`, on every platform. Neither the record nor this design as
+  first written carried it; S6R.1's implementation review found it, and §11a is where it is fixed.
+  Added 2026-09-22.
 
 ---
 
 ## 14. Acceptance
 
-- Focused modules, clang debug, in the lane; **one module at a time**. The modules this touches are
-  `utf_baselib_h2core` (H05 h2 half, H12, H15, H16 engine half, H18),
-  `utf_baselib_httpclient3` (H01, N1, N2), the request-task module (H07), and the pool module
-  (H03b).
+- Focused modules, clang debug, in the lane; **one module at a time**. The modules this touches:
+  `utf_baselib_h2core` (H05 h2 half, H12, H15, H16 engine half, H18); `utf_baselib_h2client2`
+  (H16's driver half — `toSessionRequest( )` is `Http2ConnectionTaskT`'s static); `utf_baselib_http2`
+  (N2's `net::` unit case, beside `TestPeerCloseErrorCodes.h`); `utf_baselib_httpclient` (H07, the
+  request-task module); `utf_baselib_h2client4` (H03b, the pool module); and for the HTTP/1.1 driver
+  cases **a new `utf_baselib_httpclient7`, not `utf_baselib_httpclient3`**.
+- **The size rule — corrected 2026-09-22.** This list used to send H01, N1 and N2 to
+  `utf_baselib_httpclient3`. That module was 40.3 MB on a64 debug after S6R.1 (`6fe658d`'s own
+  message), which is over the 40 MB target, and `src/utests/AGENTS.md` is explicit: *"If the module
+  you were going to use is at or near the 40MB target, do not add to it … create a numbered
+  sibling."* This design puts six cases there — H01's two, N1's (optional), N2's, and §11a's two —
+  so the sibling is not optional. The sibling reaches `ScriptedPeer` and the driver typedefs by
+  moving them into a shared header under `src/utests/include/utests/baselib/` (proposed
+  `Http1DriverTestUtils.h`, beside `Http2DriverTestUtils.h`), never by including
+  `utf_baselib_httpclient3`'s header across the module boundary — the rule in that file — and
+  `utf_baselib_httpclient3`'s `notes.txt` recipes stay where their cases are. `utf_baselib_h2core`
+  was 36.9 MB on the gcc a64 debug object recorded in `l1-gcc-toolchain-coverage-record.md` before
+  S6R.1 added three cases to it; this design adds ten. The lane reads the headroom line as the
+  module links **before** adding, and if it is at or near target the new cases go to
+  `utf_baselib_h2core2` under the same checklist; `utf_inventory.py --compare` is run either way.
 - Then clang **and** gcc release plus the whole-suite G1 gate, by the orchestrator.
 - Every fix that claims a test above must ship it, shown **red before and green after**. Nothing here
   may rest on "the suite still passes".
@@ -864,23 +1086,133 @@ astra.
 - **N2 cannot be accepted on this machine.** Its Linux arm checks only that a POSIX reset is refused
   by the clean-end predicate; the rule it breaches is one a Linux-only run structurally cannot check.
   It needs the Windows matrix, repeated, because the mechanism is a race.
+- **§11a's two cases abort a debug module before the conversion**, so their red is the process
+  dying and not an assertion; they are committed with or after the conversion, never before, and
+  the run recipe records that. (Added 2026-09-22.)
 
 ## 15. What could not be settled here
 
 1. **N2's Windows behaviour** — §10 and §11. Needs the matrix.
 2. **H12's amended test** — the raise from 4096 to 16384 must be shown in the produced bytes, which
    needs a build.
-3. **H18's test survey** — done per test case, not per `Session` object; a compiler is what would
-   turn "expected fallout: zero" into a fact.
+3. **H18's test survey** — now per `Session` object and per driver peer (§7, 2026-09-22); a compiler
+   is still what turns "expected fallout: zero" into a fact.
 4. **H01's buffer sizes** — the test's determinism rests on `SO_RCVBUF`/`SO_SNDBUF` being settable on
    those sockets in that harness. That was reasoned about, not tried.
 5. **Whether H01's forced non-reuse ever fires on an ordinary keep-alive exchange.** The ordering
    argument in §1 says it cannot; only a run of `Http1Driver_RequestResponseAndKeepAliveReuseTests`
    after the change turns that argument into evidence, and it is the first thing to look at if that
    case becomes flaky.
+6. **The sizes of `utf_baselib_h2core` and the new `utf_baselib_httpclient7` once the cases are in**
+   — §14; only the link line answers it. (Added 2026-09-22.)
+7. **Whether the decode outcome carries the decoded-list size H05 wants** — §3; a compiler question.
+   (Added 2026-09-22.)
 
 ## 16. Deliberately out of scope
 
 H06, H08, H11, H09, H10, H04a (S6R.3, decisions first); H19, H20, H23, H29 (S6R.4); H24, H25
 (deferred to the decoder programme); H21, H22 (on L6's owed list). H02, H03a, H13, H14, H17, H26,
-H04b, H27, H28 are S6R.1's and are landing now.
+H04b, H27, H28 are S6R.1's and landed at `3bcf21e`.
+
+---
+
+## 17. Design review, 2026-09-22
+
+**Reviewer: Claude Fable 5.1, on `s6r2-design` @ `48f4739` in this worktree, read against
+`lazari2` @ `a36b04e` — the tree this change-set will actually land on, which is thirty-three lines
+longer in `Http1ConnectionTask.h` than the one every citation above was taken from.** Every function
+named in §1, §2, §8, §10 and §11 was opened at its signature and read to its end on `lazari2`; the h2
+engine, the receive window, the encoder, the pool's timer and retry rule, the codec's EOF path,
+`MultiOperationTaskT`'s accounting, the handler macros, `HeaderList`'s name rule, the redirect
+policy, the request task's `cancelStream( )` and `outcomeOnClosed( )`, the h2 test server's write
+gate and the three raw-frame scripts were read for the claim each section rests on; Beast's
+`put_eof( )`, `got_some( )` and `body_limit( )` and asio's `write_op` were opened in the dist the
+build uses. Nothing was built or run.
+
+**Verdict: not agreed as first written; agreed with the corrections written in place above, each
+dated 2026-09-22.** The reasoning the design carries is sound on every item; what it lacked was
+completeness, on three counts:
+
+1. **Two of S6R.1's three recorded obligations were undischarged** (`s6r1-design.md` §11b.3,
+   `a36b04e`). The zero-octet close — a virgin parser reaching `put_eof( )`, an abort in debug and a
+   status-0 success in release — was absent, and §11's own summary of `put_eof( )` omitted its first
+   line, `BOOST_ASSERT( got_some( ) )`, which is the arm that carries it. The `canSend( WINDOW_UPDATE )`
+   tree comment was absent too. §11a and §12 now carry both; §13 records the third h1 case. The miss
+   has the shape S6R.1's had — an enumeration of arms read past the line above them — and the
+   reviewer notes that the caller's own check of `put_eof( )` stopped at the same two arms.
+2. **N2(b) was silent on the truncation arm.** (a) keeps `isStreamTruncationError( )`; a (b) that
+   admitted `eof` alone would have failed every close-delimited HTTPS response from a server that
+   skips `close_notify`, which today succeeds. §10 now decides it, as a proposal, in favour of
+   today's behaviour, and separately corrects the code an unclean end should carry, because (a)
+   makes a POSIX reset end the task cleanly and the diagnostic chain would otherwise lose it.
+3. **The module-size rule was not applied.** `utf_baselib_httpclient3` was over the 40 MB target
+   before this design added six cases to it. §14 names the sibling.
+
+**Verified and standing as written, against the source:**
+
+- **H01's barrier cannot hang on any accounted path.** Every `finishStream( )` that can see
+  `m_isWriteInFlight == true` runs inside the read handler — `onBytesRead( )` on completion or parse
+  error, `onPeerClosed( )` — and `closeConnection( )` → `beginClose( )` there is followed by that
+  handler's own `BL_TASKS_HANDLER_END_MULTIOP( )` → `onOperationCompleted( )`, which finds
+  `m_closing && ! m_closeInitiated` (`MultiOperationTask.h:371`) and runs `initiateClose( )` →
+  `getSocket( ).cancel( )`; the woken write completes `operation_aborted`, is excused as
+  self-inflicted, and takes the terminal. A write whose completion was already queued when the
+  barrier tripped completes clean and takes the terminal the same way. `onCancelStream( )` is the
+  one unaccounted caller and §1 says so; `onStartRequest( )`'s two early returns cannot see the flag
+  set, because (b) keeps a connection with a write in flight out of `Ready`, and `submit( )` gates on
+  `Ready` and an empty handle under the same lock `finishStream( )` publishes under.
+  `takeTerminalNoLock( )` requires `0 == m_pendingOperations` (`:147-157`), so §1a's "fully settled
+  at `onTaskStoppedNothrow( )`" holds. asio's `write_op` copies the sequence (`write.hpp:317-327`),
+  so the vector is not the hazard and the members are. The only readers of the two members are the
+  ones §1 names; a full read of the driver found no other.
+- **§1a's divergence is real.** The catch clears `m_isWriteInFlight` on the premise the catch already
+  rests on — no handler is owed — and leaves `m_requestMayHaveBeenSent` on S6R.1's — a throw is not
+  provably unwritten. One flag serving both would answer the second question with the first's
+  premise and replay a POST from the throwing initiator. `chkRequestMayBeReplayed( )` falls to
+  `isConnectionLost && retryIdempotentOnConnectionLoss && isIdempotentMethod( )`
+  (`ConnectionPool.h:430-455`) and the policy constructor leaves the knob false (`:297-310`), as
+  §1a says.
+- **N3's settlement is right, and so is the constraint it puts on N2.** On h2 a peer close reaches
+  every live stream as `onClosed( handle, connection_aborted, isRetryable )` through
+  `closeStream( )` (`Http2ConnectionTask.h:1108-1149`, `:1181-1198`, `:1557-1572`),
+  `answerOnClosed( )` fails any non-empty code (`HttpClientRequestTask.h:1211-1273`), and a stream
+  that is not live completed on END_STREAM with its content-length closed out (`Session.h:3252-3277`).
+  On h1 `put_eof( )` completes only a close-delimited message, verified in Boost 1.90. Both existing
+  `net::` predicates admit the Windows reset spellings (`NetUtils.h:353-385`), so either would route a
+  mid-body reset into that completion; the third predicate is necessary, not stylistic.
+  `outcomeOnClosed( )` reads `isConnectionLost` from the connection's state and not from the code, so
+  N2's choice of code changes diagnostics and nothing else.
+- **H12 is pinned and the design handles it.** `TestSession.h:3588-3595` on `lazari2` asserts 65536
+  at construction; the block's comment becomes false as §4 says; the amendment is right, and its
+  control at 4096 rests on `setDynamicTableCapacity( )` refusing an update for an equal value, now
+  stated in §4.
+- **H03b, H07, H15 and H18 are as written.** The pool's timer is created once and never reassigned;
+  `m_isMaintenanceArmed` is written only under the pool lock (`:1692-1694`, `:1953`, `:1986`); the
+  race is arm against dispose-cancel and nothing else. `failWith( )`'s guard, its ten call sites and
+  their eight caller-side guards are as counted. The window's threshold is set only in the
+  constructor and by the two profile-gated callers. `handleFrame( )` opens with the stream-error arm
+  the gate must precede, and every peer this library's tests speak to opens with SETTINGS.
+
+**Precisions applied in place, none of them changing a decision:** where the clears go in
+`onWriteCompleted( )` and that a write woken by the peer ends the task failed (§1); the landed
+reality of S6R.1's lines, the three comments that must move, six fields not five (§1a); H07's test
+must not assert a reset that cannot happen (§2); `fileInterimAndRestart( )` takes no `error_code`
+and the decoder does not hand its measure back (§3); the equal-capacity no-op (§4); the redirect
+function's real name, the 301/302 POST trigger and the authority comparison (§6); the H18 survey
+redone per object and per peer, and the test server's real line (§7); N1's representation and its
+existing pins (§9); the predicate's arms versus its premise (§10); the commit sentence's two readings
+(§11); the stale S6R.1 sentence (§12); modules and sizes (§14, §15).
+
+**Proposals, marked as such where they sit:** `TooManyInterimResponses` and `NoResponse` as new
+codec error values (§3, §11a); the truncation arm and the transport code on an unclean end (§10);
+the maximum-value default for `maxBodySize` and dropping the redundant driver-level pin (§9); the
+authority-pair comparison for `Host` (§6); a shared `Http1DriverTestUtils.h` for the new sibling
+(§14).
+
+**What this review does not claim.** Nothing was compiled: the sizes in §14, the H18 fallout, and
+whether the decode outcome carries the list size are the compiler's. N2's Windows premise is
+exactly as unsettled as §10 says, and nothing here narrows it.
+
+**Agreement.** With the in-place corrections above taken as part of the design, the reviewer agrees
+that S6R.2 may be implemented against it — on `lazari2` at `a36b04e` or later, in the modules §14
+now names, with H01 as its own commit and §11a's cases never ahead of their conversion.
