@@ -1589,7 +1589,7 @@ of those is what the layer exists to prevent.
 |---|---|---|
 | **S6R.1** | H02, H03a, H13, H14, H17, H26, H04b, H27, H28 | ~60 lines, seven files, all deterministically testable, three one-liners. H03a's cost buys the **segfault** only; "work scheduled after the disposal sweep" survives it. H27's fix must give `mergeCookieValues` its own byte-exact compare and **not** touch the shared `contains( )`, whose `equalsIgnoreCase` is load-bearing for the Accept-Encoding intersection |
 | **S6R.2** | H01, H07, H05, H12, H15, H16, H18, **H03b**, **N1**, **N2** | larger but bounded; H01 carries the only real design content (a write-completion barrier) |
-| **S6R.3** | H06, H08, H11, H09, H10, **H04a** | **decide before implementing** — see §5 of the verification record. H10 will restructure what S6R.1's H13 touched, so sequence them |
+| **S6R.3** | H06, H08, H11, H09, H10, **H04a** | **decide before implementing** — see §5 of the verification record. *Corrected 2026-09-22:* this row said "H10 will restructure what S6R.1's H13 touched, so sequence them"; H10 as designed (`issues/s6r3-design.md` §3.5) does not touch `queueHeaderBlock( )`, so no sequencing against H13 is needed. What H10 must not do is run concurrently with S6R.2's H12, which writes the same encoder's construction |
 | **S6R.4** | H29, H20, H19, H23, the 4a test-inversion trap, the stale Windows line in the L4 record | documentation and ledger hygiene |
 
 **H21 and H22 are not staged here** — both sit on L6's owed list (4a and finding 9) and belong to

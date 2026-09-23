@@ -138,7 +138,15 @@ the same delay. What shape (A) removes are the **crash** faces: today's null mem
 use-after-free of a copy racing its `reset( )`, and — had it shipped — the second draft's null-proxy
 completion. (An earlier wording counted "two crash faces, the null member and the second draft's
 null-proxy completion", which listed a face of a rejected draft as if it were in the tree and left
-out the use-after-free that is.) The delay is closed by S6R.3's admission protocol, with H04a.
+out the use-after-free that is.) The delay is **not** closed by S6R.3, and this sentence used to say
+it was — *"The delay is closed by S6R.3's admission protocol, with H04a."* Corrected 2026-09-22 by
+the S6R.3 design review: S6R.3 §4.2 finds that H04a (an acquire on the writer's publishing store)
+and this residual (an admission gate with a drain) share a site and nothing else, and that H04a does
+not shorten the delay at all. What S6R.3 identifies instead is a one-line reduction of the delay's
+*duration* — `disposeInternal( )` sweeping `entry -> driverConnection` as well as `attempt.task`,
+so a driver pushed during the wait is already cancel-requested and completes at once — which belongs
+to whichever change-set owns the pool's disposal. The in-tree comment at
+`ConnectionPool.h:2146-2152` carries the same sentence and is H04a's change-set to amend.
 
 So the honest claim is: **this buys the crash; in the narrower sub-window a pre-existing shutdown
 delay bounded by the idle lifetime remains.**
