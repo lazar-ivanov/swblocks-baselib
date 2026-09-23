@@ -337,50 +337,34 @@ namespace utest
          * @brief The assertions every platform must satisfy, and the arm for the one it is
          */
 
-        inline void requireClassifiedAsPeerClose(
+        inline void requireGracefulPeerClose(
             SAA_in          const LoopbackPair::ReadOutcome&                    outcome,
-            SAA_in          const std::size_t                                   payloadSize,
-            SAA_in          const bool                                          platformRenamesTheClose
+            SAA_in          const std::size_t                                   payloadSize
             )
         {
             using namespace bl;
 
             /*
-             * It ended, and the library calls the ending a peer close - the two things every
-             * caller of net::isPeerClosedErrorCode( ) depends on
+             * The teardown is graceful ON EVERY PLATFORM, and that is the point of these cases
+             *
+             * They were written to measure a platform difference and they found one: with the
+             * shutdown_both this function's peer used to perform, Windows reported 10054 or 10053
+             * and delivered 0 of 16384 bytes, where Linux reported eof and delivered all of them.
+             * The difference turned out to be self-inflicted - shutting down the RECEIVE side
+             * makes the close abortive, and the reset discards what the peer had not yet read.
+             * TcpSocketCommonBase::shutdownSocket( ) now shuts down the send side only, and the
+             * asymmetry is gone.
+             *
+             * So there is no platform arm here any more. Both sides must see an orderly end of
+             * stream and every byte, which is what makes this a regression test for the teardown
+             * rather than a description of Windows: if anyone restores shutdown_both, these two
+             * cases go red on Windows and say why
              */
 
-            UTF_REQUIRE( outcome.ec );
+            UTF_REQUIRE_EQUAL( asio::error::make_error_code( asio::error::eof ), outcome.ec );
+            UTF_REQUIRE( net::isOrderlyPeerCloseErrorCode( outcome.ec ) );
             UTF_REQUIRE( net::isPeerClosedErrorCode( outcome.ec ) );
-
-            if( platformRenamesTheClose )
-            {
-                /*
-                 * The platform which reported 10054 and 10053 from product code. The code is one
-                 * of those two, and NOT eof - which is what would show the hypothesis of the record
-                 * to be wrong in the other direction: a stack which reports the close as an
-                 * orderly end of stream here has no business having two extra rows in net::
-                 *
-                 * The byte count is reported above and deliberately not asserted
-                 */
-
-                UTF_REQUIRE(
-                    asio::error::connection_reset == outcome.ec ||
-                    asio::error::connection_aborted == outcome.ec
-                    );
-            }
-            else
-            {
-                /*
-                 * A stack which sends FIN for the shutdown and hands over what it had queued
-                 * before reporting the end: every byte, then eof, which is also the orderly close
-                 * the retry classifier accepts
-                 */
-
-                UTF_REQUIRE_EQUAL( asio::error::make_error_code( asio::error::eof ), outcome.ec );
-                UTF_REQUIRE( net::isOrderlyPeerCloseErrorCode( outcome.ec ) );
-                UTF_REQUIRE_EQUAL( outcome.delivered, payloadSize );
-            }
+            UTF_REQUIRE_EQUAL( outcome.delivered, payloadSize );
         }
 
     } // peerclose
@@ -425,11 +409,7 @@ UTF_AUTO_TEST_CASE( PeerCloseErrorCodes_PeerShutsDownWithUnreadDataTests )
 
     reportOutcome( "the peer shut down with unread data", outcome, payload.size() );
 
-    requireClassifiedAsPeerClose(
-        outcome,
-        payload.size(),
-        os::peerCloseWithUnreadDataIsReportedAsReset()
-        );
+    requireGracefulPeerClose( outcome, payload.size() );
 }
 
 /*
@@ -473,11 +453,7 @@ UTF_AUTO_TEST_CASE( PeerCloseErrorCodes_ReaderSendsAfterPeerShutdownTests )
 
     reportOutcome( "the reader sent after the peer shut down", outcome, payload.size() );
 
-    requireClassifiedAsPeerClose(
-        outcome,
-        payload.size(),
-        os::peerCloseCanBeReportedAsConnectionAborted()
-        );
+    requireGracefulPeerClose( outcome, payload.size() );
 }
 
 #endif /* __UTEST_TESTPEERCLOSEERRORCODES_H_ */

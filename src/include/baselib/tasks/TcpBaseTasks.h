@@ -321,8 +321,40 @@ namespace bl
                 }
 
                 {
+                    /*
+                     * shutdown_send and NOT shutdown_both, because shutting down the RECEIVE side
+                     * makes this an abortive close which destroys data we have already delivered
+                     * to the peer
+                     *
+                     * Windows resets the connection if anything arrives after the receive side is
+                     * shut down, and a reset DISCARDS the peer's unread receive buffer - including
+                     * whatever we sent it moments earlier. Measured with
+                     * PeerCloseErrorCodes_* in utf_baselib_http2, on win-x64, with the peer torn
+                     * down through this very function:
+                     *
+                     *     shutdown_both   the reader saw 10054 / 10053 and 0 of 16384 bytes
+                     *     shutdown_send   the reader saw eof and 16384 of 16384 bytes
+                     *
+                     * So a server which answered and then ended its task could have its response
+                     * thrown away by its own teardown, and the client would report success because
+                     * a reset after a complete exchange is indistinguishable from a peer close.
+                     * That is what H2Driver_OpeningWriteIsOneWriteTests caught on the slowest
+                     * combination in the matrix - status( ) was 0 where 204 had been sent - and it
+                     * is why the WSAECONNRESET and WSAECONNABORTED rows exist in net:: at all
+                     *
+                     * FIN still goes out, so the peer still sees an orderly end of stream; what is
+                     * given up is refusing data after this point, which nothing here wanted - the
+                     * cancel below stops the reads, and anything that arrives is simply dropped
+                     * when the socket closes
+                     *
+                     * This NARROWS the window rather than closing it: our own close( ) with unread
+                     * data can still reset, and a peer which is slow to read could in principle
+                     * lose something that way. It cannot happen for data which preceded our FIN,
+                     * which is the case that was losing responses
+                     */
+
                     eh::error_code ec;
-                    socket.shutdown( tcp::socket::shutdown_both, ec );
+                    socket.shutdown( tcp::socket::shutdown_send, ec );
                     checkSocketError( ec );
                 }
 
