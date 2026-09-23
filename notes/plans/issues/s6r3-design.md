@@ -42,6 +42,16 @@ in the tree, which is the state §4.2 assumes.
 `markDraining( )` in `handleGoAway( )` is at `Session.h:2388`, not `:2349`; and the decoder
 registrations §2 cites are at `TestClientSession.h:1766` and `:1811`. Corrected where they are used.
 
+**Re-read for the §4.1 re-gate (2026-09-23, `lazari2` @ `9583c31`):** the pool's `Entry`,
+`refreshEntry( )`, `findDispatchable( )`, `canStartConnection( )`, `examineKey( )`, `examineAll( )`,
+`runActions( )`, `startConnection( )`, `forgetConnection( )`, `chkCancelEntry( )` and
+`onMaintenance( )`, whole; the base's `onProtocolNegotiated( )`, `continueAfterConnected( )` and
+`connection( )`; the driver's `onProtocolNegotiated( )`, `onTaskStoppedNothrow( )`,
+`publishState( )`, `state( )` and its five `Closed` publications; `TaskBase::notifyReadyImpl( )`,
+`getState( )` and `exception( )`; every `ConnectionAttempt` builder in the tree (four) and
+`StubConnectionTaskT` whole. Line numbers in §4.1's re-gate, §4.3 and §12 are that tip's; the
+factory lambda §4 cites at `ClientSession.h:1730` is at `:1790` there.
+
 **And the decisions document this design leans on is not on the branch this design is on.**
 `s6r3-decisions.md` exists only on branch `s6r3-decisions`, at `c4b2f87`; on `lazari2` every
 citation of it below resolves to nothing. Either it lands ahead of this design, or this design must
@@ -676,20 +686,94 @@ own reason and marks it inferred: the write and the read are in practice ordered
 execution queue's and the io_context's mutexes, which is real synchronisation TSan honours and which
 the code does not document. An incidental edge is not a designed one.
 
-### 4.1 The change
+### 4.1 The change — re-gated 2026-09-23, after the gate as agreed crashed the pool's own module
 
-Gate the driver poll on a load the writer performed **after** the write — a load that says the task
-has *finished*:
+**The gate this section agreed on 2026-09-22 was implemented exactly as written and crashed
+`utf_baselib_h2client4` with SIGSEGV** (lane 3, branch `s6r3-3`, 2026-09-23, entering
+`H2Pool_FallbackDriverIsPreferredTests`): an unbounded `startConnection( ) → runActions( ) →
+startConnection( )` recursion (`ConnectionPool.h:1942` → `:1860` → `:1942` …) until the stack
+overflowed. Reverted, the module is 15 cases green. The mechanism was verified link by link against
+`lazari2` @ `9583c31` on 2026-09-23 — every function below opened at its signature and read to its
+end — and it is not a stub artefact: the stub only holds still a window the real fallback opens for
+microseconds. What this section said, and why each part was wrong, is quoted below the gate now
+taken, so that the next reader gets the answer before the history.
 
-    if( ! entry -> driverConnection && entry -> attempt.task &&
-        entry -> attempt.task -> getState() >= tasks::Task::PendingCompletion )
+**The gate taken.** One reading of the task connection's state per examine, and both decisions that
+depend on it — whether the driver may be polled, and whether the entry is retired — made from that
+one reading:
 
-`TaskBase::m_state` is `std::atomic< State >` (`TaskBase.h:759`), and `notifyReadyImpl( )` stores
-`PendingCompletion` into it (`:726`) **after** `onTaskStoppedNothrow( )` returns (`:607`), under the
-task lock — both read at the source. `m_connection` is written before the task can finish, so the
-load is an acquire on a store that happens-after the write, and the pointer read is ordered. The
-`>=` is the idiom `TaskBase.h:1111` already uses for "finished"; `Completed` is stored later still,
-by the queue's `onReady( )` (`ExecutionQueueImpl.h:544`), and is ordered the same way.
+    ConnectionState taskState = ConnectionState::Connecting;
+    bool mayPollDriver = false;
+
+    if( entry -> taskConnection )
+    {
+        taskState = entry -> taskConnection -> state();               /* the ONE load */
+        mayPollDriver = ( ConnectionState::Closed == taskState );
+    }
+    else if( entry -> attempt.task )
+    {
+        mayPollDriver = entry -> attempt.task -> getState() >= tasks::Task::PendingCompletion;
+    }
+
+    if( ! entry -> driverConnection && mayPollDriver )
+    {
+        /* the existing resolveDriver( ) block, unchanged ( :1299-1322 ) */
+    }
+
+    const auto& connection = entry -> current();
+
+    if( connection )
+    {
+        const auto state = connection.get() == entry -> taskConnection.get() ?
+            taskState : connection -> state();
+
+        /* the existing Ready and Draining-or-Closed arms, unchanged ( :1331-1350 ) */
+    }
+
+Three properties, each read at the source:
+
+1. **It is a valid acquire for the `m_connection` write.** `publishState( )`
+   (`Http2ConnectionTask.h:2364`) stores `m_connectionState` with the default order and `state( )`
+   (`:2822`) loads it the same way. On the fallback the write (`ClientConnectionTaskBase.h:581`,
+   inside `continueAfterConnected( )` `:625`, on the strand) is sequenced before the task's
+   completion, and `Closed` is stored from that completion: `notifyReadyImpl( )` (`TaskBase.h:604`)
+   calls the driver's `onTaskStoppedNothrow( )` (`Http2ConnectionTask.h:2651`), which publishes at
+   `:2700`. On the driver's four other `Closed` routes — `onPeerClosed( )` `:1569`, the PING
+   deadline `:1974`, the drain deadline `:2226`, `chkFinishClose( )` `:2288` — the task took the h2
+   branch of `onProtocolNegotiated( )` (`:2479-2490`), which never writes `m_connection`; a
+   pre-handshake stop reaches `:2700` with the member never written. So a load that returns `Closed`
+   orders the pool's `attempt.driver( )` read (`ClientSession.h:1790` → `connection( )` `:669`)
+   after the only write there is.
+2. **It cannot retire the entry on the reading that should have adopted the driver — by
+   construction, not by timing.** The retire arm reads `taskState`, the value the poll was decided
+   on. If it is `Closed`, the poll ran first in the same call and `current( )` is the driver; if it
+   is not, nothing is retired, and the next examine reads `Closed` and adopts. Two loads of the same
+   atomic in one examine — which the agreed gate had (`getState( )`, then `state( )`), and which
+   today's unconditional poll has too (`m_connection`, then `state( )`) — can straddle the writer's
+   `Closed` store if the examining thread is held between them; one load cannot. `Draining` needs
+   no arm: `publishState( )` is monotone (`:2364-2385`) and `Ready` is published at `:2534` alone,
+   on the h2 branch, so a `Draining` task connection never carries a driver.
+3. **It costs nothing against today on the fallback.** The rider's `onClosed( )` is posted from
+   `closeAllStreamsUnwrittenRetryable( )` at `:2708`, *after* `:2700`, so the `releaseStream( )` its
+   request task makes reads `Closed` and adopts in that examine — the examine that adopts today.
+   Without a rider the adopting examine is the next maintenance tick, as today; the write and the
+   `Closed` store are microseconds apart, so it is the same tick.
+
+**The `else` arm is the agreed gate, kept for the one attempt shape that needs it — and that shape is
+in the tree, not hypothetical.** `taskConnection` is null when the attempt's task is not itself a
+`ClientConnection`, and `TestHttpClientRequestTask.h:1314-1341` builds exactly that: an attempt whose
+task is a bare `SimpleTaskImpl` (`:1331`) and whose accessor returns a connection the case holds,
+used by two cases (`:2408`, `:2501`). The lane's re-gate argument said `taskConnection` "is set on
+every path that can produce a fallback driver"; that is true of production — `ClientSession.h:1790`
+and `TestConnectionPoolConcurrency.h:360` are the only other `attempt.driver` assignments, both on an
+h2 task — and false of the tree, and L5 finding 7's shape alone, which the lane proposed, would
+never open for those two cases: their entries would sit until the establishment bound. For that shape
+the task-state gate is safe precisely because `current( )` (`:752`) is null until the driver is
+adopted, so the retire arm cannot fire; and it is ordered because `PendingCompletion`
+(`TaskBase.h:726`) is stored after `onTaskStoppedNothrow( )` returns (`:604`), after anything the
+task wrote. It costs those two cases one tick where today the first examine adopts — 10 ms when the
+placeholder armed the tick (`:1774-1775`), up to 250 ms if it was already running. A `Created` task
+is still excluded, for the reason the next paragraph gives.
 
 **Corrected by the 2026-09-22 review: the gate as first written was `tasks::Task::Running != …
 getState( )`, and that admits `Created`.** A `Created` attempt task is not a theoretical state at
@@ -701,15 +785,55 @@ the write by its own later push; for the other thread it is not — a read unord
 that has not happened yet, which is the same formal race H04a exists to remove, one state earlier.
 "Finished" excludes it and costs nothing: no driver can exist before the task has run.
 
-**Why the task's state and not the connection's.** `Http2ConnectionTaskT::onTaskStoppedNothrow( )`
+**What this section said on 2026-09-22, and why it was wrong — quoted, because the deletion is what
+hides the lesson.** The gate was
+
+    if( ! entry -> driverConnection && entry -> attempt.task &&
+        entry -> attempt.task -> getState() >= tasks::Task::PendingCompletion )
+
+with the argument *"`m_connection` is written before the task can finish, so the load is an acquire
+on a store that happens-after the write, and the pointer read is ordered."* True, and not enough. The
+section asked one question of the gate — is the store it opens on after the write? — and never the
+second: what does the reader do while the gate is shut? While it is shut, `current( )` (`:752`) falls
+through to the **task** connection, and the store that opens the gate is not the first store the task
+makes on its way out. `onTaskStoppedNothrow( )` publishes `Closed` at `Http2ConnectionTask.h:2700`;
+`PendingCompletion` is stored only when it returns (`TaskBase.h:604` → `:726`). Between the two,
+`refreshEntry( )` reads `Closed` from the task (`:1325-1329`), its retire arm fires (`:1342-1350`),
+and `examineKey( )` forgets the entry (`:1597-1609`) — driver never adopted, waiter served by a new
+connection. In the real driver that window is the tail of one locked function and any examine can
+land in it; the rider's own `releaseStream( )` is posted from inside it (`:2708`). Its losing outcome
+is a wasted TLS connection and a full second establishment, on the default path to every origin that
+does not speak h2 — a race, not a certainty, and one nobody would have traced back to this line. The
+stub (`TestConnectionPool.h:801`, `:354`) holds the task at `Closed` and `Running` for the case's
+life, so under the agreed gate the window never closes, every replacement entry is born into it, and
+the pool's own response to an uncharged retire is the recursion —
+`pool-uncharged-retire-recursion-record.md`.
+
+*"**Why the task's state and not the connection's.** `Http2ConnectionTaskT::onTaskStoppedNothrow( )`
 publishes `ConnectionState::Closed` at `:2648` — also after the write, also atomic — and L5 finding 7
 proposed exactly that. It is correct, and it is narrower: it needs `entry -> taskConnection`, which
-exists only when the attempt's task is itself a `ClientConnection`. The task's own state is
-available for every attempt, needs no QI, and is a property of `TaskBase` rather than of one driver.
+exists only when the attempt's task is itself a `ClientConnection`."* Reversed on the axis that
+mattered. `Closed` is published **before** `PendingCompletion` and is the very store that arms the
+retire branch, so a gate on it opens the poll at the instant the retire arm can first fire, and the
+poll runs first (`:1297` precedes `:1325`). The section compared the two stores against the write and
+never against the retire branch. Where it was right — the connection's state is not available for
+every attempt — the answer was an arm per shape, not the later of the two stores for both.
 
-**What it costs.** At worst one maintenance tick of adoption latency, over a window of two returning
-stack frames on one thread. `refreshEntry( )` is reached from `examineAll( )`, so the next examine
-picks it up. In exchange the read stops depending on an edge nobody designed.
+*"**What it costs.** At worst one maintenance tick of adoption latency, over a window of two
+returning stack frames on one thread."* The tick is not a unit of 10 ms: the interval doubles on
+every tick that changes nothing (`:2050-2058`), from 10 ms to 250 ms (`:210-211`), and an
+establishment lasts long enough for it to have climbed, so "one tick" is up to a quarter of a second
+— and the sentence names the cost in the *lucky* branch of the window. In the other branch the cost
+was the retire above.
+
+*"H04a has no deterministic test and says so"* (§4.3 and §7, as first written). False, and it is the
+claim the crash fell out of. `StubFactory::operator( )( )` (`TestConnectionPool.h:783-853`) builds
+the fallback as a task that is `Closed` from birth (`:801`) with the driver beside it (`:829`), and
+`StubConnectionTaskT` stays `Running` until the case ends (`:354`) — which is exactly "driver
+written, `Closed` published, task not finished", held still. A gate on "finished" can never open for
+it, and the case that pins the fallback preference (`:1507`) can never pass under it. That was
+answerable by reading the fixture the feature is pinned by; neither the author nor the reviewer
+opened it, and both accepted "no deterministic test" instead of checking it against the module.
 
 **What it must not disturb.** `refreshEntry( )`'s last branch already tests `attempt.task ->
 getState( )` for a *failed* attempt, and L5 finding 7 separately records that this branch tests the
@@ -779,9 +903,30 @@ time in this project that a right conclusion was published on a wrong premise.
 
 ### 4.3 Test
 
-**None that is deterministic, and that is stated rather than papered over.** The change is justified
-by construction: after it, the pointer is read only after an atomic load of a store that
-happens-after its write.
+**Corrected 2026-09-23.** This section said *"None that is deterministic, and that is stated rather
+than papered over. The change is justified by construction"*, and §7 repeated it. Wrong, and the
+crash is what the wrong claim cost: the module that pins the fallback preference is a deterministic
+test of any gate on the driver poll, because its stub holds the fallback's three stores still —
+driver written, `Closed` published, task never finished (§4.1). What the change-set ships:
+
+- **The existing `H2Pool_FallbackDriverIsPreferredTests`** (`TestConnectionPool.h:1507`),
+  unmodified and named here as load-bearing: red under the agreed gate — a crash, or with the bound
+  of `pool-uncharged-retire-recursion-record.md` in place a failed answer — and green under §4.1's.
+- **A pin of H04a's own purpose, red before.** A stub task that is `Connecting` and `Running` with
+  the accessor already returning a `Ready` driver (one knob on `StubFactory`: the fallback task's
+  initial state), and an **unreplayable** request, so that nothing rides the preface. Assert that no
+  answer arrives while the task stays `Connecting` — a bounded negative wait, with its positive half
+  in the same case, as `H2Pool_ConnectingTakesOnlyReplayableTests` does it — then
+  `setState( Closed )` on the task and assert the waiter is answered with the driver. Red before:
+  today's unconditional poll hands the driver out at the first examine. It is the one deterministic
+  statement of "the pointer is not read before the acquire" available without TSan.
+- **The `else` arm.** An attempt whose task is a plain `SimpleTaskImpl` — the shape of
+  `TestHttpClientRequestTask.h:1314` — with an accessor returning a `Ready` stub; assert the driver
+  is adopted once the task has completed. Green before and after; it pins that the arm exists.
+- Where they go is subject to the size rule in `src/utests/AGENTS.md`: `utf_baselib_h2client4`, or
+  a numbered sibling if it is near the target.
+
+The TSan paragraph below stands: it corroborates the race half and does not prove it.
 
 A TSan run over `utf_baselib_httpclient4` is worth doing and is **not** the proof — the same 32-run
 round already failed to report the unfixed read, for a reason that record gives. A clean run
@@ -826,9 +971,12 @@ and none was a core-path rewrite. That argument does not transfer.
   `HttpClientRequestTask.h` and `ClientSession.h`. **Gates on the whole suite. Blocked on H07.**
 - **H10** — its own change-set, core path in `Session.h`. Independent of the other three. **Must not
   run concurrently with S6R.2's H12**, which writes the same encoder's construction.
-- **H04a** — its own change-set, core path in `ConnectionPool.h`, two lines and a comment. It could
-  ride with the pool-disposal work of §4.2 if that is taken; it must not ride with H06/H08, whose
-  theme is different.
+- **H04a** — its own change-set, core path in `ConnectionPool.h`: §4.1's two-arm gate, the one-load
+  refresh, and the cases of §4.3. *Amended 2026-09-23:* this said "two lines and a comment", of the
+  gate that crashed. It could ride with the pool-disposal work of §4.2 if that is taken; it must not
+  ride with H06/H08, whose theme is different. **It lands after the retry-accounting bound of
+  `pool-uncharged-retire-recursion-record.md`**, its own change-set, which is what makes a wrong gate
+  on the driver poll a red case rather than a stack overflow.
 - **H09** — documentation only. It may ride with S6R.4.
 
 **One interaction across them, and it is not a conflict.** H06's drain adds uncancellable,
@@ -847,8 +995,12 @@ should read §1.6 first, because the two hazards are the same hazard.
   Three of them can be: H06's drain, H06's failure limb (after H07), H08's two cases, and both of
   H10's — plus H10's third case, which is a control, green on both sides by design, and owed for the
   reason §3.8 gives. Nothing here may rest on "the suite still passes".
-- **H04a has no deterministic test and says so.** It is justified by construction; the TSan run
-  corroborates and does not prove.
+- **H04a ships the cases §4.3 names** — the existing fallback-preference case as a named control,
+  the Connecting-then-Closed pin (red before), and the `else`-arm pin — and `utf_baselib_httpclient`
+  is in its focused set, because the `else` arm exists for two of that module's cases. *Corrected
+  2026-09-23:* this line said *"H04a has no deterministic test and says so. It is justified by
+  construction"*; the module that pins the poll was that test, and the agreed gate crashed it. The
+  TSan run still corroborates the race half and does not prove it.
 - **H09 ships no test**, because a documentation change has none to ship.
 - H06/H08 and H10 each owe `notes.txt` recipes and a manifest refresh.
 
@@ -888,6 +1040,15 @@ Recorded in the same spirit as the verification record's own §2 and the decisio
   cannot see. The ACK now holds its place inside the header block queue. The decision stands.
 - **§4.1's gate as first written admitted `Created`** (2026-09-22), a state `startConnection( )`
   exposes under the pool lock; corrected to "finished".
+- **§4.1's gate as corrected on 2026-09-22 was itself wrong, and crashed** (2026-09-23). "Finished"
+  is stored *after* the `Closed` that retires the entry, so while the gate was shut the retire arm
+  read the task's `Closed` with the driver unadopted; the stub, `Closed` and `Running` for the case's
+  life, made that window permanent, and the pool re-established without charge until the stack
+  overflowed. Re-gated on one reading of the task connection's state, with the agreed gate kept only
+  for an attempt whose task is not a `ClientConnection` (§4.1). The rejected alternative had the
+  ordering right and the availability wrong; the correction takes each where it holds. The unbounded
+  recursion is a pool hazard in its own right, live today in its asynchronous form —
+  `pool-uncharged-retire-recursion-record.md`.
 - **§1.3's gate as first written told the sink `onComplete( )` in the `[ Expired, Closed ]` batch**
   (2026-09-22), the very row the decisions document's table promised to close; corrected to "the
   close is the answer".
@@ -949,7 +1110,9 @@ the most expensive in the review:
    ACK into the header block queue at its own position — two pieces instead of five, one comment,
    one more case. §3.6 still holds.
 2. **H04a's gate admitted `Created`** (§4.1), a state `startConnection( )` exposes to
-   `refreshEntry( )` under the pool lock before the push. Corrected to "finished".
+   `refreshEntry( )` under the pool lock before the push. Corrected to "finished". *2026-09-23: that
+   correction stood on the same blind spot as the gate it corrected, and the corrected gate crashed
+   the pool's own module — §12. "The finished-task gate" in the verdict above does not stand.*
 3. **H06's gate told the sink `onComplete( )` in the `[ Expired, Closed ]` batch** (§1.3), the row
    the decisions document's table promised to close. Corrected to "the close is the answer".
 
@@ -1003,3 +1166,85 @@ nothing else.
 **Agreement.** With the in-place corrections above taken as part of the design, the reviewer agrees
 that S6R.3's four change-sets may be implemented against it, in the order and with the gates §6 and
 §7 give — H06/H08 after H07 lands, H10 never beside H12.
+
+---
+
+## 12. Re-gate of §4.1, 2026-09-23 — after the agreed gate crashed
+
+**Reviewer: Claude Fable 5.1 — the same reader who agreed §4.1 on 2026-09-22 and made its `Created`
+correction — on `lazari2` @ `9583c31`, at the maintainer's request after lane 3 reported the crash.**
+Read whole, from signature to end: `refreshEntry( )`, `findDispatchable( )`, `canStartConnection( )`,
+`examineKey( )`, `examineAll( )`, `runActions( )`, `startConnection( )`, `forgetConnection( )`,
+`chkCancelEntry( )`, `onMaintenance( )` and `Entry` in `ConnectionPool.h`; `onProtocolNegotiated( )`,
+`continueAfterConnected( )`, `connection( )` and the `m_connection` declaration in
+`ClientConnectionTaskBase.h`; the driver's `onProtocolNegotiated( )`, `onTaskStoppedNothrow( )`,
+`publishState( )`, `state( )` and all five `Closed` publications; `TaskBase::notifyReadyImpl( )`,
+`getState( )` and `exception( )`; the four `ConnectionAttempt` builders in the tree and
+`StubConnectionTaskT` whole; lane 3's journal entry for the crash, outside the repo. Nothing was
+built — two lanes were compiling — and nothing needed to be for the diagnosis: the lane's evidence is
+a backtrace and a green re-run, and every link of the mechanism is a synchronous line of code.
+
+**Verdict on the lane's diagnosis: right in every link, overstated in one magnitude, and wrong in
+one claim that would have sent the fix into a second failure.**
+
+- Every link holds — `current( )`'s fall-through, the `Closed`-before-`PendingCompletion` order, the
+  retire arm, the forget, the uncharged re-establishment, the recursion. §4.1 carries them with line
+  numbers.
+- *"On the default path for every origin that does not speak h2"* names the path, not the frequency.
+  In the real driver the shut-gate window is microseconds under the task lock; the tick lands in it
+  rarely, and the rider's release, though posted from inside it, usually arrives after it has closed.
+  The losing outcome is real and bad — a wasted TLS connection and a second establishment — and it is
+  a race. The stub makes it certain, which is why the crash was deterministic.
+- *"`taskConnection` is set on every path that can produce a fallback driver"* is true of production
+  and false of the tree: `TestHttpClientRequestTask.h:1314` is a driver-bearing attempt on a
+  `SimpleTaskImpl`, used by two cases. L5 finding 7's shape alone, which the lane proposed as the
+  fix, would leave those entries unadopted until the establishment bound. The gate taken has an arm
+  for each shape (§4.1).
+- Both understatements verified: the tick is up to 250 ms; the recursion is unbounded whenever an
+  entry retires without ever having been usable and without the retire being charged, which is
+  `refreshEntry( )`'s `Draining`/`Closed` arm exactly, and it is latent as a crash only because no
+  real driver is born `Closed` — while its asynchronous form, a reconnect loop against an origin that
+  GOAWAYs at birth, is live. It has its own record, with a bound and a test, and the bound is
+  sequenced before this gate on purpose.
+
+**A third shape, and it is the one taken.** Neither the agreed gate nor L5 finding 7's is the answer:
+the first opens on the later store; the second on the right store but for one attempt shape only;
+and both read the task connection's state a second time for the retire decision, which is a straddle
+(§4.1, property 2 — today's unconditional poll has the same straddle, at nanosecond width). One load,
+both decisions from it, and the task-state gate only where there is no task connection to read.
+
+**What would have caught this at the gate — the gate is what failed, not the lane.**
+
+1. **Read the gate against the fixture that pins the feature.** `StubFactory` builds the fallback as
+   `Closed` + `Running` + driver (`TestConnectionPool.h:801`, `:829`, `:354`). One read of it answers
+   "does this gate ever open for the case that pins the poll?" — no. The design said "no
+   deterministic test" and the review accepted the sentence instead of opening the module. A change
+   to a poll owes a reading of every fixture that drives the poll, and "there is no test" is a claim
+   about the tree, to be checked against the tree.
+2. **Ask the second question of every gate.** An acquire argument answers "is the load after the
+   write?". A gate also has a shut state, and the reader does something in it. Here it read the same
+   object's *other* state and acted on it. "What does the reader do while the gate is shut, and which
+   of the writer's stores does it see first?" was never asked — not by the author, and not by the
+   reviewer, whose `Created` correction moved the gate *later* by the same method and so widened the
+   shut interval without looking at it.
+3. **A correction that narrows a gate is a change that needs the same review as the gate.** The
+   2026-09-22 correction was made in place and agreed in the same pass; it was treated as a
+   precision. It was a specification change, and it was wrong in the direction it moved.
+4. **A rejected alternative that differs in ordering must be compared on ordering.** §4.1 rejected
+   L5 finding 7 on availability and generality and wrote "also after the write" of both stores — true
+   and beside the point. The two stores differ in their order relative to the retire branch, and one
+   sentence comparing them there would have been the whole finding.
+5. **Compile the fifteen cases.** The design and the review both record "nothing built; a lane was
+   compiling". The module the gate crashed builds in minutes and would have crashed at the design
+   stage. Keeping builds off a contended machine is right for a design pass; for a two-line change to
+   a polled core path whose pinning module is small, one focused build costs less than this section.
+
+**What this re-gate does not claim.** The corrected gate has not been compiled or run. Property 1's
+acquire argument and property 2's one-load argument are from the source; the cases in §4.3 are
+specified, not written. The frequency of the real-driver race was reasoned from the window's width
+and the paths that can examine during it, not measured.
+
+**Agreement.** §4.1 as re-gated, sequenced after the recursion bound's change-set, may be implemented
+— with the cases of §4.3 shown red before and green after where that section says they can be, and
+with `utf_baselib_httpclient` in the focused set, because its two pool-composed cases are the ones
+the `else` arm exists for.
