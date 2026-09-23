@@ -74,5 +74,11 @@
 --log_level=message --run_test=HttpClientRequestTask_ConnectionLostUnderTheStreamIsReportedUnusableTests
 --log_level=message --run_test=HttpClientRequestTask_BouncedRequestNamesTheConnectionFailureTests
 
+--log_level=message --run_test=Http1Codec_CloseBeforeAnyResponseOctetTests
+--log_level=message --run_test=Http1Codec_BodyIsUncappedByDefaultTests
+--log_level=message --run_test=HttpClientRequestTask_SinkWhichThrowsOnCompleteFailsTheRequestTests
+--log_level=message --run_test=HttpClientRequestTask_SinkWhichThrowsInTheCloseBatchFailsTheRequestTests
+--log_level=message --run_test=Http1Codec_InterimResponsesAreBoundedTests
+
 # S6R.4 - the timeout message renders a URL without its userinfo, query or fragment (astra H20)
 --log_level=message --run_test=HttpClientRequestTask_TimeoutMessageRedactsTheUrlTests

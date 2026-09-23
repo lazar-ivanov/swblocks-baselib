@@ -209,10 +209,22 @@ namespace bl
             /*
              * NOT "bytes were written" - "this request may have been sent", which is a weaker
              * claim and the only one a client can make about a write it has issued. It is set
-             * before async_write( ) is initiated and consumed as the negation of retryability
+             * before async_write( ) is initiated and consumed as the negation of retryability,
+             * and cleared again by a write which transferred NOTHING - the one case in which
+             * "no octet escaped" is proven rather than assumed
              */
 
             bool                                                                m_requestMayHaveBeenSent = false;
+
+            /*
+             * A DIFFERENT QUESTION FROM THE FLAG ABOVE, AND THE TWO MUST NOT BE FOLDED INTO ONE.
+             * This one is "is a write handler still owed", which is what the storage of a write
+             * and the reuse of this connection both depend on; the one above is "may bytes have
+             * escaped", which a write that never started can still answer yes to. The h2 driver
+             * carries the same flag under the same name and clears it in its write handler
+             */
+
+            bool                                                                m_isWriteInFlight = false;
             bool                                                                m_requestSaidClose = false;
 
             /*
@@ -682,10 +694,17 @@ namespace bl
                  * The two paths which legitimately claim the opposite both return ABOVE this
                  * line: the isClosing( ) check and the render failure, neither of which reached
                  * the socket. The exact answer - "zero octets escaped, so this is safe to
-                 * replay" - needs the write-completion barrier of H01 and is S6R.2's
+                 * replay" - is answered in onWriteCompleted( ), which is the one place that can
+                 * know it, and only once the write has settled
+                 *
+                 * m_isWriteInFlight GOES WITH IT AND IS NOT THE SAME FLAG. From here until the
+                 * completion handler runs, the buffers handed to async_write( ) point into
+                 * m_requestHead and m_requestBody, so neither may be released and this
+                 * connection may not be published as Ready - see finishStream( )
                  */
 
                 m_requestMayHaveBeenSent = true;
+                m_isWriteInFlight = true;
 
                 base_type::beginOperation();
 
@@ -707,7 +726,15 @@ namespace bl
                     /*
                      * The operation was begun and will never complete, so it is completed here -
                      * the accounting must balance or the task can never take its terminal path
+                     *
+                     * AND THE TWO FLAGS DIVERGE HERE, DELIBERATELY. No handler is owed, so
+                     * m_isWriteInFlight is cleared - the same premise this catch already rests
+                     * on. m_requestMayHaveBeenSent is NOT: a throw out of the initiator is
+                     * precisely a case that cannot be proven unwritten, which is the whole of
+                     * why it is set before the try
                      */
+
+                    m_isWriteInFlight = false;
 
                     base_type::onOperationCompleted( std::current_exception(), false );
                 }
@@ -722,15 +749,42 @@ namespace bl
             {
                 BL_TASKS_HANDLER_BEGIN()
 
-                if( 0U != bytesTransferred )
+                /*
+                 * EVERYTHING THE WRITE OWED IS SETTLED HERE, AND AHEAD OF CHK_EC( ). That macro
+                 * throws to the epilog, so anything placed after it never runs for a write which
+                 * FAILED - and a failed write is exactly the case which must let go of the
+                 * caller's DataBlock and, when it transferred nothing, take back the
+                 * conservative claim that the request may have been sent
+                 */
+
+                m_isWriteInFlight = false;
+
+                if( 0U == bytesTransferred )
                 {
                     /*
-                     * Redundant since onStartRequest( ) marks it before the write is issued, and
-                     * kept because it is true and costs nothing
+                     * THE EXACT ANSWER onStartRequest( ) defers to here. async_write( ) reports
+                     * the CUMULATIVE total across its internal write_some( ) calls, so zero means
+                     * no octet was ever handed to the stream - under the TLS policy, that no
+                     * plaintext octet was ever encrypted into a record. It is not a claim about
+                     * what the peer did with bytes it received; it is the claim that there were
+                     * none, which is the one thing that makes a replay safe rather than a
+                     * duplicate. Clearing it is safe only because of the barrier below: a
+                     * connection with a write in flight is never published as Ready, so no second
+                     * request can have started in between
                      */
 
-                    m_requestMayHaveBeenSent = true;
+                    m_requestMayHaveBeenSent = false;
                 }
+
+                /*
+                 * THE WRITE'S STORAGE IS RELEASED BY THE WRITE'S OWN HANDLER, which is the
+                 * earliest correct point: the buffers async_write( ) was given point into these
+                 * two, and until this handler runs they are still being read from. finishStream( )
+                 * keeps its copy of these two clears for the paths where no write was ever issued
+                 */
+
+                m_requestHead.clear();
+                m_requestBody.reset();
 
                 BL_TASKS_HANDLER_CHK_EC( ec );
                 BL_TASKS_HANDLER_CHK_CANCEL_IMPL()
@@ -981,14 +1035,63 @@ namespace bl
             }
 
             /**
-             * @brief The peer closed - which COMPLETES a read-until-close body and refuses a
-             * truncated message rather than hanging on it
+             * @brief Whether the byte stream ended in a way a message framed BY that ending may
+             * be declared complete on
+             *
+             * TWO PARTS, AND THE SECOND IS NOT OPTIONAL. net::isCleanEndOfStreamErrorCode( ) is
+             * eof on every platform and deliberately refuses the Windows reset spellings, which
+             * discard whatever was still unread. isStreamTruncationError( ) is the TLS stream
+             * ending without close_notify, which the peer-close record files under "orderly close
+             * of a TLS stream" and which is the ordinary shape of a close-delimited HTTPS
+             * response (RFC 2818 2.2.2) - a predicate admitting eof alone would fail every one of
+             * those, which succeed today
              */
 
-            void onPeerClosed()
+            bool isCleanEndOfStream( SAA_in const eh::error_code& ec ) NOEXCEPT
+            {
+                return net::isCleanEndOfStreamErrorCode( ec ) || base_type::isStreamTruncationError( ec );
+            }
+
+            /**
+             * @brief The peer closed - which COMPLETES a read-until-close body and refuses a
+             * truncated message rather than hanging on it
+             *
+             * 'closeCode' IS HOW THE STREAM ENDED AND NOT ONLY THAT IT ENDED, which is the whole
+             * of N2's second part. Everything onReadCompleted( ) admits arrives here, and this is
+             * the one function which can declare a close-delimited message COMPLETE - so a
+             * classification that admitted the Windows reset spellings would turn an aborted
+             * transfer into a short response reported as a success, for exactly the class of
+             * message HTTP/1.1 cannot frame any other way. An unclean end therefore does not
+             * reach parseEof( ) at all, and the stream is finished with the TRANSPORT'S own code
+             * rather than a protocol error: the caller saw "connection reset by peer" before this
+             * change and must go on seeing it, because after N2's first part the connection task
+             * itself ends cleanly and connectionFailureCause( ) has no exception left to chain
+             */
+
+            void onPeerClosed( SAA_in const eh::error_code& closeCode )
             {
                 if( ! m_parser )
                 {
+                    return;
+                }
+
+                if( ! isCleanEndOfStream( closeCode ) )
+                {
+                    /*
+                     * Whatever already parsed is still delivered - both of these are no-ops
+                     * unless a header block or a body chunk arrived and was not handed on yet -
+                     * and the message is NOT completed on the strength of a reset
+                     */
+
+                    deliverHeaders();
+                    deliverBodyChunk();
+
+                    finishStream(
+                        closeCode,
+                        ! m_requestMayHaveBeenSent /* isRetryable */,
+                        false /* isConnectionUsable */
+                        );
+
                     return;
                 }
 
@@ -1030,16 +1133,30 @@ namespace bl
                  * Classified before the handler prolog, exactly as HttpServerReceiveRequestTask
                  * classifies a truncation: an end of stream is not a failure of this task, it is
                  * how a read-until-close body ends and how a pooled idle connection is reclaimed
+                 *
+                 * ASKED OF net:: RATHER THAN COMPARED BY HAND - N2, and the rule NetUtils.h
+                 * states in as many words. The same peer behaviour reaches us under different
+                 * codes on Windows, where a close during a full-duplex transfer is reported as
+                 * connection_aborted and a close with unread data as connection_reset; neither is
+                 * eof, so the comparison this replaces FAILED a connection the peer had closed
+                 * normally, about one time in eight. It is the same defect the HTTP/2 driver had
+                 * before it asked the same question here
+                 *
+                 * THE PREDICATE IS THE WIDE ONE ON PURPOSE - the conversation is over however it
+                 * ended, and failing the task is the wrong answer to a peer that went away. What
+                 * that admits is then discriminated by onPeerClosed( ), which is where completing
+                 * a message on the strength of the close is decided, and which is why this change
+                 * cannot ship without that one
                  */
 
                 const bool isEndOfStream =
-                    asio::error::eof == ec || base_type::isStreamTruncationError( ec );
+                    net::isPeerClosedErrorCode( ec ) || base_type::isStreamTruncationError( ec );
 
                 BL_TASKS_HANDLER_BEGIN()
 
                 if( isEndOfStream )
                 {
-                    onPeerClosed();
+                    onPeerClosed( ec );
 
                     closeConnection();
                 }
@@ -1114,7 +1231,27 @@ namespace bl
             {
                 BL_NOEXCEPT_BEGIN()
 
-                const bool isReusable = isConnectionUsable && ! base_type::isClosing();
+                /*
+                 * A WRITE STILL IN FLIGHT MAKES THIS CONNECTION UNUSABLE, and that is the exact
+                 * MIRROR of the rule deriveIsReusable( ) already applies in the other direction.
+                 * A response which left bytes unconsumed makes the connection unusable because
+                 * those bytes are either unsolicited or a second message smuggled behind the
+                 * first; request bytes still in OUR send buffer are the same sentence with the
+                 * arrow reversed - the server has not consumed them, and a second request put
+                 * behind them is read as this request's body
+                 *
+                 * REFUSED RATHER THAN DRAINED. The peer that stopped reading sets the pace, so a
+                 * drain is unbounded; refusing states the rule in one predicate
+                 *
+                 * AND IT DOES NOT HANG. ! isReusable takes closeConnection( ) below, which is
+                 * beginClose( ), and the epilog of the very handler that got here then reaches
+                 * onOperationCompleted( ) with m_closing set and m_closeInitiated not - the one
+                 * call which runs initiateClose( ), which cancels the socket and so wakes the
+                 * pending write. The handler that trips the barrier is the one that frees it
+                 */
+
+                const bool isReusable =
+                    isConnectionUsable && ! base_type::isClosing() && ! m_isWriteInFlight;
 
                 om::ObjPtr< sink_t > sink;
                 stream_handle_t handle = httpclient::ClientConnection::INVALID_STREAM_HANDLE;
@@ -1140,8 +1277,21 @@ namespace bl
                 }
 
                 m_parser.reset();
-                m_requestHead.clear();
-                m_requestBody.reset();
+
+                /*
+                 * THE WRITE'S STORAGE IS THE WRITE HANDLER'S TO RELEASE, and these two are only
+                 * this function's for the paths which never issued one - the isClosing( ) return
+                 * and the render failure of onStartRequest( ), and a cancel arriving before the
+                 * request was ever started. Releasing them while a write is in flight is H01
+                 * itself: the buffers handed to async_write( ) point into them
+                 */
+
+                if( ! m_isWriteInFlight )
+                {
+                    m_requestHead.clear();
+                    m_requestBody.reset();
+                }
+
                 m_bodyChunk.clear();
                 m_headersDelivered = false;
                 m_requestMayHaveBeenSent = false;

@@ -384,6 +384,42 @@ namespace bl
             return isOrderlyPeerCloseErrorCode( ec ) || asio::error::connection_reset == ec;
         }
 
+        /**
+         * @brief Whether the BYTE STREAM ended cleanly, so that a message framed by the close
+         * itself may be declared complete on it
+         *
+         * THE THIRD PREDICATE THE COMMENT ABOVE ASKS FOR, and it exists because neither of the
+         * other two answers this question. Use it where the consequence of saying yes is that
+         * something is declared COMPLETE - an HTTP/1.1 response whose only framing is the
+         * connection closing, which RFC 9112 section 6.3 makes a real and common case and which a
+         * client has nothing else to check against.
+         *
+         * IT ADMITS eof AND NOTHING ELSE, ON EVERY PLATFORM, which is what makes it different
+         * from isOrderlyPeerCloseErrorCode(). That one admits the Windows reset spellings
+         * DELIBERATELY - the stack has collapsed a clean close into them and a handshake retry
+         * asking "is this transient?" is right to treat them as one. Here they are exactly what
+         * must be refused: on Windows a reset DISCARDS what was still unread - the control
+         * measured 0 of 16384 bytes delivered - so a close-delimited body ended by one is either
+         * short or aborted, and there is no third possibility. Declaring it complete would hand
+         * the caller a truncated response reported as a success, and the caller would have no way
+         * to tell.
+         *
+         * WHAT THIS DOES NOT COVER is a truncated TLS stream, exactly as the two predicates above
+         * do not: that is spelled by the stream policy and not by the transport. A caller which
+         * means "the stream ended in a way this message may be completed on" asks
+         * STREAM::isStreamTruncationError() alongside this, because a server which closes a TLS
+         * connection without close_notify is the ordinary shape of a close-delimited HTTPS
+         * response (RFC 2818 section 2.2.2) and refusing it would fail responses which succeed
+         * today.
+         *
+         * See notes/plans/issues/windows-peer-close-error-codes-record.md
+         */
+
+        inline bool isCleanEndOfStreamErrorCode( SAA_in const eh::error_code& ec ) NOEXCEPT
+        {
+            return asio::error::eof == ec;
+        }
+
         template
         <
             typename T

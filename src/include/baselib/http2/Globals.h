@@ -272,6 +272,28 @@ namespace bl
                 MAX_CONTINUATION_FRAMES_PER_BLOCK_DEFAULT       = 64U,
 
                 /*
+                 * INFORMATIONAL responses on ONE stream, as a count and as a byte total - H05.
+                 * Every limit above is per BLOCK, and an informational block is not the last one:
+                 * a peer may send as many 1xx as it likes before the final response, each one
+                 * inside every per-block cap, and each one costing a queued event and a vector
+                 * push in the request task. Nothing counted them
+                 *
+                 * THE PAIR IS NOT REDUNDANT. A count alone lets eight blocks of 64 KB through; a
+                 * byte total alone lets thousands of tiny blocks through, and each of those costs
+                 * more in bookkeeping than in octets. The existing rows pair them the same way
+                 *
+                 * The byte total is ONE BLOCK'S WORTH IN TOTAL and not per block, measured the
+                 * way RFC 9113 6.5.2 measures a header list - name, value and 32 octets of
+                 * overhead per field. Eight is above anything a compliant server does: 103 Early
+                 * Hints is a real feature real servers send, usually once and small. Breaching
+                 * either resets the STREAM and not the connection, because a peer flooding one
+                 * stream should cost that request and not every other request on the connection
+                 */
+
+                MAX_INTERIM_RESPONSES_PER_STREAM_DEFAULT        = 8U,
+                MAX_INTERIM_HEADER_BYTES_PER_STREAM_DEFAULT     = 64U * 1024U,
+
+                /*
                  * Control-frame bytes queued for a peer which is not reading - the acknowledgements
                  * we owe it. Exceeding it is a connection error
                  */

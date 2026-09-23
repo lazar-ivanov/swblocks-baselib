@@ -1,0 +1,22 @@
+# each slice appends the recipes for the cases it lands here
+
+--log_level=message --run_test=Http1Driver_WriteInFlightRefusesReuseTests
+--log_level=message --run_test=Http1Driver_WriteInFlightRefusesASecondRequestTests
+
+# KNOWN RED, AND ON PURPOSE - Http1Driver_WriteInFlightRefusesReuseTests fails about half of its
+# runs on "the barrier left a write nothing woke", a64 clang debug and clang release alike.
+# Http1ConnectionTask::initiateClose( ) cancels the socket and does not shut it down, and
+# cancel( ) cannot reap a composed asio::async_write that is between two of its internal steps -
+# so the write the barrier refused to wait for is left with nothing to wake it. The case is
+# measuring the driver, not itself; see the note on runBlockedUpload( ). The second case shares
+# the exchange and so stalls the full 5s bound on those runs while staying green, because what
+# it asserts is read before the wait
+
+# the two 11a cases ABORT this module on Beast's BOOST_ASSERT( got_some( ) ) unless the tree
+# carries the zero-octet conversion in Http1ResponseParserT::parseEof( ) - their red is the
+# process dying and not an assertion, which is why they landed with that conversion and not
+# before it
+
+--log_level=message --run_test=Http1Driver_PeerClosesWithoutAnsweringTests
+--log_level=message --run_test=Http1Driver_PeerClosesAfterEarlyHintsTests
+--log_level=message --run_test=Http1Driver_PeerResetsMidCloseDelimitedBodyTests

@@ -602,6 +602,51 @@ namespace utest
         }
 
         /**
+         * @brief Whether the first HEADERS frame in a buffer opens with an HPACK dynamic table
+         * size update - RFC 7541 section 6.3, the pattern 001xxxxx
+         *
+         * WHAT ANNOUNCES A CAPACITY CHANGE, and the only thing that does. Section 4.2 requires
+         * the update at the start of the first block after the change, and a case which asserted
+         * only the capacity would pass just as well against an encoder which raised its own table
+         * and told the peer nothing - which is the defect H12 is about, one layer down
+         *
+         * It reads the payload's first octet directly, which is sound for the frames THIS library
+         * produces: it pads no HEADERS frame, and it puts no PRIORITY fields on one unless the
+         * profile asks for them, which no caller of this helper does
+         */
+
+        inline bool headerBlockOpensWithSizeUpdate( SAA_in const std::string& bytes )
+        {
+            std::size_t offset = 0U;
+
+            while( offset + 9U <= bytes.size() )
+            {
+                const auto length =
+                    ( static_cast< std::uint32_t >(
+                        static_cast< unsigned char >( bytes[ offset ] ) ) << 16 ) |
+                    ( static_cast< std::uint32_t >(
+                        static_cast< unsigned char >( bytes[ offset + 1U ] ) ) << 8 ) |
+                      static_cast< std::uint32_t >(
+                        static_cast< unsigned char >( bytes[ offset + 2U ] ) );
+
+                if(
+                    static_cast< std::uint8_t >( bytes[ offset + 3U ] ) ==
+                        bl::http2::Globals::FRAME_TYPE_HEADERS &&
+                    length != 0U
+                    )
+                {
+                    const auto first = static_cast< unsigned char >( bytes[ offset + 9U ] );
+
+                    return 0x20U == ( first & 0xE0U );
+                }
+
+                offset += 9U + length;
+            }
+
+            return false;
+        }
+
+        /**
          * @brief Establishes a connection - the opening write is produced and the peer's SETTINGS
          * and its acknowledgement are fed, so the session is in its steady state
          */
@@ -3580,6 +3625,20 @@ UTF_AUTO_TEST_CASE( Session_PushPromiseAndPingTests )
 
     /*
      * The peer's SETTINGS_HEADER_TABLE_SIZE bounds OUR encoder, which is the mirror of contract 2
+     *
+     * AND THE PROTOCOL'S INITIAL VALUE BOUNDS IT BEFORE THE PEER HAS SAID ANYTHING - H12, and
+     * this block used to assert the opposite. RFC 9113 6.5.2 gives the setting an initial value
+     * of 4096, so until a peer advertises otherwise its DECODER holds a 4096-octet table; a
+     * profile asking for 65536 was taken at its word, and we indexed entries the peer had already
+     * evicted with no dynamic table size update to say anything about it
+     *
+     * The profile's capacity is not lost, it is DEFERRED to the moment the peer permits it - so
+     * the peer here advertises 16384, BETWEEN the protocol default and the profile's ask, which
+     * is what makes the raise real rather than a no-op. The block that used to be here had the
+     * peer advertise exactly 4096: it stayed green after the fix while its own comment, "the new
+     * capacity is signalled at the start of the next block", became FALSE, because nothing
+     * changed and nothing was signalled. That control is kept below, as a control, and now
+     * asserts the absence it was always really about
      */
 
     {
@@ -3591,8 +3650,53 @@ UTF_AUTO_TEST_CASE( Session_PushPromiseAndPingTests )
 
         UTF_REQUIRE_EQUAL(
             session.hpackEncoderTableCapacity(),
-            static_cast< std::size_t >( 65536 )
+            static_cast< std::size_t >( Globals::HEADER_TABLE_SIZE_DEFAULT )
             );
+
+        ( void ) produceText( session, now );
+
+        feedText(
+            session,
+            settingsFrame(
+                std::vector< Http2Setting >(
+                    1U,
+                    setting( Globals::SETTINGS_HEADER_TABLE_SIZE, 16384U )
+                    )
+                ),
+            now
+            );
+
+        UTF_REQUIRE_EQUAL( session.peerHeaderTableSize(), 16384U );
+
+        /*
+         * The new capacity is signalled at the start of the next block, which is RFC 7541 4.2
+         */
+
+        ( void ) session.submitRequest( makeRequest() );
+
+        const auto produced = produceText( session, now );
+
+        UTF_REQUIRE_EQUAL(
+            session.hpackEncoderTableCapacity(),
+            static_cast< std::size_t >( 16384 )
+            );
+
+        UTF_REQUIRE( headerBlockOpensWithSizeUpdate( produced ) );
+    }
+
+    /*
+     * THE CONTROL - a peer which advertises exactly the protocol default. min( 65536, 4096 ) is
+     * what the encoder already holds, setDynamicTableCapacity( ) returns without arming an update
+     * for a value equal to the current one, and so NOTHING is signalled. Without this the case
+     * above could not tell "announced because it changed" from "announces every block"
+     */
+
+    {
+        Http2Profile profile;
+
+        profile.hpackEncoderTableSize = 65536U;
+
+        Session session( StreamRole::Client, now, profile );
 
         ( void ) produceText( session, now );
 
@@ -3609,18 +3713,16 @@ UTF_AUTO_TEST_CASE( Session_PushPromiseAndPingTests )
 
         UTF_REQUIRE_EQUAL( session.peerHeaderTableSize(), 4096U );
 
-        /*
-         * The new capacity is signalled at the start of the next block, which is RFC 7541 4.2
-         */
-
         ( void ) session.submitRequest( makeRequest() );
 
-        ( void ) produceText( session, now );
+        const auto produced = produceText( session, now );
 
         UTF_REQUIRE_EQUAL(
             session.hpackEncoderTableCapacity(),
-            static_cast< std::size_t >( 4096 )
+            static_cast< std::size_t >( Globals::HEADER_TABLE_SIZE_DEFAULT )
             );
+
+        UTF_REQUIRE( ! headerBlockOpensWithSizeUpdate( produced ) );
     }
 }
 
@@ -4106,6 +4208,436 @@ UTF_AUTO_TEST_CASE( Session_ProfileShapingTests )
                 ),
             2U
             );
+    }
+}
+
+/**
+ * @brief S6R.2 H05 - aggregate informational responses are bounded, and the STREAM pays for them
+ *
+ * EVERY OTHER LIMIT IN THIS ENGINE IS PER BLOCK, and an informational block is not the last one.
+ * A peer may send 1xx after 1xx, each inside maxDecodedHeaderListSize and each inside
+ * maxCompressedHeaderBlockSize, and before this nothing counted them: deliverHeaderBlock( )
+ * recorded NOTHING on the stream context for an informational block, so there was no count and no
+ * byte total anywhere on the path. Each one costs a queued event here and a vector push in the
+ * request task, for as long as the peer cares to keep going
+ *
+ * THE STREAM IS RESET AND NOT THE CONNECTION, which is the decision this case pins as much as the
+ * bound itself: a peer flooding one stream costs that request, where a connection error would
+ * cost every other request on the connection for one peer's behaviour
+ */
+
+UTF_AUTO_TEST_CASE( Session_InterimResponsesAreBoundedTests )
+{
+    using namespace bl;
+    using namespace bl::http2;
+    using namespace utest::session;
+
+    const auto now = baseTime();
+
+    /*
+     * THE CONTROL FIRST, because a bound which refused the legal case would be worse than none.
+     * Eight interims is the default limit and is above anything a compliant server does - 103
+     * Early Hints is a real feature, sent once and small - so eight and then a final response is
+     * an ordinary exchange and must go through untouched
+     */
+
+    {
+        Session session( StreamRole::Client, now );
+        PeerEncoder peer;
+
+        settle( session, now );
+
+        const auto streamId = session.submitRequest( makeRequest() );
+
+        ( void ) produceText( session, now );
+
+        for( std::size_t i = 0U; i < 8U; ++i )
+        {
+            feedText(
+                session,
+                headersFrame( streamId, peer.response( "103" ), false, true ),
+                now
+                );
+        }
+
+        feedText(
+            session,
+            headersFrame( streamId, peer.response( "200" ), true /* endStream */, true ),
+            now
+            );
+
+        UTF_REQUIRE( ! session.isClosed() );
+
+        const auto events = drain( session );
+
+        /*
+         * Eight informational blocks, the final one, and the close
+         */
+
+        UTF_REQUIRE_EQUAL( events.size(), 10U );
+
+        for( std::size_t i = 0U; i < 8U; ++i )
+        {
+            UTF_REQUIRE( events[ i ].type == SessionEventType::Headers );
+            UTF_REQUIRE( events[ i ].isInformational );
+        }
+
+        UTF_REQUIRE( events[ 8 ].type == SessionEventType::Headers );
+        UTF_REQUIRE( ! events[ 8 ].isInformational );
+
+        UTF_REQUIRE( events[ 9 ].type == SessionEventType::StreamClosed );
+        UTF_REQUIRE_EQUAL( events[ 9 ].errorCode.value(), Globals::ERROR_CODE_NO_ERROR );
+
+        UTF_REQUIRE_EQUAL(
+            countFrames( produceText( session, now ), Globals::FRAME_TYPE_RST_STREAM ),
+            0U
+            );
+    }
+
+    /*
+     * ... and the ninth is one too many. The stream is reset with ENHANCE_YOUR_CALM and the
+     * CONNECTION stays up, which is the half of this a connection error would have got wrong
+     */
+
+    {
+        Session session( StreamRole::Client, now );
+        PeerEncoder peer;
+
+        settle( session, now );
+
+        const auto streamId = session.submitRequest( makeRequest() );
+
+        ( void ) produceText( session, now );
+
+        for( std::size_t i = 0U; i < 9U; ++i )
+        {
+            feedText(
+                session,
+                headersFrame( streamId, peer.response( "103" ), false, true ),
+                now
+                );
+        }
+
+        UTF_REQUIRE( ! session.isClosed() );
+
+        const auto events = drain( session );
+
+        UTF_REQUIRE_EQUAL( events.size(), 9U );
+
+        for( std::size_t i = 0U; i < 8U; ++i )
+        {
+            UTF_REQUIRE( events[ i ].type == SessionEventType::Headers );
+        }
+
+        UTF_REQUIRE( events[ 8 ].type == SessionEventType::StreamClosed );
+
+        UTF_REQUIRE_EQUAL(
+            events[ 8 ].errorCode.value(),
+            Globals::ERROR_CODE_ENHANCE_YOUR_CALM
+            );
+
+        UTF_REQUIRE_EQUAL(
+            countFrames( produceText( session, now ), Globals::FRAME_TYPE_RST_STREAM ),
+            1U
+            );
+    }
+
+    /*
+     * THE BYTE TOTAL IS THE OTHER HALF OF THE PAIR, and it is not redundant: a count alone lets
+     * eight blocks of sixty-four kilobytes through. Here the count is never reached - the limit
+     * is lowered to two blocks' worth of octets and the third interim breaches it while the
+     * default count of eight still has room
+     */
+
+    {
+        SessionLimits limits;
+
+        limits.maxInterimHeaderBytesPerStream = 200U;
+
+        Session session( StreamRole::Client, now, Http2Profile(), limits );
+        PeerEncoder peer;
+
+        settle( session, now );
+
+        const auto streamId = session.submitRequest( makeRequest() );
+
+        ( void ) produceText( session, now );
+
+        HpackFieldList hints;
+
+        hints.push_back( field( "link", std::string( 60U, 'a' ) ) );
+
+        for( std::size_t i = 0U; i < 3U; ++i )
+        {
+            feedText(
+                session,
+                headersFrame( streamId, peer.response( "103", hints ), false, true ),
+                now
+                );
+        }
+
+        UTF_REQUIRE( ! session.isClosed() );
+
+        const auto events = drain( session );
+
+        UTF_REQUIRE( events.size() >= 1U );
+
+        const auto& last = events[ events.size() - 1U ];
+
+        UTF_REQUIRE( last.type == SessionEventType::StreamClosed );
+        UTF_REQUIRE_EQUAL( last.errorCode.value(), Globals::ERROR_CODE_ENHANCE_YOUR_CALM );
+
+        /*
+         * FEWER THAN THREE BLOCKS GOT THROUGH, which is what says the BYTE total stopped it and
+         * not the count - the count's own limit is still eight
+         */
+
+        UTF_REQUIRE( events.size() < 4U );
+    }
+}
+
+/**
+ * @brief S6R.2 H15 - the automatic WINDOW_UPDATE threshold follows the window when it moves
+ *
+ * ReceiveFlowControlWindowT derives its threshold as HALF THE WINDOW IT WAS OPENED WITH. A stream
+ * opened before our SETTINGS was acknowledged is opened at 65535, so its threshold is 32767 - and
+ * the acknowledgement then lowers the window to the profile's value and used to leave 32767
+ * behind. With a 1024-octet window, 32767 octets of pending credit can never accumulate, so no
+ * WINDOW_UPDATE was ever due and the stream stopped for good
+ *
+ * IT IS NARROWER THAN IT READS, AND THE NARROWING IS WHY THE STREAM HERE IS OPENED FIRST.
+ * createStreamContext( ) builds each stream's window from m_localInitialWindowSize, which
+ * applyLocalInitialWindowSize( ) has already updated - so a stream opened AFTER the
+ * acknowledgement gets the right size and the right half of it for free. Only streams that were
+ * already open are affected, which is exactly the case this reproduces
+ */
+
+UTF_AUTO_TEST_CASE( Session_WindowUpdateThresholdFollowsTheWindowTests )
+{
+    using namespace bl;
+    using namespace bl::http2;
+    using namespace utest::session;
+
+    const auto now = baseTime();
+
+    /*
+     * (a) The default policy. The stream is opened while our SETTINGS is still unacknowledged,
+     * the acknowledgement lowers the initial window to 1024, and one window's worth of octets is
+     * then PARTLY delivered and consumed. Half of 1024 is 512 and 600 octets is over it, so the
+     * WINDOW_UPDATE is due - unless the threshold was left at half of 65535
+     *
+     * 600 AND NOT 1024, WHICH IS WHAT MAKES THIS BLOCK PIN (a) AND NOT (b). A full window's worth
+     * would leave the window at zero, where the liveness floor of (b) emits the update whatever
+     * the threshold says - so the case would go green on (b) alone and say nothing about the
+     * recomputation. With 424 octets still in the window the floor cannot fire, and the only
+     * thing that can produce the frame is a threshold which followed the window down
+     */
+
+    {
+        Http2Profile profile;
+
+        profile.settings.push_back( setting( Globals::SETTINGS_INITIAL_WINDOW_SIZE, 1024U ) );
+
+        Session session( StreamRole::Client, now, profile );
+        PeerEncoder peer;
+
+        ( void ) produceText( session, now );
+
+        feedText( session, settingsFrame( std::vector< Http2Setting >() ), now );
+
+        /*
+         * OPENED BEFORE THE ACKNOWLEDGEMENT - the whole point. At this moment the stream's window
+         * is still the protocol default and so is the threshold derived from it
+         */
+
+        const auto streamId = session.submitRequest( makeRequest() );
+
+        ( void ) produceText( session, now );
+
+        feedText( session, settingsAckFrame(), now );
+
+        ( void ) produceText( session, now );
+
+        feedText(
+            session,
+            headersFrame( streamId, peer.response( "200" ), false, true ),
+            now
+            );
+
+        feedText( session, dataFrame( streamId, std::string( 600U, 'x' ), false ), now );
+
+        ( void ) drain( session );
+
+        session.consumed( streamId, 600U );
+
+        UTF_REQUIRE_EQUAL(
+            countFramesForStream(
+                produceText( session, now ),
+                Globals::FRAME_TYPE_WINDOW_UPDATE,
+                streamId
+                ),
+            1U
+            );
+    }
+
+    /*
+     * (b) THE PROFILE WHICH ASKS FOR A THRESHOLD LARGER THAN THE WINDOW IT ALSO ASKS FOR. (a)
+     * does nothing for this one - the threshold is EXPLICIT, so it is the caller's number and not
+     * ours to recompute - and it wedges identically. The liveness floor is what makes it
+     * unreachable: an exhausted window with credit owed is a stall whatever the threshold is,
+     * and batching is worthless once there is nothing left to batch for
+     *
+     * This block is red before the floor AND after the threshold recomputation alone, which is
+     * what makes it the pin for the second half of H15 rather than a second copy of the first
+     */
+
+    {
+        Http2Profile profile;
+
+        profile.settings.push_back( setting( Globals::SETTINGS_INITIAL_WINDOW_SIZE, 1024U ) );
+        profile.windowUpdateThreshold = 4096U;
+
+        Session session( StreamRole::Client, now, profile );
+        PeerEncoder peer;
+
+        settle( session, now );
+
+        const auto streamId = session.submitRequest( makeRequest() );
+
+        ( void ) produceText( session, now );
+
+        feedText(
+            session,
+            headersFrame( streamId, peer.response( "200" ), false, true ),
+            now
+            );
+
+        feedText( session, dataFrame( streamId, std::string( 1024U, 'x' ), false ), now );
+
+        ( void ) drain( session );
+
+        session.consumed( streamId, 1024U );
+
+        UTF_REQUIRE_EQUAL(
+            countFramesForStream(
+                produceText( session, now ),
+                Globals::FRAME_TYPE_WINDOW_UPDATE,
+                streamId
+                ),
+            1U
+            );
+    }
+}
+
+/**
+ * @brief S6R.2 H18 - the peer's first frame is a non-ACK SETTINGS, or there is no connection
+ *
+ * RFC 9113 3.4: the connection preface of each endpoint begins with a SETTINGS frame, which may
+ * be empty but may NOT be an acknowledgement. handleFrame( ) dispatched on type with no notion of
+ * a first frame at all, so a peer could acknowledge our settings and answer with HEADERS having
+ * never stated its own - and every limit we would have read off that SETTINGS sits at the RFC's
+ * initial value with nothing saying whether the peer meant it
+ *
+ * THE GATE RUNS BEFORE THE STREAM-ERROR ARM, and that order is what the HEADERS row below pins.
+ * That arm exists so a malformed frame does not desynchronize the connection; the preface rule
+ * outranks it, because a peer whose first frame is a malformed HEADERS has already broken the
+ * preface and answering a stream error would leave the gate armed for the NEXT frame
+ *
+ * WHAT IT COSTS is a peer which opens with an extension frame, which 3.4 makes wrong but which is
+ * a real-world risk - which is why this is a design decision and not a mechanical fix
+ */
+
+UTF_AUTO_TEST_CASE( Session_PeerPrefaceMustBeSettingsTests )
+{
+    using namespace bl;
+    using namespace bl::http2;
+    using namespace utest::session;
+
+    const auto now = baseTime();
+
+    /*
+     * Four ways to get it wrong, and the ACK is the one a real peer produces: it answers OUR
+     * settings before sending its own, which is legal in every other respect
+     */
+
+    {
+        PeerEncoder peer;
+
+        std::vector< std::string > openings;
+
+        openings.push_back( settingsAckFrame() );
+        openings.push_back( dataFrame( 1U, "x", false ) );
+        openings.push_back( pingFrame( std::string( 8U, 'p' ), false ) );
+        openings.push_back( headersFrame( 1U, peer.response( "200" ), false, true ) );
+
+        for( std::size_t i = 0U; i < openings.size(); ++i )
+        {
+            Session session( StreamRole::Client, now );
+
+            ( void ) produceText( session, now );
+
+            ( void ) session.submitRequest( makeRequest() );
+
+            ( void ) produceText( session, now );
+
+            feedText( session, openings[ i ], now );
+
+            UTF_CHECK_EQUAL(
+                std::to_string( i ) + ( session.isClosed() ? ":closed" : ":STILL-OPEN" ),
+                std::to_string( i ) + ":closed"
+                );
+
+            UTF_CHECK_EQUAL(
+                std::to_string( i ) + (
+                    Globals::ERROR_CODE_PROTOCOL_ERROR == session.connectionErrorCode()
+                        ? ":protocol-error"
+                        : ":WRONG-CODE"
+                    ),
+                std::to_string( i ) + ":protocol-error"
+                );
+        }
+    }
+
+    /*
+     * THE CONTROL, and it is fed as ONE buffer on purpose. A peer is entitled to coalesce its
+     * opening SETTINGS with everything behind it into a single write, and a gate which looked at
+     * the buffer rather than at the first FRAME would refuse the most ordinary thing a real peer
+     * does
+     */
+
+    {
+        Session session( StreamRole::Client, now );
+        PeerEncoder peer;
+
+        ( void ) produceText( session, now );
+
+        const auto streamId = session.submitRequest( makeRequest() );
+
+        ( void ) produceText( session, now );
+
+        feedText(
+            session,
+            settingsFrame( std::vector< Http2Setting >() ) +
+                settingsAckFrame() +
+                headersFrame( streamId, peer.response( "200" ), true /* endStream */, true ),
+            now
+            );
+
+        UTF_REQUIRE( ! session.isClosed() );
+
+        const auto events = drain( session );
+
+        /*
+         * The peer's SETTINGS, its acknowledgement of ours, and the response the gate let past -
+         * three frames out of one buffer, in the order they were written
+         */
+
+        UTF_REQUIRE_EQUAL( events.size(), 4U );
+        UTF_REQUIRE( events[ 0 ].type == SessionEventType::SettingsReceived );
+        UTF_REQUIRE( events[ 1 ].type == SessionEventType::SettingsAcknowledged );
+        UTF_REQUIRE( events[ 2 ].type == SessionEventType::Headers );
+        UTF_REQUIRE_EQUAL( events[ 2 ].status.value(), 200U );
+        UTF_REQUIRE( events[ 3 ].type == SessionEventType::StreamClosed );
     }
 }
 

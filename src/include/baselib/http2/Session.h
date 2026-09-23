@@ -96,6 +96,21 @@ namespace bl
             std::uint32_t   maxContinuationFramesPerBlock =
                                 Globals::MAX_CONTINUATION_FRAMES_PER_BLOCK_DEFAULT;
 
+            /**
+             * @brief The two caps on AGGREGATE informational responses for one stream - H05
+             *
+             * Every other row above bounds ONE block. An informational block is not the last one,
+             * so a peer may send 1xx after 1xx, each of them inside every per-block cap, and
+             * before this nothing counted them at all. A breach resets the stream - see
+             * deliverHeaderBlock( )
+             */
+
+            std::uint32_t   maxInterimResponsesPerStream =
+                                Globals::MAX_INTERIM_RESPONSES_PER_STREAM_DEFAULT;
+
+            std::uint32_t   maxInterimHeaderBytesPerStream =
+                                Globals::MAX_INTERIM_HEADER_BYTES_PER_STREAM_DEFAULT;
+
             std::uint32_t   maxQueuedControlFrameBytes =
                                 Globals::MAX_QUEUED_CONTROL_FRAME_BYTES_DEFAULT;
 
@@ -366,6 +381,15 @@ namespace bl
                 cpp::ScalarTypeIniter< std::uint32_t >          closeErrorCode;
                 cpp::ScalarTypeIniter< unsigned >               status;
 
+                /*
+                 * H05 - what this stream has spent on INFORMATIONAL responses so far. Neither is
+                 * reset by an interim block, which is the point of them: they accumulate across
+                 * every 1xx the peer sends before the final response
+                 */
+
+                cpp::ScalarTypeIniter< std::uint32_t >          interimResponses;
+                cpp::ScalarTypeIniter< std::uint64_t >          interimHeaderBytes;
+
                 StreamContext(
                     SAA_in          const std::uint32_t         streamId,
                     SAA_in          const std::int32_t          initialSendWindow,
@@ -493,6 +517,15 @@ namespace bl
 
             cpp::ScalarTypeIniter< std::size_t >                                m_prefaceRemaining;
 
+            /*
+             * H18 - WHETHER THE PEER HAS SENT ITS OPENING SETTINGS. RFC 9113 3.4 makes a
+             * non-acknowledgement SETTINGS frame the FIRST frame each endpoint sends, and until
+             * this was tracked there was no notion of a first frame at all: a peer could
+             * acknowledge our settings and answer with HEADERS having never stated its own
+             */
+
+            cpp::ScalarTypeIniter< bool >                                       m_peerPrefaceSettingsSeen;
+
             time::ptime                                                         m_now;
             time::ptime                                                         m_rateWindowStart;
 
@@ -514,7 +547,30 @@ namespace bl
                     limits.rememberedClosedStreamTimeoutInSeconds
                     ),
                 m_decoder( advertisedHeaderTableSize( profile ) ),
-                m_encoder( encoderTableSize( profile ) ),
+
+                /*
+                 * H12 - THE ENCODER STARTS AT THE PROTOCOL DEFAULT, WHATEVER THE PROFILE ASKS FOR.
+                 * RFC 9113 6.5.2 gives SETTINGS_HEADER_TABLE_SIZE an initial value of 4096, and
+                 * until a peer says otherwise that is what its DECODER's table holds. A profile
+                 * asking for more used to be taken at its word here, so we indexed entries a
+                 * default peer had already evicted, with no dynamic table size update to tell it
+                 * anything - a COMPRESSION_ERROR waiting for the first block big enough
+                 *
+                 * The profile's larger capacity is not lost, it is DEFERRED to the moment the peer
+                 * permits it: applyPeerSettings( )'s SETTINGS_HEADER_TABLE_SIZE arm raises the
+                 * encoder to min( profile, peer ), and setDynamicTableCapacity( ) arms the size
+                 * update that announces it at the start of the next block (RFC 7541 4.2). A
+                 * SMALLER profile capacity needs no announcement and is left alone by the min:
+                 * both tables insert the same entries in the same order, so the peer's is a
+                 * superset of ours and every index we emit names the same entry in both
+                 */
+
+                m_encoder(
+                    std::min< std::size_t >(
+                        encoderTableSize( profile ),
+                        static_cast< std::size_t >( Globals::HEADER_TABLE_SIZE_DEFAULT )
+                        )
+                    ),
                 m_sendConnectionWindow( Globals::STREAM_ID_CONNECTION ),
                 m_receiveConnectionWindow(
                     Globals::STREAM_ID_CONNECTION,
@@ -1709,6 +1765,43 @@ namespace bl
 
             void handleFrame( SAA_in const FrameView& frame )
             {
+                /*
+                 * H18 - THE PEER'S FIRST FRAME IS A NON-ACK SETTINGS, OR THERE IS NO CONNECTION.
+                 * RFC 9113 3.4: the connection preface of each endpoint begins with a SETTINGS
+                 * frame, which may be empty but may not be an acknowledgement. Without this a
+                 * peer could ACK our settings and send response HEADERS having never stated its
+                 * own, and every limit we would have read off that SETTINGS stays at the RFC's
+                 * initial value with nothing saying whether the peer meant it
+                 *
+                 * BEFORE THE STREAM-ERROR ARM, AND THE ORDER IS NOT OBVIOUS. That arm exists so
+                 * that a malformed frame does not desynchronize the connection; the preface rule
+                 * OUTRANKS it, because a peer whose first frame is a malformed HEADERS has
+                 * already broken the preface, and answering a stream error would leave this gate
+                 * armed for the NEXT frame - judging the wrong one
+                 *
+                 * WHAT IT CAN REFUSE THAT WE DID NOT REFUSE BEFORE is a peer which opens with an
+                 * extension frame. 3.4 makes such a peer wrong, and this is a deliberate decision
+                 * rather than a mechanical fix. Our own sessions satisfy it in both roles:
+                 * queueOpeningFrames( ) serializes SETTINGS through applyLocalSettings( ) before
+                 * the optional connection WINDOW_UPDATE
+                 */
+
+                if( ! m_peerPrefaceSettingsSeen )
+                {
+                    if(
+                        frame.header.type.value() != Globals::FRAME_TYPE_SETTINGS ||
+                        0U != ( frame.header.flags & Globals::FRAME_FLAG_ACK )
+                        )
+                    {
+                        throwConnectionError(
+                            Globals::ERROR_CODE_PROTOCOL_ERROR,
+                            "the peer's first frame was not a SETTINGS frame (3.4)"
+                            );
+                    }
+
+                    m_peerPrefaceSettingsSeen = true;
+                }
+
                 if( frame.streamErrorCode != Globals::ERROR_CODE_NO_ERROR )
                 {
                     /*
@@ -1890,9 +1983,12 @@ namespace bl
                  * BOTH WINDOWS, and BEFORE reapClosedStreams( ) - which erases the very context
                  * the stream flush takes by reference. Each is threshold-gated inside, so an
                  * ordinary frame carrying real octets costs nothing here; and if this frame
-                 * carried END_STREAM, canSend( WINDOW_UPDATE ) fails and the stream flush emits
-                 * nothing, leaving the leftover to reapClosedStreams( ) to credit to the
-                 * connection as it always has
+                 * carried END_STREAM AND CLOSED THE STREAM, canSend( WINDOW_UPDATE ) fails and
+                 * the stream flush emits nothing, leaving the leftover to reapClosedStreams( ) to
+                 * credit to the connection as it always has; on a stream whose LOCAL half is
+                 * still open - a body still uploading when the peer answers early - the stream is
+                 * half-closed (remote) instead, canSend( ) returns true there, and it emits a
+                 * legal WINDOW_UPDATE the peer will ignore. No credit is lost either way
                  */
 
                 flushStreamWindowUpdate( streamId, context, false /* force */ );
@@ -3199,6 +3295,54 @@ namespace bl
                 SAA_in          const BlockVerdict&                  verdict
                 )
             {
+                if( verdict.isInformational && ! verdict.isTrailerSection )
+                {
+                    /*
+                     * H05 - AGGREGATE INFORMATIONAL RESPONSES ARE BOUNDED, and this is the only
+                     * place that can bound them: an interim block records nothing on the stream
+                     * context, so before this there was no count and no byte total anywhere on
+                     * this path. The request task's m_interimResponses grew without a bound
+                     * behind it, and nothing is added THERE - with both parsers bounded it is
+                     * bounded by the same numbers, and a third copy of one rule in a third place
+                     * is how the three drift apart
+                     *
+                     * MEASURED HERE RATHER THAN TAKEN FROM THE DECODER, which applies the
+                     * per-block cap inside decode( ) and does not hand the measure back.
+                     * hpackSize( ) is name + value + 32, which is exactly the sum RFC 9113 6.5.2
+                     * defines and exactly what the decoder counted - so the two limits name one
+                     * number. It is measured BEFORE the swap into the event, which is where
+                     * 'fields' goes
+                     *
+                     * THE STREAM IS RESET, NOT THE CONNECTION. A peer flooding one stream costs
+                     * that request; a connection error would cost every other request on the
+                     * connection for one peer's behaviour
+                     */
+
+                    context.interimResponses = context.interimResponses + 1U;
+
+                    for( auto it = fields.begin(); it != fields.end(); ++it )
+                    {
+                        context.interimHeaderBytes =
+                            context.interimHeaderBytes + static_cast< std::uint64_t >( it -> hpackSize() );
+                    }
+
+                    if(
+                        context.interimResponses > m_limits.maxInterimResponsesPerStream ||
+                        context.interimHeaderBytes >
+                            static_cast< std::uint64_t >( m_limits.maxInterimHeaderBytesPerStream )
+                        )
+                    {
+                        rejectStream(
+                            streamId,
+                            Globals::ERROR_CODE_ENHANCE_YOUR_CALM,
+                            "the peer sent more informational responses on one stream than the "
+                                "session limits allow"
+                            );
+
+                        return;
+                    }
+                }
+
                 if( verdict.isTrailerSection )
                 {
                     context.trailersReceived = true;

@@ -77,3 +77,7 @@
 
 # S5.2 - the draining reserve, from a pool policy to the stream registry (design 4.3, 5.4)
 --log_level=test_suite --run_test=H2Session_DrainingReserveFromLimitsTests
+
+--log_level=message --run_test=Session_InterimResponsesAreBoundedTests
+--log_level=message --run_test=Session_WindowUpdateThresholdFollowsTheWindowTests
+--log_level=message --run_test=Session_PeerPrefaceMustBeSettingsTests
