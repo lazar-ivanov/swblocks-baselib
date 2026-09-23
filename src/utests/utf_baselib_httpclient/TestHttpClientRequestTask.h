@@ -1594,6 +1594,101 @@ UTF_AUTO_TEST_CASE( HttpClientRequestTask_TotalTimeoutCoversThePoolWaitTests )
 }
 
 /**
+ * @brief The timeout message names the request without its userinfo, its query or its fragment
+ *
+ * The same timeout as the case above, over a URL which carries all three of the components
+ * net::Uri::toString( ) recomposes and redactedUrl( ) does not. What is pinned is that the
+ * message is still the shape SimpleHttpTask produces - the scheme, the authority and the path -
+ * and that none of the three secrets reaches the caller through it (astra H20).
+ *
+ * THE OTHER SITE IS NOT PINNED HERE. SessionRequestTaskT::chkRemainingBudget( ) renders the same
+ * way, but its throw is a guard no case reaches (L6 finding 3 records that), so this case is what
+ * covers the rendering and the reading of the other site is what covers its use of it
+ */
+
+UTF_AUTO_TEST_CASE( HttpClientRequestTask_TimeoutMessageRedactsTheUrlTests )
+{
+    using namespace bl;
+    using namespace bl::httpclient;
+    using namespace utest::requesttask;
+
+    const auto pool = ProbePool::createInstance(
+        om::ObjPtr< ClientConnection >(),
+        false /* isAnswered */
+        );
+
+    HttpClientRequestConfig config;
+
+    config.totalTimeout = time::milliseconds( 250 );
+
+    const auto url = net::Uri::parse(
+        "https://alice:pwdsecret@example.com/resource?token=querysecret#fragmentsecret"
+        );
+
+    /*
+     * WHY THIS CASE DISCRIMINATES, pinned rather than asserted in a comment. The message below is
+     * built from ONE rendering of this URL, so the four negative checks at the end can only be
+     * satisfied by a renderer which drops all three components - and the renderer this change
+     * replaced, net::Uri::toString( ), keeps every one of them. These two lines are what a red run
+     * against the old code would have shown, kept in the case so it cannot be lost
+     */
+
+    UTF_REQUIRE_EQUAL( redactedUrl( url ), std::string( "https://example.com/resource" ) );
+
+    UTF_REQUIRE_EQUAL(
+        url.toString(),
+        std::string( "https://alice:pwdsecret@example.com/resource?token=querysecret#fragmentsecret" )
+        );
+
+    ClientRequest request;
+
+    request.method( "GET" );
+
+    request.url( cpp::copy( url ) );
+
+    const auto taskImpl = HttpClientRequestTaskImpl::createInstance(
+        std::move( request ),
+        makeKey(),
+        om::qi< ConnectionPool >( pool ),
+        config
+        );
+
+    const auto task = om::qi< tasks::Task >( taskImpl );
+
+    runTask( task, []() -> void {} );
+
+    UTF_REQUIRE( task -> isFailed() );
+
+    const auto message = messageOf( task );
+
+    requireTrue(
+        message.find( "HTTP GET request to 'https://example.com/resource' has timed out" ) !=
+            std::string::npos,
+        "the timeout message did not have the redacted shape: " + message
+        );
+
+    requireTrue(
+        message.find( "alice" ) == std::string::npos,
+        "the timeout message carried the userinfo's user: " + message
+        );
+
+    requireTrue(
+        message.find( "pwdsecret" ) == std::string::npos,
+        "the timeout message carried the userinfo's password: " + message
+        );
+
+    requireTrue(
+        message.find( "querysecret" ) == std::string::npos,
+        "the timeout message carried the query: " + message
+        );
+
+    requireTrue(
+        message.find( "fragmentsecret" ) == std::string::npos,
+        "the timeout message carried the fragment: " + message
+        );
+}
+
+/**
  * @brief A response-headers timeout resets the STREAM and leaves the connection alone
  *
  * Design 5.7 is explicit that cancelling a request never closes the connection, and the trace is

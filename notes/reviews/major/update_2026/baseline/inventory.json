@@ -6505,7 +6505,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 2175,
+   "line": 2270,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_BodySourceWhichThrowsFailsTheRequestTests",
    "namespaces": []
@@ -6517,7 +6517,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 2382,
+   "line": 2477,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_BouncedRequestNamesTheConnectionFailureTests",
    "namespaces": []
@@ -6541,7 +6541,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1672,
+   "line": 1767,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_CancelResetsTheStreamTests",
    "namespaces": []
@@ -6553,7 +6553,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 2270,
+   "line": 2365,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_ConnectionLostUnderTheStreamIsReportedUnusableTests",
    "namespaces": []
@@ -6565,7 +6565,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1606,
+   "line": 1701,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_HeadersTimeoutResetsTheStreamOnlyTests",
    "namespaces": []
@@ -6589,7 +6589,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 2108,
+   "line": 2203,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_LatePoolAnswerStillReturnsTheSlotTests",
    "namespaces": []
@@ -6601,7 +6601,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1808,
+   "line": 1903,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_RefusedSubmitIsRetryableTests",
    "namespaces": []
@@ -6613,7 +6613,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1876,
+   "line": 1971,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_RefusedSubmitReturnsTheSlotToTheRealPoolTests",
    "namespaces": []
@@ -6625,7 +6625,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1740,
+   "line": 1835,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_ResponseBodyCapResetsTheStreamTests",
    "namespaces": []
@@ -6640,6 +6640,18 @@
    "line": 1396,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_StreamingSinkCreditsOnlyWhatItTookTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "7d5d89f35680f1e322e6b4ae2b416d31",
+   "doc_sha": "f7f258ffd9d3e9df726bff7a458239dd",
+   "file": "utf_baselib_httpclient/TestHttpClientRequestTask.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1609,
+   "module": "utf_baselib_httpclient",
+   "name": "HttpClientRequestTask_TimeoutMessageRedactsTheUrlTests",
    "namespaces": []
   },
   {
@@ -6661,7 +6673,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1962,
+   "line": 2057,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_UnsuitableRequestKeepsTheConnectionPoolableTests",
    "namespaces": []
@@ -9249,7 +9261,7 @@
    "namespaces": []
   },
   {
-   "body_sha": "773120c59bfaadffe17a0943d418382e",
+   "body_sha": "f00a8b2e5bdc287cfe76c3f12b8a5e7d",
    "doc_sha": null,
    "file": "utf_baselib_h2core/TestSession.h",
    "fixture": null,
@@ -18681,6 +18693,7 @@
     "HttpClientRequestTask_RefusedSubmitReturnsTheSlotToTheRealPoolTests",
     "HttpClientRequestTask_ResponseBodyCapResetsTheStreamTests",
     "HttpClientRequestTask_StreamingSinkCreditsOnlyWhatItTookTests",
+    "HttpClientRequestTask_TimeoutMessageRedactsTheUrlTests",
     "HttpClientRequestTask_TotalTimeoutCoversThePoolWaitTests",
     "HttpClientRequestTask_UnsuitableRequestKeepsTheConnectionPoolableTests",
     "HttpClientRequestTask_UploadIsAnsweredOncePerPullTests",
@@ -18792,6 +18805,7 @@
     "Http1Driver_AgainstTheLibraryHttpServerTests",
     "Http1Driver_ChunkedTrailersAndBodilessTests",
     "Http1Driver_InterimResponsesPrecedeTheFinalBlockTests",
+    "Http1Driver_RequestOnTheWireIsNotRetryableTests",
     "Http1Driver_RequestResponseAndKeepAliveReuseTests",
     "Http1Driver_RequestsThisDriverRefusesTests",
     "Http1Driver_ReuseVerdictInputsTests"
@@ -18827,6 +18841,7 @@
     "ClientSession_AgainstTheLibraryHttpServerTests",
     "ClientSession_BodySourceIsNeverCarriedByHttp11Tests",
     "ClientSession_ConnectionIsReusedAcrossRequestsTests",
+    "ClientSession_CookieMergeComparesNamesExactlyTests",
     "ClientSession_CookiesAreStoredMergedAndSentOnceTests",
     "ClientSession_CrossOriginRedirectDropsCredentialsTests",
     "ClientSession_CrossSchemeRedirectIsRefusedTests",

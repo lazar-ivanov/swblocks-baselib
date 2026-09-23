@@ -1032,6 +1032,11 @@ namespace bl
              * @throw TimeoutException when the budget is spent - which is the chain's own way of
              * ending, and is marked expected for the reason the hop's timeout is: a deadline
              * which was reached is not a defect to be logged as a failure
+             *
+             * The URL goes in through redactedUrl( ) and not net::Uri::toString( ), which is the
+             * second of the two sites astra H20 named - see that function. No case reaches this
+             * throw (L6's finding 3 records it as a guard), so the pin for the rendering is the
+             * hop's own timeout message in utf_baselib_httpclient
              */
 
             auto chkRemainingBudget() const -> time::time_duration
@@ -1051,7 +1056,7 @@ namespace bl
                         << "HTTP "
                         << m_next.method()
                         << " request to '"
-                        << m_next.url().toString()
+                        << redactedUrl( m_next.url() )
                         << "' has timed out - the request's budget was spent by the "
                         << m_hops.value()
                         << " redirect hop(s) and the attempts before it"

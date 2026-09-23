@@ -680,6 +680,19 @@ fact" - the following are claims:
 6. **Unchanged from the first pass:** the 1.1.1w half of S4.2's acceptance is owed; the negative
    controls exist in lane accounts and not in the tree; Windows has not run any of it.
 
+   **The Windows clause is stale and is corrected in place, 2026-09-22 (astra R4).** It was true
+   when written. A full 12-combination Windows build-and-test matrix has since run over the whole
+   tree at commit `ba71298` - 3 architectures x {vc143, ccl16} x {debug, release}, one combination
+   at a time - and it built and ran the fourteen modules this feature added, which is how
+   `utf_baselib_httpclient4` and `utf_baselib_httpclient5` come to have measured object sizes on
+   `win-x86`. See `windows-matrix-2026-09-21-module-sizes-record.md`. Getting there took `ca5bf08`,
+   three MSVC translation failures in the pulled tests that no Linux build can report.
+
+   **What that does not license.** The record which survives that run is an object-size table, not
+   a per-case pass ledger for this range, so "Windows has not run any of it" is false while "every
+   case in the L4 range is pinned green on Windows" is not established by it either. The 1.1.1w
+   half and the negative controls are untouched by this correction and remain owed.
+
 **Verified versus inferred in this pass.** Verified by reading: every diff named above and the tip
 code around each, including the exactly-two setters of `m_isCloseWhenDrained`, the disarm path
 through `initiateClose`, the classification of a cancelled task's abort, and the four grep-negative

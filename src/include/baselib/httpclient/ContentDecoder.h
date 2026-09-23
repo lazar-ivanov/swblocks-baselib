@@ -396,8 +396,22 @@ namespace bl
          * @brief class ContentDecoderRegistryT - the decoders one session has, and their limits
          *
          * EMPTY BY DEFAULT (D9) - see the file note. A session which registers nothing sends no
-         * accept-encoding and receives identity bodies, which is exactly what the existing client
-         * does today.
+         * accept-encoding, which is exactly what the existing client does today.
+         *
+         * IT DOES NOT FOLLOW THAT THE BODIES COME BACK UNCODED, and this comment used to say that
+         * it did - "and receives identity bodies". Corrected 2026-09-22 (astra H29). RFC 9110
+         * section 12.5.3 is that an ABSENT accept-encoding makes any content coding acceptable to
+         * the user agent; it is an EMPTY field value which says the opposite. So a conforming
+         * server may answer a request carrying no accept-encoding with a coded body. The
+         * convention that it does not is strong enough that this has never bitten, but it is a
+         * convention and not a rule, and the claim above was the rule.
+         *
+         * THE BEHAVIOUR WAS ALREADY RIGHT AND IS NOT CHANGED BY THAT CORRECTION. A coded body
+         * whose coding is not registered here meets decodeBody( ) in ClientSession.h, which looks
+         * the coding up, finds nothing and returns: the body and its content-encoding reach the
+         * caller exactly as they arrived, which is what lets a caller see what happened instead of
+         * being handed unreadable bytes with the label removed. createStream( ) below refuses the
+         * same coding, because that is the path which ASKED for a decoder
          *
          * Content-coding tokens are case insensitive (RFC 9110 section 8.4.1), so keys are folded
          * to lower case - with an ASCII-only fold, for the reason the header of http::HeaderList

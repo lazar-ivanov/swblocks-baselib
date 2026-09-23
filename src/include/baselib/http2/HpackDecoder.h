@@ -146,16 +146,56 @@ namespace bl
              * ceiling drops to what we advertised only once the acknowledgement proves the peer
              * has applied it
              *
-             * IT DOES NOT SHRINK THE TABLE, deliberately. The table's capacity follows the peer's
-             * own dynamic table size update, which RFC 7541 section 4.2 requires at the start of
-             * the first block after the change - and that update is what evicts, on both sides, at
-             * the same point in the stream of blocks. Evicting here instead would NOT break a
-             * conforming peer: section 4.3 has its encoder evict whenever its maximum is reduced,
-             * and section 4.2 has it signal that reduction at the start of its next block, so a
-             * conforming peer has itself stopped naming exactly what an eviction here would drop.
-             * What not evicting buys is tolerance of a peer which reduced late or not at all - it
-             * goes on naming entries we still hold - and the table is bounded by what we once
-             * advertised either way
+             * IT DOES NOT SHRINK THE TABLE, and NOTHING ANYWHERE HERE REFUSES A BLOCK WHICH OMITS
+             * THE SIZE UPDATE THE PEER OWES US. The first is a consequence of where eviction
+             * belongs; the second is a CONFORMANCE CHOICE, and this comment used to present it as
+             * though it followed from the first.
+             *
+             * WHAT IT USED TO ARGUE, AND WHY THAT ARGUMENT ANSWERED A DIFFERENT QUESTION. The
+             * paragraph reasoned from RFC 7541 sections 4.2 and 4.3 - the peer's ENCODER evicts
+             * when its maximum is reduced and signals the reduction at the start of its next
+             * block - and concluded that "what not evicting buys is tolerance of a peer which
+             * reduced late or not at all". Sound about EVICTION, and silent on the question it was
+             * put to: whether we must REJECT such a block. That duty is the DECODER's, it is
+             * RFC 9113 section 4.3.1, and the paragraph never reached it. Corrected 2026-09-22
+             * (astra H11); the behaviour is unchanged and is the one deliberately kept.
+             *
+             * WHAT 4.3.1 REQUIRES, AND HOW NARROW ITS TRIGGER IS. Once an endpoint acknowledges a
+             * change to SETTINGS_HEADER_TABLE_SIZE which reduces the maximum BELOW THE CURRENT
+             * SIZE OF THE DYNAMIC TABLE, the peer's encoder MUST open its next field block with a
+             * dynamic table size update, and an endpoint MUST treat a field block following that
+             * acknowledgement as a COMPRESSION_ERROR connection error if it does not. The trigger
+             * is the table's CURRENT SIZE - HpackDynamicTable::size( ), the sum of the live
+             * entries - and NOT the previous maximum. A check written to the broader wording would
+             * refuse conforming peers: dropping our advertised maximum from 4096 to 2048 while the
+             * table holds 500 bytes arms nothing at all, and a peer which sends no size update
+             * there is correct.
+             *
+             * WHY DECLINING TO ENFORCE IT COSTS NOTHING. The table is addressed NEWEST-FIRST -
+             * HpackDynamicTable::at( ) counts from the newest and combined index 62 is position 0 -
+             * while eviction removes from the OLDEST end. Both sides see the same insertions in the
+             * same order, so an entry the peer still holds sits at the same newest-first position
+             * in our table however much older material we are holding behind it. A peer which
+             * reduced late or not at all therefore leaves our table an old-end superset of its
+             * own: every index it can legally send is bounded by ITS live count, and each one
+             * resolves here to exactly the entry it resolves to there. The extra old entries sit at
+             * indices the peer cannot name. Tolerance is free.
+             *
+             * AND EVICTING HERE WOULD NOT BE. It could only make our table SMALLER than the peer's
+             * in the window before its next block, where eviction from the oldest end pushes live
+             * indices past isValidIndex( ) - so the enforcement would manufacture a
+             * COMPRESSION_ERROR on a peer we decode perfectly well today, and buy no correctness
+             * for it. 4.3.1's own note that "reducing the value of SETTINGS_HEADER_TABLE_SIZE is
+             * not widely interoperable" points the same way. The table stays bounded by what we
+             * once advertised either way, because decodeSizeUpdate( ) refuses an update above the
+             * ceiling this setter holds.
+             *
+             * WHEN TO REOPEN IT. Either a profile which advertises a header table size BELOW the
+             * live table size, which is the only way 4.3.1 arms at all and which nothing does today
+             * (Http2Profile::settings ships empty, so advertisedHeaderTableSize( ) falls back to
+             * the protocol's 4096); or a conformance suite becoming a requirement rather than a
+             * nicety, which turns a free tolerance into a reported defect. Until one of those, the
+             * lines this would cost buy a failure mode and nothing else
              */
 
             void setMaxDynamicTableSize( SAA_in const std::size_t maxDynamicTableSize ) NOEXCEPT

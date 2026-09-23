@@ -722,6 +722,35 @@ case, the pool policy comment at `ConnectionPool.h:239` says nothing). Condition
 sentence at `maxRetriesPerRequest` naming the consequence, and 4a as the first item of owed work
 with the two-sided shape the lane correctly insists on (pool flag plus session setting it).
 
+**Added 2026-09-22 (astra R4): whoever takes 4a must decide what happens to the control case, and
+it will not tell them.** `ClientSession_FallbackRiderNeedsTheDispatchedRetryTests`
+(`utf_baselib_httpclient4/TestClientSession.h`) is the negative control for the case above it. It
+sets `poolPolicy.maxRetriesPerRequest = 0`, sends one GET over cleartext to the library's own
+`HttpServer`, and asserts `task -> isFailed()`, `status() == 0`, `dispatched == 1` and
+`released == 1`. It exists to pin the very defect 4a removes, so 4a's landing is exactly when it
+stops meaning what it says.
+
+**What happens to it depends on 4a's shape, and both shapes are live.** Read at the source: it
+builds a **default** `ClientSessionConfig`, so `connectionConfig.cleartextProtocol` is `Http11`
+while `alpnOffer` still names `h2`.
+
+- **Per key or per connection** - astra's own wording for H21, *"avoid dispatching a rider when the
+  selected protocol is already known to be h1"*. A cleartext key under `cleartextProtocol = Http11`
+  is exactly that, so no rider is dispatched, the request succeeds with zero retries, and the case
+  **fails loudly** on `isFailed()`. It must then be inverted: assert success, one dispatch, one
+  release.
+- **Per session**, which is the shape this finding's own wording implies and which
+  `ConnectionPoolPolicy` being pool-wide makes natural - *"a session turns it off when it cannot
+  produce HTTP/2 at all"*. A default session still can, over TLS. The flag stays on, the rider
+  still rides the cleartext placeholder, and the case **keeps passing untouched** - which is the
+  trap, because a green control then reads as evidence that 4a bites on this path when 4a has not
+  touched it.
+
+Either way the case has to be revisited deliberately. Pick the shape first, then say in the same
+change-set what this case asserts afterwards, and if the answer is "nothing changed" say why. (The
+first half of this finding's handover condition - the sentence at the knob - has since landed;
+`ConnectionPool.h` now carries both it and the two-budget arithmetic of finding 10.)
+
 ### The evidence findings (7, 8) - blocking, or owed?
 
 - **Finding 8 is withdrawn, in the lane's favour, by measurement.** `utf_baselib_httpclient6` is
