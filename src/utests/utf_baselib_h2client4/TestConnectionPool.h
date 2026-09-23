@@ -2120,4 +2120,232 @@ UTF_AUTO_TEST_CASE( H2Pool_PeerLimitIsTakenFreshOnceItIsKnownTests )
     pool -> dispose();
 }
 
+/************************************************************************
+ * A CONNECTION WHICH RETIRES WITHOUT EVER HAVING BEEN USABLE IS A FAILED ATTEMPT, and what it
+ * provokes is bounded by the waiter's own retry budget rather than by nothing
+ *
+ * "A clean close is not a failure" is the rule of the pool's own class comment and it is right for
+ * a connection which carried requests. An entry which reads Draining or Closed before it was ever
+ * usable is the case that rule does not cover: retired uncharged, holding no slot, it is forgotten
+ * in the same pass, canStartConnection( ) counts no live entry and says yes, and a replacement
+ * placeholder goes out - with nothing having spent maxRetriesPerRequest.
+ *
+ * SYNCHRONOUSLY THAT IS A RECURSION AND NOT A LOOP. startConnection( ) fills the entry under the
+ * lock and calls examineAll( ), then runActions( ), which calls startConnection( ) for every start
+ * that examine produced. A connection whose very first reading is terminal makes that chain
+ * unbounded on one thread, and the process dies of a stack overflow rather than failing a request.
+ * Against the unfixed pool this case does not fail, it SIGSEGVs.
+ *
+ * So what the count of factory calls pins here is the bound itself: maxRetriesPerRequest + 1
+ * levels, then the waiter is answered with the last error. Both states of the one arm are driven,
+ * because both reach it
+ */
+
+UTF_AUTO_TEST_CASE( H2Pool_ANeverUsableConnectionIsChargedAndBoundedTests )
+{
+    using namespace bl;
+    using namespace utest::connpool;
+
+    const httpclient::ConnectionState states[] =
+    {
+        httpclient::ConnectionState::Closed,
+        httpclient::ConnectionState::Draining,
+    };
+
+    for( const auto state : states )
+    {
+        const auto factory = std::make_shared< StubFactory >();
+        const auto answers = std::make_shared< Answers >();
+
+        factory -> initialState = state;
+
+        httpclient::ConnectionPoolPolicy policy;
+
+        policy.maxRetriesPerRequest = 2U;
+
+        const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
+
+        const PoolGuard guard( pool );
+
+        /*
+         * Unreplayable, so nothing rides the preface and the one request stays the pool's to
+         * answer - which is what makes the count below the pool's own bound and not a driver's
+         */
+
+        acquireInto( pool, makeKey(), makeRequest( false /* isReplayable */ ), answers, 0U );
+
+        UTF_REQUIRE( answers -> waitFor( 1U ) );
+
+        UTF_REQUIRE_EQUAL( factory -> calls(), 3U );
+
+        const auto records = answers -> records();
+
+        UTF_REQUIRE_EQUAL( records.size(), 1U );
+        UTF_REQUIRE( nullptr != records[ 0 ].exception );
+        UTF_REQUIRE( nullptr == records[ 0 ].connection );
+
+        const auto stats = pool -> stats();
+
+        UTF_REQUIRE_EQUAL( stats.connectionsCreated.value(), 3U );
+        UTF_REQUIRE_EQUAL( stats.connectionsRetired.value(), 3U );
+        UTF_REQUIRE_EQUAL( stats.establishmentRetries.value(), 3U );
+        UTF_REQUIRE_EQUAL( stats.failures.value(), 1U );
+        UTF_REQUIRE_EQUAL( stats.dispatched.value(), 0U );
+
+        pool -> dispose();
+    }
+}
+
+/************************************************************************
+ * THE SAME ARM REACHED THE WAY A REAL ORIGIN REACHES IT - an h2 peer which answers every
+ * connection with an immediate GOAWAY
+ *
+ * No real connection task is born terminal - the h2 task is Connecting from construction - so the
+ * case above needs a stub to reach the arm synchronously. This one does not: a connection which is
+ * Connecting when the pool looks and Draining when it looks next has never been seen Ready, which
+ * is exactly what a server at its connection limit produces, and the pool's answer to it before
+ * the bound was one fresh connection per round trip until the waiter's own deadline - thirty
+ * minutes by default.
+ *
+ * Its red is an assertion rather than a crash, because each replacement here is born Connecting
+ * and the loop is spread over maintenance ticks: unfixed, the waiter is never answered at all and
+ * the wait below runs out
+ */
+
+UTF_AUTO_TEST_CASE( H2Pool_ADrainingAtBirthOriginIsBoundedTests )
+{
+    using namespace bl;
+    using namespace utest::connpool;
+
+    const auto factory = std::make_shared< StubFactory >();
+    const auto answers = std::make_shared< Answers >();
+
+    httpclient::ConnectionPoolPolicy policy;
+
+    policy.maxRetriesPerRequest = 2U;
+
+    const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
+
+    const PoolGuard guard( pool );
+
+    acquireInto( pool, makeKey(), makeRequest( false /* isReplayable */ ), answers, 0U );
+
+    /*
+     * Each connection goes Draining once it exists, and the pool notices on its maintenance tick -
+     * the only thing which looks, since a driver has nothing to subscribe to
+     */
+
+    for( std::size_t i = 0U; i < 3U; ++i )
+    {
+        UTF_REQUIRE( factory -> waitForCalls( i + 1U ) );
+
+        factory -> taskAt( i ) -> setState( httpclient::ConnectionState::Draining );
+    }
+
+    UTF_REQUIRE( answers -> waitFor( 1U ) );
+
+    UTF_REQUIRE_EQUAL( factory -> calls(), 3U );
+
+    const auto records = answers -> records();
+
+    UTF_REQUIRE_EQUAL( records.size(), 1U );
+    UTF_REQUIRE( nullptr != records[ 0 ].exception );
+    UTF_REQUIRE( nullptr == records[ 0 ].connection );
+
+    const auto stats = pool -> stats();
+
+    UTF_REQUIRE_EQUAL( stats.connectionsRetired.value(), 3U );
+    UTF_REQUIRE_EQUAL( stats.establishmentRetries.value(), 3U );
+    UTF_REQUIRE_EQUAL( stats.failures.value(), 1U );
+    UTF_REQUIRE_EQUAL( stats.dispatched.value(), 0U );
+
+    pool -> dispose();
+}
+
+/************************************************************************
+ * THE SECOND WITNESS: a connection which completed a request WAS usable, whatever the pool saw of
+ * its state, and the requests queued behind it are not charged for its close
+ *
+ * "Never usable" has two witnesses and this case is the one which needs the second. isReady is the
+ * pool's own record of having OBSERVED Ready, and a connection can serve a request without the
+ * pool ever taking that reading: the first request rides the preface of a connection which is
+ * still Connecting, and the pool looks again only on a tick or on the next call it receives. So
+ * releaseStream( )'s Completed arm - which marks the peer's limit known - is the only witness left
+ * for the origin which answers one request and closes, and without it that origin is charged for
+ * behaving normally and stops being served.
+ *
+ * THE BUDGET IS ZERO so that the charge, if it happened, would be fatal to the second request
+ * rather than merely expensive. The deterministic discriminator is nevertheless
+ * establishmentRetries, which examineKey( ) increments for a charged retire whether or not a
+ * waiter is queued to receive it - a maintenance tick can reach the retire before the second
+ * acquire( ) does, and on that interleaving the waiter would be spared and the statistic would
+ * not
+ */
+
+UTF_AUTO_TEST_CASE( H2Pool_ACompletedRequestSparesTheRetireTests )
+{
+    using namespace bl;
+    using namespace utest::connpool;
+
+    const auto factory = std::make_shared< StubFactory >();
+    const auto answers = std::make_shared< Answers >();
+
+    httpclient::ConnectionPoolPolicy policy;
+
+    policy.maxRetriesPerRequest = 0U;
+
+    const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
+
+    const PoolGuard guard( pool );
+
+    const auto key = makeKey();
+
+    /*
+     * Replayable, so it rides the preface - dispatched to a connection which is still Connecting,
+     * and which the pool therefore never records as Ready
+     */
+
+    acquireInto( pool, key, makeRequest( true /* isReplayable */ ), answers, 0U );
+
+    UTF_REQUIRE( answers -> waitFor( 1U ) );
+
+    const auto first = factory -> taskAt( 0U );
+    const auto firstConnection = om::qi< httpclient::ClientConnection >( first );
+
+    UTF_REQUIRE( httpclient::ConnectionState::Connecting == first -> state() );
+
+    UTF_REQUIRE( answers -> records()[ 0 ].connection.get() == firstConnection.get() );
+
+    /*
+     * The response came back in full, which is what proves the peer has spoken - and then the
+     * origin closed, as one which serves a single request per connection does
+     */
+
+    pool -> releaseStream( firstConnection, 1U, httpclient::RequestOutcome::Completed );
+
+    first -> setState( httpclient::ConnectionState::Draining );
+
+    acquireInto( pool, key, makeRequest( true /* isReplayable */ ), answers, 1U );
+
+    UTF_REQUIRE( answers -> waitFor( 2U ) );
+
+    const auto records = answers -> records();
+
+    UTF_REQUIRE_EQUAL( records.size(), 2U );
+
+    UTF_REQUIRE( nullptr == records[ 1 ].exception );
+    UTF_REQUIRE( records[ 1 ].connection.get() != firstConnection.get() );
+
+    UTF_REQUIRE_EQUAL( factory -> calls(), 2U );
+
+    const auto stats = pool -> stats();
+
+    UTF_REQUIRE_EQUAL( stats.connectionsRetired.value(), 1U );
+    UTF_REQUIRE_EQUAL( stats.establishmentRetries.value(), 0U );
+    UTF_REQUIRE_EQUAL( stats.failures.value(), 0U );
+    UTF_REQUIRE_EQUAL( stats.dispatched.value(), 2U );
+
+    pool -> dispose();
+}
+
 #endif /* __UTEST_TESTCONNECTIONPOOL_H_ */

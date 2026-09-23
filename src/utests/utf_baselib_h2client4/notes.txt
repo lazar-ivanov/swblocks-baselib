@@ -24,3 +24,8 @@
 
 # L5 second pass - the sentinel's reading goes when the peer's number arrives
 --log_level=test_suite --run_test=H2Pool_PeerLimitIsTakenFreshOnceItIsKnownTests
+
+# the uncharged retire - a connection which was never usable is a failed attempt
+--log_level=test_suite --run_test=H2Pool_ANeverUsableConnectionIsChargedAndBoundedTests
+--log_level=test_suite --run_test=H2Pool_ADrainingAtBirthOriginIsBoundedTests
+--log_level=test_suite --run_test=H2Pool_ACompletedRequestSparesTheRetireTests

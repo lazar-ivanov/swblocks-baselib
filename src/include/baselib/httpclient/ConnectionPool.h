@@ -1346,6 +1346,54 @@ namespace bl
                             entry -> isRetired = true;
 
                             ++m_stats.connectionsRetired.lvalue();
+
+                            /*
+                             * A CLEAN CLOSE IS NOT A FAILURE - unless the connection was never
+                             * usable, and then it is the only failure there will ever be. Such an
+                             * entry holds no slot, so it is forgotten in the same pass; nothing
+                             * counts it, canStartConnection( ) says yes, and a replacement goes
+                             * out - with nothing having spent maxRetriesPerRequest. An origin
+                             * which answers every connection with an immediate GOAWAY is then
+                             * reconnected to once per round trip until the waiter's own deadline,
+                             * and a connection whose FIRST reading is terminal turns the same
+                             * hole into startConnection( ) -> runActions( ) -> startConnection( )
+                             * on one thread, which overflows the stack.
+                             *
+                             * "NEVER USABLE" HAS TWO WITNESSES AND BOTH ARE NEEDED. isReady is
+                             * the pool's own record of having OBSERVED Ready, and it is not
+                             * enough by itself: the first request rides the preface of a
+                             * connection which is still Connecting, so a connection can serve a
+                             * request without that reading ever being taken. isPeerLimitKnown is
+                             * the second, through releaseStream( )'s Completed arm - a response
+                             * came back, so the connection WAS usable whatever the pool saw of
+                             * it. Without it an origin which answers one request per connection
+                             * and then closes would be charged for behaving normally, and would
+                             * stop being served after maxRetriesPerRequest connections.
+                             *
+                             * ( learnPeerLimit( )'s own route to markPeerLimitKnown( ) cannot
+                             * reach here with isReady false - it runs in the Ready arm above,
+                             * which sets isReady first. So the second witness is exactly the
+                             * completed response and nothing else )
+                             */
+
+                            if( ! entry -> isReady && ! entry -> isPeerLimitKnown )
+                            {
+                                hasFailed = true;
+
+                                const auto eptr = entry -> attempt.task ?
+                                    entry -> attempt.task -> exception() : std::exception_ptr();
+
+                                failure = eptr ? eptr : makeException< UnexpectedException >(
+                                    resolveMessage(
+                                        BL_MSG()
+                                            << "A connection to '"
+                                            << entry -> key.host
+                                            << ":"
+                                            << entry -> key.port.value()
+                                            << "' was closed before it could carry a request"
+                                        )
+                                    );
+                            }
                         }
                     }
                 }
