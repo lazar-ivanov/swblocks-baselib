@@ -1048,16 +1048,24 @@ namespace utest
             return request;
         }
 
-        inline void chkTaskSucceeded( SAA_in const bl::om::ObjPtr< bl::tasks::Task >& task )
+        /**
+         * @brief What a task failed WITH, rendered for a message - "<none>" when it did not fail
+         *
+         * A case whose subject is HOW a connection ended needs the REASON and not only the fact.
+         * A write woken by this driver's own cancel and a write woken by the peer tearing its
+         * socket down both end in the same bool, and only the exception tells them apart - so a
+         * case which asserts on that bool has to be able to say which of the two it got
+         */
+
+        inline auto taskFailureText( SAA_in const bl::om::ObjPtr< bl::tasks::Task >& task )
+            -> std::string
         {
             using namespace bl;
 
             if( ! task -> isFailed() )
             {
-                return;
+                return "<none>";
             }
-
-            std::string message( "<no exception>" );
 
             if( task -> exception() )
             {
@@ -1067,11 +1075,64 @@ namespace utest
                 }
                 catch( std::exception& e )
                 {
-                    message = e.what();
+                    return e.what();
                 }
             }
 
-            UTF_FAIL( "the HTTP/1.1 driver task failed: " + message );
+            return "<no exception>";
+        }
+
+        inline void chkTaskSucceeded( SAA_in const bl::om::ObjPtr< bl::tasks::Task >& task )
+        {
+            if( task -> isFailed() )
+            {
+                UTF_FAIL( "the HTTP/1.1 driver task failed: " + taskFailureText( task ) );
+            }
+        }
+
+        /**
+         * @brief Waits, BOUNDED, for a task to reach its terminal path on its own
+         *
+         * ExecutionQueue::wait( ) is the rendezvous everywhere a case knows the task will end,
+         * and it is unbounded. What this is for is the opposite question - whether a task ends
+         * at all when nothing outside it helps - and the ABSENCE of an event cannot be waited
+         * for, only bounded. A case which asserts on the answer therefore polls the state and
+         * says how long it was willing to wait, exactly as RecordingSink::waitForClosed( )
+         * bounds the stream it is waiting for
+         *
+         * It is not a substitute for a rendezvous before an assertion about what was DELIVERED -
+         * see the note on m_cvData - and it must not be used as one
+         */
+
+        inline bool waitForTaskEnd(
+            SAA_in          const bl::om::ObjPtr< bl::tasks::Task >&            task,
+            SAA_in          const std::size_t                                   timeoutInMilliseconds
+            )
+        {
+            enum : std::size_t
+            {
+                POLL_INTERVAL_IN_MILLISECONDS = 20U,
+            };
+
+            for(
+                std::size_t waited = 0U;
+                waited < timeoutInMilliseconds;
+                waited += static_cast< std::size_t >( POLL_INTERVAL_IN_MILLISECONDS )
+                )
+            {
+                if( bl::tasks::Task::Completed == task -> getState() )
+                {
+                    return true;
+                }
+
+                bl::os::sleep(
+                    bl::time::milliseconds(
+                        static_cast< long >( POLL_INTERVAL_IN_MILLISECONDS )
+                        )
+                    );
+            }
+
+            return bl::tasks::Task::Completed == task -> getState();
         }
 
         inline auto joinEvents( SAA_in const std::vector< std::string >& events ) -> std::string
