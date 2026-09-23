@@ -139,7 +139,8 @@ Three faces, in descending order of certainty:
     end to end, because a barrier which waits for a handler nothing will wake is a deadlock and not
     a fix.
 
-    **CORRECTED 2026-09-23 — the two sentences in bold above are FALSE, and the barrier does hang.**
+    **CORRECTED 2026-09-23 — the bold sentence above, and the clause before it which says the cancel
+    "wakes the pending write", are FALSE: the barrier does hang.**
     `cancel( )` reaps only what is registered with the reactor, and a composed `asio::async_write`
     between two of its internal steps has nothing registered (`boost/asio/impl/write.hpp`,
     `write_op::operator( )`) — so the cancel finds nothing, the composed loop arms its next step
