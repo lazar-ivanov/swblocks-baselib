@@ -955,3 +955,135 @@ the peer's - is still owed its one-line gate on `! isClosing( )`, whichever opti
 
 **Unchanged from §12:** nothing was run here, so every number is the lane's; the h2 red's
 reproducibility; Windows.
+
+---
+
+## 15. Implementation, 2026-09-23
+
+**Implemented on `teardown-impl` at `849e767`, in the lane1 worktree, clang debug only.** The status
+line at the top of this document and §11's "Not agreed" are the status at design time and are left
+as written, in the house pattern of `s6r1-design.md` §11b.
+
+**Base.** The design names `s6r2` @ `b100c2a` and it had to: h1's `m_isWriteInFlight` exists only
+there, so the h1 half of (a) cannot be written on `lazari2` at all. But the design's own corrections
+turn on `bb53bdd`, which is on `lazari2` and not on `s6r2`. So the branch is `lazari2` @ `efff61f`
+with `s6r2` merged into it (`c2af9d2`), one conflict, in `utf_baselib_httpclient/notes.txt`, where
+both sides append test recipes to a file whose first line says each slice appends to it; resolved as
+the union. `TcpBaseTasks.h` is untouched by that merge, so `bb53bdd`'s `shutdownSocket( )` stands as
+written. **The fix therefore carries S6R.2 with it, which is a sequencing fact the orchestrator has
+to decide about and not one this lane could settle.**
+
+### 15.1 The form (a) took, and one reason this design does not give
+
+§2.1's superseded block and §14's addendum both point at the helper, and the helper is what landed:
+`TcpSocketCommonBase::shutdownSocket( base_type::getSocket( ) )`, without `force`, inside each
+driver's existing guard and before its existing `cancel( )`, gated on `m_isWriteInFlight`, with
+`TcpSocketCommonBase::m_wasSocketShutdownForcefully = true` on the line before it — the idiom of
+`TcpStrandedStreams.h:224` and `Http1ConnectionTask.h:1565`. The existing `cancel( )` stays
+unconditional and after, so the ungated path is byte-identical to today.
+
+**The reason the design does not state, found by reading `shutdownSocket( )` at `bb53bdd` rather
+than taking §2.1's quotation of it:** the helper opens with `if( ! socket.is_open( ) ) return;`. §5
+says h2's looser `isSocketCreated( )` guard is safe because "`shutdown( )` on a created-but-closed
+socket returns `bad_descriptor` and is discarded like every other code here". That is true of the
+bespoke line §2 first proposed and **false of the helper** — `checkSocketError( )`'s
+`bad_file_descriptor` arm is `BL_RIP_MSG`, a fatal RIP, not a discard. The `is_open( )` guard makes
+the question unreachable, so the helper is strictly safer here than the line it replaced, and §5's
+sentence should be read as an argument about the rejected shape.
+
+### 15.2 (b), and the invariant re-derived
+
+Both halves landed as designed: `const bool isOurOwnTeardown = ec && base_type::isClosing( );`
+before h1's prolog with `if( ! isOurOwnTeardown ) { CHK_EC }` and `CHK_CANCEL_IMPL( )` outside it,
+and one arm placed first in h2's `onWrite( )` that does nothing.
+
+§3's invariant was re-derived from the source rather than read back, because (b) is built on it and
+§11 names it as the second thing to attack. `m_closing` is **private** and `grep` over all of `src/`
+finds exactly three writers, all in `MultiOperationTask.h`: `beginClose( ):243`, which sets
+`m_closingDeliberate` with it; `onOperationCompleted( ):367`, inside `if( eptr && ! m_firstError )`
+and after `m_firstError = eptr` at `:364`, in the same critical section; and
+`scheduleNothrow( ):409`, which clears it with `m_closingDeliberate` and `m_firstError`. So
+`m_closing && ! m_firstError` can only have come from `beginClose( )`. **The invariant stands.**
+
+### 15.3 The (a)-only intermediate, which §8.1 called the only direct evidence for (b)
+
+Measured, a64 clang debug, ten runs of each state, `Http1Driver_WriteInFlightRefusesReuseTests`:
+
+| driver | assertion one, "a write nothing woke" | assertion two, "did not end clean" | wall |
+|---|---|---|---|
+| cancel only | **2 of 10 red** | not reached | 5314 ms on the red runs |
+| (a) alone | 0 of 10 red | **7 of 10 red**, every one `Broken pipe [system:32 at reactive_socket_send_op.hpp:136]` | 45-55 ms on every run |
+| (a) + (b) | 0 of 12 | 0 of 12 | 27-50 ms |
+
+The timing column is the second half of the evidence and was not anticipated here: with (a) alone
+the red runs no longer take the 5 s bound at all. (a) converted the hang into a prompt failure, and
+(b) removed the failure — which is §3's sentence, measured.
+
+**§12's "every number is the lane's" is now partly discharged.** The `Broken pipe` text and the
+bimodal 5 ms / 30000 ms outcome were reproduced here independently. The 2-of-10 red rate is lower
+than the lane's 4-5 of 10; the case is a genuine race and a rate is not a premise, which §12 already
+said.
+
+### 15.4 The h2 case, and what §8.3 got wrong about it
+
+**§8.3's door is right and its lever is wrong.** The case is
+`H2Driver_PeerHalfClosesWithAWriteInFlightTests`, through door 2 exactly as §5 and §8.3 require: a
+peer that never reads, then `shutdown( shutdown_send )`. §12's open question — "whether the peer's
+receive buffer can be made small enough" — is **settled: yes**, with two corrections.
+
+1. **§8.3 says "a large DATA upload leaves `async_write` outstanding", and the write is not large.**
+   `Session::produce( )` places **one DATA frame per write** — `bodyBytesWanted( )` never offers
+   more than `SETTINGS_MAX_FRAME_SIZE` — so the writes are 16384 + 9 octets each and not one
+   window-sized buffer. Measured: `16467, 16393, 16393`. The body's size is therefore irrelevant
+   beyond exceeding the window; what has to be small is the pipe.
+2. **The receive buffer must be shrunk on the ACCEPTOR, not on the accepted socket.** An accepted
+   socket inherits the listening socket's buffer sizes and the receive window is advertised during
+   the handshake, so a shrink applied after `accept( )` clamps the buffer but arrives after the peer
+   has been told it may send more. Measured: with the post-accept set alone the driver got three
+   16.4 KB frames away before blocking; with the acceptor-level set it blocks on the first. The
+   driver's own send buffer is shrunk too, from `onWriteScheduled( )`, which runs on the strand
+   immediately before each `async_write`.
+
+The rendezvous is `onWriteScheduled( )` and not a sleep: it is called on the strand just before
+`async_write` is issued, and the read completion carrying the peer's FIN cannot be dispatched until
+that strand handler returns — so by the time `onRead( )` runs the composed write is in flight, by
+the strand's ordering rather than the scheduler's.
+
+Same three states, ten runs each: unfixed **5 of 10 red** on assertion one; (a) alone **3 of 10
+red** on assertion two, every one `Broken pipe`, every run under 45 ms; (a) + (b) **0 of 12**.
+
+**It landed in a new module, `utf_baselib_h2client6`.** `utf_baselib_h2client2` measured **38.1 MB**
+a64 clang debug with its fourteen cases — at `src/utests/AGENTS.md`'s 40 MB target, and the size at
+which `utf_baselib_h2client` itself was split (37.1 MB). The new module is 33.1 MB and
+`utf_baselib_httpclient7` is unchanged at 30.0 MB. The second reason is not size: the peer is a raw
+socket that refuses to read, and `Http2TestServerT` reads its socket continuously — a peer that
+reads is a second waker for the write under test. `RawFrameScriptPeer` was considered and does not
+fit either: its script is fixed at construction and this case has to half-close on a rendezvous the
+driver raises.
+
+### 15.5 What was NOT done, and is still owed
+
+- **§10's TLS run.** The gap §10 established is not closed. No case in the suite closes an h1
+  connection over TLS, and §10's proposal — one keep-alive GET through `utf_baselib_httpclient5`'s
+  `TlsPeerT` with the ALPN server preference set to `http/1.1` — was **not** implemented here. So
+  §2.3's `close_notify` reasoning remains inference on both drivers, and the flag is what makes the
+  question unreachable rather than answered. This is the largest thing this change-set does not have.
+- **§10's release and whole-suite gate**, which are the orchestrator's by the worktree split.
+- **Windows**, per §10 and §12.
+- **§13's list**, untouched: h1's missing peer-close arm, the composed TLS read that can slip a
+  cancel the same way a composed write does, `scheduleNothrow( )`'s task-lock call, and h2's
+  `scheduleRead( )` accounting guard. The new module is the natural home for the first two, and its
+  own header says so.
+
+### 15.6 The test gate
+
+`scripts/utests/check_split.sh` tier 1 is RED against `notes/reviews/major/update_2026/baseline`,
+which predates these modules entirely — every S6R.2 case reads as ADDED there. Re-run against the
+merge commit `c2af9d2`, so that the only delta is this change, it reports four items and each is
+intended: the new h2 case ADDED (a new case is unjudgeable by a differential, by construction); two
+`C2 case BODY CHANGED` for the h1 barrier cases, one of which gained §8.2's assertion and both of
+which gained the comment corrections §8.1 and §9.1 owe; and one `C6 helper member LOST`, which is
+the same comment edit — C6 identifies members by text hash, and the block is present at the same
+line in both manifests. Tier 2 needs an x86 debug tree and tier 3 a current baseline; neither exists
+in this lane. Assertion counts, which is tier 3's substance for the cases touched:
+`Http1Driver_WriteInFlightRefusesReuseTests` 7, unchanged, and its sibling 6, which is +1 for §8.2.
