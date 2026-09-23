@@ -464,6 +464,17 @@ namespace bl
             cpp::ScalarTypeIniter< std::int64_t >                               m_pendingCredit;
             cpp::ScalarTypeIniter< std::int32_t >                               m_updateThreshold;
 
+            /*
+             * WHOSE NUMBER THE THRESHOLD IS - H15. The constructor derives HALF THE WINDOW, which
+             * is a policy and has to follow the window when the window moves; a caller which set
+             * the threshold itself stated a NUMBER, and a number stated is not ours to recompute.
+             * setUpdateThreshold( ) has exactly two callers and both are already gated on
+             * profile.windowUpdateThreshold != 0U, so "explicit" and "a profile set it" are the
+             * same predicate and this flag needs no plumbing
+             */
+
+            cpp::ScalarTypeIniter< bool >                                       m_isThresholdExplicit;
+
         public:
 
             explicit ReceiveFlowControlWindowT(
@@ -514,6 +525,8 @@ namespace bl
                     );
 
                 m_updateThreshold = threshold;
+
+                m_isThresholdExplicit = true;
             }
 
             /**
@@ -537,6 +550,25 @@ namespace bl
                 )
             {
                 m_window.applyInitialWindowSizeChange( previousValue, newValue );
+
+                /*
+                 * H15 - AND THE THRESHOLD MOVES WITH IT, unless a profile stated one. The
+                 * constructor derived half of whatever window the stream was OPENED with, and a
+                 * stream opened before our SETTINGS was acknowledged was opened at 65535 - so a
+                 * threshold of 32767 was left behind on a window the acknowledgement has just
+                 * lowered to, say, 1024. Pending credit could then never reach it, no
+                 * WINDOW_UPDATE was ever due, and the stream stopped for good
+                 *
+                 * It is confined to streams that were ALREADY OPEN: createStreamContext( ) builds
+                 * each new stream's window from m_localInitialWindowSize, which
+                 * applyLocalInitialWindowSize( ) has updated by then, so a stream opened after the
+                 * acknowledgement gets the right size and the right half of it for free
+                 */
+
+                if( ! m_isThresholdExplicit )
+                {
+                    m_updateThreshold = static_cast< std::int32_t >( newValue / 2U );
+                }
             }
 
             std::int64_t outstanding() const NOEXCEPT
@@ -592,12 +624,27 @@ namespace bl
             }
 
             /**
-             * @brief Whether a WINDOW_UPDATE is due - the half-window threshold of design 4.4
+             * @brief Whether a WINDOW_UPDATE is due - the half-window threshold of design 4.4,
+             * with a LIVENESS FLOOR under it
+             *
+             * H15(b), and it is not the same fix as the threshold recomputation above. That one
+             * keeps the DEFAULT policy honest when the window moves; this one makes the wedge
+             * unreachable by construction, including for a profile which asks for a threshold
+             * LARGER than the window it also asks for - a caller mistake this library should not
+             * turn into a hang.
+             *
+             * AN EXHAUSTED WINDOW WITH CREDIT OWED IS A STALL WHATEVER THE THRESHOLD IS, and the
+             * threshold's only purpose - batching frames - is worthless once there is nothing
+             * left to batch FOR. What it trades is frames for liveness: a small window with a
+             * consumer taking a few octets at a time emits an update per consumption once the
+             * window is empty. That is the only behaviour which makes progress at all, and it
+             * fires only at zero
              */
 
             bool shouldSendWindowUpdate() const NOEXCEPT
             {
-                return m_pendingCredit > 0 && m_pendingCredit >= m_updateThreshold;
+                return m_pendingCredit > 0 &&
+                    ( m_pendingCredit >= m_updateThreshold || m_window.size() <= 0 );
             }
 
             /**

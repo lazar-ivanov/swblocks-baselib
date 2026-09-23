@@ -1829,3 +1829,149 @@ UTF_AUTO_TEST_CASE( Http1Codec_BodyIsUncappedByDefaultTests )
         UTF_REQUIRE( httpclient::Http1CodecError::BodyTooLarge == parser.codecError() );
     }
 }
+
+/**
+ * @brief S6R.2 H05 - the AGGREGATE interim budget of one message, which no per-block cap bounds
+ *
+ * maxHeadersSize bounds ONE field section, and an interim response gets a whole fresh one:
+ * fileInterimAndRestart( ) discards the backend and builds another with the same cap, so a peer
+ * could send 1xx after 1xx, each of them comfortably inside every limit this parser had, and the
+ * per-message total never accumulated. Each one costs a vector push here and an event one layer
+ * up, for as long as the peer cares to keep going.
+ *
+ * THE NUMBERS ARE HTTP/2'S, deliberately - Globals::MAX_INTERIM_RESPONSES_PER_STREAM_DEFAULT and
+ * its byte sibling, and the byte total is measured the way RFC 9113 6.5.2 measures a header list,
+ * name plus value plus 32. A caller must not have to know which protocol answered in order to
+ * know what this client tolerates, and two numbers which merely happen to be equal would drift.
+ */
+
+UTF_AUTO_TEST_CASE( Http1Codec_InterimResponsesAreBoundedTests )
+{
+    using namespace bl;
+    using namespace utest::http1codec;
+
+    const std::string interim( "HTTP/1.1 103 Early Hints\r\nLink: </s.css>; rel=preload\r\n\r\n" );
+    const std::string final( "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok" );
+
+    /*
+     * THE CONTROL FIRST, because a bound which refused the legal case would be worse than none.
+     * Eight is the default and is above anything a compliant server does
+     */
+
+    {
+        std::string wire;
+
+        for( std::size_t i = 0U; i < 8U; ++i )
+        {
+            wire += interim;
+        }
+
+        wire += final;
+
+        httpclient::Http1ResponseParser parser;
+
+        const auto outcome = feed( parser, wire );
+
+        UTF_REQUIRE( ! outcome.hasError );
+        UTF_REQUIRE( parser.isComplete() );
+        UTF_REQUIRE_EQUAL( parser.interimResponses().size(), 8U );
+        UTF_REQUIRE_EQUAL( parser.statusCode(), 200 );
+    }
+
+    /*
+     * ... and the ninth is one too many, whatever follows it
+     */
+
+    {
+        std::string wire;
+
+        for( std::size_t i = 0U; i < 9U; ++i )
+        {
+            wire += interim;
+        }
+
+        wire += final;
+
+        httpclient::Http1ResponseParser parser;
+
+        const auto outcome = feed( parser, wire );
+
+        UTF_REQUIRE( outcome.hasError );
+        UTF_REQUIRE( ! parser.isComplete() );
+
+        UTF_REQUIRE(
+            httpclient::Http1CodecError::TooManyInterimResponses == parser.codecError()
+            );
+
+        /*
+         * The eight that fit are still on record - the refusal is of the ninth and not of the
+         * message so far
+         */
+
+        UTF_REQUIRE_EQUAL( parser.interimResponses().size(), 8U );
+    }
+
+    /*
+     * THE BYTE TOTAL IS THE OTHER HALF OF THE PAIR AND IS NOT REDUNDANT: a count alone lets eight
+     * blocks of sixty-four kilobytes through. Here the COUNT is never reached - the byte budget
+     * is lowered to two blocks' worth and the third interim breaches it while the default count
+     * of eight still has room
+     */
+
+    {
+        httpclient::Http1ResponseLimits limits;
+
+        /*
+         * One interim here measures 57 octets - 'link' plus '</s.css>; rel=preload' plus the 32
+         * of overhead - so two fit and the third does not, while the COUNT limit is still eight
+         */
+
+        limits.maxInterimHeaderBytes = 120U;
+
+        std::string wire;
+
+        for( std::size_t i = 0U; i < 3U; ++i )
+        {
+            wire += interim;
+        }
+
+        wire += final;
+
+        httpclient::Http1ResponseParser parser( limits );
+
+        const auto outcome = feed( parser, wire );
+
+        UTF_REQUIRE( outcome.hasError );
+        UTF_REQUIRE( ! parser.isComplete() );
+
+        UTF_REQUIRE(
+            httpclient::Http1CodecError::TooManyInterimResponses == parser.codecError()
+            );
+
+        UTF_REQUIRE_EQUAL( parser.interimResponses().size(), 2U );
+    }
+
+    /*
+     * AND THE KNOB IS A KNOB. A session which wants to accept more than the default says so, and
+     * a limit of zero refuses the FIRST interim - which is what a caller who wants no 1xx at all
+     * would set, and what makes the count a real bound rather than an off-by-one
+     */
+
+    {
+        httpclient::Http1ResponseLimits limits;
+
+        limits.maxInterimResponses = 0U;
+
+        httpclient::Http1ResponseParser parser( limits );
+
+        const auto outcome = feed( parser, interim + final );
+
+        UTF_REQUIRE( outcome.hasError );
+
+        UTF_REQUIRE(
+            httpclient::Http1CodecError::TooManyInterimResponses == parser.codecError()
+            );
+
+        UTF_REQUIRE( parser.interimResponses().empty() );
+    }
+}

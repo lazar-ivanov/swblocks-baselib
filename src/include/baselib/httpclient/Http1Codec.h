@@ -202,6 +202,13 @@ namespace bl
              */
 
             NoResponse,
+
+            /**
+             * The peer sent more informational responses before the final one, or more header
+             * octets across them, than the aggregate limits allow - see Http1ResponseLimits
+             */
+
+            TooManyInterimResponses,
         };
 
         /**
@@ -257,15 +264,46 @@ namespace bl
                  */
 
                 NO_MAX_BODY_SIZE                    = ~static_cast< std::uint64_t >( 0U ),
+
+                /**
+                 * @brief The AGGREGATE interim budget of one message - H05
+                 *
+                 * maxHeadersSize bounds ONE field section, and an interim response gets a whole
+                 * fresh one: fileInterimAndRestart( ) discards the backend and builds another
+                 * with the same cap, so before this a peer could send 1xx after 1xx, each inside
+                 * the cap, and the per-message limit never accumulated. The numbers are HTTP/2's,
+                 * deliberately - Globals::MAX_INTERIM_RESPONSES_PER_STREAM_DEFAULT and its byte
+                 * sibling - because a caller must not have to know which protocol answered to
+                 * know what this client tolerates
+                 */
+
+                DEFAULT_MAX_INTERIM_HEADER_BYTES    = 64ULL * 1024ULL,
+            };
+
+            enum : std::uint32_t
+            {
+                DEFAULT_MAX_INTERIM_RESPONSES       = 8U,
+
+                /**
+                 * @brief The per-field overhead of RFC 9113 section 6.5.2, which HPACK's own
+                 * entry size uses and which is what makes the two protocols' byte budgets the
+                 * same budget rather than two numbers that happen to match
+                 */
+
+                INTERIM_FIELD_SIZE_OVERHEAD         = 32U,
             };
 
             cpp::ScalarTypeIniter< std::uint32_t >                              maxHeadersSize;
             cpp::ScalarTypeIniter< std::uint64_t >                              maxBodySize;
+            cpp::ScalarTypeIniter< std::uint32_t >                              maxInterimResponses;
+            cpp::ScalarTypeIniter< std::uint64_t >                              maxInterimHeaderBytes;
 
             Http1ResponseLimits() NOEXCEPT
             {
                 maxHeadersSize = DEFAULT_MAX_HEADERS_SIZE;
                 maxBodySize = NO_MAX_BODY_SIZE;
+                maxInterimResponses = DEFAULT_MAX_INTERIM_RESPONSES;
+                maxInterimHeaderBytes = DEFAULT_MAX_INTERIM_HEADER_BYTES;
             }
         };
 
@@ -338,6 +376,14 @@ namespace bl
             std::string                                                         m_body;
 
             std::vector< Http1InterimResponse >                                 m_interimResponses;
+
+            /*
+             * H05 - what the interim responses of THIS message have cost so far, measured the way
+             * RFC 9113 6.5.2 measures a header list so that the HTTP/1.1 and HTTP/2 limits name
+             * one number. The count is m_interimResponses.size( ); this is the other half
+             */
+
+            cpp::ScalarTypeIniter< std::uint64_t >                              m_interimHeaderBytes;
 
             cpp::ScalarTypeIniter< Http1CodecError >                            m_codecError;
             cpp::ScalarTypeIniter< bool >                                       m_isComplete;
@@ -548,6 +594,20 @@ namespace bl
                     {
                         if( isInterimStatus( m_statusCode ) )
                         {
+                            /*
+                             * H05 - THE AGGREGATE INTERIM BUDGET IS CHECKED HERE, BEFORE THE
+                             * RESTART, because the restart is what throws the evidence away: it
+                             * makes a fresh backend with a fresh maxHeadersSize, so every interim
+                             * gets its own full budget and the per-message cap never accumulates.
+                             * It is checked from parse( ) and not from fileInterimAndRestart( )
+                             * for one reason - this is where the error_code is
+                             */
+
+                            if( ! chkInterimBudget( ec ) )
+                            {
+                                return consumed;
+                            }
+
                             fileInterimAndRestart();
 
                             continue;
@@ -760,6 +820,48 @@ namespace bl
                  */
 
                 return statusCode >= 100 && statusCode <= 199 && statusCode != 101;
+            }
+
+            /**
+             * @brief Whether one more interim response fits the aggregate budget - H05
+             *
+             * @return false when it does not, having recorded the refusal; the caller stops
+             *
+             * THE FIELDS ARE MEASURED THE WAY RFC 9113 6.5.2 MEASURES A HEADER LIST - name plus
+             * value plus 32 octets of overhead - which is exactly HpackField::hpackSize( ), so
+             * this limit and the HTTP/2 one name ONE number rather than two which happen to be
+             * equal. What it counts is the interim about to be filed, added to what the earlier
+             * ones on this message already cost
+             */
+
+            bool chkInterimBudget( SAA_inout eh::error_code& ec )
+            {
+                std::uint64_t bytes = m_interimHeaderBytes;
+
+                for( auto it = m_headers.begin(); it != m_headers.end(); ++it )
+                {
+                    bytes +=
+                        static_cast< std::uint64_t >( it -> name().size() ) +
+                        static_cast< std::uint64_t >( it -> value().size() ) +
+                        static_cast< std::uint64_t >(
+                            Http1ResponseLimits::INTERIM_FIELD_SIZE_OVERHEAD
+                            );
+                }
+
+                if(
+                    m_interimResponses.size() >=
+                        static_cast< std::size_t >( m_limits.maxInterimResponses.value() ) ||
+                    bytes > m_limits.maxInterimHeaderBytes
+                    )
+                {
+                    fail( Http1CodecError::TooManyInterimResponses, ec );
+
+                    return false;
+                }
+
+                m_interimHeaderBytes = bytes;
+
+                return true;
             }
 
             void fileInterimAndRestart()

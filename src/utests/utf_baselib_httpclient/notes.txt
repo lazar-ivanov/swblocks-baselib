@@ -78,3 +78,4 @@
 --log_level=message --run_test=Http1Codec_BodyIsUncappedByDefaultTests
 --log_level=message --run_test=HttpClientRequestTask_SinkWhichThrowsOnCompleteFailsTheRequestTests
 --log_level=message --run_test=HttpClientRequestTask_SinkWhichThrowsInTheCloseBatchFailsTheRequestTests
+--log_level=message --run_test=Http1Codec_InterimResponsesAreBoundedTests
