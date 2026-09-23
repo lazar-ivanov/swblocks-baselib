@@ -1,0 +1,23 @@
+# each slice appends the recipes for the cases it lands here
+
+--log_level=message --run_test=Http1Driver_WriteInFlightRefusesReuseTests
+--log_level=message --run_test=Http1Driver_WriteInFlightRefusesASecondRequestTests
+
+# NO LONGER RED. Until the teardown fix landed, Http1Driver_WriteInFlightRefusesReuseTests failed
+# about half its runs on "the barrier left a write nothing woke", and this note said so at length -
+# initiateClose( ) cancelled the socket without shutting it down, and cancel( ) cannot reap a
+# composed asio::async_write that is between two of its internal steps. Both drivers now shut the
+# send side down first, and both cases are green: 0 of 12 runs, the reds having been 2 of 10 before
+# the fix and 7 of 10 with the shutdown but without the error classification beside it.
+#
+# THE NOTE IS REWRITTEN RATHER THAN DELETED because a stale "known red" is what gets a real red
+# ignored. If either case reds again it is a regression of the teardown fix, not a known state
+
+# the two 11a cases ABORT this module on Beast's BOOST_ASSERT( got_some( ) ) unless the tree
+# carries the zero-octet conversion in Http1ResponseParserT::parseEof( ) - their red is the
+# process dying and not an assertion, which is why they landed with that conversion and not
+# before it
+
+--log_level=message --run_test=Http1Driver_PeerClosesWithoutAnsweringTests
+--log_level=message --run_test=Http1Driver_PeerClosesAfterEarlyHintsTests
+--log_level=message --run_test=Http1Driver_PeerResetsMidCloseDelimitedBodyTests

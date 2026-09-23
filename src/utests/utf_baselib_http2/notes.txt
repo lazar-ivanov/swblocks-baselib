@@ -38,3 +38,5 @@
 
 --log_level=message --run_test=PeerCloseErrorCodes_PeerShutsDownWithUnreadDataTests
 --log_level=message --run_test=PeerCloseErrorCodes_ReaderSendsAfterPeerShutdownTests
+
+--log_level=message --run_test=PeerCloseErrorCodes_CleanEndOfStreamSetTests

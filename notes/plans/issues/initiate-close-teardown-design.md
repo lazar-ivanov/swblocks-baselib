@@ -955,3 +955,456 @@ the peer's - is still owed its one-line gate on `! isClosing( )`, whichever opti
 
 **Unchanged from §12:** nothing was run here, so every number is the lane's; the h2 red's
 reproducibility; Windows.
+
+---
+
+## 15. Implementation, 2026-09-23
+
+**Implemented on `teardown-impl` at `849e767`, in the lane1 worktree, clang debug only.** The status
+line at the top of this document and §11's "Not agreed" are the status at design time and are left
+as written, in the house pattern of `s6r1-design.md` §11b.
+
+**Base.** The design names `s6r2` @ `b100c2a` and it had to: h1's `m_isWriteInFlight` exists only
+there, so the h1 half of (a) cannot be written on `lazari2` at all. But the design's own corrections
+turn on `bb53bdd`, which is on `lazari2` and not on `s6r2`. So the branch is `lazari2` @ `efff61f`
+with `s6r2` merged into it (`c2af9d2`), one conflict, in `utf_baselib_httpclient/notes.txt`, where
+both sides append test recipes to a file whose first line says each slice appends to it; resolved as
+the union. `TcpBaseTasks.h` is untouched by that merge, so `bb53bdd`'s `shutdownSocket( )` stands as
+written. **The fix therefore carries S6R.2 with it, which is a sequencing fact the orchestrator has
+to decide about and not one this lane could settle.**
+
+### 15.1 The form (a) took, and one reason this design does not give
+
+§2.1's superseded block and §14's addendum both point at the helper, and the helper is what landed:
+`TcpSocketCommonBase::shutdownSocket( base_type::getSocket( ) )`, without `force`, inside each
+driver's existing guard and before its existing `cancel( )`, gated on `m_isWriteInFlight`, with
+`TcpSocketCommonBase::m_wasSocketShutdownForcefully = true` on the line before it — the idiom of
+`TcpStrandedStreams.h:224` and `Http1ConnectionTask.h:1565`. The existing `cancel( )` stays
+unconditional and after, so the ungated path is byte-identical to today.
+
+**The reason the design does not state, found by reading `shutdownSocket( )` at `bb53bdd` rather
+than taking §2.1's quotation of it:** the helper opens with `if( ! socket.is_open( ) ) return;`. §5
+says h2's looser `isSocketCreated( )` guard is safe because "`shutdown( )` on a created-but-closed
+socket returns `bad_descriptor` and is discarded like every other code here". That is true of the
+bespoke line §2 first proposed and **false of the helper** — `checkSocketError( )`'s
+`bad_file_descriptor` arm is `BL_RIP_MSG`, a fatal RIP, not a discard. The `is_open( )` guard makes
+the question unreachable, so the helper is strictly safer here than the line it replaced, and §5's
+sentence should be read as an argument about the rejected shape.
+
+### 15.2 (b), and the invariant re-derived
+
+Both halves landed as designed: `const bool isOurOwnTeardown = ec && base_type::isClosing( );`
+before h1's prolog with `if( ! isOurOwnTeardown ) { CHK_EC }` and `CHK_CANCEL_IMPL( )` outside it,
+and one arm placed first in h2's `onWrite( )` that does nothing.
+
+§3's invariant was re-derived from the source rather than read back, because (b) is built on it and
+§11 names it as the second thing to attack. `m_closing` is **private** and `grep` over all of `src/`
+finds exactly three writers, all in `MultiOperationTask.h`: `beginClose( ):243`, which sets
+`m_closingDeliberate` with it; `onOperationCompleted( ):367`, inside `if( eptr && ! m_firstError )`
+and after `m_firstError = eptr` at `:364`, in the same critical section; and
+`scheduleNothrow( ):409`, which clears it with `m_closingDeliberate` and `m_firstError`. So
+`m_closing && ! m_firstError` can only have come from `beginClose( )`. **The invariant stands.**
+
+### 15.3 The (a)-only intermediate, which §8.1 called the only direct evidence for (b)
+
+Measured, a64 clang debug, ten runs of each state, `Http1Driver_WriteInFlightRefusesReuseTests`:
+
+| driver | assertion one, "a write nothing woke" | assertion two, "did not end clean" | wall |
+|---|---|---|---|
+| cancel only | **2 of 10 red** | not reached | 5314 ms on the red runs |
+| (a) alone | 0 of 10 red | **7 of 10 red**, every one `Broken pipe [system:32 at reactive_socket_send_op.hpp:136]` | 45-55 ms on every run |
+| (a) + (b) | 0 of 12 | 0 of 12 | 27-50 ms |
+
+The timing column is the second half of the evidence and was not anticipated here: with (a) alone
+the red runs no longer take the 5 s bound at all. (a) converted the hang into a prompt failure, and
+(b) removed the failure — which is §3's sentence, measured.
+
+**§12's "every number is the lane's" is now partly discharged.** The `Broken pipe` text and the
+bimodal 5 ms / 30000 ms outcome were reproduced here independently. The 2-of-10 red rate is lower
+than the lane's 4-5 of 10; the case is a genuine race and a rate is not a premise, which §12 already
+said.
+
+### 15.4 The h2 case, and what §8.3 got wrong about it
+
+**§8.3's door is right and its lever is wrong.** The case is
+`H2Driver_PeerHalfClosesWithAWriteInFlightTests`, through door 2 exactly as §5 and §8.3 require: a
+peer that never reads, then `shutdown( shutdown_send )`. §12's open question — "whether the peer's
+receive buffer can be made small enough" — is **settled: yes**, with two corrections.
+
+1. **§8.3 says "a large DATA upload leaves `async_write` outstanding", and the write is not large.**
+   `Session::produce( )` places **one DATA frame per write** — `bodyBytesWanted( )` never offers
+   more than `SETTINGS_MAX_FRAME_SIZE` — so the writes are 16384 + 9 octets each and not one
+   window-sized buffer. Measured: `16467, 16393, 16393`. The body's size is therefore irrelevant
+   beyond exceeding the window; what has to be small is the pipe.
+2. **The receive buffer must be shrunk on the ACCEPTOR, not on the accepted socket.** An accepted
+   socket inherits the listening socket's buffer sizes and the receive window is advertised during
+   the handshake, so a shrink applied after `accept( )` clamps the buffer but arrives after the peer
+   has been told it may send more. Measured: with the post-accept set alone the driver got three
+   16.4 KB frames away before blocking; with the acceptor-level set it blocks on the first. The
+   driver's own send buffer is shrunk too, from `onWriteScheduled( )`, which runs on the strand
+   immediately before each `async_write`.
+
+The rendezvous is `onWriteScheduled( )` and not a sleep: it is called on the strand just before
+`async_write` is issued, and the read completion carrying the peer's FIN cannot be dispatched until
+that strand handler returns — so by the time `onRead( )` runs the composed write is in flight, by
+the strand's ordering rather than the scheduler's.
+
+Same three states, ten runs each: unfixed **5 of 10 red** on assertion one; (a) alone **3 of 10
+red** on assertion two, every one `Broken pipe`, every run under 45 ms; (a) + (b) **0 of 12**.
+
+**It landed in a new module, `utf_baselib_h2client6`.** `utf_baselib_h2client2` measured **38.1 MB**
+a64 clang debug with its fourteen cases — at `src/utests/AGENTS.md`'s 40 MB target, and the size at
+which `utf_baselib_h2client` itself was split (37.1 MB). The new module is 33.1 MB and
+`utf_baselib_httpclient7` is unchanged at 30.0 MB. The second reason is not size: the peer is a raw
+socket that refuses to read, and `Http2TestServerT` reads its socket continuously — a peer that
+reads is a second waker for the write under test. `RawFrameScriptPeer` was considered and does not
+fit either: its script is fixed at construction and this case has to half-close on a rendezvous the
+driver raises.
+
+### 15.5 What was NOT done, and is still owed
+
+- **§10's TLS run.** The gap §10 established is not closed. No case in the suite closes an h1
+  connection over TLS, and §10's proposal — one keep-alive GET through `utf_baselib_httpclient5`'s
+  `TlsPeerT` with the ALPN server preference set to `http/1.1` — was **not** implemented here. So
+  §2.3's `close_notify` reasoning remains inference on both drivers, and the flag is what makes the
+  question unreachable rather than answered. This is the largest thing this change-set does not have.
+- **§10's release and whole-suite gate**, which are the orchestrator's by the worktree split.
+- **Windows**, per §10 and §12.
+- **§13's list**, untouched: h1's missing peer-close arm, the composed TLS read that can slip a
+  cancel the same way a composed write does, `scheduleNothrow( )`'s task-lock call, and h2's
+  `scheduleRead( )` accounting guard. The new module is the natural home for the first two, and its
+  own header says so.
+
+### 15.6 The test gate
+
+`scripts/utests/check_split.sh` tier 1 is RED against `notes/reviews/major/update_2026/baseline`,
+which predates these modules entirely — every S6R.2 case reads as ADDED there. Re-run against the
+merge commit `c2af9d2`, so that the only delta is this change, it reports four items and each is
+intended: the new h2 case ADDED (a new case is unjudgeable by a differential, by construction); two
+`C2 case BODY CHANGED` for the h1 barrier cases, one of which gained §8.2's assertion and both of
+which gained the comment corrections §8.1 and §9.1 owe; and one `C6 helper member LOST`, which is
+the same comment edit — C6 identifies members by text hash, and the block is present at the same
+line in both manifests. Tier 2 needs an x86 debug tree and tier 3 a current baseline; neither exists
+in this lane. Assertion counts, which is tier 3's substance for the cases touched:
+`Http1Driver_WriteInFlightRefusesReuseTests` 7, unchanged, and its sibling 6, which is +1 for §8.2.
+
+## 16. Implementation review, 2026-09-23 - the second gate
+
+**Reviewer: Claude Fable 5.1, on `lazari2` in the main worktree, reading the staged merge of
+`teardown-impl` @ `96071bb` (`849e767` is the fix, `c2af9d2` the S6R.2 merge).** Opened at the
+signature and read to the end, at the working tree: h1's `onStartRequest( )`, `onWriteCompleted( )`,
+`isCleanEndOfStream( )`, `onPeerClosed( )`, `onReadCompleted( )`, `finishStream( )`,
+`closeConnection( )`, `chkArmIdleTimer( )`, `cancelIdleTimer( )`, `onIdleDeadline( )`,
+`initiateClose( )`, `scheduleTask( )`, `cancelTask( )`, `shutdownOnStreamExecutor( )` and
+`onTaskStoppedNothrow( )`; h2's `scheduleRead( )`, `isPeerClosed( )`, `onRead( )`,
+`onPeerClosed( )`, `onWriteScheduled( )`, `pumpWrites( )`, `onWrite( )`, `cancelTimers( )`,
+`armDrainDeadline( )`, `onDrainDeadline( )`, `closeGracefully( )`, `chkFinishClose( )`, the session
+start, `initiateClose( )`, `cancelTask( )` and `onTaskStoppedNothrow( )`; `MultiOperationTask.h`
+whole; `TcpBaseTasks.h`'s `shutdownSocket( )` with its `checkSocketError( )` lambda,
+`isExpectedSocketException( )`, both `onTaskStoppedNothrow( )`, both `cancelTask( )`,
+`isChannelOpen( )` and `isSocketCreated( )`; `TcpSslBaseTasks.h`'s `cancelTask( )`,
+`isExpectedException( )`, `scheduleTaskFinishContinuation( )`, `onTaskStoppedNothrow( )`,
+`beginProtocolShutdown( )`, `onShutdownCompleted( )`, `isShutdownNeeded( )`, `attachStream( )`,
+`getSocket( )` and the SSL `isChannelOpen( )` / `isSocketCreated( )`; both stranded policies'
+`cancelTask( )` and `shutdownSocketOnStrand( )`; `TaskBase.h`'s handler macros, `notifyReady( )`,
+`requestCancelInternal( )`, `isCanceled( )`, `isFailed( )` and `scheduleNothrow( )`; `NetUtils.h`'s
+three predicates; `Session.h`'s `wantsWrite( )`, `produce( )`, `bodyBytesWanted( )` and
+`writeOneDataFrame( )`; `ClientConnectionTaskBase.h`'s connect deadline; `HttpClientRequestTask.h`'s
+`connectionFailureCause( )` and `answerOnClosed( )`; `TestHttp1DriverWriteBarrier.h` and
+`TestHttp2DriverWriteBarrier.h` whole; `Http1DriverTestUtils.h`'s `runExchange( )`; the new
+module's `Main.cpp`, `notes.txt` and marker; `utf_baselib_httpclient7/notes.txt`; the
+`s6r2-design.md` correction diff; `src/utests/AGENTS.md`; and, outside the repo, the lane's own
+journal (`http2-l0-state/lane1.md`, the 2026-09-23 section) and `teardown-validate.sh`. Nothing
+was built or run. The one measurement made independently here is the object sizes, read off the
+lane worktree's build tree (below).
+
+**Verdict: the implementation is correct and matches the design as gated. Agreed.** Both halves
+landed in the shape §14 agreed to, on both drivers; the invariant (b) rests on stands when
+re-derived from the source rather than read back; the three design errors the lane reports are
+real and its corrections are right, with one wording precision; the (a)-only table is a sound
+demonstration that (b) is load-bearing, with the statistical caveat stated below; the h2 case is on
+door 2 and could not have been built on door 1; the new module was necessary; the `httpclient3` red
+is pre-existing and its mechanism is confirmed, though it is better described than the lane
+describes it; the TLS gap is a gap and is acceptable to land on a gate, for the reason given at
+item 7. Four things neither the design nor the lane noticed are at item 8; one of them is a stale
+"known red" note that will mislead the next reader and should be corrected before or with the
+merge. None of the four is a defect in the code.
+
+### 16.1 (a) matches what the design left
+
+`Http1ConnectionTask.h:1556-1567` and `Http2ConnectionTask.h:2599-2610`: inside each driver's
+existing guard (`isChannelOpen( )` / `isSocketCreated( )`, unchanged), before the existing
+unconditional `cancel( ec )` (`:1566`, `:2609`, unchanged), gated on `m_isWriteInFlight` (`:1558`,
+`:2601`), the flag on the line before the call (`:1560`, `:2603`), and
+`TcpSocketCommonBase::shutdownSocket( base_type::getSocket( ) )` with no `force` (`:1562`, `:2605`).
+h1's `cancelIdleTimer( )` (`:1577`) and h2's `cancelTimers( )` (`:2575`) are where they were.
+
+**No-`force` is right, read at `TcpBaseTasks.h:241-368`:** the only thing `force` adds is the
+`linger( false, 0 )` block at `:303-321`, and it is the default; the rest of the function -
+`shutdown( shutdown_send, ec )` at `:357` and `cancel( ec )` at `:364`, each through
+`checkSocketError( )` - runs either way. Passing `force` would add one `setsockopt( )` that changes
+nothing. The cleartext `TcpSocketAsyncBase::onTaskStoppedNothrow( )` (`:628-643`) and its TLS twin
+(`TcpSslBaseTasks.h:520-546`) already call the helper this same way, so `initiateClose( )` now
+performs the library's own task-finish teardown one step earlier - which is §14's addendum in one
+sentence.
+
+**The flag's placement is right, and it is not load-bearing within the call.** `shutdownSocket( )`
+is `static` and reads no task state, so nothing between `:1560` and `:1562` can observe the flag;
+its readers - `isShutdownNeeded( )`'s first line (`TcpSslBaseTasks.h:669`),
+`scheduleTaskFinishContinuation( )` (`:476`) and `TcpSocketCommonBaseT::onTaskStoppedNothrow( )`
+(`TcpBaseTasks.h:123`) - all run on the terminal path, which cannot be taken while the write is
+still pending. "Set first" therefore mirrors the idiom of the stranded policies
+(`TcpStrandedStreams.h:224`, `TcpSslStrandedStreams.h:226`, h1's own `cancelTask( )` at `:1653`),
+where it IS load-bearing because the shutdown is posted; here everything is synchronous and either
+order is correct. Recorded so nobody "fixes" the order in either direction.
+
+**The gated path's second `cancel( )`** (the helper's at `:364`, then the driver's own) is a no-op
+against an empty reactor table - the design allowed either shape and this is the one-line diff.
+
+### 16.2 (b) matches, in both drivers, and the invariant re-derived
+
+h1 `onWriteCompleted( ):745-832`: `const bool isOurOwnTeardown = ec && base_type::isClosing( );` at
+`:779`, before `BL_TASKS_HANDLER_BEGIN( )` at `:781`; `if( ! isOurOwnTeardown ) { CHK_EC }` at
+`:820-823`; `CHK_CANCEL_IMPL( )` at `:825`, outside the guard. The flag clear, the zero-octet
+answer and the two storage clears (`:791-818`) are untouched and stay ahead of the guard.
+h2 `onWrite( ):1638-1745`: the new arm is the FIRST arm of `if( ec )` (`:1686-1691`), its body is a
+comment, and the existing `isPeerClosed( )` arm follows it as `else if`.
+
+**The invariant, from the source and not from §15.2.** `MultiOperationTask.h` is 429 lines and was
+read whole. `m_closing` is declared under the `private:` label at `:90` (members `:112-119`); the
+class has no `friend`; a derived class cannot write it. Its writers are three: `beginClose( ):243`,
+which sets `m_closingDeliberate` in the same guard at `:244`; `onOperationCompleted( ):367`, which
+is inside `if( eptr && ! m_firstError )` (`:344`) and inside `if( ! isSelfInflictedAbort )`
+(`:362`), two lines after `m_firstError = eptr` at `:364`, under the one `BL_MUTEX_GUARD` taken at
+`:335`; and `scheduleNothrow( ):409`, which clears it together with `m_firstError` at `:413` under
+the guard at `:406`. So `m_closing && ! m_firstError` can only have been produced by
+`beginClose( )`, and `isClosing( )` (`:258-263`) reads `m_closing` under the same leaf lock. **The
+invariant stands in the direction (b) needs**, and `isClosing( )` true partitions exactly as §4.2
+says: no first error - deliberate; a first error - `:344` would have discarded this one.
+
+**One precision to §4.2 and §4.3, which neither the design nor the lane states.** The invariant
+gives *deliberate*, not *self-inflicted*. On a deliberately closing task the failed write's code is
+almost always the one our own `shutdown_send` produced - but a genuine transport error that
+completes the write in the same instant (the peer's RST racing our teardown) is swallowed by the
+same arm, where before this change it was recorded as the task's first error and the task
+completed FAILED. `MultiOperationTask.h:310-311` states the mix-in's contract as *"a genuine I/O
+failure which arrives while the task is closing is still the task's error"*, and the two write
+handlers now narrow it. It is acceptable, and it is stated here so §4.3's *"no genuine error is lost
+that was previously reported"* is read with the qualifier it needs: on every deliberate-close path
+the sink has already been answered - h1's `finishStream( )` releases it before `closeConnection( )`,
+h2's `onPeerClosed( )` and `chkFinishClose( )` close every stream before `beginClose( )` - so
+`connectionFailureCause( )` (`HttpClientRequestTask.h:1186`) has no request task left to chain the
+lost error into, and the only observable is the connection task's own `isFailed( )`, on a connection
+being discarded, for a code (`connection_reset`, `broken_pipe`) that `isExpectedSocketException( )`
+already classed as expected. The h2 driver already ends gracefully on a peer close seen by the write
+side; this makes h1 consistent with it in the one window where both are true.
+
+**The window between `:779` and `:823` is closed**, as §14.2 argued: `m_closing` is monotonic
+within a run, and every writer runs on the strand except `scheduleRead( )`'s catch, which precedes
+any write. `isClosing( )` at `:779` runs outside the task lock and takes the leaf lock only;
+`isClosing( )` at h2 `:1686` runs inside the handler body, task lock then leaf lock, the established
+order.
+
+### 16.3 The three design errors, each verified
+
+1. **`shutdownSocket( )` and `bad_file_descriptor`.** True, with a wording precision.
+   `TcpBaseTasks.h:248` is `if( ! socket.is_open( ) ) return;`; `checkSocketError( )` at `:253-297`
+   routes `bad_file_descriptor` and `WSAEBADF` to `BL_RIP_MSG` at `:285`. So §5's sentence -
+   *"`shutdown( )` on a created-but-closed socket returns `bad_descriptor` and is discarded like every
+   other code here"* - was an argument about the bespoke line and does not transfer to the helper.
+   **But "strictly safer" (§15.1, and the lane's journal) overstates it.** The bespoke line discarded
+   `ec` unconditionally and had no fatal arm at all; the helper HAS a fatal arm and is safe only
+   because `is_open( )` makes it unreachable - asio's `is_open( )` is "the native handle is not
+   invalid", and a handle can be bad while open only if something closed the descriptor behind
+   asio's back, which nothing here does. The correct statement is: *the helper is not less safe than
+   the line it replaced, and it is pinned by the two `PeerCloseErrorCodes_*` control cases, which the
+   line was not.* The commit message's own sentence on this ("h2's looser `isSocketCreated( )` guard
+   would otherwise have reached `checkSocketError( )`") conflates the two shapes - a bespoke line
+   never reaches that lambda - and is history; §15.1 is the accurate version. Also read: h2's
+   trailing `cancel( ec )` at `:2609` stays under `isSocketCreated( )` and discards its code, exactly
+   as today, so a created-but-closed socket on that path is the same no-op it was.
+2. **One DATA frame per write.** True, and the reason is the pull contract rather than
+   `produce( )`'s loop. `produce( ):913-947` loops `writeOneDataFrame( )` until
+   `firstSendableStreamId( )` is the connection, so it WOULD place several frames if several were
+   pending; what bounds it is `bodyBytesWanted( ):1067-1099`, whose `room` is
+   `min( m_peerMaxFrameSize, windows ) - pendingBody.size( )`, and `provideBody( )`'s `BL_CHK` at
+   `:1142-1145` refuses more. So at most one frame's worth is ever pending per stream between two
+   pumps, and one `produce( )` places one DATA frame per stream. The measured `16467, 16393, 16393`
+   is `16384 + 9` with 74 octets of something ahead of the first. §8.3's "a large DATA upload leaves
+   `async_write` outstanding" therefore rested on the wrong quantity, and the lane's correction -
+   the PIPE is what must be small - is the right one.
+3. **`SO_RCVBUF` on the acceptor.** True in mechanism on Linux - an accepted socket inherits the
+   listener's buffer sizes, the initial window is chosen from the listener's `sk_rcvbuf` at SYN-ACK
+   time, and setting the option after `accept( )` clamps the buffer but not the window already
+   advertised - and the lane measured it (three frames away versus none). The test sets both
+   (`TestHttp2DriverWriteBarrier.h:230-239` and `:360-365`), which is the right belt and braces.
+
+### 16.4 The intermediate evidence is sound, with one statistical caveat
+
+The wall-clock column is the corroboration the lane claims, and it is the discriminator the exception
+text cannot be: on Linux the peer's RST and our own `shutdown_send` both surface as `EPIPE` from the
+next `send( )`, so `Broken pipe [system:32 at reactive_socket_send_op.hpp:136]` alone cannot say
+which waker produced it. A red run at 5314 ms is the 5 s bound plus the harness's release - the
+peer's RST freeing a write nothing else woke; a red run at 45-55 ms with the peer still parked can
+only be the driver's own teardown having reached the write. So the (a)-alone row says exactly what
+§8.1 wanted said: (a) converted the hang into a prompt failure, and (b) removed the failure.
+
+The (a)-alone 7 of 10 exceeding the cancel-only 2 of 10 is not a contradiction and is worth
+explaining once: a registered send step is reaped by `cancel( )` with `operation_aborted` (excused),
+but after `shutdown( SHUT_WR )` the kernel reports the socket writable at once, so a registered step
+woken by the reactor thread between the helper's `shutdown( )` at `:357` and its `cancel( )` at
+`:364` completes `EPIPE` instead. (a) therefore poisons the between-steps window AND races the
+cancel for the registered one, and the `EPIPE` count is expected to be at or above the hang count.
+The h2 table's 3 of 10 against 5 of 10 runs the other way and is sample noise at ten runs; the
+design's §12 already said a rate is not a premise.
+
+**The caveat.** Assertion two's evidence is conclusive - 7 of 10 red to 0 of 12 green cannot be
+chance. Assertion one's h1 evidence is thin on its own - 2 of 10 to 0 of 10 is consistent with luck
+about one run in nine - and rests on the mechanism read in `write_op`, on the wall-clock signature,
+and on the h2 case's 5 of 10 to 0 of 12, which is not thin. §10 asked for ten runs a side and got
+them; the orchestrator's release gate, which runs the case again on two more toolchains, is the
+right place to thicken it, and no further lane run is asked for.
+
+### 16.5 The h2 case is on door 2, and the module was necessary
+
+**Door 2, by construction of the peer and by the strand.** `HalfClosingPeer` accepts, never reads,
+and on request does `shutdown( shutdown_send )` (`:374`) - FIN with the receive queue untouched, so
+the driver's `onRead( )` gets `eof` → `isPeerClosed( )` → `onPeerClosed( ):1557-1572` →
+`beginClose( ):1571` → the read handler's own epilog runs `initiateClose( )`. The write is in flight
+when it does: `BlockedWriteProbeT::onWriteScheduled( )` (`:499-534`) signals from inside
+`pumpWrites( )` at `:1620`, on the strand, before `async_write( )` at `:1626`; the case then asks for
+the half-close (`:660`) and waits for it (`:662`), and the read completion carrying the FIN cannot
+be dispatched until the handler that is issuing the write returns. `taskEndedUnaided` (`:671`) is
+read with the peer still holding its end; `release( )` is at `:680`. The two assertions are §8.3's,
+in §8.1's order (`:711-722`), behind a precondition that the blocked write really was a DATA frame
+(`:706-709`), which is the right thing to assert rather than assume.
+
+**It could not have been built on door 1.** `chkFinishClose( )` is called at `:1600` and `:1613`
+and nowhere else, both inside `pumpWrites( )` and both after its return at `:1593` while
+`m_isWriteInFlight` is true; `beginClose( )` has exactly two h2 callers, `:1571` and `:2290`. So a
+graceful close with a write outstanding never reaches `beginClose( )` at all - it waits in
+`pumpWrites( )` for a write the peer controls, bounded only by `armDrainDeadline( )`, whose expiry
+cancels the task (`onDrainDeadline( ):2199-2232`). A case on that door would be green against the
+unfixed driver and would be testing the drain deadline. Door 3 would have served too, but door 2 is
+the one that turns a clean peer close into a FAILED connection without (b), which is the one worth
+pinning.
+
+**Necessary, not convenient.** The sizes were read off the lane worktree's own build tree rather
+than taken from the record: `utf_baselib_h2client2` is 39,937,968 bytes (38.1 MiB) a64 clang debug,
+`utf_baselib_h2client6` 34,677,624 (33.1 MiB), `utf_baselib_httpclient7` 31,466,952 (30.0 MiB),
+all three matching §15.4 to the tenth. `src/utests/AGENTS.md` says of a module at or near the 40 MB
+target: *"do not add to it"*. Its "prefer a module comfortably under target" alternative was checked
+against the lane journals' own figures: `h2client3` 39.7 MB and `h2client5` 37.6 MB are at the same
+wall; `h2client4` has room at ~26 MB but its `Main.cpp:52` says *"No other case here may touch the
+driver"*. So no sibling with room and suitable fixtures existed, and the fixture argument - a raw
+peer that refuses to read, which `Http2TestServerT` must not become - stands on its own as well.
+The 21 MB TU floor is the cost and it was paid knowingly.
+
+### 16.6 The `httpclient3` red: pre-existing, mechanism confirmed, and it is not a "flake"
+
+The lane's mechanism is right and is confirmed by reading, not by its numbers.
+`runExchange( ):1266` reads `result.stateAfterResponse = driver -> state( )` at `:1349`
+immediately after `sink -> waitForClosed( )` at `:1342`, with the peer parked. `waitForClosed( )`
+is satisfied by `finishStream( )`'s `onClosed`, and `finishStream( )` decides the state it publishes
+at `:1300-1301`: `isReusable = isConnectionUsable && ! isClosing( ) && ! m_isWriteInFlight`. The
+request's write completed speculatively inside `async_write_some( )` on the strand and its handler
+was posted, but under a multi-threaded `io_context` the read completion carrying the peer's answer
+can be enqueued on the strand ahead of it when the peer answers within that window - a window a
+concurrent compile widens from microseconds to hundreds of milliseconds. Then `onReadCompleted( )`
+runs first, the parser completes, `finishStream( )` sees `m_isWriteInFlight` still true, publishes
+`Draining`, and the case's `Ready` assertion is red. The write handler then runs with `ec` = success
+(the write had completed), `initiateClose( )` fires the new branch with nothing left to poison, and
+the task ends clean on both sides of the fix - which is why the lane sees the same assertion and the
+same task-succeeded on both, 2 of 20 with and 3 of 20 without.
+
+**Two sharpenings.** First, this is the exact window §2.2's *Precision, 2026-09-23 review* names -
+*"the flag is also true for a write that has completed at the socket but whose handler has not yet
+run"* - so the design predicted it and did not know it was already visible. Second, it is not test
+flakiness and it is not S6R.2 "flakiness"; it is a **benign, pre-existing H01 defect**: a spurious
+refusal of reuse for a connection whose write has in fact completed, costing the pool a connection
+and nothing else - the refusal is the safe direction, since `m_isWriteInFlight` is also the storage
+guard for the buffers `async_write( )` was given. The case is right to be red on it. The shape of the
+fix, for the record and for its own change-set: `finishStream( )` defers the verdict when the write
+is still in flight and the connection is otherwise reusable, and `onWriteCompleted( )` publishes
+`Ready` and arms the idle timer on success where the stream has already ended. It goes on §13's list
+below as S6R.2's, and `teardown-validate.sh` already carries the right instruction to the release
+gate: a red on that one assertion in `utf_baselib_httpclient3` is this defect and not this
+change-set's.
+
+### 16.7 The TLS gap: a gap, and acceptable to land on a gate
+
+What §10's TLS run would have measured, and what it would not. The ungated path of both
+`initiateClose( )` overrides is byte-identical to today, so a TLS control case with no write
+outstanding (§10's `http/1.1` ALPN proposal) is a regression guard on unchanged code, not a
+verification of the new lines. The new lines run under TLS only on the gated path - a close with a
+write outstanding - and there they do two things: skip the `close_notify` (§7.1, by the flag at
+`isShutdownNeeded( ):669` and `scheduleTaskFinishContinuation( ):476`, both read here), and produce a
+write error that surfaces through `ssl::stream` and is classified by the task's state and not its
+code (§4.1). Neither has been exercised on either driver. That is the gap, and §10 said to report it
+rather than paper over it; it is reported.
+
+**Why it is acceptable to land:** the risk on the gated TLS path is bounded to a `close_notify` not
+being sent on a connection whose send side we have just shut - which could not have carried it -
+and the flag makes the attempt unreachable rather than betting on `isExpectedException( )`'s two
+lists, as §2.3's corrected reasoning requires. The classification of the surfaced error is the task's
+state, which is the same on every policy. And the whole-suite gate does exercise h2's `initiateClose( )`
+under TLS on the ungated path through `utf_baselib_httpclient5`'s two `ClientSessionTls_*` cases,
+whose peer prefers `h2` - the one TLS control that exists today, for the driver whose edit is
+identical.
+
+**What is owed, in order:** §10's h1 TLS control case, as its own test-only change-set - small, and
+the natural companion of §13's h1 peer-close arm; then the write-outstanding TLS case for h1, which
+`TestHttp1DriverWriteBarrier.h`'s harness can take by instantiating the driver over
+`TcpSslSocketAsyncStrandedBase` against a TLS peer that stops reading - the sibling module the h2
+case's `Main.cpp` already names as the home for the composed-read item. Neither blocks this gate.
+
+### 16.8 What neither the design nor the lane noticed
+
+1. **`utf_baselib_httpclient7/notes.txt:6-13` still says the reuse case is "KNOWN RED, AND ON
+   PURPOSE"** - "fails about half of its runs on 'the barrier left a write nothing woke'" - and
+   names the very mechanism this change removes. It was written at `b100c2a` and the fix commit did
+   not touch it. It is now false, and a stale "known red" note is the one kind of comment that
+   causes a real red to be ignored. **Owed before or with the merge**: replace the block with the
+   sentence that the case is green since `849e767` and is the regression guard for both halves. One
+   file, documentation only.
+2. **`TestHttp2DriverWriteBarrier.h` carries §8.3's wrong lever in its own text.** Its header comment
+   at `:59-60` ("the driver's second write is the whole window's worth of DATA"), the enum comment
+   at `:82-84`, the rendezvous comment at `:639-641` and both failure messages at `:655` and `:708`
+   say "a window's worth", while `BIG_WRITE_THRESHOLD`'s comment at `:100-108` says, correctly, one
+   frame per write and 16.4 KB. The assertion itself is right (`>= 8 KB`). Owed a comment pass so
+   the file does not contradict itself in the place a failing run will print.
+3. **The precision to §4.2/§4.3 at 16.2** - the arm swallows a genuine concurrent error on a
+   deliberately closing task, narrowing the mix-in's stated contract for the two write handlers -
+   acceptable, and now written down.
+4. **The `httpclient3` red is a benign H01 defect and not flakiness** (16.6), with the fix shape
+   recorded. It is S6R.2's, it predates this change, and it is owed its own change-set; until then
+   every release gate will carry its 10-15%.
+
+Also checked and found clean, so they are not rediscovered: `m_wasSocketShutdownForcefully` is
+`protected` (`TcpBaseTasks.h:69`) and the spelling `TcpSocketCommonBase::m_wasSocketShutdownForcefully`
+is the one h1's `cancelTask( )` already uses; an external `cancelTask( )` landing on a task whose
+flag this change set is converted to `operation_aborted` by `onTaskStoppedNothrow( ):123` exactly
+as a task whose flag the cancel set, so nothing changes for the cancelled case; h1's `onIdleDeadline( )`
+(`:1491-1513`) re-checks `activeHandle( )`, so the idle close cannot reach the new branch with a
+request's write outstanding; h2's connect deadline is not an accounted operation and is disarmed in
+`onTaskStoppedNothrow( )` (`ClientConnectionTaskBase.h:644`), so the error branch of `onWrite( )` not
+clearing `m_isPrefaceWritePending` - pre-existing - cannot hold the terminal path; the sibling case's
+assertion count is 6 (`+1`, `:456`) and the reuse case's 7, by reading; the `s6r2-design.md`
+corrections name what landed and nothing more; and the design's status line and §11's "Not agreed"
+are left as written in the house pattern, as §15 says.
+
+### 16.9 Additions to §13, owed and out of scope here
+
+- **H01's spurious reuse refusal in the completed-but-unhandled write window** (16.6), S6R.2's; the
+  fix shape is stated there. It is what makes `utf_baselib_httpclient3` red one run in eight under
+  load.
+- **The stale `httpclient7/notes.txt` block** (16.8.1) - to be corrected with or before the merge.
+- **The h2 test's self-contradicting lever wording** (16.8.2) - comments only.
+- **§10's two TLS cases** (16.7), the control first.
+
+**Sequencing, for the orchestrator and not this review:** merging `teardown-impl` merges S6R.2,
+which was reviewed and agreed on its own gate contingent on three `src/` fixes the maintainer applied;
+nothing here re-reviews it, and the flake at 16.6 is the one S6R.2 fact this review adds to that
+record. The release pass (`teardown-validate.sh`) and the whole-suite gate are the orchestrator's,
+and `Http1Driver_WriteInFlightRefusesReuseTests` and `H2Driver_PeerHalfClosesWithAWriteInFlightTests`
+are the two cases whose green there is the fix's, per §10.

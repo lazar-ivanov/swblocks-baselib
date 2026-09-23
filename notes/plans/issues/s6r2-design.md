@@ -149,8 +149,12 @@ Three faces, in descending order of certainty:
     of 8 runs, and the outcome was bimodal at 5 ms or exactly the peer's own 30 s timeout. The chain
     WAS read end to end inside this repository; the premise never opened was `cancel( )`'s own
     reach, which is asio's. The fix for both halves is
-    `notes/plans/issues/initiate-close-teardown-design.md`. §17 below repeats the same error and is
-    corrected there too.
+    `notes/plans/issues/initiate-close-teardown-design.md`, **implemented 2026-09-23 in
+    `drivers: initiateClose( ) cancels a write asio never registered`** - `initiateClose( )` now
+    calls `TcpSocketCommonBase::shutdownSocket( )` when a write is in flight, and the write handler
+    classifies the error that produces as the task's own teardown. The barrier no longer hangs, and
+    the case that measured both halves is `Http1Driver_WriteInFlightRefusesReuseTests`. §17 below
+    repeats the same error and is corrected there too.
 
 (c) **The write's storage is released by the write's handler.** The two clears move out of
     `finishStream( )`'s unconditional block into `onWriteCompleted( )`, and stay in `finishStream( )`
@@ -1259,7 +1263,9 @@ completeness, on three counts:
   `onCancelStream( )` exception, the `submit( )` gating, the `takeTerminalNoLock( )` requirement and
   the `write_op` buffer-copy point were each read at the source and are unaffected. The fix for both
   halves is `notes/plans/issues/initiate-close-teardown-design.md`, whose §9 records how the error
-  was made.
+  was made and whose §15 records what landed. **Fixed 2026-09-23**: with the send side shut down
+  where the cancel could not reach, the barrier takes its terminal path, and the `broken_pipe` this
+  paragraph names is classified as the teardown's own rather than recorded as the task's error.
 - **§1a's divergence is real.** The catch clears `m_isWriteInFlight` on the premise the catch already
   rests on — no handler is owed — and leaves `m_requestMayHaveBeenSent` on S6R.1's — a throw is not
   provably unwritten. One flag serving both would answer the second question with the first's

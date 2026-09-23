@@ -18,3 +18,5 @@
 
 # L6 fix round - the establishment failure no case ran, and the cause it leaves on the task
 --log_level=test_suite --run_test=H2Driver_EstablishmentFailureBouncesAndKeepsItsCauseTests
+
+--log_level=message --run_test=H2Driver_RequestHeadersAreNormalizedTests

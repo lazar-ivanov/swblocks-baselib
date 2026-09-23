@@ -190,6 +190,25 @@ namespace bl
              */
 
             InvalidFieldSyntax,
+
+            /**
+             * The connection closed before a single octet of the status line arrived - with no
+             * response at all, or after an interim 1xx with no final response behind it
+             *
+             * ITS OWN VALUE RATHER THAN MalformedMessage, whose comment already covers "a
+             * truncated message at end of stream": a message cut short and a message that never
+             * began are two different things about the peer, and this enumeration exists so that
+             * a caller can assert on the difference directly
+             */
+
+            NoResponse,
+
+            /**
+             * The peer sent more informational responses before the final one, or more header
+             * octets across them, than the aggregate limits allow - see Http1ResponseLimits
+             */
+
+            TooManyInterimResponses,
         };
 
         /**
@@ -209,16 +228,82 @@ namespace bl
 
             enum : std::uint64_t
             {
+                /**
+                 * @brief NOT a default any more - the value a caller may still ask for
+                 *
+                 * N1. This cap used to be the constructor's default and it was applied ONE LAYER
+                 * TOO LOW. The codec is handed it for EVERY response, because a driver knows
+                 * nothing about whether the caller installed a BodySink - the sink is a
+                 * constructor parameter of the request task and never reaches a driver at all.
+                 * So a STREAMED download above 64 MB failed on HTTP/1.1 and succeeded on HTTP/2,
+                 * which has no equivalent cap, although the design's own limits table scopes its
+                 * 64 MB to "Response body, buffered mode"
+                 *
+                 * THE CAP ALREADY EXISTS AT THE LAYER THAT KNOWS, with the same number and the
+                 * same design citation: HttpClientRequestConfig::maxResponseBodySize, whose
+                 * comment names design 4.6 and SimpleHttpTask.h:83 exactly as this one did. The
+                 * buffered path is therefore capped at 64 MB exactly as before and the streamed
+                 * path is uncapped, which is what HTTP/2 already does
+                 *
+                 * WHAT THAT REMOVES IS A BOUND ON THE TRANSFER, NOT ON MEMORY. Buffered memory is
+                 * still bounded by the request task's cap; streamed memory never was bounded by
+                 * this one, since the driver hands each chunk on and clears it. A streamed h1
+                 * transfer is now bounded by the request's total timeout alone - and NOT by
+                 * backpressure, because this driver's consumed( ) is deliberately a no-op
+                 */
+
                 DEFAULT_MAX_BODY_SIZE               = 1ULL << 26,
+
+                /**
+                 * @brief What the constructor sets: no limit
+                 *
+                 * The maximum of the type rather than a zero sentinel or a boost::none, because
+                 * Beast's own check is 'n > *body_limit_' and the maximum never trips it - so the
+                 * value travels through unchanged, there is no second branch to get wrong, and
+                 * zero stays a value a caller could legitimately mean
+                 */
+
+                NO_MAX_BODY_SIZE                    = ~static_cast< std::uint64_t >( 0U ),
+
+                /**
+                 * @brief The AGGREGATE interim budget of one message - H05
+                 *
+                 * maxHeadersSize bounds ONE field section, and an interim response gets a whole
+                 * fresh one: fileInterimAndRestart( ) discards the backend and builds another
+                 * with the same cap, so before this a peer could send 1xx after 1xx, each inside
+                 * the cap, and the per-message limit never accumulated. The numbers are HTTP/2's,
+                 * deliberately - Globals::MAX_INTERIM_RESPONSES_PER_STREAM_DEFAULT and its byte
+                 * sibling - because a caller must not have to know which protocol answered to
+                 * know what this client tolerates
+                 */
+
+                DEFAULT_MAX_INTERIM_HEADER_BYTES    = 64ULL * 1024ULL,
+            };
+
+            enum : std::uint32_t
+            {
+                DEFAULT_MAX_INTERIM_RESPONSES       = 8U,
+
+                /**
+                 * @brief The per-field overhead of RFC 9113 section 6.5.2, which HPACK's own
+                 * entry size uses and which is what makes the two protocols' byte budgets the
+                 * same budget rather than two numbers that happen to match
+                 */
+
+                INTERIM_FIELD_SIZE_OVERHEAD         = 32U,
             };
 
             cpp::ScalarTypeIniter< std::uint32_t >                              maxHeadersSize;
             cpp::ScalarTypeIniter< std::uint64_t >                              maxBodySize;
+            cpp::ScalarTypeIniter< std::uint32_t >                              maxInterimResponses;
+            cpp::ScalarTypeIniter< std::uint64_t >                              maxInterimHeaderBytes;
 
             Http1ResponseLimits() NOEXCEPT
             {
                 maxHeadersSize = DEFAULT_MAX_HEADERS_SIZE;
-                maxBodySize = DEFAULT_MAX_BODY_SIZE;
+                maxBodySize = NO_MAX_BODY_SIZE;
+                maxInterimResponses = DEFAULT_MAX_INTERIM_RESPONSES;
+                maxInterimHeaderBytes = DEFAULT_MAX_INTERIM_HEADER_BYTES;
             }
         };
 
@@ -291,6 +376,14 @@ namespace bl
             std::string                                                         m_body;
 
             std::vector< Http1InterimResponse >                                 m_interimResponses;
+
+            /*
+             * H05 - what the interim responses of THIS message have cost so far, measured the way
+             * RFC 9113 6.5.2 measures a header list so that the HTTP/1.1 and HTTP/2 limits name
+             * one number. The count is m_interimResponses.size( ); this is the other half
+             */
+
+            cpp::ScalarTypeIniter< std::uint64_t >                              m_interimHeaderBytes;
 
             cpp::ScalarTypeIniter< Http1CodecError >                            m_codecError;
             cpp::ScalarTypeIniter< bool >                                       m_isComplete;
@@ -501,6 +594,20 @@ namespace bl
                     {
                         if( isInterimStatus( m_statusCode ) )
                         {
+                            /*
+                             * H05 - THE AGGREGATE INTERIM BUDGET IS CHECKED HERE, BEFORE THE
+                             * RESTART, because the restart is what throws the evidence away: it
+                             * makes a fresh backend with a fresh maxHeadersSize, so every interim
+                             * gets its own full budget and the per-message cap never accumulates.
+                             * It is checked from parse( ) and not from fileInterimAndRestart( )
+                             * for one reason - this is where the error_code is
+                             */
+
+                            if( ! chkInterimBudget( ec ) )
+                            {
+                                return consumed;
+                            }
+
                             fileInterimAndRestart();
 
                             continue;
@@ -533,6 +640,23 @@ namespace bl
              *
              * This is what completes a read-until-close body, and what turns a truncated message
              * into a refusal rather than a hang
+             *
+             * A CLOSE BEFORE THE FIRST OCTET IS REFUSED HERE AND NOT HANDED TO THE BACKEND, and
+             * that is the third shape of an end-of-stream rather than a defence against one
+             * backend's assert. A peer which reads the request and closes without writing - a
+             * server dropping a request it will not serve, and the stale keep-alive race the
+             * retry rules exist for - leaves a parser which has seen nothing. Beast's put_eof( )
+             * special cases only the start_line and fields states and the two framing flags, so
+             * a virgin parser is in NEITHER and falls through to 'complete with no error': the
+             * caller is then told the request SUCCEEDED, with status 0 and no header block at
+             * all. It is not close-delimited framing and it is not one platform's behaviour - it
+             * happens on eof, everywhere
+             *
+             * THE CHECK IS ON THE CURRENT BACKEND, WHICH IS WHAT COVERS THE INTERIM CASE TOO.
+             * fileInterimAndRestart( ) discards the backend and makes a fresh one, so a peer
+             * which sends 103 Early Hints and then closes reaches exactly the same state although
+             * the parser as a whole has seen a whole message. A response with no final status
+             * line is not a response
              */
 
             void parseEof( SAA_inout eh::error_code& ec )
@@ -548,6 +672,13 @@ namespace bl
 
                 if( m_isComplete )
                 {
+                    return;
+                }
+
+                if( ! m_backend -> gotSome() )
+                {
+                    fail( Http1CodecError::NoResponse, ec );
+
                     return;
                 }
 
@@ -689,6 +820,48 @@ namespace bl
                  */
 
                 return statusCode >= 100 && statusCode <= 199 && statusCode != 101;
+            }
+
+            /**
+             * @brief Whether one more interim response fits the aggregate budget - H05
+             *
+             * @return false when it does not, having recorded the refusal; the caller stops
+             *
+             * THE FIELDS ARE MEASURED THE WAY RFC 9113 6.5.2 MEASURES A HEADER LIST - name plus
+             * value plus 32 octets of overhead - which is exactly HpackField::hpackSize( ), so
+             * this limit and the HTTP/2 one name ONE number rather than two which happen to be
+             * equal. What it counts is the interim about to be filed, added to what the earlier
+             * ones on this message already cost
+             */
+
+            bool chkInterimBudget( SAA_inout eh::error_code& ec )
+            {
+                std::uint64_t bytes = m_interimHeaderBytes;
+
+                for( auto it = m_headers.begin(); it != m_headers.end(); ++it )
+                {
+                    bytes +=
+                        static_cast< std::uint64_t >( it -> name().size() ) +
+                        static_cast< std::uint64_t >( it -> value().size() ) +
+                        static_cast< std::uint64_t >(
+                            Http1ResponseLimits::INTERIM_FIELD_SIZE_OVERHEAD
+                            );
+                }
+
+                if(
+                    m_interimResponses.size() >=
+                        static_cast< std::size_t >( m_limits.maxInterimResponses.value() ) ||
+                    bytes > m_limits.maxInterimHeaderBytes
+                    )
+                {
+                    fail( Http1CodecError::TooManyInterimResponses, ec );
+
+                    return false;
+                }
+
+                m_interimHeaderBytes = bytes;
+
+                return true;
             }
 
             void fileInterimAndRestart()
