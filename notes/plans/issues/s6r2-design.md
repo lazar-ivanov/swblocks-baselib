@@ -139,6 +139,19 @@ Three faces, in descending order of certainty:
     end to end, because a barrier which waits for a handler nothing will wake is a deadlock and not
     a fix.
 
+    **CORRECTED 2026-09-23 — the bold sentence above, and the clause before it which says the cancel
+    "wakes the pending write", are FALSE: the barrier does hang.**
+    `cancel( )` reaps only what is registered with the reactor, and a composed `asio::async_write`
+    between two of its internal steps has nothing registered (`boost/asio/impl/write.hpp`,
+    `write_op::operator( )`) — so the cancel finds nothing, the composed loop arms its next step
+    afterwards, and `initiateClose( )` is called once per run and never again. Measured by the lane
+    that implemented this barrier: with the peer parked the task was still running 500 ms later in 6
+    of 8 runs, and the outcome was bimodal at 5 ms or exactly the peer's own 30 s timeout. The chain
+    WAS read end to end inside this repository; the premise never opened was `cancel( )`'s own
+    reach, which is asio's. The fix for both halves is
+    `notes/plans/issues/initiate-close-teardown-design.md`. §17 below repeats the same error and is
+    corrected there too.
+
 (c) **The write's storage is released by the write's handler.** The two clears move out of
     `finishStream( )`'s unconditional block into `onWriteCompleted( )`, and stay in `finishStream( )`
     only for the paths where no write was ever issued — expressed as `if( ! m_isWriteInFlight )`.
@@ -1235,6 +1248,18 @@ completeness, on three counts:
   at `onTaskStoppedNothrow( )`" holds. asio's `write_op` copies the sequence (`write.hpp:317-327`),
   so the vector is not the hazard and the members are. The only readers of the two members are the
   ones §1 names; a full read of the driver found no other.
+
+  **CORRECTED 2026-09-23 — the heading above does not hold for this item, and the item's first
+  sentence is false.** The barrier DOES hang: `initiateClose( )` → `getSocket( ).cancel( )` does not
+  wake a composed `asio::async_write` sitting between two of its internal steps, because such a
+  write has nothing registered with the reactor for the cancel to find; and on the occasions the
+  write IS woken — by the peer's RST rather than by us — it completes `broken_pipe`, not
+  `operation_aborted`, so it is NOT excused as self-inflicted and the task completes FAILED.
+  Everything else in this item stands: the enumeration of `finishStream( )`'s callers, the
+  `onCancelStream( )` exception, the `submit( )` gating, the `takeTerminalNoLock( )` requirement and
+  the `write_op` buffer-copy point were each read at the source and are unaffected. The fix for both
+  halves is `notes/plans/issues/initiate-close-teardown-design.md`, whose §9 records how the error
+  was made.
 - **§1a's divergence is real.** The catch clears `m_isWriteInFlight` on the premise the catch already
   rests on — no handler is owed — and leaves `m_requestMayHaveBeenSent` on S6R.1's — a throw is not
   provably unwritten. One flag serving both would answer the second question with the first's
