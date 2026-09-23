@@ -1,0 +1,709 @@
+# S6R.3 — design for the five that needed a decision first
+
+**Status:** design, 2026-09-22. **Nothing implemented; nothing under `src/` was touched and nothing
+was built** — another lane was compiling and the machine has two cores.
+
+**Scope:** H06, H08, H09, H10 and H04a from `astra-review-verification-record.md`. H11 is settled
+and is not designed here — see §5.
+
+**What this design is not.** It is not a restatement of the findings — read the verification record
+for those, and `s6r3-decisions.md` for the trade behind H06 and H08. It is the *intended change* for
+each, the reason that shape was chosen over the alternatives, the boundaries it rests on, what could
+go wrong, and the test with whether it can be shown red-before-green-after.
+
+---
+
+## 0. Provenance — what was read, and what was taken from a record
+
+An independent reviewer will read this against the source and will find the difference, so it is
+stated first rather than buried. Line numbers are this worktree's at `c90f84e`.
+
+**The base moved while this was being written, and the numbers were re-checked against where it
+moved to.** S6R.1's nine fixes merged into `lazari2` as `3bcf21e` during the session. Every claim
+below holds unchanged on that tip; only line numbers shift, and only in the four files S6R.1 touched.
+The anchors, so either base is checkable: `ConnectionPool.h` — `refreshEntry( )` 1206→1217,
+`runActions( )`'s schedules loop 1756→1767, `startConnection( )`'s disposed arm 1835→1846,
+`disposeInternal( )`'s task collection 2078→2089 (and `m_isDisposed` at 808 and `resolveDriver( )`'s
+`if( attempt.driver )` at 926 do not move); `Session.h` — `queueHeaderBlock( )` 3606→3645,
+`forceCloseStream( )` 3453→3492, the SETTINGS ACK 2291→2330, `setDynamicTableCapacity( )` 2474→2513,
+`m_peerMaxFrameSize = value` 2529→2568 (and `produce( )`'s control-queue line at 864 and
+`raiseConnectionError( )`'s clear at 1530 do not move); `ClientSession.h` — `chkPrepareRetry( )`
+1151→1181, `chkPrepareNextHop( )` 1290→1320, the driver lambda 1730→1760, the sink hand-off
+1115→1145. **`HttpClientRequestTask.h`, `Http2ConnectionTask.h`, `ClientConnectionTaskBase.h`,
+`HpackEncoder.h`, `TaskBase.h` and `ExecutionQueueImpl.h` are untouched by that merge**, so every
+§1, §2 and §4.1 citation is exact on both. Two facts §4.2 depends on were re-read on the new tip and
+still hold: `m_isDisposed` is still a `cpp::ScalarTypeIniter< bool >`, and `disposeInternal( )` still
+collects only `entry -> attempt.task` for its cancel sweep. H03a's `forceFlushNoThrow( true )` is now
+in the tree, which is the state §4.2 assumes.
+
+**Read at the source by the author, whole functions from their signatures to their ends:**
+
+- the request task's streaming path — `applyData( )`, `offerToSink( )`, `applyClosed( )`,
+  `outcomeOnClosed( )`, `answerOnClosed( )`, `failWith( )`, `applyEvents( )`, `runDeferred( )`,
+  `cancelStream( )`, `releaseConnection( )`, and the public accessor block at `:1800-1845`;
+- the session — `continuationTask( )`, `absorbResponse( )`, `decodeBody( )`, `storeCookies( )`,
+  `chkPrepareRetry( )`, **`chkPrepareNextHop( )` from its first line**, `startHop( )`,
+  `chkRemainingBudget( )`, and the driver-resolver lambda at `ClientSession.h:1730`;
+- `ExecutionQueueImpl::onReady( )` including the lock it takes and the `continuationTask( )` call
+  inside it; `TaskBase`'s `notifyReadyImpl( )`, `scheduleNothrow( )`, `requestCancelInternal( )`,
+  `scheduleEvenIfAlreadyCanceled( )` and the member declarations of `m_state`/`m_cancelRequested`;
+- the h2 engine — `queueHeaderBlock( )`, `produce( )`, `wantsWrite( )`, `submitRequest( )`,
+  `submitHeaders( )`, `handleSettings( )`, `applyPeerSettings( )`, `raiseConnectionError( )`,
+  `forceCloseStream( )`, `dropQueuedHeaderBlocks( )`, `closeStreamsAbove( )`, `closeEveryStream( )`,
+  `sendableBytes( )`, `bodyBytesWanted( )`, and the `QueuedHeaderBlock` declaration and its comment;
+- `HpackEncoderT` in full — the constructor, `setDynamicTableCapacity( )`, `encode( )` and
+  `emitSizeUpdate( )`;
+- the h2 driver — `pumpWrites( )`, `onRead( )`, `onHeaderBlocksProduced( )`, `applyCancel( )`,
+  `onProtocolNegotiated( )`, `publishState( )`, `onTaskStoppedNothrow( )`, and every
+  `applyCommands( )`/`pumpWrites( )` call site;
+- `ClientConnectionTaskBase` — `continueAfterConnected( )`, `onProtocolNegotiated( )`,
+  `connection( )`, and every occurrence of `m_connection` (four: one declaration, one write, one
+  `.get( )` check on the writing thread, one getter);
+- the pool — `resolveDriver( )`, `refreshEntry( )`, `effectiveMaxConnectionsPerKey( )`,
+  `examineKey( )`, `runActions( )`, `startConnection( )`'s disposed arm, `disposeInternal( )` in
+  full, and the `m_isDisposed` declaration;
+- the tests — `HttpClientRequestTask_StreamingSinkCreditsOnlyWhatItTookTests` in full,
+  `Session_GoAwayDropsQueuedHeaderBlockTests` in full, the connection-error sibling that precedes
+  it, the two `frameTypes( )` ordering cases, the `hpackEncoderTableCapacity( )` cases, and the
+  `settle( )` helper;
+- **RFC 9113 fetched, not recalled**: §6.5.3's acknowledgement sentence, §4.3.1's decoder-side MUST
+  and §4.2's FRAME_SIZE_ERROR sentence are quoted verbatim in §3 from that fetch. The fetch
+  **confirms** the decisions document's §4 quotation of the §4.3.1 MUST word for word.
+
+**Taken from a record and NOT re-derived here:** S6R.2's H07 shape (read from `s6r2-design.md`, not
+from an implementation, because none exists); the L5 and L6 findings' own history; the TSan round's
+32-run negative and its stated reason. Each is marked where it is used.
+
+**One premise of the author's own was formed and then refuted by reading, and it is recorded in §1
+rather than deleted**, because the deletion is what hides the lesson.
+
+---
+
+## 1. H06 and H08 — one mechanism: what the sink has seen, and whether that is the whole body
+
+The decisions document argues the shape and the maintainer accepted it: **A2 for H06, B2 for H08,
+and the frozen `BodySink` contract left alone.** This section is the change, not the argument.
+
+### 1.1 The change, in five pieces
+
+| Piece | Where | Serves |
+|---|---|---|
+| A drain at close, in the deferred phase, with a no-progress stop | `applyClosed( )`'s deferred slot, replacing the unconditional `onComplete( )` push at `:1137` | H06 |
+| `onComplete( )` only when the queue drained on a **clean** close | same site | H06 + H08 |
+| Fail the request when it did not drain | same, through the existing `deferredException` channel | H06 |
+| `m_sinkDelivered` counter, incremented in `offerToSink( )` by what was **taken** | `:952-990` | H08 |
+| `sinkDelivered( )` accessor, and one clause in `chkPrepareRetry( )` | `HttpClientRequestTask.h:1837`, `ClientSession.h:1151` | H08 |
+
+The new deferred action replaces the lambda at `:1137`; `applyClosed( )`'s other two deferred
+pushes — `releaseConnectionSlot( )` and `releaseConnection( )`'s empty lambda — keep their order
+behind it.
+
+**The drain is the existing `offerToSink( )` called repeatedly**, not a second copy of it.
+`offerToSink( )` already loops while blocks are taken whole and `break`s on a partial take, so one
+call does not drain a sink that takes less than a block. The new action calls it until a whole pass
+moves nothing.
+
+**The verdict is a throw, not a new field.** If the queue is non-empty when progress stops, the
+action throws a truncation exception. `runDeferred( )` catches `std::exception&` and keeps the
+first, and `applyEvents( )` already calls `failWith( deferredException, false )` under the lock
+afterwards (`:501`, after `cancelStream( reset )` at `:499`). So A2's failure limb costs **no new
+plumbing at all** — it reuses the exact channel H07 is being built to make work. `cancelStream( )`
+on that path is a no-op here, because `releaseConnection( )` has already reset `m_connection` under
+the same lock.
+
+### 1.2 Sequencing against H07, stated as the dependency it is
+
+`applyClosed( )` calls `answerOnClosed( )` **under the lock, before any deferred action runs**, and
+on a clean close that runs `completeResponse( )` and sets `m_isCompletionPending = true`
+(`:1268-1272`). `failWith( )` returns at its first line when `m_isCompleted || m_isCompletionPending`
+(`:1395-1398`). **Both links read at the source.** So today a deferred action cannot turn a pending
+success into a failure, and A2's verdict is reached in exactly that phase.
+
+**H07 (S6R.2) must land first.** Its designed shape — two guards in place of one, so that a
+*published* completion wins over everything, an *earlier real failure* wins over a later one, and a
+*pending success* loses to any failure — is precisely what A2 needs and nothing more. *(H07's shape
+is taken from `s6r2-design.md` §2; it is designed, not implemented, so this is a dependency on a
+sibling design, not on code in the tree.)*
+
+If the maintainer wants H06 first, A2 must build H07's guards itself and S6R.2 inherits them. That
+is strictly worse: the same edit, made by the change-set that does not own it, and then two
+change-sets touching `failWith( )`.
+
+### 1.3 Which close drains, and which does not
+
+**Drain and `onComplete( )` only when `m_outcome == RequestOutcome::Completed`.** On any other
+outcome the sink is told nothing at all. Two consequences, both intended:
+
+1. The **ALPN-bounce path stops lying.** The bounce closes the stream with `connection_aborted` and
+   `isRetryable = true`, so `outcomeOnClosed( )` (`:1098-1112`) returns `Failed` — not `Completed` —
+   and no terminal callback precedes the retry. This is the default path on every first request to
+   an origin that does not speak h2, and B1 removes it without a knob.
+2. A sink gets **no terminal callback on a failure**. That is the deliberate cost the decisions
+   document names: a terminal callback whatever happened is `onComplete( outcome )`, a
+   `ClientTypes.h` change, and is deferred with B4.
+
+### 1.4 A premise the author formed and reading refuted — recorded, not deleted
+
+Before reading `chkPrepareNextHop( )` the author concluded from two call sites — `startHop( )` hands
+`m_bodySink` to every hop (`ClientSession.h:1115`), and `applyData( )` pushes to the sink with no
+test of the response status — that a **redirected** streamed download would concatenate every hop's
+entity body into the caller's sink and deliver one `onComplete( )` per hop, and that B2 therefore
+fixed only half of its own headline.
+
+**It is false.** `chkPrepareNextHop( )` **begins** with `if( m_bodySink ) return false;`, under the
+comment "a sink and a redirect cannot both be honoured" (`ClientSession.h:1290-1299`). A streamed
+request never follows a redirect; the 3xx is returned to the caller as the response. So a sink
+session has exactly one kind of multi-hop chain — the **retry** — which is H08 and nothing else.
+The decisions document is right and the objection does not exist.
+
+This is the same failure mode §4 of the S6R.1 design records for H14: two call sites enumerated, the
+function not opened at its signature. It cost nothing here only because it was checked before it was
+written down.
+
+### 1.5 What breaks, precisely — and the brief's wording is one line too generous
+
+`HttpClientRequestTask_StreamingSinkCreditsOnlyWhatItTookTests` is the only case in the tree that
+installs a `BodySink` on a request task. *(Verified independently of the decisions document: the only
+`BodySink` implementer in the tests is `StubBodySink` in `TestClientContracts.h:155`; its two uses
+are the contract test at `:950`, which drives the sink with no request task, and this case at
+`TestHttpClientRequestTask.h:1412`; `TestClientSession.h:216` has a defaulted parameter no case
+passes.)*
+
+The brief and the decisions document both say the pinning test's **two** final lines move. Traced
+through the fixture, **exactly one assertion changes under A2**:
+
+- `UTF_REQUIRE_EQUAL( sink -> received(), "abcdef" )` → `"abcdefghij"`. **Changes.**
+- `requireSucceeded( task )` — **unchanged.** A2 succeeds here, because this sink takes three bytes
+  per call and will take the remaining four in two more offers. Only A1 would have turned this case
+  into a failure, and A1 was not taken.
+- `UTF_REQUIRE( sink -> isComplete( ) )` — **unchanged**; the queue drains, so `onComplete( )` fires.
+- `UTF_REQUIRE_EQUAL( connection -> consumedTotal( ), 6U )` — **unchanged**, and this is the credit
+  rule the case exists for. The drained tail credits nothing: `offerToSink( )`'s credit is gated on
+  `! m_isStreamClosed` (`:987`) and `applyClosed( )` sets that flag under the lock before any
+  deferred action runs.
+- `UTF_REQUIRE( ! taskImpl -> response( ).body( ) )` — unchanged.
+- The two in-flight `waitForConsumedTotal( 3U )` / `( 6U )` — unchanged.
+
+So the honest statement is: **one assertion moves, and every credit assertion stays.** "Two lines"
+came from §1 of the decisions document naming `"abcdef"` *and* `requireSucceeded` as the fixture's
+observed output — which is true of what they *are*, and not of what A2 *changes*.
+
+### 1.6 A hazard the fix carries in, which nothing else in this change-set does
+
+`applyClosed( )` calls `cancelAllTimers( )` (`:1127`) **before** the deferred phase. So the drain
+runs with the idle timer and the total timer already dead. Its work is bounded by
+`m_pendingDownload` and by how much the sink takes per call: a sink taking one byte per call over an
+h1 body bounded only by Beast's `body_limit` (N1's 64 MB) makes 64 million `onData( )` calls in one
+uncancellable, undeadlined phase.
+
+This is **not new work** — it is the work the contract already implies, compressed into one phase
+with no deadline over it. It is recorded rather than fixed because a bound would have to choose a
+number, and any number silently truncates a body that was about to arrive, which is the defect being
+closed. It is the same shape as H09's, arriving from the other direction, and §2 says so.
+
+### 1.7 Where H08's clause goes, and why not in the shared rule
+
+`chkPrepareRetry( )` gets its own early refusal, above `chkRequestMayBeReplayed( )` and therefore
+above the `rewind( )`. Not a field on `RetryContext`: `chkRequestMayBeReplayed( )` is deliberately
+one rule for both halves of the retry, and the pool's half never has a sink — a field one of two
+callers must always leave false reads as a bug to the next reader.
+
+**The accessor is safe to read where the session reads it.** `sinkDelivered( )` sits beside
+`isRetryable( )` and `outcome( )`, which the session reads off a completed hop from
+`continuationTask( )` with no task lock. The last write to `m_sinkDelivered` happens in the deferred
+phase, and `applyEvents( )` calls `notifyReady( )` only after that phase and after the locked
+section that follows it (`:525`), so the completion edge orders the write before any read.
+
+**Blast radius on the default configuration is nil**, and this is checkable rather than asserted:
+the ALPN bounce delivers zero bytes, so `sinkDelivered( ) == 0` and the retry proceeds exactly as
+today. The only refused retry is one after a genuine mid-body loss with
+`retryIdempotentOnConnectionLoss` on, which is off by default.
+
+### 1.8 Tests
+
+- **H06, red-before-green-after and deterministic.** The pinning case above, with its one assertion
+  moved. Red before is the current `"abcdef"`.
+- **H06's failure limb**, which nothing today can produce: a sink that takes three bytes per call
+  and then **stops taking anything** once the stream has closed. Assert the task fails and that the
+  sink was **not** told `onComplete( )`. This case is the one that cannot pass before H07, and that
+  is the point of it — it is the pin that proves the dependency was honoured rather than assumed.
+- **H08's terminal-callback rule**: a session-level sink over the ALPN fallback, asserting **one**
+  `onComplete( )` after the body and not two. Red before: two.
+- **H08's retry refusal**: a mid-body connection loss with `retryIdempotentOnConnectionLoss` on,
+  asserting the request fails rather than appending to the prefix the sink already has. Red before:
+  the body is appended.
+- The change-set also owes the two things the decisions document says are owed regardless: the
+  `BodySink` half of `body-source-readiness-deferral.md` (L5 nit (e), never done — *verified: that
+  file contains no occurrence of the string `BodySink`*), and the amendment to `offerToSink( )`'s
+  comment, which states an h2 property as though it held on h1.
+
+---
+
+## 2. H09 — caller code and decoding under the execution-queue lock
+
+**Defect, confirmed by reading both ends.** `ExecutionQueueImpl::onReady( )` takes
+`BL_MUTEX_GUARD( m_lock )` and calls `task -> continuationTask( )` inside it (`:480`, `:499`).
+`SessionRequestTaskT::continuationTask( )` then takes the wrapper's `m_lock` and runs
+`absorbResponse( )` — `storeCookies( )` and `decodeBody( )`, the latter a registered
+`ContentDecoder` over up to 64 MB — then `chkPrepareRetry( )` and `chkPrepareNextHop( )`, each of
+which may call the caller's `BodySource::rewind( )`, then `startHop( )`. `os::mutex` is not
+recursive, and `startHop( )`'s own comment says so where it explains why it assigns
+`m_wrappedTask` directly.
+
+**Astra's added point is true and I verified its two limbs separately.** The completed hop has
+cancelled its timers (`applyClosed( )` `:1127`, and `failWith( )` `:1407`), and the chain budget is
+`chkRemainingBudget( )` — a synchronous `m_deadline - now` evaluated **inside `startHop( )`**, which
+runs *after* `absorbResponse( )`. And `m_cancelRequested` is tested after `absorbResponse( )` too.
+So a long decode is neither interrupted by a timer nor observed by a cancel until it is over: **both
+uncancellable and undeadlined**, and the two are separate facts, not one restated.
+
+**This design takes the documented minimum, and the reason is reachability, not cost.**
+
+`decodeBody( )` returns immediately unless `m_plan.state -> decoders.hasDecoder( )` — and **no
+decoder ships**. The only two registrations in the tree are in `TestClientSession.h:1710` and
+`:1755`. So the CPU-heavy, undeadlined half is **latent**, exactly like H24 and H25, and becomes live
+when a codec does.
+
+What is live today is `BodySource::rewind( )`: caller code, under both locks, with a contract that
+says nothing about blocking or re-entering. `storeCookies( )` and `startHop( )` are in-library and
+bounded.
+
+So:
+
+- **Now, as documentation:** state at `BodySource::rewind( )` in `ClientTypes.h` and at
+  `ContentDecoder` that both run under the scheduling lock of the execution queue the request was
+  pushed to and under the session wrapper's lock, and must not block, must not submit to that queue,
+  and must not re-enter the wrapper. This is what L6 finding 6 asked for and what closes the live
+  half — the live half is a **contract gap**, and a contract gap is closed by writing the contract.
+- **As a gate, not a deferral:** the structural move — response transformation into the hop task's
+  deferred phase, which already exists and already runs off every lock — becomes a **prerequisite of
+  the decoder programme**, recorded beside H24 and H25 rather than in a deferral file nobody reads
+  when shipping a codec. Shipping a codec without it puts unbounded CPU under a queue-wide mutex.
+
+**Why not do the structural move here.** It changes the continuation protocol that
+`RetryableWrapperTaskT` shares, which makes it a core-path change gating on the whole suite, for a
+hazard whose expensive half no shipped configuration can reach. Doing it now would also collide with
+H06/H08, which add state to the same `continuationTask( )` path in the same slice.
+
+**Test.** None, and this says so rather than inventing one: a documentation change has nothing to
+show red. The structural move, when it comes, is testable — a deliberately slow decoder with other
+completions queued behind it — and that case belongs to the change that makes it pass.
+
+---
+
+## 3. H10 — a queued header block can follow a SETTINGS ACK with stale HPACK or frame limits
+
+The most expensive item in the review. Both halves are answered below, and the shape taken is the
+one astra names first, for reasons the alternatives make clear.
+
+### 3.1 The defect, both halves, read end to end
+
+`queueHeaderBlock( )` HPACK-encodes the block and frames it **at queue time**: `m_encoder.encode( )`
+commits its dynamic-table transaction, the fragments are sized against `m_peerMaxFrameSize` as it
+reads at that instant, and the finished bytes go onto `m_headerBlockQueue`.
+
+`handleSettings( )`, for a peer's non-ACK SETTINGS, calls `applyPeerSettings( )` — which sets
+`m_peerMaxFrameSize = value` immediately (`:2529`) and calls
+`m_encoder.setDynamicTableCapacity( min( encoderTableSize( profile ), value ) )` (`:2474`) — and then
+serializes the ACK into `m_controlQueue` (`:2291`).
+
+`produce( )` emits **the control queue first, then the header block queue** (`:864-878`).
+
+So an already-encoded block is written **after** the ACK of the SETTINGS it predates:
+
+- **HPACK half.** `HpackEncoderT::setDynamicTableCapacity( )` only records a pending value; the
+  table moves and the Dynamic Table Size Update is emitted inside the *next* `encode( )`
+  (`:184-194`, `emitSizeUpdate( )` at `:352-365`). So the block on the wire after the ACK carries no
+  size update. RFC 9113 §4.3.1, fetched: *"An endpoint MUST treat a field block that follows an
+  acknowledgment of the reduction to the maximum dynamic table size as a connection error
+  (Section 5.4.1) of type COMPRESSION_ERROR if it does not start with a conformant Dynamic Table
+  Size Update instruction."*
+- **MAX_FRAME_SIZE half.** The block's fragments were sized to the old, larger limit. RFC 9113 §4.2,
+  fetched: *"An endpoint MUST send an error code of FRAME_SIZE_ERROR if a frame exceeds the size
+  defined in SETTINGS_MAX_FRAME_SIZE…"* Reachable only for a reduction from above 16384 — a smaller
+  value is refused outright by `applyPeerSettings( )`, which a case already pins
+  (`TestSession.h:3227-3245`, `SETTINGS_MAX_FRAME_SIZE = 1024` → PROTOCOL_ERROR).
+
+**Only header blocks are exposed, and that asymmetry is the finding.** DATA is framed inside
+`produce( )` — `sendableBytes( )` caps by `m_peerMaxFrameSize` at that moment (`:3695-3698`) — and
+every control frame is tiny. A header block is the one thing this engine commits to bytes before it
+commits to the wire.
+
+### 3.2 The window, and why L3 did not see it
+
+Every `applyCommands( )` in the h2 driver is followed by a `pumpWrites( )` (call sites at `:526/528`,
+`:1532/1538`, `:1713/1717`, `:2521/2530`), and `pumpWrites( )` returns early only on
+`m_isWriteInFlight || isClosing( ) || ! m_session`. So a block sits in the queue **exactly when a
+write is in flight**, and `onRead( )` feeds the peer's SETTINGS on the read path meanwhile
+(`:1524`). One write in flight plus one inbound SETTINGS is the whole trigger.
+
+L3 examined `encode( )` in isolation and cleared the encoder mirror, "including the smallest-then-
+final rule". That verdict is correct about `encode( )`. What it never had in view is a block that
+was *already encoded*. **No existing case puts one there:** every case that feeds a SETTINGS after a
+`submitRequest( )` produces in between (checked across `TestSession.h`).
+
+### 3.3 The shapes, and which one the ACK boundary settles
+
+RFC 9113 §6.5.3, fetched: *"the recipient MUST immediately emit a SETTINGS frame with the ACK flag
+set. Upon receiving a SETTINGS frame with the ACK flag set, the sender of the altered settings can
+rely on the values from the oldest unacknowledged SETTINGS frame having been applied."*
+
+Read the second sentence as the boundary it is: **before our ACK the peer may not rely on its new
+values having been applied.** That makes "every block encoded before the SETTINGS leaves before the
+ACK" a complete answer to *both* halves, not a trick that fixes one:
+
+- the oversized HEADERS arrives while the old MAX_FRAME_SIZE is still the one the peer may rely on;
+- at the moment of the ACK, §4.3.1's MUST is evaluated against our table as it then stands. If some
+  block encoded in between carried the size update, the table is already at or below the new maximum
+  and the MUST is **not armed**; if none did, `m_sizeUpdatePending` is still true and the next
+  `encode( )` emits the update — which is the first field block after the ACK. Conformant either way.
+
+**(A) Promote the queued blocks into `m_controlQueue` ahead of the ACK.** Five lines. **Rejected —
+see §3.4.**
+
+**(B) Defer the ACK past the blocks encoded before it.** ~20 lines. **Taken — see §3.5.**
+
+**(C) Drop the stale blocks and re-encode them.** Rejected twice over. Astra's own note applies —
+"Independently re-encoding one block can also desynchronize later blocks" — and it contradicts the
+invariant `QueuedHeaderBlock` exists for: a block is dropped only for a stream that has been
+**doomed**, which is why the struct carries a stream id at all. A drop with the stream still open
+leaves the registry told HEADERS were sent and `localEndStreamQueued` set, for a block that never
+goes out.
+
+**(D) Structural: queue field lists, encode inside `produce( )`.** Rejected for this slice; see §3.7
+for what it additionally buys and why it is worth recording rather than doing.
+
+**(E) Emit the header block queue before the control queue.** Rejected outright: two existing cases
+pin control-before-headers with a PING ACK (`TestSession.h:2400-2408` and `:2431-2444`), and
+`applyCancel( )`'s held-back cancel is built on it — a RST_STREAM must not overtake the HEADERS of a
+stream the peer has never heard of.
+
+### 3.4 The collision, stated exactly — it is not a red test, and that is worse
+
+Shape (A) is the cheap one, and the collision the verification record names is its.
+
+`raiseConnectionError( )` clears `m_headerBlockQueue` (`:1530`) and `forceCloseStream( )` calls
+`dropQueuedHeaderBlocks( streamId )` (`:3453`), so a block queued for a stream that a peer's GOAWAY
+dooms never reaches the wire. `Session_GoAwayDropsQueuedHeaderBlockTests` pins it, and the reason is
+in its comment: the caller has already been told that request is **retryable**, so bytes reaching
+the origin afterwards turn a replay into a duplicate. `QueuedHeaderBlock`'s own comment says why the
+identifier travels with the bytes — *"a bare buffer carries nothing to recognize it by"*.
+
+`m_controlQueue` is a bare buffer. Promoting a block into it **destroys the only handle that makes
+the drop possible.** After (A), a block promoted by a SETTINGS and then doomed by a GOAWAY is
+written behind our GOAWAY, and the request the caller may already be replaying reaches the origin
+twice.
+
+**And the suite would not catch it.** No case combines a peer SETTINGS with a GOAWAY over a queued
+block — the GOAWAY cases feed no SETTINGS after `settle( )`, and `settle( )` produces after the
+SETTINGS it feeds, so nothing is pending when the GOAWAY lands. **Both checked by reading the
+helper and the cases.** So (A)'s cost is not a red test to fix; it is a silent regression of a
+pinned safety property, in a configuration the suite does not construct. That is the same shape as
+the false padding comment §4 of the S6R.1 design records — a true-looking invariant surviving
+because the test used the other configuration — and it is the reason (A) is rejected rather than
+repaired.
+
+Shape (B) touches no such handle. Verified against the same cases: the GOAWAY case feeds no SETTINGS
+so nothing is deferred and `wantsWrite( )`/`out.empty( )` are unchanged; the connection-error
+sibling feeds a *SETTINGS ACK*, not a SETTINGS, so it queues no acknowledgement of ours.
+
+### 3.5 The change taken — the SETTINGS acknowledgement leaves after the blocks that predate it
+
+1. A second buffer, `m_deferredControlQueue`, beside `m_controlQueue`. `handleSettings( )`
+   serializes the ACK into it instead of into `m_controlQueue`.
+2. `produce( )` appends it **after** the header block queue and before the DATA loop, then clears it.
+3. `wantsWrite( )` tests it alongside the other two.
+4. `checkControlQueueBound( )` measures the **sum** of the two buffers, so the existing bound on
+   queued control bytes keeps its meaning and a peer cannot make us buffer acknowledgements without
+   limit while a write is blocked. (`checkInboundFrameRate( )` already bounds inbound SETTINGS per
+   second; that bounds the rate, not the total, so the byte bound is the one that matters.)
+5. `raiseConnectionError( )` clears it, next to the line that clears the header block queue. An
+   acknowledgement owed on a connection we have just ended is not owed.
+
+**Only the SETTINGS ACK moves.** Every other control frame keeps its place ahead of the header
+blocks, which is what §3.3(E) and `applyCancel( )` require.
+
+**Why this is within "immediately".** We apply the peer's values at receipt, which is what §6.5.3
+requires of the recipient; we delay only the acknowledgement, and only behind frames already
+committed to bytes. Every implementation queues its ACK behind whatever its write buffer already
+holds; this makes the boundary explicit instead of accidental. The delay is bounded by the in-flight
+write, which the connection's own write path already bounds.
+
+**What it does not cover, said plainly.** A SETTINGS *increase* — of either parameter — is outside
+this: an increase never arms §4.3.1's MUST and never makes an already-framed block oversized. And
+the encoder's own construction-time capacity is **H12's** (S6R.2), not this; the two touch the same
+object and must not be written by the same lane at the same time.
+
+### 3.6 What happens to S6R.1's H13 lines
+
+**Nothing. They are not touched.**
+
+H13 (`3f0c89f`, on branch `s6r1`) inserted `firstMaxFragment = maxFragment -
+FrameCodec::prioritySize( priority )` into `queueHeaderBlock( )` and changed one `std::min` to use
+it. Shape (B) changes `handleSettings( )`, `produce( )`, `wantsWrite( )`,
+`checkControlQueueBound( )` and `raiseConnectionError( )` — and not one line of
+`queueHeaderBlock( )`. H13's comment block and its two lines survive verbatim, and its case keeps
+asserting exactly what it asserts.
+
+This is a property of the shape, and it is one of the reasons for it. Shape (D) would have moved
+`queueHeaderBlock( )`'s whole body into `produce( )`, rewriting those lines within days of their
+landing and putting a lane in the position of re-deriving H13's arithmetic in a new place. The
+verification record's staging note — "H10 will restructure what S6R.1's H13 touched, so sequence
+them" — assumed (D). Under (B) the sequencing constraint disappears.
+
+### 3.7 A third hazard the reading found, which this change does not close
+
+`queueHeaderBlock( )` calls `m_encoder.encode( )`, and `encode( )` **commits** its dynamic-table
+transaction: the entries are in our table from that moment. If the block is then **dropped** — by
+`dropQueuedHeaderBlocks( )` or by `raiseConnectionError( )`'s clear — our encoder holds entries the
+peer's decoder never saw. Every later block that uses a dynamic index is then decoded against a
+different table.
+
+**It is latent, and the reachability argument is what makes it latent rather than live:**
+
+- `raiseConnectionError( )`'s clear sets `m_isClosed` and nothing further is sent. Harmless.
+- `forceCloseStream( )`'s drop is reached from a peer's GOAWAY, and `handleGoAway( )` calls
+  `m_registry.markDraining( )` (`:2349`) **before** the doomed streams are closed. `submitRequest( )`
+  refuses on `canOpenLocalStream( )` while draining (`:921-927`), so no new local stream — hence no
+  new header block — can be opened on that connection.
+- The only other door into `queueHeaderBlock( )` is `submitHeaders( )`, the role-neutral one. **No
+  client path calls it**: its only callers in the tree are the test server (`Http2TestServer.h`,
+  three sites) and one session case. A client sending trailers on a surviving stream would reach it,
+  and this client does not send trailers.
+
+So: **unreachable today, by two independent properties, and one shipped feature away from being
+live.** It is recorded here and not fixed, because the fix is shape (D) and (D) is not taken — which
+is precisely the argument for (D) when the day comes.
+
+### 3.8 Tests — both halves, both deterministic, both red before
+
+The engine is a pure function of `feed( )` and `produce( )` and has no write pump, so the window
+that needs a blocked write in the driver needs **nothing at all** here: "queued and not yet
+produced" is simply "submitted without an intervening `produce( )`". Both cases go in
+`utf_baselib_h2core`, beside the SETTINGS cases; adding to that module is subject to the size rule
+in `src/utests/AGENTS.md` and a sibling module is the answer if it is near the target.
+
+- **HPACK half.** `settle( )`; submit one request and produce it, so the encoder's dynamic table is
+  non-empty — which is what arms §4.3.1's MUST, and the reason this step is not decoration. Submit a
+  second request and **do not** produce. Feed a peer SETTINGS with `SETTINGS_HEADER_TABLE_SIZE = 0`.
+  Produce, and assert on `frameTypes( )` that the HEADERS frame precedes the SETTINGS ACK. **Red
+  before:** the ACK is first.
+- **MAX_FRAME_SIZE half.** `settle( )` with a peer `SETTINGS_MAX_FRAME_SIZE` of 32768; submit a
+  request whose header block exceeds 16384 so its first fragment is larger than the default; do not
+  produce. Feed `SETTINGS_MAX_FRAME_SIZE = 16384`. Produce, and assert both that the oversized
+  HEADERS precedes the ACK and that its length is what the old limit allowed. **Red before:** the
+  ACK precedes a frame the peer may then refuse.
+- **A control that must stay green**, and it is the one that would catch a careless (E): the
+  existing PING-before-HEADERS ordering cases. They are not modified; they are named here so that a
+  lane knows they are load-bearing for this change.
+- The change-set owes its `notes.txt` recipes and a manifest refresh, as every case-adding
+  change-set here does.
+
+---
+
+## 4. H04a — publishing the driver pointer
+
+**Defect, read end to end.** `ClientConnectionTaskBase::onProtocolNegotiated( )` writes the plain
+`om::ObjPtr< ClientConnection > m_connection` on the connection's own thread
+(`ClientConnectionTaskBase.h:581`); `connection( )` returns a **reference to that member** (`:671`);
+the pool's `attempt.driver` lambda (`ClientSession.h:1730`) does `om::copy( held -> connection( ) )`,
+which reads the pointer and takes a reference on the object; `resolveDriver( )` calls it
+(`ConnectionPool.h:926-932`) from `refreshEntry( )`, **before any load of a state the writer set
+afterwards** — the driver poll is the first thing `refreshEntry( )` does. The member has exactly one
+write (grepped: four occurrences, one declaration, one write, one `.get( )` check on the writing
+thread, one getter). The pool's mutex does not help: the writer never takes it.
+
+**Recorded three times, and the third is not a refutation.** L5 finding 7; L6; and a TSan round of
+32 runs in which the read demonstrably executed — the case logs `ALPN selected ''` twice and could
+not have completed had the read returned nothing — and was **not reported**. That record states its
+own reason and marks it inferred: the write and the read are in practice ordered through the
+execution queue's and the io_context's mutexes, which is real synchronisation TSan honours and which
+the code does not document. An incidental edge is not a designed one.
+
+### 4.1 The change
+
+Gate the driver poll on a load the writer performed **after** the write:
+
+    if( ! entry -> driverConnection && entry -> attempt.task &&
+        tasks::Task::Running != entry -> attempt.task -> getState() )
+
+`TaskBase::m_state` is `std::atomic< State >` (`TaskBase.h:759`), and `notifyReadyImpl( )` stores
+`PendingCompletion` into it **after** `onTaskStoppedNothrow( )` returns — both read at the source.
+`m_connection` is written before the task can finish, so the load is an acquire on a store that
+happens-after the write, and the pointer read is ordered.
+
+**Why the task's state and not the connection's.** `Http2ConnectionTaskT::onTaskStoppedNothrow( )`
+publishes `ConnectionState::Closed` at `:2648` — also after the write, also atomic — and L5 finding 7
+proposed exactly that. It is correct, and it is narrower: it needs `entry -> taskConnection`, which
+exists only when the attempt's task is itself a `ClientConnection`. The task's own state is
+available for every attempt, needs no QI, and is a property of `TaskBase` rather than of one driver.
+
+**What it costs.** At worst one maintenance tick of adoption latency, over a window of two returning
+stack frames on one thread. `refreshEntry( )` is reached from `examineAll( )`, so the next examine
+picks it up. In exchange the read stops depending on an edge nobody designed.
+
+**What it must not disturb.** `refreshEntry( )`'s last branch already tests `attempt.task ->
+getState( )` for a *failed* attempt, and L5 finding 7 separately records that this branch tests the
+wrong object — it is correct today only because `Http1ConnectionTaskT` reads `Ready` from
+construction. That is a different finding, it is not fixed here, and the new gate must be written so
+that it does not look like it fixed it.
+
+**H04b is already landed** (`b707fc2`, branch `s6r1`): `effectiveMaxConnectionsPerKey( )` tests
+`entry -> isReady` first. This closes the other half named in the same finding.
+
+### 4.2 Does one admission mechanism serve H04a and H03a's residual? — **One site. Two mechanisms.**
+
+The S6R.1 design says the residual's delay "is closed by S6R.3's admission protocol, with H04a".
+That promise is answered here rather than repeated, and the answer is narrower than the promise.
+
+**They do meet at one site, which is the genuinely useful half of the answer.** `refreshEntry( )`
+resolves the fallback driver (H04a's unsynchronised read) and pushes it onto `actions.schedules`;
+`runActions( )` then pushes it onto `m_eqConnections` **outside the pool lock** (`:1756-1759`) —
+which is H03a's residual face 2. One adoption path, two findings on it. And the gate H03a's residual
+wants **already exists at the sibling site**: `startConnection( )` has
+`else if( m_isDisposed ) { actions.cancels.push_back( attempt.task ); }` (`:1835`). `refreshEntry( )`
+has no such arm.
+
+**But the mechanisms are not one, and three things say so:**
+
+1. **A disposed gate under the pool lock narrows the window and does not close it.** `runActions( )`
+   executes a batch collected earlier; the flag can be set between collection and execution.
+2. **The check cannot simply move to the push.** `m_isDisposed` is a `cpp::ScalarTypeIniter< bool >`
+   (`:808`), so reading it outside the lock is itself a race; and taking the pool lock around
+   `m_eqConnections -> push_back( )` would order pool lock → queue lock, which is the edge rule L4
+   exists to forbid and which the queue's own observer callback could close into a cycle.
+3. **Closing it properly is a reservation with a drain** — admit under the lock, release the lock,
+   push, and have `disposeInternal( )` wait for admissions in flight before it flushes. That is a
+   change to the pool's disposal protocol, it gates on the whole suite, and it is not two lines
+   beside a read gate.
+
+**A one-line alternative that buys most of what the residual costs, verified rather than assumed.**
+The residual matters because of its *duration*: a driver pushed during the flush's wait is not
+cancelled by the sweep and then runs to its own idle lifetime — 300 s by default, unbounded if a
+caller disables it. `disposeInternal( )` collects `entry -> attempt.task` into the list it
+`requestCancel( )`s (`:2074-2080`) and **does not collect `entry -> driverConnection`**. Adding it
+means any driver the pool knows about is cancel-requested before the flush; and
+`TaskBase::scheduleNothrow( )` throws `operation_aborted` at `:1196` for a task already
+cancel-requested, with `scheduleEvenIfAlreadyCanceled( )` returning true only for timer tasks
+(grepped: one override in the whole tree). So such a driver completes **at once** instead of idling.
+
+That is a real reduction of the residual and it is **not** H04a. It belongs with whatever change-set
+owns the pool's disposal, and it is recorded here so it is not lost between two slices.
+
+**So the answer to the question as asked: no, one mechanism does not serve both.** H04a needs an
+acquire on the writer's publishing store. H03a's residual needs an admission gate with a drain. They
+share a site, a file and a shape of argument, and nothing else. Saying otherwise would be the third
+time in this project that a right conclusion was published on a wrong premise.
+
+### 4.3 Test
+
+**None that is deterministic, and that is stated rather than papered over.** The change is justified
+by construction: after it, the pointer is read only after an atomic load of a store that
+happens-after its write.
+
+A TSan run over `utf_baselib_httpclient4` is worth doing and is **not** the proof — the same 32-run
+round already failed to report the unfixed read, for a reason that record gives. A clean run
+corroborates; the construction argument carries it. The recipe is in
+`http2-driver-timer-cancel-cross-thread-race-record.md` §5, and the mandatory positive control
+(`utf_baselib_basictask`, the known report at `TestBaselibBasicTask.h:127`, exit 66) is in that
+record's §1 and closing tables, not in §5.
+
+---
+
+## 5. H11 — closed by the maintainer, and moved
+
+**Decided, not dropped.** No code: the behaviour stays, the justification is rewritten to cite
+RFC 9113 §4.3.1 rather than RFC 7541 §4.2, to say plainly that the leniency is chosen, and to state
+the arming condition; plus a short record naming the reopen trigger — the first profile advertising
+`SETTINGS_HEADER_TABLE_SIZE` below 4096, or below the live table size. It is a comment rewrite and
+belongs with S6R.4's documentation work. The argument is in `s6r3-decisions.md` §4 and is not
+repeated here.
+
+---
+
+## 6. These are four change-sets, not one
+
+The S6R.1 design could argue nine fixes into one change-set because they touched disjoint functions
+and none was a core-path rewrite. That argument does not transfer.
+
+- **H06 + H08** — one change-set, one theme ("what the sink has seen"), core path in
+  `HttpClientRequestTask.h` and `ClientSession.h`. **Gates on the whole suite. Blocked on H07.**
+- **H10** — its own change-set, core path in `Session.h`. Independent of the other three. **Must not
+  run concurrently with S6R.2's H12**, which writes the same encoder's construction.
+- **H04a** — its own change-set, core path in `ConnectionPool.h`, two lines and a comment. It could
+  ride with the pool-disposal work of §4.2 if that is taken; it must not ride with H06/H08, whose
+  theme is different.
+- **H09** — documentation only. It may ride with S6R.4.
+
+**One interaction across them, and it is not a conflict.** H06's drain adds uncancellable,
+undeadlined work to the request task's deferred phase; H09's structural move, when it comes, adds
+more of the same kind to a *different* phase. Neither blocks the other; whoever writes the H09 fix
+should read §1.6 first, because the two hazards are the same hazard.
+
+---
+
+## 7. Acceptance
+
+- Focused modules, clang debug, in the lane; **one module at a time**.
+- Then clang **and** gcc release plus the whole-suite G1 gate, by the orchestrator. Every one of
+  these is a core-path change, so the whole suite is the gate, not a convenience.
+- Every fix that claims a test above must ship that test, shown **red before and green after**.
+  Three of them can be: H06's drain, H06's failure limb (after H07), H08's two cases, and both of
+  H10's. Nothing here may rest on "the suite still passes".
+- **H04a has no deterministic test and says so.** It is justified by construction; the TSan run
+  corroborates and does not prove.
+- **H09 ships no test**, because a documentation change has none to ship.
+- H06/H08 and H10 each owe `notes.txt` recipes and a manifest refresh.
+
+---
+
+## 8. Where this contradicts or extends the two records it was built on
+
+Recorded in the same spirit as the verification record's own §2 and the decisions document's §6.
+
+- **The pinning test moves one assertion, not two** (§1.5). `requireSucceeded( )` is unchanged under
+  A2; it would have changed under A1. Both the brief and the decisions document say two.
+- **The verification record's "its cheap fix collides with an existing GOAWAY test" is true of one
+  cheap shape and not of the other** (§3.4). Promotion into the control queue collides — and worse
+  than the wording suggests, because the collision is a silent regression the suite cannot construct,
+  not a red case. Deferring the acknowledgement does not collide, and that was checked against the
+  cases and the `settle( )` helper rather than assumed.
+- **"H10 will restructure what S6R.1's H13 touched, so sequence them"** (implementation plan
+  `:1592`, verification record §6) assumed the structural shape. Under the shape taken, H10 does not
+  touch `queueHeaderBlock( )` at all (§3.6).
+- **The S6R.1 design's "the delay is closed by S6R.3's admission protocol, with H04a" is not
+  delivered as written** (§4.2). One site serves both; two mechanisms are needed; H04a is the smaller
+  one and does not shorten the residual. A one-line reduction of the residual's *duration* is
+  identified and verified instead, and it is not part of H04a.
+- **H09's price depends on a reachability nobody stated**: the decode half is latent because no
+  decoder ships (two test registrations, no production one), which is why the documented minimum is
+  the right answer now and a gate on the decoder programme is the right answer later. The record
+  rates H09 "structural" without that distinction.
+- **A third HPACK hazard exists and is in no record** (§3.7): dropping an already-encoded block
+  leaves the encoder's dynamic table holding entries the peer never saw. Latent behind two
+  independent properties, and closed for free only by the structural shape.
+- **One premise of this design's own author was refuted by reading** (§1.4), and the refutation is
+  recorded rather than deleted.
+
+---
+
+## 9. What this design does not establish
+
+Nothing here was built or run. Every claim is from reading, except the three RFC 9113 sentences,
+which were fetched. In particular: H10's trigger is derived from the driver's write-in-flight guard
+and the engine's queue, not observed against a peer; H04a's race is certain from the source and its
+consequence is probabilistic; H06's ALPN-bounce path is the decisions document's trace, re-read here
+at `outcomeOnClosed( )` and `applyClosed( )` but not exercised. No case in the tree installs a sink
+at the session level, so **nothing in the suite would have caught H08** — which is the argument for
+the cases §1.8 owes.
+
+---
+
+## 10. Deliberately out of scope
+
+Half (b) of H06 (sink readiness), `onComplete( outcome )`, and B4's reset-capable sink — all
+`ClientTypes.h` changes, all deferrals. H09's structural move, recorded as a gate on the decoder
+programme. H10's shape (D), recorded in §3.7 with what it alone buys. The pool's
+reserve-and-drain admission protocol and the one-line cancel of a known driver at disposal, §4.2.
+H11, §5. H12 (S6R.2) writes the same encoder H10 reads and is sequenced against it, not merged with
+it.
