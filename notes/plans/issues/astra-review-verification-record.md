@@ -68,6 +68,10 @@ treating it as wrong.
 - **H29's code is already correct.** A no-decoder client receiving `Content-Encoding: br` returns the
   raw bytes with the header intact, deliberately. Two *sentences* are wrong — in the decoder deferral
   and in `ContentDecoder.h` — claiming servers send identity bodies. Documentation defect only.
+  **Corrected 2026-09-22 while fixing them: it is three sentences, not two.** The deferral carries
+  one in "Why there is a question at all" and a second in "What the deferral costs"; the third is in
+  `ContentDecoder.h`'s `ContentDecoderRegistryT` class comment and not, as the R4 staging assumed,
+  in its file note. The file note's account of the omitted `accept-encoding` is accurate.
 - **H13 overshoots by "exactly five".** It is up to five: five only when the block is at least the
   frame limit, one to four for blocks just below it.
 - **H12's second sentence overshoots.** A *smaller* unannounced capacity is harmless (the peer's
@@ -80,12 +84,30 @@ treating it as wrong.
   engages.
 - **H04's two halves are not the same size.** Half B reads an enum — a formal race with no plausible
   misbehaviour. Half A is unsynchronised smart-pointer publication, a genuine hazard on a64.
+- **H19 is a boundary this project already recorded and accepted, and here is where** (added
+  2026-09-22, so that the finding leads to its answer instead of being re-argued). The include is
+  `crypto/CryptoBase.h` at `ClientConnectionTaskBase.h:29` with the `OPENSSL_VERSION_NUMBER` guard
+  at `:48`, and the comment above the guard says why it is keyed on the capability rather than on a
+  devenv version. The consequence — that this header reaches OpenSSL, so it is kept out of
+  `httpclient/PreCompiled.h` — is written into `PreCompiled.h` itself, and
+  `http2-l4-review-record.md` records that placement as checked and accepted in its verdict on the
+  L4 range. Astra's remedy (move the specialization behind a TLS-specific header) remains a
+  reasonable future shape; it is owed work, not an unrecorded defect.
 
 ## 3. What the review found that our own ledgers missed
 
 - **A validation trap.** `ClientSession_FallbackRiderNeedsTheDispatchedRetryTests` asserts *failure*
   with retries disabled. When L6 4a lands, that test **keeps passing silently** unless it is
-  inverted. L6's 4a condition does not mention it.
+  inverted. L6's 4a condition does not mention it. **Recorded against 4a in the L6 record on
+  2026-09-22, and narrowed while recording it: "keeps passing silently" holds for one of 4a's two
+  candidate shapes, not for both.** The case builds a *default* `ClientSessionConfig`, so
+  `cleartextProtocol` is `Http11` while the ALPN offer still names `h2`. A per-key decision —
+  astra's own wording under H21, *"avoid dispatching a rider when the selected protocol is already
+  known to be h1"* — makes the request succeed and the case fail **loudly** on `isFailed()`. A
+  per-session flag, which is what 4a's own wording and a pool-wide `ConnectionPoolPolicy` imply,
+  leaves a default session still able to produce h2 over TLS, so the rider still rides and the case
+  **passes unchanged** — reading as evidence for a fix that never touched this path. Either way it
+  must be revisited deliberately; the trap is real and its shape is conditional.
 - **H09's deadline point.** The completed hop has already cancelled its timers and the chain budget
   is a timestamp checked synchronously, so decoding between hops is **both uncancellable and
   undeadlined**. L6 f6 did not say this.
