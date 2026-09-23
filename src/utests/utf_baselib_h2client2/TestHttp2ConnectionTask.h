@@ -1778,4 +1778,170 @@ UTF_AUTO_TEST_CASE( H2Driver_EstablishmentFailureBouncesAndKeepsItsCauseTests )
     }
 }
 
+/**
+ * @brief S6R.2 H16 - protocol-specific fields are normalized at the HTTP/2 driver boundary
+ *
+ * THE HTTP/1.1 RENDERER ALREADY DID THIS AND THE HTTP/2 PATH DID NOT, which is the whole finding.
+ * serializeRequestHead( ) refuses Transfer-Encoding, supplies Host and SETS Content-Length from
+ * the body that will actually be written; toSessionRequest( ) copied request.headers( ) through
+ * unchanged, and submitRequest( ) checked only that the three pseudo-headers were non-empty
+ * before appending every field the caller had.
+ *
+ * THE INTERNAL TRIGGER IS REAL AND IT IS THREE STATUS CODES, NOT ONE.
+ * RedirectPolicy::rewriteMethod( ) sets dropBody for a 303 on any method but GET and HEAD, AND
+ * for a 301 or 302 on POST; chkPrepareNextHop( ) then drops the body and touches the headers only
+ * to strip credentials on a cross-origin hop. So a POST with an explicit Content-Length becomes a
+ * GET which still declares one, and this driver sent END_STREAM with no DATA behind it - RFC 9113
+ * 8.1.1 makes that malformed. Over HTTP/1.1 the same redirect is harmless, because the renderer
+ * removes the field. The last block below is that exact shape.
+ *
+ * PURE AND STATIC, so it needs no peer, no strand and no connection: toSessionRequest( ) runs on
+ * the CALLER's thread inside submit( ), which is where the h1 side does the equivalent work
+ */
+
+UTF_AUTO_TEST_CASE( H2Driver_RequestHeadersAreNormalizedTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest;
+    using namespace utest::h2driver;
+
+    typedef Http2ConnectionTaskT< TcpSocketAsyncStrandedBase >              driver_t;
+
+    /*
+     * (1) The connection-specific fields of RFC 9113 8.2.2 are REMOVED and not refused. A
+     * 'Connection: keep-alive' from a caller is legal protocol-neutral input, and rejecting it
+     * would make one ClientRequest succeed over h1 and fail over h2 - which is the difference
+     * this client exists to hide. 8.2.2 says an intermediary translating h1 to h2 MUST remove
+     * them, so removing is the specified behaviour
+     */
+
+    {
+        auto request = makeRequest( "https://example.com/p" );
+
+        request.headers().append( "Connection", "keep-alive" );
+        request.headers().append( "Keep-Alive", "timeout=5" );
+        request.headers().append( "Proxy-Connection", "keep-alive" );
+        request.headers().append( "Transfer-Encoding", "chunked" );
+        request.headers().append( "Upgrade", "websocket" );
+        request.headers().append( "X-Kept", "yes" );
+
+        const auto result = driver_t::toSessionRequest( request );
+
+        UTF_REQUIRE( ! result.headers.has( "connection" ) );
+        UTF_REQUIRE( ! result.headers.has( "keep-alive" ) );
+        UTF_REQUIRE( ! result.headers.has( "proxy-connection" ) );
+        UTF_REQUIRE( ! result.headers.has( "transfer-encoding" ) );
+        UTF_REQUIRE( ! result.headers.has( "upgrade" ) );
+
+        /*
+         * ... and nothing else is touched, which is what stops a lane from "fixing" this by
+         * emptying the list
+         */
+
+        UTF_REQUIRE( result.headers.has( "x-kept" ) );
+        UTF_REQUIRE_EQUAL( result.headers.get( "x-kept" ), std::string( "yes" ) );
+    }
+
+    /*
+     * (2) 'te' is the one field of that family which survives, and only with the exact value
+     * 8.2.2 permits
+     */
+
+    {
+        auto keeps = makeRequest( "https://example.com/p" );
+
+        keeps.headers().append( "TE", "trailers" );
+
+        UTF_REQUIRE( driver_t::toSessionRequest( keeps ).headers.has( "te" ) );
+
+        auto drops = makeRequest( "https://example.com/p" );
+
+        drops.headers().append( "TE", "gzip" );
+
+        UTF_REQUIRE( ! driver_t::toSessionRequest( drops ).headers.has( "te" ) );
+    }
+
+    /*
+     * (3) 'host' which AGREES with the URL authority is dropped - 8.3.1 has a client generating
+     * HTTP/2 use :authority - and the agreement is a comparison of AUTHORITIES and not of
+     * strings: a caller who writes the default port explicitly names the same origin
+     */
+
+    {
+        auto bare = makeRequest( "https://example.com/p" );
+
+        bare.headers().append( "Host", "example.com" );
+
+        UTF_REQUIRE( ! driver_t::toSessionRequest( bare ).headers.has( "host" ) );
+
+        auto withPort = makeRequest( "https://example.com/p" );
+
+        withPort.headers().append( "Host", "EXAMPLE.com:443" );
+
+        UTF_REQUIRE( ! driver_t::toSessionRequest( withPort ).headers.has( "host" ) );
+
+        auto spelledPort = makeRequest( "https://example.com:8443/p" );
+
+        spelledPort.headers().append( "Host", "example.com:8443" );
+
+        UTF_REQUIRE( ! driver_t::toSessionRequest( spelledPort ).headers.has( "host" ) );
+    }
+
+    /*
+     * (4) ... and one which DISAGREES is refused, which is the only arm here that can fail a
+     * request which works today. A caller setting Host to something other than the URL host is
+     * doing virtual-host routing that h2 expresses through :authority, and failing loudly beats
+     * sending a request whose two authorities disagree
+     */
+
+    {
+        auto request = makeRequest( "https://example.com/p" );
+
+        request.headers().append( "Host", "attacker.example" );
+
+        UTF_REQUIRE_THROW(
+            ( void ) driver_t::toSessionRequest( request ),
+            ArgumentException
+            );
+
+        auto otherPort = makeRequest( "https://example.com/p" );
+
+        otherPort.headers().append( "Host", "example.com:8443" );
+
+        UTF_REQUIRE_THROW(
+            ( void ) driver_t::toSessionRequest( otherPort ),
+            ArgumentException
+            );
+    }
+
+    /*
+     * (5) content-length is SET from the body which will actually be written, and REMOVED when
+     * there is no body. The second half is the redirect shape: RedirectPolicy drops the body of a
+     * POST on a 303, 301 or 302 and leaves the headers alone, so this is precisely what
+     * chkPrepareNextHop( ) hands the next hop - a GET declaring a body it will never send
+     */
+
+    {
+        auto withBody = makeRequest( "https://example.com/p", "POST" );
+
+        withBody.headers().append( "Content-Length", "999" );
+        withBody.body( om::ObjPtrCopyable< data::DataBlock >( blockOf( "four" ) ) );
+
+        const auto sent = driver_t::toSessionRequest( withBody );
+
+        UTF_REQUIRE( sent.headers.has( "content-length" ) );
+        UTF_REQUIRE_EQUAL( sent.headers.get( "content-length" ), std::string( "4" ) );
+
+        auto afterRedirect = makeRequest( "https://example.com/other", "GET" );
+
+        afterRedirect.headers().append( "Content-Length", "4" );
+
+        const auto rewritten = driver_t::toSessionRequest( afterRedirect );
+
+        UTF_REQUIRE( ! rewritten.headers.has( "content-length" ) );
+        UTF_REQUIRE( ! rewritten.hasBody );
+    }
+}
+
 #endif /* __UTEST_TESTHTTP2CONNECTIONTASK_H_ */

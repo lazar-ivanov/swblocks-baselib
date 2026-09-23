@@ -2785,6 +2785,203 @@ namespace bl
             }
 
             /**
+             * @brief Whether an authority the caller wrote as Host names the same origin as the
+             * URL's - H16
+             *
+             * IT IS A COMPARISON OF AUTHORITIES AND NOT OF STRINGS, which is what stops this from
+             * rejecting a request that is perfectly ordinary. ':authority' is
+             * request.url( ).authority( ), which carries ':port' only when the URL SPELLS one, so
+             * a caller who writes 'Host: example.com:443' against 'https://example.com/' names
+             * exactly the same origin. RFC 9110 7.2 gives the field the grammar
+             * uri-host [ ":" port ], so the two are parsed into that pair, the host is folded to
+             * lower ASCII and a missing port is defaulted from the scheme on BOTH sides
+             */
+
+            static bool isSameAuthority(
+                SAA_in          const std::string&                              hostField,
+                SAA_in          const net::Uri&                                 url
+                )
+            {
+                const auto split =
+                    []( SAA_in const std::string& value, SAA_out std::string& host ) -> unsigned
+                    {
+                        const auto colon = value.rfind( ':' );
+
+                        /*
+                         * An IPv6 literal is bracketed, and every colon inside the brackets
+                         * belongs to the address - only a colon AFTER the closing bracket is a
+                         * port separator
+                         */
+
+                        const auto bracket = value.rfind( ']' );
+
+                        const bool hasPort =
+                            colon != std::string::npos &&
+                            ( bracket == std::string::npos || colon > bracket );
+
+                        host = hasPort ? value.substr( 0U, colon ) : value;
+
+                        for( std::size_t i = 0U; i < host.size(); ++i )
+                        {
+                            const auto ch = host[ i ];
+
+                            if( ch >= 'A' && ch <= 'Z' )
+                            {
+                                host[ i ] = static_cast< char >( ch - 'A' + 'a' );
+                            }
+                        }
+
+                        if( ! hasPort )
+                        {
+                            return 0U;
+                        }
+
+                        unsigned port = 0U;
+
+                        for( auto i = colon + 1U; i < value.size(); ++i )
+                        {
+                            const auto ch = value[ i ];
+
+                            if( ch < '0' || ch > '9' )
+                            {
+                                return 0U;
+                            }
+
+                            port = ( port * 10U ) + static_cast< unsigned >( ch - '0' );
+                        }
+
+                        return port;
+                    };
+
+                std::string fieldHost;
+                std::string urlHost;
+
+                const auto fieldPort = split( hostField, fieldHost );
+                const auto urlPort = split( url.authority(), urlHost );
+
+                const auto effective = static_cast< unsigned >( url.effectivePort() );
+
+                return
+                    fieldHost == urlHost &&
+                    ( 0U == fieldPort ? effective : fieldPort ) ==
+                        ( 0U == urlPort ? effective : urlPort );
+            }
+
+            /**
+             * @brief Makes a caller's protocol-neutral header list into a legal HTTP/2 one - H16
+             *
+             * THE h1 RENDERER ALREADY DOES THIS AND THE h2 PATH DID NOT, which is the whole
+             * finding: serializeRequestHead( ) refuses Transfer-Encoding, supplies Host and SETS
+             * Content-Length from the body that will actually be written, while this side copied
+             * request.headers( ) through unchanged and submitRequest( ) appended every field.
+             *
+             * THE INTERNAL TRIGGER IS REAL AND IS THREE STATUS CODES, NOT ONE.
+             * RedirectPolicy::rewriteMethod( ) sets dropBody for a 303 on any method but GET and
+             * HEAD, AND for a 301 or 302 on POST; chkPrepareNextHop( ) then drops the body and
+             * leaves the headers alone. So a POST with an explicit Content-Length becomes a GET
+             * that still declares one, and this driver sent END_STREAM with no DATA behind it -
+             * malformed under RFC 9113 8.1.1. The same redirect over HTTP/1.1 is harmless,
+             * because the renderer there removes the field.
+             *
+             * NORMALIZED RATHER THAN REJECTED, except where normalizing would misrepresent the
+             * request. A 'Connection: keep-alive' from a caller is legal protocol-neutral input,
+             * and rejecting it would make one ClientRequest succeed over h1 and fail over h2 -
+             * which is the difference this client exists to hide. RFC 9113 8.2.2 says an
+             * intermediary translating h1 to h2 MUST remove these fields, so removing them is the
+             * specified behaviour and not a leniency.
+             *
+             * ONE ARM ASTRA IMPLIES IS DELIBERATELY NOT WRITTEN, so that nobody adds it later:
+             * pseudo-header injection through the caller's list is impossible. http::HeaderList
+             * validates every name as 1*tchar and ':' is not a token character, so a caller
+             * cannot put ':method' in there at all and a check for it would be dead code
+             */
+
+            static void normalizeHeaders(
+                SAA_in          const httpclient::ClientRequest&                request,
+                SAA_inout       http2::SessionRequest&                          result
+                )
+            {
+                /*
+                 * (1) The connection-specific fields of RFC 9113 8.2.2
+                 */
+
+                static const char* g_connectionSpecific[] =
+                {
+                    "connection",
+                    "keep-alive",
+                    "proxy-connection",
+                    "transfer-encoding",
+                    "upgrade",
+                };
+
+                for( std::size_t i = 0U; i < sizeof( g_connectionSpecific ) / sizeof( char* ); ++i )
+                {
+                    ( void ) result.headers.removeAll( g_connectionSpecific[ i ] );
+                }
+
+                /*
+                 * (2) 'te', which 8.2.2 permits only with the exact value 'trailers'
+                 */
+
+                {
+                    const auto* te = result.headers.tryGet( "te" );
+
+                    if( nullptr != te && ! http::HeaderList::equalsIgnoreCase( *te, "trailers" ) )
+                    {
+                        ( void ) result.headers.removeAll( "te" );
+                    }
+                }
+
+                /*
+                 * (3) content-length, from the body which will actually be written. A BodySource
+                 * is the one place this is weaker than the h1 renderer: its length is not known
+                 * at this layer, so the caller's framing claim stays the caller's
+                 */
+
+                if( ! request.hasBody() )
+                {
+                    ( void ) result.headers.removeAll( "content-length" );
+                }
+                else if( request.body() )
+                {
+                    const auto& body = request.body();
+
+                    result.headers.set(
+                        "content-length",
+                        utils::lexical_cast< std::string >( body -> size() - body -> offset1() )
+                        );
+                }
+
+                /*
+                 * (4) host, which RFC 9113 8.3.1 replaces with :authority for a client generating
+                 * HTTP/2. One that AGREES is dropped; one that DISAGREES is refused, because
+                 * dropping it would silently change which origin the request claims - a caller
+                 * setting Host to something other than the URL host is doing virtual-host routing
+                 * that h2 expresses through :authority, and failing them loudly beats sending a
+                 * request whose two authorities disagree. This is the only arm which can fail a
+                 * request that works today
+                 */
+
+                {
+                    const auto* host = result.headers.tryGet( "host" );
+
+                    if( nullptr != host )
+                    {
+                        BL_CHK_T(
+                            false,
+                            isSameAuthority( *host, request.url() ),
+                            ArgumentException(),
+                            BL_MSG()
+                                << "An HTTP/2 request carries a Host field which names a "
+                                << "different authority than its URL"
+                            );
+
+                        ( void ) result.headers.removeAll( "host" );
+                    }
+                }
+            }
+
+            /**
              * @brief The HTTP/2 request one ClientRequest is, without touching any session state
              *
              * Static and pure, so it runs on the CALLER's thread inside submit( ) rather than on
@@ -2803,6 +3000,8 @@ namespace bl
                 result.path = request.url().pathAndQuery();
                 result.headers = request.headers();
                 result.hasBody = request.hasBody();
+
+                normalizeHeaders( request, result );
 
                 result.priority.urgency = request.priority().urgency;
                 result.priority.incremental = request.priority().isIncremental;
