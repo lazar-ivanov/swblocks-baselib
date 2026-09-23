@@ -500,7 +500,16 @@ namespace bl
 
                 for( std::size_t i = 0U; i < jarPairs.size(); ++i )
                 {
-                    if( contains( names, cookiePairName( jarPairs[ i ] ) ) )
+                    /*
+                     * BYTE EXACT, and deliberately not the shared contains( ). A cookie name is
+                     * case sensitive (RFC 6265 4.1.1) and the jar's own identity comparison is
+                     * exact, so it stores "sid" and "SID" as two cookies and emits both - folding
+                     * case here would drop one of them and send a request the origin reads as
+                     * signed out. The shared helper stays case-insensitive because the
+                     * accept-encoding intersection needs it to be
+                     */
+
+                    if( containsExact( names, cookiePairName( jarPairs[ i ] ) ) )
                     {
                         continue;
                     }
@@ -715,6 +724,27 @@ namespace bl
                 for( std::size_t i = 0U; i < values.size(); ++i )
                 {
                     if( equalsIgnoreCase( values[ i ], value ) )
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            /**
+             * @brief contains( )'s case-sensitive sibling, for the one comparison which must be
+             * exact - see mergeCookieValues( )
+             */
+
+            static bool containsExact(
+                SAA_in          const std::vector< std::string >&               values,
+                SAA_in          const std::string&                              value
+                )
+            {
+                for( std::size_t i = 0U; i < values.size(); ++i )
+                {
+                    if( values[ i ] == value )
                     {
                         return true;
                     }

@@ -726,6 +726,72 @@ UTF_AUTO_TEST_CASE( CookieJar_SecureAndHttpOnlyTests )
         );
 
     /*
+     * AND IT MAY NOT REPLACE OR DELETE ONE EITHER - section 5.3 step 11, sub-step 2, which is the
+     * half of the rule the read side above does not carry. A non-HTTP API which could overwrite
+     * an HttpOnly cookie would never need to read it: it would write a value of its own choosing
+     * and let the HTTP stack send THAT. The deletion idiom is the same door, since a cleared
+     * session cookie is a session ended by something the site marked HttpOnly to keep out
+     */
+
+    UTF_CHECK(
+        CookieStoreResult::RejectedHttpOnly ==
+            httpOnlyJar.setCookie(
+                uri( "https://example.com/" ),
+                "sid=overwritten",
+                false   /* isHttpApi */,
+                now
+                )
+        );
+
+    UTF_CHECK(
+        CookieStoreResult::RejectedHttpOnly ==
+            httpOnlyJar.setCookie(
+                uri( "https://example.com/" ),
+                "sid=gone; Max-Age=0",
+                false   /* isHttpApi */,
+                now
+                )
+        );
+
+    UTF_CHECK_EQUAL( httpOnlyJar.size(), 2U );
+
+    UTF_CHECK_EQUAL(
+        httpOnlyJar.cookieHeaderValue( uri( "https://example.com/" ), true /* isHttpApi */, now ),
+        std::string( "sid=secret; visible=1" )
+        );
+
+    /*
+     * It is the EXISTING cookie's flag which decides, and nothing else: the HTTP stack still
+     * replaces its own HttpOnly cookie, and a non-HTTP write to a cookie which was never
+     * HttpOnly is still stored
+     */
+
+    UTF_CHECK(
+        CookieStoreResult::Stored ==
+            httpOnlyJar.setCookie(
+                uri( "https://example.com/" ),
+                "sid=refreshed; HttpOnly",
+                true    /* isHttpApi */,
+                now
+                )
+        );
+
+    UTF_CHECK(
+        CookieStoreResult::Stored ==
+            httpOnlyJar.setCookie(
+                uri( "https://example.com/" ),
+                "visible=2",
+                false   /* isHttpApi */,
+                now
+                )
+        );
+
+    UTF_CHECK_EQUAL(
+        httpOnlyJar.cookieHeaderValue( uri( "https://example.com/" ), true /* isHttpApi */, now ),
+        std::string( "sid=refreshed; visible=2" )
+        );
+
+    /*
      * The attribute names are case insensitive, as section 5.2 requires
      */
 

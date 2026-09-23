@@ -1879,6 +1879,26 @@ namespace bl
                     context.receiveWindow.onConsumed( length - dataSize );
                 }
 
+                /*
+                 * THE PADDING CREDIT IS ADVERTISED HERE, WHICH IS THE ONLY PLACE THAT CAN. It was
+                 * credited a line ago and nobody will ever consume it, so the application-driven
+                 * flush in consumed( ) is not coming - a padding-only DATA frame delivers no
+                 * octets for the caller to take. Without this the stream spends its window on
+                 * padding and never replenishes it, and a stream receiving only such frames stops
+                 * for good
+                 *
+                 * BOTH WINDOWS, and BEFORE reapClosedStreams( ) - which erases the very context
+                 * the stream flush takes by reference. Each is threshold-gated inside, so an
+                 * ordinary frame carrying real octets costs nothing here; and if this frame
+                 * carried END_STREAM, canSend( WINDOW_UPDATE ) fails and the stream flush emits
+                 * nothing, leaving the leftover to reapClosedStreams( ) to credit to the
+                 * connection as it always has
+                 */
+
+                flushStreamWindowUpdate( streamId, context, false /* force */ );
+
+                flushConnectionWindowUpdate( false /* force */ );
+
                 context.receivedDataBytes = context.receivedDataBytes + dataSize;
 
                 SessionEvent event;
@@ -2180,6 +2200,25 @@ namespace bl
                      */
 
                     reason = "DATA arrived before the header section of its message (8.1)";
+                }
+                else if( context.expectsNoContent && dataSize != 0 )
+                {
+                    /*
+                     * A response to HEAD, a 204 and a 304 may not carry content at all (RFC 9110
+                     * 9.3.2, 15.3.5, 15.4.5), and one which does is malformed - 8.1.1 asks for a
+                     * stream error, which is enough: no other stream on this connection has done
+                     * anything wrong. Delivering the octets instead would hand the caller a body
+                     * on a message it was told carries none, and leave two intermediaries free to
+                     * disagree about where the response ended
+                     *
+                     * ON dataSize AND NOT ON THE FRAME, deliberately: a zero-length DATA frame
+                     * carrying END_STREAM is how a bodyless message legally ends, and refusing
+                     * the frame rather than its content would break the ordinary completion of
+                     * every response this rule is about. Padding is not content either, and a
+                     * padded frame with no data is judged by the same number
+                     */
+
+                    reason = "a response which may not carry content sent DATA (RFC 9110 9.3.2)";
                 }
                 else if( lengthIsChecked && total > context.declaredContentLength )
                 {
@@ -3616,10 +3655,21 @@ namespace bl
 
                 const auto maxFragment = static_cast< std::size_t >( m_peerMaxFrameSize );
 
+                /*
+                 * THE PRIORITY FIELDS COME OUT OF THE FIRST FRAGMENT'S BUDGET, NOT ON TOP OF IT.
+                 * They are inside the HEADERS frame's Length (6.2), so a first fragment sized at
+                 * the whole of the peer's SETTINGS_MAX_FRAME_SIZE produces a frame up to five
+                 * octets over it - which 4.2 makes a connection error the peer is entitled to
+                 * raise. No underflow: the setting is never below 16384, which applyPeerSettings( )
+                 * enforces
+                 */
+
+                const auto firstMaxFragment = maxFragment - FrameCodec::prioritySize( priority );
+
                 const auto* const data =
                     block.empty() ? nullptr : reinterpret_cast< const std::uint8_t* >( block.data() );
 
-                const auto first = std::min< std::size_t >( block.size(), maxFragment );
+                const auto first = std::min< std::size_t >( block.size(), firstMaxFragment );
                 const bool endHeaders = first == block.size();
 
                 wire_buffer_t frames;

@@ -793,6 +793,190 @@ namespace utest
             return factory;
         }
 
+        /**
+         * @brief The driver under test with a door onto its OWN strand, for the one question
+         * which can only be asked between the write going out and its completion
+         *
+         * WHY BOTH POSTS COME FROM A STRAND HANDLER, AND WHY NOTHING WEAKER IS DETERMINISTIC.
+         * The case asks what the driver would tell a sink if the peer closed while the request
+         * write was in flight - so it needs the peer-close to be handled AFTER onStartRequest( )
+         * has issued the write and BEFORE onWriteCompleted( ) runs. Issuing submit( ) and the
+         * probe post from a handler already running on the strand settles that before either can
+         * run: the strand's FIFO takes [ onStartRequest, probe ] while this handler still holds
+         * it, and asio never invokes a completion handler from inside the initiating call, so the
+         * write completion can only be queued behind both.
+         *
+         * Posted from the TEST thread instead, the same two calls race the strand: onStartRequest
+         * may finish and release it before the probe post lands, and a loopback write completes
+         * in microseconds - so the "red" run would be green about half the time. Ordering by
+         * thread scheduling is not ordering.
+         *
+         * THE PARTIAL STATUS LINE IS NOT DECORATION. Beast's put_eof( ) opens with
+         * BOOST_ASSERT( got_some( ) ), and NDEBUG is defined only by the release toolchain files,
+         * so calling onPeerClosed( ) on a parser which has seen no byte aborts a debug build
+         * rather than failing the stream. Feeding one partial status line first is also the
+         * realistic shape of this defect: the server began answering and the connection died
+         */
+
+        class Http1DriverProbe : public bl::tasks::Http1ConnectionTaskT< plain_stream_t >
+        {
+            BL_DECLARE_OBJECT_IMPL( Http1DriverProbe )
+
+        public:
+
+            typedef bl::tasks::Http1ConnectionTaskT< plain_stream_t >           base_type;
+
+        protected:
+
+            bl::httpclient::ClientRequest                                       m_probeRequest;
+            bl::om::ObjPtr< bl::httpclient::ClientStreamEventSink >             m_probeSink;
+
+            /*
+             * Written on the strand before the sink is told, and read by the case after the
+             * sink's rendezvous - so the sink's own lock orders the two. A UTF assertion here
+             * would be one made from a pool thread, which Boost.Test does not support
+             */
+
+            bool                                                                m_probeParsed;
+
+            Http1DriverProbe(
+                SAA_in          bl::httpclient::NegotiatedProtocol              negotiated,
+                SAA_inout       plain_stream_t::stream_ref&&                    connectedStream,
+                SAA_in          bl::httpclient::ConnectionKey                   key
+                )
+                :
+                base_type(
+                    BL_PARAM_FWD( negotiated ),
+                    BL_PARAM_FWD( connectedStream ),
+                    BL_PARAM_FWD( key )
+                    ),
+                m_probeParsed( false )
+            {
+            }
+
+            virtual void scheduleTask(
+                SAA_in          const std::shared_ptr< bl::tasks::ExecutionQueue >&     eq
+                ) OVERRIDE
+            {
+                /*
+                 * The base arms the read and publishes m_started - both synchronously - so by the
+                 * time the handler below runs, submit( ) will post rather than defer
+                 */
+
+                base_type::scheduleTask( eq );
+
+                const auto ref = base_type::selfRef();
+
+                base_type::postToStreamExecutor(
+                    [ this, ref ]() -> void
+                    {
+                        submitAndProbe();
+                    }
+                    );
+            }
+
+            void submitAndProbe()
+            {
+                ( void ) base_type::submit( m_probeRequest, m_probeSink );
+
+                const auto ref = base_type::selfRef();
+
+                base_type::postToStreamExecutor(
+                    [ this, ref ]() -> void
+                    {
+                        peerClosedProbe();
+                    }
+                    );
+            }
+
+            void peerClosedProbe()
+            {
+                /*
+                 * The parser exists because onStartRequest( ) ran first, which is the ordering
+                 * this probe is built on - checked rather than assumed away, so that a future
+                 * change which breaks that ordering fails the case with a diagnosis instead of
+                 * dereferencing a null pointer. onPeerClosed( ) itself already guards it
+                 */
+
+                if( ! base_type::m_parser )
+                {
+                    return;
+                }
+
+                const std::string partial( "HTTP/1.1 200 OK\r\n" );
+
+                bl::eh::error_code ec;
+
+                const auto consumed =
+                    base_type::m_parser -> parse( partial.c_str(), partial.size(), ec );
+
+                m_probeParsed = ! ec && consumed == partial.size();
+
+                base_type::onPeerClosed();
+            }
+
+        public:
+
+            /**
+             * @brief Handed over before the task is scheduled, so nothing here races the strand
+             */
+
+            void probeWith(
+                SAA_in          const bl::httpclient::ClientRequest&            request,
+                SAA_in          const bl::om::ObjPtr< bl::httpclient::ClientStreamEventSink >& sink
+                )
+            {
+                m_probeRequest = request;
+                m_probeSink = bl::om::copy( sink );
+            }
+
+            bool probeParsed() const NOEXCEPT
+            {
+                return m_probeParsed;
+            }
+        };
+
+        typedef bl::om::ObjectImpl< Http1DriverProbe >                          Http1DriverProbeImpl;
+
+        /**
+         * @brief makeHttp1Factory( )'s sibling, building the probe above instead of the driver
+         */
+
+        inline auto makeProbeFactory(
+            SAA_in          const std::shared_ptr< bl::om::ObjPtr< Http1DriverProbeImpl > >& slot
+            )
+            -> std::shared_ptr< bl::httpclient::ClientDriverFactoryT< plain_stream_t > >
+        {
+            typedef bl::httpclient::ClientDriverFactoryT< plain_stream_t >      factory_t;
+
+            auto factory = std::make_shared< factory_t >();
+
+            factory -> registerDriver(
+                bl::httpclient::HttpProtocol::Http11,
+                [ slot ](
+                    SAA_in      const bl::httpclient::NegotiatedProtocol&       negotiated,
+                    SAA_inout   plain_stream_t::stream_ref&&                    connectedStream,
+                    SAA_in      const bl::httpclient::ConnectionKey&            key
+                    )
+                    -> bl::om::ObjPtr< bl::httpclient::ClientConnection >
+                {
+                    auto driver = Http1DriverProbeImpl::createInstance(
+                        bl::cpp::copy( negotiated ),
+                        BL_PARAM_FWD( connectedStream ),
+                        bl::cpp::copy( key )
+                        );
+
+                    auto result = bl::om::qi< bl::httpclient::ClientConnection >( driver );
+
+                    *slot = bl::om::copy( driver );
+
+                    return result;
+                }
+                );
+
+            return factory;
+        }
+
         inline auto makeKey(
             SAA_in          std::string                                         host,
             SAA_in          const bl::os::port_t                                port
@@ -897,6 +1081,42 @@ namespace utest
             const auto establisher = PlainEstablisherImpl::createInstance(
                 makeKey( cpp::copy( host ), port ),
                 makeHttp1Factory( slot ),
+                ProxyConfig::none(),
+                ClientConnectionConfig(),
+                false /* logExceptions */
+                );
+
+            const auto establisherTask = om::qi< Task >( establisher );
+
+            eq -> push_back( establisherTask );
+            eq -> wait( establisherTask );
+
+            chkTaskSucceeded( establisherTask );
+
+            UTF_REQUIRE( nullptr != slot -> get() );
+
+            return om::copy( *slot );
+        }
+
+        /**
+         * @brief establishDriver( )'s sibling, which hands back the probe rather than the
+         * ClientConnection - the case needs the derived type to arm it before it is scheduled
+         */
+
+        inline auto establishProbeDriver(
+            SAA_in          const bl::om::ObjPtr< bl::tasks::ExecutionQueue >&  eq,
+            SAA_in          const bl::os::port_t                                port
+            )
+            -> bl::om::ObjPtr< Http1DriverProbeImpl >
+        {
+            using namespace bl;
+            using namespace bl::tasks;
+
+            const auto slot = std::make_shared< om::ObjPtr< Http1DriverProbeImpl > >();
+
+            const auto establisher = PlainEstablisherImpl::createInstance(
+                makeKey( std::string( "127.0.0.1" ), port ),
+                makeProbeFactory( slot ),
                 ProxyConfig::none(),
                 ClientConnectionConfig(),
                 false /* logExceptions */
@@ -1726,6 +1946,96 @@ UTF_AUTO_TEST_CASE( Http1Driver_RequestsThisDriverRefusesTests )
 
     UTF_REQUIRE_EQUAL( records.size(), 1U );
     UTF_REQUIRE_EQUAL( records[ 0 ], std::string( "served:GET /after HTTP/1.1" ) );
+}
+
+UTF_AUTO_TEST_CASE( Http1Driver_RequestOnTheWireIsNotRetryableTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest::http1driver;
+
+    /*
+     * A REQUEST WHOSE WRITE HAS BEEN ISSUED IS NOT PROVABLY UNPROCESSED. The peer-close path
+     * reports retryability as the negation of "this request may have been sent", and the driver
+     * used to set that only when the WRITE COMPLETION ran - so a connection which died between
+     * the write going out and its completion was reported as retryable. The pool's
+     * chkRequestMayBeReplayed( ) answers true from that limb BEFORE it reaches the idempotency
+     * gate, which makes this a silently duplicated POST rather than a failed one: the octets are
+     * on the wire and the origin may act on them either way.
+     *
+     * The probe is what makes the moment reachable at all - see Http1DriverProbe. The peer here
+     * reads the request and says nothing, so nothing but the probe ends this stream, and the
+     * REFUSED cases above are the other side of the same assertion: a request which never
+     * reached the socket is still retryable
+     */
+
+    ScriptedPeer peer(
+        []( SAA_inout ScriptedPeer& self, SAA_inout asio::ip::tcp::socket& socket ) -> void
+        {
+            const auto request = ScriptedPeer::readRequest( socket );
+
+            self.record( "read:" + ScriptedPeer::requestLineOf( request ) );
+
+            self.waitForRelease();
+        }
+        );
+
+    const auto sink = RecordingSinkImpl::createInstance();
+
+    bool probeParsed = false;
+
+    scheduleAndExecuteInParallel(
+        [ &peer, &sink, &probeParsed ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
+        {
+            eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+            const auto probe = establishProbeDriver( eq, peer.port() );
+
+            probe -> probeWith(
+                makeRequest( peer.port(), "/inflight", "POST" ),
+                om::qi< httpclient::ClientStreamEventSink >( sink )
+                );
+
+            const auto driverTask = om::qi< Task >( probe );
+
+            eq -> push_back( driverTask );
+
+            chkOrFail(
+                sink -> waitForClosed(),
+                "the probed stream never ended; events so far: " + joinEvents( sink -> events() )
+                );
+
+            probeParsed = probe -> probeParsed();
+
+            peer.release();
+
+            eq -> wait( driverTask );
+        }
+        );
+
+    UTF_REQUIRE_EQUAL( peer.failure(), std::string() );
+
+    /*
+     * The premise of the probe: the parser really did see the partial response, so what ended
+     * this stream is the peer-close path and not a codec refusal
+     */
+
+    UTF_REQUIRE( probeParsed );
+
+    /*
+     * The stream failed, which is not the subject - THIS is: the request went out, so nothing
+     * downstream may replay it on another connection
+     */
+
+    UTF_REQUIRE( sink -> errorCode() );
+    UTF_REQUIRE( ! sink -> isRetryable() );
+
+    UTF_REQUIRE( peer.waitForRecords( 1U ) );
+
+    const auto records = peer.records();
+
+    UTF_REQUIRE_EQUAL( records.size(), 1U );
+    UTF_REQUIRE_EQUAL( records[ 0 ], std::string( "read:POST /inflight HTTP/1.1" ) );
 }
 
 UTF_AUTO_TEST_CASE( Http1Driver_AgainstTheLibraryHttpServerTests )

@@ -616,6 +616,41 @@ namespace bl
             std::string                                                         m_response;
             std::size_t                                                         m_searchFrom;
 
+            /**
+             * @brief The authority these bytes carry - an IPv6 literal in the brackets RFC 3986
+             * section 3.2.2 requires of one
+             *
+             * THE HOST ARRIVES BARE AND MUST STAY BARE EVERYWHERE ELSE. ConnectionKey::fromUri
+             * stores uri.host( ), which the parser has already stripped the brackets from, and
+             * that unbracketed form is what the resolver takes, what certificate verification
+             * matches against the iPAddress SAN entries, and what the SNI decision is computed
+             * from - TcpSslBaseTasks tests make_address( hostName ) and omits SNI entirely for a
+             * host which parses as an address (RFC 6066 3 forbids a literal there). A bracketed
+             * host would not parse, so normalising the stored form would send SNI WITH brackets,
+             * which is worse than the defect this fixes. Hence: at render time only, here
+             */
+
+            static std::string renderAuthority(
+                SAA_in                  const std::string&                      host,
+                SAA_in                  const os::port_t                        port
+                )
+            {
+                cpp::SafeOutputStringStream os;
+
+                if( std::string::npos != host.find( ':' ) )
+                {
+                    os << "[" << host << "]";
+                }
+                else
+                {
+                    os << host;
+                }
+
+                os << ":" << port;
+
+                return os.str();
+            }
+
         public:
 
             HttpConnectNegotiationT(
@@ -626,17 +661,15 @@ namespace bl
                 :
                 m_searchFrom( 0U )
             {
+                const auto authority = renderAuthority( originHost, originPort );
+
                 cpp::SafeOutputStringStream os;
 
                 os
                     << "CONNECT "
-                    << originHost
-                    << ":"
-                    << originPort
+                    << authority
                     << " HTTP/1.1\r\nHost: "
-                    << originHost
-                    << ":"
-                    << originPort
+                    << authority
                     << "\r\n";
 
                 if( config.hasCredentials() )

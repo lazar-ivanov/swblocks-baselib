@@ -881,6 +881,35 @@ UTF_AUTO_TEST_CASE( TcpTunnelStage_HttpConnectNegotiationTests )
     }
 
     /*
+     * AN IPv6 LITERAL IS BRACKETED, AND ONLY HERE. ConnectionKey::fromUri stores uri.host( ),
+     * which the URI parser has already stripped the brackets from, so the host this negotiation is
+     * handed for "https://[::1]:443" is the bare "::1" - and "CONNECT ::1:443" is not an authority
+     * any proxy can parse, since the colon which separates the port is indistinguishable from the
+     * ones inside the address (RFC 3986 3.2.2, RFC 9110 9.3.6)
+     *
+     * The bare form is deliberately what the resolver, the SNI decision and certificate
+     * verification keep working from - see the render helper - so the brackets appear in these
+     * bytes and nowhere else
+     */
+
+    {
+        HttpConnectNegotiation negotiation(
+            ProxyConfig::httpConnect( "proxy.example.com", 3128U ),
+            "::1",
+            443U
+            );
+
+        UTF_REQUIRE_EQUAL(
+            negotiation.outgoing(),
+            std::string(
+                "CONNECT [::1]:443 HTTP/1.1\r\n"
+                "Host: [::1]:443\r\n"
+                "\r\n"
+                )
+            );
+    }
+
+    /*
      * RFC 7617: the user-id and the password joined by a colon, base64 of the result. The literal
      * below was produced with
      *

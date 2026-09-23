@@ -206,7 +206,13 @@ namespace bl
             std::string                                                         m_bodyChunk;
 
             bool                                                                m_headersDelivered = false;
-            bool                                                                m_requestBytesWritten = false;
+            /*
+             * NOT "bytes were written" - "this request may have been sent", which is a weaker
+             * claim and the only one a client can make about a write it has issued. It is set
+             * before async_write( ) is initiated and consumed as the negation of retryability
+             */
+
+            bool                                                                m_requestMayHaveBeenSent = false;
             bool                                                                m_requestSaidClose = false;
 
             /*
@@ -659,6 +665,28 @@ namespace bl
                     return;
                 }
 
+                /*
+                 * MARKED BEFORE THE WRITE IS ISSUED, AND NOT WHEN IT COMPLETES. From here on this
+                 * request is not provably unsent: the octets may be on the wire, and acted on by
+                 * the origin, long before onWriteCompleted( ) runs - and the negation of this
+                 * flag is what the peer-close path hands the sink as retryability, which
+                 * ConnectionPoolPolicy answers from BEFORE it reaches the idempotency gate. A
+                 * POST replayed on that answer is a duplicate rather than a retry.
+                 *
+                 * BEFORE beginOperation( ) and the try, because the initiating call can throw:
+                 * its catch completes the operation and fails the TASK, which reaches the same
+                 * flag through onTaskStoppedNothrow( ). A write which threw is precisely a case
+                 * that cannot be proven unwritten. The h2 driver marks at the same point and for
+                 * the same reason - isHeadersProduced at hand-off, "not provably unwritten"
+                 *
+                 * The two paths which legitimately claim the opposite both return ABOVE this
+                 * line: the isClosing( ) check and the render failure, neither of which reached
+                 * the socket. The exact answer - "zero octets escaped, so this is safe to
+                 * replay" - needs the write-completion barrier of H01 and is S6R.2's
+                 */
+
+                m_requestMayHaveBeenSent = true;
+
                 base_type::beginOperation();
 
                 try
@@ -696,7 +724,12 @@ namespace bl
 
                 if( 0U != bytesTransferred )
                 {
-                    m_requestBytesWritten = true;
+                    /*
+                     * Redundant since onStartRequest( ) marks it before the write is issued, and
+                     * kept because it is true and costs nothing
+                     */
+
+                    m_requestMayHaveBeenSent = true;
                 }
 
                 BL_TASKS_HANDLER_CHK_EC( ec );
@@ -971,7 +1004,7 @@ namespace bl
                 {
                     finishStream(
                         ec,
-                        ! m_requestBytesWritten /* isRetryable */,
+                        ! m_requestMayHaveBeenSent /* isRetryable */,
                         false /* isConnectionUsable */
                         );
 
@@ -983,7 +1016,7 @@ namespace bl
                         eh::error_code()
                         :
                         eh::errc::make_error_code( eh::errc::protocol_error ),
-                    ! m_requestBytesWritten /* isRetryable */,
+                    ! m_requestMayHaveBeenSent /* isRetryable */,
                     false /* isConnectionUsable - the peer just closed it */
                     );
             }
@@ -1111,7 +1144,7 @@ namespace bl
                 m_requestBody.reset();
                 m_bodyChunk.clear();
                 m_headersDelivered = false;
-                m_requestBytesWritten = false;
+                m_requestMayHaveBeenSent = false;
                 m_requestSaidClose = false;
 
                 if( sink && httpclient::ClientConnection::INVALID_STREAM_HANDLE != handle )
@@ -1454,7 +1487,7 @@ namespace bl
                             errorCode
                             :
                             eh::errc::make_error_code( eh::errc::connection_aborted ),
-                        ! m_requestBytesWritten /* isRetryable */
+                        ! m_requestMayHaveBeenSent /* isRetryable */
                         );
                 }
 

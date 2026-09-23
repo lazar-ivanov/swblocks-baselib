@@ -886,6 +886,19 @@ namespace bl
 
                 if( existing != m_cookies.size() )
                 {
+                    /*
+                     * RFC 6265 section 5.3 step 11, sub-step 2 - the OTHER half of the HttpOnly
+                     * rule, and the one the refusal above does not cover: a non-HTTP API may
+                     * neither replace nor delete a cookie which is already HttpOnly. It is the
+                     * EXISTING cookie's flag which decides, not the incoming one's, because a
+                     * writer which could overwrite an HttpOnly cookie would never need to read it
+                     */
+
+                    if( m_cookies[ existing ].isHttpOnly && ! isHttpApi )
+                    {
+                        return CookieStoreResult::RejectedHttpOnly;
+                    }
+
                     if( isExpired )
                     {
                         m_cookies.erase( m_cookies.begin() + static_cast< std::ptrdiff_t >( existing ) );

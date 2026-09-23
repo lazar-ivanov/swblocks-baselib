@@ -1106,6 +1106,21 @@ namespace bl
                 appendPadding( out, padding );
             }
 
+            /**
+             * @brief What a priority-flagged HEADERS frame spends on the fields themselves
+             *
+             * The E, Stream Dependency and Weight fields sit INSIDE the frame's Length (6.2), so
+             * a caller which fragments a header block has to take them out of the first
+             * fragment's budget. It is asked for with the very Http2HeadersPriority that
+             * serializeHeaders( ) will be given, so the two cannot disagree about whether the
+             * fields are there
+             */
+
+            static std::size_t prioritySize( SAA_in const Http2HeadersPriority& priority ) NOEXCEPT
+            {
+                return priority.isSet ? static_cast< std::size_t >( PRIORITY_FIELDS_SIZE ) : 0U;
+            }
+
             static void serializeHeaders(
                 SAA_in          const std::uint32_t                  streamId,
                 SAA_in_opt      const std::uint8_t*                  fieldBlock,

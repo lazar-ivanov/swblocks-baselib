@@ -6,3 +6,4 @@
 --log_level=message --run_test=Http1Driver_ChunkedTrailersAndBodilessTests
 --log_level=message --run_test=Http1Driver_RequestsThisDriverRefusesTests
 --log_level=message --run_test=Http1Driver_AgainstTheLibraryHttpServerTests
+--log_level=message --run_test=Http1Driver_RequestOnTheWireIsNotRetryableTests
