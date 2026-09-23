@@ -450,6 +450,80 @@ namespace utest
             return profile;
         }
 
+        /**
+         * @brief A caller's BodySink at the SESSION level, which counts its terminal callbacks
+         *
+         * NOTHING IN THIS SUITE INSTALLED ONE UNTIL S6R.3, which is why H08 was invisible: a sink
+         * handed to createRequestTask( ) is carried to EVERY hop of the chain ( startHop( ) ), so
+         * what a hop tells it is what the CALLER sees, and a chain of two hops used to tell it the
+         * body was complete twice. The count is therefore the assertion, exactly as the request
+         * task's own case counts credit
+         *
+         * It takes everything it is offered - the backpressure question is the request task's and
+         * has its own cases there; what is under test here is which hop says what to it
+         */
+
+        template
+        <
+            typename E = void
+        >
+        class CountingBodySinkT : public bl::httpclient::BodySink
+        {
+            BL_DECLARE_OBJECT_IMPL_ONEIFACE( CountingBodySinkT, bl::httpclient::BodySink )
+
+        protected:
+
+            mutable bl::os::mutex                                               m_lock;
+
+            std::string                                                         m_received;
+            std::size_t                                                         m_completions;
+
+            CountingBodySinkT() NOEXCEPT
+                :
+                m_completions( 0U )
+            {
+            }
+
+        public:
+
+            virtual std::size_t onData( SAA_in const bl::om::ObjPtr< bl::data::DataBlock >& data ) OVERRIDE
+            {
+                const auto offered = data -> size() - data -> offset1();
+
+                BL_MUTEX_GUARD( m_lock );
+
+                m_received.append(
+                    reinterpret_cast< const char* >( data -> pv() ) + data -> offset1(),
+                    offered
+                    );
+
+                return offered;
+            }
+
+            virtual void onComplete() OVERRIDE
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                ++m_completions;
+            }
+
+            auto received() const -> std::string
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                return m_received;
+            }
+
+            std::size_t completions() const
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                return m_completions;
+            }
+        };
+
+        typedef bl::om::ObjectImpl< CountingBodySinkT<> >                       CountingBodySink;
+
     } // session
 
 } // utest
@@ -2147,6 +2221,208 @@ UTF_AUTO_TEST_CASE( ClientSession_FallbackRiderNeedsTheDispatchedRetryTests )
 
             UTF_REQUIRE_EQUAL( stats.dispatched.value(), 1U );
             UTF_REQUIRE_EQUAL( stats.released.value(), 1U );
+        }
+        );
+}
+
+/**
+ * @brief S6R.3 H08 - a chain of two hops says "the body is complete" ONCE
+ *
+ * THE DEFAULT PATH, AND NOT A CORNER. This is the case above with a sink installed, which is the
+ * one thing no case in this suite did until now. The pool dispatches the first request of a key
+ * onto the Connecting placeholder; over a connection which turns out to speak HTTP/1.1 the HTTP/2
+ * task bounces that rider with connection_aborted, and applyClosed( ) used to queue the caller's
+ * onComplete( ) on ANY close whatever its outcome. So the caller's sink was told the body was
+ * complete, with nothing in it, and was then handed the whole body by the retried hop - twice
+ * wrong on every first request to an origin which does not speak h2
+ *
+ * THE COUNT IS THE ASSERTION, and one is the number: a bounce is not a completion, so the first
+ * hop says nothing at all, and the hop which really did carry the body says it once
+ *
+ * AND IT IS THE CONTROL FOR H08's OTHER HALF. chkPrepareRetry( ) now refuses a retry once the sink
+ * has seen bytes; the bounced rider is answered before a byte of its response exists, so that
+ * refusal must not fire here. If it did, this case would not merely lose a callback - it would
+ * fail outright, since without the dispatched retry every first request over a fallback connection
+ * fails ( the case above records that finding )
+ */
+
+UTF_AUTO_TEST_CASE( ClientSession_SinkIsToldCompleteOnceAcrossTheFallbackRetryTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest;
+    using namespace utest::session;
+
+    utest::http::HttpServerHelpers::startHttpServerAndExecuteCallback(
+        []() -> void
+        {
+            const auto url =
+                "http://" +
+                test::UtfArgsParser::host() +
+                ":" +
+                utils::lexical_cast< std::string >(
+                    static_cast< os::port_t >( test::UtfArgsParser::port() )
+                    ) +
+                utest::http::g_requestUri;
+
+            const auto session = makeSession( httpclient::ClientSessionConfig() );
+
+            BL_SCOPE_EXIT_WARN_ON_FAILURE(
+                {
+                    session -> dispose();
+                },
+                "utest::session::ClientSession_SinkIsToldCompleteOnceAcrossTheFallbackRetryTests"
+                );
+
+            httpclient::ClientRequest request;
+
+            request.method( "GET" );
+            request.url( net::Uri::parse( url ) );
+
+            const auto sink = CountingBodySink::createInstance();
+
+            const auto fetched = runRequest(
+                session,
+                request,
+                om::ObjPtrCopyable< httpclient::BodySink >(
+                    om::qi< httpclient::BodySink >( sink )
+                    )
+                );
+
+            UTF_REQUIRE_EQUAL( fetched -> response().status(), 200U );
+
+            /*
+             * The body went to the SINK and not into the response, which is design 5.3's streamed
+             * form - so the sink's tally is the only place the body exists
+             */
+
+            UTF_REQUIRE( ! fetched -> response().body() );
+
+            UTF_REQUIRE_EQUAL( sink -> received(), utest::http::g_desiredResult );
+
+            UTF_REQUIRE_EQUAL( sink -> completions(), 1U );
+
+            /*
+             * The chain really was two hops, which is what makes the count above worth its green:
+             * a run where the rider was never bounced would say "one" for the trivial reason
+             */
+
+            const auto stats = statsOf( session );
+
+            UTF_REQUIRE_EQUAL( stats.dispatched.value(), 2U );
+            UTF_REQUIRE_EQUAL( stats.released.value(), 2U );
+        }
+        );
+}
+
+/**
+ * @brief S6R.3 H08's other half - a hop which reached the sink may not be replayed onto it
+ *
+ * A BodySink CANNOT BE REWOUND - ClientTypes.h has no such method, and that is a decision rather
+ * than an oversight ( the reset-capable sink is a recorded deferral ). So a retry after the sink
+ * has seen bytes does not repeat a request, it CORRUPTS one: the caller's sink keeps the prefix
+ * the lost connection delivered and the replayed hop appends a second, complete copy behind it
+ *
+ * THE CONFIGURATION IS THE ONE WHERE THIS BITES: retryIdempotentOnConnectionLoss, which is off by
+ * default and which exists precisely so that an idempotent request survives a connection dying
+ * under it. The knob is not wrong - what was wrong is that nothing asked whether response bytes
+ * had already escaped to the caller
+ *
+ * THE PEER SERVES THE FIRST REQUEST HALF AND THEN DROPS THE CONNECTION, and serves the second in
+ * full - so a client which replays is visibly rewarded with a body, and the assertion below can
+ * tell "refused the replay" from "the peer simply failed twice"
+ */
+
+UTF_AUTO_TEST_CASE( ClientSession_RetryIsRefusedOnceTheSinkHasSeenBytesTests )
+{
+    using namespace bl;
+    using namespace bl::tasks;
+    using namespace utest;
+    using namespace utest::session;
+
+    const auto peer = makePeer();
+
+    const auto served = std::make_shared< std::atomic< unsigned > >( 0U );
+
+    peer -> setResponder(
+        [ served ]( SAA_in const h2peer::Http2TestRequest& request ) -> h2peer::Http2ResponseScript
+        {
+            BL_UNUSED( request );
+
+            if( 0U == ( *served )++ )
+            {
+                /*
+                 * A status, half a body, and then the connection out from under it - no
+                 * END_STREAM, so the stream is still open when the close arrives
+                 */
+
+                return h2peer::Http2ResponseScript()
+                    .headers( 200U )
+                    .data( "first-half" )
+                    .closeConnection();
+            }
+
+            return h2peer::Http2ResponseScript()
+                .headers( 200U )
+                .data( "the whole body" )
+                .endStream();
+        }
+        );
+
+    h2driver::withPeer(
+        peer,
+        [ & ]( SAA_in const unsigned short port ) -> void
+        {
+            auto config = makeHttp2SessionConfig();
+
+            config.poolPolicy.retryIdempotentOnConnectionLoss = true;
+
+            const auto session = makeSession( std::move( config ) );
+
+            BL_SCOPE_EXIT_WARN_ON_FAILURE(
+                {
+                    session -> dispose();
+                },
+                "utest::session::ClientSession_RetryIsRefusedOnceTheSinkHasSeenBytesTests"
+                );
+
+            const auto sink = CountingBodySink::createInstance();
+
+            const auto requestTask = session -> createRequestTask(
+                makeRequest( port, "/half" ),
+                om::ObjPtrCopyable< httpclient::BodySink >(
+                    om::qi< httpclient::BodySink >( sink )
+                    )
+                );
+
+            const auto task = om::qi< Task >( requestTask );
+
+            runSessionTask( task );
+
+            UTF_REQUIRE( task -> isFailed() );
+
+            /*
+             * WHAT THE CALLER'S SINK HOLDS IS THE PREFIX AND NOTHING ELSE. This is the assertion
+             * the fix is for: without it the replayed hop appends "the whole body" behind
+             * "first-half" and the caller is handed a body which was never sent
+             */
+
+            UTF_REQUIRE_EQUAL( sink -> received(), std::string( "first-half" ) );
+
+            /*
+             * And it is never told the body is complete, because it never was - the terminal
+             * callback for a request which failed is a contract change and a recorded deferral;
+             * the task's own failure is how the caller learns of this one
+             */
+
+            UTF_REQUIRE_EQUAL( sink -> completions(), 0U );
+
+            /*
+             * The peer was asked ONCE. A second request arriving here is the replay this refuses,
+             * and it would have been served in full
+             */
+
+            UTF_REQUIRE_EQUAL( served -> load(), 1U );
         }
         );
 }

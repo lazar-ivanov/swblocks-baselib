@@ -1185,6 +1185,31 @@ namespace bl
 
             bool chkPrepareRetry()
             {
+                /*
+                 * A HOP WHICH REACHED THE CALLER'S SINK HAS SPENT IT, and that is refused here
+                 * rather than inside chkRequestMayBeReplayed( ). That predicate is deliberately
+                 * ONE rule for both halves of the retry ( ConnectionPool.h ), and the pool's half
+                 * never has a sink - it does not know sinks exist - so a field on RetryContext
+                 * would be one its other caller must always leave false, which reads as a bug to
+                 * the next reader. The shared rule is about the REQUEST; "response bytes escaped"
+                 * is about the HOP, and only this task sees hops
+                 *
+                 * IT IS ABOVE THE REPLAY RULE because it is also above the rewind( ): a retry
+                 * refused here must not have moved the caller's body source first
+                 *
+                 * The ALPN fallback is untouched by it, and that is checkable rather than hoped
+                 * for: the bounced rider is answered before a byte of its response exists, so
+                 * sinkDelivered( ) is zero and the dispatched retry below proceeds exactly as it
+                 * did. What this refuses is a retry after a genuine mid-body loss, where the
+                 * alternative is appending a second copy of the body to the prefix the caller's
+                 * sink already holds
+                 */
+
+                if( 0U != m_hop -> sinkDelivered() )
+                {
+                    return false;
+                }
+
                 RetryContext context;
 
                 context.isRetryable = m_hop -> isRetryable();

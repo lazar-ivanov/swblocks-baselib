@@ -1209,6 +1209,99 @@ namespace utest
         typedef bl::om::ObjectImpl< BatchThrowingSinkT<> > BatchThrowingSink;
 
         /**
+         * @brief A caller's BodySink which takes three bytes a call and can be told to stop - S6R.3
+         * H06's failure limb
+         *
+         * THE ONE SINK THE DRAIN CANNOT SATISFY, and the case needs one: a sink which merely takes
+         * less than it is offered is drained at close by the re-offers ( the pinning case is that
+         * sink ), so the failure limb is unreachable through it. This one stops taking ANYTHING
+         * once the case says so, which is what makes "the queue is not empty and progress has
+         * stopped" reachable at all
+         *
+         * THE STOP IS AN INSTRUCTION AND NOT A GUESS AT TIMING. The case calls stopTaking( )
+         * after a rendezvous on the credit the in-flight offers produced and BEFORE it delivers
+         * the close, so the drain which follows the close can only see a sink which has stopped -
+         * no sleep and no race with the drain thread
+         */
+
+        template
+        <
+            typename E = void
+        >
+        class StopsTakingSinkT : public bl::httpclient::BodySink
+        {
+            BL_DECLARE_OBJECT_IMPL_ONEIFACE( StopsTakingSinkT, bl::httpclient::BodySink )
+
+        protected:
+
+            mutable bl::os::mutex                                               m_lock;
+
+            std::string                                                         m_received;
+            bool                                                                m_isStopped;
+            bool                                                                m_completeCalled;
+
+            StopsTakingSinkT() NOEXCEPT
+                :
+                m_isStopped( false ),
+                m_completeCalled( false )
+            {
+            }
+
+        public:
+
+            virtual std::size_t onData( SAA_in const bl::om::ObjPtr< bl::data::DataBlock >& data ) OVERRIDE
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                if( m_isStopped )
+                {
+                    return 0U;
+                }
+
+                const auto offered = data -> size() - data -> offset1();
+
+                const auto consumed = std::min< std::size_t >( 3U, offered );
+
+                m_received.append(
+                    reinterpret_cast< const char* >( data -> pv() ) + data -> offset1(),
+                    consumed
+                    );
+
+                return consumed;
+            }
+
+            virtual void onComplete() OVERRIDE
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                m_completeCalled = true;
+            }
+
+            void stopTaking()
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                m_isStopped = true;
+            }
+
+            bool completeCalled() const
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                return m_completeCalled;
+            }
+
+            auto received() const -> std::string
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                return m_received;
+            }
+        };
+
+        typedef bl::om::ObjectImpl< StopsTakingSinkT<> > StopsTakingSink;
+
+        /**
          * @brief What the real ConnectionPool asks for, answered with a connection the case holds
          *
          * The shape is the ALPN fallback's and not the h2 task's: the attempt carries a task the
@@ -1604,6 +1697,13 @@ UTF_AUTO_TEST_CASE( HttpClientRequestTask_InterimResponsesDoNotOverwriteTheStatu
  * connection rather than the stream, the difference is not cosmetic. The remainder is re-offered
  * before anything newer, which is what keeps the streamed body in order, and the case checks the
  * bytes came out in order rather than merely adding up
+ *
+ * AND THE LAST RE-OFFER IS THE CLOSE'S - S6R.3 H06. The four bytes outstanding when the stream
+ * ended used to be dropped, with the sink told onComplete( ) and the request reported a success;
+ * the close now drains them, so received( ) is the whole body. THE CREDIT ASSERTIONS DO NOT MOVE
+ * AND THAT IS THE POINT: applyClosed( ) sets m_isStreamClosed before any deferred action runs, so
+ * the drained tail credits nothing and consumedTotal( ) is still six. A change which moved that
+ * number would be crediting a closed stream, which is the defect this case exists for
  */
 
 UTF_AUTO_TEST_CASE( HttpClientRequestTask_StreamingSinkCreditsOnlyWhatItTookTests )
@@ -1665,7 +1765,7 @@ UTF_AUTO_TEST_CASE( HttpClientRequestTask_StreamingSinkCreditsOnlyWhatItTookTest
      * IN ORDER, and never a byte of the second block before the first block is done
      */
 
-    UTF_REQUIRE_EQUAL( sink -> received(), std::string( "abcdef" ) );
+    UTF_REQUIRE_EQUAL( sink -> received(), std::string( "abcdefghij" ) );
     UTF_REQUIRE( sink -> isComplete() );
 
     UTF_REQUIRE_EQUAL( connection -> consumedTotal(), 6U );
@@ -1676,6 +1776,116 @@ UTF_AUTO_TEST_CASE( HttpClientRequestTask_StreamingSinkCreditsOnlyWhatItTookTest
      */
 
     UTF_REQUIRE( ! taskImpl -> response().body() );
+}
+
+/**
+ * @brief S6R.3 H06's failure limb - a body the sink will not take is not a success
+ *
+ * THE OTHER HALF OF THE CASE ABOVE, AND THE ONE NOTHING COULD PRODUCE BEFORE. The drain re-offers
+ * at close until a whole pass moves nothing; a sink which takes three bytes a call empties the
+ * queue and succeeds, which is the case above. This one stops taking, so the pass moves nothing
+ * with five bytes still queued - and those five are bytes the caller will never see. A request
+ * which lost them is not a success, and saying so is the whole of H06
+ *
+ * IT IS ALSO THE PIN ON S6R.2's H07, which is why it is worth its green rather than merely
+ * passing. The verdict is reached in the DEFERRED phase, by which time answerOnClosed( ) has
+ * already run completeResponse( ) and set m_isCompletionPending; under the single guard failWith( )
+ * used to open with, this exception would have been discarded and the request reported a success.
+ * It is admitted by H07's second guard - a pending SUCCESS carries no m_completionException - so a
+ * lane which reverted H07 would see this case go red rather than see nothing
+ *
+ * AND THE SINK IS TOLD NOTHING. onComplete( ) means "the body is complete" ( ClientTypes.h ), and
+ * the body is not; the assertion that it never ran is what makes that a rule rather than a comment
+ */
+
+UTF_AUTO_TEST_CASE( HttpClientRequestTask_StreamingSinkWhichWillNotDrainFailsTheRequestTests )
+{
+    using namespace bl;
+    using namespace bl::httpclient;
+    using namespace utest::requesttask;
+
+    const auto connection = ProbeConnection::createInstance(
+        NegotiatedProtocol::withoutAlpn( HttpProtocol::Http11 ),
+        false /* isSubmitRefused */
+        );
+
+    const auto pool = ProbePool::createInstance(
+        om::qi< ClientConnection >( connection ),
+        true /* isAnswered */
+        );
+
+    const auto sink = StopsTakingSink::createInstance();
+
+    const auto taskImpl = HttpClientRequestTaskImpl::createInstance(
+        makeRequest(),
+        makeKey(),
+        om::qi< ConnectionPool >( pool ),
+        HttpClientRequestConfig(),
+        om::ObjPtrCopyable< BodySink >( om::qi< BodySink >( sink ) )
+        );
+
+    const auto task = om::qi< tasks::Task >( taskImpl );
+
+    runTask(
+        task,
+        [ & ]() -> void
+        {
+            connection -> waitFor( "submit" );
+
+            connection -> deliverHeaders( 200U, http::HeaderList(), false /* isInterim */ );
+
+            connection -> deliverData( "abcdefgh" );
+
+            /*
+             * THE RENDEZVOUS IS THE CREDIT, and it is what makes the stop deterministic: the first
+             * offer has taken its three bytes and reported them, so everything below happens after
+             * it and before the close's own drain
+             */
+
+            connection -> waitForConsumedTotal( 3U );
+
+            sink -> stopTaking();
+
+            connection -> deliverClosed();
+        }
+        );
+
+    requireTrue(
+        task -> isFailed(),
+        "a body the sink never took should have failed the request, and the task reports: " +
+            messageOf( task )
+        );
+
+    UTF_REQUIRE(
+        std::string::npos !=
+            messageOf( task ).find( "did not take 5 bytes" )
+        );
+
+    requireTrue(
+        ! sink -> completeCalled(),
+        "the sink was told the body was complete although five bytes never reached it"
+        );
+
+    UTF_REQUIRE_EQUAL( sink -> received(), std::string( "abc" ) );
+
+    /*
+     * AND NOTHING WAS CREDITED FOR WHAT WAS NOT TAKEN, which is the rule the case above pins,
+     * holding on the failure path too
+     */
+
+    UTF_REQUIRE_EQUAL( connection -> consumedTotal(), 3U );
+
+    /*
+     * THE SLOT STILL GOES BACK, AND AS Completed. The peer did speak and the stream did end
+     * cleanly - the truncation is between this task and the CALLER's sink, and is none of the
+     * connection's business. Same rule as the throwing-sink cases below, reached from the other
+     * direction
+     */
+
+    requireTrue( pool -> waitForRelease(), "the stream slot never came back" );
+
+    UTF_REQUIRE_EQUAL( pool -> releases().size(), 1U );
+    UTF_REQUIRE_EQUAL( pool -> releases()[ 0 ], std::string( "42:completed" ) );
 }
 
 /**
@@ -2936,14 +3146,24 @@ UTF_AUTO_TEST_CASE( HttpClientRequestTask_SinkWhichThrowsInTheCloseBatchFailsThe
         );
 
     /*
-     * The batch really did carry both: the sink was offered twice, and its onComplete( ) ran in
-     * the same deferred list - after the throw, because runDeferred( ) guards each action on its
-     * own rather than stopping at the first failure
+     * THE BATCH REALLY DID CARRY BOTH, and the count is THREE rather than two since S6R.3's H06:
+     * the close's own action is a DRAIN, so the block the second offer threw on is still queued
+     * and is offered once more before the drain gives up. A close arriving in a LATER batch would
+     * find m_isCompletionPending already set by the failure and would queue no drain at all - so
+     * this number discriminates the two arrangements, which is what the case is about, where
+     * "onComplete( ) ran" no longer can: it is not called on a body which did not arrive
+     *
+     * That runDeferred( ) guards each action on its own rather than stopping at the first failure
+     * is what the third offer shows, and is the property this assertion used to read off
+     * onComplete( )
      */
 
-    UTF_REQUIRE_EQUAL( sink -> offers(), 2U );
+    UTF_REQUIRE_EQUAL( sink -> offers(), 3U );
 
-    requireTrue( sink -> completeCalled(), "the sink's onComplete( ) never ran behind the throw" );
+    requireTrue(
+        ! sink -> completeCalled(),
+        "the sink was told the body was complete although it refused the block that was queued"
+        );
 
     requireTrue( pool -> waitForRelease(), "the stream slot never came back" );
 

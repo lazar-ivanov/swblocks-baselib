@@ -51,6 +51,13 @@
  * TU floor each. So the split produces two modules of about 45 and 42 MB, neither under the target
  * and 37 MB more in total. If this module does grow, that seam is where the cut goes
  *
+ * RE-MEASURED 48.8 MB clang debug (a64) at S6R.3's H06/H08, which added the two session-level
+ * BodySink cases - one needs the HttpServer and the other the peer of design 8.2, and this is the
+ * only module holding both, so the sibling a case of that shape would otherwise go to would have
+ * to instantiate one of them again. The figure is the whole object at that tip and NOT a delta:
+ * several change-sets landed between the 48.0 above and it, and what those two cases cost on their
+ * own was not isolated
+ *
  * The module is devenv7+ only: the devenv7_only marker next to this file is what keeps it out of
  * the build on devenv2-6 (projects/make/common.mk). Headers never test BL_DEVENV_VERSION; they
  * guard on the capability they need - BOOST_VERSION, OPENSSL_VERSION_NUMBER - with a clear #error

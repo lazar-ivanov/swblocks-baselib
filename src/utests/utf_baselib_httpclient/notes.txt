@@ -82,3 +82,6 @@
 
 # S6R.4 - the timeout message renders a URL without its userinfo, query or fragment (astra H20)
 --log_level=message --run_test=HttpClientRequestTask_TimeoutMessageRedactsTheUrlTests
+
+# S6R.3 H06 - the close drains the sink, and a sink which will not drain fails the request
+--log_level=message --run_test=HttpClientRequestTask_StreamingSinkWhichWillNotDrainFailsTheRequestTests

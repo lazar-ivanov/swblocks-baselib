@@ -316,6 +316,15 @@ namespace bl
             std::string                                                         m_responseBody;
             std::deque< om::ObjPtrCopyable< data::DataBlock > >                 m_pendingDownload;
 
+            /*
+             * HOW MANY RESPONSE BYTES THE CALLER'S SINK HAS ACTUALLY TAKEN, which is the one thing
+             * that decides whether another hop may reuse it - see sinkDelivered( ). Written in the
+             * deferred phase by offerToSink( ), exactly like m_pendingDownload and for the reason
+             * that function's comment gives
+             */
+
+            cpp::ScalarTypeIniter< std::size_t >                                m_sinkDelivered;
+
             cpp::ScalarTypeIniter< bool >                                       m_isFinalHeadersSeen;
             cpp::ScalarTypeIniter< bool >                                       m_isStreamClosed;
             cpp::ScalarTypeIniter< bool >                                       m_isRetryable;
@@ -945,11 +954,19 @@ namespace bl
              * A sink which consumes LESS than it was offered is applying backpressure, and the
              * remainder stays at the front of the queue to be offered again before anything newer
              * - which is what keeps a streamed body in order. Only what was actually consumed is
-             * credited, so a sink which takes nothing closes the stream window and the server
-             * stops sending. That is the design 5.3 chain working, not a stall to be worked around
+             * credited, and the same number is RETURNED, so that drainToSink( ) can tell a pass
+             * which moved something from one which did not without looking at the queue twice
+             *
+             * THE BACKPRESSURE IT PRODUCES IS HTTP/2's AND IS NOT HTTP/1.1's, which this comment
+             * used to state as though it held on both. Over h2 a sink which takes nothing closes
+             * the stream window and the server stops sending - the design 5.3 chain working, not a
+             * stall to be worked around. Over h1 there is no such chain: consumed( ) is a
+             * documented no-op ( Http1ConnectionTask.h - "HTTP/1.1 has no flow control window" )
+             * and the read is re-armed unconditionally, so the blocks accumulate in
+             * m_pendingDownload and the remainder is re-offered on every new chunk instead
              */
 
-            void offerToSink()
+            std::size_t offerToSink()
             {
                 std::size_t consumed = 0U;
 
@@ -984,10 +1001,78 @@ namespace bl
                  * the drain is serialized by the mailbox flag, so no second drain can be in here
                  */
 
+                m_sinkDelivered = m_sinkDelivered.value() + consumed;
+
                 if( 0U != consumed && m_connection && ! m_isStreamClosed )
                 {
                     m_connection -> consumed( m_handle, consumed );
                 }
+
+                return consumed;
+            }
+
+            /**
+             * @brief The LAST offer, and the verdict on whether the body arrived whole
+             *
+             * "THE REMAINDER IS OFFERED AGAIN" HAS A LAST AGAIN, AND THE STREAM CLOSING IS IT.
+             * offerToSink( ) breaks out of its own loop on a partial take, so one call does not
+             * drain a sink which takes less than a block; this calls it until a whole pass moves
+             * nothing, which is the only stopping rule that neither truncates a sink still taking
+             * bytes nor spins on one that has stopped
+             *
+             * THE VERDICT IS A THROW AND NOT A FLAG. What is left in the queue when progress stops
+             * is what the caller will never see, and a request which lost bytes is not a success -
+             * so the truncation goes out through the ONE channel the deferred phase already has:
+             * runDeferred( ) keeps it and applyEvents( ) hands it to failWith( ), whose second
+             * guard admits it precisely because a pending success carries no exception of its own
+             *
+             * AND onComplete( ) MEANS THE BODY ARRIVED. It is called here and nowhere else, only
+             * on the queue being empty, which is what makes ClientTypes.h's "the body is complete"
+             * true of every call rather than of some of them
+             *
+             * NOTHING HAS A DEADLINE OVER THIS PHASE, AND IT IS RECORDED RATHER THAN BOUNDED.
+             * applyClosed( ) calls cancelAllTimers( ) before the deferred phase, so the drain runs
+             * with the idle timer and the total timer already dead; and a streamed body is capped
+             * by nothing this library sets - N1 took the h1 cap off Http1ResponseLimits precisely
+             * because a codec cannot see whether a sink was installed, and h2 never had one. So a
+             * sink taking one byte a call makes one onData( ) call per byte of whatever arrived,
+             * in one uncancellable, undeadlined phase. It is NOT new work - it is the work the
+             * contract already implied, compressed into one phase with no deadline over it - and a
+             * bound is deliberately not taken, because any number would silently truncate a body
+             * which was about to be accepted, which is the defect this exists to close
+             */
+
+            void drainToSink()
+            {
+                while( ! m_pendingDownload.empty() )
+                {
+                    if( 0U == offerToSink() )
+                    {
+                        break;
+                    }
+                }
+
+                if( ! m_pendingDownload.empty() )
+                {
+                    std::size_t outstanding = 0U;
+
+                    for( std::size_t i = 0U; i < m_pendingDownload.size(); ++i )
+                    {
+                        const auto& block = m_pendingDownload[ i ];
+
+                        outstanding += block -> size() - block -> offset1();
+                    }
+
+                    BL_THROW(
+                        createException< UnexpectedException >( false /* isExpected */ ),
+                        BL_MSG()
+                            << "The HTTP response body sink did not take "
+                            << outstanding
+                            << " bytes which arrived before the stream closed"
+                        );
+                }
+
+                m_bodySink -> onComplete();
             }
 
             void applyBodyWanted(
@@ -1130,11 +1215,40 @@ namespace bl
 
                 m_outcome = outcomeOnClosed( event );
 
-                if( m_bodySink )
-                {
-                    const auto sink = m_bodySink;
+                /*
+                 * THE SINK IS TOLD SOMETHING ONLY WHEN THIS CLOSE IS THE ANSWER, and both halves
+                 * of that are load-bearing. The OUTCOME is why the ALPN bounce stops lying: it
+                 * closes the stream with connection_aborted and isRetryable, so the outcome is not
+                 * Completed, no terminal callback precedes the retry, and the sink which used to be
+                 * told onComplete( ) with zero bytes and then handed the whole body is not
+                 *
+                 * The COMPLETION FLAGS are answerOnClosed( )'s own first line, and the batch
+                 * [ Expired, Closed ] is why they are here too: a timeout applied by applyStopped( )
+                 * fails the request without touching m_outcome, so a clean close behind it in the
+                 * same batch still reads Completed - and the caller holding a TimeoutException
+                 * would have its sink told the body was complete
+                 *
+                 * SO A SINK GETS NO TERMINAL CALLBACK WHEN THE REQUEST FAILS, deliberately: the
+                 * caller learns of that from the TASK, and a callback which fired whatever happened
+                 * is onComplete( outcome ) - a change to a frozen contract, deferred in
+                 * notes/plans/issues/body-sink-terminal-callback-and-reset-deferral.md
+                 */
 
-                    deferred.push_back( [ sink ]() -> void { sink -> onComplete(); } );
+                if(
+                    m_bodySink &&
+                    RequestOutcome::Completed == m_outcome &&
+                    ! m_isCompletionPending &&
+                    ! m_isCompleted
+                    )
+                {
+                    const auto self = self_ref_t::acquireRef( this );
+
+                    deferred.push_back(
+                        [ self ]() -> void
+                        {
+                            const_cast< this_type* >( self.get() ) -> drainToSink();
+                        }
+                        );
                 }
 
                 releaseConnectionSlot( connection, deferred );
@@ -1874,6 +1988,29 @@ namespace bl
             RequestOutcome outcome() const NOEXCEPT
             {
                 return m_outcome;
+            }
+
+            /**
+             * @brief How many response bytes this hop's sink actually took
+             *
+             * WHAT IT IS FOR is the other half of the retry rule when a sink is installed: a
+             * BodySink cannot be rewound - ClientTypes.h has no such method and freezing it is a
+             * decision, not an oversight - so a hop which delivered bytes has spent the caller's
+             * sink, and a replay would APPEND a second copy of the body to the prefix it already
+             * holds. The session refuses the retry on exactly this value ( chkPrepareRetry( ) ),
+             * and what it would take to permit one instead is
+             * notes/plans/issues/body-sink-terminal-callback-and-reset-deferral.md
+             *
+             * WHERE IT IS SAFE TO READ, which is the same place isRetryable( ) and outcome( ) are:
+             * off a hop which has completed, from continuationTask( ), with no task lock. The last
+             * write is offerToSink( )'s in the deferred phase, and applyEvents( ) notifies ready
+             * only after that phase and after the locked section behind it, so the completion edge
+             * orders the write before any such read
+             */
+
+            std::size_t sinkDelivered() const NOEXCEPT
+            {
+                return m_sinkDelivered;
             }
         };
 

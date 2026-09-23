@@ -18,3 +18,7 @@
 --log_level=message --run_test=ClientSession_CrossSchemeRedirectIsRefusedTests
 --log_level=message --run_test=ClientSession_RequestBudgetIsChainedAcrossHopsTests
 --log_level=message --run_test=ClientSession_CookieMergeComparesNamesExactlyTests
+
+# S6R.3 H08 - what a chain of hops tells the caller's sink, and when a hop may not be replayed
+--log_level=message --run_test=ClientSession_SinkIsToldCompleteOnceAcrossTheFallbackRetryTests
+--log_level=message --run_test=ClientSession_RetryIsRefusedOnceTheSinkHasSeenBytesTests
