@@ -1593,3 +1593,239 @@ UTF_AUTO_TEST_CASE( Http1Codec_LocaleIndependenceTests )
         std::string( "Host=example.com;User-Agent=ProfileUA;Accept=*/*;Accept-Language=en;If-Modified-Since=0;" )
         );
 }
+
+/**
+ * @brief S6R.2 11a - a close before the first response octet is a FAILURE, not a success
+ *
+ * THE THIRD SHAPE OF AN END OF STREAM, and the one this parser used to get wrong on every
+ * platform. Beast's put_eof( ) special cases only the start_line and fields states and the two
+ * framing flags; a parser which has been handed NOTHING is in neither state and carries neither
+ * flag, so it fell through to "complete, with no error" - and a caller was then told a request
+ * had SUCCEEDED, with status 0 and no header block at all. In a debug build it never got that
+ * far: BOOST_ASSERT( got_some( ) ) took the process down instead
+ *
+ * THE INTERIM ARM IS NOT A VARIATION OF THE FIRST, it is what decides WHERE the check goes.
+ * fileInterimAndRestart( ) discards the backend and makes a new one, so after a 103 the PARSER
+ * has seen a whole message and the CURRENT BACKEND has seen nothing. A check that remembered
+ * whether this parser was ever fed would pass the first arm and fail this one
+ *
+ * The last two blocks are the controls, and neither is decoration: they are the two shapes that
+ * must keep the answers they had, and without them this case would pass just as well against a
+ * parser which refused every end of stream
+ */
+
+UTF_AUTO_TEST_CASE( Http1Codec_CloseBeforeAnyResponseOctetTests )
+{
+    using namespace bl;
+    using namespace utest::http1codec;
+
+    /*
+     * (1) Nothing at all arrived
+     */
+
+    {
+        httpclient::Http1ResponseParser parser;
+
+        eh::error_code ec;
+
+        parser.parseEof( ec );
+
+        UTF_REQUIRE( !! ec );
+        UTF_REQUIRE( ! parser.isComplete() );
+        UTF_REQUIRE( httpclient::Http1CodecError::NoResponse == parser.codecError() );
+
+        /*
+         * AND NO HEADER SECTION IS CLAIMED. This is the assertion that speaks for the caller: it
+         * is isHeaderComplete( ) that the HTTP/1.1 driver consults before delivering onHeaders( ),
+         * and Beast's is_header_done( ) is 'state_ > fields' - which 'complete' satisfied
+         */
+
+        UTF_REQUIRE( ! parser.isHeaderComplete() );
+        UTF_REQUIRE_EQUAL( parser.statusCode(), 0 );
+    }
+
+    /*
+     * (2) A 103 Early Hints and then nothing. The hint is still on record - it arrived and a
+     * caller may look at it - and the response is still a failure, because a response with no
+     * final status line is not a response
+     */
+
+    {
+        httpclient::Http1ResponseParser parser;
+
+        eh::error_code ec;
+
+        const std::string interim(
+            "HTTP/1.1 103 Early Hints\r\n"
+            "Link: </style.css>; rel=preload\r\n"
+            "\r\n"
+            );
+
+        const auto consumed = parser.parse( interim, ec );
+
+        UTF_REQUIRE( ! ec );
+        UTF_REQUIRE_EQUAL( consumed, interim.size() );
+        UTF_REQUIRE( ! parser.isComplete() );
+        UTF_REQUIRE_EQUAL( parser.interimResponses().size(), 1U );
+
+        parser.parseEof( ec );
+
+        UTF_REQUIRE( !! ec );
+        UTF_REQUIRE( ! parser.isComplete() );
+        UTF_REQUIRE( httpclient::Http1CodecError::NoResponse == parser.codecError() );
+        UTF_REQUIRE_EQUAL( parser.interimResponses().size(), 1U );
+    }
+
+    /*
+     * (3) CONTROL - a status line the peer had begun. One octet is one octet, so this is a
+     * TRUNCATED message and not an absent one, and it keeps the reason it always had. The two
+     * values exist so that a caller can tell these two apart
+     */
+
+    {
+        httpclient::Http1ResponseParser parser;
+
+        eh::error_code ec;
+
+        ( void ) parser.parse( std::string( "HTTP/1.1 200 OK\r\n" ), ec );
+
+        UTF_REQUIRE( ! ec );
+
+        parser.parseEof( ec );
+
+        UTF_REQUIRE( !! ec );
+        UTF_REQUIRE( ! parser.isComplete() );
+        UTF_REQUIRE( httpclient::Http1CodecError::NoResponse != parser.codecError() );
+        UTF_REQUIRE( httpclient::Http1CodecError::MalformedMessage == parser.codecError() );
+    }
+
+    /*
+     * (4) CONTROL - the close which COMPLETES a message, which is what parseEof( ) is for and
+     * what the refusal above must not have cost. A read-until-close body ends exactly here
+     */
+
+    {
+        httpclient::Http1ResponseParser parser;
+
+        const auto outcome = feed(
+            parser,
+            "HTTP/1.1 200 OK\r\nX-A: b\r\n\r\nbody-to-the-close",
+            true /* eofAfter */
+            );
+
+        UTF_REQUIRE( ! outcome.hasError );
+        UTF_REQUIRE( parser.isComplete() );
+        UTF_CHECK_EQUAL( parser.body(), std::string( "body-to-the-close" ) );
+    }
+}
+
+/**
+ * @brief S6R.2 N1 - the codec caps no body by default, because it cannot see who is buffering
+ *
+ * THE CAP WAS APPLIED ONE LAYER TOO LOW. This parser is handed maxBodySize for EVERY response,
+ * because a driver knows nothing about whether the caller installed a BodySink - the sink is a
+ * constructor parameter of the request task and never reaches a driver at all. So a STREAMED
+ * download above 64 MB failed on HTTP/1.1 and succeeded on HTTP/2, which has no equivalent cap,
+ * although the design's own limits table scopes its 64 MB to "Response body, buffered mode". The
+ * cap that belongs to the buffered case still exists one layer up, with the same number and the
+ * same design citation: HttpClientRequestConfig::maxResponseBodySize
+ *
+ * THE BODY IS STREAMED THROUGH A CALLBACK AND NEVER ACCUMULATED, which is both what the driver
+ * does and what keeps this case's own memory at one megabyte while it proves something about
+ * sixty-eight
+ */
+
+UTF_AUTO_TEST_CASE( Http1Codec_BodyIsUncappedByDefaultTests )
+{
+    using namespace bl;
+    using namespace utest::http1codec;
+
+    enum : std::size_t
+    {
+        CHUNK_SIZE      = 1024U * 1024U,
+        CHUNK_COUNT     = 68U,
+    };
+
+    /*
+     * (1) The default itself, stated as a value rather than inferred from behaviour
+     */
+
+    UTF_CHECK(
+        httpclient::Http1ResponseLimits().maxBodySize.value() ==
+            static_cast< std::uint64_t >( httpclient::Http1ResponseLimits::NO_MAX_BODY_SIZE )
+        );
+
+    const std::string chunk( static_cast< std::size_t >( CHUNK_SIZE ), 'x' );
+
+    /*
+     * (2) Sixty-eight megabytes of a close-delimited body through a default parser. The old
+     * default refused at sixty-four
+     */
+
+    {
+        httpclient::Http1ResponseParser parser;
+
+        std::uint64_t delivered = 0U;
+
+        parser.bodyCallback(
+            [ &delivered ](
+                SAA_in      const char*                                         data,
+                SAA_in      const std::size_t                                   size
+                ) -> std::size_t
+            {
+                BL_UNUSED( data );
+
+                delivered += size;
+
+                return size;
+            }
+            );
+
+        eh::error_code ec;
+
+        ( void ) parser.parse( std::string( "HTTP/1.1 200 OK\r\nX-A: b\r\n\r\n" ), ec );
+
+        UTF_REQUIRE( ! ec );
+
+        for( std::size_t i = 0U; i < static_cast< std::size_t >( CHUNK_COUNT ); ++i )
+        {
+            const auto consumed = parser.parse( chunk, ec );
+
+            UTF_REQUIRE( ! ec );
+            UTF_REQUIRE_EQUAL( consumed, chunk.size() );
+        }
+
+        parser.parseEof( ec );
+
+        UTF_REQUIRE( ! ec );
+        UTF_REQUIRE( parser.isComplete() );
+
+        UTF_REQUIRE_EQUAL(
+            delivered,
+            static_cast< std::uint64_t >( CHUNK_SIZE ) * static_cast< std::uint64_t >( CHUNK_COUNT )
+            );
+    }
+
+    /*
+     * (3) CONTROL - the knob survives, which is the whole difference between removing a cap and
+     * removing the ability to have one. A session which wants an HTTP/1.1 transfer bounded still
+     * sets it and still gets BodyTooLarge
+     */
+
+    {
+        httpclient::Http1ResponseLimits limits;
+
+        limits.maxBodySize = 8U;
+
+        httpclient::Http1ResponseParser parser( limits );
+
+        const auto outcome = feed(
+            parser,
+            "HTTP/1.1 200 OK\r\nContent-Length: 40\r\n\r\n0123456789012345678901234567890123456789",
+            true /* eofAfter */
+            );
+
+        UTF_REQUIRE( outcome.hasError );
+        UTF_REQUIRE( httpclient::Http1CodecError::BodyTooLarge == parser.codecError() );
+    }
+}

@@ -73,3 +73,8 @@
 # establishment cause a bounced request used to lose (review finding 4b)
 --log_level=message --run_test=HttpClientRequestTask_ConnectionLostUnderTheStreamIsReportedUnusableTests
 --log_level=message --run_test=HttpClientRequestTask_BouncedRequestNamesTheConnectionFailureTests
+
+--log_level=message --run_test=Http1Codec_CloseBeforeAnyResponseOctetTests
+--log_level=message --run_test=Http1Codec_BodyIsUncappedByDefaultTests
+--log_level=message --run_test=HttpClientRequestTask_SinkWhichThrowsOnCompleteFailsTheRequestTests
+--log_level=message --run_test=HttpClientRequestTask_SinkWhichThrowsInTheCloseBatchFailsTheRequestTests

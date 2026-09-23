@@ -221,7 +221,42 @@ namespace bl
 
             enum : std::uint64_t
             {
+                /**
+                 * @brief NOT a default any more - the value a caller may still ask for
+                 *
+                 * N1. This cap used to be the constructor's default and it was applied ONE LAYER
+                 * TOO LOW. The codec is handed it for EVERY response, because a driver knows
+                 * nothing about whether the caller installed a BodySink - the sink is a
+                 * constructor parameter of the request task and never reaches a driver at all.
+                 * So a STREAMED download above 64 MB failed on HTTP/1.1 and succeeded on HTTP/2,
+                 * which has no equivalent cap, although the design's own limits table scopes its
+                 * 64 MB to "Response body, buffered mode"
+                 *
+                 * THE CAP ALREADY EXISTS AT THE LAYER THAT KNOWS, with the same number and the
+                 * same design citation: HttpClientRequestConfig::maxResponseBodySize, whose
+                 * comment names design 4.6 and SimpleHttpTask.h:83 exactly as this one did. The
+                 * buffered path is therefore capped at 64 MB exactly as before and the streamed
+                 * path is uncapped, which is what HTTP/2 already does
+                 *
+                 * WHAT THAT REMOVES IS A BOUND ON THE TRANSFER, NOT ON MEMORY. Buffered memory is
+                 * still bounded by the request task's cap; streamed memory never was bounded by
+                 * this one, since the driver hands each chunk on and clears it. A streamed h1
+                 * transfer is now bounded by the request's total timeout alone - and NOT by
+                 * backpressure, because this driver's consumed( ) is deliberately a no-op
+                 */
+
                 DEFAULT_MAX_BODY_SIZE               = 1ULL << 26,
+
+                /**
+                 * @brief What the constructor sets: no limit
+                 *
+                 * The maximum of the type rather than a zero sentinel or a boost::none, because
+                 * Beast's own check is 'n > *body_limit_' and the maximum never trips it - so the
+                 * value travels through unchanged, there is no second branch to get wrong, and
+                 * zero stays a value a caller could legitimately mean
+                 */
+
+                NO_MAX_BODY_SIZE                    = ~static_cast< std::uint64_t >( 0U ),
             };
 
             cpp::ScalarTypeIniter< std::uint32_t >                              maxHeadersSize;
@@ -230,7 +265,7 @@ namespace bl
             Http1ResponseLimits() NOEXCEPT
             {
                 maxHeadersSize = DEFAULT_MAX_HEADERS_SIZE;
-                maxBodySize = DEFAULT_MAX_BODY_SIZE;
+                maxBodySize = NO_MAX_BODY_SIZE;
             }
         };
 
