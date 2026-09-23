@@ -4641,4 +4641,266 @@ UTF_AUTO_TEST_CASE( Session_PeerPrefaceMustBeSettingsTests )
     }
 }
 
+/**
+ * @brief H10 - where a SETTINGS acknowledgement of ours goes among the header blocks
+ *
+ * A HEADER BLOCK IS COMMITTED TO BYTES WHEN IT IS QUEUED, so the acknowledgement of a SETTINGS
+ * which arrived after it must not overtake it.
+ *
+ * queueHeaderBlock( ) HPACK-encodes the block and sizes its fragments against the peer's
+ * SETTINGS_MAX_FRAME_SIZE as it reads at that instant. produce( ) writes the control queue first,
+ * so a block sitting in the queue while a write was in flight used to be written AFTER the ack of
+ * a SETTINGS it predates - past the boundary RFC 9113 6.5.3 draws, "the sender of the altered
+ * settings can rely on the values from the oldest unacknowledged SETTINGS frame having been
+ * applied"
+ *
+ * The engine is a pure function of feed( ) and produce( ) and has no write pump, so the driver's
+ * write-in-flight window needs nothing here: "queued and not yet produced" is simply "submitted
+ * without an intervening produce( )"
+ *
+ * THREE CASES AND NOT ONE BLOCK, so that each half fails on its own rather than behind the first
+ * REQUIRE the other tripped. The third is a control which is green on both sides of this change,
+ * and is named at the other two because it is what makes them a POSITION for the ack rather than
+ * a deferral of it
+ */
+
+UTF_AUTO_TEST_CASE( Session_StaleHeaderBlockPrecedesTheSettingsAckTests )
+{
+    using namespace bl;
+    using namespace bl::http2;
+    using namespace utest::session;
+
+    const auto now = baseTime();
+
+    /*
+     * THE HPACK HALF. A reduction of SETTINGS_HEADER_TABLE_SIZE arms 4.3.1 - "an endpoint MUST
+     * treat a field block that follows an acknowledgment of the reduction to the maximum dynamic
+     * table size as a connection error of type COMPRESSION_ERROR if it does not start with a
+     * conformant Dynamic Table Size Update". The queued block carries no such update, because
+     * setDynamicTableCapacity( ) only arms one and the block was already encoded
+     */
+
+    {
+        Session session( StreamRole::Client, now );
+
+        settle( session, now );
+
+        /*
+         * One request is produced first, so the encoder's dynamic table is NOT EMPTY when the
+         * reduction arrives - which is what arms the MUST, and the reason this step is not
+         * decoration. The second block below is visibly shorter for it, which is the pin that the
+         * table really did fill
+         */
+
+        ( void ) session.submitRequest( makeRequest() );
+
+        const auto firstLengths = frameLengths( produceText( session, now ) );
+
+        UTF_REQUIRE_EQUAL( firstLengths.size(), 1U );
+
+        /*
+         * The second is submitted with no produce( ) after it, so its block is encoded under the
+         * table size as it then stands and is left in the queue
+         */
+
+        ( void ) session.submitRequest( makeRequest() );
+
+        feedText(
+            session,
+            settingsFrame(
+                std::vector< Http2Setting >(
+                    1U,
+                    setting( Globals::SETTINGS_HEADER_TABLE_SIZE, 0U )
+                    )
+                ),
+            now
+            );
+
+        const auto out = produceText( session, now );
+        const auto types = frameTypes( out );
+        const auto lengths = frameLengths( out );
+
+        UTF_REQUIRE_EQUAL( types.size(), 2U );
+
+        UTF_REQUIRE_EQUAL( types[ 0 ], Globals::FRAME_TYPE_HEADERS );
+        UTF_REQUIRE_EQUAL( types[ 1 ], Globals::FRAME_TYPE_SETTINGS );
+
+        UTF_REQUIRE( lengths[ 0 ] < firstLengths[ 0 ] );
+
+        /*
+         * AND THE SUBSTANCE, NOT ONLY THE ORDER. Order is what 6.5.3 settles; the update is what
+         * 4.3.1 demands, and a case pinning only the first would go green on a mechanism which got
+         * the second wrong. The stale block opens with no size update - which is exactly why it
+         * must go ahead of the acknowledgement rather than behind it
+         */
+
+        UTF_REQUIRE( ! headerBlockOpensWithSizeUpdate( out ) );
+
+        /*
+         * ... and the first block encoded after it does open with one, which is 4.3.1 satisfied
+         * for everything that follows the ack
+         */
+
+        ( void ) session.submitRequest( makeRequest() );
+
+        UTF_REQUIRE( headerBlockOpensWithSizeUpdate( produceText( session, now ) ) );
+    }
+}
+
+UTF_AUTO_TEST_CASE( Session_StaleFragmentSizePrecedesTheSettingsAckTests )
+{
+    using namespace bl;
+    using namespace bl::http2;
+    using namespace utest::session;
+
+    const auto now = baseTime();
+
+    /*
+     * THE MAX_FRAME_SIZE HALF, reachable only for a reduction from above 16384 - a smaller value
+     * is refused outright by applyPeerSettings( ). RFC 9113 4.2: "an endpoint MUST send an error
+     * code of FRAME_SIZE_ERROR if a frame exceeds the size defined in SETTINGS_MAX_FRAME_SIZE"
+     */
+
+    {
+        Session session( StreamRole::Client, now );
+
+        settle(
+            session,
+            now,
+            std::vector< Http2Setting >(
+                1U,
+                setting( Globals::SETTINGS_MAX_FRAME_SIZE, 32768U )
+                )
+            );
+
+        UTF_REQUIRE_EQUAL( session.peerMaxFrameSize(), 32768U );
+
+        auto request = makeRequest();
+
+        request.headers.append( "x-large", std::string( 100000U, 'h' ) );
+
+        ( void ) session.submitRequest( request );
+
+        feedText(
+            session,
+            settingsFrame(
+                std::vector< Http2Setting >(
+                    1U,
+                    setting( Globals::SETTINGS_MAX_FRAME_SIZE, 16384U )
+                    )
+                ),
+            now
+            );
+
+        UTF_REQUIRE_EQUAL(
+            session.peerMaxFrameSize(),
+            static_cast< std::uint32_t >( Globals::MAX_FRAME_SIZE_DEFAULT )
+            );
+
+        const auto out = produceText( session, now );
+        const auto types = frameTypes( out );
+        const auto lengths = frameLengths( out );
+
+        UTF_REQUIRE( types.size() >= 3U );
+
+        UTF_REQUIRE_EQUAL( types[ 0 ], Globals::FRAME_TYPE_HEADERS );
+
+        /*
+         * Sized to the limit the peer could still rely on when the block was framed, and over the
+         * one it may rely on from our acknowledgement onwards - which is the whole hazard
+         */
+
+        UTF_REQUIRE_EQUAL( lengths[ 0 ], 32768U );
+
+        /*
+         * The block is still ONE unit and the acknowledgement is behind the whole of it, not
+         * between its pieces - which now has to be said, because the ack shares the queue the
+         * block's atomicity comes from
+         */
+
+        UTF_REQUIRE_EQUAL( types[ types.size() - 1U ], Globals::FRAME_TYPE_SETTINGS );
+        UTF_REQUIRE_EQUAL( countFrames( out, Globals::FRAME_TYPE_SETTINGS ), 1U );
+
+        for( std::size_t i = 1U; i + 1U < types.size(); ++i )
+        {
+            UTF_REQUIRE_EQUAL( types[ i ], Globals::FRAME_TYPE_CONTINUATION );
+        }
+    }
+}
+
+UTF_AUTO_TEST_CASE( Session_SettingsAckPrecedesABlockEncodedAfterItTests )
+{
+    using namespace bl;
+    using namespace bl::http2;
+    using namespace utest::session;
+
+    const auto now = baseTime();
+
+    /*
+     * THE CONTROL WHICH SEPARATES THE TWO MECHANISMS, and it is the reason the acknowledgement
+     * holds a POSITION among the header blocks rather than being appended after the queue. A block
+     * encoded AFTER the SETTINGS is sized to the new limit and, when the capacity moved, opens
+     * with the size update - and 4.3.1 says that change "takes effect when the endpoint
+     * acknowledges settings", so an update to a LARGER table ahead of our ack is a
+     * COMPRESSION_ERROR to a decoder which bounds the update by the setting it has applied.
+     *
+     * Green before this change and green after it; RED for any mechanism which defers the ack past
+     * the whole queue rather than past the blocks which predate it. That is why it is here: it is
+     * the pin which stops the next reader from re-deriving the second buffer
+     *
+     * Nor is the block after the SETTINGS a corner: the driver's onRead( ) runs applyCommands( )
+     * between feed( ) and pumpWrites( ), so a submit waiting in the mailbox when a SETTINGS
+     * arrives is encoded under the new values before anything is produced, with no write in flight
+     */
+
+    {
+        Http2Profile profile;
+
+        profile.hpackEncoderTableSize = 65536U;
+
+        Session session( StreamRole::Client, now, profile );
+
+        settle( session, now );
+
+        feedText(
+            session,
+            settingsFrame(
+                std::vector< Http2Setting >(
+                    1U,
+                    setting( Globals::SETTINGS_HEADER_TABLE_SIZE, 16384U )
+                    )
+                ),
+            now
+            );
+
+        /*
+         * Submitted AFTER the SETTINGS - and nothing was produced in between, which is what makes
+         * this the mirror of Session_StaleHeaderBlockPrecedesTheSettingsAckTests rather than a
+         * different situation
+         */
+
+        ( void ) session.submitRequest( makeRequest() );
+
+        const auto out = produceText( session, now );
+        const auto types = frameTypes( out );
+
+        UTF_REQUIRE_EQUAL( types.size(), 2U );
+
+        UTF_REQUIRE_EQUAL( types[ 0 ], Globals::FRAME_TYPE_SETTINGS );
+        UTF_REQUIRE_EQUAL( types[ 1 ], Globals::FRAME_TYPE_HEADERS );
+
+        /*
+         * And it is the raise itself that is behind the acknowledgement: this block opens with the
+         * update H12 deferred to exactly here
+         */
+
+        UTF_REQUIRE( headerBlockOpensWithSizeUpdate( out ) );
+
+        UTF_REQUIRE_EQUAL(
+            session.hpackEncoderTableCapacity(),
+            static_cast< std::size_t >( 16384 )
+            );
+    }
+}
+
 #endif /* __UTEST_TESTSESSION_H_ */
