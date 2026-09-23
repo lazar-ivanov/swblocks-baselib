@@ -127,6 +127,45 @@ replayable request dispatched and given back with `RequestOutcome::Completed`, t
 Subject to the size rule in `src/utests/AGENTS.md`: `utf_baselib_h2client4`, or a numbered sibling if
 it is near the target.
 
+### Corrected by the implementing lane, 2026-09-23 — two of the three cases do not work as written
+
+The bound is unchanged; what follows is the test section only, and both corrections were settled by
+a run rather than argued. The paragraph above is kept as written, because the reason it was wrong is
+the instructive part.
+
+1. **The counts assume two waiters queued behind one placeholder, and this shape cannot produce
+   that.** `acquire( )` calls `examineAll( )` under the lock and `runActions( )` after it, both
+   synchronously, and an entry born terminal is retired inside `startConnection( )`'s own examine —
+   so the whole bounded chain runs to its end, and the waiter is answered, **before the first
+   `acquire( )` returns**. A second `acquire( )` therefore starts its own chain: two waiters give
+   six factory calls and `establishmentRetries == 6`, not three. The sibling this section borrowed
+   the shape from gets three because its failure is asynchronous —
+   `StubControl::onScheduled( )` POSTS the failure
+   (`TestConnectionPool.h:155`), which leaves the placeholder standing long enough for the second
+   waiter to queue behind it.
+
+   The case landed with **one** unreplayable waiter, where the count of factory calls is the bound
+   itself: `maxRetriesPerRequest + 1` levels, `failures == 1`, `establishmentRetries == 3`,
+   `dispatched == 0`. Both states of the arm are driven in one case, `Closed` and `Draining`.
+
+2. **The control as written pins nothing.** With `initialState = Ready` the pool records `isReady`
+   at the first examine, so the FIRST witness already spares the retire and the case is green with
+   or without the second. To reach the retire with `isReady` false and `isPeerLimitKnown` true the
+   connection must stay `Connecting` throughout and the request must ride the preface — which is
+   also the only shape in which the two witnesses disagree in production. The control landed that
+   way, and was shown red against a gate carrying `! isReady` alone: the second request to a
+   one-request-per-connection origin is answered with an exception. That is the second witness
+   earned rather than asserted.
+
+3. **A third case landed that this section did not ask for**, because the section's only case needs
+   a stub to reach the arm and the live half does not: a connection which is `Connecting` when the
+   pool looks and `Draining` when it looks next has never been seen `Ready`, which is the
+   GOAWAY-at-birth origin exactly. Its red is an assertion rather than a crash — unfixed, the waiter
+   is never answered at all.
+
+The SIGSEGV red is as this section predicted, recorded with a `gdb` backtrace of
+`startConnection( ) :1942 -> runActions( ) :1860` repeating to the guard page.
+
 ## Its own change-set, before H04a's
 
 A core-path change to the pool's retry accounting; it gates on the whole suite. It is sequenced
