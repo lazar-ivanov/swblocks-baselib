@@ -996,6 +996,219 @@ namespace utest
         typedef bl::om::ObjectImpl< ThrowingBodySourceT<> > ThrowingBodySource;
 
         /**
+         * @brief A caller's BodySink whose onComplete( ) throws - S6R.2 H07
+         *
+         * THE CALLER'S OWN CODE IS WHAT RUNS IN THE DEFERRED PHASE, so one of these throwing is
+         * something that happens rather than something that cannot. This one throws at the very
+         * last event of the stream, which is the point of it: applyClosed( ) queues onComplete( )
+         * and then answers the caller, so the throw arrives after a success is already PENDING
+         */
+
+        template
+        <
+            typename E = void
+        >
+        class CompletionThrowingSinkT : public bl::httpclient::BodySink
+        {
+            BL_DECLARE_OBJECT_IMPL_ONEIFACE( CompletionThrowingSinkT, bl::httpclient::BodySink )
+
+        protected:
+
+            mutable bl::os::mutex                                               m_lock;
+
+            std::string                                                         m_received;
+            bool                                                                m_completeCalled;
+
+            CompletionThrowingSinkT() NOEXCEPT
+                :
+                m_completeCalled( false )
+            {
+            }
+
+        public:
+
+            virtual std::size_t onData( SAA_in const bl::om::ObjPtr< bl::data::DataBlock >& data ) OVERRIDE
+            {
+                const auto size = data -> size() - data -> offset1();
+
+                {
+                    BL_MUTEX_GUARD( m_lock );
+
+                    m_received.append(
+                        reinterpret_cast< const char* >( data -> pv() ) + data -> offset1(),
+                        size
+                        );
+                }
+
+                return size;
+            }
+
+            virtual void onComplete() OVERRIDE
+            {
+                {
+                    BL_MUTEX_GUARD( m_lock );
+
+                    m_completeCalled = true;
+                }
+
+                BL_THROW(
+                    bl::UnexpectedException(),
+                    BL_MSG()
+                        << "The body sink could not finish the response"
+                    );
+            }
+
+            bool completeCalled() const
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                return m_completeCalled;
+            }
+
+            auto received() const -> std::string
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                return m_received;
+            }
+        };
+
+        typedef bl::om::ObjectImpl< CompletionThrowingSinkT<> > CompletionThrowingSink;
+
+        /**
+         * @brief A caller's BodySink which throws from onData( ), in the SAME drain batch as the
+         * close - S6R.2 H07's second shape
+         *
+         * THE BATCH IS ARRANGED AND NOT HOPED FOR. A throw from an earlier batch is already
+         * answered correctly today, because no completion is pending yet; what H07 is about is a
+         * throw which arrives once one IS. So this sink BLOCKS inside its first offer, which runs
+         * in the deferred phase off the task lock, while the case posts the second data event and
+         * the close behind it - post( ) takes only the mailbox lock, so neither is held up. The
+         * drain then takes both as one batch, defers [ offerToSink, onComplete ], and the throw
+         * from the second offer lands with the success already pending.
+         *
+         * A sleep in place of this rendezvous would be the flake src/utests/AGENTS.md names, and
+         * an unsynchronized pair of deliveries would be green about as often as it was red
+         */
+
+        template
+        <
+            typename E = void
+        >
+        class BatchThrowingSinkT : public bl::httpclient::BodySink
+        {
+            BL_DECLARE_OBJECT_IMPL_ONEIFACE( BatchThrowingSinkT, bl::httpclient::BodySink )
+
+        protected:
+
+            mutable bl::os::mutex                                               m_lock;
+            mutable bl::os::condition_variable                                  m_cv;
+
+            std::size_t                                                         m_offers;
+            bool                                                                m_released;
+            bool                                                                m_completeCalled;
+
+            BatchThrowingSinkT() NOEXCEPT
+                :
+                m_offers( 0U ),
+                m_released( false ),
+                m_completeCalled( false )
+            {
+            }
+
+        public:
+
+            virtual std::size_t onData( SAA_in const bl::om::ObjPtr< bl::data::DataBlock >& data ) OVERRIDE
+            {
+                const auto size = data -> size() - data -> offset1();
+
+                {
+                    bl::os::mutex_unique_lock guard( m_lock );
+
+                    ++m_offers;
+
+                    m_cv.notify_all();
+
+                    if( 1U == m_offers )
+                    {
+                        ( void ) m_cv.wait_for(
+                            guard,
+                            bl::os::chrono::milliseconds( 30000 ),
+                            [ this ]() -> bool
+                            {
+                                return m_released;
+                            }
+                            );
+
+                        return size;
+                    }
+                }
+
+                BL_THROW(
+                    bl::UnexpectedException(),
+                    BL_MSG()
+                        << "The body sink refused a block of the response"
+                    );
+            }
+
+            virtual void onComplete() OVERRIDE
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                m_completeCalled = true;
+            }
+
+            /**
+             * @brief Blocks until the first offer is INSIDE the sink, which is what makes
+             * everything posted after this call land in a later batch
+             */
+
+            bool waitForFirstOffer() const
+            {
+                bl::os::mutex_unique_lock guard( m_lock );
+
+                return m_cv.wait_for(
+                    guard,
+                    bl::os::chrono::milliseconds( 30000 ),
+                    [ this ]() -> bool
+                    {
+                        return m_offers >= 1U;
+                    }
+                    );
+            }
+
+            /**
+             * @brief Lets the held first offer return - NOT called release( ), which is
+             * om::Object's own reference count and which an override here would shadow
+             */
+
+            void letFirstOfferReturn()
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                m_released = true;
+
+                m_cv.notify_all();
+            }
+
+            std::size_t offers() const
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                return m_offers;
+            }
+
+            bool completeCalled() const
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                return m_completeCalled;
+            }
+        };
+
+        typedef bl::om::ObjectImpl< BatchThrowingSinkT<> > BatchThrowingSink;
+
+        /**
          * @brief What the real ConnectionPool asks for, answered with a connection the case holds
          *
          * The shape is the ALPN fallback's and not the h2 task's: the attempt carries a task the
@@ -2461,3 +2674,184 @@ UTF_AUTO_TEST_CASE( HttpClientRequestTask_BouncedRequestNamesTheConnectionFailur
 }
 
 #endif /* __UTEST_TESTHTTPCLIENTREQUESTTASK_H_ */
+
+/**
+ * @brief S6R.2 H07 - a throwing terminal sink callback must not become a success
+ *
+ * THE ORDER IS WHAT MAKES THIS REACHABLE AT ALL. applyClosed( ) queues the caller's
+ * onComplete( ) onto the deferred list and then calls answerOnClosed( ), which completes the
+ * response and sets m_isCompletionPending. applyEvents( ) runs the deferred list afterwards and
+ * keeps the first exception - and then handed it to failWith( ), which returned at once on
+ * "m_isCompleted || m_isCompletionPending". The pending success published, the caller was told
+ * the request had SUCCEEDED, and the exception was DISCARDED.
+ *
+ * The comments in that file already promised the opposite - "the FIRST failure is what the
+ * request is failed with". What was missing is that a pending SUCCESS is not a failure and must
+ * not outrank one: published wins over everything, an earlier failure wins over a later one, and
+ * a pending success loses to any failure.
+ *
+ * THE SLOT STILL GOES BACK, AND AS Completed. The peer did speak and the stream did end, so the
+ * connection stays poolable - the caller's sink throwing is the CALLER's problem and not the
+ * connection's. That assertion is what a lane fixing this by reordering applyClosed( ) would
+ * break, which is why it is here rather than left implied
+ */
+
+UTF_AUTO_TEST_CASE( HttpClientRequestTask_SinkWhichThrowsOnCompleteFailsTheRequestTests )
+{
+    using namespace bl;
+    using namespace bl::httpclient;
+    using namespace utest::requesttask;
+
+    const auto connection = ProbeConnection::createInstance(
+        NegotiatedProtocol::fromAlpn( "h2" ),
+        false /* isSubmitRefused */
+        );
+
+    const auto pool = ProbePool::createInstance(
+        om::qi< ClientConnection >( connection ),
+        true /* isAnswered */
+        );
+
+    const auto sink = CompletionThrowingSink::createInstance();
+
+    const auto taskImpl = HttpClientRequestTaskImpl::createInstance(
+        makeRequest(),
+        makeKey(),
+        om::qi< ConnectionPool >( pool ),
+        HttpClientRequestConfig(),
+        om::ObjPtrCopyable< BodySink >( om::qi< BodySink >( sink ) )
+        );
+
+    const auto task = om::qi< tasks::Task >( taskImpl );
+
+    runTask(
+        task,
+        [ & ]() -> void
+        {
+            connection -> waitFor( "submit" );
+
+            connection -> deliverHeaders( 200U, http::HeaderList(), false /* isInterim */ );
+
+            connection -> deliverData( "hello" );
+
+            connection -> waitForConsumedTotal( 5U );
+
+            connection -> deliverClosed();
+        }
+        );
+
+    requireTrue(
+        task -> isFailed(),
+        "a sink which threw out of onComplete( ) should have failed the request, and the task "
+            "reports: " + messageOf( task )
+        );
+
+    /*
+     * AND IT IS THE SINK'S OWN EXCEPTION, not a substitute. A fix which failed the request with
+     * something of its own would pass the assertion above and lose the diagnosis
+     */
+
+    UTF_REQUIRE(
+        std::string::npos !=
+            messageOf( task ).find( "The body sink could not finish the response" )
+        );
+
+    requireTrue( sink -> completeCalled(), "the sink's onComplete( ) was never called" );
+
+    UTF_REQUIRE_EQUAL( sink -> received(), std::string( "hello" ) );
+
+    requireTrue( pool -> waitForRelease(), "the stream slot never came back" );
+
+    UTF_REQUIRE_EQUAL( pool -> releases().size(), 1U );
+    UTF_REQUIRE_EQUAL( pool -> releases()[ 0 ], std::string( "42:completed" ) );
+}
+
+/**
+ * @brief H07's second shape - the throw arrives from a DATA event in the close's own batch
+ *
+ * Same defect, reached the other way: the deferred list of one batch is [ offerToSink,
+ * onComplete ], runDeferred( ) keeps the FIRST exception, and the completion answerOnClosed( )
+ * left pending was published over it. The batch is arranged by the sink itself - see
+ * BatchThrowingSinkT - so this case is deterministic rather than a race with the drain thread
+ */
+
+UTF_AUTO_TEST_CASE( HttpClientRequestTask_SinkWhichThrowsInTheCloseBatchFailsTheRequestTests )
+{
+    using namespace bl;
+    using namespace bl::httpclient;
+    using namespace utest::requesttask;
+
+    const auto connection = ProbeConnection::createInstance(
+        NegotiatedProtocol::withoutAlpn( HttpProtocol::Http11 ),
+        false /* isSubmitRefused */
+        );
+
+    const auto pool = ProbePool::createInstance(
+        om::qi< ClientConnection >( connection ),
+        true /* isAnswered */
+        );
+
+    const auto sink = BatchThrowingSink::createInstance();
+
+    const auto taskImpl = HttpClientRequestTaskImpl::createInstance(
+        makeRequest(),
+        makeKey(),
+        om::qi< ConnectionPool >( pool ),
+        HttpClientRequestConfig(),
+        om::ObjPtrCopyable< BodySink >( om::qi< BodySink >( sink ) )
+        );
+
+    const auto task = om::qi< tasks::Task >( taskImpl );
+
+    runTask(
+        task,
+        [ & ]() -> void
+        {
+            connection -> waitFor( "submit" );
+
+            connection -> deliverHeaders( 200U, http::HeaderList(), false /* isInterim */ );
+
+            connection -> deliverData( "first" );
+
+            /*
+             * The drain is now INSIDE the sink's first offer, in the deferred phase and off the
+             * task lock. Everything posted from here lands in the mailbox the next turn of the
+             * drain loop takes as ONE batch
+             */
+
+            requireTrue( sink -> waitForFirstOffer(), "the sink was never offered the first block" );
+
+            connection -> deliverData( "second" );
+
+            connection -> deliverClosed();
+
+            sink -> letFirstOfferReturn();
+        }
+        );
+
+    requireTrue(
+        task -> isFailed(),
+        "a sink which threw in the close's own batch should have failed the request, and the task "
+            "reports: " + messageOf( task )
+        );
+
+    UTF_REQUIRE(
+        std::string::npos !=
+            messageOf( task ).find( "The body sink refused a block of the response" )
+        );
+
+    /*
+     * The batch really did carry both: the sink was offered twice, and its onComplete( ) ran in
+     * the same deferred list - after the throw, because runDeferred( ) guards each action on its
+     * own rather than stopping at the first failure
+     */
+
+    UTF_REQUIRE_EQUAL( sink -> offers(), 2U );
+
+    requireTrue( sink -> completeCalled(), "the sink's onComplete( ) never ran behind the throw" );
+
+    requireTrue( pool -> waitForRelease(), "the stream slot never came back" );
+
+    UTF_REQUIRE_EQUAL( pool -> releases().size(), 1U );
+    UTF_REQUIRE_EQUAL( pool -> releases()[ 0 ], std::string( "42:completed" ) );
+}

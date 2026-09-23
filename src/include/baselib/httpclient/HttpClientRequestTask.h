@@ -1392,7 +1392,25 @@ namespace bl
                 SAA_in          const bool                                      isExpected
                 )
             {
-                if( m_isCompleted || m_isCompletionPending )
+                /*
+                 * TWO GUARDS IN PLACE OF ONE, BECAUSE A PENDING SUCCESS IS NOT A FAILURE. The
+                 * comments above already promise that "the FIRST failure is what the request is
+                 * failed with"; what one guard could not say is that a pending SUCCESS must not
+                 * outrank one. It did: applyClosed( ) queues the caller's onComplete( ) and then
+                 * answers the caller, so a sink which threw in the deferred phase arrived with
+                 * m_isCompletionPending already set - and was discarded, with the request
+                 * reported as a success
+                 *
+                 * PUBLISHED wins over everything, an EARLIER FAILURE wins over a later one, and a
+                 * pending success loses to any failure
+                 */
+
+                if( m_isCompleted )
+                {
+                    return;
+                }
+
+                if( m_isCompletionPending && m_completionException )
                 {
                     return;
                 }
@@ -1402,11 +1420,20 @@ namespace bl
                  * through. An armed timer holds a reference to this task, so a total deadline left
                  * running would keep a finished request alive for its whole thirty minutes - not a
                  * leak in the end, but thirty minutes of one
+                 *
+                 * It stays unconditional because it is idempotent; completeResponse( ) does NOT,
+                 * and the guard on it is not cosmetic. A second call would rebuild the response
+                 * body from m_responseBody all over again, and by this point releaseConnection( )
+                 * has already dropped m_connection - so the negotiated protocol it filled in
+                 * would not be filled in twice, but the body copy would
                  */
 
                 cancelAllTimers();
 
-                completeResponse();
+                if( ! m_isCompletionPending )
+                {
+                    completeResponse();
+                }
 
                 m_completionException = eptr;
                 m_isCompletionExpected = isExpected;
