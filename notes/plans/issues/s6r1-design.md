@@ -2,7 +2,8 @@
 
 **Status:** design, 2026-09-22. **Nothing implemented.** This is the artifact that must be agreed
 before code is written, per the review loop. **Agreed 2026-09-22 — see §11a for by whom, on what
-text, and what the agreement does not claim.**
+text, and what the agreement does not claim.** **Implementation reviewed 2026-09-22 — see §11b;
+"nothing implemented" above is the status at design time and is left as written.**
 
 **Scope:** the nine findings grouped as R1 in `astra-review-verification-record.md` — H02, H03a,
 H13, H14, H17, H26, H04b, H27, H28. Chosen because they touch **disjoint functions**, are each
@@ -213,9 +214,18 @@ including all accumulated padding. So gating the new flushes on `dataSize == 0` 
 not required — an unconditional flush at that site is threshold-gated and harmless. Prefer the
 unconditional form: fewer branches, same behaviour.
 
-**Self-guarding on END_STREAM.** If the frame carried END_STREAM, `canSend( WINDOW_UPDATE )` fails
-and the stream flush returns without emitting; `reapClosedStreams` then credits the leftover to the
-connection. No special case needed.
+**Self-guarding on END_STREAM — corrected 2026-09-22 by the implementation review.** This paragraph
+used to say: *"If the frame carried END_STREAM, `canSend( WINDOW_UPDATE )` fails and the stream
+flush returns without emitting."* That is true only when the END_STREAM **closes** the stream — the
+local half already ended, which is every request without a body and every request whose body was
+fully sent. While the local half is still open (a body still uploading when the peer answers early)
+the stream becomes half-closed (remote), where `canSend( )` returns true
+(`StreamStateMachine.h:358-361`), and the flush emits a threshold-gated WINDOW_UPDATE that is legal
+(RFC 9113 5.1 and 6.9) and useless. No behaviour defect — `consumed( )` already emits the same frame
+in the same state, and the connection window took its own padding credit at the top of
+`handleData( )` — but the claim was stated without its condition, and the in-tree comment repeats
+it (§11b.5, item 2). Either way `reapClosedStreams` credits the still-outstanding octets of a closed
+stream to the connection. No special case needed.
 
 **Placement constraint — the flushes must go BEFORE `reapClosedStreams( )`.** The stream flush takes
 a `StreamContext&`, and `reapClosedStreams` erases contexts. A lane that appends the flushes at the
@@ -407,6 +417,260 @@ trust:
   (`TestHttp1ConnectionTask.h:743`) and `submit( )` posts `onStartRequest` through the stream's
   executor (`Http1ConnectionTask.h:1484-1530`);
 - the H14 placement premise: `reapClosedStreams( )` erases contexts (`Session.h:3304`).
+
+---
+
+## 11b. Implementation review, 2026-09-22
+
+**Reviewer: Claude Fable 5.1, on the uncommitted working tree of `lazari2` @ `c90f84e` — the same
+change as the twelve commits `5114f20..568d97f` on `s6r1` over `4aeced3` — read against the design
+above including the §4 correction.** Every changed function was opened at its signature and read to
+its end; every line reference below is to the working tree. Nothing was built or run: the release
+passes and the whole-suite gate were compiling during this review and are §11's, not this section's.
+
+**Verdict: the code matches the design on all nine fixes, boundaries included, and the reviewer
+agrees it may land** — contingent on one two-word correction to a false comment in a test
+(§11b.5, item 1), which the orchestrator applies since the reviewer may not touch `src/`. Everything
+else below is a verification, a precision the reviewer has already applied to this document, or a
+proposal, and each is marked which.
+
+### 11b.1 The code against the design, fix by fix
+
+**H02 — matches, on the boundary that matters.** `m_requestMayHaveBeenSent = true` is at
+`Http1ConnectionTask.h:687`, after both paths that legitimately claim "provably unwritten" have
+returned — the `isClosing( )` check (`:580-596`) and the render `catch` (`:636-658`) — and before
+`beginOperation( )` (`:689`) and the `async_write` `try` (`:692-694`). A throwing initiator, whose
+`catch` completes the operation and fails the task (`:712`), therefore reaches
+`onTaskStoppedNothrow( )` (`:1490`) with the flag set. The redundant assignment in
+`onWriteCompleted( )` is kept (`:727-732`). Both `finishStream` calls in `onPeerClosed( )`
+(`:1004-1007`, `:1013-1019`) and the terminal path carry the negation; `finishStream` resets it
+(`:1147`). The rename is complete: no `m_requestBytesWritten` remains under `src/`.
+
+**H03a — exactly one line, no reset.** The block at `ConnectionPool.h:2154-2157` is
+`if( m_eqConnections ) { m_eqConnections -> forceFlushNoThrow( true /* wait */ ); }`. The member is
+written once, at `:841`; its only other reader is `runActions( )` (`:1769`). The flush is outside the
+pool lock — the `BL_MUTEX_GUARD( m_lock )` scope of `disposeInternal( )` runs `:2038-2100` and closes
+before the answers are posted, the timer is cancelled, the attempts are cancelled and the queue is
+flushed. The two claims the shape rests on hold at the source: `forceFlushNoThrow( true )`
+(`ExecutionQueueImpl.h:1420-1436`) and `dispose( )` (`:1540-1562`) pass the same five `true` flags
+to `flushInternal( )`; and `~ObjPtrDisposable( )` (`ObjModel.h:939-960`) calls `dispose( )` through
+`tryQI< Disposable >` before releasing, which is what satisfies the queue destructor's
+`BL_ASSERT( ! m_observerThis )` (`ExecutionQueueImpl.h:293`) for a disposed-then-destroyed pool.
+`forceFlushNoThrow`'s own `BL_ASSERT( false == wait || isEmptyInternal( ) )` cannot trip: the
+predicate wait returns holding the queue lock, `discardReady` clears `m_ready` under it, and the
+assert runs before the lock is released — no push can land between.
+
+**H04b — matches.** `entry -> isReady` is the first operand at `ConnectionPool.h:970`, then the
+pointer, then `negotiated( ).protocol( )`.
+
+**H13 — keyed off the parameter.** `queueHeaderBlock( )` computes
+`firstMaxFragment = maxFragment - FrameCodec::prioritySize( priority )` from its own `priority`
+parameter (`Session.h:3667`), takes `first = min( block.size( ), firstMaxFragment )` (`:3672`), and
+hands the same `priority` to `serializeHeaders( )` (`:3678-3687`), whose `Length` adds
+`PRIORITY_FIELDS_SIZE` exactly when `priority.isSet` (`FrameCodec.h:1146-1150`) — so the two cannot
+disagree. CONTINUATION fragments keep the full `maxFragment` (`:3697`), which is right: they carry no
+priority fields. The two callers pass what the design says: the request path the profile's priority
+(`:951-956`), the plain header path a default-constructed `noPriority` (`:990-992`). No underflow:
+`applyPeerSettings( )` refuses `SETTINGS_MAX_FRAME_SIZE < 16384` (`:2555-2568`).
+
+**H14 — both windows, before `reapClosedStreams( )`, unconditional.** The two flushes are at
+`Session.h:1898-1900`, immediately after the padding credit (`:1876-1880`) and before the Data event
+(`:1902-1916`), `onPeerEndStream( )` (`:1920`) and `reapClosedStreams( )` (`:1925`), which erases
+contexts (`:3343`). `context` is `it -> second` (`:1873`) from a lookup no code between disturbs.
+Neither flush is gated on `dataSize == 0`, as the design preferred. A frame the judge rejects returns
+at `:1842` and never reaches this site, so the §10 invariant with H17 holds.
+
+**H17 — before the registry, on `dataSize`.** The arm is at `Session.h:2204-2222`, inside
+`judgeDataFrame( )`, which `handleData( )` runs (`:1836-1842`) before `m_registry.onFrameReceived( )`
+(`:1844-1850`). It tests `context.expectsNoContent && dataSize != 0`, and `dataSize` is the payload
+net of padding (`:1803`), so a zero-length DATA with END_STREAM — and a padding-only one — passes to
+the ordinary completion. `expectsNoContent` is set for HEAD at submit (`:949`) and for 204 and 304
+when the final block is delivered (`:3211-3214`), which covers the three shapes. The reject path
+credits the connection window and flushes it before `rejectStream( )` (`:2243-2247`), so contract 1
+holds on this arm as on the others.
+
+**H26 — render time only.** `renderAuthority( )` (`TcpTunnelStage.h:633-651`) is a private static
+used for both the request target and `Host` (`:664-673`); `originHost` arrives as a
+`const std::string&` this class only reads and does not store. The SOCKS5 sibling (`:1256-1267`)
+still sends the bare host in the domain-name address form, which for a literal is a different defect
+under a different RFC and is not in the nine; noted in §11b.5 rather than fixed.
+
+**H27 — the shared helper untouched.** `contains( )` (`ClientSession.h:719-733`) still calls
+`equalsIgnoreCase( )`; its two other callers, the accept-encoding intersection (`:401`) and header
+placement (`:620`), are unchanged. `containsExact( )` (`:740-753`) is used by `mergeCookieValues( )`
+alone (`:512`).
+
+**H28 — the existing entry's flag, before both branches.** `CookieJar.h:897-900` tests
+`m_cookies[ existing ].isHttpOnly && ! isHttpApi` inside `if( existing != m_cookies.size( ) )`, ahead
+of the expiry erase (`:902-906`) and the replacement (`:914-918`). The incoming-cookie refusal of
+step 10 stays where it was (`:807-809`).
+
+### 11b.2 The four things the lane says the design got wrong — each verified at the source
+
+1. **§4's connection-wedge claim was false, and the correction at `c90f84e` is right.**
+   `handleData( )` ends in `reapClosedStreams( )` (`Session.h:1925`), which ends in
+   `flushConnectionWindowUpdate( false )` (`:3346`). The claim was the reviewer's in round 1 and the
+   author's to verify; it was enumerated from the four call sites without following `handleData( )`
+   to its last line. The reviewer records that against himself as well as against the author.
+2. **`PRIORITY_FIELDS_SIZE` is private, so H13 as written was unreachable.** It sits in the
+   anonymous enum under `private:` at `FrameCodec.h:204-212`. The lane's `prioritySize( )`
+   (`:1119-1122`) is in the `public:` section that opens at `:505` and closes at `:1400`, and takes
+   the very `Http2HeadersPriority` the serializer takes — the right door, and additive API.
+3. **Beast asserts on a virgin parser, so the H02 probe needed a partial status line.**
+   `basic_parser.ipp:202-224` (Boost 1.90.0, the dist this machine builds against) opens
+   `put_eof( )` with `BOOST_ASSERT( got_some( ) )`; `got_some( )` is `state_ != state::nothing_yet`
+   (`basic_parser.hpp:166-171`). The wrapper `putEof( )` (`Http1CodecBeastImpl.h:208-216`) guards
+   only on `is_done( )`. `NDEBUG` is defined only by `gcc-default-release.mk:2` and
+   `msvc-default-release.mk:1`, and neither `BOOST_DISABLE_ASSERTS` nor `BOOST_ENABLE_ASSERT_HANDLER`
+   is set anywhere under `projects/make/` or `baselib/core/`. Verified — and see §11b.3 for what it
+   means beyond the probe.
+4. **The comment above the H03a flush was false and the lane amended it.** It read *"cancel
+   everything, do not wait for it here, and let the queue's own disposal join"* — false once the
+   flush waits, and the design that changed the flush did not say so. The amendment fixes that half.
+   The other half — *"flushed the way TcpServerBase flushes its own"* — is now itself inexact,
+   because `TcpServerBase` flushes with `wait = false` (`TcpBaseTasks.h:1919-1927`) and leaves the
+   join to its members' `~ObjPtrDisposable( )`; after this change the pool differs from it precisely
+   in taking the join here. Proposal in §11b.5, item 3.
+
+### 11b.3 The latent defect: the analysis is right, the routing is right, and the record must say more
+
+**Verified.** `onPeerClosed( )` (`Http1ConnectionTask.h:988`) returns only for a null parser; with a
+request in flight the parser exists from `onStartRequest( )` (`:602`) until `finishStream( )`
+(`:1142`), and a read that completes with EOF before one response octet reaches `parseEof( )`
+(`Http1Codec.h:538`), `putEof( )`, and `put_eof( )` on `state::nothing_yet`. Debug: the assert
+aborts the process. Release: `put_eof( )` falls past both of its guards and sets
+`state_ = complete`, so `isDone( )` is true, `m_statusCode` is still its initial 0,
+`isInterimStatus( 0 )` is false and `m_isComplete = true` (`Http1Codec.h:563-566`). Then
+`deliverHeaders( )` (`Http1ConnectionTask.h:801-838`) finds `isHeaderComplete( )` true — Beast's
+`is_header_done( )` is `state_ > fields` — and delivers `onHeaders( handle, 0, {} )`; the request
+task copies the 0 into the response with no floor (`HttpClientRequestTask.h:866`); and
+`finishStream` is reached with `error_code( )` (`:1013-1019`). **The caller receives a status-0,
+header-less, body-less response reported as a success.** The lane's phrase "a zero-byte response
+reported as success" is right; the status-0 header delivery is the part it did not say.
+
+**It is not latent in the sense of hard to reach.** The shape is a peer that closes after reading
+the request and before answering — a server that drops a request it will not serve, and the stale
+keep-alive race whose window is exactly the one H01 and H02 exist for. (The always-armed read
+catches a FIN that arrived earlier, with the parser still null; only a FIN that lands after
+`onStartRequest( )` has created the parser reaches this path.) Debug users of the pool will see the
+abort on that race.
+
+**What this means for H02, which neither the lane nor the design said.** On the zero-octet shape,
+`isRetryable` is never consulted in release — the stream closes as a success — and never reached in
+debug. H02 as landed therefore closes the duplicate POST for the shape where at least one response
+octet arrived before the close (the probe's shape) and for the throwing-initiator and task-failure
+paths, and does nothing for the zero-octet shape until S6R.2 converts that close into a failure —
+at which point `! m_requestMayHaveBeenSent` is precisely the value that failure must carry. The
+flag's name and its placement before the write are load-bearing for a fix that has not been written
+yet. The routing to S6R.2 with H01 and N3 is right, and S6R.2 owes:
+
+- the conversion itself — in `parseEof( )` or in the wrapper, a parser that has seen no octet
+  reports a refusal rather than reaching `put_eof( )`, with `onPeerClosed( )` then finishing the
+  stream as a failure carrying `! m_requestMayHaveBeenSent`;
+- a test for the zero-octet shape, which cannot exist in this change-set because in a debug build it
+  aborts the module before it can assert anything. The H02 probe's partial status line is therefore a
+  workaround with a date on it, not a modelling choice; the probe comment's "also the realistic
+  shape" is true and must not be read as "the only shape".
+
+Both are recorded here so that S6R.2's design cannot start without them.
+
+### 11b.4 Are the tests worth their green?
+
+Each new case was traced through the source on both sides of its fix rather than taken from the
+commit message's numbers, which the reviewer could not rerun.
+
+- **H02** (`TestHttp1ConnectionTask.h:1951-2039`, probe `:821-940`). The ordering argument holds:
+  `submit( )` posts through `postToStreamExecutor( )`, which is `asio::post( )` on the socket's
+  executor (`Http1ConnectionTask.h:301-310`, `:1549-1560`) and never a dispatch; `m_started` is set
+  synchronously in the base `scheduleTask( )` (`:1357`) before the probe's own post; so the strand
+  holds `[ onStartRequest, peerClosedProbe ]` before either runs, and the write completion can only
+  queue behind both. `m_probeParsed` is written on the strand before `sink -> onClosed( )` and read
+  after `waitForClosed( )` returns under the sink's lock, so the read is ordered. The peer's
+  `read:POST /inflight HTTP/1.1` record pins that the octets were on the wire, which is the premise
+  of non-retryability. Red before: with the old flag unset until `onWriteCompleted( )`, the probe
+  runs first and reports retryable. **Two limits, stated so nobody over-reads the green:** the case
+  cannot tell marking before `async_write( )` from marking after it returns — the "before" is
+  verified by reading (§11b.1), not by this test; and it pins only the partial-response shape
+  (§11b.3).
+- **H03a, H04b.** No deterministic case, as the design says. The TSan corroboration exists only in
+  the lane's runbook outside the repo (`http2-l0-state/lane1.md`, S6R.1 section) and is transcribed
+  here because §11 requires it recorded: instrumented tree parked outside the repo;
+  `utf_baselib_h2client4` (15 cases) and `utf_baselib_h2client5` (1 case) three runs each, no
+  report; the positive control `utf_baselib_basictask` fires in the same tree with the known
+  `TestBaselibBasicTask.h:127` race, `reported 1 warnings`, exit 66, banner and suppressions file
+  present. The modules run include cases which dispose a pool with acquisitions still pending
+  (`TestConnectionPool.h:1195-1201`, `:1580-1585`), which is as close to §11's "racing `dispose( )`"
+  as a deterministic case gets. **A clean run is not the proof** — detection is
+  interleaving-dependent; what carries H03a and H04b is the construction argument in §2 and §7,
+  verified at the source in §11b.1.
+- **H13** (`TestSession.h:2735-2789`). `lengths[ 0 ] == peerMaxFrameSize( )` is the right pin: with a
+  block far over the limit, `first = 16384 - 5` and the serializer adds 5, so the frame is exactly
+  16384; the old code gave 16389, the lane's red number. The PRIORITY-flag assertion on `out[ 4 ]`
+  closes the way the case could pass vacuously. `frameLengths( )` (`:503`) reads the 24-bit length
+  correctly.
+- **H14** (`TestSession.h:2499-2578`). Traced: a PADDED frame with Pad Length 60 and 60 octets of
+  padding is 61 octets; both windows are charged 61 and credited 61; the profile's threshold of 40
+  reaches both the connection window (`Session.h:536-540`) and the stream's (`:1453-1458`); so with
+  the fix each emits one WINDOW_UPDATE and the trailing `reapClosedStreams( )` finds nothing left,
+  which is why `== 1U` for stream 0 is exact rather than `>= 1U`. `takeWindowUpdate( )` grants the
+  increment back (`FlowControlWindow.h:612-627`), so `streamReceiveWindow( ) == 65535` is a second,
+  independent pin; the old code left 65474, the lane's red number. The stream-0 assertion is a
+  control that passes on both sides, as the lane reported.
+- **H17** (`TestSession.h:2178-2295`). The control passes on both sides, traced: before the fix
+  there was no arm; after it `dataSize == 0` never enters the arm; the registry accepts; the H14
+  flushes emit nothing (no pending credit, and `canSend` is false on the now-closed stream);
+  `onPeerEndStream( )` sets `messageComplete` with no content-length to check; and
+  `reapClosedStreams( )` emits `StreamClosed( NO_ERROR )` with no RST_STREAM — the three events the
+  case requires. The rejections: `events.size( ) == 2` holds on both sides (Headers + Data before,
+  Headers + StreamClosed after), so the red is in the three checks per script, nine in all, matching
+  the lane. `rejectStream( )` (`Session.h:3290-3316`) records the code, sends RST_STREAM and reaps,
+  which is where the StreamClosed event and the one RST_STREAM the case counts come from.
+- **H26, H27, H28** are exact-value unit cases whose red values follow directly from the old code
+  paths read above; nothing to add. H28's two checks after the two rejections are genuine controls:
+  the HTTP-side replacement and the non-HttpOnly non-HTTP write both go through `:914-918`.
+
+### 11b.5 What neither the design nor the lane noticed
+
+1. **FINDING, and the one condition of this agreement — a comment amended to stay true is false.**
+   `TestSession.h:2377` now reads *"ONE EXCEPTION, and the last case below is it: PADDING is
+   credited on arrival"*. The padding-only case (`:2499`) is followed by two more cases in the same
+   test — the stream-window overrun at `:2580` and the connection-window overrun at `:2615`. It is
+   not the last case. Replace "the last case below" with **"the padding-only case below"**. Two
+   words, in a comment the lane rewrote for the purpose of not being false after H14.
+2. **FINDING on a comment, fix PROPOSED — the "self-guarding on END_STREAM" claim is overstated, in
+   the tree and in §4.** The in-tree comment (`Session.h:1892-1896`) says *"if this frame carried
+   END_STREAM, canSend( WINDOW_UPDATE ) fails and the stream flush emits nothing"*. `canSend( )`
+   returns true in half-closed (remote) (`StreamStateMachine.h:358-361`) and false only in closed
+   (`:375-381`). So the claim holds when the END_STREAM closes the stream — every request that
+   carried no body, and every request whose body was fully sent — and fails while the local half is
+   still open (a body still uploading when the peer answers early): the stream is then half-closed
+   (remote), the flush emits a threshold-gated WINDOW_UPDATE that is legal (RFC 9113 5.1, a
+   half-closed (remote) stream may send any frame; 6.9, the peer must not treat it as an error) and
+   useless, and no credit is lost because the connection window took its own padding credit at
+   `:1813-1818`. Not a behaviour defect — `consumed( )` (`:1142-1161`) already emits the same frame
+   in the same state — which is why it is a proposal and not a condition. Proposed tree wording:
+   *"and if this frame carried END_STREAM and closed the stream, canSend( WINDOW_UPDATE ) fails and
+   the stream flush emits nothing; on a stream whose local half is still open it emits a legal
+   WINDOW_UPDATE the peer will ignore"*. §4 above is corrected in place.
+3. **PROPOSAL — the `TcpServerBase` analogy in the H03a comment.** After the amendment
+   (`ConnectionPool.h:2113-2118`) the comment says the queue is *"flushed the way TcpServerBase
+   flushes its own: cancel everything, and take the queue's own join"*. `TcpServerBase` cancels and
+   does not join (`TcpBaseTasks.h:1919-1927`, `wait = false`, the join left to
+   `~ObjPtrDisposable( )`). Proposed: *"The connection queue is cancelled the way TcpServerBase
+   cancels its own — every task, no GOAWAY — but unlike TcpServerBase the pool takes the queue's join
+   HERE rather than leaving it to the member's destructor, for the reason below."*
+4. **Observation, no change.** `if( m_eqConnections )` at `ConnectionPool.h:2154` is now always
+   true: the member is assigned in the constructor and never reset. Harmless; recorded so no reader
+   takes the guard as evidence that the member can be null.
+5. **Observation, outside the nine.** The SOCKS5 negotiation (`TcpTunnelStage.h:1256-1267`) sends
+   the bare stored host in the domain-name address form (`ADDRESS_DOMAIN_NAME`), so an IPv6 literal
+   goes out as the three-octet name `::1` rather than as RFC 1928's 16-octet `ATYP = 0x04`. Same root
+   as H26 — the stored host is bare — different wire format, different fix. Read, not run against a
+   proxy; belongs on the owed list, not in this change-set.
+
+**Agreement.** With item 1 applied, the reviewer agrees that the S6R.1 implementation matches the
+agreed design and may land, subject to §11's release passes and whole-suite gate, which were running
+at the time of this review and which this section does not claim.
 
 ---
 

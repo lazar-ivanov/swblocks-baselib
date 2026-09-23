@@ -2374,7 +2374,7 @@ UTF_AUTO_TEST_CASE( Session_FlowControlTests )
      * A WINDOW_UPDATE is sent when the CONSUMER took the bytes, never when they arrived - which is
      * the backpressure mechanism of the whole client (design 4.4, 5.3)
      *
-     * ONE EXCEPTION, and the last case below is it: PADDING is credited on arrival, because
+     * ONE EXCEPTION, and the padding-only case below is it: PADDING is credited on arrival, because
      * nobody will ever consume it. That is not a hole in the backpressure - the octets a consumer
      * could take are still held until it takes them - it is the only way the window a padding
      * frame spent can ever come back
