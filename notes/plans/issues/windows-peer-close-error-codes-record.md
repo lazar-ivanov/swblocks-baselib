@@ -42,15 +42,21 @@ measurement of that call.
   (`Http2TestServer.h:446`, `:842`, `:898`); after `bb53bdd` its close arrives as `eof`.
   `H2Driver_OpeningWriteIsOneWriteTests` on win-x86-vc143-debug was the same mechanism seen from
   the other side: the peer's own teardown destroyed the 204 it had just sent.
-- **The second row** - the TLS handshake retry's `connection_reset` - **is plausibly the same shape
-  and not established either way.** That peer is not `shutdownSocket( )`: `acceptAndShutdown( )`
-  (`utf_baselib_http2/TestTcpPreHandshakeStageTls.h:133-148`) does one `async_read_some( )` of at
-  most 1024 bytes and then its own `shutdown_both` + `close( )`. Its comment says reading the hello
-  "keeps this an orderly end of the stream rather than a reset"; a 10054 after that is consistent
-  only with hello bytes still unread at the `shutdown_both` - one read need not take the whole
+- **The second row** - the TLS handshake retry's `connection_reset` - **was measured against a test
+  peer which manufactured the reset itself, and what the platform does with an orderly close there
+  is still not measured.** That peer is not `shutdownSocket( )`: `acceptAndShutdown( )`
+  (`utf_baselib_http2/TestTcpPreHandshakeStageTls.h`) did one `async_read_some( )` of at most 1024
+  bytes and then its own `shutdown_both` + `close( )`. Its comment said reading the hello "keeps
+  this an orderly end of the stream rather than a reset"; a 10054 after that is consistent only
+  with hello bytes still unread at the `shutdown_both` - one read need not take the whole
   ClientHello - which is the control's first scenario in the test peer instead of the library.
-  `bb53bdd` does not touch that peer, so nothing about that row has been re-measured. See the
-  2026-09-23 correction in `tls-handshake-retry-unreachable-record.md`.
+  **Now measured:** the peer reports what it reads and the hello is **1500 bytes**, so at least 476
+  of them were always still queued at that `close( )`, which is abortive on BOTH platforms (RFC 2525
+  section 2.17) before Windows adds the `SD_RECEIVE` reset on top. `111e3f9` on `tls-peer-fix`
+  changes the peer to read the hello whole - the load-bearing half, since `shutdown_send` alone
+  leaves the unread bytes - and to shut the send side down only. The Windows re-run which says what
+  the code becomes is owed. See the 2026-09-23 correction in
+  `tls-handshake-retry-unreachable-record.md` and the section after it.
 - *"Linux hands queued bytes over before reporting the error"* was never measured. The Linux runs
   of the control never saw a reset; they measured a FIN - all bytes, then `eof`. That a Linux read
   returns queued data ahead of `ECONNRESET` is a reading of the kernel, and stays marked as such.
@@ -80,6 +86,11 @@ measurement of that call.
   the TLS test peer is changed to `shutdown_send` (or reads the whole hello) and the two retry
   cases are re-run on Windows with the diagnostic** - narrowing on a guess is how this record was
   opened. `TlsHandshakeRetryClassifier_RetryableErrorSetTests` pins both arms and changes with them.
+  **The peer half was done on 2026-09-23 by `111e3f9` - it needed both alternatives and not either,
+  because `shutdown_send` does not remove the unread bytes a close resets over. The re-run is still
+  owed, and it no longer needs a diagnostic edit: `RetryableHandshakeErrorTests` reports the code
+  the predicate was handed, so `--log_level=message` on the Windows matrix is the whole
+  measurement.**
 - **Comments in `src/` that state the old mechanism as a platform property**, not edited here:
   `NetUtils.h`'s block above the predicates ("because the divergence is in the TCP stack and in the
   I/O model, below anything this library writes"; "confirmed by the PeerCloseErrorCodes_* control
@@ -114,7 +125,10 @@ Windows-only rows are two observables and may well be **one mechanism seen twice
 
 **1. A peer close can arrive as a RESET.** Measured: a peer which accepted and then went away
 mid-handshake produced `WSAECONNRESET` on Windows where Linux reported `eof` or a truncation, and
-the handshake retry was unreachable there until the code was accepted.
+the handshake retry was unreachable there until the code was accepted. **The peer which produced
+that was closing with at least 476 bytes of the client hello unread; `111e3f9` stopped it, and
+what a peer that closes in an orderly way produces there is unmeasured - see the second-row bullet
+above.**
 
 An earlier version of this record explained it as "Windows sends RST where POSIX sends FIN when
 data is unread". **That is not a platform difference** - Linux `close()` with unread data also sends

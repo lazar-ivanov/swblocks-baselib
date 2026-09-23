@@ -59,6 +59,19 @@ namespace utest
     namespace prehandshake
     {
         /**
+         * @brief One byte of a protocol header, as a number
+         */
+
+        inline auto octet(
+            SAA_in          const char*                                         buffer,
+            SAA_in          const std::size_t                                   offset
+            )
+            -> std::size_t
+        {
+            return static_cast< std::size_t >( static_cast< unsigned char >( buffer[ offset ] ) );
+        }
+
+        /**
          * @brief A TLS server on an ephemeral loopback port, driven one connection at a time
          *
          * The accept and the read are deadline bounded so a connector which never arrives fails
@@ -123,11 +136,21 @@ namespace utest
             }
 
             /**
-             * @brief Accepts one connection, reads what the client sent and then shuts it down
+             * @brief Accepts one connection, reads the whole client hello and then shuts it down
              *
-             * Reading the client hello before shutting down is what keeps this an orderly end of
-             * the stream rather than a reset - a reset would silently turn this into a different
-             * case
+             * Reading the client hello WHOLE is what keeps this an orderly end of the stream
+             * rather than a reset - a reset would silently turn this into a different case. It
+             * used to be one read_some( ) into 1024 bytes, which is not the same thing: a hello
+             * OpenSSL 3.5 offers is routinely larger than that and a read_some( ) returns as soon
+             * as any bytes are there, so bytes were left queued, and closing a socket with bytes
+             * still in its receive queue is an ABORTIVE close on both platforms (RFC 2525 section
+             * 2.17). The reset the 2026-09-21 Windows row measured was this peer's own
+             *
+             * The shutdown is of the send side only, for the reason
+             * TcpSocketCommonBase::shutdownSocket( ) now is (bb53bdd): asking for SD_RECEIVE makes
+             * the close abortive on Windows the moment anything arrives afterwards. That is the
+             * lesser of the two here - this peer never reads again - but it costs nothing and it
+             * leaves no way for the case to manufacture the code it is measuring
              */
 
             void acceptAndShutdown()
@@ -136,15 +159,34 @@ namespace utest
 
                 acceptOne( socket );
 
-                char buffer[ 1024 ];
+                /*
+                 * A TLS record body cannot exceed SSL3_RT_MAX_PLAIN_LENGTH, so a buffer of one
+                 * whole record can never be too small for a well formed hello
+                 */
+
+                char buffer[ SSL3_RT_HEADER_LENGTH + SSL3_RT_MAX_PLAIN_LENGTH ];
 
                 bl::eh::error_code ec;
 
-                ( void ) readSomeWithDeadline( socket, buffer, sizeof( buffer ), ec );
+                const auto helloSize =
+                    readClientHelloWithDeadline( socket, buffer, sizeof( buffer ), ec );
 
                 UTF_REQUIRE_EQUAL( bl::eh::error_code(), ec );
 
-                socket.shutdown( bl::asio::ip::tcp::socket::shutdown_both, ec );
+                /*
+                 * Reported and not asserted: how big a hello is depends on the OpenSSL version and
+                 * on what the client offers, and no case should turn on it. What it records is
+                 * whether one 1024 byte read could ever have taken the whole of one
+                 */
+
+                UTF_MESSAGE(
+                    BL_MSG()
+                        << "the pre-handshake peer read a client hello of "
+                        << helloSize
+                        << " bytes before shutting the connection down"
+                    );
+
+                socket.shutdown( bl::asio::ip::tcp::socket::shutdown_send, ec );
                 socket.close( ec );
             }
 
@@ -246,6 +288,101 @@ namespace utest
                 UTF_REQUIRE( readCompleted );
 
                 return bytesRead;
+            }
+
+            /**
+             * @brief Reads exactly the number of bytes asked for, or stops at the first error
+             *
+             * A read_some( ) completes as soon as ANY bytes are available, so one of them is not a
+             * read of a known quantity; this is
+             */
+
+            auto readExactlyWithDeadline(
+                SAA_inout       bl::asio::ip::tcp::socket&                      socket,
+                SAA_out         char*                                           buffer,
+                SAA_in          const std::size_t                               size,
+                SAA_out         bl::eh::error_code&                             ec
+                )
+                -> std::size_t
+            {
+                std::size_t bytesRead = 0U;
+
+                while( bytesRead < size )
+                {
+                    bytesRead += readSomeWithDeadline( socket, buffer + bytesRead, size - bytesRead, ec );
+
+                    if( ec )
+                    {
+                        break;
+                    }
+                }
+
+                return bytesRead;
+            }
+
+            /**
+             * @brief Reads the client hello whole, so that none of it is left queued unread
+             *
+             * The record header carries the length of what follows it, so the hello can be taken
+             * exactly rather than guessed at. What this peer needs is not the hello's content - it
+             * answers nothing - but the certainty that NOTHING of it is still in the receive queue
+             * when the socket is closed, and a length taken from the wire is the only way to have
+             * that
+             */
+
+            auto readClientHelloWithDeadline(
+                SAA_inout       bl::asio::ip::tcp::socket&                      socket,
+                SAA_out         char*                                           buffer,
+                SAA_in          const std::size_t                               capacity,
+                SAA_out         bl::eh::error_code&                             ec
+                )
+                -> std::size_t
+            {
+                ( void ) readExactlyWithDeadline( socket, buffer, SSL3_RT_HEADER_LENGTH, ec );
+
+                if( ec )
+                {
+                    return 0U;
+                }
+
+                /*
+                 * A content type, two version bytes and then the body length
+                 */
+
+                UTF_REQUIRE_EQUAL( octet( buffer, 0U ), std::size_t( SSL3_RT_HANDSHAKE ) );
+
+                const std::size_t bodySize = ( octet( buffer, 3U ) << 8 ) + octet( buffer, 4U );
+
+                UTF_REQUIRE( SSL3_RT_HEADER_LENGTH + bodySize <= capacity );
+
+                ( void ) readExactlyWithDeadline( socket, buffer + SSL3_RT_HEADER_LENGTH, bodySize, ec );
+
+                if( ec )
+                {
+                    return SSL3_RT_HEADER_LENGTH;
+                }
+
+                /*
+                 * That the record holds exactly one complete handshake message, and that it is the
+                 * hello, is what says the client's first flight has been taken entirely. Asserted
+                 * rather than assumed: a client which ever fragmented its hello across records
+                 * would quietly put this case back to closing with bytes unread, which is the
+                 * reset it exists not to manufacture
+                 */
+
+                const auto* const body = buffer + SSL3_RT_HEADER_LENGTH;
+
+                UTF_REQUIRE( bodySize > SSL3_HM_HEADER_LENGTH );
+
+                UTF_REQUIRE_EQUAL( octet( body, 0U ), std::size_t( SSL3_MT_CLIENT_HELLO ) );
+
+                UTF_REQUIRE_EQUAL(
+                    ( octet( body, 1U ) << 16 ) + ( octet( body, 2U ) << 8 ) + octet( body, 3U )
+                        + SSL3_HM_HEADER_LENGTH,
+                    bodySize
+                    );
+
+                return SSL3_RT_HEADER_LENGTH + bodySize;
             }
 
             bl::asio::io_service                                                m_ioService;
@@ -527,6 +664,28 @@ UTF_AUTO_TEST_CASE( TcpPreHandshakeStageTls_RetryableHandshakeErrorTests )
         );
 
     UTF_REQUIRE( task -> isFailed() );
+
+    /*
+     * Which code a peer that goes away mid-handshake produces, reported and not asserted: it is a
+     * property of the platform, and asserting it here would be asserting the platform. It is the
+     * code of the LAST attempt, the one which exhausted the retry budget, and it is read the same
+     * way isProtocolHandshakeRetryableError() reads it - so it is the code the predicate was
+     * handed on the attempt before, which is the measurement
+     * notes/plans/issues/tls-handshake-retry-unreachable-record.md is owed on Windows
+     */
+
+    const auto handshakeEc = eh::errorCodeFromExceptionPtr( task -> exception() );
+
+    UTF_MESSAGE(
+        BL_MSG()
+            << "the handshake against a peer which went away ended with category='"
+            << handshakeEc.category().name()
+            << "' value="
+            << handshakeEc.value()
+            << " ('"
+            << handshakeEc.message()
+            << "')"
+        );
 
     /*
      * Two attempts, and continueAfterConnected was never reached on either of them because the
