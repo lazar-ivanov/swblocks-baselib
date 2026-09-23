@@ -193,7 +193,66 @@ retryable on Windows and not on POSIX, bounded as the paragraph above says.
 `shutdown_send` (or read until the hello is whole), re-run the two retry cases on Windows with the
 diagnostic, and record which code the retry then sees. Until then the arm stays - removing it on a
 guess is how this record was opened, twice. `TlsHandshakeRetryClassifier_RetryableErrorSetTests`
-pins both arms and changes with the answer.
+pins both arms and changes with the answer. **The first half was done on 2026-09-23 - the section
+directly below - and it needed BOTH of the alternatives in that parenthesis, not either.**
+
+### The peer was changed, 2026-09-23 - and it took both halves, not either
+
+`111e3f9` on `tls-peer-fix`.
+
+**What the peer used to do, and what it claimed.** `acceptAndShutdown( )` read once, with
+`async_read_some( )` into a 1024 byte buffer, and then called `shutdown_both` + `close( )`. Its
+comment said that reading the hello *"before shutting down is what keeps this an orderly end of the
+stream rather than a reset - a reset would silently turn this into a different case"*. It did not.
+The peer now reports what it reads, and on `ub24-a64-clang2010-debug`, boost 1.90 / OpenSSL 3.5.4:
+
+    the pre-handshake peer read a client hello of 1500 bytes
+
+1500 does not fit in 1024, and an `async_read_some( )` returns as soon as any bytes are there
+anyway. At least 476 bytes of the hello were still queued when that socket was closed, on every run
+of both cases, on every platform. The comment described an intention the code did not carry out.
+
+**Why `shutdown_send` alone would not have been the fix.** A close with bytes still in the receive
+queue is an abortive close on BOTH platforms - RFC 2525 section 2.17, and `bb53bdd`'s own message
+says the same of the library: *"Our own close( ) with unread data can still reset"*. Shutting down
+only the send side removes the `SD_RECEIVE` hazard; it does not remove the unread bytes underneath
+it. Reading the hello whole is the load-bearing half. The send-side shutdown is the cheap second
+half - this peer never reads again, so it costs nothing - and it is what
+`TcpSocketCommonBase::shutdownSocket( )` now does, for the same reason.
+
+**What it does now.** It reads the TLS record header, takes the body length from it, reads exactly
+that many bytes, and asserts that what arrived is one complete `SSL3_MT_CLIENT_HELLO` and nothing
+else - so *the client's first flight has been taken entirely* is checked rather than assumed. Then
+`shutdown_send` + `close( )`. A client which ever fragmented its hello across records would fail
+that assertion loudly instead of putting the case quietly back to closing with bytes unread.
+
+**What the cases assert is unchanged**, and so is what they exercise. The peer still goes away
+mid-handshake without answering, so the retry classifier must still call the failure retryable or
+the second `acceptAndShutdown( )` is never reached. Only the code it is called on changes, and only
+on Windows.
+
+**What the Linux run establishes, and what it cannot.** `utf_baselib_http2` on
+`ub24-a64-clang2010-debug`: 34 cases, no failure, no leak; the two retry cases at 3.5ms and 3.3ms,
+nowhere near the 30s accept deadline, so both attempts are served and the retry happens. The case
+now reports the code it ended on:
+
+    the handshake against a peer which went away ended with category='asio.ssl.stream' value=1
+    ('stream truncated')
+
+That is the POSIX answer, and it is the answer the OLD peer gave here too - on Linux the FIN of
+`shutdown_both` completes the client's read before the RST of the close arrives, which is why this
+was only ever a Windows row. **A green Linux run therefore verifies nothing about Windows.** What it
+verifies is that the case still exercises the retry after the change.
+
+**Still owed, and now cheap.** Re-run `TcpPreHandshakeStageTls_RetryableHandshakeErrorTests` and
+`..._StageRunsOncePerAttemptTests` on the Windows matrix at `--log_level=message` and read the two
+reported lines. No diagnostic edit of `TcpSslBaseTasks.h` is needed any more: the code the predicate
+was handed is reported by the case itself, read the same way the predicate reads it. If it is `eof`
+or `asio.ssl.stream:1`, the 2026-09-21 row was this peer's own reset and the Windows
+`connection_reset` arm rests on nothing measured; if it is still 10054 against a peer which now
+closes in an orderly way, the arm is measured after all and the Windows row of this section stands.
+Until that run says which, the arm stays. `TlsHandshakeRetryClassifier_RetryableErrorSetTests` opens
+no socket, is untouched by `111e3f9`, and still pins both arms.
 
 ### The test asserts both arms
 
