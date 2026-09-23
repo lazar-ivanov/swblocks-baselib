@@ -5671,6 +5671,30 @@
    "namespaces": []
   },
   {
+   "body_sha": "764de2d648c3150690e872e499ade4d9",
+   "doc_sha": "52fb298f9f4eda6b19cd8d7f6940fcc6",
+   "file": "utf_baselib_h2client4/TestConnectionPool.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 2285,
+   "module": "utf_baselib_h2client4",
+   "name": "H2Pool_ACompletedRequestSparesTheRetireTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "2be37380a5b2524ad266bb6ae065bb91",
+   "doc_sha": "df1a4461215448689e22fbff32da44ef",
+   "file": "utf_baselib_h2client4/TestConnectionPool.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 2215,
+   "module": "utf_baselib_h2client4",
+   "name": "H2Pool_ADrainingAtBirthOriginIsBoundedTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "b3cf5c31b215f4d539a64c901de47a31",
    "doc_sha": "88ffd9ac1742002f0643ab5e85ea211c",
    "file": "utf_baselib_h2client4/TestConnectionPool.h",
@@ -5680,6 +5704,18 @@
    "line": 1841,
    "module": "utf_baselib_h2client4",
    "name": "H2Pool_AForgottenConnectionIsStoppedTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "048792f0c5878bd905017242a7e61075",
+   "doc_sha": "3d1729cc1621ee5cc6a907c44601b309",
+   "file": "utf_baselib_h2client4/TestConnectionPool.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 2144,
+   "module": "utf_baselib_h2client4",
+   "name": "H2Pool_ANeverUsableConnectionIsChargedAndBoundedTests",
    "namespaces": []
   },
   {
@@ -18210,7 +18246,10 @@
     }
    ],
    "notes_cases": [
+    "H2Pool_ACompletedRequestSparesTheRetireTests",
+    "H2Pool_ADrainingAtBirthOriginIsBoundedTests",
     "H2Pool_AForgottenConnectionIsStoppedTests",
+    "H2Pool_ANeverUsableConnectionIsChargedAndBoundedTests",
     "H2Pool_AssumedLimitIsNotDispatchedAgainstTests",
     "H2Pool_ConcurrentAcquireAndReleaseTests",
     "H2Pool_ConnectingTakesOnlyReplayableTests",
