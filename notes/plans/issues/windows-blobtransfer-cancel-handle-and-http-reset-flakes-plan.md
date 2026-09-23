@@ -268,6 +268,12 @@ intermittent" differently; the capture separates them):
      close_notify drain before the destructor closes, and ensure the TLS `async_shutdown` is
      attempted on the paths that currently skip it. This has the widest blast radius (every
      server) and must not be made without the capture.
+     *2026-09-23:* the `shutdown_send` half of this was made by `bb53bdd` on `lazari2`, for the
+     `force` path as well as the graceful one, on a direct measurement (`PeerCloseErrorCodes_*` in
+     `utf_baselib_http2`, win-x64 and win-x86: `shutdown_both` -> 10054/10053 and 0 of 16384 bytes;
+     `shutdown_send` -> `eof` and all 16384). Independent of the flakes this plan closed under
+     candidate 2 - the hazard named in candidate 1 was real on its own account. The
+     `async_shutdown` half is untouched. See `windows-peer-close-error-codes-record.md`.
 - **Candidate 3 confirmed** (only the 400 request fails, server log shows the parse error before
   the body arrived) → in the HTTP server's error path, read and discard the announced body (or
   `shutdown( send )` + drain with the connection timeout) before closing.

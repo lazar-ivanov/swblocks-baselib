@@ -128,6 +128,9 @@ Still live, to be separated by the capture:
    resets the connection if data is queued or arrives afterwards. Several server paths reach it
    without a prior TLS `async_shutdown` (`TcpSslBaseTasks.h:627-635`, `:352-360`;
    `TcpBaseTasks.h:2434-2437`, `:1966-1978`).
+   *2026-09-23:* confirmed by measurement and fixed by `bb53bdd` (`shutdown_send`). It was not the
+   cause of these flakes, which were candidate 2's, but it was real - see
+   `windows-peer-close-error-codes-record.md`.
 2. **Port 28100 shared with a foreign listener** — every server module defaults to 28100
    (`UtfArgsParser.h:46`); `utf_baselib_tasks`/`_io` bind `"localhost"`, i.e. `[::1]:28100` on this
    host (`TestTaskUtils.h:838`), and the HTTP client tries `::1` **first**. A concurrently running

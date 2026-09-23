@@ -787,6 +787,45 @@ terms: do not compare an asio transport error code by hand; ask `net::isPeerClos
 the peer closed normally. That is the same ~1-in-8 Windows defect the h2 driver had before
 `connection_aborted` was added to `net::`.
 
+**CORRECTED 2026-09-23 - the cost above was measured against a peer this library was resetting
+itself, and `bb53bdd` on `lazari2` has removed that.** `shutdownSocket( )` did `shutdown_both`;
+shutting down the receive side makes the close abortive on Windows, and the reset discards what the
+peer had not read. The h2 driver's ~1-in-8 and the `PeerCloseErrorCodes_*` controls were that
+mechanism - the h2 test server ends its connection through `beginClose( )` and
+`onTaskStoppedNothrow( )` -> `shutdownSocket( )`. With `shutdown_send` the same controls report
+`eof` and 16384 of 16384 on win-x64 and win-x86, and now assert it on every platform. So *"a
+connection the peer closed normally"* is withdrawn: a peer of this library closing normally arrives
+as `eof` on Windows, and the old `eof == ec` comparison passes it.
+
+What N2 is after that, both parts:
+
+- **(a) stands, as an alignment with h2 and not as a Windows fix.** A genuine reset - a real
+  server, a middlebox, any peer whose `close( )` finds our request body unread (RFC 2525 section
+  2.17; an origin answering 413 from the head does exactly this) - reaches `onReadCompleted( )` as
+  `connection_reset` on **every** platform, and `eof == ec` fails the connection task where the h2
+  driver ends it clean (`Http2ConnectionTask.h:1477-1501`). The wide predicate is still the right
+  question; the "about one time in eight" justification in `onReadCompleted( )`'s comment on
+  `s6r2` is no longer true of anything and should be reworded before merge.
+- **(b) stands, and its necessity never depended on Windows.** `isPeerClosedErrorCode( )` admits
+  `connection_reset` on POSIX (`NetUtils.h:382-385`), so (a) without (b) completes a reset-cut
+  close-delimited body on Linux - which is what `Http1Driver_PeerResetsMidCloseDelimitedBodyTests`
+  demonstrates with `SO_LINGER( on, 0 )`, on this machine, with no Windows premise at all. The third
+  predicate is not over-built. Its comment ("the control measured 0 of 16384 bytes delivered") and
+  `PeerCloseErrorCodes_CleanEndOfStreamSetTests`'s prose ("the case above measured that and reports
+  the number") cite a measurement the control no longer makes; the discard is still a fact about a
+  Windows reset, and the sentence should say that rather than point at a case that now asserts the
+  opposite.
+- **The premise "What could go wrong" could not check is now measured.** *"that an orderly server
+  close after a close-delimited body arrives as `eof` on Windows"* - `bb53bdd`'s controls measure
+  exactly that for the teardown every peer of this library uses, on win-x64 and win-x86. What no
+  Linux run can still check is a real server's close with our bytes unread, which is a reset on
+  every platform and is (b)'s case, not (a)'s.
+- **Merge.** `TestPeerCloseErrorCodes.h` auto-merges: N2's case appends after the two `bb53bdd`
+  rewrote (`git merge-tree bb53bdd b100c2a` reports no conflict there; the merge's one conflict is
+  `utf_baselib_httpclient/notes.txt`, S6R.4's H20 recipe against this change-set's five, and is
+  trivial). N2's case still compiles afterwards - the two `os::` facts it keys its arms on remain
+  in `OSImplPlatformCommon.h`.
+
 **And the fix is not a one-line swap, because the predicate chosen has a second consequence.** See
 §11: whichever predicate `onReadCompleted( )` asks, everything it admits goes to `onPeerClosed( )`,
 and `onPeerClosed( )` is what can **complete a close-delimited message**. Admitting the Windows reset
@@ -912,6 +951,28 @@ never satisfy `asio::error::eof == ec`, so `onReadCompleted( )` never calls `onP
 them; it fails the task instead. The 16 KB the commit measured as lost therefore surfaces to the
 caller as a **failure**, not as a short success.
 
+**CORRECTED 2026-09-23 - `bb53bdd` on `lazari2` changes two sentences here and not the
+settlement.** The 16 KB the commit measured as lost was thrown away by the *peer's own*
+`shutdownSocket( )` - `shutdown_both`, which resets the connection on Windows when anything is left
+to arrive - and `bb53bdd` makes that `shutdown_send`; the same control now delivers 16384 of 16384
+and `eof` on win-x64 and win-x86. So *"today, on Windows, even that is unreachable"* is withdrawn
+for the ordinary case: an orderly close from a peer of this library arrives as `eof` on Windows,
+`onPeerClosed( )` IS reached there today, and a close-delimited body is completed on it exactly as
+on POSIX - which is correct, and is what makes the zero-octet case of section 11a reachable on
+Windows too. What stays unreachable-as-success is a genuine reset, on every platform, and that is
+what (b) is for.
+
+**The field instance, which is the case this section's precision already names.**
+`H2Driver_OpeningWriteIsOneWriteTests` on win-x86-vc143-debug (`bb53bdd`'s message): the peer
+answers 204 with END_STREAM and ends its task; the `shutdown_both` reset discarded the 204 before
+the driver read it; the driver's read completed 10054 -> `isPeerClosed( )` -> `onPeerClosed( )` ->
+`closeAllStreamsUnwrittenRetryable( connection_aborted )`. `chkTaskSucceeded( driver )` passed and
+`sink -> status( )` was 0 - the `RecordingSink` sets `m_status` only in `onHeaders( )`
+(`Http2DriverTestUtils.h:275`), which never fired, and `m_errorCode` in `onClosed( )` (`:343`),
+which carried the code. The **connection** task completed clean, the **request** did not. N3 stays
+settled: the caller was not told success, and the response was destroyed by our own teardown,
+which is fixed at its source.
+
 **The finding is prospective, and it is a constraint on N2.** Fix N2 with either existing predicate
 and the Windows reset spellings start reaching `onPeerClosed( )` — where a close-delimited response
 aborted mid-body is completed as a success, with, on that platform, none of the unread bytes
@@ -1034,6 +1095,10 @@ astra.
   success half is not established and asks for it to be settled. It is: it does not happen on h2, it
   happens on h1 only for close-delimited messages, and today the N2 breach blocks it on Windows —
   so **fixing N2 would create it**. That connection is not in the record. §11.
+  *Precision, 2026-09-23:* "today the N2 breach blocks it on Windows" was true only of the reset
+  spellings, which a peer of this library no longer produces after `bb53bdd`; the constraint on N2
+  stands on POSIX as well, because `isPeerClosedErrorCode( )` admits `connection_reset` there - see
+  section 10's correction.
 - **H03b's "benign outcome" has a number: 250 ms of delayed destruction**, bounded by
   `MAX_MAINTENANCE_INTERVAL_IN_MILLISECONDS`. And the pool's timer, unlike the h2 driver's, is never
   reassigned, so the use-after-free half of the h2 hazard is absent here. §8.
@@ -1086,6 +1151,11 @@ astra.
 - **N2 cannot be accepted on this machine.** Its Linux arm checks only that a POSIX reset is refused
   by the clean-end predicate; the rule it breaches is one a Linux-only run structurally cannot check.
   It needs the Windows matrix, repeated, because the mechanism is a race.
+  *Revised 2026-09-23:* the race was `shutdownSocket( )`'s own reset and is gone with `bb53bdd`;
+  what a Windows run of `utf_baselib_httpclient7` now confirms is that an orderly close arrives as
+  `eof` there, which `bb53bdd`'s controls already measured for the teardown every peer of this
+  library uses. Still owed; no longer expected to be intermittent. (b)'s case is Linux-testable and
+  tested - see section 10's correction.
 - **§11a's two cases abort a debug module before the conversion**, so their red is the process
   dying and not an assertion; they are committed with or after the conversion, never before, and
   the run recipe records that. (Added 2026-09-22.)

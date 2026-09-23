@@ -255,7 +255,8 @@ section wrongly said it was.** The arms come after `pumpWrites( )` and `schedule
 that route there is always a read in flight - and the same `onTaskStoppedNothrow( )` chain
 continues into the stream policy's own `onTaskStoppedNothrow( )`, which (the task sets
 `isCloseStreamOnTaskFinish( true )` in its constructor) calls `shutdownSocket( )`:
-`shutdown_both` plus `cancel( )`. The read then wakes - `operation_aborted`, or `eof` if the peer
+`shutdown_both` plus `cancel( )` (*`shutdown_send` plus `cancel( )` since `bb53bdd`, 2026-09-23;
+the wake described next is the `cancel( )`'s and is unchanged*). The read then wakes - `operation_aborted`, or `eof` if the peer
 closed first - and either outcome reaches `cancelTimers( )` on the strand, the first through
 `onOperationCompleted( )` -> `initiateClose( )` and the second through `onPeerClosed( )`. Without
 the direct call the timers would still be disarmed, a wake later.

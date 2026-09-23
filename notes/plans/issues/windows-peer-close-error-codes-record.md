@@ -3,10 +3,99 @@
 **Status:** the divergence is permanent - it is in the operating system, not in this library. The
 library's answer is `net::isPeerClosedErrorCode()` and `net::isOrderlyPeerCloseErrorCode()` in
 `src/include/baselib/core/NetUtils.h`. **Networking code must ask those and must not compare
-transport error codes by hand.**
+transport error codes by hand.** **Superseded in part 2026-09-23 - see the section directly
+below: the divergence this record measured was self-inflicted; the rule stands.**
 
 This has been paid for three times. Each time the symptom was different, the diagnosis took a full
 Windows matrix run, and the cause was the same.
+
+## Superseded in part, 2026-09-23 - the divergence this record measured was self-inflicted
+
+**What changed.** `bb53bdd` on `lazari2` (*tasks: stop resetting our own peers when a task tears
+its socket down*) changed `TcpSocketCommonBase::shutdownSocket( )` from `shutdown_both` to
+`shutdown_send` (`TcpBaseTasks.h:357`). Shutting down the RECEIVE side makes the close abortive on
+Windows - anything queued at `SD_RECEIVE` or arriving afterwards resets the connection, and the
+reset discards the peer's unread receive buffer. Measured through the two control cases below, on
+win-x64 and win-x86:
+
+    shutdown_both   the reader saw 10054 / 10053 and 0 of 16384 bytes
+    shutdown_send   the reader saw eof and 16384 of 16384 bytes
+
+Linux reported `eof` with all 16384 either way. Every task in this library ended its socket through
+that function, so every measurement in this record taken against a peer of this library was a
+measurement of that call.
+
+**Withdrawn.**
+
+- *"the divergence is permanent - it is in the operating system, not in this library"* (the status
+  line above). The divergence the control measured was manufactured here. What the operating
+  system contributes is narrower: on Windows `SD_RECEIVE` resets on a later arrival where Linux
+  does not, and a reset discards the unread receive buffer where Linux hands it over - both real,
+  neither reachable by an orderly close once nothing here asks for `SD_RECEIVE`.
+- *"The control is a hypothesis test ... its Windows arm requires the code to be one of the two AND
+  not `eof`"*. Inverted by `bb53bdd`: `PeerCloseErrorCodes_PeerShutsDownWithUnreadDataTests` and
+  `..._ReaderSendsAfterPeerShutdownTests` now assert `eof`, the orderly predicate and every byte on
+  EVERY platform, and are a regression test for the teardown rather than a description of Windows.
+- **The third row of "The three defects"** - the HTTP/2 driver's `connection_aborted`, ~1 run in 8 -
+  was this mechanism exactly. The peer in those runs is the h2 test server, which ends a connection
+  through `beginClose( )` and the policy's `onTaskStoppedNothrow( )` -> `shutdownSocket( )`
+  (`Http2TestServer.h:446`, `:842`, `:898`); after `bb53bdd` its close arrives as `eof`.
+  `H2Driver_OpeningWriteIsOneWriteTests` on win-x86-vc143-debug was the same mechanism seen from
+  the other side: the peer's own teardown destroyed the 204 it had just sent.
+- **The second row** - the TLS handshake retry's `connection_reset` - **is plausibly the same shape
+  and not established either way.** That peer is not `shutdownSocket( )`: `acceptAndShutdown( )`
+  (`utf_baselib_http2/TestTcpPreHandshakeStageTls.h:133-148`) does one `async_read_some( )` of at
+  most 1024 bytes and then its own `shutdown_both` + `close( )`. Its comment says reading the hello
+  "keeps this an orderly end of the stream rather than a reset"; a 10054 after that is consistent
+  only with hello bytes still unread at the `shutdown_both` - one read need not take the whole
+  ClientHello - which is the control's first scenario in the test peer instead of the library.
+  `bb53bdd` does not touch that peer, so nothing about that row has been re-measured. See the
+  2026-09-23 correction in `tls-handshake-retry-unreachable-record.md`.
+- *"Linux hands queued bytes over before reporting the error"* was never measured. The Linux runs
+  of the control never saw a reset; they measured a FIN - all bytes, then `eof`. That a Linux read
+  returns queued data ahead of `ECONNRESET` is a reading of the kernel, and stays marked as such.
+
+**Standing.**
+
+- **The rule.** Do not compare transport codes by hand; ask `net::`. A real server, a middlebox, or
+  any peer that calls `close( )` with our bytes unread (RFC 2525 section 2.17 - an origin answering
+  413 from the head of a body it will not read does this) still resets us, on every platform, and
+  the driver must still call that a peer close. `bb53bdd` removes the condition this library
+  manufactured; it does not remove resets.
+- **`isPeerClosedErrorCode( )` as coded.** `connection_reset` on every platform,
+  `connection_aborted` where the stack spells a reset that our own send drew that way.
+- **The Windows discard.** Measured on a reset we manufactured, but a reset is a reset: a caller on
+  Windows does not get the bytes a reset threw away. `isCleanEndOfStreamErrorCode( )` (S6R.2's
+  N2, branch `s6r2`) refuses to complete a message on either reset spelling, and that refusal is
+  right on POSIX as well, where the bytes may have arrived but nothing can say the message did.
+
+**Owed, and to whom.**
+
+- **The Windows arms of `isOrderlyPeerCloseErrorCode( )`** - through
+  `os::peerCloseWithUnreadDataIsReportedAsReset( )` and
+  `os::peerCloseCanBeReportedAsConnectionAborted( )` - rest on *"On Windows the separation is not
+  observable"*. For a peer that closes in an orderly way it now is: `eof`, as on POSIX. What the
+  arms do today is make a genuine reset retryable on Windows and not on POSIX, bounded by
+  `maxRetryCount + 1`. Not harmful; no longer justified by anything measured. **Keep them until
+  the TLS test peer is changed to `shutdown_send` (or reads the whole hello) and the two retry
+  cases are re-run on Windows with the diagnostic** - narrowing on a guess is how this record was
+  opened. `TlsHandshakeRetryClassifier_RetryableErrorSetTests` pins both arms and changes with them.
+- **Comments in `src/` that state the old mechanism as a platform property**, not edited here:
+  `NetUtils.h`'s block above the predicates ("because the divergence is in the TCP stack and in the
+  I/O model, below anything this library writes"; "confirmed by the PeerCloseErrorCodes_* control
+  cases: shutdown_both leaves the receive side shut"); both `os::` predicate comments in
+  `OSImplPlatformCommon.h` ("CONFIRMED by a control ... shutdown_both"); the header comment of
+  `TestPeerCloseErrorCodes.h` ("shuts down both directions", "asserted in two arms", "REPORTED and
+  not asserted" - all three false after `bb53bdd`'s own edit of that file);
+  `TcpSslBaseTasks.h:308-330` and `Http2ConnectionTask.h:1477-1501`. On `s6r2`, N2's comments in
+  `Http1ConnectionTask.h`, the third predicate's, and `PeerCloseErrorCodes_CleanEndOfStreamSetTests`'s
+  prose ("the case above measured that and reports the number") attribute to Windows what is a
+  property of any reset.
+- **Provenance worth keeping.** This exact change was proposed on 2026-09-09 as candidate 1 of
+  `windows-blobtransfer-cancel-handle-and-http-reset-flakes-plan.md` (remedy item 2: "use
+  `shutdown( shutdown_send )` for the graceful path ... must not be made without the capture") and
+  set aside when candidate 2 explained those flakes. The hazard was real on its own account; the
+  measurement that settled it came two weeks later, from a different symptom.
 
 ## The divergence
 

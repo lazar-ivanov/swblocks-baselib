@@ -170,6 +170,15 @@ hypothesising it. The breach is certain and the fix shape is one file away; the 
 remains inferred. Note the record's own warning: **a Linux-only run cannot catch a breach of this
 rule**, so this fix's acceptance needs the Windows matrix.
 
+*Corrected 2026-09-23.* What `2b4c61b` measured was `shutdownSocket( )`'s own `shutdown_both`,
+which reset every peer of this library on Windows; `bb53bdd` on `lazari2` makes it `shutdown_send`
+and the same control now reports `eof` with every byte on win-x64 and win-x86. The breach of the
+rule stands and so does the fix (branch `s6r2`, commit `d34f9c3`), but its manifestation is no
+longer "a normal close fails ~1 in 8 on Windows" - it is "a genuine reset fails the h1 connection
+task where h2 ends it clean, on every platform", which S6R.2's
+`Http1Driver_PeerResetsMidCloseDelimitedBodyTests` reaches on Linux with `SO_LINGER( on, 0 )`. See
+`s6r2-design.md` §10's correction of the same date.
+
 **N3 — OPEN QUESTION, not yet a finding: is a truncated body reported as complete?**
 Commit `2b4c61b` measured that a Windows reset discards **all** unread bytes (16 KB sent, none
 delivered) and its message infers *"a response body can be short while the task reports success"*.
@@ -186,6 +195,14 @@ close code and on what the request task does with it.
 **Settle this before S6R.2**, by reading the close path end to end and, if needed, one Windows run.
 Do not carry the commit message's phrasing into a document as fact — it is an inference in a commit
 message, and this project has been bitten four times by exactly that.
+
+*Settled 2026-09-23, with a field instance.* `s6r2-design.md` §11 settled this by reading: on h2
+the request is closed with `connection_aborted` and only the *connection* task completes clean.
+`bb53bdd`'s message reports exactly that shape from a run - `H2Driver_OpeningWriteIsOneWriteTests`
+on win-x86-vc143-debug, `status( ) == 0` where 204 had been sent while the driver task succeeded -
+and finds why the 204 was lost: the peer's own `shutdownSocket( )` was `shutdown_both`, which
+resets on Windows and discards the peer's unread buffer. Fixed at its source by that commit. The
+byte loss `2b4c61b` measured was self-inflicted; the success half does not happen, as §11 said.
 
 ---
 

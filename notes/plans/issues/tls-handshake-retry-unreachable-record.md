@@ -166,6 +166,35 @@ handshake retry is transport policy, and both answers are compliant. What is at 
 5.1's establishment contract, which assumes a transient peer-side close is survivable - true on
 POSIX since 2026-09-18, and true on Windows only with this change.
 
+### Corrected 2026-09-23 - the mechanism above is withdrawn, and the arm now rests on a measurement owed
+
+*"A TCP stack property, not a protocol or library one ... Closing a socket in that state is an
+abortive close on Windows - it sends RST ... POSIX sends FIN for the same sequence"* was withdrawn
+on 2026-09-22 by `2b4c61b` and the peer-close record - Linux `close( )` with unread data also
+sends RST (RFC 2525 section 2.17) - but the withdrawal never reached this record. What actually
+produces the reset, measured by `bb53bdd` on `lazari2` (2026-09-23) through `PeerCloseErrorCodes_*`
+on win-x64 and win-x86: shutting down the RECEIVE side. Windows resets the connection when data is
+queued at `SD_RECEIVE` or arrives after it, where Linux does not; `shutdown_both` asked for that,
+and `TcpSocketCommonBase::shutdownSocket( )` now shuts down the send side only.
+
+**This test's peer is not that function, and `bb53bdd` does not change it.** `acceptAndShutdown( )`
+(`TestTcpPreHandshakeStageTls.h:133-148`) does one `async_read_some( )` of at most 1024 bytes and
+then its own `shutdown_both` + `close( )`. Its comment says reading the hello "keeps this an orderly
+end of the stream rather than a reset"; the 10054 measured above is consistent only with hello
+bytes still unread at that `shutdown_both` - one `read_some( )` need not take the whole ClientHello
+- which is the control's first scenario, in the test peer instead of the library. **Not measured.**
+So the Windows row of this section was, plausibly, the same self-inflicted shape, and *"On Windows
+the separation is not observable"* now rests on nothing measured against a peer that closes in an
+orderly way: after `bb53bdd`, such a peer arrives as `eof` on Windows exactly as on POSIX. What
+`os::peerCloseWithUnreadDataIsReportedAsReset( )`'s arm does today is make a genuine reset
+retryable on Windows and not on POSIX, bounded as the paragraph above says.
+
+**Owed before the arm is kept on a true premise or removed:** change `acceptAndShutdown( )` to
+`shutdown_send` (or read until the hello is whole), re-run the two retry cases on Windows with the
+diagnostic, and record which code the retry then sees. Until then the arm stays - removing it on a
+guess is how this record was opened, twice. `TlsHandshakeRetryClassifier_RetryableErrorSetTests`
+pins both arms and changes with the answer.
+
 ### The test asserts both arms
 
 `TlsHandshakeRetryClassifier_RetryableErrorSetTests` now asserts `connection_reset` retryable where
