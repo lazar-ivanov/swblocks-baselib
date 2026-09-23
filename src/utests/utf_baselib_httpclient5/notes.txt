@@ -2,3 +2,6 @@
 
 --log_level=message --run_test=ClientSessionTls_GetOverHttp2Tests
 --log_level=message --run_test=ClientSessionTls_StreamingUploadTakesAnHttp2OnlyConnectionTests
+--log_level=message --run_test=ClientSessionTls_Http11FallbackExchangeTests
+--log_level=message --run_test=Http1DriverTls_IdleCloseSendsCloseNotifyTests
+--log_level=message --run_test=Http1DriverTls_WriteInFlightCloseSkipsCloseNotifyTests

@@ -39,13 +39,15 @@
  *
  * Sockets: loopback, ephemeral ports, so these cases do not take the machine global test lock
  *
- * SIZE, MEASURED AND OVER TARGET, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 46.0 MB
- * clang debug and 93.6 MB gcc release (a64), against a 40 MB target and a 75 MB debug ceiling
- * which only win-x86-*-debug enforces. The session instantiates BOTH drivers over the TLS policy -
- * the HTTP/2 one it builds and the HTTP/1.1 one its factory registers for the fallback - so the
- * client-role protocol engine is here, and the TLS peer puts the server-role engine here as well.
- * There are two cases and they cost almost nothing; the instantiations are the whole of it, which
- * is also why splitting this module would buy nothing at all
+ * SIZE, MEASURED AND OVER TARGET, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 46.9 MB
+ * clang debug (a64), against a 40 MB target and a 75 MB debug ceiling which only win-x86-*-debug
+ * enforces; 93.6 MB gcc release (a64) was measured before the h1-over-TLS cases and has not been
+ * re-measured since. The session instantiates BOTH drivers over the TLS policy - the HTTP/2 one it
+ * builds and the HTTP/1.1 one its factory registers for the fallback - so the client-role protocol
+ * engine is here, and the TLS peer puts the server-role engine here as well. The cases cost almost
+ * nothing - the three h1-over-TLS ones added 1.3%, because the types they name were already
+ * instantiated - and the instantiations are the whole of it, which is also why splitting this
+ * module would buy nothing at all
  *
  * The module is devenv7+ only: the devenv7_only marker next to this file is what keeps it out of
  * the build on devenv2-6 (projects/make/common.mk). Headers never test BL_DEVENV_VERSION; they
@@ -76,3 +78,4 @@
  */
 
 #include "TestClientSessionTls.h"
+#include "TestClientSessionTlsHttp1.h"
