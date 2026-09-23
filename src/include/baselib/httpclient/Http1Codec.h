@@ -190,6 +190,18 @@ namespace bl
              */
 
             InvalidFieldSyntax,
+
+            /**
+             * The connection closed before a single octet of the status line arrived - with no
+             * response at all, or after an interim 1xx with no final response behind it
+             *
+             * ITS OWN VALUE RATHER THAN MalformedMessage, whose comment already covers "a
+             * truncated message at end of stream": a message cut short and a message that never
+             * began are two different things about the peer, and this enumeration exists so that
+             * a caller can assert on the difference directly
+             */
+
+            NoResponse,
         };
 
         /**
@@ -533,6 +545,23 @@ namespace bl
              *
              * This is what completes a read-until-close body, and what turns a truncated message
              * into a refusal rather than a hang
+             *
+             * A CLOSE BEFORE THE FIRST OCTET IS REFUSED HERE AND NOT HANDED TO THE BACKEND, and
+             * that is the third shape of an end-of-stream rather than a defence against one
+             * backend's assert. A peer which reads the request and closes without writing - a
+             * server dropping a request it will not serve, and the stale keep-alive race the
+             * retry rules exist for - leaves a parser which has seen nothing. Beast's put_eof( )
+             * special cases only the start_line and fields states and the two framing flags, so
+             * a virgin parser is in NEITHER and falls through to 'complete with no error': the
+             * caller is then told the request SUCCEEDED, with status 0 and no header block at
+             * all. It is not close-delimited framing and it is not one platform's behaviour - it
+             * happens on eof, everywhere
+             *
+             * THE CHECK IS ON THE CURRENT BACKEND, WHICH IS WHAT COVERS THE INTERIM CASE TOO.
+             * fileInterimAndRestart( ) discards the backend and makes a fresh one, so a peer
+             * which sends 103 Early Hints and then closes reaches exactly the same state although
+             * the parser as a whole has seen a whole message. A response with no final status
+             * line is not a response
              */
 
             void parseEof( SAA_inout eh::error_code& ec )
@@ -548,6 +577,13 @@ namespace bl
 
                 if( m_isComplete )
                 {
+                    return;
+                }
+
+                if( ! m_backend -> gotSome() )
+                {
+                    fail( Http1CodecError::NoResponse, ec );
+
                     return;
                 }
 

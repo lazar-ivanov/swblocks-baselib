@@ -128,6 +128,15 @@ namespace utest
             mutable bl::os::mutex                                               m_lock;
             mutable bl::os::condition_variable                                  m_cvClosed;
 
+            /*
+             * ITS OWN CONDITION VARIABLE, so that nothing which waits for the end of a stream is
+             * woken by a body chunk. A case whose subject is what the peer does AFTER the body
+             * has been delivered needs a rendezvous on the body itself - and a poll or a sleep in
+             * its place is the flake src/utests/AGENTS.md names
+             */
+
+            mutable bl::os::condition_variable                                  m_cvData;
+
             std::vector< std::string >                                          m_events;
             std::vector< HeaderBlock >                                          m_blocks;
             bl::http::HeaderList                                                m_trailers;
@@ -211,6 +220,8 @@ namespace utest
                     );
 
                 m_events.push_back( "data:" + bl::utils::lexical_cast< std::string >( size ) );
+
+                m_cvData.notify_all();
             }
 
             virtual void onTrailers(
@@ -272,6 +283,33 @@ namespace utest
                     [ this ]() -> bool
                     {
                         return m_closed;
+                    }
+                    );
+            }
+
+            /**
+             * @brief Blocks until at least this many body octets have been delivered
+             *
+             * The rendezvous a case needs when its subject is what the peer does once the body
+             * has REACHED the sink - it is the driver's own strand that appends, under the lock
+             * that notifies, so a case which returns from here has a happens-before with the
+             * delivery and not merely a hope about timing
+             */
+
+            bool waitForBodyAtLeast(
+                SAA_in          const std::size_t                               octets,
+                SAA_in          const std::size_t                               timeoutInMilliseconds =
+                                    static_cast< std::size_t >( WAIT_TIMEOUT_IN_MILLISECONDS )
+                ) const
+            {
+                bl::os::mutex_unique_lock guard( m_lock );
+
+                return m_cvData.wait_for(
+                    guard,
+                    bl::os::chrono::milliseconds( timeoutInMilliseconds ),
+                    [ this, octets ]() -> bool
+                    {
+                        return m_body.size() >= octets;
                     }
                     );
             }
@@ -796,11 +834,14 @@ namespace utest
          * in microseconds - so the "red" run would be green about half the time. Ordering by
          * thread scheduling is not ordering.
          *
-         * THE PARTIAL STATUS LINE IS NOT DECORATION. Beast's put_eof( ) opens with
-         * BOOST_ASSERT( got_some( ) ), and NDEBUG is defined only by the release toolchain files,
-         * so calling onPeerClosed( ) on a parser which has seen no byte aborts a debug build
-         * rather than failing the stream. Feeding one partial status line first is also the
-         * realistic shape of this defect: the server began answering and the connection died
+         * THE PARTIAL STATUS LINE IS NOT DECORATION. It is the shape this case is ABOUT - the
+         * server began answering and the connection died - and it is what makes the flag's answer
+         * the conservative one rather than the exact one. It was also, until S6R.2's 11a
+         * converted the zero-octet close into a refusal, the only shape this probe could take at
+         * all: Beast's put_eof( ) opens with BOOST_ASSERT( got_some( ) ), NDEBUG is defined only
+         * by the release toolchain files, and a parser which has seen no octet aborted a debug
+         * build here rather than failing the stream. That other shape now has cases of its own,
+         * in utf_baselib_httpclient7, and this one is not the only one
          */
 
         class Http1DriverProbe : public bl::tasks::Http1ConnectionTaskT< plain_stream_t >
@@ -897,7 +938,15 @@ namespace utest
 
                 m_probeParsed = ! ec && consumed == partial.size();
 
-                base_type::onPeerClosed();
+                /*
+                 * eof, because this probe stands for a peer which ended the byte stream cleanly
+                 * with a message it had only begun. S6R.2's N2 gave onPeerClosed( ) the code the
+                 * stream ended with, because that is what decides whether a close-delimited
+                 * message may be completed on it; passing eof here keeps this case asking
+                 * exactly what it asked before
+                 */
+
+                base_type::onPeerClosed( bl::asio::error::eof );
             }
 
         public:

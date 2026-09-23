@@ -1035,14 +1035,63 @@ namespace bl
             }
 
             /**
-             * @brief The peer closed - which COMPLETES a read-until-close body and refuses a
-             * truncated message rather than hanging on it
+             * @brief Whether the byte stream ended in a way a message framed BY that ending may
+             * be declared complete on
+             *
+             * TWO PARTS, AND THE SECOND IS NOT OPTIONAL. net::isCleanEndOfStreamErrorCode( ) is
+             * eof on every platform and deliberately refuses the Windows reset spellings, which
+             * discard whatever was still unread. isStreamTruncationError( ) is the TLS stream
+             * ending without close_notify, which the peer-close record files under "orderly close
+             * of a TLS stream" and which is the ordinary shape of a close-delimited HTTPS
+             * response (RFC 2818 2.2.2) - a predicate admitting eof alone would fail every one of
+             * those, which succeed today
              */
 
-            void onPeerClosed()
+            bool isCleanEndOfStream( SAA_in const eh::error_code& ec ) NOEXCEPT
+            {
+                return net::isCleanEndOfStreamErrorCode( ec ) || base_type::isStreamTruncationError( ec );
+            }
+
+            /**
+             * @brief The peer closed - which COMPLETES a read-until-close body and refuses a
+             * truncated message rather than hanging on it
+             *
+             * 'closeCode' IS HOW THE STREAM ENDED AND NOT ONLY THAT IT ENDED, which is the whole
+             * of N2's second part. Everything onReadCompleted( ) admits arrives here, and this is
+             * the one function which can declare a close-delimited message COMPLETE - so a
+             * classification that admitted the Windows reset spellings would turn an aborted
+             * transfer into a short response reported as a success, for exactly the class of
+             * message HTTP/1.1 cannot frame any other way. An unclean end therefore does not
+             * reach parseEof( ) at all, and the stream is finished with the TRANSPORT'S own code
+             * rather than a protocol error: the caller saw "connection reset by peer" before this
+             * change and must go on seeing it, because after N2's first part the connection task
+             * itself ends cleanly and connectionFailureCause( ) has no exception left to chain
+             */
+
+            void onPeerClosed( SAA_in const eh::error_code& closeCode )
             {
                 if( ! m_parser )
                 {
+                    return;
+                }
+
+                if( ! isCleanEndOfStream( closeCode ) )
+                {
+                    /*
+                     * Whatever already parsed is still delivered - both of these are no-ops
+                     * unless a header block or a body chunk arrived and was not handed on yet -
+                     * and the message is NOT completed on the strength of a reset
+                     */
+
+                    deliverHeaders();
+                    deliverBodyChunk();
+
+                    finishStream(
+                        closeCode,
+                        ! m_requestMayHaveBeenSent /* isRetryable */,
+                        false /* isConnectionUsable */
+                        );
+
                     return;
                 }
 
@@ -1084,16 +1133,30 @@ namespace bl
                  * Classified before the handler prolog, exactly as HttpServerReceiveRequestTask
                  * classifies a truncation: an end of stream is not a failure of this task, it is
                  * how a read-until-close body ends and how a pooled idle connection is reclaimed
+                 *
+                 * ASKED OF net:: RATHER THAN COMPARED BY HAND - N2, and the rule NetUtils.h
+                 * states in as many words. The same peer behaviour reaches us under different
+                 * codes on Windows, where a close during a full-duplex transfer is reported as
+                 * connection_aborted and a close with unread data as connection_reset; neither is
+                 * eof, so the comparison this replaces FAILED a connection the peer had closed
+                 * normally, about one time in eight. It is the same defect the HTTP/2 driver had
+                 * before it asked the same question here
+                 *
+                 * THE PREDICATE IS THE WIDE ONE ON PURPOSE - the conversation is over however it
+                 * ended, and failing the task is the wrong answer to a peer that went away. What
+                 * that admits is then discriminated by onPeerClosed( ), which is where completing
+                 * a message on the strength of the close is decided, and which is why this change
+                 * cannot ship without that one
                  */
 
                 const bool isEndOfStream =
-                    asio::error::eof == ec || base_type::isStreamTruncationError( ec );
+                    net::isPeerClosedErrorCode( ec ) || base_type::isStreamTruncationError( ec );
 
                 BL_TASKS_HANDLER_BEGIN()
 
                 if( isEndOfStream )
                 {
-                    onPeerClosed();
+                    onPeerClosed( ec );
 
                     closeConnection();
                 }

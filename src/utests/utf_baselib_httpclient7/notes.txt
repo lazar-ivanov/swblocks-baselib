@@ -2,3 +2,12 @@
 
 --log_level=message --run_test=Http1Driver_WriteInFlightRefusesReuseTests
 --log_level=message --run_test=Http1Driver_WriteInFlightRefusesASecondRequestTests
+
+# the two 11a cases ABORT this module on Beast's BOOST_ASSERT( got_some( ) ) unless the tree
+# carries the zero-octet conversion in Http1ResponseParserT::parseEof( ) - their red is the
+# process dying and not an assertion, which is why they landed with that conversion and not
+# before it
+
+--log_level=message --run_test=Http1Driver_PeerClosesWithoutAnsweringTests
+--log_level=message --run_test=Http1Driver_PeerClosesAfterEarlyHintsTests
+--log_level=message --run_test=Http1Driver_PeerResetsMidCloseDelimitedBodyTests

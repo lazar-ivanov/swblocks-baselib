@@ -215,6 +215,23 @@ namespace bl
                     base_type::put_eof( ec );
                 }
 
+                /**
+                 * @brief Whether this backend has been handed a single octet
+                 *
+                 * RE-EXPORTED BECAUSE putEof( ) MAY NOT BE CALLED WITHOUT ASKING IT FIRST.
+                 * Beast's put_eof( ) opens with BOOST_ASSERT( got_some( ) ), and this library
+                 * defines NDEBUG only in the release toolchain files - so a parser which has seen
+                 * nothing aborts a debug build there, and in a release build falls past BOTH of
+                 * put_eof( )'s guards, which test for the start_line and fields states and for
+                 * the framing flags, and reports a COMPLETE message with no status line at all.
+                 * The facade asks this before putEof( ) - see Http1ResponseParserT::parseEof( )
+                 */
+
+                bool gotSome() const NOEXCEPT
+                {
+                    return base_type::got_some();
+                }
+
                 bool isHeaderDone() const NOEXCEPT
                 {
                     return base_type::is_header_done();
