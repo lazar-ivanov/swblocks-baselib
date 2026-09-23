@@ -32,7 +32,18 @@ The library has no decompressor. Not directly; not through Boost, which is built
 `no-shared` and nothing else (`scripts/devenv7/linux/build-openssl-linux.sh:539`).
 
 The existing client never needed one: `SimpleHttpTask` sends no `accept-encoding`
-(`src/include/baselib/http/SimpleHttpTask.h:612-657`), so servers reply uncompressed.
+(`src/include/baselib/http/SimpleHttpTask.h:612-657`), and in practice servers reply uncompressed.
+
+**Corrected 2026-09-22 (astra H29).** That sentence used to end *"so servers reply uncompressed"*,
+and as a statement about the protocol it is false. RFC 9110 section 12.5.3, the first of the rules a
+server tests acceptability by: *"If no Accept-Encoding header field is in the request, any content
+coding is considered acceptable by the user agent."* It is an **empty** field value, not an absent
+one, which says the opposite: *"An Accept-Encoding header field with a field value that is empty
+implies that the user agent does not want any content coding in response."* So omitting the field
+permits every coding rather than forbidding all of them, and a conforming server may answer it with
+`content-encoding: br`. Sending none when none was asked for is a convention servers keep, not an
+obligation the protocol places on them - which is why "in practice" is the strongest the sentence
+can be made.
 
 Browsers advertise four content codings, which are three algorithms of very different weight:
 
@@ -49,7 +60,16 @@ Browsers advertise four content codings, which are three algorithms of very diff
 It depends entirely on the path.
 
 **Requests without impersonation: essentially nothing.** The client omits `accept-encoding`, exactly
-as today, and servers send identity bodies. The loss is bandwidth.
+as today, and in practice servers answer with an uncoded body. The loss is bandwidth.
+
+**Corrected 2026-09-22 (astra H29), the second of the two sentences.** This one used to read *"and
+servers send identity bodies"*, which promises what section 12.5.3 does not - see the correction
+above. **The code is already right, and nothing here is a behaviour defect.** A server which does
+answer an absent `accept-encoding` with a coding meets
+`SessionRequestTaskT::decodeBody( )` (`ClientSession.h`): it finds no decoder registered for that
+coding and returns, so the body and its `content-encoding` reach the caller exactly as they
+arrived. Nothing is decoded wrongly, nothing is stripped, and the header which says the body is
+coded is still on it. What the two sentences overstated was the *guarantee*, not the behaviour.
 
 **Requests with impersonation: it matters, and it affects the impersonation itself.** Every real
 browser sends `accept-encoding: gzip, deflate, br, zstd` on every request. That header is part of the
