@@ -297,6 +297,28 @@ namespace bl
              * @brief Restarts the source from its first byte
              *
              * @throw NotSupportedException when canRewind() is false
+             *
+             * IT RUNS UNDER TWO LOCKS, AND THE THREE RULES BELOW ARE THE CONTRACT RATHER THAN
+             * ADVICE. Both call sites are inside SessionRequestTaskT::continuationTask( ) - the
+             * retry's rewind and the redirect's - which ExecutionQueueImpl::onReady( ) calls with
+             * the SCHEDULING LOCK of the execution queue the request was pushed to already held,
+             * and which takes the session wrapper's own lock before it decides anything. So for as
+             * long as this call runs, every push_back( ), wait( ) and pop( ) on that queue blocks,
+             * and so does a requestCancel( ) on the wrapper.
+             *
+             * DO NOT BLOCK - not on I/O, not on a condition variable, not on anything another
+             * thread has to run first. DO NOT SUBMIT TO THAT EXECUTION QUEUE, and do not wait on
+             * anything already scheduled on it: that deadlocks outright. DO NOT RE-ENTER the
+             * wrapper task, whose os::mutex is not recursive. Reopening a handle and seeking to
+             * zero is the shape this is written for. Throwing is not a violation - the queue turns
+             * a throw out of continuationTask( ) into this request's own failure.
+             *
+             * ( L6 finding 6 / astra H09. This is the LIVE half of that finding, and it is a
+             * contract gap, so writing the contract is what closes it. The other half is the
+             * registered ContentDecoder, which runs in the same place with far more CPU behind it;
+             * the structural answer to both - moving the inter-hop work into the hop task's
+             * deferred phase, which already runs off both locks - is recorded as a prerequisite of
+             * the decoder programme in notes/plans/issues/http-content-decoders-deferral.md )
              */
 
             virtual void rewind() = 0;

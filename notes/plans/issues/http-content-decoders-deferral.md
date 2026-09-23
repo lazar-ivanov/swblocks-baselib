@@ -151,8 +151,65 @@ dependencies, and it has no Brotli filter at all.
 
 ---
 
+## Prerequisites before a decoder ships
+
+Three defects are harmless while the registry is empty and become live the moment it is not. They are
+recorded **here** rather than in a ledger because `ContentDecoder.h`'s file note sends every codec
+author to this document by name, and because none of them is the codec's own work. **They are a gate,
+not a deferral:** shipping a codec without P1 puts unbounded CPU under a queue-wide mutex.
+
+### P1. The decode runs under the execution queue's scheduling lock, uncancellable and undeadlined
+
+`ExecutionQueueImpl::onReady( )` holds the queue's `m_lock` across `task -> continuationTask( )`, and
+`SessionRequestTaskT::continuationTask( )` takes the session wrapper's lock and then runs
+`absorbResponse( )` — `storeCookies( )` and `decodeBody( )`. So a decode of up to
+`DecoderLimits::DEFAULT_MAX_OUTPUT_BYTES` (64 MB) holds a **queue-wide** mutex: every `push_back( )`,
+`wait( )` and `pop( )` on the queue the request was pushed to blocks for its duration, as does a
+`requestCancel( )` on the wrapper. And nothing interrupts it — the completed hop has already
+cancelled its timers, `chkRemainingBudget( )` is evaluated synchronously **inside** `startHop( )`,
+which runs *after* the decode, and the wrapper's cancel flag is tested after it too. Those are two
+separate facts: **uncancellable** and **undeadlined**.
+
+**The fix is structural and is not a limit.** Move the response transformation into the hop task's
+deferred phase, which already exists and already runs off both locks. It is testable when it lands —
+a deliberately slow decoder with other completions queued behind it — and that case belongs to the
+change that makes it pass.
+
+*L6 finding 6; astra H09. S6R.3 took the documented minimum now — the contract written at
+`BodySource::rewind( )` in `ClientTypes.h` and at `ContentDecoder` — because that closes the half
+which is live today: `rewind( )` is **caller code** running in that place with a contract that said
+nothing about it. The decode half is latent, and measurably so: `decodeBody( )` returns at once
+unless a decoder is registered for the response's coding, and every `registerDecoder( )` call in the
+tree is under `src/utests/`.*
+
+### P2. `Content-Encoding` is read as one token, not as a list — astra H24
+
+`decodeBody( )` looks the **whole field value** up in the registry (`decoders.hasDecoder( *coding )`),
+so a value naming more than one coding matches nothing and the body is handed back intact with its
+header — which is the documented behaviour for a coding we cannot decode, and is why this is latent
+rather than silent. It stops being latent as soon as a decoder exists: the layers of a multi-coding
+value have to be recognised and peeled in reverse order, and today a single successful decode deletes
+both `content-encoding` and `content-length` wholesale. The full entry, including the verification
+record's own correction that H24 is *not* silent, is in `astra-review-verification-record.md`.
+
+### P3. Decoding runs on failed and on bodyless responses — astra H25
+
+`absorbResponse( )` returns early only on `status( ) == 0`, and `continuationTask( )` calls it
+**before** it examines `m_hop -> exception( )`. So a hop that failed *after* its headers — a body
+over the cap, a reset mid-body — still reaches `decodeBody( )`, and a decoder that throws on the
+truncated coded body has its exception forwarded by the queue over the network error that actually
+happened. The bodyless half is its sibling: a 204, a 304 or a response to HEAD which carries a
+`content-encoding` reaches `createStream( )` and `finish( )` with nothing to decode, which the
+`ContentDecoder` contract makes a truncation throw. The failed half is L6 finding 12; the full entry
+is in `astra-review-verification-record.md`.
+
+---
+
 ## Sequencing when it does happen
 
+0. Close **P1** above, and P2 and P3 for any coding being registered. P1 is a change to the
+   continuation protocol `RetryableWrapperTaskT` shares, so it is a core-path change-set of its own
+   and gates on the whole suite; it does not ride with a codec.
 1. Choose between A, B and C **per coding** - they need not share an answer. Inflate in-house with
    Brotli and Zstandard external is a coherent outcome.
 2. For any external library: the build scripts, the makefile module and the supply-chain record, on

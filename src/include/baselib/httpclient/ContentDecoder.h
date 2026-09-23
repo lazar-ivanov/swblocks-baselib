@@ -84,6 +84,27 @@ namespace bl
          * The contract is that write( ... ) may call 'output' any number of times including none,
          * that finish( ... ) flushes whatever the decoder was holding, and that neither is called
          * again after finish( ... )
+         *
+         * WHERE THEY RUN, AND WHAT THAT FORBIDS. The session decodes a buffered body from
+         * SessionRequestTaskT::continuationTask( ), which ExecutionQueueImpl::onReady( ) calls with
+         * the SCHEDULING LOCK of the execution queue the request was pushed to already held, and
+         * which takes the session wrapper's own lock before it. So write( ... ) and finish( ... )
+         * run under both: every push_back( ), wait( ) and pop( ) on that queue blocks for their
+         * duration, as does a requestCancel( ) on the wrapper. A decoder must not block, must not
+         * submit to that queue or wait on anything scheduled on it, and must not re-enter the
+         * wrapper task, whose os::mutex is not recursive.
+         *
+         * AND THE CPU THERE IS NEITHER CANCELLABLE NOR DEADLINED, which is the half no rule on a
+         * decoder can fix. The completed hop has already cancelled its timers; the chain's
+         * remaining budget is evaluated synchronously inside startHop( ), which runs AFTER the
+         * decode; and the wrapper's own cancel flag is tested after it too. Two separate facts, not
+         * one restated. So a decode of up to DEFAULT_MAX_OUTPUT_BYTES holds a queue-wide mutex for
+         * as long as it takes and nothing interrupts it - which is why moving this work into the
+         * hop task's deferred phase, where it would run off both locks, is a PREREQUISITE of
+         * shipping any codec and not an optimization. It is recorded as such, with the two other
+         * prerequisites, in notes/plans/issues/http-content-decoders-deferral.md - the document the
+         * file note above already sends every codec author to. Latent today only because no
+         * decoder ships ( L6 finding 6 / astra H09 )
          */
 
         class ContentDecoder : public om::Object

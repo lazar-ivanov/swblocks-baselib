@@ -801,6 +801,20 @@ the arming condition; plus a short record naming the reopen trigger — the firs
 belongs with S6R.4's documentation work. The argument is in `s6r3-decisions.md` §4 and is not
 repeated here.
 
+**It landed there, and nothing is owed** (confirmed against the source, 2026-09-23). Commit
+`b1224b3`, "http2: the decoder's HPACK leniency is a choice, not a consequence", inside the S6R.4
+merge `38ed037`; the rewrite is the doc comment above `HpackDecoderT::setMaxDynamicTableSize( )` in
+`HpackDecoder.h`. It carries all four things this section asks for — RFC 9113 §4.3.1 in place of
+RFC 7541 §4.2, the decoder-side MUST quoted, the leniency stated as a chosen conformance departure
+rather than a consequence of not evicting, and the arming condition written as the table's CURRENT
+size rather than the previous maximum. One deviation from this section, and it is an improvement:
+the reopen trigger went into that same comment, under "WHEN TO REOPEN IT", instead of into a
+separate `issues/` record — so the trigger sits where the next reader of the behaviour will be, not
+in a file they would have to know to open. The behaviour is unchanged, as decided.
+
+*(One more thing this section's §0 flagged is no longer true: `s6r3-decisions.md` IS on `lazari2`,
+at `c4b2f87`, so every citation of it below resolves.)*
+
 ---
 
 ## 6. These are four change-sets, not one
