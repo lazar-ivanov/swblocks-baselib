@@ -1448,6 +1448,11 @@ namespace bl
                  * "HTTP <METHOD> request to '<url>' has timed out (<duration>)". Callers and logs
                  * already recognise it, and a second shape for the same event would be a gratuitous
                  * difference between the old task and the new one
+                 *
+                 * THE URL IS REDACTED AND THE SHAPE IS NOT. redactedUrl( ) renders the scheme, the
+                 * authority and the path; this used to call net::Uri::toString( ), which also
+                 * recomposes the userinfo, the query and the fragment (astra H20). See that
+                 * function for what this does and does not claim to close
                  */
 
                 return resolveMessage(
@@ -1455,7 +1460,7 @@ namespace bl
                         << "HTTP "
                         << m_request.method()
                         << " request to '"
-                        << m_request.url().toString()
+                        << redactedUrl( m_request.url() )
                         << "' has timed out ("
                         << timeoutOf( kind )
                         << ")"

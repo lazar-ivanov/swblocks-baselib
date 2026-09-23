@@ -651,6 +651,54 @@ namespace bl
             }
         };
 
+        /**
+         * @brief A request's URL as a MESSAGE HANDED TO A CALLER may carry it - the scheme, the
+         * authority and the path, and nothing else
+         *
+         * NOT net::Uri::toString( ), which recomposes the reference in full and therefore carries
+         * three things a caller may have put a secret in: the USERINFO, the QUERY - a bearer or a
+         * session token is commonly a query parameter - and the FRAGMENT, which the request never
+         * even put on the wire. net::Uri::authority( ) excludes the userinfo by construction, which
+         * is what makes this a rendering rather than a filter.
+         *
+         * WHAT THIS IS, STATED EXACTLY, because overstating it would be its own defect (astra H20).
+         * The URL reaches a caller only INSIDE THE EXCEPTION these messages are built for: no
+         * BL_LOG in this client emits one, and the framework's exception dump cannot fire for these
+         * tasks - it is gated on a task name they never set. So what this closes is an
+         * API-CONTRACT gap, that a message handed to a caller was not redaction-safe. It is not a
+         * leak that was happening.
+         *
+         * THE PATH IS KEPT, deliberately: it is what tells one timed-out request from another, and
+         * the message shape these callers already recognise - SimpleHttpTask::createTimeoutMessage(
+         * )'s - has always carried it. The legacy task redacts the path too, but only under its own
+         * isSecureMode, and this client has no such flag yet; L8's compatibility facade is where
+         * one arrives, and this renderer is the seam it will need.
+         *
+         * Additive, and no part of the frozen contract this file's note governs - nothing above is
+         * changed by it and no consumer has to know it exists
+         */
+
+        inline std::string redactedUrl( SAA_in const net::Uri& url )
+        {
+            std::string result;
+
+            if( url.hasScheme() )
+            {
+                result += url.scheme();
+                result += ':';
+            }
+
+            if( url.hasAuthority() )
+            {
+                result += "//";
+                result += url.authority();
+            }
+
+            result += url.path();
+
+            return result;
+        }
+
     } // httpclient
 
 } // bl
