@@ -81,3 +81,10 @@
 --log_level=message --run_test=Session_InterimResponsesAreBoundedTests
 --log_level=message --run_test=Session_WindowUpdateThresholdFollowsTheWindowTests
 --log_level=message --run_test=Session_PeerPrefaceMustBeSettingsTests
+
+# S6R.3 H10 - where a SETTINGS acknowledgement of ours goes among the header blocks. The first two
+# are red before the fix; the third is a control, green on both sides, and is what separates the
+# position taken from deferring the ack past the whole queue
+--log_level=message --run_test=Session_StaleHeaderBlockPrecedesTheSettingsAckTests
+--log_level=message --run_test=Session_StaleFragmentSizePrecedesTheSettingsAckTests
+--log_level=message --run_test=Session_SettingsAckPrecedesABlockEncodedAfterItTests

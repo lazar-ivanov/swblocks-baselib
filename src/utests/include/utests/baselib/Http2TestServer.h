@@ -1282,11 +1282,11 @@ namespace utest
             /**
              * @brief Whether everything queued for this stream has actually been written
              *
-             * Session::produce( ) writes control frames, then header blocks, then DATA - so a
-             * trailer section queued while a body is still pending would be written in FRONT of
-             * that body. The test for "the body is out" is that nothing is in flight, the session
-             * has nothing more to say, and both windows are open: with a shut window the session
-             * also has nothing to say, and the body would still be sitting there
+             * Session::produce( ) writes header blocks before DATA - so a trailer section queued
+             * while a body is still pending would be written in FRONT of that body. The test for
+             * "the body is out" is that nothing is in flight, the session has nothing more to say,
+             * and both windows are open: with a shut window the session also has nothing to say,
+             * and the body would still be sitting there
              */
 
             bool isStreamDrained( SAA_in const std::uint32_t streamId ) const

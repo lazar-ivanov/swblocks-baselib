@@ -441,6 +441,10 @@ namespace bl
              * send it. A stream force closed by a peer's GOAWAY is reported RETRYABLE - the caller
              * may replay that request elsewhere - so its block must be dropped rather than written
              * behind the GOAWAY, and a bare buffer carries nothing to recognize it by
+             *
+             * An entry of STREAM_ID_CONNECTION is not a block at all: it is a SETTINGS
+             * acknowledgement holding its place among them, behind the blocks which predate the
+             * frame it answers and ahead of the blocks which follow it - see handleSettings( )
              */
 
             struct QueuedHeaderBlock
@@ -908,6 +912,10 @@ namespace bl
              * Control frames first, then whole header blocks, then DATA within the windows - and
              * every one of those three is bounded, so this terminates and is what a write pump
              * hands to one async_write
+             *
+             * ONE CONTROL FRAME IS NOT IN THE FIRST GROUP: a SETTINGS acknowledgement is an entry
+             * of the header block queue, at the position handleSettings( ) gave it, and so can
+             * leave behind a block which predates the frame it answers
              */
 
             void produce(
@@ -1720,7 +1728,27 @@ namespace bl
                     return;
                 }
 
-                if( m_controlQueue.size() > m_limits.maxQueuedControlFrameBytes )
+                /*
+                 * H10 - THE SETTINGS ACKNOWLEDGEMENTS AMONG THE HEADER BLOCKS COUNT TOWARD THE
+                 * SAME BOUND. handleSettings( ) queues an ack as an entry of STREAM_ID_CONNECTION
+                 * in the header block queue so that it keeps its place against the blocks around
+                 * it; those octets are still control-frame octets owed to a peer which may not be
+                 * reading, and checkInboundFrameRate( ) bounds the RATE of inbound SETTINGS rather
+                 * than the total. A walk of a short deque once per control frame, rather than a
+                 * counter to be kept in step at every site which queues one
+                 */
+
+                std::size_t queued = m_controlQueue.size();
+
+                for( auto it = m_headerBlockQueue.begin(); it != m_headerBlockQueue.end(); ++it )
+                {
+                    if( it -> streamId == Globals::STREAM_ID_CONNECTION )
+                    {
+                        queued += it -> frames.size();
+                    }
+                }
+
+                if( queued > m_limits.maxQueuedControlFrameBytes )
                 {
                     throwConnectionError(
                         Globals::ERROR_CODE_ENHANCE_YOUR_CALM,
@@ -2423,7 +2451,36 @@ namespace bl
 
                 applyPeerSettings( settings );
 
-                FrameCodec::serializeSettingsAck( m_controlQueue );
+                /*
+                 * H10 - THE ACKNOWLEDGEMENT HOLDS ITS PLACE AMONG THE HEADER BLOCKS, and it is the
+                 * only control frame of ours which does.
+                 *
+                 * queueHeaderBlock( ) commits a block to bytes when it is QUEUED: its fragments
+                 * are sized against m_peerMaxFrameSize as it then reads, and m_encoder.encode( )
+                 * has already committed its dynamic table transaction. applyPeerSettings( ) above
+                 * has just moved both. So a block queued BEFORE this frame arrived is stale, and
+                 * produce( ) writing the control queue first would put it AFTER our ack - past the
+                 * boundary of 6.5.3, "the sender of the altered settings can rely on the values
+                 * from the oldest unacknowledged SETTINGS frame having been applied". Oversized
+                 * for 4.2, and with no Dynamic Table Size Update for 4.3.1's MUST
+                 *
+                 * A block queued AFTER it is the opposite case and must stay where it is: it is
+                 * sized to the new limit and, if the capacity moved, opens with the size update,
+                 * which 4.3.1 says takes effect only when we acknowledge - a RAISE written ahead
+                 * of our ack is a COMPRESSION_ERROR to a decoder which bounds the update by the
+                 * setting it has applied, which is what nghttp2, Netty and QUICHE each do
+                 *
+                 * So the ack's place is BETWEEN them, which is its position in this queue and
+                 * nowhere else. STREAM_ID_CONNECTION is what carries it: dropQueuedHeaderBlocks( )
+                 * matches a real stream id and so never this entry, and raiseConnectionError( )'s
+                 * clear drops it with the blocks - an acknowledgement owed on a connection we have
+                 * just ended is not owed
+                 */
+
+                m_headerBlockQueue.push_back( QueuedHeaderBlock() );
+                m_headerBlockQueue.back().streamId = Globals::STREAM_ID_CONNECTION;
+
+                FrameCodec::serializeSettingsAck( m_headerBlockQueue.back().frames );
 
                 checkControlQueueBound();
 
