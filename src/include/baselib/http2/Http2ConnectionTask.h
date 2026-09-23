@@ -1660,13 +1660,36 @@ namespace bl
                  * Nothing is lost by ending gracefully here. A stream whose headers have been
                  * produced is already non-retryable, and onPeerClosed( ) is what reports every
                  * still-open stream as ended by the peer
+                 *
+                 * AND A THIRD ANSWER AHEAD OF BOTH, which is the write this task's own teardown
+                 * broke. initiateClose( ) shuts the send side down to reach a composed write no
+                 * cancel can, so that write then fails - broken_pipe on POSIX, WSAESHUTDOWN on
+                 * Windows, something else again through an ssl::stream. None of those is
+                 * operation_aborted, which is the only code the accounting excuses, so without
+                 * this arm the fix would turn a hang into a FAILED connection
+                 *
+                 * THE QUESTION IS THIS TASK'S STATE AND NOT THE CODE, for the reason above: the
+                 * codes diverge by platform and by policy, our own closing state does not.
+                 * isClosing( ) is true either deliberately - the case this exists for - or
+                 * because a first error is already recorded, in which case this one would have
+                 * been discarded anyway
+                 *
+                 * IT MUST COME FIRST, AND IT MUST DO NOTHING. On the peer-close door
+                 * onPeerClosed( ) has ALREADY run, from onRead( ), and it has no re-entry guard:
+                 * reaching it a second time would republish state and re-close streams
                  */
 
                 m_isWriteInFlight = false;
 
                 if( ec )
                 {
-                    if( isPeerClosed( ec ) )
+                    if( base_type::isClosing() )
+                    {
+                        /*
+                         * Our own teardown - nothing to report and nothing to do
+                         */
+                    }
+                    else if( isPeerClosed( ec ) )
                     {
                         onPeerClosed();
                     }
@@ -2551,8 +2574,37 @@ namespace bl
             {
                 cancelTimers();
 
+                /*
+                 * A CANCEL CANNOT REACH A COMPOSED WRITE, which is what the shutdown below is
+                 * for. asio::async_write( ) is a resumable loop over async_write_some( ), and
+                 * between two of its steps it has nothing registered with the reactor; cancel( )
+                 * reaps what is registered, finds nothing of that write, and the loop arms its
+                 * next step afterwards. initiateClose( ) runs once per run, so no second cancel
+                 * is coming and the task can never take its terminal path - a hang, not a failure
+                 *
+                 * THE DOOR IS THE PEER'S CLOSE, and it is why this driver needs it too. The
+                 * graceful close cannot get here with a write outstanding: chkFinishClose( ) is
+                 * reached only from pumpWrites( ), which returns while m_isWriteInFlight is true.
+                 * onPeerClosed( ) can - a peer that stops reading and then half-closes leaves the
+                 * upload outstanding, and this function has just cancelled every timer, so
+                 * nothing else is left to bound it. So can any first error raised while a write
+                 * is in flight
+                 *
+                 * The rest of the reasoning is the h1 driver's initiateClose( ), verbatim: the
+                 * library's own teardown rather than a line written here, shutdown_send and not
+                 * both, gated so a deliberate TLS close keeps its close_notify, and the flag set
+                 * FIRST because shutdownSocket( ) is static and touches no task state
+                 */
+
                 if( base_type::isSocketCreated() )
                 {
+                    if( m_isWriteInFlight )
+                    {
+                        TcpSocketCommonBase::m_wasSocketShutdownForcefully = true;
+
+                        TcpSocketCommonBase::shutdownSocket( base_type::getSocket() );
+                    }
+
                     eh::error_code ec;
 
                     base_type::getSocket().cancel( ec );

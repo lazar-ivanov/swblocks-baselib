@@ -174,18 +174,23 @@ namespace utest
          * the case assert on whichever waker got there first, and it was never the driver: the
          * green runs were the peer's doing as much as the red ones
          *
-         * WHAT THE BOUND FOUND. With the peer parked the task does not end at all in most runs -
-         * measured still running 500ms after the barrier tripped in 6 of 8, and freed instantly
-         * by a forced shutdown. initiateClose( ) calls socket.cancel( ) and nothing else, and
-         * cancel( ) reaps only the async_write_some CURRENTLY registered with the reactor. A
-         * composed asio::async_write between two of its internal steps has none registered - and
-         * that interleaving is exactly the one this exchange engineers on purpose - so the cancel
-         * finds nothing, the composed write arms its next step afterwards, and no second cancel
-         * is ever coming. TcpBaseTasks.h states the rule this misses in as many words: shutdown( )
-         * prevents new requests, cancel( ) stops existing ones, and shutdownSocket( ) does both
+         * WHAT THE BOUND FOUND, AND WHAT THE DRIVER THEN CHANGED. With the peer parked the task
+         * did not end at all in most runs - measured still running 500ms after the barrier
+         * tripped in 6 of 8, and freed instantly by a forced shutdown. initiateClose( ) called
+         * socket.cancel( ) and nothing else, and cancel( ) reaps only the async_write_some
+         * CURRENTLY registered with the reactor. A composed asio::async_write between two of its
+         * internal steps has none registered - and that interleaving is exactly the one this
+         * exchange engineers on purpose - so the cancel found nothing, the composed write armed
+         * its next step afterwards, and no second cancel was ever coming. TcpBaseTasks.h states
+         * the rule it missed in as many words: shutdown( ) prevents new requests, cancel( ) stops
+         * existing ones, and shutdownSocket( ) does both
          *
-         * So this case is RED against the driver as it stands, and it is red for the reason it
-         * exists to find. See the note on the assertions below
+         * initiateClose( ) NOW CALLS shutdownSocket( ) when a write is in flight, and this case
+         * is what says so. Measured here, a64 clang debug, 10 runs each: cancel only - 2 red on
+         * the first assertion below, the failing runs taking the full 5s bound; shutdown without
+         * the classification - 0 red on the first and 7 on the SECOND, every one of them the
+         * broken_pipe of the write we had just poisoned, and every run back under 55ms; with
+         * both - 12 of 12 green. That is the whole argument for the two halves in one table
          */
 
         inline auto runBlockedUpload( SAA_in const bool submitAgain = false ) -> BlockedUploadResult
@@ -382,9 +387,9 @@ UTF_AUTO_TEST_CASE( Http1Driver_WriteInFlightRefusesReuseTests )
 
     /*
      * AND THE BARRIER MUST NOT BE A DEADLOCK - the two assertions this case exists for, and the
-     * two it currently FAILS. Refusing reuse takes closeConnection( ), and the epilog of the
-     * handler that got there reaches initiateClose( ), which is the one thing that may wake the
-     * write the barrier refused to wait for. So the exchange holds the peer, asks whether the
+     * two it was written RED against. Refusing reuse takes closeConnection( ), and the epilog of
+     * the handler that got there reaches initiateClose( ), which is the one thing that may wake
+     * the write the barrier refused to wait for. So the exchange holds the peer, asks whether the
      * task ends on its own, and then asks whether it ended CLEAN
      *
      * THE FIRST ONE IS THE DEADLOCK ITSELF and it is separate on purpose: a task which never
@@ -394,9 +399,13 @@ UTF_AUTO_TEST_CASE( Http1Driver_WriteInFlightRefusesReuseTests )
      * still there when the peer finally went away, which is the deadlock again rather than a
      * second fault
      *
-     * WHY THEY ARE RED. initiateClose( ) cancels the socket and does not shut it down, and
-     * cancel( ) cannot reap a composed async_write that is between its internal steps - see the
-     * note on runBlockedUpload( ). The driver has to change; the assertions are what say so
+     * ONE ASSERTION PER HALF OF THE FIX, AND NEITHER IS REDUNDANT. The first is initiateClose( )
+     * shutting the send side down where a cancel cannot reach the write; the second is
+     * onWriteCompleted( ) not counting the error that shutdown produces as this task's. With the
+     * shutdown alone the first goes green and the second goes red with broken_pipe - measured, 7
+     * of 10 - which is the only direct evidence that the classification is load-bearing rather
+     * than defensive. A future change that reverts either half fails exactly one of these, and
+     * the message says which
      */
 
     utest::http1driver::chkOrFail(
@@ -436,6 +445,15 @@ UTF_AUTO_TEST_CASE( Http1Driver_WriteInFlightRefusesASecondRequestTests )
     UTF_REQUIRE(
         httpclient::ClientConnection::INVALID_STREAM_HANDLE == result.secondHandle
         );
+
+    /*
+     * AND THE SAME BOUND IS ASSERTED HERE, because this case shares runBlockedUpload( ) and
+     * therefore shares its five-second wait. Without this line a wedged driver leaves the case
+     * GREEN - the refused handle is read before the wait - and simply stalls for the full bound,
+     * which is a silent five seconds rather than a failure. One line turns it into one
+     */
+
+    UTF_REQUIRE( result.taskEndedUnaided );
 }
 
 #endif /* __UTEST_TESTHTTP1DRIVERWRITEBARRIER_H_ */

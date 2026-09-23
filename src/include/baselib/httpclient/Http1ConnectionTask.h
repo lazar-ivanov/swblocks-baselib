@@ -747,6 +747,37 @@ namespace bl
                 SAA_in          const std::size_t                               bytesTransferred
                 ) NOEXCEPT
             {
+                /*
+                 * CLASSIFIED BEFORE THE HANDLER PROLOG, the same way onReadCompleted( ) classifies
+                 * an end of stream - a write which failed because WE tore the send side down in
+                 * initiateClose( ) is not a failure of this task, it is how the teardown reaches a
+                 * write no cancel could
+                 *
+                 * THE PREDICATE IS THIS TASK'S STATE AND NOT THE ERROR'S CODE, which is where the
+                 * write side differs from the read side rather than mirrors it. On the read side
+                 * the transport is the only witness that the conversation ended, so the code is
+                 * the only evidence there is. Here we ended it ourselves, and our own state is
+                 * better evidence than any code - decisively so, because the codes diverge:
+                 * broken_pipe on POSIX, WSAESHUTDOWN on Windows, and whatever an ssl::stream
+                 * surfaces on top of either. NetUtils.h states the house rule for exactly this,
+                 * and the record behind it says this library has paid for a hand-written
+                 * platform comparison three times. A state predicate is right on Windows without
+                 * a Windows run; a code predicate cannot be known to be
+                 *
+                 * isClosing( ) AND NOT A DELIBERATE-CLOSE ACCESSOR, because both of its cases are
+                 * right. Closing deliberately is the case this exists for. Closing because
+                 * something already failed means m_firstError is already recorded, and
+                 * MultiOperationTaskT would have DISCARDED this error anyway - the first error
+                 * wins there - so excusing it one step earlier changes nothing observable
+                 *
+                 * AND CHK_CANCEL_IMPL( ) STAYS OUTSIDE THE GUARD. An external cancelTask( ) must
+                 * still fail this task with operation_aborted, which the accounting requires and
+                 * deliberately does not excuse; only the error of OUR OWN teardown is swallowed
+                 * here
+                 */
+
+                const bool isOurOwnTeardown = ec && base_type::isClosing();
+
                 BL_TASKS_HANDLER_BEGIN()
 
                 /*
@@ -786,7 +817,11 @@ namespace bl
                 m_requestHead.clear();
                 m_requestBody.reset();
 
-                BL_TASKS_HANDLER_CHK_EC( ec );
+                if( ! isOurOwnTeardown )
+                {
+                    BL_TASKS_HANDLER_CHK_EC( ec );
+                }
+
                 BL_TASKS_HANDLER_CHK_CANCEL_IMPL()
 
                 /*
@@ -1243,11 +1278,23 @@ namespace bl
                  * REFUSED RATHER THAN DRAINED. The peer that stopped reading sets the pace, so a
                  * drain is unbounded; refusing states the rule in one predicate
                  *
-                 * AND IT DOES NOT HANG. ! isReusable takes closeConnection( ) below, which is
-                 * beginClose( ), and the epilog of the very handler that got here then reaches
-                 * onOperationCompleted( ) with m_closing set and m_closeInitiated not - the one
-                 * call which runs initiateClose( ), which cancels the socket and so wakes the
-                 * pending write. The handler that trips the barrier is the one that frees it
+                 * AND IT DOES NOT HANG - BUT ONLY BECAUSE initiateClose( ) SHUTS THE SEND SIDE
+                 * DOWN, which it did not when this barrier first landed. ! isReusable takes
+                 * closeConnection( ) below, which is beginClose( ), and the epilog of the very
+                 * handler that got here then reaches onOperationCompleted( ) with m_closing set
+                 * and m_closeInitiated not - the one call which runs initiateClose( ). The
+                 * handler that trips the barrier is the one that frees it
+                 *
+                 * WHAT FREES IT IS THE SHUTDOWN AND NOT THE CANCEL, and the difference was worth
+                 * about three runs in four. A cancel reaps what is REGISTERED with the reactor,
+                 * and a composed asio::async_write between two of its internal async_write_some
+                 * steps has nothing registered at all - which is precisely the interleaving this
+                 * barrier is tripped by. The cancel found nothing, the composed loop armed its
+                 * next step afterwards, and initiateClose( ) runs once per run, so nothing was
+                 * ever coming back for it. bf115f2's commit message says "cancels the socket and
+                 * completes the write it refused to wait for"; that sentence was false and this
+                 * one replaces it. See initiateClose( ), and the barrier case in
+                 * utf_baselib_httpclient7, which is what measured it
                  */
 
                 const bool isReusable =
@@ -1470,10 +1517,51 @@ namespace bl
                 /*
                  * The read and the write are both on the socket, so cancelling it is what wakes
                  * them. It must not take the task lock and must not begin a new operation
+                 *
+                 * EXCEPT THAT A CANCEL CANNOT REACH A COMPOSED WRITE, which is why the shutdown
+                 * below is here. asio::async_write( ) is a resumable loop over async_write_some( ),
+                 * and between two of its steps it has NOTHING registered with the reactor;
+                 * cancel( ) reaps what is registered, finds nothing of that write, and the loop
+                 * arms its next step afterwards. initiateClose( ) runs exactly once per run
+                 * (MultiOperationTask.h, m_closeInitiated), so no second cancel is coming and
+                 * that write is never woken - a HANG and not a slow failure, because the task
+                 * cannot take its terminal path while an operation is still pending
+                 *
+                 * TcpBaseTasks.h states the rule this misses in as many words: "shutdown() will
+                 * prevent new read/write requests and cancel() will stop existing such requests".
+                 * shutdown( ) is a property of the socket rather than an entry in the reactor's
+                 * table, so it poisons the step the composed loop has not issued yet
+                 *
+                 * THE LIBRARY'S OWN TEARDOWN AND NOT A LINE WRITTEN HERE. shutdownSocket( ) is
+                 * shutdown_send + cancel, the exact pair the PeerCloseErrorCodes_* control cases
+                 * pin on every platform, and shutdown_send is the half that matters: shutting the
+                 * RECEIVE side down makes OUR OWN socket report eof to the read still armed on
+                 * it, which isCleanEndOfStream( ) is built to trust as the peer's orderly close
+                 * and parseEof( ) would complete a half-received close-delimited body on
+                 *
+                 * GATED, because it is owed only where a cancel cannot do the job. The terminal
+                 * notifyReady( ) runs the TLS close_notify of scheduleTaskFinishContinuation( )
+                 * before the policy's own teardown is reached, so an ungated shutdown here would
+                 * precede that close_notify on EVERY deliberate close and cost it. With the gate
+                 * this is inert on every path with no write outstanding
+                 *
+                 * AND THE FLAG IS SET FIRST, as every cancelTask( ) in the library sets it beside
+                 * its own call - shutdownSocket( ) is static and touches no task state. It is
+                 * m_wasSocketShutdownForcefully that makes isShutdownNeeded( ) answer false, and
+                 * a send side we have just shut down cannot carry a close_notify: the attempt
+                 * would fail with a code that is neither eof nor expected on a handshaken task,
+                 * so without the flag a cleanly closing TLS connection would FAIL
                  */
 
                 if( base_type::isChannelOpen() )
                 {
+                    if( m_isWriteInFlight )
+                    {
+                        TcpSocketCommonBase::m_wasSocketShutdownForcefully = true;
+
+                        TcpSocketCommonBase::shutdownSocket( base_type::getSocket() );
+                    }
+
                     eh::error_code ec;
 
                     base_type::getSocket().cancel( ec );
