@@ -1294,7 +1294,61 @@ namespace bl
             {
                 bool hasFailed = false;
 
-                if( ! entry -> driverConnection && entry -> attempt.task )
+                /*
+                 * ONE READING OF THE TASK CONNECTION'S STATE PER EXAMINE, and BOTH decisions which
+                 * depend on it - whether the driver may be polled, and whether the entry is
+                 * retired - made from that one reading.
+                 *
+                 * WHAT THE GATE IS FOR. The driver pointer is written by the establishing task on
+                 * its own thread ( ClientConnectionTaskBase::onProtocolNegotiated( ) ) and read
+                 * here through attempt.driver( ); nothing the pool holds orders the two, because
+                 * the writer never takes the pool lock. state( ) IS ordered: the task publishes
+                 * Closed from its own completion, after the pointer is written, so a reading of
+                 * Closed is an acquire on the only write there is and the pointer read which
+                 * follows it is ordered.
+                 *
+                 * WHY THE SAME READING MUST DECIDE THE RETIRE. The arms below retire an entry
+                 * whose connection reads Draining or Closed. Take the state a second time for
+                 * them and the two loads can straddle the writer's Closed store - the poll reads
+                 * the earlier value and declines, the retire reads the later one and fires, and
+                 * the entry is forgotten in the very examine which should have adopted the
+                 * driver. That is not a narrow window to be argued about: it is removed by
+                 * construction, because there is only one load to straddle.
+                 *
+                 * WHY Closed AND NOT THE TASK'S OWN "FINISHED". The task publishes Closed BEFORE
+                 * it stores PendingCompletion ( notifyReadyImpl( ) calls onTaskStoppedNothrow( ),
+                 * which publishes, and stores the task state only once it returns ). A gate on
+                 * "finished" therefore opens LATER than the store which arms the retire arm, and
+                 * between the two this function reads Closed from the task connection and retires
+                 * the entry. Gating on Closed opens the poll at the instant the retire can first
+                 * fire, and the poll runs first.
+                 *
+                 * AND THE ARM FOR AN ATTEMPT WITH NO TASK CONNECTION. taskConnection is null when
+                 * the attempt's task is not itself a ClientConnection, and there is no state to
+                 * read; the task's own completion is then the ordered store. It is safe there
+                 * precisely because current( ) is null until the driver is adopted, so the retire
+                 * arm cannot fire while this gate is shut. Created is excluded deliberately:
+                 * startConnection( ) examines the entry it has just filled BEFORE it pushes the
+                 * task, so a Created reading can be taken by another thread against a write which
+                 * has not happened - the same race one state earlier
+                 */
+
+                ConnectionState taskState = ConnectionState::Connecting;
+                bool mayPollDriver = false;
+
+                if( entry -> taskConnection )
+                {
+                    taskState = entry -> taskConnection -> state();
+
+                    mayPollDriver = ( ConnectionState::Closed == taskState );
+                }
+                else if( entry -> attempt.task )
+                {
+                    mayPollDriver =
+                        entry -> attempt.task -> getState() >= tasks::Task::PendingCompletion;
+                }
+
+                if( ! entry -> driverConnection && mayPollDriver )
                 {
                     auto driver = resolveDriver( entry -> attempt );
 
@@ -1326,7 +1380,14 @@ namespace bl
 
                 if( connection )
                 {
-                    const auto state = connection -> state();
+                    /*
+                     * THE ONE READING ABOVE, when current( ) is the task connection. When it is
+                     * the driver it is a different object, so this is a first load of that one
+                     * and not a second of the same
+                     */
+
+                    const auto state = connection.get() == entry -> taskConnection.get() ?
+                        taskState : connection -> state();
 
                     if( ConnectionState::Ready == state )
                     {
