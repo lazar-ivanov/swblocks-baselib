@@ -61,3 +61,4 @@
 
 #include "TestHttp1DriverWriteBarrier.h"
 #include "TestHttp1DriverPeerClose.h"
+#include "TestHttp1DriverWritePeerClose.h"

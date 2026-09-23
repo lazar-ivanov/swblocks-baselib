@@ -753,10 +753,10 @@ namespace bl
                  * initiateClose( ) is not a failure of this task, it is how the teardown reaches a
                  * write no cancel could
                  *
-                 * THE PREDICATE IS THIS TASK'S STATE AND NOT THE ERROR'S CODE, which is where the
-                 * write side differs from the read side rather than mirrors it. On the read side
-                 * the transport is the only witness that the conversation ended, so the code is
-                 * the only evidence there is. Here we ended it ourselves, and our own state is
+                 * THIS ARM'S PREDICATE IS THIS TASK'S STATE AND NOT THE ERROR'S CODE, which is
+                 * where the write side differs from the read side rather than mirrors it. On the
+                 * read side the transport is the only witness that the conversation ended, so the
+                 * code is the only evidence there is. Here we ended it ourselves, and our state is
                  * better evidence than any code - decisively so, because the codes diverge:
                  * broken_pipe on POSIX, WSAESHUTDOWN on Windows, and whatever an ssl::stream
                  * surfaces on top of either. NetUtils.h states the house rule for exactly this,
@@ -772,11 +772,41 @@ namespace bl
                  *
                  * AND CHK_CANCEL_IMPL( ) STAYS OUTSIDE THE GUARD. An external cancelTask( ) must
                  * still fail this task with operation_aborted, which the accounting requires and
-                 * deliberately does not excuse; only the error of OUR OWN teardown is swallowed
-                 * here
+                 * deliberately does not excuse; only the two endings classified here are swallowed
+                 * here, and a cancel is neither of them
                  */
 
                 const bool isOurOwnTeardown = ec && base_type::isClosing();
+
+                /*
+                 * THE SECOND ENDING WHICH IS NOT A FAILURE - the peer hung up while the request
+                 * was still going out. Classified here beside the first and for the same reason,
+                 * and asked of net:: rather than compared by hand, which is the rule NetUtils.h
+                 * states and which the write side needs its own predicate for: both of the
+                 * read-side ones refuse broken_pipe, and broken_pipe is one of the two codes this
+                 * exact event produces
+                 *
+                 * SECOND AND NOT FIRST, AND THAT ORDER IS LOAD BEARING. Our own shutdown_send
+                 * produces broken_pipe too, so on the write-barrier case both questions answer yes
+                 * together on every run - and a connection torn down by us must be explained by
+                 * our state and not by a code the peer could also have produced. isClosing( ) is
+                 * the better evidence wherever it applies, so it applies first
+                 *
+                 * AND THE WRITE SIDE DOES NOTHING ELSE - no onPeerClosed( ), no closeConnection( ).
+                 * The read has been armed since the task was scheduled and the same ending reaches
+                 * it with a READ-side code, which is the only side holding a parser that can tell
+                 * a complete close-delimited response from a truncated one. Ending the stream from
+                 * here would reset that parser under a response which may still be arriving, and
+                 * would put the verdict back on whichever handler ran first - the very thing this
+                 * arm exists to remove
+                 *
+                 * isStreamTruncationError( ) BESIDE IT exactly as onReadCompleted( ) asks it,
+                 * because this class is instantiated over the TLS policy as well and a truncated
+                 * TLS stream is spelled by the policy rather than by the transport
+                 */
+
+                const bool isPeerClosedOnWrite =
+                    net::isPeerClosedOnWriteErrorCode( ec ) || base_type::isStreamTruncationError( ec );
 
                 BL_TASKS_HANDLER_BEGIN()
 
@@ -817,7 +847,7 @@ namespace bl
                 m_requestHead.clear();
                 m_requestBody.reset();
 
-                if( ! isOurOwnTeardown )
+                if( ! isOurOwnTeardown && ! isPeerClosedOnWrite )
                 {
                     BL_TASKS_HANDLER_CHK_EC( ec );
                 }

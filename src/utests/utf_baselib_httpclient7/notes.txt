@@ -21,3 +21,19 @@
 --log_level=message --run_test=Http1Driver_PeerClosesWithoutAnsweringTests
 --log_level=message --run_test=Http1Driver_PeerClosesAfterEarlyHintsTests
 --log_level=message --run_test=Http1Driver_PeerResetsMidCloseDelimitedBodyTests
+
+# A2 - the write path's peer-close arm. Red on EVERY run against a tree without that arm, and the
+# case is built so that it is: the sink holds the driver's strand across the peer's reset, so the
+# reset finds a write op and no read op, and the write handler is enqueued on the strand before
+# scheduleRead( ) can put anything behind it. Measured a64 clang debug - 35 of 35 red without the
+# arm (20 idle, 15 under CPU and I/O load) and 30 of 30 green with it (20 idle, 10 loaded).
+#
+# TWO EARLIER SHAPES OF THE SAME EXCHANGE WERE ONLY MOSTLY RED, and the numbers are here because
+# the difference is instructive rather than incidental: parking both ops and releasing the peer
+# from the test thread gave 19 of 20 - the loser is asio's own dispatch, since perform_io invokes
+# only the FIRST completed op inline and posts the rest. Holding the strand from the response HEAD
+# gave 17 of 20, because the peer answers before the composed write has parked and a write between
+# two async_write_some steps has no op to fail. If this case ever goes green against a tree without
+# the arm, WRITE_PARKS_IN_MILLISECONDS is the first thing to look at
+
+--log_level=message --run_test=Http1Driver_PeerResetsWhileRequestWriteIsBlockedTests

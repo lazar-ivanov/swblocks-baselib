@@ -420,6 +420,54 @@ namespace bl
             return asio::error::eof == ec;
         }
 
+        /**
+         * @brief Whether a WRITE ended because the peer went away
+         *
+         * THE FOURTH PREDICATE, and it exists because the three above are all READ side. Ask it
+         * where a send failed and the question is "is the conversation over?" - a request still
+         * going out when the peer hangs up, say, which is an ordinary ending and not a fault of
+         * ours. It is isPeerClosedErrorCode() with one code added, and that code is the whole
+         * reason it is here.
+         *
+         * IT ADMITS broken_pipe, WHICH NONE OF THE OTHERS DOES. A peer that closes with our
+         * upload still unread puts a RST on the wire (RFC 2525 section 2.17), and a send into
+         * that connection completes EPIPE - measured, system:32 out of reactive_socket_send_op,
+         * by the write-barrier case in utf_baselib_httpclient7.
+         *
+         * AND WHY IT ALSO STILL ADMITS connection_reset, WHICH IS NOT A CHOICE BETWEEN THE TWO.
+         * One peer close produces BOTH codes, and which one a write gets says only which half of
+         * the connection reached the reset first: sk_stream_error() takes the pending error with
+         * an exchange, so the FIRST of the two syscalls gets ECONNRESET and the other gets what is
+         * left - EPIPE for a send, a plain end of stream for a recv. Measured both ways on this
+         * platform, deterministically, with the order fixed by which op the reactor performs
+         * first. A predicate admitting one of them would be right about half the time and would
+         * look like a race rather than a hole.
+         *
+         * WHAT IS STILL OWED IS THE WINDOWS SPELLING, and it is deliberately not guessed here.
+         * WSAECONNRESET and WSAECONNABORTED already map to codes isPeerClosedErrorCode() admits
+         * on that platform, so what is open is only whether a send into a reset connection is
+         * spelled a third way there. The matrix answers that; this predicate is not the place to
+         * assume it. WSAESHUTDOWN stays OUT either way - that one is OUR own shutdown_send and is
+         * a state question, not a code question, which is why onWriteCompleted() asks isClosing()
+         * first and this second.
+         *
+         * NOT THE ORDERLY VARIANT, and not for the reason that looks obvious. The question here is
+         * whether the conversation is over, not whether it ended tidily and a retry is worth it -
+         * and a write cannot answer the second question at all, because by the time it fails the
+         * request is part sent.
+         *
+         * WHAT THIS DOES NOT COVER is a truncated TLS stream, exactly as the three above do not:
+         * that is spelled by the stream policy. A caller on a class which may be instantiated over
+         * TLS asks STREAM::isStreamTruncationError() alongside this.
+         *
+         * See notes/plans/issues/windows-peer-close-error-codes-record.md
+         */
+
+        inline bool isPeerClosedOnWriteErrorCode( SAA_in const eh::error_code& ec ) NOEXCEPT
+        {
+            return isPeerClosedErrorCode( ec ) || asio::error::broken_pipe == ec;
+        }
+
         template
         <
             typename T
