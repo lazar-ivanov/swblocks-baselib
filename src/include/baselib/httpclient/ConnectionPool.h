@@ -230,6 +230,32 @@ namespace bl
              *
              * L6 finding 4a is the real fix and is owed: a policy flag - ride the preface,
              * default true - which a session turns off when it cannot produce HTTP/2 at all
+             *
+             * ONE KNOB, TWO BUDGETS, AND THEY MULTIPLY (L6 finding 10, astra H23). This number
+             * bounds two counters which are renewed independently of one another:
+             *
+             *  - the POOL's, Waiter::attempts, which counts ESTABLISHMENT failures and is
+             *    refused by examineKey( )'s "attempts > maxRetriesPerRequest". A waiter is made
+             *    per acquire( ), so the counter starts at zero for every acquire( );
+             *
+             *  - the SESSION's, SessionRequestTaskT::m_attempts, which counts DISPATCHED attempts
+             *    and is refused by chkRequestMayBeReplayed( ) on the same comparison. It is reset
+             *    to zero at every redirect hop, and each retry it grants performs a FRESH
+             *    acquire( ) - which is to say a fresh waiter with a fresh pool budget.
+             *
+             * So a hop's worst case is not N + 1 establishments but (N + 1) squared: N + 1
+             * dispatch attempts, each of which may spend N + 1 establishments underneath it. At
+             * the default of 3 that is 16, and design 5.4's "bounded by the retry limit (4.6)"
+             * reads as one budget of three. Nothing here is unbounded and nothing here is a
+             * defect; it is a promise about counts which the knob's name does not keep.
+             *
+             * WHY IT IS A NOTE AND NOT A FIX. The chain deadline (L6 finding 3) bounds the whole
+             * of it in TIME: the session computes one deadline for the request and stamps the
+             * remainder on every hop, and the pool's waiter deadline reads the same value, so the
+             * 16 establishments cannot outlive the caller's own budget whatever they cost in round
+             * trips. The fix, when it is wanted, is to share one logical attempt budget or to give
+             * establishment and replay separately named limits - not to tighten this one, which
+             * would tighten both halves at once
              */
 
             cpp::ScalarTypeIniter< std::size_t >                                maxRetriesPerRequest;
