@@ -801,6 +801,51 @@ namespace bl
             om::ObjPtrDisposable< tasks::ExecutionQueue >                       m_eqConnections;
 
             cpp::SafeUniquePtr< asio::deadline_timer >                          m_maintenanceTimer;
+
+            /**
+             * @brief The maintenance timer's OWN lock - H03b, and it is a LEAF
+             *
+             * armMaintenance( ) runs from runActions( ), which by the leaf-lock rule runs OUTSIDE
+             * m_lock; disposeInternal( ) cancels the same timer, also outside it. Two threads
+             * inside one basic_deadline_timer is the documented "Shared objects: Unsafe", and it
+             * is the same byte the HTTP/2 driver's timer race was caught on
+             *
+             * NARROWER THAN THAT RACE IN TWO WAYS, both read rather than assumed. The timer
+             * object is created once in the constructor and NEVER reassigned, so there is no
+             * use-after-free from a re-arm destroying the object under a concurrent cancel( ) -
+             * the worse half of the h2 hazard is simply absent here. And two concurrent arms are
+             * impossible, because m_isMaintenanceArmed is set and cleared only under m_lock. The
+             * race is arm against dispose-cancel, and nothing else
+             *
+             * WHY NOT THE h2 FIX'S SHAPE. That race was closed by posting the off-strand caller
+             * to the strand. This pool has no strand: its timer lives on a bare io_service, and a
+             * post to an io_service is not a serialization. Giving the pool a strand is REJECTED
+             * for the reason the h2 record itself gives - disposeInternal( ) is also called from
+             * the DESTRUCTOR, and a handler posted there would bind acquireRef( this ) on an
+             * object whose count has already reached zero
+             *
+             * WHY NOT m_lock ITSELF. The timer functions do not re-enter the pool - asio never
+             * invokes a completion handler from inside the initiating call, and cancel( ) posts
+             * rather than calls - so it would not deadlock. It would still widen the pool's
+             * documented leaf lock to cover an asio service mutex for no benefit over four lines
+             * of its own, and that lock discipline is the comment in this file most likely to be
+             * read as a contract
+             *
+             * NOTHING IS CALLED WHILE IT IS HELD except the timer's own two calls
+             */
+
+            mutable os::mutex                                                   m_timerLock;
+
+            /**
+             * @brief Disposal is FINAL for the timer, which the mutex alone would not give
+             *
+             * It also closes the post-dispose re-arm - work scheduled by a batch collected before
+             * the disposal sweep and executed after it, which would otherwise arm a timer on a
+             * pool that is going away
+             */
+
+            cpp::ScalarTypeIniter< bool >                                       m_isTimerDisposed;
+
             cpp::ScalarTypeIniter< bool >                                       m_isMaintenanceArmed;
             cpp::ScalarTypeIniter< long >                                       m_maintenanceIntervalMs;
 
@@ -1910,6 +1955,20 @@ namespace bl
             {
                 BL_NOEXCEPT_BEGIN()
 
+                /*
+                 * H03b - THE TIMER'S OWN LEAF LOCK, because this runs outside m_lock and so does
+                 * the cancel in disposeInternal( ). See m_timerLock for why it is a lock of its
+                 * own and not the pool's, and why the h2 driver's post-to-the-strand fix is not
+                 * available here
+                 */
+
+                BL_MUTEX_GUARD( m_timerLock );
+
+                if( m_isTimerDisposed )
+                {
+                    return;
+                }
+
                 m_maintenanceTimer -> expires_from_now(
                     time::milliseconds( m_maintenanceIntervalMs.value() )
                     );
@@ -2105,6 +2164,20 @@ namespace bl
                 }
 
                 {
+                    /*
+                     * H03b - UNDER THE TIMER'S OWN LOCK, and the flag is what makes disposal
+                     * FINAL. A lost cancel would leave the timer armed; when it fired,
+                     * onMaintenance( ) would take m_lock, see m_isDisposed and return, so the
+                     * cost was bounded at one interval of delayed destruction rather than a
+                     * crash - but the concurrent access itself is real UB, and the flag closes
+                     * the separate hole of a batch collected before this sweep arming the timer
+                     * after it
+                     */
+
+                    BL_MUTEX_GUARD( m_timerLock );
+
+                    m_isTimerDisposed = true;
+
                     eh::error_code ec;
 
                     m_maintenanceTimer -> cancel( ec );
