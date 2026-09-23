@@ -772,6 +772,24 @@ opened, what was corrected in place before agreement, and the one choice left to
 
 ## 13. Owed, and deliberately out of scope
 
+**SCHEDULED 2026-09-23, by the maintainer: §10's h1-over-TLS control is its own change-set, taken
+after S6R.3.** It is not folded into S6R.3, because it is independent of all four of those slices
+and mixing it into a core-path change-set would blur what each is gated on.
+
+What it buys, stated so the next reader does not have to re-derive it: **no case in the suite runs an
+exchange over HTTP/1.1 on TLS.** The h1 driver is explicitly instantiated over the TLS policy, so it
+compiles, but every TLS session case asserts `negotiatedAlpn( ) == "h2"` and therefore ends up on the
+h2 driver. So nothing would notice if `close_notify` stopped going out on an h1 TLS connection —
+which makes §2.3's reasoning about the send-side shutdown and the `close_notify` an inference on
+both drivers rather than a tested fact. The write-in-flight gate makes the question *unreachable*,
+not answered.
+
+Two cases, in order: a session case in `utf_baselib_httpclient5` with the server's ALPN preference
+set to `http/1.1`, a keep-alive GET and an idle close — the `close_notify` control; then a second
+with a write outstanding, which is the one that exercises the gated path. Check the module's size
+first; `httpclient5` was last measured well under target but S6R.2 added to it.
+
+
 - **h1's write path still has no peer-close arm** (§4.4). Shape: the same `isPeerClosed( )` question
   h2 asks at `:1648-1660`, placed after the new `isClosing( )` arm, routing to `onPeerClosed( ec )`
   and `closeConnection( )`. Its own change-set.
