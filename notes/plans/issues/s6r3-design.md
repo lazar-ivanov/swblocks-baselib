@@ -18,6 +18,24 @@ go wrong, and the test with whether it can be shown red-before-green-after.
 An independent reviewer will read this against the source and will find the difference, so it is
 stated first rather than buried. Line numbers are this worktree's at `c90f84e`.
 
+**The base moved while this was being written, and the numbers were re-checked against where it
+moved to.** S6R.1's nine fixes merged into `lazari2` as `3bcf21e` during the session. Every claim
+below holds unchanged on that tip; only line numbers shift, and only in the four files S6R.1 touched.
+The anchors, so either base is checkable: `ConnectionPool.h` — `refreshEntry( )` 1206→1217,
+`runActions( )`'s schedules loop 1756→1767, `startConnection( )`'s disposed arm 1835→1846,
+`disposeInternal( )`'s task collection 2078→2089 (and `m_isDisposed` at 808 and `resolveDriver( )`'s
+`if( attempt.driver )` at 926 do not move); `Session.h` — `queueHeaderBlock( )` 3606→3645,
+`forceCloseStream( )` 3453→3492, the SETTINGS ACK 2291→2330, `setDynamicTableCapacity( )` 2474→2513,
+`m_peerMaxFrameSize = value` 2529→2568 (and `produce( )`'s control-queue line at 864 and
+`raiseConnectionError( )`'s clear at 1530 do not move); `ClientSession.h` — `chkPrepareRetry( )`
+1151→1181, `chkPrepareNextHop( )` 1290→1320, the driver lambda 1730→1760, the sink hand-off
+1115→1145. **`HttpClientRequestTask.h`, `Http2ConnectionTask.h`, `ClientConnectionTaskBase.h`,
+`HpackEncoder.h`, `TaskBase.h` and `ExecutionQueueImpl.h` are untouched by that merge**, so every
+§1, §2 and §4.1 citation is exact on both. Two facts §4.2 depends on were re-read on the new tip and
+still hold: `m_isDisposed` is still a `cpp::ScalarTypeIniter< bool >`, and `disposeInternal( )` still
+collects only `entry -> attempt.task` for its cancel sweep. H03a's `forceFlushNoThrow( true )` is now
+in the tree, which is the state §4.2 assumes.
+
 **Read at the source by the author, whole functions from their signatures to their ends:**
 
 - the request task's streaming path — `applyData( )`, `offerToSink( )`, `applyClosed( )`,
