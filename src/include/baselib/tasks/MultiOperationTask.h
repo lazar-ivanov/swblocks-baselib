@@ -223,6 +223,37 @@ namespace bl
             }
 
             /**
+             * @brief Gives back an operation which was begun and whose async_* call then THREW
+             *
+             * The initiating call can throw - an allocation, since asio reports I/O failure through
+             * the handler - and an operation which was begun and never started has to be given back
+             * or the pending count never reaches zero again. A task whose count cannot reach zero
+             * can never take its terminal path, which is a HANG rather than a failure
+             *
+             * IT DECIDES NOTHING, and that is the whole difference from onOperationCompleted().
+             * No close, no terminal, so it may be called while the TASK LOCK is held - which the
+             * catch of an initiator called from a handler body, or from a task's establishment
+             * chain, always is. onOperationCompleted() in that position would reach notifyReady()
+             * whenever the count fell to zero, and notifyReady() re-acquires the task lock
+             *
+             * It leaves the accounting exactly as it would have been had beginOperation() never
+             * been called, so the exception must go on to leave the function: the task's ordinary
+             * error path - the handler epilog, or the caller - is what reports it
+             */
+
+            void abandonOperation() NOEXCEPT
+            {
+                BL_MUTEX_GUARD( m_operationsLock );
+
+                BL_ASSERT( 0U != m_pendingOperations );
+
+                if( 0U != m_pendingOperations )
+                {
+                    --m_pendingOperations;
+                }
+            }
+
+            /**
              * @brief Enters the closing state without an error
              *
              * This is how a task ends deliberately - it has nothing left to do, or a deadline has
