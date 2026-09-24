@@ -2978,8 +2978,6 @@ UTF_AUTO_TEST_CASE( HttpClientRequestTask_BouncedRequestNamesTheConnectionFailur
     UTF_REQUIRE_EQUAL( pool -> releases()[ 0 ], std::string( "7:failed" ) );
 }
 
-#endif /* __UTEST_TESTHTTPCLIENTREQUESTTASK_H_ */
-
 /**
  * @brief S6R.2 H07 - a throwing terminal sink callback must not become a success
  *
@@ -3170,3 +3168,5 @@ UTF_AUTO_TEST_CASE( HttpClientRequestTask_SinkWhichThrowsInTheCloseBatchFailsThe
     UTF_REQUIRE_EQUAL( pool -> releases().size(), 1U );
     UTF_REQUIRE_EQUAL( pool -> releases()[ 0 ], std::string( "42:completed" ) );
 }
+
+#endif /* __UTEST_TESTHTTPCLIENTREQUESTTASK_H_ */
