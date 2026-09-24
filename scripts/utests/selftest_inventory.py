@@ -48,6 +48,25 @@ sys.path.insert( 0, os.path.dirname( os.path.abspath( __file__ ) ) )
 
 from utf_inventory import check_intrinsic, check_against
 
+#
+# condition_stack( ) and span_conditions( ) are imported defensively, which is the accommodation
+# unreferenced( ) makes one level down and for the same reason: this file has to run against an
+# OLDER utf_inventory.py, because that is how the negative half of every probe below is produced,
+# and a hard ImportError would take every one of them with it rather than only the extractor
+# section. One block each, so that a tool carrying the first and not the second still runs the half
+# it has
+#
+
+try:
+    from utf_inventory import condition_stack
+except ImportError:
+    condition_stack = None
+
+try:
+    from utf_inventory import span_conditions
+except ImportError:
+    span_conditions = None
+
 
 MARKER_RE = re.compile( r'^(C\d+)(.?)' )
 
@@ -144,6 +163,229 @@ def expect( label, failures, marker ):
 
     print( '    FAIL  %-4s %-46s (no %s violation reported)' % ( marker, label, marker ) )
     return False
+
+
+#
+# The synthetic line lists condition_stack( ) is asserted on, and the stack expected AT every line
+#
+# Everything else in this file mutates a captured manifest, so what it proves is the COMPARISON.
+# The EXTRACTOR was asserted by nothing at all, and the reason that is worse than it sounds is that
+# the suite cannot notice: both sides of every comparison are built by this same walk, so a stack
+# computed wrongly is computed wrongly twice and the two manifests agree. The whole returned list
+# is compared line by line rather than any count derived from it, because a count is exactly the
+# thing that cannot tell a reader the extractor is wrong
+#
+# The BOUNDARY RULE is the first case and the load-bearing one: the entry for a line is the stack
+# in force BEFORE that line is read. That is why the tree's one-line directive members split the
+# way they do - the #if opener carries the outer stack and its #endif carries the inner one - and
+# it is what decides the member and span census a green run prints. It is C3's rule by code rather
+# than by analogy: a case can never sit on a directive line, so C3 never faced the boundary, and
+# the after-line reading would give a different census with nothing to say it had changed
+#
+# The last three cases are the malformed ones, and the direction each takes is the safe one. An
+# unterminated #if stays in force to the end of the file, so its condition is attributed to MORE
+# text rather than less; an unterminated #ifndef is not an include guard, so it is judged as the
+# condition it might be rather than dropped; and a stray #endif or #else with nothing open is
+# ignored rather than popping a stack that is already empty
+#
+
+EXTRACTOR_CASES = [
+
+    ( 'the boundary rule - a #if carries the OUTER stack, its #endif the INNER one', [
+        ( 'int before = 0;',                             () ),
+        ( '#if defined( _WIN32 )',                       () ),
+        ( 'int inside = 1;',                             ( 'if defined( _WIN32 )', ) ),
+        ( '#endif',                                      ( 'if defined( _WIN32 )', ) ),
+        ( 'int after = 2;',                              () ),
+        ] ),
+
+    ( 'a bare #else appends C3\'s spelling, trailing space and all', [
+        ( '#if defined( _WIN32 )',                       () ),
+        ( 'int win = 1;',                                ( 'if defined( _WIN32 )', ) ),
+        ( '#else',                                       ( 'if defined( _WIN32 )', ) ),
+        ( 'int posix = 1;',                              ( 'if defined( _WIN32 ) | else ', ) ),
+        ( '#endif',                                      ( 'if defined( _WIN32 ) | else ', ) ),
+        ( 'int after = 0;',                              () ),
+        ] ),
+
+    ( '#elif appends too, and a trailing comment goes into the identity', [
+        ( '#if A',                                       () ),
+        ( 'int a = 1;',                                  ( 'if A', ) ),
+        ( '#elif B',                                     ( 'if A', ) ),
+        ( 'int b = 1;',                                  ( 'if A | elif B', ) ),
+        ( '#else // why',                                ( 'if A | elif B', ) ),
+        ( 'int c = 1;',                                  ( 'if A | elif B | else // why', ) ),
+        ( '#endif',                                      ( 'if A | elif B | else // why', ) ),
+        ] ),
+
+    ( 'an include guard contributes nothing, and hides nothing inside it', [
+        ( '#ifndef __TEST_UTF_H_',                       () ),
+        ( '#define __TEST_UTF_H_',                       () ),
+        ( 'int declared = 0;',                           () ),
+        ( '#if defined( _WIN32 )',                       () ),
+        ( 'int win = 0;',                                ( 'if defined( _WIN32 )', ) ),
+        ( '#endif',                                      ( 'if defined( _WIN32 )', ) ),
+        ( '#endif',                                      () ),
+        ] ),
+
+    ( 'define-if-not-defined has a guard\'s shape and IS a condition', [
+        ( '#ifndef UTF_ARGS_PARSER',                     () ),
+        ( '#define UTF_ARGS_PARSER test::UtfArgsParser', ( 'ifndef UTF_ARGS_PARSER', ) ),
+        ( '#endif',                                      ( 'ifndef UTF_ARGS_PARSER', ) ),
+        ( '#define AFTER 1',                             () ),
+        ] ),
+
+    ( 'an #else on an include guard leaves it contributing nothing', [
+        ( '#ifndef __TEST_UTF_H_',                       () ),
+        ( '#define __TEST_UTF_H_',                       () ),
+        ( '#else',                                       () ),
+        ( 'int x = 0;',                                  () ),
+        ( '#endif',                                      () ),
+        ] ),
+
+    ( 'nesting - the stack is the whole path, outermost first', [
+        ( '#if defined( _WIN32 )',                       () ),
+        ( '#ifdef NDEBUG',                               ( 'if defined( _WIN32 )', ) ),
+        ( 'int both = 0;',                               ( 'if defined( _WIN32 )', 'ifdef NDEBUG' ) ),
+        ( '#endif',                                      ( 'if defined( _WIN32 )', 'ifdef NDEBUG' ) ),
+        ( 'int outer = 0;',                              ( 'if defined( _WIN32 )', ) ),
+        ( '#endif',                                      ( 'if defined( _WIN32 )', ) ),
+        ] ),
+
+    ( 'an unterminated #if stays in force to the end of the file', [
+        ( 'int before = 0;',                             () ),
+        ( '#if defined( _WIN32 )',                       () ),
+        ( 'int inside = 1;',                             ( 'if defined( _WIN32 )', ) ),
+        ( 'int still_inside = 2;',                       ( 'if defined( _WIN32 )', ) ),
+        ] ),
+
+    ( 'an unterminated #ifndef is no include guard, so it is a condition', [
+        ( '#ifndef __TEST_UTF_H_',                       () ),
+        ( '#define __TEST_UTF_H_',                       ( 'ifndef __TEST_UTF_H_', ) ),
+        ( 'int declared = 0;',                           ( 'ifndef __TEST_UTF_H_', ) ),
+        ] ),
+
+    ( 'a stray #endif or #else with nothing open is ignored', [
+        ( 'int before = 0;',                             () ),
+        ( '#endif',                                      () ),
+        ( '#else',                                       () ),
+        ( 'int after = 0;',                              () ),
+        ] ),
+
+    ]
+
+
+def extractor( stack_of ):
+    """
+    Assert the stack condition_stack( ) records AT every line of each synthetic line list
+
+    The subject is the extractor rather than a manifest, which is the one thing no other probe in
+    this file can reach - and the assertion is the returned stacks themselves, not a downstream
+    count, because a count is what already cannot tell anyone the walk is wrong
+    """
+
+    ok = True
+
+    for label, rows in EXTRACTOR_CASES:
+
+        lines = [ line for line, _ in rows ]
+        expected = [ stack for _, stack in rows ]
+        actual = list( stack_of( lines ) )
+
+        if actual == expected:
+            print( '    PASS  ----  condition_stack( ) %s' % label )
+            continue
+
+        print( '    FAIL  ----  condition_stack( ) %s' % label )
+
+        for index, ( line, want ) in enumerate( rows ):
+            got = actual[ index ] if index < len( actual ) else '<no entry>'
+            if got != want:
+                print( '                line %d  %-44s want %r got %r'
+                       % ( index + 1, line[ : 44 ], want, got ) )
+
+        ok = False
+
+    return ok
+
+
+#
+# The same treatment for span_conditions( ), which decides what a FILE-SCOPE span is judged under
+#
+# A span's sha is over the SHADOW, where a preprocessor conditional is blanked, so a conditional
+# that opens and closes entirely inside a bracketed span was in neither half of C11's identity -
+# not in the sha, because it is blanked, and not in the guards, because those were the stack at the
+# span's first line, which is the stack OUTSIDE it. A blank line inside an open bracket does not
+# split a member, so the span simply swallowed it. Measured on a filesystem copy before this:
+# inverting #if BOOST_VERSION < 105900 at UtfMain.h:96, inside the 319-line span at :52, PASSED
+#
+# The first and third cases are that shape; the second and fourth are the ones that must NOT move,
+# and they are the larger population - 78 of the 79 spans in this tree have no conditional inside
+# them, and for every one of those this has to return exactly what the first line's stack returned
+#
+# The tree has no instance of this in a MODULE file, all 79 spans having been counted: the one
+# instance is in the shared tree. So the module-file half of the control is a constructed span on a
+# filesystem copy, and lives with the change-set's evidence rather than here
+#
+
+SPAN_CASES = [
+
+    ( 'a conditional opening INSIDE a bracketed span is in the identity', [
+        'static const char* const g_text[] =',
+        '{',
+        '#if defined( _WIN32 )',
+        '    "windows",',
+        '#else',
+        '    "posix",',
+        '#endif',
+        '};',
+        ], 0, 7, [ 'if defined( _WIN32 )', 'if defined( _WIN32 ) | else ' ] ),
+
+    ( 'a span with no conditional inside it keeps the first line\'s stack', [
+        '#if defined( _WIN32 )',
+        'static int g_count = 0;',
+        '#endif',
+        ], 1, 1, [ 'if defined( _WIN32 )' ] ),
+
+    ( 'a span under one condition and containing another carries both, outer first', [
+        '#ifdef NDEBUG',
+        'static const char* const g_text[] =',
+        '{',
+        '#if defined( _WIN32 )',
+        '    "windows",',
+        '#endif',
+        '};',
+        '#endif',
+        ], 1, 6, [ 'ifdef NDEBUG', 'if defined( _WIN32 )' ] ),
+
+    ( 'a span with no condition anywhere near it carries none', [
+        'static int g_count = 0;',
+        ], 0, 0, [] ),
+
+    ]
+
+
+def spans( stack_of, conditions_of ):
+    """
+    Assert the conditions span_conditions( ) records for a file-scope span over synthetic lines
+    """
+
+    ok = True
+
+    for label, lines, first, last, expected in SPAN_CASES:
+
+        actual = list( conditions_of( stack_of( lines ), first, last ) )
+
+        if actual == expected:
+            print( '    PASS  ----  span_conditions( ) %s' % label )
+            continue
+
+        print( '    FAIL  ----  span_conditions( ) %s' % label )
+        print( '                lines %d-%d  want %r got %r'
+               % ( first + 1, last + 1, expected, actual ) )
+        ok = False
+
+    return ok
 
 
 def main():
@@ -248,6 +490,26 @@ def main():
     else:
         print( '    PASS  ----  all %d entries across %d famil(ies) share one key set  '
                '--capture may judge each by its first' % ( counted, len( families ) ) )
+
+    #
+    # The EXTRACTOR, which is the one section here whose subject is not a manifest
+    #
+    # It runs before the invariant probes because every one of them rests on it: a manifest is only
+    # evidence about a relocation if the walk that built it read the tree correctly, and nothing in
+    # this repository re-read that walk until this section existed
+    #
+
+    if condition_stack is None:
+        print( '    ----  ----  condition_stack( ) is not in this tool        '
+               'the extractor section cannot run against a build predating it' )
+    else:
+        ok &= extractor( condition_stack )
+
+        if span_conditions is None:
+            print( '    ----  ----  span_conditions( ) is not in this tool        '
+                   'the span half of the extractor section cannot run against it' )
+        else:
+            ok &= spans( condition_stack, span_conditions )
 
     # C1 - a dropped case
     mutated = copy.deepcopy( baseline )
@@ -928,9 +1190,9 @@ def main():
     # WITH NO GUARD, on split_members( )'s own extent, PASSED tier 1 green
     #
     # These probes mutate a manifest, so what they prove is the COMPARISON. What the extractor
-    # produces from real lines - condition_stack( ) and its boundary rule - is proved by the
-    # filesystem controls of the change-set that wrote it and by nothing here, which is recorded
-    # in that function as residue
+    # produces - condition_stack( ) and its boundary rule - is the extractor section above, on
+    # synthetic lines; the filesystem controls of the change-set that wrote this half are what
+    # stand behind the two together
     #
     # The subjects are forced onto known spans rather than searched for, so that the proof does not
     # depend on which baseline this is handed. A span whose text is unique in its list is chosen,
