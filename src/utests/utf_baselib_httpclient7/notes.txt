@@ -89,3 +89,20 @@
 # not reached.
 
 --log_level=message --run_test=Http1Driver_StrandSeamCancelInTheWindowWinsTests
+# A4 - the read initiator which throws on the SCHEDULING path. It borrows the seam above and arms
+# it one more way: the next read the driver arms fails in its initiator, and the next one is the
+# one scheduleTask( ) arms.
+#
+# ITS RED IS A HANG AND NOT A FAILURE, which is the defect and not a choice - against a tree whose
+# scheduleTask( ) calls scheduleRead( ) rather than armRead( ), the catch inside scheduleRead( )
+# reaches notifyReady( ) while TaskBase::scheduleNothrow( ) still holds the task lock, and the
+# scheduling thread deadlocks on a mutex it holds itself. Measured a64 clang debug: the run does
+# not finish (rc=124 under timeout), and the stacks taken 25s in show, on ONE thread,
+# notifyReadyImpl( ) blocked at TaskBase.h:564 under applyDecision -> onOperationCompleted ->
+# scheduleRead -> scheduleTask -> scheduleNothrow -> padExecutingQueueNothrow -> push_back. With
+# armRead( ) the case passes in 23ms.
+#
+# SO RUN IT WITH A BOUND. A timeout on this module is this case regressing, and there will be no
+# assertion to read - the thread which would have printed one is the deadlocked one.
+
+--log_level=message --run_test=Http1Driver_ScheduleReadInitiatorThrowEndsTheTaskTests

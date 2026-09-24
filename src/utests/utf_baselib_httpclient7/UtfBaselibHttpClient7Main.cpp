@@ -63,3 +63,4 @@
 #include "TestHttp1DriverPeerClose.h"
 #include "TestHttp1DriverWritePeerClose.h"
 #include "TestHttp1DriverStrandSeam.h"
+#include "TestHttp1DriverScheduleThrow.h"

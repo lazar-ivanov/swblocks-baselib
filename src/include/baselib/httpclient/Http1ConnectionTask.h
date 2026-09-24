@@ -186,8 +186,8 @@ namespace bl
 
             /*
              * Touched only on the stream's executor - the strand under a stranded policy - and in
-             * onTaskStoppedNothrow, which runs when the multi-operation accounting has already
-             * established that nothing is in flight, so the strand is quiescent by then
+             * onTaskStoppedNothrow, where the strand is quiescent: either the accounting has
+             * established that nothing is in flight, or armRead( ) threw and nothing ever was
              */
 
             std::vector< char >                                                 m_readBuffer;
@@ -944,7 +944,54 @@ namespace bl
              */
 
             /**
-             * @brief Arms the read which is in flight for the whole life of this connection
+             * @brief Arms the read which is in flight for the whole life of this connection, and
+             * lets an initiator which throws out to its caller
+             *
+             * scheduleRead( ) below is this call with the accounting's guard around it, and which
+             * of the two a call site wants turns on one question only - whether the pending count
+             * can reach ZERO if the arm fails:
+             *
+             *   - from scheduleTask( ) it can. Nothing else is outstanding while the very first
+             *     read is being armed, so completing the operation there finds the count back at
+             *     zero, takes the single terminal path and reaches notifyReady( ) - while
+             *     TaskBase::scheduleNothrow( ), which called scheduleTask( ), still holds the task
+             *     lock that notifyReadyImpl( ) re-acquires. os::mutex is std::mutex, and it
+             *     is not recursive, so that is a self-deadlock on the scheduling thread and not
+             *     merely a breach of the rule at MultiOperationTask.h. The throw is let out
+             *     instead, to scheduleNothrow( )'s own catch, which completes the task from the
+             *     thread pool with no lock held - which is what that catch exists for
+             *   - from onReadCompleted( ) it cannot. The completing read is still outstanding
+             *     until BL_TASKS_HANDLER_END_MULTIOP( ) runs, so the count cannot reach zero and
+             *     no terminal is due there; what the guard buys is the phantom operation being
+             *     given back, without which the count never reaches zero AGAIN and the task hangs
+             *
+             * On the propagating route the count is left AT ONE, deliberately: no one reads it
+             * once the task has completed, and MultiOperationTaskT::scheduleNothrow( ) zeroes the
+             * whole accounting at the start of every run
+             */
+
+            void armRead()
+            {
+                BL_ASSERT( m_readValid < m_readBuffer.size() );
+
+                base_type::beginOperation();
+
+                base_type::getStream().async_read_some(
+                    asio::buffer(
+                        m_readBuffer.data() + m_readValid,
+                        m_readBuffer.size() - m_readValid
+                        ),
+                    cpp::bind(
+                        &this_type::onReadCompleted,
+                        selfRef(),
+                        asio::placeholders::error,
+                        asio::placeholders::bytes_transferred
+                        )
+                    );
+            }
+
+            /**
+             * @brief armRead( ), with the accounting's guard - for every re-arm from a handler
              *
              * The try / catch is the accounting's, not the socket's. An operation which was begun
              * and then never started has to be completed here or the pending count never reaches
@@ -954,24 +1001,9 @@ namespace bl
 
             void scheduleRead()
             {
-                BL_ASSERT( m_readValid < m_readBuffer.size() );
-
-                base_type::beginOperation();
-
                 try
                 {
-                    base_type::getStream().async_read_some(
-                        asio::buffer(
-                            m_readBuffer.data() + m_readValid,
-                            m_readBuffer.size() - m_readValid
-                            ),
-                        cpp::bind(
-                            &this_type::onReadCompleted,
-                            selfRef(),
-                            asio::placeholders::error,
-                            asio::placeholders::bytes_transferred
-                            )
-                        );
+                    armRead();
                 }
                 catch( std::exception& )
                 {
@@ -2061,9 +2093,14 @@ namespace bl
                  * The read is armed FIRST and unconditionally - it is the operation which is in
                  * flight for the whole life of this connection, and the response of a request
                  * started below arrives on it
+                 *
+                 * ARMED AND NOT SCHEDULED, which is the one difference: this function is called
+                 * by TaskBase::scheduleNothrow( ) with the task lock HELD, so an initiator which
+                 * throws has to be let out to that function's catch rather than completed here.
+                 * armRead( ) says what completing it here would cost
                  */
 
-                scheduleRead();
+                armRead();
 
                 if( hasPending )
                 {
@@ -2142,10 +2179,10 @@ namespace bl
              * onClosed( ... ) arrives even when the stream failed before any header and it is
              * always the last event (S2.6). A write which failed, or a cancel, completes the task
              * through the handler macros and never through finishStream( ... ), so without this a
-             * request task would wait for an event which is never coming. It runs when the
-             * multi-operation accounting has established that no operation is in flight, so it does
-             * not race the strand, and it is idempotent because delivering the event is what
-             * releases the sink
+             * request task would wait for an event which is never coming. It does not race the
+             * strand: either the accounting has established that no operation is in flight, or the
+             * schedule-path arm threw and none ever was. It is idempotent because delivering the
+             * event is what releases the sink
              */
 
             virtual auto onTaskStoppedNothrow(

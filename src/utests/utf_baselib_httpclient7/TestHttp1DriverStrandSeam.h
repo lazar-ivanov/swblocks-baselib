@@ -107,6 +107,20 @@ namespace utest
 
             std::atomic< bool >                                                 releaseAsReset;
 
+            /**
+             * @brief The NEXT read arm fails in its initiator, and only that one
+             *
+             * A SECOND ARM ON THE SAME SEAM, used by no case above. It is here rather than in a
+             * stream of its own because a second stream means a second driver instantiation in
+             * this module's one translation unit, and this stream is already the thing the driver
+             * arms its reads on - see TestHttp1DriverScheduleThrow.h, which is the only arm of it
+             *
+             * One shot, because the driver re-arms the read from its own handler for the life of
+             * the connection and a seam which stayed armed would fail every one of those too
+             */
+
+            std::atomic< bool >                                                 throwOnNextReadArm;
+
             mutable bl::os::mutex                                               lock;
             bl::cpp::void_callback_t                                            held;
 
@@ -136,7 +150,8 @@ namespace utest
                 holdNextWrite( false ),
                 releaseArmed( false ),
                 releaseEarly( true ),
-                releaseAsReset( false )
+                releaseAsReset( false ),
+                throwOnNextReadArm( false )
             {
             }
         };
@@ -300,6 +315,22 @@ namespace utest
                 SAA_in          Handler&&                                       handler
                 )
             {
+                /*
+                 * BEFORE THE SOCKET IS TOUCHED AND BEFORE THE HANDLER IS COPIED, because what the
+                 * armed case is about is an initiator which fails having started nothing - the
+                 * allocation an initiating call makes is the only thing that can throw out of a
+                 * real one, and no test can arrange that from the outside
+                 */
+
+                if( seam().throwOnNextReadArm.exchange( false ) )
+                {
+                    BL_THROW(
+                        bl::UnexpectedException(),
+                        BL_MSG()
+                            << "The read initiator was made to fail"
+                        );
+                }
+
                 typedef typename std::decay< Handler >::type                    handler_t;
 
                 const auto shared =
