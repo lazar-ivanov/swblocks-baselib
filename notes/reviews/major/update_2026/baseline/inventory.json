@@ -7085,7 +7085,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 3083,
+   "line": 3081,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_SinkWhichThrowsInTheCloseBatchFailsTheRequestTests",
    "namespaces": []
@@ -7097,7 +7097,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 3004,
+   "line": 3002,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_SinkWhichThrowsOnCompleteFailsTheRequestTests",
    "namespaces": []
@@ -22645,7 +22645,7 @@
     "TlsClientHello_Ja3AndJa4MatchHandWorkedValuesTests",
     "TlsClientHello_MalformedMessagesAreRefusedTests"
    ],
-   "notes_index": false
+   "notes_index": true
   },
   "utf_baselib_http": {
    "data_files": {},
@@ -23797,9 +23797,7 @@
   },
   "utf_baselib_messaging": {
    "data_files": {
-    "async_rpc_request.json": "0f9e4bec31ea1ae9e2f6e3a480a7a6a7",
-    "async_rpc_response.json": "ed51f55751261ed665e5febc659ba505",
-    "async_rpc_response_with_exception.json": "cc28651bb25fbb399be69663678737ba"
+    "async_rpc_request.json": "0f9e4bec31ea1ae9e2f6e3a480a7a6a7"
    },
    "data_literals": [
     "127.0.0.1",
@@ -23910,8 +23908,7 @@
   "utf_baselib_messaging3": {
    "data_files": {
     "async_rpc_request.json": "0f9e4bec31ea1ae9e2f6e3a480a7a6a7",
-    "async_rpc_response.json": "ed51f55751261ed665e5febc659ba505",
-    "async_rpc_response_with_exception.json": "cc28651bb25fbb399be69663678737ba"
+    "async_rpc_response.json": "ed51f55751261ed665e5febc659ba505"
    },
    "data_literals": [
     "async_rpc_request.json",
