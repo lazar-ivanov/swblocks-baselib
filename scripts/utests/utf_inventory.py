@@ -125,10 +125,14 @@ NOTES_RUN_TEST_RE = re.compile( r'--run_test=([^\s]+)' )
 # hard-to-reproduce ones in most modules, not an index
 #
 # So the requirement is opt-in, and the opt-in is already written in the tree: fifteen notes.txt
-# files open with "each slice appends the recipes for the cases it lands here", and those fifteen
-# modules are at this moment exactly the ones whose every case has a recipe. A module which says
-# that is making a claim C9 can hold it to. "notes-index: complete" is accepted as well, so that a
-# module outside that feature's vocabulary can make the same claim in its own words
+# files open with "each slice appends the recipes for the cases it lands here", and every one of
+# those fifteen modules does have a recipe for each of its cases. The converse does not hold and
+# the check does not need it: eighteen modules are complete, and utf_baselib_h2profiles (14 cases),
+# utf_baselib_messaging4 (1) and utf_baselib_setprio (1) are complete without declaring it. The
+# property C9 rests on is that the declared modules are a subset of the complete ones - a module
+# which says that is making a claim C9 can hold it to, and a module which says nothing is simply
+# not asked. "notes-index: complete" is accepted as well, so that a module outside that feature's
+# vocabulary can make the same claim in its own words
 #
 # The declaration cannot be dropped to escape the check - withdrawing it is itself a C9 failure
 # against a baseline which recorded it, which is also what keeps this prose matcher honest: any
