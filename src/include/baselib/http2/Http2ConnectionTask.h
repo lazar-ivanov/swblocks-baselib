@@ -1818,8 +1818,8 @@ namespace bl
                  *
                  *   - A read was armed when the ending landed, so its own handler is told, with
                  *     one of the codes isPeerClosed( ) admits.
-                 *   - Or none was, and then THIS handler's own strand turn arms one before it
-                 *     ends. The two places no read is armed are onRead( )'s pump-then-arm pair and
+                 *   - Or none was, and then the strand turn which issued this write arms one before
+                 *     it ends. The two places no read is armed are onRead( )'s pump-then-arm pair and
                  *     onProtocolNegotiated( )'s, and this arm sets no flag which could gate the
                  *     scheduleRead( ) which follows.
                  *
