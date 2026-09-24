@@ -59,12 +59,12 @@ namespace bl
          * is running. A task which lets the count fall to zero while it is not closing has simply
          * stopped doing anything, and nothing is left to complete it
          *
-         * Note that initiateClose() and the terminal notifyReady() are invoked ONLY from
-         * onOperationCompleted(), which BL_TASKS_HANDLER_END_MULTIOP() places outside the scope of
-         * the task lock. beginOperation() and beginClose() only touch the accounting, so they are
-         * safe to call from a handler body, where the task lock IS held. That asymmetry is
-         * deliberate: notifyReady() must never be called while holding the task lock (see the
-         * invariants at the top of TaskBase.h) and this is what guarantees it
+         * Note that initiateClose() is invoked ONLY from onOperationCompleted(), and the terminal
+         * notifyReady() from it and from abandonOperation() - both outside the scope of the task
+         * lock, the first because BL_TASKS_HANDLER_END_MULTIOP() places it there and the second
+         * because a terminal cannot be DUE while that lock is held. beginOperation() and
+         * beginClose() only touch the accounting, so they are safe from a handler body, where the
+         * lock IS held: notifyReady() must never be called under it (see TaskBase.h's invariants)
          *
          * The class is parameterized on its base rather than deriving from TaskBase directly, so
          * that it can be mixed into a task which already has TaskBase in its chain - a connection
@@ -247,11 +247,11 @@ namespace bl
              * scheduled is not closing. So this clause can only fire off that path, and it cannot
              * fire under the task lock
              *
-             * A due terminal also means the close has already been initiated, every handler has
-             * passed its epilog and nothing is left in flight; the safety is structural rather
-             * than a property of the order things ran in. What it does move is the THREAD the
-             * terminal runs on - a task whose onTaskStoppedNothrow() assumes the strand or the
-             * I/O pool must say so, as the HTTP/2 driver's mailbox post does
+             * A due terminal also means the close was initiated - the FLAG is set, though the call
+             * may still be running on another thread - and that nothing is left in flight; the
+             * safety is structural. What it moves is the THREAD the terminal runs on, so a task
+             * whose initiateClose() or onTaskStoppedNothrow() touches an object it shares with
+             * them must say so, as the HTTP/2 driver's mailbox post does of its timers and socket
              *
              * Apart from that terminal it leaves the accounting exactly as it would have been had
              * beginOperation() never been called, so the exception must go on to leave the

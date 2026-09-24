@@ -523,18 +523,19 @@ namespace bl
                          * seven rethrow into a handler epilog or the establisher's; this one
                          * rethrows to whichever thread called submit( ), cancel( ), consumed( ) or
                          * provideBody( ). A first error initiates the close but does NOT close
-                         * submissions - closeSubmissions( ) runs from the terminal - so a command
-                         * can be accepted, and an operation begun, on a task which is already
+                         * submissions - on THAT path closeSubmissions( ) runs from the terminal -
+                         * so a command can be accepted, and an operation begun, on a task already
                          * closing; giving that one back after the last real handler has completed
                          * leaves the count at zero, the task closing and NOBODY to complete it
                          *
-                         * THE CAVEAT THAT COMES WITH IT: onTaskStoppedNothrow( ) then runs on this
-                         * caller's thread, a route its own comment does not list. It is under the
-                         * task lock either way, so it still excludes cancelTask( ); what it does
-                         * not exclude is the cancelTimers( ) that cancelTask( ) POSTS, which is
-                         * the timer race that record names. With the count at zero no operation is
-                         * left for a lost cancel to strand, so what remains to lose is the cancel
-                         * itself and not the task
+                         * THE CAVEAT THAT COMES WITH IT: initiateClose( ) and onTaskStoppedNothrow( )
+                         * then run on two threads, this caller's and the strand's - a route neither
+                         * comment lists. The task lock still excludes cancelTask( ), but not the
+                         * cancelTimers( ) it POSTS, and not initiateClose( ), whose flag is set
+                         * under the accounting lock and whose body runs after it. The shared
+                         * objects are the five TIMERS and the SOCKET. With the count at zero every
+                         * one of those cancels is a no-op, so what is at stake is asio's rule and
+                         * not the task
                          */
 
                         {
@@ -1515,10 +1516,11 @@ namespace bl
              * ONE SITE IS ENOUGH TO RULE THE SHAPE OUT, and once two shapes would be needed the
              * one that is safe everywhere is the better design: the settings timer's safety rests
              * on nothing but the order inside pumpWrites( ), which a reorder could take away in
-             * silence. No OTHER site of the eight is reachable with the count at zero - the
+             * silence. No other site ON THE STRAND is reachable with the count at zero - the
              * negotiation chain drains no events, because applyCancel( ) is held behind
              * isHeadersProduced and a connection error is raised only from Session::feed( ) and
-             * Session::onTimer( ) - so this rests on one site and says so
+             * Session::onTimer( ). postCommand( ), the eighth, holds no task lock and is its own
+             * case: it CAN begin at zero, and its own catch says what that costs
              *
              * h1 IS NOT THE COUNTER-EXAMPLE IT LOOKS LIKE. Its scheduleRead( ) reached from
              * scheduleTask( ) runs with the count at zero as well, which is the defect design 4
@@ -1735,9 +1737,9 @@ namespace bl
                      * the operation - no handler is owed, which is the premise this catch already
                      * rests on - and what it costs if it does not is initiateClose( ): the flag is
                      * that function's gate for the FORCEFUL shutdown, so a write which never
-                     * started would take a deliberate TLS close's close_notify with it. Not, as
-                     * this comment first said, a later pump being refused - after the rethrow the
-                     * handler's epilog records the first error and every pump returns at its head
+                     * started would take the FAILURE close's close_notify with it - no deliberate
+                     * close can follow a recorded first error. Not, as this comment first said, a
+                     * later pump being refused: the epilog closes and every pump returns at its head
                      */
 
                     m_isWriteInFlight = false;
@@ -2854,11 +2856,12 @@ namespace bl
                 BL_NOEXCEPT_BEGIN()
 
                 /*
-                 * The last word on every stream, and it runs on the strand: the terminal
+                 * The last word on every stream, and it USUALLY runs on the strand: the terminal
                  * notifyReady of the mix-in is taken from the handler of the operation which
-                 * completed last, which for this task is always a strand handler. A sink which
-                 * was never told its stream ended would leave a request task waiting for an event
-                 * that can no longer come
+                 * completed last, which for this task is a strand handler - except on the one
+                 * route postCommand( )'s catch describes, where a caller's thread gives back the
+                 * last operation of a task already closing and takes the due terminal itself. A
+                 * sink never told its stream ended leaves a request task waiting for good
                  */
 
                 /*
