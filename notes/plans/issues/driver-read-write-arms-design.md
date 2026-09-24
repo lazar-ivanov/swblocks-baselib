@@ -1881,6 +1881,12 @@ owed two words.
   R1's measurement. Owed a red and a look, and the record that this change introduces is the obvious
   evidence for the reuse verdict to consult — which is H01's territory, where the lane already reads
   it.
+  > **CLOSED 2026-09-24 by `edb6d96`** (owed item 6a). The reuse verdict now asks
+  > `! m_writeEndingCode` on the **synchronous** path as well as the deferred one — the record this
+  > paragraph predicted would be the evidence is exactly what it consults. *"No case exists"* and
+  > *"owed a red"* are both answered: `Http1Driver_PeerResetsAfterACompleteKeepAliveResponseTests`
+  > is **15/15 red without the term and 0/15 with it**, against a real peer with a real RST and no
+  > seam, with `deferrals=0` in all thirty runs proving the runs exercise the synchronous verdict.
 - **The deferral's coverage is silent.** Nothing committed can tell that R2 took the deferral rather
   than the direct path; the measurement lives in a removed probe and its log. A future "simplification"
   that dropped the deferral would keep R1, R2 and the module green and reintroduce v1's 1 in 20 as a
@@ -1906,8 +1912,9 @@ above.
 code's misreport and the narrowing's premise are each unmeasured there); the TLS spelling of a
 write's reset — asio's `engine::map_error_code( )` touches only `eof`, so a transport
 `connection_reset` should reach the TLS write handler unchanged and the record should hold under the
-TLS policy too, but that is read in asio and not measured, and it is A1-tls's to measure; whether the
-Ready-on-reset shape of §13.8 occurs against a real origin, which no case arranges; and the loop
+TLS policy too, but that is read in asio and not measured, and it is A1-tls's to measure; ~~whether the
+Ready-on-reset shape of §13.8 occurs against a real origin, which no case arranges~~ — **settled
+2026-09-24: it occurs 15 times out of 15, deterministically, against a real peer** (`edb6d96`); and the loop
 counts of the must-not-move runs beyond what the logs hold — here every count was a log, and the
 journal was needed for nothing.
 
