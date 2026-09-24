@@ -328,9 +328,17 @@ def collect_by_running( bld_tree, only, timeout ):
 
         result[ module ] = parsed
 
+        #
+        # Flushed because this is the only progress signal a long tier 3 has, and check_split.sh
+        # pipes this output through tee. CPython block-buffers a pipe, so without the flush all six
+        # lines of a twelve-second capture arrive together at exit - measured - while on a terminal
+        # they arrive as each module finishes. A pipe and a captured variable are equally silent:
+        # the flush is what makes the difference, not the way the output is collected
+        #
+
         print( '    %-32s %4d registered  %4d ran  %4d skipped  exit=%s' % (
             module, len( registered ), len( parsed[ 'entered' ] ),
-            len( parsed[ 'skipped' ] ), code ) )
+            len( parsed[ 'skipped' ] ), code ), flush = True )
 
     return result
 
@@ -360,7 +368,7 @@ def collect_by_parsing( logs_dir, only ):
 
         print( '    %-32s %4d ran  %4d skipped  %s' % (
             module, len( parsed[ 'entered' ] ), len( parsed[ 'skipped' ] ),
-            'clean' if parsed[ 'clean' ] else 'NOT CLEAN' ) )
+            'clean' if parsed[ 'clean' ] else 'NOT CLEAN' ), flush = True )
 
     return result
 
