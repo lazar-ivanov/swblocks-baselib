@@ -3737,6 +3737,30 @@
    "namespaces": []
   },
   {
+   "body_sha": "06b051d031e6c7c9ef21ae7cfa19f3ff",
+   "doc_sha": "8a57b71649d06a30f5e31c008390624b",
+   "file": "utf_baselib_httpclient6/TestClientSessionCancel.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 462,
+   "module": "utf_baselib_httpclient6",
+   "name": "ClientSession_CancelAfterTheFinalHopIsANoOpTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "cefa3eb4a54bf29f84659521ac67f316",
+   "doc_sha": "2f38b50af5b6d8ba9b029785915235ca",
+   "file": "utf_baselib_httpclient6/TestClientSessionCancel.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 374,
+   "module": "utf_baselib_httpclient6",
+   "name": "ClientSession_CancelBetweenHopsIsReportedAsCancelledTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "7b34e46183cf032e2b180496689fb120",
    "doc_sha": "7661285e3771277209113358a30ac2c4",
    "file": "utf_baselib_httpclient4/TestClientSession.h",
@@ -15421,6 +15445,14 @@
    "sha": "0abef02d0845caa9ddc81ecf36d569e1"
   },
   {
+   "file": "utf_baselib_httpclient6/TestClientSessionCancel.h",
+   "label": "namespace sessioncancel",
+   "line": 71,
+   "module": "utf_baselib_httpclient6",
+   "ns": "utest",
+   "sha": "67261558b9f05d8a505de45634094fd1"
+  },
+  {
    "file": "utf_baselib_httpclient6/TestClientSessionIdle.h",
    "label": "namespace sessionidle",
    "line": 48,
@@ -19844,6 +19876,16 @@
      "includes": [
       "<baselib/httpclient/ClientSession.h>",
       "<baselib/tasks/TcpStrandedStreams.h>",
+      "<utests/baselib/Http2DriverTestUtils.h>",
+      "<utests/baselib/Http2TestServer.h>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_httpclient6/TestClientSessionCancel.h"
+    },
+    {
+     "includes": [
+      "<baselib/httpclient/ClientSession.h>",
+      "<baselib/tasks/TcpStrandedStreams.h>",
       "<utests/baselib/Http2TestServer.h>",
       "<utests/baselib/Utf.h>"
      ],
@@ -19854,12 +19896,15 @@
       "<utests/baselib/UtfMain.h>",
       "<baselib/http2/PreCompiled.h>",
       "<baselib/httpclient/PreCompiled.h>",
-      "\"TestClientSessionIdle.h\""
+      "\"TestClientSessionIdle.h\"",
+      "\"TestClientSessionCancel.h\""
      ],
      "path": "utf_baselib_httpclient6/UtfBaselibHttpClient6Main.cpp"
     }
    ],
    "notes_cases": [
+    "ClientSession_CancelAfterTheFinalHopIsANoOpTests",
+    "ClientSession_CancelBetweenHopsIsReportedAsCancelledTests",
     "ClientSession_IdleTimeoutReachesTheHttp11DriverTests"
    ],
    "notes_index": true
@@ -21971,6 +22016,13 @@
    "module": "utf_baselib_httpclient5",
    "name": "utest",
    "sha": "0399134104b45c6bd813f641223cc836"
+  },
+  {
+   "file": "utf_baselib_httpclient6/TestClientSessionCancel.h",
+   "line": 69,
+   "module": "utf_baselib_httpclient6",
+   "name": "utest",
+   "sha": "8c9bfec70cd4e65e791b086a0c89db94"
   },
   {
    "file": "utf_baselib_httpclient6/TestClientSessionIdle.h",
