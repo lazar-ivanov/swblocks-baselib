@@ -833,6 +833,11 @@ UTF_AUTO_TEST_CASE( ClientSessionTls_Http11FallbackExchangeTests )
  * peer - eof and not a truncation - and the case below asserts the opposite value of that same
  * observable, so neither can be passing vacuously.
  *
+ * AND IT DISCRIMINATES, measured 2026-09-23 rather than argued: remove section 2.2's gate, so that
+ * initiateClose( ) shuts the send side on EVERY deliberate close, and this assertion is RED 10 in
+ * 10 with the peer's stream ending asio.ssl.stream:1 - the exact value the case below asserts. That
+ * is the whole reason the shutdown is gated, and it is now a measurement. Baseline 40/40.
+ *
  * WHAT IT DOES NOT ESTABLISH: anything about the new lines of initiateClose( ), which do not run
  * here; and it does not show the alert after a completed exchange, which is what H01 currently
  * makes non-deterministic. The exchange over HTTP/1.1 on TLS is carried by the other two cases.
@@ -962,14 +967,39 @@ UTF_AUTO_TEST_CASE( Http1DriverTls_IdleCloseSendsCloseNotifyTests )
  *     so nothing but the driver's teardown can end that task - the same instrument the cleartext
  *     case uses, and the composed operation it has to reach through is ssl::stream's rather than
  *     the socket's.
- *   - the close does NOT fail the task. This is what m_wasSocketShutdownForcefully buys per
- *     section 2.3: without it the terminal path attempts a close_notify on a send side that has
- *     just been shut, and the flag makes that attempt unreachable instead of betting on an error
- *     code list.
+ *   - the close does NOT fail the task. CORRECTED 2026-09-23 BY THE NEGATIVE CONTROLS BELOW, and
+ *     the sentence this replaces named the wrong cause: it is NOT m_wasSocketShutdownForcefully
+ *     that this assertion catches here. Dropping the flag leaves the task clean in every run which
+ *     reaches this assertion, because the driver task never performed the handshake - the
+ *     establisher did - so m_isHandshakeCompleted is false, the ! m_isHandshakeCompleted arm of
+ *     isExpectedException( ) is taken and isExpectedSocketException( ) lists broken_pipe. Section
+ *     2.3's own CORRECTED paragraph says precisely this of h1 on POSIX. What this assertion guards
+ *     on this platform is (b), the isClosing( ) classification in onWriteCompleted( ); the flag's
+ *     own red is owed to a Windows run and to the h2 driver, which does handshake for itself.
  *   - the close_notify is NOT sent, which is section 7.1's stated consequence. Asserted as "not
  *     the close_notify ending" rather than as one particular code, because what section 7.1
  *     claims is the absence of the alert and the peer has an aborted upload queued in front of
  *     the FIN.
+ *
+ * THE NEGATIVE CONTROLS, measured 2026-09-23, clang debug a64, and the evidence this case shipped
+ * without - section 10 requires a red before a green and the implementing lane could not produce
+ * one. Each is one line of initiateClose( ) degraded in a local tree and reverted; baseline 40/40.
+ *
+ *   drop the shutdownSocket( ) call     taskEndedUnaided RED 10/10, every one at the full bound
+ *   drop the m_was...Forcefully flag    taskEndedUnaided RED 5/40; ! taskFailed green in the 35
+ *                                       runs which reached it
+ *   drop (b), the isClosing( ) arm      ! taskFailed RED 10/10, "Broken pipe [system:32 at
+ *                                       reactive_socket_send_op.hpp:136]"
+ *   ungate the shutdown                 this case UNCHANGED - it reds the sibling case instead,
+ *                                       which is what says the two are on opposite paths
+ *
+ * THE MIDDLE ROW IS A FACT THE DESIGN DOES NOT CARRY. Section 2.3 argues the flag prevents a
+ * FAILURE. Without it isShutdownNeeded( ) answers true, the terminal path starts the very TLS
+ * shutdown the flag exists to suppress, and one run in eight it does not complete until the peer is
+ * released - so on this path the flag buys the ENDING. It is a stall and not a hang: the case
+ * reaches its own assertion every time. And this case is a STRONGER instrument for the first
+ * assertion than its cleartext twin, which measured 2 in 10 for the same degradation
+ * (utf_baselib_httpclient7/TestHttp1DriverWriteBarrier.h).
  *
  * WHAT IT DOES NOT ESTABLISH: that the write error is classified correctly on Windows. Section
  * 12 says the code a locally shut-down pending write reports there was never measured, and a
