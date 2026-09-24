@@ -53,6 +53,22 @@
 
 --log_level=message --run_test=Http1Driver_PeerHalfClosesWithAWriteInFlightTests
 
+# 6a - the OTHER half of the same defect, and the one H01 left open: Ready published on a
+# connection whose write the peer reset. Same exchange and same arrangement as the two cases above,
+# extended by one chunk - the peer completes the declared body only after the sink has recorded
+# that the driver consumed the previous one, so the message is finished by a read which runs BEHIND
+# the write handler and finishStream( ) reaches its SYNCHRONOUS verdict with the write already
+# over. Red on every run against a tree whose finishStream( ) does not ask '! m_writeEndingCode':
+# measured a64 clang debug, 15 of 15 red without the term and 15 of 15 green with it.
+#
+# A GREEN RUN AGAINST THE UNFIXED TREE WOULD MEAN THE ARRANGEMENT AND NOT THE DEFECT. On the other
+# ordering H01's deferral is taken and its continuation already answers Draining, so a green run
+# there is the write handler having lost the strand. '-- --bl-logging-level=6' discriminates: this
+# case must print NO 'deferred reuse verdict' line at all, and it printed none in any of those 30
+# runs. WRITE_PARKS_IN_MILLISECONDS is the first thing to look at if it ever does.
+
+--log_level=message --run_test=Http1Driver_PeerResetsAfterACompleteKeepAliveResponseTests
+
 # H01 - the spurious reuse refusal, and the stream seam which makes its window certain. The first
 # case is RED on every run against a tree without the one-strand-hop deferral in finishStream( ):
 # it holds the write's completion until the read's own completion is on the strand, so the driver

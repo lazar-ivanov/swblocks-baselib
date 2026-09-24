@@ -1011,3 +1011,272 @@ restored tree, and nothing else is journaled — assumed identical, not shown. T
 argument refusal (§12.6.3) — the lane's report, no log. The two before-side load batches' loader
 coverage — the journal's, `load.log` being per-session. And the 22 empty captures are the reuse case
 by elimination, not by a saved output.
+
+---
+
+## 13. Implementation review, 2026-09-24 — `sync-verdict` @ `6e97b86`, owed item 6a
+
+**Reviewer: Claude Fable 5.1, reading the lane worktree at `6e97b86`** — two commits on `lazari2` @
+`50dd9ca`: `edb6d96` (the fix), `6e97b86` (manifest). Line numbers are at `6e97b86`. Read whole: the
+diff of all four files; in the landed header the member block, `onStartRequest( )`'s write initiation
+and its catch, `onWriteCompleted( )`, `armRead( )` and the tail of `onReadCompleted( )`,
+`onPeerClosed( )`, `deriveIsReusable( )`, `finishStream( )`, `publishStreamEnd( )`,
+`deferStreamEnd( )`, `onStreamEndDeferred( )`, `closeConnection( )`, `submit( )` and `state( )`;
+`NetUtils.h`'s five predicates; `TestHttp1DriverWritePeerClose.h`'s sink, arrangement and the new
+case; `notes.txt`; `Http1DriverTestUtils.h`'s `waitForRecords( )`; the source `#include` graph and the
+`*.d` union of the main worktree's tree; the lane's two scripts and its journal; the owed-work
+record's 6a, the arms design's §12.5, §12.6, §13.6 and §13.8; and **every log in
+`logs/lane3-syncverdict/`, re-tabulated from the 60 per-run files rather than off the rate
+summaries**. Tier 1 and tier 2 were re-run read-only from the main worktree's venv. Nothing was
+built; no test was run.
+
+**Verdict: agree that the implementation should be accepted.** The term is the right one at every
+code the write can carry (§13.1), it is asked on the one line where the evidence still exists
+(§13.2), it changes exactly one verdict on one path (§13.3), the two computations are now one
+question and the textual residue is benign and named (§13.4), the red is deterministic and its
+load-bearing half — that it measures the synchronous verdict — is verified in the logs two ways
+(§13.5), the second rendezvous is sound and sits on the risk rather than beside it (§13.6), the
+narrowing of the gate is accepted because the reach was derived and not read (§13.8). One comment
+carries a wrong premise under a right conclusion (§13.9) — owed a same-line-count rewording, not a
+condition.
+
+### 13.1 The predicate, checked at every code the write can carry
+
+`m_writeEndingCode` is written raw at `:857` by every completion of the write, ahead of the handler
+prolog; `m_isWriteInFlight` clears at `:869`; and the task fails on the write's code only when
+neither `isOurOwnTeardown` (`:807`) nor `isPeerClosedOnWrite` (`:843`) excuses it (`:928`). So at a
+synchronous verdict with the flag clear, the record is:
+
+- **empty** — a clean write. The term passes. The only code on which a connection may be handed on.
+- **`connection_reset`, `broken_pipe`, `eof`, or the policy's truncation** — A2's arm: the task does
+  not fail, the flag clears, the record stays. The term refuses, and must: a write that completed on
+  any of these handed the stream fewer octets than the request has, so the peer holds a partial
+  request and a second one put behind it is read as this one's body — `finishStream( )`'s own mirror
+  sentence, with the arrow the write side's way.
+- **`operation_aborted`** — our own cancel or `initiateClose( )`'s. `! isClosing( )` already refuses;
+  the term is redundant and harmless.
+- **anything else** — `CHK_EC( )` fails the task, `m_closing` is set, `! isClosing( )` refuses;
+  redundant and harmless.
+
+So the term decides exactly on A2's arm and is inert everywhere else. **The lane's rejection of
+`net::isPeerResetOnWriteErrorCode( )` is right, and it is decisive on a reachable shape**, not only
+a tidier question: that predicate refuses `broken_pipe` (`NetUtils.h:519-521`), and a peer that
+half-closes with our upload unread after answering in full — FIN first, then our send into
+`CLOSE_WAIT` — completes the write `EPIPE` while the read completes the message on the octets ahead
+of the FIN. Under the predicate that connection would be published Ready for one strand turn and
+`submit( )` accepts in one strand turn (`:2359-2360`); under the term it is Draining. The asymmetry
+the predicate encodes — a reset is proof, a broken pipe is not — is the right one for
+`onPeerClosed( )`'s question and the wrong one for reuse, exactly as the lane says. And the term is
+code-agnostic, which is what makes it safe on the platform nobody has measured: the Windows spelling
+`NetUtils.h:508` leaves open cannot reach it.
+
+### 13.2 Placement, verified
+
+`isReusable` at `:1617-1619`; the record cleared at `:1695` under `if( ! m_isWriteInFlight )`
+(`:1690`); the bool carried into `publishStreamEnd( )` at `:1709`. The only branch on which
+`isReusable` can be true is the branch that clears the record, so a term asked after the state block
+would read an empty code on precisely the path that needs it. The deferred path is untouched: the
+clear is skipped for it, the continuation reads at `:1912` and clears at `:1936`, as §12.2 verified.
+At `50dd9ca` the two lines are `:1586` and `:1663` — the 77 of the commit message.
+
+### 13.3 Blast radius — the eight call sites, confirmed
+
+`:629` false (closing at start), **`:699` true** (render failure), `:1169` false (parse error),
+**`:1182` `deriveIsReusable( )`** (complete message), `:1304`, `:1323`, `:1332` false (the three
+endings of `onPeerClosed( )`), `:2524` false (cancel). Two sites can pass true, as the lane counted.
+At `:699` the record is empty by construction, not by luck: `submit( )` accepts only on `Ready` with
+no handle (`:2359-2360`), and every publication of `Ready` — `:1757`, reached synchronously under
+`! m_isWriteInFlight` or from the continuation under `isWriteEnded` — clears the record in the same
+call (`:1695`, `:1936`). The write-initiation catch (`:765`) clears the flag and fails the task, so
+it cannot leave a record either. And `isReusable` is not consulted at all when `isVerdictDeferred`
+(`:1703-1710`). **The one behavioural change is the complete-message site after A2's arm has run:
+Ready becomes Draining.** Nothing else moves.
+
+### 13.4 The two computations, and the trade
+
+Synchronous `:1617-1619`, deferred `:1909-1912`: the same four questions, the deferred one without
+`isConnectionUsable`. That term is a conjunct of `isVerdictDeferred` (`:1654-1655`), the only
+condition under which `deferStreamEnd( )` is called (`:1703-1705`), whose post is the only path to
+`onStreamEndDeferred( )` — true by construction, and a *stable* fact, being a property of the
+completed response (the parser's verdict and `m_requestSaidClose`) that nothing in the window can
+change. Plumbing it through would add a parameter that is always true to two signatures and a bind
+on a universal path — a dead parameter that invites "when is it false?" and answers "never". The
+lane recorded the omission in both comments instead. **Judged: the right trade.** The hazard §12.5.1
+named — a future simplification resolving the asymmetry the wrong way — was about the *outcome*
+term, which is now at both sites. The residue cannot be resolved silently the wrong way: adding
+`isConnectionUsable` to the deferred verdict is a no-op, and removing it from the synchronous one
+publishes Ready on every failed stream and turns four `Ready != state` assertions red in one file
+alone. Benign, and loud if touched.
+
+### 13.5 The evidence, re-derived — and the half that makes it evidence
+
+From the 60 per-run logs, not the two summaries: `unfixed-{1..15}` 15 red, `fixed-{1..15}` 15
+green, `negctl-{1..15}` 15 red, `final-{1..15}` 15 green — an A-B-A-B on the same binary path, the
+last pair on the committed text: the header's mtime `08:58:36` (the restore after the negative
+control) precedes `UtfBaselibHttpClient7Main.o`'s `08:59:00`, and the tree is clean at HEAD, so the
+object the `final` and `hc7-final-module` runs used is the committed text. The gap §12.9 recorded
+for H01 — "assumed identical, not shown" — does not recur for `httpclient7`. All 30 reds carry one
+message, the new case's `chkOrFail( )` at `Http1DriverTestUtils.h:87`, with the same events and
+peer records: `headers:200:final|data:8|data:8|data:10|closed:ok` and
+`rcvbuf:set|head:…|chunk-two:sent|gate:held|chunk-three:sent|linger:set|reset|state:read` — the
+response complete and reported `closed:ok`, the reset after the third chunk, the verdict read after
+the reset.
+
+**`deferrals=0`, verified two ways.** A `grep` over all 60 per-run logs for either trace line —
+`Deferring the reuse verdict` (`deferStreamEnd( )`, `:1826`) and `The deferred reuse verdict`
+(`onStreamEndDeferred( )`, `:1914`; the script counts this one) — finds none. And the instrument
+prints at that level: H01's `after-seam.log` and `after-seam-final.log` carry both lines under the
+same `-- --bl-logging-level=6`, and every per-run log here shows TRACE output, so the level was in
+force. Therefore `isVerdictDeferred` was false in all 60 runs; on the unfixed runs Ready was
+published, which requires `! isClosing( )` and so the flag clear — the write handler ran first; on
+the fixed runs, with `isConnectionUsable` true (200, `part-onepart-twopart-three`, `closed:ok`
+asserted) and the task not failed (asserted), the Draining is the record's. **These runs are
+evidence about the synchronous verdict and nothing else, as the lane says.** The whole-module
+negative control (`hc7-negctl-module.log`, 14 cases) fails the new case and only it, so no existing
+`httpclient7` case depended on the term's absence.
+
+### 13.6 The second rendezvous, judged
+
+**Mechanism, at the source.** `publishStreamEnd( )` sets `m_state` under `m_stateLock` at `:1757`,
+releases the lock, then calls `sink -> onClosed( )` at `:1766`. The gated sink (`:416-433`) delegates
+to the inner sink first — which satisfies `waitForClosed( )` — and only then blocks in `m_endGate`
+on `peer.waitForRecords( 8 )`, bounded by `WAIT_TIMEOUT_IN_MILLISECONDS = 30000`
+(`Http1DriverTestUtils.h:72`). The test thread wakes, reads `state( )` (`:775`, `m_stateLock` only,
+which the publishing thread no longer holds — no deadlock), records `state:read` (`:779`), and the
+gate opens. The hold is on the strand, so the three writers of `m_state` — `:1757`, `:1968`,
+`:2298` — cannot run until the sink returns; and the read is re-armed only after `onBytesRead( )`
+returns (`:1484-1486`), i.e. after the gate. That last fact is why the gate is needed: on the
+unfixed tree the re-armed read meets the reset's residue and ends the connection within one strand
+turn, and a `state( )` read racing it can return `Draining` — a green run against the defect, the
+one failure mode this case must not have.
+
+**Sound, and it masks nothing**, on three grounds. It reads the verdict at the event the production
+reader reads it — `releaseStream( )` runs inside the request task's `onClosed( )` — so the control
+is on the risk: it measures the value `submit( )` would consult (`:2359`) at that moment. It delays
+only `publishStreamEnd( )`'s epilog, on a strand with nothing else pending — the write handler has
+run, the read is not yet re-armed, no timer is live — so there is no concurrent activity whose order
+the delay could hide. And its failure mode is a slow run and not a wrong answer: the state is read
+*before* the record is written, so the bound can only elapse if the test thread does not run for
+30 s between `waitForClosed( )` and `state( )`; and if `onClosed( )` never comes, `waitForClosed( )`
+reports it. The two earlier cases are untouched — `m_endGate` is empty unless `attachEndGate( )` is
+called (`:690`), their record count stays 5, and the manifest shows their `body_sha` unchanged. The
+sink still calls nothing on the connection; the read is from the test thread, so L3 holds.
+
+### 13.7 §13.8's open question — what 15/15 settles
+
+§13.8 had no case; the write-first ordering was "argued from the kernel and R1's measurement". 15 of
+15 with a real RST (`SO_LINGER( on, 0 )`, no shutdown), no seam and an unmodified driver settles
+**reachability**: the ordering exists with a real transport, and on it the defect fires every time.
+The arrangement holds the strand on chunk two for 50 ms after the reset
+(`STRAND_HELD_AFTER_RESET_IN_MILLISECONDS`, `:220`) — a slow consumer, which is a legitimate sink and
+not an injection — and the source says why the ordering then follows: with the read not re-armed
+until `onBytesRead( )` returns, the write op is the only op registered during the hold, the reset
+can reach nothing else, and its handler is on the strand before the hold releases. What 15/15 does
+not measure is the production *frequency* of the ordering against a fast sink — that needs the RST
+and the completing octets in one reactor wake, or a lagging read handler — and it does not need to:
+a deterministic red on a reachable ordering is what a one-term fix is judged by. The other ordering
+is H01's, closed by the outcome term with its own negative control. **Settled.**
+
+### 13.8 Coverage — the narrowing accepted, and on what condition
+
+**The reach was derived, not read, twice over.** From source: `Http1ConnectionTask.h` is
+`#include`d by `ClientSession.h:22` and by four test headers (`Http1DriverTestUtils.h:20`,
+`TestHttp1ConnectionTask.h:20`, `TestClientSessionTlsHttp1.h:23`, `TestHttp1DriverTlsCancelClose.h:22`);
+the mentions in `HttpClientRequestTask.h:656,964` and `Http2ConnectionTask.h:1891` are comments;
+`ClientSession.h` is included only by `httpclient4`, `5` and `6` test headers. That reaches
+`utf_baselib_httpclient{3,4,5,6,7}` and nothing else. From the compiler: the `*.d` union of the main
+worktree's tree — 46 of 46 test modules and the four apps — names the same five. baselib is
+header-only, so a module that does not compile the header links a byte-identical binary, and running
+the other 41 measures nothing about this change. The whole-suite gate exists for reach that reading
+can miss; here the reach comes from the compiler's own dependency output, and the lane said plainly
+what it did not run. **Accepted.** The condition is the obvious one: the argument is as good as the
+include graph, and the next `#include` of `ClientSession.h` or the driver header widens the set.
+What the rule still owes and this narrowing does not discharge: clang release and gcc debug of the
+five modules, the orchestrator's.
+
+**The five, re-tabulated.** `httpclient7` 3 + 5 whole-module runs green, 14 cases, the last five on
+the committed text. `httpclient5` 3 + 2 green, 8 cases, rebuilt at HEAD at 09:01
+(`hc5-head-driver.log` says three runs; two logs were saved). `httpclient6` 3 green, 3 cases.
+`httpclient4` 25 runs, 2 red: run 2 `SinkIsToldCompleteOnceAcrossTheFallbackRetryTests`
+`dispatched == 2U` — arms §13.6, red on the *base* binary once in 30 before any of this; run 6
+`AgainstTheLibraryHttpServerTests` `connectionsCreated == 2U` — arms §12.6, 3/30 both sides and
+6/90 against 7/90 across H04a, the pool's adoption window. Both pre-existing, both at rates
+consistent with one in 25. Their objects (08:45, 08:52) and `httpclient3`'s (08:25) predate the
+final header text; see the last paragraph.
+
+**`httpclient3`, the H01 instrument:** 3/300 quiet, 4/300 under the lane's own single-module builds
+of `httpclient4/5/6` (08:45-08:52, a lighter load than H01's sixteen rebuilds), 7/600 = 1.17 %,
+Wilson [0.57 %, 2.39 %] — re-derived. The quiet figure is H01's 3/300 exactly. The reds:
+`RequestResponseAndKeepAliveReuse` ×2 (the second `submit( )` refused — §12.1's sixth exposure,
+captured empty by the script's pattern exactly as §12.1 predicted; run 62 carries it beside
+`ReuseVerdictInputs`, so 7 red runs are 8 failing cases), `ReuseVerdictInputs` ×2,
+`ChunkedTrailersAndBodiless` ×3, `InterimResponsesPrecedeTheFinalBlock` ×1 — every one a
+`stateAfterResponse == Ready` failing, H01's residual set. **No new signature.** One precision: the
+`hc3` runs were taken without `--bl-logging-level=6` (`lane3-sv-hc3.sh`), so no red carries the
+`still in flight` line §12.1 used to identify the residual run by run. Here the identity is by
+elimination: for the new term to publish Draining the write must end with a non-empty code without
+failing the task — A2's arm, a peer that closed during the write — and every red case expected
+Ready, so its peer answered keep-alive and held the connection, and its small write ended clean.
+Tight, and by reading; a level-6 batch is the cheap way to make it by log.
+
+**Tiers.** Tier 1 re-run here, read-only, at `6e97b86` from the main worktree's venv: **PASS, all
+invariants** — the lane's three tier-1 logs are all pre-refresh FAILs (C1, C6 ×2; C9 in the first,
+before the recipe), and no post-refresh log exists, so the commit message's "PASSes after this" was
+a claim until this run. Tier 2, `utf_objsize.py` read here: `httpclient7` 32.5 MB (34,117,616
+octets), marginal 11.5 under the 40 MB target; the family peak `httpclient4` 49.0 MB, untouched.
+Tier 3: no baseline for the httpclient family (`tier3-family.log`: 0 baseline modules), so it cannot
+speak; intrinsically all five `registered == ran`, 0 skipped, exit 0 — the lane's finding, recorded.
+
+### 13.9 Comments checked — one wrong premise under a right conclusion
+
+**Born in `edb6d96`, verified:** the member comment's three readers (`:1289`, `:1619`, `:1912`) and
+two releases (`:1695` after `:1619`; `:1936` after `:1912`); `finishStream( )`'s account of A2's arm
+(`:928`); "released below"; "the same four terms"; `publishStreamEnd( )`'s rewritten paragraph. In
+the test: "cleared it 77 lines later" (`:1586` → `:1663` at `50dd9ca`); "most of an 8MB upload never
+sent" (`BLOCKED_BODY_SIZE` 8 MiB against a 2048-octet receive buffer); `notes.txt`'s "printed none in
+any of those 30 runs" (60, counting both pairs).
+
+**The wrong premise.** The `NON-EMPTY RATHER THAN` paragraph — and the commit message and the
+journal after it — says *"admitting broken_pipe would be WRONG, because EPIPE proves a FIN came
+first"*. It does not. `NetUtils.h`'s fifth predicate, verified at the kernel source by the arms
+design's §13.3, says a write's `broken_pipe` is consistent with three histories — a FIN first; the
+read having taken the reset itself, after which the exchange leaves the send `EPIPE`; or our own
+`shutdown_send` — and "says nothing at all against the read's own code". The conclusion the sentence
+supports is right: for `onPeerClosed( )`'s question `broken_pipe` must not be taken as proof of a
+reset, because in every one of those histories the read's own code is the truth. The premise stated
+is one history of three. A comment, no behaviour; **owed a same-line-count rewording** — the
+paragraph is seven lines, and the `BL_LOG` / `BL_THROW` sites below it bake `__LINE__` in, so the
+count must hold to keep the measurement on the committed object valid.
+
+**Two minor imprecisions, neither owed more than a word:** "the branch that makes this verdict
+reachable" — precisely, the branch that lets it be *true*; the verdict is used, false, on the others.
+And "aborted … is a request this peer will not finish reading" — for `operation_aborted` the reason
+is ours, not the peer's; the answer is the same. **Untouched and now off by one:** the H01 paragraph
+below the predicate, *"THE SAME THREE BITS ABOVE"* (`:1622-1623`) — there are four; the three H01 is
+about are still there and the sentence stays true of them. Add to §12.8's list.
+
+### 13.10 Agreement, what is owed, and what this review could not settle
+
+**Agreed; `sync-verdict` @ `6e97b86` is accepted for merge onto `lazari2`.** No condition in code.
+The base has moved to `6b4fa34`; the journal names `inventory.json` as the file likeliest to
+conflict. Record edits at the merge, the orchestrator's: the owed-work record's item 6a, which still
+reads "unscheduled" and becomes FIXED against this section; this design's status line; and
+§12.5.1's "recommended as the next one", now done.
+
+**Owed, none a condition:** the `EPIPE` rewording (§13.9), same line count; a level-6 batch of
+`httpclient3` so the residual's identity is by log (§13.8); the "three bits" word (§13.9); clang
+release and gcc debug of the five modules, per the rule; and the tier 3 baseline for the httpclient
+family, a whole-tree run and not a lane's, without which no differential assertion-count evidence
+exists for any module the change reaches.
+
+**Not settled by reading.** TLS: the term compiles over the TLS policy (`httpclient5` green at HEAD)
+but the case is cleartext; a write into a reset TLS connection surfaces the transport's code or the
+policy's truncation, and the term refuses either, so the answer is the same on every spelling —
+argued, not measured. Windows: the matrix's, with the point in §13.1's last sentence in the term's
+favour. Whether the header text the `httpclient3`, `4` and `6` binaries were built from (08:25,
+08:45, 08:52) is byte-identical to the committed one (08:58:36): the journal says the first rate pair
+predates "the comment correction", so at least comments moved between 08:23 and 08:58; the term was
+in place from 08:23 (`build-fixed-hc7.log`, `fixed-{1..15}` green), and comment-only edits shift
+`__LINE__` literals and nothing else — assumed, as §12.9 assumed for H01; `httpclient7` and
+`httpclient5` are on the committed text and are not assumed. The production frequency of the
+write-first ordering (§13.7). And the third `hc5-head` run, whose log was not saved.

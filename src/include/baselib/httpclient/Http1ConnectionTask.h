@@ -234,12 +234,13 @@ namespace bl
              * sets the socket's ONE pending error and the first syscall to reach it takes it away,
              * so a send( ) which got connection_reset leaves the pending recv( ) a plain eof - and
              * eof is precisely what a close-delimited message may be completed on. Recorded by
-             * every write handler and consulted by TWO readers: onPeerClosed( ), for the sentence
-             * above, and onStreamEndDeferred( ), where it is the only evidence left of a write
-             * which ended badly and closed nothing - the flag it would otherwise ask has been
-             * cleared under it by then. Released by whichever of finishStream( ) and that
-             * continuation finds the write over. A write which ended cleanly records an empty
-             * code, so the record cannot outlive the ending it describes
+             * every write handler and consulted by THREE readers: onPeerClosed( ), for the
+             * sentence above, and BOTH reuse verdicts - finishStream( )'s own and
+             * onStreamEndDeferred( )'s - where it is the evidence that a write ended badly and
+             * closed nothing, which the flag those would otherwise ask cannot carry. Released by
+             * whichever of finishStream( ) and that continuation finds the write over, and by
+             * finishStream( ) only AFTER its verdict has read it. A write which ended cleanly
+             * records an empty code, so the record cannot outlive the ending it describes
              */
 
             eh::error_code                                                      m_writeEndingCode;
@@ -1581,14 +1582,45 @@ namespace bl
                  * completes the write it refused to wait for"; that sentence was false and this
                  * one replaces it. See initiateClose( ), and the barrier case in
                  * utf_baselib_httpclient7, which is what measured it
+                 *
+                 * AND A WRITE WHICH HAS ENDED BADLY MAKES IT UNUSABLE TOO, WHICH IS A SECOND
+                 * QUESTION AND NOT THE SAME ONE. The flag says whether the write is over; it says
+                 * nothing about HOW, and a write handler which ran a moment ago may have learned
+                 * the connection is dead and closed nothing about it - a peer which answers in
+                 * full and then resets with the upload unread is classified in onWriteCompleted( )
+                 * as an ending rather than a failure. The response is then perfect by every test
+                 * deriveIsReusable( ) applies, the flag is clear, nothing is closing, and without
+                 * this term the connection is published Ready with a reset behind it: the pool
+                 * accepts the next request onto a socket the peer has gone from, and learns
+                 * otherwise on the wasted attempt
+                 *
+                 * THE RECORD IS STILL HERE AND IS RELEASED BELOW, which is why the term is asked
+                 * at this line and not after the state block: the same ! m_isWriteInFlight branch
+                 * that lets this verdict be TRUE is the branch that clears m_writeEndingCode
+                 *
+                 * NON-EMPTY RATHER THAN net::isPeerResetOnWriteErrorCode( ), which is a DIFFERENT
+                 * VERDICT and not a tidier question. That predicate is onPeerClosed( )'s - is the
+                 * read's eof the residue of a reset the write consumed - and it refuses
+                 * broken_pipe because EPIPE fits THREE histories: a FIN first, the read having
+                 * taken the reset itself, or our own shutdown_send. It proves nothing either way.
+                 * Reuse needs no proof: a peer which half closes with the upload unread ends our
+                 * write EPIPE and THAT connection is finished, as it is on every other non-empty
+                 * code, ours included. So the question here is only - did this write end cleanly
+                 *
+                 * WHICH MAKES THE TWO VERDICTS ONE QUESTION AGAIN. onStreamEndDeferred( ) has
+                 * asked exactly this since H01, and until now this line did not - two computations
+                 * differing by one term, on the path every response takes. They are the same four
+                 * terms now, and the deferred one omits only isConnectionUsable, which is a
+                 * conjunct of isVerdictDeferred and therefore true on that path by construction
                  */
 
                 const bool isReusable =
-                    isConnectionUsable && ! base_type::isClosing() && ! m_isWriteInFlight;
+                    isConnectionUsable && ! base_type::isClosing() && ! m_isWriteInFlight &&
+                    ! m_writeEndingCode;
 
                 /*
                  * H01 - A WRITE WHICH HAS FINISHED AND A WRITE WHICH IS STILL RUNNING ARE THE SAME
-                 * THREE BITS ABOVE, AND ONE STRAND HOP IS WHAT TELLS THEM APART
+                 * FIRST THREE BITS ABOVE, AND ONE STRAND HOP IS WHAT TELLS THEM APART
                  *
                  * m_isWriteInFlight is cleared by the write's OWN handler, so a read completion
                  * which reaches this strand ahead of that handler reads a stale true and refuses a
@@ -1689,11 +1721,15 @@ namespace bl
              * verdict reads it AT that event - the pool through the request task's onClosed( ),
              * and every case in the two driver modules
              *
-             * THE VERDICT IS THE CALLER'S BECAUSE THE TWO CALLERS DO NOT COMPUTE THE SAME ONE, and
-             * that difference is the whole of this change. The synchronous caller asks the write's
-             * FLAG, as it always has; the deferred one asks the write's recorded OUTCOME, which is
-             * the only question left once the flag has been cleared under it - see
-             * onStreamEndDeferred( )
+             * THE VERDICT IS THE CALLER'S BECAUSE THE TWO CALLERS ASK IT AT DIFFERENT MOMENTS, and
+             * that is now the ONLY difference between them. Both ask the same four things - the
+             * caller's usability, not closing, no write in flight, and no write ending code - and
+             * the deferred one omits only the first, which is a conjunct of isVerdictDeferred and
+             * so true on that path by construction. An earlier version of this paragraph said the
+             * two callers do not compute the same verdict, the synchronous one asking the write's
+             * FLAG and the deferred one its recorded OUTCOME. That was true and was a defect: the
+             * outcome term prevented a regression on the interleaving H01 deferred, and left Ready
+             * published on the other one. See finishStream( ), where the term now is too
              */
 
             void publishStreamEnd(

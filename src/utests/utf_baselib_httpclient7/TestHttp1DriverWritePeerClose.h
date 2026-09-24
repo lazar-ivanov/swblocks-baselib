@@ -144,6 +144,43 @@ namespace utest
             PEER_RECORDS_AFTER_RESET            = 5U,
 
             /**
+             * @brief The peer's cue to send the chunk which COMPLETES the response
+             *
+             * rcvbuf, head, chunk-two, gate - the fourth written by the sink from the driver's own
+             * strand, which is the only thing that can say the driver has CONSUMED chunk two. The
+             * peer waits for it before sending chunk three, so the two can never arrive in one
+             * read, and a read which took both would complete the message inside the held strand -
+             * with the write still in flight, which is the OTHER interleaving and would make this
+             * case green against the unfixed tree
+             */
+
+            PEER_RECORDS_BEFORE_THE_THIRD_CHUNK = 4U,
+
+            /**
+             * @brief What the peer has recorded once it has reset, in the three-chunk script
+             *
+             * The five above, plus the sink's gate record and chunk three
+             */
+
+            PEER_RECORDS_AFTER_RESET_COMPLETED  = 7U,
+
+            /**
+             * @brief And what says the test thread has read the verdict
+             *
+             * WHY THE STRAND IS HELD A SECOND TIME, INSIDE onClosed( ). A connection published
+             * Ready re-arms its read, and the read of a socket the peer has reset ends the stream
+             * at once - so on the UNFIXED tree the Ready this case exists to catch survives for
+             * one strand turn and two syscalls. Reading state( ) from the test thread against that
+             * is a race whose only failure mode is a GREEN run against the defect, which is
+             * exactly the "mostly red" src/utests/AGENTS.md refuses. So the sink blocks in
+             * onClosed( ) - after the inner sink has released waitForClosed( ) - until the test
+             * thread has recorded that it read the verdict, and nothing can advance past
+             * publishStreamEnd( ) in between
+             */
+
+            PEER_RECORDS_AFTER_THE_VERDICT      = 8U,
+
+            /**
              * @brief How long the driver is left with a FREE strand before the peer is released
              *
              * WHAT IT BOUNDS IS THE COMPOSED WRITE REACHING A FULL PEER WINDOW, and it is the one
@@ -224,10 +261,12 @@ namespace utest
          * op registered. Everything else here is bookkeeping.
          *
          * IT DOES NOT CALL BACK INTO THE CONNECTION, which is what design 5.2 rule L3 forbids of a
-         * sink. It waits on the peer's own lock and returns. It holds the strand exactly once,
-         * because a second hold would be against the very handlers this case is waiting to see
-         * run, and it holds it only after the case has ARMED it - the first body chunk must be
-         * delivered with the strand free, or the composed write never reaches its parked state.
+         * sink. It waits on the peer's own lock and returns. It holds the strand at most once
+         * DURING the response, because a second hold there would be against the very handlers this
+         * case is waiting to see run, and it holds it only after the case has ARMED it - the first
+         * body chunk must be delivered with the strand free, or the composed write never reaches
+         * its parked state. The optional second hold is at the stream's END and is a different
+         * question - see attachEndGate( ), which no handler this case waits on runs behind.
          *
          * IT DELEGATES RATHER THAN DERIVES so the case keeps the ordinary RecordingSink, with
          * every accessor and rendezvous on it unchanged
@@ -246,6 +285,16 @@ namespace utest
 
             bl::om::ObjPtr< bl::httpclient::ClientStreamEventSink >             m_inner;
             bl::cpp::function< void () >                                        m_gate;
+
+            /**
+             * @brief The SECOND hold, and the only case which asks for one sets it
+             *
+             * Optional and empty for the two cases above, so their arrangement is unchanged. What
+             * it buys is stated on PEER_RECORDS_AFTER_THE_VERDICT: a verdict read on the test
+             * thread while the driver runs on is a verdict read at an unknown moment
+             */
+
+            bl::cpp::function< void () >                                        m_endGate;
 
             mutable bl::os::mutex                                               m_lock;
             bool                                                                m_armed;
@@ -285,6 +334,19 @@ namespace utest
             {
                 m_inner = bl::om::copy( inner );
                 m_gate = BL_PARAM_FWD( gate );
+            }
+
+            /**
+             * @brief The second hold, handed over on the same thread and at the same time
+             *
+             * Separate from attachTo( ) so that the cases which want only the first are untouched
+             * by this one existing. Called AFTER the inner sink, so the test thread is already out
+             * of waitForClosed( ) and has only to read state( ) and say so
+             */
+
+            void attachEndGate( SAA_in bl::cpp::function< void () >&& endGate )
+            {
+                m_endGate = BL_PARAM_FWD( endGate );
             }
 
             /**
@@ -352,6 +414,23 @@ namespace utest
                 ) NOEXCEPT OVERRIDE
             {
                 m_inner -> onClosed( handle, errorCode, isRetryable );
+
+                /*
+                 * AFTER THE INNER SINK AND NOT BEFORE IT, which is what makes this a rendezvous
+                 * rather than a second deadlock: waitForClosed( ) is satisfied by the call above,
+                 * so the test thread is already running by the time this blocks. It waits on the
+                 * peer's records exactly as the first gate does, and that wait is bounded - a
+                 * mistake here is a slow run and never a hang
+                 */
+
+                BL_NOEXCEPT_BEGIN()
+
+                if( m_endGate )
+                {
+                    m_endGate();
+                }
+
+                BL_NOEXCEPT_END()
             }
         };
 
@@ -402,15 +481,37 @@ namespace utest
          * also reported to the pending read, this stream would never end, and waitForClosed( )
          * says so rather than the case passing for a reason nobody checked
          *
-         * 'isCloseDelimited' IS THE ONE THING THE TWO CASES DIFFER BY, and it changes exactly one
-         * string: the response head the peer sends, with or without its Content-Length. The
+         * 'isCloseDelimited' IS THE ONE THING THE FIRST TWO CASES DIFFER BY, and it changes exactly
+         * one string: the response head the peer sends, with or without its Content-Length. The
          * arrangement above is identical for both, which is the point of parameterizing it -
          * A1-cleartext's red needs precisely A2's ordering, and an arrangement copied into a
          * second function is an arrangement that drifts
+         *
+         * 'isCompletedAfterTheHold' IS 6a's, AND IT PARAMETERIZES THE SAME ARRANGEMENT AGAIN for
+         * the same reason. It declares a length the peer DOES deliver, in three chunks rather than
+         * two, and the third is sent only once the sink has recorded that the driver consumed the
+         * second. So the message is completed by a read which runs BEHIND the write handler, and
+         * the driver reaches its reuse verdict with the write already ended and its reset recorded:
+         *
+         *   1-3. as above, and the sink takes the strand on chunk two
+         *   4.   the peer, cued by the sink's own record, sends chunk three and only THEN resets -
+         *        so the octets which complete the message are in our receive queue before the RST,
+         *        and Linux hands queued data over before it reports the error
+         *   5.   the reset finds the write op alone, exactly as above, and the write handler is
+         *        enqueued on the held strand ahead of anything the re-armed read can put behind it
+         *   6.   the write handler runs first, records connection_reset, closes nothing - A2's
+         *        shape (ii) - and clears m_isWriteInFlight
+         *   7.   the read then delivers chunk three, the parser completes, and finishStream( ) sees
+         *        a reusable message and NO write in flight. Its synchronous verdict is the one
+         *        H01's deferral never reaches
+         *
+         * It is mutually exclusive with 'isCloseDelimited' - a message the close frames cannot be
+         * completed before the close - and the two cases which pass the first pass neither
          */
 
         inline auto runResetDuringBlockedUpload(
-            SAA_in          const bool                                          isCloseDelimited = false
+            SAA_in          const bool                                          isCloseDelimited = false,
+            SAA_in          const bool                                          isCompletedAfterTheHold = false
             )
             -> WritePeerCloseResult
         {
@@ -422,9 +523,10 @@ namespace utest
 
             const std::string chunkOne( "part-one" );
             const std::string chunkTwo( "part-two" );
+            const std::string chunkThree( "part-three" );
 
             ScriptedPeer peer(
-                [ &chunkOne, &chunkTwo, isCloseDelimited ](
+                [ &chunkOne, &chunkTwo, &chunkThree, isCloseDelimited, isCompletedAfterTheHold ](
                     SAA_inout   ScriptedPeer&                                   self,
                     SAA_inout   asio::ip::tcp::socket&                          socket
                     ) -> void
@@ -445,10 +547,26 @@ namespace utest
                     self.record( "head:" + ScriptedPeer::requestLineOf( head ) );
 
                     /*
-                     * A response which has begun and cannot finish - the header section is
-                     * complete and the body will stay short of what it declared. It says nothing
-                     * about the connection, so nothing in the response itself asks this driver to
-                     * close and the read stays armed for a body which never comes
+                     * WHAT THE LENGTH IS FOR, and it is the whole difference between the two
+                     * shapes. Short of what the peer delivers, it makes the message a truncation
+                     * however the stream ended - which is what the first two cases assert on.
+                     * Exactly what it delivers, it makes the message COMPLETE and the connection
+                     * reusable by every test deriveIsReusable( ) applies, which is 6a's subject:
+                     * the verdict is then decided by the write and by nothing about the response
+                     */
+
+                    const auto declaredLength =
+                        isCompletedAfterTheHold ?
+                            chunkOne.size() + chunkTwo.size() + chunkThree.size()
+                            :
+                            static_cast< std::size_t >( DECLARED_BODY_LENGTH );
+
+                    /*
+                     * A response which has begun, and which finishes only in the three-chunk
+                     * shape - the header section is complete either way, and unless the peer is
+                     * going to send chunk three the body stays short of what it declared. It says
+                     * nothing about the connection, so nothing in the response itself asks this
+                     * driver to close and the read stays armed for whatever is still owed
                      *
                      * WITHOUT THE LENGTH THE CLOSE IS THE ONLY FRAMING THERE IS, which is the
                      * shape RFC 9112 section 6.3 leaves a client nothing to check against - so
@@ -465,9 +583,7 @@ namespace utest
                             :
                             "HTTP/1.1 200 OK\r\n"
                             "Content-Length: " +
-                            utils::lexical_cast< std::string >(
-                                static_cast< std::size_t >( DECLARED_BODY_LENGTH )
-                                ) +
+                            utils::lexical_cast< std::string >( declaredLength ) +
                             "\r\n"
                             "\r\n" +
                             chunkOne
@@ -484,6 +600,31 @@ namespace utest
                     ScriptedPeer::send( socket, chunkTwo );
 
                     self.record( "chunk-two:sent" );
+
+                    if( isCompletedAfterTheHold )
+                    {
+                        /*
+                         * THE CUE, AND IT COMES FROM INSIDE THE DRIVER'S OWN READ HANDLER. The sink
+                         * records it as it takes the strand on chunk two, so a peer past this line
+                         * knows the driver has already PARSED that chunk - which is the one thing
+                         * that keeps chunk three out of the same read. Coalesced, the two would
+                         * complete the message inside the held strand with the write still in
+                         * flight, and the case would be exercising H01's deferral instead of the
+                         * synchronous verdict it exists for
+                         *
+                         * AND CHUNK THREE GOES OUT BEFORE THE RESET, never after: the RST discards
+                         * nothing already on the wire, and Linux hands a receive queue over before
+                         * it reports the error behind it
+                         */
+
+                        ( void ) self.waitForRecords(
+                            static_cast< std::size_t >( PEER_RECORDS_BEFORE_THE_THIRD_CHUNK )
+                            );
+
+                        ScriptedPeer::send( socket, chunkThree );
+
+                        self.record( "chunk-three:sent" );
+                    }
 
                     /*
                      * SO_LINGER( on, 0 ) AND NO SHUTDOWN FIRST, exactly as the peer-close cases do
@@ -514,10 +655,26 @@ namespace utest
 
             gated -> attachTo(
                 om::qi< httpclient::ClientStreamEventSink >( sink ),
-                [ &peer ]() -> void
+                [ &peer, isCompletedAfterTheHold ]() -> void
                 {
+                    if( isCompletedAfterTheHold )
+                    {
+                        /*
+                         * RECORDED BEFORE THE WAIT AND NOT AFTER IT - this is the cue the peer's
+                         * script is blocked on, so the wait below cannot be satisfied until it has
+                         * been written
+                         */
+
+                        peer.record( "gate:held" );
+                    }
+
                     ( void ) peer.waitForRecords(
-                        static_cast< std::size_t >( PEER_RECORDS_AFTER_RESET )
+                        static_cast< std::size_t >(
+                            isCompletedAfterTheHold ?
+                                PEER_RECORDS_AFTER_RESET_COMPLETED
+                                :
+                                PEER_RECORDS_AFTER_RESET
+                            )
                         );
 
                     os::sleep(
@@ -528,8 +685,20 @@ namespace utest
                 }
                 );
 
+            if( isCompletedAfterTheHold )
+            {
+                gated -> attachEndGate(
+                    [ &peer ]() -> void
+                    {
+                        ( void ) peer.waitForRecords(
+                            static_cast< std::size_t >( PEER_RECORDS_AFTER_THE_VERDICT )
+                            );
+                    }
+                    );
+            }
+
             scheduleAndExecuteInParallel(
-                [ &peer, &sink, &gated, &result, &chunkOne ](
+                [ &peer, &sink, &gated, &result, &chunkOne, isCompletedAfterTheHold ](
                     SAA_in      const om::ObjPtr< ExecutionQueue >&             eq
                     ) -> void
                 {
@@ -595,9 +764,20 @@ namespace utest
                      * READ HERE, which is where the pool reads it: releaseStream( ) runs inside
                      * the request task's handling of onClosed and asks this connection whether it
                      * may be reused
+                     *
+                     * AND WITH THE DRIVER STILL INSIDE onClosed( ) when this case asked for the
+                     * end gate - so "here" is the moment the verdict was published and not some
+                     * moment after it. The record below is what lets the strand go on; without it
+                     * the gate's own bound would release it, which is a slow run and not a wrong
+                     * answer
                      */
 
                     result.state = driver -> state();
+
+                    if( isCompletedAfterTheHold )
+                    {
+                        peer.record( "state:read" );
+                    }
 
                     eq -> wait( driverTask );
 
@@ -989,6 +1169,112 @@ UTF_AUTO_TEST_CASE( Http1Driver_PeerHalfClosesWithAWriteInFlightTests )
         ! result.taskFailed,
         "a peer half closing during the request write failed the driver task: " +
             result.taskFailure + "; events: " + result.events + "; peer: " + result.peerRecords
+        );
+}
+
+UTF_AUTO_TEST_CASE( Http1Driver_PeerResetsAfterACompleteKeepAliveResponseTests )
+{
+    using namespace bl;
+    using namespace utest::http1writeclose;
+
+    /*
+     * 6a - THE HALF OF THE RESET-ON-WRITE DEFECT H01 DID NOT CLOSE: Ready published on a connection
+     * whose write the peer RESET.
+     *
+     * THE TWO VERDICTS, AND WHY THERE WERE TWO. finishStream( ) publishes the reuse verdict either
+     * synchronously or one strand hop later, and H01 gave the DEFERRED one a term the synchronous
+     * one did not have - the write's recorded outcome. That was right and was not enough. The
+     * deferral is taken only when the write is still in flight at the verdict, so on the ordering
+     * this case arranges - write handler first, its flag already cleared - the synchronous verdict
+     * ran, asked three bits that say nothing about how the write ended, and published Ready on a
+     * connection with a reset behind it and most of an 8MB upload never sent.
+     *
+     * WHAT MAKES IT THE DANGEROUS CLASS is that the response is perfect. The peer answered in full,
+     * keep-alive, Content-Length satisfied - deriveIsReusable( ) is true for every reason it has -
+     * so nothing about the message says a word against the connection, and the only evidence there
+     * is sits in the write's code. finishStream( ) held that evidence and cleared it 77 lines later
+     * without reading it.
+     *
+     * AND THE HARM IS THE POOL'S. A connection published Ready is one submit( ) accepts, so the
+     * next request goes out on a socket the peer reset: the pool learns the truth on the wasted
+     * attempt, retries, and retires the entry. Self-healing and not a wrong answer - which is why
+     * this survived - but it is a wasted round trip on a path every response takes.
+     *
+     * THE ARRANGEMENT IS A2's, EXTENDED BY ONE CHUNK, and every step of it is a rendezvous - see
+     * runResetDuringBlockedUpload( ). No seam, no injected code, no held completion: a real peer
+     * puts a real RST on a real socket, and the write handler wins the strand because the sink is
+     * holding it when the reset lands. That is deliberate and is the whole point of this case.
+     * Whether the write-first ordering occurs against a real peer AT ALL is what design section
+     * 13.8 left unestablished, and a seam would have asserted the answer instead of measuring it.
+     *
+     * SO ITS NEGATIVE CONTROL PROVES TWO THINGS AT ONCE. Red against the unfixed tree means the
+     * verdict is wrong; it ALSO means the interleaving happened, because on the other ordering the
+     * deferral is taken and H01's continuation already returns Draining - a green run against the
+     * unfixed tree is the arrangement not being set up, never the defect being absent. The same
+     * sentence WRITE_PARKS_IN_MILLISECONDS carries for the two cases above applies here first.
+     */
+
+    const auto result =
+        runResetDuringBlockedUpload(
+            false /* isCloseDelimited */,
+            true  /* isCompletedAfterTheHold */
+            );
+
+    UTF_REQUIRE( result.closed );
+
+    /*
+     * THE PEER RESET AFTER IT HAD ANSWERED IN FULL, which is the premise of everything below and
+     * is asserted rather than assumed - a peer which reset early would make the response
+     * incomplete and this a different case
+     */
+
+    utest::http1driver::chkOrFail(
+        std::string::npos != result.peerRecords.find( "chunk-three:sent" ) &&
+            std::string::npos != result.peerRecords.find( "reset" ),
+        "the peer did not complete the response before resetting: " + result.peerRecords
+        );
+
+    /*
+     * A COMPLETE, SUCCESSFUL RESPONSE - all three chunks and no error. The caller's answer is
+     * RIGHT here and must stay right: this change-set decides what happens to the CONNECTION, and
+     * a fix which turned a completed response into a failure would be a far worse defect than the
+     * one it closed
+     */
+
+    UTF_REQUIRE_EQUAL( result.status, 200U );
+
+    UTF_REQUIRE_EQUAL( result.body, std::string( "part-onepart-twopart-three" ) );
+
+    utest::http1driver::chkOrFail(
+        ! result.errorCode,
+        "a complete keep-alive response was reported to the caller as failed with '" +
+            result.errorCode.message() + "'; events: " + result.events +
+            "; peer: " + result.peerRecords
+        );
+
+    /*
+     * AND THE TASK DOES NOT FAIL, which is A2's arm and is asserted here for the reason the case
+     * above states: the stream's verdict and the task's are independent answers
+     */
+
+    utest::http1driver::chkOrFail(
+        ! result.taskFailed,
+        "the peer's reset during the request write failed the driver task: " +
+            result.taskFailure + "; events: " + result.events + "; peer: " + result.peerRecords
+        );
+
+    /*
+     * THE ASSERTION THIS CASE EXISTS FOR, AND THE ONE IT WAS WRITTEN RED AGAINST. Read on the test
+     * thread while the driver is still inside onClosed( ) holding its strand, so it is the verdict
+     * as PUBLISHED and not whatever the connection settled into afterwards - without that hold the
+     * idle read of a reset socket overwrites Ready within one strand turn, and the red would be a
+     * race rather than a certainty
+     */
+
+    utest::http1driver::chkOrFail(
+        httpclient::ConnectionState::Ready != result.state,
+        "a connection whose write the peer reset was published Ready: the next request would go "
+        "out on it; events: " + result.events + "; peer: " + result.peerRecords
         );
 }
 
