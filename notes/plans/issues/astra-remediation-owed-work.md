@@ -703,3 +703,316 @@ the previous review; whether the six directive-line members should be excluded f
 `split_members( )` once a guard stack exists, since they would then be redundant and are the only
 protection today; and the C12 label under a same-file twin deletion, for which the tree offers no
 pair.
+
+## Review of `tier3-platform-stamp` (`3079edd`), 2026-09-24 — the tier-3 baseline says which platform it speaks for
+
+This closes the finding `tier3-client-modules-not-baselineable-record.md` §4 recorded as *"tier 3 is
+already unusable on Linux against this baseline … **not** fixed here"*. That finding never reached
+this list as a row; it is recorded here as **landed**, and the record wants a one-line pointer at
+merge. Every number below was re-measured: the lane's `controls.sh` and `rendering.sh` regenerate
+`controls.txt` and `rendering.txt` **byte-for-byte**; three further checks the lane did not make are
+in `evidence/tier3-platform/review-checks.sh` and its `.txt`, regenerable the same way.
+
+**Verdict: accept, with two things folded in before it merges and one correction to the record.**
+The `tee` the commit adds to keep the progress lines streaming is what stops them — a correct
+conclusion on a false premise, measured — and two `flush` tokens close it. The platform check on
+`--nondeterministic` is the decision already taken applied to the other comparison the tool makes,
+and folds in at five lines. The correction: **251 and 813, the commit message's own "before" numbers
+for the risk, are not measurements of the platform risk** — 43 of the 251 are, and none of the 813.
+The behaviour is not in doubt: the mismatch is refused, the refusal reaches the gate as a SKIP on
+both paths, and a real regression on a matching platform still reds it.
+
+**1. Refusing an unstamped baseline is right, and "costs nothing" is false for one real flow.**
+Unknown is not a match; the only unstamped baseline in existence is also cross-platform; and
+"accepted with a note" is the note this tool has been caught behind three times. But the cost does
+not land only *"where the platform is unknown"*: `g1-gate.sh` captures the parent with the **parent
+checkout's** tool (`RUNLOG` is relative and phases 2–3 `cd "$BASEWT"` at `PARENT`) and compares with
+the tip's, so any `PARENT` before `3079edd` yields unstamped base captures and a phase-7 `REFUSED`,
+exit 3 — with the platform perfectly known to the operator (`bld/$PLAT`) and unknown only to the
+file. What the refusal is catching there is a second thing worth catching: **two tool versions in one
+comparison**, across `fd0b6f1` and `266bc95`, which changed what the parser sees. The fix is one
+runbook line outside the repo — `RUNLOG=$REPO/scripts/utests/utf_runlog.py` for every phase — not a
+`--platform` override; the *"cannot be laundered"* comment is right, since a hand edit to the JSON
+shows in a diff and a flag would be used by reflex. `lane1-t3-analyse.py` reads captures raw and will
+now `AttributeError` on a stamped one: loud, two lines, the runbook's.
+
+**2. The stripping is complete inside the tool, and the mixed states are loud.** Every snapshot read
+goes through `load_snapshot( )` — `--nondeterministic` twice, `--against`, `--compare` — and the two
+remaining `json.load`s read the unstable list and the reasons map, neither a snapshot.
+`collect_by_running( )` and `collect_by_parsing( )` key on binary and log names, so cannot produce
+the key; `stamp( )` copies, so the summary's `len( snapshot )` is the module count; `restrict( )`
+runs after the refusal on stripped dicts. Control 2's proof is sound for a reason worth stating: a
+leaked key reaches `union( )` as a string, and the old tool handed the new baseline shows exactly what
+that looks like (`AttributeError` at the summary line, `old-tool-new-baseline.txt`), so 57 byte-identical
+outputs are not consistent with a leak. Old tool with new baseline fails before comparing — the safe
+direction. One cosmetic: `--against <unstamped> --bld <tree> --capture` writes unstamped, because the
+file's `None` wins by design, and then says *"no --bld given"*.
+
+**3. The status reaching the switch is the tool's on both paths — and the `tee` defeats its own
+reason.** `check_split.sh` is `set -u` only (line 39): no `-e`, no `pipefail`, so the pipeline never
+aborts the script and `PIPESTATUS[0]` at line 224, the very next simple command, is the tool's. The
+rendering's `regress` variant is the discriminating control — were `tee`'s 0 what reached the switch
+it would have printed PASS and GREEN; it prints FAIL and RED on both paths — and it reproduces. But
+the comment says *"piped through tee rather than captured, because --run prints a line per module as
+it goes and that is the only progress signal a long tier 3 has"*, and with stdout a pipe CPython
+block-buffers and the tool never flushes. Measured with six stand-ins sleeping 2 s each: **through
+the pipe all six progress lines arrive at 12.11 s, at exit; on a pty they arrive at 2.04, 4.05, 6.07,
+8.08, 10.10, 12.12.** So on the interactive `--run` path this commit removes the signal its comment
+preserves, and it matters most in the case the record documents — a module hanging to its 600 or
+1800 s timeout now shows a blank screen rather than the last module that finished. `$( )` and `tee`
+are equally silent; the variable is the flush. `flush = True` on the two progress prints
+(`collect_by_running( )`, `collect_by_parsing( )`) closes it and also makes `g1-gate.sh`'s
+`>>log` phases move, which they never did — the monitoring rule's trap 2 for this tool. Windows,
+cosmetic: CPython there writes `\r\n` into the pipe and the `sed` leaves the `\r` in `reason`, so the
+SKIP summary line would carry a trailing CR; `| tr -d '\r'`. No runbook shows the Windows agent
+running `check_split.sh`, so this is unmeasured.
+
+**Exit 3 is not a reserved code.** `utf_inventory.py` returns 3 for a PARSE PROBLEM, which the same
+gate script renders as tier-1 **FAIL**; `build-slot.sh`, which every lane run goes through, exits 3
+for *stopped before running, low disk*. So 3 means fail in the sibling, skip here, and never-ran in
+the wrapper. Not a defect today — `check_split.sh` does not run through the slot and its tier-1
+branch reads only zero/nonzero — but a `--run --compare` wrapped in the slot and switched on 3 would
+render a low-disk stop as GREEN. One line in the runbook, or a different code in one of the two.
+
+**4. The 57 pairs do exercise matching comparisons.** Under the old tool the 56 consecutive client
+pairs are **41 PASS and 15 FAIL**, plus the win-x86 pair PASS, so byte-identity spans outputs
+carrying real `OUTCOME CHANGED` and `NO LONGER RUNS` lines from the flakes the record documents; and
+since the new tool reaches `compare( )` only past the stamp check, identical FAIL text proves the
+check passed and the comparison ran, not that the stamp is inert. The rendering's last block covers
+the two gate paths, where the after-side stamp comes from `--bld` rather than a file. The gap: the
+win-x86 pair is the only one whose stamp is the committed string — every Linux pair was restamped by
+the harness — and no pair runs real binaries; the stand-ins take the same code path. Acceptable.
+
+**5. `--nondeterministic` — agree it folds in; "three lines" is the first half.** `nondeterministic( )`
+compares two captures' assertion counts, which across two platforms is precisely *"a comparison
+across a platform mismatch"*, and the predicate, the exit code and the message function already
+exist: read the two stamps, `platform_refusal( )`, print, `return 3` — five lines and one control.
+The second half is the list itself. `nondeterministic.json` is a bare list with no stamp, so
+`--compare` cannot check that the list it applies was derived on the baseline's platform. The
+committed list is the win-x86 pair's and today every comparison that passes the stamp check is
+win-x86, so it is consistent **by accident**. The moment a Linux baseline is captured — the record's
+own reversal condition for twelve modules — a stale list compares eleven cases on outcome only where
+they may be stable: the silent weakening the orchestrator names. And the refresh sentence this commit
+adds to `AGENTS.md` — *"the answer to either is `utf_runlog.py --run --bld <tree> --capture …`"* —
+is one capture, where `91d5c2c`'s own message says pass 2 is kept so the list can be re-derived. That
+half is a shape decision, below.
+
+**6. Refusing after collection — the justification does not apply to the path everyone runs.**
+*"--run still writes the capture the operator needs"* holds only where `--capture` is given, and
+`check_split.sh`'s `--run` branch (lines 247–248) does not give it: on a mismatched tree every binary
+runs, up to 1800 s per module, then nothing is kept and the operator is told to run again. Both
+inputs to the refusal — `args.bld` and the baseline's stamp — are known before the first binary
+starts. Cost, not correctness; but the trade as recorded is not the trade the gate makes.
+
+**7. Leaving 37 in `AGENTS.md` is right; 251 and 813 must not be cited as platform noise.** The
+record names its branch, tree and date, and 24 over ten modules is consistent with 37 over
+seventeen, both `gcc1520 debug`. What I classified against the tree: of the **251**, **43 are
+platform** — nine `#if defined( _WIN32 )`-guarded registrations in `TestBaselibDefault*.h`, twice
+(LOST and NO LONGER RUNS), 24 assertion counts, one skipped-set line — and **208 are the baseline's
+age**: 86 cases relocated by splits landed *after* `91d5c2c` on the same day (38 to `utf_baselib2` at
+`1629478`, 42 to `security2`/`3` at `c18829c`, 5 to `io2` at `77ef537`, 1 to `apps2`), twice, and
+18 cases added since, twice — the lane's per-family method sees a case moved out of the family as
+lost. And **813 = 741 + 36 + 36**: every baseline case NO LONGER RUNS because the six-module log tree
+contains none of the 17 baseline modules, the six modules' 36 cases NEWLY RUNS, the baseline's 36
+skips — **zero platform**; that tree reds identically on Windows. The conclusion is right (the
+platform *is* mismatched and refusal is correct); the evidence line for *"the risk itself"* is mostly
+something else. Recorded here so the next reader cites 43 or 37, not 251 or 813. One word in
+`AGENTS.md`: *"run against a Linux tree it **reports** 37"* is now *reported* — the tool refuses.
+
+**8. What the tree name does and does not identify.** `ub24-a64-clang2010-debug` encodes OS, arch,
+toolchain and variant, and one baseline per name is what per-platform means: under the lane and
+orchestrator split, a Linux tier 3 in force needs three captures (clang debug, clang release, gcc
+debug). It does not encode SVE on a virtualised a64 host, JNI availability or a Rosetta container —
+within-name variation is the unstable list's job and the name is necessary, not sufficient. A cost to
+know, not a defect.
+
+**Decisions, in the order to take them.** *(1) `flush = True` on the two progress prints*, folded
+into this branch. What it is: the per-module line reaches the operator as each module ends, through
+`tee` and through a log redirect alike. If not: the interactive `--run` path is blind for the whole
+run, and blind exactly when a module hangs. Risk nil, blast radius two print statements; the control
+is `review-checks.sh` §1, which should show the pty timings through the pipe. Undecided: two
+`flush = True` versus one `sys.stdout.reconfigure( line_buffering = True )`; recommend the two, since
+`reconfigure` is 3.7+ and the dist interpreter's version is not pinned in the docs. *(2) The
+two-run stamp check on `--nondeterministic`*, folded in — a consequence of the decision, five lines,
+and one line in `controls.sh`. *(3) Refuse before collecting when `--compare` is given and
+`--capture` is not*: about eight lines in `main( )`; if not done, a mismatched `check_split.sh --run`
+costs a full run for a SKIP it could print at once. Recommend yes; reverses if anything reads the
+module-count summary of a refused run, which nothing does. *(4) Stamp the unstable list*: it becomes
+`{ "__platform__": …, "unstable": [ … ] }`, `--nondet` reads the bare list as unstamped, and an
+unstamped or mismatched list is refused as the baseline is; the committed list is converted once.
+About twenty lines and a file-shape change, which is why it is a decision and not a fold-in. If not
+done: the first Linux baseline inherits a Windows unstable list silently. Recommend yes, before that
+first capture, since that is when it goes live; reverses if the committed list is retired for lists
+derived at gate time as `g1-gate.sh` does, in which case delete it instead. *(5) Docs*: *reported*;
+the refresh sentence says capture twice and re-derive the list; the record's §4 points here.
+*(6) Runbook, outside the repo, the orchestrator's*: one tool for every `g1-gate.sh` phase,
+`load_snapshot( )` in `lane1-t3-analyse.py`, and the exit-3 aliasing with `build-slot.sh`.
+
+**Could not settle here:** the Windows rendering, never run on this host — the `\r`, and whether
+the Windows tree the agent builds is spelled `win-x86-vc143-debug` exactly, since anything else
+gets a SKIP there too; the record's own 105/37 method — whether its Linux capture was `--only` the
+17 or a full tree is not stated, and it is not reproducible here without seven network-heavy modules,
+so it stands on attribution; and which of `build-slot.sh` or the tool should give up the code 3.
+
+## Review of `tier1-guards` (`df9470c`, `41e6b03`), 2026-09-24 — the capture guard, and the seventh gap closed
+
+The sixth round: decisions (3) and (5) of the previous review, implemented. Every number here was
+re-measured — an independent walk with its own include-guard rule and both boundary rules, the
+lane's mutated trees re-judged with both tools, two relocation controls of my own, the probe fix
+applied alone at `99aaff7`, and the baseline's history across every ref — not read from the logs.
+
+**Verdict: accept both, as a re-commit of three rather than two — the probe fix out and first,
+commit 1's message and its `AGENTS.md` sentence corrected, since they rest on a loss that never
+happened, and one wording in commit 2 corrected.** Nothing in either design or either implementation
+needs to change. The identity C6 and C11 now compare on is the right one, its boundary rule is C3's,
+its raw-text spelling is the right price, the control that was missing now sits on the risk, and
+"not in force" is bit-identical by construction and by measurement.
+
+**What re-measures.** The refreshed baseline is 854 insertions and 0 deletions: 767 `"guards": []`
+and 29 non-empty (29 openers, 29 conditions, 29 closers). My own walk over all 796 members and
+spans gives **18 and 11 under a condition with 0 mismatches** against what the baseline records; the
+*after*-line rule gives 19 and 11. The selftest is red at `99aaff7` on the C13 probe, and **green with
+the three-line fix applied alone** — exit 0, nothing else touched. Controls 1 and 2 re-judged with
+both tools reproduce log 06 line for line. My own: `namedMutexSemaphoreKey( )` cut into a sibling
+under a *different* guard reports two `GUARD STACK CHANGED` lines, *was under `if ! defined( _WIN32
+)`, now under `if defined( __linux__ )`*, plus two ADDED for the sibling's blank-separated
+directives — the old tool gives the two ADDED alone; the same guard *re-spelled* in the sibling
+reports the same shape. No ref ever carried a six-key baseline before `adc00c8`. Every list in the
+manifest carries one key set per entry; below entry level there are only `modules[].files` and
+`modules[].data_files`, a map keyed by file name. Eight `#else // …` lines exist tree wide and no
+case, member or span sits under one. One file-scope span holds a conditional inside its extent —
+`UtfMain.h:52`–`370`, 319 lines — and inverting `#if BOOST_VERSION < 105900` at `:96` **passes**.
+
+**1. The probe fix — split it out and land it first; the lane's defence is an ordering argument,
+and ordering satisfies it.** The fix is three lines at a different place in the selftest from the
+seven probes, it depends on nothing in the guard work, and applied alone at `99aaff7` it turns the
+selftest green. So "could not land green probes on a red selftest" is true and is answered by landing
+the fix *before* the probes, not *with* them. Two rules say so, not one: unrelated changes are not
+mixed, because a selftest that reds later would bisect to `41e6b03` for two reasons; and a live
+defect that hands a caller a wrong answer — the whole selftest FAIL for everyone since `adc00c8` — is
+scheduled on sight as its own change-set, which is a stronger reason than the mixing rule. Order:
+fix, then 1, then 2.
+
+**2. The census — the lane is right, and the brief's numbers were counted under a different rule
+and before the classifier fix.** The boundary rule is C3's by code, not by analogy: `condition_stack(
+)` and the case walk push after reading a `#if`, append `| else` on reading a `#else`, and pop on
+reading the `#endif`, so the stack a line sees is the one in force before it is read. A case can
+never sit on a directive line, so C3 never faced the boundary; this is the consistent extension. The
+brief's **19** is the *after*-line count, where a `#if` member carries its own condition and an
+`#endif` member none — 18 + 3 − 2. The brief's **10** predates the classifier fix: `#define
+SSL_R_SHORT_READ 219` at `TestCmdLineEhUtils.h:32` became a span under `ifndef SSL_R_SHORT_READ`
+when that `#ifndef` stopped being a guard, and its twin at `UtfMain.h:179` sits inside the span at
+`:52`, so it adds none. One correction: *"six one-line directive members"* is three. `UtfPluginFixture.h:105`,
+`TestBaselibDefault5.h:396` and `:427` are one line; `UtfPluginFixture.h:91` and `:98` carry the
+`.dll` and `.so` definitions, and `TestMessagingDefault.h:491`'s `#if 0` carries
+`exceptionThrowHook1( )` — multi-line members whose *first* line is a directive. The three-under,
+three-not split is exactly right; the word is wrong in the commit message, the `scan_file( )`
+comment and log 09, and it matters for decision B below.
+
+**3. Raw text — worth it, and the honest boundary is that the identity is the line, not the
+condition.** All four reasons hold, and the tree supplies the fifth: `Utf.h` spells one condition two
+ways, `defined(UTF_TEST_MODULE)` at `:20` and `defined( UTF_TEST_MODULE )` at `:107`, which is
+exactly what a whitespace normaliser would tempt, and normalising here alone would part the members'
+spelling from C3's. The cost measured on the shape it bites: a split that re-spells the guard in
+the sibling reds — and it *already* reddened under the old tool when the directives were
+blank-separated, by the one-liner accident; the guard half makes that shape-independent. The cost
+nobody named: `group( 2 )` is everything after the keyword, comment included, so the eight `#else //
+…` lines put a comment into the identity of whatever sits under them. Zero instances today on
+either side, and C3 has carried it since it existed. A trailing-comment strip is lexical rather than
+a normaliser and blesses nothing, but it changes C3's stored text for a refresh's worth of nothing.
+Recorded, not acted on.
+
+**4. The control — the distinction is real, and control 1 is the one that sits on the risk.** LOST
+and ADDED come from a sha present on one side only; `GUARD STACK CHANGED` from a sha present on both
+under different stacks — disjoint by construction in `span_comparison( )`, `key[ 0 ] not in new_text`
+on the one and `& new_text` on the other, and the selftest asserts the disjunction on the severe
+form. Control 2's two-plus-five verified, the fifth being the `#endif` one-liner at `:427`, which is
+the boundary rule showing. But control 2 is an edit, a step to the side of the risk; **control 1 is
+the relocation** — PASS to two `GUARD STACK CHANGED` with no directive moving at all — and that is
+the control that was missing before and is on the risk now. My different-guard relocation puts the
+*was/now* on the accident's most likely form. What the selftest does not pin: every probe mutates a
+manifest, so `condition_stack( )` and the boundary rule that decides identity are asserted nowhere in
+the repo — the earlier finding 8, now with a subject. One probe on a synthetic line list (a `#if`
+one-liner, an `#endif` one-liner, an `#else` branch, an include guard) closes it.
+
+**5. Bit-identical — the right property, proven by construction, exercised where it has teeth.**
+With `armed` false the keys are `( sha, () )`, `setdefault( )` keeps the first entry, LOST and ADDED
+are sorted by sha in that order, and `reguarded` is provably empty — the old loops verbatim. Of the
+six trees, c1, c3 and c4 are the ones with teeth: an armed run reports and an unarmed must not, and
+c1 is exactly the case the guard half exists for. c2 and c5 exercise LOST plus ADDED; c4b exercises
+nothing in `span_comparison( )`, its two lines being the intrinsic half. A LOST of a sha with two
+copies is not exercised and is the same by construction; the md5 is of the *sorted* list, so it
+proves the set and not the order, which is also the same by construction. One asymmetry, minor:
+`guarded` is read from `before` alone, so `--compare NEW --against OLD` would print 29 spurious
+guard changes — that direction is already broken for C11 by the "extraction failed" hard failure,
+so this is consistent rather than new; one `and carries_guards( after… )` if anyone ever runs it.
+
+**Commit 1 on its own — accept the code; the premise is false, and it is written into `AGENTS.md`.**
+The refusal is right: strict superset only, both-ways disagreement written, exit 4 distinct from the
+parse code 3, `check_split.sh` treats any non-zero as FAIL, and an unparseable file — a
+conflict-marked one — is overwritten, which is the rule's own remedy when the writing tool is the
+integrated one. Controls A–E sit on the risk. But *"each of those writes dropped `file_members` and
+`shared`"* did not happen: no ref ever carried those keys before `adc00c8`, the four refreshes
+(`21b0c37`, `3c57955`, `6e97b86`, `fd6d80a`) were pre-arming refreshes that dropped nothing, and the
+previous review's finding 6 says exactly *"nothing was disarmed, since nothing was armed"*. The
+guard is preventive, and the trigger it prevents is real — `s6r3-1` carries its own baseline commit
+`b814ed9` with a tool that predates all of this — so keep it; but the `AGENTS.md` sentence *"That is
+not hypothetical — …"* must be corrected in the re-commit, because the next reader will cite it.
+
+**Decision A — one level deeper is not moving the hole; it is the deepest level a schema-free
+comparison is sound at for this manifest.** Depth 3 is data-keyed: `modules` by module name,
+`modules[].data_files` by file name, so a path union there would refuse the ordinary refresh that
+removes a module or a data file, calling the tool older. Every field this tool has ever added lives
+at depth 1 or 2. Recommend: top-level keys, plus the key set of the first entry of each list and of
+the first value of `modules`, the same strict-superset rule at each level, the depth-3 residual named
+in the docstring, and a selftest assertion that every entry of a list carries one key set — measured
+true — so "first entry" is a checked precondition rather than an assumption. Reject the generation
+stamp: hand-maintained, and "forgot to bump" is the silent failure this tool has been caught behind.
+Reverses the day a field is added below entry level, when the stamp becomes the only exact option.
+
+**Decision B — a fix, not papering, provided it is scoped to what it measured.** The duplication half
+asks *is this an ODR risk*, and a bare conditional directive never is, whatever `split_members( )`
+ought to emit — so excluding it there is the half's own answer. Scope it to members whose *every*
+non-blank line is a conditional directive: three today, not six, since three of the six carry code
+and must stay judged. It is a live wrong answer — a red gate on a legal split, identical before and
+after — and is scheduled on sight by the project's own exception. The root question is now
+decidable and separate: with the stack in the identity, a directive-only member reports nothing the
+guard half does not, except the text of an *empty* region where nothing compiles differently, and
+it costs double reporting — seven lines for five facts in controls 2 and 5. Dropping them at
+extraction changes the member population (717 → 714), needs a refresh and touches the extractor
+every invariant reads: take it at the next refresh-bearing change, not now. The exclusion is a
+strict subset of it and needs no reversal.
+
+**Residuals, recorded against C11's shadow rather than against these commits.** (i) A conditional
+that opens *inside* a bracketed file-scope span is invisible to both halves — its directive is
+blanked from the shadow and the stack is recorded at the span's first line. One instance:
+`UtfMain.h:52`–`370`, the app-init template, with `#if BOOST_VERSION < 105900` at `:96` and
+`#ifndef UTF_TEST_APP_INIT_UTF_ARGS_PARSER` at `:179`; inverting `:96` passes. The earlier finding 5
+said zero instances — the shared tree was not scanned then. The fix shape recorded there, hashing
+`lines` over the extent, still stands; members are not exposed, their sha being over `lines`
+already. (ii) The `--against` asymmetry above. (iii) The baseline refresh rides in commit 2 as the
+arming refresh; if `lazari2`'s baseline moves before merge, the orchestrator re-captures with the
+integrated tool — commit 1's own rule — and gets the same pure insertion.
+
+**Decisions, in the order to take them.** *(1) Re-commit as three*: the fix; commit 1 with its
+message and the `AGENTS.md` sentence corrected; commit 2 with *"six one-line"* corrected. If not
+done: a bisect lands on one commit for two reasons, and project documentation cites a loss that did
+not occur. Risk nil, blast radius the history of one lane branch; undecided only whether the fix
+precedes commit 1 or follows it — recommend precedes, since it is independent of both and is what
+makes every later selftest run green. *(2) Decision B's exclusion*, its own commit on top, no
+refresh, with control 4b as the control and the three one-liners as the census. *(3) Decision A*,
+its own commit, same tool, after (2). *(4) The `condition_stack( )` probe*, with (2). *(5) The
+extraction-level drop and the interior-conditional hash*, one decision round at the next refresh.
+
+**What moved on the list.** From the previous review: (3) the `--capture` refusal — **landed** in
+`df9470c`, pending the re-commit; (5) the seventh gap — **landed** in `41e6b03`, pending the
+re-commit; (1) the classifier and (4) the refresh — **landed** before `99aaff7`, `adc00c8` arming all
+three. Two "could not settle" items are now observed a second time and are converted: *whether the
+directive-line members should leave `split_members( )`* is decision (5) above, and *the selftest
+cannot see the extractor* is decision (4).
+
+**Could not settle here:** nothing was run on Windows, and the tool runs there — `keys_a_capture_would_drop(
+)` opens the baseline with no encoding argument exactly as `--compare` already does, so nothing is
+new, but nothing is measured; whether the orchestrator's merge conflicts on the baseline, which
+depends on the state of `lazari2` at that hour; and the trailing-comment strip, zero-instance today
+on both sides and left with C3.
