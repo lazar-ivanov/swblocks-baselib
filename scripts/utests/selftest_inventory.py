@@ -975,10 +975,17 @@ def main():
     # a hard failure would stop every lane rather than the change that earned it. The current side
     # is trimmed instead, which makes the comparison exactly the one that ran before this existed
     #
+    # file_members is trimmed alongside members, and leaving it out was a real red: a baseline
+    # refreshed with C13 in force carries 38 file-scope spans from the shared tree, without_shared( )
+    # takes them off the CURRENT side, and an older side still holding them reported all 38 as C11
+    # LOST. The probe was written when no baseline carried them and went red the day one did
+    #
 
     older = copy.deepcopy( shared )
     del older[ 'shared' ]
-    older[ 'members' ] = [ m for m in older[ 'members' ] if m[ 'module' ] != SHARED ]
+
+    for key in ( 'members', 'file_members' ):
+        older[ key ] = [ m for m in older.get( key, [] ) if m[ 'module' ] != SHARED ]
 
     residue = [ f for f in check_against( older, shared )
                 if f.startswith( ( 'C13 ', 'C6 ', 'C11 ', 'C12 ' ) ) ]
