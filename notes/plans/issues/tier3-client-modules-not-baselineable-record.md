@@ -91,6 +91,24 @@ Appending Linux records for the client modules would make the file wrong on **bo
 also means tier 3 is already unusable on Linux against this baseline, which is a larger finding than
 the one this work was sent to close and is **not** fixed here.
 
+> **Closed 2026-09-24, in a later change-set — both halves.** The paragraph above stands as the
+> finding; it no longer describes the state. The baseline carries `__platform__` and `--compare`
+> **refuses** across a mismatch at exit 3, which `check_split.sh` renders as SKIP-with-reason, so
+> tier 3 on Linux is no longer unusable — it declines to answer, loudly, instead of answering
+> wrongly. An **unstamped** baseline is refused the same way, since the only unstamped baseline in
+> existence is also cross-platform. Merged at `05f503f`.
+>
+> Two of the numbers above were also classified and are **not** what this section cited them for:
+> of the 251 differences only **43 are platform**, the remaining 208 being the baseline's age — 86
+> cases relocated by splits that landed the same day *after* `91d5c2c`, plus 18 added since, doubled
+> across two signals. The separate 813 figure is 741+36+36 with **zero** platform content, because
+> none of those six modules is among the baseline's 17; it reds identically on Windows. The
+> conclusion held and the premises did not, which is why they are corrected here rather than left
+> to be cited again.
+>
+> The 37-assertion-count figure in `src/utests/AGENTS.md` is the original measurement, attributed
+> and unchanged; only its tense was corrected, at `402d4f6`.
+
 ## What was done instead
 
 - `utf_runlog.py --compare` now ends every comparison, PASS or FAIL, with a coverage statement
