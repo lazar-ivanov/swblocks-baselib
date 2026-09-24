@@ -185,8 +185,8 @@ namespace bl
 
             /*
              * Touched only on the stream's executor - the strand under a stranded policy - and in
-             * onTaskStoppedNothrow, which runs when the multi-operation accounting has already
-             * established that nothing is in flight, so the strand is quiescent by then
+             * onTaskStoppedNothrow, where the strand is quiescent: either the accounting has
+             * established that nothing is in flight, or armRead( ) threw and nothing ever was
              */
 
             std::vector< char >                                                 m_readBuffer;
@@ -950,7 +950,7 @@ namespace bl
              *     read is being armed, so completing the operation there finds the count back at
              *     zero, takes the single terminal path and reaches notifyReady( ) - while
              *     TaskBase::scheduleNothrow( ), which called scheduleTask( ), still holds the task
-             *     lock that notifyReadyImpl( ) re-acquires. os::mutex is Boost's plain mutex and
+             *     lock that notifyReadyImpl( ) re-acquires. os::mutex is std::mutex, and it
              *     is not recursive, so that is a self-deadlock on the scheduling thread and not
              *     merely a breach of the rule at MultiOperationTask.h. The throw is let out
              *     instead, to scheduleNothrow( )'s own catch, which completes the task from the
@@ -2151,10 +2151,10 @@ namespace bl
              * onClosed( ... ) arrives even when the stream failed before any header and it is
              * always the last event (S2.6). A write which failed, or a cancel, completes the task
              * through the handler macros and never through finishStream( ... ), so without this a
-             * request task would wait for an event which is never coming. It runs when the
-             * multi-operation accounting has established that no operation is in flight, so it does
-             * not race the strand, and it is idempotent because delivering the event is what
-             * releases the sink
+             * request task would wait for an event which is never coming. It does not race the
+             * strand: either the accounting has established that no operation is in flight, or the
+             * schedule-path arm threw and none ever was. It is idempotent because delivering the
+             * event is what releases the sink
              */
 
             virtual auto onTaskStoppedNothrow(

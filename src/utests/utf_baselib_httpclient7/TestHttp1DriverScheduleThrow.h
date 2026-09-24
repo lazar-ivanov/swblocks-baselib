@@ -42,7 +42,7 @@
  * caught inside scheduleRead( ) and handed to MultiOperationTaskT::onOperationCompleted( )
  * INLINE: the count went back to zero, the single terminal path was taken, and notifyReady( )
  * was reached while scheduleNothrow( ) still held the task lock that notifyReadyImpl( )
- * re-acquires. os::mutex is Boost's plain mutex and is not recursive, so that is a SELF-DEADLOCK
+ * re-acquires. os::mutex is std::mutex and is not recursive, so that is a SELF-DEADLOCK
  * on the scheduling thread - and, since ExecutionQueueImpl calls scheduleNothrow( ) under its own
  * lock, on the execution queue with it.
  *
