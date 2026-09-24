@@ -44,20 +44,28 @@
 # C2 together with C3 and C4 is the core claim about a case which stayed where it was: its text,
 # the preprocessor guard stack and the namespace stack it sits under are all unchanged. C10 adds
 # the file's #include list to that, and C11 the declarations the file makes at file scope: the
-# fixtures of utf_baselib_loader, the column-0 statics, the BL_IID_DECLAREs, UTF_GLOBAL_FIXTURE
-# and the file-scope using-directives. That is 35 spans over 405 lines in 15 files today, and for
-# ten invariants' worth of history no hash read any of it. Measured before C11 existed: a member
-# injected into ManifestFixture, which three cases are fixtured on, and a changed signature on a
-# column-0 static helper BOTH passed tier 1
+# fixtures of utf_baselib_loader, the column-0 statics, the BL_IID_DECLAREs, UTF_GLOBAL_FIXTURE,
+# the file-scope using-directives and the five behavioural #defines. That is 40 spans over 426
+# lines in 18 files today, and for ten invariants' worth of history no hash read any of it.
+# Measured before C11 existed: a member injected into ManifestFixture, which three cases are
+# fixtured on, and a changed signature on a column-0 static helper BOTH passed tier 1
+#
+# The hash is text alone, compared tree wide, which is what makes a relocation silent - and the
+# price is that a span whose exact text appears in more than one file is not protected against one
+# of its copies being deleted. Two do: "using namespace bl;" in two entry points, and one
+# THREAD_POOLS define in three. Counting the copies would close that and would red the new-module
+# control, whose entry point legitimately writes the third "using namespace bl;" - measured
 #
 # What remains outside every hash is two named things at file scope, and no others:
 #
-#   - a PREPROCESSOR DIRECTIVE at file scope, with its line continuations. The #include lines
-#     there are C10's and the conditionals are C3's; what is left is the include guard and the
-#     per-module #define - UTF_TEST_MODULE above all - which a new module's entry point must
-#     write fresh, so hashing them reds the very operation this tool exists to verify. A
-#     multi-line #define at file scope is therefore unhashed in full, and tier 3 is what stands
-#     behind UTF_TEST_MODULE: renaming it registers a different master suite
+#   - a PREPROCESSOR DIRECTIVE at file scope which another invariant already reads, or which a
+#     new module must write fresh, and no other. The #include lines are C10's and the conditionals
+#     are C3's. Of the #define lines only two kinds go: the include guard, by its shape, and
+#     UTF_TEST_MODULE, by its name - hashing those reds the very operation this tool exists to
+#     verify, and tier 3 is what stands behind UTF_TEST_MODULE, since renaming it registers a
+#     different master suite. Every other #define is hashed with its continuations, which is what
+#     a blanket exclusion gave up: editing UTF_TEST_NORMALIZE's body and deleting
+#     BL_PLUGINS_CLASS_IMPLEMENTATION both passed tier 1 before this was narrowed
 #
 #   - a COMMENT BLOCK at file scope standing on its own, which is module-level prose rather than
 #     evidence about a relocation. Writing one is part of creating a module: the real split
@@ -339,21 +347,25 @@ def doc_comment_span( lines, case_start ):
 
 DEFINE_RE = re.compile( r'^\s*#\s*define\s+([A-Za-z_][A-Za-z0-9_]*)' )
 
+UTF_TEST_MODULE_RE = re.compile( r'^\s*#\s*define\s+UTF_TEST_MODULE\b' )
 
-def is_include_guard( lines, index, matched ):
+
+def include_guard_define( lines, index, matched ):
     """
-    True when the #ifndef at this line is a plain include guard
+    The index of the #define which makes the #ifndef at this line a plain include guard, or None
 
-    The shape is #ifndef FOO followed, ignoring blank and comment lines, by #define FOO
+    The shape is #ifndef FOO followed, ignoring blank and comment lines, by #define FOO. The index
+    is returned rather than a bare yes, because C11 needs to know which #define lines are the
+    guard's: those are excluded from its hash and every other one is not
     """
 
     if matched.group( 1 ) != 'ifndef':
-        return False
+        return None
 
     symbol = matched.group( 2 ).strip()
 
     if not symbol:
-        return False
+        return None
 
     probe = index + 1
 
@@ -366,9 +378,17 @@ def is_include_guard( lines, index, matched ):
             continue
 
         defined = DEFINE_RE.match( lines[ probe ] )
-        return bool( defined and defined.group( 1 ) == symbol )
+        return probe if defined and defined.group( 1 ) == symbol else None
 
-    return False
+    return None
+
+
+def is_include_guard( lines, index, matched ):
+    """
+    True when the #ifndef at this line is a plain include guard
+    """
+
+    return include_guard_define( lines, index, matched ) is not None
 
 
 def scan_file( path, module, rel_path, problems ):
@@ -396,11 +416,42 @@ def scan_file( path, module, rel_path, problems ):
     total = len( lines )
 
     #
-    # The preprocessor directives are blanked here, ahead of the walk, so that nothing about the
-    # walk itself changes - the alternative was a new branch inside it, which would have had to
-    # get the data literal collection right as well. The walk blanks the two spans it alone knows:
-    # a case with its doc comment, and a namespace block
+    # The preprocessor directives another invariant reads are blanked here, ahead of the walk, so
+    # that nothing about the walk itself changes - the alternative was a new branch inside it,
+    # which would have had to get the data literal collection right as well. The walk blanks the
+    # two spans it alone knows: a case with its doc comment, and a namespace block
     #
+    # Which directives those are is narrower than it looks, and the narrowing is measured. The
+    # #include lines are C10's and the conditionals are C3's, so both go. Of the #define lines,
+    # only two kinds go: the include guard, recognised by its shape, and UTF_TEST_MODULE,
+    # recognised by its name - exactly what the measurement showed a new module's entry point must
+    # write fresh, and hashing those two reds the very operation this tool exists to verify
+    #
+    # Every OTHER #define is hashed, with its continuations. Five spans at file scope carry one
+    # today. Measured on tree copies, before this narrowing and after: editing the body of
+    # UTF_TEST_NORMALIZE, and deleting #define BL_PLUGINS_CLASS_IMPLEMENTATION from
+    # utf_baselib_plugin/Calculator.cpp, both went from PASS to a C11 line. A new module writing a
+    # define of its own is ADDED, exactly as a new helper is, and the baseline refresh blesses it
+    #
+    # What this does NOT close, and the distinction is C11's rather than this exclusion's: three
+    # entry points carry #define UTF_TEST_APP_INIT_DEACTIVATE_THREAD_POOLS ( true ) with identical
+    # text, and C11's identity is text alone compared tree wide, so dropping one of the three is
+    # silent both before and after the narrowing - as dropping one of the two "using namespace bl;"
+    # lines is. Counting the copies instead would close it and would red the new-module control,
+    # whose entry point legitimately writes the third "using namespace bl;". The exclusion is what
+    # decides whether a define is hashed at all; the identity is what decides what that buys
+    #
+
+    guard_defines = set()
+
+    for probe in range( total ):
+
+        matched = COND_OPEN_RE.match( lines[ probe ] )
+
+        if matched:
+            defined = include_guard_define( lines, probe, matched )
+            if defined is not None:
+                guard_defines.add( defined )
 
     shadow = list( lines )
 
@@ -409,10 +460,18 @@ def scan_file( path, module, rel_path, problems ):
     while probe < total:
 
         if DIRECTIVE_RE.match( lines[ probe ] ):
+
+            hashed = ( DEFINE_RE.match( lines[ probe ] )
+                       and probe not in guard_defines
+                       and not UTF_TEST_MODULE_RE.match( lines[ probe ] ) )
+
             while probe < total and lines[ probe ].rstrip().endswith( '\\' ):
-                shadow[ probe ] = ''
+                if not hashed:
+                    shadow[ probe ] = ''
                 probe += 1
-            blank( shadow, probe, probe )
+
+            if not hashed:
+                blank( shadow, probe, probe )
 
         probe += 1
 
