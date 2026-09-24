@@ -85,10 +85,11 @@ namespace bl
          * from the cancelling thread racing the strand's own handlers. Posting it to the stream's
          * executor restores what D13 exists to guarantee.
          *
-         * THE OPERATIONS IN FLIGHT. At most three: a read, which is armed for the whole life of
-         * the connection, a write, while a request is going out, and the idle timer, while no
-         * request is. That is why MultiOperationTaskT is mixed in - with one terminal path taken
-         * only once all of them have completed or been cancelled - and why the read is armed even
+         * THE OPERATIONS IN FLIGHT. At most four: a read, armed for the whole life of the
+         * connection, a write, while a request is going out, the idle timer, while no request is,
+         * and the deferred reuse verdict, for one strand hop - see finishStream( ). That is why
+         * MultiOperationTaskT is mixed in - with one terminal path taken only once all of them
+         * have completed or been cancelled - and why the read is armed even
          * when the connection is IDLE. The idle read is not ceremony: it is what notices a pooled
          * keep-alive connection the server closed, which is the single most common thing that
          * happens to one, and it is also what keeps the accounting from falling to zero. A task
@@ -218,10 +219,11 @@ namespace bl
 
             /*
              * A DIFFERENT QUESTION FROM THE FLAG ABOVE, AND THE TWO MUST NOT BE FOLDED INTO ONE.
-             * This one is "is a write handler still owed", which is what the storage of a write
-             * and the reuse of this connection both depend on; the one above is "may bytes have
-             * escaped", which a write that never started can still answer yes to. The h2 driver
-             * carries the same flag under the same name and clears it in its write handler
+             * This one is "is a write handler still owed", which the storage of a write, whether
+             * the reuse verdict may be taken at all, and the read's own hand-over of an ending it
+             * cannot classify all depend on; the one above is "may bytes have escaped", which a
+             * write that never started can still answer yes to. The h2 driver carries the same
+             * flag under the same name and clears it in its write handler
              */
 
             bool                                                                m_isWriteInFlight = false;
@@ -232,8 +234,11 @@ namespace bl
              * sets the socket's ONE pending error and the first syscall to reach it takes it away,
              * so a send( ) which got connection_reset leaves the pending recv( ) a plain eof - and
              * eof is precisely what a close-delimited message may be completed on. Recorded by
-             * every write handler, consulted by onPeerClosed( ), released with the rest of this
-             * message's state in finishStream( ). A write which ended cleanly records an empty
+             * every write handler and consulted by TWO readers: onPeerClosed( ), for the sentence
+             * above, and onStreamEndDeferred( ), where it is the only evidence left of a write
+             * which ended badly and closed nothing - the flag it would otherwise ask has been
+             * cleared under it by then. Released by whichever of finishStream( ) and that
+             * continuation finds the write over. A write which ended cleanly records an empty
              * code, so the record cannot outlive the ending it describes
              */
 
@@ -1454,10 +1459,16 @@ namespace bl
                  *
                  * AND IT DOES NOT HANG - BUT ONLY BECAUSE initiateClose( ) SHUTS THE SEND SIDE
                  * DOWN, which it did not when this barrier first landed. ! isReusable takes
-                 * closeConnection( ) below, which is beginClose( ), and the epilog of the very
-                 * handler that got here then reaches onOperationCompleted( ) with m_closing set
-                 * and m_closeInitiated not - the one call which runs initiateClose( ). The
-                 * handler that trips the barrier is the one that frees it
+                 * closeConnection( ), which is beginClose( ), and the epilog of the handler which
+                 * called it then reaches onOperationCompleted( ) with m_closing set and
+                 * m_closeInitiated not - the one call which runs initiateClose( ).
+                 *
+                 * WHICH HANDLER THAT IS MOVED WITH THE DEFERRAL, AND THE ACCOUNTING IS WHY IT IS
+                 * STILL TRUE. On the deferred path the close is the continuation's, so the epilog
+                 * which frees the write is onStreamEndDeferred( )'s rather than the read's - and
+                 * that continuation is an ACCOUNTED operation precisely so that its epilog reaches
+                 * onOperationCompleted( ) at all. An unaccounted one would close and wake nothing,
+                 * which in this case is a hang and not a failure
                  *
                  * WHAT FREES IT IS THE SHUTDOWN AND NOT THE CANCEL, and the difference was worth
                  * about three runs in four. A cancel reaps what is REGISTERED with the reactor,
