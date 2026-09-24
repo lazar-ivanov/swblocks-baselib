@@ -6517,7 +6517,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 220,
+   "line": 230,
    "module": "utf_baselib_httpclient7",
    "name": "Http1Driver_ScheduleReadInitiatorThrowEndsTheTaskTests",
    "namespaces": []
@@ -15130,7 +15130,7 @@
    "line": 82,
    "module": "utf_baselib_httpclient7",
    "ns": "utest",
-   "sha": "ebca29bd913091c28a810ebc966468e3"
+   "sha": "301f2fbb0b9397b286ac208922cda196"
   },
   {
    "file": "utf_baselib_httpclient7/TestHttp1DriverStrandSeam.h",
@@ -19479,6 +19479,7 @@
     "Http1Driver_PeerResetsMidCloseDelimitedBodyDuringWriteTests",
     "Http1Driver_PeerResetsMidCloseDelimitedBodyTests",
     "Http1Driver_PeerResetsWhileRequestWriteIsBlockedTests",
+    "Http1Driver_ScheduleReadInitiatorThrowEndsTheTaskTests",
     "Http1Driver_StrandSeamLeavesAGenuineWriteRefusedTests",
     "Http1Driver_StrandSeamMakesTheDeferredVerdictReuseTests",
     "Http1Driver_StrandSeamRefusesReuseAfterAResetWriteTests",
@@ -21471,7 +21472,7 @@
    "line": 80,
    "module": "utf_baselib_httpclient7",
    "name": "utest",
-   "sha": "8e39fe4ec53665fa165b57c97ff4c36a"
+   "sha": "cd87036a290154d608439cc741131890"
   },
   {
    "file": "utf_baselib_httpclient7/TestHttp1DriverStrandSeam.h",

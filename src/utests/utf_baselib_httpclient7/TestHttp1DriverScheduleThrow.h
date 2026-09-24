@@ -86,10 +86,10 @@ namespace utest
             /**
              * @brief How long the task is given to reach its terminal path
              *
-             * The task is completed from the thread pool by scheduleNothrow( )'s catch, so this is
-             * a bound on a post and not on any I/O. It is generous because what it protects
-             * against is a regression OTHER than the deadlock - one which loses the completion
-             * rather than blocking on it, and which would otherwise wait for ever below
+             * A bound on a post and not on any I/O: scheduleNothrow( )'s catch completes the task
+             * from the thread pool. WHAT IT BUYS IS THE VERDICT BEING SAID - the eq -> wait( )
+             * below it is unbounded, so a regression which loses the completion rather than
+             * deadlocking on it still hangs the module, just after naming itself first
              */
 
             TASK_END_TIMEOUT_IN_MILLISECONDS    = 30U * 1000U,
@@ -176,11 +176,21 @@ namespace utest
                         static_cast< std::size_t >( TASK_END_TIMEOUT_IN_MILLISECONDS )
                         );
 
-                    if( result.ended )
-                    {
-                        result.taskFailed = driverTask -> isFailed();
-                        result.taskFailure = taskFailureText( driverTask );
-                    }
+                    /*
+                     * SAID HERE OR NOT AT ALL, which is what the bound above is for. Every step
+                     * below this one waits on the task or on the queue holding its lock, and a
+                     * task which never ended cannot be waited for - so a case which fell through
+                     * to them would spend its bound and then hang with nothing printed. The
+                     * teardown still hangs afterwards; this file's header accepts that trade
+                     */
+
+                    chkOrFail(
+                        result.ended,
+                        "the driver task never reached its terminal path"
+                        );
+
+                    result.taskFailed = driverTask -> isFailed();
+                    result.taskFailure = taskFailureText( driverTask );
 
                     peer.release();
 
