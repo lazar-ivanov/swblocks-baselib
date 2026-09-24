@@ -37,6 +37,19 @@ against that decision**, recorded where the decision lives, and never carried as
 
 Where several decisions are presented together, order them by what to do first and say why.
 
+**Sweep the consolidated owed list at the end of every change-set — not when asked.** Re-read it
+against what actually merged and report what moved, in either direction. This project has paid for
+three separate failures of that list, and only the first is obvious:
+
+- entries **silently lost** when it was consolidated;
+- entries **kept long after the work landed**, so a reader is told that finished work is pending;
+- and the expensive one — an item **observed repeatedly and never converted into a decision**. One
+  gap here was written into five different records, always as an observation. **When a sweep finds
+  the same thing recorded twice, that is the signal to decide it, not to record it a third time.**
+
+Reporting a category is not reporting its contents: *dispositioned*, *deferred with reasoning* and
+*done* are three different states, and only the last one means nobody can still hit it.
+
 **Always use the project's Python virtual environment.**
 
 When running Python commands, tests, or scripts, ALWAYS use the Python interpreter from the project's `.venv` virtual environment, i.e. `.venv/bin/python` relative to the repository root (or `.venv/bin/pytest` for pytest). On Windows these are `.venv/Scripts/python.exe` and `.venv/Scripts/pip.exe`. If the `.venv` directory does not exist, run `make pytest-install` to create it before proceeding. On Windows that target fails against the devenv7 dist interpreter, which is an embeddable build with no `venv` or `pip` — see `scripts/devenv7/AGENTS.md` for the procedure to provision a full CPython into a scratch directory.
@@ -166,6 +179,12 @@ Two traps that make a stuck job look busy:
 Prefer a watcher that reports on a stall — alive but not advancing — over one that only reports
 completion. A job that hangs sends no completion notification, which is exactly when a watcher is
 needed and exactly when a completion-only watcher is silent.
+
+**Evidence goes to the log directory before it is cited, not after it is challenged.** A measurement
+quoted from a session scratchpad cannot be checked by the next reader, and a reviewer is right to
+disbelieve one. Write the artifact where it will outlive the session, then cite it. A disagreement
+about what was measured is settled in one exchange when the file is durable and the tool's own source
+can be pointed at; otherwise it costs a round trip and someone is wrongly corrected.
 
 ---
 
@@ -345,10 +364,11 @@ For detailed build system documentation, see `scripts/devenv7/AGENTS.md`:
 
 ---
 
-**Document Version:** 2.11
+**Document Version:** 2.12
 **Last Updated:** 2026-09-24
 
 **Changelog:**
+- v2.12 (2026-09-24): Sweep the owed list every change-set — an item observed twice is a decision waiting, not a note to write again; and evidence goes to the log directory before it is cited
 - v2.11 (2026-09-24): Added when to fold work in without asking, when a decision must be presented instead, and the shape to present it in
 - v2.10 (2026-09-24): Orchestrator validation is clang release and gcc **debug**, not gcc release — gcc debug is where assertions and the debug standard library actually fire, and the lanes' clang debug already covers that variant on one toolchain only
 - v2.9 (2026-09-22): Added Networking Error Codes Are Not Portable — ask net::, never compare transport codes by hand
