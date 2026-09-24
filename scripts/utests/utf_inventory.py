@@ -56,7 +56,12 @@
 # THREAD_POOLS define in three. Counting the copies would close that and would red the new-module
 # control, whose entry point legitimately writes the third "using namespace bl;" - measured
 #
-# What remains outside every hash is two named things at file scope, and no others:
+# Within a SCANNED MODULE FILE, and for its text, what remains outside every hash is two named
+# things at file scope and no others. Both qualifiers are load bearing and neither was stated
+# before: the scan covers src/utests/utf*/ only, and src/utests/include/ - 27 files, 15,373 lines,
+# included by 181 of the 185 module files - is read by nothing at all, so a shared fixture edited
+# there and UTF_AUTO_TEST_CASE itself redefined in Utf.h both pass tier 1. That is a gap of its
+# own and is not closed here:
 #
 #   - a PREPROCESSOR DIRECTIVE at file scope which another invariant already reads, or which a
 #     new module must write fresh, and no other. The #include lines are C10's and the conditionals
@@ -67,10 +72,17 @@
 #     a blanket exclusion gave up: editing UTF_TEST_NORMALIZE's body and deleting
 #     BL_PLUGINS_CLASS_IMPLEMENTATION both passed tier 1 before this was narrowed
 #
-#   - a COMMENT BLOCK at file scope standing on its own, which is module-level prose rather than
-#     evidence about a relocation. Writing one is part of creating a module: the real split
-#     f992e2f wrote four, and C11 reported all four before this was measured. A comment which
-#     documents a declaration sits against it with no blank line and is hashed with it
+#   - a COMMENT BLOCK at file scope every line of which opens with a comment token, which is
+#     module-level prose rather than evidence about a relocation. Writing one is part of creating
+#     a module: the real split f992e2f wrote four, and C11 reported all four before this was
+#     measured. A comment which documents a declaration sits against it with no blank line and is
+#     hashed with it
+#
+#     "Standing on its own" is what the rule means and "every line opens with a comment token" is
+#     what it tests, which is a house-style test rather than the thing itself. Every block in this
+#     tree that breaks the style is commented-out code inside a case body - 31 strictly interior
+#     lines in five files, all of them C2's and none of them at file scope - so a file-scope block
+#     written that way would be hashed rather than dropped
 #
 # Blank lines between spans, and trailing whitespace, are outside every hash too, by normalize( )
 #
@@ -279,6 +291,10 @@ def is_prose( shadow, first, last ):
     translation unit - and C11 reported every one of them before this was measured. A comment
     which documents a declaration sits against it with no blank line between, so it is part of
     that declaration's span and stays hashed; only a block standing on its own is dropped
+
+    "Every line opens with a comment token" is a house-style test rather than the thing itself.
+    31 strictly interior lines in five files break that style, every one commented-out code
+    inside a case body, so a file-scope block written the same way would be hashed, not dropped
     """
 
     return all( COMMENT_LINE_RE.match( line )

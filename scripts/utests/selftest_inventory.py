@@ -796,7 +796,15 @@ def main():
     # It is the one arming guard in this tool that must NOT fail, because no baseline captured
     # before C11 carries the field and a hard red here would stop every lane until the refresh
     # lands. main( ) prints the state on every run instead, which is the C9 no-withdrawal
-    # precedent. The two guards below are what keep that from becoming a permanent silence
+    # precedent
+    #
+    # What bounds that silence is NOT the two guards below - neither of them fires on a baseline
+    # MISSING the key, which is the state every baseline is in. It is that capture( ) always
+    # writes file_members, so the next refresh for any reason arms C11, and every real change-set
+    # replayed so far carries a C1 ADDED, which is a refresh. The bound is days rather than a
+    # policy. The two guards below cover the other state - a baseline which carries the field
+    # BROKEN - and the edge neither covers is a refresh taken with a pre-C11 tool, from a lane
+    # branched before the merge, which would disarm C11 with only the printed note to say so
     #
 
     older = copy.deepcopy( armed )
