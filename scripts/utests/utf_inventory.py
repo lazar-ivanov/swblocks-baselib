@@ -31,7 +31,8 @@
 #   C4  every case sits under the same namespace stack
 #   C5  no case name occurs twice anywhere in the tree
 #   C6  no helper block or member occurs twice within one module (an ODR risk); none was lost
-#   C7  every data file a module references exists in that module's data/ directory
+#   C7  every data file a module references exists in that module's data/ directory, carries the
+#       content it had, and does not become one nothing names
 #   C8  every case a module's notes.txt names exists in that module
 #   C9  no case loses a recipe it had, and a module which declares its notes.txt a complete
 #       index really does name every one of its cases
@@ -605,6 +606,20 @@ def file_includes( manifest ):
     return includes
 
 
+def unreferenced_data_files( info ):
+    """
+    The data files one module carries which nothing in that module names
+
+    Both the resolved call sites and the bare filename literals count as a reference, exactly as
+    C7's intrinsic half treats them, so a file reached through a helper parameter is not called
+    an orphan
+    """
+
+    named = set( info.get( 'data_refs', [] ) ) | set( info.get( 'data_literals', [] ) )
+
+    return { name for name in info.get( 'data_files', {} ) if name not in named }
+
+
 def check_intrinsic( manifest ):
     """
     Invariants that hold of a single manifest on its own: C5 to C9
@@ -762,11 +777,11 @@ def check_intrinsic( manifest ):
 
 def check_against( before, after ):
     """
-    Invariants that relate two manifests: C1 to C4 and C10, plus the C6 and C9 no-loss halves
+    Invariants that relate two manifests: C1 to C4 and C10, plus the C6, C7 and C9 no-loss halves
 
-    C10 reads manifest[ 'modules' ], which is worth saying because for a long time nothing here
-    did: the whole per-module half was captured on every run and compared by nothing, so every
-    differential claim this gate made was about cases and members alone
+    C7 and C10 read manifest[ 'modules' ], which is worth saying because for a long time nothing
+    here did: the whole per-module half was captured on every run and compared by nothing, so
+    every differential claim this gate made was about cases and members alone
     """
 
     failures = []
@@ -844,6 +859,56 @@ def check_against( before, after ):
                     )
             else:
                 failures.append( 'C10 file INCLUDES REORDERED: %s' % path )
+
+    #
+    # C7's differential half - the content of every data file, and the data file nothing names
+    #
+    # C7 was intrinsic only: it asked whether a referenced file exists and whether two modules'
+    # copies of one name agree, and both questions are answered inside a single manifest. Neither
+    # notices a data file whose CONTENT changed - the tests then read different input and pass or
+    # fail for a reason no invariant reports. Changing every copy of a shared file identically
+    # defeats the divergence check too, which is why that is not accidental cover
+    #
+    # The other direction of the existence check is the orphan: a module keeps a data file whose
+    # last reference has moved away. That cannot be intrinsic, because this tree carries such
+    # files today and always has, and a rule red on legitimate state is worse than the blind spot
+    # it closes. So it is differential and narrow - a data file unreferenced now which was not in
+    # that state in the baseline, whether it lost its last reference or arrived without one
+    #
+    # A data file added or removed outright is not judged. A split moves a data file with the
+    # cases that read it, and C7's intrinsic half already reports the module left referencing one
+    # it no longer carries
+    #
+
+    if ( any( info.get( 'data_files' ) for info in after[ 'modules' ].values() )
+         and not any( info.get( 'data_files' ) for info in before[ 'modules' ].values() ) ):
+        failures.append(
+            'C7 the baseline carries no data file hashes - it predates the content capture and '
+            'must be regenerated from its own commit before this invariant can be trusted'
+            )
+
+    for module, info in sorted( after[ 'modules' ].items() ):
+
+        was = before[ 'modules' ].get( module )
+
+        if was is None:
+            continue
+
+        for name, digest in sorted( info.get( 'data_files', {} ).items() ):
+
+            previous = was.get( 'data_files', {} ).get( name )
+
+            if previous is not None and previous != digest:
+                failures.append(
+                    'C7 data file CONTENT CHANGED: %s/data/%s (%s -> %s)'
+                    % ( module, name, previous, digest )
+                    )
+
+        for name in sorted( unreferenced_data_files( info ) - unreferenced_data_files( was ) ):
+            failures.append(
+                'C7 data file NEWLY UNREFERENCED: %s/data/%s - nothing in that module names it '
+                'any more' % ( module, name )
+                )
 
     #
     # The no-loss half of C9 - a case which exists on both sides and had a recipe must still have
@@ -1010,6 +1075,20 @@ def main():
                'moved between files is judged on text, guards and namespaces only'
                % ( len( old_paths & new_paths ), len( new_paths - old_paths ),
                    len( old_paths - new_paths ) ) )
+
+        shared_data = sum(
+            len( set( info.get( 'data_files', {} ) )
+                 & set( before[ 'modules' ].get( module, {} ).get( 'data_files', {} ) ) )
+            for module, info in manifest[ 'modules' ].items()
+            )
+
+        accepted = sum(
+            len( unreferenced_data_files( info ) ) for info in before[ 'modules' ].values()
+            )
+
+        print( 'utf_inventory: C7 compares the content of the %d data file(s) present in both '
+               'manifests and reports one nothing names any more; the %d already unreferenced in '
+               'the baseline stay accepted' % ( shared_data, accepted ) )
 
         failures.extend( check_against( before, manifest ) )
 

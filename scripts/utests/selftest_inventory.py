@@ -47,6 +47,21 @@ sys.path.insert( 0, os.path.dirname( os.path.abspath( __file__ ) ) )
 from utf_inventory import check_intrinsic, check_against
 
 
+def unreferenced( info ):
+    """
+    The data files one module carries which nothing in that module names
+
+    Computed here rather than imported from utf_inventory, for two reasons. A control which
+    inherits the definition it is checking cannot contradict it; and this file has to run
+    against an older tool which has no such function, or the negative half of every proof
+    below - the same corruption going unreported - cannot be produced at all
+    """
+
+    named = set( info.get( 'data_refs', [] ) ) | set( info.get( 'data_literals', [] ) )
+
+    return { name for name in info.get( 'data_files', {} ) if name not in named }
+
+
 def expect( label, failures, marker ):
     """
     Assert that at least one reported failure carries the given invariant marker
@@ -286,6 +301,105 @@ def main():
     withdrawn[ 'modules' ][ incomplete ][ 'notes_index' ] = False
     ok &= expect( 'index declaration withdrawn (%s)' % incomplete,
                   check_against( declared, withdrawn ), 'C9' )
+
+    #
+    # C7 - a data file whose content changed under tests that still read it
+    #
+
+    mutated = copy.deepcopy( baseline )
+    owner = next( name for name, info in sorted( mutated[ 'modules' ].items() ) if info[ 'data_files' ] )
+    edited = sorted( mutated[ 'modules' ][ owner ][ 'data_files' ] )[ 0 ]
+    mutated[ 'modules' ][ owner ][ 'data_files' ][ edited ] = 'e' * 32
+    ok &= expect( 'data file content changed (%s)' % edited,
+                  check_against( baseline, mutated ), 'C7' )
+
+    #
+    # C7 - EVERY copy of a shared data file changed identically
+    #
+    # The stronger form, and the one that rules out the cross-module divergence check as
+    # accidental cover: change one copy and that intrinsic check fires, change all of them and it
+    # has nothing to compare. The assertion below is that the intrinsic half really is silent
+    # here, so that the differential half is shown to be what catches it
+    #
+
+    carried = {}
+
+    for name, info in baseline[ 'modules' ].items():
+        for data in info[ 'data_files' ]:
+            carried.setdefault( data, [] ).append( name )
+
+    shared = sorted( ( len( owners ), name ) for name, owners in carried.items() )[ -1 ][ 1 ]
+
+    mutated = copy.deepcopy( baseline )
+
+    for info in mutated[ 'modules' ].values():
+        if shared in info[ 'data_files' ]:
+            info[ 'data_files' ][ shared ] = 'e' * 32
+
+    residue = [ f for f in check_intrinsic( mutated ) if f.startswith( 'C7' ) ]
+
+    if residue:
+        print( '    ----  C7   all %d copies of %-30s the intrinsic half fired too'
+               % ( len( carried[ shared ] ), shared ) )
+    else:
+        print( '    ----  C7   all %d copies of %-30s intrinsic half silent, as expected'
+               % ( len( carried[ shared ] ), shared ) )
+
+    ok &= expect( 'every copy of %s changed alike' % shared,
+                  check_against( baseline, mutated ), 'C7' )
+
+    #
+    # C7 - a data file which lost its last reference
+    #
+
+    mutated = copy.deepcopy( baseline )
+    stranded = None
+
+    for name, info in sorted( mutated[ 'modules' ].items() ):
+        for data in sorted( info[ 'data_files' ] ):
+            if data in info[ 'data_refs' ]:
+                stranded = ( name, data )
+                break
+        if stranded:
+            break
+
+    module, data = stranded
+    info = mutated[ 'modules' ][ module ]
+    info[ 'data_refs' ] = [ ref for ref in info[ 'data_refs' ] if ref != data ]
+    info[ 'data_literals' ] = [ ref for ref in info.get( 'data_literals', [] ) if ref != data ]
+
+    ok &= expect( 'data file lost its last reference (%s)' % data,
+                  check_against( baseline, mutated ), 'C7' )
+
+    #
+    # C7 - and the data files this tree already carries unreferenced must stay silent
+    #
+    # Four of them today. An intrinsic orphan rule would report all four on a tree nobody has
+    # changed, which is the same mistake a universal C9 would have been
+    #
+
+    stale = sum( len( unreferenced( info ) ) for info in baseline[ 'modules' ].values() )
+    residue = [ f for f in check_against( baseline, baseline ) if f.startswith( 'C7' ) ]
+
+    if residue:
+        print( '    FAIL  C7   %d data file(s) unreferenced in the baseline      '
+               '(reported - the orphan rule is not differential)' % stale )
+        ok = False
+    else:
+        print( '    PASS  C7   %d data file(s) unreferenced in the baseline      '
+               'correctly silent - only a NEW orphan is reported' % stale )
+
+    #
+    # C7 - a baseline with no data file hashes must say so rather than pass everything
+    #
+
+    stripped = copy.deepcopy( baseline )
+
+    for info in stripped[ 'modules' ].values():
+        info[ 'data_files' ] = {}
+
+    ok &= expect( 'baseline predating the data file capture',
+                  check_against( stripped, baseline ), 'C7' )
 
     #
     # C10 - an #include added to a file which holds live test cases
