@@ -628,6 +628,121 @@ def main():
     ok &= expect( 'baseline predating the include capture',
                   check_against( stripped, baseline ), 'C10' )
 
+    #
+    # C11 - file-scope text, which for ten invariants nothing hashed
+    #
+    # A refreshed baseline carries its own file_members and they are used as they stand. One
+    # captured before C11 existed carries none, and rather than skip the proof the list is stood
+    # up from the baseline's own helper members - real spans with real shas, re-filed as
+    # file-scope ones. Every branch of the check is exercised either way
+    #
+    # This is deliberately NOT the capture path, and the difference matters: what C11 extracts
+    # from a real tree, and what it must stay silent about, is proved on filesystem copies of
+    # src/utests. Those probes are what found the two exclusions; a synthesized list could not
+    # have, because it has no preprocessor lines and no comment blocks in it
+    #
+
+    armed = copy.deepcopy( baseline )
+
+    if not armed.get( 'file_members' ):
+        armed[ 'file_members' ] = [
+            { 'module': member[ 'module' ], 'file': member[ 'file' ], 'line': member[ 'line' ],
+              'sha': member[ 'sha' ], 'label': member[ 'label' ] }
+            for member in baseline[ 'members' ][ : 40 ]
+            ]
+
+    if check_against( armed, armed ):
+        print( '    FAIL  C11  armed baseline is not clean against itself' )
+        ok = False
+    else:
+        print( '    PASS  C11  armed baseline is clean against itself       '
+               '%d file-scope span(s) in force' % len( armed[ 'file_members' ] ) )
+
+    # C11 - a file-scope span edited, which is what a member injected into a fixture looks like
+    mutated = copy.deepcopy( armed )
+    mutated[ 'file_members' ][ 0 ][ 'sha' ] = 'a' * 32
+    ok &= expect( 'file-scope span edited (%s)' % mutated[ 'file_members' ][ 0 ][ 'label' ][ : 24 ],
+                  check_against( armed, mutated ), 'C11' )
+
+    # C11 - a file-scope span deleted outright
+    mutated = copy.deepcopy( armed )
+    gone = mutated[ 'file_members' ].pop( 1 )
+    ok &= expect( 'file-scope span deleted (%s)' % gone[ 'label' ][ : 24 ],
+                  check_against( armed, mutated ), 'C11' )
+
+    #
+    # C11 - a file-scope span invented
+    #
+    # The direction C6 was one-way about until 1c7003e, and C8 before it. A relocation invents no
+    # fixture any more than it invents a case
+    #
+
+    mutated = copy.deepcopy( armed )
+    mutated[ 'file_members' ].append(
+        { 'module': 'utf_baselib', 'file': 'utf_baselib/TestObjModel.h', 'line': 1,
+          'sha': 'b' * 32, 'label': 'struct AnInventedFixture' } )
+    ok &= expect( 'file-scope span invented', check_against( armed, mutated ), 'C11' )
+
+    #
+    # C11 - the same span in another file: a relocation, and it must be SILENT
+    #
+    # This is the whole reason the identity is text alone and the comparison is tree wide. A
+    # split moving a fixture into a sibling header, or into a new module with the cases it
+    # fixtures, changes its file and its line and nothing else
+    #
+
+    mutated = copy.deepcopy( armed )
+    mutated[ 'file_members' ][ 2 ][ 'file' ] = 'utf_baselib_tasks9/TestTasks8.h'
+    mutated[ 'file_members' ][ 2 ][ 'module' ] = 'utf_baselib_tasks9'
+    mutated[ 'file_members' ][ 2 ][ 'line' ] = 4242
+
+    residue = [ f for f in check_against( armed, mutated ) if f.startswith( 'C11 ' ) ]
+
+    if residue:
+        print( '    FAIL  C11  span relocated to another module             '
+               '(reported - C11 would fire on every legitimate split)' )
+        ok = False
+    else:
+        print( '    PASS  C11  span relocated to another module             '
+               'correctly silent - identity is text alone, compared tree wide' )
+
+    #
+    # C11 - a baseline predating the file-scope capture leaves the check not in force, silently
+    #
+    # It is the one arming guard in this tool that must NOT fail, because no baseline captured
+    # before C11 carries the field and a hard red here would stop every lane until the refresh
+    # lands. main( ) prints the state on every run instead, which is the C9 no-withdrawal
+    # precedent. The two guards below are what keep that from becoming a permanent silence
+    #
+
+    older = copy.deepcopy( armed )
+    del older[ 'file_members' ]
+
+    mutated = copy.deepcopy( armed )
+    mutated[ 'file_members' ][ 0 ][ 'sha' ] = 'c' * 32
+
+    residue = [ f for f in check_against( older, mutated ) if f.startswith( 'C11 ' ) ]
+
+    if residue:
+        print( '    FAIL  C11  baseline predating the file-scope capture    '
+               '(reported - it must be a printed note, not a red gate)' )
+        ok = False
+    else:
+        print( '    PASS  C11  baseline predating the file-scope capture    '
+               'correctly silent - not in force until the baseline is refreshed' )
+
+    # C11 - but a baseline which carries the field EMPTY is broken, not merely old
+    broken = copy.deepcopy( armed )
+    broken[ 'file_members' ] = []
+    ok &= expect( 'baseline carrying an empty file-scope list',
+                  check_against( broken, armed ), 'C11' )
+
+    # C11 - and an extraction which produced nothing is a failure of the run, not of the baseline
+    empty = copy.deepcopy( armed )
+    empty[ 'file_members' ] = []
+    ok &= expect( 'capture which extracted no file-scope text',
+                  check_against( armed, empty ), 'C11' )
+
     # C7 - the same data file name diverging between two modules
     mutated = copy.deepcopy( baseline )
     source = next( name for name, info in mutated[ 'modules' ].items() if info[ 'data_files' ] )
