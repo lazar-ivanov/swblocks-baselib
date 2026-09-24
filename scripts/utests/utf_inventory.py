@@ -1501,10 +1501,11 @@ def main():
                    % ( len( manifest.get( 'file_members', [] ) ),
                        len( { member[ 'file' ] for member in manifest.get( 'file_members', [] ) } ) ) )
 
-            print( 'utf_inventory: C11 exempts a preprocessor directive at file scope with its '
-                   'continuations - includes are C10\'s, conditionals C3\'s, and the include guard '
-                   'and per-module #define are what a new module writes fresh - and a comment '
-                   'block standing on its own, which is module-level prose a split must write; a '
+            print( 'utf_inventory: C11 exempts the file-scope directives another invariant already '
+                   'reads - includes are C10\'s and conditionals C3\'s - and the two a new module '
+                   'writes fresh: the include guard by its shape and UTF_TEST_MODULE by its name. '
+                   'Every OTHER #define is hashed with its continuations. A comment block every '
+                   'line of which opens with a comment token is dropped as module-level prose; a '
                    'comment against a declaration is part of it and stays judged' )
 
         failures.extend( check_against( before, manifest ) )
