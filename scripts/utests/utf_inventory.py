@@ -23,7 +23,7 @@
 # which matters because the failure mode - a case that silently stops being registered - looks
 # exactly like success in a green test run
 #
-# This script captures a manifest of every test case in src/utests and checks twelve invariants:
+# This script captures a manifest of every test case in src/utests and checks thirteen invariants:
 #
 #   C1  the set of case names is identical
 #   C2  every case body and doc comment hashes the same
@@ -41,6 +41,7 @@
 #   C11 no file-scope text - what sits outside every column-0 namespace block - is lost or
 #       invented
 #   C12 a helper member which stayed in its file kept the namespace it sat in
+#   C13 src/utests/include, the shared tree every module compiles against, is scanned too
 #
 # C2 together with C3 and C4 is the core claim about a case which stayed where it was: its text,
 # the preprocessor guard stack and the namespace stack it sits under are all unchanged. C10 adds
@@ -63,12 +64,9 @@
 # it was read by the duplication check alone - a column-0 namespace renamed passed tier 1, measured
 # in a helper-only header and in one holding live cases
 #
-# Within a SCANNED MODULE FILE, and for its text, what remains outside every hash is two named
-# things at file scope and no others. Both qualifiers are load bearing and neither was stated
-# before: the scan covers src/utests/utf*/ only, and src/utests/include/ - 27 files, 15,373 lines,
-# included by 181 of the 185 module files - is read by nothing at all, so a shared fixture edited
-# there and UTF_AUTO_TEST_CASE itself redefined in Utf.h both pass tier 1. That is a gap of its
-# own and is not closed here:
+# The scan covers src/utests/utf*/ AND src/utests/include/ - C13 - so "for its text" is the only
+# qualifier still needed on what follows. Within a scanned file, and for its text, what remains
+# outside every hash is two named things at file scope and no others:
 #
 #   - a PREPROCESSOR DIRECTIVE at file scope which another invariant already reads, or which a
 #     new module must write fresh, and no other. The #include lines are C10's and the conditionals
@@ -711,12 +709,50 @@ def file_sha( path ):
     return digest.hexdigest()[ :32 ]
 
 
+SHARED_DIR = 'include'
+
+SHARED_MODULE = '<shared>'
+
+#
+# C13 - src/utests/include is scanned too, and its text joins the tree-wide lists
+#
+# The scan used to start at a directory named utf*, and src/utests/include is not one: 27 files and
+# 15,373 lines, included by 181 of the 185 module files, read by no invariant at all. Measured
+# before this: editing a shared fixture's declaration in TestMessagingUtils.h, and redefining
+# UTF_AUTO_TEST_CASE itself in Utf.h - the macro all 1082 cases are declared with - BOTH passed
+# tier 1
+#
+# It is SCOPE rather than a new rule. The same scan_file( ) runs over those files with the same
+# exclusions, and what it finds is judged by the invariants that already exist: C6 for a helper
+# inside a namespace block, C10 for the include list, C11 for file scope, C12 for the namespace a
+# member sits in. C13 itself reports only whether the scan is in force, because a baseline captured
+# before it carries no 'shared' key and has nothing to be compared against
+#
+# The shared tree is deliberately NOT a module. It has no data/ directory and cannot have one -
+# TestUtils::resolveDataFilePath resolves relative to the executable - so attributing the one real
+# data file name it mentions, async_rpc_request.json in TestMessagingUtilsImpl.cpp, to a pseudo
+# module would make C7 demand a directory that cannot exist. Keeping it out of manifest[ 'modules' ]
+# also leaves C7's orphan grandfathering and C10's roster exemption untouched, both measured
+# identical: the shared tree carries no data file, and all 358 of its includes and every include OF
+# it are <angle> spellings, which the roster exemption never covers
+#
+# Its members and file-scope spans DO join the tree-wide lists, under the module name <shared>, and
+# that is the choice worth stating. C6 says a helper is lost only if its text survives nowhere in
+# the tree, and with the shared tree outside the scan that was false as written - a helper hoisted
+# into src/utests/include read as LOST. One list makes it a move again. The same label keeps C6's
+# duplication check, which is per module, asking whether the shared tree redefines something inside
+# itself; measured: 0 duplicate blocks and 0 duplicate members there, and 0 shas shared with any
+# module's members
+#
+
+
 def capture( src_utests ):
     """
-    Walk every utf* module directory and build the manifest
+    Walk every utf* module directory, and the shared include tree, and build the manifest
     """
 
-    manifest = { 'cases': [], 'namespaces': [], 'members': [], 'file_members': [], 'modules': {} }
+    manifest = { 'cases': [], 'namespaces': [], 'members': [], 'file_members': [],
+                 'shared': { 'files': [] }, 'modules': {} }
     problems = []
 
     for module in sorted( os.listdir( src_utests ) ):
@@ -785,6 +821,34 @@ def capture( src_utests ):
         module_info[ 'data_literals' ] = sorted( data_literals )
         manifest[ 'modules' ][ module ] = module_info
 
+    #
+    # The shared include tree, scanned exactly as a module's files are. Its data references are
+    # collected and then dropped on the floor: the tree carries no data/ directory and cannot, so
+    # the only thing to do with them would be to demand one
+    #
+
+    for root, dirs, files in os.walk( os.path.join( src_utests, SHARED_DIR ) ):
+
+        dirs.sort()
+
+        for entry in sorted( files ):
+
+            if not entry.endswith( ( '.h', '.cpp' ) ):
+                continue
+
+            path = os.path.join( root, entry )
+            rel_path = os.path.relpath( path, src_utests ).replace( os.sep, '/' )
+
+            ( cases, namespaces, members, file_members, includes,
+              refs, literals ) = scan_file( path, SHARED_MODULE, rel_path, problems )
+
+            manifest[ 'cases' ].extend( cases )
+            manifest[ 'namespaces' ].extend( namespaces )
+            manifest[ 'members' ].extend( members )
+            manifest[ 'file_members' ].extend( file_members )
+
+            manifest[ 'shared' ][ 'files' ].append( { 'path': rel_path, 'includes': includes } )
+
     manifest[ 'cases' ].sort( key = lambda case: case[ 'name' ] )
     manifest[ 'namespaces' ].sort( key = lambda ns: ( ns[ 'module' ], ns[ 'file' ], ns[ 'line' ] ) )
     manifest[ 'members' ].sort( key = lambda m: ( m[ 'module' ], m[ 'file' ], m[ 'line' ] ) )
@@ -817,10 +881,13 @@ def recipe_owners( manifest ):
 
 def file_includes( manifest ):
     """
-    File path -> its #include list, across every module
+    File path -> its #include list, across every module and the shared include tree
 
     Paths carry the module directory and so are unique tree wide, which is what lets a file be
-    matched between two manifests without also matching on the module
+    matched between two manifests without also matching on the module. The shared tree's paths
+    begin with include/ and are unique for the same reason, so C10 judges them with no further
+    machinery - and a baseline which predates the shared scan simply does not carry them, so the
+    intersection leaves them unjudged until it is refreshed
     """
 
     includes = {}
@@ -828,6 +895,9 @@ def file_includes( manifest ):
     for info in manifest[ 'modules' ].values():
         for entry in info[ 'files' ]:
             includes[ entry[ 'path' ] ] = entry.get( 'includes', [] )
+
+    for entry in manifest.get( 'shared', {} ).get( 'files', [] ):
+        includes[ entry[ 'path' ] ] = entry.get( 'includes', [] )
 
     return includes
 
@@ -887,6 +957,26 @@ def unreferenced_data_files( info ):
     named = set( info.get( 'data_refs', [] ) ) | set( info.get( 'data_literals', [] ) )
 
     return { name for name in info.get( 'data_files', {} ) if name not in named }
+
+
+def without_shared( manifest ):
+    """
+    The same manifest with every trace of the shared include tree taken out
+
+    Used on the current side when the baseline predates the shared scan, so that the comparison is
+    exactly the one that ran before it existed rather than 200-odd spurious ADDED lines. The four
+    lists are rebuilt and everything else is shared by reference, because nothing here writes
+    """
+
+    trimmed = dict( manifest )
+
+    for key in ( 'cases', 'namespaces', 'members', 'file_members' ):
+        trimmed[ key ] = [ entry for entry in manifest.get( key, [] )
+                           if entry.get( 'module' ) != SHARED_MODULE ]
+
+    trimmed.pop( 'shared', None )
+
+    return trimmed
 
 
 def check_intrinsic( manifest ):
@@ -1057,6 +1147,44 @@ def check_against( before, after ):
     """
 
     failures = []
+
+    #
+    # C13 - is the shared include tree in force?
+    #
+    # A baseline captured before it was scanned carries no 'shared' key and none of its text, so
+    # every span, member and namespace the current scan found there would report as ADDED - 164
+    # helper members and 38 file-scope spans of pure noise on a tree nobody has changed. The
+    # departure is C11's, for C11's reason: a hard red would stop every lane until the refresh
+    # lands rather than stopping the change that earned it. main( ) prints which state a run is in
+    #
+    # So when the baseline predates it the shared tree is taken out of the CURRENT side too, which
+    # makes the comparison bit-identical to the one before this existed. When the baseline carries
+    # it, both sides are judged whole
+    #
+    # The note is bounded the way C11's is - capture( ) always writes the key, so the next refresh
+    # for any reason arms it - and the two states it cannot be in are hard failures below: a
+    # baseline which carries the key EMPTY is broken rather than old, and a scan which found no
+    # shared file when the baseline has them is an extraction failure
+    #
+
+    armed = 'shared' in before
+
+    if armed:
+
+        if not before[ 'shared' ].get( 'files' ):
+            failures.append(
+                'C13 the baseline carries an EMPTY shared-tree file list - src/utests/%s holds '
+                'files in every real tree, so this baseline is broken rather than merely old'
+                % SHARED_DIR
+                )
+
+        elif not after.get( 'shared', {} ).get( 'files' ):
+            failures.append(
+                'C13 the current manifest carries no shared-tree files - extraction failed'
+                )
+
+    else:
+        after = without_shared( after )
 
     #
     # C5, asked of the BASELINE as well as of the tree being scanned
@@ -1569,10 +1697,19 @@ def main():
                % ( len( fresh_modules ),
                    ' (%s)' % ', '.join( fresh_modules ) if fresh_modules else '' ) )
 
+        #
+        # Every count below is of what is actually JUDGED, which is not the whole manifest when
+        # the baseline predates the shared include tree - C13 takes that tree out of both sides,
+        # and a scope line printed over a population the comparison never looked at is the exact
+        # mistake these lines exist to prevent
+        #
+
+        judged = manifest if 'shared' in before else without_shared( manifest )
+
         print( 'utf_inventory: C6 reports a helper member ADDED as well as one LOST, over %d '
                'member(s) - a relocation invents neither, so a slice which adds one on purpose '
                'refreshes the baseline, exactly as C1 already requires for a new case'
-               % len( manifest.get( 'members', [] ) ) )
+               % len( judged.get( 'members', [] ) ) )
 
         #
         # C12's scope is its anchor, and a reader of a green run has to be able to size it: a
@@ -1581,19 +1718,50 @@ def main():
         #
 
         anchored = ( { ( member[ 'sha' ], member[ 'file' ] ) for member in before.get( 'members', [] ) }
-                     & { ( member[ 'sha' ], member[ 'file' ] ) for member in manifest.get( 'members', [] ) } )
+                     & { ( member[ 'sha' ], member[ 'file' ] ) for member in judged.get( 'members', [] ) } )
 
         print( 'utf_inventory: C12 judges the namespace path of the %d member(s) whose text and '
                'file are both unchanged, of %d - one that moved to another file is a relocation '
                'and is C6\'s alone; the block list itself is read only by the duplication check, '
                'because a block sha covers its own opening line and a partition changes it'
-               % ( len( anchored ), len( manifest.get( 'members', [] ) ) ) )
+               % ( len( anchored ), len( judged.get( 'members', [] ) ) ) )
 
         #
         # The same reasoning once more: a check whose scope is not printed is a check a reader of
         # a green run cannot size. C11's scope has two halves worth stating - what it reads, and
         # the one thing at file scope it deliberately does not
         #
+
+        #
+        # C13's state, on every run, for the reason C11 prints its own: an unarmed check a reader
+        # cannot see is the state this tool has been caught in three times
+        #
+
+        shared_files = manifest.get( 'shared', {} ).get( 'files', [] )
+        shared_paths = { entry[ 'path' ] for entry in shared_files }
+
+        consumers = sum(
+            1
+            for info in manifest[ 'modules' ].values()
+            for entry in info[ 'files' ]
+            if any( SHARED_DIR + '/' + include[ 1 : -1 ] in shared_paths
+                    for include in entry[ 'includes' ] if len( include ) > 2 )
+            )
+
+        if 'shared' not in before:
+            print( 'utf_inventory: C13 - this baseline predates the shared include tree, so the '
+                   '%d file(s) under src/utests/%s, included by %d of the %d module file(s), are '
+                   'judged by nothing until it is refreshed'
+                   % ( len( shared_files ), SHARED_DIR, consumers,
+                       sum( len( info[ 'files' ] ) for info in manifest[ 'modules' ].values() ) ) )
+        else:
+            print( 'utf_inventory: C13 - the shared include tree is in force: %d file(s) under '
+                   'src/utests/%s, %d helper member(s) and %d file-scope span(s), judged by C6, '
+                   'C10, C11 and C12 exactly as a module\'s files are; it is not a module, so C7 '
+                   'and C9 never ask it anything'
+                   % ( len( shared_files ), SHARED_DIR,
+                       sum( 1 for m in manifest.get( 'members', [] ) if m[ 'module' ] == SHARED_MODULE ),
+                       sum( 1 for m in manifest.get( 'file_members', [] ) if m[ 'module' ] == SHARED_MODULE ) ) )
 
         if 'file_members' not in before:
             print( 'utf_inventory: C11 - this baseline predates the file-scope capture, so text '
@@ -1603,8 +1771,8 @@ def main():
                    'what is left once the cases, the namespace blocks and the preprocessor lines '
                    'are taken out - by text alone, tree wide and in both directions, exactly as '
                    'C6 does inside a namespace'
-                   % ( len( manifest.get( 'file_members', [] ) ),
-                       len( { member[ 'file' ] for member in manifest.get( 'file_members', [] ) } ) ) )
+                   % ( len( judged.get( 'file_members', [] ) ),
+                       len( { member[ 'file' ] for member in judged.get( 'file_members', [] ) } ) ) )
 
             print( 'utf_inventory: C11 exempts the file-scope directives another invariant already '
                    'reads - includes are C10\'s and conditionals C3\'s - and the two a new module '

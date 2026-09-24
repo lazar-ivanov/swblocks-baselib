@@ -909,6 +909,90 @@ def main():
         print( '    ----  C4   0 of %d cases sit inside a namespace          '
                'C4 protects nothing that exists here; C12 is not redundant' % len( baseline[ 'cases' ] ) )
 
+    #
+    # C13 - the shared include tree
+    #
+    # The baseline predates it, so the armed manifest is synthesized the way the C11 section
+    # synthesizes its file-scope list: real members re-filed under the <shared> module name, with
+    # a shared file list beside them. What the scan really extracts from src/utests/include, and
+    # what it must stay silent about, is proved on filesystem copies outside the repo - that is
+    # where the hoist control lives, and a synthesized list could not carry it
+    #
+
+    SHARED = '<shared>'
+
+    shared = copy.deepcopy( baseline )
+    shared[ 'shared' ] = { 'files': [
+        { 'path': 'include/utests/baselib/Utf.h', 'includes': [ '<boost/test/unit_test.hpp>' ] },
+        { 'path': 'include/utests/baselib/TestMessagingUtils.h', 'includes': [ '<utests/baselib/Utf.h>' ] },
+        ] }
+
+    shared[ 'members' ] = shared[ 'members' ] + [
+        dict( member, module = SHARED, file = 'include/utests/baselib/TestMessagingUtils.h',
+              sha = 'd%s' % member[ 'sha' ][ 1 : ] )
+        for member in baseline[ 'members' ][ : 6 ]
+        ]
+
+    if check_against( shared, shared ):
+        print( '    FAIL  C13  armed baseline is not clean against itself' )
+        ok = False
+    else:
+        print( '    PASS  C13  armed baseline is clean against itself       '
+               '%d shared file(s), %d shared member(s) in force'
+               % ( len( shared[ 'shared' ][ 'files' ] ),
+                   sum( 1 for m in shared[ 'members' ] if m[ 'module' ] == SHARED ) ) )
+
+    # C13 - a baseline carrying the key with an EMPTY file list is broken, not merely old
+    broken = copy.deepcopy( shared )
+    broken[ 'shared' ] = { 'files': [] }
+    ok &= expect( 'baseline carrying an empty shared file list',
+                  check_against( broken, shared ), 'C13' )
+
+    # C13 - and a scan which found no shared file at all is a failure of the run
+    empty = copy.deepcopy( shared )
+    empty[ 'shared' ] = { 'files': [] }
+    ok &= expect( 'scan which found no shared-tree file',
+                  check_against( shared, empty ), 'C13' )
+
+    #
+    # C13 - a member LOST from the shared tree is C6's, which is the whole point of one list
+    #
+    # C6 says a helper is lost only if its text survives nowhere in the tree. While the shared
+    # tree was outside the scan that was false as written: a helper hoisted into it read as LOST.
+    # Measured live, both ways - the hoist reds against the tool before this and passes after
+    #
+
+    mutated = copy.deepcopy( shared )
+    gone = next( m for m in mutated[ 'members' ] if m[ 'module' ] == SHARED )
+    mutated[ 'members' ] = [ m for m in mutated[ 'members' ] if m is not gone ]
+    ok &= expect( 'shared-tree helper member lost (%s)' % gone[ 'file' ],
+                  check_against( shared, mutated ), 'C6' )
+
+    #
+    # C13 - a baseline which predates the scan must stay SILENT, not red
+    #
+    # It is the same departure C11 takes and for the same reason: no baseline carries the key, so
+    # a hard failure would stop every lane rather than the change that earned it. The current side
+    # is trimmed instead, which makes the comparison exactly the one that ran before this existed
+    #
+
+    older = copy.deepcopy( shared )
+    del older[ 'shared' ]
+    older[ 'members' ] = [ m for m in older[ 'members' ] if m[ 'module' ] != SHARED ]
+
+    residue = [ f for f in check_against( older, shared )
+                if f.startswith( ( 'C13 ', 'C6 ', 'C11 ', 'C12 ' ) ) ]
+
+    if residue:
+        print( '    FAIL  C13  baseline predating the shared scan           '
+               '(reported - it must be a printed note, not a red gate)' )
+        for failure in residue[ : 3 ]:
+            print( '                %s' % failure )
+        ok = False
+    else:
+        print( '    PASS  C13  baseline predating the shared scan           '
+               'correctly silent - the shared tree is trimmed from both sides' )
+
     # C7 - the same data file name diverging between two modules
     mutated = copy.deepcopy( baseline )
     source = next( name for name, info in mutated[ 'modules' ].items() if info[ 'data_files' ] )
