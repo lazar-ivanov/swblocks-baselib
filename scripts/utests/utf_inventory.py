@@ -109,11 +109,12 @@
 #   utf_inventory.py --compare baseline.json
 #   utf_inventory.py --compare before.json --against after.json
 #
-# --capture REFUSES to overwrite a baseline whose top-level keys are a STRICT SUPERSET of the ones
-# this run would write, and exits 4 without touching the file. That is an older tool about to
-# disarm a check a newer one armed, and all it would leave behind is a printed note nobody has to
-# read. The comparison is key sets alone - no schema and no contents - so a key added later needs
-# no edit here
+# --capture REFUSES to overwrite a baseline whose keys are a STRICT SUPERSET of the ones this run
+# would write, and exits 4 without touching the file. That is an older tool about to disarm a check
+# a newer one armed, and all it would leave behind is a printed note nobody has to read. The
+# comparison is key sets alone - no schema and no contents - so a key added later needs no edit
+# here, and it runs at two levels because a check's key is not always a top-level one: the guard
+# stack C6 and C11 fold in is a field on a MEMBER
 #
 # This is PREVENTIVE, and the distinction is worth stating exactly because the obvious story is
 # wrong. No baseline anywhere in this repository carried file_members or shared before adc00c8
@@ -1845,14 +1846,57 @@ def check_against( before, after ):
     return failures
 
 
+def key_sets( manifest ):
+    """
+    The key sets --capture's refusal compares: the top level, each list's ENTRY shape, and a module
+
+    Two levels, and the second one is where the stop actually has to be, because a check's key is
+    not always a top-level one: the guard stack C6 and C11 fold in is a field on a member, so a
+    pre-guard tool re-capturing writes the same top-level keys and would be waved through by a
+    top-level comparison alone
+
+    Two levels is also as deep as a SCHEMA-FREE rule can go here, and that is measured rather than
+    chosen for tidiness. Below this the manifest is DATA-keyed - modules by module name, and
+    modules[ ... ].data_files by filename - so a rule which walked further would read the ordinary
+    refresh that deletes a module, or a data file, as keys being dropped and refuse it
+
+    The shortcut is the FIRST entry of a list standing for all of them, which holds because
+    scan_file( ) builds every entry of a list from one literal. selftest_inventory.py asserts it
+    over every entry of every list rather than leaving it to this comment
+
+    RESIDUE: a field added BELOW entry level is not covered - a new key inside an entry of an entry.
+    Nothing in this manifest has that shape today, and the day one does is the day this rule has to
+    be rethought rather than deepened, because deepening runs into the data-keyed levels above. A
+    dict value which is neither modules nor a list - shared today - is compared by its presence
+    alone for the same reason
+    """
+
+    sets = { '': set( manifest ) }
+
+    for name, value in manifest.items():
+        if isinstance( value, list ) and value and isinstance( value[ 0 ], dict ):
+            sets[ name + '[]' ] = set( value[ 0 ] )
+
+    modules = manifest.get( 'modules' )
+
+    if isinstance( modules, dict ) and modules:
+        first = modules[ sorted( modules )[ 0 ] ]
+        if isinstance( first, dict ):
+            sets[ 'modules{}' ] = set( first )
+
+    return sets
+
+
 def keys_a_capture_would_drop( path, manifest ):
     """
-    The top-level keys a baseline already at this path carries and this manifest does not
+    The keys a baseline already at this path carries and this manifest does not, level by level
 
-    Empty unless the existing key set is a STRICT SUPERSET of the one about to be written, which is
-    the one state that says unambiguously "an older tool is overwriting a newer baseline". Any
-    other disagreement is left alone: a manifest carrying a key the baseline lacks is the ordinary
-    arming refresh, and disagreement in both directions is schema evolution rather than a downgrade
+    A level is reported only when the existing key set there is a STRICT SUPERSET of the one about
+    to be written, which is the one state that says unambiguously "an older tool is overwriting a
+    newer baseline". Any other disagreement at that level is left alone: a manifest carrying a key
+    the baseline lacks is the ordinary arming refresh, and disagreement in both directions is
+    schema evolution rather than a downgrade. Levels are judged independently, so an arming refresh
+    at the top level does not excuse a field disappearing from a member
 
     Key sets alone, deliberately - no schema and no contents. Every check that came with a key was
     written to notice its own absence, so the only thing this has to stop is the key vanishing; and
@@ -1874,10 +1918,19 @@ def keys_a_capture_would_drop( path, manifest ):
     if not isinstance( existing, dict ):
         return []
 
-    if set( manifest ) - set( existing ):
-        return []
+    was, now = key_sets( existing ), key_sets( manifest )
 
-    return sorted( set( existing ) - set( manifest ) )
+    dropped = []
+
+    for level in sorted( set( was ) & set( now ) ):
+
+        if now[ level ] - was[ level ]:
+            continue
+
+        for key in sorted( was[ level ] - now[ level ] ):
+            dropped.append( '%s%s' % ( level + '.' if level else '', key ) )
+
+    return dropped
 
 
 def repo_root():
@@ -1950,8 +2003,8 @@ def main():
         dropped = keys_a_capture_would_drop( args.capture, manifest )
 
         if dropped:
-            print( 'utf_inventory: REFUSING to overwrite %s - it carries top-level key(s) this '
-                   'run does not write: %s' % ( args.capture, ', '.join( dropped ) ),
+            print( 'utf_inventory: REFUSING to overwrite %s - it carries key(s) this run does not '
+                   'write: %s' % ( args.capture, ', '.join( dropped ) ),
                    file = sys.stderr )
             print( 'utf_inventory: every key this run writes is already there, so this tool is '
                    'OLDER than the baseline and the write would drop whatever reads those keys, '

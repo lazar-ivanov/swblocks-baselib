@@ -142,9 +142,14 @@ rebase first, then `--capture` once, from the integrated tree. **No such downgra
 here** — every baseline commit before `adc00c8` carries four top-level keys, so nothing was there to
 drop — but `s6r3-1` carries its own baseline commit `b814ed9`, written with an older tool and never
 merged, and a re-capture from it would write four keys over six. `--capture` therefore **refuses** to
-overwrite a baseline whose top-level keys are a strict superset of the ones it writes, and exits 4.
-That guard lives in the tool doing the writing, so it can only stop an older tool built from that
-commit onward. The rule is what covers the rest.
+overwrite a baseline whose keys are a strict superset of the ones it writes, and exits 4. It compares
+**two levels** — the top-level keys, and the key set of each list's entries and of a module — because
+a check's key is not always a top-level one: the `#if` stack below is a field on a *member*, so a
+pre-guard tool writes the same six top-level keys. Two is as deep as it can go: below that the
+manifest is keyed by data (`modules` by name, `data_files` by filename), so a deeper rule would
+refuse the ordinary refresh that removes a module or a data file. That guard lives in the tool doing
+the writing, so it can only stop an older tool built from that commit onward. The rule is what covers
+the rest.
 
 **C11 is not in force until that refresh happens.** No baseline captured before it carries
 `file_members`, and a hard failure there would red the gate for everyone rather than for the change

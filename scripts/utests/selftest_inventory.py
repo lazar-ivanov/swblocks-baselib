@@ -210,6 +210,45 @@ def main():
         print( '    PASS  ----  all %d failure strings follow the marker with a space  '
                'expect( ) can discriminate C1 from C10 and C11' % total )
 
+    #
+    # The precondition --capture's refusal rests on, asserted rather than assumed
+    #
+    # That guard compares the key set of the FIRST entry of each list and takes it for the shape of
+    # every entry. That holds because scan_file( ) builds each list from one literal, but "holds
+    # because of how the code reads today" is exactly the kind of claim this file exists to replace
+    # with a measurement - and the way it would break is one entry built on a branch, so the first
+    # entry keeps a key the rest have lost and the guard is looking at the wrong one
+    #
+
+    families = [ ( name + '[]', entries ) for name, entries in sorted( baseline.items() )
+                 if isinstance( entries, list ) and entries and isinstance( entries[ 0 ], dict ) ]
+
+    modules = baseline.get( 'modules' )
+
+    if isinstance( modules, dict ) and modules:
+        families.append( ( 'modules{}', [ modules[ name ] for name in sorted( modules ) ] ) )
+
+    ragged, counted = [], 0
+
+    for name, entries in families:
+
+        shape = set( entries[ 0 ] )
+        counted += len( entries )
+
+        for index, entry in enumerate( entries ):
+            if set( entry ) != shape:
+                ragged.append( ( name, index, sorted( set( entry ) ^ shape ) ) )
+
+    if ragged:
+        print( '    FAIL  ----  %d entr(ies) do not carry the first entry\'s key set'
+               % len( ragged ) )
+        for name, index, diff in ragged[ : 3 ]:
+            print( '                %s entry %d differs by %s' % ( name, index, ', '.join( diff ) ) )
+        ok = False
+    else:
+        print( '    PASS  ----  all %d entries across %d famil(ies) share one key set  '
+               '--capture may judge each by its first' % ( counted, len( families ) ) )
+
     # C1 - a dropped case
     mutated = copy.deepcopy( baseline )
     dropped = mutated[ 'cases' ].pop( 17 )
