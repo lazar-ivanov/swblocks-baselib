@@ -50,6 +50,21 @@ three separate failures of that list, and only the first is obvious:
 Reporting a category is not reporting its contents: *dispositioned*, *deferred with reasoning* and
 *done* are three different states, and only the last one means nobody can still hit it.
 
+**Batch what the work finds. Do not schedule a lane per finding.**
+
+Good work finds things, and a review loop that keeps finding them is working rather than failing —
+but scheduling each one the moment it appears is what turns a bounded batch into an open-ended one.
+Closing a single blind spot in the test-inventory tool became **five** change-sets that way, each
+with its own design, implementation, review round and merge.
+
+- Collect what a round turns up and bring it as **one decision round**, ordered by what to do first.
+- Group by what a lane would actually touch: several findings in one file or one tool are one
+  change-set, not several.
+- A finding recorded and deferred is not lost — that is what the owed list and the deferral records
+  are for, and the sweep above is what stops it being forgotten.
+- **The exception is a live defect that hands a caller a wrong answer.** Those are scheduled on
+  sight; everything else waits for the batch.
+
 **Always use the project's Python virtual environment.**
 
 When running Python commands, tests, or scripts, ALWAYS use the Python interpreter from the project's `.venv` virtual environment, i.e. `.venv/bin/python` relative to the repository root (or `.venv/bin/pytest` for pytest). On Windows these are `.venv/Scripts/python.exe` and `.venv/Scripts/pip.exe`. If the `.venv` directory does not exist, run `make pytest-install` to create it before proceeding. On Windows that target fails against the devenv7 dist interpreter, which is an embeddable build with no `venv` or `pip` — see `scripts/devenv7/AGENTS.md` for the procedure to provision a full CPython into a scratch directory.
@@ -119,6 +134,20 @@ and orchestrator**, never repeated in both:
   cell nobody covers**, which is the price of the split and is deliberate.
 - These limits are what keep the machine viable. With every lane confined to one focused module at a
   time, no more than about two test modules are ever compiling at once across all worktrees.
+
+**Repetition, not breadth, is what makes a batch slow. Default to 50 runs.**
+
+Focused scope is cheap and is already the rule above; what costs hours is running the same focused
+module hundreds of times. One change-set here spent about **700 module runs** and an earlier one
+**1370**, because a rate was asked for by reflex rather than because a rate was the question.
+
+- **50 runs** is the default for a regression check, a must-not-move set, or a red/green pair. It
+  catches anything real.
+- **600 runs** only where **the rate itself is the acceptance criterion** — where the change is
+  accepted or rejected on a measured frequency and no deterministic control exists. That has been
+  true exactly once.
+- A **deterministic** red needs neither: show it red and green once each, and say why it is certain.
+- Say which of the three a run count is, and why, whenever one is reported.
 
 ### Test Module Size
 
@@ -364,10 +393,11 @@ For detailed build system documentation, see `scripts/devenv7/AGENTS.md`:
 
 ---
 
-**Document Version:** 2.12
+**Document Version:** 2.13
 **Last Updated:** 2026-09-24
 
 **Changelog:**
+- v2.13 (2026-09-24): 50 runs is the default and 600 only where the rate itself is the acceptance criterion; and batch what the work finds into one decision round instead of a lane per finding
 - v2.12 (2026-09-24): Sweep the owed list every change-set — an item observed twice is a decision waiting, not a note to write again; and evidence goes to the log directory before it is cited
 - v2.11 (2026-09-24): Added when to fold work in without asking, when a decision must be presented instead, and the shape to present it in
 - v2.10 (2026-09-24): Orchestrator validation is clang release and gcc **debug**, not gcc release — gcc debug is where assertions and the debug standard library actually fire, and the lanes' clang debug already covers that variant on one toolchain only
