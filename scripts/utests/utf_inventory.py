@@ -23,19 +23,41 @@
 # which matters because the failure mode - a case that silently stops being registered - looks
 # exactly like success in a green test run
 #
-# This script captures a manifest of every test case in src/utests and checks seven invariants:
+# This script captures a manifest of every test case in src/utests and checks ten invariants:
 #
 #   C1  the set of case names is identical
 #   C2  every case body and doc comment hashes the same
 #   C3  every case sits under the same #if guard stack
 #   C4  every case sits under the same namespace stack
 #   C5  no case name occurs twice anywhere in the tree
-#   C6  no helper block or member occurs twice within one module (an ODR risk); none was lost
-#   C7  every data file a module references exists in that module's data/ directory
+#   C6  no helper block or member occurs twice within one module (an ODR risk); none was lost,
+#       and none was invented
+#   C7  every data file a module references exists in that module's data/ directory, carries the
+#       content it had, and does not become one nothing names
 #   C8  every case a module's notes.txt names exists in that module
+#   C9  no case loses a recipe it had, and a module which declares its notes.txt a complete
+#       index really does name every one of its cases
+#   C10 every file keeps the #include list it had
 #
-# C2 together with C3 and C4 is the core claim: the text of every test, and the compilation
-# context that text sees, is unchanged
+# C2 together with C3 and C4 is the core claim about a case which stayed where it was: its text,
+# the preprocessor guard stack and the namespace stack it sits under are all unchanged. C10 adds
+# the file's #include list to that - not the whole of the rest of the compilation context
+#
+# What is still NOT hashed by anything, and the limit a reader of a green run has to know: text
+# at FILE SCOPE, outside every column-0 namespace block. C6 extracts helper members only from
+# inside such a block, so 343 lines across 16 files are read by no invariant at all - the
+# fixtures of utf_baselib_loader (ManifestFixture, PersonalityTestFixture, ResolverFixture),
+# nine column-0 static helpers, the BL_IID_DECLARE lines of TestObjModel.h and
+# TestBaselibDefault.h, and UTF_GLOBAL_FIXTURE. Measured: injecting a member into
+# ManifestFixture, which three cases are fixtured on, and changing the signature of a column-0
+# static helper BOTH pass tier 1 today. This predates C10 and is not what C10 narrowed; closing
+# it means extracting members at file scope as well, which is its own change-set
+#
+# A case RELOCATED into a different file is deliberately not judged on includes, because a split
+# writes new headers with their own include blocks and a rule that fired on that would fire on
+# every legitimate split. That limit is written down because the claim here used to be broader
+# than the checks: it said "the compilation context that text sees is unchanged", which covers
+# includes, and for three invariants' worth of history nothing read them at all
 #
 # The parser relies on a layout precondition which holds throughout src/utests and is asserted
 # on every run: each test case macro sits at column 0 and its braces sit at column 0, so a case
@@ -103,6 +125,34 @@ DATA_LITERAL_RE = re.compile( r'"([A-Za-z0-9_][A-Za-z0-9_.\-]*\.[A-Za-z0-9]{1,8}
 #
 
 NOTES_RUN_TEST_RE = re.compile( r'--run_test=([^\s]+)' )
+
+#
+# C8 runs in one direction only - it resolves every recipe to a case, and says nothing about a case
+# with no recipe. That asymmetry is not a detail: a recipe deleted from notes.txt, or a case landed
+# without one, leaves tier 1 green, and one was found by a lane re-capturing by hand rather than by
+# the gate. C9 is the other direction, and it cannot simply be "every case has a recipe" because
+# 481 of the 1075 cases in this tree have none and always have - notes.txt is a curated list of the
+# hard-to-reproduce ones in most modules, not an index
+#
+# So the requirement is opt-in, and the opt-in is already written in the tree: fifteen notes.txt
+# files open with "each slice appends the recipes for the cases it lands here", and every one of
+# those fifteen modules does have a recipe for each of its cases. The converse does not hold and
+# the check does not need it: eighteen modules are complete, and utf_baselib_h2profiles (14 cases),
+# utf_baselib_messaging4 (1) and utf_baselib_setprio (1) are complete without declaring it. The
+# property C9 rests on is that the declared modules are a subset of the complete ones - a module
+# which says that is making a claim C9 can hold it to, and a module which says nothing is simply
+# not asked. "notes-index: complete" is accepted as well, so that a module outside that feature's
+# vocabulary can make the same claim in its own words
+#
+# The declaration cannot be dropped to escape the check - withdrawing it is itself a C9 failure
+# against a baseline which recorded it, which is also what keeps this prose matcher honest: any
+# rewording that stops matching reports as a withdrawal rather than silently switching C9 off
+#
+
+NOTES_INDEX_RE = re.compile(
+    r'^\s*#.*(?:appends the recipes for the cases it lands here|notes-index:\s*complete)',
+    re.IGNORECASE
+    )
 
 #
 # C6 hashes each helper block whole, which cannot tell a block that was partitioned from one that
@@ -496,16 +546,22 @@ def capture( src_utests ):
 
         notes_path = os.path.join( module_dir, 'notes.txt' )
         notes_cases = []
+        notes_index = False
 
         if os.path.isfile( notes_path ):
             with open( notes_path, 'r', encoding = 'utf-8', errors = 'replace' ) as stream:
-                for spec in NOTES_RUN_TEST_RE.findall( stream.read() ):
-                    for name in spec.split( ',' ):
-                        name = name.strip()
-                        if name and '*' not in name and '?' not in name:
-                            notes_cases.append( name )
+                notes_text = stream.read()
+
+            for spec in NOTES_RUN_TEST_RE.findall( notes_text ):
+                for name in spec.split( ',' ):
+                    name = name.strip()
+                    if name and '*' not in name and '?' not in name:
+                        notes_cases.append( name )
+
+            notes_index = any( NOTES_INDEX_RE.match( line ) for line in notes_text.split( '\n' ) )
 
         module_info[ 'notes_cases' ] = sorted( set( notes_cases ) )
+        module_info[ 'notes_index' ] = notes_index
 
         data_dir = os.path.join( module_dir, 'data' )
 
@@ -530,9 +586,101 @@ def index_cases( manifest ):
     return { case[ 'name' ]: case for case in manifest[ 'cases' ] }
 
 
+def recipe_owners( manifest ):
+    """
+    Case name -> the set of modules whose notes.txt carries a --run_test recipe for it
+
+    Ownership is tree wide on purpose. A case that moves to another module with its recipe
+    following it has lost nothing, and C8 already reports a recipe left behind in the module the
+    case departed - so C9 asks only whether some notes.txt still names it
+    """
+
+    owners = {}
+
+    for module, info in manifest[ 'modules' ].items():
+        for name in info.get( 'notes_cases', [] ):
+            owners.setdefault( name, set() ).add( module )
+
+    return owners
+
+
+def file_includes( manifest ):
+    """
+    File path -> its #include list, across every module
+
+    Paths carry the module directory and so are unique tree wide, which is what lets a file be
+    matched between two manifests without also matching on the module
+    """
+
+    includes = {}
+
+    for info in manifest[ 'modules' ].values():
+        for entry in info[ 'files' ]:
+            includes[ entry[ 'path' ] ] = entry.get( 'includes', [] )
+
+    return includes
+
+
+def module_file_churn( before, after ):
+    """
+    Module -> the module-relative paths of the files this change added to or removed from it
+
+    Every module's entry point is a roster: Utf<Name>Main.cpp carries one quoted include per
+    header the module holds, so moving a header between modules MUST edit it. That edit is the
+    relocation itself rather than evidence of one, which is what C10 exempts
+    """
+
+    churn = {}
+
+    for module in set( before[ 'modules' ] ) | set( after[ 'modules' ] ):
+
+        was = { entry[ 'path' ]
+                for entry in before[ 'modules' ].get( module, {} ).get( 'files', [] ) }
+
+        now = { entry[ 'path' ]
+                for entry in after[ 'modules' ].get( module, {} ).get( 'files', [] ) }
+
+        prefix = module + '/'
+
+        churn[ module ] = { path[ len( prefix ) : ]
+                            for path in was ^ now if path.startswith( prefix ) }
+
+    return churn
+
+
+def names_a_moved_file( include, moved ):
+    """
+    True when a quoted include names one of the files this change moved into or out of the module
+
+    Only a quoted include can name a sibling header, so an <angle> include added to a roster is
+    judged exactly as it would be anywhere else. The spelling must match the module-relative
+    path: an unexpected one stays judged rather than exempted by guesswork, because the safe
+    direction for a gate is to fire
+    """
+
+    if len( include ) < 2 or not include.startswith( '"' ) or not include.endswith( '"' ):
+        return False
+
+    return include[ 1 : -1 ].replace( '\\', '/' ) in moved
+
+
+def unreferenced_data_files( info ):
+    """
+    The data files one module carries which nothing in that module names
+
+    Both the resolved call sites and the bare filename literals count as a reference, exactly as
+    C7's intrinsic half treats them, so a file reached through a helper parameter is not called
+    an orphan
+    """
+
+    named = set( info.get( 'data_refs', [] ) ) | set( info.get( 'data_literals', [] ) )
+
+    return { name for name in info.get( 'data_files', {} ) if name not in named }
+
+
 def check_intrinsic( manifest ):
     """
-    Invariants that hold of a single manifest on its own: C5, C6 and C7
+    Invariants that hold of a single manifest on its own: C5 to C9
     """
 
     failures = []
@@ -641,6 +789,35 @@ def check_intrinsic( manifest ):
                     % ( module, name )
                     )
 
+    #
+    # C9 intrinsic half - a module which declares its notes.txt a complete index must name every
+    # one of its own cases there
+    #
+    # This is the half that survives a baseline refresh, and it is the one that catches the live
+    # risk: a case landing in one of the declared modules without the recipe its neighbours all
+    # have. A differential check cannot do that, because a newly added case has no recipe in the
+    # baseline to lose and a refresh would bless the gap
+    #
+
+    own_by_module = {}
+
+    for case in manifest[ 'cases' ]:
+        own_by_module.setdefault( case[ 'module' ], [] ).append( case[ 'name' ] )
+
+    for module, info in sorted( manifest[ 'modules' ].items() ):
+
+        if not info.get( 'notes_index' ):
+            continue
+
+        indexed = set( info.get( 'notes_cases', [] ) )
+
+        for name in sorted( own_by_module.get( module, [] ) ):
+            if name not in indexed:
+                failures.append(
+                    'C9 module %s declares its notes.txt a complete index but has no --run_test '
+                    'recipe for case %s' % ( module, name )
+                    )
+
     by_name = {}
 
     for module, info in sorted( manifest[ 'modules' ].items() ):
@@ -658,7 +835,11 @@ def check_intrinsic( manifest ):
 
 def check_against( before, after ):
     """
-    Invariants that relate two manifests: C1 to C4, plus the C6 no-loss half
+    Invariants that relate two manifests: C1 to C4 and C10, plus the C6, C7 and C9 no-loss halves
+
+    C7 and C10 read manifest[ 'modules' ], which is worth saying because for a long time nothing
+    here did: the whole per-module half was captured on every run and compared by nothing, so
+    every differential claim this gate made was about cases and members alone
     """
 
     failures = []
@@ -693,12 +874,184 @@ def check_against( before, after ):
                 )
 
     #
+    # C10 - the #include list of every file present on both sides
+    #
+    # Includes are the third part of a case's compilation context, beside its guard stack and its
+    # namespace stack, and they were the part no check read. An include added to a header full of
+    # live cases changes what every one of them compiles against while leaving C1 to C4 green,
+    # because nothing about the case text itself moved
+    #
+    # The comparison is per file rather than per case, and that is the whole of its scope. A case
+    # which moved to another file is judged on text, guards and namespaces only - a split writes
+    # new headers with their own include blocks, so judging a moved case on the include list of
+    # its new home would fire on every legitimate relocation, which is the one thing this gate
+    # cannot afford. A file added or removed is likewise not judged
+    #
+    # And a quoted include naming a file this change added to or removed from the same module is
+    # not judged either, for exactly the reason that file itself is not: every module's
+    # Utf<Name>Main.cpp is a roster of one quoted include per header it holds, so a relocation
+    # MUST edit it. Judging that edit fires on the very operation this tool exists to verify -
+    # measured on f992e2f, the real four-way messaging split, which C10 reported as a violation
+    # before this clause existed
+    #
+    # It is a narrow exemption and everything around it stays live. An <angle> include added to a
+    # roster still fires. A quoted include DROPPED while the header it names stays in the module
+    # still fires, and that is the case worth having: a header cut from the roster unregisters
+    # every case in it while the manifest still finds them, so C1 stays green - the exact failure
+    # mode this tool was built for
+    #
+    # Order is part of the comparison, on whatever survives the exemption. An include can depend
+    # on one before it, and in these rosters include order is registration order is run order:
+    # MessagingUtils_TokenTypeConcurrencyTests needs a cold process-global cache and is neutered,
+    # while still passing, by any case that runs first and warms it
+    #
+
+    old_includes = file_includes( before )
+    new_includes = file_includes( after )
+    churn = module_file_churn( before, after )
+
+    if not any( old_includes.values() ):
+        failures.append(
+            'C10 the baseline carries no #include lists - it predates the include capture and '
+            'must be regenerated from its own commit before this invariant can be trusted'
+            )
+    else:
+        for path in sorted( set( old_includes ) & set( new_includes ) ):
+
+            moved = churn.get( path.split( '/' )[ 0 ], set() )
+
+            was = [ entry for entry in old_includes[ path ]
+                    if not names_a_moved_file( entry, moved ) ]
+
+            now = [ entry for entry in new_includes[ path ]
+                    if not names_a_moved_file( entry, moved ) ]
+
+            if was == now:
+                continue
+
+            added = [ entry for entry in now if entry not in was ]
+            removed = [ entry for entry in was if entry not in now ]
+
+            if added or removed:
+                failures.append(
+                    'C10 file INCLUDES CHANGED: %s (added %s, removed %s)'
+                    % ( path, ', '.join( added ) or 'nothing', ', '.join( removed ) or 'nothing' )
+                    )
+            else:
+                failures.append( 'C10 file INCLUDES REORDERED: %s' % path )
+
+    #
+    # C7's differential half - the content of every data file, and the data file nothing names
+    #
+    # C7 was intrinsic only: it asked whether a referenced file exists and whether two modules'
+    # copies of one name agree, and both questions are answered inside a single manifest. Neither
+    # notices a data file whose CONTENT changed - the tests then read different input and pass or
+    # fail for a reason no invariant reports. Changing every copy of a shared file identically
+    # defeats the divergence check too, which is why that is not accidental cover
+    #
+    # The other direction of the existence check is the orphan: a module keeps a data file whose
+    # last reference has moved away. That cannot be intrinsic tree-wide, because this tree carries
+    # four such files today and always has, and a rule red on legitimate state is worse than the
+    # blind spot it closes. So for a module the baseline already knew it is differential and
+    # narrow - a data file unreferenced now which was not in that state in the baseline, whether
+    # it lost its last reference or arrived without one
+    #
+    # A module the baseline does NOT carry is judged INTRINSICALLY instead, because there is no
+    # earlier state to grandfather against: a new module carrying a data file it never names is
+    # carrying it by accident. That is not hypothetical - the f992e2f split gave the new
+    # utf_baselib_messaging3 a copy of async_rpc_response_with_exception.json which nothing in it
+    # names, and skipping new modules is exactly why that went unreported while the same split's
+    # two leftovers in utf_baselib_messaging were caught
+    #
+    # A data file added or removed outright is not judged for content. A split moves a data file
+    # with the cases that read it, and C7's intrinsic half already reports the module left
+    # referencing one it no longer carries
+    #
+
+    if ( any( info.get( 'data_files' ) for info in after[ 'modules' ].values() )
+         and not any( info.get( 'data_files' ) for info in before[ 'modules' ].values() ) ):
+        failures.append(
+            'C7 the baseline carries no data file hashes - it predates the content capture and '
+            'must be regenerated from its own commit before this invariant can be trusted'
+            )
+
+    for module, info in sorted( after[ 'modules' ].items() ):
+
+        #
+        # an empty dict rather than a skip: it carries no data file hashes, so nothing is judged
+        # on content, and it grandfathers no orphan, so a new module is judged intrinsically
+        #
+        was = before[ 'modules' ].get( module, {} )
+
+        for name, digest in sorted( info.get( 'data_files', {} ).items() ):
+
+            previous = was.get( 'data_files', {} ).get( name )
+
+            if previous is not None and previous != digest:
+                failures.append(
+                    'C7 data file CONTENT CHANGED: %s/data/%s (%s -> %s)'
+                    % ( module, name, previous, digest )
+                    )
+
+        for name in sorted( unreferenced_data_files( info ) - unreferenced_data_files( was ) ):
+            failures.append(
+                'C7 data file NEWLY UNREFERENCED: %s/data/%s - %s' % (
+                    module, name,
+                    'that module is new and nothing in it names this file' if not was
+                    else 'nothing in that module names it any more'
+                    )
+                )
+
+    #
+    # The no-loss half of C9 - a case which exists on both sides and had a recipe must still have
+    # one. This is the direction C8 never looked in, and it is the only C9 coverage the thirty-one
+    # modules which declare nothing have, since the intrinsic half says nothing about them
+    #
+    # It is placed before the C6 section deliberately, because that section returns early when a
+    # baseline carries no members and C9 must not be skipped along with it
+    #
+
+    old_recipes = recipe_owners( before )
+    new_recipes = recipe_owners( after )
+
+    for name in sorted( set( old ) & set( new ) ):
+        if name in old_recipes and name not in new_recipes:
+            failures.append(
+                'C9 case RECIPE LOST: %s - notes.txt of %s named it, none does now'
+                % ( name, ', '.join( sorted( old_recipes[ name ] ) ) )
+                )
+
+    #
+    # A declaration withdrawn is a check switched off, so it has to be reported rather than
+    # obeyed. A baseline captured before notes_index existed records nothing here, and then this
+    # half is simply not in force - which main( ) says out loud rather than leaving implied
+    #
+
+    for module, info in sorted( before[ 'modules' ].items() ):
+
+        if not info.get( 'notes_index' ):
+            continue
+
+        current = after[ 'modules' ].get( module )
+
+        if current is not None and not current.get( 'notes_index' ):
+            failures.append(
+                'C9 module %s WITHDREW its notes.txt complete-index declaration - the C9 '
+                'completeness check no longer applies to it' % module
+                )
+
+    #
     # The no-loss half of C6, checked per member rather than per block. A helper is lost only if
     # its text survives nowhere in the tree; a block that was partitioned, or a helper hoisted
     # into a different namespace, is a move and reads as one
     #
     # Comparing text alone is what makes a hoist a move. The namespace path is deliberately not
     # part of this identity - it is used only by the duplication check above
+    #
+    # It runs in BOTH directions, because looking one way is how C8 hid a lost recipe for as long
+    # as it did. A relocation invents no helper any more than it invents a case, so a member that
+    # exists only on the new side is reported exactly as C1 reports a case that does - and a slice
+    # which legitimately adds one refreshes the baseline, which is already the workflow here
     #
     # Both manifests must actually carry members, or a baseline captured before this check
     # existed would silently pass everything. That failure mode has bitten this tool twice
@@ -720,12 +1073,21 @@ def check_against( before, after ):
     for member in before[ 'members' ]:
         old_members.setdefault( member[ 'sha' ], member )
 
-    new_members = { member[ 'sha' ] for member in after[ 'members' ] }
+    new_members = {}
 
-    for digest in sorted( set( old_members ) - new_members ):
+    for member in after[ 'members' ]:
+        new_members.setdefault( member[ 'sha' ], member )
+
+    for digest in sorted( set( old_members ) - set( new_members ) ):
         where = old_members[ digest ]
         failures.append(
             'C6 helper member LOST: %s (%s:%d)' % ( where[ 'label' ], where[ 'file' ], where[ 'line' ] )
+            )
+
+    for digest in sorted( set( new_members ) - set( old_members ) ):
+        where = new_members[ digest ]
+        failures.append(
+            'C6 helper member ADDED: %s (%s:%d)' % ( where[ 'label' ], where[ 'file' ], where[ 'line' ] )
             )
 
     return failures
@@ -765,6 +1127,19 @@ def main():
     print( 'utf_inventory: %d cases, %d helper blocks, %d modules' % (
         len( manifest[ 'cases' ] ), len( manifest[ 'namespaces' ] ), len( manifest[ 'modules' ] ) ) )
 
+    #
+    # State C9's rule where a reader of a green run will see it, because what it does NOT require
+    # is the whole reason it is not noisy - and an unstated scope is how C8's one-wayness went
+    # unnoticed in the first place
+    #
+
+    declared = { module for module, info in manifest[ 'modules' ].items() if info.get( 'notes_index' ) }
+    gated = sum( 1 for case in manifest[ 'cases' ] if case[ 'module' ] in declared )
+
+    print( 'utf_inventory: C9 requires a recipe for every case of the %d module(s) whose notes.txt '
+           'declares itself a complete index (%d of %d cases); elsewhere it requires only that no '
+           'case loses a recipe it had' % ( len( declared ), gated, len( manifest[ 'cases' ] ) ) )
+
     if args.summary:
         counts = {}
         for case in manifest[ 'cases' ]:
@@ -788,6 +1163,59 @@ def main():
     if args.compare:
         with open( args.compare ) as stream:
             before = json.load( stream )
+
+        if not any( 'notes_index' in info for info in before[ 'modules' ].values() ):
+            print( 'utf_inventory: C9 - this baseline predates the index declaration, so the '
+                   'no-withdrawal half is not in force until it is refreshed' )
+
+        #
+        # The same reasoning as C9's roster line, for the differential half: what a check does not
+        # look at is exactly what a reader of a green run needs told, and leaving it implied is
+        # how the per-module half went uncompared for as long as it did
+        #
+
+        old_paths, new_paths = set( file_includes( before ) ), set( file_includes( manifest ) )
+
+        moved_files = sum( len( names ) for names in module_file_churn( before, manifest ).values() )
+
+        print( 'utf_inventory: C10 compares the #include list of the %d file(s) present in both '
+               'manifests, order included (%d added and %d removed by this change are not judged); '
+               'a case that moved between files is judged on text, guards and namespaces only'
+               % ( len( old_paths & new_paths ), len( new_paths - old_paths ),
+                   len( old_paths - new_paths ) ) )
+
+        print( 'utf_inventory: C10 exempts a quoted include naming one of the %d file(s) this '
+               'change moved into or out of its own module - a roster edit IS the relocation; a '
+               'dropped include whose header stayed, and any <angle> include, still fire'
+               % moved_files )
+
+        shared_data = sum(
+            len( set( info.get( 'data_files', {} ) )
+                 & set( before[ 'modules' ].get( module, {} ).get( 'data_files', {} ) ) )
+            for module, info in manifest[ 'modules' ].items()
+            )
+
+        accepted = sum(
+            len( unreferenced_data_files( info ) ) for info in before[ 'modules' ].values()
+            )
+
+        fresh_modules = sorted( set( manifest[ 'modules' ] ) - set( before[ 'modules' ] ) )
+
+        print( 'utf_inventory: C7 compares the content of the %d data file(s) present in both '
+               'manifests and reports one nothing names any more; the %d already unreferenced in '
+               'the baseline stay accepted' % ( shared_data, accepted ) )
+
+        print( 'utf_inventory: C7 grandfathers an orphan only in a module the baseline carries - '
+               'the %d module(s) new in this change are judged intrinsically, since a new module '
+               'has no earlier state to be accepted against%s'
+               % ( len( fresh_modules ),
+                   ' (%s)' % ', '.join( fresh_modules ) if fresh_modules else '' ) )
+
+        print( 'utf_inventory: C6 reports a helper member ADDED as well as one LOST, over %d '
+               'member(s) - a relocation invents neither, so a slice which adds one on purpose '
+               'refreshes the baseline, exactly as C1 already requires for a new case'
+               % len( manifest.get( 'members', [] ) ) )
+
         failures.extend( check_against( before, manifest ) )
 
     if failures:

@@ -20,8 +20,15 @@
 #
 # A verification gate nobody has seen fail is not a gate. The module split relies on
 # utf_inventory.py to catch a silently dropped or edited test case, so before that reliance is
-# placed on it, each of its seven invariants is shown to fire on a manifest corrupted in exactly
+# placed on it, each of its ten invariants is shown to fire on a manifest corrupted in exactly
 # the way that invariant exists to catch
+#
+# Several of them are also shown NOT to fire on the legitimate state they must stay silent about,
+# because a rule which reds on ordinary work is worse than the blind spot it closes
+#
+# C9 is also shown NOT to fire on a module which never claimed a complete notes.txt index, because
+# a rule that fired on the 481 cases in this tree with no recipe would be worse than the blind spot
+# it closes - a gate nobody can keep green is a gate everybody learns to ignore
 #
 # This mutates in-memory copies of a captured manifest. It never touches the source tree
 #
@@ -38,6 +45,21 @@ import sys
 sys.path.insert( 0, os.path.dirname( os.path.abspath( __file__ ) ) )
 
 from utf_inventory import check_intrinsic, check_against
+
+
+def unreferenced( info ):
+    """
+    The data files one module carries which nothing in that module names
+
+    Computed here rather than imported from utf_inventory, for two reasons. A control which
+    inherits the definition it is checking cannot contradict it; and this file has to run
+    against an older tool which has no such function, or the negative half of every proof
+    below - the same corruption going unreported - cannot be produced at all
+    """
+
+    named = set( info.get( 'data_refs', [] ) ) | set( info.get( 'data_literals', [] ) )
+
+    return { name for name in info.get( 'data_files', {} ) if name not in named }
 
 
 def expect( label, failures, marker ):
@@ -79,6 +101,12 @@ def main():
     # C8; the current tree does not. Excluding it here keeps the precondition honest rather than
     # papering over it, and C8 is intrinsic to whichever tree is scanned, so the baseline's copy
     # of it is never consulted by a real run
+    #
+    # C9 needs no such exclusion and must not be given one. A baseline predating notes_index
+    # declares nothing, so C9's completeness half has nothing to say about it, and a refreshed one
+    # satisfies that half already - the fifteen declared modules are complete today. If this line
+    # ever reds on C9, a declared index really has lost a recipe and the right answer is to put it
+    # back, not to widen the exclusion
     #
 
     clean = [ failure for failure in check_intrinsic( baseline ) if not failure.startswith( 'C8' ) ]
@@ -156,6 +184,10 @@ def main():
     # of C6 moved down to members. Splitting a block in two keeps every member, so nothing is
     # lost; deleting one of the halves is the previous test and still fires
     #
+    # It carries the silence control for the ADDED direction as well, since it asserts that NO
+    # C6 failure of any kind is reported: members whose file and line changed but whose text did
+    # not are a move, and a move must read as neither a loss nor an invention
+    #
     mutated = copy.deepcopy( baseline )
     victim = mutated[ 'namespaces' ][ 0 ]
     moved = [ m for m in mutated[ 'members' ]
@@ -177,6 +209,20 @@ def main():
         else:
             print( '    PASS  C6   block partitioned                             '
                    'correctly read as a move, not a loss' )
+
+    #
+    # C6 - a helper member invented
+    #
+    # The direction the no-loss half never looked in, exactly as C8 never looked for a lost
+    # recipe. C1 has always reported an invented case; a helper is no different
+    #
+
+    mutated = copy.deepcopy( baseline )
+    invented = copy.deepcopy( mutated[ 'members' ][ 0 ] )
+    invented[ 'sha' ] = 'c' * 32
+    invented[ 'label' ] = 'void anInventedHelper( )'
+    mutated[ 'members' ].append( invented )
+    ok &= expect( 'helper member invented', check_against( baseline, mutated ), 'C6' )
 
     # C6 - the same helper member copied into a second header of the same module
     mutated = copy.deepcopy( baseline )
@@ -206,6 +252,375 @@ def main():
     source = next( name for name, info in mutated[ 'modules' ].items() if info.get( 'notes_cases' ) )
     mutated[ 'modules' ][ source ][ 'notes_cases' ].append( 'ACaseWhichWasDeletedYearsAgo' )
     ok &= expect( 'notes.txt names a deleted case', check_intrinsic( mutated ), 'C8' )
+
+    #
+    # C9 - the direction C8 never looked in
+    #
+    # The declaration is synthesized rather than looked for, so that these fire against a baseline
+    # captured before notes_index existed as well as against a fresh one
+    #
+
+    uncovered = {}
+
+    for case in baseline[ 'cases' ]:
+        info = baseline[ 'modules' ].get( case[ 'module' ] )
+        if info is not None and case[ 'name' ] not in set( info.get( 'notes_cases', [] ) ):
+            uncovered.setdefault( case[ 'module' ], [] ).append( case[ 'name' ] )
+
+    incomplete = sorted( uncovered )[ 0 ]
+    orphan = sorted( uncovered[ incomplete ] )[ 0 ]
+
+    # C9 - a declared complete index which does not name one of its own cases
+    mutated = copy.deepcopy( baseline )
+    mutated[ 'modules' ][ incomplete ][ 'notes_index' ] = True
+    ok &= expect( 'declared index missing a recipe (%s)' % orphan, check_intrinsic( mutated ), 'C9' )
+
+    #
+    # C9 - and the same module with no such declaration must stay silent
+    #
+    # This is the discrimination the rule rests on. 481 of this tree's 1075 cases have no recipe
+    # and are meant to have none, so a C9 which cannot tell a claim of completeness from the
+    # absence of one would report every single one of them
+    #
+
+    mutated = copy.deepcopy( baseline )
+    mutated[ 'modules' ][ incomplete ][ 'notes_index' ] = False
+    residue = [ f for f in check_intrinsic( mutated ) if f.startswith( 'C9' ) ]
+
+    if residue:
+        print( '    FAIL  C9   undeclared module with no recipes              '
+               '(reported - the rule is not opt-in and would fire on 481 cases)' )
+        ok = False
+    else:
+        print( '    PASS  C9   undeclared module with no recipes              '
+               'correctly silent - the requirement is opt-in' )
+
+    # C9 - a surviving case which lost the recipe it had
+    owners = {}
+    for module, info in baseline[ 'modules' ].items():
+        for name in info.get( 'notes_cases', [] ):
+            owners.setdefault( name, [] ).append( module )
+
+    live = { case[ 'name' ] for case in baseline[ 'cases' ] }
+    dropped = sorted( name for name in owners if name in live )[ 0 ]
+
+    mutated = copy.deepcopy( baseline )
+    for info in mutated[ 'modules' ].values():
+        info[ 'notes_cases' ] = [ n for n in info.get( 'notes_cases', [] ) if n != dropped ]
+    ok &= expect( 'recipe deleted for a live case (%s)' % dropped,
+                  check_against( baseline, mutated ), 'C9' )
+
+    #
+    # C9 - the declaration withdrawn, which would switch the completeness half off silently
+    #
+    declared = copy.deepcopy( baseline )
+    declared[ 'modules' ][ incomplete ][ 'notes_index' ] = True
+    withdrawn = copy.deepcopy( baseline )
+    withdrawn[ 'modules' ][ incomplete ][ 'notes_index' ] = False
+    ok &= expect( 'index declaration withdrawn (%s)' % incomplete,
+                  check_against( declared, withdrawn ), 'C9' )
+
+    #
+    # C7 - a data file whose content changed under tests that still read it
+    #
+
+    mutated = copy.deepcopy( baseline )
+    owner = next( name for name, info in sorted( mutated[ 'modules' ].items() ) if info[ 'data_files' ] )
+    edited = sorted( mutated[ 'modules' ][ owner ][ 'data_files' ] )[ 0 ]
+    mutated[ 'modules' ][ owner ][ 'data_files' ][ edited ] = 'e' * 32
+    ok &= expect( 'data file content changed (%s)' % edited,
+                  check_against( baseline, mutated ), 'C7' )
+
+    #
+    # C7 - EVERY copy of a shared data file changed identically
+    #
+    # The stronger form, and the one that rules out the cross-module divergence check as
+    # accidental cover: change one copy and that intrinsic check fires, change all of them and it
+    # has nothing to compare. The assertion below is that the intrinsic half really is silent
+    # here, so that the differential half is shown to be what catches it
+    #
+
+    carried = {}
+
+    for name, info in baseline[ 'modules' ].items():
+        for data in info[ 'data_files' ]:
+            carried.setdefault( data, [] ).append( name )
+
+    shared = sorted( ( len( owners ), name ) for name, owners in carried.items() )[ -1 ][ 1 ]
+
+    mutated = copy.deepcopy( baseline )
+
+    for info in mutated[ 'modules' ].values():
+        if shared in info[ 'data_files' ]:
+            info[ 'data_files' ][ shared ] = 'e' * 32
+
+    residue = [ f for f in check_intrinsic( mutated ) if f.startswith( 'C7' ) ]
+
+    if residue:
+        print( '    ----  C7   all %d copies of %-30s the intrinsic half fired too'
+               % ( len( carried[ shared ] ), shared ) )
+    else:
+        print( '    ----  C7   all %d copies of %-30s intrinsic half silent, as expected'
+               % ( len( carried[ shared ] ), shared ) )
+
+    ok &= expect( 'every copy of %s changed alike' % shared,
+                  check_against( baseline, mutated ), 'C7' )
+
+    #
+    # C7 - a data file which lost its last reference
+    #
+
+    mutated = copy.deepcopy( baseline )
+    stranded = None
+
+    for name, info in sorted( mutated[ 'modules' ].items() ):
+        for data in sorted( info[ 'data_files' ] ):
+            if data in info[ 'data_refs' ]:
+                stranded = ( name, data )
+                break
+        if stranded:
+            break
+
+    module, data = stranded
+    info = mutated[ 'modules' ][ module ]
+    info[ 'data_refs' ] = [ ref for ref in info[ 'data_refs' ] if ref != data ]
+    info[ 'data_literals' ] = [ ref for ref in info.get( 'data_literals', [] ) if ref != data ]
+
+    ok &= expect( 'data file lost its last reference (%s)' % data,
+                  check_against( baseline, mutated ), 'C7' )
+
+    #
+    # C7 - and the data files this tree already carries unreferenced must stay silent
+    #
+    # Four of them today. An intrinsic orphan rule would report all four on a tree nobody has
+    # changed, which is the same mistake a universal C9 would have been
+    #
+    # The count is ASSERTED, not merely printed. Silence over a baseline carrying no orphan at
+    # all proves nothing about a differential rule, so the control has to establish that there
+    # is something there to stay silent about before the silence means anything
+    #
+
+    stale = sum( len( unreferenced( info ) ) for info in baseline[ 'modules' ].values() )
+    residue = [ f for f in check_against( baseline, baseline ) if f.startswith( 'C7' ) ]
+
+    if not stale:
+        print( '    FAIL  C7   %d data file(s) unreferenced in the baseline      '
+               '(the baseline carries no orphan - this control has nothing to prove)' % stale )
+        ok = False
+    elif residue:
+        print( '    FAIL  C7   %d data file(s) unreferenced in the baseline      '
+               '(reported - the orphan rule is not differential)' % stale )
+        ok = False
+    else:
+        print( '    PASS  C7   %d data file(s) unreferenced in the baseline      '
+               'correctly silent - only a NEW orphan is reported' % stale )
+
+    #
+    # C7 - but a module the baseline does not carry is judged intrinsically
+    #
+    # A new module has no earlier state to be grandfathered against, and the f992e2f split gave
+    # utf_baselib_messaging3 a data file nothing in it names. Skipping new modules is why that
+    # went unreported while the same split's two leftovers were caught
+    #
+
+    mutated = copy.deepcopy( baseline )
+    donor = next( info for info in baseline[ 'modules' ].values() if info.get( 'data_files' ) )
+
+    mutated[ 'modules' ][ 'utf_baselib_freshly_split' ] = {
+        'files': [],
+        'data_refs': [],
+        'data_literals': [],
+        'data_files': dict( donor[ 'data_files' ] ),
+        'notes_cases': [],
+        'notes_index': False,
+        }
+
+    ok &= expect( 'new module carries a data file it never names',
+                  check_against( baseline, mutated ), 'C7' )
+
+    #
+    # C7 - a baseline with no data file hashes must say so rather than pass everything
+    #
+
+    stripped = copy.deepcopy( baseline )
+
+    for info in stripped[ 'modules' ].values():
+        info[ 'data_files' ] = {}
+
+    ok &= expect( 'baseline predating the data file capture',
+                  check_against( stripped, baseline ), 'C7' )
+
+    #
+    # C10 - an #include added to a file which holds live test cases
+    #
+    # This is the mutation that showed the docstring claimed more than the checks held: the
+    # compilation context of every case in that header changes and C1 to C4 stay green
+    #
+
+    mutated = copy.deepcopy( baseline )
+    carrier = sorted( case[ 'file' ] for case in baseline[ 'cases' ] )[ 0 ]
+
+    for info in mutated[ 'modules' ].values():
+        for entry in info[ 'files' ]:
+            if entry[ 'path' ] == carrier:
+                entry[ 'includes' ] = entry[ 'includes' ] + [ '<an/invented/header.h>' ]
+
+    ok &= expect( 'include added to a file with cases (%s)' % carrier,
+                  check_against( baseline, mutated ), 'C10' )
+
+    # C10 - the same file's includes merely reordered
+    mutated = copy.deepcopy( baseline )
+
+    for info in mutated[ 'modules' ].values():
+        for entry in info[ 'files' ]:
+            if entry[ 'path' ] == carrier and len( entry[ 'includes' ] ) > 1:
+                entry[ 'includes' ] = list( reversed( entry[ 'includes' ] ) )
+
+    ok &= expect( 'includes reordered (%s)' % carrier, check_against( baseline, mutated ), 'C10' )
+
+    #
+    # C10 - a file removed by a relocation must NOT be reported
+    #
+    # A split deletes headers by design, so a rule which judged a vanished file would be red on
+    # every legitimate use of this tool. The cases and members that file carried are C1's and
+    # C6's to speak for
+    #
+
+    mutated = copy.deepcopy( baseline )
+
+    for info in mutated[ 'modules' ].values():
+        info[ 'files' ] = [ entry for entry in info[ 'files' ] if entry[ 'path' ] != carrier ]
+
+    residue = [ f for f in check_against( baseline, mutated ) if f.startswith( 'C10' ) ]
+
+    if residue:
+        print( '    FAIL  C10  file removed by a relocation                  '
+               '(reported - the rule is not scoped to files present on both sides)' )
+        ok = False
+    else:
+        print( '    PASS  C10  file removed by a relocation                  '
+               'correctly silent - only files present on both sides are judged' )
+
+    #
+    # C10 - the roster edit a relocation cannot avoid
+    #
+    # Every module's Utf<Name>Main.cpp holds one quoted include per header the module carries, so
+    # moving a header between modules MUST edit it. Judging that edit reds the very operation
+    # this tool exists to verify - the real split f992e2f was reported as a violation before the
+    # exemption existed
+    #
+    # The five below are written as one group because the exemption is only defensible together
+    # with the three cases it must NOT swallow
+    #
+
+    roster_module, roster, siblings = None, None, set()
+
+    for name, info in sorted( baseline[ 'modules' ].items() ):
+
+        held = { entry[ 'path' ][ len( name ) + 1 : ] for entry in info[ 'files' ] }
+
+        for entry in info[ 'files' ]:
+            quoted = [ i for i in entry[ 'includes' ]
+                       if i.startswith( '"' ) and i[ 1 : -1 ] in held ]
+            if len( quoted ) >= 3:
+                roster_module, roster, siblings = name, entry, held
+                break
+
+        if roster:
+            break
+
+    def roster_of( manifest ):
+        info = manifest[ 'modules' ][ roster_module ]
+        return next( e for e in info[ 'files' ] if e[ 'path' ] == roster[ 'path' ] )
+
+    def without_header( manifest, header ):
+        info = manifest[ 'modules' ][ roster_module ]
+        info[ 'files' ] = [ e for e in info[ 'files' ]
+                            if e[ 'path' ] != roster_module + '/' + header ]
+
+    header = next( i[ 1 : -1 ] for i in roster[ 'includes' ]
+                   if i.startswith( '"' ) and i[ 1 : -1 ] in siblings )
+
+    # C10 - a header moved out of the module, struck from the roster with it: SILENT
+    mutated = copy.deepcopy( baseline )
+    without_header( mutated, header )
+    roster_of( mutated )[ 'includes' ] = [ i for i in roster[ 'includes' ]
+                                           if i != '"%s"' % header ]
+
+    residue = [ f for f in check_against( baseline, mutated ) if f.startswith( 'C10' ) ]
+
+    if residue:
+        print( '    FAIL  C10  header moved out, roster edited to match      '
+               '(reported - C10 would fire on every real relocation)' )
+        ok = False
+    else:
+        print( '    PASS  C10  header moved out, roster edited to match      '
+               'correctly silent - that roster edit IS the relocation' )
+
+    # C10 - a header cut into the module, added to the roster with it: SILENT
+    mutated = copy.deepcopy( baseline )
+    mutated[ 'modules' ][ roster_module ][ 'files' ].append(
+        { 'path': roster_module + '/TestCut.h', 'includes': [] } )
+    roster_of( mutated )[ 'includes' ] = roster[ 'includes' ] + [ '"TestCut.h"' ]
+
+    residue = [ f for f in check_against( baseline, mutated ) if f.startswith( 'C10' ) ]
+
+    if residue:
+        print( '    FAIL  C10  header cut in, roster edited to match         '
+               '(reported - a split writes sibling headers and lists them)' )
+        ok = False
+    else:
+        print( '    PASS  C10  header cut in, roster edited to match         '
+               'correctly silent - the same clause, the other direction' )
+
+    #
+    # C10 - a header STRUCK FROM THE ROSTER while it stays in the module
+    #
+    # The case that makes the exemption safe to hold. Every test case in that header stops being
+    # registered, the manifest still finds all of them, and C1 to C4 stay green - which is the
+    # failure mode this whole tool was built for
+    #
+
+    mutated = copy.deepcopy( baseline )
+    roster_of( mutated )[ 'includes' ] = [ i for i in roster[ 'includes' ]
+                                           if i != '"%s"' % header ]
+    ok &= expect( 'roster drops a header that stays (%s)' % header,
+                  check_against( baseline, mutated ), 'C10' )
+
+    # C10 - an <angle> include added to a roster is never exempt
+    mutated = copy.deepcopy( baseline )
+    roster_of( mutated )[ 'includes' ] = roster[ 'includes' ] + [ '<an/invented/header.h>' ]
+    ok &= expect( 'angle include added to a roster', check_against( baseline, mutated ), 'C10' )
+
+    #
+    # C10 - whatever survives the exemption is still compared in ORDER
+    #
+    # In a roster, include order is registration order is run order, and
+    # MessagingUtils_TokenTypeConcurrencyTests needs a cold process-global cache: any case that
+    # runs before it and warms that cache neuters it while it still passes
+    #
+
+    mutated = copy.deepcopy( baseline )
+    without_header( mutated, header )
+    roster_of( mutated )[ 'includes' ] = list( reversed(
+        [ i for i in roster[ 'includes' ] if i != '"%s"' % header ] ) )
+    ok &= expect( 'surviving roster reordered', check_against( baseline, mutated ), 'C10' )
+
+    #
+    # C10 - a baseline with no include lists must say so rather than pass everything
+    #
+    # The failure mode this guards has bitten this tool twice already: a check added after a
+    # baseline was captured reads an absent field, finds nothing to compare, and reports clean
+    #
+
+    stripped = copy.deepcopy( baseline )
+
+    for info in stripped[ 'modules' ].values():
+        for entry in info[ 'files' ]:
+            entry[ 'includes' ] = []
+
+    ok &= expect( 'baseline predating the include capture',
+                  check_against( stripped, baseline ), 'C10' )
 
     # C7 - the same data file name diverging between two modules
     mutated = copy.deepcopy( baseline )
