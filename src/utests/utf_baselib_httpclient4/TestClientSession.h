@@ -2141,31 +2141,57 @@ UTF_AUTO_TEST_CASE( ClientSession_AgainstTheLibraryHttpServerTests )
             UTF_REQUIRE_EQUAL( stats.connectionsCreated.value(), 2U );
 
             /*
-             * FOUR DISPATCHES FOR TWO REQUESTS, AND THIS IS THE FINDING THIS CASE MADE. The pool
-             * dispatches the first request of a key onto the Connecting placeholder so that its
-             * HEADERS ride the preface (design 5.4). Over a FALLBACK connection that placeholder
-             * is the HTTP/2 task, which hands the connected stream to the HTTP/1.1 driver and
-             * completes - answering the rider it is holding with connection_aborted, correctly
-             * flagged retryable because not a byte of it was written. The session then replays it
-             * onto the driver, which is the DISPATCHED half of the retry of design 5.4 and is this
-             * slice's (L5 review, finding 5(a)). Without it EVERY first request over a fallback
-             * connection fails, which is what this case did on its first run
+             * ONE DISPATCH PER REQUEST, AND THIS NUMBER IS THE FINDING THIS CASE MADE TWICE OVER.
+             * It was FOUR for these two requests until L6 finding 4a landed: the pool dispatched
+             * the first request of a key onto the Connecting placeholder so that its HEADERS could
+             * ride the preface (design 5.4), that placeholder was the HTTP/2 task, and on a
+             * connection which turns out to speak HTTP/1.1 it handed the connected stream to the
+             * HTTP/1.1 driver and completed - answering the rider it was holding with
+             * connection_aborted, correctly flagged retryable because not a byte of it was
+             * written. The session then replayed it onto the driver, and that replay is a RETRY,
+             * so every first request to an HTTP/1.1 origin spent one from a budget meant for
+             * network faults (astra H21)
+             *
+             * THE RIDER NOW RIDES ONLY WHERE THE PROTOCOL IS GENUINELY UNDECIDED, which is ALPN
+             * and nothing else: a cleartext connection speaks what its configuration says, this
+             * session's says HTTP/1.1, so ConnectionPoolPolicy::ridePreface is off here and the
+             * request waits the few milliseconds for the driver rather than being thrown at a
+             * placeholder which cannot carry it. The bounce and the replay themselves are
+             * UNCHANGED and are exercised where they are real -
+             * ClientSessionTls_Http11FallbackExchangeTests, over TLS, in utf_baselib_httpclient5
              */
 
-            UTF_REQUIRE_EQUAL( stats.dispatched.value(), 4U );
-            UTF_REQUIRE_EQUAL( stats.released.value(), 4U );
+            UTF_REQUIRE_EQUAL( stats.dispatched.value(), 2U );
+            UTF_REQUIRE_EQUAL( stats.released.value(), 2U );
         }
         );
 }
 
 /**
- * @brief The control for the case above: with the retry budget at zero the fallback rider is fatal
+ * @brief The control for the case above, INVERTED BY L6 FINDING 4a: with the retry budget at zero
+ * the request SUCCEEDS, because nothing spends that budget on a protocol decision any more
  *
- * A COUNT OF GREEN RUNS IS NOT EVIDENCE THAT A FIX BITES. What earns it is a control which makes
- * the failure certain - here the same request against the same server with maxRetriesPerRequest
- * of zero, which is the session's dispatched-half retry degraded to nothing. It fails, and it
- * fails exactly the way the case above did before the retry existed: one dispatch, one release,
- * no response
+ * THE NAME RECORDS WHAT THIS CASE WAS FOR AND IS DELIBERATELY KEPT. It pinned the consequence of
+ * the rider being dispatched onto a placeholder which can never speak HTTP/2: the bounce is a
+ * retry, so maxRetriesPerRequest of zero made a cleartext HTTP/1.1 session unable to make any
+ * request at all, and it failed as "connection aborted" with nothing chained to explain it,
+ * because the placeholder itself completed successfully. A knob whose value zero disables a
+ * protocol - and this case is what made that a measurement rather than an argument. Named by L6
+ * finding 4a's addendum, by astra-review-verification-record.md section 3 and by this module's
+ * notes.txt - astra H21 links the file by line, not by name - and astra asked that it be retained
+ *
+ * WHY THE INVERSION IS EVIDENCE AND NOT A CONCESSION. The request, the server and the zero budget
+ * are the same; only the expected outcome moved. So this case is RED against every revision before
+ * ConnectionPoolPolicy::ridePreface and GREEN after it, which is the discrimination a control is
+ * for - and it is a stronger assertion inverted than it was before, because the old form could be
+ * satisfied by ANY failure whatever while this one can only be satisfied by a request which really
+ * was carried with no attempt to spare
+ *
+ * THE COUNTS DO NOT MOVE, AND THAT IS WHY THE OUTCOME IS ASSERTED WITH THEM. One connection, one
+ * dispatch, one release, before and after: before, that single dispatch was the rider and it was
+ * thrown away; now it is the request itself, onto the HTTP/1.1 driver the fallback built, and
+ * nothing is thrown away. A case which asserted only the counts would stay green across the fix
+ * and would be telling nobody anything
  */
 
 UTF_AUTO_TEST_CASE( ClientSession_FallbackRiderNeedsTheDispatchedRetryTests )
@@ -2213,11 +2239,22 @@ UTF_AUTO_TEST_CASE( ClientSession_FallbackRiderNeedsTheDispatchedRetryTests )
 
             runSessionTask( task );
 
-            UTF_REQUIRE( task -> isFailed() );
+            UTF_REQUIRE( ! task -> isFailed() );
 
-            UTF_REQUIRE_EQUAL( requestTask -> response().status(), 0U );
+            UTF_REQUIRE_EQUAL( requestTask -> response().status(), 200U );
+
+            /*
+             * AND IT REALLY WENT OVER HTTP/1.1, which is what makes the 200 above mean what the
+             * case says. The server is the library's own HttpServer and speaks nothing else
+             */
+
+            UTF_REQUIRE(
+                httpclient::HttpProtocol::Http11 == requestTask -> response().protocol()
+                );
 
             const auto stats = statsOf( session );
+
+            UTF_REQUIRE_EQUAL( stats.connectionsCreated.value(), 1U );
 
             UTF_REQUIRE_EQUAL( stats.dispatched.value(), 1U );
             UTF_REQUIRE_EQUAL( stats.released.value(), 1U );
@@ -2226,24 +2263,30 @@ UTF_AUTO_TEST_CASE( ClientSession_FallbackRiderNeedsTheDispatchedRetryTests )
 }
 
 /**
- * @brief S6R.3 H08 - a chain of two hops says "the body is complete" ONCE
+ * @brief S6R.3 H08 - a streamed response says "the body is complete" ONCE
  *
- * THE DEFAULT PATH, AND NOT A CORNER. This is the case above with a sink installed, which is the
- * one thing no case in this suite did until now. The pool dispatches the first request of a key
- * onto the Connecting placeholder; over a connection which turns out to speak HTTP/1.1 the HTTP/2
- * task bounces that rider with connection_aborted, and applyClosed( ) used to queue the caller's
- * onComplete( ) on ANY close whatever its outcome. So the caller's sink was told the body was
- * complete, with nothing in it, and was then handed the whole body by the retried hop - twice
- * wrong on every first request to an origin which does not speak h2
+ * WHAT IT ESTABLISHED WHEN IT WAS WRITTEN, and the name keeps: this was the case above with a sink
+ * installed, the one thing no case in this suite did until then. The pool dispatched the first
+ * request of a key onto the Connecting placeholder; over a connection which turns out to speak
+ * HTTP/1.1 the HTTP/2 task bounced that rider with connection_aborted, and applyClosed( ) used to
+ * queue the caller's onComplete( ) on ANY close whatever its outcome. So the caller's sink was
+ * told the body was complete, with nothing in it, and was then handed the whole body by the
+ * retried hop - twice wrong on every first request to an origin which does not speak h2
  *
- * THE COUNT IS THE ASSERTION, and one is the number: a bounce is not a completion, so the first
- * hop says nothing at all, and the hop which really did carry the body says it once
+ * WHAT IT ESTABLISHES NOW, AND THE HALF IT LOST. L6 finding 4a stopped the rider being dispatched
+ * where the protocol is already decided, so this chain is ONE hop and there is no bounce on it any
+ * more: what survives is the streamed form itself - the body reaches the sink and not the response,
+ * and the single hop which carried it says "complete" exactly once. The discrimination that made
+ * the count worth its green - a first hop which must say nothing at all - no longer runs HERE, and
+ * saying so is the point: it is not that the defect was re-checked and found gone, it is that this
+ * path no longer reaches it. The combination of a BOUNCED rider and an installed sink is now only
+ * reachable over TLS ALPN fallback, where ClientSessionTls_Http11FallbackExchangeTests
+ * ( utf_baselib_httpclient5 ) runs the bounce with no sink; that case with a sink is OWED and is
+ * recorded as such against finding 4a
  *
- * AND IT IS THE CONTROL FOR H08's OTHER HALF. chkPrepareRetry( ) now refuses a retry once the sink
- * has seen bytes; the bounced rider is answered before a byte of its response exists, so that
- * refusal must not fire here. If it did, this case would not merely lose a callback - it would
- * fail outright, since without the dispatched retry every first request over a fallback connection
- * fails ( the case above records that finding )
+ * AND IT IS STILL THE CONTROL FOR H08's OTHER HALF, which did not depend on the bounce:
+ * chkPrepareRetry( ) refuses a retry once the sink has seen bytes, and a plain streamed response
+ * must not trip that refusal
  */
 
 UTF_AUTO_TEST_CASE( ClientSession_SinkIsToldCompleteOnceAcrossTheFallbackRetryTests )
@@ -2303,14 +2346,15 @@ UTF_AUTO_TEST_CASE( ClientSession_SinkIsToldCompleteOnceAcrossTheFallbackRetryTe
             UTF_REQUIRE_EQUAL( sink -> completions(), 1U );
 
             /*
-             * The chain really was two hops, which is what makes the count above worth its green:
-             * a run where the rider was never bounced would say "one" for the trivial reason
+             * ONE HOP, which is what the chain is once the rider no longer rides a cleartext
+             * HTTP/1.1 key - and it is asserted rather than left implicit precisely because the
+             * completion count above USED to be discriminating and now is not
              */
 
             const auto stats = statsOf( session );
 
-            UTF_REQUIRE_EQUAL( stats.dispatched.value(), 2U );
-            UTF_REQUIRE_EQUAL( stats.released.value(), 2U );
+            UTF_REQUIRE_EQUAL( stats.dispatched.value(), 1U );
+            UTF_REQUIRE_EQUAL( stats.released.value(), 1U );
         }
         );
 }

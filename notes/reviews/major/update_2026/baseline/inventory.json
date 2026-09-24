@@ -3677,7 +3677,7 @@
    "namespaces": []
   },
   {
-   "body_sha": "56c331b2afd39c1506b4943316702943",
+   "body_sha": "6dd2f0dd1c85acc6122ca784068f04cc",
    "doc_sha": "45b8206dc571309c490facfd9d7973a7",
    "file": "utf_baselib_httpclient5/TestClientSessionTlsHttp1.h",
    "fixture": null,
@@ -3713,7 +3713,7 @@
    "namespaces": []
   },
   {
-   "body_sha": "a590cd556688ffedf03cf5271e60234b",
+   "body_sha": "9a2a6e3f504dac1b5f814383d185f9ca",
    "doc_sha": "e8a28db82cfd5671e4d3aae88486b8a0",
    "file": "utf_baselib_httpclient4/TestClientSession.h",
    "fixture": null,
@@ -3833,13 +3833,13 @@
    "namespaces": []
   },
   {
-   "body_sha": "9a372a0b51c040fd5ad5bfa0a72e279c",
-   "doc_sha": "59fe1db25a25cf31de19f817e94b7567",
+   "body_sha": "639ed2e92eb127518fc8cecfc1994dd8",
+   "doc_sha": "b79b6c5f59f3a8e421d44d96b735ee26",
    "file": "utf_baselib_httpclient4/TestClientSession.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 2171,
+   "line": 2197,
    "module": "utf_baselib_httpclient4",
    "name": "ClientSession_FallbackRiderNeedsTheDispatchedRetryTests",
    "namespaces": []
@@ -3947,19 +3947,19 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 2336,
+   "line": 2380,
    "module": "utf_baselib_httpclient4",
    "name": "ClientSession_RetryIsRefusedOnceTheSinkHasSeenBytesTests",
    "namespaces": []
   },
   {
-   "body_sha": "7f72549840d85878179abacc4c5f1a46",
-   "doc_sha": "3a3ff1db190bcb8a012faf848e53ff9a",
+   "body_sha": "150a8d360bac222f3a1b73d39696b145",
+   "doc_sha": "bf8db4789cda835e56f86e8bf224d838",
    "file": "utf_baselib_httpclient4/TestClientSession.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 2249,
+   "line": 2292,
    "module": "utf_baselib_httpclient4",
    "name": "ClientSession_SinkIsToldCompleteOnceAcrossTheFallbackRetryTests",
    "namespaces": []
@@ -6497,7 +6497,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 846,
+   "line": 859,
    "module": "utf_baselib_httpclient5",
    "name": "Http1DriverTls_IdleCloseSendsCloseNotifyTests",
    "namespaces": []
@@ -6509,7 +6509,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1010,
+   "line": 1023,
    "module": "utf_baselib_httpclient5",
    "name": "Http1DriverTls_WriteInFlightCloseSkipsCloseNotifyTests",
    "namespaces": []
