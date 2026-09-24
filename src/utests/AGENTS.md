@@ -159,7 +159,7 @@ diff shows exactly what is blessed.
 
 **Tier 3's baseline covers 17 of the tree's 45 test binaries, and none of the http or h2 client
 ones.** It is also a `win-x86-vc143-debug` capture (`91d5c2c`), so it is a statement about one
-platform as well as about those modules: run against a Linux tree it reports 37 assertion-count
+platform as well as about those modules: run against a Linux tree it reported 37 assertion-count
 differences inside its *own* 17 modules which are nothing but Windows-versus-POSIX
 (`BaseLib_OSJunctionsTests` 18 → 0, `BaseLib_OSRegistryValueTest` 8 → 0, Windows argv quoting
 81 → 0). Every comparison therefore ends with a coverage statement naming the modules it could not
