@@ -228,6 +228,28 @@ namespace bl
             bool                                                                m_requestSaidClose = false;
 
             /*
+             * HOW THE WRITE ENDED, WHICH IS EVIDENCE THE READ'S OWN CODE DOES NOT CARRY. One reset
+             * sets the socket's ONE pending error and the first syscall to reach it takes it away,
+             * so a send( ) which got connection_reset leaves the pending recv( ) a plain eof - and
+             * eof is precisely what a close-delimited message may be completed on. Recorded by
+             * every write handler, consulted by onPeerClosed( ), released with the rest of this
+             * message's state in finishStream( ). A write which ended cleanly records an empty
+             * code, so the record cannot outlive the ending it describes
+             */
+
+            eh::error_code                                                      m_writeEndingCode;
+
+            /*
+             * AND THE ENDING THE READ OBSERVED WHILE A WRITE WAS STILL IN FLIGHT - the same
+             * question from the other side. The write handler has not run, so the record above is
+             * not yet there to consult; the read hands its ending over instead and the write
+             * handler delivers it. An empty code means nothing is owed, and an ending the read
+             * admits is never the empty code - see onReadCompleted( )
+             */
+
+            eh::error_code                                                      m_deferredEndingCode;
+
+            /*
              * The leaf lock of design 5.2 rule L4. It guards what an off-strand caller reads or
              * writes - the state, the handle, and the request a submit( ... ) handed over - and
              * nothing is ever called while it is held
@@ -792,13 +814,20 @@ namespace bl
                  * our state and not by a code the peer could also have produced. isClosing( ) is
                  * the better evidence wherever it applies, so it applies first
                  *
-                 * AND THE WRITE SIDE DOES NOTHING ELSE - no onPeerClosed( ), no closeConnection( ).
-                 * The read has been armed since the task was scheduled and the same ending reaches
-                 * it with a READ-side code, which is the only side holding a parser that can tell
-                 * a complete close-delimited response from a truncated one. Ending the stream from
-                 * here would reset that parser under a response which may still be arriving, and
-                 * would put the verdict back on whichever handler ran first - the very thing this
-                 * arm exists to remove
+                 * AND THE WRITE SIDE CLASSIFIES NOTHING - no onPeerClosed( ) of its own, no
+                 * closeConnection( ). The read has been armed since the task was scheduled and the
+                 * same ending reaches it with a READ-side code; the read side is the one holding
+                 * the parser and the bytes, so ending the stream from here would reset that parser
+                 * under a response which may still be arriving, and would put the verdict back on
+                 * whichever handler ran first - the very thing this arm exists to remove
+                 *
+                 * WHAT THE WRITE DOES OWE THE READ IS ITS CODE, WHICH IS NOT A CLASSIFICATION. The
+                 * read's machinery is the only thing that can tell a complete close-delimited
+                 * response from a truncated one, and on this ordering it is handed the eof this
+                 * write's own reset left behind - so the evidence is here while the verdict stays
+                 * there. m_writeEndingCode carries the one to the other; an earlier version of this
+                 * paragraph said the read side held the only machinery AND therefore the answer,
+                 * which was true of the machinery and false of the outcome
                  *
                  * isStreamTruncationError( ) BESIDE IT exactly as onReadCompleted( ) asks it,
                  * because this class is instantiated over the TLS policy as well and a truncated
@@ -807,6 +836,19 @@ namespace bl
 
                 const bool isPeerClosedOnWrite =
                     net::isPeerClosedOnWriteErrorCode( ec ) || base_type::isStreamTruncationError( ec );
+
+                /*
+                 * RECORDED RAW, BEFORE THE PROLOG AND BESIDE THE CLASSIFICATION, and deliberately
+                 * not filtered by either arm above. isOurOwnTeardown is TRUE of a peer's reset
+                 * whenever the read observed the same ending first and closed this connection in
+                 * answer to it - which is exactly the interleaving the deferral below exists for,
+                 * so filtering by it would throw the evidence away in the one case that needs it.
+                 * What the code MEANS is asked of net:: by the one function that consults this,
+                 * and unconditionally is also what keeps a write which ended cleanly from leaving
+                 * a verdict behind it
+                 */
+
+                m_writeEndingCode = ec;
 
                 BL_TASKS_HANDLER_BEGIN()
 
@@ -846,6 +888,36 @@ namespace bl
 
                 m_requestHead.clear();
                 m_requestBody.reset();
+
+                /*
+                 * THE READ'S ENDING, DELIVERED HERE BECAUSE ITS OWN HANDLER RAN FIRST. A read
+                 * which observed an end of stream while this write was in flight could not
+                 * consult a record this handler had not written yet, so it handed the ending over
+                 * instead - see onReadCompleted( ). Both handlers are on the strand, so the flag
+                 * it decided on was exact and this delivery is owed exactly once
+                 *
+                 * AHEAD OF CHK_EC( ), for the same reason the storage release is: that macro
+                 * throws to the epilog, and an ending the read already observed is owed to the
+                 * sink whatever this write's own code turns out to be. Delivering it is the
+                 * READ's act performed here, which is why it is not gated by the arms above -
+                 * the question those answer is whether this TASK failed, and this one is how the
+                 * MESSAGE ended
+                 *
+                 * AND IT CANNOT WAIT FOREVER, which is the deferral's whole safety: the read's
+                 * closeConnection( ) reaches initiateClose( ) through its own epilog, and that
+                 * shuts the send side down for a write in flight - so a parked write wakes with
+                 * broken_pipe, one which already failed at the syscall carries its own code, and
+                 * one the cancel reaped carries operation_aborted
+                 */
+
+                if( m_deferredEndingCode )
+                {
+                    const auto deferredEndingCode = m_deferredEndingCode;
+
+                    m_deferredEndingCode = eh::error_code();
+
+                    onPeerClosed( deferredEndingCode );
+                }
 
                 if( ! isOurOwnTeardown && ! isPeerClosedOnWrite )
                 {
@@ -1100,8 +1172,15 @@ namespace bl
             }
 
             /**
-             * @brief Whether the byte stream ended in a way a message framed BY that ending may
-             * be declared complete on
+             * @brief Whether the CODE THIS READ WAS HANDED is one a message framed by the ending
+             * may be declared complete on - which is not the whole of that question
+             *
+             * IT ANSWERS ABOUT THE CODE AND NOT ABOUT THE ENDING, and the gap between the two was
+             * a defect this driver shipped. A reset sets the socket's one pending error and the
+             * first syscall to reach it takes it, so a send( ) which got there first leaves this
+             * read a plain eof - which is admitted here, on purpose and correctly, because eof is
+             * how a close-delimited message is framed at all. The other half of the question is
+             * what the WRITE ended with, and onPeerClosed( ) asks that before it trusts this
              *
              * TWO PARTS, AND THE SECOND IS NOT OPTIONAL. net::isCleanEndOfStreamErrorCode( ) is
              * eof on every platform and deliberately refuses the Windows reset spellings, which
@@ -1131,6 +1210,20 @@ namespace bl
              * rather than a protocol error: the caller saw "connection reset by peer" before this
              * change and must go on seeing it, because after N2's first part the connection task
              * itself ends cleanly and connectionFailureCause( ) has no exception left to chain
+             *
+             * AND THE READ'S OWN CODE IS NOT ALWAYS THE ENDING, WHICH THE SENTENCE ABOVE MISSED.
+             * Refusing the Windows reset spellings is necessary and is not sufficient: on POSIX
+             * the eof this function admits does the very same damage whenever the WRITE consumed
+             * the reset, because the kernel hands its one pending error to the first syscall that
+             * asks and leaves the other side an ordinary end of stream. Measured, and it reported
+             * a body cut short by a RST to the caller as a complete 200. So the write's ending is
+             * consulted below before this one is trusted
+             *
+             * WHICH IS CALLED FROM BOTH HANDLERS. The read's own, with the ending it observed,
+             * and the WRITE's, with an ending the read observed while that write was in flight
+             * and could not classify yet. A gate on this driver's own teardown belongs where the
+             * ending is OBSERVED and not here, because the deferred delivery runs with
+             * isClosing( ) already true by construction
              */
 
             void onPeerClosed( SAA_in const eh::error_code& closeCode )
@@ -1140,7 +1233,26 @@ namespace bl
                     return;
                 }
 
-                if( ! isCleanEndOfStream( closeCode ) )
+                /*
+                 * THE WRITE'S CODE DECIDES WHEN IT IS PROOF AND NEVER OTHERWISE, and the rule is
+                 * the kernel's: a reset is written into the socket's error from a state which has
+                 * received no FIN, and EPIPE from one which has. So a write which completed
+                 * connection_reset PROVES the ending was a reset with no orderly close before it,
+                 * and the eof this read holds is the residue of that reset rather than a close;
+                 * a write which completed broken_pipe proves nothing against the read's own code,
+                 * because the read may have taken the reset itself, a FIN may have come first, or
+                 * the pipe may be our own shutdown. net::isPeerResetOnWriteErrorCode( ) is that
+                 * question, with the reasoning beside it - asked of net:: and never compared here
+                 *
+                 * AND IT CAN ONLY MAKE AN ENDING UNCLEAN. A write that ended cleanly, or that has
+                 * not ended at all, records the empty code, which this refuses
+                 */
+
+                const bool isResetTakenByTheWrite = net::isPeerResetOnWriteErrorCode( m_writeEndingCode );
+
+                const eh::error_code endCode = isResetTakenByTheWrite ? m_writeEndingCode : closeCode;
+
+                if( ! isCleanEndOfStream( endCode ) )
                 {
                     /*
                      * Whatever already parsed is still delivered - both of these are no-ops
@@ -1152,7 +1264,7 @@ namespace bl
                     deliverBodyChunk();
 
                     finishStream(
-                        closeCode,
+                        endCode,
                         ! m_requestMayHaveBeenSent /* isRetryable */,
                         false /* isConnectionUsable */
                         );
@@ -1221,7 +1333,39 @@ namespace bl
 
                 if( isEndOfStream )
                 {
-                    onPeerClosed( ec );
+                    /*
+                     * DEFERRED WHILE A WRITE IS IN FLIGHT, AND WITHOUT THIS THE CONSULT BELOW IS
+                     * HALF A FIX. The evidence onPeerClosed( ) needs is the write's code, and the
+                     * write's handler can run AFTER this one - the reactor posts the read op and
+                     * completes the write op inline, so an ending observed here may be an ending
+                     * whose only witness has not been asked yet. A record not yet written is a
+                     * record that cannot be consulted, so the ending is handed to the handler
+                     * which will hold it instead
+                     *
+                     * THE WRITE HANDLER IS GUARANTEED TO RUN, which is what makes this a deferral
+                     * and not a hang: closeConnection( ) below reaches initiateClose( ) through
+                     * this handler's own epilog, and that shuts the send side down for exactly
+                     * the case of a write in flight. Both handlers are on the strand, so the flag
+                     * is read here with no race and the hand-over is taken exactly once
+                     *
+                     * AND NOTHING IS DELIVERED HERE. An end of stream carries no octets, so there
+                     * is nothing this read could lose by saying nothing; what it would lose by
+                     * speaking is the discrimination itself
+                     *
+                     * WITH NO WRITE IN FLIGHT NOTHING BUT THIS READ COULD HAVE CONSUMED THE
+                     * ENDING, so the ending is classified here and now, exactly as before - and
+                     * with no parser there is no message to frame and onPeerClosed( ) returns at
+                     * once, which is why an idle connection's close is left on the direct path
+                     */
+
+                    if( m_parser && m_isWriteInFlight )
+                    {
+                        m_deferredEndingCode = ec;
+                    }
+                    else
+                    {
+                        onPeerClosed( ec );
+                    }
 
                     closeConnection();
                 }
@@ -1361,12 +1505,20 @@ namespace bl
                  * and the render failure of onStartRequest( ), and a cancel arriving before the
                  * request was ever started. Releasing them while a write is in flight is H01
                  * itself: the buffers handed to async_write( ) point into them
+                 *
+                 * AND THE WRITE'S RECORD GOES WITH THEM, under the same condition and for a
+                 * second reason of its own. How a write ended is a fact about THIS message, so a
+                 * connection handed back to the pool must not carry it into the next one; and a
+                 * write still in flight is one whose record a deferred delivery may yet have to
+                 * consult, which no stream ending may clear from under it
                  */
 
                 if( ! m_isWriteInFlight )
                 {
                     m_requestHead.clear();
                     m_requestBody.reset();
+
+                    m_writeEndingCode = eh::error_code();
                 }
 
                 m_bodyChunk.clear();

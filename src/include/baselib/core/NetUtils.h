@@ -331,8 +331,10 @@ namespace bl
          * and diagnosed from first principles, which is expensive.
          *
          * So: do not compare against asio::error::connection_reset, connection_aborted or eof in
-         * networking code. Ask one of the two predicates below, and if neither fits, add a third
-         * HERE with its reasoning rather than open-coding the comparison at the call site.
+         * networking code. Ask one of the predicates below, and if none of them fits, add the next
+         * one HERE with its reasoning rather than open-coding the comparison at the call site.
+         * There were two of them when this was written and there are five now, each of which had
+         * to say what question it answers that the ones before it do not.
          *
          * See notes/plans/issues/windows-peer-close-error-codes-record.md
          */
@@ -436,8 +438,8 @@ namespace bl
          *
          * AND WHY IT ALSO STILL ADMITS connection_reset, WHICH IS NOT A CHOICE BETWEEN THE TWO.
          * One peer close produces BOTH codes, and which one a write gets says only which half of
-         * the connection reached the reset first: sk_stream_error() takes the pending error with
-         * an exchange, so the FIRST of the two syscalls gets ECONNRESET and the other gets what is
+         * the connection reached the reset first: sock_error() takes the pending error with an
+         * exchange, so the FIRST of the two syscalls gets ECONNRESET and the other gets what is
          * left - EPIPE for a send, a plain end of stream for a recv. Measured both ways on this
          * platform, deterministically, with the order fixed by which op the reactor performs
          * first. A predicate admitting one of them would be right about half the time and would
@@ -466,6 +468,57 @@ namespace bl
         inline bool isPeerClosedOnWriteErrorCode( SAA_in const eh::error_code& ec ) NOEXCEPT
         {
             return isPeerClosedErrorCode( ec ) || asio::error::broken_pipe == ec;
+        }
+
+        /**
+         * @brief Whether a WRITE's own code is PROOF that the peer reset the connection, with no
+         * orderly close before it
+         *
+         * THE FIFTH PREDICATE, AND THE ONLY ONE WHOSE SUBJECT IS EVIDENCE RATHER THAN ROUTING.
+         * The four above ask what to DO about a code. This one asks what a code lets you conclude
+         * about the OTHER half of the same connection, and it exists because on a duplex socket
+         * the two halves do not both get to see what happened: one pending error, one exchange,
+         * and the first syscall to ask takes it away. A read left holding a plain end of stream
+         * after its own write consumed the reset cannot tell that ending from an orderly close,
+         * and for a message framed BY the close - an HTTP/1.1 response with no length - that is
+         * the difference between a complete answer and a truncated one reported as a success.
+         *
+         * WHAT MAKES IT PROOF IS THE KERNEL'S OWN RULE, and it is the whole reasoning here. On
+         * Linux tcp_reset() writes ECONNRESET only from a state which has received no FIN - the
+         * ESTABLISHED arm - and EPIPE from CLOSE_WAIT, and tcp_fin() sets SOCK_DONE, after which
+         * every empty recv() returns zero before it ever looks at the pending error. So a write
+         * which completed connection_reset says the ending was a reset and that nothing orderly
+         * preceded it. A write which completed broken_pipe says nothing at all against the read's
+         * own code: the read may have taken the reset itself, a FIN may have arrived first, or
+         * the pipe may be our own shutdown_send. Verified at the source, kernel 6.8, and measured
+         * both ways on a raw-socket probe.
+         *
+         * IT IS isPeerClosedErrorCode() AND THAT IS THE POINT, not a hand comparison wearing a
+         * name. On POSIX that predicate admits connection_reset and refuses broken_pipe, which is
+         * exactly the question above; what this adds is the reasoning, at one place, so that no
+         * call site has to carry it.
+         *
+         * WHAT IS OWED TO THE MATRIX, AND IT IS A BEHAVIOUR AND NOT ONLY A SPELLING. On Windows
+         * the stack collapses an orderly close into the reset spellings, so the kernel rule above
+         * does not hold there and this predicate admits a code a write may have got AFTER a FIN.
+         * A peer which half closes and only then aborts would, on that platform alone, have its
+         * FIN-framed message reported as a reset rather than completed. Nothing is lost by it on
+         * the face this exists for - a reset there reaches the READ as a reset spelling, which
+         * isCleanEndOfStreamErrorCode() refuses for itself - so the record is redundant on
+         * Windows and this is the only case in which it is not also harmless. Measure it there
+         * before relying on either answer.
+         *
+         * WHAT THIS DOES NOT COVER is a truncated TLS stream: that is the stream policy's
+         * spelling and, unlike the predicates above, asking it here would be WRONG - a truncation
+         * is what an orderly close-delimited HTTPS response looks like, so it is not evidence of
+         * a reset and must not be added beside this one.
+         *
+         * See notes/plans/issues/windows-peer-close-error-codes-record.md
+         */
+
+        inline bool isPeerResetOnWriteErrorCode( SAA_in const eh::error_code& ec ) NOEXCEPT
+        {
+            return isPeerClosedErrorCode( ec );
         }
 
         template

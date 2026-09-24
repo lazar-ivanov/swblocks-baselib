@@ -66,7 +66,7 @@
  * early for exactly this reason, and that is what its three green runs in twenty were.
  *
  * THE CODES, MEASURED. The reset is consumed by whichever syscall reaches it first, because
- * sk_stream_error( ) takes it with an exchange: send( ) first returns ECONNRESET and leaves the
+ * sock_error( ) takes it with an exchange: send( ) first returns ECONNRESET and leaves the
  * following recv( ) with a plain end of stream; recv( ) first returns ECONNRESET and leaves the
  * following send( ) with EPIPE. broken_pipe and connection_reset on a write are therefore one
  * event seen from the two sides of one race, which is why net::isPeerClosedOnWriteErrorCode( )
@@ -75,6 +75,14 @@
  * WHAT THE PEER DOES IS NOT A CHOICE. It answers from the request head - a 413, a 401, or as here
  * a response whose body it never finishes - and then closes with our upload still unread, which
  * puts a RST on the wire on every platform (RFC 2525 section 2.17).
+ *
+ * AND THE SAME EXCHANGE UNDER THE OTHER FRAMING IS A SECOND DEFECT, WHICH A1-CLEARTEXT FIXES AND
+ * WHICH THE TWO CASES AT THE END OF THIS FILE PIN. A2 declares Content-Length so that its red is
+ * about the write arm alone; with the response framed by the CLOSE instead, the eof the write left
+ * behind was handed to parseEof( ) and a body cut short by a RST was reported to the caller as a
+ * complete 200. That is design section 12.5's face 3 - the read consults what the write recorded,
+ * and defers to it while a write is still in flight - and its red is this exchange with the length
+ * taken off.
  */
 
 namespace utest
@@ -108,15 +116,20 @@ namespace utest
              * length a short body is incomplete however the stream ended, so the assertion on the
              * error code says the same thing on every platform.
              *
-             * AND THE CLOSE-DELIMITED SHAPE OF THIS EXCHANGE IS A DEFECT THIS CASE IS NOT ABOUT,
-             * which is the second reason and the load-bearing one. MEASURED, both sides, 8 runs
-             * each on a64 clang debug: with the same peer and no Content-Length, a 16-octet body
-             * cut short by a RST is reported to the caller as a COMPLETE 200 - closed:ok, no
-             * error - and it is reported that way with OR WITHOUT this driver's write arm. The
-             * cause is upstream of both: the write's send( ) consumes the reset, so the read is
-             * handed a plain end of stream, isCleanEndOfStream( ) says yes and parseEof( )
-             * completes the message. It is pre-existing, this change neither makes nor mends it,
-             * and a case written over that framing would be asserting a wrong answer
+             * AND THE CLOSE-DELIMITED SHAPE OF THIS EXCHANGE IS A SECOND DEFECT, WHICH A2 NEITHER
+             * MADE NOR MENDED - which is the second reason and the load-bearing one. MEASURED,
+             * both sides, 8 runs each on a64 clang debug: with the same peer and no
+             * Content-Length, a 16-octet body cut short by a RST is reported to the caller as a
+             * COMPLETE 200 - closed:ok, no error - and it was reported that way with OR WITHOUT
+             * this driver's write arm. The cause is upstream of both: the write's send( ) consumes
+             * the reset, so the read is handed a plain end of stream, isCleanEndOfStream( ) says
+             * yes and parseEof( ) completes the message
+             *
+             * A1-CLEARTEXT FIXES IT, AND ITS RED IS THIS EXCHANGE WITH THE LENGTH TAKEN OFF -
+             * Http1Driver_PeerResetsMidCloseDelimitedBodyDuringWriteTests below, which is why
+             * runResetDuringBlockedUpload( ) takes the framing as a parameter rather than being
+             * copied. A2's own case keeps the declared length, so that a future red HERE is about
+             * the write arm and about nothing else
              */
 
             DECLARED_BODY_LENGTH                = 64U,
@@ -388,9 +401,18 @@ namespace utest
          * write handler says nothing at all - so if a peer close which failed the write were not
          * also reported to the pending read, this stream would never end, and waitForClosed( )
          * says so rather than the case passing for a reason nobody checked
+         *
+         * 'isCloseDelimited' IS THE ONE THING THE TWO CASES DIFFER BY, and it changes exactly one
+         * string: the response head the peer sends, with or without its Content-Length. The
+         * arrangement above is identical for both, which is the point of parameterizing it -
+         * A1-cleartext's red needs precisely A2's ordering, and an arrangement copied into a
+         * second function is an arrangement that drifts
          */
 
-        inline auto runResetDuringBlockedUpload() -> WritePeerCloseResult
+        inline auto runResetDuringBlockedUpload(
+            SAA_in          const bool                                          isCloseDelimited = false
+            )
+            -> WritePeerCloseResult
         {
             using namespace bl;
             using namespace bl::tasks;
@@ -402,7 +424,7 @@ namespace utest
             const std::string chunkTwo( "part-two" );
 
             ScriptedPeer peer(
-                [ &chunkOne, &chunkTwo ](
+                [ &chunkOne, &chunkTwo, isCloseDelimited ](
                     SAA_inout   ScriptedPeer&                                   self,
                     SAA_inout   asio::ip::tcp::socket&                          socket
                     ) -> void
@@ -427,18 +449,28 @@ namespace utest
                      * complete and the body will stay short of what it declared. It says nothing
                      * about the connection, so nothing in the response itself asks this driver to
                      * close and the read stays armed for a body which never comes
+                     *
+                     * WITHOUT THE LENGTH THE CLOSE IS THE ONLY FRAMING THERE IS, which is the
+                     * shape RFC 9112 section 6.3 leaves a client nothing to check against - so
+                     * whether this message may be declared complete is decided entirely by HOW
+                     * the byte stream ended, and that is A1-cleartext's subject
                      */
 
                     ScriptedPeer::send(
                         socket,
-                        "HTTP/1.1 200 OK\r\n"
-                        "Content-Length: " +
-                        utils::lexical_cast< std::string >(
-                            static_cast< std::size_t >( DECLARED_BODY_LENGTH )
-                            ) +
-                        "\r\n"
-                        "\r\n" +
-                        chunkOne
+                        isCloseDelimited ?
+                            "HTTP/1.1 200 OK\r\n"
+                            "\r\n" +
+                            chunkOne
+                            :
+                            "HTTP/1.1 200 OK\r\n"
+                            "Content-Length: " +
+                            utils::lexical_cast< std::string >(
+                                static_cast< std::size_t >( DECLARED_BODY_LENGTH )
+                                ) +
+                            "\r\n"
+                            "\r\n" +
+                            chunkOne
                         );
 
                     /*
@@ -593,6 +625,168 @@ namespace utest
             return result;
         }
 
+        /**
+         * @brief One POST whose body the peer never reads, half answered and then HALF CLOSED
+         *
+         * THE CONTROL THE DEFERRAL OWES, AND NOT A SECOND RED. Design section 12.5's third part
+         * has the read hand its ending to the write handler whenever it observes one with a write
+         * still in flight - so the two things that shape has to be held to are that the ending
+         * still ARRIVES, and that a message the peer framed with a FIN is still completed. Today's
+         * tree passes this case as well, by delivering from the read handler; what it pins is that
+         * the deferral did not turn either answer into a hang or a truncation.
+         *
+         * THE INTERLEAVING IS CERTAIN AND NEEDS NO STRAND HELD. The peer reads the request HEAD
+         * and then stops, so an 8MB body cannot complete however long it is given - the write is
+         * in flight when the FIN arrives, on every run and on every machine. That is the whole
+         * arrangement, and it is why this case has no gate, no bound and no sleep.
+         *
+         * WHAT WAKES THE WRITE IS OUR OWN TEARDOWN, which is the no-hang argument made observable:
+         * the read's closeConnection( ) reaches initiateClose( ) through the epilog, initiateClose( )
+         * shuts the send side down for a write in flight, and the parked write completes EPIPE.
+         * A deferral waiting on a handler nothing would ever run is exactly what waitForClosed( )'s
+         * bound turns into a diagnosis here.
+         *
+         * shutdown_send AND NOT close( ), and the difference is the whole case: a close with our
+         * upload unread puts a RST on the wire (RFC 2525 section 2.17) and that is the OTHER case
+         * above. Here the peer half closes and keeps its receive side open, so what the driver
+         * sees is a plain FIN and the message it framed is complete
+         */
+
+        inline auto runHalfCloseDuringBlockedUpload() -> WritePeerCloseResult
+        {
+            using namespace bl;
+            using namespace bl::tasks;
+            using namespace utest::http1driver;
+
+            WritePeerCloseResult result;
+
+            const std::string chunkOne( "part-one" );
+
+            ScriptedPeer peer(
+                [ &chunkOne ](
+                    SAA_inout   ScriptedPeer&                                   self,
+                    SAA_inout   asio::ip::tcp::socket&                          socket
+                    ) -> void
+                {
+                    eh::error_code ec;
+
+                    socket.set_option(
+                        asio::socket_base::receive_buffer_size(
+                            static_cast< int >( PEER_RECEIVE_BUFFER_SIZE )
+                            ),
+                        ec
+                        );
+
+                    self.record( ec ? "rcvbuf:failed" : "rcvbuf:set" );
+
+                    const auto head = readRequestHead( socket );
+
+                    self.record( "head:" + ScriptedPeer::requestLineOf( head ) );
+
+                    /*
+                     * Framed by the close and by nothing else, so that what the FIN means for this
+                     * message is the whole of what the case asserts
+                     */
+
+                    ScriptedPeer::send(
+                        socket,
+                        "HTTP/1.1 200 OK\r\n"
+                        "\r\n" +
+                        chunkOne
+                        );
+
+                    /*
+                     * THE FIN, WITH THE UPLOAD STILL UNREAD IN ITS QUEUE. shutdown_send leaves the
+                     * receive side open, which is what keeps those octets from becoming a RST
+                     */
+
+                    socket.shutdown( asio::ip::tcp::socket::shutdown_send, ec );
+
+                    self.record( ec ? "fin:failed" : "fin:sent" );
+
+                    /*
+                     * AND IT HOLDS THE CONNECTION until the case has its verdict. The close which
+                     * ends this script has our unread upload behind it and would put a RST on the
+                     * wire - after the stream has ended it can harm nothing, and before it would
+                     * make this the other case
+                     */
+
+                    self.waitForRelease();
+                }
+                );
+
+            const auto sink = RecordingSinkImpl::createInstance();
+
+            scheduleAndExecuteInParallel(
+                [ &peer, &sink, &result ](
+                    SAA_in      const om::ObjPtr< ExecutionQueue >&             eq
+                    ) -> void
+                {
+                    eq -> setOptions( ExecutionQueue::OptionKeepAll );
+
+                    const auto driver = establishDriver( eq, peer.port() );
+                    const auto driverTask = om::qi< Task >( driver );
+
+                    eq -> push_back( driverTask );
+
+                    auto request = makeRequest( peer.port(), "/half-closed", "POST" );
+
+                    const auto block =
+                        data::DataBlock::createInstance(
+                            static_cast< std::size_t >( BLOCKED_BODY_SIZE )
+                            );
+
+                    std::memset( block -> pv(), 'x', static_cast< std::size_t >( BLOCKED_BODY_SIZE ) );
+
+                    block -> setSize( static_cast< std::size_t >( BLOCKED_BODY_SIZE ) );
+
+                    request.body( om::ObjPtrCopyable< data::DataBlock >( block ) );
+
+                    const auto handle = driver -> submit(
+                        request,
+                        om::qi< httpclient::ClientStreamEventSink >( sink )
+                        );
+
+                    UTF_REQUIRE( httpclient::ClientConnection::INVALID_STREAM_HANDLE != handle );
+
+                    result.closed = sink -> waitForClosed();
+
+                    chkOrFail(
+                        result.closed,
+                        "the stream never ended - a read which deferred its ending to the write "
+                        "handler was left waiting for a write nothing woke; events so far: " +
+                            joinEvents( sink -> events() )
+                        );
+
+                    /*
+                     * READ BEFORE THE PEER IS LET GO, for the reason the other case states: this
+                     * is where the pool reads it
+                     */
+
+                    result.state = driver -> state();
+
+                    peer.release();
+
+                    eq -> wait( driverTask );
+
+                    result.taskFailed = driverTask -> isFailed();
+                    result.taskFailure = taskFailureText( driverTask );
+
+                    eq -> forceFlushNoThrow();
+                }
+                );
+
+            UTF_REQUIRE_EQUAL( peer.failure(), std::string() );
+
+            result.errorCode = sink -> errorCode();
+            result.status = sink -> finalStatus();
+            result.body = sink -> body();
+            result.events = joinEvents( sink -> events() );
+            result.peerRecords = joinEvents( peer.records() );
+
+            return result;
+        }
+
     } // http1writeclose
 
 } // utest
@@ -644,6 +838,152 @@ UTF_AUTO_TEST_CASE( Http1Driver_PeerResetsWhileRequestWriteIsBlockedTests )
         "the peer hanging up during the request write failed the driver task: " +
             result.taskFailure + "; the stream ended with '" + result.errorCode.message() +
             "'; events: " + result.events + "; peer: " + result.peerRecords
+        );
+}
+
+UTF_AUTO_TEST_CASE( Http1Driver_PeerResetsMidCloseDelimitedBodyDuringWriteTests )
+{
+    using namespace bl;
+    using namespace utest::http1writeclose;
+
+    /*
+     * A1-CLEARTEXT, FACE 3 - THE RESET THE WRITE CONSUMED, AND THE WORST ANSWER THIS DRIVER COULD
+     * GIVE: a truncated response handed to the caller as a complete, successful 200.
+     *
+     * THE SAME EXCHANGE AS THE CASE ABOVE, WITH THE LENGTH TAKEN OFF. One RST sets the socket's
+     * pending error once and the first syscall to reach it takes it away; the arrangement above
+     * makes that syscall the WRITE's, which leaves the pending read a plain end of stream.
+     * isCleanEndOfStream( ) admits eof on purpose - it is how a close-delimited message is framed
+     * at all - so parseEof( ) completed a 16-octet body the peer had not finished, and the caller
+     * was told closed:ok with no way to tell. Measured 8 of 8 on a64 clang debug, on the tree with
+     * the write arm and on the tree without it.
+     *
+     * WHAT THE FIX RESTS ON IS THAT THE WRITE'S CODE IS EVIDENCE THE READ'S IS NOT. tcp_reset( )
+     * writes ECONNRESET only from a state which has received no FIN and EPIPE from CLOSE_WAIT, and
+     * tcp_fin( ) sets SOCK_DONE - so a write which completed connection_reset PROVES the ending
+     * was a reset with no FIN before it, and the read's eof is what that reset left behind rather
+     * than an orderly close. onPeerClosed( ) therefore consults what the write recorded, and the
+     * ending is unclean with the WRITE's code.
+     *
+     * THE RED IS THE ERROR CODE ASSERTION AND NOTHING ELSE. Everything else here passed before the
+     * fix too - which is what makes this the dangerous class of defect rather than a visible one
+     */
+
+    const auto result = runResetDuringBlockedUpload( true /* isCloseDelimited */ );
+
+    UTF_REQUIRE( result.closed );
+
+    /*
+     * EVERYTHING THE PEER DID SEND IS STILL DELIVERED. The fix decides how the message ENDS and
+     * takes nothing away from it - a caller told the transfer was cut short still gets the octets
+     * it did receive, exactly as the read-first case above already had it
+     */
+
+    UTF_REQUIRE_EQUAL( result.status, 200U );
+
+    UTF_REQUIRE_EQUAL( result.body, std::string( "part-onepart-two" ) );
+
+    /*
+     * NOT REUSABLE, for the same reason and read at the same moment as in the case above
+     */
+
+    UTF_REQUIRE( httpclient::ConnectionState::Ready != result.state );
+
+    /*
+     * AND THE TASK STILL DOES NOT FAIL. A2's arm is what makes this true, and it is asserted here
+     * as well because the two answers are independent: the stream's verdict is what the caller
+     * gets, the task's is what the pool gets, and a change which fixed one by breaking the other
+     * would be no fix at all
+     */
+
+    utest::http1driver::chkOrFail(
+        ! result.taskFailed,
+        "the peer hanging up during the request write failed the driver task: " +
+            result.taskFailure + "; events: " + result.events + "; peer: " + result.peerRecords
+        );
+
+    /*
+     * THE ASSERTION THIS CASE EXISTS FOR, AND THE ONE IT WAS WRITTEN RED AGAINST. A close-delimited
+     * body has no length to check against, so if the ending is declared clean the message is
+     * declared COMPLETE - and the caller has nothing left to consult. The message carries what the
+     * stream actually ended with, because a future red here must say whether the verdict went
+     * missing or merely changed
+     */
+
+    utest::http1driver::chkOrFail(
+        static_cast< bool >( result.errorCode ),
+        "a close-delimited body cut short by a RST was reported to the caller as a complete "
+        "response: status " + utils::lexical_cast< std::string >( result.status ) +
+            ", body '" + result.body + "', events: " + result.events +
+            "; peer: " + result.peerRecords
+        );
+}
+
+UTF_AUTO_TEST_CASE( Http1Driver_PeerHalfClosesWithAWriteInFlightTests )
+{
+    using namespace bl;
+    using namespace utest::http1writeclose;
+
+    /*
+     * A1-CLEARTEXT'S CONTROL - THE FIN CASE THE DEFERRAL MUST NOT BREAK.
+     *
+     * The read observes the ending with the write still in flight, which is the interleaving the
+     * deferral exists for: the write handler has not run, it is guaranteed to, and a record not yet
+     * written is a record the read cannot consult. So the read hands its ending over and the WRITE
+     * handler delivers it - here with a code that is not a reset (our own shutdown wakes the parked
+     * write with EPIPE), so the read's own eof decides and the message the FIN framed is complete.
+     *
+     * IT IS NOT A RED, AND SAYING SO IS PART OF THE EVIDENCE. Today's tree completes this message
+     * too, from the read handler. What would fail here is a deferral that waits on a handler
+     * nothing wakes - a HANG, reported by waitForClosed( )'s bound - or one that lets the write's
+     * broken_pipe decide, which would turn a complete response into a failure. Both are what this
+     * change-set could plausibly have got wrong, and neither can be seen from the other case
+     */
+
+    const auto result = runHalfCloseDuringBlockedUpload();
+
+    utest::http1driver::chkOrFail(
+        result.closed,
+        "the stream never ended; events: " + result.events + "; peer: " + result.peerRecords
+        );
+
+    /*
+     * THE FIN REACHED THE WIRE, which is what makes this the half-close case rather than an
+     * accident of the peer's own teardown
+     */
+
+    utest::http1driver::chkOrFail(
+        std::string::npos != result.peerRecords.find( "fin:sent" ),
+        "the peer did not half close: " + result.peerRecords
+        );
+
+    UTF_REQUIRE_EQUAL( result.status, 200U );
+
+    UTF_REQUIRE_EQUAL( result.body, std::string( "part-one" ) );
+
+    /*
+     * COMPLETE, AND THAT IS THE ASSERTION. A close-delimited message is framed by the close, and
+     * this one ended with the peer's own orderly FIN - so declaring it complete is the RIGHT answer
+     * and the write's broken_pipe must not be allowed to override it
+     */
+
+    utest::http1driver::chkOrFail(
+        ! result.errorCode,
+        "a close-delimited response framed by the peer's own FIN was reported as failed with '" +
+            result.errorCode.message() + "'; events: " + result.events +
+            "; peer: " + result.peerRecords
+        );
+
+    /*
+     * NOT REUSABLE - the peer ended the conversation, whichever way it ended it
+     */
+
+    UTF_REQUIRE( httpclient::ConnectionState::Ready != result.state );
+
+    utest::http1driver::chkOrFail(
+        ! result.taskFailed,
+        "a peer half closing during the request write failed the driver task: " +
+            result.taskFailure + "; events: " + result.events + "; peer: " + result.peerRecords
         );
 }
 

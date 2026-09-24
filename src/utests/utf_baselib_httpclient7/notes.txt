@@ -37,3 +37,18 @@
 # the arm, WRITE_PARKS_IN_MILLISECONDS is the first thing to look at
 
 --log_level=message --run_test=Http1Driver_PeerResetsWhileRequestWriteIsBlockedTests
+
+# A1-cleartext - face 3 of design 12.5: the reset the WRITE consumed leaves the read a plain eof,
+# and a close-delimited body cut short by that reset was declared COMPLETE. Same exchange and same
+# arrangement as the A2 case above, with the response's Content-Length taken off - so the same note
+# about WRITE_PARKS_IN_MILLISECONDS applies to it, and for the same reason.
+
+--log_level=message --run_test=Http1Driver_PeerResetsMidCloseDelimitedBodyDuringWriteTests
+
+# The control beside it, and NOT a red: a peer which half closes with the upload unread. The read
+# observes the FIN with the write in flight, so it defers the ending to the write handler - which
+# our own initiateClose( ) wakes with EPIPE. The message the FIN framed must still complete. It
+# passes on the tree before the fix as well; what it pins is that the deferral neither hangs nor
+# lets the write's broken_pipe override an orderly close.
+
+--log_level=message --run_test=Http1Driver_PeerHalfClosesWithAWriteInFlightTests
