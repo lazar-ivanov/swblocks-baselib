@@ -205,6 +205,32 @@ is in `astra-review-verification-record.md`.
 
 ---
 
+## The decision on P2 and P3, taken 2026-09-24
+
+**Both stay deferred here, and this is a decision rather than an omission.** They came up in the
+sweep of everything astra's review left open, were considered on their own merits, and the
+disposition is unchanged: **P2 (astra H24) and P3 (astra H25) are prerequisites of the decoder
+programme, not of the HTTP client layers.**
+
+**Why deferring costs nothing today.** Both are **latent by the same property**: this client
+registers no decoder, so `decodeBody( )` matches nothing, the body is handed back intact with its
+header, and that is the documented behaviour for a coding we cannot decode. Neither can produce a
+wrong answer while that holds.
+
+**What reverses it — one condition, and it is the same for both.** The moment **any** content codec
+is registered, both stop being latent, and they become **the first two items of that work** rather
+than new findings discovered during it. P2's multi-coding layers have to be peeled in reverse order;
+P3's early return has to move above the exception check. Whoever unparks the decoder programme owns
+them on day one.
+
+**Note the parked state is not only this deferral's.** The embedded decompression design and plan are
+committed and parked on two unmade decisions of their own — **E5** (generated headers in the repo
+include tree versus the devenv dist) and astra's **C01** (the design specifies `inline constexpr`,
+which is C++17, while baselib compiles `-std=c++11`). So there are three gates between here and a
+registered codec, and P2/P3 sit behind all of them.
+
+---
+
 ## Sequencing when it does happen
 
 0. Close **P1** above, and P2 and P3 for any coding being registered. P1 is a change to the
