@@ -5,3 +5,5 @@
 --log_level=message --run_test=ClientSessionTls_Http11FallbackExchangeTests
 --log_level=message --run_test=Http1DriverTls_IdleCloseSendsCloseNotifyTests
 --log_level=message --run_test=Http1DriverTls_WriteInFlightCloseSkipsCloseNotifyTests
+--log_level=message --run_test=Http1DriverTls_CancelledReadCompletesACutShortBodyTests
+--log_level=message --run_test=Http1DriverTls_ClosingReadCompletesACutShortBodyTests

@@ -79,3 +79,4 @@
 
 #include "TestClientSessionTls.h"
 #include "TestClientSessionTlsHttp1.h"
+#include "TestHttp1DriverTlsCancelClose.h"
