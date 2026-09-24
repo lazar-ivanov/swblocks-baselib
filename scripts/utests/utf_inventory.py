@@ -581,6 +581,54 @@ def condition_stack( lines ):
     return at
 
 
+def span_conditions( cond_at, first, last ):
+    """
+    Every condition governing any line of a file-scope span, the stack at its first line first
+
+    C11's identity is the sha of the span's SHADOW text together with the conditions it compiles
+    under, and the shadow is where the hole was: a conditional which opens and closes entirely
+    INSIDE a bracketed span is blanked out of the shadow, so it is not in the sha - and the stack
+    recorded at the span's first line is the one OUTSIDE it, so it was not in the guards either.
+    A blank line inside an open bracket does not split a member, so the span swallowed the whole
+    conditional and neither half of the identity could see it. Measured on a filesystem copy:
+    inverting #if BOOST_VERSION < 105900 at include/utests/baselib/UtfMain.h:96, inside the
+    319-line span at :52, PASSED tier 1 green - a file-scope declaration silently changing what
+    compiles on which Boost, and the gate said nothing at all
+
+    The union rather than the first line's stack, and the union rather than the span's TEXT, and
+    both halves of that are the decision:
+
+      - into the GUARDS, because the report has to say the condition changed. Hashing lines
+        rather than shadow over the extent would close the same hole, and it was the shape first
+        recorded for it, but it puts the directive into the sha - so the report is LOST plus
+        ADDED, indistinguishable from text moving, which is the very distinction the guard half
+        was added to draw. It would also hash the #include lines inside such a span, which are
+        C10's, and report every one of them twice
+
+      - the UNION over the extent, because a span is not under one stack: 319 lines of UtfMain.h
+        compile unconditionally and a handful of them under a BOOST_VERSION test. Flattening that
+        to "the conditions governing this span" is the honest summary a flat list can carry, and
+        it degenerates to exactly the old value - the stack at the first line - for every span
+        with no conditional inside it, which today is 78 of the 79
+
+    Order is first appearance, which puts the outer stack first and in its own order, because the
+    entry for the first line IS the outer stack and every interior entry extends it
+
+    MEMBERS are deliberately left alone. A helper member's sha is over lines rather than shadow,
+    so a conditional inside one is already in its identity as text; folding it in here as well
+    would report it twice and change nothing about what is judged. 18 members carry one today
+    """
+
+    conditions = []
+
+    for stack in cond_at[ first : last + 1 ]:
+        for entry in stack:
+            if entry not in conditions:
+                conditions.append( entry )
+
+    return conditions
+
+
 def scan_file( path, module, rel_path, problems ):
     """
     Extract every test case, column-0 namespace block and include from one file
@@ -619,11 +667,13 @@ def scan_file( path, module, rel_path, problems ):
     # does it for cases, and a text that survives under a different stack is reported as a guard
     # change rather than as a loss
     #
-    # RESIDUE: a conditional opening INSIDE a bracketed file-scope span is invisible to both halves
-    # of that. The stack is taken at a span's first line, and the directive itself is blanked out of
-    # the shadow so it is not in the sha either - and a blank inside an open bracket does not split
-    # the member. One live instance: include/utests/baselib/UtfMain.h:52-370, a 319-line span with
-    # #if BOOST_VERSION < 105900 at :96. Inverting :96 PASSES, measured
+    # A conditional opening INSIDE a bracketed file-scope span was invisible to both halves of that,
+    # and span_conditions( ) below is what closes it. The stack used to be taken at a span's first
+    # line alone, while the directive itself is blanked out of the shadow and so is not in the sha
+    # either - and a blank line inside an open bracket does not split the member, so the two halves
+    # met in the middle and judged nothing. One live instance, and it is 319 lines long:
+    # include/utests/baselib/UtfMain.h:52-370, with #if BOOST_VERSION < 105900 at :96. Inverting :96
+    # PASSED, measured, before span_conditions( ) existed
     #
 
     cond_at = condition_stack( lines )
@@ -894,7 +944,7 @@ def scan_file( path, module, rel_path, problems ):
         'file': rel_path,
         'line': first + 1,
         'sha': sha( normalize( shadow[ first : last + 1 ] ) ),
-        'guards': list( cond_at[ first ] ),
+        'guards': span_conditions( cond_at, first, last ),
         'label': shadow[ first ].strip()[ : 60 ],
         } for first, last in split_members( shadow, 0, total )
         if not is_prose( shadow, first, last ) ]
@@ -1215,12 +1265,13 @@ def span_comparison( before_list, after_list, armed ):
     """
     Sort two lists of spans into ( lost, added, reguarded ) - C6's and C11's shared comparison
 
-    The identity is the text sha together with the enclosing preprocessor condition stack, which is
-    what C3 does for a case. A span whose text survives on the other side under a DIFFERENT stack
-    is neither lost nor invented - it is the same helper now compiling on a different platform, and
-    saying so in its own words is what makes the control meaningful. Reporting it as LOST plus
-    ADDED would be indistinguishable from one of the three one-line directive members moving, which
-    is text and not the guard
+    The identity is the text sha together with the preprocessor conditions recorded beside it - the
+    stack enclosing a helper member, and for a file-scope span the conditions governing any line of
+    it, which span_conditions( ) explains - as C3 does for a case. A span whose text survives on the
+    other side under a DIFFERENT stack is neither lost nor invented - it is the same helper now
+    compiling on a different platform, and saying so in its own words is what makes the control
+    meaningful. Reporting it as LOST plus ADDED would be indistinguishable from one of the three
+    one-line directive members moving, which is text and not the guard
 
     With armed False the guard half of every key is empty on both sides, so the keys differ only by
     sha, reguarded is necessarily empty, and lost and added are exactly what this comparison
@@ -1490,9 +1541,9 @@ def check_against( before, after ):
     # The guard half of C6 and C11 - is the enclosing preprocessor condition part of the identity?
     #
     # No invariant read a condition enclosing anything but a test case: C11 drops conditionals
-    # "because conditionals are C3's", and C3 speaks for cases only. 18 helper members and 11
-    # file-scope spans sit under one today, among them Utf.h's #if defined( UTF_TEST_MODULE ),
-    # which is the condition gating main( )
+    # "because conditionals are C3's", and C3 speaks for cases only. 18 helper members sit under
+    # one today and 12 file-scope spans sit under or contain one, among them Utf.h's
+    # #if defined( UTF_TEST_MODULE ), which is the condition gating main( )
     #
     # A baseline captured before this carries no guards anywhere, and the same departure C11 and
     # C13 take is taken here rather than reding every lane: span_comparison( ) then keys on the sha
@@ -2229,10 +2280,12 @@ def main():
                    'under one' % ( under_a_guard, spans_under_a_guard ) )
         else:
             print( 'utf_inventory: C6 and C11 fold the enclosing #if stack into their identity, as '
-                   'C3 does for a case - %d member(s) and %d file-scope span(s) sit under one, and '
-                   'a text that survives under a DIFFERENT stack reports as a guard change rather '
-                   'than as a loss. The condition is compared as written, so a re-spelling of the '
-                   'same condition reports' % ( under_a_guard, spans_under_a_guard ) )
+                   'C3 does for a case - %d member(s) sit under one, and %d file-scope span(s) sit '
+                   'under or CONTAIN one, since a conditional opening inside a bracketed span is '
+                   'read by neither the stack outside it nor the hash within it. A text that '
+                   'survives under a DIFFERENT stack reports as a guard change rather than as a '
+                   'loss. The condition is compared as written, so a re-spelling of the same '
+                   'condition reports' % ( under_a_guard, spans_under_a_guard ) )
 
         failures.extend( check_against( before, manifest ) )
 

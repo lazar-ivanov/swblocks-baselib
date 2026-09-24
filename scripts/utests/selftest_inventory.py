@@ -49,16 +49,23 @@ sys.path.insert( 0, os.path.dirname( os.path.abspath( __file__ ) ) )
 from utf_inventory import check_intrinsic, check_against
 
 #
-# condition_stack( ) is imported defensively, which is the accommodation unreferenced( ) makes one
-# level down and for the same reason: this file has to run against an OLDER utf_inventory.py,
-# because that is how the negative half of every probe below is produced, and a hard ImportError
-# would take every one of them with it rather than only the extractor section
+# condition_stack( ) and span_conditions( ) are imported defensively, which is the accommodation
+# unreferenced( ) makes one level down and for the same reason: this file has to run against an
+# OLDER utf_inventory.py, because that is how the negative half of every probe below is produced,
+# and a hard ImportError would take every one of them with it rather than only the extractor
+# section. One block each, so that a tool carrying the first and not the second still runs the half
+# it has
 #
 
 try:
     from utf_inventory import condition_stack
 except ImportError:
     condition_stack = None
+
+try:
+    from utf_inventory import span_conditions
+except ImportError:
+    span_conditions = None
 
 
 MARKER_RE = re.compile( r'^(C\d+)(.?)' )
@@ -302,6 +309,85 @@ def extractor( stack_of ):
     return ok
 
 
+#
+# The same treatment for span_conditions( ), which decides what a FILE-SCOPE span is judged under
+#
+# A span's sha is over the SHADOW, where a preprocessor conditional is blanked, so a conditional
+# that opens and closes entirely inside a bracketed span was in neither half of C11's identity -
+# not in the sha, because it is blanked, and not in the guards, because those were the stack at the
+# span's first line, which is the stack OUTSIDE it. A blank line inside an open bracket does not
+# split a member, so the span simply swallowed it. Measured on a filesystem copy before this:
+# inverting #if BOOST_VERSION < 105900 at UtfMain.h:96, inside the 319-line span at :52, PASSED
+#
+# The first and third cases are that shape; the second and fourth are the ones that must NOT move,
+# and they are the larger population - 78 of the 79 spans in this tree have no conditional inside
+# them, and for every one of those this has to return exactly what the first line's stack returned
+#
+# The tree has no instance of this in a MODULE file, all 79 spans having been counted: the one
+# instance is in the shared tree. So the module-file half of the control is a constructed span on a
+# filesystem copy, and lives with the change-set's evidence rather than here
+#
+
+SPAN_CASES = [
+
+    ( 'a conditional opening INSIDE a bracketed span is in the identity', [
+        'static const char* const g_text[] =',
+        '{',
+        '#if defined( _WIN32 )',
+        '    "windows",',
+        '#else',
+        '    "posix",',
+        '#endif',
+        '};',
+        ], 0, 7, [ 'if defined( _WIN32 )', 'if defined( _WIN32 ) | else ' ] ),
+
+    ( 'a span with no conditional inside it keeps the first line\'s stack', [
+        '#if defined( _WIN32 )',
+        'static int g_count = 0;',
+        '#endif',
+        ], 1, 1, [ 'if defined( _WIN32 )' ] ),
+
+    ( 'a span under one condition and containing another carries both, outer first', [
+        '#ifdef NDEBUG',
+        'static const char* const g_text[] =',
+        '{',
+        '#if defined( _WIN32 )',
+        '    "windows",',
+        '#endif',
+        '};',
+        '#endif',
+        ], 1, 6, [ 'ifdef NDEBUG', 'if defined( _WIN32 )' ] ),
+
+    ( 'a span with no condition anywhere near it carries none', [
+        'static int g_count = 0;',
+        ], 0, 0, [] ),
+
+    ]
+
+
+def spans( stack_of, conditions_of ):
+    """
+    Assert the conditions span_conditions( ) records for a file-scope span over synthetic lines
+    """
+
+    ok = True
+
+    for label, lines, first, last, expected in SPAN_CASES:
+
+        actual = list( conditions_of( stack_of( lines ), first, last ) )
+
+        if actual == expected:
+            print( '    PASS  ----  span_conditions( ) %s' % label )
+            continue
+
+        print( '    FAIL  ----  span_conditions( ) %s' % label )
+        print( '                lines %d-%d  want %r got %r'
+               % ( first + 1, last + 1, expected, actual ) )
+        ok = False
+
+    return ok
+
+
 def main():
 
     if len( sys.argv ) != 2:
@@ -418,6 +504,12 @@ def main():
                'the extractor section cannot run against a build predating it' )
     else:
         ok &= extractor( condition_stack )
+
+        if span_conditions is None:
+            print( '    ----  ----  span_conditions( ) is not in this tool        '
+                   'the span half of the extractor section cannot run against it' )
+        else:
+            ok &= spans( condition_stack, span_conditions )
 
     # C1 - a dropped case
     mutated = copy.deepcopy( baseline )
