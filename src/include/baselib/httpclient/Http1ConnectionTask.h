@@ -1596,16 +1596,16 @@ namespace bl
                  *
                  * THE RECORD IS STILL HERE AND IS RELEASED BELOW, which is why the term is asked
                  * at this line and not after the state block: the same ! m_isWriteInFlight branch
-                 * that makes this verdict reachable is the branch that clears m_writeEndingCode
+                 * that lets this verdict be TRUE is the branch that clears m_writeEndingCode
                  *
-                 * NON-EMPTY RATHER THAN net::isPeerResetOnWriteErrorCode( ), and the two are
-                 * different questions. That predicate answers "is the read's own eof the residue
-                 * of a reset the write consumed" - onPeerClosed( )'s question, where admitting
-                 * broken_pipe would be WRONG, because EPIPE proves a FIN came first and the read's
-                 * ending is genuine. Reusability has no such asymmetry: a write that ended
-                 * broken_pipe, eof, reset, aborted or truncated is a request this peer will not
-                 * finish reading, and every one of them is a no. So the question here is the
-                 * widest one there is - did this write end cleanly - and it needs no predicate
+                 * NON-EMPTY RATHER THAN net::isPeerResetOnWriteErrorCode( ), which is a DIFFERENT
+                 * VERDICT and not a tidier question. That predicate is onPeerClosed( )'s - is the
+                 * read's eof the residue of a reset the write consumed - and it refuses
+                 * broken_pipe because EPIPE fits THREE histories: a FIN first, the read having
+                 * taken the reset itself, or our own shutdown_send. It proves nothing either way.
+                 * Reuse needs no proof: a peer which half closes with the upload unread ends our
+                 * write EPIPE and THAT connection is finished, as it is on every other non-empty
+                 * code, ours included. So the question here is only - did this write end cleanly
                  *
                  * WHICH MAKES THE TWO VERDICTS ONE QUESTION AGAIN. onStreamEndDeferred( ) has
                  * asked exactly this since H01, and until now this line did not - two computations
@@ -1620,7 +1620,7 @@ namespace bl
 
                 /*
                  * H01 - A WRITE WHICH HAS FINISHED AND A WRITE WHICH IS STILL RUNNING ARE THE SAME
-                 * THREE BITS ABOVE, AND ONE STRAND HOP IS WHAT TELLS THEM APART
+                 * FIRST THREE BITS ABOVE, AND ONE STRAND HOP IS WHAT TELLS THEM APART
                  *
                  * m_isWriteInFlight is cleared by the write's OWN handler, so a read completion
                  * which reaches this strand ahead of that handler reads a stale true and refuses a
