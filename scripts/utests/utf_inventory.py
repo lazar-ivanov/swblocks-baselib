@@ -546,10 +546,12 @@ def condition_stack( lines ):
     deliberate re-spelling reports, which is the ordinary companion-refresh answer this gate
     already gives for every other deliberate edit
 
-    RESIDUE: this function is asserted by nothing. Every probe in selftest_inventory.py mutates a
-    manifest, so what the EXTRACTOR produces from real lines - this stack, and the boundary rule
-    above - is proved only by the filesystem controls of the change-set that wrote it, and nothing
-    in the repository re-proves it. A probe over synthetic lines would close that
+    selftest_inventory.py asserts this walk directly, on synthetic line lists whose every line
+    carries the stack it expects: the boundary rule above, the #else and #elif spelling, the
+    include guard exclusion and the define-if-not-defined that shares its shape, nesting, and the
+    direction an unbalanced or unterminated conditional takes. That is the only probe there whose
+    subject is not a manifest, and it had to be, because both sides of a manifest comparison are
+    built by this walk - a stack computed wrongly is computed wrongly twice and reads as equal
     """
 
     stack = []
