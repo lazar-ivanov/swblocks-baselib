@@ -109,6 +109,27 @@
 #   utf_inventory.py --compare baseline.json
 #   utf_inventory.py --compare before.json --against after.json
 #
+# --capture REFUSES to overwrite a baseline whose top-level keys are a STRICT SUPERSET of the ones
+# this run would write, and exits 4 without touching the file. That is an older tool about to
+# disarm a check a newer one armed, and all it would leave behind is a printed note nobody has to
+# read. The comparison is key sets alone - no schema and no contents - so a key added later needs
+# no edit here
+#
+# This is PREVENTIVE, and the distinction is worth stating exactly because the obvious story is
+# wrong. No baseline anywhere in this repository carried file_members or shared before adc00c8
+# armed them: every one of the 30 baseline commits across every ref carries four top-level keys,
+# and the four lazari2 refreshes made while C11, C12 and C13 were being built - 21b0c37, 3c57955,
+# 6e97b86, fd6d80a - dropped NOTHING, because nothing was armed yet. No downgrade exists in this
+# history. What does exist is a branch positioned to make one: s6r3-1 carries its own baseline
+# commit, b814ed9, written on 2026-09-23 with an older tool and never merged, so a re-capture from
+# it after the arming would write four keys over six
+#
+# It protects only against tools built from this commit onward, which is why the refresh rule is
+# also written down in src/utests/AGENTS.md: an inventory.json conflict is resolved by re-capturing
+# with the integrated tool, never by taking one side. Disagreement in BOTH directions is not
+# refused either - that is schema evolution rather than a downgrade, and a gate which cannot tell
+# them apart would block the next key this tool learns to write
+#
 # Stdlib only, by design - it must run on the devenv7 dist interpreter, which is an embeddable
 # build with no venv and no pip
 #
@@ -1634,6 +1655,41 @@ def check_against( before, after ):
     return failures
 
 
+def keys_a_capture_would_drop( path, manifest ):
+    """
+    The top-level keys a baseline already at this path carries and this manifest does not
+
+    Empty unless the existing key set is a STRICT SUPERSET of the one about to be written, which is
+    the one state that says unambiguously "an older tool is overwriting a newer baseline". Any
+    other disagreement is left alone: a manifest carrying a key the baseline lacks is the ordinary
+    arming refresh, and disagreement in both directions is schema evolution rather than a downgrade
+
+    Key sets alone, deliberately - no schema and no contents. Every check that came with a key was
+    written to notice its own absence, so the only thing this has to stop is the key vanishing; and
+    a rule which validated contents would need editing for every key added after it
+
+    A path which does not exist, does not parse as JSON, or does not hold an object is not a
+    baseline this could be downgrading, so nothing is reported and the write goes ahead
+    """
+
+    if not os.path.isfile( path ):
+        return []
+
+    try:
+        with open( path ) as stream:
+            existing = json.load( stream )
+    except ( ValueError, OSError ):
+        return []
+
+    if not isinstance( existing, dict ):
+        return []
+
+    if set( manifest ) - set( existing ):
+        return []
+
+    return sorted( set( existing ) - set( manifest ) )
+
+
 def repo_root():
     return os.path.normpath( os.path.join( os.path.dirname( os.path.abspath( __file__ ) ), '..', '..' ) )
 
@@ -1694,6 +1750,27 @@ def main():
         print( '' )
 
     if args.capture:
+
+        #
+        # Refuse before the write rather than warn after it. A printed note is exactly what the
+        # unarmed state already has, and the state this tool has been caught in three times is one
+        # nobody read
+        #
+
+        dropped = keys_a_capture_would_drop( args.capture, manifest )
+
+        if dropped:
+            print( 'utf_inventory: REFUSING to overwrite %s - it carries top-level key(s) this '
+                   'run does not write: %s' % ( args.capture, ', '.join( dropped ) ),
+                   file = sys.stderr )
+            print( 'utf_inventory: every key this run writes is already there, so this tool is '
+                   'OLDER than the baseline and the write would drop whatever reads those keys, '
+                   'leaving those invariants judging nothing', file = sys.stderr )
+            print( 'utf_inventory: re-capture with the integrated tool - merge or rebase onto the '
+                   'branch that wrote this baseline first. A conflict in a baseline is never '
+                   'resolved by taking one side', file = sys.stderr )
+            return 4
+
         with open( args.capture, 'w' ) as stream:
             json.dump( manifest, stream, indent = 1, sort_keys = True )
             stream.write( '\n' )
