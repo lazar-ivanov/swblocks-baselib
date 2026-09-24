@@ -557,16 +557,69 @@ namespace utest
             bool                                                                taskFailed;
             std::string                                                         taskFailure;
 
+            bl::eh::error_code                                                  errorCode;
+            std::size_t                                                         closedEvents;
+
             SeamResult()
                 :
                 state( bl::httpclient::ConnectionState::Closed ),
                 freeSlots( 0U ),
                 status( 0U ),
                 closed( false ),
-                taskFailed( false )
+                taskFailed( false ),
+                closedEvents( 0U )
             {
             }
         };
+
+        /**
+         * @brief The recording sink, cancelling its own stream from inside onHeaders( )
+         *
+         * THE ONE THING THAT PUTS A CANCEL INSIDE THE ONE-HOP WINDOW, and it does so by ordering
+         * rather than by timing. onHeaders( ) is delivered from deliverHeaders( ), inside the read
+         * handler and before finishStream( ) is reached at all, so cancel( )'s post of
+         * onCancelStream( ) is enqueued on the strand AHEAD of the continuation that same handler
+         * is about to post. The window keeps m_handle allocated, which is what lets the cancel find
+         * a stream to end at all - and what the continuation's handle guard then has to notice.
+         *
+         * It cancels on the FINAL header block only: a 1xx arrives through the same call, and
+         * cancelling on one would end the stream before the response this exchange is about
+         */
+
+        class CancellingSink : public utest::http1driver::RecordingSink
+        {
+            BL_CTR_DEFAULT( CancellingSink, protected )
+            BL_DECLARE_OBJECT_IMPL( CancellingSink )
+
+        public:
+
+            typedef utest::http1driver::RecordingSink                           base_type;
+
+            bl::om::ObjPtr< bl::httpclient::ClientConnection >                  m_connection;
+
+            virtual void onHeaders(
+                SAA_in          const bl::httpclient::stream_handle_t           handle,
+                SAA_in          const unsigned                                  status,
+                SAA_in          bl::http::HeaderList&&                          headers,
+                SAA_in          const bool                                      isInterim
+                ) OVERRIDE
+            {
+                base_type::onHeaders( handle, status, BL_PARAM_FWD( headers ), isInterim );
+
+                if( m_connection && ! isInterim )
+                {
+                    /*
+                     * THE HANDLE THE EVENT CARRIES, and not one the test thread stored, so there
+                     * is no window in which this sink could cancel a handle submit( ) has not
+                     * returned yet
+                     */
+
+                    m_connection -> cancel( handle, bl::eh::error_code() );
+                }
+            }
+        };
+
+        typedef bl::om::ObjectImpl< CancellingSink >                            CancellingSinkImpl;
 
         /**
          * @brief One ordinary keep-alive exchange, with the write's completion held across the
@@ -581,7 +634,8 @@ namespace utest
 
         inline auto runSeamExchange(
             SAA_in          const bool                                          releaseEarly,
-            SAA_in          const bool                                          releaseAsReset = false
+            SAA_in          const bool                                          releaseAsReset = false,
+            SAA_in          const bool                                          cancelOnHeaders = false
             )
             -> SeamResult
         {
@@ -614,12 +668,12 @@ namespace utest
                 }
                 );
 
-            const auto sink = RecordingSinkImpl::createInstance();
+            const auto sink = CancellingSinkImpl::createInstance();
 
             armSeam( releaseEarly, releaseAsReset );
 
             scheduleAndExecuteInParallel(
-                [ &peer, &sink, &result ](
+                [ &peer, &sink, &result, cancelOnHeaders ](
                     SAA_in      const om::ObjPtr< ExecutionQueue >&             eq
                     ) -> void
                 {
@@ -629,6 +683,15 @@ namespace utest
                     const auto driverTask = om::qi< Task >( driver );
 
                     eq -> push_back( driverTask );
+
+                    /*
+                     * SET BEFORE submit( ), because after it the driver may already be delivering
+                     */
+
+                    if( cancelOnHeaders )
+                    {
+                        sink -> m_connection = om::copy( driver );
+                    }
 
                     const auto handle = driver -> submit(
                         makeRequest( peer.port(), "/seam", "GET" ),
@@ -652,10 +715,28 @@ namespace utest
                     result.state = driver -> state();
                     result.freeSlots = driver -> freeStreamSlots();
                     result.status = sink -> finalStatus();
+                    result.errorCode = sink -> errorCode();
 
                     peer.release();
 
                     eq -> wait( driverTask );
+
+                    /*
+                     * COUNTED HERE AND NOT ABOVE, AND THAT IS THE RENDEZVOUS RATHER THAN A DETAIL.
+                     * The terminal event is owed exactly once, and a continuation publishing an
+                     * ending for a stream somebody else had already ended is how a second one
+                     * would appear - after the first. The continuation is an ACCOUNTED operation,
+                     * so the task cannot end until it has run, which makes this wait exactly the
+                     * event "everything that could deliver has delivered"
+                     */
+
+                    for( const auto& event : sink -> events() )
+                    {
+                        if( 0U == event.compare( 0U, 7U, "closed:" ) )
+                        {
+                            ++result.closedEvents;
+                        }
+                    }
 
                     result.taskFailed = driverTask -> isFailed();
                     result.taskFailure = taskFailureText( driverTask );
@@ -792,6 +873,63 @@ UTF_AUTO_TEST_CASE( Http1Driver_StrandSeamRefusesReuseAfterAResetWriteTests )
 
     UTF_REQUIRE( result.closed );
     UTF_REQUIRE_EQUAL( result.status, 200U );
+
+    UTF_REQUIRE( httpclient::ConnectionState::Ready != result.state );
+    UTF_REQUIRE_EQUAL( result.freeSlots, 0U );
+
+    UTF_CHECK( ! result.taskFailed );
+}
+
+/**
+ * @brief A CANCEL THAT LANDS INSIDE THE ONE-HOP WINDOW - the continuation's handle guard
+ *
+ * The window keeps m_handle allocated on purpose, so that nothing can see the connection as
+ * dispatchable before the verdict is published. The price of keeping it is that cancel( ) still
+ * finds a stream to end there, and the sink here ends it: it calls cancel( ) from inside
+ * onHeaders( ), which runs in the read handler BEFORE finishStream( ) is reached, so
+ * onCancelStream( ) is enqueued on the strand ahead of the continuation by FIFO and nothing about
+ * this is a race.
+ *
+ * WHAT THE DESIGN DECIDED, MADE OBSERVABLE. A cancel in the window WINS over a response which had
+ * already completed: onCancelStream( ) ends the stream with the cancel's own code, and the sink is
+ * told operation_aborted rather than success. That is what section 5.2.1 specified when it required
+ * the continuation to carry the handle it was posted for - and it is a decision rather than an
+ * accident, so it is worth a case instead of an argument.
+ *
+ * AND THE TERMINAL EVENT IS STILL OWED EXACTLY ONCE, which is the guard's own job: the continuation
+ * finds m_handle no longer the one it was posted for and does nothing but account for itself.
+ *
+ * WHAT THIS CASE DOES NOT CLAIM. It is not a red for the guard LINE. On this tree the cancel's own
+ * finishStream( ) has already taken the sink and left the connection closing, so a continuation
+ * without the guard would find no sink to deliver to and would recompute the same Draining verdict -
+ * the guard is defensive here rather than load bearing. What the case does is pin the decision and
+ * keep the guard's branch exercised, so that a later change which makes the difference observable
+ * fails here rather than in the field.
+ */
+
+UTF_AUTO_TEST_CASE( Http1Driver_StrandSeamCancelInTheWindowWinsTests )
+{
+    using namespace bl;
+    using namespace utest::http1seam;
+
+    const auto result = runSeamExchange(
+        true  /* releaseEarly */,
+        false /* releaseAsReset */,
+        true  /* cancelOnHeaders */
+        );
+
+    UTF_REQUIRE( result.closed );
+
+    /*
+     * The response was complete and its headers were delivered - the cancel is what the sink did
+     * WITH them, not something that happened instead of them
+     */
+
+    UTF_REQUIRE_EQUAL( result.status, 200U );
+
+    UTF_REQUIRE_EQUAL( result.closedEvents, 1U );
+
+    UTF_REQUIRE( asio::error::operation_aborted == result.errorCode );
 
     UTF_REQUIRE( httpclient::ConnectionState::Ready != result.state );
     UTF_REQUIRE_EQUAL( result.freeSlots, 0U );

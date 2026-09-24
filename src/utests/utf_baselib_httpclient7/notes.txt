@@ -74,3 +74,18 @@
 # accident.
 
 --log_level=message --run_test=Http1Driver_StrandSeamRefusesReuseAfterAResetWriteTests
+
+# The fourth exercises the continuation's handle guard: the sink cancels from inside onHeaders( ),
+# which puts onCancelStream( ) ahead of the continuation by strand FIFO. It pins the DECISION - a
+# cancel inside the window wins over a response which had already completed, and the sink is told
+# operation_aborted exactly once - rather than being a red for the guard line itself, which is
+# defensive on this tree. It IS red against a tree without the deferral, where the sink is told the
+# response succeeded instead.
+#
+# HOW TO SEE THAT THE GUARD BRANCH IS TAKEN, since it deliberately logs nothing: with
+# '-- --bl-logging-level=6' a whole module run takes SIX deferrals and prints only FIVE outcome
+# lines. The missing one is this case's - the continuation found the handle no longer its own and
+# returned before the line. Six and five is the signature; six and six would mean the guard was
+# not reached.
+
+--log_level=message --run_test=Http1Driver_StrandSeamCancelInTheWindowWinsTests
