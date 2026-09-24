@@ -1595,6 +1595,32 @@ namespace bl
                 return net::isPeerClosedErrorCode( ec ) || base_type::isStreamTruncationError( ec );
             }
 
+            /**
+             * @brief Whether a WRITE's error code means the peer ended the conversation
+             *
+             * A SEPARATE QUESTION FROM isPeerClosed( ), AND NOT A STYLISTIC ONE. That one is the
+             * read-side pair and admits no broken_pipe on any platform, and broken_pipe is what a
+             * send takes when a FIN preceded the peer's reset - a server which answers, half
+             * closes and then closes with our upload unread. Asking the read-side pair on the
+             * write path sent that ordinary ending to CHK_EC and failed the task
+             *
+             * NOT net::isPeerResetOnWriteErrorCode( ), which is the same family and the wrong
+             * member: that one's subject is EVIDENCE - what a write's code proves about the read's
+             * half - and it is isPeerClosedErrorCode( ) minus eof, so it refuses broken_pipe by
+             * construction. The question here is routing only, since onWrite( ) draws no
+             * conclusion from the code beyond whether to excuse it
+             *
+             * The truncation is asked of the stream policy for the same reason isPeerClosed( )
+             * asks it: this class is instantiated over TLS, and which codes mean a truncated TLS
+             * stream is knowledge the policy owns and the transport does not
+             */
+
+            bool isPeerClosedOnWrite( SAA_in const eh::error_code& ec ) NOEXCEPT
+            {
+                return net::isPeerClosedOnWriteErrorCode( ec )
+                    || base_type::isStreamTruncationError( ec );
+            }
+
             void onRead(
                 SAA_in              const eh::error_code&                       ec,
                 SAA_in              const std::size_t                           bytesTransferred
@@ -1760,10 +1786,9 @@ namespace bl
                 BL_TASKS_HANDLER_BEGIN()
 
                 /*
-                 * A peer close is classified HERE as well as in onRead( ), and for the same
-                 * reason: the conversation can end while a write is outstanding just as easily as
-                 * while a read is, and which of the two notices first is a race rather than a
-                 * meaningful difference
+                 * A peer close is EXCUSED here and classified nowhere: the conversation can end
+                 * while a write is outstanding just as easily as while a read is, and the whole of
+                 * this handler's answer to that is to say nothing and leave the ending to onRead( )
                  *
                  * This used to be BL_TASKS_HANDLER_BEGIN_CHK_EC( ), which turns any error into an
                  * exception, so a peer which went away while we still had a frame in flight failed
@@ -1772,9 +1797,36 @@ namespace bl
                  * path simply never did, which made the classification depend on which handler the
                  * ending happened to reach first
                  *
-                 * Nothing is lost by ending gracefully here. A stream whose headers have been
-                 * produced is already non-retryable, and onPeerClosed( ) is what reports every
-                 * still-open stream as ended by the peer
+                 * WHY IT DECLINES RATHER THAN CALLING onPeerClosed( ), which is what it did until
+                 * this arm was corrected, and it is NOT that the call is redundant. onPeerClosed( )
+                 * takes no error code and every step of it is code-free, so the write side
+                 * contributes no information by calling it - whatever it would decide, the read
+                 * decides identically one strand turn later. The only thing the write's call
+                 * changes is WHEN, and earlier is strictly worse: onPeerClosed( ) empties
+                 * m_streams through closeAllStreamsUnwrittenRetryable( ), after which sinkOf( )
+                 * answers nullptr for every stream id, and onRead( )'s feed( ) - the one and only
+                 * place in this class which feeds the session - then has nowhere to put what the
+                 * reactor was already holding. A peer which answers, half closes and then closes
+                 * with our upload unread had its ANSWER dropped that way and its stream reported
+                 * connection_aborted and NOT retryable: told not to retry a request the server
+                 * had already answered
+                 *
+                 * AND THE READ IS ALWAYS THERE TO DECIDE, which is what declining rests on -
+                 * WHICHEVER of the two handlers runs first. That order is deliberately NOT relied
+                 * on here: it belongs to the reactor and to the strand rather than to this class,
+                 * and both cases end the same way.
+                 *
+                 *   - A read was armed when the ending landed, so its own handler is told, with
+                 *     one of the codes isPeerClosed( ) admits.
+                 *   - Or none was, and then THIS handler's own strand turn arms one before it
+                 *     ends. The two places no read is armed are onRead( )'s pump-then-arm pair and
+                 *     onProtocolNegotiated( )'s, and this arm sets no flag which could gate the
+                 *     scheduleRead( ) which follows.
+                 *
+                 * What the read is handed is an ending either way: after a FIN the recv( ) returns
+                 * zero because tcp_fin( ) set SOCK_DONE, and after a bare reset the write consumed
+                 * sk_err and RCV_SHUTDOWN makes it return zero as well - eof both times, measured
+                 * on this platform in both orders
                  *
                  * AND A THIRD ANSWER AHEAD OF BOTH, which is the write this task's own teardown
                  * broke. initiateClose( ) shuts the send side down to reach a composed write no
@@ -1789,9 +1841,20 @@ namespace bl
                  * because a first error is already recorded, in which case this one would have
                  * been discarded anyway
                  *
-                 * IT MUST COME FIRST, AND IT MUST DO NOTHING. On the peer-close door
-                 * onPeerClosed( ) has ALREADY run, from onRead( ), and it has no re-entry guard:
-                 * reaching it a second time would republish state and re-close streams
+                 * IT MUST COME FIRST, AND THE REASON IS THE CODE AND NOT A RE-ENTRY. broken_pipe
+                 * is what our own shutdown_send produces on POSIX and it is exactly what the
+                 * write-side predicate admits, so on our own teardown both questions answer yes
+                 * together on every run and only the order says which one is TRUE. Nothing about
+                 * the outcome turns on it while both arms do nothing - and that is precisely why
+                 * it is written down: the order is what would have to hold if either arm ever
+                 * gained a body, and an arm which drifted ahead would classify our own teardown as
+                 * the peer's in silence
+                 *
+                 * What the earlier version of this comment said here - that reaching
+                 * onPeerClosed( ) a second time would republish state and re-close streams - was
+                 * false in both halves. publishState( ) is monotone and returns for any state at
+                 * or below the current one, and closeAllStreamsUnwrittenRetryable( ) has already
+                 * drained m_streams, so a second pass finds nothing to close
                  */
 
                 m_isWriteInFlight = false;
@@ -1804,9 +1867,12 @@ namespace bl
                          * Our own teardown - nothing to report and nothing to do
                          */
                     }
-                    else if( isPeerClosed( ec ) )
+                    else if( isPeerClosedOnWrite( ec ) )
                     {
-                        onPeerClosed();
+                        /*
+                         * The peer ended it, and onRead( ) is what classifies that ending - see
+                         * above for why saying nothing here is the whole of the answer
+                         */
                     }
                     else
                     {

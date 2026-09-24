@@ -2,3 +2,7 @@
 
 # the initiateClose( ) teardown fix - the HTTP/2 half, through the peer-half-close door
 --log_level=test_suite --run_test=H2Driver_PeerHalfClosesWithAWriteInFlightTests
+
+# the write path's peer-close arm - the predicate ( R1 ) and the shape that keeps the answer ( R2 )
+--log_level=test_suite --run_test=H2Driver_PeerEndsWhileTheOpeningWriteIsBeingIssuedTests
+--log_level=test_suite --run_test=H2Driver_AnsweredRequestSurvivesAPeerEndingOnTheWriteTests
