@@ -395,17 +395,48 @@ def main():
     # Four of them today. An intrinsic orphan rule would report all four on a tree nobody has
     # changed, which is the same mistake a universal C9 would have been
     #
+    # The count is ASSERTED, not merely printed. Silence over a baseline carrying no orphan at
+    # all proves nothing about a differential rule, so the control has to establish that there
+    # is something there to stay silent about before the silence means anything
+    #
 
     stale = sum( len( unreferenced( info ) ) for info in baseline[ 'modules' ].values() )
     residue = [ f for f in check_against( baseline, baseline ) if f.startswith( 'C7' ) ]
 
-    if residue:
+    if not stale:
+        print( '    FAIL  C7   %d data file(s) unreferenced in the baseline      '
+               '(the baseline carries no orphan - this control has nothing to prove)' % stale )
+        ok = False
+    elif residue:
         print( '    FAIL  C7   %d data file(s) unreferenced in the baseline      '
                '(reported - the orphan rule is not differential)' % stale )
         ok = False
     else:
         print( '    PASS  C7   %d data file(s) unreferenced in the baseline      '
                'correctly silent - only a NEW orphan is reported' % stale )
+
+    #
+    # C7 - but a module the baseline does not carry is judged intrinsically
+    #
+    # A new module has no earlier state to be grandfathered against, and the f992e2f split gave
+    # utf_baselib_messaging3 a data file nothing in it names. Skipping new modules is why that
+    # went unreported while the same split's two leftovers were caught
+    #
+
+    mutated = copy.deepcopy( baseline )
+    donor = next( info for info in baseline[ 'modules' ].values() if info.get( 'data_files' ) )
+
+    mutated[ 'modules' ][ 'utf_baselib_freshly_split' ] = {
+        'files': [],
+        'data_refs': [],
+        'data_literals': [],
+        'data_files': dict( donor[ 'data_files' ] ),
+        'notes_cases': [],
+        'notes_index': False,
+        }
+
+    ok &= expect( 'new module carries a data file it never names',
+                  check_against( baseline, mutated ), 'C7' )
 
     #
     # C7 - a baseline with no data file hashes must say so rather than pass everything
@@ -469,6 +500,111 @@ def main():
     else:
         print( '    PASS  C10  file removed by a relocation                  '
                'correctly silent - only files present on both sides are judged' )
+
+    #
+    # C10 - the roster edit a relocation cannot avoid
+    #
+    # Every module's Utf<Name>Main.cpp holds one quoted include per header the module carries, so
+    # moving a header between modules MUST edit it. Judging that edit reds the very operation
+    # this tool exists to verify - the real split f992e2f was reported as a violation before the
+    # exemption existed
+    #
+    # The five below are written as one group because the exemption is only defensible together
+    # with the three cases it must NOT swallow
+    #
+
+    roster_module, roster, siblings = None, None, set()
+
+    for name, info in sorted( baseline[ 'modules' ].items() ):
+
+        held = { entry[ 'path' ][ len( name ) + 1 : ] for entry in info[ 'files' ] }
+
+        for entry in info[ 'files' ]:
+            quoted = [ i for i in entry[ 'includes' ]
+                       if i.startswith( '"' ) and i[ 1 : -1 ] in held ]
+            if len( quoted ) >= 3:
+                roster_module, roster, siblings = name, entry, held
+                break
+
+        if roster:
+            break
+
+    def roster_of( manifest ):
+        info = manifest[ 'modules' ][ roster_module ]
+        return next( e for e in info[ 'files' ] if e[ 'path' ] == roster[ 'path' ] )
+
+    def without_header( manifest, header ):
+        info = manifest[ 'modules' ][ roster_module ]
+        info[ 'files' ] = [ e for e in info[ 'files' ]
+                            if e[ 'path' ] != roster_module + '/' + header ]
+
+    header = next( i[ 1 : -1 ] for i in roster[ 'includes' ]
+                   if i.startswith( '"' ) and i[ 1 : -1 ] in siblings )
+
+    # C10 - a header moved out of the module, struck from the roster with it: SILENT
+    mutated = copy.deepcopy( baseline )
+    without_header( mutated, header )
+    roster_of( mutated )[ 'includes' ] = [ i for i in roster[ 'includes' ]
+                                           if i != '"%s"' % header ]
+
+    residue = [ f for f in check_against( baseline, mutated ) if f.startswith( 'C10' ) ]
+
+    if residue:
+        print( '    FAIL  C10  header moved out, roster edited to match      '
+               '(reported - C10 would fire on every real relocation)' )
+        ok = False
+    else:
+        print( '    PASS  C10  header moved out, roster edited to match      '
+               'correctly silent - that roster edit IS the relocation' )
+
+    # C10 - a header cut into the module, added to the roster with it: SILENT
+    mutated = copy.deepcopy( baseline )
+    mutated[ 'modules' ][ roster_module ][ 'files' ].append(
+        { 'path': roster_module + '/TestCut.h', 'includes': [] } )
+    roster_of( mutated )[ 'includes' ] = roster[ 'includes' ] + [ '"TestCut.h"' ]
+
+    residue = [ f for f in check_against( baseline, mutated ) if f.startswith( 'C10' ) ]
+
+    if residue:
+        print( '    FAIL  C10  header cut in, roster edited to match         '
+               '(reported - a split writes sibling headers and lists them)' )
+        ok = False
+    else:
+        print( '    PASS  C10  header cut in, roster edited to match         '
+               'correctly silent - the same clause, the other direction' )
+
+    #
+    # C10 - a header STRUCK FROM THE ROSTER while it stays in the module
+    #
+    # The case that makes the exemption safe to hold. Every test case in that header stops being
+    # registered, the manifest still finds all of them, and C1 to C4 stay green - which is the
+    # failure mode this whole tool was built for
+    #
+
+    mutated = copy.deepcopy( baseline )
+    roster_of( mutated )[ 'includes' ] = [ i for i in roster[ 'includes' ]
+                                           if i != '"%s"' % header ]
+    ok &= expect( 'roster drops a header that stays (%s)' % header,
+                  check_against( baseline, mutated ), 'C10' )
+
+    # C10 - an <angle> include added to a roster is never exempt
+    mutated = copy.deepcopy( baseline )
+    roster_of( mutated )[ 'includes' ] = roster[ 'includes' ] + [ '<an/invented/header.h>' ]
+    ok &= expect( 'angle include added to a roster', check_against( baseline, mutated ), 'C10' )
+
+    #
+    # C10 - whatever survives the exemption is still compared in ORDER
+    #
+    # In a roster, include order is registration order is run order, and
+    # MessagingUtils_TokenTypeConcurrencyTests needs a cold process-global cache: any case that
+    # runs before it and warms that cache neuters it while it still passes
+    #
+
+    mutated = copy.deepcopy( baseline )
+    without_header( mutated, header )
+    roster_of( mutated )[ 'includes' ] = list( reversed(
+        [ i for i in roster[ 'includes' ] if i != '"%s"' % header ] ) )
+    ok &= expect( 'surviving roster reordered', check_against( baseline, mutated ), 'C10' )
 
     #
     # C10 - a baseline with no include lists must say so rather than pass everything

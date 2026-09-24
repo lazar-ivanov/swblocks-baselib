@@ -607,6 +607,49 @@ def file_includes( manifest ):
     return includes
 
 
+def module_file_churn( before, after ):
+    """
+    Module -> the module-relative paths of the files this change added to or removed from it
+
+    Every module's entry point is a roster: Utf<Name>Main.cpp carries one quoted include per
+    header the module holds, so moving a header between modules MUST edit it. That edit is the
+    relocation itself rather than evidence of one, which is what C10 exempts
+    """
+
+    churn = {}
+
+    for module in set( before[ 'modules' ] ) | set( after[ 'modules' ] ):
+
+        was = { entry[ 'path' ]
+                for entry in before[ 'modules' ].get( module, {} ).get( 'files', [] ) }
+
+        now = { entry[ 'path' ]
+                for entry in after[ 'modules' ].get( module, {} ).get( 'files', [] ) }
+
+        prefix = module + '/'
+
+        churn[ module ] = { path[ len( prefix ) : ]
+                            for path in was ^ now if path.startswith( prefix ) }
+
+    return churn
+
+
+def names_a_moved_file( include, moved ):
+    """
+    True when a quoted include names one of the files this change moved into or out of the module
+
+    Only a quoted include can name a sibling header, so an <angle> include added to a roster is
+    judged exactly as it would be anywhere else. The spelling must match the module-relative
+    path: an unexpected one stays judged rather than exempted by guesswork, because the safe
+    direction for a gate is to fire
+    """
+
+    if len( include ) < 2 or not include.startswith( '"' ) or not include.endswith( '"' ):
+        return False
+
+    return include[ 1 : -1 ].replace( '\\', '/' ) in moved
+
+
 def unreferenced_data_files( info ):
     """
     The data files one module carries which nothing in that module names
@@ -830,12 +873,28 @@ def check_against( before, after ):
     # its new home would fire on every legitimate relocation, which is the one thing this gate
     # cannot afford. A file added or removed is likewise not judged
     #
-    # Order is part of the comparison. An include can depend on one before it, so a reordering is
-    # a change to the context even when the set is identical - it is reported as its own kind
+    # And a quoted include naming a file this change added to or removed from the same module is
+    # not judged either, for exactly the reason that file itself is not: every module's
+    # Utf<Name>Main.cpp is a roster of one quoted include per header it holds, so a relocation
+    # MUST edit it. Judging that edit fires on the very operation this tool exists to verify -
+    # measured on f992e2f, the real four-way messaging split, which C10 reported as a violation
+    # before this clause existed
+    #
+    # It is a narrow exemption and everything around it stays live. An <angle> include added to a
+    # roster still fires. A quoted include DROPPED while the header it names stays in the module
+    # still fires, and that is the case worth having: a header cut from the roster unregisters
+    # every case in it while the manifest still finds them, so C1 stays green - the exact failure
+    # mode this tool was built for
+    #
+    # Order is part of the comparison, on whatever survives the exemption. An include can depend
+    # on one before it, and in these rosters include order is registration order is run order:
+    # MessagingUtils_TokenTypeConcurrencyTests needs a cold process-global cache and is neutered,
+    # while still passing, by any case that runs first and warms it
     #
 
     old_includes = file_includes( before )
     new_includes = file_includes( after )
+    churn = module_file_churn( before, after )
 
     if not any( old_includes.values() ):
         failures.append(
@@ -845,7 +904,13 @@ def check_against( before, after ):
     else:
         for path in sorted( set( old_includes ) & set( new_includes ) ):
 
-            was, now = old_includes[ path ], new_includes[ path ]
+            moved = churn.get( path.split( '/' )[ 0 ], set() )
+
+            was = [ entry for entry in old_includes[ path ]
+                    if not names_a_moved_file( entry, moved ) ]
+
+            now = [ entry for entry in new_includes[ path ]
+                    if not names_a_moved_file( entry, moved ) ]
 
             if was == now:
                 continue
@@ -871,14 +936,22 @@ def check_against( before, after ):
     # defeats the divergence check too, which is why that is not accidental cover
     #
     # The other direction of the existence check is the orphan: a module keeps a data file whose
-    # last reference has moved away. That cannot be intrinsic, because this tree carries such
-    # files today and always has, and a rule red on legitimate state is worse than the blind spot
-    # it closes. So it is differential and narrow - a data file unreferenced now which was not in
-    # that state in the baseline, whether it lost its last reference or arrived without one
+    # last reference has moved away. That cannot be intrinsic tree-wide, because this tree carries
+    # four such files today and always has, and a rule red on legitimate state is worse than the
+    # blind spot it closes. So for a module the baseline already knew it is differential and
+    # narrow - a data file unreferenced now which was not in that state in the baseline, whether
+    # it lost its last reference or arrived without one
     #
-    # A data file added or removed outright is not judged. A split moves a data file with the
-    # cases that read it, and C7's intrinsic half already reports the module left referencing one
-    # it no longer carries
+    # A module the baseline does NOT carry is judged INTRINSICALLY instead, because there is no
+    # earlier state to grandfather against: a new module carrying a data file it never names is
+    # carrying it by accident. That is not hypothetical - the f992e2f split gave the new
+    # utf_baselib_messaging3 a copy of async_rpc_response_with_exception.json which nothing in it
+    # names, and skipping new modules is exactly why that went unreported while the same split's
+    # two leftovers in utf_baselib_messaging were caught
+    #
+    # A data file added or removed outright is not judged for content. A split moves a data file
+    # with the cases that read it, and C7's intrinsic half already reports the module left
+    # referencing one it no longer carries
     #
 
     if ( any( info.get( 'data_files' ) for info in after[ 'modules' ].values() )
@@ -890,10 +963,11 @@ def check_against( before, after ):
 
     for module, info in sorted( after[ 'modules' ].items() ):
 
-        was = before[ 'modules' ].get( module )
-
-        if was is None:
-            continue
+        #
+        # an empty dict rather than a skip: it carries no data file hashes, so nothing is judged
+        # on content, and it grandfathers no orphan, so a new module is judged intrinsically
+        #
+        was = before[ 'modules' ].get( module, {} )
 
         for name, digest in sorted( info.get( 'data_files', {} ).items() ):
 
@@ -907,8 +981,11 @@ def check_against( before, after ):
 
         for name in sorted( unreferenced_data_files( info ) - unreferenced_data_files( was ) ):
             failures.append(
-                'C7 data file NEWLY UNREFERENCED: %s/data/%s - nothing in that module names it '
-                'any more' % ( module, name )
+                'C7 data file NEWLY UNREFERENCED: %s/data/%s - %s' % (
+                    module, name,
+                    'that module is new and nothing in it names this file' if not was
+                    else 'nothing in that module names it any more'
+                    )
                 )
 
     #
@@ -1085,11 +1162,18 @@ def main():
 
         old_paths, new_paths = set( file_includes( before ) ), set( file_includes( manifest ) )
 
+        moved_files = sum( len( names ) for names in module_file_churn( before, manifest ).values() )
+
         print( 'utf_inventory: C10 compares the #include list of the %d file(s) present in both '
-               'manifests (%d added and %d removed by this change are not judged); a case that '
-               'moved between files is judged on text, guards and namespaces only'
+               'manifests, order included (%d added and %d removed by this change are not judged); '
+               'a case that moved between files is judged on text, guards and namespaces only'
                % ( len( old_paths & new_paths ), len( new_paths - old_paths ),
                    len( old_paths - new_paths ) ) )
+
+        print( 'utf_inventory: C10 exempts a quoted include naming one of the %d file(s) this '
+               'change moved into or out of its own module - a roster edit IS the relocation; a '
+               'dropped include whose header stayed, and any <angle> include, still fire'
+               % moved_files )
 
         shared_data = sum(
             len( set( info.get( 'data_files', {} ) )
@@ -1101,9 +1185,17 @@ def main():
             len( unreferenced_data_files( info ) ) for info in before[ 'modules' ].values()
             )
 
+        fresh_modules = sorted( set( manifest[ 'modules' ] ) - set( before[ 'modules' ] ) )
+
         print( 'utf_inventory: C7 compares the content of the %d data file(s) present in both '
                'manifests and reports one nothing names any more; the %d already unreferenced in '
                'the baseline stay accepted' % ( shared_data, accepted ) )
+
+        print( 'utf_inventory: C7 grandfathers an orphan only in a module the baseline carries - '
+               'the %d module(s) new in this change are judged intrinsically, since a new module '
+               'has no earlier state to be accepted against%s'
+               % ( len( fresh_modules ),
+                   ' (%s)' % ', '.join( fresh_modules ) if fresh_modules else '' ) )
 
         print( 'utf_inventory: C6 reports a helper member ADDED as well as one LOST, over %d '
                'member(s) - a relocation invents neither, so a slice which adds one on purpose '
