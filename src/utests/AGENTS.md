@@ -120,7 +120,7 @@ moves, adds or removes test cases.
 
 | Tier | Tool | Checks |
 |---|---|---|
-| 1 | `utf_inventory.py --compare` | C1–C13: no case lost, added or edited; guard and namespace stacks unchanged; no duplicate names; helper members neither lost, invented nor duplicated; data files present, unchanged in content and still referenced; `notes.txt` recipes resolve, no case loses one, and a module declaring its index complete really is; every file on both sides keeps its `#include` list, bar the roster lines a relocation must edit; file-scope text — the fixtures, the column-0 statics, the `BL_IID_DECLARE`s, the behavioural `#define`s — neither lost nor invented; a helper member that stayed in its file keeps the namespace it sat in; and all of it over `src/utests/include/` too |
+| 1 | `utf_inventory.py --compare` | C1–C13: no case lost, added or edited; guard and namespace stacks unchanged; no duplicate names; helper members neither lost, invented nor duplicated; data files present, unchanged in content and still referenced; `notes.txt` recipes resolve, no case loses one, and a module declaring its index complete really is; every file on both sides keeps its `#include` list, bar the roster lines a relocation must edit; file-scope text — the fixtures, the column-0 statics, the `BL_IID_DECLARE`s, the behavioural `#define`s — neither lost nor invented; a helper member and a file-scope span each keep the `#if` stack they sit under; a helper member that stayed in its file keeps the namespace it sat in; and all of it over `src/utests/include/` too |
 | 2 | `utf_objsize.py --ceiling 75` | No object over the ceiling |
 | 3 | `utf_runlog.py --compare` | Registered set, executed set, pass/fail, skips, and **per-case assertion counts** — differentially, **only over the 17 modules the baseline covers**, and **only on the platform the baseline was captured on**; across a mismatch the comparison is refused, not attempted |
 
@@ -134,10 +134,46 @@ a new file-scope declaration are all reported — none of them is a relocation. 
 commit, where the manifest diff shows exactly what is now blessed. Refreshing to silence a report you
 cannot explain is the one way to make this gate worthless.
 
+**An `inventory.json` conflict is resolved by re-capturing with the integrated tool, never by taking
+one side.** Taking a side is how a stale manifest reaches the baseline: a lane branched before an
+invariant landed re-captures with its own older tool, the manifest loses the keys that invariant
+reads, and tier 1 goes on printing PASS with only a note to say it is now judging nothing. Merge or
+rebase first, then `--capture` once, from the integrated tree. **No such downgrade has happened
+here** — every baseline commit before `adc00c8` carries four top-level keys, so nothing was there to
+drop — but `s6r3-1` carries its own baseline commit `b814ed9`, written with an older tool and never
+merged, and a re-capture from it would write four keys over six. `--capture` therefore **refuses** to
+overwrite a baseline whose keys are a strict superset of the ones it writes, and exits 4. It compares
+**two levels** — the top-level keys, and the key set of each list's entries and of a module — because
+a check's key is not always a top-level one: the `#if` stack below is a field on a *member*, so a
+pre-guard tool writes the same six top-level keys. Two is as deep as it can go: below that the
+manifest is keyed by data (`modules` by name, `data_files` by filename), so a deeper rule would
+refuse the ordinary refresh that removes a module or a data file. That guard lives in the tool doing
+the writing, so it can only stop an older tool built from that commit onward. The rule is what covers
+the rest.
+
 **C11 is not in force until that refresh happens.** No baseline captured before it carries
 `file_members`, and a hard failure there would red the gate for everyone rather than for the change
 that earned it, so every run prints which state it is in. The refresh that arms it is the ordinary
 one above.
+
+**A helper carried out from under its `#if` is a guard change, not a move — and C6 and C11 now say
+so.** For thirteen invariants nothing read a preprocessor condition enclosing anything but a test
+case: C11 dropped conditionals because "conditionals are C3's", and C3 speaks for cases only. 18
+helper members and 11 file-scope spans sit under one, `Utf.h`'s `#if defined( UTF_TEST_MODULE )` —
+the condition gating `main( )` — among them. Measured before this: `namedMutexSemaphoreKey( )` cut
+out from under `#if ! defined( _WIN32 )` into a sibling header **with no guard**, on
+`split_members( )`'s own extent, which is how every split here is cut, **passed tier 1 green** — a
+relocation accident that silently changes what compiles on which platform. So the condition stack
+joins C6's and C11's identity, and a text that survives under a different stack reports as a guard
+change rather than as a loss. **The condition is compared as written**: `#if ! defined( X )`
+re-spelled as `#ifndef X` reports, because a re-spelling is an edit and a normaliser sound enough to
+be trusted would have to be an expression parser. **It is not in force until the baseline is
+refreshed**, and every run prints which state it is in, exactly as C11 and C13 do. A split that
+moves a guarded helper **with** its guard stays silent, which is the point — and for that to be true
+C6's *duplication* half no longer asks about a member which is nothing but `#if`, `#else` and
+`#endif`. Three members tree-wide have that shape; they declare nothing, so two copies are no ODR
+risk, and they repeat across sibling headers on any ordinary split. C6's no-loss half and the guard
+half still judge them.
 
 **Tier 3 is the one that catches a case which still registers and still passes while silently doing
 less work.** Do not skip it for a change that moves cases between modules.
