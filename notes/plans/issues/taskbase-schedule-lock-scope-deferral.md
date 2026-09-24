@@ -188,6 +188,41 @@ operation in flight**. Only the second is the defect, and A4 neither creates nor
 
 Pre-existing, untouched by A4, and absent from the design.
 
+### 6.1 The h2 establishment route is the same defect, and is folded in here — **closed 2026-09-24**
+
+Carried in from the owed list as item **13d**, which is now **closed** rather than left pending: it is
+an instance of this section's general statement, its fix is this section's to make, and it changes
+nothing an L0–L6 caller can observe.
+
+**The route.** A throw out of `onProtocolNegotiated( )` after the first `beginOperation( )` reaches
+the establisher's catch with operations pending and calls `notifyReady( eptr )` outside the lock.
+`notifyReadyImpl( )` then runs `scheduleTaskFinishContinuation( )` and `onTaskStoppedNothrow( )`,
+which cancels the timers and, through the policy, shuts the socket. The pending write or read fails,
+its handler finds `isClosing( )` false — the accounting never saw an error — so the code goes through
+`CHK_EC( )` into `END_MULTIOP( )`, becomes the first error, initiates the close and, at count zero,
+takes the terminal: a **second** `notifyReadyImpl( )`, stopped at `m_notifyCalled`.
+
+**Its entrances are several, not one** — every throw in `onProtocolNegotiated( )` after the write is
+begun: the `async_write( )` itself with the settings timer pending, `scheduleRead( )`,
+`chkArmKeepAlive( )`, `chkArmIdleTimer( )`, and anything in that stretch that allocates. **That is
+why no initiator-level guard closes it**, and why A3's uniform shape was right to leave it: an inline
+catch at one initiator would close one entrance and look complete.
+
+**Why closing it here costs nothing to give up.** The consequence is bounded by three properties,
+each verified at the source: the establisher's retry is gated on
+`! hasHandshakeCompletedSuccessfully( )` and does not fire; the TLS continuation's second call sees
+`m_scheduledForShutdown` and rethrows the original; and h2's `onTaskStoppedNothrow( )` is idempotent
+by construction — monotone publish, `closeSubmissions( )` on a closed mailbox, an empty stream table.
+**So it is redundant work and possibly a second log line. The pool sees one completion.** Derived by
+reading, never observed.
+
+**If this section is ever picked up, this is where it is fixed** — at the boundary of
+`onProtocolNegotiated( )` rather than at an initiator: catch there, and when operations are pending
+record the error and initiate the close *without completing anything*, returning true so the
+establisher's epilog is not reached and the pending handlers take the one terminal; rethrow when
+nothing is pending. That needs the additive *"fail while operations are pending"* primitive, which is
+the same accounting change §4's step 3 would need.
+
 ## 7. Two adjacent facts, recorded so they are not rediscovered
 
 **The in-handler call site is safe, and not for an obvious reason.** h1's *other* call of

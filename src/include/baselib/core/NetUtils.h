@@ -345,8 +345,8 @@ namespace bl
          * Use where the question is "did the peer finish cleanly, so is this transient and worth
          * another attempt?". On POSIX a reset is deliberately NOT one of these: there it is a
          * genuinely distinct condition and treating it as a clean close would turn a real refusal
-         * into an attempt storm. On Windows it is one of these, because the stack has collapsed
-         * the clean close into it and the distinction POSIX offers is simply not observable.
+         * into an attempt storm. On Windows it IS one of these, so a retry is not refused there -
+         * but that a CLEAN close ever arrives as one is NOT measured; withdrawn 2026-09-23.
          *
          * Note this does NOT cover a truncated TLS stream, which is spelled by the stream policy
          * and not by the transport - ask STREAM::isStreamTruncationError() alongside this.
@@ -397,9 +397,9 @@ namespace bl
          * client has nothing else to check against.
          *
          * IT ADMITS eof AND NOTHING ELSE, ON EVERY PLATFORM, which is what makes it different
-         * from isOrderlyPeerCloseErrorCode(). That one admits the Windows reset spellings
-         * DELIBERATELY - the stack has collapsed a clean close into them and a handshake retry
-         * asking "is this transient?" is right to treat them as one. Here they are exactly what
+         * from isOrderlyPeerCloseErrorCode(). That one admits the Windows reset spellings so a
+         * retry is not refused; NOT because a clean close arrives as one - that premise was
+         * withdrawn 2026-09-23, self-inflicted by shutdown_both. Here they are exactly what
          * must be refused: on Windows a reset DISCARDS what was still unread - the control
          * measured 0 of 16384 bytes delivered - so a close-delimited body ended by one is either
          * short or aborted, and there is no third possibility. Declaring it complete would hand
