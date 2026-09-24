@@ -127,6 +127,13 @@ moves, adds or removes test cases.
 `selftest_inventory.py` proves tier 1 actually fails when it should; run it if you change the
 extractor.
 
+**A change that legitimately adds something refreshes the baseline, in a commit of its own.** Tier 1
+is a relocation gate, so a new case, a new helper member, an added `#include` and an edited data file
+are all reported — none of them is a relocation. The answer is
+`utf_inventory.py --capture notes/reviews/major/update_2026/baseline/inventory.json` as a companion
+commit, where the manifest diff shows exactly what is now blessed. Refreshing to silence a report you
+cannot explain is the one way to make this gate worthless.
+
 **Tier 3 is the one that catches a case which still registers and still passes while silently doing
 less work.** Do not skip it for a change that moves cases between modules.
 
