@@ -25,7 +25,7 @@
 #
 #   1   source equivalence   no build needed, about a second
 #   2   object ceiling       needs a built x86 debug tree
-#   3   runtime equivalence  needs test logs or built binaries
+#   3   runtime equivalence  needs test logs or built binaries, on the baseline's own platform
 #   eol line endings         guards the CRLF hazard git diff --check cannot see
 #
 # Usage:
@@ -201,25 +201,54 @@ NONDET_ARG=()
 UNCOVERED_ARG=()
 [[ -f "${BASELINE}/uncovered.json" ]] && UNCOVERED_ARG=( --uncovered "${BASELINE}/uncovered.json" )
 
+#
+# Tier 3 has three outcomes, not two. A comparison utf_runlog refused to make - the baseline speaks
+# for another platform, or carries no platform stamp at all - is neither a PASS nor a FAIL, and
+# rendering it as either is wrong: a FAIL reds the gate for everyone building on a platform the
+# baseline was not captured on, and a PASS claims a check that never ran. It exits 3 and names the
+# reason on one line, and that line becomes the summary note, so the gate says which state it is in
+#
+# Piped through tee rather than captured, because --run prints a line per module as it goes and
+# that is the only progress signal a long tier 3 has
+#
+
+tier3() {
+
+    local label="$1"; shift
+
+    local log reason status
+
+    log="$( mktemp 2>/dev/null )" || log="${TMPDIR:-/tmp}/check_split-tier3.$$.log"
+
+    "${PYTHON}" "${HERE}/utf_runlog.py" "$@" 2>&1 | tee "${log}"
+    status="${PIPESTATUS[0]}"
+
+    case "${status}" in
+        0)
+            note "tier3  PASS  runtime equivalence, baseline modules only (${label})"
+            ;;
+        3)
+            reason="$( sed -n 's/^utf_runlog: REFUSED - //p' "${log}" | head -1 )"
+            note "tier3  SKIP  ${reason:-the comparison was refused; see the tier 3 output above}"
+            ;;
+        *)
+            note "tier3  FAIL  runtime equivalence, baseline modules only (${label})"
+            RC=1
+            ;;
+    esac
+
+    rm -f "${log}"
+}
+
 if [[ ! -f "${BASELINE}/runlog.json" ]]; then
     echo "no runtime baseline at ${BASELINE}/runlog.json"
     note "tier3  SKIP  no runtime baseline"
 elif [[ "${DO_RUN}" == "1" && -n "${BLD}" ]]; then
-    if "${PYTHON}" "${HERE}/utf_runlog.py" --run --bld "${BLD}" \
-        --compare "${BASELINE}/runlog.json" "${NONDET_ARG[@]}" "${UNCOVERED_ARG[@]}"; then
-        note "tier3  PASS  runtime equivalence, baseline modules only (ran binaries)"
-    else
-        note "tier3  FAIL  runtime equivalence, baseline modules only (ran binaries)"
-        RC=1
-    fi
+    tier3 "ran binaries" --run --bld "${BLD}" \
+        --compare "${BASELINE}/runlog.json" "${NONDET_ARG[@]}" "${UNCOVERED_ARG[@]}"
 elif [[ -n "${BLD}" && -d "${BLD}/utflogs" ]]; then
-    if "${PYTHON}" "${HERE}/utf_runlog.py" --parse-logs "${BLD}/utflogs" \
-        --compare "${BASELINE}/runlog.json" "${NONDET_ARG[@]}" "${UNCOVERED_ARG[@]}"; then
-        note "tier3  PASS  runtime equivalence, baseline modules only (parsed logs)"
-    else
-        note "tier3  FAIL  runtime equivalence, baseline modules only (parsed logs)"
-        RC=1
-    fi
+    tier3 "parsed logs" --parse-logs "${BLD}/utflogs" --bld "${BLD}" \
+        --compare "${BASELINE}/runlog.json" "${NONDET_ARG[@]}" "${UNCOVERED_ARG[@]}"
 else
     echo "pass --bld <tree> to compare logs, and add --run to execute the binaries"
     note "tier3  SKIP  no build tree given"

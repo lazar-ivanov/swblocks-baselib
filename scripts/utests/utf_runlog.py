@@ -38,7 +38,7 @@
 # Usage:
 #
 #   utf_runlog.py --run --bld <tree> --capture run1.json       run every binary and capture
-#   utf_runlog.py --parse-logs <utflogs dir> --capture x.json  parse logs make already produced
+#   utf_runlog.py --parse-logs <utflogs dir> --bld <tree> --capture x.json     parse make's logs
 #   utf_runlog.py --nondeterministic run1.json run2.json --capture nondet.json
 #   utf_runlog.py --compare before.json --against after.json [--nondet nondet.json]
 #                                                            [--uncovered uncovered.json]
@@ -46,6 +46,12 @@
 # Every comparison ends with a coverage statement naming the modules the baseline does not cover,
 # because the four signals below are differential and can say nothing whatever about those. A PASS
 # is a statement about the covered modules and nothing else
+#
+# A capture is also stamped with the platform it was taken on - the name of the build tree it read,
+# win-x86-vc143-debug or ub24-a64-clang2010-debug - and a comparison across two platforms is refused
+# rather than attempted. Refusing exits 3, a third outcome which check_split.sh renders as a SKIP
+# naming the reason; see the note above PLATFORM_KEY for why none of the four signals survives the
+# crossing
 #
 # Stdlib only, by design - it must run on the devenv7 dist interpreter, which is an embeddable
 # build with no venv and no pip
@@ -549,6 +555,85 @@ def compare( before, after, unstable, unmeasured = None ):
     return failures
 
 
+#
+# The platform a capture was taken on, kept beside the modules under a key which cannot collide
+# with one - every module name is a directory under <tree>/utests and none of them begins with an
+# underscore. Keeping it in the same object is what makes stamping an existing baseline a one-key
+# edit rather than a recapture
+#
+# None of the four signals above is portable. The committed baseline is a win-x86-vc143-debug
+# capture and against a Linux tree it reports differences inside its own modules which are nothing
+# but Windows versus POSIX - BaseLib_OSJunctionsTests 18 assertions to 0, BaseLib_OSRegistryValueTest
+# 8 to 0, Windows argv quoting 81 to 0. That wall of red says nothing whatever about the test tree,
+# and the first reader to see it reasonably concludes the gate is broken
+#
+
+PLATFORM_KEY = '__platform__'
+
+
+def platform_of_tree( bld_tree ):
+    """
+    The platform a build tree speaks for, which is the tree's own directory name: bld/win-x86-vc143-debug
+    is win-x86-vc143-debug. That string is the platform identity this project already uses everywhere
+    """
+
+    if not bld_tree:
+        return None
+
+    return os.path.basename( os.path.normpath( bld_tree ) ) or None
+
+
+def load_snapshot( path ):
+    """
+    Read a capture as ( modules, platform ), so every other function here sees modules alone
+    """
+
+    with open( path ) as stream:
+        raw = json.load( stream )
+
+    modules = { name: record for name, record in raw.items() if name != PLATFORM_KEY }
+
+    return modules, raw.get( PLATFORM_KEY )
+
+
+def stamp( snapshot, platform ):
+    """
+    The capture as it is written out: the modules, plus the platform when one is known
+    """
+
+    if not platform:
+        return snapshot
+
+    stamped = dict( snapshot )
+    stamped[ PLATFORM_KEY ] = platform
+
+    return stamped
+
+
+def platform_refusal( baseline_platform, platform ):
+    """
+    Why a comparison must not be attempted, or None when the two sides are known to agree
+
+    Three states, not two. A stamp which disagrees is a mismatch; a stamp absent on either side is
+    an unknown, and an unknown is not a match. Every capture taken before this existed is unstamped,
+    and the one this repo carries was taken on win-x86-vc143-debug, so treating unstamped as matching
+    would wave through exactly the comparison this exists to refuse
+    """
+
+    if baseline_platform and platform and baseline_platform == platform:
+        return None
+
+    if baseline_platform is None:
+        return ( 'the baseline carries no platform stamp, so there is nothing to match this tree '
+                 'against - not in force until the baseline is refreshed' )
+
+    if platform is None:
+        return ( 'the baseline speaks for %s and this side carries no platform stamp'
+                 % baseline_platform )
+
+    return 'the baseline speaks for %s and this tree is %s' % ( baseline_platform, platform )
+
+
 def repo_root():
     return os.path.normpath( os.path.join( os.path.dirname( os.path.abspath( __file__ ) ), '..', '..' ) )
 
@@ -558,7 +643,9 @@ def main():
     parser = argparse.ArgumentParser( description = 'capture and compare unit-test run behaviour' )
 
     parser.add_argument( '--run', action = 'store_true', help = 'run every built test binary directly' )
-    parser.add_argument( '--bld', help = 'the build tree to run binaries from, e.g. bld/win-x86-vc143-debug' )
+    parser.add_argument( '--bld', help = 'the build tree to run binaries from, e.g. bld/win-x86-vc143-debug; '
+                                         'its name is the platform the capture is stamped with, and is '
+                                         'worth passing alongside --parse-logs for that reason alone' )
     parser.add_argument( '--parse-logs', metavar = 'DIR', help = 'parse the utflogs directory make produced' )
     parser.add_argument( '--only', nargs = '*', help = 'restrict to these modules' )
     parser.add_argument( '--timeout', type = int, default = 1800, help = 'per-module timeout in seconds' )
@@ -580,10 +667,8 @@ def main():
 
     if args.nondeterministic:
 
-        with open( args.nondeterministic[ 0 ] ) as stream:
-            first = json.load( stream )
-        with open( args.nondeterministic[ 1 ] ) as stream:
-            second = json.load( stream )
+        first, _ = load_snapshot( args.nondeterministic[ 0 ] )
+        second, _ = load_snapshot( args.nondeterministic[ 1 ] )
 
         unstable = nondeterministic( first, second )
 
@@ -601,6 +686,14 @@ def main():
 
     snapshot = None
 
+    #
+    # A tree names its own platform, and a capture read back from a file carries whatever platform
+    # it was stamped with. The file's own stamp wins over --bld deliberately: an unstamped capture
+    # cannot be laundered into a stamped one by naming a tree on the command line
+    #
+
+    platform = platform_of_tree( args.bld )
+
     if args.run:
         if not args.bld:
             print( 'utf_runlog: --run needs --bld', file = sys.stderr )
@@ -613,8 +706,7 @@ def main():
         snapshot = collect_by_parsing( args.parse_logs, set( args.only or [] ) )
 
     elif args.against:
-        with open( args.against ) as stream:
-            snapshot = json.load( stream )
+        snapshot, platform = load_snapshot( args.against )
 
     if snapshot is None:
         print( 'utf_runlog: nothing to do - pass --run, --parse-logs or --against', file = sys.stderr )
@@ -622,9 +714,10 @@ def main():
 
     if args.capture and not args.nondeterministic:
         with open( args.capture, 'w' ) as stream:
-            json.dump( snapshot, stream, indent = 1, sort_keys = True )
+            json.dump( stamp( snapshot, platform ), stream, indent = 1, sort_keys = True )
             stream.write( '\n' )
-        print( 'utf_runlog: wrote %s' % args.capture )
+        print( 'utf_runlog: wrote %s%s' % (
+            args.capture, '' if platform else ' (no --bld given, so it carries no platform stamp)' ) )
 
     print( '' )
     print( 'utf_runlog: %d module(s), %d case(s) ran, %d registered' % (
@@ -632,8 +725,25 @@ def main():
 
     if args.compare:
 
-        with open( args.compare ) as stream:
-            before = json.load( stream )
+        before, baseline_platform = load_snapshot( args.compare )
+
+        #
+        # Refused before anything is compared, and reported as neither a PASS nor a FAIL: exit 3,
+        # which check_split.sh renders as a SKIP naming this reason. A FAIL here would red the gate
+        # for everyone who runs it on a platform the baseline was not captured on, and a PASS would
+        # claim a check that never ran
+        #
+
+        refusal = platform_refusal( baseline_platform, platform )
+
+        if refusal:
+            print( '' )
+            print( 'utf_runlog: REFUSED - %s' % refusal )
+            print( 'utf_runlog: nothing was compared. None of the four signals is portable, so a' )
+            print( 'utf_runlog: comparison across platforms reports platform difference as regression' )
+            print( 'utf_runlog: - capture a baseline on this platform, or run on the one the baseline' )
+            print( 'utf_runlog: speaks for' )
+            return 3
 
         if args.family:
             before = restrict( before, args.family )

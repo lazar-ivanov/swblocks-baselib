@@ -122,7 +122,7 @@ moves, adds or removes test cases.
 |---|---|---|
 | 1 | `utf_inventory.py --compare` | C1–C13: no case lost, added or edited; guard and namespace stacks unchanged; no duplicate names; helper members neither lost, invented nor duplicated; data files present, unchanged in content and still referenced; `notes.txt` recipes resolve, no case loses one, and a module declaring its index complete really is; every file on both sides keeps its `#include` list, bar the roster lines a relocation must edit; file-scope text — the fixtures, the column-0 statics, the `BL_IID_DECLARE`s, the behavioural `#define`s — neither lost nor invented; a helper member that stayed in its file keeps the namespace it sat in; and all of it over `src/utests/include/` too |
 | 2 | `utf_objsize.py --ceiling 75` | No object over the ceiling |
-| 3 | `utf_runlog.py --compare` | Registered set, executed set, pass/fail, skips, and **per-case assertion counts** — differentially, and **only over the 17 modules the baseline covers** |
+| 3 | `utf_runlog.py --compare` | Registered set, executed set, pass/fail, skips, and **per-case assertion counts** — differentially, **only over the 17 modules the baseline covers**, and **only on the platform the baseline was captured on**; across a mismatch the comparison is refused, not attempted |
 
 `selftest_inventory.py` proves tier 1 actually fails when it should; run it if you change the
 extractor.
@@ -161,12 +161,22 @@ diff shows exactly what is blessed.
 ones.** It is also a `win-x86-vc143-debug` capture (`91d5c2c`), so it is a statement about one
 platform as well as about those modules: run against a Linux tree it reports 37 assertion-count
 differences inside its *own* 17 modules which are nothing but Windows-versus-POSIX
-(`BaseLib_OSJunctionsTests` 18 → 0, `BaseLib_OSRegistryValueTest` 8 → 0). Every comparison therefore
-ends with a coverage statement naming the modules it could not speak about, and
-`baseline/uncovered.json` gives the reason for each — read that before taking a green tier 3 for
-coverage. The 17 client modules were measured for admission and **refused**;
+(`BaseLib_OSJunctionsTests` 18 → 0, `BaseLib_OSRegistryValueTest` 8 → 0, Windows argv quoting
+81 → 0). Every comparison therefore ends with a coverage statement naming the modules it could not
+speak about, and `baseline/uncovered.json` gives the reason for each — read that before taking a
+green tier 3 for coverage. The 17 client modules were measured for admission and **refused**;
 `notes/plans/issues/tier3-client-modules-not-baselineable-record.md` has the numbers and what would
 reverse it.
+
+**That cross-platform comparison is now refused rather than attempted.** A capture records the
+platform it was taken on — the name of the build tree it read, so pass `--bld` even with
+`--parse-logs` — and tier 3 compares only when the baseline's platform matches the tree it is
+handed. Otherwise it reports neither a PASS nor a FAIL but a **SKIP naming both platforms**, because
+a FAIL would red the gate for everyone who is not on the baseline's platform and a PASS would claim
+a check that never ran. **A baseline with no platform stamp is refused the same way and is not in
+force until it is refreshed**, exactly as C11 and C13 are, and the summary line says which state it
+is in. The answer to either is `utf_runlog.py --run --bld <tree> --capture …` on the platform you
+need to gate.
 
 **A differential comparison can only speak about things present on both sides.** Tiers 1 and 3
 compare against a baseline, so anything *new* — a module, a case — is unjudgeable by construction,
