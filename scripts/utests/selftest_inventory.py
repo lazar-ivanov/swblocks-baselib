@@ -37,14 +37,67 @@
 
 from __future__ import print_function
 
+import ast
 import copy
 import json
 import os
+import re
 import sys
 
 sys.path.insert( 0, os.path.dirname( os.path.abspath( __file__ ) ) )
 
 from utf_inventory import check_intrinsic, check_against
+
+
+MARKER_RE = re.compile( r'^(C\d+)(.?)' )
+
+#
+# ast.parse( ) yields Constant from 3.8 and Str before it, and the devenv7 dist interpreter is
+# whatever it is. Resolved here, behind the version test, because merely LOOKING UP ast.Str on
+# 3.12 and later emits a DeprecationWarning on stderr of every run
+#
+
+LEGACY_STR = getattr( ast, 'Str', None ) if sys.version_info < ( 3, 8 ) else None
+
+
+def spaced():
+    """
+    Every failure string in utf_inventory.py, and whether its marker is followed by a space
+
+    Returns ( total, [ ( line, text ) ... ] ) for the ones that are not. Parsed from the source
+    beside this file, which is the tool under test whether that is this branch's or an older one
+    """
+
+    path = os.path.join( os.path.dirname( os.path.abspath( __file__ ) ), 'utf_inventory.py' )
+
+    with open( path, 'r', encoding = 'utf-8-sig', errors = 'replace' ) as stream:
+        tree = ast.parse( stream.read() )
+
+    total, bad = 0, []
+
+    for node in ast.walk( tree ):
+
+        if isinstance( node, ast.Constant ):
+            value = node.value
+        elif LEGACY_STR is not None and isinstance( node, LEGACY_STR ):
+            value = node.s
+        else:
+            continue
+
+        if not isinstance( value, str ):
+            continue
+
+        matched = MARKER_RE.match( value )
+
+        if not matched:
+            continue
+
+        total += 1
+
+        if matched.group( 2 ) != ' ':
+            bad.append( ( node.lineno, value[ : 60 ] ) )
+
+    return total, bad
 
 
 def unreferenced( info ):
@@ -65,9 +118,25 @@ def unreferenced( info ):
 def expect( label, failures, marker ):
     """
     Assert that at least one reported failure carries the given invariant marker
+
+    The marker is matched with its trailing space, because a bare prefix does not separate C1
+    from C10 and C11: an expectation written for C1 would be satisfied by either of them, and a
+    control that can be satisfied by the wrong invariant proves nothing about the right one
+
+    The control for that is a discrimination, not a run of the harness. The bare-prefix matcher
+    answers True for the marker C1 on 'C10 file INCLUDES CHANGED: ...' and on 'C11 file-scope
+    text LOST: ...'; this one answers False on both and True on 'C1 case LOST: ...'. Disabling C1
+    and watching both C1 expectations go red measures something else - it says the bug was masking
+    nothing today, because no mutation here happens to disturb includes or file scope as well, and
+    that is a claim about latency rather than about the fix
+
+    The stricter form is only safe if every failure string the tool emits really does carry the
+    marker followed by a space, and spaced( ) below asserts that by parsing the source rather than
+    by anyone reading it - because the way this defect comes back is one new failure string
+    written without the space, which would then match nothing and go silently unproven
     """
 
-    hit = [ failure for failure in failures if failure.startswith( marker ) ]
+    hit = [ failure for failure in failures if failure.startswith( marker + ' ' ) ]
 
     if hit:
         print( '    PASS  %-4s %-46s %s' % ( marker, label, hit[ 0 ][ : 76 ] ) )
@@ -120,6 +189,27 @@ def main():
 
     print( '    PASS  ----  unmutated baseline is clean both ways' )
 
+    #
+    # The precondition every expect( ) below rests on, asserted rather than assumed
+    #
+    # expect( ) matches the marker with a trailing space so that a C1 expectation cannot be
+    # satisfied by a C10 or C11 line. That is only safe while every failure string the tool emits
+    # carries the space, and the way this defect returns is one new string written without it -
+    # which would then match nothing and leave its own expectation silently unproven
+    #
+
+    total, unspaced = spaced()
+
+    if unspaced:
+        print( '    FAIL  ----  %d of %d failure string(s) do not follow the marker with a space'
+               % ( len( unspaced ), total ) )
+        for line, text in unspaced:
+            print( '                utf_inventory.py:%d  %s' % ( line, text ) )
+        ok = False
+    else:
+        print( '    PASS  ----  all %d failure strings follow the marker with a space  '
+               'expect( ) can discriminate C1 from C10 and C11' % total )
+
     # C1 - a dropped case
     mutated = copy.deepcopy( baseline )
     dropped = mutated[ 'cases' ].pop( 17 )
@@ -163,6 +253,24 @@ def main():
     clone[ 'file' ] = 'utf_baselib_elsewhere/TestClone.h'
     mutated[ 'cases' ].append( clone )
     ok &= expect( 'case name duplicated (%s)' % clone[ 'name' ], check_intrinsic( mutated ), 'C5' )
+
+    #
+    # C5 - the duplicate on the BASELINE side, which is the one nothing looked at
+    #
+    # The clone is made identical in every hashed field, so that the only thing wrong with this
+    # pair of manifests is the duplicate itself. Against the tool before this half existed the
+    # comparison below reports NOTHING at all: index_cases( ) collapses the pair, and C1 to C4
+    # then compare the survivor against itself while one of the two cases has been deleted
+    #
+
+    doubled = copy.deepcopy( baseline )
+    twin = copy.deepcopy( doubled[ 'cases' ][ 13 ] )
+    twin[ 'file' ] = 'utf_baselib_elsewhere/TestTwin.h'
+    twin[ 'module' ] = 'utf_baselib_elsewhere'
+    doubled[ 'cases' ].append( twin )
+
+    ok &= expect( 'baseline carries the name twice, one deleted (%s)' % twin[ 'name' ],
+                  check_against( doubled, baseline ), 'C5' )
 
     # C6 - a helper block copied into a second header of the same module
     mutated = copy.deepcopy( baseline )
@@ -621,6 +729,269 @@ def main():
 
     ok &= expect( 'baseline predating the include capture',
                   check_against( stripped, baseline ), 'C10' )
+
+    #
+    # C11 - file-scope text, which for ten invariants nothing hashed
+    #
+    # A refreshed baseline carries its own file_members and they are used as they stand. One
+    # captured before C11 existed carries none, and rather than skip the proof the list is stood
+    # up from the baseline's own helper members - real spans with real shas, re-filed as
+    # file-scope ones. Every branch of the check is exercised either way
+    #
+    # This is deliberately NOT the capture path, and the difference matters: what C11 extracts
+    # from a real tree, and what it must stay silent about, is proved on filesystem copies of
+    # src/utests. Those probes are what found the two exclusions; a synthesized list could not
+    # have, because it has no preprocessor lines and no comment blocks in it
+    #
+
+    armed = copy.deepcopy( baseline )
+
+    if not armed.get( 'file_members' ):
+        armed[ 'file_members' ] = [
+            { 'module': member[ 'module' ], 'file': member[ 'file' ], 'line': member[ 'line' ],
+              'sha': member[ 'sha' ], 'label': member[ 'label' ] }
+            for member in baseline[ 'members' ][ : 40 ]
+            ]
+
+    if check_against( armed, armed ):
+        print( '    FAIL  C11  armed baseline is not clean against itself' )
+        ok = False
+    else:
+        print( '    PASS  C11  armed baseline is clean against itself       '
+               '%d file-scope span(s) in force' % len( armed[ 'file_members' ] ) )
+
+    # C11 - a file-scope span edited, which is what a member injected into a fixture looks like
+    mutated = copy.deepcopy( armed )
+    mutated[ 'file_members' ][ 0 ][ 'sha' ] = 'a' * 32
+    ok &= expect( 'file-scope span edited (%s)' % mutated[ 'file_members' ][ 0 ][ 'label' ][ : 24 ],
+                  check_against( armed, mutated ), 'C11' )
+
+    # C11 - a file-scope span deleted outright
+    mutated = copy.deepcopy( armed )
+    gone = mutated[ 'file_members' ].pop( 1 )
+    ok &= expect( 'file-scope span deleted (%s)' % gone[ 'label' ][ : 24 ],
+                  check_against( armed, mutated ), 'C11' )
+
+    #
+    # C11 - a file-scope span invented
+    #
+    # The direction C6 was one-way about until 1c7003e, and C8 before it. A relocation invents no
+    # fixture any more than it invents a case
+    #
+
+    mutated = copy.deepcopy( armed )
+    mutated[ 'file_members' ].append(
+        { 'module': 'utf_baselib', 'file': 'utf_baselib/TestObjModel.h', 'line': 1,
+          'sha': 'b' * 32, 'label': 'struct AnInventedFixture' } )
+    ok &= expect( 'file-scope span invented', check_against( armed, mutated ), 'C11' )
+
+    #
+    # C11 - the same span in another file: a relocation, and it must be SILENT
+    #
+    # This is the whole reason the identity is text alone and the comparison is tree wide. A
+    # split moving a fixture into a sibling header, or into a new module with the cases it
+    # fixtures, changes its file and its line and nothing else
+    #
+
+    mutated = copy.deepcopy( armed )
+    mutated[ 'file_members' ][ 2 ][ 'file' ] = 'utf_baselib_tasks9/TestTasks8.h'
+    mutated[ 'file_members' ][ 2 ][ 'module' ] = 'utf_baselib_tasks9'
+    mutated[ 'file_members' ][ 2 ][ 'line' ] = 4242
+
+    residue = [ f for f in check_against( armed, mutated ) if f.startswith( 'C11 ' ) ]
+
+    if residue:
+        print( '    FAIL  C11  span relocated to another module             '
+               '(reported - C11 would fire on every legitimate split)' )
+        ok = False
+    else:
+        print( '    PASS  C11  span relocated to another module             '
+               'correctly silent - identity is text alone, compared tree wide' )
+
+    #
+    # C11 - a baseline predating the file-scope capture leaves the check not in force, silently
+    #
+    # It is the one arming guard in this tool that must NOT fail, because no baseline captured
+    # before C11 carries the field and a hard red here would stop every lane until the refresh
+    # lands. main( ) prints the state on every run instead, which is the C9 no-withdrawal
+    # precedent
+    #
+    # What bounds that silence is NOT the two guards below - neither of them fires on a baseline
+    # MISSING the key, which is the state every baseline is in. It is that capture( ) always
+    # writes file_members, so the next refresh for any reason arms C11, and every real change-set
+    # replayed so far carries a C1 ADDED, which is a refresh. The bound is days rather than a
+    # policy. The two guards below cover the other state - a baseline which carries the field
+    # BROKEN - and the edge neither covers is a refresh taken with a pre-C11 tool, from a lane
+    # branched before the merge, which would disarm C11 with only the printed note to say so
+    #
+
+    older = copy.deepcopy( armed )
+    del older[ 'file_members' ]
+
+    mutated = copy.deepcopy( armed )
+    mutated[ 'file_members' ][ 0 ][ 'sha' ] = 'c' * 32
+
+    residue = [ f for f in check_against( older, mutated ) if f.startswith( 'C11 ' ) ]
+
+    if residue:
+        print( '    FAIL  C11  baseline predating the file-scope capture    '
+               '(reported - it must be a printed note, not a red gate)' )
+        ok = False
+    else:
+        print( '    PASS  C11  baseline predating the file-scope capture    '
+               'correctly silent - not in force until the baseline is refreshed' )
+
+    # C11 - but a baseline which carries the field EMPTY is broken, not merely old
+    broken = copy.deepcopy( armed )
+    broken[ 'file_members' ] = []
+    ok &= expect( 'baseline carrying an empty file-scope list',
+                  check_against( broken, armed ), 'C11' )
+
+    # C11 - and an extraction which produced nothing is a failure of the run, not of the baseline
+    empty = copy.deepcopy( armed )
+    empty[ 'file_members' ] = []
+    ok &= expect( 'capture which extracted no file-scope text',
+                  check_against( armed, empty ), 'C11' )
+
+    #
+    # C12 - a helper member which stayed in its file, moved to another namespace
+    #
+    # manifest[ 'namespaces' ] was read by the duplication check and by nothing else, so a
+    # column-0 namespace renamed passed tier 1 in a helper-only header AND in one holding live
+    # cases. C4 cannot stand in: every case in this tree sits at file scope, so its subject is
+    # empty - which the control two below asserts rather than assumes
+    #
+
+    mutated = copy.deepcopy( baseline )
+    moved = mutated[ 'members' ][ 0 ]
+    moved[ 'ns' ] = moved[ 'ns' ] + '_renamed'
+    ok &= expect( 'member moved to another namespace (%s:%d)' % ( moved[ 'file' ], moved[ 'line' ] ),
+                  check_against( baseline, mutated ), 'C12' )
+
+    #
+    # C12 - the same member in ANOTHER file, which is a relocation and must be SILENT
+    #
+    # This is the whole reason the anchor is text AND file rather than text alone. A split cuts a
+    # block into a sibling header, or hoists a helper into a shared namespace, and the namespace
+    # path legitimately changes with it - a rule that fired there would fire on the operation this
+    # tool exists to verify. Measured live as well, on a verbatim partition and on a whole block
+    # cut out of its file: both PASS with nothing reported at all
+    #
+
+    mutated = copy.deepcopy( baseline )
+    relocated = mutated[ 'members' ][ 1 ]
+    relocated[ 'file' ] = relocated[ 'file' ].replace( '.h', 'Split.h' )
+    relocated[ 'ns' ] = 'somewhere_else'
+    relocated[ 'line' ] = 4242
+
+    residue = [ f for f in check_against( baseline, mutated ) if f.startswith( 'C12 ' ) ]
+
+    if residue:
+        print( '    FAIL  C12  member relocated to another file              '
+               '(reported - C12 would fire on every legitimate split)' )
+        ok = False
+    else:
+        print( '    PASS  C12  member relocated to another file              '
+               'correctly silent - the anchor is text AND file' )
+
+    #
+    # C4's subject really is empty on this tree, which is what makes C12 load bearing rather than
+    # redundant. Asserted, not assumed: if a case is ever written inside a column-0 namespace this
+    # control goes red and the claim above has to be rewritten rather than quietly left wrong
+    #
+
+    nested = [ case for case in baseline[ 'cases' ] if case[ 'namespaces' ] ]
+
+    if nested:
+        print( '    ----  C4   %d case(s) sit inside a column-0 namespace     '
+               'C4 has a subject after all - revisit what C12 claims' % len( nested ) )
+    else:
+        print( '    ----  C4   0 of %d cases sit inside a namespace          '
+               'C4 protects nothing that exists here; C12 is not redundant' % len( baseline[ 'cases' ] ) )
+
+    #
+    # C13 - the shared include tree
+    #
+    # The baseline predates it, so the armed manifest is synthesized the way the C11 section
+    # synthesizes its file-scope list: real members re-filed under the <shared> module name, with
+    # a shared file list beside them. What the scan really extracts from src/utests/include, and
+    # what it must stay silent about, is proved on filesystem copies outside the repo - that is
+    # where the hoist control lives, and a synthesized list could not carry it
+    #
+
+    SHARED = '<shared>'
+
+    shared = copy.deepcopy( baseline )
+    shared[ 'shared' ] = { 'files': [
+        { 'path': 'include/utests/baselib/Utf.h', 'includes': [ '<boost/test/unit_test.hpp>' ] },
+        { 'path': 'include/utests/baselib/TestMessagingUtils.h', 'includes': [ '<utests/baselib/Utf.h>' ] },
+        ] }
+
+    shared[ 'members' ] = shared[ 'members' ] + [
+        dict( member, module = SHARED, file = 'include/utests/baselib/TestMessagingUtils.h',
+              sha = 'd%s' % member[ 'sha' ][ 1 : ] )
+        for member in baseline[ 'members' ][ : 6 ]
+        ]
+
+    if check_against( shared, shared ):
+        print( '    FAIL  C13  armed baseline is not clean against itself' )
+        ok = False
+    else:
+        print( '    PASS  C13  armed baseline is clean against itself       '
+               '%d shared file(s), %d shared member(s) in force'
+               % ( len( shared[ 'shared' ][ 'files' ] ),
+                   sum( 1 for m in shared[ 'members' ] if m[ 'module' ] == SHARED ) ) )
+
+    # C13 - a baseline carrying the key with an EMPTY file list is broken, not merely old
+    broken = copy.deepcopy( shared )
+    broken[ 'shared' ] = { 'files': [] }
+    ok &= expect( 'baseline carrying an empty shared file list',
+                  check_against( broken, shared ), 'C13' )
+
+    # C13 - and a scan which found no shared file at all is a failure of the run
+    empty = copy.deepcopy( shared )
+    empty[ 'shared' ] = { 'files': [] }
+    ok &= expect( 'scan which found no shared-tree file',
+                  check_against( shared, empty ), 'C13' )
+
+    #
+    # C13 - a member LOST from the shared tree is C6's, which is the whole point of one list
+    #
+    # C6 says a helper is lost only if its text survives nowhere in the tree. While the shared
+    # tree was outside the scan that was false as written: a helper hoisted into it read as LOST.
+    # Measured live, both ways - the hoist reds against the tool before this and passes after
+    #
+
+    mutated = copy.deepcopy( shared )
+    gone = next( m for m in mutated[ 'members' ] if m[ 'module' ] == SHARED )
+    mutated[ 'members' ] = [ m for m in mutated[ 'members' ] if m is not gone ]
+    ok &= expect( 'shared-tree helper member lost (%s)' % gone[ 'file' ],
+                  check_against( shared, mutated ), 'C6' )
+
+    #
+    # C13 - a baseline which predates the scan must stay SILENT, not red
+    #
+    # It is the same departure C11 takes and for the same reason: no baseline carries the key, so
+    # a hard failure would stop every lane rather than the change that earned it. The current side
+    # is trimmed instead, which makes the comparison exactly the one that ran before this existed
+    #
+
+    older = copy.deepcopy( shared )
+    del older[ 'shared' ]
+    older[ 'members' ] = [ m for m in older[ 'members' ] if m[ 'module' ] != SHARED ]
+
+    residue = [ f for f in check_against( older, shared )
+                if f.startswith( ( 'C13 ', 'C6 ', 'C11 ', 'C12 ' ) ) ]
+
+    if residue:
+        print( '    FAIL  C13  baseline predating the shared scan           '
+               '(reported - it must be a printed note, not a red gate)' )
+        for failure in residue[ : 3 ]:
+            print( '                %s' % failure )
+        ok = False
+    else:
+        print( '    PASS  C13  baseline predating the shared scan           '
+               'correctly silent - the shared tree is trimmed from both sides' )
 
     # C7 - the same data file name diverging between two modules
     mutated = copy.deepcopy( baseline )

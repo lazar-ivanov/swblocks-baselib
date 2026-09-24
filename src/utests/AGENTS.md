@@ -120,7 +120,7 @@ moves, adds or removes test cases.
 
 | Tier | Tool | Checks |
 |---|---|---|
-| 1 | `utf_inventory.py --compare` | C1–C10: no case lost, added or edited; guard and namespace stacks unchanged; no duplicate names; helper members neither lost nor duplicated; data files present, unchanged in content and still referenced; `notes.txt` recipes resolve, and no case loses one; every file keeps the `#include` list it had |
+| 1 | `utf_inventory.py --compare` | C1–C13: no case lost, added or edited; guard and namespace stacks unchanged; no duplicate names; helper members neither lost, invented nor duplicated; data files present, unchanged in content and still referenced; `notes.txt` recipes resolve, no case loses one, and a module declaring its index complete really is; every file on both sides keeps its `#include` list, bar the roster lines a relocation must edit; file-scope text — the fixtures, the column-0 statics, the `BL_IID_DECLARE`s, the behavioural `#define`s — neither lost nor invented; a helper member that stayed in its file keeps the namespace it sat in; and all of it over `src/utests/include/` too |
 | 2 | `utf_objsize.py --ceiling 75` | No object over the ceiling |
 | 3 | `utf_runlog.py --compare` | Registered set, executed set, pass/fail, skips, and **per-case assertion counts** |
 
@@ -128,14 +128,34 @@ moves, adds or removes test cases.
 extractor.
 
 **A change that legitimately adds something refreshes the baseline, in a commit of its own.** Tier 1
-is a relocation gate, so a new case, a new helper member, an added `#include` and an edited data file
-are all reported — none of them is a relocation. The answer is
+is a relocation gate, so a new case, a new helper member, an added `#include`, an edited data file and
+a new file-scope declaration are all reported — none of them is a relocation. The answer is
 `utf_inventory.py --capture notes/reviews/major/update_2026/baseline/inventory.json` as a companion
 commit, where the manifest diff shows exactly what is now blessed. Refreshing to silence a report you
 cannot explain is the one way to make this gate worthless.
 
+**C11 is not in force until that refresh happens.** No baseline captured before it carries
+`file_members`, and a hard failure there would red the gate for everyone rather than for the change
+that earned it, so every run prints which state it is in. The refresh that arms it is the ordinary
+one above.
+
 **Tier 3 is the one that catches a case which still registers and still passes while silently doing
 less work.** Do not skip it for a change that moves cases between modules.
+
+**Tier 1 scans `src/utests/include/` as well as `src/utests/utf*/`.** That shared tree — 27 files,
+15,373 lines, included by 181 of the 185 module files, and where `Utf.h`, `UtfMain.h` and the shared
+fixtures live — used to be read by no invariant at all: editing a shared fixture there, or
+redefining `UTF_AUTO_TEST_CASE` itself, passed tier 1 green. Its files are now judged by C6, C10,
+C11 and C12 exactly as a module's are. It is **not** a module — it has no `data/` directory and can
+have none — so C7, C8 and C9 never ask it anything. **C13 is not in force until the baseline is
+refreshed**, and every run prints which state it is in, exactly as C11 does.
+
+**Moving heavy helper bodies out of line is not a relocation, and tier 1 now says so.** Reduction
+option 3 below rewrites a helper's declaration and writes its body into a new `…Impl.cpp` in the
+shared tree. Replaying the real four-way `f992e2f` split reports eleven such lines — one added
+`#include` in a shared header and ten helper members — where it used to report three. Each names a
+real change to a file every module compiles; the answer is the companion refresh, where the manifest
+diff shows exactly what is blessed.
 
 **A differential comparison can only speak about things present on both sides.** Tiers 1 and 3
 compare against a baseline, so anything *new* — a module, a case — is unjudgeable by construction,
