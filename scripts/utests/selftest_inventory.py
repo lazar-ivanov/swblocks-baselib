@@ -20,8 +20,11 @@
 #
 # A verification gate nobody has seen fail is not a gate. The module split relies on
 # utf_inventory.py to catch a silently dropped or edited test case, so before that reliance is
-# placed on it, each of its nine invariants is shown to fire on a manifest corrupted in exactly
+# placed on it, each of its ten invariants is shown to fire on a manifest corrupted in exactly
 # the way that invariant exists to catch
+#
+# Several of them are also shown NOT to fire on the legitimate state they must stay silent about,
+# because a rule which reds on ordinary work is worse than the blind spot it closes
 #
 # C9 is also shown NOT to fire on a module which never claimed a complete notes.txt index, because
 # a rule that fired on the 481 cases in this tree with no recipe would be worse than the blind spot
@@ -283,6 +286,73 @@ def main():
     withdrawn[ 'modules' ][ incomplete ][ 'notes_index' ] = False
     ok &= expect( 'index declaration withdrawn (%s)' % incomplete,
                   check_against( declared, withdrawn ), 'C9' )
+
+    #
+    # C10 - an #include added to a file which holds live test cases
+    #
+    # This is the mutation that showed the docstring claimed more than the checks held: the
+    # compilation context of every case in that header changes and C1 to C4 stay green
+    #
+
+    mutated = copy.deepcopy( baseline )
+    carrier = sorted( case[ 'file' ] for case in baseline[ 'cases' ] )[ 0 ]
+
+    for info in mutated[ 'modules' ].values():
+        for entry in info[ 'files' ]:
+            if entry[ 'path' ] == carrier:
+                entry[ 'includes' ] = entry[ 'includes' ] + [ '<an/invented/header.h>' ]
+
+    ok &= expect( 'include added to a file with cases (%s)' % carrier,
+                  check_against( baseline, mutated ), 'C10' )
+
+    # C10 - the same file's includes merely reordered
+    mutated = copy.deepcopy( baseline )
+
+    for info in mutated[ 'modules' ].values():
+        for entry in info[ 'files' ]:
+            if entry[ 'path' ] == carrier and len( entry[ 'includes' ] ) > 1:
+                entry[ 'includes' ] = list( reversed( entry[ 'includes' ] ) )
+
+    ok &= expect( 'includes reordered (%s)' % carrier, check_against( baseline, mutated ), 'C10' )
+
+    #
+    # C10 - a file removed by a relocation must NOT be reported
+    #
+    # A split deletes headers by design, so a rule which judged a vanished file would be red on
+    # every legitimate use of this tool. The cases and members that file carried are C1's and
+    # C6's to speak for
+    #
+
+    mutated = copy.deepcopy( baseline )
+
+    for info in mutated[ 'modules' ].values():
+        info[ 'files' ] = [ entry for entry in info[ 'files' ] if entry[ 'path' ] != carrier ]
+
+    residue = [ f for f in check_against( baseline, mutated ) if f.startswith( 'C10' ) ]
+
+    if residue:
+        print( '    FAIL  C10  file removed by a relocation                  '
+               '(reported - the rule is not scoped to files present on both sides)' )
+        ok = False
+    else:
+        print( '    PASS  C10  file removed by a relocation                  '
+               'correctly silent - only files present on both sides are judged' )
+
+    #
+    # C10 - a baseline with no include lists must say so rather than pass everything
+    #
+    # The failure mode this guards has bitten this tool twice already: a check added after a
+    # baseline was captured reads an absent field, finds nothing to compare, and reports clean
+    #
+
+    stripped = copy.deepcopy( baseline )
+
+    for info in stripped[ 'modules' ].values():
+        for entry in info[ 'files' ]:
+            entry[ 'includes' ] = []
+
+    ok &= expect( 'baseline predating the include capture',
+                  check_against( stripped, baseline ), 'C10' )
 
     # C7 - the same data file name diverging between two modules
     mutated = copy.deepcopy( baseline )

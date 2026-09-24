@@ -23,7 +23,7 @@
 # which matters because the failure mode - a case that silently stops being registered - looks
 # exactly like success in a green test run
 #
-# This script captures a manifest of every test case in src/utests and checks nine invariants:
+# This script captures a manifest of every test case in src/utests and checks ten invariants:
 #
 #   C1  the set of case names is identical
 #   C2  every case body and doc comment hashes the same
@@ -35,9 +35,17 @@
 #   C8  every case a module's notes.txt names exists in that module
 #   C9  no case loses a recipe it had, and a module which declares its notes.txt a complete
 #       index really does name every one of its cases
+#   C10 every file keeps the #include list it had
 #
-# C2 together with C3 and C4 is the core claim: the text of every test, and the compilation
-# context that text sees, is unchanged
+# C2 together with C3 and C4 is the core claim about a case which stayed where it was: its text,
+# the preprocessor guard stack and the namespace stack it sits under are all unchanged. C10 adds
+# the remaining part of the compilation context - the #include list of the file the case sits in
+#
+# A case RELOCATED into a different file is deliberately not judged on includes, because a split
+# writes new headers with their own include blocks and a rule that fired on that would fire on
+# every legitimate split. That limit is written down because the claim here used to be broader
+# than the checks: it said "the compilation context that text sees is unchanged", which covers
+# includes, and for three invariants' worth of history nothing read them at all
 #
 # The parser relies on a layout precondition which holds throughout src/utests and is asserted
 # on every run: each test case macro sits at column 0 and its braces sit at column 0, so a case
@@ -580,6 +588,23 @@ def recipe_owners( manifest ):
     return owners
 
 
+def file_includes( manifest ):
+    """
+    File path -> its #include list, across every module
+
+    Paths carry the module directory and so are unique tree wide, which is what lets a file be
+    matched between two manifests without also matching on the module
+    """
+
+    includes = {}
+
+    for info in manifest[ 'modules' ].values():
+        for entry in info[ 'files' ]:
+            includes[ entry[ 'path' ] ] = entry.get( 'includes', [] )
+
+    return includes
+
+
 def check_intrinsic( manifest ):
     """
     Invariants that hold of a single manifest on its own: C5 to C9
@@ -737,7 +762,11 @@ def check_intrinsic( manifest ):
 
 def check_against( before, after ):
     """
-    Invariants that relate two manifests: C1 to C4, plus the C6 and C9 no-loss halves
+    Invariants that relate two manifests: C1 to C4 and C10, plus the C6 and C9 no-loss halves
+
+    C10 reads manifest[ 'modules' ], which is worth saying because for a long time nothing here
+    did: the whole per-module half was captured on every run and compared by nothing, so every
+    differential claim this gate made was about cases and members alone
     """
 
     failures = []
@@ -770,6 +799,51 @@ def check_against( before, after ):
             failures.append(
                 'C4 case NAMESPACE STACK CHANGED: %s (%s -> %s)' % ( name, a[ 'namespaces' ], b[ 'namespaces' ] )
                 )
+
+    #
+    # C10 - the #include list of every file present on both sides
+    #
+    # Includes are the third part of a case's compilation context, beside its guard stack and its
+    # namespace stack, and they were the part no check read. An include added to a header full of
+    # live cases changes what every one of them compiles against while leaving C1 to C4 green,
+    # because nothing about the case text itself moved
+    #
+    # The comparison is per file rather than per case, and that is the whole of its scope. A case
+    # which moved to another file is judged on text, guards and namespaces only - a split writes
+    # new headers with their own include blocks, so judging a moved case on the include list of
+    # its new home would fire on every legitimate relocation, which is the one thing this gate
+    # cannot afford. A file added or removed is likewise not judged
+    #
+    # Order is part of the comparison. An include can depend on one before it, so a reordering is
+    # a change to the context even when the set is identical - it is reported as its own kind
+    #
+
+    old_includes = file_includes( before )
+    new_includes = file_includes( after )
+
+    if not any( old_includes.values() ):
+        failures.append(
+            'C10 the baseline carries no #include lists - it predates the include capture and '
+            'must be regenerated from its own commit before this invariant can be trusted'
+            )
+    else:
+        for path in sorted( set( old_includes ) & set( new_includes ) ):
+
+            was, now = old_includes[ path ], new_includes[ path ]
+
+            if was == now:
+                continue
+
+            added = [ entry for entry in now if entry not in was ]
+            removed = [ entry for entry in was if entry not in now ]
+
+            if added or removed:
+                failures.append(
+                    'C10 file INCLUDES CHANGED: %s (added %s, removed %s)'
+                    % ( path, ', '.join( added ) or 'nothing', ', '.join( removed ) or 'nothing' )
+                    )
+            else:
+                failures.append( 'C10 file INCLUDES REORDERED: %s' % path )
 
     #
     # The no-loss half of C9 - a case which exists on both sides and had a recipe must still have
@@ -922,6 +996,20 @@ def main():
         if not any( 'notes_index' in info for info in before[ 'modules' ].values() ):
             print( 'utf_inventory: C9 - this baseline predates the index declaration, so the '
                    'no-withdrawal half is not in force until it is refreshed' )
+
+        #
+        # The same reasoning as C9's roster line, for the differential half: what a check does not
+        # look at is exactly what a reader of a green run needs told, and leaving it implied is
+        # how the per-module half went uncompared for as long as it did
+        #
+
+        old_paths, new_paths = set( file_includes( before ) ), set( file_includes( manifest ) )
+
+        print( 'utf_inventory: C10 compares the #include list of the %d file(s) present in both '
+               'manifests (%d added and %d removed by this change are not judged); a case that '
+               'moved between files is judged on text, guards and namespaces only'
+               % ( len( old_paths & new_paths ), len( new_paths - old_paths ),
+                   len( old_paths - new_paths ) ) )
 
         failures.extend( check_against( before, manifest ) )
 
