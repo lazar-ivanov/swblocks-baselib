@@ -59,7 +59,7 @@
 # control, whose entry point legitimately writes the third "using namespace bl;" - measured
 #
 # C4 is the part of that core claim with nothing to say about this tree, and C12 is why that had
-# to be said out loud: all 1082 cases here sit at file scope, so C4's subject is empty and it
+# to be said out loud: EVERY case in this tree sits at file scope, so C4's subject is empty and it
 # protects nothing that exists. The namespace a HELPER sits in is the thing that really moves, and
 # it was read by the duplication check alone - a column-0 namespace renamed passed tier 1, measured
 # in a helper-only header and in one holding live cases
@@ -719,7 +719,7 @@ SHARED_MODULE = '<shared>'
 # The scan used to start at a directory named utf*, and src/utests/include is not one: 27 files and
 # 15,373 lines, included by 181 of the 185 module files, read by no invariant at all. Measured
 # before this: editing a shared fixture's declaration in TestMessagingUtils.h, and redefining
-# UTF_AUTO_TEST_CASE itself in Utf.h - the macro all 1082 cases are declared with - BOTH passed
+# UTF_AUTO_TEST_CASE itself in Utf.h - the macro every case in the tree is declared with - BOTH passed
 # tier 1
 #
 # It is SCOPE rather than a new rule. The same scan_file( ) runs over those files with the same
@@ -1478,8 +1478,9 @@ def check_against( before, after ):
     # manifest[ 'namespaces' ] - the column-0 blocks, each with its name and its whole-block sha -
     # was read by check_intrinsic( )'s duplication check and by nothing else, so renaming a
     # column-0 namespace passed tier 1. Measured, in a helper-only header and in one holding live
-    # cases. C4 cannot stand in for this: all 1082 cases in this tree sit at file scope, so C4's
-    # subject is empty and it protects nothing that exists
+    # cases. C4 cannot stand in for this: every case in this tree sits at file scope, so C4's
+    # subject is empty and it protects nothing that exists - asserted by the selftest on whatever
+    # baseline it is given, not left as a count in a comment that a new case would make stale
     #
     # The identity is deliberately NOT the block. A block's sha covers its opening line, so a
     # rename changes it and the block cannot be matched across the two manifests at all; and the
