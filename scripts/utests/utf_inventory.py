@@ -1044,9 +1044,38 @@ def check_against( before, after ):
     C7 and C10 read manifest[ 'modules' ], which is worth saying because for a long time nothing
     here did: the whole per-module half was captured on every run and compared by nothing, so
     every differential claim this gate made was about cases and members alone
+
+    C5 is asked here too, of the baseline, because check_intrinsic( ) is only ever given the
+    current tree and a duplicate on the other side hides a deletion from C1
     """
 
     failures = []
+
+    #
+    # C5, asked of the BASELINE as well as of the tree being scanned
+    #
+    # check_intrinsic( ) runs on one manifest and main( ) only ever hands it the current one, so
+    # the baseline's own duplicate names were read by nothing. That is not academic: index_cases( )
+    # keys on the name and collapses a duplicate pair to one entry, and C1 to C4 all key on the
+    # name too - so with a baseline carrying two cases called N, deleting either one of them is
+    # reported by NOTHING. The path that can produce such a baseline is --capture, which writes the
+    # manifest before check_intrinsic( ) has run and cannot refuse after the fact
+    #
+
+    doubled = {}
+
+    for case in before[ 'cases' ]:
+
+        name = case[ 'name' ]
+
+        if name in doubled:
+            failures.append(
+                'C5 the BASELINE carries case name %s twice (%s and %s) - C1 to C4 key on the '
+                'name, so one of the pair is invisible to this comparison'
+                % ( name, doubled[ name ][ 'file' ], case[ 'file' ] )
+                )
+
+        doubled[ name ] = case
 
     old = index_cases( before )
     new = index_cases( after )

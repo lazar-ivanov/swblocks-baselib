@@ -254,6 +254,24 @@ def main():
     mutated[ 'cases' ].append( clone )
     ok &= expect( 'case name duplicated (%s)' % clone[ 'name' ], check_intrinsic( mutated ), 'C5' )
 
+    #
+    # C5 - the duplicate on the BASELINE side, which is the one nothing looked at
+    #
+    # The clone is made identical in every hashed field, so that the only thing wrong with this
+    # pair of manifests is the duplicate itself. Against the tool before this half existed the
+    # comparison below reports NOTHING at all: index_cases( ) collapses the pair, and C1 to C4
+    # then compare the survivor against itself while one of the two cases has been deleted
+    #
+
+    doubled = copy.deepcopy( baseline )
+    twin = copy.deepcopy( doubled[ 'cases' ][ 13 ] )
+    twin[ 'file' ] = 'utf_baselib_elsewhere/TestTwin.h'
+    twin[ 'module' ] = 'utf_baselib_elsewhere'
+    doubled[ 'cases' ].append( twin )
+
+    ok &= expect( 'baseline carries the name twice, one deleted (%s)' % twin[ 'name' ],
+                  check_against( doubled, baseline ), 'C5' )
+
     # C6 - a helper block copied into a second header of the same module
     mutated = copy.deepcopy( baseline )
     block = copy.deepcopy( mutated[ 'namespaces' ][ 0 ] )
