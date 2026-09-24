@@ -19,6 +19,24 @@ Do not jump into implementation or change files unless clearly instructed to mak
 
 Do not make any assumptions. Use the AskUserQuestion tool to ask as many follow ups as you need to reach clarity.
 
+**Fold in work that was decided and then blocked, the moment it unblocks — do not ask again.** The
+decision was already taken and the blocker was the only thing outstanding. This does **not** extend
+to work that was merely recommended, or whose shape is still open: that needs a decision and must be
+presented as one. Equally, an item that is the consequence of a decision already taken is **closed
+against that decision**, recorded where the decision lives, and never carried as pending work.
+
+**When a decision is needed, present it in this shape**, every time:
+
+- **What it is**, in plain English, assuming no context.
+- **What happens if it is not done** — the concrete consequence, not the abstraction.
+- **Risk, complexity and blast radius.** Blast radius is what the change can *reach*, not how large
+  the diff is; a one-line change on a universal path has a larger radius than a thousand-line one in
+  a leaf.
+- **The undecided part, named explicitly.** It is usually not *whether* but *which shape*.
+- **A recommendation, and the condition that would reverse it.**
+
+Where several decisions are presented together, order them by what to do first and say why.
+
 **Always use the project's Python virtual environment.**
 
 When running Python commands, tests, or scripts, ALWAYS use the Python interpreter from the project's `.venv` virtual environment, i.e. `.venv/bin/python` relative to the repository root (or `.venv/bin/pytest` for pytest). On Windows these are `.venv/Scripts/python.exe` and `.venv/Scripts/pip.exe`. If the `.venv` directory does not exist, run `make pytest-install` to create it before proceeding. On Windows that target fails against the devenv7 dist interpreter, which is an embeddable build with no `venv` or `pip` — see `scripts/devenv7/AGENTS.md` for the procedure to provision a full CPython into a scratch directory.
@@ -327,10 +345,11 @@ For detailed build system documentation, see `scripts/devenv7/AGENTS.md`:
 
 ---
 
-**Document Version:** 2.10
+**Document Version:** 2.11
 **Last Updated:** 2026-09-24
 
 **Changelog:**
+- v2.11 (2026-09-24): Added when to fold work in without asking, when a decision must be presented instead, and the shape to present it in
 - v2.10 (2026-09-24): Orchestrator validation is clang release and gcc **debug**, not gcc release — gcc debug is where assertions and the debug standard library actually fire, and the lanes' clang debug already covers that variant on one toolchain only
 - v2.9 (2026-09-22): Added Networking Error Codes Are Not Portable — ask net::, never compare transport codes by hand
 - v2.8 (2026-09-19): Added Monitoring A Long Build Or Test Run — check progress, not liveness
