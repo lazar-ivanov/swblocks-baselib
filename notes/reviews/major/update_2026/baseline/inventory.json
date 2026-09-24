@@ -6511,13 +6511,25 @@
    "namespaces": []
   },
   {
+   "body_sha": "15c329cfd4149a4fb43ed2e4398f7932",
+   "doc_sha": "2bcb26943108762e469fa06651c5d30e",
+   "file": "utf_baselib_httpclient7/TestHttp1DriverStrandSeam.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 910,
+   "module": "utf_baselib_httpclient7",
+   "name": "Http1Driver_StrandSeamCancelInTheWindowWinsTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "5b8d0d8b8479f7f14fd3a9db7eff25f3",
    "doc_sha": "a8906e136bbefd0e1d995cb7c544ca4b",
    "file": "utf_baselib_httpclient7/TestHttp1DriverStrandSeam.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 733,
+   "line": 814,
    "module": "utf_baselib_httpclient7",
    "name": "Http1Driver_StrandSeamLeavesAGenuineWriteRefusedTests",
    "namespaces": []
@@ -6529,7 +6541,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 691,
+   "line": 772,
    "module": "utf_baselib_httpclient7",
    "name": "Http1Driver_StrandSeamMakesTheDeferredVerdictReuseTests",
    "namespaces": []
@@ -6541,7 +6553,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 781,
+   "line": 862,
    "module": "utf_baselib_httpclient7",
    "name": "Http1Driver_StrandSeamRefusesReuseAfterAResetWriteTests",
    "namespaces": []
@@ -15118,7 +15130,7 @@
    "line": 70,
    "module": "utf_baselib_httpclient7",
    "ns": "utest",
-   "sha": "e43a46d5fbbba359b27cebae7e77a3b7"
+   "sha": "f2f7af144d648d02061b458dc5af5dde"
   },
   {
    "file": "utf_baselib_httpclient7/TestHttp1DriverWriteBarrier.h",
@@ -19447,6 +19459,7 @@
     "Http1Driver_PeerResetsMidCloseDelimitedBodyDuringWriteTests",
     "Http1Driver_PeerResetsMidCloseDelimitedBodyTests",
     "Http1Driver_PeerResetsWhileRequestWriteIsBlockedTests",
+    "Http1Driver_StrandSeamCancelInTheWindowWinsTests",
     "Http1Driver_StrandSeamLeavesAGenuineWriteRefusedTests",
     "Http1Driver_StrandSeamMakesTheDeferredVerdictReuseTests",
     "Http1Driver_StrandSeamRefusesReuseAfterAResetWriteTests",
@@ -21439,7 +21452,7 @@
    "line": 68,
    "module": "utf_baselib_httpclient7",
    "name": "utest",
-   "sha": "79482fb760154eb4cd687a25d2c971c0"
+   "sha": "645b706b92f7452b1e50f9646d9b1a66"
   },
   {
    "file": "utf_baselib_httpclient7/TestHttp1DriverWriteBarrier.h",
