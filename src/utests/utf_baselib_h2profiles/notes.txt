@@ -1,3 +1,5 @@
+# each slice appends the recipes for the cases it lands here
+
 --log_level=message --run_test=HttpClientProfiles_ShapeTypesDefaultToDefinedValuesTests
 --log_level=message --run_test=HttpClientProfiles_ShapeTypesPreserveOrderTests
 --log_level=message --run_test=HttpClientProfiles_BrowserProfileRoundTripTests

@@ -633,13 +633,32 @@ def stamp( snapshot, platform ):
 # derived before this existed is one. The shape says which it is, so nothing has to be inferred from
 # a missing key that might equally be a typo
 #
+# A third key, "observed", holds the names that were never DERIVED at all, each mapped to where it
+# was seen. Ten of the eleven names this repo carries re-derive from the two committed baseline
+# passes; one does not, because it never was derived from them.
+# IO_SimpleConnectAndTransmitDataMessageDispatcherOutgoingTests was added by hand at 77ef537, whose
+# message records that re-running the unchanged binary twice gave 8199 and then 8194 - so the case
+# simply varies and the two baseline passes were unlucky in agreeing. Written back into "unstable",
+# a name like that survives exactly until the next --nondeterministic recomputes that array and
+# drops it, silently, after which the case is compared against a count it does not hold
+#
+# So the two halves are kept apart by provenance and joined only on the way out. "unstable" is what
+# a derivation writes and may freely overwrite; "observed" is hand-maintained and a derivation
+# carries it through untouched; load_unstable( ) returns the union, deduplicated, so a name written
+# into both is one name. A list with no "observed" key behaves exactly as it did before this
+# existed, and its value is read for its names alone, exactly as "unstable" is
+#
 
 UNSTABLE_KEY = 'unstable'
+OBSERVED_KEY = 'observed'
 
 
 def load_unstable( path ):
     """
     Read an unstable list as ( names, platform ), the bare array it used to be reading as unstamped
+
+    The names are the union of the derived half and the observed half. A refresh that recomputes
+    "unstable" alone therefore cannot drop an observed name, which is the whole point of the split
     """
 
     with open( path ) as stream:
@@ -648,17 +667,49 @@ def load_unstable( path ):
     if isinstance( raw, list ):
         return raw, None
 
-    return raw.get( UNSTABLE_KEY ) or [], raw.get( PLATFORM_KEY )
+    derived = raw.get( UNSTABLE_KEY ) or []
+    observed = raw.get( OBSERVED_KEY ) or {}
+
+    return sorted( set( derived ) | set( observed ) ), raw.get( PLATFORM_KEY )
 
 
-def stamp_unstable( names, platform ):
+def load_observed( path ):
+    """
+    The observed half alone, name -> where it was seen, so that a derivation can carry it through
+
+    A bare legacy array has none, and a file which is not there has none - which is also the right
+    answer for a derivation writing to a path that does not hold the existing list yet
+    """
+
+    if not path or not os.path.isfile( path ):
+        return {}
+
+    with open( path ) as stream:
+        raw = json.load( stream )
+
+    if isinstance( raw, list ):
+        return {}
+
+    return raw.get( OBSERVED_KEY ) or {}
+
+
+def stamp_unstable( names, platform, observed = None ):
     """
     The list as it is written out. There is no unstamped case to write here, unlike a capture: the
     two runs a list is derived from must already agree on a platform or the derivation is refused,
     and that platform - never --bld - is what the list speaks for
+
+    The observed half is written back exactly as it was read, because a derivation can say nothing
+    whatever about it: a name is in it precisely because two passes do not produce it. An empty one
+    writes no key at all, so a list that never had one does not grow one
     """
 
-    return { PLATFORM_KEY: platform, UNSTABLE_KEY: names }
+    written = { PLATFORM_KEY: platform, UNSTABLE_KEY: names }
+
+    if observed:
+        written[ OBSERVED_KEY ] = observed
+
+    return written
 
 
 def platform_refusal( baseline_platform, platform, subject = 'baseline' ):
@@ -801,6 +852,21 @@ def main():
             print( '    %s' % name )
 
         #
+        # The observed half is read back from the file about to be overwritten and carried through,
+        # because a derivation writing only what it derived is exactly how one of those names is
+        # lost. Named line by line rather than counted, and printed even when it is empty, so that a
+        # derivation into a path which does NOT hold the existing list says so here rather than
+        # after the result has been copied over one that does
+        #
+
+        observed = load_observed( args.capture )
+
+        print( 'utf_runlog: %d observed case(s) carried through from %s' % (
+            len( observed ), args.capture or '<no --capture>' ) )
+        for name in sorted( observed ):
+            print( '    %s  -  %s' % ( name, observed[ name ] ) )
+
+        #
         # Stamped with the platform the two runs agree on, which the refusal just above is what
         # makes safe to assume. That string is the tree name a capture is stamped with, so the list
         # and the baseline it applies to speak the same language and can be compared directly
@@ -808,7 +874,7 @@ def main():
 
         if args.capture:
             with open( args.capture, 'w' ) as stream:
-                json.dump( stamp_unstable( unstable, first_platform ), stream,
+                json.dump( stamp_unstable( unstable, first_platform, observed ), stream,
                            indent = 1, sort_keys = True )
                 stream.write( '\n' )
             print( 'utf_runlog: wrote %s, stamped %s' % ( args.capture, first_platform ) )

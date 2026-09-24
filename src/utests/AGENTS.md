@@ -223,13 +223,13 @@ is in. The answer to either is `utf_runlog.py --run --bld <tree> --capture …` 
 need to gate, twice, because the unstable list is derived from a pair of passes.
 
 **`baseline/nondeterministic.json` is stamped the same way, and it is the reason the refresh is two
-captures.** It is `{ "__platform__": …, "unstable": [ … ] }`, stamped with the platform the two runs
-it was derived from agree on, and a comparison refuses a list from anywhere else on the same path
-with the same SKIP. It is the other input to a comparison and was the last one nothing checked:
-every case it names is thereafter compared on outcome alone, so a list carried across a platform
-excuses the wrong cases, silently and for as long as it stays committed. **A bare array is an
-unstamped list** — which is what every list derived before the stamp existed is — and is refused
-like an unstamped baseline, because unknown is not a match.
+captures.** It is `{ "__platform__": …, "unstable": [ … ], "observed": { … } }`, stamped with the
+platform the two runs it was derived from agree on, and a comparison refuses a list from anywhere
+else on the same path with the same SKIP. It is the other input to a comparison and was the last one
+nothing checked: every case it names is thereafter compared on outcome alone, so a list carried
+across a platform excuses the wrong cases, silently and for as long as it stays committed. **A bare
+array is an unstamped list** — which is what every list derived before the stamp existed is — and is
+refused like an unstamped baseline, because unknown is not a match.
 
 **`utf_runlog.py --nondeterministic <pass1> <pass2> --capture …` produces a starting point, not the
 list: merge it into the one already there, and never let it replace one.** Two passes classify every
@@ -241,9 +241,13 @@ re-derive from the two committed passes and
 `IO_SimpleConnectAndTransmitDataMessageDispatcherOutgoingTests` does not. That one was added by hand
 at `77ef537`, which flagged it at 8199 assertions against a baseline of 8194 and then drew 8199 and
 8194 from the *unchanged* binary — the two baseline passes had simply been unlucky in agreeing. A
-name recorded from observation is evidence the pair does not carry, and a refresh that overwrites
-the file drops it with nothing to show it happened. **Nothing in the file marks which names came
-from observation rather than from a pair**, so read the history of any name you are about to remove.
+name recorded from observation is evidence the pair does not carry, and a refresh that overwrote the
+file used to drop it with nothing to show it happened. **Such a name goes under `observed`, which
+maps it to where it was seen**: a derivation rewrites `unstable`, carries `observed` through
+untouched and names every name it carried as it goes, and the list a comparison reads is the union
+of the two. A refresh can therefore no longer drop one — but it still cannot *find* one, which is
+why the committed list stays a curated superset and why a name you are about to remove still wants
+its history read.
 
 **A differential comparison can only speak about things present on both sides.** Tiers 1 and 3
 compare against a baseline, so anything *new* — a module, a case — is unjudgeable by construction,
