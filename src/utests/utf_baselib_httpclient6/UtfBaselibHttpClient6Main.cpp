@@ -27,16 +27,21 @@
  * cases, is 39.7 and declared closed. So the answer the same file calls the intended one applies:
  * a numbered sibling, which needs no makefile change
  *
- * WHAT GOES IN IT. Cases about a session which are NOT about the HTTP/2 peer. This module
- * deliberately does not instantiate the in-process peer of design 8.2 or the library's own
- * HttpServer - httpclient4 measured those two at about 8.6 MB and 5.8 MB - and pays only the
- * ~21 MB TU floor plus the session with both of its drivers. That is the seam httpclient4's own
- * note says the cut would go along, and taking it is what keeps this module under target
+ * WHAT GOES IN IT. Cases about a session. It does not instantiate the library's own HttpServer -
+ * httpclient4 measured that at about 5.8 MB - and pays the ~21 MB TU floor plus the session with
+ * both of its drivers. That is the seam httpclient4's own note says the cut would go along
  *
- * MEASURED: 39.0 MB clang debug (a64) with the one case below, against a 40 MB target. Under it,
- * and NOT comfortably - the session with both drivers is most of that and a second case costs
- * almost nothing, but a case which instantiates a peer of its own would not fit. Measure before
- * adding one; do not convert from another module's figure
+ * MEASURED, clang debug (a64): 39.0 MB with the idle case alone, 42.4 MB once H22's two cancel
+ * cases brought in the in-process peer of design 8.2. So this module is 2.4 OVER the 40 MB target
+ * and the recorded reason is that splitting would not help: the weight IS the session plus the
+ * peer, so a sibling holding only those two cases would measure about the same and the ~21 MB
+ * floor would be paid a second time for no change in the peak. The 75 MB ceiling is far off
+ *
+ * THAT PEER COST 3.3 MB HERE AND NOT THE 8.6 httpclient4 MEASURED, because this module already
+ * included Http2TestServer.h for its recorder and the session already instantiates most of what
+ * the peer needs. The note this replaces predicted from httpclient4's figure that such a case
+ * "would not fit", in the same breath as saying not to convert from another module's figure.
+ * Measure the grouping; the isolated number is not the marginal one
  *
  * The module is devenv7+ only: the devenv7_only marker next to this file is what keeps it out of
  * the build on devenv2-6 (projects/make/common.mk). Headers never test BL_DEVENV_VERSION; they
@@ -63,3 +68,4 @@
  */
 
 #include "TestClientSessionIdle.h"
+#include "TestClientSessionCancel.h"

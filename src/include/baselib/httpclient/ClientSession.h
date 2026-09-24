@@ -1345,6 +1345,12 @@ namespace bl
 
             /**
              * @brief Whether a next hop follows, and what it is
+             *
+             * IT DOES NOT COUNT THE HOP. m_hops is incremented by continuationTask( ), which is
+             * the only caller, at the point where the hop is actually TAKEN - because this may be
+             * asked and then abandoned, and a chain which ended as cancelled must not report a
+             * redirect it never followed. The increment sits immediately before the startHop( )
+             * it has always preceded, so nothing else about it moved
              */
 
             bool chkPrepareNextHop()
@@ -1419,9 +1425,54 @@ namespace bl
                     m_next.bodySource() -> rewind();
                 }
 
-                m_hops = m_hops.value() + 1U;
-
                 return true;
+            }
+
+            /**
+             * @brief Ends the chain as cancelled, on the hop because the wrapper has nowhere else
+             *
+             * WHY THE EXCEPTION GOES ON THE HOP. ForwarderTaskBaseT holds no state of its own -
+             * isFailed( ), isFailedOrFailing( ), exception( ) and getState( ) all forward to the
+             * wrapped task - so this is the only place a verdict for the whole chain can be put,
+             * and it is where RetryableWrapperTaskT puts its own cancellation too. The hop is in
+             * PendingCompletion when this runs, because onReady( ) calls setCompletedState( )
+             * only AFTER continuationTask( ) returns, and that is what makes isFailed( ) - which
+             * is m_state >= PendingCompletion && m_hasException - true for the caller
+             *
+             * THE SHAPE IS applyStopped( )'s AND NOT RetryableWrapperTaskT's SystemException: an
+             * UnexpectedException carrying errinfo_error_code( operation_aborted ), whose message
+             * says the request was cancelled. One event gets one exception type - a caller must
+             * not have to catch two different ones depending on which side of a hop boundary its
+             * cancel landed, which is the discrimination problem this fix is about, one level down
+             *
+             * MARKED EXPECTED because that is the shape applyStopped( ) produces for the same
+             * event and because CmdLineAppBase and BackendProcessingBase read the mark. It is NOT
+             * what keeps this out of the failure log: notifyReadyImpl( ) has already run for the
+             * hop and m_notifyCalled stops it running a second time, so that decision was taken
+             * from the hop's own isExpected before this exception existed
+             *
+             * m_response IS LEFT ALONE and the 3xx stays readable. With isFailed( ) true and an
+             * explicit operation_aborted the answer is no longer ambiguous, and a failed chain
+             * already leaves the failing hop's partial response readable
+             *
+             * NO URL IN THE MESSAGE - astra H20's rule, and there is nothing a redactedUrl( )
+             * would add here that the caller does not already have from request( )
+             */
+
+            void failChainAsCancelled()
+            {
+                m_hop -> exception(
+                    std::make_exception_ptr(
+                        BL_EXCEPTION(
+                            UnexpectedException()
+                                << eh::errinfo_is_expected( true )
+                                << eh::errinfo_error_code(
+                                    asio::error::make_error_code( asio::error::operation_aborted )
+                                    ),
+                            "The HTTP request was cancelled between redirect hops"
+                            )
+                        )
+                    );
             }
 
         public:
@@ -1451,13 +1502,20 @@ namespace bl
 
                 absorbResponse();
 
-                if( m_cancelRequested )
-                {
-                    return nullptr;
-                }
-
                 if( m_hop -> exception() )
                 {
+                    if( m_cancelRequested )
+                    {
+                        /*
+                         * THE LIMB THE LATCH ALREADY ANSWERED CORRECTLY, and it keeps its early
+                         * check for the reason RetryableWrapperTaskT gives: the work task's own
+                         * error is more informative than a bare cancellation, so a cancelled
+                         * chain whose last hop failed reports THAT error and prepares no retry
+                         */
+
+                        return nullptr;
+                    }
+
                     if( ! chkPrepareRetry() )
                     {
                         return nullptr;
@@ -1468,10 +1526,63 @@ namespace bl
                     return om::copyAs< tasks::Task >( this );
                 }
 
+                /*
+                 * THE DECISION IS ASKED BEFORE THE LATCH IS READ, and that is the whole of H22.
+                 *
+                 * Asked the other way round - which is how this was written - a cancel latched
+                 * between two hops ended the chain on the intermediate 3xx and set NO exception
+                 * anywhere, so the logical request inherited the SUCCESSFUL hop's verdict. What
+                 * the caller then held - isFailed( ) false, exception( ) null, status 302,
+                 * redirectHops( ) accurate - is byte for byte the legitimate "the policy did not
+                 * follow this redirect" outcome that redirects-off, the hop limit, a cross-scheme
+                 * target and a BodySink all produce on purpose. A cancelled chain was
+                 * indistinguishable from a policy decision, which is the severity of it
+                 *
+                 * SO THE LOGICAL REQUEST IS FINISHED WHEN THE CHAIN HAS DECIDED IT HAS NO MORE
+                 * WORK TO DO. If no next hop follows, this hop IS the answer and a cancel which
+                 * arrived after it lost the race - which is what every other cancellable API in
+                 * this tree does with a cancel that arrives after completion. If a next hop was
+                 * due, the chain still owed the caller work and the cancel truncated it, so it
+                 * ends as aborted rather than as the 3xx it happens to be holding
+                 *
+                 * NOT RetryableWrapperTaskT's SHAPE, deliberately, although the latch above is
+                 * copied from it: failing the wrapped task whenever the latch is set cannot tell
+                 * those two cases apart, and would hand operation_aborted to a caller whose
+                 * single-hop request had already completed with the 200 it asked for. That
+                 * wrapper accepts the trade because it cannot know whether more attempts were
+                 * coming; this one can know, by asking. And the caller in question is not exotic:
+                 * the queue's own cancelAll( ), dispose( ) and forceFlushNoThrow( ) all reach
+                 * this window, because the queue lock serialises them against onReady( ) and NOT
+                 * against the hop completion which opens it
+                 *
+                 * chkPrepareNextHop( ) HAS ALREADY MOVED m_next WHEN THE CANCEL WINS, and on a
+                 * 307 or a 308 it has rewound the caller's body source for a request which will
+                 * now never be sent. Both are accepted: m_next is invisible to the caller, which
+                 * reads request( ), and a rewind is harmless by BodySource's own contract. The
+                 * alternative is splitting this predicate into a pure decision and an apply,
+                 * which is its own change and not one to smuggle in behind a cancellation fix
+                 */
+
                 if( ! chkPrepareNextHop() )
                 {
                     return nullptr;
                 }
+
+                if( m_cancelRequested )
+                {
+                    failChainAsCancelled();
+
+                    return nullptr;
+                }
+
+                /*
+                 * COUNTED HERE AND NOT IN THE PREDICATE, so that redirectHops( ) stays "how many
+                 * redirects were followed" for the chain the check above just ended - see
+                 * chkPrepareNextHop( ). Everywhere else this is neutral, because startHop( )
+                 * follows it unconditionally on every other path
+                 */
+
+                m_hops = m_hops.value() + 1U;
 
                 m_attempts = 0U;
 

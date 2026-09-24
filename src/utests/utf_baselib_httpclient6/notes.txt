@@ -1,3 +1,5 @@
 # each slice appends the recipes for the cases it lands here
 
 --log_level=message --run_test=ClientSession_IdleTimeoutReachesTheHttp11DriverTests
+--log_level=message --run_test=ClientSession_CancelBetweenHopsIsReportedAsCancelledTests
+--log_level=message --run_test=ClientSession_CancelAfterTheFinalHopIsANoOpTests
