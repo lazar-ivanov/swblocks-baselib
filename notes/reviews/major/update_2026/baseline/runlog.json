@@ -1,4 +1,5 @@
 {
+ "__platform__": "win-x86-vc143-debug",
  "utf_baselib": {
   "cases": {
    "BaseLib_AppInitDoneDefaultPoolsTests": {
