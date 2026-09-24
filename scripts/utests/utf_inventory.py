@@ -23,7 +23,7 @@
 # which matters because the failure mode - a case that silently stops being registered - looks
 # exactly like success in a green test run
 #
-# This script captures a manifest of every test case in src/utests and checks ten invariants:
+# This script captures a manifest of every test case in src/utests and checks eleven invariants:
 #
 #   C1  the set of case names is identical
 #   C2  every case body and doc comment hashes the same
@@ -38,20 +38,33 @@
 #   C9  no case loses a recipe it had, and a module which declares its notes.txt a complete
 #       index really does name every one of its cases
 #   C10 every file keeps the #include list it had
+#   C11 no file-scope text - what sits outside every column-0 namespace block - is lost or
+#       invented
 #
 # C2 together with C3 and C4 is the core claim about a case which stayed where it was: its text,
 # the preprocessor guard stack and the namespace stack it sits under are all unchanged. C10 adds
-# the file's #include list to that - not the whole of the rest of the compilation context
+# the file's #include list to that, and C11 the declarations the file makes at file scope: the
+# fixtures of utf_baselib_loader, the column-0 statics, the BL_IID_DECLAREs, UTF_GLOBAL_FIXTURE
+# and the file-scope using-directives. That is 39 spans over 423 lines in 16 files today, and for
+# ten invariants' worth of history no hash read any of it. Measured before C11 existed: a member
+# injected into ManifestFixture, which three cases are fixtured on, and a changed signature on a
+# column-0 static helper BOTH passed tier 1
 #
-# What is still NOT hashed by anything, and the limit a reader of a green run has to know: text
-# at FILE SCOPE, outside every column-0 namespace block. C6 extracts helper members only from
-# inside such a block, so 343 lines across 16 files are read by no invariant at all - the
-# fixtures of utf_baselib_loader (ManifestFixture, PersonalityTestFixture, ResolverFixture),
-# nine column-0 static helpers, the BL_IID_DECLARE lines of TestObjModel.h and
-# TestBaselibDefault.h, and UTF_GLOBAL_FIXTURE. Measured: injecting a member into
-# ManifestFixture, which three cases are fixtured on, and changing the signature of a column-0
-# static helper BOTH pass tier 1 today. This predates C10 and is not what C10 narrowed; closing
-# it means extracting members at file scope as well, which is its own change-set
+# What remains outside every hash is two named things at file scope, and no others:
+#
+#   - a PREPROCESSOR DIRECTIVE at file scope, with its line continuations. The #include lines
+#     there are C10's and the conditionals are C3's; what is left is the include guard and the
+#     per-module #define - UTF_TEST_MODULE above all - which a new module's entry point must
+#     write fresh, so hashing them reds the very operation this tool exists to verify. A
+#     multi-line #define at file scope is therefore unhashed in full, and tier 3 is what stands
+#     behind UTF_TEST_MODULE: renaming it registers a different master suite
+#
+#   - a COMMENT BLOCK at file scope standing on its own, which is module-level prose rather than
+#     evidence about a relocation. Writing one is part of creating a module: the real split
+#     f992e2f wrote four, and C11 reported all four before this was measured. A comment which
+#     documents a declaration sits against it with no blank line and is hashed with it
+#
+# Blank lines between spans, and trailing whitespace, are outside every hash too, by normalize( )
 #
 # A case RELOCATED into a different file is deliberately not judged on includes, because a split
 # writes new headers with their own include blocks and a rule that fired on that would fire on
@@ -169,6 +182,15 @@ NOTES_INDEX_RE = re.compile(
 # A nested namespace inside a block is one member rather than being descended into. That is a
 # deliberate limit: it keeps the rule total, and the outer block still moves or dies as a unit
 #
+# C11 runs the very same split over what is left of a file once every span another invariant reads
+# has been blanked out of it - the case bodies with their doc comments, the namespace blocks, and
+# the preprocessor directives. Blanking rather than cutting is what keeps a file-scope helper with
+# a #if in its body one member instead of three, and keeps every residue line number the file's own
+#
+
+DIRECTIVE_RE = re.compile( r'^\s*#' )
+
+COMMENT_LINE_RE = re.compile( r'^\s*(?://|/\*|\*)' )
 
 STRIP_RE = re.compile( r'"[^"]*"|\'[^\']*\'|//.*$' )
 
@@ -212,6 +234,31 @@ def split_members( lines, start, stop ):
         members.append( ( first, index - 1 ) )
 
     return members
+
+
+def blank( shadow, first, last ):
+    """
+    Blank a span of the file-scope residue copy, so C11 does not hash what another invariant reads
+    """
+
+    for index in range( max( first, 0 ), min( last, len( shadow ) - 1 ) + 1 ):
+        shadow[ index ] = ''
+
+
+def is_prose( shadow, first, last ):
+    """
+    True when every line of a file-scope span is comment text - C11 hashes declarations, not prose
+
+    A standalone comment block at file scope is module-level prose, and writing one is part of
+    creating a module rather than evidence about one: the real split f992e2f wrote four - the
+    explanatory block at the head of each new Utf<Name>Main.cpp and one in a new forwarding
+    translation unit - and C11 reported every one of them before this was measured. A comment
+    which documents a declaration sits against it with no blank line between, so it is part of
+    that declaration's span and stays hashed; only a block standing on its own is dropped
+    """
+
+    return all( COMMENT_LINE_RE.match( line )
+                for line in shadow[ first : last + 1 ] if line.strip() )
 
 
 def sha( text ):
@@ -320,6 +367,27 @@ def scan_file( path, module, rel_path, problems ):
     index = 0
     total = len( lines )
 
+    #
+    # The preprocessor directives are blanked here, ahead of the walk, so that nothing about the
+    # walk itself changes - the alternative was a new branch inside it, which would have had to
+    # get the data literal collection right as well. The walk blanks the two spans it alone knows:
+    # a case with its doc comment, and a namespace block
+    #
+
+    shadow = list( lines )
+
+    probe = 0
+
+    while probe < total:
+
+        if DIRECTIVE_RE.match( lines[ probe ] ):
+            while probe < total and lines[ probe ].rstrip().endswith( '\\' ):
+                shadow[ probe ] = ''
+                probe += 1
+            blank( shadow, probe, probe )
+
+        probe += 1
+
     while index < total:
 
         line = lines[ index ]
@@ -388,6 +456,11 @@ def scan_file( path, module, rel_path, problems ):
 
             doc = doc_comment_span( lines, index )
 
+            if doc:
+                blank( shadow, doc[ 0 ], doc[ 1 ] )
+
+            blank( shadow, index, end )
+
             # most data file references sit inside case bodies, which the jump below skips
             for body_line in lines[ index : end + 1 ]:
                 for ref in DATA_REF_RE.findall( body_line ):
@@ -427,6 +500,8 @@ def scan_file( path, module, rel_path, problems ):
             end = open_index + 1
             while end < total and not CLOSE_RE.match( lines[ end ] ):
                 end += 1
+
+            blank( shadow, index, end )
 
             namespaces.append( {
                 'name': name,
@@ -481,7 +556,17 @@ def scan_file( path, module, rel_path, problems ):
 
         index += 1
 
-    return cases, namespaces, members, includes, sorted( data_refs ), sorted( data_literals )
+    file_members = [ {
+        'module': module,
+        'file': rel_path,
+        'line': first + 1,
+        'sha': sha( normalize( shadow[ first : last + 1 ] ) ),
+        'label': shadow[ first ].strip()[ : 60 ],
+        } for first, last in split_members( shadow, 0, total )
+        if not is_prose( shadow, first, last ) ]
+
+    return ( cases, namespaces, members, file_members, includes,
+             sorted( data_refs ), sorted( data_literals ) )
 
 
 def file_sha( path ):
@@ -508,7 +593,7 @@ def capture( src_utests ):
     Walk every utf* module directory and build the manifest
     """
 
-    manifest = { 'cases': [], 'namespaces': [], 'members': [], 'modules': {} }
+    manifest = { 'cases': [], 'namespaces': [], 'members': [], 'file_members': [], 'modules': {} }
     problems = []
 
     for module in sorted( os.listdir( src_utests ) ):
@@ -534,11 +619,13 @@ def capture( src_utests ):
                 path = os.path.join( root, entry )
                 rel_path = os.path.relpath( path, src_utests ).replace( os.sep, '/' )
 
-                cases, namespaces, members, includes, refs, literals = scan_file( path, module, rel_path, problems )
+                ( cases, namespaces, members, file_members, includes,
+                  refs, literals ) = scan_file( path, module, rel_path, problems )
 
                 manifest[ 'cases' ].extend( cases )
                 manifest[ 'namespaces' ].extend( namespaces )
                 manifest[ 'members' ].extend( members )
+                manifest[ 'file_members' ].extend( file_members )
                 data_refs.update( refs )
                 data_literals.update( literals )
 
@@ -578,6 +665,7 @@ def capture( src_utests ):
     manifest[ 'cases' ].sort( key = lambda case: case[ 'name' ] )
     manifest[ 'namespaces' ].sort( key = lambda ns: ( ns[ 'module' ], ns[ 'file' ], ns[ 'line' ] ) )
     manifest[ 'members' ].sort( key = lambda m: ( m[ 'module' ], m[ 'file' ], m[ 'line' ] ) )
+    manifest[ 'file_members' ].sort( key = lambda m: ( m[ 'module' ], m[ 'file' ], m[ 'line' ] ) )
 
     return manifest, problems
 
@@ -1041,6 +1129,70 @@ def check_against( before, after ):
                 )
 
     #
+    # C11 - the file-scope residue, which is everything outside every column-0 namespace block
+    #
+    # C6 extracts helper members from inside such a block only, so text at file scope was hashed
+    # by nothing at all - and utf_baselib_loader's three fixtures live exactly there. Measured
+    # before this check existed: a member injected into ManifestFixture, which three
+    # UTF_FIXTURE_TEST_CASEs are fixtured on, and a changed signature on a column-0 static helper
+    # BOTH passed tier 1
+    #
+    # The identity and the direction are C6's, for C6's reasons. Text alone, so a fixture that
+    # moves to another header with the cases it fixtures is a move rather than a loss; tree wide,
+    # so a move between modules is one too; and both ways, so an invented file-scope helper is
+    # reported exactly as C1 reports an invented case
+    #
+    # What C11 does NOT ask is whether the same file-scope text occurs twice within one module,
+    # and that is a decision rather than an omission. There is nothing there to catch: every
+    # header of a module is included into one translation unit, so a real redefinition at file
+    # scope does not compile, and C6's duplication half exists because a helper inside a namespace
+    # CAN be copied without a diagnostic. What does legitimately repeat is "using namespace bl;",
+    # which opens two module entry points today and would open a third
+    #
+    # It sits before the C6 section for the reason C9's no-loss half does: that section returns
+    # early when a baseline carries no members, and C11 must not be skipped along with it
+    #
+
+    if 'file_members' in before:
+
+        if not before[ 'file_members' ]:
+            failures.append(
+                'C11 the baseline carries an EMPTY file-scope member list - every real tree has '
+                'at least one per file, so this baseline is broken rather than merely old'
+                )
+
+        elif not after.get( 'file_members' ):
+            failures.append(
+                'C11 the current manifest carries no file-scope text - extraction failed'
+                )
+
+        else:
+
+            old_scope = {}
+
+            for member in before[ 'file_members' ]:
+                old_scope.setdefault( member[ 'sha' ], member )
+
+            new_scope = {}
+
+            for member in after[ 'file_members' ]:
+                new_scope.setdefault( member[ 'sha' ], member )
+
+            for digest in sorted( set( old_scope ) - set( new_scope ) ):
+                where = old_scope[ digest ]
+                failures.append(
+                    'C11 file-scope text LOST: %s (%s:%d)'
+                    % ( where[ 'label' ], where[ 'file' ], where[ 'line' ] )
+                    )
+
+            for digest in sorted( set( new_scope ) - set( old_scope ) ):
+                where = new_scope[ digest ]
+                failures.append(
+                    'C11 file-scope text ADDED: %s (%s:%d)'
+                    % ( where[ 'label' ], where[ 'file' ], where[ 'line' ] )
+                    )
+
+    #
     # The no-loss half of C6, checked per member rather than per block. A helper is lost only if
     # its text survives nowhere in the tree; a block that was partitioned, or a helper hoisted
     # into a different namespace, is a move and reads as one
@@ -1215,6 +1367,29 @@ def main():
                'member(s) - a relocation invents neither, so a slice which adds one on purpose '
                'refreshes the baseline, exactly as C1 already requires for a new case'
                % len( manifest.get( 'members', [] ) ) )
+
+        #
+        # The same reasoning once more: a check whose scope is not printed is a check a reader of
+        # a green run cannot size. C11's scope has two halves worth stating - what it reads, and
+        # the one thing at file scope it deliberately does not
+        #
+
+        if 'file_members' not in before:
+            print( 'utf_inventory: C11 - this baseline predates the file-scope capture, so text '
+                   'outside every namespace block is judged by nothing until it is refreshed' )
+        else:
+            print( 'utf_inventory: C11 compares the %d span(s) of file-scope text in %d file(s) - '
+                   'what is left once the cases, the namespace blocks and the preprocessor lines '
+                   'are taken out - by text alone, tree wide and in both directions, exactly as '
+                   'C6 does inside a namespace'
+                   % ( len( manifest.get( 'file_members', [] ) ),
+                       len( { member[ 'file' ] for member in manifest.get( 'file_members', [] ) } ) ) )
+
+            print( 'utf_inventory: C11 exempts a preprocessor directive at file scope with its '
+                   'continuations - includes are C10\'s, conditionals C3\'s, and the include guard '
+                   'and per-module #define are what a new module writes fresh - and a comment '
+                   'block standing on its own, which is module-level prose a split must write; a '
+                   'comment against a declaration is part of it and stays judged' )
 
         failures.extend( check_against( before, manifest ) )
 
