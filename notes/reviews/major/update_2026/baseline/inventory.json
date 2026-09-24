@@ -6581,9 +6581,21 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 927,
+   "line": 1107,
    "module": "utf_baselib_httpclient7",
    "name": "Http1Driver_PeerHalfClosesWithAWriteInFlightTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "759db80a3a641ac4cad6b556d0d3bcba",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient7/TestHttp1DriverWritePeerClose.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1175,
+   "module": "utf_baselib_httpclient7",
+   "name": "Http1Driver_PeerResetsAfterACompleteKeepAliveResponseTests",
    "namespaces": []
   },
   {
@@ -6593,7 +6605,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 844,
+   "line": 1024,
    "module": "utf_baselib_httpclient7",
    "name": "Http1Driver_PeerResetsMidCloseDelimitedBodyDuringWriteTests",
    "namespaces": []
@@ -6617,7 +6629,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 794,
+   "line": 974,
    "module": "utf_baselib_httpclient7",
    "name": "Http1Driver_PeerResetsWhileRequestWriteIsBlockedTests",
    "namespaces": []
@@ -15498,7 +15510,7 @@
    "line": 90,
    "module": "utf_baselib_httpclient7",
    "ns": "utest",
-   "sha": "8a439c9a04bc4e8f450fece904a696f3"
+   "sha": "f077d084e573a3f56db83418e49b2c12"
   },
   {
    "file": "utf_baselib_io/TestIO.h",
@@ -19992,6 +20004,7 @@
     "Http1Driver_PeerClosesAfterEarlyHintsTests",
     "Http1Driver_PeerClosesWithoutAnsweringTests",
     "Http1Driver_PeerHalfClosesWithAWriteInFlightTests",
+    "Http1Driver_PeerResetsAfterACompleteKeepAliveResponseTests",
     "Http1Driver_PeerResetsMidCloseDelimitedBodyDuringWriteTests",
     "Http1Driver_PeerResetsMidCloseDelimitedBodyTests",
     "Http1Driver_PeerResetsWhileRequestWriteIsBlockedTests",
@@ -22064,7 +22077,7 @@
    "line": 88,
    "module": "utf_baselib_httpclient7",
    "name": "utest",
-   "sha": "d010e609edeeb485bb42f14889d72808"
+   "sha": "198cf3e2f94e8f0b5bd91303ac116e7e"
   },
   {
    "file": "utf_baselib_io/TestIO.h",
