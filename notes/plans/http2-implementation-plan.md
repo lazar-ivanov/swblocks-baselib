@@ -1592,8 +1592,26 @@ of those is what the layer exists to prevent.
 | **S6R.3** | H06, H08, H11, H09, H10, **H04a** | **decide before implementing** — see §5 of the verification record. *Corrected 2026-09-22:* this row said "H10 will restructure what S6R.1's H13 touched, so sequence them"; H10 as designed (`issues/s6r3-design.md` §3.5) does not touch `queueHeaderBlock( )`, so no sequencing against H13 is needed. What H10 must not do is run concurrently with S6R.2's H12, which writes the same encoder's construction. *Re-gated 2026-09-23:* H04a's agreed gate crashed `utf_baselib_h2client4`; `issues/s6r3-design.md` §4.1 carries the corrected gate and §12 the re-gate, and `issues/pool-uncharged-retire-recursion-record.md` the retry-accounting bound whose change-set lands before it |
 | **S6R.4** | H29, H20, H19, H23, the 4a test-inversion trap, the stale Windows line in the L4 record | documentation and ledger hygiene |
 
+**ALL FOUR SLICES LANDED, and this table did not say so until 2026-09-24.** Recorded here in the
+convention S3.x already uses, because its absence had a cost: a reader of this table in 2026-09-24
+concluded S6R.4 *"was never written"* and scheduled a change-set to redo it. Nothing was redone — the
+lane checked ancestry before implementing and found the work merged — but the table is why the
+question arose.
+
+| Slice | Merged | On |
+|---|---|---|
+| **S6R.1** | `3bcf21e` | 2026-09-22 |
+| **S6R.4** | `38ed037` | 2026-09-22 |
+| **S6R.2** | `c2af9d2` | 2026-09-23 |
+| **S6R.3** | `8fcb950` | 2026-09-23 |
+
+All four are ancestors of `lazari2`, verified. **S6R.4 also absorbed H11**, which the row above does
+not list. Astra's 29 findings are therefore all dispositioned: fixed, closed by the maintainer, or
+deferred with reasoning — see `issues/astra-remediation-owed-work.md`.
+
 **H21 and H22 are not staged here** — both sit on L6's owed list (4a and finding 9) and belong to
-whichever change-set takes those up.
+whichever change-set takes those up. *2026-09-24: H21 is closed against L6 finding 4a, whose
+handover condition is met; H22 has a design at `issues/h22-redirect-cancellation-design.md`.*
 
 **H24 and H25 are not in this layer.** Both are latent until a content codec ships and are
 prerequisites of that work, not of L7.

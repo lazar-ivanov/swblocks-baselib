@@ -61,6 +61,13 @@ slot nobody created), *decided* (the reason survives re-reading), and *not a def
 | # | Item | Status | Where |
 |---|---|---|---|
 | 6 | **H01's spurious reuse refusal** — `httpclient3` fails ~10% of full-module runs (2/20 with the teardown fix, 3/20 without, so **pre-existing**), and the `tls-h1-control` lane independently measured **~1 in 8** on TLS | **folded into this batch 2026-09-23**, because it degrades the gate every other change-set is judged against. Redesigned in [`h01-reuse-verdict-design.md`](h01-reuse-verdict-design.md) after the recorded shape failed re-derivation; lands **after A2** (§5.3). Its evidence standard is a **scoped exception**, below | teardown design §16.6 |
+| 7 | **h1's write path has no peer-close arm** — h2 has one; which handler notices the peer first still decides whether the task fails | **unscheduled** — §4.4 and §13 both say "its own change-set", and no slot was created | teardown design §4.4, §13 |
+| 8 | **A composed TLS read can slip a cancel** the same way a composed write does — pre-existing, neither created nor closed by the teardown fix | **unscheduled** — §13 carries the one-line shape (gate `onPeerClosed( )` on `! isClosing( )`) and says it deserves its own red | teardown design §13 |
+| 9 | **The third HPACK hazard** — `encode( )` commits its dynamic-table transaction at queue time, so a dropped block leaves our encoder holding entries the peer never saw | **decided** — the fix is shape **(D)**, which §3.3 rejected for that slice; unreachable today by four properties re-verified at the source on this tip | `s6r3-design.md` §3.3, §3.7; `s6r3-h10-record.md` §5 |
+| 10 | **A control frame queued after the SETTINGS ACK now leaves before it** | **not a defect** — nothing in RFC 9113 orders a SETTINGS acknowledgement against a PING acknowledgement. Recorded because it is certain from the code and invisible to the suite, not because it is wrong | `s6r3-h10-record.md` §2 |
+| 11 | **A sixth terminal situation** where `onComplete( )` is not truthful: a clean close with no final header block | **deferred with an id** — a terminal callback whatever happened is `onComplete( outcome )`, a `ClientTypes.h` change, deferred as **B4** | `s6r3-design.md` §1.3 |
+| 12 | **`TaskBase::scheduleNothrow( )` calls `scheduleTask( )` under the task lock**, so h1's `scheduleRead( )` catch can reach `notifyReady( )` with the task lock held. `m_lock` is a non-recursive `boost::mutex` and `notifyReadyImpl( )` re-acquires it, so this is a **self-deadlock**, not only a breach of `MultiOperationTask.h:62-67` | **scheduled as A4**, driver-local, in `driver-read-write-arms-design.md` §10.2. The **core** question — whether the library itself has a design problem here — is deliberately left open in [`taskbase-schedule-lock-scope-deferral.md`](taskbase-schedule-lock-scope-deferral.md) | teardown design §13 |
+| 13 | **h2's `scheduleRead( )` has no accounting guard** — `beginOperation( )` then `async_read_some( )` with no `catch` completing the operation, where h1's read, write and timer each carry one. A throw out of the initiator leaves the count one high and the task unable to take its terminal path | **unscheduled** — pre-existing and narrow | teardown design §13 |
 
 **The one scoped exception to the negative-control rule, decided by the maintainer 2026-09-23.**
 `src/utests/AGENTS.md` requires that a fix be shown red against the unfixed code and green after, and
@@ -76,13 +83,18 @@ citing it wrongly. The standard the rate must meet, and the residual risk it lea
 `h01-reuse-verdict-design.md` §8 — in particular that the standard distinguishes *eliminated* from
 *residual ≥ ~1 %*, so a fix that took 10 % to 0.3 % would likely pass as eliminated, and §4's own
 caveat names exactly the mechanism that would produce such a partial result.
-| 7 | **h1's write path has no peer-close arm** — h2 has one; which handler notices the peer first still decides whether the task fails | **unscheduled** — §4.4 and §13 both say "its own change-set", and no slot was created | teardown design §4.4, §13 |
-| 8 | **A composed TLS read can slip a cancel** the same way a composed write does — pre-existing, neither created nor closed by the teardown fix | **unscheduled** — §13 carries the one-line shape (gate `onPeerClosed( )` on `! isClosing( )`) and says it deserves its own red | teardown design §13 |
-| 9 | **The third HPACK hazard** — `encode( )` commits its dynamic-table transaction at queue time, so a dropped block leaves our encoder holding entries the peer never saw | **decided** — the fix is shape **(D)**, which §3.3 rejected for that slice; unreachable today by four properties re-verified at the source on this tip | `s6r3-design.md` §3.3, §3.7; `s6r3-h10-record.md` §5 |
-| 10 | **A control frame queued after the SETTINGS ACK now leaves before it** | **not a defect** — nothing in RFC 9113 orders a SETTINGS acknowledgement against a PING acknowledgement. Recorded because it is certain from the code and invisible to the suite, not because it is wrong | `s6r3-h10-record.md` §2 |
-| 11 | **A sixth terminal situation** where `onComplete( )` is not truthful: a clean close with no final header block | **deferred with an id** — a terminal callback whatever happened is `onComplete( outcome )`, a `ClientTypes.h` change, deferred as **B4** | `s6r3-design.md` §1.3 |
-| 12 | **`TaskBase::scheduleNothrow( )` calls `scheduleTask( )` under the task lock**, so h1's `scheduleRead( )` catch can reach `notifyReady( )` with the task lock held. `m_lock` is a non-recursive `boost::mutex` and `notifyReadyImpl( )` re-acquires it, so this is a **self-deadlock**, not only a breach of `MultiOperationTask.h:62-67` | **scheduled as A4**, driver-local, in `driver-read-write-arms-design.md` §10.2. The **core** question — whether the library itself has a design problem here — is deliberately left open in [`taskbase-schedule-lock-scope-deferral.md`](taskbase-schedule-lock-scope-deferral.md) | teardown design §13 |
-| 13 | **h2's `scheduleRead( )` has no accounting guard** — `beginOperation( )` then `async_read_some( )` with no `catch` completing the operation, where h1's read, write and timer each carry one. A throw out of the initiator leaves the count one high and the task unable to take its terminal path | **unscheduled** — pre-existing and narrow | teardown design §13 |
+
+### Found by 13a's reading pass, 2026-09-24 — and this one is live
+
+| # | Item | Status |
+|---|---|---|
+| 13e | **h2 tells the caller "do not retry" for a request the server answered.** In the one window where h2's write arm can fire — no read armed — the peer ends, the **write** handler runs first, `onPeerClosed( )` → `closeAllStreamsUnwrittenRetryable( )` empties `m_streams`/`m_handles` and reports every live stream `connection_aborted`, **non-retryable**. The read handler then arrives carrying the peer's **actual response** (Linux does not purge the receive queue on RST) and feeds it into a session with no streams, so `sinkOf( )` returns nullptr and the answer is dropped | **LIVE TODAY** on `connection_reset`. This is h2's counterpart of the h1 misreport §12.5 closed, by a different mechanism — **a wrong answer to the caller, the worst class on this list.** Fixing item 13a's predicate *alone* **widens** it to `broken_pipe` as well |
+
+**It is closed by the shape, not by the predicate.** h2's `onPeerClosed( )` takes no argument and is
+code-free, so the write side contributes **no information** by calling it — whatever it would decide,
+the read decides identically one strand turn later. The only thing the call changes is *when*, and
+earlier is strictly worse, because it empties the stream table before the answer arrives. So the
+write declining and doing nothing closes 13a and 13e together.
 
 ### A blind spot in tier 1, found 2026-09-23
 
@@ -92,8 +104,146 @@ resolves to a real case — not that every case's recipe was seen.** So the gap 
 direction, and a green tier 1 is not evidence that a module's recipes are all recorded.
 
 Caught by the lane re-capturing, not by the gate. It is the same lesson as the rest of this batch:
-**a gate saying "clean" is a claim about what it looks at.** Worth a C9, or widening C8, before the
-next reader trusts tier 1 for this.
+**a gate saying "clean" is a claim about what it looks at.**
+
+**CLOSED 2026-09-24 by C9** on `tier1-c8` — and the rule is not the obvious one. *"Every case must
+have a recipe"* is **wrong by a wide margin**: 481 of 1075 cases have none, across 27 of the 46
+modules, because `notes.txt` is a curated list of the hard-to-reproduce cases almost everywhere. A
+universal rule would have fired on 481 legitimate cases. **But the narrower rule was already written
+in the tree** — fifteen `notes.txt` files open with *"each slice appends the recipes for the cases it
+lands here"*. *Corrected 2026-09-24: this said those fifteen are **exactly** the modules at 100 %
+coverage. They are not — **18** modules are complete and **15** declare it, the undeclared three
+being `h2profiles` (14/14), `messaging4` (1/1) and `setprio` (1/1). The property that holds, and the
+one C9 actually rests on, is **`declared ⊆ complete`**; the step-1 measurement said 18 all along.*
+The convention existed
+in the team's own words and the tool had never read it. C9 is therefore **opt-in**, keyed on a claim
+a module makes about itself, in three halves: intrinsic, no-loss, and no-withdrawal.
+
+### And the second blind spot is larger than the first — found 2026-09-24, NOT fixed
+
+| # | Item | Status |
+|---|---|---|
+| C-2 | **`check_against( )` never reads `manifest['modules']` at all.** The entire per-module half of the manifest is captured on every run and **never compared**, so every differential claim tier 1 makes is about `cases` and `members` only. C8's one-wayness was one instance of a structural gap | **CLOSED 2026-09-24** on `tier1-modules`, four commits, one invariant each: **C10** (the `#include` list), **C7's differential half** (data-file content, and a file newly unreferenced), **C6's ADDED direction**, and the refresh docs. Tier 1 is now C1–C10 |
+
+Measured on a tree copy, all four **PASS** tier 1 today: a data file's content changed; **all five**
+copies of a shared data file changed identically (ruling out C7 as accidental cover); an `#include`
+added to a header holding live cases; a helper member invented.
+
+**The `#include` one is the sharpest.** `utf_inventory.py`'s own docstring claims C2+C3+C4 establish
+*"the text of every test, **and the compilation context that text sees**, is unchanged"*. Includes
+are part of that context, they are captured per file, and **no check reads them** — the tool's
+central claim is stated broader than it holds.
+
+Per invariant: C1 is bidirectional; C2/C3/C4 are symmetric equalities; C5 has no converse;
+**C6's no-loss half is one-way exactly as C8 was**; **C7 is intrinsic only and never differenced**,
+and its ref→file direction leaves an orphan data file unreported.
+
+#### Review of `tier1-c8` (`16b33f9`) and `tier1-modules` (`ae97a50`), 2026-09-24
+
+Every number below was re-measured, not read from the lane's logs: `--compare` on the current tree
+PASSes (46 modules, 1075 cases, 550 members, 182 include lists, 32 data hashes, 4 accepted orphans),
+the selftest is red against the tool at `lazari2` on exactly the twelve new mutations and green
+against `tier1-modules`, both on the frozen baseline and on a fresh capture. The arming claim holds:
+`36ec522`, the tool's first commit, already captured `files[*].includes` and `data_files`, and the
+baseline refreshed at `6767d8f` carries 182 of 182 include lists and all 32 hashes. The guards fail
+rather than warn, and the selftest exercises both.
+
+**Verdict: accept `tier1-c8`, with one wording correction. Do not accept `tier1-modules` as it
+stands.** C7's differential half and C6's ADDED direction are right and were measured silent on
+real relocations; **C10 reds on every legitimate relocation**, which is the one thing the lane itself
+said this gate cannot afford. Since the four commits are chained, the branch lands after C10 is
+narrowed and re-proven; the control that proves it is named below and is already in hand.
+
+**1. C10 fires on the split itself, through the source module's `Main.cpp`.** Every module's
+`Main.cpp` is a roster of `#include "Test*.h"` lines, and a relocation *must* edit it. That file is
+present on both sides, so C10 judges it. Measured three ways on tree copies, each green at
+`16b33f9` and red at `tier1-modules` with the only C10 line on that roster: `TestTasks8.h` moved
+whole to a new `utf_baselib_tasks9`, recipes with it (*case 1 of "Reducing a module"*) — one line,
+`removed "TestTasks8.h"`; a 143-line helper block cut verbatim from `TestTasks.h` into a sibling
+header included from the same `Main.cpp` (*step A of case 2*) — one line, `added "TestTasksCut.h"`;
+and **the one real split in history replayed**, `f992e2f`'s pre- and post-trees from `git archive`
+— `16b33f9` PASS, `tier1-modules` three lines, one of them the roster. None of the lane's controls
+was a relocation: the "file removed" selftest covers the header that vanished, not the roster line
+that named it. The scope exclusion is therefore not over-broad but *not broad enough*, and the
+principled extension of the lane's own rule is one clause: **a quoted include naming a file this
+relocation added to or removed from the same module is not judged, exactly as that file is not.**
+That keeps what matters — an `#include <…>` added to `Main.cpp` still fires, and a *reorder* of the
+surviving roster still fires as REORDERED, which is worth keeping because include order there is
+registration order is run order, and `src/utests/AGENTS.md` records a cold-start contract that run
+order can silently neuter. The `f992e2f` replay is the live control for the fix: it should report
+exactly the two `C7 NEWLY UNREFERENCED` lines and nothing else. Not implemented here.
+
+**2. The three-halves judgement on C9 stands; "exactly" does not.** Intrinsic covers the declared
+modules including a *new* case, no-loss is the only coverage the 31 undeclared modules have,
+no-withdrawal is what keeps the intrinsic half armed — none is redundant, and the only overlap is
+cosmetic (a recipe deleted in a declared module prints two lines). But *"those fifteen are exactly
+the modules at 100 % coverage"* — written in the paragraph above, in `utf_inventory.py:128-129` and
+in `16b33f9`'s message — is false, and the lane's own step-1 log says so (*"modules exhaustively
+indexed: 18"*). Re-counted independently: **18 modules with cases are complete, 15 declare it**;
+`utf_baselib_h2profiles` (14/14), `utf_baselib_messaging4` (1/1) and `utf_baselib_setprio` (1/1)
+are complete and undeclared. What makes the rule defensible is **declared ⊆ complete**, which holds,
+not equality. `h2profiles` is the one that matters: an h2 module living by the convention without
+saying so, where a new case landing unindexed is uncaught. Declaring it is a one-line `notes.txt`
+edit under `src/`, owed separately. `AGENTS.md`'s *"Fifteen modules say this today"* is correct as
+written.
+
+**3. The orphan rule's premise is wrong for three of its four files, and the rule is still right.**
+*"This tree carries such files today and always has"*: `git grep` at `f992e2f^` shows
+`utf_baselib_messaging` referencing both `async_rpc_response.json` and
+`async_rpc_response_with_exception.json`; that split moved the referencing headers out and left the
+copies, and gave `utf_baselib_messaging3` a copy of the second it never names. Only
+`utf_baselib_rest/data/async_rpc_response.json` is 2017-era. So three of the four "legitimate"
+orphans are **exactly the defect the rule exists to catch, eleven days old, grandfathered.** The
+differential shape is still correct — a rule red on the untouched tree is still wrong — but the
+replay says two more things: the rule *works* (it names both messaging leftovers), and it **misses
+`messaging3`'s, because a module absent from the baseline is skipped entirely** (`was is None →
+continue`), a scope the comment does not state. Owed: a `src/` commit deleting the three leftovers,
+so the accepted set is honest; and judging a *new* module intrinsically for orphans — nothing to
+grandfather there, so no false positive is possible, and it would have caught the third.
+
+**4. The narrowed docstring is still one notch broader than the checks.** *"C10 adds the remaining
+part of the compilation context"* — but text at file scope outside any column-0 namespace block is
+hashed by nothing: `struct ManifestFixture` (`utf_baselib_loader/TestManifest.h:28`, the fixture of
+three `UTF_FIXTURE_TEST_CASE`s), nine column-0 `static` helpers such as
+`utf_baselib2/TestTimeZoneData.h:28`, the `BL_IID_DECLARE`s, `UTF_GLOBAL_FIXTURE( LoaderInit )` —
+fifteen files carry such lines. Measured: a member injected into `ManifestFixture` and an edit to
+`logTestName( )` both PASS tier 1 at `tier1-modules`. Pre-existing, not introduced here, but the
+rewritten docstring asserts a completeness it does not have. Minimum: say so in the docstring. The
+closing shape is to treat file scope as an implicit block and run `split_members( )` over its residue,
+so a fixture that moves with its cases stays a move; whether the member precondition holds at file
+scope is unmeasured and is the lane's to decide.
+
+**5. The selftest's orphan silence control is complete and vacuous.** It runs
+`check_against( baseline, baseline )`, which is empty for *any* differential definition, so the
+copied `unreferenced( )` feeds only the printed count and nothing asserts on it — the control is
+subsumed by the *"unmutated baseline is clean both ways"* line above it. The second reason for the
+copy (running against the older tool) is real. Minimum: assert the count is nonzero, since that is
+the premise that forced the differential shape; a real silence control mutates the *after* side of a
+module that carries a baseline orphan and asserts the old orphan is still not reported.
+
+**6. Smaller findings.** C6's identity is text *with leading indentation* (`normalize( )` strips
+trailing whitespace only), so a hoist across nesting depth re-indents and reads as LOST + ADDED per
+member — the "hoist reads as a move" comment holds for same-depth hoists; a verbatim move measured
+clean both for the 143-line block and for a header carrying eleven data files and a helper block, so
+this is refresh-workflow noise, not a false positive. All fifteen declarations sit on `#` lines, as
+`NOTES_INDEX_RE` requires; the phrase form is a substring match, so a quoting mention would opt a
+module *in* — a visible red, not a silent off, and `notes-index: complete` is the robust spelling.
+The no-withdrawal half is not in force until the baseline is refreshed, which the tool says on every
+run; that refresh is the companion commit owed the moment the branch lands. C5 needs no converse:
+it is a uniqueness property of one set, and "at least once" is C1.
+
+**7. The docs describe less than the tool does, and more than C10 should.** The tiers table says
+*"helper members neither lost nor duplicated"* — C6's ADDED direction, the whole of `1c7003e`, is not
+in it; it says *"no case loses one"* and omits C9's intrinsic and no-withdrawal halves, which only the
+checklist carries; and *"every file keeps the `#include` list it had"* overstates C10 twice — files
+present on both sides, and, once fixed, minus the roster lines of files the relocation added or
+removed. The refresh paragraph is right and was the missing piece; the checklist's C9 item is
+accurate. *"Tier 1 is a relocation gate"* is true again only after finding 1 is fixed.
+
+**Could not settle here:** whether the roster exclusion should also silence REORDERED on `Main.cpp`
+(argued no, above); the file-scope residue shape; and whether the three split-leftover orphans are
+deleted before or after the branch lands — before is cleaner, because the replay control then
+reports nothing at all.
 
 ### Found by H01's implementation and its review, 2026-09-23
 
@@ -192,9 +342,11 @@ request.
 
 | # | Item | Why |
 |---|---|---|
-| 14 | **H11** | closed by the maintainer: leniency is chosen, the justification rewritten, the reopen trigger recorded |
+| 13f | **H19's actual remedy** — moving the TLS specialization behind a TLS-specific header, so a plain client does not reach OpenSSL at all | **owed, and it was missing from this list until 2026-09-24.** H19 itself is discharged as *recorded and accepted*: the `OPENSSL_VERSION_NUMBER` guard, the comment explaining why it is keyed on the capability rather than `BL_DEVENV_VERSION`, and the consequence written into `httpclient/PreCompiled.h`. But astra's remedy is a real piece of work recorded only in the verification record — **not in the one place a reader is told to look for what is left** |
+| 14 | **H11** | closed by the maintainer: leniency is chosen, the justification rewritten, the reopen trigger recorded. **Landed in S6R.4** (`38ed037`), which the plan's slice table did not list |
 | 15 | **H24, H25** | latent until a content codec ships, and prerequisites of it — now recorded as P2 and P3 in the decoder deferral |
-| 16 | **H21, H22** | on L6's owed list, pre-dating astra |
+| 16 | **H21** — successful HTTP/1 selection consumes a retry, so `maxRetriesPerRequest = 0` makes the first request to every HTTP/1.1 origin fail | **already deferred, properly** — it is L6's **finding 4a**, recorded in [`http2-l6-review-record.md`](http2-l6-review-record.md) with its cost, both candidate shapes and what each does to the control case, and its handover condition **met**: `ConnectionPool.h`'s `maxRetriesPerRequest` comment opens with *"AND ZERO SWITCHES OFF HTTP/1.1 THROUGH A SESSION RATHER THAN MERELY TIGHTENING THE BUDGET"*. Needs no new document; this row exists so a reader of one list finds the other |
+| 16a | **H22** — cancellation between redirect hops can report the **intermediate** response as a success | on L6's owed list as finding 9. **A wrong answer to the caller**, so the same class as 7a and 13e |
 
 ## Not part of this remediation at all
 

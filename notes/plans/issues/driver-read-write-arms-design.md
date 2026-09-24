@@ -8,7 +8,7 @@ in place and each dated, and both shape choices made by the maintainer: **#7 tak
 |---|---|
 | **A2** (#7) | **implemented** `a2-write-peer-close` @ `04bcb6f`, **reviewed §12 and accepted** — no conditions; owed items are §12's list, none blocking |
 | **A3** (#13) | **implemented** `a3-h2-accounting` @ `372a397`, **reviewed §11 — agreed with two conditions**, both returned to the lane: three code comments carrying false premises, and the `postCommand( )` residual, which the maintainer decided is **fixed now, not deferred** |
-| **A1** (#8) | **A1-cleartext (face 3) implemented** `a1-cleartext` @ `6632469`, **reviewed §13 and accepted** — one comment condition at the merge (§13.3), the Windows narrowing **deferred to the matrix** (§13.3); **A1-tls (faces 1–2) not started**, after the fixture. Re-specified in §12.5 after A2 showed the recorded gate worked only by accident; maintainer agreed 2026-09-23 — including that the author's own "write records, read consults" was necessary and **not sufficient**, §12.5's step 3 being what makes it deterministic |
+| **A1** (#8) | **A1-cleartext (face 3) implemented** `a1-cleartext` @ `6632469`, **reviewed §13 and accepted** — one comment condition at the merge (§13.3), the Windows narrowing **deferred to the matrix** (§13.3); **A1-tls (faces 1–2) implemented** `a1-tls` @ `db30f53`, **reviewed §15 and accepted** — no condition at the merge; face 1's gate lands as defence-in-depth by the maintainer's decision, its control and its trigger recorded (§15.5). Re-specified in §12.5 after A2 showed the recorded gate worked only by accident; maintainer agreed 2026-09-23 — including that the author's own "write records, read consults" was necessary and **not sufficient**, §12.5's step 3 being what makes it deterministic |
 | **A4** (#12) | agreed, **not started** |
 
 Change-set **A** of the four items that
@@ -85,6 +85,37 @@ draft gave: the question is whether the conversation is over, not whether a retr
 a peer close that reaches the write first as `broken_pipe` goes to `CHK_EC` and fails the task.
 `H2Driver_PeerHalfClosesWithAWriteInFlightTests` does not see it because its peer holds its end and
 the read notices first (door 2); a peer that RSTs would.
+
+**Corrected 2026-09-24 — this paragraph was wrong in three ways when it was written.** It was written
+from h1's perspective by an author who had not read h2's structure for it, and its line numbers came
+from a pre-A3 tree.
+
+1. **"a peer that RSTs would" — it would not.** That case comes out **green**. `broken_pipe` needs a
+   FIN *before* the RST (`CLOSE_WAIT` → `EPIPE`); a bare reset gives `connection_reset`, which h2
+   already admits.
+2. **The arm fired in the ordinary case — this point is itself corrected 2026-09-24 by the 13a/13e
+   implementation review, §16.3, by reading at the source and not by measurement.** As first written
+   it said `perform_io( )` performs the **write's** syscall first but **posts the read's handler
+   first**, so that with both ops registered the read handler ran first, closed, and the arm could
+   fire **only where no read is armed**. That is not this reactor. In Boost 1.90 `epoll_reactor::run( )`
+   queues the `descriptor_state` itself; `perform_io( )` runs later, from
+   `descriptor_state::do_complete( )`, which **invokes the write's completion in place** — the socket
+   is built on `make_strand( )`, so that is `strand::execute( )`, which enqueues the handler and runs
+   the strand's invoker inline, the inner `io_context` executor being `blocking.possibly` and the
+   reactor thread `can_dispatch( )` — while the read's completion has just been **posted** to the
+   scheduler queue by `perform_io_cleanup_on_block_exit`. So with both ops registered the **write
+   handler ordinarily runs first**, with `isClosing( )` false, and the arm fired on every peer ending
+   that reached a pending write: as 13a whenever a FIN preceded the reset, as 13e whenever the answer
+   was queued. The read-first order is a narrow race — a woken pool thread reaching the strand's mutex
+   before the reactor thread does — and not the rule. The two no-read-armed windows, `onRead( )`'s
+   pump-then-arm pair and `onProtocolNegotiated( )`'s, are real and are what the two committed cases
+   arrange; they are where the write is *alone*, not the only places it is *first*.
+3. **The cited line numbers were never right.** `:1638` is `onRead( )`'s epilog and `:1477-1502` is a
+   different function's comment. The anchors are the function names, as §0 says.
+
+**And the reading found a second defect, live today** — see
+[`astra-remediation-owed-work.md`](astra-remediation-owed-work.md) item **13e**. It is why the shape
+matters and not only the predicate.
 
 **Which shape — the question §13's one line does not settle.** Two shapes, and they differ in
 what the caller sees.
@@ -211,6 +242,19 @@ sentence in the teardown design.
    `! isClosing( )` alone, `! isClosing( ) && ! isCanceled( )`, or the cancel check moved ahead of
    the arm, is the lane's to decide with the case in hand — and the record must say which, because
    the first is what §13 wrote down and it is not enough on its own.
+
+*Corrected 2026-09-24 by the implementation review of A1-tls — §15.2.* Point 2's list is right as a
+list and its conclusion is stale. `chkArmIdleTimer( )`'s catch runs with no parser — it is guarded on
+no active handle, and the parser's lifetime lies inside the handle's. `onStartRequest( )`'s initiating
+catch runs with a **live** parser, created above the write, but it clears `m_isWriteInFlight` before
+completing the operation, so `initiateClose( )` shuts nothing down there, and no request octet has
+left, so no response can be in flight: it cannot produce the symptom. `onWriteCompleted( )` fails the
+task, with A2 in shape (ii), only on the `operation_aborted` of a cancel's reaping, on its own
+`CHK_CANCEL_IMPL( )`, and on Windows on `WSAESHUTDOWN` — every one behind an external cancel. So in
+this tree `isClosing( )` is true at the observation with a live parser only when `isCanceled( )` is
+true as well, and the gate of this section has no red the cancel check does not also fix; it lands
+as defence-in-depth on §15.5's terms. Point 3's decision is taken: `CHK_CANCEL_IMPL( )` **narrowed to
+a live parser, ahead of the arm** — the other two candidates are ruled out in §15.3.
 
 **What the gate does not close, recorded so it is not mistaken for closed.** The same cancel-miss
 window has a second face. If the transport read that completed inside the window carried a partial
@@ -1416,8 +1460,15 @@ close. *The three endings that produce it:*
 
 - **Face 1 — our own teardown** (§3.1-3.2 as recorded): the composed TLS read re-arms past
   `initiateClose( )`'s cancel and observes an ending we caused. Gate `onPeerClosed( )` on
-  `! isClosing( )`. Unchanged.
+  `! isClosing( )`. Unchanged. *Corrected 2026-09-24 by the implementation review of A1-tls — §15.2,
+  §15.5: unchanged in shape and in placement — asked at the observation, never at the delivery — and
+  not unchanged in what it covers. After A2 nothing reaches this gate with a live parser unless
+  `isCanceled( )` is true as well, so it has no red the cancel check of face 2 does not also fix; it
+  lands as defence-in-depth by the maintainer's decision, with the matrix's row 2 as its control and
+  its trigger recorded in §15.5.*
 - **Face 2 — the external cancel** (§3.2, point 3): unchanged; the lane decides with the case in hand.
+  *Decided 2026-09-24: `CHK_CANCEL_IMPL( )` narrowed to a live parser, ahead of the arm — the two
+  candidates it ruled out are judged in §15.3. In this tree it is the gate that closes the symptom.*
 - **Face 3 — the reset the write consumed** (new, this review). One RST sets `sk_err` once and the
   first syscall to reach it takes it. The write's `send( )` is first whenever both ops are registered
   — `perform_io( )`'s order — and whenever the composed write's next step runs before the read's
@@ -2158,3 +2209,683 @@ or a plain module loop — the journal's, not logged; the TLS second-terminal tr
 whether the first teardown sets `m_wasSocketShutdownForcefully` was not followed; and the real-world
 reachability of an initiator throw, which is still only the seam's — as the lane says, the allocation
 inside a real initiating call is not something a test can arrange from outside.
+
+---
+
+## 15. Implementation review, 2026-09-24 — A1-tls's second gate
+
+**Reviewer: Claude Fable 5.1, reading `a1-tls` @ `db30f53` (and `8086829`, the manifest) in the lane
+worktree, off `lazari2` @ `58aa106`. Line numbers in this section are at `db30f53`.** The
+specification under review is §12.5, which this reviewer wrote; it is reviewed here as if by someone
+else, and its face 1 sentence is corrected in place above. Read whole, at the commit: the diff; h1's
+`onStartRequest( )`, `onWriteCompleted( )`, `armRead( )`, `onPeerClosed( )`, `onReadCompleted( )`,
+`finishStream( )`, `publishStreamEnd( )`, the H01 continuation, `closeConnection( )`,
+`chkArmIdleTimer( )`, `onIdleDeadline( )`, `initiateClose( )`, `scheduleTask( )`, `cancelTask( )`,
+`onTaskStoppedNothrow( )`, `submit( )`, `onCancelStream( )` and `postToStreamExecutor( )`;
+`TaskBase.h`'s handler macros, `requestCancel( )` and `notifyReadyImpl( )`; the whole of
+`MultiOperationTask.h`'s accounting; `NetUtils.h`'s fourth and fifth predicates; the whole of the new
+case file, `chkOrFail( )` and the `Http1TlsPeer` helpers it uses, `RecordingSink::waitForClosed( )`
+and `scheduleAndExecuteInParallelInternal( )`; the two strand-probe precedents (`Http1DriverProbe`,
+the H01 seam); teardown §2.1 and §17; the lane's journal and its four scripts. **Every log in
+`logs/lane3-a1tls/` was read**, and the matrix was counted from the fatal-error lines rather than from
+the summary. Nothing was built or run. The re-indented block was checked mechanically — the parent's
+block indented four columns, `diff`ed against the commit's: identical, the three differing lines being
+blank lines the indent had padded.
+
+**Verdict: agree that the implementation should be accepted, with no condition at the merge.** Three
+comment precisions are owed, none blocking (§15.7), and one harness hygiene defect on the failure path
+only (§15.6). The §12.5 correction the lane left is made in place above and derived here (§15.2). Face
+1's gate lands **by the maintainer's decision of 2026-09-24**, recorded in §15.5 with what its control
+proves, what it does not, and its trigger — on a premise this review corrects. The strand-holding
+instrument is judged acceptable (§15.6).
+
+### 15.1 The diff, verified
+
+**Eight code lines**, as the brief counts them: `if( m_parser ) { BL_TASKS_HANDLER_CHK_CANCEL_IMPL() }`
+(`:1389-1392`) and `if( ! base_type::isClosing() ) { … }` (`:1415-1467`) in `onReadCompleted( )`'s
+end-of-stream arm, with `closeConnection( )` (`:1476`) outside both; A1-cleartext's deferral block
+nested inside the second, re-indented and otherwise untouched (`:1417-1466`). The rest is comment,
+checked in §15.7. A `break` from `CHK_EC( )` inside the `if( m_parser )` braces leaves the prolog's
+`do { } while( false )` exactly as it does from the `else` branch — braces are not a loop. `notes.txt`
+gains two recipes in the file's own form; `Main.cpp` one include; the manifest's `854` and `881`
+match the committed file and the final logs.
+
+**Both questions at the observation, verified against the one path that must not be refused.** The
+deferred delivery is `onWriteCompleted( ):918-925`, which neither gate touches, and the hand-over is
+taken only inside `! isClosing( )` — a read that defers has `isClosing( )` false at its own observation
+and sets it itself through `closeConnection( )`. §12.5 step 4 is satisfied structurally, and
+`hc7-face3-probe.log` says the same in fact (§15.4).
+
+**What `closeConnection( )` outside both gates does on each path.** On the `CHK_CANCEL_IMPL( )` path it
+is not reached — the `break` skips it — and the read's own failure sets `m_closing` through
+`onOperationCompleted( ):438`; the state reaches `Closed` at the terminal, the handle stays allocated
+so `submit( )` refuses meanwhile, and the sink is moved out once — as on every other failing-macro
+path in this driver. On the `isClosing( )`-true path `beginClose( )` sets `m_closingDeliberate` on a
+task whose first error is already recorded — verified harmless: `m_firstError` is written once
+(`MultiOperationTask.h:425-439`) and the terminal reports it, and the throwaway run measured
+`operation_aborted` reaching the sink on this very path. On the deferral and delivery paths it is
+A1-cleartext's, unchanged.
+
+### 15.2 The lane's finding against §12.5, judged — right conclusion, one false premise, and the theorem restated
+
+**The conclusion holds:** in this tree `isClosing( )` is never true at the end-of-stream observation
+with a live parser unless `isCanceled( )` is true as well, so face 1's gate closes nothing face 2's
+check does not. **The premise the case's header states for it is wrong in one of its three
+eliminations** — the recurring failure this feature has — and it is recorded here so it is not copied
+forward.
+
+The producers of `m_closing` (three writers — `beginClose( ):310`, `onOperationCompleted( ):438`,
+`scheduleNothrow( ):480` clears — teardown §14 premise 2, re-verified) reached with a **live parser
+and a read still armed**, each at the source:
+
+1. `beginClose( )` has one caller, `closeConnection( )`, which has three: the end-of-stream arm itself
+   (`:1476`) — the read is completing and this branch never re-arms (only the `else` does,
+   `:1483-1486`), so no later observation exists; `publishStreamEnd( ):1735` — `finishStream( )`
+   reset the parser first (`:1642`, unconditional); `onIdleDeadline( ):2054` — guarded on no active
+   handle (`:2043`), and the parser's lifetime lies inside the handle's (created at `:641` after
+   `submit( )` allocated the handle, reset at `:1642` before `publishStreamEnd( )` releases it). **All
+   three eliminated, on the premises the lane gives.**
+2. A first error from an accounted handler while a response is in flight and the read armed: the
+   read's own handler completes the read on either failing branch; the H01 continuation carries no
+   failing macro and runs after the parser is reset; `chkArmIdleTimer( )`'s catch (`:2007`) runs
+   under `activeHandle( ) == INVALID` (`:1970`) — **no parser, as the lane says**;
+   **`onStartRequest( )`'s initiating catch (`:748-766`) runs with a LIVE parser** — it is created at
+   `:641`, in the first `try`, above the write — so the header's *"The last two run with no parser"*
+   (`TestHttp1DriverTlsCancelClose.h:56-58`) is false of this one. The elimination survives on a
+   different premise: that catch clears `m_isWriteInFlight` (`:764`) before completing the operation,
+   so `initiateClose( )` shuts nothing down there (`:2103`) and can provoke no ending, and not one
+   request octet has left, so no response can be in the parser. It cannot produce the symptom — but
+   not because there is no parser.
+3. `onWriteCompleted( )` — and it has **two** failing macros, not one: `CHK_EC( ec )` behind the two
+   arms (`:927-930`) and the unconditional `CHK_CANCEL_IMPL( )` (`:932`). The commit message and the
+   header name only the first; run 3 of 5 in `red-probe-both.log` took the second — the write woke
+   `broken_pipe` from `cancelTask( )`'s `shutdown_send`, `isPeerClosedOnWrite` excused it, and the
+   cancel check failed the task. Both are behind `isCanceled( )` on POSIX: the arms excuse every
+   ending code (`isPeerClosedOnWriteErrorCode( )` admits `broken_pipe`, `isStreamTruncationError( )`
+   the TLS spelling, `isOurOwnTeardown` anything while closing), which leaves `operation_aborted`
+   from a cancel's reaping. On Windows `WSAESHUTDOWN` reaches `CHK_EC( )` directly — the fourth
+   predicate refuses it by design (`NetUtils.h:452`) — but only after `cancelTask( )`'s shutdown, so
+   still behind the cancel; unmeasured.
+
+**The theorem, on the right premises:** *an ending we provoked, observed with a live parser and
+`isClosing( )` true, implies `isCanceled( )`* — because our send side is shut only by `cancelTask( )`
+or by `initiateClose( )` with a write in flight, and the latter runs with a write in flight only from
+a handler that is not the write's, which by 1 and 2 is never one that leaves the read armed with a
+response in flight. **Its scope is endings we caused.** A write that fails with a code the arms do not
+excuse and no cancel produced — `timed_out` after the retransmit budget, a TLS engine error — sets
+`m_closing` with the parser live; `initiateClose( )` then issues only a `cancel( )`
+(`m_isWriteInFlight` is already false, `:868`), and a read inside §3.1's window at that instant
+re-arms past it and later observes whatever the **peer** does. There face 1's gate acts and the cancel
+check does not: it refuses a message the peer's own close framed, on a task that has already failed,
+and the caller sees the write's failure instead of a completed 200 to a request the origin never
+fully received. Defensible, not the worst class, and not arrangeable from a test — it needs a
+partition and a partial record in the same window. Recorded so that "no red of its own" is read as
+*in what a fixture can arrange*, which is true, and not as *unreachable*, which is not quite.
+
+**§3.2 and §12.5 are corrected in place above.** §3.2 point 2's list was right as a list; its
+conclusion — that the gate changes behaviour at those three sites — is stale for the reasons in 2 and
+3. §12.5's *"Unchanged"* was right of the gate's shape and placement and wrong of its coverage.
+
+### 15.3 Face 2's shape — the two rejections verified, and what the narrowing preserves
+
+**Rejection 1 — `! isClosing( ) && ! isCanceled( )` with a swallow — holds at the source.** With no
+failing macro the read completes clean, `closeConnection( )` closes deliberately, nothing else is
+pending on the GET, `onOperationCompleted( )` records no first error and the terminal is clean;
+`onTaskStoppedNothrow( ):2240` then hands the sink `connection_aborted` — its default for a task with
+no exception — for a request the caller cancelled, and `isFailed( )` is false. A misleading code in
+place of a truncation, exactly as the lane says. On the POST the write's own `operation_aborted` is
+already the first error, so the shape is wrong only on face 2 — the face it was proposed for.
+
+**Rejection 2 — `CHK_CANCEL_IMPL( )` moved wholesale above the arm — holds, with one precision on what
+"as it always has" means.** The wholesale move differs from the narrowed check on exactly one path: an
+ending observed with **no parser** and `isCanceled( )` true — a cancelled idle connection whose
+composed read slipped the cancel and then saw the peer answer our FIN. Today that path swallows,
+closes deliberately and completes the task **clean**; the same connection whose read the cancel
+*reaped* — the ordinary case, and the only case on cleartext — completes `operation_aborted` through
+the `else` branch's `CHK_EC( )`. So the narrowing preserves a small inconsistency rather than a
+uniform rule. It is harmless — no sink exists to be told either way, and nothing in the pool reads a
+cancelled idle task's verdict — and the narrowing is the smaller change, which is the right default.
+But the comment at `:1384-1386`, *"a cancelled idle connection whose read is reaped goes on ending as
+it always has"*, describes the wrong path: a reaped read completes `operation_aborted`, is not an end
+of stream, and never enters this branch at all. Owed a precision, same line count (§15.7).
+
+**The narrowing itself is right for the symptom:** a live parser is a message that has not completed
+(`finishStream( )` resets it on every completion), so *"with no message in flight there is nothing to
+frame"* is exactly true, and the check sits ahead of both the deferral and the delivery, so a
+cancelled read can neither hand an ending to the write handler nor frame one.
+
+### 15.4 The evidence, read rather than taken
+
+- **The matrix**, counted from the fatal-error lines of `matrix-{pristine,face1only,face2only,both}.log`:
+  pristine 5/5 red on both cases; face1only 5/5 red on face 2 and 0/5 on face 1; face2only and both
+  0/5 on both. Every red is the symptom and not a run count: *status 200, body 'part-one', sink
+  headers 200|data 8|closed cleanly, peer …|partial:sent|peer-end:asio.ssl.stream:1 (stream
+  truncated)|closed*. The summary's table is what the logs say.
+- **The mechanism, in the trace** (`red-probe-both.log`, temporary `fprintf`, 5 runs): face 2 observes
+  `eos=1 closing=0 canceled=1 parser=1 wif=0` every run — `m_closing` false throughout, as the case's
+  comment claims. Face 1: `write ec=system:125 teardown=0 … closing=0 canceled=1 parser=1`, then
+  `initiateClose wif=0 parser=1`, then `read … eos=1 closing=1 canceled=1 parser=1 wif=0` — the write
+  reaped by the cancel, its `operation_aborted` the first error, `initiateClose( )` issuing only a
+  cancel that finds the completed-but-unqueued read, and the read observing with `isClosing( )` true:
+  §3.1's window exactly. Run 3 is the `broken_pipe` route of §15.2 point 3. **`red-face1-01.log` is
+  not this**: it shows the read observing first with `closing=0 canceled=1 wif=1` and deferring — the
+  journal's recorded trap, the peer draining early so the write woke excused; the case was then gated
+  on the cancel having run (`:576`, with the measurement in its comment), and `red-face1-02.log`
+  shows the committed mechanism. The case text grew 61 lines after the probe runs (the reds there
+  report `:793` and `:820`; the committed cases are `:854` and `:881`), and `final-pristine.log`
+  re-established both reds 5/5 on the committed text, between two 0/5 runs of the committed driver
+  whose objects are byte-identical (`final-summary.log`).
+- **Face 3's deferral** (`hc7-face3-probe.log`, 3 runs of R1, R2, the older reset case and A2's case,
+  0 red): `read DEFERS` ×3 and `write DELIVERS deferred` ×3 — R2 takes the hand-over every run and
+  the write handler delivers it — and `read DIRECT` ×9 for the other three. The delivering write
+  carried `operation_aborted` in two runs and `broken_pipe` in one: §12.5 step 3 predicts
+  `broken_pipe` for a parked write, and the `cancel( )` that follows the shutdown inside
+  `shutdownSocket( )` evidently reaps it first about two times in three. Both are excused, the verdict
+  was the read's `eof` each time, and the precision is worth the sentence §12.5 does not have.
+- **What the caller sees** (`throwaway.log`, a temporary assertion, reverted; `restore-verify.log`
+  2/2 green on the restored object, 49,713,864 octets, the validated size): `system:125` —
+  `operation_aborted` — on both faces, *closed with an error*.
+- **Modules:** `green-hc5-module.log` and `final-hc5-module.log` 3/3, `green-hc7-module.log` 3/3,
+  `green-hc3-run{1,2,3}.log` 3/3, all `No errors detected`. §13.2's `httpclient3` reuse-refusal flake
+  did not appear in three runs, which says nothing about it either way.
+- **The object:** 49,713,864 is in the logs (`stat`, three times) and on disk; the before-figure
+  49,308,288 is the journal's and was not rebuilt here. Against it the cases cost ~400 KB (the
+  pristine driver with the cases: 49,708,896) and the eight code lines ~2.6 KB. **+0.8% on a module
+  already over target with a recorded reason is accepted:** a sibling would pay the TU floor and a
+  second TLS peer for +0.4 MB of content, and the cases name only types the module already
+  instantiates.
+
+### 15.5 Face 1's gate — decided, and the record made honest
+
+**The decision (maintainer, 2026-09-24): the gate stays, as defence-in-depth, with the matrix's row 2
+as its control.** Recorded here so the next reader does not reopen it, with exactly what was measured.
+
+**What the gate has, stated precisely.** It is not a gate without a red. Against the tree with
+**neither** gate the face-1 case is red 5/5, and with the `! isClosing( )` gate **alone** it is green
+5/5 while the face-2 case stays red 5/5 (rows 1 → 2). That is a red-before, green-after for this gate
+on the path it names — `isClosing( )` true at the observation, the trace of §15.4 — and it is also
+its **specificity** control: it acts on that path and does not act on face 2's. **What it lacks is
+independence**: with the cancel check in place the gate has no case that changes colour (rows 3 = 4),
+because §15.2's theorem says today's only producer of that path is behind `isCanceled( )`. Row 2
+therefore proves what the lane says it proves — that the gate acts on exactly the path it names —
+and **does not prove necessity**, which in this tree nothing can. The record must say *redundant and
+measured*, not *unmeasured*; the lane's "no red of its own" means the first.
+
+> **SUPERSEDED 2026-09-24 by `5941a50`, and the "nothing can" above was wrong.** The claim held of
+> what an **external cancel** can arrange; it did not hold of what a **fixture** can arrange, because
+> the landed probe can call the epilog's own `closeConnection( )` + `initiateClose( )` pair directly
+> instead of `requestCancel( )`. `Http1DriverTls_ClosingWithoutACancelCompletesACutShortBodyTests`
+> does exactly that, and the matrix now has a fourth column:
+>
+> | variant | face 2 case | face 1 case | **face 1 alone** |
+> |---|---|---|---|
+> | neither gate | RED 5/5 | RED 5/5 | RED 5/5 |
+> | face 1's gate only | RED 5/5 | GREEN 5/5 | GREEN 5/5 |
+> | **face 2's gate only** | GREEN 5/5 | GREEN 5/5 | **RED 5/5** |
+> | both | GREEN 5/5 | GREEN 5/5 | GREEN 5/5 |
+>
+> **Row 3 is the independence this section says nothing can provide.** Its failure text carries the
+> same symptom the siblings pin — *status 200, body 'part-one', closed cleanly* — but with **`task
+> clean`** rather than `Operation canceled [system:125]`, which is what shows no cancel was anywhere
+> near it. So `! isClosing( )` is no longer redundancy anyone must remember to re-measure: **remove
+> it and a case fails.** The maintainer's decision to keep the gate stands, and the note that went
+> with it — *defence-in-depth, row 2 as its control, re-measure when the triggers fire* — is retired
+> rather than carried.
+>
+> §15.9's owed item and `db30f53`'s commit message both predate this and are left as written.
+
+**The accepted reasoning rests on one premise this review corrects.** *"§13.3 already defers narrowing
+that arm to the Windows matrix"* — it does not. §13.3's deferred narrowing is of the **fifth**
+predicate, `isPeerResetOnWriteErrorCode( )` (*"refuse the record where
+`os::peerCloseWithUnreadDataIsReportedAsReset( )`"*), which is the consult inside `onPeerClosed( )`;
+taking it changes what a recorded write code proves and changes **nothing** about which codes
+`onWriteCompleted( )`'s arms excuse, so it cannot make `m_closing` reachable with a live parser. The
+conclusion — keep the gate against a future producer — stands on its own, and the producers that
+would matter are these. **The trigger, recorded:** the gate is to be **re-measured for a red of its
+own** — the face-1 arrangement with the cancel replaced by the new producer — whenever any of the
+following lands: (i) a change to `onWriteCompleted( )`'s two excusing arms (`isOurOwnTeardown`,
+`isPeerClosedOnWriteErrorCode( ) || isStreamTruncationError( )`) that lets a code no cancel produced
+reach `CHK_EC( )`; (ii) a new caller of `closeConnection( )` or `beginClose( )` while a response is in
+flight — a drain, a per-request deadline, a `Connection: close` acted on early; (iii) a new accounted
+operation whose failure can be the task's first error while a response is in flight. At (ii) with a
+write in flight the gate would acquire its red with certainty — `initiateClose( )` shuts the send side
+and the peer's answer is observed closing and not cancelled; at (i) and (iii), and at (ii) without a
+write, whenever the producer shuts our send side or the peer closes while we are closing.
+
+**The red can be given now, and this review recommends it (not a condition).** The probe class as
+landed can call the driver's protected `closeConnection( )` and `initiateClose( )` from the first hold
+in place of the test thread's `requestCancel( )` — the same two actions a first-error epilog performs,
+on the strand, with no task lock — and the peer's script needs no change: our FIN goes out, the peer
+reads to the end and closes, and the read observes with `isClosing( )` true and `isCanceled( )` false.
+By the traces of §15.4 that case is red under `face2only` and green under `both`: a third case that
+fails if the gate is ever dropped, which converts "remember to re-measure at the trigger" into
+something the suite remembers. `initiateClose( )` would then run twice in that run — the real epilog's
+call finds `m_isWriteInFlight` false and cancels an empty table — which is harmless and is the one
+contract of the base it bends, in a test.
+
+**On `src/utests/AGENTS.md`'s rule.** The rule as written — *show the case failing against the unfixed
+code* — is met by rows 1 → 2. What it does not address is a guard that is **redundant with another**
+in the tree it lands in, and the precedent is worth naming rather than leaving implicit. Proposed
+wording, for the maintainer to apply (this review touches nothing under `src/`), as a sentence after
+*"shown red before and green after"*:
+
+> A guard that another guard already covers may land only if it has its own red against the tree
+> with **neither** (so its effect is measured), the redundancy is itself measured (the other guard
+> alone turns its case green), and the record names what would make it independent — with the
+> re-measurement owed at that point, or a case that manufactures the producer now.
+
+### 15.6 The instrument, judged — acceptable, with precedent, and one hygiene defect
+
+**A test may reach onto a driver's strand this way.** The question the case asks — what the read
+handler does when an ending is observed *after* a cancel that found nothing registered — lives in a
+window between a reactor completion and a strand handler, and the only lever that opens it is
+holding the strand. Two precedents already do so in this tree: `Http1DriverProbe`
+(`Http1DriverTestUtils.h:820`), *"the driver under test with a door onto its OWN strand"*, posts from
+a subclass exactly as `holdStrand( ):320` does; and H01's seam (`TestHttp1DriverStrandSeam.h`) holds a
+write's completion through a test-only stream policy. The probe here is narrower than either: one
+public method, no state, no override, no behaviour — the driver under test is the driver.
+
+**Why a sink cannot do it, verified.** `BL_TASKS_HANDLER_BEGIN( )` is `BL_MUTEX_GUARD(
+TaskBase::m_lock )` (`TaskBase.h:119-120`); every sink call is inside a handler body —
+`deliverBodyChunk( )` from `onBytesRead( )` inside `onReadCompleted( )`, `onClosed( )` from
+`finishStream( )` inside whichever handler ended the stream; `requestCancel( )` takes `m_lock`
+(`:1237-1243`); and `scheduleRead( )` runs in the same handler (`:1485`) before the lock is released.
+A cancel issued from a sink blocks until the read has re-armed, which is the other side of the window.
+
+**The five octets are the right key.** A bare record header leaves the engine wanting input
+(`io.hpp:156`), which is the one outcome that re-arms without completing; a full record completes the
+read with data, which the `else` branch's `CHK_CANCEL_IMPL( )` (`:1481`) kills correctly — the tree
+behaving. The cases assert the peer's own ending was **truncated** (`Http1TlsPeer::isTruncated( )`,
+`TestClientSessionTlsHttp1.h:473`), which pins that the ending was our forceful shutdown and never a
+close the client chose.
+
+**It fails safe.** The two settles (`:715`, `:740`) bound one reactor hop each; too short, and the read
+is still registered when the cancel runs, or the ending has not been observed yet — green against the
+unfixed tree in both, never a red. The instrument, the number and the reason are A2's
+`WRITE_PARKS_IN_MILLISECONDS`. The weakness is the one §13.2 recorded for R2: a slow host weakens the
+*control* silently and never the case.
+
+**One hygiene defect, on the harness-failure path only.** The four hold latches are declared inside
+the `scheduleAndExecuteInParallel( )` lambda (`:666-669`) and captured by reference by handlers that
+block on them. If a `chkOrFail( )` inside that lambda fires while a hold is blocked — the peer never
+closing, say — `UTF_FAIL` throws, the lambda unwinds and destroys the latches, and
+`scheduleAndExecuteInParallelInternal( )`'s catch then `forceFlushNoThrow( )`s a queue whose driver
+task cannot end until the hold's 30 s wait times out and returns through a destroyed mutex. Undefined
+behaviour in place of a diagnosis: a red run the case was built to diagnose could become a crash. None
+of the recorded runs took that path — every red fired in `chkNotReportedComplete( )`, after the
+lambda had returned. **Recommended, not a condition:** hoist the four latches to function scope beside
+the peer's three (`:509-511`), which live through the catch. On the green path the lifetimes are
+sound: every latch's last use is inside a hold that returns before the strand can run the handlers
+the task's terminal needs, and `eq -> wait( driverTask )` (`:747`) returns only after that terminal.
+
+### 15.7 Comments checked against the code they describe
+
+**Born in this change, in the driver.** Face 2's paragraph (`:1374-1386`): *"m_closing has three
+writers and cancelTask( ) is none of them"* — verified; *"The else branch asks the same question with
+the same macro, and an ending never reaches it"* — verified; *"a cancelled idle connection whose read
+is reaped goes on ending as it always has"* — the wrong path (§15.3), owed a precision in the same
+line count: it is the connection whose read *slipped* the cancel that goes on ending as before, and
+the reaped one never enters this branch. Face 1's paragraph (`:1395-1413`): *"the read then re-arms
+and observes the ending our own shutdown_send provoked"* — true, with the precision that in the
+measured red the shutdown is `cancelTask( )`'s and `initiateClose( )` issued none (`wif=0` in the
+trace); *"ASKED WHERE THE ENDING IS OBSERVED AND NEVER AT THE DELIVERY … this read set it"* —
+verified; *"Routing the ending to CHK_EC( ) instead would make eof the first error of a task closing
+DELIBERATELY"* — verified against `onOperationCompleted( )`. *"OUTSIDE BOTH GATES"* (`:1470-1475`) —
+verified in §15.1, including *"all but a no-op"* on a task already closing.
+
+**Born in this change, in the case.** The header's *"The last two run with no parser"* (`:56-58`) —
+**false of `onStartRequest( )`'s initiating catch** (§15.2); the conclusion it serves survives on the
+premise given there, and the sentence is owed the correction, same line count. *"the write handler's
+CHK_EC( )"* (`:58`, and the face-1 case comment) — its `CHK_CANCEL_IMPL( )` too, which run 3 took; a
+precision. The peer's *"AND IT DOES NOT READ ONE OCTET UNTIL THE CANCEL HAS RUN"* paragraph
+(`:565-576`) — verified against `red-face1-01.log`, which is the measurement it cites. The header's
+*"a sink cannot be used for this"* — verified (§15.6). The face-2 case's *"m_closing IS FALSE
+THROUGHOUT"* — verified in the trace. The bounds paragraph — verified in direction (§15.6).
+
+**Neighbours, re-read at the commit.** `onPeerClosed( )`'s *"A gate on this driver's own teardown
+belongs where the ending is OBSERVED and not here"* (`:1261-1264`) — now true of the code, not only
+of the intent. `onWriteCompleted( )`'s *"AND CHK_CANCEL_IMPL( ) STAYS OUTSIDE THE GUARD"* — unchanged
+and true. `onTaskStoppedNothrow( )`'s *"A write which failed, or a cancel, completes the task through
+the handler macros and never through finishStream( )"* — still true, and the read's own cancel check
+is now a third route to it; narrower than it reads, not false. `initiateClose( )`'s *"shutting the
+RECEIVE side down makes OUR OWN socket report eof … parseEof( ) would complete a half-received
+close-delimited body on"* — untouched and still the reason `shutdownSocket( )` is `shutdown_send`;
+the lane's journal records having first read `force` as `shutdown_both` and correcting itself at the
+source, which is the right order.
+
+### 15.8 Found here, not fixed here
+
+- **Windows, two things unmeasured, both behind a cancel:** `WSAESHUTDOWN` reaching `CHK_EC( )` from
+  `cancelTask( )`'s shutdown (§15.2 point 3), and whether the composed TLS read's window has the same
+  shape under IOCP, where a completed-but-unqueued read is the ordinary state rather than a race. The
+  cases are POSIX-measured only; the matrix should run them.
+- **The TLS spelling of a write's reset (§12.5, §13.9) is still owed.** This change measured the TLS
+  spelling of a write's *cancel* — `operation_aborted` passed through unchanged, and `broken_pipe`
+  likewise — not of a reset.
+- **The idle-connection inconsistency** of §15.3: a cancelled idle TLS connection whose read slipped
+  the cancel completes clean; one whose read was reaped completes `operation_aborted`. Harmless today;
+  whoever next touches the arm should decide it deliberately rather than inherit it.
+- **The hold-latch lifetime** (§15.6) and **the three comment precisions** (§15.7) — owed, none
+  blocking.
+- **A face-1 case without a cancel** (§15.5) — recommended, with its shape given.
+- **The AGENTS.md sentence** (§15.5) — proposed, not applied.
+
+### 15.9 Agreement, and what is owed
+
+**Agreed; A1-tls is accepted on this review, with no condition at the merge.** Face 1's gate lands by
+the maintainer's decision, and the record of it is §15.5: measured and redundant, not unmeasured; its
+control proves specificity and not necessity; its trigger is any new producer of `isClosing( )` with a
+response in flight — and not §13.3's narrowing, which cannot produce one. **Recommended and not
+required:** the face-1 case without a cancel; hoisting the hold latches; the three comment precisions,
+each in its line count. **Owed and recorded so it is not rediscovered:** the Windows measurements of
+§15.8; the write-reset TLS spelling; the idle inconsistency; the AGENTS.md sentence; this design's
+status row, corrected above.
+
+**What this review could not settle by reading:** the before-object size (the journal's, not
+rebuilt); Windows in every direction named; whether the `timed_out` route of §15.2 has ever occurred
+against a real origin — argued from the kernel's retransmit behaviour and asio's window, arranged by
+nothing; and the loop counts of the module runs beyond what the logs hold — here every count was a
+log.
+
+---
+
+## 16. Implementation review, 2026-09-24 — 13a and 13e's second gate
+
+**Reviewer: Claude Fable 5.1, reading `h2-write-peer-close` @ `bc1f13a` in the lane worktree, off
+`lazari2` @ `865f923`. Line numbers in this section are at `bc1f13a`; Boost's are in the 1.90.0
+source under the devenv dist.** The specification under review is the lane's reading pass
+(`logs/lane1-h2shape/findings.md`, outside the repo), the owed-work record's 13a and 13e rows, and
+§2.2 above as corrected on 2026-09-24. Read whole, at the commit: the diff (four files); h2's
+`isPeerClosed( )`, `isPeerClosedOnWrite( )`, `onRead( )`, `onPeerClosed( )`, `onWriteScheduled( )`,
+`pumpWrites( )`, `onWrite( )`, `scheduleRead( )`, `closeStream( )`,
+`closeAllStreamsUnwrittenRetryable( )`, `sinkOf( )`, `onHeadersEvent( )`, `publishState( )` and the
+tail of `onProtocolNegotiated( )`; `MultiOperationTask::beginClose( )`; `NetUtils.h`'s five
+predicates and their comments; the whole of the new case file; `TcpStrandedStreams.h`'s policy
+comment and `OSBoostImports.h`'s `strand_t`; `ThreadPoolImpl.h`'s `io_service` construction;
+`utf_baselib_h2client4`'s `H2Pool_ADriverIsAdoptedOnlyOnceTheTaskPublishesClosedTests` and the stubs
+it is built from; and in Boost's own source the whole of `epoll_reactor.ipp`,
+`strand_executor_service.ipp` with its `.hpp` implementation, `handler_work.hpp`, `strand.hpp`'s
+`execute( )`, `reactive_socket_send_op::do_complete( )`, `scheduler::do_run_one( )`,
+`post_deferred_completions( )`, `post_immediate_completion( )`, `can_dispatch( )`,
+`wake_one_thread_and_unlock( )`, the scheduler's constructor and
+`io_context::basic_executor_type::execute( )`. Of `logs/lane1-h2write/`, the red, the control and the
+final green were read whole; the build and must-not-move logs were read for their verdict lines and
+case counts. **Nothing was built or run, and no probe was compiled:** the reactor ordering below is
+settled by reading and is marked so wherever it is used.
+
+**Verdict: agree that the implementation should be accepted, with one comment condition at the
+merge, in its line count (§16.6).** The change is the right shape for the right reasons, both
+defects are measured rather than argued — the (A) control row *is* 13e — and the reactor finding the
+lane reports **holds**: it makes both defects the ordinary case rather than two windows' worth,
+which strengthens the change and weakens two records. §2.2's point 2 is corrected in place above; the
+owed-work record's 13e row is owed the same correction when the item is closed (§16.7). **13a and
+13e can be marked closed.**
+
+### 16.1 The diff, verified
+
+**Six code lines change behaviour**, all in `onWrite( )`: the middle arm asks
+`isPeerClosedOnWrite( ec )` (`:1870`) and its body is a comment. The helper (`:1618-1622`) is
+`net::isPeerClosedOnWriteErrorCode( ec ) || base_type::isStreamTruncationError( ec )` — the fourth
+predicate beside the truncation question exactly as `onRead( )`'s pair asks it — and the fifth is
+refused for the reason NetUtils gives: it is `isPeerClosedErrorCode( ) && !
+isCleanEndOfStreamErrorCode( )`, so it refuses `broken_pipe`, the code this defect is about.
+`isPeerClosed( )` (`:1571`) is untouched and has exactly one caller left, `onRead( )` at `:1633`.
+**The arm order is the one §2.2 requires and §2.4 warns about:** `isClosing( )` first, the peer-close
+arm second, `CHK_EC( )` third — the barrier case's write ends `broken_pipe` from our own
+`shutdown_send`, both questions answer yes there, and only the order keeps that case on the first
+arm. Green in every log. `m_isWriteInFlight = false` still precedes the arms; the success branch, its
+`CHK_CANCEL_IMPL( )` and the epilog are untouched.
+
+**The case file, read whole.** The peer is four hand-built frames over a raw socket and never
+`Http2TestServerT`, for the reason the barrier case's own peer gives. Its ending is
+`shutdown( shutdown_send )` — the FIN that puts the driver's socket into CLOSE_WAIT — then
+`SO_LINGER( true, 0 )` and `close( )`, which resets from FIN_WAIT unconditionally. The rendezvous is a
+non-consuming `poll( )` on the driver's own descriptor from inside `onWriteScheduled( )`:
+`available( )` (FIONREAD) with `poll( POLLIN )` between checks until the answer is queued, then
+`poll( )` with an **empty** events mask for `POLLERR` against a **`steady_clock` deadline**. Both
+halves are right: `POLLERR` is reported whether or not it was asked for, a FIN alone makes the socket
+readable so a `POLLIN` mask returns at once on every call — the 4 ms the lane measured a
+slice-counting helper burning — and the two reds' `system:32` *after* `sawPollError( )` is the proof
+the `poll( )` took neither the error nor the bytes. The seam records and never asserts, and each case
+asserts its own preconditions — `peer.failure( )`, `wasArmed( )`, `seamFailure( )`,
+`sawPollError( )`, and for R2 `hasSpoken( )` — before the assertion it exists for. R1 is the preface
+at `onProtocolNegotiated( )`'s window; R2 is the SETTINGS acknowledgement at `onRead( )`'s, with the
+sink deliberately not given the connection so `consumed( )` adds no second pump. `notes.txt` gains
+the two recipes; `Main.cpp` one include; the whole file body sits inside `#if ! defined( _WIN32 )`
+(§16.5).
+
+### 16.2 The evidence, read rather than taken
+
+| log | what it shows |
+|---|---|
+| `red-unfixed.log` | at `865f923`, one run: R1 and R2 each `fatal error ... Broken pipe [system:32 at ... reactive_socket_send_op.hpp:136 ... do_complete]`; the barrier case green; `2 failures`, rc 201 |
+| `control-A-predicate-only.log` | the predicate swapped, the write still calling `onPeerClosed( )`, one run: R1 **green**; R2 `the answered response did not reach the sink - status 0, recorded: closed with an error`; `1 failure` |
+| `green-ii-final2.log` | the committed shape, three runs: all three cases green each time, `No errors detected` |
+| `mustnotmove-h2client{2,3,4,7}.log` | 14, 3, 20 and 1 cases, each module `No errors detected`; h2client2's `DEBUG ... did not acknowledge our SETTINGS frame in time` is a line logged inside a green case, not a failure |
+
+**The control row is 13e measured.** A server answered 200 with a body, a driver differing from the
+committed one by six lines told the caller *closed with an error* and no status, and the committed
+driver hands the answer over. That is the discriminator §2.3 asked for, shown against the shape
+rather than argued. `shape-ii.patch` in the log directory is identical to the committed diff in its
+code lines and differs in one comment paragraph: the patch still carried the record's ordering claim
+(*"posts the READ's handler first ... the read has already closed the task"*), and the commit replaced
+it with *"WHICHEVER of the two handlers runs first"* after the lane checked the reactor — the check
+happened before the commit, not after.
+
+**One precision on what the reds prove.** The rendezvous makes the *kernel's* state certain — RST
+applied, answer queued, no read armed — and that removes the scheduler-versus-kernel race the
+findings warned of. It does not fix the order in which the two *posted* completions reach the
+strand: both are pushed to the scheduler queue by `post_immediate_completion( )` while the issuing
+turn still holds the strand, and a woken pool thread taking the read op can reach the strand's mutex
+before the thread taking the write op does. In that order the unfixed tree's R1 is **green** — the
+read's `eof` closes the task first and the write finds `isClosing( )` — and the (A) control's R2 is
+green, the answer being fed before `onPeerClosed( )` empties the table. So the two reds and the
+control are overwhelmingly likely and not deterministic, and each was shown once. **The committed
+cases are not so exposed:** under the write declining, both orders end green by construction, which
+is what a case pinned to a shape needs. The lane's header sentence *"this makes the failure certain"*
+overstates by exactly that much (§16.6).
+
+Not in the logs, taken from the lane: the module size (33.1 → 33.4 MB; no size line in any log
+here), the two `C1 ADDED` and the eol pass.
+
+### 16.3 The reactor ordering — the lane's finding holds, by reading; the measurement is owed
+
+The findings' §0, and §2.2's point 2 as first corrected, said: `perform_io( )` performs the write's
+syscall first but posts the read's handler first, so with both ops registered the read handler runs
+first, closes, and the write arm cannot fire; the arm fires only in the two no-read-armed windows.
+**Traced at the source, that is not this reactor, and the lane is right.**
+
+1. `epoll_reactor::run( )` performs no socket I/O. For each ready descriptor it does
+   `descriptor_data->set_ready_events( )` and `ops.push( descriptor_data )` — the **`descriptor_state`
+   itself** is the queued operation — and `task_cleanup` moves it onto the scheduler queue.
+2. `perform_io( )` is reached only from `descriptor_state::do_complete( )`, when the scheduler pops
+   that state. It loops `j = max_ops - 1 .. 0`, so the **write's `send( )` runs before the read's
+   `recv( )`** — §12.3's syscall order, confirmed — and collects the completed ops as
+   `[ write, read ]`. It returns the **front** (the write) and its `perform_io_cleanup_on_block_exit`
+   destructor **posts the rest** (the read) with `post_deferred_completions( )`: to the scheduler
+   queue under lock with a `wake_one_thread_and_unlock( )`, because `one_thread_` is
+   `concurrency_hint == 1` (`scheduler.ipp:115`) and `ThreadPoolImpl` builds its `io_service` with a
+   hint of 0 or the default.
+3. `do_complete( )` then calls `op->complete( )` on the write op **in place**:
+   `reactive_socket_send_op::do_complete( )` → `handler_work::complete( )`. The socket is built on
+   `make_strand( )` (`TcpStrandedStreams.h`; `OSBoostImports.h:78` makes `strand_t` a
+   `strand< io_context::executor_type >`), and the handler is a plain `cpp::bind( )` with no
+   associated executor, so the `IoExecutor` is the strand, `handler_work_base< strand >` is the
+   primary template whose `owns_work( )` is `true`, and `complete( )` goes to `dispatch( )` →
+   `strand::execute( )` (`strand.hpp:267-271`).
+4. `strand_executor_service::do_execute( )`: the reactor thread is not `running_in_this_thread( )`
+   the strand, so it **enqueues** the write handler — `locked_ = true`, `ready_queue_ = [ write ]` —
+   and, being first, calls `ex.execute( invoker )` on the inner `io_context` executor. That
+   executor's `execute( )` (`boost/asio/impl/io_context.hpp:207`) runs the function **inline** when
+   `blocking.never` is not set and `can_dispatch( )` — the thread is inside `scheduler::run( )` — is
+   true. Both hold. The invoker runs `run_ready_handlers( )`, and **the write handler executes right
+   there, inside `do_complete( )`**, before `do_run_one( )` has returned, while the read op sits in
+   the scheduler queue behind the reactor task.
+5. Whoever pops the read op next reaches the strand while it is locked, or after the write handler
+   has finished, and runs the read handler after it.
+
+**So the ordinary order is write handler first, read handler second — the opposite of the record.**
+The lane's conclusion is right; its stated mechanism is off in one detail: `strand::execute( )` does
+not *post* the write handler's invoker, it runs it inline through `can_dispatch( )`. The detail
+changes nothing — even a posted invoker would find the write handler already enqueued on the strand,
+and the read's later dispatch lands behind it. The read-first order is a race and, in an idle pool,
+a narrow one: the thread woken in step 2 must pop the read op, run `recv_op::do_complete( )` and
+reach the strand's mutex before the reactor thread gets from the end of `perform_io( )` to the same
+mutex in step 4 — a condvar wake against a few hundred instructions. And it is not confined to the
+`perform_io( )` batch: where the write's `send( )` fails **speculatively** inside the issuing turn —
+the two windows the cases arrange, and every `pumpWrites( )` site with the read armed — the write
+handler is posted during that turn, and the read's completion, whether posted by `scheduleRead( )`'s
+speculative `recv( )` or queued as a `descriptor_state` when the reactor task next runs, is behind
+it, except where the reactor had queued the read's completion before the issuing turn began.
+
+**What follows, and it is the reason this section exists.** With the write handler ordinarily first
+and `isClosing( )` false, the arm being removed fired **on every peer ending that reached a pending
+write**: as 13a — `CHK_EC( )` and a failed task — whenever a FIN preceded the reset, and as 13e — the
+answer dropped, the caller told *do not retry* — whenever the answer was queued and the code admitted.
+The findings' §1 row *"FIN then RST, read armed ... its handler runs first and closes"* has the wrong
+handler first; its §5 *"what cannot be arranged"* — a read carrying data queued behind the write
+through the reactor — is the ordinary both-registered case and **can** be arranged, by the barrier
+pattern: a full send buffer, the read armed, the peer's answer, FIN, linger-zero reset. **The change
+that landed is strengthened** — (ii) is green in both orders, which is why no case for the
+both-registered shape is needed to accept it — and §2.2's point 2 and the 13e row were wrong in the
+direction that makes the defect larger, which is the direction this feature's records have been
+wrong in before.
+
+**The lane's decision to assert neither ordering in the code was the right call.** The committed
+comment says the read decides *whichever* handler runs first, and that is the only sentence the
+code's correctness rests on. A comment asserting the order measured by nobody would have been the
+exact failure this feature keeps meeting — a true conclusion on a premise no one checked, outliving
+whatever checks it later.
+
+**What would settle it by measurement, none of it this slice's:**
+
+- **No code:** build `utf_baselib_h2client6` with `ASIO_ENABLE_HANDLER_TRACKING=1`
+  (`projects/make/common.mk`, which defines `BOOST_ASIO_ENABLE_HANDLER_TRACKING`) and run R2. Asio
+  then prints every operation's creation and completion with sequence numbers on stderr, and the
+  order of the `async_send` and `async_receive` completions is read off the log. The same build
+  against a both-registered case is the measurement of the ordinary case.
+- **A both-registered case:** the barrier case's parked peer with an answer, a FIN and a linger-zero
+  reset in place of the park, asserting nothing about order — both orders are green under (ii) — and
+  printing it. A probe for the record, not a case for the module.
+- **A standalone probe** outside the repo, in the shape of §12.3's `rstprobe.c`: one strand, both ops
+  registered, the peer resets, the two handlers log their order over a few hundred iterations.
+  Cheapest, and it measures the race's width as well as its direction.
+
+### 16.4 The three corrections to the findings, checked
+
+1. **R1's recipe as written would not have produced a RST — correct.** At the R1 rendezvous the write
+   being armed *is* the preface, so nothing of ours has reached the peer and its receive queue is
+   empty; Linux sends a RST from `close( )` only when data was unread, so `shutdown( SHUT_WR )` then
+   `close( )` puts out one FIN and nothing more. The driver's preface `send( )` then **succeeds** into
+   its own buffer; the peer's orphaned socket resets on receipt, after the fact; the read armed next
+   sees the FIN as `eof`, and the case is green on every tree. `SO_LINGER( true, 0 )` resets from
+   FIN_WAIT unconditionally, and the two reds' `system:32` are the proof the pair FIN-then-RST landed.
+2. **The `poll( )` rendezvous needs an empty events mask and a wall-clock deadline — correct**,
+   §16.1: `POLLERR` is reported regardless of the mask, `POLLIN` after a FIN returns at once forever,
+   and a slice count is time only while `poll( )` blocks.
+3. **The pool reversal condition is vacuous — correct, and verified in the module.**
+   `H2Pool_ADriverIsAdoptedOnlyOnceTheTaskPublishesClosedTests` (`TestConnectionPool.h:1658`) is
+   built on `StubFactory` with `isFallback = true`, and the publication it waits for is
+   `factory -> taskAt( 0U ) -> setState( httpclient::ConnectionState::Closed )` — **the case's own
+   call on a `StubConnectionTask`**. `utf_baselib_h2client4` is one header and its main; the real
+   `Http2ConnectionTaskT` appears in it once outside comments, in the `static_assert` at `:1910`
+   pinning `UNCONFIRMED_MAX_CONCURRENT_STREAMS`. No publication of the real driver's is observed
+   there, so the condition attached to the (ii) decision — that this case be unable to accommodate a
+   publication one strand turn later — could never have fired. The module was run anyway (20 cases,
+   green), which is the right thing to have done with a condition one believes vacuous.
+
+### 16.5 Windows — the exclusion is honest, and it leaves one thing unmeasured that should be named
+
+The two cases are `#if ! defined( _WIN32 )`, on two grounds: the FIN-then-`EPIPE` ending is a POSIX
+kernel behaviour, and a Windows send into a reset connection takes `WSAECONNRESET` or
+`WSAECONNABORTED`, which map to codes `isPeerClosedErrorCode( )` already admits there — so R1 would be
+green before and after the predicate change and discriminate nothing. **Both grounds are true**, and
+the predicate half of this change is a no-op on Windows by construction: the fourth and the read-side
+predicates differ only by `broken_pipe`, which Winsock never spells for a send. R2 cannot run there
+for a reason the lane did not state and NetUtils did: a Windows reset **discards** what is still
+unread (measured, 0 of 16384), so no shape can hand the answer over and the status assertion is
+unachievable.
+
+**What the exclusion does not cover is the shape half.** (ii)'s premise — the write declines, so the
+read must be told, or the ending waits on a timer — is *"unmeasured for a read and a write pending
+together"* on Windows in NetUtils' own words, and the findings' §3 said taking (ii) here doubles that
+exposure. Nothing compiled on Windows measures it for h2. AGENTS.md's rule is about the change, not
+the new cases: **the matrix run of the existing modules is owed** — `h2client6`'s barrier case and
+`h2client2`'s read-side closes are where a Windows regression would show. **Recommended and not
+required:** a Windows-shaped R1 — the same peer ending with a Windows rendezvous in place of
+`<poll.h>` — which is green under either predicate and is exactly the measurement of *the read is
+told*; if it hangs to the connect deadline, (ii)'s premise has failed for h2 and §10.1's reopen
+applies. Not evasive: the grounds are stated in the file header and the commit message, and NetUtils
+says the Windows spelling is the matrix's. Incomplete, in that the consequence was recorded nowhere
+until here.
+
+### 16.6 Comments checked against the code they describe
+
+**The two corrections the lane made, verified.** *"Nothing is lost by ending gracefully here"* was
+false wherever the write handler ran first with an answer queued — §16.3 makes that the ordinary
+case. *"Reaching it a second time would republish state and re-close streams"* was false in both
+halves: `publishState( )` returns for any state at or below the current one (`<=` on the enum; the
+store never runs), and `closeAllStreamsUnwrittenRetryable( )` loops until `m_streams` is empty, so a
+second pass finds nothing; `beginClose( )` (`MultiOperationTask.h:310`) sets two flags under the lock
+and is idempotent as well. The replacement gives the true reason for the order — `broken_pipe` is our
+own `shutdown_send`'s code and both arms answer yes on our own teardown — and says nothing turns on
+it while both arms do nothing. Right, and it matches §2.2's order paragraph.
+
+**Condition at the merge, in its line count.** The second bullet of the *"AND THE READ IS ALWAYS
+THERE TO DECIDE"* paragraph reads *"Or none was, and then THIS handler's own strand turn arms one
+before it ends."* `onWrite( )`'s own strand turn arms nothing on this arm; the read is armed by the
+**turn that issued the write** — `onRead( )`'s or `onProtocolNegotiated( )`'s `scheduleRead( )`, in
+the same turn as the `pumpWrites( )` whose speculative `send( )` failed. The next sentence names those
+two places correctly, so a reader is misled for one line; but a comment saying a handler arms a read
+it does not arm is the class of thing this feature has paid for. One line, same count: *"Or none was,
+and then the strand turn which issued this write arms one before it ends."*
+
+**Precisions, recommended and not required.**
+
+- The same paragraph's *"eof both times, measured on this platform in both orders"*: the two orders
+  measured are §12.3's, on a bare reset. The FIN case's `eof` is by kernel reading (`tcp_fin( )`'s
+  `SOCK_DONE`) plus these two cases' green, which shows the read was handed *an admitted code*, not
+  which one. *"Measured for the reset, derived for the FIN"* is what holds.
+- The case file's header, *"this makes the failure certain"*: the kernel state is certain; the order
+  of the two posted completions is the narrow race of §16.2. *"This makes the window certain"* is
+  what it proves.
+- The case file's header and R2's comment say the read handler is *"posted second"* — true of the
+  window they arrange and consistent with §16.3; nothing to change.
+- `isPeerClosedOnWrite( )`'s comment says the fifth predicate *"refuses broken_pipe by
+  construction"* — verified against `NetUtils.h`: `isPeerClosedErrorCode( ) && !
+  isCleanEndOfStreamErrorCode( )` cannot admit a code the first conjunct refuses.
+
+### 16.7 Found here, not fixed here
+
+- **The 13e row in the owed-work record** says *"In the one window where h2's write arm can fire — no
+  read armed"*. §16.3: it fired in the ordinary case. Correct the row's mechanism when the item is
+  marked closed — the closure stands either way, and the correction makes the closed defect larger,
+  not smaller.
+- **The findings document** (`logs/lane1-h2shape/findings.md`, outside the repo) carries §0, the §1
+  table's fourth row and §5's *"what cannot be arranged"* with the ordering backwards. It is a session
+  log and not a record; nothing to fix, but it must not be read as the mechanism.
+- **The double `onPeerClosed( )`** the findings' §6.4 said disappears under (ii): it does, and it was
+  harmless before (§16.6). `onRead( )` still has no `isClosing( )` gate, which is right — the read is
+  now the only caller.
+- **`BL_TASKS_HANDLER_CHK_CANCEL_IMPL( )` sits in `onWrite( )`'s success branch only** (findings
+  §6.6), where h1 keeps it outside the guard. Pre-existing; a write failing with an admitted code
+  while an external cancel is pending is not checked here, and the accounting fails the task on the
+  cancel regardless.
+- **This design's status table** at the head has no row for 13a and 13e; they are owed-list items
+  rather than change-set A's, and the owed-work record is where their closure belongs.
+
+### 16.8 Agreement, and what is owed
+
+**Agreed; the implementation is accepted on this review, with one condition at the merge:** the
+one-line comment correction of §16.6, within its line count. **Recommended and not required:** the
+three precisions of §16.6; the Windows-shaped R1 of §16.5. **Owed and recorded so it is not
+rediscovered:** the Windows matrix run of the existing modules (§16.5); the (ii) premise on Windows
+for h2, measured by nothing (§16.5); the measurement of the handler order (§16.3), which changes no
+code and settles a record; the 13e row's mechanism (§16.7).
+
+**What this review could not settle by reading:** the handler order itself — traced through seven
+Boost files to one conclusion, run by nothing; the width of the race, which only a loop measures; the
+module size and the tier-1 results, which are the lane's and not in the logs here; Windows in every
+direction named; and whether the ordinary both-registered shape — a large upload answered early by a
+peer that then closes — occurs against a real origin, which no case arranges and which the h1 record
+already assumes it does.
