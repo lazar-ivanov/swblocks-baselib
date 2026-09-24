@@ -1426,3 +1426,48 @@ nothing here re-reviews it, and the flake at 16.6 is the one S6R.2 fact this rev
 record. The release pass (`teardown-validate.sh`) and the whole-suite gate are the orchestrator's,
 and `Http1Driver_WriteInFlightRefusesReuseTests` and `H2Driver_PeerHalfClosesWithAWriteInFlightTests`
 are the two cases whose green there is the fix's, per §10.
+
+---
+
+## 17. The negative controls for the TLS cases, measured 2026-09-23
+
+§10 requires a red before a green and says nothing may rest on "the suite still passes". `42347a6`
+landed the three h1-over-TLS cases green and could not produce the reds - the harness refused every
+edit under `src/include` - and reported that rather than working around it. The reds exist now.
+
+**Method.** One line of `Http1ConnectionTask.h` degraded at a time, line count preserved, built and
+run clang debug a64 in the lane worktree, then reverted. **Nothing under `src/include` was
+committed**, and the reverted object is **49,127,136 octets, byte identical** to the pre-experiment
+baseline, which is the check that the revert is exact.
+
+| degradation | case 2 `isCloseNotify` | case 3 `taskEndedUnaided` | case 3 `! taskFailed` |
+|---|---|---|---|
+| none (baseline) | 40/40 green | 40/40 green | 40/40 green |
+| ungate the shutdown | **RED 10/10** | 10/10 green | 10/10 green |
+| drop `m_wasSocketShutdownForcefully` | 10/10 green | **RED 5/40** | green in 35/35 reached |
+| drop `shutdownSocket( )` | 10/10 green | **RED 10/10** | masked by the fatal above it |
+| drop (b), the `isClosing( )` arm | 10/10 green | 10/10 green | **RED 10/10** |
+
+Ungating reds case 2 with the peer's stream ending `asio.ssl.stream:1` - the exact value case 3
+asserts - so §2.2's gate is now a measurement and the two cases are each other's control at both
+ends. Dropping (b) reds case 3 with `Broken pipe [system:32 at reactive_socket_send_op.hpp:136]`,
+the same error the cleartext twin recorded and 10/10 here against its 7/10.
+
+**§2.3's claim about the flag does not hold for h1 on POSIX, as §2.3 itself predicts.** Dropping the
+flag leaves the task clean in all 35 runs that reached the assertion: the h1 driver task never
+performed the handshake, so `m_isHandshakeCompleted` is false, the `! m_isHandshakeCompleted` arm of
+`isExpectedException( )` is taken and `isExpectedSocketException( )` lists `broken_pipe`. **The flag's
+own red is still owed**, and only Windows or the h2 driver - which handshakes for itself - can
+produce it. The case comment that attributed `! taskFailed` to the flag is corrected in place.
+
+**What the flag does buy on this path, and the design does not say it.** §2.3 argues the flag
+prevents a *failure*. Without it `isShutdownNeeded( )` answers true, the terminal path starts the
+very TLS shutdown the flag exists to suppress, and in **5 runs of 40** that shutdown does not
+complete until the peer is released - the run ends at 5.3s, the 5s bound plus the teardown after
+`peer.release( )`. So on the gated TLS path the flag buys the *ending* as well. It is a stall and
+not a hang: the case reaches its own assertion every time, and no degradation hung the module.
+
+**Also settled:** `taskEndedUnaided` is earned twice over, and this TLS case is a *stronger*
+instrument for it than `Http1Driver_WriteInFlightRefusesReuseTests` - 10/10 against that case's 2/10
+for the same degradation. §16.7's "acceptable to land on a gate" is discharged for everything a
+Linux run can reach.
