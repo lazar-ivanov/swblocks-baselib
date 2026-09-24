@@ -103,12 +103,17 @@ closes when `continuationTask( )` reads `m_cancelRequested`. In between, in orde
 
 Two consequences of step 4 are load-bearing and neither finding states them:
 
-- **A cancel through the queue can never land in this window on the same queue.**
+- **A cancel through the queue reaches this window, and the queue lock does not stop it.**
+  *Heading corrected 2026-09-24 by the review (§9.2); the body below was right all along and the
+  heading said the opposite, which §2, §7 and §8 then repeated.*
   `ExecutionQueueImpl::cancelAll( )` and `flushInternal( ..., cancelExecuting = true )` call
   `requestCancel( )` on each executing task *while holding the queue's `m_lock`*, and `onReady( )`
-  holds the same lock across `continuationTask( )`. The two are mutually exclusive. If `cancelAll`
-  wins the lock the latch is set and the defect fires; if `onReady` wins, the next hop has already
-  been created and started and the forwarded cancel reaches *it*, which is the correct outcome.
+  holds the same lock across `continuationTask( )`. The two are mutually exclusive **at step 4
+  only** — and the window opens at step 1, when the hop's completion becomes pending, with no queue
+  lock held anywhere. So if `cancelAll` wins the lock the latch is set and **the defect fires**; if
+  `onReady` wins, the next hop has already been created and started and the forwarded cancel reaches
+  *it*, which is the correct outcome. **Any future caller's ordinary shutdown — `cancelAll( )`,
+  `dispose( )`, `forceFlushNoThrow( )` — can therefore produce the wrong answer.**
 - **The window is a real interval, not a single instruction.** It spans a pool `releaseStream( )`
   and everything else in the deferred phase, plus whatever contention the queue lock is under. It is
   not a "two adjacent stores" race.
@@ -160,8 +165,13 @@ more informative than a bare cancellation"). Only the success limb is defective.
 
 ## 2. Is it reachable
 
-**Yes, but there is no live caller today, and there is no way to hit it from the execution queue's
-own cancellation API.**
+**Yes. There is no live caller today — but the execution queue's own cancellation API reaches it.**
+
+> *Corrected 2026-09-24 (§9.2).* This opening said there was *"no way to hit it from the execution
+> queue's own cancellation API"*. There is: the queue lock serialises only step 4 of §1.2's window,
+> which opens at step 1. **`cancelAll( )`, `dispose( )` and `forceFlushNoThrow( )` all reach it**, so
+> a future caller's ordinary **shutdown** produces the wrong answer. This makes §4(a)'s rejection
+> stronger and §4(d) weaker; the shape in §3 is unaffected, because it does not care who latched.
 
 - Nothing in `src/` outside the unit tests calls `ClientSession::createRequestTask( )`. The L8
   compatibility facade is future work. So the defect is **latent**: it can be reached only by code
@@ -438,6 +448,11 @@ than assumed — the 48.0 figure is a64 clang debug, and the gate that matters i
 8. **Nothing here has been reviewed.** Three findings in this batch were right in conclusion and
    wrong in premise; §1.4 corrects three such details in H22 itself, and this document is subject to
    the same failure mode.
+9. **The reachability narrowing itself — added 2026-09-24 by the review (§9.7), and it was FALSE.**
+   This list had eight items and omitted the one claim that decides how reachable the defect is: that
+   the queue's cancellation API could not reach it. It was read from the lock and never checked
+   against the window's own start. **Item 8 predicted exactly this, and this is the instance.** The
+   claim is now corrected at §1.2, §2 and §8; the shape in §3 never depended on it.
 
 ## 8. Verdict
 
@@ -616,3 +631,240 @@ outliving a claim that was never true. With 9.2 in hand the case for taking the 
 3. Whether the L8 facade will shut down through `cancelAll( )`/`dispose( )` — §7.2, now with the
    queue route in scope.
 4. `utf_baselib_httpclient6`'s size after the additions — §6 already says measure.
+
+---
+
+## 10. Implementation review — 2026-09-24
+
+Reviewed: branch `h22-cancel-between-hops`, `101be15` (the fix) and `21b0c37` (the manifest), two
+commits off `lazari2` @ `3430966`. Read whole: `SessionRequestTaskT` after the fix and
+`continuationTask( )` / `chkPrepareNextHop( )` before it (`git show 3430966:`), the new case file,
+the module note, `ForwarderTaskBaseT` / `WrapperTaskBaseT` / `RetryableWrapperTaskT` /
+`TaskBase::notifyReadyImpl( )` / `scheduleNothrow( )`, `ExecutionQueueImpl::onReady( )` /
+`waitInternal( )` / `flushInternal( )`, `HttpClientRequestTaskT::applyStopped( )` /
+`requestCancel( )`. Every run log under `http2-l0-state/logs/lane3-h22/` read, not the table. Sizes
+re-read from the objects on disk with `scripts/utests/utf_objsize.py`, read-only. No build.
+
+**Verdict: accept both commits.** The boundary is the one §3.1 chose and it is implemented on every
+path; the red is deterministic and fails on the discriminating read; the blast radius is the three
+modules the lane names and they are green; the size decision is right and its recorded reason
+suffices, with one clause to correct. Nothing found blocks the merge. The items below are ordered
+hardest first, then the judgements asked for, then what this review corrects in §9.
+
+### 10.1 The boundary — verified on every path
+
+The four-way table of (hop exception, latch) against the pre-fix text at `3430966`:
+
+| hop exception | latch | before | after |
+|---|---|---|---|
+| set | set | `nullptr`, hop's exception (the latch read came first) | `nullptr`, hop's exception (the latch read is now inside the limb) |
+| set | clear | `chkPrepareRetry( )` → retry or `nullptr` | identical |
+| none | clear | `chkPrepareNextHop( )` → next hop or `nullptr` | identical, increment moved out of the predicate |
+| none | set | **`nullptr`, no exception** — the defect | `chkPrepareNextHop( )` first: `false` → the hop is the answer; `true` → `failChainAsCancelled( )` |
+
+The failure limb is unchanged **in effect**: the only textual change is that its early return moved
+from above `if( m_hop -> exception() )` to the first statement inside it, and every path inside the
+limb returns.
+
+The `m_hops` move is neutral everywhere else, and this was checked against the three readers of
+the value rather than asserted: `RedirectPolicy::evaluate( )` receives `m_hops.value( )` as
+`hopsSoFar` before the increment in both versions (the increment was the predicate's *last*
+statement); `chkRemainingBudget( )`'s message reads `m_hops` from inside `startHop( )`, which the
+increment precedes in both versions, including the path where that check throws; and the retry limb
+calls `startHop( )` without an increment in both. `redirectHops( )` is "how many redirects were
+followed" and a decided-then-abandoned one now reads 0, which the interface doc supports.
+
+One corollary the design accepted implicitly and did not name: on the (none, set) path the
+predicate's own throw sites — `m_next.url( )` allocation, `bodySource( ) -> rewind( )` on a 307/308
+— are now reachable where the pre-fix latch returned first. A throw there leaves `continuationTask( )`
+through `onReady( )`'s `task -> exception( continuationException )`, i.e. still a *failed* chain,
+with the throw in place of `operation_aborted`. The polarity is right and a `rewind( )` that throws
+on a source `chkRequestMayBeReplayed( )` already vetted is the source's defect. Accepted, recorded.
+
+### 10.2 §9.5 confirmed by experiment — and the lane's "one degree better" is right
+
+`probe-counterfactual-run.log`, built with `base_type::continuationTask( )` on purpose: case 2
+fails at `TestClientSessionCancel.h(497)`, `EQUAL( probe -> hopsObserved(), 2U )`, lhs 1 — the
+probe dropped out of the chain after hop 1 exactly as §9.5 derived. Agreed that this is better than
+§9.5 stated: §9.5 described the *sketch*, which had no counter, as silent, and prescribed the
+counter; asserted first in case 2, the counter makes the wrong spelling loud.
+
+What the same log does **not** show: the 53.8 ms for case 1 against 2.5 ms is not evidence about
+the spelling. By reading, case 1 is identical under both spellings — each calls the session's
+`continuationTask( )` once under the probe's lock and each returns `nullptr` when it does. The log
+line under it — *"waiting for 1 outstanding connections to shutdown"*, then *"closed"* ~52 ms
+later — is the peer's shutdown poll finding the client's connection still open at teardown, the
+same ~54 ms that shows on every TLS case in `hc5-run.log`. A teardown artefact; the evidence is
+case 2's counter and nothing else.
+
+### 10.3 `failChainAsCancelled( )` without a guard — the invariant holds
+
+It is reached only after `if( m_hop -> exception() )`, every path of which returns, so the hop had
+no exception at that read. Between the read and the set, under the wrapper's lock, nothing can put
+one there: `notifyReadyImpl( )` has already run for this hop — that is how `continuationTask( )`
+came to be called — and `m_notifyCalled` refuses a second; the forwarded cancel only marks and
+posts to the mailbox, and `applyStopped( )` returns on `m_isCompleted || m_isCompletionPending`;
+`onReady( )`'s own `task -> exception( … )` is the same thread, after return. `RetryableWrapperTaskT`
+carries its guard because its cancel limb sits *above* its exception check and serves a failed and
+a succeeded wrapped task alike; here the limbs are split, so the guard would guard nothing. "An
+invariant of the placement" is the right description. Optional, not required:
+`BL_ASSERT( ! m_hop -> exception() )` at the top of the helper (`BOOST_ASSERT`, debug only) would
+make the placement self-checking against a future move of the call.
+
+### 10.4 The red — read from the logs
+
+`red-run.log`: `TestClientSessionCancel.h(409): fatal error … critical check ( task -> isFailed() )
+has failed`, 1.9 ms, no hang, no timeout; case 2 green in the same run. `green-run.log`,
+`final-hc6-run.log`, `final2-hc6-run.log`: 3 of 3. Two precisions the table cannot carry:
+
+- Because `UTF_REQUIRE` is fatal, **none of case 1's later assertions ran against the unfixed
+  code**. The header's "green on both sides" for `redirectHops( ) == 0`, `finalRequests == 0` and
+  `hopsObserved( ) == 1` is established by reading — the pre-fix latch returned before
+  `chkPrepareNextHop( )`, so the increment inside it never ran — and the reading is correct. It is
+  by reading, not by run.
+- The source state of the red build is not in the log; what is in the log is a failure only the
+  unfixed code produces.
+
+### 10.5 Blast radius — the enumeration is complete
+
+`#include <baselib/httpclient/ClientSession.h>` occurs in exactly five files under `src/` —
+`httpclient4/TestClientSession.h`, `httpclient5/TestClientSessionTls.h`,
+`httpclient5/TestClientSessionTlsHttp1.h`, `httpclient6/TestClientSessionIdle.h`,
+`httpclient6/TestClientSessionCancel.h` — and in no umbrella: `httpclient/PreCompiled.h` does not
+pull it in, and `ContentDecoder.h` names it in a comment only. `SessionRequestTaskT` is a template
+reached only through `ClientSessionImplT`, so no other translation unit can instantiate it. The
+seven pre-existing `redirectHops( )` assertions are all in `httpclient4/TestClientSession.h`
+(`:609`, `:1203`, `:1304`, `:1312`, `:1428`, `:1524`, `:1665`), as is
+`ClientSession_RequestBudgetIsChainedAcrossHopsTests` (`:1358`). `hc4-run.log`: *Running 20 test
+cases … No errors detected*; `hc5-run.log`: 8; `hc6`: 3.
+
+This corrects **§6 of this document**: its gating list named `utf_baselib_httpclient`, `7` and the
+`h2client` family as suites that must run "because `SessionRequestTaskT` sits under all of them".
+It does not; they do not compile the class. The project's whole-suite gate for a core change
+applies as a rule, but a regression from this edit cannot appear there.
+
+### 10.6 The module size — judged
+
+Figures, re-read from the lane's objects with the project's own tool: `httpclient6` **42.4 MB**
+(21.4 above the ~21 MB floor), `httpclient5` 47.4, `httpclient4` 49.0, a64 clang debug.
+
+**The recorded reason suffices, and the module is the right one.** The reason is not "it is only
+2.4 over"; it is that no home under target exists for a session-level case that needs a peer: the
+module's own measured grouping put the floor plus the session with both drivers at 39.0 before any
+peer, and the peer's marginal cost inside such a TU is 3.3, so any module holding these cases sits
+at about 42 or above. Given that, `httpclient6` is the smallest of the three that can host them,
+adds nothing to the two largest, keeps the family's peak at `httpclient4`'s 49.0, and pays no
+second floor. `src/utests/AGENTS.md`'s "needs a recorded reason" is met by the note as written.
+
+Two corrections to how the decision is *described*:
+
+1. **The old note's prediction was right in its conclusion and wrong in its magnitude.** It said a
+   case instantiating a peer "would not fit" — and it does not fit: 42.4 is over target. What was
+   wrong was the 8.6 it converted from `httpclient4`, against a measured 3.3. The commit message's
+   "the note's prediction was wrong" overturns a claim that held; the replacement note in
+   `UtfBaselibHttpClient6Main.cpp` is more careful but still reads as a rebuke. One clause fixes it:
+   *the magnitude was converted and wrong; the conclusion, over target, was right; the reason for
+   going over anyway is that nothing can be under.* This is the batch's recurring failure — a
+   conclusion judged by its premise — in the other direction.
+2. **"A sibling would measure about the same" is derived, not measured.** It is derived from this
+   module's own grouping and its own marginal, which is the right way to derive it, but
+   `src/utests/AGENTS.md` says build the grouping. One clang-debug build of a sibling holding only
+   `TestClientSessionCancel.h` costs about twenty seconds on this host and would turn the argument
+   into a number. Worth doing if the orchestrator wants a number; not a condition of acceptance.
+
+**x86 debug**, the governing measurement, is unmeasured here and unrecorded anywhere in `notes/`
+for any of `httpclient4`/`5`/`6`. It is not the deciding number for *this* choice: the ceiling
+question is the family's peak, and that is `httpclient4`, not `6`; if `6` were near 75 on x86,
+`4` and `5` would already be over it. The Windows matrix round is where the figure comes from.
+
+### 10.7 The stale creation figures — judged
+
+Verified at the creation commit `0af7934`: `httpclient4`'s note then said 48.0 and `httpclient5`'s
+said 46.0, so the figures in *"WHY THIS MODULE EXISTS"* were true when written. The **tense** is
+what has outlived them: "`httpclient4` **is** 48.0 MB … `httpclient5` **is** 46.0", in the present,
+two paragraphs above a paragraph this commit rewrote, while the objects measure 49.0 and 47.4.
+Keeping the numbers is right — they are the reason the module exists; keeping "is" is the
+comment-outlives-its-fix pattern. Recommend *"was 48.0 … and 46.0 when this module was created"*:
+a wording change inside lines already in this commit's neighbourhood, no line-count change, and
+`Main.cpp` carries no `__LINE__`-anchored case.
+
+### 10.8 The other claims checked
+
+- **9.9.1 settled.** The probe compiles and stays in the chain: `hopsObserved( ) == 2` is green in
+  three runs, and the counterfactual shows the assertion catching the other spelling.
+- **9.9.4 settled.** `isExpectedOperationAborted( )` reads the code and the mark, the message is
+  asserted, the type is `UnexpectedException`; the shape is a tested contract. One residual
+  difference from `applyStopped( )`'s shape, recorded so nobody "fixes" it: the hop builds its
+  exception through `createException<>( )`, which calls `enhanceException( )` and attaches
+  `errinfo_task_info`; `failChainAsCancelled( )` cannot — `enhanceException( )` is `protected` on
+  the hop — so the between-hops cancel carries `BL_EXCEPTION`'s function, file, line and time and
+  no task info. Type, code, mark and message are the same; a log reader sees no task info.
+  Acceptable.
+- **§9.7's ninth item** is in `continuationTask( )`'s comment (the `cancelAll( )`, `dispose( )`,
+  `forceFlushNoThrow( )` sentence), as §9.8 asked. **This document's body still carries the refuted
+  claim**: §1.2's bold bullet and §2's bold opening say the queue cannot reach the window, and §7
+  has eight items; only §8 carries a correction blockquote (added in `3430966`, with §9). A reader
+  of §2 alone is misled. Recommend the same blockquote at §1.2's bullet and §2's opening and the
+  ninth item in §7. Not done here: this review was asked for as an appended section.
+- **The concurrency limitation in the test header** (lines 54–59) says what is true, as qualified.
+  `storeCookies( )` and `decodeBody( )` run inside `absorbResponse( )` under `base_type::m_lock`; a
+  cancelling thread sets the latch lock-free and then blocks in the forward on that lock; the latch
+  is not readable from a hook (the session is not a `TaskBase`, `m_cancelRequested` is protected).
+  The deferred phase and the pool's `releaseStream( )` are in the window and are not black-box
+  reachable, which the header's "a black-box test can reach" covers. The probe exercises the late
+  end of the window — completion published, decision not taken; a cancel in §1.2's steps 1–3
+  reaches the same latch and the same read.
+- **"Discarded asynchronously, on the pool"** — the probe's comment now says this correctly; §9.5's
+  "exercised rather than assumed" objection is met.
+- **The manifest** (`21b0c37`): the two case entries carry the right lines (374, 462), the
+  `sessioncancel` block at 71, the `utest` namespace at 69, the include list matches the header, the
+  two `notes_cases` match `notes.txt`. Mechanical and consistent; the tier-1 gate's own run is the
+  lane's claim.
+
+### 10.9 Comments the lane did not touch, checked for the same failure
+
+- `chkRemainingBudget( )`: *"No case reaches this throw"* — still true; nothing under `src/utests/`
+  asserts on "budget was spent". The budget case pins the chaining, not the throw.
+- `m_cancelRequested`'s member comment and `startHop( )`'s "assigned directly" comment — still true.
+- `RedirectPolicy::evaluate( )` "does not count hops" — still true, and now the predicate does not
+  either; the two agree.
+- `Http2ConnectionTask.h:3198`, `TestHttp2ConnectionTask.h:1792`, `:1922` — describe
+  `chkPrepareNextHop( )` dropping the body and touching the headers; that part did not move.
+- `httpclient4`'s note, *"SPLITTING WAS CONSIDERED AND MEASURED"*: its 8.6 and 5.8 are "from the
+  figures h2client2 and httpclient3 recorded" — converted from other modules, the same conversion
+  the old `httpclient6` note is faulted for. The lane's 3.3 is the first *measured* marginal for
+  the peer inside a session TU. It does not overturn that note's conclusion — a peer half at
+  ~21 + 15 + 3.3 lands at about 39–40, at target rather than under it, and the HttpServer half is
+  still ~42, still +21 in total — but the next person to cut `httpclient4` should measure rather
+  than convert. Not this change's business.
+- `astra-remediation-owed-work.md` row **16a** and L6 **finding 9** ("Mirror it"): the fix
+  deliberately does not mirror, and §4(a) and the code comment say why. The ledger row needs its
+  disposition line at merge; a one-line pointer at the L6 finding would stop the next reader
+  reopening "mirror it". Orchestrator's call.
+
+### 10.10 A pre-existing third spelling, outside this change-set
+
+A cancel that lands after the latch read and before the new hop's `scheduleNothrow( )` marks the
+hop first, and `TaskBase::scheduleNothrow( )` then throws `BL_THROW_EC( operation_aborted )` — a
+`SystemException`, marked expected — which the failure limb hands to the caller as the hop's own
+error. `HttpClientRequestTaskT` does not override `scheduleEvenIfAlreadyCanceled( )` (only
+`TimerTaskBaseT` does). Unchanged by the fix, same window before and after; §3.3's "one event, one
+type" holds at the hop boundary this change is about and not at the pre-start boundary. Record; do
+not fix here.
+
+### 10.11 What this review corrects in §9
+
+- **§9.6's "only the `isFailed( )` assertion discriminates"** was loose. The message read and the
+  code-and-mark read also fail against the unfixed code — there is no exception at all — so what
+  discriminates is one *fact*, the verdict, expressed by four reads. The test header's
+  "`isFailed( )` and the three reads that follow from it" says it correctly.
+- **§9.1's `httpclient6` line** ("already includes `Http2TestServer.h`") was about the include and
+  not the instantiation, as the lane says; it did not check the module's own note, which forbade
+  what §6 directed. The lane read the note, measured, and recorded — which is the right response.
+
+### 10.12 Not settled by this review
+
+1. The x86 debug figure for `httpclient6` — and for `4` and `5`, which decide the ceiling question.
+2. The sibling's size — derived at ~42, not built.
+3. gcc debug and clang release — the orchestrator's cells, after merge.
+4. The red build's source state — inferred from the failure it produced.
