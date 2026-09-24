@@ -6415,6 +6415,30 @@
    "namespaces": []
   },
   {
+   "body_sha": "a8d6380b9f17dd92e75bca8fcf851791",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient7/TestHttp1DriverWritePeerClose.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 927,
+   "module": "utf_baselib_httpclient7",
+   "name": "Http1Driver_PeerHalfClosesWithAWriteInFlightTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "1a90544be29d194cf79012cbdf8c507f",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient7/TestHttp1DriverWritePeerClose.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 844,
+   "module": "utf_baselib_httpclient7",
+   "name": "Http1Driver_PeerResetsMidCloseDelimitedBodyDuringWriteTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "b361a87195f01c5ba63e79807e5ae0bb",
    "doc_sha": null,
    "file": "utf_baselib_httpclient7/TestHttp1DriverPeerClose.h",
@@ -6424,6 +6448,18 @@
    "line": 278,
    "module": "utf_baselib_httpclient7",
    "name": "Http1Driver_PeerResetsMidCloseDelimitedBodyTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "b1bee0e20b083c143c05456faedba83a",
+   "doc_sha": null,
+   "file": "utf_baselib_httpclient7/TestHttp1DriverWritePeerClose.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 794,
+   "module": "utf_baselib_httpclient7",
+   "name": "Http1Driver_PeerResetsWhileRequestWriteIsBlockedTests",
    "namespaces": []
   },
   {
@@ -6472,6 +6508,42 @@
    "line": 286,
    "module": "utf_baselib_httpclient3",
    "name": "Http1Driver_ReuseVerdictInputsTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "5b8d0d8b8479f7f14fd3a9db7eff25f3",
+   "doc_sha": "a8906e136bbefd0e1d995cb7c544ca4b",
+   "file": "utf_baselib_httpclient7/TestHttp1DriverStrandSeam.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 733,
+   "module": "utf_baselib_httpclient7",
+   "name": "Http1Driver_StrandSeamLeavesAGenuineWriteRefusedTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "eda929aef5c164ccf5b60c7f13f79646",
+   "doc_sha": "7ddece3e01365b17ac07fc2943dd8320",
+   "file": "utf_baselib_httpclient7/TestHttp1DriverStrandSeam.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 691,
+   "module": "utf_baselib_httpclient7",
+   "name": "Http1Driver_StrandSeamMakesTheDeferredVerdictReuseTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "8c8260402c7886e9d68b51ca59107fbf",
+   "doc_sha": "54f97f674c8ad57d16034a857177f2a1",
+   "file": "utf_baselib_httpclient7/TestHttp1DriverStrandSeam.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 781,
+   "module": "utf_baselib_httpclient7",
+   "name": "Http1Driver_StrandSeamRefusesReuseAfterAResetWriteTests",
    "namespaces": []
   },
   {
@@ -15041,12 +15113,28 @@
    "sha": "02cb081f5914bc25b91c01e2f2cb75f0"
   },
   {
+   "file": "utf_baselib_httpclient7/TestHttp1DriverStrandSeam.h",
+   "label": "namespace http1seam",
+   "line": 70,
+   "module": "utf_baselib_httpclient7",
+   "ns": "utest",
+   "sha": "e43a46d5fbbba359b27cebae7e77a3b7"
+  },
+  {
    "file": "utf_baselib_httpclient7/TestHttp1DriverWriteBarrier.h",
    "label": "namespace http1barrier",
    "line": 56,
    "module": "utf_baselib_httpclient7",
    "ns": "utest",
    "sha": "162e20340899411220f10aaf68a4ef00"
+  },
+  {
+   "file": "utf_baselib_httpclient7/TestHttp1DriverWritePeerClose.h",
+   "label": "namespace http1writeclose",
+   "line": 90,
+   "module": "utf_baselib_httpclient7",
+   "ns": "utest",
+   "sha": "8a439c9a04bc4e8f450fece904a696f3"
   },
   {
    "file": "utf_baselib_io/TestIO.h",
@@ -19287,7 +19375,9 @@
   },
   "utf_baselib_httpclient7": {
    "data_files": {},
-   "data_literals": [],
+   "data_literals": [
+    "127.0.0.1"
+   ],
    "data_refs": [],
    "files": [
     {
@@ -19299,6 +19389,20 @@
       "<utests/baselib/Utf.h>"
      ],
      "path": "utf_baselib_httpclient7/TestHttp1DriverPeerClose.h"
+    },
+    {
+     "includes": [
+      "<baselib/core/BaseIncludes.h>",
+      "<atomic>",
+      "<cstddef>",
+      "<memory>",
+      "<string>",
+      "<type_traits>",
+      "<utility>",
+      "<utests/baselib/Http1DriverTestUtils.h>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_httpclient7/TestHttp1DriverStrandSeam.h"
     },
     {
      "includes": [
@@ -19314,10 +19418,24 @@
     },
     {
      "includes": [
+      "<baselib/data/DataBlock.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<cstring>",
+      "<string>",
+      "<utests/baselib/Http1DriverTestUtils.h>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_httpclient7/TestHttp1DriverWritePeerClose.h"
+    },
+    {
+     "includes": [
       "<utests/baselib/UtfMain.h>",
       "<baselib/httpclient/PreCompiled.h>",
       "\"TestHttp1DriverWriteBarrier.h\"",
-      "\"TestHttp1DriverPeerClose.h\""
+      "\"TestHttp1DriverPeerClose.h\"",
+      "\"TestHttp1DriverWritePeerClose.h\"",
+      "\"TestHttp1DriverStrandSeam.h\""
      ],
      "path": "utf_baselib_httpclient7/UtfBaselibHttpClient7Main.cpp"
     }
@@ -19325,7 +19443,13 @@
    "notes_cases": [
     "Http1Driver_PeerClosesAfterEarlyHintsTests",
     "Http1Driver_PeerClosesWithoutAnsweringTests",
+    "Http1Driver_PeerHalfClosesWithAWriteInFlightTests",
+    "Http1Driver_PeerResetsMidCloseDelimitedBodyDuringWriteTests",
     "Http1Driver_PeerResetsMidCloseDelimitedBodyTests",
+    "Http1Driver_PeerResetsWhileRequestWriteIsBlockedTests",
+    "Http1Driver_StrandSeamLeavesAGenuineWriteRefusedTests",
+    "Http1Driver_StrandSeamMakesTheDeferredVerdictReuseTests",
+    "Http1Driver_StrandSeamRefusesReuseAfterAResetWriteTests",
     "Http1Driver_WriteInFlightRefusesASecondRequestTests",
     "Http1Driver_WriteInFlightRefusesReuseTests"
    ]
@@ -21311,11 +21435,25 @@
    "sha": "01ff31b75c41a34517ce1e379e9eddf1"
   },
   {
+   "file": "utf_baselib_httpclient7/TestHttp1DriverStrandSeam.h",
+   "line": 68,
+   "module": "utf_baselib_httpclient7",
+   "name": "utest",
+   "sha": "79482fb760154eb4cd687a25d2c971c0"
+  },
+  {
    "file": "utf_baselib_httpclient7/TestHttp1DriverWriteBarrier.h",
    "line": 54,
    "module": "utf_baselib_httpclient7",
    "name": "utest",
    "sha": "f13bdf0b9456c36750cd95d6b0aa829d"
+  },
+  {
+   "file": "utf_baselib_httpclient7/TestHttp1DriverWritePeerClose.h",
+   "line": 88,
+   "module": "utf_baselib_httpclient7",
+   "name": "utest",
+   "sha": "d010e609edeeb485bb42f14889d72808"
   },
   {
    "file": "utf_baselib_io/TestIO.h",
