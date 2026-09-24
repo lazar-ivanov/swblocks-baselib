@@ -212,7 +212,7 @@ a FAIL would red the gate for everyone who is not on the baseline's platform and
 a check that never ran. **A baseline with no platform stamp is refused the same way and is not in
 force until it is refreshed**, exactly as C11 and C13 are, and the summary line says which state it
 is in. The answer to either is `utf_runlog.py --run --bld <tree> --capture …` on the platform you
-need to gate, twice, so the unstable list can be re-derived from the pair.
+need to gate, twice, because the unstable list is derived from a pair of passes.
 
 **`baseline/nondeterministic.json` is stamped the same way, and it is the reason the refresh is two
 captures.** It is `{ "__platform__": …, "unstable": [ … ] }`, stamped with the platform the two runs
@@ -221,8 +221,21 @@ with the same SKIP. It is the other input to a comparison and was the last one n
 every case it names is thereafter compared on outcome alone, so a list carried across a platform
 excuses the wrong cases, silently and for as long as it stays committed. **A bare array is an
 unstamped list** — which is what every list derived before the stamp existed is — and is refused
-like an unstamped baseline, because unknown is not a match. Re-derive with
-`utf_runlog.py --nondeterministic <pass1> <pass2> --capture …`.
+like an unstamped baseline, because unknown is not a match.
+
+**`utf_runlog.py --nondeterministic <pass1> <pass2> --capture …` produces a starting point, not the
+list: merge it into the one already there, and never let it replace one.** Two passes classify every
+case that agrees with itself as deterministic, which is sound for a case that varies on most runs
+and unsound for one whose variation is rare —
+`notes/plans/issues/utf-runlog-nondeterministic-sampling-record.md` measures one misclassified about
+a third of the time. So the committed list is a **curated superset**: of its eleven names ten
+re-derive from the two committed passes and
+`IO_SimpleConnectAndTransmitDataMessageDispatcherOutgoingTests` does not. That one was added by hand
+at `77ef537`, which flagged it at 8199 assertions against a baseline of 8194 and then drew 8199 and
+8194 from the *unchanged* binary — the two baseline passes had simply been unlucky in agreeing. A
+name recorded from observation is evidence the pair does not carry, and a refresh that overwrites
+the file drops it with nothing to show it happened. **Nothing in the file marks which names came
+from observation rather than from a pair**, so read the history of any name you are about to remove.
 
 **A differential comparison can only speak about things present on both sides.** Tiers 1 and 3
 compare against a baseline, so anything *new* — a module, a case — is unjudgeable by construction,
