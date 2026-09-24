@@ -37,14 +37,67 @@
 
 from __future__ import print_function
 
+import ast
 import copy
 import json
 import os
+import re
 import sys
 
 sys.path.insert( 0, os.path.dirname( os.path.abspath( __file__ ) ) )
 
 from utf_inventory import check_intrinsic, check_against
+
+
+MARKER_RE = re.compile( r'^(C\d+)(.?)' )
+
+#
+# ast.parse( ) yields Constant from 3.8 and Str before it, and the devenv7 dist interpreter is
+# whatever it is. Resolved here, behind the version test, because merely LOOKING UP ast.Str on
+# 3.12 and later emits a DeprecationWarning on stderr of every run
+#
+
+LEGACY_STR = getattr( ast, 'Str', None ) if sys.version_info < ( 3, 8 ) else None
+
+
+def spaced():
+    """
+    Every failure string in utf_inventory.py, and whether its marker is followed by a space
+
+    Returns ( total, [ ( line, text ) ... ] ) for the ones that are not. Parsed from the source
+    beside this file, which is the tool under test whether that is this branch's or an older one
+    """
+
+    path = os.path.join( os.path.dirname( os.path.abspath( __file__ ) ), 'utf_inventory.py' )
+
+    with open( path, 'r', encoding = 'utf-8-sig', errors = 'replace' ) as stream:
+        tree = ast.parse( stream.read() )
+
+    total, bad = 0, []
+
+    for node in ast.walk( tree ):
+
+        if isinstance( node, ast.Constant ):
+            value = node.value
+        elif LEGACY_STR is not None and isinstance( node, LEGACY_STR ):
+            value = node.s
+        else:
+            continue
+
+        if not isinstance( value, str ):
+            continue
+
+        matched = MARKER_RE.match( value )
+
+        if not matched:
+            continue
+
+        total += 1
+
+        if matched.group( 2 ) != ' ':
+            bad.append( ( node.lineno, value[ : 60 ] ) )
+
+    return total, bad
 
 
 def unreferenced( info ):
@@ -68,9 +121,19 @@ def expect( label, failures, marker ):
 
     The marker is matched with its trailing space, because a bare prefix does not separate C1
     from C10 and C11: an expectation written for C1 would be satisfied by either of them, and a
-    control that can be satisfied by the wrong invariant proves nothing about the right one. It
-    is latent today only because no C1 mutation happens to disturb includes or file scope as
-    well - measured, by disabling C1 and watching both C1 expectations go red as they should
+    control that can be satisfied by the wrong invariant proves nothing about the right one
+
+    The control for that is a discrimination, not a run of the harness. The bare-prefix matcher
+    answers True for the marker C1 on 'C10 file INCLUDES CHANGED: ...' and on 'C11 file-scope
+    text LOST: ...'; this one answers False on both and True on 'C1 case LOST: ...'. Disabling C1
+    and watching both C1 expectations go red measures something else - it says the bug was masking
+    nothing today, because no mutation here happens to disturb includes or file scope as well, and
+    that is a claim about latency rather than about the fix
+
+    The stricter form is only safe if every failure string the tool emits really does carry the
+    marker followed by a space, and spaced( ) below asserts that by parsing the source rather than
+    by anyone reading it - because the way this defect comes back is one new failure string
+    written without the space, which would then match nothing and go silently unproven
     """
 
     hit = [ failure for failure in failures if failure.startswith( marker + ' ' ) ]
@@ -125,6 +188,27 @@ def main():
         return 1
 
     print( '    PASS  ----  unmutated baseline is clean both ways' )
+
+    #
+    # The precondition every expect( ) below rests on, asserted rather than assumed
+    #
+    # expect( ) matches the marker with a trailing space so that a C1 expectation cannot be
+    # satisfied by a C10 or C11 line. That is only safe while every failure string the tool emits
+    # carries the space, and the way this defect returns is one new string written without it -
+    # which would then match nothing and leave its own expectation silently unproven
+    #
+
+    total, unspaced = spaced()
+
+    if unspaced:
+        print( '    FAIL  ----  %d of %d failure string(s) do not follow the marker with a space'
+               % ( len( unspaced ), total ) )
+        for line, text in unspaced:
+            print( '                utf_inventory.py:%d  %s' % ( line, text ) )
+        ok = False
+    else:
+        print( '    PASS  ----  all %d failure strings follow the marker with a space  '
+               'expect( ) can discriminate C1 from C10 and C11' % total )
 
     # C1 - a dropped case
     mutated = copy.deepcopy( baseline )
