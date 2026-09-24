@@ -751,6 +751,55 @@ change-set what this case asserts afterwards, and if the answer is "nothing chan
 first half of this finding's handover condition - the sentence at the knob - has since landed;
 `ConnectionPool.h` now carries both it and the two-budget arithmetic of finding 10.)
 
+#### 4a landed 2026-09-24: per session, and the addendum's second branch was wrong about why
+
+**The shape taken is per session** - `ConnectionPoolPolicy::ridePreface`, default true, which
+`ClientSessionT`'s constructor turns off when `! mayProduceHttp2()`. The finding's own wording, and
+two-sided as the lane insisted.
+
+**Per key was refused on its merits, not on convenience.** `ConnectionKey` carries scheme, host,
+port, proxy, the two profile ids and the verification flags - and no protocol. What decides a
+cleartext connection is `ClientConnectionConfig::cleartextProtocol`, which is the session's and
+which the pool never sees, so a per key rule for cleartext would be the session stamping one answer
+onto every key: the per session flag with machinery around it. The only genuinely per key thing is
+a LEARNED one - remember that a TLS origin selected `http/1.1` last time and skip the rider on the
+next connection to it - and that cannot help the FIRST connection to any key, which is the whole of
+the defect. It is an optimization for the second connection onward, not a fix, and `ridePreface` is
+the switch it would hang off if it is ever wanted.
+
+**What the addendum got wrong, and it inverts its own conclusion.** Its per session branch says "a
+default session still can produce h2, over TLS. The flag stays on ... and the case **keeps passing
+untouched** - which is the trap". There is no such trap. `ClientSessionT` is templated on `STREAM`
+and `mayProduceHttp2()` branches on `STREAM::isProtocolHandshakeNeeded`: on the cleartext
+instantiation it reads `cleartextProtocol` and never looks at `alpnOffer` at all. The control case's
+session is `PlainSessionImpl` = `ClientSessionImplT< TcpSocketAsyncStrandedBase >`, so
+`mayProduceHttp2()` is `Http2 == Http11`, false, and the flag goes off under the per session shape
+exactly as it does under the per key one. **Both live shapes invert the control case**, so what the
+case does could not have decided between them and the decision rests entirely on the argument above.
+A reader who took the addendum at its word would have picked per key believing it was the only shape
+that bites on this path.
+
+**What the cases assert now** (`utf_baselib_httpclient4`, all measured red before and green after):
+
+- `ClientSession_FallbackRiderNeedsTheDispatchedRetryTests` is **inverted**: same request, same
+  server, same `maxRetriesPerRequest = 0`, now a 200 over HTTP/1.1 with one connection, one dispatch
+  and one release. The counts do not move, which is why the outcome is asserted with them. The name
+  is deliberately kept - three places cite it.
+- `ClientSession_AgainstTheLibraryHttpServerTests` drops from four dispatches for two requests to
+  two, which is the fix's own arithmetic.
+- `ClientSession_SinkIsToldCompleteOnceAcrossTheFallbackRetryTests` drops from two dispatches to
+  one and **loses its discrimination**: with no bounce on this path, "the sink is told complete
+  once" is now true for the trivial reason. Recorded in the case itself rather than quietly left.
+- `ClientSessionTls_Http11FallbackExchangeTests` (`utf_baselib_httpclient5`) gains
+  `dispatched == 2` as the must-not-move control: ALPN is the one place the session cannot know, so
+  the rider must still ride there, and nothing asserted that before.
+
+**Owed by this landing, and small**: the bounced rider with an installed sink now exists only over
+TLS ALPN fallback, and the TLS case runs the bounce with no sink. That case with a sink is what
+would restore H08's cleartext discrimination. Also unchanged on purpose: finding 4b's masked cause
+(`closeSubmissions()`'s unconditional `connection_aborted`) still applies to the ALPN bounce, which
+is now the only route to it.
+
 ### The evidence findings (7, 8) - blocking, or owed?
 
 - **Finding 8 is withdrawn, in the lane's favour, by measurement.** `utf_baselib_httpclient6` is
