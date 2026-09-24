@@ -114,9 +114,9 @@ echo "=== tier 1: source equivalence ===========================================
 
 if [[ -f "${BASELINE}/inventory.json" ]]; then
     if "${PYTHON}" "${HERE}/utf_inventory.py" --compare "${BASELINE}/inventory.json"; then
-        note "tier1  PASS  source equivalence (C1-C11)"
+        note "tier1  PASS  source equivalence (C1-C13)"
     else
-        note "tier1  FAIL  source equivalence (C1-C11)"
+        note "tier1  FAIL  source equivalence (C1-C13)"
         RC=1
     fi
 else
