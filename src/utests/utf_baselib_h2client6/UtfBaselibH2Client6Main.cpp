@@ -62,3 +62,4 @@
  */
 
 #include "TestHttp2DriverWriteBarrier.h"
+#include "TestHttp2DriverWritePeerClose.h"
