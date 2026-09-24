@@ -495,12 +495,59 @@ namespace bl
 
                 if( needsPost )
                 {
-                    base_type::postToStrand(
-                        cpp::bind(
-                            &this_type::onCommandsPosted,
-                            self_ref_t::acquireRef( this )
-                            )
-                        );
+                    try
+                    {
+                        base_type::postToStrand(
+                            cpp::bind(
+                                &this_type::onCommandsPosted,
+                                self_ref_t::acquireRef( this )
+                                )
+                            );
+                    }
+                    catch( std::exception& )
+                    {
+                        /*
+                         * The accounting guard of scheduleRead( ). The drain was begun and the
+                         * post never started, so the operation is given back and the caller is
+                         * told by the throw - which is where it went before the guard too
+                         *
+                         * THE SCHEDULED FLAG GOES BACK WITH IT, and both for the same reason: it
+                         * says a drain handler is owed, and none is. Left set, this mailbox would
+                         * never be posted for again - the commands already in it, and every one
+                         * accepted afterwards, would wait for a handler which cannot come. The
+                         * two locks are taken one after the other and never nested, so the order
+                         * this class documents at postCommand( ) is untouched
+                         *
+                         * THE ONE SITE OF THE EIGHT WITH NO DECIDER DOWNSTREAM, which is why
+                         * abandonOperation( ) takes a terminal that is already due. The other
+                         * seven rethrow into a handler epilog or the establisher's; this one
+                         * rethrows to whichever thread called submit( ), cancel( ), consumed( ) or
+                         * provideBody( ). A first error initiates the close but does NOT close
+                         * submissions - on THAT path closeSubmissions( ) runs from the terminal -
+                         * so a command can be accepted, and an operation begun, on a task already
+                         * closing; giving that one back after the last real handler has completed
+                         * leaves the count at zero, the task closing and NOBODY to complete it
+                         *
+                         * THE CAVEAT THAT COMES WITH IT: initiateClose( ) and onTaskStoppedNothrow( )
+                         * then run on two threads, this caller's and the strand's - a route neither
+                         * comment lists. The task lock still excludes cancelTask( ), but not the
+                         * cancelTimers( ) it POSTS, and not initiateClose( ), whose flag is set
+                         * under the accounting lock and whose body runs after it. The shared
+                         * objects are the five TIMERS and the SOCKET. With the count at zero every
+                         * one of those cancels is a no-op, so what is at stake is asio's rule and
+                         * not the task
+                         */
+
+                        {
+                            BL_MUTEX_GUARD( m_commandsLock );
+
+                            m_isDrainScheduled = false;
+                        }
+
+                        base_type::abandonOperation();
+
+                        throw;
+                    }
                 }
 
                 return true;
@@ -1446,6 +1493,44 @@ namespace bl
              * The read loop
              */
 
+            /**
+             * @brief Arms the read which is in flight for the whole life of this connection
+             *
+             * THE TRY / CATCH IS THE ACCOUNTING'S, NOT THE SOCKET'S, and it is the shape every one
+             * of this class's eight beginOperation( ) sites carries. An operation which was begun
+             * and then never started has to be given back here or the pending count never reaches
+             * zero again - and a task whose count cannot reach zero can never take its terminal
+             * path, which is a hang rather than a failure. What can throw is the same at every
+             * site: the allocation the initiating call makes, since asio reports I/O failure
+             * through the handler
+             *
+             * IT GIVES THE OPERATION BACK AND RETHROWS; IT DOES NOT COMPLETE IT, which is where
+             * this departs from h1's catch. Completing inline is safe only where the count cannot
+             * reach zero, and ONE of these eight sites refutes that: onProtocolNegotiated( ) runs
+             * under the establisher's task lock with the count at ZERO, and pumpWrites( ) arms the
+             * SETTINGS deadline through chkArmSettingsTimer( ) BEFORE it begins the write.
+             * Completing an operation there would drive the count to zero, take the terminal path
+             * and call notifyReady( ), which re-acquires the task lock the handler already holds
+             * and is not recursive. A self-deadlock, not a style question
+             *
+             * ONE SITE IS ENOUGH TO RULE THE SHAPE OUT, and once two shapes would be needed the
+             * one that is safe everywhere is the better design: the settings timer's safety rests
+             * on nothing but the order inside pumpWrites( ), which a reorder could take away in
+             * silence. No other site ON THE STRAND is reachable with the count at zero - the
+             * negotiation chain drains no events, because applyCancel( ) is held behind
+             * isHeadersProduced and a connection error is raised only from Session::feed( ) and
+             * Session::onTimer( ). postCommand( ), the eighth, holds no task lock and is its own
+             * case: it CAN begin at zero, and its own catch says what that costs
+             *
+             * h1 IS NOT THE COUNTER-EXAMPLE IT LOOKS LIKE. Its scheduleRead( ) reached from
+             * scheduleTask( ) runs with the count at zero as well, which is the defect design 4
+             * records as A4 rather than a property to copy
+             *
+             * Giving it back decides nothing beyond a terminal which is ALREADY DUE
+             * (MultiOperationTask.h), so it is safe at every site, and the throw then takes
+             * exactly the route it took before the guard existed
+             */
+
             void scheduleRead()
             {
                 if( base_type::isClosing() )
@@ -1455,15 +1540,24 @@ namespace bl
 
                 base_type::beginOperation();
 
-                base_type::getStream().async_read_some(
-                    asio::buffer( m_readBlock -> begin(), m_readBlock -> capacity() ),
-                    cpp::bind(
-                        &this_type::onRead,
-                        self_ref_t::acquireRef( this ),
-                        asio::placeholders::error,
-                        asio::placeholders::bytes_transferred
-                        )
-                    );
+                try
+                {
+                    base_type::getStream().async_read_some(
+                        asio::buffer( m_readBlock -> begin(), m_readBlock -> capacity() ),
+                        cpp::bind(
+                            &this_type::onRead,
+                            self_ref_t::acquireRef( this ),
+                            asio::placeholders::error,
+                            asio::placeholders::bytes_transferred
+                            )
+                        );
+                }
+                catch( std::exception& )
+                {
+                    base_type::abandonOperation();
+
+                    throw;
+                }
             }
 
             /**
@@ -1623,16 +1717,37 @@ namespace bl
 
                 base_type::beginOperation();
 
-                asio::async_write(
-                    base_type::getStream(),
-                    asio::buffer( &m_writeBuffer[ 0 ], m_writeBuffer.size() ),
-                    cpp::bind(
-                        &this_type::onWrite,
-                        self_ref_t::acquireRef( this ),
-                        asio::placeholders::error,
-                        asio::placeholders::bytes_transferred
-                        )
-                    );
+                try
+                {
+                    asio::async_write(
+                        base_type::getStream(),
+                        asio::buffer( &m_writeBuffer[ 0 ], m_writeBuffer.size() ),
+                        cpp::bind(
+                            &this_type::onWrite,
+                            self_ref_t::acquireRef( this ),
+                            asio::placeholders::error,
+                            asio::placeholders::bytes_transferred
+                            )
+                        );
+                }
+                catch( std::exception& )
+                {
+                    /*
+                     * The accounting guard of scheduleRead( ). m_isWriteInFlight goes back with
+                     * the operation - no handler is owed, which is the premise this catch already
+                     * rests on - and what it costs if it does not is initiateClose( ): the flag is
+                     * that function's gate for the FORCEFUL shutdown, so a write which never
+                     * started would take the FAILURE close's close_notify with it - no deliberate
+                     * close can follow a recorded first error. Not, as this comment first said, a
+                     * later pump being refused: the epilog closes and every pump returns at its head
+                     */
+
+                    m_isWriteInFlight = false;
+
+                    base_type::abandonOperation();
+
+                    throw;
+                }
             }
 
             void onWrite(
@@ -1788,13 +1903,33 @@ namespace bl
 
                 base_type::beginOperation();
 
-                m_settingsTimer -> async_wait(
-                    cpp::bind(
-                        &this_type::onSettingsDeadline,
-                        self_ref_t::acquireRef( this ),
-                        asio::placeholders::error
-                        )
-                    );
+                try
+                {
+                    m_settingsTimer -> async_wait(
+                        cpp::bind(
+                            &this_type::onSettingsDeadline,
+                            self_ref_t::acquireRef( this ),
+                            asio::placeholders::error
+                            )
+                        );
+                }
+                catch( std::exception& )
+                {
+                    /*
+                     * The accounting guard of scheduleRead( ), and THE SITE THAT SETTLES ITS
+                     * SHAPE: this one is reached from onProtocolNegotiated( ), through
+                     * pumpWrites( ), with the count at zero and the task lock held
+                     *
+                     * The armed flag goes back with the operation - no handler is owed, so a later
+                     * pump must be free to arm this deadline again
+                     */
+
+                    m_isSettingsTimerArmed = false;
+
+                    base_type::abandonOperation();
+
+                    throw;
+                }
             }
 
             void chkDisarmSettingsTimer() NOEXCEPT
@@ -1866,13 +2001,26 @@ namespace bl
 
                 base_type::beginOperation();
 
-                m_keepAliveTimer -> async_wait(
-                    cpp::bind(
-                        &this_type::onKeepAlive,
-                        self_ref_t::acquireRef( this ),
-                        asio::placeholders::error
-                        )
-                    );
+                try
+                {
+                    m_keepAliveTimer -> async_wait(
+                        cpp::bind(
+                            &this_type::onKeepAlive,
+                            self_ref_t::acquireRef( this ),
+                            asio::placeholders::error
+                            )
+                        );
+                }
+                catch( std::exception& )
+                {
+                    /*
+                     * The accounting guard of scheduleRead( )
+                     */
+
+                    base_type::abandonOperation();
+
+                    throw;
+                }
             }
 
             void onKeepAlive( SAA_in const eh::error_code& ec ) NOEXCEPT
@@ -1916,13 +2064,26 @@ namespace bl
 
                 base_type::beginOperation();
 
-                m_pingDeadlineTimer -> async_wait(
-                    cpp::bind(
-                        &this_type::onPingDeadline,
-                        self_ref_t::acquireRef( this ),
-                        asio::placeholders::error
-                        )
-                    );
+                try
+                {
+                    m_pingDeadlineTimer -> async_wait(
+                        cpp::bind(
+                            &this_type::onPingDeadline,
+                            self_ref_t::acquireRef( this ),
+                            asio::placeholders::error
+                            )
+                        );
+                }
+                catch( std::exception& )
+                {
+                    /*
+                     * The accounting guard of scheduleRead( )
+                     */
+
+                    base_type::abandonOperation();
+
+                    throw;
+                }
             }
 
             /**
@@ -2046,13 +2207,28 @@ namespace bl
 
                 base_type::beginOperation();
 
-                m_idleTimer -> async_wait(
-                    cpp::bind(
-                        &this_type::onIdleDeadline,
-                        self_ref_t::acquireRef( this ),
-                        asio::placeholders::error
-                        )
-                    );
+                try
+                {
+                    m_idleTimer -> async_wait(
+                        cpp::bind(
+                            &this_type::onIdleDeadline,
+                            self_ref_t::acquireRef( this ),
+                            asio::placeholders::error
+                            )
+                        );
+                }
+                catch( std::exception& )
+                {
+                    /*
+                     * The accounting guard of scheduleRead( ). Both callers - onStreamClosedEvent( )
+                     * and onProtocolNegotiated( ), after the write and the read - hold at least one
+                     * operation, so the count here cannot reach zero
+                     */
+
+                    base_type::abandonOperation();
+
+                    throw;
+                }
             }
 
             void cancelIdleTimer() NOEXCEPT
@@ -2187,13 +2363,36 @@ namespace bl
 
                 base_type::beginOperation();
 
-                m_drainTimer -> async_wait(
-                    cpp::bind(
-                        &this_type::onDrainDeadline,
-                        self_ref_t::acquireRef( this ),
-                        asio::placeholders::error
-                        )
-                    );
+                try
+                {
+                    m_drainTimer -> async_wait(
+                        cpp::bind(
+                            &this_type::onDrainDeadline,
+                            self_ref_t::acquireRef( this ),
+                            asio::placeholders::error
+                            )
+                        );
+                }
+                catch( std::exception& )
+                {
+                    /*
+                     * The accounting guard of scheduleRead( ). Both callers - onConnectionErrorEvent( )
+                     * and closeGracefully( ) - run from a handler body, so the count here cannot
+                     * reach zero
+                     *
+                     * THE TIMER'S PRESENCE GOES BACK WITH THE OPERATION, because this function
+                     * makes it the gate: "a connection drains once". Left set, a drain which was
+                     * never bounded could never be bounded again. Nothing reaches this function
+                     * twice after the rethrow today - every re-arm is behind isClosing( ) - so
+                     * this is the principle and not a defect
+                     */
+
+                    m_drainTimer.reset();
+
+                    base_type::abandonOperation();
+
+                    throw;
+                }
             }
 
             void onDrainDeadline( SAA_in const eh::error_code& ec ) NOEXCEPT
@@ -2657,11 +2856,12 @@ namespace bl
                 BL_NOEXCEPT_BEGIN()
 
                 /*
-                 * The last word on every stream, and it runs on the strand: the terminal
+                 * The last word on every stream, and it USUALLY runs on the strand: the terminal
                  * notifyReady of the mix-in is taken from the handler of the operation which
-                 * completed last, which for this task is always a strand handler. A sink which
-                 * was never told its stream ended would leave a request task waiting for an event
-                 * that can no longer come
+                 * completed last, which for this task is a strand handler - except on the one
+                 * route postCommand( )'s catch describes, where a caller's thread gives back the
+                 * last operation of a task already closing and takes the due terminal itself. A
+                 * sink never told its stream ended leaves a request task waiting for good
                  */
 
                 /*

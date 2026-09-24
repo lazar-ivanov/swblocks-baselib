@@ -1449,6 +1449,259 @@ namespace
         }
     }
 
+    /**
+     * @brief class AbandonedOperationProbeT - the LAST operation of a closing task, given back
+     *
+     * abandonOperation() is what a task calls when an initiator it had already begun an operation
+     * for then throws. Wherever the catch rethrows into a handler epilog there is a decider behind
+     * it, and the primitive can afford to decide nothing; where the catch rethrows to a CALLER -
+     * a task's own public API, called on the caller's thread - there is none, and giving back the
+     * last operation of a task which is already closing would leave the terminal untaken for good
+     *
+     * This probe is that position with nothing else in it. One operation fails, which records the
+     * first error and initiates the close; a second was begun and never armed, which is what the
+     * test gives back once the close has been initiated. The count is then zero, the task is
+     * closing, the terminal is due - and the task has to complete
+     */
+
+    template
+    <
+        typename E = void
+    >
+    class AbandonedOperationProbeT : public bl::tasks::MultiOperationTask
+    {
+        BL_DECLARE_OBJECT_IMPL( AbandonedOperationProbeT )
+
+    public:
+
+        typedef AbandonedOperationProbeT< E >                               this_type;
+        typedef bl::tasks::MultiOperationTask                               base_type;
+
+    protected:
+
+        mutable bl::os::mutex                                               m_lockProbe;
+        mutable bl::os::condition_variable                                  m_cvClosing;
+        mutable bl::os::condition_variable                                  m_cvStopped;
+
+        bool                                                                m_isCloseInitiated;
+        bool                                                                m_isStopped;
+
+        bl::cpp::SafeUniquePtr< bl::asio::deadline_timer >                  m_timer;
+
+        AbandonedOperationProbeT()
+            :
+            m_isCloseInitiated( false ),
+            m_isStopped( false )
+        {
+        }
+
+        void onTimer( SAA_in const bl::eh::error_code& ec ) NOEXCEPT
+        {
+            BL_UNUSED( ec );
+
+            BL_TASKS_HANDLER_BEGIN()
+
+            BL_THROW(
+                bl::UnexpectedException(),
+                BL_MSG()
+                    << "abandon-probe-operation"
+                );
+
+            BL_TASKS_HANDLER_END_MULTIOP()
+        }
+
+        virtual void initiateClose() OVERRIDE
+        {
+            /*
+             * Reached from onOperationCompleted() with the failing operation already accounted
+             * for, so this is exactly the moment the count is one and that one is the operation
+             * the test is about to give back. The task lock is NOT held here
+             */
+
+            {
+                BL_MUTEX_GUARD( m_lockProbe );
+
+                m_isCloseInitiated = true;
+            }
+
+            m_cvClosing.notify_all();
+        }
+
+        virtual void scheduleTask( SAA_in const std::shared_ptr< bl::tasks::ExecutionQueue >& eq ) OVERRIDE
+        {
+            using namespace bl;
+
+            /*
+             * The operation which is never armed - the phantom an initiator that threw leaves
+             * behind, begun here so that the case does not need one to throw
+             */
+
+            base_type::beginOperation();
+
+            const auto threadPool = base_type::getThreadPool( eq );
+
+            m_timer.reset( new asio::deadline_timer( threadPool -> aioService() ) );
+
+            m_timer -> expires_from_now( time::milliseconds( 10 ) );
+
+            base_type::beginOperation();
+
+            m_timer -> async_wait(
+                cpp::bind(
+                    &this_type::onTimer,
+                    om::ObjPtrCopyable< this_type >::acquireRef( this ),
+                    asio::placeholders::error
+                    )
+                );
+        }
+
+        virtual auto onTaskStoppedNothrow(
+            SAA_in_opt          const std::exception_ptr&                   eptrIn = nullptr,
+            SAA_inout_opt       bool*                                       isExpectedException = nullptr
+            ) NOEXCEPT
+            -> std::exception_ptr OVERRIDE
+        {
+            const auto result = base_type::onTaskStoppedNothrow( eptrIn, isExpectedException );
+
+            {
+                BL_MUTEX_GUARD( m_lockProbe );
+
+                m_isStopped = true;
+            }
+
+            m_cvStopped.notify_all();
+
+            return result;
+        }
+
+    public:
+
+        bool waitForCloseInitiated( SAA_in const std::size_t timeoutInMilliseconds ) const
+        {
+            bl::os::mutex_unique_lock guard( m_lockProbe );
+
+            return m_cvClosing.wait_for(
+                guard,
+                bl::os::chrono::milliseconds( timeoutInMilliseconds ),
+                [ this ]() -> bool
+                {
+                    return m_isCloseInitiated;
+                }
+                );
+        }
+
+        bool waitForStopped( SAA_in const std::size_t timeoutInMilliseconds ) const
+        {
+            bl::os::mutex_unique_lock guard( m_lockProbe );
+
+            return m_cvStopped.wait_for(
+                guard,
+                bl::os::chrono::milliseconds( timeoutInMilliseconds ),
+                [ this ]() -> bool
+                {
+                    return m_isStopped;
+                }
+                );
+        }
+
+        void abandonFromCallerThread() NOEXCEPT
+        {
+            base_type::abandonOperation();
+        }
+
+        std::size_t pendingForTest() const NOEXCEPT
+        {
+            return base_type::pendingOperations();
+        }
+
+        /**
+         * @brief TEARDOWN ONLY - the one route which takes a due terminal without an operation
+         *
+         * It exists so that a case which has just shown the defect can still flush its queue: a
+         * task whose terminal is due and untaken never completes, and a hung module is not a test
+         * result. Never reached on the green path
+         */
+
+        bool chkReleaseTerminalForCleanup( SAA_in const std::size_t timeoutInMilliseconds ) NOEXCEPT
+        {
+            base_type::beginOperation();
+
+            base_type::onOperationCompleted( nullptr, false );
+
+            return waitForStopped( timeoutInMilliseconds );
+        }
+    };
+
+    typedef bl::om::ObjectImpl< AbandonedOperationProbeT<> > AbandonedOperationProbeImpl;
+
+    void runAbandonedOperationSuite( SAA_in const std::size_t threadsCount )
+    {
+        using namespace bl;
+        using namespace bl::tasks;
+
+        const auto tpLocal = om::lockDisposable(
+            ThreadPoolImpl::createInstance< ThreadPool >( os::AbstractPriority::Normal, threadsCount )
+            );
+
+        const auto taskImpl = AbandonedOperationProbeImpl::createInstance();
+
+        bool stopped = false;
+
+        {
+            const auto eq = om::lockDisposable(
+                ExecutionQueueImpl::createInstance< ExecutionQueue >( ExecutionQueue::OptionKeepAll )
+                );
+
+            eq -> setLocalThreadPool( tpLocal.get() );
+
+            const auto task = om::qi< Task >( taskImpl );
+
+            eq -> push_back( task );
+
+            /*
+             * The rendezvous is initiateClose(), which the accounting reaches only after the
+             * failing operation has been accounted for - so the count is one when it returns and
+             * that one is the operation never armed
+             */
+
+            UTF_REQUIRE( taskImpl -> waitForCloseInitiated( 15U * 1000U ) );
+
+            UTF_REQUIRE_EQUAL( taskImpl -> pendingForTest(), 1U );
+
+            taskImpl -> abandonFromCallerThread();
+
+            stopped = taskImpl -> waitForStopped( 15U * 1000U );
+
+            if( ! stopped )
+            {
+                ( void ) taskImpl -> chkReleaseTerminalForCleanup( 15U * 1000U );
+            }
+
+            eq -> flush(
+                false /* discardPending */,
+                true  /* nothrowIfFailed */,
+                false /* discardReady */,
+                false /* cancelExecuting */
+                );
+
+            /*
+             * THE ASSERTION THIS CASE EXISTS FOR
+             */
+
+            UTF_REQUIRE( stopped );
+
+            UTF_REQUIRE_EQUAL( Task::Completed, task -> getState() );
+            UTF_REQUIRE( task -> isFailed() );
+
+            /*
+             * NOT flushAndDiscardReady( ), which rethrows what a ready task failed with - and this
+             * task is MEANT to have failed, with the exception its own operation threw
+             */
+
+            eq -> forceFlushNoThrow( true /* wait */ );
+        }
+    }
+
 } // __unnamed
 
 UTF_AUTO_TEST_CASE( Tasks_MultiOperationTaskSingleThreadedTests )
@@ -1465,4 +1718,10 @@ UTF_AUTO_TEST_CASE( Tasks_MultiOperationTaskIsClosingTests )
 {
     runIsClosingSuite( 1U /* threadsCount */ );
     runIsClosingSuite( 4U /* threadsCount */ );
+}
+
+UTF_AUTO_TEST_CASE( Tasks_MultiOperationTaskAbandonedLastOperationTests )
+{
+    runAbandonedOperationSuite( 1U /* threadsCount */ );
+    runAbandonedOperationSuite( 4U /* threadsCount */ );
 }

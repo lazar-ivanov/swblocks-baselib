@@ -1,0 +1,4 @@
+# each slice appends the recipes for the cases it lands here
+
+# A3 - an operation of the HTTP/2 driver which was begun and whose initiator then threw
+--log_level=test_suite --run_test=H2Driver_AnInitiatorWhichThrowsLeavesNoPhantomOperationTests
