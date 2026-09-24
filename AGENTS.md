@@ -82,8 +82,10 @@ and orchestrator**, never repeated in both:
 - A lane worktree validates with **clang debug only**, and builds and runs **only the focused test
   modules its slice affects, one module at a time**. A lane never builds the repo, never compiles two
   modules concurrently, and never builds a second toolchain or variant.
-- The orchestrator validates with **clang release and gcc release**, in the main worktree, after it
-  merges a lane's commit. That is where variant and toolchain coverage is earned.
+- The orchestrator validates with **clang release and gcc debug**, in the main worktree, after it
+  merges a lane's commit. That is where variant and toolchain coverage is earned. Lanes give clang
+  debug, so the three together cover both toolchains and both variants — and **gcc release is the
+  cell nobody covers**, which is the price of the split and is deliberate.
 - These limits are what keep the machine viable. With every lane confined to one focused module at a
   time, no more than about two test modules are ever compiling at once across all worktrees.
 
@@ -325,10 +327,11 @@ For detailed build system documentation, see `scripts/devenv7/AGENTS.md`:
 
 ---
 
-**Document Version:** 2.9
-**Last Updated:** 2026-09-22
+**Document Version:** 2.10
+**Last Updated:** 2026-09-24
 
 **Changelog:**
+- v2.10 (2026-09-24): Orchestrator validation is clang release and gcc **debug**, not gcc release — gcc debug is where assertions and the debug standard library actually fire, and the lanes' clang debug already covers that variant on one toolchain only
 - v2.9 (2026-09-22): Added Networking Error Codes Are Not Portable — ask net::, never compare transport codes by hand
 - v2.8 (2026-09-19): Added Monitoring A Long Build Or Test Run — check progress, not liveness
 - v2.7 (2026-09-17): Added the parallel-work-across-worktrees split of the toolchain and variant mix
