@@ -5479,6 +5479,20 @@
    "namespaces": []
   },
   {
+   "body_sha": "367a9bbbd4d87d2ff65601105503661d",
+   "doc_sha": "46580b5d971991c8a251f9fe8786ed60",
+   "file": "utf_baselib_h2client6/TestHttp2DriverWritePeerClose.h",
+   "fixture": null,
+   "guards": [
+    "if ! defined( _WIN32 )"
+   ],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1034,
+   "module": "utf_baselib_h2client6",
+   "name": "H2Driver_AnsweredRequestSurvivesAPeerEndingOnTheWriteTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "be20acde338fbfded58f75b3ec99ddcc",
    "doc_sha": "8ca9a59a7dbda5f77892cc3a412dbd69",
    "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
@@ -5572,6 +5586,20 @@
    "line": 385,
    "module": "utf_baselib_h2client2",
    "name": "H2Driver_OpeningWriteIsOneWriteTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "d46f0c91490541df5769d6b6857bfe0c",
+   "doc_sha": "f90c4de7f56cc8c5e35ce13bce88e411",
+   "file": "utf_baselib_h2client6/TestHttp2DriverWritePeerClose.h",
+   "fixture": null,
+   "guards": [
+    "if ! defined( _WIN32 )"
+   ],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 936,
+   "module": "utf_baselib_h2client6",
+   "name": "H2Driver_PeerEndsWhileTheOpeningWriteIsBeingIssuedTests",
    "namespaces": []
   },
   {
@@ -14849,6 +14877,14 @@
    "sha": "7ffc15b3d43935429bb217a49af59773"
   },
   {
+   "file": "utf_baselib_h2client6/TestHttp2DriverWritePeerClose.h",
+   "label": "namespace h2driver",
+   "line": 83,
+   "module": "utf_baselib_h2client6",
+   "ns": "utest",
+   "sha": "26c249f5fd7b41d52d687e0ac21ca38d"
+  },
+  {
    "file": "utf_baselib_h2client7/TestHttp2DriverAccounting.h",
    "label": "namespace h2accounting",
    "line": 60,
@@ -17913,7 +17949,8 @@
     "ObjModel_ObjPtrDisposableTests",
     "ObjModel_ProxyImplTests",
     "ObjModel_SharedPtrTests"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib2": {
    "data_files": {},
@@ -18028,7 +18065,8 @@
     "TestTransaction3",
     "TestTransaction4",
     "TestTransaction5"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_apps": {
    "data_files": {},
@@ -18103,7 +18141,8 @@
      "path": "utf_baselib_apps/UtfBaselibAppsMain.cpp"
     }
    ],
-   "notes_cases": []
+   "notes_cases": [],
+   "notes_index": false
   },
   "utf_baselib_apps2": {
    "data_files": {},
@@ -18128,7 +18167,8 @@
      "path": "utf_baselib_apps2/UtfBaselibApps2Main.cpp"
     }
    ],
-   "notes_cases": []
+   "notes_cases": [],
+   "notes_index": false
   },
   "utf_baselib_async": {
    "data_files": {},
@@ -18166,7 +18206,8 @@
     "AsyncV2_BasicTests",
     "AsyncV2_CancelTests",
     "AsyncV2_SmallPerfTests"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_basictask": {
    "data_files": {},
@@ -18207,7 +18248,8 @@
      "path": "utf_baselib_basictask/UtfBaselibBasicTaskMain.cpp"
     }
    ],
-   "notes_cases": []
+   "notes_cases": [],
+   "notes_index": false
   },
   "utf_baselib_blobtransfer": {
    "data_files": {},
@@ -18233,7 +18275,8 @@
     "BlobTransfer_FilesPackagerInMemoryCancelRemoveTests",
     "BlobTransfer_FilesPackagerInMemoryCancelUploadTests",
     "BlobTransfer_FilesPackagerInMemoryTests"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_blobtransfer2": {
    "data_files": {},
@@ -18267,7 +18310,8 @@
     "BlobTransfer_StartBlobClient",
     "BlobTransfer_StartBlobServer",
     "BlobTransfer_StartBlobServerProxy"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_cmdline": {
    "data_files": {},
@@ -18338,7 +18382,8 @@
     "CmdLine_Parse_CommandMode_Create",
     "CmdLine_Parse_CommandMode_Mail",
     "CmdLine_Parse_CommandMode_Run"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_data": {
    "data_files": {
@@ -18446,7 +18491,8 @@
     "TestFilesystemMetadataInMemoryImpl",
     "TestFilesystemMetadataIteratorOutlivesStoreHandle",
     "TestFilesystemMetadataRejectedMutationsLeaveStoreConsistent"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_h2client": {
    "data_files": {},
@@ -18544,7 +18590,8 @@
     "TcpSslStrandedStreams_TlsFullDuplexTests",
     "TcpStrandedStreams_PlainCancelPostsShutdownToStrandTests",
     "TcpStrandedStreams_PlainFullDuplexTests"
-   ]
+   ],
+   "notes_index": true
   },
   "utf_baselib_h2client2": {
    "data_files": {},
@@ -18589,7 +18636,8 @@
     "H2Driver_SettingsAcknowledgementTimeoutTests",
     "H2Driver_UnwrittenStreamIsRetryableOnPeerCloseTests",
     "H2Driver_UploadIsPulledFromTheSinkTests"
-   ]
+   ],
+   "notes_index": true
   },
   "utf_baselib_h2client3": {
    "data_files": {},
@@ -18620,7 +18668,8 @@
     "H2Driver_TlsAlpnNoOverlapSelectsNothingTests",
     "H2Driver_TlsAlpnSelectsHttp2Tests",
     "H2Driver_TlsAlpnServerPreferenceWinsTests"
-   ]
+   ],
+   "notes_index": true
   },
   "utf_baselib_h2client4": {
    "data_files": {},
@@ -18682,7 +18731,8 @@
     "H2Pool_QueueBehindPlaceholderTests",
     "H2Pool_RetryMatrixTests",
     "H2Pool_SlotLimitingTests"
-   ]
+   ],
+   "notes_index": true
   },
   "utf_baselib_h2client5": {
    "data_files": {},
@@ -18726,7 +18776,8 @@
    ],
    "notes_cases": [
     "H2Pool_RequestsInFlightTogetherOnOneConnectionTests"
-   ]
+   ],
+   "notes_index": true
   },
   "utf_baselib_h2client6": {
    "data_files": {},
@@ -18749,17 +18800,33 @@
     },
     {
      "includes": [
+      "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<string>",
+      "<vector>",
+      "<utests/baselib/Http2DriverTestUtils.h>",
+      "<utests/baselib/Utf.h>",
+      "<poll.h>"
+     ],
+     "path": "utf_baselib_h2client6/TestHttp2DriverWritePeerClose.h"
+    },
+    {
+     "includes": [
       "<utests/baselib/UtfMain.h>",
       "<baselib/http2/PreCompiled.h>",
       "<baselib/httpclient/PreCompiled.h>",
-      "\"TestHttp2DriverWriteBarrier.h\""
+      "\"TestHttp2DriverWriteBarrier.h\"",
+      "\"TestHttp2DriverWritePeerClose.h\""
      ],
      "path": "utf_baselib_h2client6/UtfBaselibH2Client6Main.cpp"
     }
    ],
    "notes_cases": [
+    "H2Driver_AnsweredRequestSurvivesAPeerEndingOnTheWriteTests",
+    "H2Driver_PeerEndsWhileTheOpeningWriteIsBeingIssuedTests",
     "H2Driver_PeerHalfClosesWithAWriteInFlightTests"
-   ]
+   ],
+   "notes_index": true
   },
   "utf_baselib_h2client7": {
    "data_files": {},
@@ -18789,7 +18856,8 @@
    ],
    "notes_cases": [
     "H2Driver_AnInitiatorWhichThrowsLeavesNoPhantomOperationTests"
-   ]
+   ],
+   "notes_index": true
   },
   "utf_baselib_h2core": {
    "data_files": {},
@@ -19014,7 +19082,8 @@
     "StreamStates_StreamIdentifierTests",
     "StreamStates_TransitionTableTests",
     "StreamStates_UnknownStreamIdentifierTests"
-   ]
+   ],
+   "notes_index": true
   },
   "utf_baselib_h2profiles": {
    "data_files": {},
@@ -19087,7 +19156,8 @@
     "TlsClientHello_GreaseAndAbsentExtensionsAreHandledTests",
     "TlsClientHello_Ja3AndJa4MatchHandWorkedValuesTests",
     "TlsClientHello_MalformedMessagesAreRefusedTests"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_http": {
    "data_files": {},
@@ -19150,7 +19220,8 @@
     "Client_SimpleHttpPerfTests",
     "Client_SimpleHttpTests",
     "Client_SimpleHttpTimeoutTests"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_http2": {
    "data_files": {},
@@ -19308,7 +19379,8 @@
     "TlsProtocolPolicy_ServerContextRejectsBadKeyMaterial",
     "TlsProtocolPolicy_Tls10IsRefusedUnderTheDefaultPolicy",
     "TlsProtocolPolicy_Tls11IsRefusedUnderTheDefaultPolicy"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_httpclient": {
    "data_files": {},
@@ -19519,7 +19591,8 @@
     "RedirectPolicy_MethodRewriteMatrixTests",
     "RedirectPolicy_OffByDefaultTests",
     "RedirectPolicy_TargetResolutionAndLocationTests"
-   ]
+   ],
+   "notes_index": true
   },
   "utf_baselib_httpclient2": {
    "data_files": {},
@@ -19571,7 +19644,8 @@
     "TcpTunnelStage_Socks5TunnelTests",
     "TcpTunnelStage_StageRunsOncePerAttemptTests",
     "TcpTunnelStage_TunnelRefusedTests"
-   ]
+   ],
+   "notes_index": true
   },
   "utf_baselib_httpclient3": {
    "data_files": {},
@@ -19624,7 +19698,8 @@
     "Http1Driver_RequestResponseAndKeepAliveReuseTests",
     "Http1Driver_RequestsThisDriverRefusesTests",
     "Http1Driver_ReuseVerdictInputsTests"
-   ]
+   ],
+   "notes_index": true
   },
   "utf_baselib_httpclient4": {
    "data_files": {},
@@ -19672,7 +19747,8 @@
     "ClientSession_RetryIsRefusedOnceTheSinkHasSeenBytesTests",
     "ClientSession_SinkIsToldCompleteOnceAcrossTheFallbackRetryTests",
     "ClientSession_SpeaksOneSchemeTests"
-   ]
+   ],
+   "notes_index": true
   },
   "utf_baselib_httpclient5": {
    "data_files": {},
@@ -19756,7 +19832,8 @@
     "Http1DriverTls_ClosingWithoutACancelCompletesACutShortBodyTests",
     "Http1DriverTls_IdleCloseSendsCloseNotifyTests",
     "Http1DriverTls_WriteInFlightCloseSkipsCloseNotifyTests"
-   ]
+   ],
+   "notes_index": true
   },
   "utf_baselib_httpclient6": {
    "data_files": {},
@@ -19784,7 +19861,8 @@
    ],
    "notes_cases": [
     "ClientSession_IdleTimeoutReachesTheHttp11DriverTests"
-   ]
+   ],
+   "notes_index": true
   },
   "utf_baselib_httpclient7": {
    "data_files": {},
@@ -19879,7 +19957,8 @@
     "Http1Driver_StrandSeamRefusesReuseAfterAResetWriteTests",
     "Http1Driver_WriteInFlightRefusesASecondRequestTests",
     "Http1Driver_WriteInFlightRefusesReuseTests"
-   ]
+   ],
+   "notes_index": true
   },
   "utf_baselib_io": {
    "data_files": {},
@@ -19954,7 +20033,8 @@
     "IO_SimplePerfMessageDispatcherTests",
     "IO_SimplePerfTests",
     "IO_SslSimpleConnectAndTransmitDataMessageDispatcherOutgoingTests"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_io2": {
    "data_files": {},
@@ -20017,7 +20097,8 @@
     "IO_MessagingBackendProcessingHelpers",
     "IO_MessagingClientBlockDispatchLocalTests",
     "IO_MessagingClientTests"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_jni": {
    "data_files": {},
@@ -20062,7 +20143,8 @@
     "Jni_JavaBridgeRestHelper",
     "Jni_JvmHelpers",
     "Jni_LocalGlobalReferences"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_loader": {
    "data_files": {},
@@ -20208,7 +20290,8 @@
     "TestPluginAccess",
     "TestResolver_CheckFailure",
     "TestResolver_CheckSuccess"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_messaging": {
    "data_files": {
@@ -20265,7 +20348,8 @@
     "ProxyBrokerFacadeTests",
     "RotatingMessagingClientBlockDispatchTests",
     "RotatingMessagingClientObjectDispatchTests"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_messaging2": {
    "data_files": {
@@ -20318,7 +20402,8 @@
     "MessagingHelpersDataIntegrityTest",
     "Test_AsyncDataChunkStorageStats",
     "Test_AsyncDataChunkStorageStatsException"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_messaging3": {
    "data_files": {
@@ -20362,7 +20447,8 @@
     "IO_MessagingMessageProcessingTestMsgTimeout",
     "IO_MessagingMessageProcessingTestWrappers",
     "IO_MessagingMessageProcessingTests"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_messaging4": {
    "data_files": {
@@ -20399,7 +20485,8 @@
    ],
    "notes_cases": [
     "IO_MessagingProxyBackendTests"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_parsing": {
    "data_files": {},
@@ -20424,7 +20511,8 @@
    ],
    "notes_cases": [
     "BaseLib_ParsingGetTokens"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_plugin": {
    "data_files": {},
@@ -20453,7 +20541,8 @@
      "path": "utf_baselib_plugin/utf/plugins/calculator/Calculator.h"
     }
    ],
-   "notes_cases": []
+   "notes_cases": [],
+   "notes_index": false
   },
   "utf_baselib_rest": {
    "data_files": {
@@ -20507,7 +20596,8 @@
     "RestServiceSslBackendPerfTests",
     "RestServiceSslBackendTests",
     "RestServiceSslHttpGatewayOnlyTests"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_security": {
    "data_files": {},
@@ -20555,7 +20645,8 @@
    "notes_cases": [
     "TestRsaSignVerifyNegative",
     "TestRsaSignVerifyPositive"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_security2": {
    "data_files": {
@@ -20655,7 +20746,8 @@
     "CryptoUtils_InitSsl",
     "CryptoUtils_RsaTests",
     "CryptoUtils_X509tests"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_security3": {
    "data_files": {
@@ -20737,7 +20829,8 @@
     "AuthorizationServiceRest_TemplateEscapingTests",
     "AuthorizationServiceRest_TokenShapeTests",
     "AuthorizationServiceRest_TokenTextRejectionTests"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_setprio": {
    "data_files": {},
@@ -20762,7 +20855,8 @@
    ],
    "notes_cases": [
     "BaseLib_AbstractPriorityTests"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_tasks": {
    "data_files": {},
@@ -21063,7 +21157,8 @@
     "Tasks_TaskContinuationsWithContextTests",
     "Tasks_TestSmartDumpOfNonBoostException",
     "Tasks_WaitCancelAndPrioritizeTests"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_tasks2": {
    "data_files": {},
@@ -21154,7 +21249,8 @@
     "TcpPreHandshakeStage_StageFailureTests",
     "TcpPreHandshakeStage_SynchronousStageTests",
     "TcpPreHandshakeStage_TodaysConnectOrderTests"
-   ]
+   ],
+   "notes_index": false
   },
   "utf_baselib_utils": {
    "data_files": {},
@@ -21178,7 +21274,8 @@
    ],
    "notes_cases": [
     "StringTemplateTests"
-   ]
+   ],
+   "notes_index": false
   }
  },
  "namespaces": [
@@ -21636,6 +21733,13 @@
    "module": "utf_baselib_h2client6",
    "name": "utest",
    "sha": "6430f8bf0187e54a58c59635f571a5b4"
+  },
+  {
+   "file": "utf_baselib_h2client6/TestHttp2DriverWritePeerClose.h",
+   "line": 81,
+   "module": "utf_baselib_h2client6",
+   "name": "utest",
+   "sha": "050e84d5a74137c049ea3410894da54e"
   },
   {
    "file": "utf_baselib_h2client7/TestHttp2DriverAccounting.h",
