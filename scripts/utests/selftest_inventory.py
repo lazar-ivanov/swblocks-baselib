@@ -376,6 +376,31 @@ def main():
     clone = copy.deepcopy( mutated[ 'members' ][ 0 ] )
     clone[ 'file' ] = clone[ 'file' ].replace( '.h', 'Copy.h' )
     mutated[ 'members' ].append( clone )
+    #
+    # ... but a member which is nothing but preprocessor conditionals is NOT asked, because it
+    # declares nothing and two copies of it are no ODR risk. It repeats across sibling headers on
+    # any ordinary split, so asking reds a legal relocation - measured, on a filesystem copy: move
+    # one guarded helper into a sibling header and repeat its guard, and the #if and the #endif were
+    # reported as duplicated within the module
+    #
+    # The two probes are written as a DISCRIMINATION rather than as one silence, because a silence
+    # on its own would also be produced by the duplication half being switched off altogether
+    #
+
+    exempt = copy.deepcopy( baseline )
+    conditional = dict( exempt[ 'members' ][ 0 ], sha = 'e' * 32, label = '#if defined( _WIN32 )',
+                        conditional_only = True )
+    exempt[ 'members' ].append( conditional )
+    exempt[ 'members' ].append( dict( conditional, file = conditional[ 'file' ].replace( '.h', 'Copy.h' ) ) )
+
+    if any( f.startswith( 'C6 helper member duplicated' ) for f in check_intrinsic( exempt ) ):
+        print( '    FAIL  C6   conditional-only member duplicated             '
+               '(reported - the gate reds on an ordinary split)' )
+        ok = False
+    else:
+        print( '    PASS  C6   conditional-only member duplicated             '
+               'correctly silent - a bare #if declares nothing, so it is no ODR risk' )
+
     ok &= expect( 'helper member duplicated within a module',
                   check_intrinsic( mutated ), 'C6' )
 

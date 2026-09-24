@@ -169,7 +169,11 @@ change rather than as a loss. **The condition is compared as written**: `#if ! d
 re-spelled as `#ifndef X` reports, because a re-spelling is an edit and a normaliser sound enough to
 be trusted would have to be an expression parser. **It is not in force until the baseline is
 refreshed**, and every run prints which state it is in, exactly as C11 and C13 do. A split that
-moves a guarded helper **with** its guard stays silent, which is the point.
+moves a guarded helper **with** its guard stays silent, which is the point — and for that to be true
+C6's *duplication* half no longer asks about a member which is nothing but `#if`, `#else` and
+`#endif`. Three members tree-wide have that shape; they declare nothing, so two copies are no ODR
+risk, and they repeat across sibling headers on any ordinary split. C6's no-loss half and the guard
+half still judge them.
 
 **Tier 3 is the one that catches a case which still registers and still passes while silently doing
 less work.** Do not skip it for a change that moves cases between modules.

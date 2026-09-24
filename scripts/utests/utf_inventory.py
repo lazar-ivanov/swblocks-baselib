@@ -339,6 +339,35 @@ def is_prose( shadow, first, last ):
                 for line in shadow[ first : last + 1 ] if line.strip() )
 
 
+def conditional_only( lines, first, last ):
+    """
+    True when every non-blank line of a span is a preprocessor conditional and nothing else
+
+    C6's duplication half asks one question - is this an ODR risk? - and a span that is nothing but
+    #if, #else and #endif declares nothing, so it never is. It repeats across sibling headers of one
+    module on any ordinary split, which is how the duplication half came to red a legal relocation:
+    move a guarded helper into a sibling header and repeat its guard, and the #if and the #endif are
+    reported as duplicated within the module. Measured, on a filesystem copy
+
+    The predicate has to be the WHOLE span rather than its first line, and that is measured too. Six
+    members tree wide OPEN on a directive and only three of them are a directive and nothing else -
+    UtfPluginFixture.h:105, TestBaselibDefault5.h:396 and :427. The other three carry code: two
+    6-line g_libExt definitions under #if defined( _WIN32 ) / #else, and a 25-line #if 0 block. A
+    first-line test would exempt those three as well, and the #if 0 block IS a real ODR risk if it
+    is ever copied
+
+    Conditionals only, not every directive: a member which is a bare #define declares something, and
+    two of those in one module is exactly what the duplication half is for
+    """
+
+    span = [ line for line in lines[ first : last + 1 ] if line.strip() ]
+
+    return bool( span ) and all(
+        COND_OPEN_RE.match( line ) or COND_MID_RE.match( line ) or COND_CLOSE_RE.match( line )
+        for line in span
+        )
+
+
 def sha( text ):
     return hashlib.sha256( text.encode( 'utf-8' ) ).hexdigest()[ :32 ]
 
@@ -836,6 +865,7 @@ def scan_file( path, module, rel_path, problems ):
                     'ns': member_ns,
                     'sha': sha( normalize( lines[ first : last + 1 ] ) ),
                     'guards': list( cond_at[ first ] ),
+                    'conditional_only': conditional_only( lines, first, last ),
                     'label': lines[ first ].strip()[ : 60 ],
                     } )
 
@@ -1263,9 +1293,30 @@ def check_intrinsic( manifest ):
     # redefinition, and utf_baselib_async relies on that
     #
 
+    #
+    # A member which is nothing but preprocessor conditionals is not asked, because it can never be
+    # the thing this check is looking for. It declares nothing, so two copies are no ODR risk; and
+    # it repeats across sibling headers on any ordinary split, so asking reds a legal relocation -
+    # move a guarded helper into a sibling header and repeat its guard, and the #if and the #endif
+    # were reported as duplicated within the module. Three members tree wide have that shape, and
+    # conditional_only( ) reads every line of the span rather than the first, because three MORE
+    # open on a directive and carry code
+    #
+    # The no-loss half above still judges them, and so does the guard half: their text moving is
+    # still a report, which is what control 2 of the guard change-set rests on
+    #
+    # A baseline captured before the field simply does not carry it, and .get( ) then answers False
+    # - every member is asked, exactly as before. That is the conservative direction, and this check
+    # is intrinsic so main( ) hands it the current scan in any case
+    #
+
     by_module_member = {}
 
     for member in manifest.get( 'members', [] ):
+
+        if member.get( 'conditional_only' ):
+            continue
+
         key = ( member[ 'sha' ], member[ 'ns' ] )
         by_module_member.setdefault( member[ 'module' ], {} ).setdefault( key, [] ).append( member )
 
