@@ -749,7 +749,8 @@ def main():
     if not armed.get( 'file_members' ):
         armed[ 'file_members' ] = [
             { 'module': member[ 'module' ], 'file': member[ 'file' ], 'line': member[ 'line' ],
-              'sha': member[ 'sha' ], 'label': member[ 'label' ] }
+              'sha': member[ 'sha' ], 'label': member[ 'label' ],
+              'guards': list( member.get( 'guards', [] ) ) }
             for member in baseline[ 'members' ][ : 40 ]
             ]
 
@@ -852,6 +853,152 @@ def main():
     empty[ 'file_members' ] = []
     ok &= expect( 'capture which extracted no file-scope text',
                   check_against( armed, empty ), 'C11' )
+
+    #
+    # The GUARD half of C6 and C11 - the preprocessor condition a member or a file-scope span sits
+    # under, folded into their identity the way C3 folds it into a case's
+    #
+    # No invariant read a condition enclosing anything but a case: C11 drops conditionals because
+    # "conditionals are C3's", and C3 speaks for cases only. Measured before this existed:
+    # namedMutexSemaphoreKey( ) cut out from under #if ! defined( _WIN32 ) into a sibling header
+    # WITH NO GUARD, on split_members( )'s own extent, PASSED tier 1 green
+    #
+    # These probes mutate a manifest, so what they prove is the COMPARISON. What the extractor
+    # produces from real lines - condition_stack( ) and its boundary rule - is proved by the
+    # filesystem controls of the change-set that wrote it and by nothing here, which is recorded
+    # in that function as residue
+    #
+    # The subjects are forced onto known spans rather than searched for, so that the proof does not
+    # depend on which baseline this is handed. A span whose text is unique in its list is chosen,
+    # because the identity collapses equal shas and a probe on a repeated one proves less
+    #
+
+    WIN32_GUARD = 'if ! defined( _WIN32 )'
+
+    def unique_span( entries ):
+        counts = {}
+        for entry in entries:
+            counts[ entry[ 'sha' ] ] = counts.get( entry[ 'sha' ], 0 ) + 1
+        return next( entry for entry in entries if counts[ entry[ 'sha' ] ] == 1 )
+
+    guarded = copy.deepcopy( armed )
+
+    for entry in guarded[ 'members' ] + guarded[ 'file_members' ]:
+        entry.setdefault( 'guards', [] )
+
+    unique_span( guarded[ 'members' ] )[ 'guards' ] = [ WIN32_GUARD ]
+    unique_span( guarded[ 'file_members' ] )[ 'guards' ] = [ WIN32_GUARD ]
+
+    if check_against( guarded, guarded ):
+        print( '    FAIL  C6   guard-armed baseline is not clean against itself' )
+        ok = False
+    else:
+        print( '    PASS  C6   guard-armed baseline is clean against itself  '
+               '%d member(s) and %d span(s) under a condition'
+               % ( sum( 1 for m in guarded[ 'members' ] if m[ 'guards' ] ),
+                   sum( 1 for m in guarded[ 'file_members' ] if m[ 'guards' ] ) ) )
+
+    #
+    # C6 - a guarded helper cut out from under its #if into a sibling header with NO guard
+    #
+    # The severe form, and the one a C12-style per-file anchor would be silent on: the file changes,
+    # which is exactly what an anchor on text-and-file treats as a relocation not to be judged
+    #
+
+    mutated = copy.deepcopy( guarded )
+    subject = unique_span( mutated[ 'members' ] )
+    subject[ 'guards' ] = []
+    subject[ 'file' ] = subject[ 'file' ].replace( '.h', 'Split.h' )
+    subject[ 'line' ] = 4242
+
+    reported = check_against( guarded, mutated )
+    ok &= expect( 'guarded helper relocated WITHOUT its guard', reported, 'C6' )
+
+    #
+    # It must report because the GUARD changed, not as a loss - the distinction is the whole of the
+    # control. Reported as LOST plus ADDED it would be indistinguishable from one of the three
+    # one-line directive members moving, which is text, and a helper carried out from under a guard
+    # moves no directive at all
+    #
+
+    if any( line.startswith( 'C6 helper member GUARD STACK CHANGED' ) for line in reported ) \
+       and not any( line.startswith( 'C6 helper member LOST' ) for line in reported ):
+        print( '    PASS  C6   reported as a GUARD change, not as a loss      '
+               'the text survives; only the condition it compiles under moved' )
+    else:
+        print( '    FAIL  C6   reported as a GUARD change, not as a loss      '
+               '(a loss is indistinguishable from a one-line directive moving)' )
+        ok = False
+
+    # C11 - the same on the file-scope half, which is the one nothing protected even by accident
+    mutated = copy.deepcopy( guarded )
+    unique_span( mutated[ 'file_members' ] )[ 'guards' ] = [ 'if defined( UTF_TEST_MODULE )' ]
+    ok &= expect( 'file-scope span moved to another #if stack',
+                  check_against( guarded, mutated ), 'C11' )
+
+    #
+    # The RE-SPELLING pin: identity is the TEXT of the condition, not a normalised form of it
+    #
+    # #if ! defined( X ) and #ifndef X are the same condition written two ways, and this reports.
+    # That is the decision C3 already lives with, kept deliberately: a re-spelling is an edit and a
+    # relocation gate should say so, and a normaliser sound enough to be trusted would have to be
+    # an expression parser - #if ! defined( X ) && ! defined( Y ) has no #ifndef spelling at all.
+    # If this probe ever goes silent, someone has normalised the condition and the claim above has
+    # to be rewritten rather than quietly left wrong
+    #
+
+    mutated = copy.deepcopy( guarded )
+    unique_span( mutated[ 'members' ] )[ 'guards' ] = [ 'ifndef _WIN32' ]
+    ok &= expect( 'the same condition RE-SPELLED as #ifndef',
+                  check_against( guarded, mutated ), 'C6' )
+
+    #
+    # A guarded helper relocated WITH its guard is a legitimate split and must be SILENT, or the
+    # blind spot has been traded for a gate that reds on every one of them. Measured live too: the
+    # whole #if ! defined( _WIN32 ) region of TestBaselibDefault5.h cut into a sibling header,
+    # directives and all, PASSES before and after
+    #
+
+    mutated = copy.deepcopy( guarded )
+    subject = unique_span( mutated[ 'members' ] )
+    subject[ 'file' ] = subject[ 'file' ].replace( '.h', 'Split.h' )
+    subject[ 'line' ] = 4242
+
+    residue = [ f for f in check_against( guarded, mutated )
+                if f.startswith( ( 'C6 ', 'C11 ' ) ) ]
+
+    if residue:
+        print( '    FAIL  C6   guarded helper relocated WITH its guard        '
+               '(reported - the gate would red on every legitimate split)' )
+        for failure in residue[ : 3 ]:
+            print( '                %s' % failure )
+        ok = False
+    else:
+        print( '    PASS  C6   guarded helper relocated WITH its guard        '
+               'correctly silent - identity is text AND condition, not the file' )
+
+    #
+    # And a baseline predating the guard capture must stay SILENT, not red - the C11 and C13
+    # departure, for their reason. What bounds the silence is that capture( ) always writes the
+    # key, so the next refresh for any reason arms it
+    #
+
+    older = copy.deepcopy( guarded )
+
+    for entry in older[ 'members' ] + older[ 'file_members' ]:
+        entry.pop( 'guards', None )
+
+    residue = [ f for f in check_against( older, guarded ) if f.startswith( ( 'C6 ', 'C11 ' ) ) ]
+
+    if residue:
+        print( '    FAIL  C6   baseline predating the guard capture           '
+               '(reported - it must be a printed note, not a red gate)' )
+        for failure in residue[ : 3 ]:
+            print( '                %s' % failure )
+        ok = False
+    else:
+        print( '    PASS  C6   baseline predating the guard capture           '
+               'correctly silent - not in force until the baseline is refreshed' )
 
     #
     # C12 - a helper member which stayed in its file, moved to another namespace

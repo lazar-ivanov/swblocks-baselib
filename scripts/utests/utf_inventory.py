@@ -31,15 +31,15 @@
 #   C4  every case sits under the same namespace stack
 #   C5  no case name occurs twice anywhere in the tree
 #   C6  no helper block or member occurs twice within one module (an ODR risk); none was lost,
-#       and none was invented
+#       none was invented, and none changed the #if stack it sits under
 #   C7  every data file a module references exists in that module's data/ directory, carries the
 #       content it had, and does not become one nothing names
 #   C8  every case a module's notes.txt names exists in that module
 #   C9  no case loses a recipe it had, and a module which declares its notes.txt a complete
 #       index really does name every one of its cases
 #   C10 every file keeps the #include list it had
-#   C11 no file-scope text - what sits outside every column-0 namespace block - is lost or
-#       invented
+#   C11 no file-scope text - what sits outside every column-0 namespace block - is lost, invented,
+#       or moved to a different #if stack
 #   C12 a helper member which stayed in its file kept the namespace it sat in
 #   C13 src/utests/include, the shared tree every module compiles against, is scanned too
 #
@@ -172,6 +172,15 @@ CASE_CLOSE_RE = re.compile( r'^\}\s*$' )
 COND_OPEN_RE = re.compile( r'^\s*#\s*(if|ifdef|ifndef)\b\s*(.*)$' )
 COND_MID_RE = re.compile( r'^\s*#\s*(elif|else)\b\s*(.*)$' )
 COND_CLOSE_RE = re.compile( r'^\s*#\s*endif\b' )
+
+#
+# RESIDUE, recorded where it would bite: group( 2 ) of both patterns runs to end of line, so a
+# trailing comment goes into the condition text - #else // defined( X ) would be recorded as
+# 'else // defined( X )' and would not match a bare #else. Every reader of these two patterns is
+# affected: C3's case guards and the member and file-scope stacks below. Measured on this tree:
+# 0 of the 70 guard strings the manifest records carries a comment token, so nothing is wrong
+# today; what makes it bite is someone writing a comment on the SAME line as a live conditional
+#
 
 INCLUDE_RE = re.compile( r'^\s*#\s*include\s+(.+?)\s*$' )
 
@@ -482,6 +491,64 @@ def is_include_guard( lines, index, matched ):
     return include_guard_define( lines, index, matched ) is not None
 
 
+def condition_stack( lines ):
+    """
+    The preprocessor conditions in force AT each line, in C3's own spelling
+
+    The entry for a line is the stack as it stands BEFORE that line is read, which is exactly how a
+    case gets its guards from the walk: a #if line carries the OUTER stack, because its own
+    condition starts on the line after, and an #endif line still carries the inner one, because the
+    pop is what reading it does. An #else or #elif appends to the top entry rather than replacing
+    it - '%s | else' - so that the two branches of one conditional are told apart in the spelling
+    C3 has always used
+
+    An include guard contributes nothing, exactly as it contributes nothing to a case's stack.
+    Counting it would put __TEST_UTF_H_ under every member of every guarded header and make a
+    header rename red the whole tree
+
+    Identity is the TEXT of the condition, not a normalised form of it, and that is a decision
+    rather than an oversight. C3 has recorded the text since it existed, so a normalised member
+    stack would mean two spellings of "the guard stack" in one manifest. A re-spelling is an edit
+    and a relocation gate should say so - #if ! defined( X ) rewritten as #ifndef X during a split
+    is not text moving. And a normaliser sound enough to be trusted would have to be an expression
+    parser: #if ! defined( X ) && ! defined( Y ) has no #ifndef spelling at all, so a half
+    normaliser would bless exactly the careless rewrites and no others. The price is that a
+    deliberate re-spelling reports, which is the ordinary companion-refresh answer this gate
+    already gives for every other deliberate edit
+
+    RESIDUE: this function is asserted by nothing. Every probe in selftest_inventory.py mutates a
+    manifest, so what the EXTRACTOR produces from real lines - this stack, and the boundary rule
+    above - is proved only by the filesystem controls of the change-set that wrote it, and nothing
+    in the repository re-proves it. A probe over synthetic lines would close that
+    """
+
+    stack = []
+    at = []
+
+    for index, line in enumerate( lines ):
+
+        at.append( tuple( entry for entry in stack if entry is not None ) )
+
+        matched = COND_OPEN_RE.match( line )
+        if matched:
+            if is_include_guard( lines, index, matched ):
+                stack.append( None )
+            else:
+                stack.append( '%s %s' % ( matched.group( 1 ), matched.group( 2 ).strip() ) )
+            continue
+
+        matched = COND_MID_RE.match( line )
+        if matched and stack:
+            if stack[ -1 ] is not None:
+                stack[ -1 ] += ' | %s %s' % ( matched.group( 1 ), matched.group( 2 ).strip() )
+            continue
+
+        if COND_CLOSE_RE.match( line ) and stack:
+            stack.pop()
+
+    return at
+
+
 def scan_file( path, module, rel_path, problems ):
     """
     Extract every test case, column-0 namespace block and include from one file
@@ -492,6 +559,42 @@ def scan_file( path, module, rel_path, problems ):
     """
 
     lines = read_lines( path )
+
+    #
+    # The preprocessor condition enclosing anything but a test case was read by no invariant at
+    # all, and the half nobody had looked at is the severe one. C11 drops conditionals "because
+    # conditionals are C3's", and C3 speaks for CASES only - so 11 file-scope spans and 18 helper
+    # members sat under a #if that nothing judged
+    #
+    # Measured before this existed, and it is the reason the shape below is identity rather than a
+    # per-file anchor: namedMutexSemaphoreKey( ) cut out from under #if ! defined( _WIN32 ) at
+    # utf_baselib/TestBaselibDefault5.h:396 into a sibling header WITH NO GUARD, roster edited,
+    # using split_members( )'s own extent - which is how every split in this project is cut -
+    # PASSED tier 1 green. A relocation accident that silently changes what compiles on which
+    # platform, and the gate called it a move
+    #
+    # The member half looked protected and was not. Six members tree wide OPEN on a directive, and
+    # exactly three of those are one line and nothing else - UtfPluginFixture.h:105,
+    # TestBaselibDefault5.h:396 and :427. The other three are real members whose first line happens
+    # to be a directive and which carry code: two 6-line g_libExt definitions under
+    # #if defined( _WIN32 ) / #else, and a 25-line #if 0 block. So inverting the guard at :396
+    # reported two C6 lines - which is one of those three one-line members moving, TEXT and not the
+    # guard, and a helper carried out from under a guard moves no directive at all. A C12-style
+    # per-file anchor would have been silent on exactly the relocation above, because the file
+    # changes
+    #
+    # So the condition stack joins C6's and C11's IDENTITY, sha plus guards, the way C3 already
+    # does it for cases, and a text that survives under a different stack is reported as a guard
+    # change rather than as a loss
+    #
+    # RESIDUE: a conditional opening INSIDE a bracketed file-scope span is invisible to both halves
+    # of that. The stack is taken at a span's first line, and the directive itself is blanked out of
+    # the shadow so it is not in the sha either - and a blank inside an open bracket does not split
+    # the member. One live instance: include/utests/baselib/UtfMain.h:52-370, a 319-line span with
+    # #if BOOST_VERSION < 105900 at :96. Inverting :96 PASSES, measured
+    #
+
+    cond_at = condition_stack( lines )
 
     cases = []
     namespaces = []
@@ -731,6 +834,7 @@ def scan_file( path, module, rel_path, problems ):
                     'line': first + 1,
                     'ns': member_ns,
                     'sha': sha( normalize( lines[ first : last + 1 ] ) ),
+                    'guards': list( cond_at[ first ] ),
                     'label': lines[ first ].strip()[ : 60 ],
                     } )
 
@@ -757,6 +861,7 @@ def scan_file( path, module, rel_path, problems ):
         'file': rel_path,
         'line': first + 1,
         'sha': sha( normalize( shadow[ first : last + 1 ] ) ),
+        'guards': list( cond_at[ first ] ),
         'label': shadow[ first ].strip()[ : 60 ],
         } for first, last in split_members( shadow, 0, total )
         if not is_prose( shadow, first, last ) ]
@@ -1054,6 +1159,72 @@ def without_shared( manifest ):
     return trimmed
 
 
+def carries_guards( *lists ):
+    """
+    True when any of these manifest span lists carries the guard stack C6 and C11 fold in
+
+    capture( ) writes the key on every member and every file-scope span, so presence on one is
+    presence on all. A baseline captured before this carries it nowhere, and the guard half is then
+    simply not in force - the C11 and C13 precedent, and for their reason: a hard red would stop
+    every lane until the refresh lands rather than stopping the change that earned it
+
+    What bounds that silence is that the next refresh for any reason arms it. What does NOT bound
+    it is --capture's refusal, and the gap is worth naming rather than assuming: that guard compares
+    TOP-LEVEL keys, and guards is a field inside a span. A pre-guard tool re-capturing over this
+    baseline writes the same six top-level keys, is not refused, and disarms this half with only the
+    printed note to say so - which is the residue the C11 section already names one level up
+    """
+
+    return any( 'guards' in entry for entries in lists for entry in entries )
+
+
+def span_comparison( before_list, after_list, armed ):
+    """
+    Sort two lists of spans into ( lost, added, reguarded ) - C6's and C11's shared comparison
+
+    The identity is the text sha together with the enclosing preprocessor condition stack, which is
+    what C3 does for a case. A span whose text survives on the other side under a DIFFERENT stack
+    is neither lost nor invented - it is the same helper now compiling on a different platform, and
+    saying so in its own words is what makes the control meaningful. Reporting it as LOST plus
+    ADDED would be indistinguishable from one of the three one-line directive members moving, which
+    is text and not the guard
+
+    With armed False the guard half of every key is empty on both sides, so the keys differ only by
+    sha, reguarded is necessarily empty, and lost and added are exactly what this comparison
+    reported before the guard stack existed. That equivalence is what lets a baseline predating the
+    capture go on being judged rather than red
+    """
+
+    def keyed( entries ):
+
+        table = {}
+
+        for entry in entries:
+            key = ( entry[ 'sha' ], tuple( entry.get( 'guards', [] ) ) if armed else () )
+            table.setdefault( key, entry )
+
+        return table
+
+    old, new = keyed( before_list ), keyed( after_list )
+
+    old_text = set( key[ 0 ] for key in old )
+    new_text = set( key[ 0 ] for key in new )
+
+    lost = [ old[ key ] for key in sorted( set( old ) - set( new ) ) if key[ 0 ] not in new_text ]
+    added = [ new[ key ] for key in sorted( set( new ) - set( old ) ) if key[ 0 ] not in old_text ]
+
+    def stacks( table, digest ):
+        return sorted( ' & '.join( key[ 1 ] ) or '<none>' for key in table if key[ 0 ] == digest )
+
+    reguarded = []
+
+    for digest in sorted( set( key[ 0 ] for key in set( old ) - set( new ) ) & new_text ):
+        where = next( new[ key ] for key in sorted( new ) if key[ 0 ] == digest )
+        reguarded.append( ( where, stacks( old, digest ), stacks( new, digest ) ) )
+
+    return lost, added, reguarded
+
+
 def check_intrinsic( manifest ):
     """
     Invariants that hold of a single manifest on its own: C5 to C9
@@ -1260,6 +1431,29 @@ def check_against( before, after ):
 
     else:
         after = without_shared( after )
+
+    #
+    # The guard half of C6 and C11 - is the enclosing preprocessor condition part of the identity?
+    #
+    # No invariant read a condition enclosing anything but a test case: C11 drops conditionals
+    # "because conditionals are C3's", and C3 speaks for cases only. 18 helper members and 11
+    # file-scope spans sit under one today, among them Utf.h's #if defined( UTF_TEST_MODULE ),
+    # which is the condition gating main( )
+    #
+    # A baseline captured before this carries no guards anywhere, and the same departure C11 and
+    # C13 take is taken here rather than reding every lane: span_comparison( ) then keys on the sha
+    # alone, which is bit-identical to the comparison that ran before this existed. main( ) prints
+    # which state a run is in, and capture( ) always writes the key, so the next refresh arms it
+    #
+    # It is folded into C6's and C11's identity rather than gated on a per-file anchor, and the
+    # difference is measured: the relocation this exists to catch - a guarded helper cut into a
+    # sibling header WITHOUT its guard - changes the file, so a per-file anchor is silent on
+    # exactly it. C6's DUPLICATION half is deliberately left alone here: two identical helpers
+    # under mutually exclusive conditions are no ODR risk, so adding the stack to that key could
+    # only make it report less, and the safe direction for a gate is to fire
+    #
+
+    guarded = carries_guards( before.get( 'members', [] ), before.get( 'file_members', [] ) )
 
     #
     # C5, asked of the BASELINE as well as of the tree being scanned
@@ -1523,28 +1717,27 @@ def check_against( before, after ):
 
         else:
 
-            old_scope = {}
+            lost, added, reguarded = span_comparison(
+                before[ 'file_members' ], after[ 'file_members' ], guarded
+                )
 
-            for member in before[ 'file_members' ]:
-                old_scope.setdefault( member[ 'sha' ], member )
-
-            new_scope = {}
-
-            for member in after[ 'file_members' ]:
-                new_scope.setdefault( member[ 'sha' ], member )
-
-            for digest in sorted( set( old_scope ) - set( new_scope ) ):
-                where = old_scope[ digest ]
+            for where in lost:
                 failures.append(
                     'C11 file-scope text LOST: %s (%s:%d)'
                     % ( where[ 'label' ], where[ 'file' ], where[ 'line' ] )
                     )
 
-            for digest in sorted( set( new_scope ) - set( old_scope ) ):
-                where = new_scope[ digest ]
+            for where in added:
                 failures.append(
                     'C11 file-scope text ADDED: %s (%s:%d)'
                     % ( where[ 'label' ], where[ 'file' ], where[ 'line' ] )
+                    )
+
+            for where, was, now in reguarded:
+                failures.append(
+                    'C11 file-scope text GUARD STACK CHANGED: %s (%s:%d) - was under %s, now '
+                    'under %s' % ( where[ 'label' ], where[ 'file' ], where[ 'line' ],
+                                   ', '.join( was ), ', '.join( now ) )
                     )
 
     #
@@ -1630,26 +1823,23 @@ def check_against( before, after ):
         failures.append( 'C6 the current manifest carries no helper members - extraction failed' )
         return failures
 
-    old_members = {}
+    lost, added, reguarded = span_comparison( before[ 'members' ], after[ 'members' ], guarded )
 
-    for member in before[ 'members' ]:
-        old_members.setdefault( member[ 'sha' ], member )
-
-    new_members = {}
-
-    for member in after[ 'members' ]:
-        new_members.setdefault( member[ 'sha' ], member )
-
-    for digest in sorted( set( old_members ) - set( new_members ) ):
-        where = old_members[ digest ]
+    for where in lost:
         failures.append(
             'C6 helper member LOST: %s (%s:%d)' % ( where[ 'label' ], where[ 'file' ], where[ 'line' ] )
             )
 
-    for digest in sorted( set( new_members ) - set( old_members ) ):
-        where = new_members[ digest ]
+    for where in added:
         failures.append(
             'C6 helper member ADDED: %s (%s:%d)' % ( where[ 'label' ], where[ 'file' ], where[ 'line' ] )
+            )
+
+    for where, was, now in reguarded:
+        failures.append(
+            'C6 helper member GUARD STACK CHANGED: %s (%s:%d) - was under %s, now under %s'
+            % ( where[ 'label' ], where[ 'file' ], where[ 'line' ],
+                ', '.join( was ), ', '.join( now ) )
             )
 
     return failures
@@ -1912,6 +2102,31 @@ def main():
                    'Every OTHER #define is hashed with its continuations. A comment block every '
                    'line of which opens with a comment token is dropped as module-level prose; a '
                    'comment against a declaration is part of it and stays judged' )
+
+        #
+        # The guard half's state, on every run, for the reason C11 and C13 print theirs. A check
+        # that is not in force and cannot be seen not to be is the state this tool has been caught
+        # in three times, and what it covers is worth sizing as well: the population is small, and
+        # a reader who thinks it is large will trust it for more than it says
+        #
+
+        under_a_guard = sum( 1 for member in judged.get( 'members', [] ) if member.get( 'guards' ) )
+
+        spans_under_a_guard = sum(
+            1 for member in judged.get( 'file_members', [] ) if member.get( 'guards' )
+            )
+
+        if not carries_guards( before.get( 'members', [] ), before.get( 'file_members', [] ) ):
+            print( 'utf_inventory: C6/C11 - this baseline predates the guard capture, so the '
+                   'preprocessor condition enclosing a helper member or a file-scope span is '
+                   'judged by nothing until it is refreshed; %d member(s) and %d span(s) sit '
+                   'under one' % ( under_a_guard, spans_under_a_guard ) )
+        else:
+            print( 'utf_inventory: C6 and C11 fold the enclosing #if stack into their identity, as '
+                   'C3 does for a case - %d member(s) and %d file-scope span(s) sit under one, and '
+                   'a text that survives under a DIFFERENT stack reports as a guard change rather '
+                   'than as a loss. The condition is compared as written, so a re-spelling of the '
+                   'same condition reports' % ( under_a_guard, spans_under_a_guard ) )
 
         failures.extend( check_against( before, manifest ) )
 

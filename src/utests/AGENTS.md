@@ -120,7 +120,7 @@ moves, adds or removes test cases.
 
 | Tier | Tool | Checks |
 |---|---|---|
-| 1 | `utf_inventory.py --compare` | C1–C13: no case lost, added or edited; guard and namespace stacks unchanged; no duplicate names; helper members neither lost, invented nor duplicated; data files present, unchanged in content and still referenced; `notes.txt` recipes resolve, no case loses one, and a module declaring its index complete really is; every file on both sides keeps its `#include` list, bar the roster lines a relocation must edit; file-scope text — the fixtures, the column-0 statics, the `BL_IID_DECLARE`s, the behavioural `#define`s — neither lost nor invented; a helper member that stayed in its file keeps the namespace it sat in; and all of it over `src/utests/include/` too |
+| 1 | `utf_inventory.py --compare` | C1–C13: no case lost, added or edited; guard and namespace stacks unchanged; no duplicate names; helper members neither lost, invented nor duplicated; data files present, unchanged in content and still referenced; `notes.txt` recipes resolve, no case loses one, and a module declaring its index complete really is; every file on both sides keeps its `#include` list, bar the roster lines a relocation must edit; file-scope text — the fixtures, the column-0 statics, the `BL_IID_DECLARE`s, the behavioural `#define`s — neither lost nor invented; a helper member and a file-scope span each keep the `#if` stack they sit under; a helper member that stayed in its file keeps the namespace it sat in; and all of it over `src/utests/include/` too |
 | 2 | `utf_objsize.py --ceiling 75` | No object over the ceiling |
 | 3 | `utf_runlog.py --compare` | Registered set, executed set, pass/fail, skips, and **per-case assertion counts** — differentially, and **only over the 17 modules the baseline covers** |
 
@@ -150,6 +150,21 @@ commit onward. The rule is what covers the rest.
 `file_members`, and a hard failure there would red the gate for everyone rather than for the change
 that earned it, so every run prints which state it is in. The refresh that arms it is the ordinary
 one above.
+
+**A helper carried out from under its `#if` is a guard change, not a move — and C6 and C11 now say
+so.** For thirteen invariants nothing read a preprocessor condition enclosing anything but a test
+case: C11 dropped conditionals because "conditionals are C3's", and C3 speaks for cases only. 18
+helper members and 11 file-scope spans sit under one, `Utf.h`'s `#if defined( UTF_TEST_MODULE )` —
+the condition gating `main( )` — among them. Measured before this: `namedMutexSemaphoreKey( )` cut
+out from under `#if ! defined( _WIN32 )` into a sibling header **with no guard**, on
+`split_members( )`'s own extent, which is how every split here is cut, **passed tier 1 green** — a
+relocation accident that silently changes what compiles on which platform. So the condition stack
+joins C6's and C11's identity, and a text that survives under a different stack reports as a guard
+change rather than as a loss. **The condition is compared as written**: `#if ! defined( X )`
+re-spelled as `#ifndef X` reports, because a re-spelling is an edit and a normaliser sound enough to
+be trusted would have to be an expression parser. **It is not in force until the baseline is
+refreshed**, and every run prints which state it is in, exactly as C11 and C13 do. A split that
+moves a guarded helper **with** its guard stays silent, which is the point.
 
 **Tier 3 is the one that catches a case which still registers and still passes while silently doing
 less work.** Do not skip it for a change that moves cases between modules.

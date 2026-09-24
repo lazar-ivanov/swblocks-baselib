@@ -13082,6 +13082,7 @@
  "file_members": [
   {
    "file": "include/utests/baselib/TestAsyncCommon.h",
+   "guards": [],
    "label": "#define TEST_ASYNC_TASK_HANDLER_BEGIN_CHK_ASYNC_RESULT() \\",
    "line": 40,
    "module": "<shared>",
@@ -13089,6 +13090,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "BL_IID_DECLARE( FilesystemMetadataStore, \"0d6210c2-f359-4550",
    "line": 80,
    "module": "<shared>",
@@ -13096,6 +13098,9 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [
+    "if defined(UTF_TEST_MODULE)"
+   ],
    "label": "#define BOOST_TEST_MODULE                            UTF_TES",
    "line": 21,
    "module": "<shared>",
@@ -13103,6 +13108,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "#define BOOST_TEST_NO_MAIN",
    "line": 24,
    "module": "<shared>",
@@ -13110,6 +13116,9 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [
+    "if BOOST_VERSION < 105900"
+   ],
    "label": "#define UTF_INTERNAL_CHECK_IMPL( P, assertion_descr, TL, CT ",
    "line": 60,
    "module": "<shared>",
@@ -13117,6 +13126,9 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [
+    "if BOOST_VERSION < 105900 | else "
+   ],
    "label": "#define UTF_INTERNAL_CHECK_IMPL( P, assertion_descr, TL, CT ",
    "line": 63,
    "module": "<shared>",
@@ -13124,6 +13136,9 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [
+    "if defined( UTF_TEST_MODULE )"
+   ],
    "label": "class PrintTestCaseVisitor : public boost::unit_test::test_t",
    "line": 109,
    "module": "<shared>",
@@ -13131,6 +13146,9 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [
+    "if defined( UTF_TEST_MODULE )"
+   ],
    "label": "int BOOST_TEST_CALL_DECL main(",
    "line": 119,
    "module": "<shared>",
@@ -13138,6 +13156,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "#define UTF_IMPL_WRAPPER_BEGIN() \\",
    "line": 597,
    "module": "<shared>",
@@ -13145,6 +13164,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "#define UTF_IMPL_WRAPPER_EXPR_BEGIN( expr, evaluated ) \\",
    "line": 605,
    "module": "<shared>",
@@ -13152,6 +13172,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "#define UTF_AUTO_TEST_CASE( testName )                      ",
    "line": 614,
    "module": "<shared>",
@@ -13159,6 +13180,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "#define UTF_CHECK( expr )                                   ",
    "line": 617,
    "module": "<shared>",
@@ -13166,6 +13188,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "#define UTF_SKIP_UNLESS( cond, reason ) \\",
    "line": 633,
    "module": "<shared>",
@@ -13173,6 +13196,9 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [
+    "if BOOST_VERSION < 105900"
+   ],
    "label": "#define UTF_MESSAGE( msg )                                  ",
    "line": 659,
    "module": "<shared>",
@@ -13180,6 +13206,9 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [
+    "if BOOST_VERSION < 105900 | else "
+   ],
    "label": "#define UTF_MESSAGE( msg )                                  ",
    "line": 661,
    "module": "<shared>",
@@ -13187,6 +13216,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "#define UTF_WARNING_MESSAGE( msg )                          ",
    "line": 663,
    "module": "<shared>",
@@ -13194,6 +13224,9 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [
+    "if BOOST_VERSION < 105900"
+   ],
    "label": "#define UTF_GLOBAL_FIXTURE( fixtureName )                   ",
    "line": 672,
    "module": "<shared>",
@@ -13201,6 +13234,9 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [
+    "if BOOST_VERSION < 105900 | else "
+   ],
    "label": "#define UTF_GLOBAL_FIXTURE( fixtureName )                   ",
    "line": 674,
    "module": "<shared>",
@@ -13208,6 +13244,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "#define UTF_FIXTURE_TEST_SUITE( suiteName, fixtureName )    ",
    "line": 677,
    "module": "<shared>",
@@ -13215,6 +13252,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "#define UTF_CHECK_EQUAL( lhs, rhs )                         ",
    "line": 680,
    "module": "<shared>",
@@ -13222,6 +13260,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "#define UTF_CHECK_THROW( expr, exception ) \\",
    "line": 683,
    "module": "<shared>",
@@ -13229,6 +13268,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "#define UTF_REQUIRE_THROW( expr, exception ) \\",
    "line": 699,
    "module": "<shared>",
@@ -13236,6 +13276,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "#define UTF_CHECK_THROW_MESSAGE( expr, exception, msg ) \\",
    "line": 715,
    "module": "<shared>",
@@ -13243,6 +13284,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "#define UTF_REQUIRE_THROW_MESSAGE( expr, exception, msg ) \\",
    "line": 748,
    "module": "<shared>",
@@ -13250,6 +13292,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "#define UTF_CHECK_THROW_ERROR_CODE( expr, exception, expecte",
    "line": 789,
    "module": "<shared>",
@@ -13257,6 +13300,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "#define UTF_REQUIRE_THROW_ERROR_CODE( expr, exception, expec",
    "line": 803,
    "module": "<shared>",
@@ -13264,6 +13308,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "#define UTF_CHECK_THROW_ERROR_CODE_AND_MESSAGE( expr, except",
    "line": 823,
    "module": "<shared>",
@@ -13271,6 +13316,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "#define UTF_REQUIRE_THROW_ERROR_CODE_AND_MESSAGE( expr, exce",
    "line": 839,
    "module": "<shared>",
@@ -13278,6 +13324,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "#define UTF_CHECK_THROW_ERRNO( expr, exception, expectedErrN",
    "line": 855,
    "module": "<shared>",
@@ -13285,6 +13332,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "#define UTF_REQUIRE_THROW_ERRNO( expr, exception, expectedEr",
    "line": 869,
    "module": "<shared>",
@@ -13292,6 +13340,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "#define UTF_CHECK_EXCEPTION( expr, exception, predicate )   ",
    "line": 883,
    "module": "<shared>",
@@ -13299,6 +13348,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "#define UTF_CHECK_EQUAL_COLLECTIONS( lhs_begin, lhs_end, rhs",
    "line": 888,
    "module": "<shared>",
@@ -13306,6 +13356,7 @@
   },
   {
    "file": "include/utests/baselib/UtfBaseLibCommon.h",
+   "guards": [],
    "label": "#define BL_PRECOMPILED_ENABLED",
    "line": 37,
    "module": "<shared>",
@@ -13313,6 +13364,7 @@
   },
   {
    "file": "include/utests/baselib/UtfConcurrent.h",
+   "guards": [],
    "label": "#define UTF_RECORD( recorder, expr ) \\",
    "line": 195,
    "module": "<shared>",
@@ -13320,6 +13372,7 @@
   },
   {
    "file": "include/utests/baselib/UtfMain.h",
+   "guards": [],
    "label": "template",
    "line": 52,
    "module": "<shared>",
@@ -13327,6 +13380,7 @@
   },
   {
    "file": "include/utests/baselib/UtfMain.h",
+   "guards": [],
    "label": "template",
    "line": 372,
    "module": "<shared>",
@@ -13334,6 +13388,7 @@
   },
   {
    "file": "include/utests/baselib/UtfMain.h",
+   "guards": [],
    "label": "typedef DefaultUtfConfigT<> DefaultUtfConfig;",
    "line": 379,
    "module": "<shared>",
@@ -13341,6 +13396,9 @@
   },
   {
    "file": "include/utests/baselib/UtfMain.h",
+   "guards": [
+    "ifndef BL_NO_DEFAULT_UTF_GLOBAL_FIXTURE"
+   ],
    "label": "UTF_GLOBAL_FIXTURE( DefaultUtfConfig )",
    "line": 382,
    "module": "<shared>",
@@ -13348,6 +13406,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "BL_IID_DECLARE( iid_test12345, \"2a5b48f8-fc88-40f6-b69a-af53",
    "line": 1219,
    "module": "utf_baselib",
@@ -13355,6 +13414,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "#define UTF_TEST_NORMALIZE( input, expected )               ",
    "line": 6085,
    "module": "utf_baselib",
@@ -13362,6 +13422,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "BL_IID_DECLARE( TestInterface1234, \"f8c57376-0d16-4161-976c-",
    "line": 46,
    "module": "utf_baselib",
@@ -13369,6 +13430,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "class TestInterface1234 : public bl::om::Object",
    "line": 49,
    "module": "utf_baselib",
@@ -13376,6 +13438,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "class TestInterface1235 : public bl::om::Object",
    "line": 59,
    "module": "utf_baselib",
@@ -13383,6 +13446,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "template",
    "line": 68,
    "module": "utf_baselib",
@@ -13390,6 +13454,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< MyObjSimpleT<> > MyObjSimple;",
    "line": 96,
    "module": "utf_baselib",
@@ -13397,6 +13462,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "template",
    "line": 98,
    "module": "utf_baselib",
@@ -13404,6 +13470,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< MyObjEncapsulatedT<> > MyObjEnca",
    "line": 133,
    "module": "utf_baselib",
@@ -13411,6 +13478,7 @@
   },
   {
    "file": "utf_baselib/UtfBaselibMain.cpp",
+   "guards": [],
    "label": "using namespace bl;",
    "line": 28,
    "module": "utf_baselib",
@@ -13418,6 +13486,7 @@
   },
   {
    "file": "utf_baselib/UtfLoaderInit.h",
+   "guards": [],
    "label": "class LoaderInit",
    "line": 30,
    "module": "utf_baselib",
@@ -13425,6 +13494,7 @@
   },
   {
    "file": "utf_baselib/UtfLoaderInit.h",
+   "guards": [],
    "label": "UTF_GLOBAL_FIXTURE( LoaderInit )",
    "line": 45,
    "module": "utf_baselib",
@@ -13432,6 +13502,7 @@
   },
   {
    "file": "utf_baselib/examples/objmodel/MyInterfaces.h",
+   "guards": [],
    "label": "// iids",
    "line": 27,
    "module": "utf_baselib",
@@ -13439,6 +13510,7 @@
   },
   {
    "file": "utf_baselib/examples/objmodel/MyInterfaces.h",
+   "guards": [],
    "label": "// clsid",
    "line": 32,
    "module": "utf_baselib",
@@ -13446,6 +13518,7 @@
   },
   {
    "file": "utf_baselib2/TestTimeZoneData.h",
+   "guards": [],
    "label": "static void logTestName( SAA_in const std::string& name )",
    "line": 28,
    "module": "utf_baselib2",
@@ -13453,6 +13526,7 @@
   },
   {
    "file": "utf_baselib2/UtfBaselib2Main.cpp",
+   "guards": [],
    "label": "using namespace bl;",
    "line": 37,
    "module": "utf_baselib2",
@@ -13460,6 +13534,7 @@
   },
   {
    "file": "utf_baselib_basictask/UtfBaselibBasicTaskMain.cpp",
+   "guards": [],
    "label": "#define UTF_TEST_APP_INIT_DEACTIVATE_THREAD_POOLS ( true )",
    "line": 17,
    "module": "utf_baselib_basictask",
@@ -13467,6 +13542,9 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLineEhUtils.h",
+   "guards": [
+    "ifndef SSL_R_SHORT_READ"
+   ],
    "label": "#define SSL_R_SHORT_READ 219",
    "line": 32,
    "module": "utf_baselib_cmdline",
@@ -13474,6 +13552,7 @@
   },
   {
    "file": "utf_baselib_httpclient3/TestHttp1ConnectionTask.h",
+   "guards": [],
    "label": "template class bl::om::ObjectImpl",
    "line": 94,
    "module": "utf_baselib_httpclient3",
@@ -13481,6 +13560,7 @@
   },
   {
    "file": "utf_baselib_jni/TestJni.h",
+   "guards": [],
    "label": "UTF_GLOBAL_FIXTURE( JniTestGlobalFixture )",
    "line": 129,
    "module": "utf_baselib_jni",
@@ -13488,6 +13568,7 @@
   },
   {
    "file": "utf_baselib_jni/UtfBaselibJniMain.cpp",
+   "guards": [],
    "label": "#define UTF_TEST_APP_INIT_DEACTIVATE_THREAD_POOLS ( true )",
    "line": 17,
    "module": "utf_baselib_jni",
@@ -13495,6 +13576,7 @@
   },
   {
    "file": "utf_baselib_loader/TestManifest.h",
+   "guards": [],
    "label": "struct ManifestFixture",
    "line": 28,
    "module": "utf_baselib_loader",
@@ -13502,6 +13584,7 @@
   },
   {
    "file": "utf_baselib_loader/TestPersonality.h",
+   "guards": [],
    "label": "struct PersonalityTestFixture",
    "line": 30,
    "module": "utf_baselib_loader",
@@ -13509,6 +13592,7 @@
   },
   {
    "file": "utf_baselib_loader/TestResolver.h",
+   "guards": [],
    "label": "struct ResolverFixture",
    "line": 37,
    "module": "utf_baselib_loader",
@@ -13516,6 +13600,7 @@
   },
   {
    "file": "utf_baselib_loader/TestResolver.h",
+   "guards": [],
    "label": "template",
    "line": 61,
    "module": "utf_baselib_loader",
@@ -13523,6 +13608,7 @@
   },
   {
    "file": "utf_baselib_loader/TestResolver.h",
+   "guards": [],
    "label": "template",
    "line": 86,
    "module": "utf_baselib_loader",
@@ -13530,6 +13616,7 @@
   },
   {
    "file": "utf_baselib_loader/TestResolver.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< CoreServicesTestObjT<> > CoreSer",
    "line": 93,
    "module": "utf_baselib_loader",
@@ -13537,6 +13624,7 @@
   },
   {
    "file": "utf_baselib_plugin/Calculator.cpp",
+   "guards": [],
    "label": "#define BL_PLUGINS_CLASS_IMPLEMENTATION",
    "line": 17,
    "module": "utf_baselib_plugin",
@@ -13544,6 +13632,7 @@
   },
   {
    "file": "utf_baselib_plugin/Calculator.cpp",
+   "guards": [],
    "label": "BL_PLUGINS_DECLARE_PLUGIN_BEGIN( CalculatorPlugin, \"calculat",
    "line": 94,
    "module": "utf_baselib_plugin",
@@ -13551,6 +13640,7 @@
   },
   {
    "file": "utf_baselib_plugin/Calculator.cpp",
+   "guards": [],
    "label": "BL_PLUGINS_REGISTER_PLUGIN( bl::plugins::CalculatorPlugin )",
    "line": 99,
    "module": "utf_baselib_plugin",
@@ -13558,6 +13648,7 @@
   },
   {
    "file": "utf_baselib_plugin/utf/plugins/calculator/Calculator.h",
+   "guards": [],
    "label": "BL_IID_DECLARE( Calculator, \"77ff26f2-e2bd-4dde-ab66-e8aa3ec",
    "line": 26,
    "module": "utf_baselib_plugin",
@@ -13565,6 +13656,7 @@
   },
   {
    "file": "utf_baselib_plugin/utf/plugins/calculator/Calculator.h",
+   "guards": [],
    "label": "BL_CLSID_DECLARE( PluginObj, \"3fd48332-db97-42bd-9cf6-f6a332",
    "line": 28,
    "module": "utf_baselib_plugin",
@@ -13572,6 +13664,7 @@
   },
   {
    "file": "utf_baselib_security3/TestAuthorizationServiceRest.h",
+   "guards": [],
    "label": "static auto loadConfig() -> bl::om::ObjPtr< bl::dm::config::",
    "line": 33,
    "module": "utf_baselib_security3",
@@ -13579,6 +13672,7 @@
   },
   {
    "file": "utf_baselib_security3/TestAuthorizationServiceRest.h",
+   "guards": [],
    "label": "static auto pathAndContentFor(",
    "line": 45,
    "module": "utf_baselib_security3",
@@ -13586,6 +13680,7 @@
   },
   {
    "file": "utf_baselib_security3/TestAuthorizationServiceRest.h",
+   "guards": [],
    "label": "static auto extractFromResponse(",
    "line": 67,
    "module": "utf_baselib_security3",
@@ -13593,6 +13688,7 @@
   },
   {
    "file": "utf_baselib_security3/TestAuthorizationServiceRest.h",
+   "guards": [],
    "label": "static const char* const g_okCategory5 =",
    "line": 275,
    "module": "utf_baselib_security3",
@@ -13600,6 +13696,7 @@
   },
   {
    "file": "utf_baselib_security3/TestAuthorizationServiceRest.h",
+   "guards": [],
    "label": "static const char* const g_okCategory4 =",
    "line": 278,
    "module": "utf_baselib_security3",
@@ -13607,6 +13704,7 @@
   },
   {
    "file": "utf_baselib_security3/TestAuthorizationServiceRest.h",
+   "guards": [],
    "label": "static const char* const g_okNoCategory =",
    "line": 281,
    "module": "utf_baselib_security3",
@@ -13614,6 +13712,7 @@
   },
   {
    "file": "utf_baselib_security3/TestAuthorizationServiceRest.h",
+   "guards": [],
    "label": "static const char* const g_principalResponseA =",
    "line": 488,
    "module": "utf_baselib_security3",
@@ -13621,6 +13720,7 @@
   },
   {
    "file": "utf_baselib_security3/TestAuthorizationServiceRest.h",
+   "guards": [],
    "label": "static const char* const g_principalResponseB =",
    "line": 492,
    "module": "utf_baselib_security3",
@@ -13628,6 +13728,7 @@
   },
   {
    "file": "utf_baselib_setprio/UtfBaselibSetPrioMain.cpp",
+   "guards": [],
    "label": "#define UTF_TEST_APP_INIT_DEACTIVATE_THREAD_POOLS ( true )",
    "line": 17,
    "module": "utf_baselib_setprio",
@@ -13637,6 +13738,7 @@
  "members": [
   {
    "file": "include/utests/baselib/DataModelTestUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 31,
    "module": "<shared>",
@@ -13645,6 +13747,7 @@
   },
   {
    "file": "include/utests/baselib/DataModelTestUtils.h",
+   "guards": [],
    "label": "template",
    "line": 35,
    "module": "<shared>",
@@ -13653,6 +13756,7 @@
   },
   {
    "file": "include/utests/baselib/DataModelTestUtils.h",
+   "guards": [],
    "label": "typedef DataModelTestUtilsT<> DataModelTestUtils;",
    "line": 62,
    "module": "<shared>",
@@ -13661,6 +13765,7 @@
   },
   {
    "file": "include/utests/baselib/Http1DriverTestUtils.h",
+   "guards": [],
    "label": "namespace http1driver",
    "line": 68,
    "module": "<shared>",
@@ -13669,6 +13774,7 @@
   },
   {
    "file": "include/utests/baselib/Http2DriverTestUtils.h",
+   "guards": [],
    "label": "namespace h2driver",
    "line": 74,
    "module": "<shared>",
@@ -13677,6 +13783,7 @@
   },
   {
    "file": "include/utests/baselib/Http2TestServer.h",
+   "guards": [],
    "label": "namespace h2peer",
    "line": 110,
    "module": "<shared>",
@@ -13685,6 +13792,7 @@
   },
   {
    "file": "include/utests/baselib/HttpServerHelpers.h",
+   "guards": [],
    "label": "namespace http",
    "line": 71,
    "module": "<shared>",
@@ -13693,6 +13801,7 @@
   },
   {
    "file": "include/utests/baselib/LoggerUtils.h",
+   "guards": [],
    "label": "/*",
    "line": 27,
    "module": "<shared>",
@@ -13701,6 +13810,7 @@
   },
   {
    "file": "include/utests/baselib/LoggerUtils.h",
+   "guards": [],
    "label": "inline void toDebugLineLogger(",
    "line": 33,
    "module": "<shared>",
@@ -13709,6 +13819,7 @@
   },
   {
    "file": "include/utests/baselib/LoggerUtils.h",
+   "guards": [],
    "label": "inline void warningToDebugLineLogger(",
    "line": 68,
    "module": "<shared>",
@@ -13717,6 +13828,7 @@
   },
   {
    "file": "include/utests/baselib/LoggerUtils.h",
+   "guards": [],
    "label": "inline void errorToDebugLineLogger(",
    "line": 78,
    "module": "<shared>",
@@ -13725,6 +13837,7 @@
   },
   {
    "file": "include/utests/baselib/MachineGlobalTestLock.h",
+   "guards": [],
    "label": "/**",
    "line": 36,
    "module": "<shared>",
@@ -13733,6 +13846,7 @@
   },
   {
    "file": "include/utests/baselib/MachineGlobalTestLock.h",
+   "guards": [],
    "label": "template",
    "line": 40,
    "module": "<shared>",
@@ -13741,6 +13855,7 @@
   },
   {
    "file": "include/utests/baselib/MachineGlobalTestLock.h",
+   "guards": [],
    "label": "template",
    "line": 318,
    "module": "<shared>",
@@ -13749,6 +13864,7 @@
   },
   {
    "file": "include/utests/baselib/MachineGlobalTestLock.h",
+   "guards": [],
    "label": "typedef MachineGlobalTestLockT<> MachineGlobalTestLock;",
    "line": 327,
    "module": "<shared>",
@@ -13757,6 +13873,7 @@
   },
   {
    "file": "include/utests/baselib/RawFrameScriptPeer.h",
+   "guards": [],
    "label": "namespace h2peer",
    "line": 60,
    "module": "<shared>",
@@ -13765,6 +13882,7 @@
   },
   {
    "file": "include/utests/baselib/TestAsyncCommon.h",
+   "guards": [],
    "label": "/*",
    "line": 48,
    "module": "<shared>",
@@ -13773,6 +13891,7 @@
   },
   {
    "file": "include/utests/baselib/TestAsyncCommon.h",
+   "guards": [],
    "label": "typedef TestSignal AsyncTestSignal;",
    "line": 53,
    "module": "<shared>",
@@ -13781,6 +13900,7 @@
   },
   {
    "file": "include/utests/baselib/TestAsyncCommon.h",
+   "guards": [],
    "label": "/**",
    "line": 55,
    "module": "<shared>",
@@ -13789,6 +13909,7 @@
   },
   {
    "file": "include/utests/baselib/TestAsyncCommon.h",
+   "guards": [],
    "label": "template",
    "line": 59,
    "module": "<shared>",
@@ -13797,6 +13918,7 @@
   },
   {
    "file": "include/utests/baselib/TestAsyncCommon.h",
+   "guards": [],
    "label": "template",
    "line": 207,
    "module": "<shared>",
@@ -13805,6 +13927,7 @@
   },
   {
    "file": "include/utests/baselib/TestAuthorizationCacheImplUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 30,
    "module": "<shared>",
@@ -13813,6 +13936,7 @@
   },
   {
    "file": "include/utests/baselib/TestAuthorizationCacheImplUtils.h",
+   "guards": [],
    "label": "template",
    "line": 35,
    "module": "<shared>",
@@ -13821,6 +13945,7 @@
   },
   {
    "file": "include/utests/baselib/TestAuthorizationCacheImplUtils.h",
+   "guards": [],
    "label": "typedef TestAuthorizationCacheImplUtilsT<> TestAuthorization",
    "line": 472,
    "module": "<shared>",
@@ -13829,6 +13954,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferFilesystemUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 26,
    "module": "<shared>",
@@ -13837,6 +13963,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferFilesystemUtils.h",
+   "guards": [],
    "label": "template",
    "line": 31,
    "module": "<shared>",
@@ -13845,6 +13972,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferFilesystemUtils.h",
+   "guards": [],
    "label": "typedef TestBlobTransferFilesystemUtils",
    "line": 265,
    "module": "<shared>",
@@ -13853,6 +13981,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 84,
    "module": "<shared>",
@@ -13861,6 +13990,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "class FilesystemMetadataStore :",
    "line": 88,
    "module": "<shared>",
@@ -13869,6 +13999,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 106,
    "module": "<shared>",
@@ -13877,6 +14008,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "template",
    "line": 111,
    "module": "<shared>",
@@ -13885,6 +14017,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_CONST_STRING( FilesystemMetadataStoreInMemo",
    "line": 172,
    "module": "<shared>",
@@ -13893,6 +14026,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "typedef FilesystemMetadataStoreInMemoryT<> FilesystemMetadat",
    "line": 174,
    "module": "<shared>",
@@ -13901,6 +14035,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 177,
    "module": "<shared>",
@@ -13909,6 +14044,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "template",
    "line": 182,
    "module": "<shared>",
@@ -13917,6 +14053,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "typedef ChunksFilterT<> ChunksFilter;",
    "line": 269,
    "module": "<shared>",
@@ -13925,6 +14062,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 271,
    "module": "<shared>",
@@ -13933,6 +14071,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "struct PipelineFaultCounters",
    "line": 276,
    "module": "<shared>",
@@ -13941,6 +14080,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 297,
    "module": "<shared>",
@@ -13949,6 +14089,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "struct PipelineFaultOptions",
    "line": 301,
    "module": "<shared>",
@@ -13957,6 +14098,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 394,
    "module": "<shared>",
@@ -13965,6 +14107,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "template",
    "line": 399,
    "module": "<shared>",
@@ -13973,6 +14116,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< FaultInjectingDataChunkStorageT<",
    "line": 540,
    "module": "<shared>",
@@ -13981,6 +14125,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 542,
    "module": "<shared>",
@@ -13989,6 +14134,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "template",
    "line": 552,
    "module": "<shared>",
@@ -13997,6 +14143,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< FailingCacheStorageT<> > Failing",
    "line": 621,
    "module": "<shared>",
@@ -14005,6 +14152,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 623,
    "module": "<shared>",
@@ -14013,6 +14161,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "template",
    "line": 628,
    "module": "<shared>",
@@ -14021,6 +14170,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< FaultInjectingBlobServerT<> > Fa",
    "line": 702,
    "module": "<shared>",
@@ -14029,6 +14179,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 704,
    "module": "<shared>",
@@ -14037,6 +14188,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "template",
    "line": 708,
    "module": "<shared>",
@@ -14045,6 +14197,7 @@
   },
   {
    "file": "include/utests/baselib/TestBlobTransferUtils.h",
+   "guards": [],
    "label": "typedef TestBlobTransferUtilsT<> TestBlobTransferUtils;",
    "line": 2653,
    "module": "<shared>",
@@ -14053,6 +14206,7 @@
   },
   {
    "file": "include/utests/baselib/TestFsUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 36,
    "module": "<shared>",
@@ -14061,6 +14215,7 @@
   },
   {
    "file": "include/utests/baselib/TestFsUtils.h",
+   "guards": [],
    "label": "template",
    "line": 40,
    "module": "<shared>",
@@ -14069,6 +14224,7 @@
   },
   {
    "file": "include/utests/baselib/TestFsUtils.h",
+   "guards": [],
    "label": "typedef TestFsUtilsT<> TestFsUtils;",
    "line": 511,
    "module": "<shared>",
@@ -14077,6 +14233,7 @@
   },
   {
    "file": "include/utests/baselib/TestMessagingUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 66,
    "module": "<shared>",
@@ -14085,6 +14242,7 @@
   },
   {
    "file": "include/utests/baselib/TestMessagingUtils.h",
+   "guards": [],
    "label": "template",
    "line": 70,
    "module": "<shared>",
@@ -14093,6 +14251,7 @@
   },
   {
    "file": "include/utests/baselib/TestMessagingUtils.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< TestHostServicesLoggingContextT<",
    "line": 163,
    "module": "<shared>",
@@ -14101,6 +14260,7 @@
   },
   {
    "file": "include/utests/baselib/TestMessagingUtils.h",
+   "guards": [],
    "label": "/*",
    "line": 166,
    "module": "<shared>",
@@ -14109,6 +14269,7 @@
   },
   {
    "file": "include/utests/baselib/TestMessagingUtils.h",
+   "guards": [],
    "label": "template",
    "line": 171,
    "module": "<shared>",
@@ -14117,6 +14278,7 @@
   },
   {
    "file": "include/utests/baselib/TestMessagingUtils.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_CONST_STRING( DummyAuthorizationCacheT, g_d",
    "line": 421,
    "module": "<shared>",
@@ -14125,6 +14287,7 @@
   },
   {
    "file": "include/utests/baselib/TestMessagingUtils.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< DummyAuthorizationCacheT<> > Dum",
    "line": 427,
    "module": "<shared>",
@@ -14133,6 +14296,7 @@
   },
   {
    "file": "include/utests/baselib/TestMessagingUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 429,
    "module": "<shared>",
@@ -14141,6 +14305,7 @@
   },
   {
    "file": "include/utests/baselib/TestMessagingUtils.h",
+   "guards": [],
    "label": "template",
    "line": 433,
    "module": "<shared>",
@@ -14149,6 +14314,7 @@
   },
   {
    "file": "include/utests/baselib/TestMessagingUtils.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_STRING( TestMessagingUtilsT, g_tokenType );",
    "line": 802,
    "module": "<shared>",
@@ -14157,6 +14323,7 @@
   },
   {
    "file": "include/utests/baselib/TestMessagingUtils.h",
+   "guards": [],
    "label": "typedef TestMessagingUtilsT<> TestMessagingUtils;",
    "line": 805,
    "module": "<shared>",
@@ -14165,6 +14332,7 @@
   },
   {
    "file": "include/utests/baselib/TestMessagingUtilsImpl.cpp",
+   "guards": [],
    "label": "template < typename E >",
    "line": 37,
    "module": "<shared>",
@@ -14173,6 +14341,7 @@
   },
   {
    "file": "include/utests/baselib/TestMessagingUtilsImpl.cpp",
+   "guards": [],
    "label": "template < typename E >",
    "line": 90,
    "module": "<shared>",
@@ -14181,6 +14350,7 @@
   },
   {
    "file": "include/utests/baselib/TestMessagingUtilsImpl.cpp",
+   "guards": [],
    "label": "template < typename E >",
    "line": 138,
    "module": "<shared>",
@@ -14189,6 +14359,7 @@
   },
   {
    "file": "include/utests/baselib/TestMessagingUtilsImpl.cpp",
+   "guards": [],
    "label": "template < typename E >",
    "line": 168,
    "module": "<shared>",
@@ -14197,6 +14368,7 @@
   },
   {
    "file": "include/utests/baselib/TestMessagingUtilsImpl.cpp",
+   "guards": [],
    "label": "template < typename E >",
    "line": 280,
    "module": "<shared>",
@@ -14205,6 +14377,7 @@
   },
   {
    "file": "include/utests/baselib/TestMessagingUtilsImpl.cpp",
+   "guards": [],
    "label": "template < typename E >",
    "line": 351,
    "module": "<shared>",
@@ -14213,6 +14386,7 @@
   },
   {
    "file": "include/utests/baselib/TestMessagingUtilsImpl.cpp",
+   "guards": [],
    "label": "template < typename E >",
    "line": 432,
    "module": "<shared>",
@@ -14221,6 +14395,7 @@
   },
   {
    "file": "include/utests/baselib/TestMessagingUtilsImpl.cpp",
+   "guards": [],
    "label": "template < typename E >",
    "line": 459,
    "module": "<shared>",
@@ -14229,6 +14404,7 @@
   },
   {
    "file": "include/utests/baselib/TestRestUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 34,
    "module": "<shared>",
@@ -14237,6 +14413,7 @@
   },
   {
    "file": "include/utests/baselib/TestRestUtils.h",
+   "guards": [],
    "label": "template",
    "line": 44,
    "module": "<shared>",
@@ -14245,6 +14422,7 @@
   },
   {
    "file": "include/utests/baselib/TestRestUtils.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< TestRestServerProcessingContextT",
    "line": 112,
    "module": "<shared>",
@@ -14253,6 +14431,7 @@
   },
   {
    "file": "include/utests/baselib/TestRestUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 114,
    "module": "<shared>",
@@ -14261,6 +14440,7 @@
   },
   {
    "file": "include/utests/baselib/TestRestUtils.h",
+   "guards": [],
    "label": "template",
    "line": 118,
    "module": "<shared>",
@@ -14269,6 +14449,7 @@
   },
   {
    "file": "include/utests/baselib/TestRestUtils.h",
+   "guards": [],
    "label": "typedef TestRestUtilsT<> TestRestUtils;",
    "line": 235,
    "module": "<shared>",
@@ -14277,6 +14458,7 @@
   },
   {
    "file": "include/utests/baselib/TestTaskUtils.h",
+   "guards": [],
    "label": "template",
    "line": 49,
    "module": "<shared>",
@@ -14285,6 +14467,7 @@
   },
   {
    "file": "include/utests/baselib/TestTaskUtils.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< BackendImplTestT<> > BackendImpl",
    "line": 569,
    "module": "<shared>",
@@ -14293,6 +14476,7 @@
   },
   {
    "file": "include/utests/baselib/TestTaskUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 571,
    "module": "<shared>",
@@ -14301,6 +14485,7 @@
   },
   {
    "file": "include/utests/baselib/TestTaskUtils.h",
+   "guards": [],
    "label": "template",
    "line": 575,
    "module": "<shared>",
@@ -14309,6 +14494,7 @@
   },
   {
    "file": "include/utests/baselib/TestTaskUtils.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< ScanningControlT<> > ScanningCon",
    "line": 618,
    "module": "<shared>",
@@ -14317,6 +14503,7 @@
   },
   {
    "file": "include/utests/baselib/TestTaskUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 620,
    "module": "<shared>",
@@ -14325,6 +14512,7 @@
   },
   {
    "file": "include/utests/baselib/TestTaskUtils.h",
+   "guards": [],
    "label": "template",
    "line": 624,
    "module": "<shared>",
@@ -14333,6 +14521,7 @@
   },
   {
    "file": "include/utests/baselib/TestTaskUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 690,
    "module": "<shared>",
@@ -14341,6 +14530,7 @@
   },
   {
    "file": "include/utests/baselib/TestTaskUtils.h",
+   "guards": [],
    "label": "template",
    "line": 694,
    "module": "<shared>",
@@ -14349,6 +14539,7 @@
   },
   {
    "file": "include/utests/baselib/TestTaskUtils.h",
+   "guards": [],
    "label": "typedef TestTaskUtilsT<> TestTaskUtils;",
    "line": 863,
    "module": "<shared>",
@@ -14357,6 +14548,7 @@
   },
   {
    "file": "include/utests/baselib/TestUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 33,
    "module": "<shared>",
@@ -14365,6 +14557,7 @@
   },
   {
    "file": "include/utests/baselib/TestUtils.h",
+   "guards": [],
    "label": "typedef TestUtilsT<> TestUtils;",
    "line": 164,
    "module": "<shared>",
@@ -14373,6 +14566,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "/**",
    "line": 70,
    "module": "<shared>",
@@ -14381,6 +14575,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "inline std::atomic< long >& outstandingRefsAtExit() NOEXCEPT",
    "line": 81,
    "module": "<shared>",
@@ -14389,6 +14584,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "/**",
    "line": 88,
    "module": "<shared>",
@@ -14397,6 +14593,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "inline std::vector< std::string > skippedCasesSnapshot();",
    "line": 95,
    "module": "<shared>",
@@ -14405,6 +14602,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "template",
    "line": 243,
    "module": "<shared>",
@@ -14413,6 +14611,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "template",
    "line": 251,
    "module": "<shared>",
@@ -14421,6 +14620,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "template",
    "line": 265,
    "module": "<shared>",
@@ -14429,6 +14629,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "template",
    "line": 287,
    "module": "<shared>",
@@ -14437,6 +14638,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "template",
    "line": 311,
    "module": "<shared>",
@@ -14445,6 +14647,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "template",
    "line": 319,
    "module": "<shared>",
@@ -14453,6 +14656,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "template",
    "line": 360,
    "module": "<shared>",
@@ -14461,6 +14665,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "template",
    "line": 375,
    "module": "<shared>",
@@ -14469,6 +14674,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "typedef UtfGlobalsT<> UtfGlobals;",
    "line": 427,
    "module": "<shared>",
@@ -14477,6 +14683,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "template",
    "line": 429,
    "module": "<shared>",
@@ -14485,6 +14692,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "template",
    "line": 436,
    "module": "<shared>",
@@ -14493,6 +14701,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "inline std::vector< std::string > skippedCasesSnapshot()",
    "line": 443,
    "module": "<shared>",
@@ -14501,6 +14710,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "/**",
    "line": 448,
    "module": "<shared>",
@@ -14509,6 +14719,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "template",
    "line": 455,
    "module": "<shared>",
@@ -14517,6 +14728,7 @@
   },
   {
    "file": "include/utests/baselib/Utf.h",
+   "guards": [],
    "label": "typedef UtfExceptionToolsT<> UtfExceptionTools;",
    "line": 593,
    "module": "<shared>",
@@ -14525,6 +14737,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "/**",
    "line": 30,
    "module": "<shared>",
@@ -14533,6 +14746,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "template",
    "line": 34,
    "module": "<shared>",
@@ -14541,6 +14755,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, bool, g_options",
    "line": 524,
    "module": "<shared>",
@@ -14549,6 +14764,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, std::string, g_",
    "line": 526,
    "module": "<shared>",
@@ -14557,6 +14773,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, unsigned short,",
    "line": 528,
    "module": "<shared>",
@@ -14565,6 +14782,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, unsigned short,",
    "line": 530,
    "module": "<shared>",
@@ -14573,6 +14791,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, std::string, g_",
    "line": 532,
    "module": "<shared>",
@@ -14581,6 +14800,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, bool, g_isVerbo",
    "line": 534,
    "module": "<shared>",
@@ -14589,6 +14809,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, bool, g_isServe",
    "line": 536,
    "module": "<shared>",
@@ -14597,6 +14818,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, bool, g_isClien",
    "line": 538,
    "module": "<shared>",
@@ -14605,6 +14827,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, std::size_t, g_",
    "line": 540,
    "module": "<shared>",
@@ -14613,6 +14836,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, std::size_t, g_",
    "line": 542,
    "module": "<shared>",
@@ -14621,6 +14845,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, std::size_t, g_",
    "line": 544,
    "module": "<shared>",
@@ -14629,6 +14854,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, std::size_t, g_",
    "line": 546,
    "module": "<shared>",
@@ -14637,6 +14863,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, std::size_t, g_",
    "line": 548,
    "module": "<shared>",
@@ -14645,6 +14872,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, std::size_t, g_",
    "line": 550,
    "module": "<shared>",
@@ -14653,6 +14881,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, std::size_t, g_",
    "line": 552,
    "module": "<shared>",
@@ -14661,6 +14890,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, std::string, g_",
    "line": 554,
    "module": "<shared>",
@@ -14669,6 +14899,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, std::string, g_",
    "line": 556,
    "module": "<shared>",
@@ -14677,6 +14908,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, std::string, g_",
    "line": 558,
    "module": "<shared>",
@@ -14685,6 +14917,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, std::string, g_",
    "line": 560,
    "module": "<shared>",
@@ -14693,6 +14926,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, std::string, g_",
    "line": 562,
    "module": "<shared>",
@@ -14701,6 +14935,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, std::string, g_",
    "line": 564,
    "module": "<shared>",
@@ -14709,6 +14944,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, std::string, g_",
    "line": 566,
    "module": "<shared>",
@@ -14717,6 +14953,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, bool, g_isRelax",
    "line": 568,
    "module": "<shared>",
@@ -14725,6 +14962,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, bool, g_isUmdhM",
    "line": 570,
    "module": "<shared>",
@@ -14733,6 +14971,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, bool, g_isAnaly",
    "line": 572,
    "module": "<shared>",
@@ -14741,6 +14980,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, bool, g_isUseLo",
    "line": 574,
    "module": "<shared>",
@@ -14749,6 +14989,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, bool, g_isVerif",
    "line": 576,
    "module": "<shared>",
@@ -14757,6 +14998,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, bool, g_isEnabl",
    "line": 578,
    "module": "<shared>",
@@ -14765,6 +15007,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, bool, g_isWaitF",
    "line": 580,
    "module": "<shared>",
@@ -14773,6 +15016,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, bool, g_isNoRfc",
    "line": 582,
    "module": "<shared>",
@@ -14781,6 +15025,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_CONST_STRING( UtfArgsParserBaseT, g_localHo",
    "line": 584,
    "module": "<shared>",
@@ -14789,6 +15034,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "BL_DEFINE_STATIC_MEMBER( UtfArgsParserBaseT, std::string, g_",
    "line": 586,
    "module": "<shared>",
@@ -14797,6 +15043,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "typedef UtfArgsParserBaseT<> UtfArgsParserBase;",
    "line": 588,
    "module": "<shared>",
@@ -14805,6 +15052,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "/**",
    "line": 590,
    "module": "<shared>",
@@ -14813,6 +15061,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "template",
    "line": 594,
    "module": "<shared>",
@@ -14821,6 +15070,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "typedef UtfArgsParserT<> UtfArgsParser;",
    "line": 610,
    "module": "<shared>",
@@ -14829,6 +15079,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "/**",
    "line": 612,
    "module": "<shared>",
@@ -14837,6 +15088,7 @@
   },
   {
    "file": "include/utests/baselib/UtfArgsParser.h",
+   "guards": [],
    "label": "template",
    "line": 616,
    "module": "<shared>",
@@ -14845,6 +15097,7 @@
   },
   {
    "file": "include/utests/baselib/UtfConcurrent.h",
+   "guards": [],
    "label": "/**",
    "line": 34,
    "module": "<shared>",
@@ -14853,6 +15106,7 @@
   },
   {
    "file": "include/utests/baselib/UtfConcurrent.h",
+   "guards": [],
    "label": "class TestSignal",
    "line": 39,
    "module": "<shared>",
@@ -14861,6 +15115,7 @@
   },
   {
    "file": "include/utests/baselib/UtfConcurrent.h",
+   "guards": [],
    "label": "/**",
    "line": 104,
    "module": "<shared>",
@@ -14869,6 +15124,7 @@
   },
   {
    "file": "include/utests/baselib/UtfConcurrent.h",
+   "guards": [],
    "label": "class DeferredAssertions",
    "line": 117,
    "module": "<shared>",
@@ -14877,6 +15133,7 @@
   },
   {
    "file": "include/utests/baselib/UtfCrypto.h",
+   "guards": [],
    "label": "template",
    "line": 28,
    "module": "<shared>",
@@ -14885,6 +15142,7 @@
   },
   {
    "file": "include/utests/baselib/UtfCrypto.h",
+   "guards": [],
    "label": "typedef UtfCryptoT<> UtfCrypto;",
    "line": 228,
    "module": "<shared>",
@@ -14893,6 +15151,7 @@
   },
   {
    "file": "include/utests/baselib/UtfDirectoryFixture.h",
+   "guards": [],
    "label": "template",
    "line": 28,
    "module": "<shared>",
@@ -14901,6 +15160,7 @@
   },
   {
    "file": "include/utests/baselib/UtfDirectoryFixture.h",
+   "guards": [],
    "label": "typedef TestDirectoryT<> TestDirectory;",
    "line": 102,
    "module": "<shared>",
@@ -14909,6 +15169,7 @@
   },
   {
    "file": "include/utests/baselib/UtfPluginFixture.h",
+   "guards": [],
    "label": "/**",
    "line": 30,
    "module": "<shared>",
@@ -14917,6 +15178,7 @@
   },
   {
    "file": "include/utests/baselib/UtfPluginFixture.h",
+   "guards": [],
    "label": "#if defined( _WIN32 )",
    "line": 91,
    "module": "<shared>",
@@ -14925,6 +15187,9 @@
   },
   {
    "file": "include/utests/baselib/UtfPluginFixture.h",
+   "guards": [
+    "if defined( _WIN32 )"
+   ],
    "label": "#else",
    "line": 98,
    "module": "<shared>",
@@ -14933,6 +15198,9 @@
   },
   {
    "file": "include/utests/baselib/UtfPluginFixture.h",
+   "guards": [
+    "if defined( _WIN32 ) | else "
+   ],
    "label": "#endif",
    "line": 105,
    "module": "<shared>",
@@ -14941,6 +15209,7 @@
   },
   {
    "file": "include/utests/baselib/UtfPluginFixture.h",
+   "guards": [],
    "label": "typedef TestPluginT<> TestPlugin;",
    "line": 107,
    "module": "<shared>",
@@ -14949,6 +15218,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "enum class ParamForwardingReferenceType",
    "line": 43,
    "module": "utf_baselib",
@@ -14957,6 +15227,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "inline void paramForwardingConstIntTargetCall(",
    "line": 50,
    "module": "utf_baselib",
@@ -14965,6 +15236,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "inline void paramForwardingConstIntTargetCall(",
    "line": 65,
    "module": "utf_baselib",
@@ -14973,6 +15245,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "inline void paramForwardingConstIntTargetCall(",
    "line": 80,
    "module": "utf_baselib",
@@ -14981,6 +15254,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "template",
    "line": 95,
    "module": "utf_baselib",
@@ -14989,6 +15263,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "inline void paramForwardingIntRvalueRefCall(",
    "line": 107,
    "module": "utf_baselib",
@@ -14997,6 +15272,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "inline void paramForwardingIntTests()",
    "line": 115,
    "module": "utf_baselib",
@@ -15005,6 +15281,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "class ParamForwardingTestClass",
    "line": 132,
    "module": "utf_baselib",
@@ -15013,6 +15290,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "inline void paramForwardingConstClassTargetCall(",
    "line": 166,
    "module": "utf_baselib",
@@ -15021,6 +15299,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "inline void paramForwardingConstClassTargetCall(",
    "line": 181,
    "module": "utf_baselib",
@@ -15029,6 +15308,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "inline void paramForwardingConstClassTargetCall(",
    "line": 196,
    "module": "utf_baselib",
@@ -15037,6 +15317,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "template",
    "line": 211,
    "module": "utf_baselib",
@@ -15045,6 +15326,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "inline void paramForwardingIntRvalueRefCall(",
    "line": 223,
    "module": "utf_baselib",
@@ -15053,6 +15335,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "inline ParamForwardingTestClass paramForwardingGetClass()",
    "line": 231,
    "module": "utf_baselib",
@@ -15061,6 +15344,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "inline void paramForwardingClassTests()",
    "line": 236,
    "module": "utf_baselib",
@@ -15069,6 +15353,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "inline bool getTrue()  { return true; }",
    "line": 364,
    "module": "utf_baselib",
@@ -15077,6 +15362,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "class DestructorTest",
    "line": 367,
    "module": "utf_baselib",
@@ -15085,6 +15371,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "static DestructorTest   g_destructorTest;",
    "line": 392,
    "module": "utf_baselib",
@@ -15093,6 +15380,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "const bl::uuid_t& UuidReturnAsConstRef1() NOEXCEPT",
    "line": 1224,
    "module": "utf_baselib",
@@ -15101,6 +15389,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "const bl::uuid_t& UuidReturnAsConstRef2() NOEXCEPT",
    "line": 1229,
    "module": "utf_baselib",
@@ -15109,6 +15398,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "void loggingExpectLine(",
    "line": 1256,
    "module": "utf_baselib",
@@ -15117,6 +15407,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "void loggingValidateOutput(",
    "line": 1274,
    "module": "utf_baselib",
@@ -15125,6 +15416,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "void loggingLogAllLevels( SAA_in const int level = bl::Loggi",
    "line": 1305,
    "module": "utf_baselib",
@@ -15133,6 +15425,9 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [
+    "if ! defined( _WIN32 )"
+   ],
    "label": "std::string readWholeFile( SAA_in const bl::fs::path& path )",
    "line": 2073,
    "module": "utf_baselib",
@@ -15141,6 +15436,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "class ScalarTypeIniterTester",
    "line": 4557,
    "module": "utf_baselib",
@@ -15149,6 +15445,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "bl::fs::path pathNormalizeForOS( SAA_in std::string&& path )",
    "line": 4617,
    "module": "utf_baselib",
@@ -15157,6 +15454,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "std::string testFormatMessage(",
    "line": 6828,
    "module": "utf_baselib",
@@ -15165,6 +15463,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "void TestFileEncoding(",
    "line": 8826,
    "module": "utf_baselib",
@@ -15173,6 +15472,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "/*",
    "line": 9246,
    "module": "utf_baselib",
@@ -15181,6 +15481,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "std::string expectedUserDomainFromEnvironment()",
    "line": 9254,
    "module": "utf_baselib",
@@ -15189,6 +15490,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [],
    "label": "bool isLocalUserOnWindows()",
    "line": 9280,
    "module": "utf_baselib",
@@ -15197,6 +15499,9 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [
+    "if defined( _WIN32 )"
+   ],
    "label": "/*",
    "line": 9723,
    "module": "utf_baselib",
@@ -15205,6 +15510,9 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [
+    "if defined( _WIN32 )"
+   ],
    "label": "template",
    "line": 9728,
    "module": "utf_baselib",
@@ -15213,6 +15521,9 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault.h",
+   "guards": [
+    "if defined( _WIN32 )"
+   ],
    "label": "typedef std::basic_istringstream< char, std::char_traits< ch",
    "line": 9772,
    "module": "utf_baselib",
@@ -15221,6 +15532,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault10.h",
+   "guards": [],
    "label": "BL_DEFINE_ENUM_WITH_STRING_CONVERSIONS( UtfTestColor, \"UtfTe",
    "line": 102,
    "module": "utf_baselib",
@@ -15229,6 +15541,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault10.h",
+   "guards": [],
    "label": "BL_DEFINE_ENUM2_WITH_STRING_CONVERSIONS( UtfTestShape, \"UtfT",
    "line": 108,
    "module": "utf_baselib",
@@ -15237,6 +15550,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault3.h",
+   "guards": [],
    "label": "/**",
    "line": 34,
    "module": "utf_baselib",
@@ -15245,6 +15559,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault3.h",
+   "guards": [],
    "label": "class UtestErrorCategory : public bl::eh::error_category",
    "line": 44,
    "module": "utf_baselib",
@@ -15253,6 +15568,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault3.h",
+   "guards": [],
    "label": "static const UtestErrorCategory g_utestErrorCategory;",
    "line": 59,
    "module": "utf_baselib",
@@ -15261,6 +15577,9 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault4.h",
+   "guards": [
+    "if ! defined( _WIN32 )"
+   ],
    "label": "/*",
    "line": 537,
    "module": "utf_baselib",
@@ -15269,6 +15588,9 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault4.h",
+   "guards": [
+    "if ! defined( _WIN32 )"
+   ],
    "label": "bl::os::process_ref spawnProcessWithGrandChild( SAA_out ::pi",
    "line": 550,
    "module": "utf_baselib",
@@ -15277,6 +15599,9 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault4.h",
+   "guards": [
+    "if ! defined( _WIN32 )"
+   ],
    "label": "/*",
    "line": 590,
    "module": "utf_baselib",
@@ -15285,6 +15610,9 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault4.h",
+   "guards": [
+    "if ! defined( _WIN32 )"
+   ],
    "label": "bool waitForProcessToDisappear( SAA_in const ::pid_t pid )",
    "line": 594,
    "module": "utf_baselib",
@@ -15293,6 +15621,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault5.h",
+   "guards": [],
    "label": "#if ! defined( _WIN32 )",
    "line": 396,
    "module": "utf_baselib",
@@ -15301,6 +15630,9 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault5.h",
+   "guards": [
+    "if ! defined( _WIN32 )"
+   ],
    "label": "/*",
    "line": 398,
    "module": "utf_baselib",
@@ -15309,6 +15641,9 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault5.h",
+   "guards": [
+    "if ! defined( _WIN32 )"
+   ],
    "label": "::key_t namedMutexSemaphoreKey( SAA_in const std::string& na",
    "line": 403,
    "module": "utf_baselib",
@@ -15317,6 +15652,9 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault5.h",
+   "guards": [
+    "if ! defined( _WIN32 )"
+   ],
    "label": "void removeNamedMutexSemaphoreNothrow( SAA_in const std::str",
    "line": 412,
    "module": "utf_baselib",
@@ -15325,6 +15663,9 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault5.h",
+   "guards": [
+    "if ! defined( _WIN32 )"
+   ],
    "label": "void noopSignalHandler( SAA_in int signalId )",
    "line": 422,
    "module": "utf_baselib",
@@ -15333,6 +15674,9 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault5.h",
+   "guards": [
+    "if ! defined( _WIN32 )"
+   ],
    "label": "#endif // ! defined( _WIN32 )",
    "line": 427,
    "module": "utf_baselib",
@@ -15341,6 +15685,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault6.h",
+   "guards": [],
    "label": "/*",
    "line": 39,
    "module": "utf_baselib",
@@ -15349,6 +15694,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault6.h",
+   "guards": [],
    "label": "void noopLineLogger(",
    "line": 47,
    "module": "utf_baselib",
@@ -15357,6 +15703,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault6.h",
+   "guards": [],
    "label": "/*",
    "line": 60,
    "module": "utf_baselib",
@@ -15365,6 +15712,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault6.h",
+   "guards": [],
    "label": "bool waitForPredicate( SAA_in const bl::cpp::function< bool ",
    "line": 64,
    "module": "utf_baselib",
@@ -15373,6 +15721,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault6.h",
+   "guards": [],
    "label": "/*",
    "line": 79,
    "module": "utf_baselib",
@@ -15381,6 +15730,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault6.h",
+   "guards": [],
    "label": "bool matchGenericErrnoErrorInfo(",
    "line": 84,
    "module": "utf_baselib",
@@ -15389,6 +15739,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault8.h",
+   "guards": [],
    "label": "std::size_t countOccurrences(",
    "line": 152,
    "module": "utf_baselib",
@@ -15397,6 +15748,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault8.h",
+   "guards": [],
    "label": "std::size_t countDirectoryEntries( SAA_in const bl::fs::path",
    "line": 393,
    "module": "utf_baselib",
@@ -15405,6 +15757,9 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault9.h",
+   "guards": [
+    "if ! defined( _WIN32 )"
+   ],
    "label": "void checkSplitCommandLine(",
    "line": 50,
    "module": "utf_baselib",
@@ -15413,6 +15768,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault9.h",
+   "guards": [],
    "label": "/*",
    "line": 310,
    "module": "utf_baselib",
@@ -15421,6 +15777,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault9.h",
+   "guards": [],
    "label": "struct UtfThreadPoolRegistryTag",
    "line": 317,
    "module": "utf_baselib",
@@ -15429,6 +15786,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault9.h",
+   "guards": [],
    "label": "typedef bl::ThreadPoolDefaultT< UtfThreadPoolRegistryTag > T",
    "line": 321,
    "module": "utf_baselib",
@@ -15437,6 +15795,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault9.h",
+   "guards": [],
    "label": "/*",
    "line": 323,
    "module": "utf_baselib",
@@ -15445,6 +15804,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault9.h",
+   "guards": [],
    "label": "template",
    "line": 336,
    "module": "utf_baselib",
@@ -15453,6 +15813,7 @@
   },
   {
    "file": "utf_baselib/TestBaselibDefault9.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< TestThreadPoolT<> > TestThreadPo",
    "line": 412,
    "module": "utf_baselib",
@@ -15461,6 +15822,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "long g_liveCounted = 0L;",
    "line": 147,
    "module": "utf_baselib",
@@ -15469,6 +15831,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "template",
    "line": 149,
    "module": "utf_baselib",
@@ -15477,6 +15840,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< CountedT<> >                    ",
    "line": 200,
    "module": "utf_baselib",
@@ -15485,6 +15849,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "/*",
    "line": 305,
    "module": "utf_baselib",
@@ -15493,6 +15858,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "std::atomic< long > g_onZeroRefsCount( 0L );",
    "line": 311,
    "module": "utf_baselib",
@@ -15501,6 +15867,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "/*",
    "line": 721,
    "module": "utf_baselib",
@@ -15509,6 +15876,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "template",
    "line": 728,
    "module": "utf_baselib",
@@ -15517,6 +15885,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< TestResolverT<> > TestResolverIm",
    "line": 784,
    "module": "utf_baselib",
@@ -15525,6 +15894,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "template",
    "line": 921,
    "module": "utf_baselib",
@@ -15533,6 +15903,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "class FooDisposable : public bl::om::Disposable",
    "line": 1638,
    "module": "utf_baselib",
@@ -15541,6 +15912,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< FooDisposable > FooDisposableImp",
    "line": 1667,
    "module": "utf_baselib",
@@ -15549,6 +15921,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "/*",
    "line": 1669,
    "module": "utf_baselib",
@@ -15557,6 +15930,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "long g_fooSvcLive = 0L;",
    "line": 1681,
    "module": "utf_baselib",
@@ -15565,6 +15939,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "template",
    "line": 1683,
    "module": "utf_baselib",
@@ -15573,6 +15948,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< FooSvcT<> > FooSvcImpl;",
    "line": 1746,
    "module": "utf_baselib",
@@ -15581,6 +15957,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "long g_stLiveCounted = 0L;",
    "line": 2025,
    "module": "utf_baselib",
@@ -15589,6 +15966,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "template",
    "line": 2027,
    "module": "utf_baselib",
@@ -15597,6 +15975,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl<",
    "line": 2051,
    "module": "utf_baselib",
@@ -15605,6 +15984,7 @@
   },
   {
    "file": "utf_baselib/TestObjModel.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl<",
    "line": 2058,
    "module": "utf_baselib",
@@ -15613,6 +15993,7 @@
   },
   {
    "file": "utf_baselib/TestPublicHeaderInstantiation.cpp",
+   "guards": [],
    "label": "/**",
    "line": 72,
    "module": "utf_baselib",
@@ -15621,6 +16002,7 @@
   },
   {
    "file": "utf_baselib/TestPublicHeaderInstantiation.cpp",
+   "guards": [],
    "label": "class GlobalOptionsProbe : public bl::cmdline::CmdLineBase",
    "line": 79,
    "module": "utf_baselib",
@@ -15629,6 +16011,7 @@
   },
   {
    "file": "utf_baselib/TestPublicHeaderInstantiation.cpp",
+   "guards": [],
    "label": "/**",
    "line": 95,
    "module": "utf_baselib",
@@ -15637,6 +16020,7 @@
   },
   {
    "file": "utf_baselib/TestPublicHeaderInstantiation.cpp",
+   "guards": [],
    "label": "template",
    "line": 104,
    "module": "utf_baselib",
@@ -15645,6 +16029,7 @@
   },
   {
    "file": "utf_baselib/TestPublicHeaderInstantiation.cpp",
+   "guards": [],
    "label": "typedef CmdLineAppProbeT<> CmdLineAppProbe;",
    "line": 142,
    "module": "utf_baselib",
@@ -15653,6 +16038,7 @@
   },
   {
    "file": "utf_baselib/examples/objmodel/MyInterfaces.h",
+   "guards": [],
    "label": "/**",
    "line": 37,
    "module": "utf_baselib",
@@ -15661,6 +16047,7 @@
   },
   {
    "file": "utf_baselib/examples/objmodel/MyInterfaces.h",
+   "guards": [],
    "label": "/**",
    "line": 49,
    "module": "utf_baselib",
@@ -15669,6 +16056,7 @@
   },
   {
    "file": "utf_baselib/examples/objmodel/MyInterfaces.h",
+   "guards": [],
    "label": "/**",
    "line": 61,
    "module": "utf_baselib",
@@ -15677,6 +16065,7 @@
   },
   {
    "file": "utf_baselib/examples/objmodel/MyObjectImpl.h",
+   "guards": [],
    "label": "/**",
    "line": 31,
    "module": "utf_baselib",
@@ -15685,6 +16074,7 @@
   },
   {
    "file": "utf_baselib/examples/objmodel/MyObjectImpl.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< MyObjectImplT<> > MyObjectImpl;",
    "line": 81,
    "module": "utf_baselib",
@@ -15693,6 +16083,7 @@
   },
   {
    "file": "utf_baselib2/TestBoostAsioCompat.h",
+   "guards": [],
    "label": "namespace utest_asio_compat",
    "line": 42,
    "module": "utf_baselib2",
@@ -15701,6 +16092,7 @@
   },
   {
    "file": "utf_baselib2/TestUri.h",
+   "guards": [],
    "label": "namespace uri",
    "line": 909,
    "module": "utf_baselib2",
@@ -15709,6 +16101,7 @@
   },
   {
    "file": "utf_baselib_apps/TestBlTool.h",
+   "guards": [],
    "label": "/**",
    "line": 30,
    "module": "utf_baselib_apps",
@@ -15717,6 +16110,7 @@
   },
   {
    "file": "utf_baselib_apps/TestBlTool.h",
+   "guards": [],
    "label": "bl::cmdline::Result runBlTool( SAA_in const std::string& arg",
    "line": 39,
    "module": "utf_baselib_apps",
@@ -15725,6 +16119,7 @@
   },
   {
    "file": "utf_baselib_apps/TestBlTool.h",
+   "guards": [],
    "label": "/**",
    "line": 50,
    "module": "utf_baselib_apps",
@@ -15733,6 +16128,7 @@
   },
   {
    "file": "utf_baselib_apps/TestBlTool.h",
+   "guards": [],
    "label": "bl::cmdline::Result runBlToolArgs( SAA_in const std::vector<",
    "line": 59,
    "module": "utf_baselib_apps",
@@ -15741,6 +16137,7 @@
   },
   {
    "file": "utf_baselib_apps/TestBlTool.h",
+   "guards": [],
    "label": "/**",
    "line": 72,
    "module": "utf_baselib_apps",
@@ -15749,6 +16146,7 @@
   },
   {
    "file": "utf_baselib_apps/TestBlTool.h",
+   "guards": [],
    "label": "std::string readFileBytes( SAA_in const bl::fs::path& path )",
    "line": 79,
    "module": "utf_baselib_apps",
@@ -15757,6 +16155,7 @@
   },
   {
    "file": "utf_baselib_apps/TestBlToolProcessFiles.h",
+   "guards": [],
    "label": "/**",
    "line": 24,
    "module": "utf_baselib_apps",
@@ -15765,6 +16164,7 @@
   },
   {
    "file": "utf_baselib_apps/TestBlToolProcessFiles.h",
+   "guards": [],
    "label": "void writeAllBytes(",
    "line": 31,
    "module": "utf_baselib_apps",
@@ -15773,6 +16173,7 @@
   },
   {
    "file": "utf_baselib_apps/TestBlToolProcessFiles.h",
+   "guards": [],
    "label": "/**",
    "line": 44,
    "module": "utf_baselib_apps",
@@ -15781,6 +16182,7 @@
   },
   {
    "file": "utf_baselib_apps/TestBlToolProcessFiles.h",
+   "guards": [],
    "label": "std::string readAllBytes( SAA_in const bl::fs::path& path )",
    "line": 48,
    "module": "utf_baselib_apps",
@@ -15789,6 +16191,7 @@
   },
   {
    "file": "utf_baselib_apps2/TestMessagingApps.h",
+   "guards": [],
    "label": "/**",
    "line": 23,
    "module": "utf_baselib_apps2",
@@ -15797,6 +16200,7 @@
   },
   {
    "file": "utf_baselib_apps2/TestMessagingApps.h",
+   "guards": [],
    "label": "struct GatewayAppAccessor : public bl::rest::MessagingHttpGa",
    "line": 35,
    "module": "utf_baselib_apps2",
@@ -15805,6 +16209,7 @@
   },
   {
    "file": "utf_baselib_apps2/TestMessagingApps.h",
+   "guards": [],
    "label": "/*",
    "line": 40,
    "module": "utf_baselib_apps2",
@@ -15813,6 +16218,7 @@
   },
   {
    "file": "utf_baselib_apps2/TestMessagingApps.h",
+   "guards": [],
    "label": "const char* const g_targetPeerId = \"8e213524-8c75-4622-8273-",
    "line": 45,
    "module": "utf_baselib_apps2",
@@ -15821,6 +16227,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncCB.h",
+   "guards": [],
    "label": "typedef bl::AsyncExecutorWrapperCallbackImpl                ",
    "line": 28,
    "module": "utf_baselib_async",
@@ -15829,6 +16236,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncCB.h",
+   "guards": [],
    "label": "/**",
    "line": 31,
    "module": "utf_baselib_async",
@@ -15837,6 +16245,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncCB.h",
+   "guards": [],
    "label": "template",
    "line": 35,
    "module": "utf_baselib_async",
@@ -15845,6 +16254,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncCB.h",
+   "guards": [],
    "label": "void startTask()",
    "line": 142,
    "module": "utf_baselib_async",
@@ -15853,6 +16263,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncCB.h",
+   "guards": [],
    "label": "void createOperation()",
    "line": 160,
    "module": "utf_baselib_async",
@@ -15861,6 +16272,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncCB.h",
+   "guards": [],
    "label": "m_operation = m_wrapperImpl -> asyncExecutor() -> createOper",
    "line": 176,
    "module": "utf_baselib_async",
@@ -15869,6 +16281,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncCB.h",
+   "guards": [],
    "label": "BL_CHK(",
    "line": 180,
    "module": "utf_baselib_async",
@@ -15877,6 +16290,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncCB.h",
+   "guards": [],
    "label": "void onHandleCall(",
    "line": 188,
    "module": "utf_baselib_async",
@@ -15885,6 +16299,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncCB.h",
+   "guards": [],
    "label": "void onCall1( SAA_in const bl::AsyncOperation::Result& resul",
    "line": 237,
    "module": "utf_baselib_async",
@@ -15893,6 +16308,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncCB.h",
+   "guards": [],
    "label": "void onCall2( SAA_in const bl::AsyncOperation::Result& resul",
    "line": 242,
    "module": "utf_baselib_async",
@@ -15901,6 +16317,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncCB.h",
+   "guards": [],
    "label": "void onCall3( SAA_in const bl::AsyncOperation::Result& resul",
    "line": 247,
    "module": "utf_baselib_async",
@@ -15909,6 +16326,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncCB.h",
+   "guards": [],
    "label": "void onCall4( SAA_in const bl::AsyncOperation::Result& resul",
    "line": 252,
    "module": "utf_baselib_async",
@@ -15917,6 +16335,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncCB.h",
+   "guards": [],
    "label": "public:",
    "line": 274,
    "module": "utf_baselib_async",
@@ -15925,6 +16344,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncCB.h",
+   "guards": [],
    "label": "template",
    "line": 276,
    "module": "utf_baselib_async",
@@ -15933,6 +16353,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncCB.h",
+   "guards": [],
    "label": "template",
    "line": 297,
    "module": "utf_baselib_async",
@@ -15941,6 +16362,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncCB.h",
+   "guards": [],
    "label": "template",
    "line": 506,
    "module": "utf_baselib_async",
@@ -15949,6 +16371,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncCB.h",
+   "guards": [],
    "label": "/**",
    "line": 548,
    "module": "utf_baselib_async",
@@ -15957,6 +16380,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncCB.h",
+   "guards": [],
    "label": "template",
    "line": 552,
    "module": "utf_baselib_async",
@@ -15965,6 +16389,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncCB.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< AsyncTestTaskAsyncOnlyT<> > Asyn",
    "line": 584,
    "module": "utf_baselib_async",
@@ -15973,6 +16398,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncCB.h",
+   "guards": [],
    "label": "/**",
    "line": 586,
    "module": "utf_baselib_async",
@@ -15981,6 +16407,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncCB.h",
+   "guards": [],
    "label": "template",
    "line": 590,
    "module": "utf_baselib_async",
@@ -15989,6 +16416,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncCB.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< AsyncTestTaskAsyncFastStartT<> >",
    "line": 624,
    "module": "utf_baselib_async",
@@ -15997,6 +16425,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncV2.h",
+   "guards": [],
    "label": "typedef bl::AsyncDataChunkStorage                           ",
    "line": 27,
    "module": "utf_baselib_async",
@@ -16005,6 +16434,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncV2.h",
+   "guards": [],
    "label": "/**",
    "line": 30,
    "module": "utf_baselib_async",
@@ -16013,6 +16443,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncV2.h",
+   "guards": [],
    "label": "template",
    "line": 34,
    "module": "utf_baselib_async",
@@ -16021,6 +16452,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncV2.h",
+   "guards": [],
    "label": "/**",
    "line": 626,
    "module": "utf_baselib_async",
@@ -16029,6 +16461,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncV2.h",
+   "guards": [],
    "label": "template",
    "line": 630,
    "module": "utf_baselib_async",
@@ -16037,6 +16470,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncV2.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< AsyncTestTaskAsyncOnlyT<> > Asyn",
    "line": 660,
    "module": "utf_baselib_async",
@@ -16045,6 +16479,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncV2.h",
+   "guards": [],
    "label": "/**",
    "line": 662,
    "module": "utf_baselib_async",
@@ -16053,6 +16488,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncV2.h",
+   "guards": [],
    "label": "template",
    "line": 666,
    "module": "utf_baselib_async",
@@ -16061,6 +16497,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncV2.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< AsyncTestTaskAsyncFastStartT<> >",
    "line": 698,
    "module": "utf_baselib_async",
@@ -16069,6 +16506,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncV2.h",
+   "guards": [],
    "label": "/**",
    "line": 983,
    "module": "utf_baselib_async",
@@ -16077,6 +16515,7 @@
   },
   {
    "file": "utf_baselib_async/TestAsyncV2.h",
+   "guards": [],
    "label": "struct VerifierProbe : public bl::detail::AsyncExecutorImplT",
    "line": 997,
    "module": "utf_baselib_async",
@@ -16085,6 +16524,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer/TestBlobTransferFilesystem.h",
+   "guards": [],
    "label": "utest::PipelineFaultOptions createReauthenticationFaultOptio",
    "line": 108,
    "module": "utf_baselib_blobtransfer",
@@ -16093,6 +16533,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer/TestBlobTransferFilesystem.h",
+   "guards": [],
    "label": "void executeFaultInjectionTest( SAA_in const utest::Pipeline",
    "line": 122,
    "module": "utf_baselib_blobtransfer",
@@ -16101,6 +16542,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "typedef bl::transfer::FilesUnpackagerUnit                   ",
    "line": 43,
    "module": "utf_baselib_blobtransfer2",
@@ -16109,6 +16551,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "bl::om::ObjPtr< bl::data::FilesystemMetadataRO > createSymli",
    "line": 45,
    "module": "utf_baselib_blobtransfer2",
@@ -16117,6 +16560,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "void chkSymlinkTargetPolicy(",
    "line": 79,
    "module": "utf_baselib_blobtransfer2",
@@ -16125,6 +16569,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "typedef utest::TestBlobTransferUtils::unpackager_unit_t     ",
    "line": 206,
    "module": "utf_baselib_blobtransfer2",
@@ -16133,6 +16578,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "/*",
    "line": 208,
    "module": "utf_baselib_blobtransfer2",
@@ -16141,6 +16587,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "enum ChunkIntegrityFault",
    "line": 212,
    "module": "utf_baselib_blobtransfer2",
@@ -16149,6 +16596,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "/*",
    "line": 220,
    "module": "utf_baselib_blobtransfer2",
@@ -16157,6 +16605,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "char patternByte( SAA_in const std::uint64_t offset )",
    "line": 225,
    "module": "utf_baselib_blobtransfer2",
@@ -16165,6 +16614,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "bl::om::ObjPtr< bl::data::DataBlock > createChunkData(",
    "line": 230,
    "module": "utf_baselib_blobtransfer2",
@@ -16173,6 +16623,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "std::uint32_t computeChunkChecksum( SAA_in const bl::om::Obj",
    "line": 251,
    "module": "utf_baselib_blobtransfer2",
@@ -16181,6 +16632,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "/**",
    "line": 260,
    "module": "utf_baselib_blobtransfer2",
@@ -16189,6 +16641,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "void chkChunkIntegrity(",
    "line": 268,
    "module": "utf_baselib_blobtransfer2",
@@ -16197,6 +16650,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "void chkUnpackagerDirectoryTimestamps( SAA_in const bool fil",
    "line": 531,
    "module": "utf_baselib_blobtransfer2",
@@ -16205,6 +16659,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "/**",
    "line": 757,
    "module": "utf_baselib_blobtransfer2",
@@ -16213,6 +16668,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "template",
    "line": 767,
    "module": "utf_baselib_blobtransfer2",
@@ -16221,6 +16677,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< CancelOnExecuteBlockReaderT<> > ",
    "line": 807,
    "module": "utf_baselib_blobtransfer2",
@@ -16229,6 +16686,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "/*",
    "line": 980,
    "module": "utf_baselib_blobtransfer2",
@@ -16237,6 +16695,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "/**",
    "line": 997,
    "module": "utf_baselib_blobtransfer2",
@@ -16245,6 +16704,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "const std::size_t g_openFileChunkSize = 64U * 1024U;",
    "line": 1003,
    "module": "utf_baselib_blobtransfer2",
@@ -16253,6 +16713,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "/**",
    "line": 1005,
    "module": "utf_baselib_blobtransfer2",
@@ -16261,6 +16722,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "bl::om::ObjPtr< bl::data::FilesystemMetadataWO > buildThreeC",
    "line": 1009,
    "module": "utf_baselib_blobtransfer2",
@@ -16269,6 +16731,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "/**",
    "line": 1066,
    "module": "utf_baselib_blobtransfer2",
@@ -16277,6 +16740,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "bl::om::ObjPtr< bl::reactive::Observer > deliverFirstChunkAn",
    "line": 1075,
    "module": "utf_baselib_blobtransfer2",
@@ -16285,6 +16749,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "/**",
    "line": 1433,
    "module": "utf_baselib_blobtransfer2",
@@ -16293,6 +16758,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "template",
    "line": 1453,
    "module": "utf_baselib_blobtransfer2",
@@ -16301,6 +16767,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< RemappedChunkMetadataT<> > Remap",
    "line": 1534,
    "module": "utf_baselib_blobtransfer2",
@@ -16309,6 +16776,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "/**",
    "line": 1536,
    "module": "utf_baselib_blobtransfer2",
@@ -16317,6 +16785,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "struct LateChunkFile",
    "line": 1540,
    "module": "utf_baselib_blobtransfer2",
@@ -16325,6 +16794,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "/**",
    "line": 1546,
    "module": "utf_baselib_blobtransfer2",
@@ -16333,6 +16803,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "void buildLateChunkPackage(",
    "line": 1554,
    "module": "utf_baselib_blobtransfer2",
@@ -16341,6 +16812,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "/**",
    "line": 1630,
    "module": "utf_baselib_blobtransfer2",
@@ -16349,6 +16821,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "void waitForUnpackagerStaging( SAA_in const bl::fs::path& st",
    "line": 1636,
    "module": "utf_baselib_blobtransfer2",
@@ -16357,6 +16830,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "/**",
    "line": 1657,
    "module": "utf_baselib_blobtransfer2",
@@ -16365,6 +16839,7 @@
   },
   {
    "file": "utf_baselib_blobtransfer2/TestBlobTransferFilesystem2.h",
+   "guards": [],
    "label": "void feedChunk(",
    "line": 1662,
    "module": "utf_baselib_blobtransfer2",
@@ -16373,6 +16848,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLine.h",
+   "guards": [],
    "label": "/**",
    "line": 33,
    "module": "utf_baselib_cmdline",
@@ -16381,6 +16857,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLine.h",
+   "guards": [],
    "label": "template",
    "line": 37,
    "module": "utf_baselib_cmdline",
@@ -16389,6 +16866,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLine.h",
+   "guards": [],
    "label": "/**",
    "line": 73,
    "module": "utf_baselib_cmdline",
@@ -16397,6 +16875,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLine.h",
+   "guards": [],
    "label": "std::string any2string( SAA_in const bl::cpp::any& value )",
    "line": 79,
    "module": "utf_baselib_cmdline",
@@ -16405,6 +16884,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLine.h",
+   "guards": [],
    "label": "void dumpVariablesMap( const bl::po::variables_map& vm )",
    "line": 195,
    "module": "utf_baselib_cmdline",
@@ -16413,6 +16893,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLine.h",
+   "guards": [],
    "label": "class CmdLineTest : public bl::cmdline::CmdLineBase",
    "line": 205,
    "module": "utf_baselib_cmdline",
@@ -16421,6 +16902,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLine.h",
+   "guards": [],
    "label": "class GlobalOptions",
    "line": 642,
    "module": "utf_baselib_cmdline",
@@ -16429,6 +16911,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLine.h",
+   "guards": [],
    "label": "class CommandRun : public bl::cmdline::CommandBase",
    "line": 659,
    "module": "utf_baselib_cmdline",
@@ -16437,6 +16920,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLine.h",
+   "guards": [],
    "label": "class CommandMail : public bl::cmdline::CommandBase",
    "line": 700,
    "module": "utf_baselib_cmdline",
@@ -16445,6 +16929,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLine.h",
+   "guards": [],
    "label": "class CommandCreateObject : public bl::cmdline::CommandBase",
    "line": 740,
    "module": "utf_baselib_cmdline",
@@ -16453,6 +16938,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLine.h",
+   "guards": [],
    "label": "class CommandCreateUser : public bl::cmdline::CommandBase",
    "line": 776,
    "module": "utf_baselib_cmdline",
@@ -16461,6 +16947,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLine.h",
+   "guards": [],
    "label": "class CommandCreate : public bl::cmdline::CommandBase",
    "line": 812,
    "module": "utf_baselib_cmdline",
@@ -16469,6 +16956,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLine.h",
+   "guards": [],
    "label": "class CmdLineModeTest : public bl::cmdline::CmdLineBase, pub",
    "line": 843,
    "module": "utf_baselib_cmdline",
@@ -16477,6 +16965,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLine.h",
+   "guards": [],
    "label": "/**",
    "line": 1379,
    "module": "utf_baselib_cmdline",
@@ -16485,6 +16974,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLine.h",
+   "guards": [],
    "label": "std::string writeListFile(",
    "line": 1385,
    "module": "utf_baselib_cmdline",
@@ -16493,6 +16983,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLine.h",
+   "guards": [],
    "label": "/**",
    "line": 1739,
    "module": "utf_baselib_cmdline",
@@ -16501,6 +16992,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLine.h",
+   "guards": [],
    "label": "class NoDryRunCommand : public bl::cmdline::CommandBase",
    "line": 1749,
    "module": "utf_baselib_cmdline",
@@ -16509,6 +17001,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLine.h",
+   "guards": [],
    "label": "class PlainCommand : public bl::cmdline::CommandBase",
    "line": 1768,
    "module": "utf_baselib_cmdline",
@@ -16517,6 +17010,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLine.h",
+   "guards": [],
    "label": "class DryRunRoot : public bl::cmdline::CmdLineBase",
    "line": 1782,
    "module": "utf_baselib_cmdline",
@@ -16525,6 +17019,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLine.h",
+   "guards": [],
    "label": "/**",
    "line": 1800,
    "module": "utf_baselib_cmdline",
@@ -16533,6 +17028,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLine.h",
+   "guards": [],
    "label": "class ThrowingDryRunRoot : public DryRunRoot",
    "line": 1806,
    "module": "utf_baselib_cmdline",
@@ -16541,6 +17037,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLineAppBase.h",
+   "guards": [],
    "label": "/**",
    "line": 29,
    "module": "utf_baselib_cmdline",
@@ -16549,6 +17046,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLineAppBase.h",
+   "guards": [],
    "label": "class CmdLineAppExpectedErrorsScope",
    "line": 39,
    "module": "utf_baselib_cmdline",
@@ -16557,6 +17055,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLineAppBase.h",
+   "guards": [],
    "label": "/**",
    "line": 65,
    "module": "utf_baselib_cmdline",
@@ -16565,6 +17064,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLineAppBase.h",
+   "guards": [],
    "label": "template",
    "line": 74,
    "module": "utf_baselib_cmdline",
@@ -16573,6 +17073,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLineAppBase.h",
+   "guards": [],
    "label": "typedef TestCmdLineAppT<> TestCmdLineApp;",
    "line": 142,
    "module": "utf_baselib_cmdline",
@@ -16581,6 +17082,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLineAppBase.h",
+   "guards": [],
    "label": "/**",
    "line": 144,
    "module": "utf_baselib_cmdline",
@@ -16589,6 +17091,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLineAppBase.h",
+   "guards": [],
    "label": "class TestAuthCmdLine : public bl::cmdline::CmdLineBase",
    "line": 153,
    "module": "utf_baselib_cmdline",
@@ -16597,6 +17100,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLineEhUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 37,
    "module": "utf_baselib_cmdline",
@@ -16605,6 +17109,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLineEhUtils.h",
+   "guards": [],
    "label": "class EhUtilsExpectedErrorsScope",
    "line": 46,
    "module": "utf_baselib_cmdline",
@@ -16613,6 +17118,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLineEhUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 72,
    "module": "utf_baselib_cmdline",
@@ -16621,6 +17127,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLineEhUtils.h",
+   "guards": [],
    "label": "inline std::vector< bl::fs::path > ehUtilsListRegularFiles( ",
    "line": 76,
    "module": "utf_baselib_cmdline",
@@ -16629,6 +17136,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLineEhUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 91,
    "module": "utf_baselib_cmdline",
@@ -16637,6 +17145,7 @@
   },
   {
    "file": "utf_baselib_cmdline/TestCmdLineEhUtils.h",
+   "guards": [],
    "label": "inline void ehUtilsRestoreEnvironmentVariable(",
    "line": 95,
    "module": "utf_baselib_cmdline",
@@ -16645,6 +17154,7 @@
   },
   {
    "file": "utf_baselib_data/TestDataChunkStorageFilesystem.h",
+   "guards": [],
    "label": "template",
    "line": 28,
    "module": "utf_baselib_data",
@@ -16653,6 +17163,7 @@
   },
   {
    "file": "utf_baselib_data/TestDataChunkStorageFilesystem.h",
+   "guards": [],
    "label": "typedef TestDataChunkStorageFilesystemLocalHelperT<> TestDat",
    "line": 593,
    "module": "utf_baselib_data",
@@ -16661,6 +17172,7 @@
   },
   {
    "file": "utf_baselib_data/TestDataModelDefault.h",
+   "guards": [],
    "label": "namespace dm",
    "line": 26,
    "module": "utf_baselib_data",
@@ -16669,6 +17181,7 @@
   },
   {
    "file": "utf_baselib_data/TestJsonAbstraction.h",
+   "guards": [],
    "label": "namespace json",
    "line": 30,
    "module": "utf_baselib_data",
@@ -16677,6 +17190,7 @@
   },
   {
    "file": "utf_baselib_data/TestJsonAbstraction.h",
+   "guards": [],
    "label": "/*",
    "line": 486,
    "module": "utf_baselib_data",
@@ -16685,6 +17199,7 @@
   },
   {
    "file": "utf_baselib_data/TestJsonPerformance.h",
+   "guards": [],
    "label": "namespace json_perf",
    "line": 25,
    "module": "utf_baselib_data",
@@ -16693,6 +17208,7 @@
   },
   {
    "file": "utf_baselib_data/TestJsonPerformance.h",
+   "guards": [],
    "label": "namespace dm_perf",
    "line": 612,
    "module": "utf_baselib_data",
@@ -16701,6 +17217,7 @@
   },
   {
    "file": "utf_baselib_data/TestServerErrorHelpers.h",
+   "guards": [],
    "label": "/*",
    "line": 25,
    "module": "utf_baselib_data",
@@ -16709,6 +17226,7 @@
   },
   {
    "file": "utf_baselib_data/TestServerErrorHelpers.h",
+   "guards": [],
    "label": "template",
    "line": 34,
    "module": "utf_baselib_data",
@@ -16717,6 +17235,7 @@
   },
   {
    "file": "utf_baselib_h2client/TestClientConnectionTaskBase.h",
+   "guards": [],
    "label": "namespace clientconnect",
    "line": 73,
    "module": "utf_baselib_h2client",
@@ -16725,6 +17244,7 @@
   },
   {
    "file": "utf_baselib_h2client/TestTcpSslStrandedStreams.h",
+   "guards": [],
    "label": "namespace strandedstreams",
    "line": 51,
    "module": "utf_baselib_h2client",
@@ -16733,6 +17253,7 @@
   },
   {
    "file": "utf_baselib_h2client/TestTcpStrandedStreams.h",
+   "guards": [],
    "label": "namespace strandedstreams",
    "line": 73,
    "module": "utf_baselib_h2client",
@@ -16741,6 +17262,7 @@
   },
   {
    "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
+   "guards": [],
    "label": "namespace h2driver",
    "line": 45,
    "module": "utf_baselib_h2client2",
@@ -16749,6 +17271,7 @@
   },
   {
    "file": "utf_baselib_h2client3/TestHttp2ConnectionTaskTls.h",
+   "guards": [],
    "label": "namespace h2driver",
    "line": 50,
    "module": "utf_baselib_h2client3",
@@ -16757,6 +17280,7 @@
   },
   {
    "file": "utf_baselib_h2client4/TestConnectionPool.h",
+   "guards": [],
    "label": "namespace connpool",
    "line": 72,
    "module": "utf_baselib_h2client4",
@@ -16765,6 +17289,7 @@
   },
   {
    "file": "utf_baselib_h2client5/TestConnectionPoolConcurrency.h",
+   "guards": [],
    "label": "namespace poolconc",
    "line": 106,
    "module": "utf_baselib_h2client5",
@@ -16773,6 +17298,7 @@
   },
   {
    "file": "utf_baselib_h2client6/TestHttp2DriverWriteBarrier.h",
+   "guards": [],
    "label": "namespace h2driver",
    "line": 75,
    "module": "utf_baselib_h2client6",
@@ -16781,6 +17307,9 @@
   },
   {
    "file": "utf_baselib_h2client6/TestHttp2DriverWritePeerClose.h",
+   "guards": [
+    "if ! defined( _WIN32 )"
+   ],
    "label": "namespace h2driver",
    "line": 83,
    "module": "utf_baselib_h2client6",
@@ -16789,6 +17318,7 @@
   },
   {
    "file": "utf_baselib_h2client7/TestHttp2DriverAccounting.h",
+   "guards": [],
    "label": "namespace h2accounting",
    "line": 60,
    "module": "utf_baselib_h2client7",
@@ -16797,6 +17327,7 @@
   },
   {
    "file": "utf_baselib_h2core/TestFlowControl.h",
+   "guards": [],
    "label": "namespace flowcontrol",
    "line": 46,
    "module": "utf_baselib_h2core",
@@ -16805,6 +17336,7 @@
   },
   {
    "file": "utf_baselib_h2core/TestFrameCodec.h",
+   "guards": [],
    "label": "namespace framecodec",
    "line": 51,
    "module": "utf_baselib_h2core",
@@ -16813,6 +17345,7 @@
   },
   {
    "file": "utf_baselib_h2core/TestHpack.h",
+   "guards": [],
    "label": "namespace hpack",
    "line": 66,
    "module": "utf_baselib_h2core",
@@ -16821,6 +17354,7 @@
   },
   {
    "file": "utf_baselib_h2core/TestHttp2ErrorInfo.h",
+   "guards": [],
    "label": "namespace http2errorinfo",
    "line": 44,
    "module": "utf_baselib_h2core",
@@ -16829,6 +17363,7 @@
   },
   {
    "file": "utf_baselib_h2core/TestHttp2Globals.h",
+   "guards": [],
    "label": "namespace http2globals",
    "line": 46,
    "module": "utf_baselib_h2core",
@@ -16837,6 +17372,7 @@
   },
   {
    "file": "utf_baselib_h2core/TestHttp2TestPeer.h",
+   "guards": [],
    "label": "namespace h2peertest",
    "line": 59,
    "module": "utf_baselib_h2core",
@@ -16845,6 +17381,7 @@
   },
   {
    "file": "utf_baselib_h2core/TestSession.h",
+   "guards": [],
    "label": "namespace session",
    "line": 52,
    "module": "utf_baselib_h2core",
@@ -16853,6 +17390,7 @@
   },
   {
    "file": "utf_baselib_h2core/TestStreamStates.h",
+   "guards": [],
    "label": "namespace streamstates",
    "line": 48,
    "module": "utf_baselib_h2core",
@@ -16861,6 +17399,7 @@
   },
   {
    "file": "utf_baselib_h2profiles/TestHttpClientProfiles.h",
+   "guards": [],
    "label": "/**",
    "line": 55,
    "module": "utf_baselib_h2profiles",
@@ -16869,6 +17408,7 @@
   },
   {
    "file": "utf_baselib_h2profiles/TestHttpClientProfiles.h",
+   "guards": [],
    "label": "const char* g_browserProfileJson =",
    "line": 62,
    "module": "utf_baselib_h2profiles",
@@ -16877,6 +17417,7 @@
   },
   {
    "file": "utf_baselib_h2profiles/TestHttpClientProfiles.h",
+   "guards": [],
    "label": "/**",
    "line": 148,
    "module": "utf_baselib_h2profiles",
@@ -16885,6 +17426,7 @@
   },
   {
    "file": "utf_baselib_h2profiles/TestHttpClientProfiles.h",
+   "guards": [],
    "label": "template",
    "line": 156,
    "module": "utf_baselib_h2profiles",
@@ -16893,6 +17435,7 @@
   },
   {
    "file": "utf_baselib_h2profiles/TestTlsClientContext.h",
+   "guards": [],
    "label": "namespace tlsclientctx",
    "line": 47,
    "module": "utf_baselib_h2profiles",
@@ -16901,6 +17444,7 @@
   },
   {
    "file": "utf_baselib_h2profiles/TestTlsClientHello.h",
+   "guards": [],
    "label": "namespace tlsclienthello",
    "line": 58,
    "module": "utf_baselib_h2profiles",
@@ -16909,6 +17453,7 @@
   },
   {
    "file": "utf_baselib_http/TestClientHttpTasks.h",
+   "guards": [],
    "label": "/**",
    "line": 21,
    "module": "utf_baselib_http",
@@ -16917,6 +17462,7 @@
   },
   {
    "file": "utf_baselib_http/TestClientHttpTasks.h",
+   "guards": [],
    "label": "class RawHttpResponder",
    "line": 31,
    "module": "utf_baselib_http",
@@ -16925,6 +17471,7 @@
   },
   {
    "file": "utf_baselib_http/TestClientHttpTasks.h",
+   "guards": [],
    "label": "/**",
    "line": 251,
    "module": "utf_baselib_http",
@@ -16933,6 +17480,7 @@
   },
   {
    "file": "utf_baselib_http/TestClientHttpTasks.h",
+   "guards": [],
    "label": "template",
    "line": 260,
    "module": "utf_baselib_http",
@@ -16941,6 +17489,7 @@
   },
   {
    "file": "utf_baselib_http/TestClientHttpTasks.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl",
    "line": 297,
    "module": "utf_baselib_http",
@@ -16949,6 +17498,7 @@
   },
   {
    "file": "utf_baselib_http/TestHttpServer.h",
+   "guards": [],
    "label": "/**",
    "line": 1812,
    "module": "utf_baselib_http",
@@ -16957,6 +17507,7 @@
   },
   {
    "file": "utf_baselib_http/TestHttpServer.h",
+   "guards": [],
    "label": "class RawTestConnection",
    "line": 1816,
    "module": "utf_baselib_http",
@@ -16965,6 +17516,7 @@
   },
   {
    "file": "utf_baselib_http/TestHttpServer.h",
+   "guards": [],
    "label": "/**",
    "line": 2016,
    "module": "utf_baselib_http",
@@ -16973,6 +17525,7 @@
   },
   {
    "file": "utf_baselib_http/TestHttpServer.h",
+   "guards": [],
    "label": "template",
    "line": 2023,
    "module": "utf_baselib_http",
@@ -16981,6 +17534,7 @@
   },
   {
    "file": "utf_baselib_http/TestHttpServer.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< TimeoutHttpSslServerT<> > Timeou",
    "line": 2071,
    "module": "utf_baselib_http",
@@ -16989,6 +17543,7 @@
   },
   {
    "file": "utf_baselib_http/TestHttpServer.h",
+   "guards": [],
    "label": "/**",
    "line": 2073,
    "module": "utf_baselib_http",
@@ -16997,6 +17552,7 @@
   },
   {
    "file": "utf_baselib_http/TestHttpServer.h",
+   "guards": [],
    "label": "template",
    "line": 2081,
    "module": "utf_baselib_http",
@@ -17005,6 +17561,7 @@
   },
   {
    "file": "utf_baselib_http/TestHttpServer.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl",
    "line": 2161,
    "module": "utf_baselib_http",
@@ -17013,6 +17570,7 @@
   },
   {
    "file": "utf_baselib_http/TestHttpServer.h",
+   "guards": [],
    "label": "/**",
    "line": 2171,
    "module": "utf_baselib_http",
@@ -17021,6 +17579,7 @@
   },
   {
    "file": "utf_baselib_http/TestHttpServer.h",
+   "guards": [],
    "label": "template",
    "line": 2175,
    "module": "utf_baselib_http",
@@ -17029,6 +17588,7 @@
   },
   {
    "file": "utf_baselib_http/TestHttpServer.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl",
    "line": 2221,
    "module": "utf_baselib_http",
@@ -17037,6 +17597,7 @@
   },
   {
    "file": "utf_baselib_http/TestHttpServer.h",
+   "guards": [],
    "label": "/**",
    "line": 2231,
    "module": "utf_baselib_http",
@@ -17045,6 +17606,7 @@
   },
   {
    "file": "utf_baselib_http/TestHttpServer.h",
+   "guards": [],
    "label": "class SmoothPolicyProbe : public bl::tasks::TcpServerPolicyS",
    "line": 2240,
    "module": "utf_baselib_http",
@@ -17053,6 +17615,7 @@
   },
   {
    "file": "utf_baselib_http/TestTlsHandshakeVerification.h",
+   "guards": [],
    "label": "namespace tlshandshake",
    "line": 49,
    "module": "utf_baselib_http",
@@ -17061,6 +17624,7 @@
   },
   {
    "file": "utf_baselib_http2/TestAsioSslStreamWrapper.h",
+   "guards": [],
    "label": "namespace sslstreamwrapper",
    "line": 49,
    "module": "utf_baselib_http2",
@@ -17069,6 +17633,7 @@
   },
   {
    "file": "utf_baselib_http2/TestPeerCloseErrorCodes.h",
+   "guards": [],
    "label": "namespace peerclose",
    "line": 58,
    "module": "utf_baselib_http2",
@@ -17077,6 +17642,7 @@
   },
   {
    "file": "utf_baselib_http2/TestTcpPreHandshakeStageTls.h",
+   "guards": [],
    "label": "namespace prehandshake",
    "line": 59,
    "module": "utf_baselib_http2",
@@ -17085,6 +17651,7 @@
   },
   {
    "file": "utf_baselib_http2/TestTlsHandshakeRetryClassifier.h",
+   "guards": [],
    "label": "namespace tlsretry",
    "line": 50,
    "module": "utf_baselib_http2",
@@ -17093,6 +17660,7 @@
   },
   {
    "file": "utf_baselib_http2/TestTlsPeerVerification.h",
+   "guards": [],
    "label": "namespace tlspeer",
    "line": 50,
    "module": "utf_baselib_http2",
@@ -17101,6 +17669,9 @@
   },
   {
    "file": "utf_baselib_http2/TestTlsPeerVerification.h",
+   "guards": [
+    "if OPENSSL_VERSION_NUMBER >= 0x10100000L"
+   ],
    "label": "namespace tlspeer",
    "line": 249,
    "module": "utf_baselib_http2",
@@ -17109,6 +17680,7 @@
   },
   {
    "file": "utf_baselib_http2/TestTlsProtocolPolicy.h",
+   "guards": [],
    "label": "namespace tlspolicy",
    "line": 43,
    "module": "utf_baselib_http2",
@@ -17117,6 +17689,7 @@
   },
   {
    "file": "utf_baselib_httpclient/TestClientContracts.h",
+   "guards": [],
    "label": "namespace clientcontracts",
    "line": 53,
    "module": "utf_baselib_httpclient",
@@ -17125,6 +17698,7 @@
   },
   {
    "file": "utf_baselib_httpclient/TestContentDecoder.h",
+   "guards": [],
    "label": "namespace contentdecoder",
    "line": 48,
    "module": "utf_baselib_httpclient",
@@ -17133,6 +17707,7 @@
   },
   {
    "file": "utf_baselib_httpclient/TestCookieJar.h",
+   "guards": [],
    "label": "namespace cookiejar",
    "line": 44,
    "module": "utf_baselib_httpclient",
@@ -17141,6 +17716,7 @@
   },
   {
    "file": "utf_baselib_httpclient/TestHttp1Codec.h",
+   "guards": [],
    "label": "namespace http1codec",
    "line": 46,
    "module": "utf_baselib_httpclient",
@@ -17149,6 +17725,7 @@
   },
   {
    "file": "utf_baselib_httpclient/TestHttpClientRequestTask.h",
+   "guards": [],
    "label": "namespace requesttask",
    "line": 71,
    "module": "utf_baselib_httpclient",
@@ -17157,6 +17734,7 @@
   },
   {
    "file": "utf_baselib_httpclient/TestRedirectPolicy.h",
+   "guards": [],
    "label": "namespace redirectpolicy",
    "line": 44,
    "module": "utf_baselib_httpclient",
@@ -17165,6 +17743,7 @@
   },
   {
    "file": "utf_baselib_httpclient2/TestTcpTunnelStage.h",
+   "guards": [],
    "label": "namespace tunnel",
    "line": 56,
    "module": "utf_baselib_httpclient2",
@@ -17173,6 +17752,7 @@
   },
   {
    "file": "utf_baselib_httpclient4/TestClientSession.h",
+   "guards": [],
    "label": "namespace session",
    "line": 46,
    "module": "utf_baselib_httpclient4",
@@ -17181,6 +17761,7 @@
   },
   {
    "file": "utf_baselib_httpclient5/TestClientSessionTls.h",
+   "guards": [],
    "label": "namespace sessiontls",
    "line": 43,
    "module": "utf_baselib_httpclient5",
@@ -17189,6 +17770,7 @@
   },
   {
    "file": "utf_baselib_httpclient5/TestClientSessionTlsHttp1.h",
+   "guards": [],
    "label": "namespace sessiontlsh1",
    "line": 100,
    "module": "utf_baselib_httpclient5",
@@ -17197,6 +17779,7 @@
   },
   {
    "file": "utf_baselib_httpclient5/TestClientSessionTlsHttp1.h",
+   "guards": [],
    "label": "BLOCKED_BODY_SIZE                   = 8U * 1024U * 1024U,",
    "line": 145,
    "module": "utf_baselib_httpclient5",
@@ -17205,6 +17788,7 @@
   },
   {
    "file": "utf_baselib_httpclient5/TestClientSessionTlsHttp1.h",
+   "guards": [],
    "label": "/**",
    "line": 147,
    "module": "utf_baselib_httpclient5",
@@ -17213,6 +17797,7 @@
   },
   {
    "file": "utf_baselib_httpclient5/TestClientSessionTlsHttp1.h",
+   "guards": [],
    "label": "UNAIDED_END_IN_MILLISECONDS         = 5000U,",
    "line": 155,
    "module": "utf_baselib_httpclient5",
@@ -17221,6 +17806,7 @@
   },
   {
    "file": "utf_baselib_httpclient5/TestClientSessionTlsHttp1.h",
+   "guards": [],
    "label": "/**",
    "line": 158,
    "module": "utf_baselib_httpclient5",
@@ -17229,6 +17815,7 @@
   },
   {
    "file": "utf_baselib_httpclient5/TestClientSessionTlsHttp1.h",
+   "guards": [],
    "label": "inline void chkOrFail(",
    "line": 163,
    "module": "utf_baselib_httpclient5",
@@ -17237,6 +17824,7 @@
   },
   {
    "file": "utf_baselib_httpclient5/TestClientSessionTlsHttp1.h",
+   "guards": [],
    "label": "/**",
    "line": 174,
    "module": "utf_baselib_httpclient5",
@@ -17245,6 +17833,7 @@
   },
   {
    "file": "utf_baselib_httpclient5/TestClientSessionTlsHttp1.h",
+   "guards": [],
    "label": "class Http1TlsPeer",
    "line": 186,
    "module": "utf_baselib_httpclient5",
@@ -17253,6 +17842,7 @@
   },
   {
    "file": "utf_baselib_httpclient5/TestClientSessionTlsHttp1.h",
+   "guards": [],
    "label": "/***********************************************************",
    "line": 573,
    "module": "utf_baselib_httpclient5",
@@ -17261,6 +17851,7 @@
   },
   {
    "file": "utf_baselib_httpclient5/TestClientSessionTlsHttp1.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl",
    "line": 582,
    "module": "utf_baselib_httpclient5",
@@ -17269,6 +17860,7 @@
   },
   {
    "file": "utf_baselib_httpclient5/TestClientSessionTlsHttp1.h",
+   "guards": [],
    "label": "typedef bl::tasks::Http1ConnectionTaskImpl< sessiontls::tls_",
    "line": 588,
    "module": "utf_baselib_httpclient5",
@@ -17277,6 +17869,7 @@
   },
   {
    "file": "utf_baselib_httpclient5/TestClientSessionTlsHttp1.h",
+   "guards": [],
    "label": "inline auto makeHttp1TlsFactory(",
    "line": 590,
    "module": "utf_baselib_httpclient5",
@@ -17285,6 +17878,7 @@
   },
   {
    "file": "utf_baselib_httpclient5/TestClientSessionTlsHttp1.h",
+   "guards": [],
    "label": "inline auto establishTlsDriver(",
    "line": 633,
    "module": "utf_baselib_httpclient5",
@@ -17293,6 +17887,7 @@
   },
   {
    "file": "utf_baselib_httpclient5/TestClientSessionTlsHttp1.h",
+   "guards": [],
    "label": "/**",
    "line": 673,
    "module": "utf_baselib_httpclient5",
@@ -17301,6 +17896,7 @@
   },
   {
    "file": "utf_baselib_httpclient5/TestClientSessionTlsHttp1.h",
+   "guards": [],
    "label": "inline bool waitForTaskEndWithin(",
    "line": 683,
    "module": "utf_baselib_httpclient5",
@@ -17309,6 +17905,7 @@
   },
   {
    "file": "utf_baselib_httpclient5/TestClientSessionTlsHttp1.h",
+   "guards": [],
    "label": "} // sessiontlsh1",
    "line": 714,
    "module": "utf_baselib_httpclient5",
@@ -17317,6 +17914,7 @@
   },
   {
    "file": "utf_baselib_httpclient5/TestHttp1DriverTlsCancelClose.h",
+   "guards": [],
    "label": "namespace tlsh1cancel",
    "line": 112,
    "module": "utf_baselib_httpclient5",
@@ -17325,6 +17923,7 @@
   },
   {
    "file": "utf_baselib_httpclient6/TestClientSessionCancel.h",
+   "guards": [],
    "label": "namespace sessioncancel",
    "line": 71,
    "module": "utf_baselib_httpclient6",
@@ -17333,6 +17932,7 @@
   },
   {
    "file": "utf_baselib_httpclient6/TestClientSessionIdle.h",
+   "guards": [],
    "label": "namespace sessionidle",
    "line": 48,
    "module": "utf_baselib_httpclient6",
@@ -17341,6 +17941,7 @@
   },
   {
    "file": "utf_baselib_httpclient7/TestHttp1DriverPeerClose.h",
+   "guards": [],
    "label": "namespace http1close",
    "line": 60,
    "module": "utf_baselib_httpclient7",
@@ -17349,6 +17950,7 @@
   },
   {
    "file": "utf_baselib_httpclient7/TestHttp1DriverScheduleThrow.h",
+   "guards": [],
    "label": "namespace http1schedulethrow",
    "line": 82,
    "module": "utf_baselib_httpclient7",
@@ -17357,6 +17959,7 @@
   },
   {
    "file": "utf_baselib_httpclient7/TestHttp1DriverStrandSeam.h",
+   "guards": [],
    "label": "namespace http1seam",
    "line": 70,
    "module": "utf_baselib_httpclient7",
@@ -17365,6 +17968,7 @@
   },
   {
    "file": "utf_baselib_httpclient7/TestHttp1DriverWriteBarrier.h",
+   "guards": [],
    "label": "namespace http1barrier",
    "line": 56,
    "module": "utf_baselib_httpclient7",
@@ -17373,6 +17977,7 @@
   },
   {
    "file": "utf_baselib_httpclient7/TestHttp1DriverWritePeerClose.h",
+   "guards": [],
    "label": "namespace http1writeclose",
    "line": 90,
    "module": "utf_baselib_httpclient7",
@@ -17381,6 +17986,7 @@
   },
   {
    "file": "utf_baselib_io/TestIO.h",
+   "guards": [],
    "label": "using namespace bl;",
    "line": 68,
    "module": "utf_baselib_io",
@@ -17389,6 +17995,7 @@
   },
   {
    "file": "utf_baselib_io/TestIO.h",
+   "guards": [],
    "label": "typedef bl::tasks::TcpBlockTransferClientConnectionImpl< bl:",
    "line": 70,
    "module": "utf_baselib_io",
@@ -17397,6 +18004,7 @@
   },
   {
    "file": "utf_baselib_io/TestIO.h",
+   "guards": [],
    "label": "template",
    "line": 74,
    "module": "utf_baselib_io",
@@ -17405,6 +18013,7 @@
   },
   {
    "file": "utf_baselib_io/TestIO.h",
+   "guards": [],
    "label": "/*",
    "line": 91,
    "module": "utf_baselib_io",
@@ -17413,6 +18022,7 @@
   },
   {
    "file": "utf_baselib_io/TestIO.h",
+   "guards": [],
    "label": "class PayloadProbe : public bl::tasks::TcpBlockTransferClien",
    "line": 101,
    "module": "utf_baselib_io",
@@ -17421,6 +18031,7 @@
   },
   {
    "file": "utf_baselib_io/TestIO.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< PayloadProbe > PayloadProbeImpl;",
    "line": 138,
    "module": "utf_baselib_io",
@@ -17429,6 +18040,7 @@
   },
   {
    "file": "utf_baselib_io/TestIO.h",
+   "guards": [],
    "label": "/*",
    "line": 140,
    "module": "utf_baselib_io",
@@ -17437,6 +18049,7 @@
   },
   {
    "file": "utf_baselib_io/TestIO.h",
+   "guards": [],
    "label": "template",
    "line": 151,
    "module": "utf_baselib_io",
@@ -17445,6 +18058,7 @@
   },
   {
    "file": "utf_baselib_io/TestIO.h",
+   "guards": [],
    "label": "template",
    "line": 165,
    "module": "utf_baselib_io",
@@ -17453,6 +18067,7 @@
   },
   {
    "file": "utf_baselib_io/TestIO.h",
+   "guards": [],
    "label": "template",
    "line": 180,
    "module": "utf_baselib_io",
@@ -17461,6 +18076,7 @@
   },
   {
    "file": "utf_baselib_io/TestIO.h",
+   "guards": [],
    "label": "template",
    "line": 233,
    "module": "utf_baselib_io",
@@ -17469,6 +18085,7 @@
   },
   {
    "file": "utf_baselib_io/TestIO.h",
+   "guards": [],
    "label": "template",
    "line": 1341,
    "module": "utf_baselib_io",
@@ -17477,6 +18094,7 @@
   },
   {
    "file": "utf_baselib_io/TestIO.h",
+   "guards": [],
    "label": "template",
    "line": 1581,
    "module": "utf_baselib_io",
@@ -17485,6 +18103,7 @@
   },
   {
    "file": "utf_baselib_io/TestIO.h",
+   "guards": [],
    "label": "template",
    "line": 1665,
    "module": "utf_baselib_io",
@@ -17493,6 +18112,7 @@
   },
   {
    "file": "utf_baselib_io/TestIO.h",
+   "guards": [],
    "label": "namespace",
    "line": 1718,
    "module": "utf_baselib_io",
@@ -17501,6 +18121,7 @@
   },
   {
    "file": "utf_baselib_io/TestIO.h",
+   "guards": [],
    "label": "template",
    "line": 2158,
    "module": "utf_baselib_io",
@@ -17509,6 +18130,7 @@
   },
   {
    "file": "utf_baselib_io/TestIO.h",
+   "guards": [],
    "label": "/**",
    "line": 3495,
    "module": "utf_baselib_io",
@@ -17517,6 +18139,7 @@
   },
   {
    "file": "utf_baselib_io/TestIO.h",
+   "guards": [],
    "label": "template",
    "line": 3499,
    "module": "utf_baselib_io",
@@ -17525,6 +18148,7 @@
   },
   {
    "file": "utf_baselib_io/TestIO.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< HeartbeatCountingQueueT<> > Hear",
    "line": 3543,
    "module": "utf_baselib_io",
@@ -17533,6 +18157,7 @@
   },
   {
    "file": "utf_baselib_io/TestIO.h",
+   "guards": [],
    "label": "/**",
    "line": 3743,
    "module": "utf_baselib_io",
@@ -17541,6 +18166,7 @@
   },
   {
    "file": "utf_baselib_io/TestIO.h",
+   "guards": [],
    "label": "template",
    "line": 3748,
    "module": "utf_baselib_io",
@@ -17549,6 +18175,7 @@
   },
   {
    "file": "utf_baselib_io/TestIO.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< ReentrantHeartbeatQueueT<> > Ree",
    "line": 3793,
    "module": "utf_baselib_io",
@@ -17557,6 +18184,7 @@
   },
   {
    "file": "utf_baselib_io2/TestIO2.h",
+   "guards": [],
    "label": "typedef bl::tasks::TcpConnectionEstablisherConnectorImpl< bl",
    "line": 31,
    "module": "utf_baselib_io2",
@@ -17565,6 +18193,7 @@
   },
   {
    "file": "utf_baselib_io2/TestIO2.h",
+   "guards": [],
    "label": "/**",
    "line": 324,
    "module": "utf_baselib_io2",
@@ -17573,6 +18202,7 @@
   },
   {
    "file": "utf_baselib_io2/TestIO2.h",
+   "guards": [],
    "label": "class FakeSslStreamCategory : public bl::eh::error_category",
    "line": 335,
    "module": "utf_baselib_io2",
@@ -17581,6 +18211,7 @@
   },
   {
    "file": "utf_baselib_io2/TestIO2.h",
+   "guards": [],
    "label": "/*",
    "line": 350,
    "module": "utf_baselib_io2",
@@ -17589,6 +18220,7 @@
   },
   {
    "file": "utf_baselib_io2/TestIO2.h",
+   "guards": [],
    "label": "const bl::eh::error_category& fakeSslStreamCategory()",
    "line": 354,
    "module": "utf_baselib_io2",
@@ -17597,6 +18229,7 @@
   },
   {
    "file": "utf_baselib_jni/TestJni.h",
+   "guards": [],
    "label": "using namespace bl;",
    "line": 34,
    "module": "utf_baselib_jni",
@@ -17605,6 +18238,7 @@
   },
   {
    "file": "utf_baselib_jni/TestJni.h",
+   "guards": [],
    "label": "fs::path getJavaLibraryPath()",
    "line": 37,
    "module": "utf_baselib_jni",
@@ -17613,6 +18247,7 @@
   },
   {
    "file": "utf_baselib_jni/TestJni.h",
+   "guards": [],
    "label": "std::string getJavaClassPath()",
    "line": 44,
    "module": "utf_baselib_jni",
@@ -17621,6 +18256,7 @@
   },
   {
    "file": "utf_baselib_jni/TestJni.h",
+   "guards": [],
    "label": "class JniTestGlobalFixture",
    "line": 61,
    "module": "utf_baselib_jni",
@@ -17629,6 +18265,7 @@
   },
   {
    "file": "utf_baselib_jni/TestJni.h",
+   "guards": [],
    "label": "/**",
    "line": 100,
    "module": "utf_baselib_jni",
@@ -17637,6 +18274,7 @@
   },
   {
    "file": "utf_baselib_jni/TestJni.h",
+   "guards": [],
    "label": "struct JvmCreateFailureTestTag;",
    "line": 109,
    "module": "utf_baselib_jni",
@@ -17645,6 +18283,7 @@
   },
   {
    "file": "utf_baselib_jni/TestJni.h",
+   "guards": [],
    "label": "typedef JavaVirtualMachineT< JvmCreateFailureTestTag > TestJ",
    "line": 111,
    "module": "utf_baselib_jni",
@@ -17653,6 +18292,7 @@
   },
   {
    "file": "utf_baselib_jni/TestJni.h",
+   "guards": [],
    "label": "template",
    "line": 113,
    "module": "utf_baselib_jni",
@@ -17661,6 +18301,7 @@
   },
   {
    "file": "utf_baselib_loader/TestResolver.h",
+   "guards": [],
    "label": "/**",
    "line": 556,
    "module": "utf_baselib_loader",
@@ -17669,6 +18310,7 @@
   },
   {
    "file": "utf_baselib_loader/TestResolver.h",
+   "guards": [],
    "label": "bl::fs::path copyOfCalculatorPlugin(",
    "line": 576,
    "module": "utf_baselib_loader",
@@ -17677,6 +18319,7 @@
   },
   {
    "file": "utf_baselib_messaging/TestMessagingDefault.h",
+   "guards": [],
    "label": "/**",
    "line": 24,
    "module": "utf_baselib_messaging",
@@ -17685,6 +18328,7 @@
   },
   {
    "file": "utf_baselib_messaging/TestMessagingDefault.h",
+   "guards": [],
    "label": "template",
    "line": 29,
    "module": "utf_baselib_messaging",
@@ -17693,6 +18337,7 @@
   },
   {
    "file": "utf_baselib_messaging/TestMessagingDefault.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< TestBlockCompletionQueueT<> > Te",
    "line": 59,
    "module": "utf_baselib_messaging",
@@ -17701,6 +18346,7 @@
   },
   {
    "file": "utf_baselib_messaging/TestMessagingDefault.h",
+   "guards": [],
    "label": "template",
    "line": 61,
    "module": "utf_baselib_messaging",
@@ -17709,6 +18355,7 @@
   },
   {
    "file": "utf_baselib_messaging/TestMessagingDefault.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< TestHostServicesContextT<> > Tes",
    "line": 172,
    "module": "utf_baselib_messaging",
@@ -17717,6 +18364,7 @@
   },
   {
    "file": "utf_baselib_messaging/TestMessagingDefault.h",
+   "guards": [],
    "label": "auto createTestSecurityPrincipal() -> bl::om::ObjPtr< bl::me",
    "line": 175,
    "module": "utf_baselib_messaging",
@@ -17725,6 +18373,7 @@
   },
   {
    "file": "utf_baselib_messaging/TestMessagingDefault.h",
+   "guards": [],
    "label": "auto createProtocolMessage( SAA_in_opt const std::string& co",
    "line": 187,
    "module": "utf_baselib_messaging",
@@ -17733,6 +18382,7 @@
   },
   {
    "file": "utf_baselib_messaging/TestMessagingDefault.h",
+   "guards": [],
    "label": "void testBackendProcessingTaskJson(",
    "line": 199,
    "module": "utf_baselib_messaging",
@@ -17741,6 +18391,7 @@
   },
   {
    "file": "utf_baselib_messaging/TestMessagingDefault.h",
+   "guards": [],
    "label": "void testBackendProcessingTask(",
    "line": 345,
    "module": "utf_baselib_messaging",
@@ -17749,6 +18400,7 @@
   },
   {
    "file": "utf_baselib_messaging/TestMessagingDefault.h",
+   "guards": [],
    "label": "void testBackendProcessingTask(",
    "line": 381,
    "module": "utf_baselib_messaging",
@@ -17757,6 +18409,7 @@
   },
   {
    "file": "utf_baselib_messaging/TestMessagingDefault.h",
+   "guards": [],
    "label": "/**",
    "line": 400,
    "module": "utf_baselib_messaging",
@@ -17765,6 +18418,7 @@
   },
   {
    "file": "utf_baselib_messaging/TestMessagingDefault.h",
+   "guards": [],
    "label": "template",
    "line": 409,
    "module": "utf_baselib_messaging",
@@ -17773,6 +18427,7 @@
   },
   {
    "file": "utf_baselib_messaging/TestMessagingDefault.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< FailingUpdateAuthorizationCacheT",
    "line": 482,
    "module": "utf_baselib_messaging",
@@ -17781,6 +18436,7 @@
   },
   {
    "file": "utf_baselib_messaging/TestMessagingDefault.h",
+   "guards": [],
    "label": "/*",
    "line": 484,
    "module": "utf_baselib_messaging",
@@ -17789,6 +18445,7 @@
   },
   {
    "file": "utf_baselib_messaging/TestMessagingDefault.h",
+   "guards": [],
    "label": "#if 0",
    "line": 491,
    "module": "utf_baselib_messaging",
@@ -17797,6 +18454,7 @@
   },
   {
    "file": "utf_baselib_messaging/TestMessagingDefault.h",
+   "guards": [],
    "label": "template",
    "line": 6301,
    "module": "utf_baselib_messaging",
@@ -17805,6 +18463,7 @@
   },
   {
    "file": "utf_baselib_messaging2/TestServerMonitoring.h",
+   "guards": [],
    "label": "typedef bl::tasks::TcpBlockTransferClientConnectionImpl< bl:",
    "line": 28,
    "module": "utf_baselib_messaging2",
@@ -17813,6 +18472,7 @@
   },
   {
    "file": "utf_baselib_messaging2/TestServerMonitoring.h",
+   "guards": [],
    "label": "/*",
    "line": 31,
    "module": "utf_baselib_messaging2",
@@ -17821,6 +18481,7 @@
   },
   {
    "file": "utf_baselib_messaging2/TestServerMonitoring.h",
+   "guards": [],
    "label": "typedef bl::cpp::function<",
    "line": 39,
    "module": "utf_baselib_messaging2",
@@ -17829,6 +18490,7 @@
   },
   {
    "file": "utf_baselib_messaging2/TestServerMonitoring.h",
+   "guards": [],
    "label": "typedef bl::cpp::function<",
    "line": 46,
    "module": "utf_baselib_messaging2",
@@ -17837,6 +18499,7 @@
   },
   {
    "file": "utf_baselib_messaging2/TestServerMonitoring.h",
+   "guards": [],
    "label": "using bl::data::DataChunkStorage;",
    "line": 53,
    "module": "utf_baselib_messaging2",
@@ -17845,6 +18508,7 @@
   },
   {
    "file": "utf_baselib_messaging2/TestServerMonitoring.h",
+   "guards": [],
    "label": "int asyncDataChunkStorageTest(",
    "line": 56,
    "module": "utf_baselib_messaging2",
@@ -17853,6 +18517,7 @@
   },
   {
    "file": "utf_baselib_messaging2/TestServerMonitoring.h",
+   "guards": [],
    "label": "/**",
    "line": 443,
    "module": "utf_baselib_messaging2",
@@ -17861,6 +18526,7 @@
   },
   {
    "file": "utf_baselib_messaging2/TestServerMonitoring.h",
+   "guards": [],
    "label": "class ThrowingMessagingBackend : public bl::messaging::Backe",
    "line": 451,
    "module": "utf_baselib_messaging2",
@@ -17869,6 +18535,7 @@
   },
   {
    "file": "utf_baselib_messaging2/TestServerMonitoring.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< ThrowingMessagingBackend > Throw",
    "line": 516,
    "module": "utf_baselib_messaging2",
@@ -17877,6 +18544,7 @@
   },
   {
    "file": "utf_baselib_messaging2/TestServerMonitoring.h",
+   "guards": [],
    "label": "/**",
    "line": 518,
    "module": "utf_baselib_messaging2",
@@ -17885,6 +18553,7 @@
   },
   {
    "file": "utf_baselib_messaging2/TestServerMonitoring.h",
+   "guards": [],
    "label": "auto pollAcceptorState(",
    "line": 523,
    "module": "utf_baselib_messaging2",
@@ -17893,6 +18562,7 @@
   },
   {
    "file": "utf_baselib_messaging3/TestMessagingDefault2.h",
+   "guards": [],
    "label": "namespace dm",
    "line": 35,
    "module": "utf_baselib_messaging3",
@@ -17901,6 +18571,7 @@
   },
   {
    "file": "utf_baselib_messaging3/TestMessagingDefault2.h",
+   "guards": [],
    "label": "class TestConversationProcessing : public bl::messaging::Con",
    "line": 81,
    "module": "utf_baselib_messaging3",
@@ -17909,6 +18580,7 @@
   },
   {
    "file": "utf_baselib_messaging3/TestMessagingDefault2.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< TestConversationProcessing > Tes",
    "line": 296,
    "module": "utf_baselib_messaging3",
@@ -17917,6 +18589,7 @@
   },
   {
    "file": "utf_baselib_messaging3/TestMessagingDefault2.h",
+   "guards": [],
    "label": "/*",
    "line": 298,
    "module": "utf_baselib_messaging3",
@@ -17925,6 +18598,7 @@
   },
   {
    "file": "utf_baselib_messaging3/TestMessagingDefault2.h",
+   "guards": [],
    "label": "class TestConversationProcessingTimeouts : public TestConver",
    "line": 302,
    "module": "utf_baselib_messaging3",
@@ -17933,6 +18607,7 @@
   },
   {
    "file": "utf_baselib_messaging3/TestMessagingDefault2.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< TestConversationProcessingTimeou",
    "line": 404,
    "module": "utf_baselib_messaging3",
@@ -17941,6 +18616,7 @@
   },
   {
    "file": "utf_baselib_messaging3/TestMessagingDefault2.h",
+   "guards": [],
    "label": "/*",
    "line": 406,
    "module": "utf_baselib_messaging3",
@@ -17949,6 +18625,7 @@
   },
   {
    "file": "utf_baselib_messaging3/TestMessagingDefault2.h",
+   "guards": [],
    "label": "class TestRecordingObjectDispatch : public bl::messaging::Me",
    "line": 414,
    "module": "utf_baselib_messaging3",
@@ -17957,6 +18634,7 @@
   },
   {
    "file": "utf_baselib_messaging3/TestMessagingDefault2.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< TestRecordingObjectDispatch > Te",
    "line": 515,
    "module": "utf_baselib_messaging3",
@@ -17965,6 +18643,7 @@
   },
   {
    "file": "utf_baselib_messaging3/TestMessagingDefault2.h",
+   "guards": [],
    "label": "/**",
    "line": 1162,
    "module": "utf_baselib_messaging3",
@@ -17973,6 +18652,7 @@
   },
   {
    "file": "utf_baselib_messaging3/TestMessagingDefault2.h",
+   "guards": [],
    "label": "void messageProcessingRoundTrip(",
    "line": 1174,
    "module": "utf_baselib_messaging3",
@@ -17981,6 +18661,7 @@
   },
   {
    "file": "utf_baselib_messaging4/TestMessagingProxyBackend.h",
+   "guards": [],
    "label": "void exceptionThrowHook2( SAA_in const bl::BaseException& ex",
    "line": 24,
    "module": "utf_baselib_messaging4",
@@ -17989,6 +18670,7 @@
   },
   {
    "file": "utf_baselib_messaging4/TestMessagingProxyBackend.h",
+   "guards": [],
    "label": "void exceptionThrowHook3( SAA_in const bl::BaseException& ex",
    "line": 44,
    "module": "utf_baselib_messaging4",
@@ -17997,6 +18679,7 @@
   },
   {
    "file": "utf_baselib_parsing/TestParsing.h",
+   "guards": [],
    "label": "namespace lex",
    "line": 24,
    "module": "utf_baselib_parsing",
@@ -18005,6 +18688,7 @@
   },
   {
    "file": "utf_baselib_plugin/Calculator.cpp",
+   "guards": [],
    "label": "namespace plugins",
    "line": 31,
    "module": "utf_baselib_plugin",
@@ -18013,6 +18697,7 @@
   },
   {
    "file": "utf_baselib_plugin/utf/plugins/calculator/Calculator.h",
+   "guards": [],
    "label": "namespace plugins",
    "line": 33,
    "module": "utf_baselib_plugin",
@@ -18021,6 +18706,7 @@
   },
   {
    "file": "utf_baselib_rest/TestRestDefault2.h",
+   "guards": [],
    "label": "/**",
    "line": 817,
    "module": "utf_baselib_rest",
@@ -18029,6 +18715,7 @@
   },
   {
    "file": "utf_baselib_rest/TestRestDefault2.h",
+   "guards": [],
    "label": "class DisconnectedBackend : public bl::messaging::BackendPro",
    "line": 825,
    "module": "utf_baselib_rest",
@@ -18037,6 +18724,7 @@
   },
   {
    "file": "utf_baselib_rest/TestRestDefault2.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< DisconnectedBackend > Disconnect",
    "line": 874,
    "module": "utf_baselib_rest",
@@ -18045,6 +18733,7 @@
   },
   {
    "file": "utf_baselib_rest/TestRestUtilsImpl.cpp",
+   "guards": [],
    "label": "template < typename E >",
    "line": 46,
    "module": "utf_baselib_rest",
@@ -18053,6 +18742,7 @@
   },
   {
    "file": "utf_baselib_rest/TestRestUtilsImpl.cpp",
+   "guards": [],
    "label": "template < typename E >",
    "line": 107,
    "module": "utf_baselib_rest",
@@ -18061,6 +18751,7 @@
   },
   {
    "file": "utf_baselib_rest/TestRestUtilsImpl.cpp",
+   "guards": [],
    "label": "template < typename E >",
    "line": 201,
    "module": "utf_baselib_rest",
@@ -18069,6 +18760,7 @@
   },
   {
    "file": "utf_baselib_rest/TestRestUtilsImpl.cpp",
+   "guards": [],
    "label": "template < typename E >",
    "line": 451,
    "module": "utf_baselib_rest",
@@ -18077,6 +18769,7 @@
   },
   {
    "file": "utf_baselib_rest/TestRestUtilsImpl.cpp",
+   "guards": [],
    "label": "template class TestRestUtilsT< void >;",
    "line": 479,
    "module": "utf_baselib_rest",
@@ -18085,6 +18778,7 @@
   },
   {
    "file": "utf_baselib_security/TestRsaSignVerify.h",
+   "guards": [],
    "label": "template",
    "line": 28,
    "module": "utf_baselib_security",
@@ -18093,6 +18787,7 @@
   },
   {
    "file": "utf_baselib_security/TestRsaSignVerify.h",
+   "guards": [],
    "label": "typedef LocalTestRsaSignVerifyHelpersT<> LocalTestRsaSignVer",
    "line": 66,
    "module": "utf_baselib_security",
@@ -18101,6 +18796,7 @@
   },
   {
    "file": "utf_baselib_security2/TestCryptoUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 38,
    "module": "utf_baselib_security2",
@@ -18109,6 +18805,7 @@
   },
   {
    "file": "utf_baselib_security2/TestCryptoUtils.h",
+   "guards": [],
    "label": "auto createNotACertificateBio() -> bl::crypto::bio_ptr_t",
    "line": 47,
    "module": "utf_baselib_security2",
@@ -18117,6 +18814,7 @@
   },
   {
    "file": "utf_baselib_security2/TestCryptoUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 68,
    "module": "utf_baselib_security2",
@@ -18125,6 +18823,7 @@
   },
   {
    "file": "utf_baselib_security2/TestCryptoUtils.h",
+   "guards": [],
    "label": "auto parseCertificateFromPem( SAA_in const std::string& pem ",
    "line": 75,
    "module": "utf_baselib_security2",
@@ -18133,6 +18832,7 @@
   },
   {
    "file": "utf_baselib_security2/TestCryptoUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 93,
    "module": "utf_baselib_security2",
@@ -18141,6 +18841,7 @@
   },
   {
    "file": "utf_baselib_security2/TestCryptoUtils.h",
+   "guards": [],
    "label": "auto parseTrustedRootFromPem( SAA_in const std::string& pem ",
    "line": 97,
    "module": "utf_baselib_security2",
@@ -18149,6 +18850,7 @@
   },
   {
    "file": "utf_baselib_security2/TestCryptoUtils.h",
+   "guards": [],
    "label": "/**",
    "line": 115,
    "module": "utf_baselib_security2",
@@ -18157,6 +18859,7 @@
   },
   {
    "file": "utf_baselib_security2/TestCryptoUtils.h",
+   "guards": [],
    "label": "std::string certificateSubjectAsText( SAA_in const bl::crypt",
    "line": 119,
    "module": "utf_baselib_security2",
@@ -18165,6 +18868,7 @@
   },
   {
    "file": "utf_baselib_security2/TestCryptoUtils.h",
+   "guards": [],
    "label": "/*",
    "line": 134,
    "module": "utf_baselib_security2",
@@ -18173,6 +18877,7 @@
   },
   {
    "file": "utf_baselib_security2/TestCryptoUtils.h",
+   "guards": [],
    "label": "::ASN1_TIME* certificateNotBefore( SAA_in const bl::crypto::",
    "line": 139,
    "module": "utf_baselib_security2",
@@ -18181,6 +18886,7 @@
   },
   {
    "file": "utf_baselib_security2/TestCryptoUtils.h",
+   "guards": [],
    "label": "::ASN1_TIME* certificateNotAfter( SAA_in const bl::crypto::x",
    "line": 148,
    "module": "utf_baselib_security2",
@@ -18189,6 +18895,7 @@
   },
   {
    "file": "utf_baselib_security2/TestPemKeyFormats.h",
+   "guards": [],
    "label": "/**",
    "line": 31,
    "module": "utf_baselib_security2",
@@ -18197,6 +18904,7 @@
   },
   {
    "file": "utf_baselib_security2/TestPemKeyFormats.h",
+   "guards": [],
    "label": "template",
    "line": 37,
    "module": "utf_baselib_security2",
@@ -18205,6 +18913,7 @@
   },
   {
    "file": "utf_baselib_security2/TestPemKeyFormats.h",
+   "guards": [],
    "label": "typedef LocalTestPemKeyFormatsHelpersT<> LocalTestPemKeyForm",
    "line": 162,
    "module": "utf_baselib_security2",
@@ -18213,6 +18922,7 @@
   },
   {
    "file": "utf_baselib_security3/TestAuthorizationCacheImpl.h",
+   "guards": [],
    "label": "namespace security",
    "line": 21,
    "module": "utf_baselib_security3",
@@ -18221,6 +18931,7 @@
   },
   {
    "file": "utf_baselib_security3/TestAuthorizationCacheImpl.h",
+   "guards": [],
    "label": "namespace security",
    "line": 158,
    "module": "utf_baselib_security3",
@@ -18229,6 +18940,7 @@
   },
   {
    "file": "utf_baselib_security3/TestAuthorizationCacheRestImpl.h",
+   "guards": [],
    "label": "namespace security",
    "line": 31,
    "module": "utf_baselib_security3",
@@ -18237,6 +18949,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "enum ThrowAction",
    "line": 142,
    "module": "utf_baselib_tasks",
@@ -18245,6 +18958,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "bool algorithmsSimpleParallelTest(",
    "line": 149,
    "module": "utf_baselib_tasks",
@@ -18253,6 +18967,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "class ExecutionQueueCompletionControl",
    "line": 635,
    "module": "utf_baselib_tasks",
@@ -18261,6 +18976,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "class ExecutionQueueNotificationRecorder :",
    "line": 747,
    "module": "utf_baselib_tasks",
@@ -18269,6 +18985,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< ExecutionQueueNotificationRecord",
    "line": 897,
    "module": "utf_baselib_tasks",
@@ -18277,6 +18994,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "class ExecutionQueueNotificationTestContext",
    "line": 900,
    "module": "utf_baselib_tasks",
@@ -18285,6 +19003,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "bl::om::ObjPtr< bl::tasks::ExternalCompletionTaskImpl > crea",
    "line": 941,
    "module": "utf_baselib_tasks",
@@ -18293,6 +19012,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "bl::om::ObjPtr< bl::tasks::Task > continuationOnce(",
    "line": 953,
    "module": "utf_baselib_tasks",
@@ -18301,6 +19021,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "/**",
    "line": 1167,
    "module": "utf_baselib_tasks",
@@ -18309,6 +19030,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "void executeNotificationBlockingReentryTest(",
    "line": 1176,
    "module": "utf_baselib_tasks",
@@ -18317,6 +19039,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "/**",
    "line": 1313,
    "module": "utf_baselib_tasks",
@@ -18325,6 +19048,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "class ExecutionQueueNotificationDepthProbe",
    "line": 1322,
    "module": "utf_baselib_tasks",
@@ -18333,6 +19057,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "/**",
    "line": 1372,
    "module": "utf_baselib_tasks",
@@ -18341,6 +19066,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "class ExecutionQueueThrottleObserver :",
    "line": 1379,
    "module": "utf_baselib_tasks",
@@ -18349,6 +19075,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< ExecutionQueueThrottleObserver >",
    "line": 1420,
    "module": "utf_baselib_tasks",
@@ -18357,6 +19084,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "class MyContinuationState : public bl::tasks::WrapperTaskBas",
    "line": 2653,
    "module": "utf_baselib_tasks",
@@ -18365,6 +19093,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< MyContinuationState > MyContinua",
    "line": 2736,
    "module": "utf_baselib_tasks",
@@ -18373,6 +19102,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "class MyCounterObject : public bl::om::Object",
    "line": 2771,
    "module": "utf_baselib_tasks",
@@ -18381,6 +19111,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< MyCounterObject > MyCounterObjec",
    "line": 2795,
    "module": "utf_baselib_tasks",
@@ -18389,6 +19120,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "/**",
    "line": 2798,
    "module": "utf_baselib_tasks",
@@ -18397,6 +19129,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "template",
    "line": 2802,
    "module": "utf_baselib_tasks",
@@ -18405,6 +19138,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< MonotonicCounterObservableT<>, t",
    "line": 2906,
    "module": "utf_baselib_tasks",
@@ -18413,6 +19147,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "/**",
    "line": 2908,
    "module": "utf_baselib_tasks",
@@ -18421,6 +19156,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "template",
    "line": 2912,
    "module": "utf_baselib_tasks",
@@ -18429,6 +19165,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< MonotonicCounterObserverT<> > Mo",
    "line": 3058,
    "module": "utf_baselib_tasks",
@@ -18437,6 +19174,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "enum ReactiveTest",
    "line": 3064,
    "module": "utf_baselib_tasks",
@@ -18445,6 +19183,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "void runReactiveTest( SAA_in const ReactiveTest test = Defau",
    "line": 3072,
    "module": "utf_baselib_tasks",
@@ -18453,6 +19192,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "/*",
    "line": 3202,
    "module": "utf_baselib_tasks",
@@ -18461,6 +19201,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "const char* const g_reentrantUnsubscribeId = \"reentrant-unsu",
    "line": 3208,
    "module": "utf_baselib_tasks",
@@ -18469,6 +19210,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "/**",
    "line": 3210,
    "module": "utf_baselib_tasks",
@@ -18477,6 +19219,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "template",
    "line": 3214,
    "module": "utf_baselib_tasks",
@@ -18485,6 +19228,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< SelfUnsubscribingObserverT<> > S",
    "line": 3251,
    "module": "utf_baselib_tasks",
@@ -18493,6 +19237,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "template",
    "line": 3763,
    "module": "utf_baselib_tasks",
@@ -18501,6 +19246,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< MyTimerTaskT<> > MyTimerTaskImpl",
    "line": 3802,
    "module": "utf_baselib_tasks",
@@ -18509,6 +19255,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "/**",
    "line": 3987,
    "module": "utf_baselib_tasks",
@@ -18517,6 +19264,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "template",
    "line": 3991,
    "module": "utf_baselib_tasks",
@@ -18525,6 +19273,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "/**",
    "line": 4166,
    "module": "utf_baselib_tasks",
@@ -18533,6 +19282,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "template",
    "line": 4170,
    "module": "utf_baselib_tasks",
@@ -18541,6 +19291,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "typedef RecursiveDirectoryScannerObserverT<> RecursiveDirect",
    "line": 4190,
    "module": "utf_baselib_tasks",
@@ -18549,6 +19300,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< RecursiveDirectoryScannerObserve",
    "line": 4192,
    "module": "utf_baselib_tasks",
@@ -18557,6 +19309,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "template",
    "line": 4404,
    "module": "utf_baselib_tasks",
@@ -18565,6 +19318,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "bl::om::ObjPtr< bl::data::FilesystemMetadataWO > createFSMD(",
    "line": 4550,
    "module": "utf_baselib_tasks",
@@ -18573,6 +19327,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "void executeTheFilesPackagerAndTransmitterPipeline(",
    "line": 4555,
    "module": "utf_baselib_tasks",
@@ -18581,6 +19336,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks.h",
+   "guards": [],
    "label": "void pingerAutoTests( SAA_in_opt const char* host2Add = null",
    "line": 5270,
    "module": "utf_baselib_tasks",
@@ -18589,6 +19345,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks2.h",
+   "guards": [],
    "label": "/**",
    "line": 39,
    "module": "utf_baselib_tasks",
@@ -18597,6 +19354,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks2.h",
+   "guards": [],
    "label": "template",
    "line": 47,
    "module": "utf_baselib_tasks",
@@ -18605,6 +19363,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks2.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< ReactiveFanoutProbeT<>, true /* ",
    "line": 89,
    "module": "utf_baselib_tasks",
@@ -18613,6 +19372,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks2.h",
+   "guards": [],
    "label": "/**",
    "line": 91,
    "module": "utf_baselib_tasks",
@@ -18621,6 +19381,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks2.h",
+   "guards": [],
    "label": "template",
    "line": 98,
    "module": "utf_baselib_tasks",
@@ -18629,6 +19390,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks2.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< ReactiveWorkerPoolProbeT<>, true",
    "line": 135,
    "module": "utf_baselib_tasks",
@@ -18637,6 +19399,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks3.h",
+   "guards": [],
    "label": "/**",
    "line": 52,
    "module": "utf_baselib_tasks",
@@ -18645,6 +19408,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks3.h",
+   "guards": [],
    "label": "std::exception_ptr makeOperationAbortedExceptionPtr()",
    "line": 57,
    "module": "utf_baselib_tasks",
@@ -18653,6 +19417,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks3.h",
+   "guards": [],
    "label": "/**",
    "line": 73,
    "module": "utf_baselib_tasks",
@@ -18661,6 +19426,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks3.h",
+   "guards": [],
    "label": "bl::om::ObjPtr< bl::tasks::ExternalCompletionTaskIfImpl > cr",
    "line": 84,
    "module": "utf_baselib_tasks",
@@ -18669,6 +19435,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks3.h",
+   "guards": [],
    "label": "/**",
    "line": 552,
    "module": "utf_baselib_tasks",
@@ -18677,6 +19444,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks3.h",
+   "guards": [],
    "label": "enum RemapTaskMode",
    "line": 556,
    "module": "utf_baselib_tasks",
@@ -18685,6 +19453,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks3.h",
+   "guards": [],
    "label": "/**",
    "line": 564,
    "module": "utf_baselib_tasks",
@@ -18693,6 +19462,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks3.h",
+   "guards": [],
    "label": "template",
    "line": 572,
    "module": "utf_baselib_tasks",
@@ -18701,6 +19471,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks3.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< RemapTaskT<> > RemapTaskImpl;",
    "line": 652,
    "module": "utf_baselib_tasks",
@@ -18709,6 +19480,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks3.h",
+   "guards": [],
    "label": "/**",
    "line": 1193,
    "module": "utf_baselib_tasks",
@@ -18717,6 +19489,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks3.h",
+   "guards": [],
    "label": "class ExecutionQueueNotificationMaskTestContext",
    "line": 1201,
    "module": "utf_baselib_tasks",
@@ -18725,6 +19498,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks4.h",
+   "guards": [],
    "label": "/**",
    "line": 71,
    "module": "utf_baselib_tasks",
@@ -18733,6 +19507,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks4.h",
+   "guards": [],
    "label": "std::shared_ptr< bl::om::ObjPtrDisposable< bl::tasks::Execut",
    "line": 76,
    "module": "utf_baselib_tasks",
@@ -18741,6 +19516,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks4.h",
+   "guards": [],
    "label": "/**",
    "line": 277,
    "module": "utf_baselib_tasks",
@@ -18749,6 +19525,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks4.h",
+   "guards": [],
    "label": "template",
    "line": 286,
    "module": "utf_baselib_tasks",
@@ -18757,6 +19534,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks4.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< ConfigurableScanningControlT<> >",
    "line": 360,
    "module": "utf_baselib_tasks",
@@ -18765,6 +19543,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks4.h",
+   "guards": [],
    "label": "/**",
    "line": 362,
    "module": "utf_baselib_tasks",
@@ -18773,6 +19552,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks4.h",
+   "guards": [],
    "label": "std::size_t drainDirectoryScan(",
    "line": 369,
    "module": "utf_baselib_tasks",
@@ -18781,6 +19561,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks4.h",
+   "guards": [],
    "label": "/**",
    "line": 1004,
    "module": "utf_baselib_tasks",
@@ -18789,6 +19570,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks4.h",
+   "guards": [],
    "label": "template",
    "line": 1013,
    "module": "utf_baselib_tasks",
@@ -18797,6 +19579,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks4.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< FakePingerTaskT<> > FakePingerTa",
    "line": 1058,
    "module": "utf_baselib_tasks",
@@ -18805,6 +19588,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "/**",
    "line": 55,
    "module": "utf_baselib_tasks",
@@ -18813,6 +19597,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "template",
    "line": 63,
    "module": "utf_baselib_tasks",
@@ -18821,6 +19606,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< CountingObserverT<> > CountingOb",
    "line": 182,
    "module": "utf_baselib_tasks",
@@ -18829,6 +19615,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "/**",
    "line": 184,
    "module": "utf_baselib_tasks",
@@ -18837,6 +19624,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "template",
    "line": 193,
    "module": "utf_baselib_tasks",
@@ -18845,6 +19633,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< BlockingCountingObserverT<> > Bl",
    "line": 240,
    "module": "utf_baselib_tasks",
@@ -18853,6 +19642,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "/**",
    "line": 242,
    "module": "utf_baselib_tasks",
@@ -18861,6 +19651,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "template",
    "line": 247,
    "module": "utf_baselib_tasks",
@@ -18869,6 +19660,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< ThrowingObserverT<> > ThrowingOb",
    "line": 288,
    "module": "utf_baselib_tasks",
@@ -18877,6 +19669,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "/**",
    "line": 290,
    "module": "utf_baselib_tasks",
@@ -18885,6 +19678,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "template",
    "line": 296,
    "module": "utf_baselib_tasks",
@@ -18893,6 +19687,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< ThrowingOnCompletedObserverT<> >",
    "line": 323,
    "module": "utf_baselib_tasks",
@@ -18901,6 +19696,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "/**",
    "line": 652,
    "module": "utf_baselib_tasks",
@@ -18909,6 +19705,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "template",
    "line": 661,
    "module": "utf_baselib_tasks",
@@ -18917,6 +19714,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< ThrottleProbeObservableT<>, true",
    "line": 748,
    "module": "utf_baselib_tasks",
@@ -18925,6 +19723,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "/**",
    "line": 937,
    "module": "utf_baselib_tasks",
@@ -18933,6 +19732,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "template",
    "line": 944,
    "module": "utf_baselib_tasks",
@@ -18941,6 +19741,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< FanoutChildFailureProbeT<>, true",
    "line": 1023,
    "module": "utf_baselib_tasks",
@@ -18949,6 +19750,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "/**",
    "line": 1146,
    "module": "utf_baselib_tasks",
@@ -18957,6 +19759,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "template",
    "line": 1150,
    "module": "utf_baselib_tasks",
@@ -18965,6 +19768,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< RecordingErrorDispatcherT<> > Re",
    "line": 1191,
    "module": "utf_baselib_tasks",
@@ -18973,6 +19777,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "/**",
    "line": 1193,
    "module": "utf_baselib_tasks",
@@ -18981,6 +19786,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "template",
    "line": 1202,
    "module": "utf_baselib_tasks",
@@ -18989,6 +19795,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< RecordingErrorDispatcherTaskT<> ",
    "line": 1249,
    "module": "utf_baselib_tasks",
@@ -18997,6 +19804,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "/**",
    "line": 1889,
    "module": "utf_baselib_tasks",
@@ -19005,6 +19813,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "template",
    "line": 1893,
    "module": "utf_baselib_tasks",
@@ -19013,6 +19822,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< FailingObservableT<>, true /* en",
    "line": 1930,
    "module": "utf_baselib_tasks",
@@ -19021,6 +19831,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "/**",
    "line": 1933,
    "module": "utf_baselib_tasks",
@@ -19029,6 +19840,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "template",
    "line": 1937,
    "module": "utf_baselib_tasks",
@@ -19037,6 +19849,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl",
    "line": 1986,
    "module": "utf_baselib_tasks",
@@ -19045,6 +19858,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "/**",
    "line": 2243,
    "module": "utf_baselib_tasks",
@@ -19053,6 +19867,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks5.h",
+   "guards": [],
    "label": "class BindInputConnectorProbe :",
    "line": 2248,
    "module": "utf_baselib_tasks",
@@ -19061,6 +19876,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks6.h",
+   "guards": [],
    "label": "/**",
    "line": 55,
    "module": "utf_baselib_tasks",
@@ -19069,6 +19885,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks6.h",
+   "guards": [],
    "label": "long settledOutstandingObjectRefs() NOEXCEPT",
    "line": 65,
    "module": "utf_baselib_tasks",
@@ -19077,6 +19894,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks6.h",
+   "guards": [],
    "label": "/**",
    "line": 88,
    "module": "utf_baselib_tasks",
@@ -19085,6 +19903,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks6.h",
+   "guards": [],
    "label": "long waitForOutstandingObjectRefs( SAA_in const long expecte",
    "line": 97,
    "module": "utf_baselib_tasks",
@@ -19093,6 +19912,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks6.h",
+   "guards": [],
    "label": "/**",
    "line": 113,
    "module": "utf_baselib_tasks",
@@ -19101,6 +19921,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks6.h",
+   "guards": [],
    "label": "class ThreadIdProbe",
    "line": 123,
    "module": "utf_baselib_tasks",
@@ -19109,6 +19930,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks7.h",
+   "guards": [],
    "label": "/**",
    "line": 56,
    "module": "utf_baselib_tasks",
@@ -19117,6 +19939,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks7.h",
+   "guards": [],
    "label": "template",
    "line": 65,
    "module": "utf_baselib_tasks",
@@ -19125,6 +19948,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks7.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< TaskLifetimeProbeT<> > TaskLifet",
    "line": 126,
    "module": "utf_baselib_tasks",
@@ -19133,6 +19957,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks7.h",
+   "guards": [],
    "label": "/**",
    "line": 128,
    "module": "utf_baselib_tasks",
@@ -19141,6 +19966,7 @@
   },
   {
    "file": "utf_baselib_tasks/TestTasks7.h",
+   "guards": [],
    "label": "bool waitForDestroyed( SAA_in const std::atomic< bool >& des",
    "line": 145,
    "module": "utf_baselib_tasks",
@@ -19149,6 +19975,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "/**",
    "line": 47,
    "module": "utf_baselib_tasks2",
@@ -19157,6 +19984,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "struct HandlerMacroOutcome",
    "line": 57,
    "module": "utf_baselib_tasks2",
@@ -19165,6 +19993,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "/**",
    "line": 80,
    "module": "utf_baselib_tasks2",
@@ -19173,6 +20002,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "template",
    "line": 90,
    "module": "utf_baselib_tasks2",
@@ -19181,6 +20011,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< HandlerMacroProbeT<> > HandlerMa",
    "line": 202,
    "module": "utf_baselib_tasks2",
@@ -19189,6 +20020,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "/**",
    "line": 204,
    "module": "utf_baselib_tasks2",
@@ -19197,6 +20029,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "HandlerMacroOutcome runHandlerMacroProbe(",
    "line": 208,
    "module": "utf_baselib_tasks2",
@@ -19205,6 +20038,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "/**",
    "line": 450,
    "module": "utf_baselib_tasks2",
@@ -19213,6 +20047,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "struct MultiOperationProbeOptions",
    "line": 458,
    "module": "utf_baselib_tasks2",
@@ -19221,6 +20056,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "/**",
    "line": 496,
    "module": "utf_baselib_tasks2",
@@ -19229,6 +20065,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "struct MultiOperationOutcome",
    "line": 500,
    "module": "utf_baselib_tasks2",
@@ -19237,6 +20074,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "/**",
    "line": 535,
    "module": "utf_baselib_tasks2",
@@ -19245,6 +20083,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "template",
    "line": 544,
    "module": "utf_baselib_tasks2",
@@ -19253,6 +20092,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< MultiOperationProbeT<> > MultiOp",
    "line": 833,
    "module": "utf_baselib_tasks2",
@@ -19261,6 +20101,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "/**",
    "line": 835,
    "module": "utf_baselib_tasks2",
@@ -19269,6 +20110,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "struct MultiOperationProbeRun",
    "line": 847,
    "module": "utf_baselib_tasks2",
@@ -19277,6 +20119,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "/**",
    "line": 853,
    "module": "utf_baselib_tasks2",
@@ -19285,6 +20128,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "auto runMultiOperationProbe(",
    "line": 861,
    "module": "utf_baselib_tasks2",
@@ -19293,6 +20137,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "/**",
    "line": 903,
    "module": "utf_baselib_tasks2",
@@ -19301,6 +20146,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "void runMultiOperationSuite( SAA_in const std::size_t thread",
    "line": 911,
    "module": "utf_baselib_tasks2",
@@ -19309,6 +20155,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "/**",
    "line": 1295,
    "module": "utf_baselib_tasks2",
@@ -19317,6 +20164,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "void runIsClosingSuite( SAA_in const std::size_t threadsCoun",
    "line": 1304,
    "module": "utf_baselib_tasks2",
@@ -19325,6 +20173,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "/**",
    "line": 1452,
    "module": "utf_baselib_tasks2",
@@ -19333,6 +20182,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "template",
    "line": 1467,
    "module": "utf_baselib_tasks2",
@@ -19341,6 +20191,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "typedef bl::om::ObjectImpl< AbandonedOperationProbeT<> > Aba",
    "line": 1635,
    "module": "utf_baselib_tasks2",
@@ -19349,6 +20200,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTask.h",
+   "guards": [],
    "label": "void runAbandonedOperationSuite( SAA_in const std::size_t th",
    "line": 1637,
    "module": "utf_baselib_tasks2",
@@ -19357,6 +20209,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestMultiOperationTaskComposition.h",
+   "guards": [],
    "label": "namespace multiopcomposition",
    "line": 63,
    "module": "utf_baselib_tasks2",
@@ -19365,6 +20218,7 @@
   },
   {
    "file": "utf_baselib_tasks2/TestTcpPreHandshakeStage.h",
+   "guards": [],
    "label": "namespace prehandshake",
    "line": 56,
    "module": "utf_baselib_tasks2",
