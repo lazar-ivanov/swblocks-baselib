@@ -53,6 +53,12 @@
 # naming the reason; see the note above PLATFORM_KEY for why none of the four signals survives the
 # crossing
 #
+# The unstable list carries the same stamp, inherited from the two captures it is derived from, and
+# a comparison will not consult one from another platform either. That list is the other input to a
+# comparison, and the only one nothing used to check: it excuses the cases it names from the
+# assertion comparison, so a list derived elsewhere excuses the wrong ones, silently and for as long
+# as it stays committed
+#
 # Stdlib only, by design - it must run on the devenv7 dist interpreter, which is an embeddable
 # build with no venv and no pip
 #
@@ -618,7 +624,44 @@ def stamp( snapshot, platform ):
     return stamped
 
 
-def platform_refusal( baseline_platform, platform ):
+#
+# An unstable list is an array of case names, so unlike a capture it has nowhere to put a key, and a
+# stamped one is an object holding both: { "__platform__": ..., "unstable": [ ... ] }. The same key
+# and the same string as a capture's, so there is one convention to learn rather than two
+#
+# An array is still read, and an array is exactly what an unstamped list looks like - every list
+# derived before this existed is one. The shape says which it is, so nothing has to be inferred from
+# a missing key that might equally be a typo
+#
+
+UNSTABLE_KEY = 'unstable'
+
+
+def load_unstable( path ):
+    """
+    Read an unstable list as ( names, platform ), the bare array it used to be reading as unstamped
+    """
+
+    with open( path ) as stream:
+        raw = json.load( stream )
+
+    if isinstance( raw, list ):
+        return raw, None
+
+    return raw.get( UNSTABLE_KEY ) or [], raw.get( PLATFORM_KEY )
+
+
+def stamp_unstable( names, platform ):
+    """
+    The list as it is written out. There is no unstamped case to write here, unlike a capture: the
+    two runs a list is derived from must already agree on a platform or the derivation is refused,
+    and that platform - never --bld - is what the list speaks for
+    """
+
+    return { PLATFORM_KEY: platform, UNSTABLE_KEY: names }
+
+
+def platform_refusal( baseline_platform, platform, subject = 'baseline' ):
     """
     Why a comparison must not be attempted, or None when the two sides are known to agree
 
@@ -626,36 +669,76 @@ def platform_refusal( baseline_platform, platform ):
     an unknown, and an unknown is not a match. Every capture taken before this existed is unstamped,
     and the one this repo carries was taken on win-x86-vc143-debug, so treating unstamped as matching
     would wave through exactly the comparison this exists to refuse
+
+    subject names the side the first stamp came from, because the unstable list is asked the same
+    question against the same tree. One predicate, so the unknown case cannot be decided one way for
+    the baseline and another for the list
     """
 
     if baseline_platform and platform and baseline_platform == platform:
         return None
 
     if baseline_platform is None:
-        return ( 'the baseline carries no platform stamp, so there is nothing to match this tree '
-                 'against - not in force until the baseline is refreshed' )
+        return ( 'the %s carries no platform stamp, so there is nothing to match this tree '
+                 'against - not in force until the %s is refreshed' % ( subject, subject ) )
 
     if platform is None:
-        return ( 'the baseline speaks for %s and this side carries no platform stamp'
-                 % baseline_platform )
+        return ( 'the %s speaks for %s and this side carries no platform stamp'
+                 % ( subject, baseline_platform ) )
 
-    return 'the baseline speaks for %s and this tree is %s' % ( baseline_platform, platform )
+    return 'the %s speaks for %s and this tree is %s' % ( subject, baseline_platform, platform )
 
 
-def print_refusal( refusal ):
+def unstable_refusal( path, platform ):
+    """
+    Why a comparison must not consult this unstable list, or None when it may
+
+    No list at all is not a refusal: excusing nothing weakens nothing, and a --nondet naming a file
+    which does not exist is what --compare has always treated as no list. The risk is a list which
+    IS applied and was derived somewhere else
+    """
+
+    if not path or not os.path.isfile( path ):
+        return None
+
+    return platform_refusal( load_unstable( path )[ 1 ], platform, 'unstable list' )
+
+
+#
+# Why the comparison did not happen and how to get one, which differs by what was refused even
+# though the line above it does not
+#
+
+BASELINE_RECOVERY = (
+    'nothing was compared. None of the four signals is portable, so a',
+    'comparison across platforms reports platform difference as regression',
+    '- capture a baseline on this platform, or run on the one the baseline',
+    'speaks for',
+    )
+
+UNSTABLE_RECOVERY = (
+    'nothing was compared. The unstable list excuses the cases it names from',
+    'the assertion comparison, so a list derived on another platform excuses',
+    'the wrong ones - silently, and for as long as it stays committed. Derive',
+    'one here with --nondeterministic over two captures of this tree',
+    )
+
+
+def print_refusal( refusal, recovery ):
     """
     One wording for the refusal, wherever it is reached from, so the two points cannot drift apart
 
     check_split.sh reads the REFUSED line back to build its summary note, so its shape is load
-    bearing: the reason is everything after the dash, on one line
+    bearing: the reason is everything after the dash, on one line. It cannot tell a refused baseline
+    from a refused list and should not - both mean the comparison did not happen - so only the lines
+    below the REFUSED line vary
     """
 
     print( '' )
     print( 'utf_runlog: REFUSED - %s' % refusal )
-    print( 'utf_runlog: nothing was compared. None of the four signals is portable, so a' )
-    print( 'utf_runlog: comparison across platforms reports platform difference as regression' )
-    print( 'utf_runlog: - capture a baseline on this platform, or run on the one the baseline' )
-    print( 'utf_runlog: speaks for' )
+
+    for line in recovery:
+        print( 'utf_runlog: %s' % line )
 
 
 def repo_root():
@@ -676,7 +759,9 @@ def main():
     parser.add_argument( '--capture', metavar = 'PATH', help = 'write the snapshot as JSON to PATH' )
     parser.add_argument( '--compare', metavar = 'PATH', help = 'the before snapshot' )
     parser.add_argument( '--against', metavar = 'PATH', help = 'the after snapshot (default: the tree)' )
-    parser.add_argument( '--nondet', metavar = 'PATH', help = 'names to compare on outcome only' )
+    parser.add_argument( '--nondet', metavar = 'PATH', help = 'names to compare on outcome only; it '
+                                                              'carries the platform it was derived on '
+                                                              'and one from elsewhere is refused' )
     parser.add_argument( '--uncovered', metavar = 'PATH',
                          help = 'module -> reason for the modules the baseline deliberately does not '
                                 'cover, printed with the coverage statement so a PASS cannot be read '
@@ -715,11 +800,18 @@ def main():
         for name in unstable:
             print( '    %s' % name )
 
+        #
+        # Stamped with the platform the two runs agree on, which the refusal just above is what
+        # makes safe to assume. That string is the tree name a capture is stamped with, so the list
+        # and the baseline it applies to speak the same language and can be compared directly
+        #
+
         if args.capture:
             with open( args.capture, 'w' ) as stream:
-                json.dump( unstable, stream, indent = 1 )
+                json.dump( stamp_unstable( unstable, first_platform ), stream,
+                           indent = 1, sort_keys = True )
                 stream.write( '\n' )
-            print( 'utf_runlog: wrote %s' % args.capture )
+            print( 'utf_runlog: wrote %s, stamped %s' % ( args.capture, first_platform ) )
 
         return 0
 
@@ -747,7 +839,13 @@ def main():
         refusal = platform_refusal( load_snapshot( args.compare )[ 1 ], platform )
 
         if refusal:
-            print_refusal( refusal )
+            print_refusal( refusal, BASELINE_RECOVERY )
+            return 3
+
+        refusal = unstable_refusal( args.nondet, platform )
+
+        if refusal:
+            print_refusal( refusal, UNSTABLE_RECOVERY )
             return 3
 
     if args.run:
@@ -800,7 +898,19 @@ def main():
         refusal = platform_refusal( baseline_platform, platform )
 
         if refusal:
-            print_refusal( refusal )
+            print_refusal( refusal, BASELINE_RECOVERY )
+            return 3
+
+        #
+        # And the same question of the list, which the check above is what makes answerable: past it
+        # the baseline and this side agree, so a list which matches this side matches the comparison
+        # it is about to inform. It is the last unchecked input to that comparison
+        #
+
+        refusal = unstable_refusal( args.nondet, platform )
+
+        if refusal:
+            print_refusal( refusal, UNSTABLE_RECOVERY )
             return 3
 
         if args.family:
@@ -813,8 +923,7 @@ def main():
         unstable = []
 
         if args.nondet and os.path.isfile( args.nondet ):
-            with open( args.nondet ) as stream:
-                unstable = json.load( stream )
+            unstable = load_unstable( args.nondet )[ 0 ]
 
         unmeasured = []
 
