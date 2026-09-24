@@ -212,7 +212,17 @@ a FAIL would red the gate for everyone who is not on the baseline's platform and
 a check that never ran. **A baseline with no platform stamp is refused the same way and is not in
 force until it is refreshed**, exactly as C11 and C13 are, and the summary line says which state it
 is in. The answer to either is `utf_runlog.py --run --bld <tree> --capture …` on the platform you
-need to gate.
+need to gate, twice, so the unstable list can be re-derived from the pair.
+
+**`baseline/nondeterministic.json` is stamped the same way, and it is the reason the refresh is two
+captures.** It is `{ "__platform__": …, "unstable": [ … ] }`, stamped with the platform the two runs
+it was derived from agree on, and a comparison refuses a list from anywhere else on the same path
+with the same SKIP. It is the other input to a comparison and was the last one nothing checked:
+every case it names is thereafter compared on outcome alone, so a list carried across a platform
+excuses the wrong cases, silently and for as long as it stays committed. **A bare array is an
+unstamped list** — which is what every list derived before the stamp existed is — and is refused
+like an unstamped baseline, because unknown is not a match. Re-derive with
+`utf_runlog.py --nondeterministic <pass1> <pass2> --capture …`.
 
 **A differential comparison can only speak about things present on both sides.** Tiers 1 and 3
 compare against a baseline, so anything *new* — a module, a case — is unjudgeable by construction,
