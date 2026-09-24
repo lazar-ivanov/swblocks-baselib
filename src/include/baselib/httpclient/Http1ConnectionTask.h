@@ -1365,6 +1365,23 @@ namespace bl
 
                     if( m_parser && m_isWriteInFlight )
                     {
+                        /*
+                         * SAID IN THE LOG BECAUSE NOTHING ELSE SAYS IT. Which of these two arms a
+                         * run took is invisible otherwise - a case on either side of the hand-over
+                         * passes whichever ran - so a later simplification which dropped the
+                         * deferral would keep every case green and put back a truncated message
+                         * reported as a success. One line, at the level the idle close uses
+                         */
+
+                        BL_LOG(
+                            Logging::trace(),
+                            BL_MSG()
+                                << "Deferring a peer close to the write in flight on an HTTP/1.1 "
+                                << "connection to '"
+                                << m_key.host
+                                << "'"
+                            );
+
                         m_deferredEndingCode = ec;
                     }
                     else
