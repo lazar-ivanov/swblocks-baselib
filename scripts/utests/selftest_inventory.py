@@ -65,9 +65,15 @@ def unreferenced( info ):
 def expect( label, failures, marker ):
     """
     Assert that at least one reported failure carries the given invariant marker
+
+    The marker is matched with its trailing space, because a bare prefix does not separate C1
+    from C10 and C11: an expectation written for C1 would be satisfied by either of them, and a
+    control that can be satisfied by the wrong invariant proves nothing about the right one. It
+    is latent today only because no C1 mutation happens to disturb includes or file scope as
+    well - measured, by disabling C1 and watching both C1 expectations go red as they should
     """
 
-    hit = [ failure for failure in failures if failure.startswith( marker ) ]
+    hit = [ failure for failure in failures if failure.startswith( marker + ' ' ) ]
 
     if hit:
         print( '    PASS  %-4s %-46s %s' % ( marker, label, hit[ 0 ][ : 76 ] ) )
