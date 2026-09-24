@@ -23985,7 +23985,7 @@
    "notes_cases": [
     "IO_MessagingProxyBackendTests"
    ],
-   "notes_index": false
+   "notes_index": true
   },
   "utf_baselib_parsing": {
    "data_files": {},
@@ -24355,7 +24355,7 @@
    "notes_cases": [
     "BaseLib_AbstractPriorityTests"
    ],
-   "notes_index": false
+   "notes_index": true
   },
   "utf_baselib_tasks": {
    "data_files": {},
