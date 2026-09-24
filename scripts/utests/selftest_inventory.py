@@ -184,6 +184,10 @@ def main():
     # of C6 moved down to members. Splitting a block in two keeps every member, so nothing is
     # lost; deleting one of the halves is the previous test and still fires
     #
+    # It carries the silence control for the ADDED direction as well, since it asserts that NO
+    # C6 failure of any kind is reported: members whose file and line changed but whose text did
+    # not are a move, and a move must read as neither a loss nor an invention
+    #
     mutated = copy.deepcopy( baseline )
     victim = mutated[ 'namespaces' ][ 0 ]
     moved = [ m for m in mutated[ 'members' ]
@@ -205,6 +209,20 @@ def main():
         else:
             print( '    PASS  C6   block partitioned                             '
                    'correctly read as a move, not a loss' )
+
+    #
+    # C6 - a helper member invented
+    #
+    # The direction the no-loss half never looked in, exactly as C8 never looked for a lost
+    # recipe. C1 has always reported an invented case; a helper is no different
+    #
+
+    mutated = copy.deepcopy( baseline )
+    invented = copy.deepcopy( mutated[ 'members' ][ 0 ] )
+    invented[ 'sha' ] = 'c' * 32
+    invented[ 'label' ] = 'void anInventedHelper( )'
+    mutated[ 'members' ].append( invented )
+    ok &= expect( 'helper member invented', check_against( baseline, mutated ), 'C6' )
 
     # C6 - the same helper member copied into a second header of the same module
     mutated = copy.deepcopy( baseline )

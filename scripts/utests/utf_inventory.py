@@ -30,7 +30,8 @@
 #   C3  every case sits under the same #if guard stack
 #   C4  every case sits under the same namespace stack
 #   C5  no case name occurs twice anywhere in the tree
-#   C6  no helper block or member occurs twice within one module (an ODR risk); none was lost
+#   C6  no helper block or member occurs twice within one module (an ODR risk); none was lost,
+#       and none was invented
 #   C7  every data file a module references exists in that module's data/ directory, carries the
 #       content it had, and does not become one nothing names
 #   C8  every case a module's notes.txt names exists in that module
@@ -956,6 +957,11 @@ def check_against( before, after ):
     # Comparing text alone is what makes a hoist a move. The namespace path is deliberately not
     # part of this identity - it is used only by the duplication check above
     #
+    # It runs in BOTH directions, because looking one way is how C8 hid a lost recipe for as long
+    # as it did. A relocation invents no helper any more than it invents a case, so a member that
+    # exists only on the new side is reported exactly as C1 reports a case that does - and a slice
+    # which legitimately adds one refreshes the baseline, which is already the workflow here
+    #
     # Both manifests must actually carry members, or a baseline captured before this check
     # existed would silently pass everything. That failure mode has bitten this tool twice
     #
@@ -976,12 +982,21 @@ def check_against( before, after ):
     for member in before[ 'members' ]:
         old_members.setdefault( member[ 'sha' ], member )
 
-    new_members = { member[ 'sha' ] for member in after[ 'members' ] }
+    new_members = {}
 
-    for digest in sorted( set( old_members ) - new_members ):
+    for member in after[ 'members' ]:
+        new_members.setdefault( member[ 'sha' ], member )
+
+    for digest in sorted( set( old_members ) - set( new_members ) ):
         where = old_members[ digest ]
         failures.append(
             'C6 helper member LOST: %s (%s:%d)' % ( where[ 'label' ], where[ 'file' ], where[ 'line' ] )
+            )
+
+    for digest in sorted( set( new_members ) - set( old_members ) ):
+        where = new_members[ digest ]
+        failures.append(
+            'C6 helper member ADDED: %s (%s:%d)' % ( where[ 'label' ], where[ 'file' ], where[ 'line' ] )
             )
 
     return failures
@@ -1089,6 +1104,11 @@ def main():
         print( 'utf_inventory: C7 compares the content of the %d data file(s) present in both '
                'manifests and reports one nothing names any more; the %d already unreferenced in '
                'the baseline stay accepted' % ( shared_data, accepted ) )
+
+        print( 'utf_inventory: C6 reports a helper member ADDED as well as one LOST, over %d '
+               'member(s) - a relocation invents neither, so a slice which adds one on purpose '
+               'refreshes the baseline, exactly as C1 already requires for a new case'
+               % len( manifest.get( 'members', [] ) ) )
 
         failures.extend( check_against( before, manifest ) )
 
