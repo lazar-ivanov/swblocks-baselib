@@ -20,8 +20,12 @@
 #
 # A verification gate nobody has seen fail is not a gate. The module split relies on
 # utf_inventory.py to catch a silently dropped or edited test case, so before that reliance is
-# placed on it, each of its seven invariants is shown to fire on a manifest corrupted in exactly
+# placed on it, each of its nine invariants is shown to fire on a manifest corrupted in exactly
 # the way that invariant exists to catch
+#
+# C9 is also shown NOT to fire on a module which never claimed a complete notes.txt index, because
+# a rule that fired on the 481 cases in this tree with no recipe would be worse than the blind spot
+# it closes - a gate nobody can keep green is a gate everybody learns to ignore
 #
 # This mutates in-memory copies of a captured manifest. It never touches the source tree
 #
@@ -79,6 +83,12 @@ def main():
     # C8; the current tree does not. Excluding it here keeps the precondition honest rather than
     # papering over it, and C8 is intrinsic to whichever tree is scanned, so the baseline's copy
     # of it is never consulted by a real run
+    #
+    # C9 needs no such exclusion and must not be given one. A baseline predating notes_index
+    # declares nothing, so C9's completeness half has nothing to say about it, and a refreshed one
+    # satisfies that half already - the fifteen declared modules are complete today. If this line
+    # ever reds on C9, a declared index really has lost a recipe and the right answer is to put it
+    # back, not to widen the exclusion
     #
 
     clean = [ failure for failure in check_intrinsic( baseline ) if not failure.startswith( 'C8' ) ]
@@ -206,6 +216,73 @@ def main():
     source = next( name for name, info in mutated[ 'modules' ].items() if info.get( 'notes_cases' ) )
     mutated[ 'modules' ][ source ][ 'notes_cases' ].append( 'ACaseWhichWasDeletedYearsAgo' )
     ok &= expect( 'notes.txt names a deleted case', check_intrinsic( mutated ), 'C8' )
+
+    #
+    # C9 - the direction C8 never looked in
+    #
+    # The declaration is synthesized rather than looked for, so that these fire against a baseline
+    # captured before notes_index existed as well as against a fresh one
+    #
+
+    uncovered = {}
+
+    for case in baseline[ 'cases' ]:
+        info = baseline[ 'modules' ].get( case[ 'module' ] )
+        if info is not None and case[ 'name' ] not in set( info.get( 'notes_cases', [] ) ):
+            uncovered.setdefault( case[ 'module' ], [] ).append( case[ 'name' ] )
+
+    incomplete = sorted( uncovered )[ 0 ]
+    orphan = sorted( uncovered[ incomplete ] )[ 0 ]
+
+    # C9 - a declared complete index which does not name one of its own cases
+    mutated = copy.deepcopy( baseline )
+    mutated[ 'modules' ][ incomplete ][ 'notes_index' ] = True
+    ok &= expect( 'declared index missing a recipe (%s)' % orphan, check_intrinsic( mutated ), 'C9' )
+
+    #
+    # C9 - and the same module with no such declaration must stay silent
+    #
+    # This is the discrimination the rule rests on. 481 of this tree's 1075 cases have no recipe
+    # and are meant to have none, so a C9 which cannot tell a claim of completeness from the
+    # absence of one would report every single one of them
+    #
+
+    mutated = copy.deepcopy( baseline )
+    mutated[ 'modules' ][ incomplete ][ 'notes_index' ] = False
+    residue = [ f for f in check_intrinsic( mutated ) if f.startswith( 'C9' ) ]
+
+    if residue:
+        print( '    FAIL  C9   undeclared module with no recipes              '
+               '(reported - the rule is not opt-in and would fire on 481 cases)' )
+        ok = False
+    else:
+        print( '    PASS  C9   undeclared module with no recipes              '
+               'correctly silent - the requirement is opt-in' )
+
+    # C9 - a surviving case which lost the recipe it had
+    owners = {}
+    for module, info in baseline[ 'modules' ].items():
+        for name in info.get( 'notes_cases', [] ):
+            owners.setdefault( name, [] ).append( module )
+
+    live = { case[ 'name' ] for case in baseline[ 'cases' ] }
+    dropped = sorted( name for name in owners if name in live )[ 0 ]
+
+    mutated = copy.deepcopy( baseline )
+    for info in mutated[ 'modules' ].values():
+        info[ 'notes_cases' ] = [ n for n in info.get( 'notes_cases', [] ) if n != dropped ]
+    ok &= expect( 'recipe deleted for a live case (%s)' % dropped,
+                  check_against( baseline, mutated ), 'C9' )
+
+    #
+    # C9 - the declaration withdrawn, which would switch the completeness half off silently
+    #
+    declared = copy.deepcopy( baseline )
+    declared[ 'modules' ][ incomplete ][ 'notes_index' ] = True
+    withdrawn = copy.deepcopy( baseline )
+    withdrawn[ 'modules' ][ incomplete ][ 'notes_index' ] = False
+    ok &= expect( 'index declaration withdrawn (%s)' % incomplete,
+                  check_against( declared, withdrawn ), 'C9' )
 
     # C7 - the same data file name diverging between two modules
     mutated = copy.deepcopy( baseline )

@@ -87,7 +87,13 @@ Checklist:
       `<exe-dir>/<exe-stem>-data/`, so a module referencing a data file needs **its own copy**. Group
       data-consuming headers to avoid duplication where you can.
 - [ ] **Move the `notes.txt` `--run_test=` recipes** with their cases. A recipe must name a case in
-      its own module.
+      its own module, and a case that had a recipe must not end up without one (C8 and C9).
+- [ ] **If the module's `notes.txt` opens with *"each slice appends the recipes for the cases it
+      lands here"***, it is declaring itself a complete index and C9 holds it to that — every case
+      in it needs a recipe, including every case you add. Fifteen modules say this today. Elsewhere
+      `notes.txt` is a curated list and no case is obliged to appear; 481 of the 1075 cases have no
+      recipe and are meant to have none. Dropping the declaration to escape the check is itself a
+      C9 failure.
 - [ ] Run `scripts/utests/check_split.sh`.
 
 ### Things that are not obvious
@@ -114,7 +120,7 @@ moves, adds or removes test cases.
 
 | Tier | Tool | Checks |
 |---|---|---|
-| 1 | `utf_inventory.py --compare` | C1–C8: no case lost, added or edited; guard and namespace stacks unchanged; no duplicate names; helper members neither lost nor duplicated; data files present; `notes.txt` recipes resolve |
+| 1 | `utf_inventory.py --compare` | C1–C9: no case lost, added or edited; guard and namespace stacks unchanged; no duplicate names; helper members neither lost nor duplicated; data files present; `notes.txt` recipes resolve, and no case loses one |
 | 2 | `utf_objsize.py --ceiling 75` | No object over the ceiling |
 | 3 | `utf_runlog.py --compare` | Registered set, executed set, pass/fail, skips, and **per-case assertion counts** |
 

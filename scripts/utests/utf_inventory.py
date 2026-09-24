@@ -23,7 +23,7 @@
 # which matters because the failure mode - a case that silently stops being registered - looks
 # exactly like success in a green test run
 #
-# This script captures a manifest of every test case in src/utests and checks seven invariants:
+# This script captures a manifest of every test case in src/utests and checks nine invariants:
 #
 #   C1  the set of case names is identical
 #   C2  every case body and doc comment hashes the same
@@ -33,6 +33,8 @@
 #   C6  no helper block or member occurs twice within one module (an ODR risk); none was lost
 #   C7  every data file a module references exists in that module's data/ directory
 #   C8  every case a module's notes.txt names exists in that module
+#   C9  no case loses a recipe it had, and a module which declares its notes.txt a complete
+#       index really does name every one of its cases
 #
 # C2 together with C3 and C4 is the core claim: the text of every test, and the compilation
 # context that text sees, is unchanged
@@ -103,6 +105,30 @@ DATA_LITERAL_RE = re.compile( r'"([A-Za-z0-9_][A-Za-z0-9_.\-]*\.[A-Za-z0-9]{1,8}
 #
 
 NOTES_RUN_TEST_RE = re.compile( r'--run_test=([^\s]+)' )
+
+#
+# C8 runs in one direction only - it resolves every recipe to a case, and says nothing about a case
+# with no recipe. That asymmetry is not a detail: a recipe deleted from notes.txt, or a case landed
+# without one, leaves tier 1 green, and one was found by a lane re-capturing by hand rather than by
+# the gate. C9 is the other direction, and it cannot simply be "every case has a recipe" because
+# 481 of the 1075 cases in this tree have none and always have - notes.txt is a curated list of the
+# hard-to-reproduce ones in most modules, not an index
+#
+# So the requirement is opt-in, and the opt-in is already written in the tree: fifteen notes.txt
+# files open with "each slice appends the recipes for the cases it lands here", and those fifteen
+# modules are at this moment exactly the ones whose every case has a recipe. A module which says
+# that is making a claim C9 can hold it to. "notes-index: complete" is accepted as well, so that a
+# module outside that feature's vocabulary can make the same claim in its own words
+#
+# The declaration cannot be dropped to escape the check - withdrawing it is itself a C9 failure
+# against a baseline which recorded it, which is also what keeps this prose matcher honest: any
+# rewording that stops matching reports as a withdrawal rather than silently switching C9 off
+#
+
+NOTES_INDEX_RE = re.compile(
+    r'^\s*#.*(?:appends the recipes for the cases it lands here|notes-index:\s*complete)',
+    re.IGNORECASE
+    )
 
 #
 # C6 hashes each helper block whole, which cannot tell a block that was partitioned from one that
@@ -496,16 +522,22 @@ def capture( src_utests ):
 
         notes_path = os.path.join( module_dir, 'notes.txt' )
         notes_cases = []
+        notes_index = False
 
         if os.path.isfile( notes_path ):
             with open( notes_path, 'r', encoding = 'utf-8', errors = 'replace' ) as stream:
-                for spec in NOTES_RUN_TEST_RE.findall( stream.read() ):
-                    for name in spec.split( ',' ):
-                        name = name.strip()
-                        if name and '*' not in name and '?' not in name:
-                            notes_cases.append( name )
+                notes_text = stream.read()
+
+            for spec in NOTES_RUN_TEST_RE.findall( notes_text ):
+                for name in spec.split( ',' ):
+                    name = name.strip()
+                    if name and '*' not in name and '?' not in name:
+                        notes_cases.append( name )
+
+            notes_index = any( NOTES_INDEX_RE.match( line ) for line in notes_text.split( '\n' ) )
 
         module_info[ 'notes_cases' ] = sorted( set( notes_cases ) )
+        module_info[ 'notes_index' ] = notes_index
 
         data_dir = os.path.join( module_dir, 'data' )
 
@@ -530,9 +562,27 @@ def index_cases( manifest ):
     return { case[ 'name' ]: case for case in manifest[ 'cases' ] }
 
 
+def recipe_owners( manifest ):
+    """
+    Case name -> the set of modules whose notes.txt carries a --run_test recipe for it
+
+    Ownership is tree wide on purpose. A case that moves to another module with its recipe
+    following it has lost nothing, and C8 already reports a recipe left behind in the module the
+    case departed - so C9 asks only whether some notes.txt still names it
+    """
+
+    owners = {}
+
+    for module, info in manifest[ 'modules' ].items():
+        for name in info.get( 'notes_cases', [] ):
+            owners.setdefault( name, set() ).add( module )
+
+    return owners
+
+
 def check_intrinsic( manifest ):
     """
-    Invariants that hold of a single manifest on its own: C5, C6 and C7
+    Invariants that hold of a single manifest on its own: C5 to C9
     """
 
     failures = []
@@ -641,6 +691,35 @@ def check_intrinsic( manifest ):
                     % ( module, name )
                     )
 
+    #
+    # C9 intrinsic half - a module which declares its notes.txt a complete index must name every
+    # one of its own cases there
+    #
+    # This is the half that survives a baseline refresh, and it is the one that catches the live
+    # risk: a case landing in one of the declared modules without the recipe its neighbours all
+    # have. A differential check cannot do that, because a newly added case has no recipe in the
+    # baseline to lose and a refresh would bless the gap
+    #
+
+    own_by_module = {}
+
+    for case in manifest[ 'cases' ]:
+        own_by_module.setdefault( case[ 'module' ], [] ).append( case[ 'name' ] )
+
+    for module, info in sorted( manifest[ 'modules' ].items() ):
+
+        if not info.get( 'notes_index' ):
+            continue
+
+        indexed = set( info.get( 'notes_cases', [] ) )
+
+        for name in sorted( own_by_module.get( module, [] ) ):
+            if name not in indexed:
+                failures.append(
+                    'C9 module %s declares its notes.txt a complete index but has no --run_test '
+                    'recipe for case %s' % ( module, name )
+                    )
+
     by_name = {}
 
     for module, info in sorted( manifest[ 'modules' ].items() ):
@@ -658,7 +737,7 @@ def check_intrinsic( manifest ):
 
 def check_against( before, after ):
     """
-    Invariants that relate two manifests: C1 to C4, plus the C6 no-loss half
+    Invariants that relate two manifests: C1 to C4, plus the C6 and C9 no-loss halves
     """
 
     failures = []
@@ -690,6 +769,44 @@ def check_against( before, after ):
         if a[ 'namespaces' ] != b[ 'namespaces' ]:
             failures.append(
                 'C4 case NAMESPACE STACK CHANGED: %s (%s -> %s)' % ( name, a[ 'namespaces' ], b[ 'namespaces' ] )
+                )
+
+    #
+    # The no-loss half of C9 - a case which exists on both sides and had a recipe must still have
+    # one. This is the direction C8 never looked in, and it is the only C9 coverage the thirty-one
+    # modules which declare nothing have, since the intrinsic half says nothing about them
+    #
+    # It is placed before the C6 section deliberately, because that section returns early when a
+    # baseline carries no members and C9 must not be skipped along with it
+    #
+
+    old_recipes = recipe_owners( before )
+    new_recipes = recipe_owners( after )
+
+    for name in sorted( set( old ) & set( new ) ):
+        if name in old_recipes and name not in new_recipes:
+            failures.append(
+                'C9 case RECIPE LOST: %s - notes.txt of %s named it, none does now'
+                % ( name, ', '.join( sorted( old_recipes[ name ] ) ) )
+                )
+
+    #
+    # A declaration withdrawn is a check switched off, so it has to be reported rather than
+    # obeyed. A baseline captured before notes_index existed records nothing here, and then this
+    # half is simply not in force - which main( ) says out loud rather than leaving implied
+    #
+
+    for module, info in sorted( before[ 'modules' ].items() ):
+
+        if not info.get( 'notes_index' ):
+            continue
+
+        current = after[ 'modules' ].get( module )
+
+        if current is not None and not current.get( 'notes_index' ):
+            failures.append(
+                'C9 module %s WITHDREW its notes.txt complete-index declaration - the C9 '
+                'completeness check no longer applies to it' % module
                 )
 
     #
@@ -765,6 +882,19 @@ def main():
     print( 'utf_inventory: %d cases, %d helper blocks, %d modules' % (
         len( manifest[ 'cases' ] ), len( manifest[ 'namespaces' ] ), len( manifest[ 'modules' ] ) ) )
 
+    #
+    # State C9's rule where a reader of a green run will see it, because what it does NOT require
+    # is the whole reason it is not noisy - and an unstated scope is how C8's one-wayness went
+    # unnoticed in the first place
+    #
+
+    declared = { module for module, info in manifest[ 'modules' ].items() if info.get( 'notes_index' ) }
+    gated = sum( 1 for case in manifest[ 'cases' ] if case[ 'module' ] in declared )
+
+    print( 'utf_inventory: C9 requires a recipe for every case of the %d module(s) whose notes.txt '
+           'declares itself a complete index (%d of %d cases); elsewhere it requires only that no '
+           'case loses a recipe it had' % ( len( declared ), gated, len( manifest[ 'cases' ] ) ) )
+
     if args.summary:
         counts = {}
         for case in manifest[ 'cases' ]:
@@ -788,6 +918,11 @@ def main():
     if args.compare:
         with open( args.compare ) as stream:
             before = json.load( stream )
+
+        if not any( 'notes_index' in info for info in before[ 'modules' ].values() ):
+            print( 'utf_inventory: C9 - this baseline predates the index declaration, so the '
+                   'no-withdrawal half is not in force until it is refreshed' )
+
         failures.extend( check_against( before, manifest ) )
 
     if failures:
