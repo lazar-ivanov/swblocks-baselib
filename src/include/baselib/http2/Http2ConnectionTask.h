@@ -517,6 +517,24 @@ namespace bl
                          * accepted afterwards, would wait for a handler which cannot come. The
                          * two locks are taken one after the other and never nested, so the order
                          * this class documents at postCommand( ) is untouched
+                         *
+                         * THE ONE SITE OF THE EIGHT WITH NO DECIDER DOWNSTREAM, which is why
+                         * abandonOperation( ) takes a terminal that is already due. The other
+                         * seven rethrow into a handler epilog or the establisher's; this one
+                         * rethrows to whichever thread called submit( ), cancel( ), consumed( ) or
+                         * provideBody( ). A first error initiates the close but does NOT close
+                         * submissions - closeSubmissions( ) runs from the terminal - so a command
+                         * can be accepted, and an operation begun, on a task which is already
+                         * closing; giving that one back after the last real handler has completed
+                         * leaves the count at zero, the task closing and NOBODY to complete it
+                         *
+                         * THE CAVEAT THAT COMES WITH IT: onTaskStoppedNothrow( ) then runs on this
+                         * caller's thread, a route its own comment does not list. It is under the
+                         * task lock either way, so it still excludes cancelTask( ); what it does
+                         * not exclude is the cancelTimers( ) that cancelTask( ) POSTS, which is
+                         * the timer race that record names. With the count at zero no operation is
+                         * left for a lost cancel to strand, so what remains to lose is the cancel
+                         * itself and not the task
                          */
 
                         {
@@ -1485,19 +1503,30 @@ namespace bl
              * site: the allocation the initiating call makes, since asio reports I/O failure
              * through the handler
              *
-             * IT GIVES THE OPERATION BACK AND RETHROWS; IT DOES NOT COMPLETE IT. h1's driver
-             * completes its own inline - onOperationCompleted( ) - and can, because at all three
-             * of its sites another operation is outstanding and the count cannot reach zero. THAT
-             * DOES NOT HOLD HERE. onProtocolNegotiated( ) runs under the establisher's task lock
-             * with the count at ZERO and reaches four of these sites before the first operation is
-             * begun: chkArmSettingsTimer( ) through pumpWrites( ), and chkArmIdleTimer( ) and
-             * armDrainDeadline( ) through the events applyCommands( ) can drain. Completing an
-             * operation there would drive the count to zero, take the terminal path and call
-             * notifyReady( ) - which re-acquires the task lock the handler already holds, and it
-             * is not recursive. A self-deadlock, not a style question
+             * IT GIVES THE OPERATION BACK AND RETHROWS; IT DOES NOT COMPLETE IT, which is where
+             * this departs from h1's catch. Completing inline is safe only where the count cannot
+             * reach zero, and ONE of these eight sites refutes that: onProtocolNegotiated( ) runs
+             * under the establisher's task lock with the count at ZERO, and pumpWrites( ) arms the
+             * SETTINGS deadline through chkArmSettingsTimer( ) BEFORE it begins the write.
+             * Completing an operation there would drive the count to zero, take the terminal path
+             * and call notifyReady( ), which re-acquires the task lock the handler already holds
+             * and is not recursive. A self-deadlock, not a style question
              *
-             * Giving it back decides nothing (MultiOperationTask.h), so it is safe at every site,
-             * and the throw then takes exactly the route it took before the guard existed
+             * ONE SITE IS ENOUGH TO RULE THE SHAPE OUT, and once two shapes would be needed the
+             * one that is safe everywhere is the better design: the settings timer's safety rests
+             * on nothing but the order inside pumpWrites( ), which a reorder could take away in
+             * silence. No OTHER site of the eight is reachable with the count at zero - the
+             * negotiation chain drains no events, because applyCancel( ) is held behind
+             * isHeadersProduced and a connection error is raised only from Session::feed( ) and
+             * Session::onTimer( ) - so this rests on one site and says so
+             *
+             * h1 IS NOT THE COUNTER-EXAMPLE IT LOOKS LIKE. Its scheduleRead( ) reached from
+             * scheduleTask( ) runs with the count at zero as well, which is the defect design 4
+             * records as A4 rather than a property to copy
+             *
+             * Giving it back decides nothing beyond a terminal which is ALREADY DUE
+             * (MultiOperationTask.h), so it is safe at every site, and the throw then takes
+             * exactly the route it took before the guard existed
              */
 
             void scheduleRead()
@@ -1704,8 +1733,11 @@ namespace bl
                     /*
                      * The accounting guard of scheduleRead( ). m_isWriteInFlight goes back with
                      * the operation - no handler is owed, which is the premise this catch already
-                     * rests on - so that a pump which runs again is not refused by a write that
-                     * never started
+                     * rests on - and what it costs if it does not is initiateClose( ): the flag is
+                     * that function's gate for the FORCEFUL shutdown, so a write which never
+                     * started would take a deliberate TLS close's close_notify with it. Not, as
+                     * this comment first said, a later pump being refused - after the rethrow the
+                     * handler's epilog records the first error and every pump returns at its head
                      */
 
                     m_isWriteInFlight = false;
@@ -2186,8 +2218,9 @@ namespace bl
                 catch( std::exception& )
                 {
                     /*
-                     * The accounting guard of scheduleRead( ) - reachable with the count at zero
-                     * through the stream closures applyCommands( ) can drain
+                     * The accounting guard of scheduleRead( ). Both callers - onStreamClosedEvent( )
+                     * and onProtocolNegotiated( ), after the write and the read - hold at least one
+                     * operation, so the count here cannot reach zero
                      */
 
                     base_type::abandonOperation();
@@ -2341,9 +2374,18 @@ namespace bl
                 catch( std::exception& )
                 {
                     /*
-                     * The accounting guard of scheduleRead( ) - reachable with the count at zero
-                     * through a connection error applyCommands( ) can drain
+                     * The accounting guard of scheduleRead( ). Both callers - onConnectionErrorEvent( )
+                     * and closeGracefully( ) - run from a handler body, so the count here cannot
+                     * reach zero
+                     *
+                     * THE TIMER'S PRESENCE GOES BACK WITH THE OPERATION, because this function
+                     * makes it the gate: "a connection drains once". Left set, a drain which was
+                     * never bounded could never be bounded again. Nothing reaches this function
+                     * twice after the rethrow today - every re-arm is behind isClosing( ) - so
+                     * this is the principle and not a defect
                      */
+
+                    m_drainTimer.reset();
 
                     base_type::abandonOperation();
 

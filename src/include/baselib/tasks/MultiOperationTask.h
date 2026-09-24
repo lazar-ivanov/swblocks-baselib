@@ -230,27 +230,67 @@ namespace bl
              * or the pending count never reaches zero again. A task whose count cannot reach zero
              * can never take its terminal path, which is a HANG rather than a failure
              *
-             * IT DECIDES NOTHING, and that is the whole difference from onOperationCompleted().
-             * No close, no terminal, so it may be called while the TASK LOCK is held - which the
-             * catch of an initiator called from a handler body, or from a task's establishment
-             * chain, always is. onOperationCompleted() in that position would reach notifyReady()
-             * whenever the count fell to zero, and notifyReady() re-acquires the task lock
+             * IT RECORDS NO ERROR AND INITIATES NO CLOSE, and that is the difference from
+             * onOperationCompleted(). It may therefore be called while the TASK LOCK is held,
+             * which the catch of an initiator called from a handler body or from a task's
+             * establishment chain is - onOperationCompleted() in that position would reach
+             * notifyReady() whenever the count fell to zero, and notifyReady() re-acquires the
+             * task lock, which is not recursive. NOT every caller holds it: an initiator called
+             * from a task's own public API runs on the caller's thread and under no lock at all
              *
-             * It leaves the accounting exactly as it would have been had beginOperation() never
-             * been called, so the exception must go on to leave the function: the task's ordinary
-             * error path - the handler epilog, or the caller - is what reports it
+             * IT DOES TAKE A TERMINAL WHICH IS ALREADY DUE - closing, count zero, not yet taken -
+             * and nothing else, because giving back the LAST operation of a task which is already
+             * closing leaves nobody to complete it. The difference matters only where nothing
+             * decides after the rethrow: from a handler body or the establishment chain there is
+             * always an epilog behind the throw, and the terminal cannot be due in either place
+             * anyway - a handler's own operation is outstanding until its epilog, and a task being
+             * scheduled is not closing. So this clause can only fire off that path, and it cannot
+             * fire under the task lock
+             *
+             * A due terminal also means the close has already been initiated, every handler has
+             * passed its epilog and nothing is left in flight; the safety is structural rather
+             * than a property of the order things ran in. What it does move is the THREAD the
+             * terminal runs on - a task whose onTaskStoppedNothrow() assumes the strand or the
+             * I/O pool must say so, as the HTTP/2 driver's mailbox post does
+             *
+             * Apart from that terminal it leaves the accounting exactly as it would have been had
+             * beginOperation() never been called, so the exception must go on to leave the
+             * function: the task's ordinary error path - the handler epilog, or the caller - is
+             * what reports it
              */
 
             void abandonOperation() NOEXCEPT
             {
-                BL_MUTEX_GUARD( m_operationsLock );
+                BL_NOEXCEPT_BEGIN()
 
-                BL_ASSERT( 0U != m_pendingOperations );
+                bool terminal = false;
+                std::exception_ptr firstError;
+                bool firstErrorIsExpected = false;
 
-                if( 0U != m_pendingOperations )
                 {
-                    --m_pendingOperations;
+                    BL_MUTEX_GUARD( m_operationsLock );
+
+                    BL_ASSERT( 0U != m_pendingOperations );
+
+                    if( 0U != m_pendingOperations )
+                    {
+                        --m_pendingOperations;
+                    }
+
+                    terminal = takeTerminalNoLock();
+
+                    firstError = m_firstError;
+                    firstErrorIsExpected = m_firstErrorIsExpected;
                 }
+
+                /*
+                 * close is false on purpose - a terminal can only be due once the close has been
+                 * initiated, so there is never one owed here
+                 */
+
+                applyDecision( false /* close */, terminal, firstError, firstErrorIsExpected );
+
+                BL_NOEXCEPT_END()
             }
 
             /**

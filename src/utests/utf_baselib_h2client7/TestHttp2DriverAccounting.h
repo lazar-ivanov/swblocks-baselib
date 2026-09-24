@@ -67,6 +67,9 @@ namespace utest
          * One shot because the driver posts to the strand from cancelTask( ) as well, and a seam
          * which stayed armed would fail the case's own teardown instead of the initiator it is
          * about
+         *
+         * IT IS PROCESS-GLOBAL, so a second case added to this module shares it with the first. A
+         * case which arms it must disarm it on every path out, as the one below does
          */
 
         inline auto postFailureArmed() NOEXCEPT -> std::atomic< bool >&
