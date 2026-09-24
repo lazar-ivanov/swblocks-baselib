@@ -754,7 +754,14 @@ def main():
         if not args.bld:
             print( 'utf_runlog: --run needs --bld', file = sys.stderr )
             return 2
-        print( 'utf_runlog: running binaries under %s' % args.bld )
+        #
+        # Flushed for the same reason the per-module line is, and for the case that one cannot
+        # reach: nothing below prints until the first module finishes, so a module which hangs on
+        # a 600 or 1800 second timeout leaves a blank screen for the whole of it. That is the one
+        # moment somebody is watching, deciding whether to kill the run
+        #
+
+        print( 'utf_runlog: running binaries under %s' % args.bld, flush = True )
         snapshot = collect_by_running( args.bld, set( args.only or [] ), args.timeout )
 
     elif args.parse_logs:
