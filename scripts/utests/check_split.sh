@@ -192,23 +192,32 @@ echo "=== tier 3: runtime equivalence ==========================================
 NONDET_ARG=()
 [[ -f "${BASELINE}/nondeterministic.json" ]] && NONDET_ARG=( --nondet "${BASELINE}/nondeterministic.json" )
 
+#
+# The baseline covers 17 of the tree's modules and was captured on one platform, so a tier 3 PASS
+# is a statement about those modules only. utf_runlog prints which modules it could not speak about
+# and why; this file supplies the why
+#
+
+UNCOVERED_ARG=()
+[[ -f "${BASELINE}/uncovered.json" ]] && UNCOVERED_ARG=( --uncovered "${BASELINE}/uncovered.json" )
+
 if [[ ! -f "${BASELINE}/runlog.json" ]]; then
     echo "no runtime baseline at ${BASELINE}/runlog.json"
     note "tier3  SKIP  no runtime baseline"
 elif [[ "${DO_RUN}" == "1" && -n "${BLD}" ]]; then
     if "${PYTHON}" "${HERE}/utf_runlog.py" --run --bld "${BLD}" \
-        --compare "${BASELINE}/runlog.json" "${NONDET_ARG[@]}"; then
-        note "tier3  PASS  runtime equivalence (ran binaries)"
+        --compare "${BASELINE}/runlog.json" "${NONDET_ARG[@]}" "${UNCOVERED_ARG[@]}"; then
+        note "tier3  PASS  runtime equivalence, baseline modules only (ran binaries)"
     else
-        note "tier3  FAIL  runtime equivalence (ran binaries)"
+        note "tier3  FAIL  runtime equivalence, baseline modules only (ran binaries)"
         RC=1
     fi
 elif [[ -n "${BLD}" && -d "${BLD}/utflogs" ]]; then
     if "${PYTHON}" "${HERE}/utf_runlog.py" --parse-logs "${BLD}/utflogs" \
-        --compare "${BASELINE}/runlog.json" "${NONDET_ARG[@]}"; then
-        note "tier3  PASS  runtime equivalence (parsed logs)"
+        --compare "${BASELINE}/runlog.json" "${NONDET_ARG[@]}" "${UNCOVERED_ARG[@]}"; then
+        note "tier3  PASS  runtime equivalence, baseline modules only (parsed logs)"
     else
-        note "tier3  FAIL  runtime equivalence (parsed logs)"
+        note "tier3  FAIL  runtime equivalence, baseline modules only (parsed logs)"
         RC=1
     fi
 else

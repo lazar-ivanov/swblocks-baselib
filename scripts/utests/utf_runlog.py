@@ -41,6 +41,11 @@
 #   utf_runlog.py --parse-logs <utflogs dir> --capture x.json  parse logs make already produced
 #   utf_runlog.py --nondeterministic run1.json run2.json --capture nondet.json
 #   utf_runlog.py --compare before.json --against after.json [--nondet nondet.json]
+#                                                            [--uncovered uncovered.json]
+#
+# Every comparison ends with a coverage statement naming the modules the baseline does not cover,
+# because the four signals below are differential and can say nothing whatever about those. A PASS
+# is a statement about the covered modules and nothing else
 #
 # Stdlib only, by design - it must run on the devenv7 dist interpreter, which is an embeddable
 # build with no venv and no pip
@@ -561,6 +566,10 @@ def main():
     parser.add_argument( '--compare', metavar = 'PATH', help = 'the before snapshot' )
     parser.add_argument( '--against', metavar = 'PATH', help = 'the after snapshot (default: the tree)' )
     parser.add_argument( '--nondet', metavar = 'PATH', help = 'names to compare on outcome only' )
+    parser.add_argument( '--uncovered', metavar = 'PATH',
+                         help = 'module -> reason for the modules the baseline deliberately does not '
+                                'cover, printed with the coverage statement so a PASS cannot be read '
+                                'as covering them' )
     parser.add_argument( '--family', metavar = 'PREFIX',
                          help = 'restrict both sides of the comparison to modules with this name prefix, '
                                 'so one split family can be validated without running the whole tree' )
@@ -647,6 +656,53 @@ def main():
             print( '' )
             print( 'utf_runlog: NOTE - %d case(s) compared without assertion counts' % len( unmeasured ) )
             print( 'utf_runlog: one side lacked --report_level=detailed, so only the outcome was checked' )
+
+        #
+        # A green report says "nothing changed in what the baseline covers", which is a narrower
+        # claim than it reads as. Every check but the two absolute ones is differential, so a module
+        # the baseline never captured contributes no registered set, no executed set, no skip set and
+        # no assertion count - the signal tier 3 exists for. Only its own verdict is read, and a case
+        # in it which still registers and still passes while asserting less is invisible
+        #
+        # Printed on PASS as well as on FAIL, because it is the PASS which misleads. Measured: with
+        # one assertion removed from a case in an uncovered module the report is byte-identical, and
+        # from a covered one it grows the expected ASSERTION COUNT CHANGED line
+        #
+
+        uncovered = sorted( set( snapshot ) - set( before ) )
+
+        reasons = {}
+
+        if args.uncovered and os.path.isfile( args.uncovered ):
+            with open( args.uncovered ) as stream:
+                reasons = json.load( stream )
+
+        if uncovered:
+            print( '' )
+            print( 'utf_runlog: COVERAGE - the baseline does not cover %d of the %d module(s) here:'
+                   % ( len( uncovered ), len( snapshot ) ) )
+            for module in uncovered:
+                print( '    %-30s %4d case(s)  %s' % (
+                    module,
+                    len( snapshot[ module ].get( 'entered' ) or [] ),
+                    reasons.get( module, 'not in the baseline' ) ) )
+            print( 'utf_runlog: for those the registered set, the executed set, the skips and the' )
+            print( 'utf_runlog: per-case assertion counts were NOT compared - only each case outcome' )
+            print( 'utf_runlog: and the module verdict were read' )
+
+        #
+        # A reason which no longer describes anything is worse than none, because it is read as a
+        # live statement about the tree. Say so rather than letting it rot silently
+        #
+
+        stale = sorted( set( reasons ) - set( uncovered ) )
+
+        if stale:
+            print( '' )
+            print( 'utf_runlog: NOTE - %d exclusion note(s) are stale; these modules ARE covered now:'
+                   % len( stale ) )
+            for module in stale:
+                print( '    %s' % module )
 
         if failures:
             print( '' )

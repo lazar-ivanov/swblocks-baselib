@@ -1,0 +1,19 @@
+{
+ "utf_baselib_h2client": "MEASURED UNSTABLE - hangs outright, 1 of 57 runs (0 of 12 cases ran); TcpStrandedStreams_PlainFullDuplexTests also varies 53/58 assertions",
+ "utf_baselib_h2client2": "stable in 57 runs, but the baseline is a win-x86-vc143-debug capture and this host cannot produce Windows records",
+ "utf_baselib_h2client3": "stable in 57 runs, but the baseline is a win-x86-vc143-debug capture and this host cannot produce Windows records",
+ "utf_baselib_h2client4": "MEASURED UNSTABLE - hangs outright, 1 of 57 runs (0 of 20 cases ran)",
+ "utf_baselib_h2client5": "stable in 57 runs, but the baseline is a win-x86-vc143-debug capture and this host cannot produce Windows records",
+ "utf_baselib_h2client6": "MEASURED UNSTABLE - H2Driver_AnsweredRequestSurvivesAPeerEndingOnTheWriteTests aborts, 1 of 57 runs",
+ "utf_baselib_h2client7": "stable in 57 runs, but the baseline is a win-x86-vc143-debug capture and this host cannot produce Windows records",
+ "utf_baselib_h2core": "stable in 57 runs, but the baseline is a win-x86-vc143-debug capture and this host cannot produce Windows records",
+ "utf_baselib_h2profiles": "stable in 57 runs, but the baseline is a win-x86-vc143-debug capture and this host cannot produce Windows records",
+ "utf_baselib_http2": "stable in 57 runs, but the baseline is a win-x86-vc143-debug capture and this host cannot produce Windows records",
+ "utf_baselib_httpclient": "stable in 57 runs, but the baseline is a win-x86-vc143-debug capture and this host cannot produce Windows records",
+ "utf_baselib_httpclient2": "stable in 57 runs, but the baseline is a win-x86-vc143-debug capture and this host cannot produce Windows records",
+ "utf_baselib_httpclient3": "stable in 57 runs here, which is NOT evidence its ~1% post-H01 refusal is gone; and the Windows-capture bar applies",
+ "utf_baselib_httpclient4": "MEASURED UNSTABLE - ClientSession_AgainstTheLibraryHttpServerTests and _SinkIsToldCompleteOnceAcrossTheFallbackRetryTests abort, 5 of 57 runs",
+ "utf_baselib_httpclient5": "MEASURED UNSTABLE - Http1DriverTls_IdleCloseSendsCloseNotifyTests aborts, 1 of 57 runs",
+ "utf_baselib_httpclient6": "stable in 57 runs, but the baseline is a win-x86-vc143-debug capture and this host cannot produce Windows records",
+ "utf_baselib_httpclient7": "stable in 57 runs, but the baseline is a win-x86-vc143-debug capture and this host cannot produce Windows records"
+}

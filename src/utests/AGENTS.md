@@ -122,7 +122,7 @@ moves, adds or removes test cases.
 |---|---|---|
 | 1 | `utf_inventory.py --compare` | C1–C13: no case lost, added or edited; guard and namespace stacks unchanged; no duplicate names; helper members neither lost, invented nor duplicated; data files present, unchanged in content and still referenced; `notes.txt` recipes resolve, no case loses one, and a module declaring its index complete really is; every file on both sides keeps its `#include` list, bar the roster lines a relocation must edit; file-scope text — the fixtures, the column-0 statics, the `BL_IID_DECLARE`s, the behavioural `#define`s — neither lost nor invented; a helper member that stayed in its file keeps the namespace it sat in; and all of it over `src/utests/include/` too |
 | 2 | `utf_objsize.py --ceiling 75` | No object over the ceiling |
-| 3 | `utf_runlog.py --compare` | Registered set, executed set, pass/fail, skips, and **per-case assertion counts** |
+| 3 | `utf_runlog.py --compare` | Registered set, executed set, pass/fail, skips, and **per-case assertion counts** — differentially, and **only over the 17 modules the baseline covers** |
 
 `selftest_inventory.py` proves tier 1 actually fails when it should; run it if you change the
 extractor.
@@ -156,6 +156,17 @@ shared tree. Replaying the real four-way `f992e2f` split reports eleven such lin
 `#include` in a shared header and ten helper members — where it used to report three. Each names a
 real change to a file every module compiles; the answer is the companion refresh, where the manifest
 diff shows exactly what is blessed.
+
+**Tier 3's baseline covers 17 of the tree's 45 test binaries, and none of the http or h2 client
+ones.** It is also a `win-x86-vc143-debug` capture (`91d5c2c`), so it is a statement about one
+platform as well as about those modules: run against a Linux tree it reports 37 assertion-count
+differences inside its *own* 17 modules which are nothing but Windows-versus-POSIX
+(`BaseLib_OSJunctionsTests` 18 → 0, `BaseLib_OSRegistryValueTest` 8 → 0). Every comparison therefore
+ends with a coverage statement naming the modules it could not speak about, and
+`baseline/uncovered.json` gives the reason for each — read that before taking a green tier 3 for
+coverage. The 17 client modules were measured for admission and **refused**;
+`notes/plans/issues/tier3-client-modules-not-baselineable-record.md` has the numbers and what would
+reverse it.
 
 **A differential comparison can only speak about things present on both sides.** Tiers 1 and 3
 compare against a baseline, so anything *new* — a module, a case — is unjudgeable by construction,
