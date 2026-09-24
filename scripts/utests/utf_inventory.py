@@ -23,7 +23,7 @@
 # which matters because the failure mode - a case that silently stops being registered - looks
 # exactly like success in a green test run
 #
-# This script captures a manifest of every test case in src/utests and checks eleven invariants:
+# This script captures a manifest of every test case in src/utests and checks twelve invariants:
 #
 #   C1  the set of case names is identical
 #   C2  every case body and doc comment hashes the same
@@ -40,6 +40,7 @@
 #   C10 every file keeps the #include list it had
 #   C11 no file-scope text - what sits outside every column-0 namespace block - is lost or
 #       invented
+#   C12 a helper member which stayed in its file kept the namespace it sat in
 #
 # C2 together with C3 and C4 is the core claim about a case which stayed where it was: its text,
 # the preprocessor guard stack and the namespace stack it sits under are all unchanged. C10 adds
@@ -55,6 +56,12 @@
 # of its copies being deleted. Two do: "using namespace bl;" in two entry points, and one
 # THREAD_POOLS define in three. Counting the copies would close that and would red the new-module
 # control, whose entry point legitimately writes the third "using namespace bl;" - measured
+#
+# C4 is the part of that core claim with nothing to say about this tree, and C12 is why that had
+# to be said out loud: all 1082 cases here sit at file scope, so C4's subject is empty and it
+# protects nothing that exists. The namespace a HELPER sits in is the thing that really moves, and
+# it was read by the duplication check alone - a column-0 namespace renamed passed tier 1, measured
+# in a helper-only header and in one holding live cases
 #
 # Within a SCANNED MODULE FILE, and for its text, what remains outside every hash is two named
 # things at file scope and no others. Both qualifiers are load bearing and neither was stated
@@ -1338,6 +1345,60 @@ def check_against( before, after ):
                     )
 
     #
+    # C12 - a helper member which stayed in its file kept the namespace it sat in
+    #
+    # manifest[ 'namespaces' ] - the column-0 blocks, each with its name and its whole-block sha -
+    # was read by check_intrinsic( )'s duplication check and by nothing else, so renaming a
+    # column-0 namespace passed tier 1. Measured, in a helper-only header and in one holding live
+    # cases. C4 cannot stand in for this: all 1082 cases in this tree sit at file scope, so C4's
+    # subject is empty and it protects nothing that exists
+    #
+    # The identity is deliberately NOT the block. A block's sha covers its opening line, so a
+    # rename changes it and the block cannot be matched across the two manifests at all; and the
+    # block's name is not distinguishing either, since the whole tree uses four names and 95 of
+    # the 165 blocks are anonymous. Worse, the per-file list of block names fires on a header
+    # partition - the one operation C6 was moved down to members precisely in order to stay
+    # silent about
+    #
+    # So the anchor is the member: text and file together. A member whose text and file are both
+    # unchanged has not been relocated, and its namespace path is then part of what a relocation
+    # gate must hold fixed - moving it from an anonymous namespace into a named one, or renaming
+    # the block around it, changes the linkage of the helper every case in that module compiles
+    # against. A member which moved to another file is not judged, for the reason C6 does not
+    # judge it either: a split writes new headers and a hoist into a different namespace IS the
+    # operation. The set of paths is compared rather than one, because the same text may legally
+    # appear twice in one file under two different namespaces
+    #
+    # It sits before the C6 section for the reason C9's no-loss half and C11 do: that section
+    # returns early when a baseline carries no members
+    #
+
+    old_paths, new_paths = {}, {}
+
+    for member in before.get( 'members', [] ):
+        old_paths.setdefault( ( member[ 'sha' ], member[ 'file' ] ), set() ).add( member[ 'ns' ] )
+
+    for member in after.get( 'members', [] ):
+        new_paths.setdefault( ( member[ 'sha' ], member[ 'file' ] ), set() ).add( member[ 'ns' ] )
+
+    labels = { ( member[ 'sha' ], member[ 'file' ] ): member
+               for member in after.get( 'members', [] ) }
+
+    for key in sorted( set( old_paths ) & set( new_paths ) ):
+
+        if old_paths[ key ] == new_paths[ key ]:
+            continue
+
+        where = labels[ key ]
+
+        failures.append(
+            'C12 helper member CHANGED NAMESPACE: %s (%s:%d) - was in %s, now in %s'
+            % ( where[ 'label' ], where[ 'file' ], where[ 'line' ],
+                ', '.join( sorted( old_paths[ key ] ) ),
+                ', '.join( sorted( new_paths[ key ] ) ) )
+            )
+
+    #
     # The no-loss half of C6, checked per member rather than per block. A helper is lost only if
     # its text survives nowhere in the tree; a block that was partitioned, or a helper hoisted
     # into a different namespace, is a move and reads as one
@@ -1512,6 +1573,21 @@ def main():
                'member(s) - a relocation invents neither, so a slice which adds one on purpose '
                'refreshes the baseline, exactly as C1 already requires for a new case'
                % len( manifest.get( 'members', [] ) ) )
+
+        #
+        # C12's scope is its anchor, and a reader of a green run has to be able to size it: a
+        # member which moved to another file is deliberately not judged, so the number that IS
+        # judged is the number worth printing
+        #
+
+        anchored = ( { ( member[ 'sha' ], member[ 'file' ] ) for member in before.get( 'members', [] ) }
+                     & { ( member[ 'sha' ], member[ 'file' ] ) for member in manifest.get( 'members', [] ) } )
+
+        print( 'utf_inventory: C12 judges the namespace path of the %d member(s) whose text and '
+               'file are both unchanged, of %d - one that moved to another file is a relocation '
+               'and is C6\'s alone; the block list itself is read only by the duplication check, '
+               'because a block sha covers its own opening line and a partition changes it'
+               % ( len( anchored ), len( manifest.get( 'members', [] ) ) ) )
 
         #
         # The same reasoning once more: a check whose scope is not printed is a check a reader of

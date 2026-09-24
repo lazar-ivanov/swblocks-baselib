@@ -853,6 +853,62 @@ def main():
     ok &= expect( 'capture which extracted no file-scope text',
                   check_against( armed, empty ), 'C11' )
 
+    #
+    # C12 - a helper member which stayed in its file, moved to another namespace
+    #
+    # manifest[ 'namespaces' ] was read by the duplication check and by nothing else, so a
+    # column-0 namespace renamed passed tier 1 in a helper-only header AND in one holding live
+    # cases. C4 cannot stand in: every case in this tree sits at file scope, so its subject is
+    # empty - which the control two below asserts rather than assumes
+    #
+
+    mutated = copy.deepcopy( baseline )
+    moved = mutated[ 'members' ][ 0 ]
+    moved[ 'ns' ] = moved[ 'ns' ] + '_renamed'
+    ok &= expect( 'member moved to another namespace (%s:%d)' % ( moved[ 'file' ], moved[ 'line' ] ),
+                  check_against( baseline, mutated ), 'C12' )
+
+    #
+    # C12 - the same member in ANOTHER file, which is a relocation and must be SILENT
+    #
+    # This is the whole reason the anchor is text AND file rather than text alone. A split cuts a
+    # block into a sibling header, or hoists a helper into a shared namespace, and the namespace
+    # path legitimately changes with it - a rule that fired there would fire on the operation this
+    # tool exists to verify. Measured live as well, on a verbatim partition and on a whole block
+    # cut out of its file: both PASS with nothing reported at all
+    #
+
+    mutated = copy.deepcopy( baseline )
+    relocated = mutated[ 'members' ][ 1 ]
+    relocated[ 'file' ] = relocated[ 'file' ].replace( '.h', 'Split.h' )
+    relocated[ 'ns' ] = 'somewhere_else'
+    relocated[ 'line' ] = 4242
+
+    residue = [ f for f in check_against( baseline, mutated ) if f.startswith( 'C12 ' ) ]
+
+    if residue:
+        print( '    FAIL  C12  member relocated to another file              '
+               '(reported - C12 would fire on every legitimate split)' )
+        ok = False
+    else:
+        print( '    PASS  C12  member relocated to another file              '
+               'correctly silent - the anchor is text AND file' )
+
+    #
+    # C4's subject really is empty on this tree, which is what makes C12 load bearing rather than
+    # redundant. Asserted, not assumed: if a case is ever written inside a column-0 namespace this
+    # control goes red and the claim above has to be rewritten rather than quietly left wrong
+    #
+
+    nested = [ case for case in baseline[ 'cases' ] if case[ 'namespaces' ] ]
+
+    if nested:
+        print( '    ----  C4   %d case(s) sit inside a column-0 namespace     '
+               'C4 has a subject after all - revisit what C12 claims' % len( nested ) )
+    else:
+        print( '    ----  C4   0 of %d cases sit inside a namespace          '
+               'C4 protects nothing that exists here; C12 is not redundant' % len( baseline[ 'cases' ] ) )
+
     # C7 - the same data file name diverging between two modules
     mutated = copy.deepcopy( baseline )
     source = next( name for name, info in mutated[ 'modules' ].items() if info[ 'data_files' ] )
