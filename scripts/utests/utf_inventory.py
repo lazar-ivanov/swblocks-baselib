@@ -41,7 +41,17 @@
 #
 # C2 together with C3 and C4 is the core claim about a case which stayed where it was: its text,
 # the preprocessor guard stack and the namespace stack it sits under are all unchanged. C10 adds
-# the remaining part of the compilation context - the #include list of the file the case sits in
+# the file's #include list to that - not the whole of the rest of the compilation context
+#
+# What is still NOT hashed by anything, and the limit a reader of a green run has to know: text
+# at FILE SCOPE, outside every column-0 namespace block. C6 extracts helper members only from
+# inside such a block, so 343 lines across 16 files are read by no invariant at all - the
+# fixtures of utf_baselib_loader (ManifestFixture, PersonalityTestFixture, ResolverFixture),
+# nine column-0 static helpers, the BL_IID_DECLARE lines of TestObjModel.h and
+# TestBaselibDefault.h, and UTF_GLOBAL_FIXTURE. Measured: injecting a member into
+# ManifestFixture, which three cases are fixtured on, and changing the signature of a column-0
+# static helper BOTH pass tier 1 today. This predates C10 and is not what C10 narrowed; closing
+# it means extracting members at file scope as well, which is its own change-set
 #
 # A case RELOCATED into a different file is deliberately not judged on includes, because a split
 # writes new headers with their own include blocks and a rule that fired on that would fire on
