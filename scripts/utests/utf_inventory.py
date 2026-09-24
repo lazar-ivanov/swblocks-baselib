@@ -47,8 +47,8 @@
 # the preprocessor guard stack and the namespace stack it sits under are all unchanged. C10 adds
 # the file's #include list to that, and C11 the declarations the file makes at file scope: the
 # fixtures of utf_baselib_loader, the column-0 statics, the BL_IID_DECLAREs, UTF_GLOBAL_FIXTURE,
-# the file-scope using-directives and the five behavioural #defines. That is 40 spans over 426
-# lines in 18 files today, and for ten invariants' worth of history no hash read any of it.
+# the file-scope using-directives and the behavioural #defines. That is 79 spans over 1128 lines
+# in 25 files today, and for ten invariants' worth of history no hash read any of it.
 # Measured before C11 existed: a member injected into ManifestFixture, which three cases are
 # fixtured on, and a changed signature on a column-0 static helper BOTH passed tier 1
 #
@@ -70,12 +70,14 @@
 #
 #   - a PREPROCESSOR DIRECTIVE at file scope which another invariant already reads, or which a
 #     new module must write fresh, and no other. The #include lines are C10's and the conditionals
-#     are C3's. Of the #define lines only two kinds go: the include guard, by its shape, and
-#     UTF_TEST_MODULE, by its name - hashing those reds the very operation this tool exists to
-#     verify, and tier 3 is what stands behind UTF_TEST_MODULE, since renaming it registers a
-#     different master suite. Every other #define is hashed with its continuations, which is what
-#     a blanket exclusion gave up: editing UTF_TEST_NORMALIZE's body and deleting
-#     BL_PLUGINS_CLASS_IMPLEMENTATION both passed tier 1 before this was narrowed
+#     are C3's. Of the #define lines only two kinds go: the include guard, by its shape AND by its
+#     #endif being the file's last directive, and UTF_TEST_MODULE, by its name - hashing those reds
+#     the very operation this tool exists to verify, and tier 3 is what stands behind
+#     UTF_TEST_MODULE, since renaming it registers a different master suite. Every other #define is
+#     hashed with its continuations, which is what a blanket exclusion gave up: editing
+#     UTF_TEST_NORMALIZE's body and deleting BL_PLUGINS_CLASS_IMPLEMENTATION both passed tier 1
+#     before this was narrowed - and the shape half alone still gave away SSL_R_SHORT_READ and the
+#     default UTF_TEST_APP_INIT_UTF_ARGS_PARSER, because define-if-not-defined has a guard's shape
 #
 #   - a COMMENT BLOCK at file scope every line of which opens with a comment token, which is
 #     module-level prose rather than evidence about a relocation. Writing one is part of creating
@@ -371,6 +373,31 @@ DEFINE_RE = re.compile( r'^\s*#\s*define\s+([A-Za-z_][A-Za-z0-9_]*)' )
 UTF_TEST_MODULE_RE = re.compile( r'^\s*#\s*define\s+UTF_TEST_MODULE\b' )
 
 
+def closes_the_file( lines, index ):
+    """
+    True when the #endif matching the conditional opened at this line is the file's last directive
+    """
+
+    depth = 0
+    probe = index
+
+    while probe < len( lines ):
+
+        if COND_OPEN_RE.match( lines[ probe ] ):
+            depth += 1
+        elif COND_CLOSE_RE.match( lines[ probe ] ):
+            depth -= 1
+            if depth == 0:
+                break
+
+        probe += 1
+
+    if probe >= len( lines ):
+        return False
+
+    return not any( DIRECTIVE_RE.match( line ) for line in lines[ probe + 1 : ] )
+
+
 def include_guard_define( lines, index, matched ):
     """
     The index of the #define which makes the #ifndef at this line a plain include guard, or None
@@ -378,6 +405,24 @@ def include_guard_define( lines, index, matched ):
     The shape is #ifndef FOO followed, ignoring blank and comment lines, by #define FOO. The index
     is returned rather than a bare yes, because C11 needs to know which #define lines are the
     guard's: those are excluded from its hash and every other one is not
+
+    Shape ALONE is not enough, and the cost of believing it was measured: define-if-not-defined has
+    the guard's shape exactly, so the shape test handed back two real defines - SSL_R_SHORT_READ in
+    utf_baselib_cmdline/TestCmdLineEhUtils.h, and UTF_TEST_APP_INIT_UTF_ARGS_PARSER in the shared
+    UtfMain.h, which is the default args parser every module in the tree gets. Editing either, and
+    deleting the SSL block outright, all three passed tier 1. So a second clause: the matching
+    #endif must be the file's LAST directive, which a real include guard's always is and neither of
+    those two is. Census of the 212 scanned files: 74 guard-shaped, 72 real, those two the only
+    failures, and all 72 open on line 17 on a __<NAME>_H_ symbol
+
+    It has no false negative here, and both halves of that were measured rather than assumed: no
+    file guards itself with #if ! defined( X ), and none uses #pragma once. What WOULD make one is
+    a directive written after a guard's #endif - the guard would stop being recognised, C11 would
+    start hashing it, and the gate would red on every header rename. Nothing does that today, and
+    the near miss is why the clause reads "last DIRECTIVE" and not "nothing follows": 190 lines of
+    live case text sit after the guard closes in TestHttpClientRequestTask.h, with no directive
+    among them. What no shape test can tell apart is the same idiom written at the very end of a
+    file, past every other directive - that residue stays open
     """
 
     if matched.group( 1 ) != 'ifndef':
@@ -399,7 +444,11 @@ def include_guard_define( lines, index, matched ):
             continue
 
         defined = DEFINE_RE.match( lines[ probe ] )
-        return probe if defined and defined.group( 1 ) == symbol else None
+
+        if not defined or defined.group( 1 ) != symbol:
+            return None
+
+        return probe if closes_the_file( lines, index ) else None
 
     return None
 
@@ -444,15 +493,18 @@ def scan_file( path, module, rel_path, problems ):
     #
     # Which directives those are is narrower than it looks, and the narrowing is measured. The
     # #include lines are C10's and the conditionals are C3's, so both go. Of the #define lines,
-    # only two kinds go: the include guard, recognised by its shape, and UTF_TEST_MODULE,
-    # recognised by its name - exactly what the measurement showed a new module's entry point must
-    # write fresh, and hashing those two reds the very operation this tool exists to verify
+    # only two kinds go: the include guard, recognised by its shape AND by its #endif being the
+    # file's last directive, and UTF_TEST_MODULE, recognised by its name - exactly what the
+    # measurement showed a new module's entry point must write fresh, and hashing those two reds
+    # the very operation this tool exists to verify. The second half of the guard test is not
+    # decoration: shape alone let through the two defines named in include_guard_define( )
     #
-    # Every OTHER #define is hashed, with its continuations. Five spans at file scope carry one
-    # today. Measured on tree copies, before this narrowing and after: editing the body of
-    # UTF_TEST_NORMALIZE, and deleting #define BL_PLUGINS_CLASS_IMPLEMENTATION from
-    # utf_baselib_plugin/Calculator.cpp, both went from PASS to a C11 line. A new module writing a
-    # define of its own is ADDED, exactly as a new helper is, and the baseline refresh blesses it
+    # Every OTHER #define is hashed, with its continuations. 38 spans at file scope carry one
+    # today, 32 of them in the shared tree C13 brought into the scan. Measured on tree copies,
+    # before this narrowing and after: editing the body of UTF_TEST_NORMALIZE, and deleting
+    # #define BL_PLUGINS_CLASS_IMPLEMENTATION from utf_baselib_plugin/Calculator.cpp, both went
+    # from PASS to a C11 line. A new module writing a define of its own is ADDED, exactly as a new
+    # helper is, and the baseline refresh blesses it
     #
     # What this does NOT close, and the distinction is C11's rather than this exclusion's: three
     # entry points carry #define UTF_TEST_APP_INIT_DEACTIVATE_THREAD_POOLS ( true ) with identical
@@ -506,7 +558,9 @@ def scan_file( path, module, rel_path, problems ):
             # An include guard is not part of a case's compilation context in any meaningful
             # sense, and counting it would make C3 fire whenever a case moved into a new header
             # written without one - a false alarm that would quickly erode trust in the gate.
-            # It is recognised by its shape: #ifndef FOO immediately followed by #define FOO
+            # It is recognised by its shape, #ifndef FOO immediately followed by #define FOO, AND
+            # by its #endif being the file's last directive - which is what tells a guard apart
+            # from define-if-not-defined, an idiom with exactly the same shape
             #
             if is_include_guard( lines, index, matched ):
                 cond_stack.append( None )
