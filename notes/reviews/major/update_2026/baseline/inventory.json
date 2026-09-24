@@ -6403,6 +6403,42 @@
    "namespaces": []
   },
   {
+   "body_sha": "71f795c88ef0c9e692329cafe1433015",
+   "doc_sha": "7fe7d5be3bd40c9918ce3edf27e92d8b",
+   "file": "utf_baselib_httpclient5/TestHttp1DriverTlsCancelClose.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 951,
+   "module": "utf_baselib_httpclient5",
+   "name": "Http1DriverTls_CancelledReadCompletesACutShortBodyTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "f91aa80994a208940f6a6c560e2f6a46",
+   "doc_sha": "43af40a27d853831f06ea96e16a89f8c",
+   "file": "utf_baselib_httpclient5/TestHttp1DriverTlsCancelClose.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 979,
+   "module": "utf_baselib_httpclient5",
+   "name": "Http1DriverTls_ClosingReadCompletesACutShortBodyTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "4a106a2fb551eb58413383a68256342a",
+   "doc_sha": "3b94fdc025c780e7a0b439d36eedc72f",
+   "file": "utf_baselib_httpclient5/TestHttp1DriverTlsCancelClose.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1014,
+   "module": "utf_baselib_httpclient5",
+   "name": "Http1DriverTls_ClosingWithoutACancelCompletesACutShortBodyTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "bfbc09758623c7b5286decc70d5d0464",
    "doc_sha": "2634f3937cda379b4a020511692342ba",
    "file": "utf_baselib_httpclient5/TestClientSessionTlsHttp1.h",
@@ -15341,6 +15377,14 @@
    "sha": "77cda05abc8003782220f99028890b62"
   },
   {
+   "file": "utf_baselib_httpclient5/TestHttp1DriverTlsCancelClose.h",
+   "label": "namespace tlsh1cancel",
+   "line": 112,
+   "module": "utf_baselib_httpclient5",
+   "ns": "utest",
+   "sha": "0abef02d0845caa9ddc81ecf36d569e1"
+  },
+  {
    "file": "utf_baselib_httpclient6/TestClientSessionIdle.h",
    "label": "namespace sessionidle",
    "line": 48,
@@ -19675,11 +19719,30 @@
     },
     {
      "includes": [
+      "<baselib/httpclient/ClientConnection.h>",
+      "<baselib/httpclient/ClientConnectionTaskBase.h>",
+      "<baselib/httpclient/Http1ConnectionTask.h>",
+      "<baselib/tasks/Algorithms.h>",
+      "<baselib/tasks/ExecutionQueue.h>",
+      "<baselib/tasks/Task.h>",
+      "<baselib/data/DataBlock.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<cstring>",
+      "<string>",
+      "<utests/baselib/Http2DriverTestUtils.h>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_httpclient5/TestHttp1DriverTlsCancelClose.h"
+    },
+    {
+     "includes": [
       "<utests/baselib/UtfMain.h>",
       "<baselib/http2/PreCompiled.h>",
       "<baselib/httpclient/PreCompiled.h>",
       "\"TestClientSessionTls.h\"",
-      "\"TestClientSessionTlsHttp1.h\""
+      "\"TestClientSessionTlsHttp1.h\"",
+      "\"TestHttp1DriverTlsCancelClose.h\""
      ],
      "path": "utf_baselib_httpclient5/UtfBaselibHttpClient5Main.cpp"
     }
@@ -19688,6 +19751,9 @@
     "ClientSessionTls_GetOverHttp2Tests",
     "ClientSessionTls_Http11FallbackExchangeTests",
     "ClientSessionTls_StreamingUploadTakesAnHttp2OnlyConnectionTests",
+    "Http1DriverTls_CancelledReadCompletesACutShortBodyTests",
+    "Http1DriverTls_ClosingReadCompletesACutShortBodyTests",
+    "Http1DriverTls_ClosingWithoutACancelCompletesACutShortBodyTests",
     "Http1DriverTls_IdleCloseSendsCloseNotifyTests",
     "Http1DriverTls_WriteInFlightCloseSkipsCloseNotifyTests"
    ]
@@ -21794,6 +21860,13 @@
    "module": "utf_baselib_httpclient5",
    "name": "utest",
    "sha": "283ecfb516fee1401c75e2b989471396"
+  },
+  {
+   "file": "utf_baselib_httpclient5/TestHttp1DriverTlsCancelClose.h",
+   "line": 110,
+   "module": "utf_baselib_httpclient5",
+   "name": "utest",
+   "sha": "0399134104b45c6bd813f641223cc836"
   },
   {
    "file": "utf_baselib_httpclient6/TestClientSessionIdle.h",

@@ -1371,56 +1371,108 @@ namespace bl
                 if( isEndOfStream )
                 {
                     /*
-                     * DEFERRED WHILE A WRITE IS IN FLIGHT, AND WITHOUT THIS THE CONSULT BELOW IS
-                     * HALF A FIX. The evidence onPeerClosed( ) needs is the write's code, and the
-                     * write's handler can run AFTER this one - the reactor posts the read op and
-                     * completes the write op inline, so an ending observed here may be an ending
-                     * whose only witness has not been asked yet. A record not yet written is a
-                     * record that cannot be consulted, so the ending is handed to the handler
-                     * which will hold it instead
+                     * A1-tls FACE 2 - AN ENDING OBSERVED WHILE AN EXTERNAL CANCEL IS IN FLIGHT IS
+                     * NOT THE PEER'S, AND THE QUESTION BELONGS AHEAD OF THIS ARM RATHER THAN
+                     * AFTER IT. cancelTask( ) shuts our send side down, so a peer which answers
+                     * that FIN by closing is a peer whose conversation WE ended - and without this
+                     * the arm below frames whatever had arrived as a complete close-delimited
+                     * message. The closing gate cannot see it: m_closing has three writers and
+                     * cancelTask( ) is none of them. The else branch asks the same question with
+                     * the same macro, and an ending never reaches it
                      *
-                     * THE WRITE HANDLER IS GUARANTEED TO RUN, which is what makes this a deferral
-                     * and not a hang: closeConnection( ) below reaches initiateClose( ) through
-                     * this handler's own epilog, and that shuts the send side down for exactly
-                     * the case of a write in flight. Both handlers are on the strand, so the flag
-                     * is read here with no race and the hand-over is taken exactly once
-                     *
-                     * AND NOTHING IS DELIVERED HERE. An end of stream carries no octets, so there
-                     * is nothing this read could lose by saying nothing; what it would lose by
-                     * speaking is the discrimination itself
-                     *
-                     * WITH NO WRITE IN FLIGHT NOTHING BUT THIS READ COULD HAVE CONSUMED THE
-                     * ENDING, so the ending is classified here and now, exactly as before - and
-                     * with no parser there is no message to frame and onPeerClosed( ) returns at
-                     * once, which is why an idle connection's close is left on the direct path
+                     * A LIVE PARSER IS THE WHOLE OF IT, exactly as it is for the gate below. With
+                     * no message in flight there is nothing to frame; and a read the cancel REAPED
+                     * never arrives here at all - operation_aborted is not an ending - so what this
+                     * preserves is the idle connection whose read SLIPPED it, ending as it always has
                      */
 
-                    if( m_parser && m_isWriteInFlight )
+                    if( m_parser )
+                    {
+                        BL_TASKS_HANDLER_CHK_CANCEL_IMPL()
+                    }
+
+                    /*
+                     * A1-tls FACE 1 - AN ENDING WHICH ARRIVES WHILE WE ARE ALREADY TEARING DOWN IS
+                     * OURS AND NOT THE PEER'S. ssl::stream::async_read_some is itself composed, so
+                     * between a transport read completing in the reactor and its intermediate
+                     * handler running on this strand nothing of this read is registered, and the
+                     * cancel( ) initiateClose( ) issues from a handler's epilog reaps nothing at
+                     * all - the read then re-arms and observes the ending our own shutdown_send
+                     * provoked
+                     *
+                     * ASKED WHERE THE ENDING IS OBSERVED AND NEVER AT THE DELIVERY. The hand-over
+                     * below reaches onPeerClosed( ) from the WRITE handler, with isClosing( ) true
+                     * by construction - this read set it - so the same question asked inside
+                     * onPeerClosed( ) would refuse that delivery and put back the truncation
+                     * A1-cleartext removed
+                     *
+                     * AND IT SWALLOWS RATHER THAN CHECKS. Routing the ending to CHK_EC( ) instead
+                     * would make eof the first error of a task closing DELIBERATELY and fail every
+                     * idle close; the read's operation completes with no error through the epilog,
+                     * which is the twin of the write arm's do-nothing
+                     */
+
+                    if( ! base_type::isClosing() )
                     {
                         /*
-                         * SAID IN THE LOG BECAUSE NOTHING ELSE SAYS IT. Which of these two arms a
-                         * run took is invisible otherwise - a case on either side of the hand-over
-                         * passes whichever ran - so a later simplification which dropped the
-                         * deferral would keep every case green and put back a truncated message
-                         * reported as a success. One line, at the level the idle close uses
+                         * DEFERRED WHILE A WRITE IS IN FLIGHT, AND WITHOUT THIS THE CONSULT BELOW IS
+                         * HALF A FIX. The evidence onPeerClosed( ) needs is the write's code, and the
+                         * write's handler can run AFTER this one - the reactor posts the read op and
+                         * completes the write op inline, so an ending observed here may be an ending
+                         * whose only witness has not been asked yet. A record not yet written is a
+                         * record that cannot be consulted, so the ending is handed to the handler
+                         * which will hold it instead
+                         *
+                         * THE WRITE HANDLER IS GUARANTEED TO RUN, which is what makes this a deferral
+                         * and not a hang: closeConnection( ) below reaches initiateClose( ) through
+                         * this handler's own epilog, and that shuts the send side down for exactly
+                         * the case of a write in flight. Both handlers are on the strand, so the flag
+                         * is read here with no race and the hand-over is taken exactly once
+                         *
+                         * AND NOTHING IS DELIVERED HERE. An end of stream carries no octets, so there
+                         * is nothing this read could lose by saying nothing; what it would lose by
+                         * speaking is the discrimination itself
+                         *
+                         * WITH NO WRITE IN FLIGHT NOTHING BUT THIS READ COULD HAVE CONSUMED THE
+                         * ENDING, so the ending is classified here and now, exactly as before - and
+                         * with no parser there is no message to frame and onPeerClosed( ) returns at
+                         * once, which is why an idle connection's close is left on the direct path
                          */
 
-                        BL_LOG(
-                            Logging::trace(),
-                            BL_MSG()
-                                << "Deferring a peer close to the write in flight on an HTTP/1.1 "
-                                << "connection to '"
-                                << m_key.host
-                                << "'"
-                            );
+                        if( m_parser && m_isWriteInFlight )
+                        {
+                            /*
+                             * SAID IN THE LOG BECAUSE NOTHING ELSE SAYS IT. Which of these two arms a
+                             * run took is invisible otherwise - a case on either side of the hand-over
+                             * passes whichever ran - so a later simplification which dropped the
+                             * deferral would keep every case green and put back a truncated message
+                             * reported as a success. One line, at the level the idle close uses
+                             */
 
-                        m_deferredEndingCode = ec;
-                    }
-                    else
-                    {
-                        onPeerClosed( ec );
+                            BL_LOG(
+                                Logging::trace(),
+                                BL_MSG()
+                                    << "Deferring a peer close to the write in flight on an HTTP/1.1 "
+                                    << "connection to '"
+                                    << m_key.host
+                                    << "'"
+                                );
+
+                            m_deferredEndingCode = ec;
+                        }
+                        else
+                        {
+                            onPeerClosed( ec );
+                        }
                     }
 
+                    /*
+                     * OUTSIDE BOTH GATES, because an ending is an ending however it was caused:
+                     * this connection carries no second message and must never be published Ready
+                     * again. On a task already closing it is all but a no-op, and on one whose
+                     * first error was raised outside this handler it is the one call which marks
+                     * the state Draining
+                     */
                     closeConnection();
                 }
                 else
