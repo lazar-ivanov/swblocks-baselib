@@ -51,15 +51,28 @@
  *   handler's CHK_CANCEL_IMPL( ) sits in the else branch AFTER the end-of-stream arm - so neither
  *   the closing question nor the cancel question is asked where the ending is observed.
  *
- * WHY BOTH ARE ONE ARRANGEMENT HERE, AND THE RE-DERIVATION THAT SAYS SO. Section 3.2 lists three
- * sites which can raise a first error outside the read handler with a response still in flight -
- * onWriteCompleted( )'s CHK_EC( ), onStartRequest( )'s catch and chkArmIdleTimer( )'s catch. The
- * last two run with no parser, and finishStream( ) resets the parser on every path that reaches
- * it, so m_closing can only be true with a LIVE parser through the write handler's CHK_EC( ). A2
- * then excuses every peer-close code and our own teardown's broken_pipe there, and initiateClose( )
- * excuses its own operation_aborted - so on POSIX the one code left which fails the task from that
- * handler is the operation_aborted of an EXTERNAL cancel. Face 1 is therefore face 2's arrangement
- * with a write in flight, and the two cases below differ by exactly that.
+ * WHY TWO OF THE THREE ARE ONE ARRANGEMENT, AND THE RE-DERIVATION THAT SAYS SO. Section 3.2 lists
+ * three sites which can raise a first error outside the read handler with a response still in
+ * flight - onWriteCompleted( ), onStartRequest( )'s initiating catch and chkArmIdleTimer( )'s. The
+ * timer's runs before any response. onStartRequest( )'s does NOT run without a parser - the parser
+ * is built earlier in that same function - but it clears m_isWriteInFlight before it completes the
+ * operation, so the initiateClose( ) it reaches shuts nothing down, and the parser it leaves behind
+ * was built moments before on this strand and is empty. finishStream( ) resets the parser on every
+ * path that reaches it. So m_closing can only be true with a LIVE parser and an ARMED read through
+ * onWriteCompleted( ), whose TWO failing macros are CHK_EC( ) and, after it, CHK_CANCEL_IMPL( ).
+ * A2 excuses every peer-close code and our own teardown's broken_pipe at the first, and
+ * isOurOwnTeardown excuses initiateClose( )'s own operation_aborted - so what a FIXTURE can arrange
+ * there is an EXTERNAL cancel, reaching CHK_EC( ) as operation_aborted when the cancel reaped the
+ * write and CHK_CANCEL_IMPL( ) when our shutdown woke it broken_pipe instead. MEASURED: 4 of 5 the
+ * first, 1 of 5 the second. The first two cases below are therefore one arrangement differing by a
+ * write in flight; the third removes the cancel and is what gives face 1's gate a red of its own.
+ *
+ * "A FIXTURE CAN ARRANGE" IS NOT "IS REACHABLE", AND THE DIFFERENCE IS THE WHOLE REASON THE GATE
+ * EXISTS. A write code which is neither a peer close, nor our own teardown, nor a cancel does fail
+ * the task from that handler with the parser live and the read armed - timed_out once the
+ * retransmit budget is spent, or an error out of the TLS engine - and there face 1's gate acts
+ * where the cancel check cannot. None of those can be produced from a loopback peer, which is what
+ * the third case stands in for; it is not a claim that the state never happens.
  *
  * WHY THE ENDING IS OURS AND NOT THE PEER'S, WHICH IS THE WHOLE POINT. cancelTask( ) posts
  * shutdownOnStreamExecutor( ), which is shutdownSocket( force ) = linger + shutdown_send + cancel.
@@ -328,6 +341,29 @@ namespace utest
                     }
                     );
             }
+
+            /**
+             * @brief Ends this connection the way a handler's OWN EPILOG ends it, and adds nothing
+             *
+             * closeConnection( ) then initiateClose( ) is exactly the pair MultiOperationTask runs
+             * when beginClose( ) or a first error reaches onOperationCompleted( ) with
+             * m_closeInitiated still false - the accounting is the only thing skipped, and the
+             * accounting is not what the gate under test reads. Calling it from a strand handler is
+             * also where it really runs: initiateClose( ) is documented as running in a handler's
+             * epilog and nowhere else
+             *
+             * IT MUST BE CALLED ON THE STRAND, which holdStrand( ) is what provides. The cancel
+             * inside initiateClose( ) reaps what is REGISTERED, so the whole value of calling it
+             * from a held strand is that the composed read's intermediate handler is queued behind
+             * the caller and there is nothing of that read to reap
+             */
+
+            void closeAsAnEpilogWould()
+            {
+                base_type::closeConnection();
+
+                base_type::initiateClose();
+            }
         };
 
         typedef bl::om::ObjectImpl< Http1TlsStrandProbe >                       Http1TlsStrandProbeImpl;
@@ -470,7 +506,7 @@ namespace utest
         }
 
         /**
-         * @brief The one exchange both cases run, with and without a request body in flight
+         * @brief The one exchange all three cases run, whichever door the teardown comes through
          *
          * THE STEPS, AND WHICH OF THEM IS A RENDEZVOUS.
          *
@@ -479,21 +515,45 @@ namespace utest
          *   2. the case waits for that chunk to reach the sink, which is a happens-before with the
          *      driver holding a live parser. With a body in flight it then leaves the strand alone
          *      for the composed write to park
-         *   3. the probe takes the strand. While it is held the case cancels the task - which
-         *      posts shutdownOnStreamExecutor( ) BEHIND the probe - and releases the peer, which
-         *      puts five octets of a record header on the wire. The armed read takes them in the
-         *      reactor and its intermediate handler queues behind the probe, so when the cancel's
-         *      shutdown_send and cancel( ) finally run there is no read op registered at all
+         *   3. the probe takes the strand. While it is held the teardown is issued - either
+         *      requestCancel( ) from the case, which posts shutdownOnStreamExecutor( ) BEHIND the
+         *      probe, or the first hold's own closeConnection( ) plus initiateClose( ) - and the
+         *      peer is released, which puts five octets of a record header on the wire. The armed
+         *      read takes them in the reactor and its intermediate handler queues behind the probe,
+         *      so when the teardown's shutdown_send and cancel( ) finally run there is no read op
+         *      registered at all
          *   4. the probe takes the strand a SECOND time, so that the ending our own FIN provokes is
-         *      observed while the write handler the cancel reaped is still queued. Without a body
+         *      observed while the write handler the teardown reaped is still queued. Without a body
          *      in flight nothing was reaped and the second hold changes nothing; with one, it is
-         *      what puts the write's operation_aborted - and therefore m_closing - ahead of the
-         *      read's ending, which is face 1
+         *      what puts the write's completion - and, on the cancel's door, the m_closing that
+         *      completion sets - ahead of the read's ending, which is face 1
          *   5. the peer reads its stream to the end and only THEN closes, so the ending is the one
          *      our teardown provoked and not a close the peer chose
          */
 
-        inline auto runCancelDuringCloseDelimitedResponse(
+        /**
+         * @brief Which door the teardown comes through - the one axis the three cases differ on
+         */
+
+        enum Teardown
+        {
+            /**
+             * @brief requestCancel( ), which sets m_isCanceled and leaves m_closing alone
+             */
+
+            ByExternalCancel,
+
+            /**
+             * @brief The epilog's own closeConnection( ) plus initiateClose( ), which sets
+             * m_closing and leaves m_isCanceled alone - the only door which separates face 1's
+             * question from face 2's
+             */
+
+            ByDeliberateClose,
+        };
+
+        inline auto runTeardownDuringCloseDelimitedResponse(
+            SAA_in          const Teardown                                      teardown,
             SAA_in          const bool                                          isWriteInFlight
             )
             -> TlsCancelResult
@@ -509,6 +569,21 @@ namespace utest
             Latch peerPartialSent;
             Latch peerMayDrain;
             Latch peerClosed;
+
+            /*
+             * AT FUNCTION SCOPE AND NOT INSIDE THE PARALLEL BLOCK, so that they outlive the
+             * execution queue which owns the handlers blocked on them. A chkOrFail( ) inside that
+             * block throws, the queue is torn down on the way out, and a hold still parked in
+             * wait( ) returns through its condition variable AFTER the block's own locals are
+             * gone - so latches declared in there would be destroyed under a live waiter, and the
+             * run that told us something had gone wrong would end in undefined behaviour instead
+             * of a diagnosis. No measured run took that path; this is where it would have bitten
+             */
+
+            Latch firstHoldEntered;
+            Latch firstHoldRelease;
+            Latch secondHoldEntered;
+            Latch secondHoldRelease;
 
             Http1TlsPeer peer(
                 [ &chunkOne, &peerPartialSent, &peerMayDrain, &peerClosed ](
@@ -663,11 +738,6 @@ namespace utest
                             );
                     }
 
-                    Latch firstHoldEntered;
-                    Latch firstHoldRelease;
-                    Latch secondHoldEntered;
-                    Latch secondHoldRelease;
-
                     probe -> holdStrand(
                         [ & ]() -> void
                         {
@@ -677,8 +747,16 @@ namespace utest
 
                             /*
                              * POSTED FROM INSIDE THE FIRST HOLD, so that it lands behind the
-                             * cancel's own post and behind the read's intermediate handler, and
-                             * ahead of the write completion the cancel is about to produce
+                             * teardown's own post and behind the read's intermediate handler, and
+                             * ahead of the write completion the teardown is about to produce
+                             *
+                             * AND AHEAD OF THE CLOSE BELOW, WHICH IS NOT AN ORDERING OF
+                             * CONVENIENCE. initiateClose( ) reaps the parked write SYNCHRONOUSLY,
+                             * so a second hold posted after it would land BEHIND that write's
+                             * completion - and the write's own epilog runs initiateClose( ) a
+                             * second time, whose cancel would then reap the read this case needs
+                             * to survive. Posted first, the order on the strand is the read's
+                             * intermediate handler, this hold, and only then the write
                              */
 
                             probe -> holdStrand(
@@ -689,6 +767,20 @@ namespace utest
                                     ( void ) secondHoldRelease.wait();
                                 }
                                 );
+
+                            if( ByDeliberateClose == teardown )
+                            {
+                                /*
+                                 * THE ONLY DOOR WHICH SETS m_closing WITHOUT SETTING m_isCanceled,
+                                 * and therefore the only one which asks face 1's question on its
+                                 * own. It is issued HERE, on a held strand with the read's
+                                 * intermediate handler already queued, because that is the state
+                                 * section 3.1 describes: initiateClose( ) runs in an epilog and
+                                 * its cancel finds nothing of a composed read to reap
+                                 */
+
+                                probe -> closeAsAnEpilogWould();
+                            }
                         }
                         );
 
@@ -699,10 +791,15 @@ namespace utest
 
                     /*
                      * THE CANCEL, ISSUED WHILE THE STRAND IS HELD BY A HANDLER WHICH TAKES NO TASK
-                     * LOCK - which is the only way it can land ahead of the read's next arm
+                     * LOCK - which is the only way it can land ahead of the read's next arm. The
+                     * other door needs no help from this thread at all: it is a call the hold
+                     * makes for itself, once the read's window is open
                      */
 
-                    driverTask -> requestCancel();
+                    if( ByExternalCancel == teardown )
+                    {
+                        driverTask -> requestCancel();
+                    }
 
                     peer.release();
 
@@ -766,7 +863,7 @@ namespace utest
         }
 
         /**
-         * @brief What both cases assert, and each line of it refuses a different outcome
+         * @brief What all three cases assert, and each line of it refuses a different outcome
          *
          *   - the status and the body say the arrangement HAPPENED: the response head and one body
          *     chunk reached the sink, so the driver held a live parser when the ending arrived and
@@ -774,9 +871,9 @@ namespace utest
          *     'part-one' exactly is also what says nothing was lost - the case is about the
          *     completion rule and not about octets the teardown discarded
          *   - the peer's own ending code says the ending was OURS: a truncated TLS stream is a
-         *     transport which ended with no close_notify, which is cancelTask( )'s forceful
-         *     shutdown; an eof there would mean the client had closed in an orderly way and this
-         *     case would be about a peer's close rather than about our teardown
+         *     transport which ended with no close_notify, which is the forceful shutdown_send
+         *     either door reaches; an eof there would mean the client had closed in an orderly way
+         *     and this case would be about a peer's close rather than about our teardown
          *   - AND THE ONE THIS EXISTS FOR: the stream's verdict. A message framed by an ending we
          *     caused must not be declared complete, and which error a correct tree reports instead
          *     is deliberately not pinned - asserting one particular code would fix this case to
@@ -856,7 +953,8 @@ UTF_AUTO_TEST_CASE( Http1DriverTls_CancelledReadCompletesACutShortBodyTests )
     using namespace bl;
     using namespace utest::tlsh1cancel;
 
-    const auto result = runCancelDuringCloseDelimitedResponse( false /* isWriteInFlight */ );
+    const auto result =
+        runTeardownDuringCloseDelimitedResponse( ByExternalCancel, false /* isWriteInFlight */ );
 
     chkNotReportedComplete( result, "face 2, the external cancel" );
 }
@@ -883,9 +981,45 @@ UTF_AUTO_TEST_CASE( Http1DriverTls_ClosingReadCompletesACutShortBodyTests )
     using namespace bl;
     using namespace utest::tlsh1cancel;
 
-    const auto result = runCancelDuringCloseDelimitedResponse( true /* isWriteInFlight */ );
+    const auto result =
+        runTeardownDuringCloseDelimitedResponse( ByExternalCancel, true /* isWriteInFlight */ );
 
     chkNotReportedComplete( result, "face 1, our own teardown" );
+}
+
+/**
+ * @brief FACE 1 ON ITS OWN - a deliberate close, with no cancel anywhere near it
+ *
+ * WHAT THE OTHER TWO CASES CANNOT SAY. Both reach their ending with isCanceled( ) true, because
+ * after A2 the external cancel is the only thing a FIXTURE can arrange which fails the task from
+ * the write handler with a response still in flight - so the cancel check alone turns BOTH of them
+ * green and face 1's gate has no red of its own between them. This case removes the cancel: the
+ * teardown is closeConnection( ) plus initiateClose( ), the pair a handler's epilog runs, so
+ * m_closing is true and m_isCanceled is false when the read observes the ending. The cancel check
+ * cannot see it and only the ! isClosing( ) gate can, which is what makes this face 1's OWN red.
+ *
+ * AND THE ENDING IS STILL OURS. initiateClose( ) shuts the send side down because a write is in
+ * flight; the peer answers that FIN by reading to the end of its stream and closing, holding the
+ * rest of a response it never finished. Without the write there would be no shutdown_send, no FIN
+ * and no ending at all - which is why this case cannot be the GET the sibling case is.
+ *
+ * WHAT IT DOES NOT CLAIM, and the claim would be false. It is not evidence that anything on
+ * today's tree PRODUCES this state: the probe reaches it by calling what an epilog calls rather
+ * than by arranging a defect, and the write codes which would - timed_out, or an error out of the
+ * TLS engine - are the ones no loopback peer can raise. What it pins is the GATE - remove
+ * ! isClosing( ) and this case fails - so the redundancy the other two measure is a fact with a
+ * test behind it rather than a note somebody must remember to re-check.
+ */
+
+UTF_AUTO_TEST_CASE( Http1DriverTls_ClosingWithoutACancelCompletesACutShortBodyTests )
+{
+    using namespace bl;
+    using namespace utest::tlsh1cancel;
+
+    const auto result =
+        runTeardownDuringCloseDelimitedResponse( ByDeliberateClose, true /* isWriteInFlight */ );
+
+    chkNotReportedComplete( result, "face 1 alone, a deliberate close" );
 }
 
 #endif /* __UTEST_TESTHTTP1DRIVERTLSCANCELCLOSE_H_ */

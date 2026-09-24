@@ -1381,9 +1381,9 @@ namespace bl
                      * the same macro, and an ending never reaches it
                      *
                      * A LIVE PARSER IS THE WHOLE OF IT, exactly as it is for the gate below. With
-                     * no message in flight there is nothing to frame, and a cancelled idle
-                     * connection whose read is reaped goes on ending as it always has rather than
-                     * reporting a cancel to a sink which is not there
+                     * no message in flight there is nothing to frame; and a read the cancel REAPED
+                     * never arrives here at all - operation_aborted is not an ending - so what this
+                     * preserves is the idle connection whose read SLIPPED it, ending as it always has
                      */
 
                     if( m_parser )
