@@ -45,7 +45,7 @@
 # the preprocessor guard stack and the namespace stack it sits under are all unchanged. C10 adds
 # the file's #include list to that, and C11 the declarations the file makes at file scope: the
 # fixtures of utf_baselib_loader, the column-0 statics, the BL_IID_DECLAREs, UTF_GLOBAL_FIXTURE
-# and the file-scope using-directives. That is 39 spans over 423 lines in 16 files today, and for
+# and the file-scope using-directives. That is 35 spans over 405 lines in 15 files today, and for
 # ten invariants' worth of history no hash read any of it. Measured before C11 existed: a member
 # injected into ManifestFixture, which three cases are fixtured on, and a changed signature on a
 # column-0 static helper BOTH passed tier 1
@@ -104,6 +104,22 @@ CASE_RE = re.compile(
 NAMESPACE_RE = re.compile( r'^namespace(?:\s+([A-Za-z_][A-Za-z0-9_]*))?\s*(\{)?\s*$' )
 
 CLOSE_RE = re.compile( r'^\}' )
+
+#
+# The case walk needs a stricter terminator than the namespace walk, and the difference is
+# measured rather than stylistic
+#
+# A case body can hold a raw string literal, and one of them closes on a line reading })"; at
+# column 0 - JsonPrettyPrintNestedLayout, utf_baselib_data/TestJsonAbstraction.h:2507. With ^\}
+# the walk ended there, and the 32 lines to the real brace at :2539 - the #else branch,
+# UTF_REQUIRE_EQUAL( pretty, expected ), verifyDeepEqual( ) and two more UTF_REQUIREs - sat
+# outside C2 entirely: editing that assertion passed tier 1. It is the only such case of 1082,
+# every other one ends on a bare }, so requiring one costs nothing here
+#
+# The namespace closers cannot take the same rule: 144 of the 165 in this tree read } // __unnamed
+#
+
+CASE_CLOSE_RE = re.compile( r'^\}\s*$' )
 
 COND_OPEN_RE = re.compile( r'^\s*#\s*(if|ifdef|ifndef)\b\s*(.*)$' )
 COND_MID_RE = re.compile( r'^\s*#\s*(elif|else)\b\s*(.*)$' )
@@ -438,12 +454,12 @@ def scan_file( path, module, rel_path, problems ):
             kind, name, fixture = matched.group( 1 ), matched.group( 2 ), matched.group( 3 )
 
             end = index + 1
-            while end < total and not CLOSE_RE.match( lines[ end ] ):
+            while end < total and not CASE_CLOSE_RE.match( lines[ end ] ):
                 end += 1
 
             if end >= total:
                 problems.append(
-                    '%s:%d: case %s has no closing brace at column 0' % ( rel_path, index + 1, name )
+                    '%s:%d: case %s has no bare closing brace at column 0' % ( rel_path, index + 1, name )
                     )
                 index += 1
                 continue
@@ -452,6 +468,19 @@ def scan_file( path, module, rel_path, problems ):
                 problems.append(
                     '%s:%d: case %s is not followed by an opening brace at column 0 - '
                     'the extraction precondition does not hold' % ( rel_path, index + 2, name )
+                    )
+
+            #
+            # The other half of the same precondition, and the one the stricter terminator makes
+            # necessary: a case which does not end on a bare brace now runs ON rather than
+            # stopping early, and would swallow whatever follows it. A case macro inside the
+            # extent is proof that it did
+            #
+
+            if any( CASE_RE.match( lines[ inner ] ) for inner in range( index + 1, end ) ):
+                problems.append(
+                    '%s:%d: case %s reaches a second case macro before its closing brace - '
+                    'the extraction precondition does not hold' % ( rel_path, index + 1, name )
                     )
 
             doc = doc_comment_span( lines, index )
