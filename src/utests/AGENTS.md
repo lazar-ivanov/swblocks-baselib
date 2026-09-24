@@ -120,7 +120,7 @@ moves, adds or removes test cases.
 
 | Tier | Tool | Checks |
 |---|---|---|
-| 1 | `utf_inventory.py --compare` | C1–C10: no case lost, added or edited; guard and namespace stacks unchanged; no duplicate names; helper members neither lost nor duplicated; data files present, unchanged in content and still referenced; `notes.txt` recipes resolve, and no case loses one; every file keeps the `#include` list it had |
+| 1 | `utf_inventory.py --compare` | C1–C11: no case lost, added or edited; guard and namespace stacks unchanged; no duplicate names; helper members neither lost, invented nor duplicated; data files present, unchanged in content and still referenced; `notes.txt` recipes resolve, no case loses one, and a module declaring its index complete really is; every file on both sides keeps its `#include` list, bar the roster lines a relocation must edit; file-scope text — the fixtures, the column-0 statics, the `BL_IID_DECLARE`s — neither lost nor invented |
 | 2 | `utf_objsize.py --ceiling 75` | No object over the ceiling |
 | 3 | `utf_runlog.py --compare` | Registered set, executed set, pass/fail, skips, and **per-case assertion counts** |
 
@@ -128,11 +128,16 @@ moves, adds or removes test cases.
 extractor.
 
 **A change that legitimately adds something refreshes the baseline, in a commit of its own.** Tier 1
-is a relocation gate, so a new case, a new helper member, an added `#include` and an edited data file
-are all reported — none of them is a relocation. The answer is
+is a relocation gate, so a new case, a new helper member, an added `#include`, an edited data file and
+a new file-scope declaration are all reported — none of them is a relocation. The answer is
 `utf_inventory.py --capture notes/reviews/major/update_2026/baseline/inventory.json` as a companion
 commit, where the manifest diff shows exactly what is now blessed. Refreshing to silence a report you
 cannot explain is the one way to make this gate worthless.
+
+**C11 is not in force until that refresh happens.** No baseline captured before it carries
+`file_members`, and a hard failure there would red the gate for everyone rather than for the change
+that earned it, so every run prints which state it is in. The refresh that arms it is the ordinary
+one above.
 
 **Tier 3 is the one that catches a case which still registers and still passes while silently doing
 less work.** Do not skip it for a change that moves cases between modules.
