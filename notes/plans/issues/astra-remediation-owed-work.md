@@ -191,6 +191,13 @@ saying so, where a new case landing unindexed is uncaught. Declaring it is a one
 edit under `src/`, owed separately. `AGENTS.md`'s *"Fifteen modules say this today"* is correct as
 written.
 
+**DONE 2026-09-24** at `a15694b`: `h2profiles` declares its index, matched by md5 against an existing
+declaration rather than by eye, so the phrase is byte-identical. C9 moves from 15 modules / 255 cases
+to **16 / 269**, exactly the 14 it brings. *`AGENTS.md`'s "fifteen" is now sixteen.* **Still open, and
+now a decision rather than an observation:** `messaging4` (1/1) and `setprio` (1/1) are also complete
+and undeclared. They were left out deliberately — `declared ⊆ complete` holds either way — but this is
+the second time they have been recorded, which under the sweep rule is the signal to decide them.
+
 **3. The orphan rule's premise is wrong for three of its four files, and the rule is still right.**
 *"This tree carries such files today and always has"*: `git grep` at `f992e2f^` shows
 `utf_baselib_messaging` referencing both `async_rpc_response.json` and
@@ -204,6 +211,15 @@ replay says two more things: the rule *works* (it names both messaging leftovers
 continue`), a scope the comment does not state. Owed: a `src/` commit deleting the three leftovers,
 so the accepted set is honest; and judging a *new* module intrinsically for orphans — nothing to
 grandfather there, so no false positive is possible, and it would have caught the third.
+
+**Both DONE.** The intrinsic-orphan judgement landed with `tier1-modules`; the three leftovers were
+deleted 2026-09-24 at `dd00619`, each verified unreferenced two independent ways — grep over the
+owning module, and the tool's own `unreferenced_data_files( )` over a fresh capture, which named
+exactly four tree-wide. **C7's accepted-orphan count is 4 → 1**, the survivor being
+`utf_baselib_rest/data/async_rpc_response.json`, which is 2017-era and genuinely orphaned. *Worth
+recording because it surprised: C7 reports* **nothing** *as they go — a file removed outright is not
+judged for content, and the orphan half compares only files still present. The line that moves is
+C7's own scope, 32 data files to 29.*
 
 **4. The narrowed docstring is still one notch broader than the checks.** *"C10 adds the remaining
 part of the compilation context"* — but text at file scope outside any column-0 namespace block is
