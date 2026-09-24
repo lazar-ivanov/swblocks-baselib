@@ -52,3 +52,25 @@
 # lets the write's broken_pipe override an orderly close.
 
 --log_level=message --run_test=Http1Driver_PeerHalfClosesWithAWriteInFlightTests
+
+# H01 - the spurious reuse refusal, and the stream seam which makes its window certain. The first
+# case is RED on every run against a tree without the one-strand-hop deferral in finishStream( ):
+# it holds the write's completion until the read's own completion is on the strand, so the driver
+# reaches the verdict with a stale m_isWriteInFlight and refuses a connection with nothing whatever
+# wrong with it. The second is the negative control and is GREEN on both sides - its write is
+# released forty strand hops on, which is what a genuinely blocked write looks like from the
+# strand, and the refusal is right for it. Append '-- --bl-logging-level=6' to see the two trace
+# lines the deferral writes; the separator is not optional, since boost test refuses an argument of
+# its own it does not recognize.
+
+--log_level=message --run_test=Http1Driver_StrandSeamMakesTheDeferredVerdictReuseTests
+--log_level=message --run_test=Http1Driver_StrandSeamLeavesAGenuineWriteRefusedTests
+
+# The third seam case is the red for ONE LINE of the deferral - the continuation asking the write's
+# recorded outcome and not only its flag. It releases the held completion carrying connection_reset,
+# which is the state A2's write arm leaves behind: flag cleared, nothing closed. Drop
+# '! m_writeEndingCode' from onStreamEndDeferred( )'s verdict and this case reds on every run; it is
+# green against the tree before the deferral as well, where the stale flag gets the right answer by
+# accident.
+
+--log_level=message --run_test=Http1Driver_StrandSeamRefusesReuseAfterAResetWriteTests

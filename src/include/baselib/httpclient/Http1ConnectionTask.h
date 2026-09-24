@@ -1474,27 +1474,57 @@ namespace bl
                 const bool isReusable =
                     isConnectionUsable && ! base_type::isClosing() && ! m_isWriteInFlight;
 
-                om::ObjPtr< sink_t > sink;
+                /*
+                 * H01 - A WRITE WHICH HAS FINISHED AND A WRITE WHICH IS STILL RUNNING ARE THE SAME
+                 * THREE BITS ABOVE, AND ONE STRAND HOP IS WHAT TELLS THEM APART
+                 *
+                 * m_isWriteInFlight is cleared by the write's OWN handler, so a read completion
+                 * which reaches this strand ahead of that handler reads a stale true and refuses a
+                 * connection with nothing whatever wrong with it - measured at 11-18% of whole
+                 * module runs of utf_baselib_httpclient3. The distinction the predicate above
+                 * cannot make is not a state, it is TIME: the write has physically completed and
+                 * its handler has merely not been dequeued yet
+                 *
+                 * SO THE VERDICT IS PUBLISHED ONE HOP LATER, AND THAT IS NEVER A WAIT. If the
+                 * write's completion is already on this strand the hop lands behind it and the
+                 * continuation reads a true false; if the write is GENUINELY still running -
+                 * utf_baselib_httpclient7's write-barrier cases, 8MB against a parked peer -
+                 * nothing is enqueued ahead of us, the continuation runs on the very next strand
+                 * turn and publishes exactly the verdict this line computes. 94.5% of the
+                 * occurrences measured fall in the first band, which is why this is worth doing:
+                 * notes/plans/issues/h01-reuse-verdict-design.md, section 11
+                 *
+                 * AND THE WHOLE ENDING MOVES AS ONE UNIT IN TODAY'S ORDER - the verdict, the
+                 * handle, the sink, onClosed( ) and the close-or-arm together, which is what
+                 * publishStreamEnd( ) is. Deferring the verdict ALONE would invert the contract
+                 * stated above this function: every observer in the tree reads the verdict at
+                 * onClosed( ), so a callback delivered ahead of it races the answer it is the
+                 * rendezvous for
+                 *
+                 * WHAT IS NOT DEFERRED IS THIS MESSAGE'S OWN STATE, below. The read re-armed by
+                 * onReadCompleted( ) must never deliver into a message which has ended, and with
+                 * the parser already gone the window behaves exactly as a reused connection does -
+                 * unsolicited data throws there and a peer close ends nothing
+                 */
+
+                const bool isVerdictDeferred =
+                    isConnectionUsable && ! base_type::isClosing() && m_isWriteInFlight;
+
                 stream_handle_t handle = httpclient::ClientConnection::INVALID_STREAM_HANDLE;
 
                 {
                     BL_MUTEX_GUARD( m_stateLock );
 
                     handle = m_handle;
-                    sink = std::move( m_sink );
 
-                    m_handle = httpclient::ClientConnection::INVALID_STREAM_HANDLE;
-                    m_sink.reset();
+                    /*
+                     * RETIRED HERE EVEN WHEN THE VERDICT IS DEFERRED, and nothing can put it back
+                     * inside the window: m_handle stays allocated until the verdict is published,
+                     * so submit( ) refuses and there is nothing for onStartRequest( ) to start
+                     */
+
                     m_request = httpclient::ClientRequest();
                     m_startPending = false;
-
-                    if( httpclient::ConnectionState::Closed != m_state )
-                    {
-                        m_state = isReusable ?
-                            httpclient::ConnectionState::Ready
-                            :
-                            httpclient::ConnectionState::Draining;
-                    }
                 }
 
                 m_parser.reset();
@@ -1526,6 +1556,63 @@ namespace bl
                 m_requestMayHaveBeenSent = false;
                 m_requestSaidClose = false;
 
+                if( isVerdictDeferred )
+                {
+                    deferStreamEnd( handle, errorCode, isRetryable );
+                }
+                else
+                {
+                    publishStreamEnd( errorCode, isRetryable, isReusable );
+                }
+
+                BL_NOEXCEPT_END()
+            }
+
+            /**
+             * @brief Publishes the connection's verdict and ends the stream - the unit
+             * finishStream( ) may defer by one strand hop
+             *
+             * ONE UNIT AND IN THIS ORDER, which is the contract finishStream( ) states above
+             * itself: the state is settled before the sink is told, because every observer of the
+             * verdict reads it AT that event - the pool through the request task's onClosed( ),
+             * and every case in the two driver modules
+             *
+             * THE VERDICT IS THE CALLER'S BECAUSE THE TWO CALLERS DO NOT COMPUTE THE SAME ONE, and
+             * that difference is the whole of this change. The synchronous caller asks the write's
+             * FLAG, as it always has; the deferred one asks the write's recorded OUTCOME, which is
+             * the only question left once the flag has been cleared under it - see
+             * onStreamEndDeferred( )
+             */
+
+            void publishStreamEnd(
+                SAA_in          const eh::error_code&                           errorCode,
+                SAA_in          const bool                                      isRetryable,
+                SAA_in          const bool                                      isReusable
+                ) NOEXCEPT
+            {
+                BL_NOEXCEPT_BEGIN()
+
+                om::ObjPtr< sink_t > sink;
+                stream_handle_t handle = httpclient::ClientConnection::INVALID_STREAM_HANDLE;
+
+                {
+                    BL_MUTEX_GUARD( m_stateLock );
+
+                    handle = m_handle;
+                    sink = std::move( m_sink );
+
+                    m_handle = httpclient::ClientConnection::INVALID_STREAM_HANDLE;
+                    m_sink.reset();
+
+                    if( httpclient::ConnectionState::Closed != m_state )
+                    {
+                        m_state = isReusable ?
+                            httpclient::ConnectionState::Ready
+                            :
+                            httpclient::ConnectionState::Draining;
+                    }
+                }
+
                 if( sink && httpclient::ClientConnection::INVALID_STREAM_HANDLE != handle )
                 {
                     sink -> onClosed( handle, errorCode, isRetryable );
@@ -1546,6 +1633,170 @@ namespace bl
                 }
 
                 BL_NOEXCEPT_END()
+            }
+
+            /**
+             * @brief H01 - posts the stream's ending one hop through the strand
+             *
+             * ACCOUNTED, AND chkArmIdleTimer( ) IS THE MODEL - beginOperation( ) before the post
+             * and the initiator in a try whose catch completes the operation. Without it the
+             * closeConnection( ) this continuation can reach would be beginClose( ) and nothing
+             * else: initiateClose( ) runs only from onOperationCompleted( ), so an unaccounted
+             * continuation which closed would wake nothing at all in the write-barrier case - read
+             * blocked, write blocked, no timer live - and the task would never end
+             *
+             * IT IS ALSO WHAT KEEPS THE TERMINAL PATH OFF THE WINDOW. m_sink is still held and
+             * m_handle still allocated until the continuation runs, so onTaskStoppedNothrow( )
+             * would deliver this stream's ending instead of us; an operation still pending is
+             * precisely what forbids the task from taking that path
+             *
+             * A POST WHICH THREW WOULD LEAVE THE STREAM UNENDED, and that is the one case the
+             * catch below hands over deliberately: the failed operation fails the TASK, and the
+             * safety net in onTaskStoppedNothrow( ) is what delivers onClosed( ) then
+             */
+
+            void deferStreamEnd(
+                SAA_in          const stream_handle_t                           handle,
+                SAA_in          const eh::error_code&                           errorCode,
+                SAA_in          const bool                                      isRetryable
+                ) NOEXCEPT
+            {
+                BL_NOEXCEPT_BEGIN()
+
+                base_type::beginOperation();
+
+                try
+                {
+                    postToStreamExecutor(
+                        cpp::bind(
+                            &this_type::onStreamEndDeferred,
+                            selfRef(),
+                            handle,
+                            errorCode,
+                            isRetryable
+                            )
+                        );
+                }
+                catch( std::exception& )
+                {
+                    base_type::onOperationCompleted( std::current_exception(), false );
+
+                    return;
+                }
+
+                /*
+                 * OUTSIDE THE TRY, BECAUSE THE OPERATION IS ACCOUNTED FOR EXACTLY ONCE. Anything
+                 * placed inside it which throws AFTER the post has succeeded would complete an
+                 * operation which is still pending, and the continuation would then run on a task
+                 * which had already taken its terminal path
+                 */
+
+                BL_LOG(
+                    Logging::trace(),
+                    BL_MSG()
+                        << "Deferring the reuse verdict of an HTTP/1.1 connection to '"
+                        << m_key.host
+                        << "' by one strand hop"
+                    );
+
+                BL_NOEXCEPT_END()
+            }
+
+            /**
+             * @brief H01 - the deferred ending, one strand hop after the response completed
+             *
+             * @param handle The stream this ending belongs to
+             */
+
+            void onStreamEndDeferred(
+                SAA_in          const stream_handle_t                           handle,
+                SAA_in          const eh::error_code                            errorCode,
+                SAA_in          const bool                                      isRetryable
+                ) NOEXCEPT
+            {
+                BL_TASKS_HANDLER_BEGIN()
+
+                /*
+                 * NOTHING TO DO IF THIS IS NO LONGER THE STREAM WE WERE POSTED FOR. A cancel( )
+                 * landing in the window finds the handle still allocated - which is exactly why it
+                 * is kept so - posts onCancelStream( ) behind us and ends the stream itself, and
+                 * the ending it publishes is the one the sink is owed. This continuation then has
+                 * nothing left but to account for itself
+                 *
+                 * READ WITHOUT TAKING, AND THAT IS EXACT RATHER THAN LUCKY: inside the window
+                 * m_handle is allocated, so submit( ) will not touch it, onTaskStoppedNothrow( )
+                 * cannot run while this accounted operation is pending, and the only other writer
+                 * of it - publishStreamEnd( ) - runs on this strand and therefore never
+                 * concurrently with this
+                 */
+
+                if( handle != activeHandle() )
+                {
+                    break;
+                }
+
+                /*
+                 * THE WRITE'S RECORDED OUTCOME AND NOT THE FLAG ALONE, WHICH IS THE POINT OF
+                 * ASKING ONE HOP LATER RATHER THAN ONE BIT DIFFERENTLY
+                 *
+                 * A write handler which ran inside the window may have learned the connection is
+                 * DEAD and closed nothing about it: a peer which answers from the head and resets
+                 * with the upload unread is classified in onWriteCompleted( ) as an ending rather
+                 * than a failure, and that arm clears the flag, releases the buffers and leaves
+                 * the classification to the read. A continuation reading only the flag would
+                 * publish Ready on that connection for one strand turn, and submit( ) accepts in
+                 * one strand turn
+                 *
+                 * m_writeEndingCode IS THAT RECORD AND ITS LIFETIME IS ALREADY RIGHT. Every write
+                 * handler records it raw ahead of its own prolog, a write which ended cleanly
+                 * records the empty code, and finishStream( ) releases it only under
+                 * ! m_isWriteInFlight - which is the one branch this path does not take, so the
+                 * record is still there to be consulted and is released below instead
+                 *
+                 * isClosing( ) IS STILL ASKED AND IS NOT REDUNDANT. A write which failed with a
+                 * code neither arm excuses has already failed the TASK by the time we run, and
+                 * that is a different question from what the write's own code was
+                 */
+
+                const bool isWriteEnded = ! m_isWriteInFlight;
+
+                const bool isReusable =
+                    isWriteEnded && ! m_writeEndingCode && ! base_type::isClosing();
+
+                BL_LOG(
+                    Logging::trace(),
+                    BL_MSG()
+                        << "The deferred reuse verdict of an HTTP/1.1 connection to '"
+                        << m_key.host
+                        << "' found the write "
+                        << ( isWriteEnded ? "completed" : "still in flight" )
+                    );
+
+                /*
+                 * WHAT finishStream( ) COULD NOT RELEASE, RELEASED HERE UNDER THE SAME CONDITION
+                 * AND FOR THE SAME TWO REASONS - see the block it belongs to. The write handler
+                 * has released the two buffers itself by now; the record of how it ended is ours
+                 * to clear, and a connection about to be published Ready must not carry this
+                 * message's write into the next one
+                 */
+
+                if( isWriteEnded )
+                {
+                    m_requestHead.clear();
+                    m_requestBody.reset();
+
+                    m_writeEndingCode = eh::error_code();
+                }
+
+                /*
+                 * THE IDLE TIMER IS ARMED HERE AND NOWHERE ELSE FOR THIS RESPONSE, and that is
+                 * structural rather than lucky: chkArmIdleTimer( ) returns before allocating
+                 * anything while activeHandle( ) is allocated, and through the whole window it is
+                 */
+
+                publishStreamEnd( errorCode, isRetryable, isReusable );
+
+                BL_TASKS_HANDLER_END_MULTIOP()
             }
 
             /**
