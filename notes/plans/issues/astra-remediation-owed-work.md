@@ -507,3 +507,199 @@ checkout — measured on Linux copies, and the tree has none; whether (3) should
 consumes; and `src/utests/include/` and the never-differenced namespaces — the lane's gaps 1 and 2,
 both measured PASS on an edit in logs 07 and 08 — which are the next owed slots and not this
 branch's.
+
+## Review of `tier1-filescope` (`c1689ca`..`6de041e`) and `tier1-shared-tree` (`6de041e`..`04d6fe4`), 2026-09-24 — the corrections, C5's second subject, C12 and C13
+
+The fourth and fifth rounds: the previous review's findings implemented, and three more invariants.
+Every number here was re-measured on tree copies through the capture path, with this branch's tool
+and with the tools at `lazari2`, `c1689ca` and `6de041e`, not read from the lane's logs; the lane's
+own probe scripts were re-run as well, and where a lane log is the source it is named.
+
+**Verdict: accept both branches, in order, and land one more clause before the integration refresh
+— the narrowed exclusion's guard classifier accepts a shape that is not an include guard, and two
+behavioural defines, one of them in `UtfMain.h`, are still silent because of it.** The lane's
+correction of the previous review's finding 3 is right and is measured below; the record of that
+finding should read *right in direction, wrong in both of its examples*. C13's replay cost is
+acceptable and no exemption is missing. The disarm edge is tolerable for this integration, and the
+guard that sits on it is about ten lines. The seventh gap is real, its severe form is a relocation
+accident rather than an edit, and one of the lane's two probes for it does not reproduce where the
+lane says it ran.
+
+**What re-measures.** The selftest is red against `lazari2`'s tool on exactly ten lines (C5,
+C11 ×5, C12, C13 ×3) and against `c1689ca` and `6de041e` on five each (C5, C12, C13 ×3); green
+here on the committed 1082-case baseline and on `lazari2`'s refreshed 1083-case one, C4's control
+reading 0 of either. `--compare` on the current tree reports the one expected `C2 case BODY
+CHANGED: JsonPrettyPrintNestedLayout` against the committed baseline and **PASS** against a fresh
+armed capture — 212 files, 717 members, 78 file-scope spans in 24 files, 27 shared files, 164 shared
+members, 38 shared spans; `check_split.sh --tier1` is red on that one line. `live-c12.sh`,
+`live-c13.sh` and `replay.sh` reproduce logs 02, 20 and 31 line for line; the hoist into the shared
+tree reports `C6 helper member LOST` at `6de041e` and passes here; control E — `TestTasks8.h` moved
+whole from `utf_baselib_tasks` into a new module with its own entry point — passes with and without
+a BOM against the narrowed exclusion. The fresh manifest confirms the docstring's census: exactly two
+file-scope shas with more than one copy tree wide, `using namespace bl;` twice and the THREAD_POOLS
+define three times; 0 member or span shas shared between the shared tree and any module; 0 quoted
+includes into or out of the shared tree; 0 cases in it.
+
+**1. Finding 3 of the previous review: right in direction, wrong in both of its examples — the lane
+is right.** Dropping `#define UTF_TEST_APP_INIT_DEACTIVATE_THREAD_POOLS ( true )` from
+`utf_baselib_basictask` passes at `c1689ca` **and** here: three entry points carry that line, C11
+keys `old_scope` and `new_scope` on the sha alone, and a sha with two surviving copies is not LOST.
+Dropping it from all three reports C11 LOST here and passes at `c1689ca`, which is what the
+narrowing bought; counting copies would close the single drop and red control E, whose entry point
+writes the third `using namespace bl;` — two copies today, by grep. And all seven `UTEST_*` macros
+sit inside case bodies — five cases in `TestServerErrorHelpers.h` and `TestAsyncRpcDataModel.h` —
+where C2 hashes `lines`, not `shadow`, so the directive pre-pass never touched them: weakening
+`UTEST_REQUIRE_PRESERVED` reports `C2 case BODY CHANGED: ServerErrorHelpersRedactionTests` at both
+tools. *"Measured silent"* in that finding was not measured, or was measured on the wrong thing, and
+*"eleven others, eight of them multi-line"* counted case-body macros as file scope; the census is
+five at file scope in module files. Recorded here rather than edited in place, so the correction
+stays visible.
+
+**2. The narrowed exclusion's classifier accepts a shape that is not an include guard, and the
+lane's proof sits beside that risk rather than on it.** `include_guard_define( )` accepts `#ifndef X`
+followed by `#define X` by shape alone, and the define-if-not-defined idiom has exactly that shape.
+Census over all 212 files: 74 guard-shaped conditionals, 72 of which close on the file's last
+directive and are include guards, and **two which do not**: `utf_baselib_cmdline/TestCmdLineEhUtils.h:31`
+— `#define SSL_R_SHORT_READ 219`, the packed reason code newer OpenSSL no longer defines — and
+`include/utests/baselib/UtfMain.h:179` — `#define UTF_TEST_APP_INIT_UTF_ARGS_PARSER test::UtfArgsParser`,
+the default argument-parser class of every module's app init. Both are among the lane's *"48
+include guards"* and neither is hashed. Measured armed, on tree copies: `219` → `220` PASS; the whole
+`SSL_R_SHORT_READ` block deleted PASS; the `UtfMain.h` default edited PASS; the `UtfMain.h` block
+deleted reports only through the enclosing `template` span's line count at `:52` — by accident of
+extent, not by reading the define. The two probes that proved the narrowing, `UTF_TEST_NORMALIZE`
+and `BL_PLUGINS_CLASS_IMPLEMENTATION`, are *unguarded* defines: they establish that an unguarded
+define is hashed and say nothing about what the classifier calls a guard. The fix is one clause — an
+include guard's matching `#endif` is the last directive of the file — which separates exactly these
+two; no guard in this tree is spelled `#if !defined( X )` and no file uses `#pragma once`, so the
+`ifndef`-only shape has no false negative today. Blast radius: `is_include_guard( )` also feeds C3's
+condition stack, and no case sits under either block, each being three lines; after the fix both
+defines are C11 spans, ADDED against any armed baseline captured before it and blessed by the refresh
+that is owed anyway — nil cost if the fix lands before that refresh. The docstring's *"five
+behavioural #defines"* becomes six in module files and one more in the shared tree, and the tiers
+table's *"the behavioural `#define`s"* is true only after this lands.
+
+**3. C12 — agree with the anchor, and its controls sit on the risk.** P1–P3 reproduce (three, three
+and one `CHANGED NAMESPACE` lines); the partition and the whole-block cut both PASS with nothing
+reported, which is the property C6 was moved down to members for, and the block-sha argument holds
+by reading — the sha covers the opening line. The set comparison is right for the same text under
+two namespaces in one file; I looked for such a pair in the baseline to exercise the label under a
+twin deletion and found none, so that label is unmeasured and unimportant. The selftest's C4 control
+asserts the empty subject on whatever baseline it is handed, which is the right answer to a count
+in a comment that `lazari2` had already made stale. **C5's second subject** is shape (i) as
+recommended, red on the unfixed tools in both the selftest and the lane's capture-path probe, and
+`main( )` still writes before it judges, so the shape is the adjacent one by choice, as recorded.
+
+**4. C13 — every shape decision holds against its measurement, and spanning C6's identity across
+both trees is the right resolution.** Not a module: `module_file_churn( )` and the C7 loops read
+`manifest[ 'modules' ]` only, `<shared>` paths begin with `include/` so the roster clause can never
+match them, and the accepted orphans, the quoted includes and the data hashes are unchanged at 4, 0
+and 32. One tree-wide list: the hoist from `utf_baselib_loader/TestResolver.h` into
+`include/utests/baselib` is LOST at `6de041e` and PASS here, reproduced — and hoisting a helper into
+the shared tree is the one sanctioned way to share it across the modules a split creates, since
+`AGENTS.md` forbids the cross-module include, so a C6 red on it would be the gate failing its
+purpose; the price is C6's existing copy-count blindness extended across the boundary, and 0 shas
+cross it today. `<shared>` as its own module label keeps the duplication check asking only whether
+the shared tree redefines something inside itself, which is enough: a module copying a shared helper
+verbatim lands both copies in one translation unit, where the compiler reports it. Unarmed,
+`without_shared( )` trims the current side and the differential half is the one that ran at
+`6de041e` — the same single C2 line, and the scope lines count `judged` rather than the whole
+manifest — while `check_intrinsic( )` still runs over the whole manifest, so the intrinsic half is
+strictly stronger and passes. The two hard C13 failures fire in the selftest. P1–P4 report under C6,
+C11, C10 and C12 respectively, exactly as the commit says.
+
+**5. The `f992e2f` cost — acceptable, and no exemption is missing.** The eleven new lines are one
+C10 (`<utests/baselib/UtfCrypto.h>` added to `TestMessagingUtils.h`), one C6 LOST and one ADDED for
+`TestMessagingUtilsT` — the class is one member, and its declaration changed when the bodies left —
+and eight C6 ADDED for the out-of-line bodies in `TestMessagingUtilsImpl.cpp`. Every one is a true
+statement about text every module compiles. An exemption that silenced them would have to recognise
+*declaration minus bodies ↔ bodies elsewhere*, which is a semantic match rather than a textual one,
+and a smuggling path: an edit inside an out-lined body would ride through it. Reduction option 3 is
+not a relocation, `AGENTS.md` now says so where it is first met, the refresh is where its diff is
+reviewed, and tier 3's per-case assertion counts are what stands behind an out-lining's behavioural
+equivalence. The module side of option 3 — the forwarding `ImplTestMessagingUtils.cpp` per module —
+was already silent, being a new file whose head is prose. The three earlier rounds each asked this
+question of lines that sat *on a relocation* — the roster, the four prose heads, and finding 3's
+supposed hole — and each needed a narrowing or a correction; these lines sit on an edit, and the
+answer is different: leave them.
+
+**6. The disarm edge — tolerable for this integration, and the guard that sits on the risk is about
+ten lines.** `lazari2`'s baseline at `b01f98e` carries `cases`, `members`, `modules`, `namespaces`
+and nothing else — 1083 cases, no `file_members`, no `shared` — after three refreshes by pre-C11
+tools (`3c57955`, `6e97b86`, `fd6d80a`). Nothing was disarmed, since nothing was armed; after the
+integration refresh, the paths to a *persisting* disarm are an `inventory.json` conflict resolved by
+taking a lane's copy, and a direct commit to `lazari2` from a checkout carrying the old tool — every
+lane refresh rewrites the same file, so the conflict is the surface, and its resolution is the risk.
+Three guards, cheapest first: *(a)* the verdict line — `PASS - all invariants hold` should say `C11
+and C13 not armed` when they are not, and `check_split.sh`'s summary should print `C1-C10; C11, C13
+unarmed` rather than `C1-C13`, so the note becomes part of the one line a reader looks at; *(b)*
+`--capture` refusing to overwrite an existing baseline whose top-level keys are a strict superset of
+what the running tool writes — schema-free, and from that commit on no tool can disarm a later tool's
+baseline; it cannot help against the pre-C11 tools that exist today, which only *(c)* covers; *(c)*
+the rule, one line in the refresh paragraph: an `inventory.json` conflict is resolved by re-capturing
+with the integrated tool, never by picking a side.
+
+**7. The seventh gap — real, at file scope exactly as the lane says; at member level the lane's probe
+does not reproduce where it says it ran, and the severe form is a relocation accident, not an
+edit.** `TestBaselibDefault5.h` carries `#if ! defined( _WIN32 )` twice: at `:38`, file scope,
+around `#include <pthread.h>` and a comment; and at `:396`, inside the anonymous namespace opened at
+`:393`, around the named-mutex helpers. Inverting `:38` passes — that is the measurement log 40
+describes, mislocated as *"around FIVE helper members"*. Inverting `:396` reports `C6 helper member
+LOST: #if ! defined( _WIN32 )` and `ADDED: #if defined( _WIN32 )`; a unique condition there likewise;
+deleting the `#if`/`#endif` pair reports two LOST. The reason is an accident: `split_members( )`
+knows nothing about directives, so a directive line separated by blank lines is a one-line member —
+six exist tree wide (`#if defined( _WIN32 )`, `#else`, `#endif`, `#if ! defined( _WIN32 )`,
+`#endif // ! defined( _WIN32 )`, `#if 0`) — protected by text identity with its copy-count
+blindness, so a second copy of a bare `#else` or `#endif` member would leave both unprotected.
+Narrowing `Utf.h`'s `main( )` gate passes, as the lane says, and `UtfMain.h`'s default is finding 2.
+So the file-scope half — 10 spans — is fully blind, and the member half — 19 members by the lane's
+count, 21 by mine, the difference being the directive lines themselves — is guarded by accident.
+**The severe form:** `namedMutexSemaphoreKey( )` cut from under `:396` into a sibling header without
+the guard, roster edited — eight lines moved verbatim with `split_members( )`'s own extent, which is
+how every split here is cut and how the lane's own controls cut — **passes tier 1**, and the new
+header now declares a `::key_t` on Windows. That is a relocation accident in the class the gate
+exists for, and it is silent. Severity: medium — the consequence on the other platform is usually a
+compile error, which is loud, but a condition that selects behaviour rather than availability
+changes behaviour silently, and the accident needs no intent. Closing cost: a condition stack
+recorded per member and per file-scope span — a per-line precomputation, since the walk's
+`cond_stack` is the stack at the namespace *opening*, not at each member — and folded into the
+**identity** C6 and C11 compare, sha with guards, so that a helper moved out from under a guard
+reads LOST and ADDED; a per-file anchor like C12's would be silent on exactly the accident, since
+the accident is a move to another file. Plus a selftest section, a refresh, and the re-spelling
+question C3 already lives with. Blast radius: both identities, the selftest, the baseline; the
+false-positive surface is a new header written under a guard the old one lacked, which is the
+surface C3 already accepts for cases. It is the maintainer's shape decision, as the lane says, and it
+belongs after the classifier fix and the refresh, or the refresh happens twice.
+
+**8. Docs.** The tiers table's *"the behavioural `#define`s"* is one notch broader than true until
+finding 2 lands; *"all of it over `src/utests/include/` too"* is qualified correctly in the paragraph
+below it. The reduction paragraph's *"eleven such lines"* is exact and worth keeping, since it is
+what a reader of a red gate will see. `check_split.sh`'s `C1-C13` is a claim about what ran, as
+before; finding 6(a) resolves it.
+
+**Decisions, in the order to take them.** *(1) The guard classifier*, one clause, a commit on top of
+`tier1-shared-tree` — not on `tier1-filescope`, since its successor is chained on its tip. What it
+is: an include guard is `#ifndef X` / `#define X` whose matching `#endif` is the file's last
+directive. If not done: two behavioural defines, one of them the default parser of every module,
+stay unhashed for good, and the refresh blesses their absence. Risk low, blast radius the classifier
+C3 and C11 share, 72 real guards unchanged; the two probes above are the controls, and control E
+re-runs. Undecided: `#endif`-last alone, or first-conditional-and-`#endif`-last; recommend the
+former, reversing if a header in this tree ever carries a directive after its guard's `#endif` —
+none does. *(2) The verdict line and the summary line* when C11 or C13 is unarmed: no behaviour
+change, and it is where the note has to live to be read; recommend yes. *(3) `--capture` refusing to
+write fewer keys than the file it would overwrite*: in plain English, a tool that does not know
+about a check cannot erase a baseline that does. If not done: the next stale checkout to refresh
+disarms C11 and C13 with only a note to say so, and the note is the thing this tool has been caught
+behind three times. Risk low, about ten lines, blast radius `--capture` only; the refusal must say to
+delete the file first if a downgrade is ever meant. Recommend yes; reverses if the refresh workflow
+ever legitimately writes from an older tool, which nothing does. *(4) The refresh at integration*,
+once, after (1): it blesses C11's list including the two classifier spans, finding 1's corrected
+case body and C13's shared tree, and it arms all three. *(5) The seventh gap*, to the maintainer,
+shape recommended above, after (4). Both branches are accepted as they stand; (1)–(3) are
+follow-ons, none of which changes what the reviewed commits already prove.
+
+**Could not settle here:** whether the lane's fifth-gap inversion ran at `:38` — no script was
+kept, and the description fits `:38` and not `:396`; the `core.autocrlf` BOM question, carried from
+the previous review; whether the six directive-line members should be excluded from
+`split_members( )` once a guard stack exists, since they would then be redundant and are the only
+protection today; and the C12 label under a same-file twin deletion, for which the tree offers no
+pair.
