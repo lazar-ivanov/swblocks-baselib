@@ -294,7 +294,19 @@ def normalize( lines ):
 
 
 def read_lines( path ):
-    with open( path, 'r', encoding = 'utf-8', errors = 'replace' ) as stream:
+    """
+    Read a source file as lines, with a byte order mark stripped if one is there
+
+    utf-8-sig rather than utf-8, and the difference is one measured false positive. C11 is the
+    only invariant that reads line 1 of a file, and in this tree line 1 is always the licence
+    comment. A BOM survives a utf-8 read as a character which is not whitespace, so COMMENT_LINE_RE
+    stops matching, the licence block stops being prose, and a new module's entry point saved by a
+    Windows editor is reported as file-scope text ADDED - a red on a legitimate relocation, on a
+    file whose content is correct. No file in this tree carries a BOM, the eol tier does not look
+    for one, and agents write files here from Windows
+    """
+
+    with open( path, 'r', encoding = 'utf-8-sig', errors = 'replace' ) as stream:
         return stream.read().split( '\n' )
 
 
