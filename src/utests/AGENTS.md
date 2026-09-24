@@ -122,7 +122,7 @@ moves, adds or removes test cases.
 |---|---|---|
 | 1 | `utf_inventory.py --compare` | C1–C10: no case lost, added or edited; guard and namespace stacks unchanged; no duplicate names; helper members neither lost nor duplicated; data files present, unchanged in content and still referenced; `notes.txt` recipes resolve, and no case loses one; every file keeps the `#include` list it had |
 | 2 | `utf_objsize.py --ceiling 75` | No object over the ceiling |
-| 3 | `utf_runlog.py --compare` | Registered set, executed set, pass/fail, skips, and **per-case assertion counts** |
+| 3 | `utf_runlog.py --compare` | Registered set, executed set, pass/fail, skips, and **per-case assertion counts** — differentially, and **only over the 17 modules the baseline covers** |
 
 `selftest_inventory.py` proves tier 1 actually fails when it should; run it if you change the
 extractor.
@@ -136,6 +136,17 @@ cannot explain is the one way to make this gate worthless.
 
 **Tier 3 is the one that catches a case which still registers and still passes while silently doing
 less work.** Do not skip it for a change that moves cases between modules.
+
+**Tier 3's baseline covers 17 of the tree's 45 test binaries, and none of the http or h2 client
+ones.** It is also a `win-x86-vc143-debug` capture (`91d5c2c`), so it is a statement about one
+platform as well as about those modules: run against a Linux tree it reports 37 assertion-count
+differences inside its *own* 17 modules which are nothing but Windows-versus-POSIX
+(`BaseLib_OSJunctionsTests` 18 → 0, `BaseLib_OSRegistryValueTest` 8 → 0). Every comparison therefore
+ends with a coverage statement naming the modules it could not speak about, and
+`baseline/uncovered.json` gives the reason for each — read that before taking a green tier 3 for
+coverage. The 17 client modules were measured for admission and **refused**;
+`notes/plans/issues/tier3-client-modules-not-baselineable-record.md` has the numbers and what would
+reverse it.
 
 **A differential comparison can only speak about things present on both sides.** Tiers 1 and 3
 compare against a baseline, so anything *new* — a module, a case — is unjudgeable by construction,
