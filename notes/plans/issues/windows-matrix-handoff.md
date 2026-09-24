@@ -13,6 +13,46 @@ said too.
 
 ---
 
+## Start here: the state you are inheriting, and the order to work in
+
+**The branch is `lazari2`. Nothing is pushed** — the maintainer pushes. Do not merge to it from a
+lane; commit on your own branch and let the merge be deliberate.
+
+**What Linux has already established, so that anything you find is yours and not inherited:**
+
+| | |
+|---|---|
+| whole-suite G1 gate | **clean** over `9cd211c`, `gcc1520` `debug` — see `g1-gate-result-2026-09-24.md`, which also explains why it exits 1 and why that means nothing |
+| tier 1 | **PASS**, C1–C13, and `selftest_inventory.py` PASS at 76 probes |
+| tier 2 | **SKIP — it has never run anywhere.** It needs an x86 debug tree, which only you can make |
+| tier 3 | **SKIP on Linux by design.** Its baseline speaks for `win-x86-vc143-debug`, so **your host is the only place it can run** |
+
+**Two of the three tiers have therefore never been exercised on the platform they were built for.**
+That is the largest single thing this handoff is asking for, and it is not in the numbered list
+because it is not a measurement — it is the gate itself finally running.
+
+**The order that gets the most out of the least work:**
+
+1. **Build `win-x86-vc143-debug` first.** It answers **item 8** as a side effect — if a module is over
+   the 75 MB ceiling the build fails and names it, and if it succeeds the sizes are there to record.
+   It is also the tree tiers 2 and 3 both need. **Name it exactly that**, or tier 3 will refuse: the
+   stamp is the basename of the `--bld` tree and the baseline says `win-x86-vc143-debug`. See §10.
+2. **Run the three tiers** against that tree — `check_split.sh --bld <tree> --run`. This is the first
+   time tier 2 will have run at all and the first time tier 3 will have run since its baseline was
+   captured. Expect the coverage statement naming 17 uncovered modules; that is normal and §10 says
+   why.
+3. **Then the behavioural items, 1 through 7.** These need runs of specific cases and are
+   independent of each other, so take them in whatever order suits the machine. **Item 1 needs dozens
+   of iterations** because the abort case is a race — budget for that rather than concluding early.
+4. **Item 5 is a decision, not a measurement**, and it is the only one here that is. Read it before
+   you build anything extra.
+
+**A build on x86 is where this project has previously been unable to compile at all**, so if step 1
+fails, that is a result worth reporting immediately rather than working around — `src/utests/AGENTS.md`
+carries the module-size rules and the splitting procedure.
+
+---
+
 ## Read this first, or item 1 will mislead you
 
 `notes/plans/issues/windows-peer-close-error-codes-record.md` opens with *"the divergence is
