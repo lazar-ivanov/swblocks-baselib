@@ -682,6 +682,17 @@ namespace utest
 
             bool                                                                isFallback;
 
+            /*
+             * What the fallback's OWN task reports before a case moves it. Closed is what an h2
+             * connection task publishes once it has handed the connected stream to the HTTP/1.1
+             * driver, and it is the state every other fallback case wants from birth. A case which
+             * pins the ADOPTION ORDER holds it at Connecting and publishes Closed itself, which is
+             * the instant between the driver pointer's write and the store which orders it made to
+             * stand still
+             */
+
+            bl::httpclient::ConnectionState                                     fallbackTaskState;
+
             ~StubFactory() NOEXCEPT
             {
                 BL_NOEXCEPT_BEGIN()
@@ -705,7 +716,8 @@ namespace utest
                 initialState( bl::httpclient::ConnectionState::Connecting ),
                 initialFreeSlots( 0U ),
                 protocol( bl::httpclient::HttpProtocol::Http2 ),
-                isFallback( false )
+                isFallback( false ),
+                fallbackTaskState( bl::httpclient::ConnectionState::Closed )
             {
             }
 
@@ -798,7 +810,7 @@ namespace utest
 
                 auto task = StubConnectionTask::createInstance(
                     control,
-                    isFallback ? bl::httpclient::ConnectionState::Closed : initialState,
+                    isFallback ? fallbackTaskState : initialState,
                     isFallback ? 0U : initialFreeSlots,
                     protocol
                     );
@@ -875,6 +887,78 @@ namespace utest
                 -> bl::httpclient::ConnectionAttempt
             {
                 return ( *factory )( key, policy );
+            };
+        }
+
+        /**
+         * @brief Releases a hand-built stub's completion callback however the case leaves
+         *
+         * The callback IS the task's own markCompleted( ) and the task holds the control, so a
+         * stub which the pool scheduled and nothing completed keeps itself alive and is reported
+         * as a leaked object reference at exit. StubFactory releases the ones it built in its own
+         * destructor; a stub a case builds by hand needs the same - and on the path where an
+         * assertion fails too, which is what makes this a guard rather than a line at the end
+         */
+
+        class StubControlGuard FINAL
+        {
+        private:
+
+            const stub_control_ptr_t                                            m_control;
+
+        public:
+
+            explicit StubControlGuard( SAA_in const stub_control_ptr_t& control )
+                :
+                m_control( control )
+            {
+            }
+
+            ~StubControlGuard() NOEXCEPT
+            {
+                BL_NOEXCEPT_BEGIN()
+
+                m_control -> releaseCompletion();
+
+                BL_NOEXCEPT_END()
+            }
+        };
+
+        /**
+         * @brief An attempt whose task is NOT a ClientConnection, with the connection beside it
+         *
+         * The pool reaches a connection task through om::tryQI< ClientConnection >( attempt.task ),
+         * and for a bare task that answers nothing - so the entry has no task connection whose
+         * state could be read, and the driver poll has to be gated on the task's own completion
+         * instead. utf_baselib_httpclient composes the real pool with exactly this shape
+         * ( connectionFactoryFor( ) ), which is why the arm is not hypothetical
+         */
+
+        inline auto bareTaskFactoryOf(
+            SAA_in          const bl::om::ObjPtr< StubConnectionTask >&          driver
+            )
+            -> bl::httpclient::connection_factory_t
+        {
+            const bl::om::ObjPtrCopyable< StubConnectionTask > held( driver );
+
+            return [ held ](
+                SAA_in          const bl::httpclient::ConnectionKey&            key,
+                SAA_in          const bl::httpclient::ConnectionPoolPolicy&     policy
+                )
+                -> bl::httpclient::ConnectionAttempt
+            {
+                BL_UNUSED( key );
+                BL_UNUSED( policy );
+
+                bl::httpclient::ConnectionAttempt attempt;
+
+                attempt.task = bl::om::ObjPtrCopyable< bl::tasks::Task >(
+                    bl::tasks::SimpleTaskImpl::createInstance< bl::tasks::Task >()
+                    );
+
+                attempt.driver = bl::cpp::bind( &StubFactory::driverOf, held );
+
+                return attempt;
             };
         }
 
@@ -1551,6 +1635,156 @@ UTF_AUTO_TEST_CASE( H2Pool_FallbackDriverIsPreferredTests )
      */
 
     UTF_REQUIRE( factory -> driverControlAt( 0U ) -> waitForScheduled() );
+
+    pool -> dispose();
+}
+
+/************************************************************************
+ * H04a: the driver pointer is read only after the store which orders it
+ *
+ * The fallback's task WRITES the driver pointer on its own thread, inside onProtocolNegotiated( ),
+ * and publishes Closed afterwards from its own completion. The pool reads that pointer through the
+ * accessor, under a lock the writer never takes - so nothing the pool holds orders the two, and
+ * the only thing which does is that publication. The case makes the instant between the two stores
+ * stand still: the accessor is ALREADY answering with a Ready driver while the task is still
+ * Connecting, which is the reading a pool that polls unconditionally takes and must not.
+ *
+ * THE REQUEST IS UNREPLAYABLE so that nothing rides the preface - findDispatchable( ) would hand a
+ * replayable one the Connecting entry itself and the negative wait would then say nothing about
+ * the driver. And the negative wait has its positive half in the same case, which is what makes an
+ * assertion about something not having happened honest here
+ */
+
+UTF_AUTO_TEST_CASE( H2Pool_ADriverIsAdoptedOnlyOnceTheTaskPublishesClosedTests )
+{
+    using namespace bl;
+    using namespace utest::connpool;
+
+    const auto factory = std::make_shared< StubFactory >();
+    const auto answers = std::make_shared< Answers >();
+
+    factory -> isFallback = true;
+    factory -> fallbackTaskState = httpclient::ConnectionState::Connecting;
+    factory -> initialState = httpclient::ConnectionState::Ready;
+    factory -> initialFreeSlots = 1U;
+
+    httpclient::ConnectionPoolPolicy policy;
+
+    const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
+
+    const PoolGuard guard( pool );
+
+    acquireInto( pool, makeKey(), makeRequest( false /* isReplayable */ ), answers, 0U );
+
+    UTF_REQUIRE( factory -> waitForCalls( 1U ) );
+
+    /*
+     * The driver exists, the accessor answers with it and it is Ready with a free slot. The pool
+     * must still not have looked, because the task has not published the store which orders the
+     * pointer - and the ticks it takes while this wait runs are the ones which would have
+     */
+
+    UTF_REQUIRE( ! answers -> waitFor( 1U, 500L /* timeoutInMilliseconds */ ) );
+
+    UTF_REQUIRE(
+        httpclient::ConnectionState::Connecting == factory -> taskAt( 0U ) -> state()
+        );
+
+    /*
+     * The publication, and the positive half of the wait
+     */
+
+    factory -> taskAt( 0U ) -> setState( httpclient::ConnectionState::Closed );
+
+    UTF_REQUIRE( answers -> waitFor( 1U ) );
+
+    const auto records = answers -> records();
+
+    const auto driverConnection =
+        om::qi< httpclient::ClientConnection >( factory -> driverAt( 0U ) );
+
+    UTF_REQUIRE_EQUAL( records.size(), 1U );
+    UTF_REQUIRE( nullptr == records[ 0 ].exception );
+    UTF_REQUIRE( records[ 0 ].connection.get() == driverConnection.get() );
+
+    /*
+     * And the entry which was made to wait is the one which answered - the pool did not give up on
+     * it and establish a second
+     */
+
+    UTF_REQUIRE_EQUAL( factory -> calls(), 1U );
+
+    const auto stats = pool -> stats();
+
+    UTF_REQUIRE_EQUAL( stats.connectionsCreated.value(), 1U );
+    UTF_REQUIRE_EQUAL( stats.connectionsRetired.value(), 0U );
+    UTF_REQUIRE_EQUAL( stats.failures.value(), 0U );
+
+    pool -> dispose();
+}
+
+/************************************************************************
+ * H04a's other arm: an attempt whose task is not a connection at all
+ *
+ * There is no task connection to read a state from, so the poll is gated on the task's own
+ * completion instead - which is ordered for the same reason, since the task state is stored after
+ * everything the task wrote. It is safe to gate there and NOT safe to gate the fallback there,
+ * because current( ) answers nothing until the driver is adopted: while this gate is shut the
+ * retire arm cannot fire, where for the fallback it reads the task connection and does.
+ *
+ * GREEN BEFORE AND AFTER by construction - an unconditional poll adopts the driver sooner, not
+ * differently - and it is here to pin that the arm exists at all. The shape is composed against
+ * the real pool by utf_baselib_httpclient
+ */
+
+UTF_AUTO_TEST_CASE( H2Pool_ADriverBesideABareTaskIsAdoptedTests )
+{
+    using namespace bl;
+    using namespace utest::connpool;
+
+    const auto driverControl = std::make_shared< StubControl >();
+
+    const StubControlGuard driverGuard( driverControl );
+
+    const auto driver = StubConnectionTask::createInstance(
+        driverControl,
+        httpclient::ConnectionState::Ready,
+        1U /* freeSlots */,
+        httpclient::HttpProtocol::Http11
+        );
+
+    const auto answers = std::make_shared< Answers >();
+
+    httpclient::ConnectionPoolPolicy policy;
+
+    const auto pool = pool_impl_t::createInstance( bareTaskFactoryOf( driver ), policy );
+
+    const PoolGuard guard( pool );
+
+    acquireInto( pool, makeKey(), makeRequest( false /* isReplayable */ ), answers, 0U );
+
+    UTF_REQUIRE( answers -> waitFor( 1U ) );
+
+    const auto records = answers -> records();
+
+    const auto driverConnection = om::qi< httpclient::ClientConnection >( driver );
+
+    UTF_REQUIRE_EQUAL( records.size(), 1U );
+    UTF_REQUIRE( nullptr == records[ 0 ].exception );
+    UTF_REQUIRE( records[ 0 ].connection.get() == driverConnection.get() );
+
+    /*
+     * And the pool scheduled it, as it does for the fallback's driver - the arm changes when the
+     * poll happens and nothing about what follows it
+     */
+
+    UTF_REQUIRE( driverControl -> waitForScheduled() );
+
+    const auto stats = pool -> stats();
+
+    UTF_REQUIRE_EQUAL( stats.connectionsCreated.value(), 1U );
+    UTF_REQUIRE_EQUAL( stats.dispatched.value(), 1U );
+    UTF_REQUIRE_EQUAL( stats.failures.value(), 0U );
 
     pool -> dispose();
 }

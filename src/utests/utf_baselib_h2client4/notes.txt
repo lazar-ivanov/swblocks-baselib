@@ -29,3 +29,7 @@
 --log_level=test_suite --run_test=H2Pool_ANeverUsableConnectionIsChargedAndBoundedTests
 --log_level=test_suite --run_test=H2Pool_ADrainingAtBirthOriginIsBoundedTests
 --log_level=test_suite --run_test=H2Pool_ACompletedRequestSparesTheRetireTests
+
+# H04a - the driver pointer is read only after the store which orders it
+--log_level=test_suite --run_test=H2Pool_ADriverIsAdoptedOnlyOnceTheTaskPublishesClosedTests
+--log_level=test_suite --run_test=H2Pool_ADriverBesideABareTaskIsAdoptedTests
