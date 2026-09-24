@@ -1734,6 +1734,26 @@ namespace bl
                         )
                     )
             {
+                /*
+                 * THE SESSION'S HALF OF L6 FINDING 4a ( astra H21 ), AND IT IS THE ONLY LAYER
+                 * WHICH CAN ANSWER. Riding the preface is a bet that the establishing connection
+                 * will speak HTTP/2, and a lost bet costs a bounce and a RETRY - which is why
+                 * maxRetriesPerRequest of zero used to make a cleartext HTTP/1.1 session unable to
+                 * make any request at all. The pool cannot see the bet: its key carries no
+                 * protocol and cleartextProtocol is the session's. mayProduceHttp2( ) is exactly
+                 * "there is a bet to make", and it is the same predicate canCarryBodySource( )
+                 * already answers with
+                 *
+                 * NARROWING ONLY. A caller who turned the rider off on a session which CAN produce
+                 * HTTP/2 meant it; there is nothing to say back to a caller who turned it on where
+                 * it cannot be won
+                 */
+
+                if( ! mayProduceHttp2() )
+                {
+                    m_config.poolPolicy.ridePreface = false;
+                }
+
                 m_pool = om::qi< ConnectionPool >(
                     ConnectionPoolImpl::createInstance(
                         makeConnectionFactory(

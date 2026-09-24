@@ -797,6 +797,19 @@ UTF_AUTO_TEST_CASE( ClientSessionTls_Http11FallbackExchangeTests )
 
     UTF_REQUIRE_EQUAL( sessiontls::statsOf( session ).connectionsCreated.value(), 1U );
 
+    /*
+     * AND THE RIDER REALLY DID RIDE - the MUST NOT MOVE half of L6 finding 4a ( astra H21 ). That
+     * fix stops the rider being dispatched wherever the session already knows it cannot produce
+     * HTTP/2, and ALPN is the one place it cannot know, so this is where the rider must survive.
+     * TWO dispatches for ONE request is the rider onto the still establishing task plus the replay
+     * onto the driver the fallback built; ONE would mean ridePreface had been turned off here too
+     * and the preface optimization lost on every negotiated connection with it. Note what this
+     * does NOT say: the bounce still costs an attempt of maxRetriesPerRequest here, deliberately,
+     * because there is no way to know before the ALPN answer arrives
+     */
+
+    UTF_REQUIRE_EQUAL( sessiontls::statsOf( session ).dispatched.value(), 2U );
+
     UTF_REQUIRE_EQUAL( peer.records().size(), 1U );
     UTF_REQUIRE_EQUAL( peer.records()[ 0 ], std::string( "head:GET /secure HTTP/1.1" ) );
 

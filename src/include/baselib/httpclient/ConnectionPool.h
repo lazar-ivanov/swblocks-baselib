@@ -217,19 +217,24 @@ namespace bl
             cpp::ScalarTypeIniter< std::size_t >                                maxStreamsPerConnection;
 
             /**
-             * @brief How many times one request may be re-dispatched - AND ZERO SWITCHES OFF
-             * HTTP/1.1 THROUGH A SESSION RATHER THAN MERELY TIGHTENING THE BUDGET
+             * @brief How many times one request may be re-dispatched - AND ZERO IS SAFE ONLY
+             * WHERE THE PROTOCOL IS SETTLED BEFORE THE REQUEST IS MADE
              *
              * The first request on a new connection RIDES THE PREFACE ( findDispatchable( ) ):
              * it is dispatched onto a task which is still establishing, and one which turns out
              * to speak http/1.1 bounces it retryable by construction. That bounce spends an
-             * attempt, so with none to spend the first request to every HTTP/1.1 origin fails -
-             * as "connection aborted", with nothing chained to explain it, because the
-             * placeholder itself completed successfully. A caller who needs the budget tight
-             * should set one rather than zero; the default is DEFAULT_MAX_RETRIES_PER_REQUEST
+             * attempt, so with none to spend the request fails - as "connection aborted", with
+             * nothing chained to explain it, because the placeholder itself completed
+             * successfully. A caller who needs the budget tight should set one rather than zero;
+             * the default is DEFAULT_MAX_RETRIES_PER_REQUEST
              *
-             * L6 finding 4a is the real fix and is owed: a policy flag - ride the preface,
-             * default true - which a session turns off when it cannot produce HTTP/2 at all
+             * THAT USED TO MAKE ZERO SWITCH OFF HTTP/1.1 ENTIRELY, which is a knob whose value
+             * disables a protocol, and it is what L6 finding 4a and astra H21 are about. It no
+             * longer does: ridePreface below is off whenever the session knows it cannot produce
+             * HTTP/2, so a cleartext HTTP/1.1 session, or a TLS one which does not offer "h2",
+             * dispatches no rider and spends nothing on the protocol. What remains is the case
+             * the rider exists for - ALPN, where "h2" was offered and the peer may yet select
+             * http/1.1 - and there one attempt of the budget is the price of the preface
              *
              * ONE KNOB, TWO BUDGETS, AND THEY MULTIPLY (L6 finding 10, astra H23). This number
              * bounds two counters which are renewed independently of one another:
@@ -259,6 +264,32 @@ namespace bl
              */
 
             cpp::ScalarTypeIniter< std::size_t >                                maxRetriesPerRequest;
+
+            /**
+             * @brief Whether the first request of a key may be dispatched onto a connection which
+             * is still establishing ( L6 finding 4a, astra H21 ) - default true, AND TWO SIDED
+             *
+             * The rider buys a round trip when the connection turns out to speak HTTP/2, and
+             * costs a bounce plus a retry when it turns out to speak HTTP/1.1. That trade is only
+             * a trade while the answer is UNKNOWN, and the pool is not the layer which knows: the
+             * key carries no protocol, and what decides a cleartext connection is the session's
+             * ClientConnectionConfig::cleartextProtocol, which the pool never sees. So the pool
+             * offers the switch and the session throws it - ClientSessionT turns it off when
+             * mayProduceHttp2( ) is false, which is exactly "ALPN cannot select h2, or nothing
+             * negotiates and the configuration says http/1.1"
+             *
+             * The session only ever turns it OFF. A caller who sets it false on a session which
+             * COULD produce HTTP/2 is asking to give up the preface optimization, which is a
+             * legitimate wish and is honoured; a caller who sets it true on one which could not is
+             * asking for a dispatch that cannot succeed, and gets it refused
+             *
+             * IT IS NOT A PER KEY ANSWER, and that is deliberate rather than an omission. A per
+             * key rule would have to REMEMBER that some origin selected http/1.1 last time, which
+             * cannot help the FIRST connection to any origin - and the first connection is the
+             * whole of the defect this exists for
+             */
+
+            cpp::ScalarTypeIniter< bool >                                       ridePreface;
 
             cpp::ScalarTypeIniter< std::uint32_t >                              drainingReserve;
 
@@ -333,6 +364,8 @@ namespace bl
                 maxTotalConnections = DEFAULT_MAX_TOTAL_CONNECTIONS;
                 maxStreamsPerConnection = DEFAULT_MAX_STREAMS_PER_CONNECTION;
                 maxRetriesPerRequest = DEFAULT_MAX_RETRIES_PER_REQUEST;
+
+                ridePreface = true;
 
                 drainingReserve = DEFAULT_DRAINING_RESERVE;
             }
@@ -1603,9 +1636,15 @@ namespace bl
                  * h2 task before ALPN resolves is bounced retryable when it does. A request which
                  * cannot be replayed would simply fail, where waiting a few milliseconds for the
                  * connection to be Ready would have cost it nothing
+                 *
+                 * AND ONLY WHILE THE PROTOCOL IS ACTUALLY IN QUESTION. That bounce is a RETRY, so
+                 * on a transport whose protocol was settled before the request was made it is a
+                 * retry spent on nothing - and with maxRetriesPerRequest at zero it was the
+                 * difference between a request and a failure. ridePreface is how the session says
+                 * so; see the note on it at ConnectionPoolPolicy ( L6 finding 4a, astra H21 )
                  */
 
-                if( connecting && waiter.request.isReplayable() )
+                if( connecting && m_policy.ridePreface && waiter.request.isReplayable() )
                 {
                     return connecting;
                 }
