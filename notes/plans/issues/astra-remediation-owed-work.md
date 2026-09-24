@@ -358,3 +358,152 @@ request.
 (generated headers in the repo include tree versus the devenv dist) is unmade and blocks its first
 layer, and astra's **C01** — the design specifies `inline constexpr`, which is C++17, while baselib
 compiles `-std=c++11` — must be resolved before any of it is attempted.
+
+## Review of `tier1-filescope` (`9c029df`..`c1689ca`), 2026-09-24 — the third blind spot closed, and what closing it turned up
+
+This is finding 4 of the `tier1-modules` review above, implemented. Every number here was re-measured
+on tree copies with the branch's tool and with `lazari2`'s, not read from the lane's logs.
+
+**Verdict: accept, once two small corrections are folded in — one token, and a terminator regex with
+its assertion — and the docstring says what those corrections make true.** The rule is the right one,
+its identity and direction are C6's for C6's reasons, and each of the three exclusions is shown
+load-bearing by removal rather than argued. The real-history bar holds. The arming departure is
+accepted on one condition, and for a different reason than the lane gives. C5's second subject should
+be implemented, separately.
+
+**What re-measures.** A fresh capture's four compared keys are byte-identical to the committed
+baseline, so nothing tier 1 already judged has moved; C11 sees **39 spans in 16 files**, a 423-line
+extent (361 non-blank), 38 distinct shas — `using namespace bl;` twice. `--compare` passes against
+the committed baseline with the arming note, passes armed against the fresh capture, and the tier-1
+gate is green. The selftest is red at `lazari2` on exactly the five C11 lines and green here on both
+baselines. The five filesystem probes reproduce logs 02 and 03 line for line. The four replays give
+**zero C11 lines**, with C1 and C6 at 7+3, 11+22, 4+2 and 4+2; `f992e2f` gives exactly the three C7
+lines. Removing exclusion 1 reds control C on the roster and an include (3 lines) and control E on
+the roster and `#define UTF_TEST_MODULE utf_baselib_tasks9` (4); removing exclusion 2 makes `f992e2f`
+report the four blocks — three `Utf…Main.cpp` heads and `ImplTestMessagingUtils.cpp`; the prose
+filter takes 46 intra-module duplicate groups to 0, dropping 352 spans, every one comment-led. The
+hoist is acceptable: `lazari2`'s two C6 LOST lines read as a deletion, and C11's third line says
+where the text went; a hoist to file scope changes linkage, so the red is honest, and same-depth
+hoists stay silent as C6's comment promises.
+
+**1. Four of the 39 spans are not file-scope text, and they are a C2 defect the lane walked past.**
+`JsonPrettyPrintNestedLayout` (`utf_baselib_data/TestJsonAbstraction.h:2458`) holds a raw string
+whose closing line `})";` sits at column 0 (`:2507`); `CLOSE_RE` is `^\}`, so the case walk ends
+there, and the **32 lines** to the real brace at `:2539` — the `#else` branch,
+`UTF_REQUIRE_EQUAL( pretty, expected )`, `verifyDeepEqual( )`, two `UTF_REQUIRE`s — are outside C2.
+Measured: editing that assertion **passes at `lazari2`**; once C11 is armed it reds, labelled
+*file-scope text*. It is the only such case of 1082 — every other one ends on a bare `}` — while
+**144 of 165 namespace closers carry `} // __unnamed`**, so the fix is scoped to the case terminator:
+require `^\}\s*$` there and assert it, as the precondition already asserts the opening brace. The
+docstring names the 39 as the fixtures, the column-0 statics, the IIDs, the global fixture and the
+using-directives; **35 are.** The lane's own log 01 lists *"TestJsonAbstraction.h 4 member(s) 18
+lines e.g. `const std::string expected =`"* without seeing that the span is indented — a right count
+on a wrong premise. After the fix: 35 spans in 15 files, one C2 BODY CHANGED against the old
+baseline, blessed by the refresh that is owed anyway.
+
+**2. A BOM reds a legitimate relocation — the one new false-positive class, and no control could
+have found it.** Control E with the new entry point saved UTF-8-with-BOM, as a Windows editor does:
+`C11 file-scope text ADDED: /* (utf_baselib_tasks9/UtfBaselibTasks9Main.cpp:1)` with the BOM in
+front of the `/*`; strip it and the tree passes; `lazari2`'s tool passes the BOM'd tree.
+`read_lines( )` opens `utf-8`, the BOM survives as `﻿` on line 1, and `COMMENT_LINE_RE` and
+`DIRECTIVE_RE` both anchor on `^\s*`, which `﻿` is not — so the licence block stops being prose.
+In this tree line 1 is always the licence comment, and C11 is the only invariant that reads it, which
+is why it alone is exposed. No file in the tree carries a BOM, the `eol` tier does not look for one,
+and the Windows agent writes files here. Fix: `utf-8-sig` in `read_lines( )`, a no-op on every file
+in the tree (the four keys stay byte-identical); control E with a BOM is the control.
+
+**3. What exclusion 1 gives up is more than the docstring says.** The file-scope `#define`s are 48
+include guards, 45 `UTF_TEST_MODULE`s and **eleven others**, eight of them multi-line. Measured
+silent: dropping `#define UTF_TEST_APP_INIT_DEACTIVATE_THREAD_POOLS ( true )` from
+`utf_baselib_basictask`'s entry point — `UtfMain.h:201` reads it to deactivate the thread pools at
+app init, and `TestBaselibBasicTask.h:194` says its cases depend on that — and editing the body of
+`UTEST_REQUIRE_PRESERVED`, expanded 111 times in `TestServerErrorHelpers.h`. The docstring discloses
+the multi-line case (*"unhashed in full"*) and not the one-line behavioural one. The principled
+narrowing keeps the exclusion for exactly what the measurement showed a new module must write — an
+include guard, recognised by `is_include_guard( )`, and `UTF_TEST_MODULE`, by name — and hashes every
+other `#define` with its continuations; a new module writing
+`UTF_TEST_APP_INIT_DEACTIVATE_THREAD_POOLS ( true )` matches `basictask`'s text tree wide and stays
+silent, and a define with new text is ADDED exactly as a new helper is. Decision below.
+
+**4. `101eee7` is right and complete; its stated control is a latency control, not a fix control.**
+Disabling C1 reds both C1 expectations under the *old* harness too, because neither mutation yields a
+C10 or C11 line — that measurement establishes the bug was masking nothing, which is the "latent"
+claim, and says nothing about the fix. The discriminating control: the old `expect( 'C1' )` on
+`['C10 file INCLUDES CHANGED: x']` returns True, and True on a C11 line; the new returns False on
+both and True on a C1 line. Every failure string the tool emits carries the space (2, 2, 1, 1, 1, 7,
+6, 2, 3, 3, 4 strings across C1–C11, all spaced). The other matchers — `startswith( 'C8' )` in the
+clean-check exclusion, `'C6'`, `'C7'`, `'C9'` and `'C10'` in the silence filters — are bare prefixes
+with no longer sibling; the two C11 silence filters carry the space. Nothing else is wrongly
+prefix-matched.
+
+**5. "Two named things … and no others" is exactly true only under a reading it does not state** —
+within a scanned module file, and for text. Outside that: `src/utests/include/` is **27 files,
+15,400 lines, scanned by nothing** — the lane's own gap 1, 36 times what C11 closed, and its log 07
+measures a shared fixture edited there and `UTF_AUTO_TEST_CASE` itself redefined, both PASS; a
+directive *inside* a file-scope body is blanked out of that span's hash (zero instances; hashing
+`lines` rather than `shadow` over the extent closes it, at the bracket-balance precondition
+`split_members( )` already rests on); the guard stack of file-scope text (zero genuine instances —
+the one my count flagged is finding 1's artefact); the eleven `#define`s; and the prose rule is a
+house-style test — 20 interior lines in two files lack the leading `*`, all commented-out code inside
+cases, so a file-scope block in that style would be hashed, and *"a comment block standing on its
+own"* should read *"every line of which opens with a comment token"*. Measured true: no case is
+documented by a `//` comment, no prose span carries code after `*/`, no BOM, no `namespace a::b`, no
+nested column-0 namespace, and the 17 non-source files are `devenv7_only` and `jni_enabled` markers.
+The count moved from 343 (`a40a734`) to 423 with the method unstated; 361 non-blank today. Minimum:
+one clause for `include/`, one word for the prose rule, and finding 1's correction.
+
+**6. The arming departure — accepted, on one condition, and the lane's own argument for it is
+wrong.** *"The two hard failures keep the note from becoming a permanent silence"*: neither fires on
+a baseline *missing* the key, which is the state every baseline is in. What actually bounds the
+silence is that `capture( )` always writes `file_members`, so the next refresh for any reason arms
+C11 — and all four replays carry C1 ADDED, i.e. a refresh, so the bound is days, not a policy. The
+edge the other way: a refresh by a pre-C11 tool, from a lane branched before the merge, would
+*disarm* it with only the note to say so; the conflict on `inventory.json` is what would surface
+that. The condition is that the orchestrator refreshes the baseline in the integration itself — the
+fold-in rule: the refresh was decided, blocked only by concurrent lanes, and the merge is where that
+blocker lifts — as one refresh carrying C11, finding 1's corrected body and finding 2 together.
+`check_split.sh` prints *"C1-C11"* while C11 is not in force, a claim about what ran; it resolves
+with the refresh and is not worth a change.
+
+**7. C5's second subject — implement, its own commit, not blocking.** End to end on a tree copy: a
+case copied into `utf_baselib2/TestDuplicate.h`; `--capture` exits 1 **and writes the baseline
+first** (`main( )` writes at `:1307` and judges at `:1313`); delete the original — the entry
+`index_cases( )` discards, since modules sort `utf_baselib` before `utf_baselib2` and the last wins —
+and `--compare` is **PASS**, for a verbatim copy and for a copy with an assertion changed, the second
+being an edit smuggled through a relocation gate. Delete the copy instead and C2 fires by accident,
+comparing two different entries. Two shapes: (i) C5 on `before` as a hard failure — *"broken rather
+than merely old"*, C11's EMPTY precedent, about six lines; (ii) `--capture` refusing to write on an
+intrinsic failure, the control *on* the risk (a red baseline cannot be born) where (i) sits adjacent
+to it. Recommend (i) now, having the precedent and the size; (ii) changes the capture's contract and
+is the maintainer's. Reverses if the refresh workflow ever gates on the exit code, which nothing does
+today.
+
+**8. The in-repo selftest cannot detect the loss of either exclusion.** Its C11 section mutates
+`file_members`; the extractor runs on the pristine tree only, so the probes that found both
+exclusions live in `live.sh` outside the repo, as the runbook rule wants. Once armed, the tree is the
+control for the shapes it has — 352 ADDED lines if the prose filter goes — so this closes with the
+refresh except for shapes the tree lacks. A `scan_file( )` control on a temp file — a guard, a
+`#define`, a standalone block, a documented declaration — would put the exclusions under the repo's
+own selftest. Recorded, not owed.
+
+**Decisions, in the order to take them.** *(1) The case terminator*, folded into this branch:
+otherwise the docstring is wrong about four of its 39 spans and a 32-line C2 hole stays open until
+armed, then closes by accident under the wrong label. Risk low — 1081 cases already satisfy the rule
+and the 144 namespace closers are untouched; blast radius is `scan_file( )`, the extractor every
+invariant reads, so the selftest and the five probes re-run. Undecided: a stricter regex that finds
+the real brace, versus a parse problem (exit 3) that forces the raw string to be re-indented;
+recommend the regex with the precondition asserted, reversing if a case is ever found whose real
+closer is not bare. *(2) `utf-8-sig`*, folded in: one token, a no-op on the tree, control E BOM'd.
+*(3) Narrow exclusion 1* to guards and `UTF_TEST_MODULE`: otherwise a dropped behavioural define and
+an edited 111-use helper macro are silent for good; the risk is a define legitimately differing per
+module, and none of the 45 `UTF_TEST_MODULE`s counts since it is excluded by name; blast radius is
+the directive pre-pass; controls C, E and `f992e2f` re-run. Recommend yes, after (1) and (2);
+reverses if a replay shows one. *(4) C5 on the baseline*, own commit. *(5) The refresh at merge*,
+finding 6's condition, once — after (1), so the corrected body is what is blessed.
+
+**Could not settle here:** whether the BOM behaviour is the same under `core.autocrlf` on a Windows
+checkout — measured on Linux copies, and the tree has none; whether (3) should wait for the
+`include/` gap's design, since a module's own `#define`s are a small part of what `UtfMain.h`
+consumes; and `src/utests/include/` and the never-differenced namespaces — the lane's gaps 1 and 2,
+both measured PASS on an edit in logs 07 and 08 — which are the next owed slots and not this
+branch's.

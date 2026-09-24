@@ -166,6 +166,22 @@ whether that combination builds.
 
 ---
 
+## 9. A byte-order mark in any file you add will red the gate
+
+**Added 2026-09-24, and it is the one item here that a Windows *agent* can cause rather than measure.**
+
+`utf_inventory.py`'s `read_lines` opens files as `utf-8`, not `utf-8-sig`. A UTF-8 **BOM** is not
+whitespace, so the licence block at the top of a file stops being recognised as a comment — and
+**C11 is the only invariant that reads line 1.** Measured: a new `Main.cpp` saved UTF-8-with-BOM
+reports `C11 file-scope text ADDED: <BOM>/*`; strip the BOM and it passes.
+
+**This is invisible to every control in the repository, because no file in the tree has a BOM.** It
+was found by a reviewer constructing one deliberately.
+
+**A one-token fix — `utf-8-sig` — is scheduled and should land before you write anything.** Until it
+does: **do not let an editor add a BOM** to any file you create or modify here. Several Windows
+editors do it silently, and a tier-1 red on a file you merely saved is the confusing outcome.
+
 ## Traps this batch paid for, which apply to any run
 
 - **A running process is not a progressing process.** Check the log's mtime moving, the phase files
