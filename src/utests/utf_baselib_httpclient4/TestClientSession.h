@@ -2176,9 +2176,9 @@ UTF_AUTO_TEST_CASE( ClientSession_AgainstTheLibraryHttpServerTests )
  * retry, so maxRetriesPerRequest of zero made a cleartext HTTP/1.1 session unable to make any
  * request at all, and it failed as "connection aborted" with nothing chained to explain it,
  * because the placeholder itself completed successfully. A knob whose value zero disables a
- * protocol - and this case is what made that a measurement rather than an argument. Three places
- * cite it by name ( ConnectionPool.h at maxRetriesPerRequest, L6 finding 4a, astra H21 ), so a
- * rename would break the citations that explain why it exists
+ * protocol - and this case is what made that a measurement rather than an argument. Named by L6
+ * finding 4a's addendum, by astra-review-verification-record.md section 3 and by this module's
+ * notes.txt - astra H21 links the file by line, not by name - and astra asked that it be retained
  *
  * WHY THE INVERSION IS EVIDENCE AND NOT A CONCESSION. The request, the server and the zero budget
  * are the same; only the expected outcome moved. So this case is RED against every revision before

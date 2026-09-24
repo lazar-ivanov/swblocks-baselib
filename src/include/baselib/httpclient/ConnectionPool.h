@@ -234,7 +234,7 @@ namespace bl
              * HTTP/2, so a cleartext HTTP/1.1 session, or a TLS one which does not offer "h2",
              * dispatches no rider and spends nothing on the protocol. What remains is the case
              * the rider exists for - ALPN, where "h2" was offered and the peer may yet select
-             * http/1.1 - and there one attempt of the budget is the price of the preface
+             * http/1.1 - and an attempt is still spent there; forcedHttp11( ) is what makes zero safe
              *
              * ONE KNOB, TWO BUDGETS, AND THEY MULTIPLY (L6 finding 10, astra H23). This number
              * bounds two counters which are renewed independently of one another:
@@ -280,13 +280,13 @@ namespace bl
              *
              * The session only ever turns it OFF. A caller who sets it false on a session which
              * COULD produce HTTP/2 is asking to give up the preface optimization, which is a
-             * legitimate wish and is honoured; a caller who sets it true on one which could not is
-             * asking for a dispatch that cannot succeed, and gets it refused
+             * legitimate wish and is honoured; a true on one which could not is OVERRIDDEN and not
+             * rejected - nothing throws, and ClientSession::config( ) shows the value which won
              *
-             * IT IS NOT A PER KEY ANSWER, and that is deliberate rather than an omission. A per
-             * key rule would have to REMEMBER that some origin selected http/1.1 last time, which
-             * cannot help the FIRST connection to any origin - and the first connection is the
-             * whole of the defect this exists for
+             * IT IS NOT A PER KEY ANSWER, and that is the complement rather than the whole. A per
+             * key rule would have to REMEMBER that an origin selected http/1.1 last time, so it
+             * cannot help the FIRST connection to one - which is where this flag bites. What it
+             * would buy is the ALPN remainder: second connection onward to an h2-offered h1 origin
              */
 
             cpp::ScalarTypeIniter< bool >                                       ridePreface;

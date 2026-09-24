@@ -763,9 +763,20 @@ cleartext connection is `ClientConnectionConfig::cleartextProtocol`, which is th
 which the pool never sees, so a per key rule for cleartext would be the session stamping one answer
 onto every key: the per session flag with machinery around it. The only genuinely per key thing is
 a LEARNED one - remember that a TLS origin selected `http/1.1` last time and skip the rider on the
-next connection to it - and that cannot help the FIRST connection to any key, which is the whole of
-the defect. It is an optimization for the second connection onward, not a fix, and `ridePreface` is
-the switch it would hang off if it is ever wanted.
+next connection to it - and that cannot help the FIRST connection to any key, which is where this
+flag bites. It is the COMPLEMENT of this flag and not a substitute for it, and `ridePreface` is the
+switch it would hang off if it is ever wanted.
+
+**Corrected 2026-09-24 on review: the first draft of this section overstated that.** "The first
+connection is the whole of the defect" is wrong. Astra's H21 names the repeated case explicitly, and
+over ALPN-negotiated TLS to an origin which will not select `h2`, EVERY connection still rides,
+bounces and spends an attempt - `mayProduceHttp2()` is true there, so the flag stays on, and it must,
+because nothing knows the answer before ALPN returns. A learned rule buys exactly that remainder. The
+residual bites a caller who both offers `h2` and sets `maxRetriesPerRequest = 0`;
+`ClientConnectionConfig::forcedHttp11()` is the escape which makes zero safe over TLS, and
+`ConnectionPool.h` now says so at the knob where zero is set. **That branch - a TLS session offering
+only `http/1.1` - is unmeasured through a session**: the flag's correctness there rests on reading
+`mayProduceHttp2()`, not on a run.
 
 **What the addendum got wrong, and it inverts its own conclusion.** Its per session branch says "a
 default session still can produce h2, over TLS. The flag stays on ... and the case **keeps passing
@@ -779,26 +790,49 @@ case does could not have decided between them and the decision rests entirely on
 A reader who took the addendum at its word would have picked per key believing it was the only shape
 that bites on this path.
 
-**What the cases assert now** (`utf_baselib_httpclient4`, all measured red before and green after):
+**What the cases assert now.** The three in `utf_baselib_httpclient4` were each measured red before
+and green after; **the fourth could not have been red before**, since it asserts behaviour this
+change preserves rather than behaviour it creates, so "red before, green after" is a claim about the
+three and not about the set:
 
 - `ClientSession_FallbackRiderNeedsTheDispatchedRetryTests` is **inverted**: same request, same
   server, same `maxRetriesPerRequest = 0`, now a 200 over HTTP/1.1 with one connection, one dispatch
   and one release. The counts do not move, which is why the outcome is asserted with them. The name
-  is deliberately kept - three places cite it.
+  is deliberately kept - it is named by this addendum, by `astra-review-verification-record.md`
+  section 3 and by the module's `notes.txt`, and astra's own validation note asked that it be
+  retained. (`ConnectionPool.h` does not name it and astra H21 links the file by line; the case
+  header said otherwise until this was checked.)
 - `ClientSession_AgainstTheLibraryHttpServerTests` drops from four dispatches for two requests to
   two, which is the fix's own arithmetic.
 - `ClientSession_SinkIsToldCompleteOnceAcrossTheFallbackRetryTests` drops from two dispatches to
-  one and **loses its discrimination**: with no bounce on this path, "the sink is told complete
-  once" is now true for the trivial reason. Recorded in the case itself rather than quietly left.
+  one and **loses its discrimination**. It is not vacuous - it still pins one terminal callback per
+  streamed hop, and that is worth keeping - but the property it was written for is gone from it.
 - `ClientSessionTls_Http11FallbackExchangeTests` (`utf_baselib_httpclient5`) gains
   `dispatched == 2` as the must-not-move control: ALPN is the one place the session cannot know, so
   the rider must still ride there, and nothing asserted that before.
 
-**Owed by this landing, and small**: the bounced rider with an installed sink now exists only over
-TLS ALPN fallback, and the TLS case runs the bounce with no sink. That case with a sink is what
-would restore H08's cleartext discrimination. Also unchanged on purpose: finding 4b's masked cause
-(`closeSubmissions()`'s unconditional `connection_aborted`) still applies to the ALPN bounce, which
-is now the only route to it.
+**Owed by this landing, and it is worth more than the phrasing above suggested.** The point is not
+that H08's cleartext discrimination should be restored somewhere. It is that **no case in the suite
+now puts a sink across any bounce at all**: the only bounce left is the TLS ALPN one, and the case
+which runs it installs no sink. So `chkPrepareRetry()`'s rule - refuse a replay once the sink has
+seen bytes, and therefore DO NOT refuse one when it has not - is now held by construction and
+controlled by nothing, and the next change to it or to `applyClosed()` can break it with every
+module green. The owed case (the TLS fallback exchange with a counting sink, asserting
+`completions() == 1` and `dispatched == 2`) is the only control for that property, not a nicety.
+
+Also unchanged on purpose: finding 4b's masked cause (`closeSubmissions()`'s unconditional
+`connection_aborted`) still applies to the ALPN bounce, which is now the only route to it.
+
+**Tier 3, precisely.** There is no runtime baseline for any client module - `runlog.json` lists 17
+and none of them - so tier 3 **cannot judge this change**, and neither the commit nor the journal
+claimed it did. A one-sided snapshot of the six affected modules WAS taken and is kept at
+`http2-l0-state/logs/lane1-h21/runlog-after.json`: `utf_runlog.py --run --capture` spawns the
+binaries itself with `--report_level=detailed` (`:104-106`), so it does not depend on the lane
+scripts' own logs, which carry `--log_level=test_suite` alone and indeed could not serve. What that
+snapshot establishes is one-sided and small - every case entered, left and passed, with its
+assertion count, so none short-circuited and the four edited cases ran 6, 10, 6 and 9 assertions as
+intended. What it cannot establish is any comparison, which is the whole of tier 3. The substitute
+that carries this change is the whole-module runs with repeats plus the enumerated per-case effect.
 
 ### The evidence findings (7, 8) - blocking, or owed?
 
