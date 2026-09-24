@@ -493,20 +493,20 @@ namespace bl
          * the pipe may be our own shutdown_send. Verified at the source, kernel 6.8, and measured
          * both ways on a raw-socket probe.
          *
-         * IT IS isPeerClosedErrorCode() AND THAT IS THE POINT, not a hand comparison wearing a
-         * name. On POSIX that predicate admits connection_reset and refuses broken_pipe, which is
-         * exactly the question above; what this adds is the reasoning, at one place, so that no
-         * call site has to carry it.
+         * IT IS isPeerClosedErrorCode() MINUS eof, AND THAT IS THE POINT - not a hand comparison
+         * wearing a name. That predicate admits connection_reset and refuses broken_pipe, which is
+         * exactly the question above, and it also admits eof - the one admitted code which is
+         * never proof of anything - so this one refuses it and says the reasoning in one place.
          *
-         * WHAT IS OWED TO THE MATRIX, AND IT IS A BEHAVIOUR AND NOT ONLY A SPELLING. On Windows
-         * the stack collapses an orderly close into the reset spellings, so the kernel rule above
-         * does not hold there and this predicate admits a code a write may have got AFTER a FIN.
-         * A peer which half closes and only then aborts would, on that platform alone, have its
-         * FIN-framed message reported as a reset rather than completed. Nothing is lost by it on
-         * the face this exists for - a reset there reaches the READ as a reset spelling, which
-         * isCleanEndOfStreamErrorCode() refuses for itself - so the record is redundant on
-         * Windows and this is the only case in which it is not also harmless. Measure it there
-         * before relying on either answer.
+         * WHAT IS OWED TO THE MATRIX, AND IT IS A BEHAVIOUR AND NOT ONLY A SPELLING. Winsock has
+         * no state-dependent spelling for a send into a reset connection - nothing like EPIPE
+         * from CLOSE_WAIT - so a write's WSAECONNRESET or WSAECONNABORTED there cannot say
+         * whether a FIN preceded it, and this predicate admits a code a write may have got AFTER
+         * one. A peer which half closes and only then aborts would, on that platform alone, have
+         * its FIN-framed message reported as a reset rather than completed. Nothing is lost by it
+         * on the face this exists for IF a reset there reaches the pending READ as a reset
+         * spelling, which isCleanEndOfStreamErrorCode() refuses for itself - unmeasured for a
+         * read and a write pending together, and both answers are the matrix's to give.
          *
          * WHAT THIS DOES NOT COVER is a truncated TLS stream: that is the stream policy's
          * spelling and, unlike the predicates above, asking it here would be WRONG - a truncation
@@ -518,7 +518,7 @@ namespace bl
 
         inline bool isPeerResetOnWriteErrorCode( SAA_in const eh::error_code& ec ) NOEXCEPT
         {
-            return isPeerClosedErrorCode( ec );
+            return isPeerClosedErrorCode( ec ) && ! isCleanEndOfStreamErrorCode( ec );
         }
 
         template

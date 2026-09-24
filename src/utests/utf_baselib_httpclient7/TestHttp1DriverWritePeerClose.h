@@ -120,8 +120,8 @@ namespace utest
              * MADE NOR MENDED - which is the second reason and the load-bearing one. MEASURED,
              * both sides, 8 runs each on a64 clang debug: with the same peer and no
              * Content-Length, a 16-octet body cut short by a RST is reported to the caller as a
-             * COMPLETE 200 - closed:ok, no error - and it was reported that way with OR WITHOUT
-             * this driver's write arm. The cause is upstream of both: the write's send( ) consumes
+             * COMPLETE 200 - closed:ok, no error - 8 times in 8 WITH this driver's write arm and
+             * 7 times in 8 without it. The cause is upstream of both: the write's send( ) consumes
              * the reset, so the read is handed a plain end of stream, isCleanEndOfStream( ) says
              * yes and parseEof( ) completes the message
              *
@@ -908,10 +908,15 @@ UTF_AUTO_TEST_CASE( Http1Driver_PeerResetsMidCloseDelimitedBodyDuringWriteTests 
      * declared COMPLETE - and the caller has nothing left to consult. The message carries what the
      * stream actually ended with, because a future red here must say whether the verdict went
      * missing or merely changed
+     *
+     * AND IT IS THE TRANSPORT'S OWN CODE, NOT MERELY A NON-EMPTY ONE, which is the contract
+     * onPeerClosed( ) states: a regression to the write handler's broken_pipe, or to a parser
+     * code, would satisfy 'non-empty' and break that contract silently. Asked of net:: rather than
+     * compared here, so it holds on every platform
      */
 
     utest::http1driver::chkOrFail(
-        static_cast< bool >( result.errorCode ),
+        bl::net::isPeerClosedErrorCode( result.errorCode ),
         "a close-delimited body cut short by a RST was reported to the caller as a complete "
         "response: status " + utils::lexical_cast< std::string >( result.status ) +
             ", body '" + result.body + "', events: " + result.events +
