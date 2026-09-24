@@ -3834,7 +3834,7 @@
   },
   {
    "body_sha": "639ed2e92eb127518fc8cecfc1994dd8",
-   "doc_sha": "f0153b40ad95a106910e3bd68c488d3f",
+   "doc_sha": "b79b6c5f59f3a8e421d44d96b735ee26",
    "file": "utf_baselib_httpclient4/TestClientSession.h",
    "fixture": null,
    "guards": [],
