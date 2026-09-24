@@ -642,6 +642,22 @@ def platform_refusal( baseline_platform, platform ):
     return 'the baseline speaks for %s and this tree is %s' % ( baseline_platform, platform )
 
 
+def print_refusal( refusal ):
+    """
+    One wording for the refusal, wherever it is reached from, so the two points cannot drift apart
+
+    check_split.sh reads the REFUSED line back to build its summary note, so its shape is load
+    bearing: the reason is everything after the dash, on one line
+    """
+
+    print( '' )
+    print( 'utf_runlog: REFUSED - %s' % refusal )
+    print( 'utf_runlog: nothing was compared. None of the four signals is portable, so a' )
+    print( 'utf_runlog: comparison across platforms reports platform difference as regression' )
+    print( 'utf_runlog: - capture a baseline on this platform, or run on the one the baseline' )
+    print( 'utf_runlog: speaks for' )
+
+
 def repo_root():
     return os.path.normpath( os.path.join( os.path.dirname( os.path.abspath( __file__ ) ), '..', '..' ) )
 
@@ -675,8 +691,23 @@ def main():
 
     if args.nondeterministic:
 
-        first, _ = load_snapshot( args.nondeterministic[ 0 ] )
-        second, _ = load_snapshot( args.nondeterministic[ 1 ] )
+        first, first_platform = load_snapshot( args.nondeterministic[ 0 ] )
+        second, second_platform = load_snapshot( args.nondeterministic[ 1 ] )
+
+        #
+        # Two runs of two platforms is the same comparison refused below, and worse in its effect:
+        # the assertion counts differ for the platform's reasons, so what falls out is not a list of
+        # unstable cases but the platform difference itself - and every name on it is thereafter
+        # excused from the assertion comparison in every run that passes --nondet. The same predicate
+        # decides it, so the two cannot drift apart
+        #
+
+        if platform_refusal( first_platform, second_platform ):
+            print( '' )
+            print( 'utf_runlog: REFUSED - run 1 is %s and run 2 is %s; an unstable list is only '
+                   'meaningful within one platform' % (
+                       first_platform or 'unstamped', second_platform or 'unstamped' ) )
+            return 3
 
         unstable = nondeterministic( first, second )
 
@@ -701,6 +732,23 @@ def main():
     #
 
     platform = platform_of_tree( args.bld )
+
+    #
+    # Refused before a single binary is executed, whenever going on would produce nothing worth
+    # having. Both inputs are known here: the tree names its platform and the baseline carries its
+    # own. Refusing after the run is right only when --capture was asked for, because then the run
+    # still yields the capture this platform needs in order to get a baseline of its own - and
+    # check_split.sh's --run branch passes no --capture, so there every module would run to its
+    # 1800s timeout, nothing would be kept, and the operator would be told to run it all again
+    #
+
+    if args.compare and not args.capture and ( args.run or args.parse_logs ):
+
+        refusal = platform_refusal( load_snapshot( args.compare )[ 1 ], platform )
+
+        if refusal:
+            print_refusal( refusal )
+            return 3
 
     if args.run:
         if not args.bld:
@@ -745,12 +793,7 @@ def main():
         refusal = platform_refusal( baseline_platform, platform )
 
         if refusal:
-            print( '' )
-            print( 'utf_runlog: REFUSED - %s' % refusal )
-            print( 'utf_runlog: nothing was compared. None of the four signals is portable, so a' )
-            print( 'utf_runlog: comparison across platforms reports platform difference as regression' )
-            print( 'utf_runlog: - capture a baseline on this platform, or run on the one the baseline' )
-            print( 'utf_runlog: speaks for' )
+            print_refusal( refusal )
             return 3
 
         if args.family:
