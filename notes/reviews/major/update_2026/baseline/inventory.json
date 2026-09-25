@@ -3683,7 +3683,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 739,
+   "line": 758,
    "module": "utf_baselib_httpclient5",
    "name": "ClientSessionTls_Http11FallbackExchangeTests",
    "namespaces": []
@@ -5511,7 +5511,7 @@
     "if ! defined( _WIN32 )"
    ],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1034,
+   "line": 1040,
    "module": "utf_baselib_h2client6",
    "name": "H2Driver_AnsweredRequestSurvivesAPeerEndingOnTheWriteTests",
    "namespaces": []
@@ -5621,7 +5621,7 @@
     "if ! defined( _WIN32 )"
    ],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 936,
+   "line": 942,
    "module": "utf_baselib_h2client6",
    "name": "H2Driver_PeerEndsWhileTheOpeningWriteIsBeingIssuedTests",
    "namespaces": []
@@ -5633,7 +5633,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 584,
+   "line": 598,
    "module": "utf_baselib_h2client6",
    "name": "H2Driver_PeerHalfClosesWithAWriteInFlightTests",
    "namespaces": []
@@ -6497,7 +6497,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 859,
+   "line": 878,
    "module": "utf_baselib_httpclient5",
    "name": "Http1DriverTls_IdleCloseSendsCloseNotifyTests",
    "namespaces": []
@@ -6509,7 +6509,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1023,
+   "line": 1042,
    "module": "utf_baselib_httpclient5",
    "name": "Http1DriverTls_WriteInFlightCloseSkipsCloseNotifyTests",
    "namespaces": []
@@ -6581,19 +6581,19 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1107,
+   "line": 1129,
    "module": "utf_baselib_httpclient7",
    "name": "Http1Driver_PeerHalfClosesWithAWriteInFlightTests",
    "namespaces": []
   },
   {
-   "body_sha": "759db80a3a641ac4cad6b556d0d3bcba",
+   "body_sha": "27cbdb80213b42993c52f42e9d98ddde",
    "doc_sha": null,
    "file": "utf_baselib_httpclient7/TestHttp1DriverWritePeerClose.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1175,
+   "line": 1197,
    "module": "utf_baselib_httpclient7",
    "name": "Http1Driver_PeerResetsAfterACompleteKeepAliveResponseTests",
    "namespaces": []
@@ -6605,7 +6605,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1024,
+   "line": 1046,
    "module": "utf_baselib_httpclient7",
    "name": "Http1Driver_PeerResetsMidCloseDelimitedBodyDuringWriteTests",
    "namespaces": []
@@ -6629,7 +6629,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 974,
+   "line": 996,
    "module": "utf_baselib_httpclient7",
    "name": "Http1Driver_PeerResetsWhileRequestWriteIsBlockedTests",
    "namespaces": []
@@ -9155,8 +9155,8 @@
    "namespaces": []
   },
   {
-   "body_sha": "a4c54d00b23f0da87aedeb2591ae3fad",
-   "doc_sha": "10683132cc53e576e155f7e74bd8dc63",
+   "body_sha": "876077d6a6034887659c14581e5bc81b",
+   "doc_sha": "c81f2f35c01f226d83ffd1cd29a4c55a",
    "file": "utf_baselib_http2/TestPeerCloseErrorCodes.h",
    "fixture": null,
    "guards": [],
@@ -12651,7 +12651,7 @@
    "namespaces": []
   },
   {
-   "body_sha": "183a4dfed3b67549a489c9272a647bf0",
+   "body_sha": "be320ccfa9577af4e8834fe2dd204a97",
    "doc_sha": null,
    "file": "utf_baselib_http2/TestTlsHandshakeRetryClassifier.h",
    "fixture": null,
@@ -12669,7 +12669,7 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 324,
+   "line": 290,
    "module": "utf_baselib_http2",
    "name": "TlsHandshakeRetryClassifier_TruncationAgreementTests",
    "namespaces": []
@@ -13780,7 +13780,7 @@
    "line": 68,
    "module": "<shared>",
    "ns": "utest",
-   "sha": "d1f02c0940e6cdbe1a7aec100dd91a1b"
+   "sha": "485ffd3dfc8a04ab3d5518fd4f75501f"
   },
   {
    "conditional_only": false,
@@ -17702,7 +17702,7 @@
    "line": 75,
    "module": "utf_baselib_h2client6",
    "ns": "utest",
-   "sha": "7ffc15b3d43935429bb217a49af59773"
+   "sha": "851e238fbf0a54f048fecdb28371df78"
   },
   {
    "conditional_only": false,
@@ -17711,7 +17711,7 @@
     "if ! defined( _WIN32 )"
    ],
    "label": "namespace h2driver",
-   "line": 83,
+   "line": 89,
    "module": "utf_baselib_h2client6",
    "ns": "utest",
    "sha": "26c249f5fd7b41d52d687e0ac21ca38d"
@@ -18366,14 +18366,14 @@
    "line": 683,
    "module": "utf_baselib_httpclient5",
    "ns": "utest",
-   "sha": "529166a567dc6194bc3716d2a1b63678"
+   "sha": "39a17d2fad58e35d326bcad348b3ff55"
   },
   {
    "conditional_only": false,
    "file": "utf_baselib_httpclient5/TestClientSessionTlsHttp1.h",
    "guards": [],
    "label": "} // sessiontlsh1",
-   "line": 714,
+   "line": 733,
    "module": "utf_baselib_httpclient5",
    "ns": "utest",
    "sha": "77cda05abc8003782220f99028890b62"
@@ -18456,7 +18456,7 @@
    "line": 90,
    "module": "utf_baselib_httpclient7",
    "ns": "utest",
-   "sha": "f077d084e573a3f56db83418e49b2c12"
+   "sha": "7d6b73c79f6d29364a842e00da8a69cb"
   },
   {
    "conditional_only": false,
@@ -24790,7 +24790,7 @@
    "line": 66,
    "module": "<shared>",
    "name": "utest",
-   "sha": "7ae7d9564a4d7e0ed8902b47ff229c80"
+   "sha": "b84edd64f56f692f4911deb8a3bb28bf"
   },
   {
    "file": "include/utests/baselib/Http2DriverTestUtils.h",
@@ -25406,11 +25406,11 @@
    "line": 73,
    "module": "utf_baselib_h2client6",
    "name": "utest",
-   "sha": "6430f8bf0187e54a58c59635f571a5b4"
+   "sha": "912b3a4a953b65724c7883e798255e2a"
   },
   {
    "file": "utf_baselib_h2client6/TestHttp2DriverWritePeerClose.h",
-   "line": 81,
+   "line": 87,
    "module": "utf_baselib_h2client6",
    "name": "utest",
    "sha": "050e84d5a74137c049ea3410894da54e"
@@ -25637,7 +25637,7 @@
    "line": 98,
    "module": "utf_baselib_httpclient5",
    "name": "utest",
-   "sha": "283ecfb516fee1401c75e2b989471396"
+   "sha": "d68829ae7172c2ec8eca0f2564fe16ce"
   },
   {
    "file": "utf_baselib_httpclient5/TestHttp1DriverTlsCancelClose.h",
@@ -25693,7 +25693,7 @@
    "line": 88,
    "module": "utf_baselib_httpclient7",
    "name": "utest",
-   "sha": "198cf3e2f94e8f0b5bd91303ac116e7e"
+   "sha": "17aec8d509049943fd877b85d653f9ec"
   },
   {
    "file": "utf_baselib_io/TestIO.h",
