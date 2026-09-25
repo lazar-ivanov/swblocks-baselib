@@ -5,10 +5,11 @@ end of the astra remediation and the batch that followed it.
 
 **RUN ON WINDOWS 2026-09-24.** Items 2, 3, 6, 8, 9 and 10 are settled, item 4 is measured and its
 narrowing taken at `ed0ced5`, items 1 and 5 turned into decisions — taken and done 2026-09-25 —
-and item 7 is still owed. The run also found one product defect none of the items named, the TLS
-wrapper's by-value handler, fixed at `9ca4678`. Every result is in `astra-remediation-owed-work.md`'s
-Windows rows, 4 to 5c and W1 to W9, which is where to read them; the text below is kept as the
-instructions it was.
+and item 7 was measured and closed on 2026-09-25. The run also found one product defect none of the
+items named, the TLS wrapper's by-value handler, fixed at `9ca4678`. Tier 3 ran on the platform it
+was built for, and its baseline was refreshed there on 2026-09-25, over 28 modules. Every result is
+in `astra-remediation-owed-work.md`'s Windows rows, 4 to 5c and W1 to W9, which is where to read
+them; the text below is kept as the instructions it was.
 
 Everything here was found on Linux and **cannot be settled there**. Two of the items are things a
 Linux run *provably* cannot reach — not "has not yet", but cannot. The rest are measurements this
@@ -192,6 +193,9 @@ Owed since the teardown design's §13.9 and still owed. The lane measured the TL
 write's **cancel** (`operation_aborted`, passed through the engine unchanged, confirming asio's
 `map_error_code( )` touches only `eof`). **No arrangement on this host produces a write's reset under
 TLS.**
+
+**Measured on Windows 2026-09-25, and closed:** `connection_reset`, `system:10054`, passed through the
+engine unchanged, 5 of 5 on `win-x64-vc143-debug` - see `astra-remediation-owed-work.md` W8.
 
 ---
 

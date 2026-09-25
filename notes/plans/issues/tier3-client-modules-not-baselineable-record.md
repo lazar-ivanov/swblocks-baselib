@@ -134,3 +134,18 @@ the one this work was sent to close and is **not** fixed here.
   discards `TimeoutExpired.output`, so the capture keeps no partial log and the hanging case is not
   named. Reproducing either hang with the module's output on a file is the next step.
 - **Windows was not run**, as always from this host, so the rates above are `a64 clang debug` only.
+
+## 2026-09-25: the Windows refresh, and why `utf_baselib_http2` is covered now
+
+The baseline was refreshed on `win-x86-vc143-debug` over **28 modules**, by the maintainer's decision
+(`astra-remediation-owed-work.md` W9). `utf_baselib_http2` came in with it, and **not** by this
+record's reversal condition: it is a numbered sibling of `utf_baselib_http`, made by the module split,
+and it holds 19 cases the split moved out of `utf_baselib_http` - cases the old capture was still
+checking, tree-wide, and which a refresh leaving it out would have dropped. It was stable in the 57
+Linux runs above and in three `win-x86-vc143-debug` runs.
+
+**The other sixteen stay refused.** Their reasons in `uncovered.json` were reworded: "this host cannot
+produce Windows records" was written on Linux and reads as false on the Windows host that runs tier
+3, so each now says it was stable in 57 Linux runs and is not yet captured on Windows, admission
+being one module at a time and deferred. `utf_baselib_httpclient5`'s now says its 1-of-57 abort
+matches the timing defect fixed at `1184eb4`, which the Linux capture kept no message to prove.

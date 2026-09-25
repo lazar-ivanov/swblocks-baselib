@@ -116,7 +116,13 @@ measurement of that call.
   `TcpSslBaseTasks.h:308-330` and `Http2ConnectionTask.h:1477-1501`. On `s6r2`, N2's comments in
   `Http1ConnectionTask.h`, the third predicate's, and `PeerCloseErrorCodes_CleanEndOfStreamSetTests`'s
   prose ("the case above measured that and reports the number") attribute to Windows what is a
-  property of any reset.
+  property of any reset. **All of them corrected by 2026-09-25, by the maintainer's decision:**
+  `3dce6ae` rewrote the ones sitting on code it changed - both `os::` facts, the retry comment in
+  `TcpSslBaseTasks.h` and that case's prose - and `3bf42e4`, comments only, the rest: `NetUtils.h`'s
+  block and the third predicate's, `TestPeerCloseErrorCodes.h`'s header, N2's comment and its twin
+  in `Http2ConnectionTask.h`, and one this list missed, `Http2TestServer.h`'s `isPeerClosed( )`
+  ("a client which closes while one is pending renames the close"). None of the phrases quoted
+  here is left in `src/`.
 - **Provenance worth keeping.** This exact change was proposed on 2026-09-09 as candidate 1 of
   `windows-blobtransfer-cancel-handle-and-http-reset-flakes-plan.md` (remedy item 2: "use
   `shutdown( shutdown_send )` for the graceful path ... must not be made without the capture") and

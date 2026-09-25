@@ -53,7 +53,7 @@ Legend: `todo` · `in-progress` · `done` · `blocked` · `n/a`
 | 0.8 | Baseline: runtime pass 1 | **done** | _this commit_ | 741 registered, 741 ran, all passed, 645,156 assertions; promoted to `runlog.json` |
 | 0.9 | Baseline: runtime pass 2 | **done** | _this commit_ | independent second run, same 741/741 |
 | 0.10 | Derive `baseline/nondeterministic.json` | **done** | _this commit_ | **10 of 741** cases have unstable counts |
-| 0.11 | Promote pass 1 to `baseline/runlog.json` | **done** | _this commit_ | `runlog.json` **is** pass 1; re-derive 0.10 from it and `runlog-pass2.json` |
+| 0.11 | Promote pass 1 to `baseline/runlog.json` | **done** | _this commit_ | `runlog.json` **is** pass 1; re-derive 0.10 from it and `runlog-pass2.json`. **Superseded 2026-09-25:** both passes were re-taken on `win-x86-vc143-debug` over 28 modules - these 17 and their 11 numbered siblings, which hold the cases this split moved - see `src/utests/AGENTS.md` |
 | 0.12 | Per-header object-weight probe | **todo** | — | **the expensive one** — see below |
 | 0.13 | Probe `utf_baselib_apps` with `UtfBaseLibCommon.h` narrowed | **todo** | — | prices the adjunct lever, plan §1.1 |
 
@@ -325,6 +325,11 @@ being subtly wrong.
 
 Captured 2026-09-12 from the build trees then on disk, **before** any of them is deleted. These are
 the numbers every later comparison is made against.
+
+**No longer the numbers in force.** Both baselines have been refreshed since, as a change which adds
+something must: the source inventory by companion commits, and the runtime one on 2026-09-25, on the
+same platform, over 28 modules - these 17 and their 11 numbered siblings, 783 cases (see
+`src/utests/AGENTS.md`). What follows is the step-0 capture.
 
 **Source inventory** — 772 test cases, 115 helper blocks, 19 module directories, all case names
 globally unique. Note 772 is the count in *source*; a single platform builds fewer (the x86 Windows

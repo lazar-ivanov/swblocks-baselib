@@ -68,8 +68,8 @@ here is in `http2-l0-state/logs/win-handoff/`, outside the repository, under the
 | W5 | **The Windows arms of `isOrderlyPeerCloseErrorCode( )` rest on nothing measured.** Row 5's re-run was the condition `windows-peer-close-error-codes-record.md` set for keeping them, and it came back clean. **This is the item's second recording, which by AGENTS.md makes it a decision** | **DECIDED 2026-09-25 by the maintainer, as recommended, and DONE - see the decisions below: narrow the orderly predicate alone**, to `eof` on every platform, and keep both reset spellings in the wide one; its own change-set, after W2 to W4. Reverses if a Windows run shows an orderly, non-resetting close arriving as `10054` or `10053`. Its only production caller is the TLS handshake retry (`TcpSslBaseTasks.h:330`), and `isPeerClosedErrorCode( )` is built on it, so removing the `connection_aborted` arm would remove it from the wide predicate too. The shape is the question: narrow the orderly predicate alone and keep both reset spellings in the wide one, or keep the arms as a deliberate, bounded difference and close the item |
 | W6 | **Handoff item 5** — `utf_baselib_h2client6/TestHttp2DriverWritePeerClose.h` compiled out on Windows | **Premise MEASURED** at the Winsock level: after a FIN and then an ordinary close over our unread upload, a parked send completes `WSAECONNRESET` — a code the read-side predicate already admits — and never `EPIPE`, 20 of 20. **DECIDED 2026-09-25 by the maintainer, as recommended, and DONE - see the decisions below:** record the exclusion as measured and close the item; a Windows-shaped equivalent would be green before and after for exactly that reason |
 | W7 | **Handoff item 6** — the `WSAESHUTDOWN` route through the TLS cancel-close cases | **NOT OBSERVED.** The parked TLS write completed `operation_aborted` (995) in 30 of 30 cdb runs of the two write-in-flight cases on x64. On cleartext R2 the write does complete `WSAESHUTDOWN`, from our own `shutdown_send`, and `isOurOwnTeardown` excuses it |
-| W8 | **Handoff item 7** — the TLS spelling of a write's reset | **Still owed.** W1 makes it reachable on Windows for the first time |
-| W9 | **Tier 3 on Windows** | **Rendering settled:** a refused comparison prints `tier3  SKIP  <reason>` with no CR under Git Bash, and the tree is spelled `win-x86-vc143-debug`, so tier 3 runs; the Python tools' own lines are CRLF in a captured log, which is cosmetic. **The comparison:** 620 differences before W1 and 626 after, of which 618 are the **baseline's age** — cases registered since its capture, `httpclient5`'s eight among the newly run once W1 let them — and two are cases edited since it (`0da54dc`, `d7f5ef0`), the two assertion shifts both runs showed. The rest: `BaseLib_SortedVectorHelperTests`, whose count varies on an unchanged binary (160605, then 160602 four times) and belongs under `observed`; `BlobTransfer_FilesPackagerInMemoryCancelDownloadTests`, 36 under that run's load and 38 in five light runs; and W2's and W4's cases with their modules. The first run's `IO_SslSimpleConnectAndTransmitDataMessageDispatcherOutgoingTests` abort did not recur and is **unexplained** — the SSL twin of a name already under `observed`. 27 of the 44 modules are uncovered, where the handoff expected 17. **Owed: a refreshed Windows baseline** — two captures on `win-x86-vc143-debug` in a commit of their own, per `src/utests/AGENTS.md` — before tier 3 can be green on the one platform it speaks for |
+| W8 | **Handoff item 7** — the TLS spelling of a write's reset | **MEASURED 2026-09-25 and CLOSED, as the accepted recommendation said this answer would: `connection_reset`, `system:10054`, passed through the engine unchanged** — as the write's cancel is, and as `driver-read-write-arms-design.md` §13.9 read in asio. 5 of 5 cdb runs on `win-x64-vc143-debug`, through a temporary edit that had `Http1DriverTls_WriteInFlightCloseSkipsCloseNotifyTests`' peer let the 8 MB upload park for 500 ms and then reset (`SO_LINGER( on, 0 )` and close) instead of answering, reverted byte for byte and the module rebuilt. Every run the write completed 10054 after 188,416 octets and the read completed 10054 too, in either order, and `onPeerClosed( )` ran once, from `onReadCompleted( )` - the read reporting the ending, as `ed0ced5` has it on Windows. Both predicates already admit the code, so nothing changes. W1 is what made it reachable |
+| W9 | **Tier 3 on Windows** | **Rendering settled:** a refused comparison prints `tier3  SKIP  <reason>` with no CR under Git Bash, and the tree is spelled `win-x86-vc143-debug`, so tier 3 runs; the Python tools' own lines are CRLF in a captured log, which is cosmetic. **The comparison:** 620 differences before W1 and 626 after, of which 618 are the **baseline's age** — cases registered since its capture, `httpclient5`'s eight among the newly run once W1 let them — and two are cases edited since it (`0da54dc`, `d7f5ef0`), the two assertion shifts both runs showed. The rest: `BaseLib_SortedVectorHelperTests`, whose count varies on an unchanged binary (160605, then 160602 four times) and belongs under `observed`; `BlobTransfer_FilesPackagerInMemoryCancelDownloadTests`, 36 under that run's load and 38 in five light runs; and W2's and W4's cases with their modules. The first run's `IO_SslSimpleConnectAndTransmitDataMessageDispatcherOutgoingTests` abort did not recur and is **unexplained** — the SSL twin of a name already under `observed`. 27 of the 44 modules are uncovered, where the handoff expected 17 — *found 2026-09-25: the other ten are the split's own siblings, uncovered only because the baseline predates them, and holding 135 cases it still checked tree-wide.* **DONE 2026-09-25, by the maintainer's decisions below:** the tool no longer reports an uncovered module's cases as added and no longer calls a module it never saw covered; the baseline is refreshed over **28 modules**, the 17 and their 11 numbered siblings, with both names under `observed`; `uncovered.json` gives the reason for each of the 16 client modules still left out. The io SSL abort was **not seen in 50 runs** and is closed as recommended, still unexplained |
 
 #### The decisions of 2026-09-25, as they were put and as they were taken
 
@@ -159,6 +159,95 @@ Every change to the test tree above is blessed by the companion inventory refres
 names exactly the three case bodies, the one doc comment and the helper members these edits touched.
 Evidence in `http2-l0-state/logs/win-handoff/w3-control/`, `.../w4-control/`, `.../w5-control/` and
 `.../decisions/`.
+
+#### The decisions of 2026-09-25, second round, as they were put and as they were taken
+
+Four owed items, put together in AGENTS.md's shape and accepted as recommended, with the full matrix
+left for the maintainer to authorise separately and everything validated by focused testing. Doing
+them turned up three more questions - the refresh's shape, the tool's closing note and the io runs'
+load - each put as a decision of its own and accepted as recommended too. Ordered as they were put,
+cheapest first. **No product behaviour changed in this round.**
+
+**The stale comments.** *What it is:* comments in `src/` still stated as a platform property the
+mechanism `windows-peer-close-error-codes-record.md` withdrew on 2026-09-23 as our own `shutdown_both`,
+and that record listed them. *If not done:* the next reader reasons from a false premise, as §13.3 of
+`driver-read-write-arms-design.md` records a lane already did. *Risk and blast radius:* none in
+behaviour; `NetUtils.h` recompiles nearly everything. *Undecided was:* only when. *Decided:* now, as
+one comment-only change-set. **Done** at `3bf42e4`: the four sites `3dce6ae` had not touched, the
+third predicate's comment, which `3dce6ae` itself left stale, and one site the list missed, folded in
+as the same decision - `Http2TestServer.h`'s `isPeerClosed( )`, "a client which closes while one is
+pending renames the close". Every changed line is a comment line;
+the five files compile clean under `-WX` on x64 vc143 debug and release and x64 ccl16 debug, through
+`httpclient5`, `http2` and `h2client2`, which between them include all five; tier 1 reported exactly
+those edits, blessed by the companion refresh `e6fc02b`.
+
+**The io SSL abort.** *What it is:* `IO_SslSimpleConnectAndTransmitDataMessageDispatcherOutgoingTests`
+aborted once in the first x86 run, at 8183 of its 8195 assertions, and the runner kept no output.
+*If not done:* a rare Windows failure in network code shows up as random red `io` runs with nothing
+to diagnose from. *Risk and blast radius:* runs only. *Undecided was:* now, or on a second sighting.
+*Decided:* 50 runs under load on x86, keeping every log, closing on "not seen" if it does not recur.
+**Done - 50 of 50 passed, every one at 8195, and closed.** Only 8 ran under load that slowed the case:
+beside `-j1` compiles it took 61 s on average against 51 s unloaded, and the 41 run beside a one-core
+CPU spinner took 48 s, so on this two-vCPU VM the spinner loaded nothing. That shortfall was put as its
+own decision - close now, with the full matrix supplying loaded `io` runs on twelve builds, or run 42
+more beside a real compile - and *decided:* close now. W1 is ruled out as the cause: the only
+`std::vector< const_buffer >` in the library is the HTTP/1.1 driver's, and the `io` path never hands
+the wrapper one. It stays unexplained; a second sighting reopens it.
+
+**Item 7, the TLS spelling of a write's reset (W8).** *What it is:* the code a TLS write reports when
+the peer resets, never measured because no Linux arrangement produces one. *If not done:* the TLS
+half of the peer-reset handling rests on a reading of asio. *Risk and blast radius:* a measurement
+changes no code. *Undecided was:* measure once, or add a permanent case, whose home `httpclient5` is
+over target. *Decided:* measure once, and close on `connection_reset` or `connection_aborted`.
+*Reverses:* any other spelling, which would be a defect. **Done:** `connection_reset`, 5 of 5 - W8.
+
+**W9, tier 3 on Windows.** *What it is:* tier 3 reported 620 differences on the first Windows run
+and 626 on the next, 618 of them the cases of modules its baseline did not cover, reported as added
+and newly run while its own coverage statement said they were not compared. *If not done:* the gate
+for a case that still passes while checking less stays switched off on the one platform it covers. *Risk and blast radius:* the
+tier-3 tool and its baseline files; Linux declines tier 3 by design. *Undecided was:* change the tool
+and re-take the 17-module snapshot; take the client modules in now; or leave it. *Decided:* the first,
+with `BaseLib_SortedVectorHelperTests` listed and `httpclient5`'s exclusion reason corrected. **Done**
+at `76d0764`: an uncovered module's cases are no longer reported as added, newly run or newly
+skipped, while losses stay tree-wide, so a case moved into one is neither lost nor added. A synthetic
+check passes 8 of 8, and replaying the post-W1 run turns 626 differences into 12, each accounted for.
+
+**The refresh's shape - found doing it.** *What it is:* the 17 modules were the whole of what
+`91d5c2c` captured, as the split's step 0, and the split then moved 135 of their 741 cases into ten
+numbered siblings. The old capture still checked all 135 only because a comparison matches cases
+tree-wide, and each has the same count in its two passes and in the two new ones; a re-take of the 17
+alone would not contain them, and a `--family` comparison of any split family would then report every
+moved case as added. The write-up that proposed re-taking the 17 called all 27 unlisted modules
+excluded for flakes; eleven were the split's successors. *If not done:* 18% of what tier 3 checks
+drops out on Windows, silently. *Risk and blast radius:* data and prose only; the risk of a wider
+shape is a flaky case in a newly covered module, and the pair derives the same ten unstable names over
+28 modules as over 17, while the siblings match the previous full run on all 175 cases but the one W5
+changed. *Undecided was:* 28 modules, 27 without `utf_baselib_http2` - on the refused list, and holding
+19 of the moved cases - or 17. *Decided:* 28. *Reverses:* a Windows run showing a failure or an
+unexplained count change in `http2` or `tasks2`, which then returns to uncovered with the measurement
+as its reason. **Done** at `cbbc2bb`: two passes over 28 modules and 783 cases, every module exit 0
+in both; the list gains `IO_MessagingClientObjectDispatchTcpDispatcherTests` from the pair and the two
+names under `observed`; `uncovered.json` drops `http2`, and the reasons that read false on a Windows
+host now say what is true; `src/utests/AGENTS.md` says what the baseline covers, and the rule this
+found. Against the old baseline the new passes differ in exactly six lines - two cases added to
+`basictask`, and the two cases edited since it (`0da54dc`, `d7f5ef0`) - which is what the refresh
+blesses. Replaying the previous full-tree run against it reports five: the W5 edit in `http2`,
+15 → 13, which leaving `http2` out would have hidden, and W2's and W4's failures, fixed since.
+
+**The tool's closing note - found doing the refresh.** *What it is:* on a comparison that did not
+include every module, "these modules ARE covered now" listed the modules it had simply not run. *If
+not done:* a false coverage claim, in the note read before trusting a green. *Risk and blast radius:*
+that note only, never the verdict. *Undecided was:* now, in the tool's own change-set, or the owed
+list. *Decided:* now. **Done** at `76d0764`: a reason naming a covered module is still called stale,
+and one naming a module the comparison never saw gets a note of its own - not run, outside the
+`--family`, or gone from the tree - so a module gone from the tree is still flagged. Red with the
+old tool, both false claims reproduced; green with the new, 6 of 6.
+
+Over the whole of it the gate's static tiers pass - tier 1, line endings and tier 2 - and tier 3 was
+compared as above rather than run over the tree, a full-suite run being the matrix's.
+
+Evidence in `http2-l0-state/logs/win-handoff/w9-tier3/`, `.../item7-tls-write-reset/`,
+`.../io-ssl-abort/` and `.../comments-check/`.
 
 ## Defects found during the remediation, recorded and not fixed
 

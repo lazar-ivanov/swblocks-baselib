@@ -1934,7 +1934,9 @@ above.
 code's misreport and the narrowing's premise are each unmeasured there); the TLS spelling of a
 write's reset — asio's `engine::map_error_code( )` touches only `eof`, so a transport
 `connection_reset` should reach the TLS write handler unchanged and the record should hold under the
-TLS policy too, but that is read in asio and not measured, and it is A1-tls's to measure; ~~whether the
+TLS policy too, but that is read in asio and not measured, and it is A1-tls's to measure — **measured
+2026-09-25 on Windows, the one host with an arrangement for it: `connection_reset`, `system:10054`,
+reached the TLS write handler unchanged, 5 of 5** (`astra-remediation-owed-work.md` W8); ~~whether the
 Ready-on-reset shape of §13.8 occurs against a real origin, which no case arranges~~ — **settled
 2026-09-24: it occurs 15 times out of 15, deterministically, against a real peer** (`edb6d96`); and the loop
 counts of the must-not-move runs beyond what the logs hold — here every count was a log, and the
@@ -2590,7 +2592,9 @@ source, which is the right order.
   cases are POSIX-measured only; the matrix should run them.
 - **The TLS spelling of a write's reset (§12.5, §13.9) is still owed.** This change measured the TLS
   spelling of a write's *cancel* — `operation_aborted` passed through unchanged, and `broken_pipe`
-  likewise — not of a reset.
+  likewise — not of a reset. **Measured 2026-09-25 on Windows:** `connection_reset`, `system:10054`,
+  passed through unchanged as well, 5 of 5, with the read taking the same code and reporting the
+  ending (`astra-remediation-owed-work.md` W8).
 - **The idle-connection inconsistency** of §15.3: a cancelled idle TLS connection whose read slipped
   the cancel completes clean; one whose read was reaped completes `operation_aborted`. Harmless today;
   whoever next touches the arm should decide it deliberately rather than inherit it.
@@ -2607,7 +2611,7 @@ control proves specificity and not necessity; its trigger is any new producer of
 response in flight — and not §13.3's narrowing, which cannot produce one. **Recommended and not
 required:** the face-1 case without a cancel; hoisting the hold latches; the three comment precisions,
 each in its line count. **Owed and recorded so it is not rediscovered:** the Windows measurements of
-§15.8; the write-reset TLS spelling; the idle inconsistency; the AGENTS.md sentence; this design's
+§15.8; ~~the write-reset TLS spelling~~ (measured 2026-09-25, §15.8); the idle inconsistency; the AGENTS.md sentence; this design's
 status row, corrected above.
 
 **What this review could not settle by reading:** the before-object size (the journal's, not
