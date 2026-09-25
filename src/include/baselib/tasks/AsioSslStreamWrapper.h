@@ -523,6 +523,29 @@ namespace bl
                 BL_NOEXCEPT_END()
             }
 
+            /*
+             * THE HANDLER IS TAKEN BY FORWARDING REFERENCE AND NEVER BY VALUE, as asio's own streams
+             * take it, and a by-value parameter here is a data-loss defect rather than a style
+             * choice. asio's composed operations call these two as
+             *
+             *     stream_.async_write_some( buffers_.prepare( max_size ), static_cast< write_op&& >( *this ) );
+             *
+             * (impl/write.hpp, and impl/read.hpp makes the same call for a read), where 'buffers_' is
+             * a member of the very handler being passed. A by-value parameter MOVE-CONSTRUCTS that
+             * handler while the call's arguments are evaluated, and the order in which they are
+             * evaluated is unspecified. MSVC and clang-cl, on every target, move the handler first
+             * in this call - measured with asio's own async_write( ) over a mock stream - so
+             * prepare( ) reads a buffer sequence already moved out of it; clang on Linux evaluates
+             * prepare( ) first and never showed it, and GCC has not been measured. A single buffer
+             * survives the move unchanged. A std::vector< const_buffer > is left empty, the TLS
+             * engine is handed zero octets, and the composed write completes SUCCESSFULLY having
+             * sent nothing - which is what every HTTP/1.1 request over TLS did on Windows, because
+             * the driver hands async_write( ) a vector, even a GET's holding the head alone
+             *
+             * Taken by reference, nothing is moved until the stream builds its own operation inside
+             * the call, by which time every argument - prepare( )'s included - has been evaluated
+             */
+
             template
             <
                 typename MutableBufferSequence,
@@ -530,10 +553,10 @@ namespace bl
             >
             void async_read_some(
                 SAA_in          const MutableBufferSequence&                        buffers,
-                SAA_in          ReadHandler                                         handler
+                SAA_in          ReadHandler&&                                       handler
                 )
             {
-                getStream().async_read_some( buffers, handler );
+                getStream().async_read_some( buffers, BL_PARAM_FWD( handler ) );
             }
 
             template
@@ -543,10 +566,10 @@ namespace bl
             >
             void async_write_some(
                 SAA_in          const ConstBufferSequence&                          buffers,
-                SAA_in          WriteHandler                                        handler
+                SAA_in          WriteHandler&&                                      handler
                 )
             {
-                getStream().async_write_some( buffers, handler );
+                getStream().async_write_some( buffers, BL_PARAM_FWD( handler ) );
             }
 
             bool isChannelOpen() const NOEXCEPT
