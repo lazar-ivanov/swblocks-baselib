@@ -340,13 +340,22 @@ namespace bl
          */
 
         /**
-         * @brief What an ORDERLY close by the peer looks like on THIS platform
+         * @brief What an ORDERLY close by the peer looks like - eof, on EVERY platform
          *
          * Use where the question is "did the peer finish cleanly, so is this transient and worth
-         * another attempt?". On POSIX a reset is deliberately NOT one of these: there it is a
-         * genuinely distinct condition and treating it as a clean close would turn a real refusal
-         * into an attempt storm. On Windows it IS one of these, so a retry is not refused there -
-         * but that a CLEAN close ever arrives as one is NOT measured; withdrawn 2026-09-23.
+         * another attempt?". A reset is deliberately NOT one of these: it is a genuinely distinct
+         * condition, and treating it as a clean close would turn a real refusal into an attempt
+         * storm.
+         *
+         * WINDOWS USED TO BE THE EXCEPTION, AND IS NOT SINCE 2026-09-25. This admitted
+         * connection_reset and connection_aborted there, on the premise that Windows collapses an
+         * orderly close into those spellings. The premise was withdrawn on 2026-09-23 - the
+         * collapse was this library's own shutdown_both - and the one re-run the record said to
+         * keep the arms until came back clean: against a TLS peer which reads the whole hello and
+         * goes away, the handshake ends asio.ssl.stream:1, a truncation, with no 10054. So a reset
+         * is a reset on Windows as everywhere else, and a handshake a peer RESETS is refused there
+         * too. isPeerClosedErrorCode() keeps both spellings, because that conversation is over.
+         * See notes/plans/issues/windows-peer-close-error-codes-record.md
          *
          * Note this does NOT cover a truncated TLS stream, which is spelled by the stream policy
          * and not by the transport - ask STREAM::isStreamTruncationError() alongside this.
@@ -354,22 +363,7 @@ namespace bl
 
         inline bool isOrderlyPeerCloseErrorCode( SAA_in const eh::error_code& ec ) NOEXCEPT
         {
-            if( asio::error::eof == ec )
-            {
-                return true;
-            }
-
-            if( os::peerCloseWithUnreadDataIsReportedAsReset() && asio::error::connection_reset == ec )
-            {
-                return true;
-            }
-
-            if( os::peerCloseCanBeReportedAsConnectionAborted() && asio::error::connection_aborted == ec )
-            {
-                return true;
-            }
-
-            return false;
+            return asio::error::eof == ec;
         }
 
         /**
@@ -379,11 +373,23 @@ namespace bl
          * read loop deciding whether to report a failure or simply stop, say. A reset counts on
          * every platform here, because a reset connection is just as over as a closed one; the
          * difference from isOrderlyPeerCloseErrorCode() is only whether the ending was tidy.
+         *
+         * AND connection_aborted COUNTS WHERE THE PLATFORM REPORTS A PEER'S ENDING THAT WAY -
+         * os::peerCloseCanBeReportedAsConnectionAborted( ), Windows. After a peer's FIN and then its
+         * RST, a read or a send issued there completes WSAECONNABORTED - measured on raw sockets
+         * and through the HTTP/1.1 driver. It used to reach this predicate through the orderly
+         * one's Windows arm and is asked here directly since that arm was removed, so the set this
+         * admits is unchanged on every platform.
          */
 
         inline bool isPeerClosedErrorCode( SAA_in const eh::error_code& ec ) NOEXCEPT
         {
-            return isOrderlyPeerCloseErrorCode( ec ) || asio::error::connection_reset == ec;
+            if( isOrderlyPeerCloseErrorCode( ec ) || asio::error::connection_reset == ec )
+            {
+                return true;
+            }
+
+            return os::peerCloseCanBeReportedAsConnectionAborted() && asio::error::connection_aborted == ec;
         }
 
         /**

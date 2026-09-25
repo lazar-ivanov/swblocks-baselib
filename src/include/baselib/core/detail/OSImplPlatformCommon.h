@@ -966,79 +966,30 @@ namespace bl
 
         /**
          * @brief Whether this platform can report a peer ending the conversation as a connection
-         * RESET rather than as an end of stream
-         *
-         * MEASURED: a peer which accepted and then went away during a TLS handshake produced
-         * WSAECONNRESET (system:10054, "An existing connection was forcibly closed by the remote
-         * host") on Windows, where the same exchange on Linux reported an orderly end of stream -
-         * asio::error::eof, or a truncation through a TLS stream. The handshake retry was
-         * unreachable on Windows until this code was accepted.
-         *
-         * WHY is NOT settled, and an earlier version of this comment got it wrong. It said
-         * Windows "sends RST where POSIX sends FIN" when a socket is closed with unread data.
-         * That is not a platform difference at all: Linux close( ) with unread data also sends
-         * RST (RFC 2525 section 2.17, LINUX_MIB_TCPABORTONCLOSE).
-         *
-         * CONFIRMED by a control, PeerCloseErrorCodes_PeerShutsDownWithUnreadDataTests in
-         * utf_baselib_http2. A loopback peer torn down with this library's own shutdownSocket( ) -
-         * shutdown_both - and a reader with bytes it never read produces exactly this code on
-         * Windows and an orderly eof on Linux. So the two observables ARE one mechanism: shutting
-         * down the receive side resets the connection on Windows when anything is left to arrive,
-         * and whether the RST surfaces as 10054 or as 10053 depends only on whether a send of ours
-         * was outstanding when it landed - see peerCloseCanBeReportedAsConnectionAborted( ) below.
-         *
-         * The consequence for callers is that the two conditions "the peer closed" and "the peer
-         * reset" are DISTINGUISHABLE on POSIX and are NOT distinguishable on Windows, because the
-         * stack has already collapsed them into one code before any library sees it. Code which
-         * treats those two conditions differently - a retry policy, say - cannot be written
-         * portably by comparing error codes alone and has to ask this question first.
-         *
-         * Expressed as a behaviour rather than as onWindows() on purpose: the call site is
-         * deciding what an error code means, not which operating system it is running on, and if
-         * another platform ever shares the behaviour only this predicate changes.
-         */
-
-        inline bool peerCloseWithUnreadDataIsReportedAsReset() NOEXCEPT
-        {
-            return isWindows;
-        }
-
-        /**
-         * @brief Whether this platform can report a peer ending the conversation as a connection
          * ABORT rather than as an end of stream
          *
-         * MEASURED, on win-x64-ccl16-debug, from inside the HTTP/2 driver's own classifier:
+         * MEASURED on Windows 2026-09-24, against a peer which sends its FIN and then resets: a
+         * read or a send issued after both have arrived completes WSAECONNABORTED (system:10053) -
+         * raw sockets, 20 of 20, and through the HTTP/1.1 driver, whose read took it in place of
+         * the FIN it never saw. POSIX reserves ECONNABORTED for accept( ) and never hands it to a
+         * read or a send. A plain FIN completing an outstanding read does NOT produce it: Asio maps
+         * a stream-oriented receive completing with no error and zero bytes to eof
+         * (asio/detail/impl/socket_ops.ipp, the "Check for connection closed" branch).
          *
-         *     DIAGNOSTIC isPeerClosed: category='system' value=10053 answer=0
+         * THE FIRST MEASUREMENT THIS COMMENT CITED WAS OUR OWN. The HTTP/2 driver's 10053, about one
+         * run in eight, and the control PeerCloseErrorCodes_ReaderSendsAfterPeerShutdownTests were
+         * both this library's shutdown_both resetting its own peers; bb53bdd made that
+         * shutdown_send, and the control asserts eof now. The code survives the correction because
+         * a genuine peer reset produces it as well - see
+         * notes/plans/issues/windows-peer-close-error-codes-record.md
          *
-         * 10053 is WSAECONNABORTED. The same exchange on Linux reports an orderly end of stream,
-         * and the driver failed about one run in eight on Windows until this code was accepted.
+         * A RESET DISCARDS WHAT IS STILL UNREAD, and accepting the code does not recover it: a read
+         * with octets queued ahead of the RST is handed the reset instead of them.
          *
-         * WHY it arrives is now CONFIRMED by a control,
-         * PeerCloseErrorCodes_ReaderSendsAfterPeerShutdownTests in utf_baselib_http2. Ruled out
-         * first: a plain FIN completing an already outstanding read does NOT produce it - Asio
-         * maps a stream-oriented receive completing with no error and zero bytes to eof
-         * (asio/detail/impl/socket_ops.ipp, the "Check for connection closed" branch), the
-         * ordinary graceful path every IOCP server sees. 10053 requires a genuine abort.
-         *
-         * What the control measures: tasks shut down with shutdown_both (TcpBaseTasks.h,
-         * shutdownSocket), on Windows shutting down the RECEIVE side resets the connection when
-         * anything arrives afterwards, and a send issued after that draws the RST which completes
-         * the read with 10053. That is the driver's late WINDOW_UPDATE, exactly.
-         *
-         * It has a consequence worth knowing before relying on this, and the control MEASURED it
-         * rather than predicting it: the RST discards what is still unread. With 16KB sent and
-         * none of it read, Windows delivered 0 of 16384 bytes before reporting the code, where
-         * Linux delivered all 16384 and then eof. Accepting the code ends the connection
-         * gracefully; it does NOT recover the data the reset threw away, and a caller which needs
-         * those bytes has lost them.
-         *
-         * Distinct from peerCloseWithUnreadDataIsReportedAsReset() above, which is about the shape
-         * of the close on the wire. Both are true on Windows and false on POSIX today, but they
-         * are separate observables and a platform could have one without the other.
-         *
-         * Prefer net::isPeerClosedErrorCode() / net::isOrderlyPeerCloseErrorCode() to asking this
-         * directly - see core/NetUtils.h.
+         * Prefer net::isPeerClosedErrorCode() to asking this directly - see core/NetUtils.h. The
+         * ORDERLY predicate stopped admitting this code on 2026-09-25, and with its other Windows
+         * arm went peerCloseWithUnreadDataIsReportedAsReset( ), the fact that arm stood on, whose
+         * premise had been withdrawn with the rest.
          */
 
         inline bool peerCloseCanBeReportedAsConnectionAborted() NOEXCEPT

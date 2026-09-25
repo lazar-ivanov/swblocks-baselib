@@ -461,21 +461,21 @@ UTF_AUTO_TEST_CASE( PeerCloseErrorCodes_ReaderSendsAfterPeerShutdownTests )
  *
  * The two cases above measure what a platform DOES. This one pins what the library DECIDES about
  * it, which is a different question and the only one a Linux-only run can answer completely:
- * unlike the other two predicates, this one admits the same set on every platform, so it has no
- * arm a run here cannot reach.
+ * unlike the wide predicate, this one admits the same set on every platform, so it has no arm a
+ * run here cannot reach.
  *
  * WHY IT EXISTS AT ALL. Its callers are the ones for whom saying yes means declaring something
- * COMPLETE - an HTTP/1.1 response whose only framing is the connection closing. The other two
- * predicates admit the Windows reset spellings deliberately, and a caller of either would
- * therefore complete a close-delimited message on a reset - which, on the platform that renames
- * the close, DISCARDS what was still unread: the case above measured that and reports the number.
- * A truncated response reported to the caller as a success is worse than the defect N2 set out to
- * fix, which is why the predicate is separate rather than reused.
+ * COMPLETE - an HTTP/1.1 response whose only framing is the connection closing. The wide
+ * predicate, isPeerClosedErrorCode( ), admits the reset spellings deliberately, and a caller of
+ * it would therefore complete a close-delimited message on a reset - which DISCARDS what was
+ * still unread wherever a reset does. A truncated response reported to the caller as a success is
+ * worse than the defect N2 set out to fix, which is why the predicate is separate rather than
+ * reused.
  *
- * BOTH PLATFORM ARMS OF EVERY ROW ARE ASSERTED, the way
- * TlsHandshakeRetryClassifier_RetryableErrorSetTests asserts its set: not because this predicate
- * has a platform arm today, but so that the day one is added the rows already have a place and
- * the difference from the other two predicates is written down rather than remembered.
+ * EVERY ROW HOLDS ON EVERY PLATFORM, and the one platform difference left among the three
+ * predicates - the wide one admitting connection_aborted where the platform reports a peer's
+ * ending that way - is asserted in (3) against its os:: fact, so that the difference is written
+ * down rather than remembered.
  */
 
 UTF_AUTO_TEST_CASE( PeerCloseErrorCodes_CleanEndOfStreamSetTests )
@@ -508,20 +508,13 @@ UTF_AUTO_TEST_CASE( PeerCloseErrorCodes_CleanEndOfStreamSetTests )
         );
 
     /*
-     * (3) And the discrimination stated against the other two, keyed on the same os:: facts they
-     * are built from - so that on the platform which renames the close this reads as a genuine
-     * disagreement between the predicates, and on the one which does not it reads as agreement.
-     * Neither arm can go vacuous, which is what the two arms are for
+     * (3) And the discrimination stated against the other two. Since 2026-09-25 no reset spelling
+     * is an ORDERLY close on any platform, so the reset rows hold everywhere; the one platform
+     * difference left is that the WIDE predicate admits connection_aborted where the platform
+     * reports a peer's ending that way, and that row is asserted against the os:: fact itself -
+     * agreement on one platform, a real difference on the other, and vacuous on neither
      */
 
-    if( os::peerCloseWithUnreadDataIsReportedAsReset() )
-    {
-        const auto reset = asio::error::make_error_code( asio::error::connection_reset );
-
-        UTF_REQUIRE( net::isOrderlyPeerCloseErrorCode( reset ) );
-        UTF_REQUIRE( ! net::isCleanEndOfStreamErrorCode( reset ) );
-    }
-    else
     {
         const auto reset = asio::error::make_error_code( asio::error::connection_reset );
 
@@ -530,19 +523,16 @@ UTF_AUTO_TEST_CASE( PeerCloseErrorCodes_CleanEndOfStreamSetTests )
         UTF_REQUIRE( ! net::isCleanEndOfStreamErrorCode( reset ) );
     }
 
-    if( os::peerCloseCanBeReportedAsConnectionAborted() )
-    {
-        const auto aborted = asio::error::make_error_code( asio::error::connection_aborted );
-
-        UTF_REQUIRE( net::isOrderlyPeerCloseErrorCode( aborted ) );
-        UTF_REQUIRE( ! net::isCleanEndOfStreamErrorCode( aborted ) );
-    }
-    else
     {
         const auto aborted = asio::error::make_error_code( asio::error::connection_aborted );
 
         UTF_REQUIRE( ! net::isOrderlyPeerCloseErrorCode( aborted ) );
         UTF_REQUIRE( ! net::isCleanEndOfStreamErrorCode( aborted ) );
+
+        UTF_REQUIRE_EQUAL(
+            net::isPeerClosedErrorCode( aborted ),
+            os::peerCloseCanBeReportedAsConnectionAborted()
+            );
     }
 
     /*

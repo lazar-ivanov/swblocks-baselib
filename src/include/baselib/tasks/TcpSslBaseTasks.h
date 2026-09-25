@@ -310,14 +310,13 @@ namespace bl
                      * net::isPeerClosedErrorCode(), which is the distinction this predicate turns
                      * on: a peer which closed cleanly mid-handshake is transient and worth another
                      * attempt, while a peer which genuinely reset is refusing and retrying it would
-                     * turn a refusal into an attempt storm. Where the platform can tell those two
-                     * apart a reset therefore stays non-retryable, exactly as before
+                     * turn a refusal into an attempt storm. A reset therefore stays non-retryable
                      *
-                     * Where it CANNOT - a stack which sends RST for an orderly close with unread
-                     * data, or which completes an outstanding read with an abort - the orderly
-                     * predicate admits those codes, because there refusing them does not make the
-                     * policy stricter, it only makes the retry unreachable in the same way the
-                     * missing truncation form once did everywhere. See core/NetUtils.h and
+                     * ON EVERY PLATFORM, SINCE 2026-09-25. The orderly predicate used to admit the
+                     * reset spellings on Windows, on the premise that the stack collapses an orderly
+                     * close into them there; that premise was withdrawn on 2026-09-23, and the
+                     * re-run which followed found an orderly peer's close arriving as a truncation -
+                     * asio.ssl.stream:1 - which the line below still retries. See core/NetUtils.h and
                      * notes/plans/issues/windows-peer-close-error-codes-record.md
                      *
                      * The cost is bounded and unchanged in kind: this runs only while a handshake

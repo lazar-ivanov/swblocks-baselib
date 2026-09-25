@@ -230,66 +230,32 @@ UTF_AUTO_TEST_CASE( TlsHandshakeRetryClassifier_RetryableErrorSetTests )
      * and neither must a refusal or the operation_aborted of a cancelled task - retrying a
      * cancellation would defeat the cancellation
      *
-     * connection_reset is asserted BOTH ways, because what it means is a property of the platform
-     * and not of this predicate. Where the TCP stack sends FIN for a peer's orderly close, a reset
-     * is a genuinely distinct condition and stays non-retryable, which is the row this case has
-     * always pinned. Where the stack sends RST instead whenever data is still unread - Windows -
-     * the orderly close IS this code, the two conditions are indistinguishable by the time any
-     * library sees them, and refusing it would leave the retry unreachable exactly as the missing
-     * truncation form once did. See os::peerCloseWithUnreadDataIsReportedAsReset() and the
-     * measurement recorded in notes/plans/issues/tls-handshake-retry-unreachable-record.md
+     * NEITHER RESET SPELLING IS RETRIED, ON ANY PLATFORM, SINCE 2026-09-25. Both rows used to be
+     * asserted both ways, because the orderly predicate admitted connection_reset and
+     * connection_aborted on Windows, on the premise that the stack collapses an orderly close into
+     * them there. That premise was withdrawn on 2026-09-23 - the collapse was this library's own
+     * shutdown_both - and the Windows re-run of the retry cases found an orderly peer's close
+     * arriving as a truncation, which (3) above retries, with no 10054. So a reset is refused
+     * everywhere, and these rows read the same on every platform. See
+     * notes/plans/issues/windows-peer-close-error-codes-record.md
      *
-     * Asserting both arms rather than skipping one keeps the case meaningful on every platform:
-     * neither arm can silently become vacuous
+     * AND ON WINDOWS THEY DISCRIMINATE NOW. The orderly and the wide predicate used to admit the
+     * identical set there, so no Windows run could tell whether a call site had picked the right
+     * one; the wide one still admits both spellings on Windows and the orderly one neither, so the
+     * reset row discriminates on every platform and the aborted row on the one which reports it
      */
 
-    if( os::peerCloseWithUnreadDataIsReportedAsReset() )
-    {
-        UTF_REQUIRE(
-            probe -> isRetryable(
-                handshakeFailure( asio::error::make_error_code( asio::error::connection_reset ) )
-                )
-            );
-    }
-    else
-    {
-        UTF_REQUIRE(
-            ! probe -> isRetryable(
-                handshakeFailure( asio::error::make_error_code( asio::error::connection_reset ) )
-                )
-            );
-    }
+    UTF_REQUIRE(
+        ! probe -> isRetryable(
+            handshakeFailure( asio::error::make_error_code( asio::error::connection_reset ) )
+            )
+        );
 
-    /*
-     * connection_aborted, asserted both ways for the same reason connection_reset is. It is the
-     * SECOND way a platform can rename a peer close: where a receive is already outstanding when
-     * the peer closes, Windows completes that pending operation itself, with WSAECONNABORTED, and
-     * a handshake read is outstanding exactly like any other. POSIX never produces it from a read
-     * at all - it is an accept() error there - so it stays non-retryable
-     *
-     * THIS ROW EXISTS BECAUSE THE TWO PREDICATES ARE INDISTINGUISHABLE ON WINDOWS. net::'s
-     * orderly and closed predicates admit the identical set there, and differ only on a POSIX
-     * reset, so no Windows run of any length can tell whether a call site picked the right one.
-     * The POSIX arm below is what actually discriminates, which makes this a row every ordinary
-     * build checks rather than one only the Windows matrix can reach
-     */
-
-    if( os::peerCloseCanBeReportedAsConnectionAborted() )
-    {
-        UTF_REQUIRE(
-            probe -> isRetryable(
-                handshakeFailure( asio::error::make_error_code( asio::error::connection_aborted ) )
-                )
-            );
-    }
-    else
-    {
-        UTF_REQUIRE(
-            ! probe -> isRetryable(
-                handshakeFailure( asio::error::make_error_code( asio::error::connection_aborted ) )
-                )
-            );
-    }
+    UTF_REQUIRE(
+        ! probe -> isRetryable(
+            handshakeFailure( asio::error::make_error_code( asio::error::connection_aborted ) )
+            )
+        );
 
     UTF_REQUIRE(
         ! probe -> isRetryable(
