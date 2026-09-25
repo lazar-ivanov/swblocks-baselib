@@ -9168,7 +9168,7 @@
   },
   {
    "body_sha": "ee1005bc11a12b11759e814b5a77ee81",
-   "doc_sha": "154611420209941799588486c4e6c87b",
+   "doc_sha": "8e85b8a0f53f32f1c644d0002ec42e6b",
    "file": "utf_baselib_http2/TestPeerCloseErrorCodes.h",
    "fixture": null,
    "guards": [],
@@ -13800,7 +13800,7 @@
    "line": 110,
    "module": "<shared>",
    "ns": "utest",
-   "sha": "496fd071b03b685847c75fbd99d4f7dc"
+   "sha": "9da9d03a9a1ede39f501365294590466"
   },
   {
    "conditional_only": false,
@@ -18071,10 +18071,10 @@
    "file": "utf_baselib_http2/TestPeerCloseErrorCodes.h",
    "guards": [],
    "label": "namespace peerclose",
-   "line": 58,
+   "line": 56,
    "module": "utf_baselib_http2",
    "ns": "utest",
-   "sha": "9ee705dadc07b6898e06c09648ae144f"
+   "sha": "5aa0b58efc48878011205cac1ed876ac"
   },
   {
    "conditional_only": false,
@@ -24804,7 +24804,7 @@
    "line": 108,
    "module": "<shared>",
    "name": "utest",
-   "sha": "7cefa68b81d546ad2ebc3e10701624a5"
+   "sha": "8c184e0236b601715736a1396f58c8bd"
   },
   {
    "file": "include/utests/baselib/HttpServerHelpers.h",
@@ -25529,10 +25529,10 @@
   },
   {
    "file": "utf_baselib_http2/TestPeerCloseErrorCodes.h",
-   "line": 56,
+   "line": 54,
    "module": "utf_baselib_http2",
    "name": "utest",
-   "sha": "2ee10375bf3614fe6fe3cf398304b8fc"
+   "sha": "642f322bddf76c3839e90085201ae82b"
   },
   {
    "file": "utf_baselib_http2/TestTcpPreHandshakeStageTls.h",
