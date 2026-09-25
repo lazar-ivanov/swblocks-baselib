@@ -62,14 +62,103 @@ here is in `http2-l0-state/logs/win-handoff/`, outside the repository, under the
 | # | Item | Status |
 |---|---|---|
 | W1 | **No HTTP/1.1 request over TLS ever left the client on Windows.** `AsioSslStreamWrapperT` took its completion handler BY VALUE, as it had since the initial commit, and asio's composed write passes that handler in the same call that reads the handler's own buffer member — `stream_.async_write_some( buffers_.prepare( max_size ), std::move( *this ) )` — in an argument order the language leaves unspecified. MSVC and clang-cl move the handler first, on x64, x86 and a64, so a `std::vector< const_buffer >`, which the HTTP/1.1 driver hands `async_write( )` even for a GET, arrives empty and the write completes SUCCESSFULLY with zero octets. Measured under cdb (`bytes_transferred` 0 for a 47-octet head) and proved without TLS by a mock-stream probe on all six Windows configurations. clang's IR for Linux evaluates `prepare( )` first, so no Linux clang run could have seen it; GCC is unmeasured. Latent on `master`; live on `lazari2` since the HTTP/1.1 driver, the first caller with a vector | **FIXED** at `9ca4678`: both forwarding functions take the handler by forwarding reference, as asio's own streams do. `httpclient5` went from 3 of 8 cases and a hang to 8 of 8 on x86 and x64 vc143 and x64 ccl16; the whole x86 tree rebuilt clean — 53 of its 55 objects include the header — and the whole x86 suite ran 1050 of 1050 cases with every tier-3 difference accounted for without it (**W9**). **Owed to Linux: run the probe (`wrapper-fix/asio_probe.cpp`) under GCC**, x64 and a64 — the only toolchain whose order is unknown |
-| W2 | **6a cannot arrange its premise on Windows.** `Http1Driver_PeerResetsAfterACompleteKeepAliveResponseTests` relies on Linux handing over octets queued ahead of a RST, and a Windows reset discards them (raw socket, 10 of 10), so the body arrives one chunk short — **40 of 40 red on x86 and on x64**, and 50 of 50 in every must-not-move loop. It is the harness's premise that fails, not the verdict it guards | **DECIDED 2026-09-25 by the maintainer, as recommended:** skip it on Windows with `UTF_SKIP_UNLESS` and the measured reason, which keeps it compiled and records the skip; the verdict logic is platform independent and Linux covers it with a real peer. Reverses if a Windows arrangement is found, without a seam, in which the read completes the message after the write handler has recorded a reset |
-| W3 | **R2's peer records are read before the peer writes them.** `runHalfCloseDuringBlockedUpload( )` snapshots `peer.records( )` with nothing ordering it after the peer's `self.record( "fin:sent" )`, which follows the FIN onto the wire — so a client that finishes first reports *"the peer did not half close"*. 2/40 on x86 and 5/40 on x64 lightly loaded, 10/50 and 17/50 under load, **0/50 isolated** | **DECIDED 2026-09-25 by the maintainer, as recommended:** wait for the record before the snapshot — a `PEER_RECORDS_AFTER_THE_FIN` beside the neighbouring cases' own constants — with a delay injected between the FIN and the record as its red. R2 is the deferral's hang-freedom control and part of 5b's must-not-move evidence, so every false red here costs the evidence reading |
-| W4 | **`waitForTaskEndWithin( )` counts iterations, not time.** Its absence bound adds the nominal 20 ms per poll to `waited`, so a poll that takes longer — under load, and plausibly from Windows sleep granularity, which is unmeasured — stretches the 125 ms window of `Http1DriverTls_IdleCloseSendsCloseNotifyTests` past the 250 ms idle close it guards, and the case reports *"the connection ended before half its idle lifetime had passed"*. 3/50 and 5/50 under load, 1/50 isolated. The case issues no write, so neither W1 nor 5b is on its path | **DECIDED 2026-09-25 by the maintainer, as recommended:** measure elapsed time against a steady clock, and count only an observation made inside the window — in this helper and in `Http1DriverTestUtils.h`'s `waitForTaskEnd( )`, which its comment calls the same helper |
-| W5 | **The Windows arms of `isOrderlyPeerCloseErrorCode( )` rest on nothing measured.** Row 5's re-run was the condition `windows-peer-close-error-codes-record.md` set for keeping them, and it came back clean. **This is the item's second recording, which by AGENTS.md makes it a decision** | **DECIDED 2026-09-25 by the maintainer, as recommended: narrow the orderly predicate alone**, to `eof` on every platform, and keep both reset spellings in the wide one; its own change-set, after W2 to W4. Reverses if a Windows run shows an orderly, non-resetting close arriving as `10054` or `10053`. Its only production caller is the TLS handshake retry (`TcpSslBaseTasks.h:330`), and `isPeerClosedErrorCode( )` is built on it, so removing the `connection_aborted` arm would remove it from the wide predicate too. The shape is the question: narrow the orderly predicate alone and keep both reset spellings in the wide one, or keep the arms as a deliberate, bounded difference and close the item |
-| W6 | **Handoff item 5** — `utf_baselib_h2client6/TestHttp2DriverWritePeerClose.h` compiled out on Windows | **Premise MEASURED** at the Winsock level: after a FIN and then an ordinary close over our unread upload, a parked send completes `WSAECONNRESET` — a code the read-side predicate already admits — and never `EPIPE`, 20 of 20. **DECIDED 2026-09-25 by the maintainer, as recommended:** record the exclusion as measured and close the item; a Windows-shaped equivalent would be green before and after for exactly that reason |
+| W2 | **6a cannot arrange its premise on Windows.** `Http1Driver_PeerResetsAfterACompleteKeepAliveResponseTests` relies on Linux handing over octets queued ahead of a RST, and a Windows reset discards them (raw socket, 10 of 10), so the body arrives one chunk short — **40 of 40 red on x86 and on x64**, and 50 of 50 in every must-not-move loop. It is the harness's premise that fails, not the verdict it guards | **DECIDED 2026-09-25 by the maintainer, as recommended, and DONE - see the decisions below:** skip it on Windows with `UTF_SKIP_UNLESS` and the measured reason, which keeps it compiled and records the skip; the verdict logic is platform independent and Linux covers it with a real peer. Reverses if a Windows arrangement is found, without a seam, in which the read completes the message after the write handler has recorded a reset |
+| W3 | **R2's peer records are read before the peer writes them.** `runHalfCloseDuringBlockedUpload( )` snapshots `peer.records( )` with nothing ordering it after the peer's `self.record( "fin:sent" )`, which follows the FIN onto the wire — so a client that finishes first reports *"the peer did not half close"*. 2/40 on x86 and 5/40 on x64 lightly loaded, 10/50 and 17/50 under load, **0/50 isolated** | **DECIDED 2026-09-25 by the maintainer, as recommended, and DONE - see the decisions below:** wait for the record before the snapshot — a `PEER_RECORDS_AFTER_THE_FIN` beside the neighbouring cases' own constants — with a delay injected between the FIN and the record as its red. R2 is the deferral's hang-freedom control and part of 5b's must-not-move evidence, so every false red here costs the evidence reading |
+| W4 | **`waitForTaskEndWithin( )` counts iterations, not time.** Its absence bound adds the nominal 20 ms per poll to `waited`, so a poll that takes longer — under load, and plausibly from Windows sleep granularity, which is unmeasured — stretches the 125 ms window of `Http1DriverTls_IdleCloseSendsCloseNotifyTests` past the 250 ms idle close it guards, and the case reports *"the connection ended before half its idle lifetime had passed"*. 3/50 and 5/50 under load, 1/50 isolated. The case issues no write, so neither W1 nor 5b is on its path | **DECIDED 2026-09-25 by the maintainer, as recommended, and DONE - see the decisions below:** measure elapsed time against a steady clock, and count only an observation made inside the window — in this helper and in `Http1DriverTestUtils.h`'s `waitForTaskEnd( )`, which its comment calls the same helper |
+| W5 | **The Windows arms of `isOrderlyPeerCloseErrorCode( )` rest on nothing measured.** Row 5's re-run was the condition `windows-peer-close-error-codes-record.md` set for keeping them, and it came back clean. **This is the item's second recording, which by AGENTS.md makes it a decision** | **DECIDED 2026-09-25 by the maintainer, as recommended, and DONE - see the decisions below: narrow the orderly predicate alone**, to `eof` on every platform, and keep both reset spellings in the wide one; its own change-set, after W2 to W4. Reverses if a Windows run shows an orderly, non-resetting close arriving as `10054` or `10053`. Its only production caller is the TLS handshake retry (`TcpSslBaseTasks.h:330`), and `isPeerClosedErrorCode( )` is built on it, so removing the `connection_aborted` arm would remove it from the wide predicate too. The shape is the question: narrow the orderly predicate alone and keep both reset spellings in the wide one, or keep the arms as a deliberate, bounded difference and close the item |
+| W6 | **Handoff item 5** — `utf_baselib_h2client6/TestHttp2DriverWritePeerClose.h` compiled out on Windows | **Premise MEASURED** at the Winsock level: after a FIN and then an ordinary close over our unread upload, a parked send completes `WSAECONNRESET` — a code the read-side predicate already admits — and never `EPIPE`, 20 of 20. **DECIDED 2026-09-25 by the maintainer, as recommended, and DONE - see the decisions below:** record the exclusion as measured and close the item; a Windows-shaped equivalent would be green before and after for exactly that reason |
 | W7 | **Handoff item 6** — the `WSAESHUTDOWN` route through the TLS cancel-close cases | **NOT OBSERVED.** The parked TLS write completed `operation_aborted` (995) in 30 of 30 cdb runs of the two write-in-flight cases on x64. On cleartext R2 the write does complete `WSAESHUTDOWN`, from our own `shutdown_send`, and `isOurOwnTeardown` excuses it |
 | W8 | **Handoff item 7** — the TLS spelling of a write's reset | **Still owed.** W1 makes it reachable on Windows for the first time |
 | W9 | **Tier 3 on Windows** | **Rendering settled:** a refused comparison prints `tier3  SKIP  <reason>` with no CR under Git Bash, and the tree is spelled `win-x86-vc143-debug`, so tier 3 runs; the Python tools' own lines are CRLF in a captured log, which is cosmetic. **The comparison:** 620 differences before W1 and 626 after, of which 618 are the **baseline's age** — cases registered since its capture, `httpclient5`'s eight among the newly run once W1 let them — and two are cases edited since it (`0da54dc`, `d7f5ef0`), the two assertion shifts both runs showed. The rest: `BaseLib_SortedVectorHelperTests`, whose count varies on an unchanged binary (160605, then 160602 four times) and belongs under `observed`; `BlobTransfer_FilesPackagerInMemoryCancelDownloadTests`, 36 under that run's load and 38 in five light runs; and W2's and W4's cases with their modules. The first run's `IO_SslSimpleConnectAndTransmitDataMessageDispatcherOutgoingTests` abort did not recur and is **unexplained** — the SSL twin of a name already under `observed`. 27 of the 44 modules are uncovered, where the handoff expected 17. **Owed: a refreshed Windows baseline** — two captures on `win-x86-vc143-debug` in a commit of their own, per `src/utests/AGENTS.md` — before tier 3 can be green on the one platform it speaks for |
+
+#### The decisions of 2026-09-25, as they were put and as they were taken
+
+Each was presented in AGENTS.md's shape - what it is, what happens if it is not done, the risk and the
+blast radius, the part left undecided, a recommendation and what would reverse it - and each was
+accepted as recommended. They are kept here whole because a decision's reasoning is what its reversal
+condition gets read against later. Ordered as they were put: the two harness races first, because
+every false red they produce is noise in every other piece of Windows evidence, including 5b's.
+
+**W3 - R2's peer-record race.** *What it is:* `Http1Driver_PeerHalfClosesWithAWriteInFlightTests` pins
+that the driver cannot hang when a peer stops sending while our upload is still in flight. Its peer
+writes "fin:sent" only after the FIN is on the wire, and the harness read the peer's records with
+nothing ordering that read after the write, so a client that finished first reported a half close
+that had happened as one that had not. *If not done:* 10 to 17 false reds in 50 runs under load on
+Windows (0 of 50 isolated), in a case that is part of 5b's evidence. *Risk and blast radius:* test
+only - one named constant and one bounded wait, the neighbouring cases' own pattern; one helper, one
+case; it cannot change product behaviour, and a peer which never records still fails with the same
+text. *Decided:* fix it, shown red first. *Reverses:* nothing foreseen. **Done** at
+`900fe23`: `PEER_RECORDS_AFTER_THE_FIN` and a `waitForRecords( )` before the snapshot. Red 3 of 3 with a 300 ms
+delay between the peer's FIN and its record and the wait disabled; green 3 of 3 with the wait
+restored - certain rather than lucky, since the client finishes in milliseconds. `httpclient7` 50 of
+50 on x64 vc143 under load, where it had been 0 of 50.
+
+**W4 - the absence bound.** *What it is:* `Http1DriverTls_IdleCloseSendsCloseNotifyTests` checks that
+a connection is still alive halfway through its 250 ms idle lifetime, and its helper added the nominal
+20 ms per poll instead of measuring time, so a busy machine stretched the "halfway" window past the
+close it guards. *If not done:* 3 to 8 false reds in 50 under load, 1 isolated, in `httpclient5`.
+*Risk and blast radius:* test only - the helper and its cleartext twin. *Undecided was:* whether to
+change the shared twin too; yes. *Decided:* elapsed time against a steady clock, counting only an
+observation made inside the window. *Reverses:* nothing foreseen. **Done at `1184eb4`, in all THREE copies** - the
+third, `utf_baselib_h2client6/TestHttp2DriverWriteBarrier.h`, was found while doing it: the same code
+with the same defect. Red 3 of 3 with every sleep made to overrun threefold under the old loop, green
+3 of 3 under the new one - certain, since the overrun alone stretches the old window past the 250 ms
+close. The other callers ask whether a task ENDED within a bound an order of magnitude above what
+they wait on, which the new rule makes at most one poll stricter.
+
+**W2 - 6a on Windows.** *What it is:* the case guards a fixed defect - a connection offered for reuse
+after the peer reset our upload - and arranges it by having its peer send the last chunk of a complete
+response and then reset, which relies on Linux delivering octets queued ahead of a RST. Windows
+discards them, so the response arrives short and the case fails at its premise, before the verdict it
+guards. *If not done:* `httpclient7` red on every Windows run, so it can never flag a real regression
+in its other cases there. *Risk and blast radius:* test only, one case, Windows only. What is given up
+is Windows coverage of that ordering, which Windows reaches only through two I/O threads racing into
+the strand - arrangeable by no real-peer test - while the verdict logic is platform independent and
+keeps its real-peer red and green on Linux. *Undecided was the shape:* a runtime skip, compiling it out
+as `utf_baselib_h2client6` does, or a seam-based Windows variant, which is more code and against the
+case's own no-seam design. *Decided:* the runtime skip, with the measured reason. *Reverses:* a Windows
+arrangement without a seam in which the read completes the message after the write handler has
+recorded a reset. **Done** at `900fe23`: `UTF_SKIP_UNLESS( ! os::peerResetIsReportedToEveryOperation( ), ... )`, so
+the case still builds on Windows and the skip is recorded where tier 3 counts it; on Linux the
+condition is false and it runs as before.
+
+**W6 - item 5's exclusion.** *What it is:* `utf_baselib_h2client6/TestHttp2DriverWritePeerClose.h` is
+compiled out on Windows on the claim that a send there takes codes the read side already admits.
+*Measured:* after a peer's FIN and then its RST, or its ordinary close over our unread upload, a
+parked send completes `WSAECONNRESET`, never `EPIPE`. *Decided:* record the exclusion as measured and
+close the item. *Reverses:* the h2 cases' premise changing. **Done** at `bb67eaf`: the comment at the exclusion
+carries the measurement, and `NetUtils.h`'s `isPeerClosedOnWriteErrorCode( )` no longer calls the
+Windows send spelling owed - there is no third one.
+
+**W5 - the orderly predicate's Windows arms.** *What it is:* `isOrderlyPeerCloseErrorCode( )` made the
+TLS handshake retry treat a reset as an orderly close on Windows only, on a premise withdrawn on
+2026-09-23 that row 5's re-run then found nothing to support. *If not done:* a genuine reset during a
+TLS handshake retried on Windows, up to the retry limit, and refused elsewhere - harmless, unjustified,
+and recorded a third time. *Risk and blast radius:* the retry decision of every TLS handshake on
+Windows, and the definition of the wide predicate every Windows peer-close classification asks, which
+had to keep accepting `10053`. *Undecided was the shape:* narrow the orderly predicate alone, or keep
+the arms as a deliberate, bounded difference and close the item. *Decided:* narrow, as its own change
+after W2 to W4. *Reverses:* a Windows run showing an orderly, non-resetting close arriving as `10054`
+or `10053`. **Done** at `3dce6ae`: the orderly predicate admits `eof` alone everywhere; the wide one asks
+`os::peerCloseCanBeReportedAsConnectionAborted( )` for `connection_aborted` directly, so its set is
+unchanged on every platform; `os::peerCloseWithUnreadDataIsReportedAsReset( )` is removed, having
+existed only to gate the arm. `TlsHandshakeRetryClassifier_RetryableErrorSetTests` and
+`PeerCloseErrorCodes_CleanEndOfStreamSetTests` assert the new rows on every platform: with the old
+arms put back both fail on Windows at exactly those rows, and without them both pass. The two TLS
+retry cases still pass on Windows in about 5 s, through the truncation - the retry is reachable
+without the arm. Linux is
+unchanged by construction: POSIX never had the arms, and the wide predicate's set is the same.
+
+**Validated by focused testing, as the maintainer asked, with the full matrix left for later.** The
+whole `win-x86-vc143-debug` tree rebuilt clean, nothing referencing the removed fact; the five
+modules these changes reach - `http2`, `httpclient3`, `httpclient5`, `httpclient7` and `h2client6` -
+pass on x86 vc143 debug, x64 ccl16 debug and x64 vc143 release, and 50 of 50 each on x64 vc143 debug
+under the load of that rebuild, where `httpclient7` had been 0 of 50 and `httpclient5` 42 to 47.
+
+Every change to the test tree above is blessed by the companion inventory refresh, `8ee047d`, whose manifest diff
+names exactly the three case bodies, the one doc comment and the helper members these edits touched.
+Evidence in `http2-l0-state/logs/win-handoff/w3-control/`, `.../w4-control/`, `.../w5-control/` and
+`.../decisions/`.
 
 ## Defects found during the remediation, recorded and not fixed
 

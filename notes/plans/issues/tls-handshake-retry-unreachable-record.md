@@ -271,3 +271,35 @@ skipping the row on one of them. A skipped row goes vacuous silently; two arms c
 
 The drop from 32s to 4s is the load-bearing evidence: it is the deadline no longer being reached,
 not merely an assertion no longer being evaluated.
+
+### Re-run on Windows 2026-09-24, and the arm removed 2026-09-25
+
+**The re-run this record was waiting for came back clean.** `win-x86-vc143-debug`, both retry cases at
+`--log_level=message`: the peer reads a 1500-byte hello whole, and the handshake against it ends
+
+    the handshake against a peer which went away ended with category='asio.ssl.stream' value=1
+    ('stream truncated')
+
+That is a truncation, with no `10054`. So the 2026-09-21 row was that peer's own reset, and the Windows
+`connection_reset` arm rested on nothing measured, which is the outcome the section above said would
+settle it.
+
+**Decided by the maintainer 2026-09-25, and done at `3dce6ae`:** `net::isOrderlyPeerCloseErrorCode( )` admits `eof`
+alone on every platform; `os::peerCloseWithUnreadDataIsReportedAsReset( )`, which existed only to gate
+that arm, is removed; `net::isPeerClosedErrorCode( )` keeps both reset spellings, asking
+`os::peerCloseCanBeReportedAsConnectionAborted( )` directly for `connection_aborted`, so the set it
+admits is unchanged on every platform. A handshake a peer RESETS is now refused on Windows as on POSIX,
+bounded as before where it was retried.
+
+**The retry is still reachable on Windows, and this is why that matters.** With the arm gone, both
+cases pass on `win-x64-vc143-debug` in about 5s each - the peer reads the hello twice, so the second
+attempt happens - ending on the truncation above, which `isStreamTruncationError( )` admits. That is
+the load-bearing check: the 2026-09-21 fix measured a drop from a 32s deadline abort to 4s, and
+removing the arm did not put the deadline back.
+
+**"The test asserts both arms" is superseded.** `TlsHandshakeRetryClassifier_RetryableErrorSetTests`
+now asserts `connection_reset` and `connection_aborted` non-retryable on every platform, and
+discriminates on Windows for the first time: with the old arms put back, both of its new rows fail
+there, and `PeerCloseErrorCodes_CleanEndOfStreamSetTests` fails with them. Evidence in
+`http2-l0-state/logs/win-handoff/w5-control/` and `.../decisions/`, and the decision's reasoning in
+`astra-remediation-owed-work.md`, row W5.

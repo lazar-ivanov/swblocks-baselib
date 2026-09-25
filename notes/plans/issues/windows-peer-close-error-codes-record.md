@@ -100,7 +100,12 @@ measurement of that call.
   whole and the handshake against it ends `asio.ssl.stream:1`, a truncation - no `10054`. So the
   2026-09-21 `10054` was that peer's own reset, and these two Windows arms now rest on nothing
   measured. Whether to remove them is a decision, not a measurement, and it is recorded as one in
-  `astra-remediation-owed-work.md`'s Windows rows.
+  `astra-remediation-owed-work.md`'s Windows rows. **Removed 2026-09-25 at `3dce6ae`, by the maintainer's
+  decision (W5):** the orderly predicate admits `eof` alone on every platform,
+  `os::peerCloseWithUnreadDataIsReportedAsReset( )` went with the arm it gated, and
+  `isPeerClosedErrorCode( )` asks `os::peerCloseCanBeReportedAsConnectionAborted( )` directly, so the
+  set it admits is unchanged. The retry stays reachable on Windows through the truncation - see
+  `tls-handshake-retry-unreachable-record.md`, its last section.
 - **Comments in `src/` that state the old mechanism as a platform property**, not edited here:
   `NetUtils.h`'s block above the predicates ("because the divergence is in the TCP stack and in the
   I/O model, below anything this library writes"; "confirmed by the PeerCloseErrorCodes_* control
