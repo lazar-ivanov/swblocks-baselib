@@ -441,7 +441,7 @@ def nondeterministic( first, second ):
     return unstable
 
 
-def compare( before, after, unstable, unmeasured = None ):
+def compare( before, after, unstable, unmeasured = None, uncovered = None ):
 
     failures = []
 
@@ -449,6 +449,26 @@ def compare( before, after, unstable, unmeasured = None ):
 
     if unmeasured is None:
         unmeasured = []
+
+    #
+    # A MODULE THE BASELINE DOES NOT COVER CONTRIBUTES NO ADDITIONS - 'uncovered' names those whose
+    # registered, entered and newly skipped cases are not reported as ADDED, NEWLY RUNS or SKIPPED
+    # SET CHANGED. Such a module has no baseline to be added relative to, so every case in it used
+    # to be reported as both: 618 lines on every Windows run once the http and h2 client work had
+    # added its 27 modules, with the coverage statement below saying at the same time that those
+    # modules were not compared. That noise kept tier 3 red on the one platform it speaks for and
+    # buried whatever real difference a run had
+    #
+    # LOSSES STAY TREE-WIDE, AND THAT IS WHAT KEEPS RELOCATION WORKING: a case moved out of a
+    # covered module into one the baseline does not cover is still in the union, so it is neither
+    # lost nor added. And a --family comparison passes nothing here, because there the successor
+    # modules are the subject - a case the family gained is exactly what that comparison asks about
+    #
+
+    uncovered = set( uncovered or [] )
+
+    def uncovered_union( key ):
+        return union( { module: after[ module ] for module in uncovered if module in after }, key )
 
     old_reg, new_reg = union( before, 'registered' ), union( after, 'registered' )
 
@@ -461,19 +481,21 @@ def compare( before, after, unstable, unmeasured = None ):
     if old_reg and new_reg:
         for name in sorted( old_reg - new_reg ):
             failures.append( 'REGISTRATION LOST: %s' % name )
-        for name in sorted( new_reg - old_reg ):
+        for name in sorted( ( new_reg - old_reg ) - uncovered_union( 'registered' ) ):
             failures.append( 'REGISTRATION ADDED: %s' % name )
 
     old_run, new_run = union( before, 'entered' ), union( after, 'entered' )
 
     for name in sorted( old_run - new_run ):
         failures.append( 'NO LONGER RUNS: %s' % name )
-    for name in sorted( new_run - old_run ):
+    for name in sorted( ( new_run - old_run ) - uncovered_union( 'entered' ) ):
         failures.append( 'NEWLY RUNS: %s' % name )
 
     old_skip, new_skip = union( before, 'skipped' ), union( after, 'skipped' )
 
-    for name in sorted( old_skip ^ new_skip ):
+    newly_skipped = ( new_skip - old_skip ) - uncovered_union( 'skipped' )
+
+    for name in sorted( ( old_skip - new_skip ) | newly_skipped ):
         failures.append( 'SKIPPED SET CHANGED: %s' % name )
 
     old_cases, new_cases = union_cases( before ), union_cases( after )
@@ -993,7 +1015,13 @@ def main():
 
         unmeasured = []
 
-        failures = compare( before, snapshot, unstable, unmeasured )
+        failures = compare(
+            before,
+            snapshot,
+            unstable,
+            unmeasured,
+            set() if args.family else set( snapshot ) - set( before )
+            )
 
         if unmeasured:
             print( '' )
@@ -1037,14 +1065,32 @@ def main():
         # A reason which no longer describes anything is worse than none, because it is read as a
         # live statement about the tree. Say so rather than letting it rot silently
         #
+        # Two things, and only the first is known to be stale: a reason naming a module the baseline
+        # covers, and one naming a module this comparison never saw - gone from the tree, or simply
+        # not in it, which is what --only, a --family or a partial --against snapshot leaves out.
+        # Reported together as "ARE covered now", the second half was false on every partial
+        # comparison: measured 2026-09-25, one over 28 modules listed as covered the 16 client
+        # modules it had not run, which no baseline covered
+        #
 
-        stale = sorted( set( reasons ) - set( uncovered ) )
+        stale = sorted( set( reasons ) & set( before ) )
 
         if stale:
             print( '' )
             print( 'utf_runlog: NOTE - %d exclusion note(s) are stale; these modules ARE covered now:'
                    % len( stale ) )
             for module in stale:
+                print( '    %s' % module )
+
+        unseen = sorted( set( reasons ) - set( before ) - set( snapshot ) )
+
+        if unseen:
+            print( '' )
+            print( 'utf_runlog: NOTE - %d exclusion note(s) name a module not in this comparison -'
+                   % len( unseen ) )
+            print( 'utf_runlog: not run, outside the --family or gone from the tree - so nothing' )
+            print( 'utf_runlog: here speaks to them:' )
+            for module in unseen:
                 print( '    %s' % module )
 
         if failures:
