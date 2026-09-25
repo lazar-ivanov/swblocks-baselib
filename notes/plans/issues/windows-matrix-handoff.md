@@ -3,6 +3,13 @@
 **Date:** 2026-09-24. **For:** whoever runs the Windows matrix. **Status:** the complete list at the
 end of the astra remediation and the batch that followed it.
 
+**RUN ON WINDOWS 2026-09-24.** Items 2, 3, 6, 8, 9 and 10 are settled, item 4 is measured and its
+narrowing taken at `ed0ced5`, items 1 and 5 turned into decisions — taken 2026-09-25 — and item 7 is
+still owed. The run also found one product defect none of the items named, the TLS wrapper's
+by-value handler, fixed at `9ca4678`. Every result is in `astra-remediation-owed-work.md`'s
+Windows rows, 4 to 5c and W1 to W9, which is where to read them; the text below is kept as the
+instructions it was.
+
 Everything here was found on Linux and **cannot be settled there**. Two of the items are things a
 Linux run *provably* cannot reach — not "has not yet", but cannot. The rest are measurements this
 host has no way to take.

@@ -1471,3 +1471,21 @@ not a hang: the case reaches its own assertion every time, and no degradation hu
 instrument for it than `Http1Driver_WriteInFlightRefusesReuseTests` - 10/10 against that case's 2/10
 for the same degradation. §16.7's "acceptable to land on a gate" is discharged for everything a
 Linux run can reach.
+
+**The flag's own red, measured on Windows 2026-09-24 — §2.3's claim holds there, and the reason is a
+spelling.** Dropping the assignment (`Http1ConnectionTask.h:2141` at `c1c5da5`, degraded to
+`( void ) 0;` with the line count preserved) reds `Http1DriverTls_WriteInFlightCloseSkipsCloseNotifyTests`
+**40 of 40** on `win-x64-vc143-debug` — *"the HTTP/1.1 TLS driver task did not end clean: ...
+system:10058 at win_iocp_socket_send_op.hpp:84"*, raised by the send of the very TLS `shutdown_op` the
+flag exists to suppress. The unmodified tree is 40 of 40 green and the reverted one 10 of 10. On Linux
+that send fails `broken_pipe`, which `isExpectedSocketException( )` lists, so the task stays clean;
+Windows spells it `WSAESHUTDOWN`, which the Windows half of that list (`TcpBaseTasks.h`) does not carry,
+so the task **fails** — exactly the failure §2.3 argues the flag prevents. So the flag buys the ending on
+Linux and the clean ending on Windows.
+
+The revert is exact at the source (`git diff` empty). The object is **not** byte-identical, and cannot
+be: MSVC without `/Brepro` is not reproducible, and the 55 octets that differ are the COFF timestamp, 23
+relocation symbol indices in `.debug$S`, and `.chks64` — no code. And this case could not reach its write
+on Windows at all before the TLS wrapper fix of the same day: until then no HTTP/1.1 request over TLS
+left the client (`windows-matrix-handoff.md`, and `astra-remediation-owed-work.md`'s Windows rows).
+Evidence in `http2-l0-state/logs/win-handoff/item3/`.

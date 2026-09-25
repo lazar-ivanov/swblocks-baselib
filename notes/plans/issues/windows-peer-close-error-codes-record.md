@@ -60,6 +60,12 @@ measurement of that call.
 - *"Linux hands queued bytes over before reporting the error"* was never measured. The Linux runs
   of the control never saw a reset; they measured a FIN - all bytes, then `eof`. That a Linux read
   returns queued data ahead of `ECONNRESET` is a reading of the kernel, and stays marked as such.
+  **Measured since, on both platforms, 2026-09-24.** `Http1Driver_PeerResetsAfterACompleteKeepAliveResponseTests`
+  (6a, `utf_baselib_httpclient7`) sends the last chunk of a complete response and only then resets,
+  and asserts the chunk arrives: green on Linux (`edb6d96`, 15 of 15), so Linux does hand the queued
+  octets over first; red on `win-x86` and `win-x64` vc143, 40 of 40 each, the body one chunk short,
+  and a raw-socket probe agrees - a read with octets queued ahead of the RST is handed `WSAECONNRESET`
+  instead of them, 10 of 10. On Windows a reset discards what arrived and was not yet read.
 
 **Standing.**
 
@@ -90,7 +96,11 @@ measurement of that call.
   because `shutdown_send` does not remove the unread bytes a close resets over. The re-run is still
   owed, and it no longer needs a diagnostic edit: `RetryableHandshakeErrorTests` reports the code
   the predicate was handed, so `--log_level=message` on the Windows matrix is the whole
-  measurement.**
+  measurement.** **Re-run 2026-09-24 on `win-x86-vc143-debug`:** the peer reads a 1500-byte hello
+  whole and the handshake against it ends `asio.ssl.stream:1`, a truncation - no `10054`. So the
+  2026-09-21 `10054` was that peer's own reset, and these two Windows arms now rest on nothing
+  measured. Whether to remove them is a decision, not a measurement, and it is recorded as one in
+  `astra-remediation-owed-work.md`'s Windows rows.
 - **Comments in `src/` that state the old mechanism as a platform property**, not edited here:
   `NetUtils.h`'s block above the predicates ("because the divergence is in the TCP stack and in the
   I/O model, below anything this library writes"; "confirmed by the PeerCloseErrorCodes_* control

@@ -1790,6 +1790,28 @@ reset spelling for itself in every reset run, take the narrowing then, as an `os
 `NetUtils.h` under the rule; if the read is ever handed `eof` for a reset there, the landed code is
 the right one and the FIN-then-RST misreport is its recorded price.
 
+**Measured on the Windows matrix 2026-09-24, and the narrowing taken on this section's rule.** On
+`win-x64-vc143-debug`, through the driver itself, reading the read's code, the write's code and which
+handler delivered the ending with cdb breakpoints rather than a source edit: in every run of R1, A2's
+case and `Http1Driver_PeerResetsMidCloseDelimitedBodyTests` the read completed `WSAECONNRESET` for
+itself - 15 of 15, never `eof` - including R1 and A2's, where the write took the reset first. R2 took
+the deferral as designed: read `eof`, write `WSAESHUTDOWN` from our own `shutdown_send`. And R2's peer
+with `SO_LINGER( on, 0 )` immediately after its `shutdown_send` (a temporary edit, reverted) splits in
+two. Where the read took the FIN as `eof` and the write then completed `WSAECONNABORTED`, the landed code
+reported the complete message as a reset - both such runs red - and the narrowed code completes it, all
+four green. Where the RST reached the read first, the read completed `WSAECONNABORTED` itself and both
+codes report a reset; correctly, since that read never saw the FIN. Plain runs, 0 of 20 green before
+and 14 of 20 after. A raw-socket probe agrees on both halves, 20 of 20 each.
+
+**So the pending read carries a reset spelling for itself in every reset run, and the narrowing is
+taken** - as an `os::`-gated arm inside `NetUtils.h`, exactly as this section specified, but gated on a
+new fact, `os::peerResetIsReportedToEveryOperation( )`, rather than on the lane's
+`peerCloseWithUnreadDataIsReportedAsReset( )`. That one names the shape of a close on the wire; this
+premise is where a reset is REPORTED, and the house rule since `0c85c9c` is one fact per behaviour, so
+a platform with one and not the other changes only its own. Its must-not-move evidence is in
+`astra-remediation-owed-work.md`'s Windows rows; the logs are in
+`http2-l0-state/logs/win-handoff/item4-*`.
+
 ### 13.4 Two findings of this review, both against §12.5's own wording
 
 1. **The fifth predicate admits `eof`, and §12.5 said it did not.** `isPeerClosedErrorCode( )` is
