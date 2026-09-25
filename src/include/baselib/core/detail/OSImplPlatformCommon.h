@@ -1046,6 +1046,37 @@ namespace bl
             return isWindows;
         }
 
+        /**
+         * @brief Whether a RESET from the peer is reported to EVERY operation on the socket, rather
+         * than handed to whichever operation asks first
+         *
+         * MEASURED on Windows, through raw sockets and through this library. A receive and a send
+         * both pending when the peer resets both complete WSAECONNRESET (system:10054), 20 runs of
+         * 20; a receive issued after the send has failed gets it too; and a receive with octets
+         * still queued is handed the reset instead of the octets. Through the HTTP/1.1 driver, in
+         * the three reset cases of utf_baselib_httpclient7's TestHttp1DriverWritePeerClose.h on
+         * win-x64-vc143-debug - two of which make the WRITE take the reset first - the read then
+         * completed WSAECONNRESET itself in every run, 15 of 15, and never an end of stream.
+         *
+         * Linux is the other way, by the kernel's own rule: one pending error, taken with an
+         * exchange by the first syscall that asks, after which a recv( ) returns an ordinary end
+         * of stream and a send( ) EPIPE - see net::isPeerClosedOnWriteErrorCode( ). So on Linux a
+         * read can be left holding an eof whose only witness to the reset is the code the write
+         * took, and on Windows it cannot.
+         *
+         * Darwin and AIX are unmeasured and keep the Linux answer, which is the one that can only
+         * fail CONSERVATIVE: it keeps consulting the write's code, where the other answer would
+         * trust a read that a platform like Linux may have left holding an eof.
+         *
+         * Prefer net::isPeerResetOnWriteErrorCode( ) to asking this directly - see core/NetUtils.h,
+         * which is where this fact is turned into a decision about a write's code.
+         */
+
+        inline bool peerResetIsReportedToEveryOperation() NOEXCEPT
+        {
+            return isWindows;
+        }
+
         inline void sleep( SAA_in const time::time_duration& duration )
         {
             thread::sleep( get_system_time() + duration );

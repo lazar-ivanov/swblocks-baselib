@@ -1282,6 +1282,13 @@ namespace bl
                  * the pipe may be our own shutdown. net::isPeerResetOnWriteErrorCode( ) is that
                  * question, with the reasoning beside it - asked of net:: and never compared here
                  *
+                 * THE KERNEL'S RULE IS LINUX'S AND NOT WINSOCK'S, which is exactly why the question
+                 * is net::'s rather than this function's. Winsock spells a send into a reset
+                 * connection the same after a FIN as before one, so there the write's code proves
+                 * nothing - and it reports the reset to the read as well, so there is no eof
+                 * residue for it to overrule. net:: answers no there, and the read's own code
+                 * decides
+                 *
                  * AND IT CAN ONLY MAKE AN ENDING UNCLEAN. A write that ended cleanly, or that has
                  * not ended at all, records the empty code, which this refuses
                  */

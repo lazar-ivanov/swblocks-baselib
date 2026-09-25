@@ -498,15 +498,19 @@ namespace bl
          * exactly the question above, and it also admits eof - the one admitted code which is
          * never proof of anything - so this one refuses it and says the reasoning in one place.
          *
-         * WHAT IS OWED TO THE MATRIX, AND IT IS A BEHAVIOUR AND NOT ONLY A SPELLING. Winsock has
-         * no state-dependent spelling for a send into a reset connection - nothing like EPIPE
-         * from CLOSE_WAIT - so a write's WSAECONNRESET or WSAECONNABORTED there cannot say
-         * whether a FIN preceded it, and this predicate admits a code a write may have got AFTER
-         * one. A peer which half closes and only then aborts would, on that platform alone, have
-         * its FIN-framed message reported as a reset rather than completed. Nothing is lost by it
-         * on the face this exists for IF a reset there reaches the pending READ as a reset
-         * spelling, which isCleanEndOfStreamErrorCode() refuses for itself - unmeasured for a
-         * read and a write pending together, and both answers are the matrix's to give.
+         * AND IT ANSWERS NO, WHATEVER THE CODE, WHERE A RESET REACHES EVERY OPERATION - which is
+         * os::peerResetIsReportedToEveryOperation( ), true on Windows. That is the narrowing
+         * driver-read-write-arms-design.md section 13.3 deferred to the matrix, taken on that
+         * section's own decision rule once the matrix had measured both of its halves. Winsock has
+         * no state-dependent spelling for a send into a reset connection - nothing like EPIPE from
+         * CLOSE_WAIT - so there a write's WSAECONNRESET or WSAECONNABORTED cannot say whether a FIN
+         * preceded it: the driver's own write completed WSAECONNABORTED after its read had taken
+         * the peer's FIN as eof, and admitting that code reported the FIN-framed, COMPLETE message
+         * as a reset. And refusing it loses nothing, because Winsock reports the reset to the READ
+         * as well: in every reset run of the driver's own cases the read completed a reset
+         * spelling itself, which isCleanEndOfStreamErrorCode() refuses, so the eof this predicate
+         * exists to overrule never reaches a read there. Where that fact is false the rule above
+         * stands unchanged.
          *
          * WHAT THIS DOES NOT COVER is a truncated TLS stream: that is the stream policy's
          * spelling and, unlike the predicates above, asking it here would be WRONG - a truncation
@@ -518,6 +522,11 @@ namespace bl
 
         inline bool isPeerResetOnWriteErrorCode( SAA_in const eh::error_code& ec ) NOEXCEPT
         {
+            if( os::peerResetIsReportedToEveryOperation() )
+            {
+                return false;
+            }
+
             return isPeerClosedErrorCode( ec ) && ! isCleanEndOfStreamErrorCode( ec );
         }
 
