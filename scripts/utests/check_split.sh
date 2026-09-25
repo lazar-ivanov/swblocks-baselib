@@ -193,9 +193,9 @@ NONDET_ARG=()
 [[ -f "${BASELINE}/nondeterministic.json" ]] && NONDET_ARG=( --nondet "${BASELINE}/nondeterministic.json" )
 
 #
-# The baseline covers 17 of the tree's modules and was captured on one platform, so a tier 3 PASS
-# is a statement about those modules only. utf_runlog prints which modules it could not speak about
-# and why; this file supplies the why
+# The baseline covers only some of the tree's modules - src/utests/AGENTS.md says which - and was
+# captured on one platform, so a tier 3 PASS is a statement about those modules only. utf_runlog
+# prints which modules it could not speak about and why; this file supplies the why
 #
 
 UNCOVERED_ARG=()

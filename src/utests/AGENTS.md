@@ -122,7 +122,7 @@ moves, adds or removes test cases.
 |---|---|---|
 | 1 | `utf_inventory.py --compare` | C1–C13: no case lost, added or edited; guard and namespace stacks unchanged; no duplicate names; helper members neither lost, invented nor duplicated; data files present, unchanged in content and still referenced; `notes.txt` recipes resolve, no case loses one, and a module declaring its index complete really is; every file on both sides keeps its `#include` list, bar the roster lines a relocation must edit; file-scope text — the fixtures, the column-0 statics, the `BL_IID_DECLARE`s, the behavioural `#define`s — neither lost nor invented; a helper member keeps the `#if` stack it sits under and a file-scope span every condition governing any line of it; a helper member that stayed in its file keeps the namespace it sat in; and all of it over `src/utests/include/` too |
 | 2 | `utf_objsize.py --ceiling 75` | No object over the ceiling |
-| 3 | `utf_runlog.py --compare` | Registered set, executed set, pass/fail, skips, and **per-case assertion counts** — differentially, **only over the 17 modules the baseline covers**, and **only on the platform the baseline was captured on**; across a mismatch the comparison is refused, not attempted |
+| 3 | `utf_runlog.py --compare` | Registered set, executed set, pass/fail, skips, and **per-case assertion counts** — differentially, **only over the 28 modules the baseline covers**, and **only on the platform the baseline was captured on**; across a mismatch the comparison is refused, not attempted |
 
 `selftest_inventory.py` proves tier 1 actually fails when it should; run it if you change the
 extractor.
@@ -201,16 +201,21 @@ shared tree. Replaying the real four-way `f992e2f` split reports eleven such lin
 real change to a file every module compiles; the answer is the companion refresh, where the manifest
 diff shows exactly what is blessed.
 
-**Tier 3's baseline covers 17 of the tree's 45 test binaries, and none of the http or h2 client
-ones.** It is also a `win-x86-vc143-debug` capture (`91d5c2c`), so it is a statement about one
-platform as well as about those modules: run against a Linux tree it reported 37 assertion-count
-differences inside its *own* 17 modules which are nothing but Windows-versus-POSIX
-(`BaseLib_OSJunctionsTests` 18 → 0, `BaseLib_OSRegistryValueTest` 8 → 0, Windows argv quoting
-81 → 0). Every comparison therefore ends with a coverage statement naming the modules it could not
-speak about, and `baseline/uncovered.json` gives the reason for each — read that before taking a
-green tier 3 for coverage. The 17 client modules were measured for admission and **refused**;
-`notes/plans/issues/tier3-client-modules-not-baselineable-record.md` has the numbers and what would
-reverse it.
+**Tier 3's baseline covers 28 of the 44 modules a Windows x86 run executes: the 17 it was first
+captured over at `91d5c2c`, as step 0 of the module split, and their 11 numbered siblings.** Of the
+http and h2 client modules it covers only `utf_baselib_http2`, which is one of those siblings.
+**Refresh it over the modules that hold its cases now, not the ones the last capture named:** taken
+over the first 17 alone, the 2026-09-25 refresh would have dropped the 135 cases the split had moved
+into ten of the siblings, which the old capture still checked only because a comparison matches cases
+tree-wide. It is a `win-x86-vc143-debug` capture — two passes over `dad1d97`'s tree — so it is a
+statement about one platform as well as about those modules: the first capture, run against a Linux
+tree, reported 37 assertion-count differences inside its *own* 17 modules which are nothing but
+Windows-versus-POSIX (`BaseLib_OSJunctionsTests` 18 → 0, `BaseLib_OSRegistryValueTest` 8 → 0,
+Windows argv quoting 81 → 0). Every comparison therefore ends with a coverage statement naming the
+modules it could not speak about, and `baseline/uncovered.json` gives the reason for each — read
+that before taking a green tier 3 for coverage. The other 16 client modules were measured for
+admission and **refused**; `notes/plans/issues/tier3-client-modules-not-baselineable-record.md` has
+the numbers and what would reverse it.
 
 **That cross-platform comparison is now refused rather than attempted.** A capture records the
 platform it was taken on — the name of the build tree it read, so pass `--bld` even with
@@ -236,11 +241,13 @@ list: merge it into the one already there, and never let it replace one.** Two p
 case that agrees with itself as deterministic, which is sound for a case that varies on most runs
 and unsound for one whose variation is rare —
 `notes/plans/issues/utf-runlog-nondeterministic-sampling-record.md` measures one misclassified about
-a third of the time. So the committed list is a **curated superset**: of its eleven names ten
-re-derive from the two committed passes and
-`IO_SimpleConnectAndTransmitDataMessageDispatcherOutgoingTests` does not. That one was added by hand
-at `77ef537`, which flagged it at 8199 assertions against a baseline of 8194 and then drew 8199 and
-8194 from the *unchanged* binary — the two baseline passes had simply been unlucky in agreeing. A
+a third of the time. So the committed list is a **curated superset**: of its fourteen names ten
+re-derive from the two committed passes and four do not.
+`BlobTransfer_FilesPackagerInMemoryCancelUploadTests` was derived by the first pair and agreed with
+itself in the second; the other three are under `observed`, and the oldest,
+`IO_SimpleConnectAndTransmitDataMessageDispatcherOutgoingTests`, was added by hand at `77ef537`,
+which flagged it at 8199 assertions against a baseline of 8194 and then drew 8199 and 8194 from the
+*unchanged* binary — the two baseline passes had simply been unlucky in agreeing. A
 name recorded from observation is evidence the pair does not carry, and a refresh that overwrote the
 file used to drop it with nothing to show it happened. **Such a name goes under `observed`, which
 maps it to where it was seen**: a derivation rewrites `unstable`, carries `observed` through

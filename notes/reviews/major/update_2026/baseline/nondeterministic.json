@@ -1,6 +1,8 @@
 {
  "__platform__": "win-x86-vc143-debug",
  "observed": {
+  "BaseLib_SortedVectorHelperTests": "2026-09-25, win-x86-vc143-debug - the same binary gave 160605 once and 160602 four times: it inserts random values, and on a 32-bit size_t a repeated draw takes the already-present branch, three assertions more",
+  "BlobTransfer_FilesPackagerInMemoryCancelDownloadTests": "2026-09-25, win-x86-vc143-debug - 36 in a loaded full-suite run and 38 in five quiet runs of the same binary; its upload twin is already under unstable",
   "IO_SimpleConnectAndTransmitDataMessageDispatcherOutgoingTests": "77ef537 - the two baseline passes agreed by luck; re-running the unchanged binary twice gave 8199 and then 8194"
  },
  "unstable": [
@@ -8,6 +10,7 @@
   "AsyncV2_CancelTests",
   "BaseLib_Base64UrlTests",
   "BlobTransfer_FilesPackagerInMemoryCancelUploadTests",
+  "IO_MessagingClientObjectDispatchTcpDispatcherTests",
   "Tasks_ExternalCompletionTaskTests",
   "Tasks_ReactiveDisconnectObservableTests",
   "Tasks_ReactiveDisconnectObserverTests",
