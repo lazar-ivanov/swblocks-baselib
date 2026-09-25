@@ -1577,12 +1577,12 @@ namespace bl
                  * nothing left to do either way
                  *
                  * The codes themselves are net's to know, and deliberately not compared here: the
-                 * peer ending the conversation reaches us as eof, as connection_reset or, when the
-                 * close races a read we already have outstanding, as connection_aborted, and which
-                 * of those it is depends on the platform's TCP stack and I/O model rather than on
-                 * anything HTTP/2 does. The connection_aborted case is what failed this driver
-                 * roughly one run in eight on Windows until it was added - see core/NetUtils.h and
-                 * notes/plans/issues/windows-peer-close-error-codes-record.md
+                 * peer ending the conversation reaches us as eof, as connection_reset or - on
+                 * Windows, once a reset follows the peer's FIN - as connection_aborted, and which of
+                 * those it is depends on the platform and on timing rather than on anything HTTP/2
+                 * does. The connection_aborted case is what failed this driver roughly one run in
+                 * eight on Windows until it was added, against a peer our own shutdown_both reset -
+                 * see core/NetUtils.h and notes/plans/issues/windows-peer-close-error-codes-record.md
                  *
                  * operation_aborted is not in either set, which is what keeps the distinction
                  * above working: it is what our own initiateClose( ) and an external cancelTask( )

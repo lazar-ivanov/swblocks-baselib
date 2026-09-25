@@ -1357,12 +1357,12 @@ namespace bl
                  * how a read-until-close body ends and how a pooled idle connection is reclaimed
                  *
                  * ASKED OF net:: RATHER THAN COMPARED BY HAND - N2, and the rule NetUtils.h
-                 * states in as many words. The same peer behaviour reaches us under different
-                 * codes on Windows, where a close during a full-duplex transfer is reported as
-                 * connection_aborted and a close with unread data as connection_reset; neither is
-                 * eof, so the comparison this replaces FAILED a connection the peer had closed
-                 * normally, about one time in eight. It is the same defect the HTTP/2 driver had
-                 * before it asked the same question here
+                 * states in as many words. A peer's ending reaches a read under different codes on
+                 * different platforms - on Windows a reset reaches every operation, as
+                 * connection_reset or, after the peer's FIN, as connection_aborted - and the
+                 * comparison this replaces admitted eof alone, so it FAILED connections which had
+                 * simply ended: about one run in eight against peers whose own shutdown_both reset
+                 * them. The HTTP/2 driver had the same defect before it asked the same question
                  *
                  * THE PREDICATE IS THE WIDE ONE ON PURPOSE - the conversation is over however it
                  * ended, and failing the task is the wrong answer to a peer that went away. What

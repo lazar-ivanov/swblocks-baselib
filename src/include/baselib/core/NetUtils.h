@@ -290,39 +290,33 @@ namespace bl
          * WHY THIS EXISTS - READ BEFORE ADDING A CODE COMPARISON TO NETWORKING CODE
          * ============================================================================
          *
-         * The same peer behaviour - "the peer went away" - reaches us under DIFFERENT error codes
-         * on Windows than on POSIX, because the divergence is in the TCP stack and in the I/O
-         * model, below anything this library writes. Two observables, which may well be one
-         * mechanism seen twice:
+         * The same peer behaviour - "the peer went away" - can reach us under DIFFERENT error codes
+         * on Windows than on POSIX, and the difference is in how a RESET is reported, not in how an
+         * orderly close is. What is measured, and what was corrected on the way:
          *
-         *   1. A peer ending the conversation can arrive as WSAECONNRESET (system:10054)
-         *      rather than as an end of stream. MEASURED, on a TLS handshake whose peer
-         *      accepted and went away, where Linux reported eof or a truncation. An earlier
-         *      version of this comment blamed "RST where POSIX sends FIN on unread data";
-         *      that is NOT a platform difference - Linux close( ) with unread data also
-         *      sends RST. The mechanism is now MEASURED - see the os:: predicates.
+         *   1. AN ORDERLY CLOSE IS eof ON BOTH PLATFORMS. This comment used to say the Windows
+         *      stack itself turns a peer's close into WSAECONNRESET (system:10054) or
+         *      WSAECONNABORTED (system:10053). The measurements behind that were of this library's
+         *      own shutdown_both, which reset its own peers; bb53bdd made the teardown
+         *      shutdown_send, and a peer which closes in an orderly way arrives as eof on Windows
+         *      exactly as on POSIX. Withdrawn 2026-09-23 - see the record below.
          *
-         *   2. A peer ending the conversation can arrive as WSAECONNABORTED (system:10053)
-         *      rather than as an end of stream, when a send of ours followed the peer's
-         *      shutdown. Also MEASURED, and NOT a plain FIN on a pending read - Asio maps that
-         *      to eof.
+         *   2. A RESET IS REPORTED DIFFERENTLY. On Windows a genuine reset reaches EVERY operation
+         *      on the socket - WSAECONNRESET, or WSAECONNABORTED once the peer's FIN had already
+         *      arrived - and a read with octets still queued is handed the reset instead of them
+         *      (os::peerResetIsReportedToEveryOperation( )). On Linux one pending error goes to the
+         *      first syscall that asks, and a read is handed what was queued ahead of it first.
          *
-         * Both are ONE mechanism, confirmed by the PeerCloseErrorCodes_* control cases in
-         * utf_baselib_http2: shutdown_both leaves the receive side shut, an arrival after that
-         * resets the connection on Windows, and the RST surfaces as 10054 or as 10053 depending
-         * only on whether a send of ours was outstanding when it landed.
+         * So on Windows a caller which needed the octets a reset threw away has lost them, and
+         * classifying the ending as a peer close does not recover them.
          *
-         * The reset also DISCARDS what is still unread. The control measured 0 of 16384 bytes
-         * delivered on Windows against all 16384 then eof on Linux, so classifying the close as
-         * a peer close does not recover what the reset threw away - a caller which needed those
-         * bytes has lost them.
-         *
-         * Neither code means what its POSIX namesake means for a READ. On POSIX a reset reaching a
-         * read still hands over whatever was already queued before reporting the error, and
-         * ECONNABORTED is an accept() error a read never produces at all. So code which compares
-         * error codes by hand is correct on the platform it was written on and quietly wrong on
-         * the other - and because mechanism 2 is a race, being wrong shows up as an INTERMITTENT
-         * failure rather than an obvious one.
+         * Neither reset code means what its POSIX namesake means for a READ. On POSIX a reset
+         * reaching a read still hands over whatever was already queued before reporting the error,
+         * and ECONNABORTED is an accept() error a read never produces at all. So code which compares
+         * error codes by hand is correct on the platform it was written on and quietly wrong on the
+         * other - and because which code an operation sees depends on timing, on which syscall asks
+         * first and on whether a FIN was read before the RST, being wrong shows up as an
+         * INTERMITTENT failure rather than an obvious one.
          *
          * This has now been paid for three times in this library: the TLS handshake retry was
          * unreachable on Windows, the HTTP/2 driver failed a connection its peer had closed
@@ -402,15 +396,16 @@ namespace bl
          * connection closing, which RFC 9112 section 6.3 makes a real and common case and which a
          * client has nothing else to check against.
          *
-         * IT ADMITS eof AND NOTHING ELSE, ON EVERY PLATFORM, which is what makes it different
-         * from isOrderlyPeerCloseErrorCode(). That one admits the Windows reset spellings so a
-         * retry is not refused; NOT because a clean close arrives as one - that premise was
-         * withdrawn 2026-09-23, self-inflicted by shutdown_both. Here they are exactly what
-         * must be refused: on Windows a reset DISCARDS what was still unread - the control
-         * measured 0 of 16384 bytes delivered - so a close-delimited body ended by one is either
-         * short or aborted, and there is no third possibility. Declaring it complete would hand
-         * the caller a truncated response reported as a success, and the caller would have no way
-         * to tell.
+         * IT ADMITS eof AND NOTHING ELSE, ON EVERY PLATFORM - since 2026-09-25 the same set
+         * isOrderlyPeerCloseErrorCode() admits, and still a predicate of its own, because the two
+         * questions differ: that one asks whether a retry is worth it, this one whether something
+         * may be declared complete, and keeping them apart is what stops a change to one from
+         * moving the other. The reset spellings are exactly what must be refused here: on Windows
+         * a reset DISCARDS what was still unread - a read with octets queued ahead of the RST is
+         * handed the reset instead of them - so a close-delimited body ended by one is either
+         * short or aborted, and on no platform can it be shown whole. Declaring it complete would
+         * hand the caller a truncated response reported as a success, and the caller would have
+         * no way to tell.
          *
          * WHAT THIS DOES NOT COVER is a truncated TLS stream, exactly as the two predicates above
          * do not: that is spelled by the stream policy and not by the transport. A caller which

@@ -30,27 +30,25 @@
 #include <utests/baselib/Utf.h>
 
 /*
- * What this platform's TCP stack reports to a reader when a peer ends the conversation the way
- * every task in this library ends it - TcpSocketCommonBase::shutdownSocket( ), which shuts down
- * both directions and cancels, and never closes
+ * What a reader sees when a peer ends the conversation the way every task in this library ends it
+ * - TcpSocketCommonBase::shutdownSocket( ), which shuts the SEND side down and cancels, and never
+ * closes
  *
- * These cases exist because the two predicates of core/NetUtils.h were written from two
- * measurements taken inside product code on Windows, one 10054 and one 10053, and the mechanism
- * behind either was never established - see
- * notes/plans/issues/windows-peer-close-error-codes-record.md, which records what was measured,
- * what was ruled out and what is only hypothesis. A loopback pair with the library's own teardown
- * on the peer side reproduces the two shapes those measurements came from, deterministically and
- * without a driver in between, so that the same run on each platform says what the platform does
+ * These cases were written to establish a mechanism nobody had. The predicates of core/NetUtils.h
+ * came from two measurements taken inside product code on Windows, one 10054 and one 10053, and a
+ * loopback pair with the library's own teardown on the peer side reproduced both shapes,
+ * deterministically and without a driver in between - and showed the difference was ours. The
+ * teardown used to shut BOTH directions down, which makes the close abortive: Windows reset the
+ * reader and discarded what it had not read, where Linux delivered every byte and then eof.
+ * bb53bdd made it shutdown_send - see notes/plans/issues/windows-peer-close-error-codes-record.md
  *
- * What is ASSERTED on every platform is the only thing product code relies on: the code the read
- * ends with is one net::isPeerClosedErrorCode( ) accepts. What differs by platform is asserted in
- * two arms, keyed on the os:: facts the predicates are built from, so that neither arm can go
- * vacuous. How many of the peer's bytes reach the reader before the end is REPORTED and not
- * asserted: whether a reset discards unread data is the open half of the hypothesis, and either
- * answer is one the library has to live with rather than one it may require
+ * So what is ASSERTED is the same on every platform, and it makes these a regression test for the
+ * teardown rather than a description of a platform: an orderly end of stream, the orderly
+ * predicate and every byte - see requireGracefulPeerClose( ). If anyone restores shutdown_both,
+ * they go red on Windows and say why
  *
- * The teardown is the real one on purpose. Replicating its three calls here would test a copy;
- * what matters is what a task's peer sees, and that is what shutdownSocket( ) does
+ * The teardown is the real one on purpose. Replicating its calls here would test a copy; what
+ * matters is what a task's peer sees, and that is what shutdownSocket( ) does
  */
 
 namespace utest
@@ -85,9 +83,10 @@ namespace utest
                  * On a stack which answers the shutdown with FIN both cases are deterministic
                  * without it, by TCP ordering alone: the payload was written before the shutdown,
                  * so it precedes the FIN in the stream, and readerReadsUntilTheEnd( ) loops until
-                 * the stack reports an end rather than sampling once. Where it matters is on a
-                 * stack which renames the close, and there the assertion is a disjunction over
-                 * both spellings for exactly this reason
+                 * the stack reports an end rather than sampling once. It mattered while the
+                 * teardown was shutdown_both and a Windows reader was handed a reset instead, which
+                 * the assertion then had to accept in either spelling; since bb53bdd every platform
+                 * answers the shutdown with FIN, and the assertion is eof
                  */
 
                 SETTLE_IN_MILLISECONDS = 100L,
@@ -374,8 +373,9 @@ namespace utest
 /*
  * The shape of the 10054 measurement: the peer has bytes from the reader it never read when it
  * shuts down. This is what a TLS peer which accepts and then goes away leaves behind - the
- * ClientHello is in its receive buffer - and it is the row
- * TlsHandshakeRetryClassifier_RetryableErrorSetTests pins both ways for connection_reset
+ * ClientHello is in its receive buffer. TlsHandshakeRetryClassifier_RetryableErrorSetTests used
+ * to pin connection_reset retryable on Windows for this shape; with shutdown_send it ends in eof,
+ * and since 3dce6ae a reset is refused on every platform
  */
 
 UTF_AUTO_TEST_CASE( PeerCloseErrorCodes_PeerShutsDownWithUnreadDataTests )
