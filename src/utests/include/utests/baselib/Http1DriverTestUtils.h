@@ -1114,13 +1114,32 @@ namespace utest
                 POLL_INTERVAL_IN_MILLISECONDS = 20U,
             };
 
-            for(
-                std::size_t waited = 0U;
-                waited < timeoutInMilliseconds;
-                waited += static_cast< std::size_t >( POLL_INTERVAL_IN_MILLISECONDS )
-                )
+            /*
+             * ELAPSED TIME, AGAINST A STEADY CLOCK, AND AN ANSWER COUNTS ONLY IF IT WAS SEEN INSIDE
+             * THE WINDOW. This used to add the poll interval to a counter - the time the loop asked
+             * to sleep rather than the time it slept - so under load every sleep overran and the
+             * window grew with it, and a window meant to end BEFORE an event could outlive it.
+             * Measured on Windows through utf_baselib_httpclient5's copy of this helper, whose 125 ms
+             * window outgrew the 250 ms idle close it guards in up to 8 runs of 50 under load. The
+             * state is read before the clock, so a completion counts only when the clock read after
+             * it still says inside: exact for a caller asking whether a task SURVIVED the bound, and
+             * at most one poll stricter for one asking whether it ENDED within it
+             */
+
+            const auto deadline =
+                bl::os::chrono::steady_clock::now() +
+                bl::os::chrono::milliseconds( timeoutInMilliseconds );
+
+            for( ;; )
             {
-                if( bl::tasks::Task::Completed == task -> getState() )
+                const bool isCompleted = bl::tasks::Task::Completed == task -> getState();
+
+                if( bl::os::chrono::steady_clock::now() >= deadline )
+                {
+                    return false;
+                }
+
+                if( isCompleted )
                 {
                     return true;
                 }
@@ -1131,8 +1150,6 @@ namespace utest
                         )
                     );
             }
-
-            return bl::tasks::Task::Completed == task -> getState();
         }
 
         inline auto joinEvents( SAA_in const std::vector< std::string >& events ) -> std::string

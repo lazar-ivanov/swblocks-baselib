@@ -141,13 +141,29 @@ namespace utest
                 POLL_INTERVAL_IN_MILLISECONDS = 20U,
             };
 
-            for(
-                std::size_t waited = 0U;
-                waited < timeoutInMilliseconds;
-                waited += static_cast< std::size_t >( POLL_INTERVAL_IN_MILLISECONDS )
-                )
+            /*
+             * ELAPSED TIME, AGAINST A STEADY CLOCK, AND AN ANSWER COUNTS ONLY IF IT WAS SEEN INSIDE
+             * THE WINDOW - the same rule, and the same reason, as the HTTP/1.1 copies of this helper
+             * in utests/baselib/Http1DriverTestUtils.h and utf_baselib_httpclient5. Counting the
+             * interval the loop asked to sleep let the window grow under load, which a caller asking
+             * whether a task SURVIVED a bound pays for with a false red; the state is read before
+             * the clock, so a completion counts only when the clock read after it still says inside
+             */
+
+            const auto deadline =
+                bl::os::chrono::steady_clock::now() +
+                bl::os::chrono::milliseconds( timeoutInMilliseconds );
+
+            for( ;; )
             {
-                if( bl::tasks::Task::Completed == task -> getState() )
+                const bool isCompleted = bl::tasks::Task::Completed == task -> getState();
+
+                if( bl::os::chrono::steady_clock::now() >= deadline )
+                {
+                    return false;
+                }
+
+                if( isCompleted )
                 {
                     return true;
                 }
@@ -158,8 +174,6 @@ namespace utest
                         )
                     );
             }
-
-            return bl::tasks::Task::Completed == task -> getState();
         }
 
         /**

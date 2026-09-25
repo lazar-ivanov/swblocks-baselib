@@ -690,13 +690,34 @@ namespace utest
                 POLL_INTERVAL_IN_MILLISECONDS = 20U,
             };
 
-            for(
-                std::size_t waited = 0U;
-                waited < timeoutInMilliseconds;
-                waited += static_cast< std::size_t >( POLL_INTERVAL_IN_MILLISECONDS )
-                )
+            /*
+             * ELAPSED TIME, AGAINST A STEADY CLOCK, AND AN ANSWER COUNTS ONLY IF IT WAS SEEN INSIDE
+             * THE WINDOW. This used to add the poll interval to a counter - the time the loop asked
+             * to sleep rather than the time it slept - so under load every sleep overran and the
+             * window grew with it, and a window meant to end BEFORE an event could outlive it.
+             * Measured on Windows: the 125 ms window of Http1DriverTls_IdleCloseSendsCloseNotifyTests
+             * outgrew the 250 ms idle close it guards and called that close an early one, in up to
+             * 8 runs of 50 under load. The state is read before the clock, so a completion counts
+             * only when the clock read after it still says inside - which makes "ended within the
+             * bound" exact for the one caller asking whether a task SURVIVED, and at most one poll
+             * stricter for the callers asking whether it ENDED, whose bounds are an order of
+             * magnitude above what they wait on
+             */
+
+            const auto deadline =
+                bl::os::chrono::steady_clock::now() +
+                bl::os::chrono::milliseconds( timeoutInMilliseconds );
+
+            for( ;; )
             {
-                if( bl::tasks::Task::Completed == task -> getState() )
+                const bool isCompleted = bl::tasks::Task::Completed == task -> getState();
+
+                if( bl::os::chrono::steady_clock::now() >= deadline )
+                {
+                    return false;
+                }
+
+                if( isCompleted )
                 {
                     return true;
                 }
@@ -707,8 +728,6 @@ namespace utest
                         )
                     );
             }
-
-            return bl::tasks::Task::Completed == task -> getState();
         }
 
     } // sessiontlsh1
