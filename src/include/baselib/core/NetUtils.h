@@ -445,13 +445,13 @@ namespace bl
          * first. A predicate admitting one of them would be right about half the time and would
          * look like a race rather than a hole.
          *
-         * WHAT IS STILL OWED IS THE WINDOWS SPELLING, and it is deliberately not guessed here.
-         * WSAECONNRESET and WSAECONNABORTED already map to codes isPeerClosedErrorCode() admits
-         * on that platform, so what is open is only whether a send into a reset connection is
-         * spelled a third way there. The matrix answers that; this predicate is not the place to
-         * assume it. WSAESHUTDOWN stays OUT either way - that one is OUR own shutdown_send and is
-         * a state question, not a code question, which is why onWriteCompleted() asks isClosing()
-         * first and this second.
+         * THE WINDOWS SPELLING IS MEASURED NOW, 2026-09-24, AND THERE IS NO THIRD ONE. A send into a
+         * reset connection there completes WSAECONNRESET or WSAECONNABORTED - on raw sockets and
+         * through the HTTP/1.1 driver alike, FIN or no FIN before the RST - and never EPIPE; both
+         * are codes isPeerClosedErrorCode() admits on that platform, so nothing is added here for
+         * it. WSAESHUTDOWN stays OUT - that one is OUR own shutdown_send and is a state question,
+         * not a code question, which is why onWriteCompleted() asks isClosing() first and this
+         * second.
          *
          * NOT THE ORDERLY VARIANT, and not for the reason that looks obvious. The question here is
          * whether the conversation is over, not whether it ended tidily and a retry is worth it -

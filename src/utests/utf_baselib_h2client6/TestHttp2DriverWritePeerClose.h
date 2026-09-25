@@ -72,6 +72,12 @@
  * is owed to the matrix and is not to be guessed. On Windows the codes a send there takes are
  * already ones the read-side predicate admits, so R1 would be green before and after and prove
  * nothing. The module's other case runs on every platform
+ *
+ * MEASURED ON THE WINDOWS MATRIX 2026-09-24, so the exclusion rests on a measurement and not on the
+ * sentence above. A send parked across the peer's FIN and then its RST completes WSAECONNRESET -
+ * raw sockets, 20 of 20, and after an ordinary close over our unread upload the same - and through
+ * the HTTP/1.1 driver WSAECONNRESET or WSAECONNABORTED; never EPIPE. Both are codes
+ * isPeerClosedErrorCode( ) admits there, which is exactly why R1 would be green before and after
  */
 
 #if ! defined( _WIN32 )
