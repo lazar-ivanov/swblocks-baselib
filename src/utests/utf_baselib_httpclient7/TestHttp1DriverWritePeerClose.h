@@ -181,6 +181,18 @@ namespace utest
             PEER_RECORDS_AFTER_THE_VERDICT      = 8U,
 
             /**
+             * @brief What the half-closing peer has recorded once its FIN is on the wire
+             *
+             * rcvbuf, head, fin - the last written only after shutdown( ) has RETURNED, by which
+             * time the FIN is already on the wire and the client can have seen it, ended the
+             * stream and come back to read the records. So they are read after this many and not
+             * before: measured on Windows, a client which won that race reported a peer which did
+             * half close as one which did not, in up to 17 runs of 50 under load
+             */
+
+            PEER_RECORDS_AFTER_THE_FIN          = 3U,
+
+            /**
              * @brief How long the driver is left with a FREE strand before the peer is released
              *
              * WHAT IT BOUNDS IS THE COMPOSED WRITE REACHING A FULL PEER WINDOW, and it is the one
@@ -962,6 +974,16 @@ namespace utest
             result.status = sink -> finalStatus();
             result.body = sink -> body();
             result.events = joinEvents( sink -> events() );
+
+            /*
+             * WAITED FOR, NOT ASSUMED - see PEER_RECORDS_AFTER_THE_FIN. The peer writes "fin:sent"
+             * after its FIN has already reached us, so nothing else orders this read after that
+             * write. The wait is bounded, and a peer which never records it still fails the
+             * assertion that reads it, with the same text
+             */
+
+            ( void ) peer.waitForRecords( static_cast< std::size_t >( PEER_RECORDS_AFTER_THE_FIN ) );
+
             result.peerRecords = joinEvents( peer.records() );
 
             return result;
@@ -1213,6 +1235,25 @@ UTF_AUTO_TEST_CASE( Http1Driver_PeerResetsAfterACompleteKeepAliveResponseTests )
      * unfixed tree is the arrangement not being set up, never the defect being absent. The same
      * sentence WRITE_PARKS_IN_MILLISECONDS carries for the two cases above applies here first.
      */
+
+    /*
+     * NOT WHERE A RESET REACHES EVERY OPERATION - WINDOWS - AND THE REASON IS MEASURED. Step 4
+     * above needs the octets which complete the message handed to the read AHEAD of the RST behind
+     * them. Linux does that, which is how this case goes green there; Winsock reports the reset to
+     * the read in place of octets still queued (raw sockets, 10 of 10), so the body arrives one
+     * chunk short and the case fails at its own premise - 40 of 40 on win-x86 and on win-x64 -
+     * before it reaches the verdict it exists for. That verdict is platform independent and keeps
+     * its real-peer red and green on Linux; on Windows the write-first ordering is reachable only
+     * through two I/O threads racing into the strand, which no arrangement with a real peer can
+     * make certain. SKIPPED RATHER THAN COMPILED OUT, so that it still builds there and the skip is
+     * recorded where tier 3 counts it
+     */
+
+    UTF_SKIP_UNLESS(
+        ! os::peerResetIsReportedToEveryOperation(),
+        "a reset reaches the read in place of the octets queued ahead of it on this platform, so "
+        "the complete response this arrangement needs cannot arrive"
+        );
 
     const auto result =
         runResetDuringBlockedUpload(
