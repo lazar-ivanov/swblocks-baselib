@@ -36,6 +36,12 @@ wrong gate **quieter**. The crash is what made this defect findable at all. §12
 the gate against the fixture that pins the feature and ask whether it ever opens — is what replaces
 the crash as the detector.
 
+## Owed to the x86-64 Linux matrix — deferred by the maintainer, 2026-09-25
+
+| # | Item | What settles it |
+|---|---|---|
+| X1 | **No GCC build for x86-64 has run the HTTP client on this host.** The x64 checkout `run-matrix-x64.sh` builds from sits at `8de30b0` of 2026-09-15 and contains no `httpclient/`, no `http2/`, and 17 of the 46 test modules; Windows x64 ran the client under MSVC and clang-cl only. **W1 is what the gap cost** — GCC on x86-64 moves the handler first, so every HTTP/1.1 request over TLS in such a build sent nothing until `9ca4678`, and no test here could meet it. Evaluation-order defects differ by toolchain *and* target, which is why x86-64 GCC is where another could still hide | **DEFERRED by the maintainer 2026-09-25 — "we will run the x86-64 Linux matrix later on"; owed, not dropped.** Sync the x64 checkout to `lazari2`, then `run-matrix-x64.sh`, per `scripts/devenv7/AGENTS.md`. Recommended scope as put: gcc1520 debug and release first, roughly 3–4 hours under Rosetta, one tree at a time for disk; clang x64 only if they turn something up, since it matched aarch64. **Check Rosetta is still registered before starting** — the same document records it being silently evicted |
+
 ## Owed to the Windows matrix, and not closeable here
 
 | # | Item | What settles it |
@@ -1283,7 +1289,8 @@ x64 checkout that `run-matrix-x64.sh` builds, at `8de30b0` of 2026-09-15, contai
 `httpclient/`, no `http2/`, and 17 of today's 46 test modules. Windows x64 ran the client, but under
 MSVC and clang-cl. W1 is what that gap cost: a silent data-loss defect on the most common server
 platform, reachable by every HTTPS request over HTTP/1.1, which no test here could meet. **Put to the
-maintainer 2026-09-25** as a decision: run the x64 Linux matrix over the client.
+maintainer 2026-09-25** as a decision: run the x64 Linux matrix over the client. **Deferred** the same
+day, to run later — owed as **X1**, near the top of this file.
 
 **Owed-list movement.** W1's Linux half — done, and it changed the answer. W4 — re-measured on Linux,
 0 of 50 under load, recorded with what fifty runs cannot say. The G1 gate record — corrected. Nothing
