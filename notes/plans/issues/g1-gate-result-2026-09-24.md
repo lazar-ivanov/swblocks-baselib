@@ -3,6 +3,27 @@
 **Verdict: CLEAN by the acceptance criterion.** The gate exited 1, which is the only thing it can
 ever do; §3 says why, and why the exit code carries no information at all.
 
+> **§3 and §4's premise was changed underneath this record on 2026-09-25, by `76d0764`.** Tier 3's
+> `compare( )` no longer reports an addition, a new run or a new skip from a module the baseline does
+> not carry. **Re-run over this record's own captures, identical inputs, with the tool at
+> `6c905d9`: 624 differences become 58.** The 566 that went are exactly the 17 modules `1bcde00`
+> never had, doubled; the 58 that stay are the 28 cases added to modules it *did* have, doubled, and
+> the same two assertion counts. The seven zeros of §2 are unchanged, so **the verdict stands**.
+>
+> What that makes false below: "622 of the 624 are the same 311 cases counted twice" is now 56 of 58
+> and 28 cases; and "the gate cannot exit 0 unless the tree stops growing" is now true only while
+> *covered* modules grow. §3's closing paragraph named this exact noise as the design's weakness —
+> the fix that paragraph said was deliberately not made at the end of a batch was made the next day,
+> on Windows, for tier 3's own reasons.
+>
+> **The safety property was checked, not assumed.** Suppressing additions must not suppress losses.
+> A case removed from a *covered* module — from `cases` **and** from `registered`, which is the list
+> the check reads — still reports `REGISTRATION LOST` and `NO LONGER RUNS`, 58 → 60. A first control
+> that removed it from `cases` alone reported nothing under **both** tools, old and new, which
+> looked like a regression and was the control reading the wrong field. Captures in
+> `http2-l0-state/evidence/g1/`; both tools' outputs, all three controls and their results, with a
+> README, in `http2-l0-state/logs/win-review/g1-recompare/`.
+
 Run after the day's tier-1 and tier-3 work merged. This is the first recorded G1 result — previous
 runs left evidence directories but nothing a reader could find.
 
