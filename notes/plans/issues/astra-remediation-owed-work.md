@@ -61,10 +61,10 @@ here is in `http2-l0-state/logs/win-handoff/`, outside the repository, under the
 
 | # | Item | Status |
 |---|---|---|
-| W1 | **No HTTP/1.1 request over TLS ever left the client on Windows.** `AsioSslStreamWrapperT` took its completion handler BY VALUE, as it had since the initial commit, and asio's composed write passes that handler in the same call that reads the handler's own buffer member — `stream_.async_write_some( buffers_.prepare( max_size ), std::move( *this ) )` — in an argument order the language leaves unspecified. MSVC and clang-cl move the handler first, on x64, x86 and a64, so a `std::vector< const_buffer >`, which the HTTP/1.1 driver hands `async_write( )` even for a GET, arrives empty and the write completes SUCCESSFULLY with zero octets. Measured under cdb (`bytes_transferred` 0 for a 47-octet head) and proved without TLS by a mock-stream probe on all six Windows configurations. clang's IR for Linux evaluates `prepare( )` first, so no Linux clang run could have seen it; GCC is unmeasured. Latent on `master`; live on `lazari2` since the HTTP/1.1 driver, the first caller with a vector | **FIXED** at `9ca4678`: both forwarding functions take the handler by forwarding reference, as asio's own streams do. `httpclient5` went from 3 of 8 cases and a hang to 8 of 8 on x86 and x64 vc143 and x64 ccl16; the whole x86 tree rebuilt clean — 53 of its 55 objects include the header — and the whole x86 suite ran 1050 of 1050 cases with every tier-3 difference accounted for without it (**W9**). **Owed to Linux: run the probe (`wrapper-fix/asio_probe.cpp`) under GCC**, x64 and a64 — the only toolchain whose order is unknown |
+| W1 | **No HTTP/1.1 request over TLS ever left the client on Windows.** `AsioSslStreamWrapperT` took its completion handler BY VALUE, as it had since the initial commit, and asio's composed write passes that handler in the same call that reads the handler's own buffer member — `stream_.async_write_some( buffers_.prepare( max_size ), std::move( *this ) )` — in an argument order the language leaves unspecified. MSVC and clang-cl move the handler first, on x64, x86 and a64, so a `std::vector< const_buffer >`, which the HTTP/1.1 driver hands `async_write( )` even for a GET, arrives empty and the write completes SUCCESSFULLY with zero octets. Measured under cdb (`bytes_transferred` 0 for a 47-octet head) and proved without TLS by a mock-stream probe on all six Windows configurations. clang's IR for Linux evaluates `prepare( )` first, so no Linux clang run could have seen it; GCC was then unmeasured — *measured 2026-09-25: GCC on x86-64 moves the handler first too, see the status column*. Latent on `master`; live on `lazari2` since the HTTP/1.1 driver, the first caller with a vector | **FIXED** at `9ca4678`: both forwarding functions take the handler by forwarding reference, as asio's own streams do. `httpclient5` went from 3 of 8 cases and a hang to 8 of 8 on x86 and x64 vc143 and x64 ccl16; the whole x86 tree rebuilt clean — 53 of its 55 objects include the header — and the whole x86 suite ran 1050 of 1050 cases with every tier-3 difference accounted for without it (**W9**). **The Linux half, DONE 2026-09-25 — and GCC on x86-64 had this defect too.** The probe, re-derived on Linux because the Windows one stayed on that host, run for {a64, x64} × {gcc 15.2, clang 20.1} × {`-O0`, `-O2`} at `-std=c++11`: **only x64 GCC moves the handler first** — at both levels and for both an int- and a class-returning `prepare( )` — and by value hands the stream 0 of 47 and 0 of 4047 octets while reporting success; a64 gcc, a64 clang and x64 clang evaluate `prepare( )` first. **Confirmed on the real module, not only the probe:** `httpclient5` built with x64 GCC 15.2 debug under Rosetta **hangs `ClientSessionTls_Http11FallbackExchangeTests` until the 900 s bound at `c1c5da5`** (by value), exactly the Windows symptom, and **passes 8 of 8 at `6c905d9`**. So every HTTP/1.1 request over TLS in an x86-64 GCC build sent nothing until `9ca4678`, and no x64 run on this host ever reached it — the x64 checkout predates the client; see the Linux review of 2026-09-25 below. Evidence in `http2-l0-state/probe/`, with a README |
 | W2 | **6a cannot arrange its premise on Windows.** `Http1Driver_PeerResetsAfterACompleteKeepAliveResponseTests` relies on Linux handing over octets queued ahead of a RST, and a Windows reset discards them (raw socket, 10 of 10), so the body arrives one chunk short — **40 of 40 red on x86 and on x64**, and 50 of 50 in every must-not-move loop. It is the harness's premise that fails, not the verdict it guards | **DECIDED 2026-09-25 by the maintainer, as recommended, and DONE - see the decisions below:** skip it on Windows with `UTF_SKIP_UNLESS` and the measured reason, which keeps it compiled and records the skip; the verdict logic is platform independent and Linux covers it with a real peer. Reverses if a Windows arrangement is found, without a seam, in which the read completes the message after the write handler has recorded a reset |
 | W3 | **R2's peer records are read before the peer writes them.** `runHalfCloseDuringBlockedUpload( )` snapshots `peer.records( )` with nothing ordering it after the peer's `self.record( "fin:sent" )`, which follows the FIN onto the wire — so a client that finishes first reports *"the peer did not half close"*. 2/40 on x86 and 5/40 on x64 lightly loaded, 10/50 and 17/50 under load, **0/50 isolated** | **DECIDED 2026-09-25 by the maintainer, as recommended, and DONE - see the decisions below:** wait for the record before the snapshot — a `PEER_RECORDS_AFTER_THE_FIN` beside the neighbouring cases' own constants — with a delay injected between the FIN and the record as its red. R2 is the deferral's hang-freedom control and part of 5b's must-not-move evidence, so every false red here costs the evidence reading |
-| W4 | **`waitForTaskEndWithin( )` counts iterations, not time.** Its absence bound adds the nominal 20 ms per poll to `waited`, so a poll that takes longer — under load, and plausibly from Windows sleep granularity, which is unmeasured — stretches the 125 ms window of `Http1DriverTls_IdleCloseSendsCloseNotifyTests` past the 250 ms idle close it guards, and the case reports *"the connection ended before half its idle lifetime had passed"*. 3/50 and 5/50 under load, 1/50 isolated. The case issues no write, so neither W1 nor 5b is on its path | **DECIDED 2026-09-25 by the maintainer, as recommended, and DONE - see the decisions below:** measure elapsed time against a steady clock, and count only an observation made inside the window — in this helper and in `Http1DriverTestUtils.h`'s `waitForTaskEnd( )`, which its comment calls the same helper |
+| W4 | **`waitForTaskEndWithin( )` counts iterations, not time.** Its absence bound adds the nominal 20 ms per poll to `waited`, so a poll that takes longer — under load, and plausibly from Windows sleep granularity, which is unmeasured — stretches the 125 ms window of `Http1DriverTls_IdleCloseSendsCloseNotifyTests` past the 250 ms idle close it guards, and the case reports *"the connection ended before half its idle lifetime had passed"*. 3/50 and 5/50 under load, 1/50 isolated. The case issues no write, so neither W1 nor 5b is on its path | **DECIDED 2026-09-25 by the maintainer, as recommended, and DONE - see the decisions below:** measure elapsed time against a steady clock, and count only an observation made inside the window — in this helper and in `Http1DriverTestUtils.h`'s `waitForTaskEnd( )`, which its comment calls the same helper. *Re-measured on Linux 2026-09-25:* **0 of 50** runs of `httpclient5` on a64 clang debug after the fix, every one beside a `-j1` compile — the condition the census's 1-of-57 abort was seen in. **A regression check, not a rate:** at the original 1-in-57, fifty runs would miss it about 41 % of the time, so this is consistent with the fix and does not prove the abort gone; the red side, the old helper under the same load on Linux, was not run. The fix sat in **three** copies of the helper, and all three were changed; a sweep of the tree for a fourth found none. Logs in `http2-l0-state/logs/win-review/h5x50/` |
 | W5 | **The Windows arms of `isOrderlyPeerCloseErrorCode( )` rest on nothing measured.** Row 5's re-run was the condition `windows-peer-close-error-codes-record.md` set for keeping them, and it came back clean. **This is the item's second recording, which by AGENTS.md makes it a decision** | **DECIDED 2026-09-25 by the maintainer, as recommended, and DONE - see the decisions below: narrow the orderly predicate alone**, to `eof` on every platform, and keep both reset spellings in the wide one; its own change-set, after W2 to W4. Reverses if a Windows run shows an orderly, non-resetting close arriving as `10054` or `10053`. Its only production caller is the TLS handshake retry (`TcpSslBaseTasks.h:330`), and `isPeerClosedErrorCode( )` is built on it, so removing the `connection_aborted` arm would remove it from the wide predicate too. The shape is the question: narrow the orderly predicate alone and keep both reset spellings in the wide one, or keep the arms as a deliberate, bounded difference and close the item |
 | W6 | **Handoff item 5** — `utf_baselib_h2client6/TestHttp2DriverWritePeerClose.h` compiled out on Windows | **Premise MEASURED** at the Winsock level: after a FIN and then an ordinary close over our unread upload, a parked send completes `WSAECONNRESET` — a code the read-side predicate already admits — and never `EPIPE`, 20 of 20. **DECIDED 2026-09-25 by the maintainer, as recommended, and DONE - see the decisions below:** record the exclusion as measured and close the item; a Windows-shaped equivalent would be green before and after for exactly that reason |
 | W7 | **Handoff item 6** — the `WSAESHUTDOWN` route through the TLS cancel-close cases | **NOT OBSERVED.** The parked TLS write completed `operation_aborted` (995) in 30 of 30 cdb runs of the two write-in-flight cases on x64. On cleartext R2 the write does complete `WSAESHUTDOWN`, from our own `shutdown_send`, and `isOurOwnTeardown` excuses it |
@@ -1230,3 +1230,67 @@ cannot see the extractor* is decision (4).
 new, but nothing is measured; whether the orchestrator's merge conflicts on the baseline, which
 depends on the state of `lazari2` at that hour; and the trailing-comment strip, zero-instance today
 on both sides and left with C3.
+
+## Linux review and validation of the Windows matrix round (`9ca4678`..`6c905d9`), 2026-09-25
+
+Fourteen commits, thirty files, reviewed and then validated on Linux — the half the Windows rounds
+left: *"validated by focused testing only, the full matrix left for the maintainer to authorise"*,
+and W1's *"owed to Linux: run the probe under GCC, x64 and a64"*. **Accepted.** One thing it turned
+up is larger than anything it was sent for, and is put to the maintainer at the end.
+
+**The product surface is small, and every behavioural change is inert on Linux — read, not
+assumed.** Four lines in `AsioSslStreamWrapper.h` (the handler by forwarding reference); the
+predicates in `NetUtils.h`; the capabilities in `OSImplPlatformCommon.h`. `Http1ConnectionTask.h`,
+`Http2ConnectionTask.h`, `TcpSslBaseTasks.h` and `check_split.sh` carry **zero** non-comment changed
+lines. `peerResetIsReportedToEveryOperation( )` and `peerCloseCanBeReportedAsConnectionAborted( )`
+are both `isWindows`, and `peerCloseWithUnreadDataIsReportedAsReset( )` — the capability that stood
+on the withdrawn premise — is removed with no caller left. So on Linux `isOrderlyPeerCloseErrorCode`
+is `eof` before and after, `isPeerClosedErrorCode` is `eof | reset` before and after, and
+`isPeerResetOnWriteErrorCode`'s new guard never fires. The W5 classifier test collapsed its platform
+branches into one assertion **identical to the one Linux already took**; the 6a skip is a runtime
+`UTF_SKIP_UNLESS` keyed on the capability, so the case still runs here. The iteration-counting wait
+lived in **three** copies of the helper and all three were fixed; the tree holds no fourth.
+
+**Validation — the orchestrator's two cells, whole suite, since core headers changed:**
+
+| | build | run |
+|---|---|---|
+| **gcc1520 debug** | clean, every module | against the previous tip's capture, same toolchain: **2 differences, all seven absolute checks zero**. `BlobTransfer_FilesPackagerInMemoryCancelUploadTests 37 → 35` is the known flaky cancel case; `PeerCloseErrorCodes_CleanEndOfStreamSetTests 14 → 15` is a case whose body this round changed (`8ee047d` records it), still passing, with platform branches collapsed into unconditional assertions |
+| **clang2010 release** | clean, every module | **1062 of 1073 run, identical to gcc debug**; the only non-zero module is `utf_baselib_jni` |
+
+`utf_baselib_jni`'s `exit=200` with `0 ran` is the recorded host property, and it was **checked
+again rather than waved through**: run directly with `--report_level=detailed`, all eleven cases
+report *passed*; the module suppresses its *Entering test case* lines, which is why both the tool and
+a plain `--log_level` run count zero. Its three gate captures of 2026-09-24, the parent `1bcde00`
+included, show the same. *A plain run without the report nearly led this review to rewrite a correct
+note from a partial view.*
+
+`76d0764`'s tier-3 change is **an improvement to the G1 gate as well as to tier 3**: over the gate's
+own captures, identical inputs, 624 differences become 58, and losses in covered modules still report
+— recorded against `g1-gate-result-2026-09-24.md`, whose §3 it made stale. The refreshed 28-module
+`runlog.json` still refuses a Linux capture at exit 3.
+
+**W1 on Linux: GCC on x86-64 moves the handler first, so the defect was live there too.** The detail
+is in W1's row. Two things belong here. The source comment said *"GCC has not been measured"*, which
+read as reassurance; it now states which toolchains move first, **rewritten seven lines for seven so
+the object is untouched** — `UtfBaselibHttpClient5Main.o` recompiled byte-identical under gcc debug
+and clang debug, so both suite runs above stand for the edited tree. And the probe was re-derived
+here from `9ca4678`'s description, so it was proved *able* to see the defect before its "no loss"
+rows were trusted: on x64 GCC it does see it, and the real module agrees.
+
+**The larger finding: nothing built with GCC for x86-64 has run the HTTP client on this host.** The
+x64 checkout that `run-matrix-x64.sh` builds, at `8de30b0` of 2026-09-15, contains no
+`httpclient/`, no `http2/`, and 17 of today's 46 test modules. Windows x64 ran the client, but under
+MSVC and clang-cl. W1 is what that gap cost: a silent data-loss defect on the most common server
+platform, reachable by every HTTPS request over HTTP/1.1, which no test here could meet. **Put to the
+maintainer 2026-09-25** as a decision: run the x64 Linux matrix over the client.
+
+**Owed-list movement.** W1's Linux half — done, and it changed the answer. W4 — re-measured on Linux,
+0 of 50 under load, recorded with what fifty runs cannot say. The G1 gate record — corrected. Nothing
+new is owed that is not put as a decision.
+
+**Not covered, and said so:** gcc release, the cell nobody covers by design; clang debug beyond
+`httpclient5`; x64 beyond `httpclient5`; and every Windows measurement these rounds cite, whose
+evidence directory `http2-l0-state/logs/win-handoff/` lives on the Windows host and could not be
+inspected here — those were reviewed for reasoning and re-derived where Linux can, not re-read.
+Evidence in `http2-l0-state/logs/win-review/` and `http2-l0-state/probe/`.
