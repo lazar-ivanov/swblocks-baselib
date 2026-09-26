@@ -533,13 +533,13 @@ namespace bl
              * (impl/write.hpp, and impl/read.hpp makes the same call for a read), where 'buffers_' is
              * a member of the very handler being passed. A by-value parameter MOVE-CONSTRUCTS that
              * handler while the call's arguments are evaluated, and the order in which they are
-             * evaluated is unspecified. MSVC and clang-cl, on every target, move the handler first
-             * in this call - measured with asio's own async_write( ) over a mock stream - so
-             * prepare( ) reads a buffer sequence already moved out of it; clang on Linux evaluates
-             * prepare( ) first and never showed it, and GCC has not been measured. A single buffer
-             * survives the move unchanged. A std::vector< const_buffer > is left empty, the TLS
-             * engine is handed zero octets, and the composed write completes SUCCESSFULLY having
-             * sent nothing - which is what every HTTP/1.1 request over TLS did on Windows, because
+             * evaluated is unspecified. MSVC and clang-cl on every target, and GCC on x86-64, move the
+             * handler first in this call - measured with asio's own async_write( ) over a mock stream -
+             * so prepare( ) reads a buffer sequence already moved out of it; clang on Linux and GCC on
+             * aarch64 evaluate prepare( ) first, which is why no aarch64 run ever showed it. A single
+             * buffer survives the move unchanged. A std::vector< const_buffer > is left empty, the TLS
+             * engine is handed zero octets, and the composed write completes SUCCESSFULLY having sent
+             * nothing - which every HTTP/1.1 request over TLS did on Windows and on x86-64 GCC, because
              * the driver hands async_write( ) a vector, even a GET's holding the head alone
              *
              * Taken by reference, nothing is moved until the stream builds its own operation inside
