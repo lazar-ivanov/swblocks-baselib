@@ -310,6 +310,14 @@ from the verified pieces above; to be shown by running it.
   and the A4 recipe in `utf_baselib_httpclient7/notes.txt`, which describe the self-deadlock in
   `scheduleTask( )` as this case's red. CS-1 owns their comment lines for this purpose (§11).
 
+**Corrected after implementation, 2026-09-27.** A4's new red is now **MEASURED**, not inferred:
+against a start handler which armed the first read with `armRead( )` bare - a local edit, restored -
+the case printed "the driver task never reached its terminal path" when its 30 s bound expired, and
+the module then did not finish (rc 124 under a 120 s bound), `logs/astra2/cs1/a4-bare-arm-regression-summary.log`.
+And the stale-text list above missed three comments in `TestHttp1DriverScheduleThrow.h`, the ones on
+`TASK_END_TIMEOUT_IN_MILLISECONDS`, on `armReadInitiatorThrow( )` and on `eq -> push_back( )`; they
+are corrected in `a83e65e`.
+
 ---
 
 ## 8. The reversal condition — does anything depend on the read starting inside `scheduleTask( )`?
