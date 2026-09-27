@@ -56,3 +56,4 @@
 #include "TestHttp1Codec.h"
 #include "TestHttpClientRequestTask.h"
 #include "TestHttpClientRequestTaskSinkAccounting.h"
+#include "TestHttpClientRequestTaskOutstandingCap.h"

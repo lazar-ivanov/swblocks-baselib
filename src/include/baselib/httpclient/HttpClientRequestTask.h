@@ -83,9 +83,35 @@ namespace bl
 
             cpp::ScalarTypeIniter< std::size_t >                                maxResponseBodySize;
 
+            /**
+             * The cap on what one request holds of a response body and has not handed on - D3 of
+             * astra's second review, 64 MB by default. Past it the stream is reset with CANCEL and
+             * the request fails with BufferTooSmallException; nothing is truncated, and no read is
+             * paused
+             *
+             * WHAT IS CHARGED is each held block's payload not yet taken PLUS a fixed allowance for
+             * the memory the block costs beyond its payload -
+             * HttpClientRequestTaskT::OUTSTANDING_BLOCK_ALLOWANCE - so that a peer which delivers one
+             * byte per read cannot hold hundreds of bytes of memory per byte of payload. The unit
+             * stays bytes
+             *
+             * IT BOUNDS WHAT IS OUTSTANDING AND NOT THE BODY: bytes a sink has taken, or the
+             * buffered path has appended, are released, so a body of any size passes a sink which
+             * keeps up. There is no "off" value, as maxResponseBodySize has none - a caller who
+             * wants none sets SIZE_MAX - and 0 fails the first block of any body. On the buffered
+             * path the body is appended as soon as it is applied, so this bounds only the mailbox
+             * there: it is the backstop behind maxResponseBodySize for a drain which has fallen
+             * behind, and its message differs, so a caller can meet it on a body under the total
+             * cap
+             */
+
+            cpp::ScalarTypeIniter< std::size_t >                                maxOutstandingResponseBodySize;
+
             enum : std::size_t
             {
                 DEFAULT_MAX_RESPONSE_BODY_SIZE      = 64U * 1024U * 1024U,
+                DEFAULT_MAX_OUTSTANDING_RESPONSE_BODY_SIZE
+                                                    = 64U * 1024U * 1024U,
                 DEFAULT_TOTAL_TIMEOUT_IN_MINUTES    = 30U,
             };
 
@@ -96,6 +122,7 @@ namespace bl
                 streamIdleTimeout( time::neg_infin )
             {
                 maxResponseBodySize = DEFAULT_MAX_RESPONSE_BODY_SIZE;
+                maxOutstandingResponseBodySize = DEFAULT_MAX_OUTSTANDING_RESPONSE_BODY_SIZE;
             }
 
             /**
@@ -240,6 +267,14 @@ namespace bl
                 Closed,
                 Expired,
                 Cancelled,
+
+                /*
+                 * A Data event whose block would have crossed maxOutstandingResponseBodySize,
+                 * stripped of its block by post( ) - D3. Applied, it resets the stream and fails
+                 * the request; see applyOverflow( )
+                 */
+
+                Overflow,
             };
 
             /**
@@ -268,6 +303,33 @@ namespace bl
 
                 std::exception_ptr                                              exception;
             };
+
+        public:
+
+            /**
+             * @brief What each held body block is charged against
+             * HttpClientRequestConfig::maxOutstandingResponseBodySize on top of its payload - D3
+             *
+             * DERIVED FROM THE TYPES, so that it stays honest as they change: the mailbox Event a
+             * block waits in, the DataBlock object which carries it, and ALLOCATOR_OVERHEAD_PER_BLOCK
+             * for the two heap allocations a block makes - the object and its buffer - each paying
+             * the allocator's header and its rounding ( glibc's smallest chunk is 32 bytes ). At a64
+             * clang debug that is 104 + 64 + 64 = 232. A block which has left the mailbox no longer
+             * has its Event and holds less than it is charged, and that is accepted: one charge per
+             * block, the larger one, is simpler to keep exact than one which changes as it moves
+             *
+             * Public because a case which states a cap in blocks has to compute it from this
+             */
+
+            enum : std::size_t
+            {
+                ALLOCATOR_OVERHEAD_PER_BLOCK        = 64U,
+
+                OUTSTANDING_BLOCK_ALLOWANCE         =
+                    sizeof( Event ) + sizeof( data::DataBlock ) + ALLOCATOR_OVERHEAD_PER_BLOCK,
+            };
+
+        protected:
 
             /**
              * @brief An interim (1xx) response, kept because ClientResponse has nowhere for one
@@ -299,6 +361,22 @@ namespace bl
             mutable os::mutex                                                   m_mailboxLock;
             std::deque< Event >                                                 m_mailbox;
             cpp::ScalarTypeIniter< bool >                                       m_isDrainScheduled;
+
+            /*
+             * WHAT THIS TASK HOLDS OF THE BODY AND HAS NOT HANDED ON, as charged against
+             * maxOutstandingResponseBodySize - D3. Mailbox state, under m_mailboxLock and never
+             * touched without it: it rises in post( ), in the critical section which queues the
+             * block, and falls as the sink takes bytes, as the buffered path appends a block or
+             * refuses it, and as a block reaches a request which has already failed - see
+             * chargeOf( ) and releaseOutstanding( )
+             *
+             * THE INVARIANT IS count <= cap, by construction: post( ) refuses a charge which would
+             * cross the cap, and every release matches a charge. The latch is set by the first
+             * refusal, after which no further body block is queued at all
+             */
+
+            cpp::ScalarTypeIniter< std::size_t >                                m_outstandingCharge;
+            cpp::ScalarTypeIniter< bool >                                       m_isOutstandingCapExceeded;
 
             /*
              * Everything below is the task's own state and is touched only from the drain, under
@@ -384,10 +462,58 @@ namespace bl
             {
                 BL_NOEXCEPT_BEGIN()
 
+                /*
+                 * DECLARED FIRST SO THAT IT DIES LAST, after the mailbox lock is released. An
+                 * overflow marker's block is moved in here, and dropping a block runs its
+                 * destructor - the kind of work this leaf lock keeps out
+                 */
+
+                om::ObjPtrCopyable< data::DataBlock > dropped;
+
                 om::ObjPtr< ThreadPool > threadPool;
 
                 {
                     BL_MUTEX_GUARD( m_mailboxLock );
+
+                    if( EventKind::Data == event.kind && event.data )
+                    {
+                        /*
+                         * D3 - THE ONE PLACE THE CHARGE RISES, and the check, the latch and the
+                         * push are one step under this lock, so "counted" and "queued" can never
+                         * disagree. This decides and cannot act: it is NOEXCEPT, runs on the
+                         * driver's strand under a leaf lock, and the completion is the drain's. So
+                         * a block which would cross the cap becomes a marker which the drain
+                         * applies in order - behind every block queued before it, and ahead of the
+                         * Closed, which the contract makes the last event
+                         */
+
+                        if( m_isOutstandingCapExceeded )
+                        {
+                            /*
+                             * After the latch: not queued, not counted, no drain scheduled. The
+                             * event dies in the caller's frame, off the lock
+                             */
+
+                            return;
+                        }
+
+                        const auto charge = chargeOf( *event.data );
+                        const auto cap = m_config.maxOutstandingResponseBodySize.value();
+
+                        if( charge > cap - m_outstandingCharge.value() )
+                        {
+                            m_isOutstandingCapExceeded = true;
+
+                            event.kind = EventKind::Overflow;
+
+                            dropped = event.data;
+                            event.data.reset();
+                        }
+                        else
+                        {
+                            m_outstandingCharge = m_outstandingCharge.value() + charge;
+                        }
+                    }
 
                     m_mailbox.push_back( BL_PARAM_FWD( event ) );
 
@@ -424,6 +550,55 @@ namespace bl
                 event.kind = kind;
 
                 post( std::move( event ) );
+            }
+
+            /**
+             * @brief What one block is charged against maxOutstandingResponseBodySize - its payload
+             * not yet taken, plus OUTSTANDING_BLOCK_ALLOWANCE for the memory it costs beyond it
+             *
+             * A block is not touched between post( ) and its apply, so what this computes when the
+             * block is applied is exactly what post( ) charged
+             */
+
+            static std::size_t chargeOf( SAA_in const data::DataBlock& block ) NOEXCEPT
+            {
+                return
+                    ( block.size() - block.offset1() ) +
+                    static_cast< std::size_t >( OUTSTANDING_BLOCK_ALLOWANCE );
+            }
+
+            /**
+             * @brief Gives back what a block was charged, or the part of it the sink has taken
+             *
+             * UNDER THE MAILBOX LOCK, which is a leaf: this calls nothing while holding it. It runs
+             * from the drain's apply phase with the task lock held - an edge the task already has,
+             * since TaskBase::scheduleNothrow( ) holds the task lock across scheduleTask( ), which
+             * takes this lock - and from the deferred phase with no lock held
+             *
+             * A RELEASE NEVER EXCEEDS WHAT IS HELD, by construction: every release matches a
+             * charge, and the crossing block and everything after the latch were never charged. It
+             * is asserted, and clamped rather than allowed to wrap, so that a defect here would
+             * loosen the cap rather than refuse every block of every later response
+             */
+
+            void releaseOutstanding( SAA_in const std::size_t charge ) NOEXCEPT
+            {
+                BL_NOEXCEPT_BEGIN()
+
+                if( 0U == charge )
+                {
+                    return;
+                }
+
+                BL_MUTEX_GUARD( m_mailboxLock );
+
+                BL_ASSERT( charge <= m_outstandingCharge.value() );
+
+                m_outstandingCharge =
+                    m_outstandingCharge.value() -
+                    std::min< std::size_t >( charge, m_outstandingCharge.value() );
+
+                BL_NOEXCEPT_END()
             }
 
             void onDrain() NOEXCEPT
@@ -609,6 +784,15 @@ namespace bl
                     case EventKind::Expired:
                     case EventKind::Cancelled:
                         applyStopped( event, deferred );
+                        break;
+
+                    /*
+                     * AN ARM OF ITS OWN AND NOT THE default:, which is Start's - a marker which fell
+                     * into it would arm the total timer again and acquire a second connection
+                     */
+
+                    case EventKind::Overflow:
+                        applyOverflow( deferred );
                         break;
                 }
             }
@@ -896,6 +1080,36 @@ namespace bl
                 SAA_inout       std::vector< cpp::void_callback_t >&            deferred
                 )
             {
+                if( m_isCompleted || m_isCompletionPending )
+                {
+                    /*
+                     * A BLOCK FOR A REQUEST WHICH HAS ALREADY FAILED IS DROPPED - offered to no
+                     * sink, appended to no body, credited to no window - and its charge is given
+                     * back. The maintainer's third decision of this run, folded into D3
+                     *
+                     * WHILE Data CAN STILL ARRIVE, A DECIDED COMPLETION CAN ONLY BE A FAILURE. The
+                     * one pending SUCCESS is answerOnClosed( )'s, set on a clean Closed, and no Data
+                     * is applied after a Closed: the contract makes it the last event, and both
+                     * drivers make it so for Data structurally - the HTTP/1.1 driver retires the
+                     * sink and the handle before it calls onClosed( ), and the HTTP/2 driver erases
+                     * the stream before it does. So this is a timeout or a cancel, a sink which
+                     * threw, a failed upload read or the buffered cap - never a body the caller is
+                     * owed, and every one of them has already reset the stream, so what is not
+                     * credited here is squared up when the stream is reaped
+                     *
+                     * BEFORE armIdleTimer( ), deliberately: failWith( ) has cancelled every timer,
+                     * and re-arming one here would hold this task for a stream idle timeout nobody
+                     * is waiting on
+                     */
+
+                    if( event.data )
+                    {
+                        releaseOutstanding( chargeOf( *event.data ) );
+                    }
+
+                    return;
+                }
+
                 armIdleTimer();
 
                 if( ! event.data )
@@ -927,7 +1141,12 @@ namespace bl
                      * The body is over the cap. The stream is reset and the request fails; the
                      * bytes are NOT credited, because crediting them would ask the server for more
                      * of a body we have already decided not to take
+                     *
+                     * THE BLOCK'S CHARGE GOES BACK FIRST, whatever follows, since it is dropped here
+                     * - D3. Every block after this one reaches the guard above instead
                      */
+
+                    releaseOutstanding( chargeOf( *event.data ) );
 
                     cancelStream( deferred );
 
@@ -953,6 +1172,13 @@ namespace bl
                     event.data -> begin() + event.data -> offset1(),
                     event.data -> begin() + event.data -> size()
                     );
+
+                /*
+                 * Appended, so no longer outstanding - D3. The buffered path lets go of a block as
+                 * soon as it applies it, which is why the cap bounds only the mailbox here
+                 */
+
+                releaseOutstanding( chargeOf( *event.data ) );
 
                 reportConsumed( size, deferred );
             }
@@ -1031,14 +1257,25 @@ namespace bl
 
                     consumed += taken;
 
+                    /*
+                     * AND GIVEN BACK IN THE SAME PLACE - D3, after the call and never across it:
+                     * what the sink took is no longer outstanding, and the block's allowance goes
+                     * when the block leaves the queue. A partly taken block keeps its allowance
+                     * until it does
+                     */
+
                     if( taken < offered )
                     {
                         block -> setOffset1( block -> offset1() + taken );
+
+                        releaseOutstanding( taken );
 
                         break;
                     }
 
                     m_pendingDownload.pop_front();
+
+                    releaseOutstanding( taken + static_cast< std::size_t >( OUTSTANDING_BLOCK_ALLOWANCE ) );
                 }
 
                 /*
@@ -1512,6 +1749,51 @@ namespace bl
                             )
                         ),
                     true /* isExpected */
+                    );
+            }
+
+            /**
+             * @brief The overflow marker post( ) queued - D3: the stream is reset and the request
+             * fails with BufferTooSmallException, as the buffered cap already does
+             *
+             * THE EARLIER VERDICT STANDS when there is one, and returning is right: every path which
+             * decides a completion before a Closed has already reset the stream or never opened one
+             * - applyStopped( ), the buffered cap, a failed deferred action - and a pending success
+             * is set only on a Closed, which no marker can follow. The marker carries no charged
+             * block, so nothing is given back here, and no timer is armed
+             *
+             * NOT A SILENT TRUNCATION: the pending failure is what stops applyClosed( ) queueing the
+             * drain which tells the sink the body is complete, and what makes answerOnClosed( ) - the
+             * success path - return at once. The sink keeps the prefix which arrived before the cap
+             * was crossed, as after any other failure of a streamed request, and the caller holds
+             * the failure
+             */
+
+            void applyOverflow( SAA_inout std::vector< cpp::void_callback_t >& deferred )
+            {
+                if( m_isCompleted || m_isCompletionPending )
+                {
+                    return;
+                }
+
+                cancelStream( deferred );
+
+                failWith(
+                    std::make_exception_ptr(
+                        BL_EXCEPTION(
+                            BufferTooSmallException(),
+                            resolveMessage(
+                                BL_MSG()
+                                    << "The HTTP response body received and not yet taken exceeded "
+                                    << "the maximum of "
+                                    << m_config.maxOutstandingResponseBodySize.value()
+                                    << " bytes, counting each held block's payload and an allowance of "
+                                    << static_cast< std::size_t >( OUTSTANDING_BLOCK_ALLOWANCE )
+                                    << " bytes for its memory"
+                                )
+                            )
+                        ),
+                    false /* isExpected */
                     );
             }
 

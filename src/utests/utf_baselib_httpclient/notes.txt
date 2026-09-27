@@ -90,3 +90,9 @@
 # offered nothing more and is not replayed onto
 --log_level=message --run_test=HttpClientRequestTask_SinkWhichThrowsKeepsItsCountAndIsOfferedNothingMoreTests
 --log_level=message --run_test=ClientSession_SinkWhichThrewIsNotReplayedOntoTests
+
+# D3 of astra's second review - the cap on what a request holds of a body and has not handed on:
+# the mailbox, the per-block allowance, and no block for a request which has already failed
+--log_level=message --run_test=HttpClientRequestTask_OutstandingCapFailsAtTheMailboxTests
+--log_level=message --run_test=HttpClientRequestTask_OutstandingCapChargesEachBlockItsAllowanceTests
+--log_level=message --run_test=HttpClientRequestTask_ABlockAfterTheFailureIsNotOfferedTests
