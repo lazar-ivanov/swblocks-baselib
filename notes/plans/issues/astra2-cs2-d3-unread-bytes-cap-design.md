@@ -1,13 +1,15 @@
 # D3 — a cap on the HTTP/1.1 body bytes a sink has not taken — design (CS-2)
 
-**Date:** 2026-09-27. **Status: revision 1, NOT agreed. Not coded.** Written by the CS-2 lane for the
-review the workflow requires before D3 is implemented
+**Date:** 2026-09-27. **Status: revision 1, AGREED 2026-09-27 - see the Agreement line at the end.**
+Written by the CS-2 lane for the review the workflow requires before D3 is implemented
 ([`../parallel-implementation-workflow.md`](../parallel-implementation-workflow.md) §4.1). Nothing
 was built or run for the mechanism; the two type sizes in §6 were measured with a compile-only probe.
 
 **Revised 2026-09-27**, once, after fable's round-1 review and the maintainer's first decision round
-of this run: §6 as the maintainer decided it; the `applyData( )` guard he folded into D3 (§2, §3,
-§8); and the review's findings F1-F7 and proposals P2-P10, in its wording where it gave wording.
+of this run: §6 as the maintainer decided it; the `applyData( )` guard the maintainer folded into
+D3 (§2, §3, §8); and the review's findings F1-F7 and proposals P2-P10, in its wording where it gave
+wording. Round 2's Low findings R2-F1 to R2-F3 were folded in with the agreement line, in its
+wording.
 
 **What is decided, and is not reopened here** — [`astra-second-review-decisions.md`](astra-second-review-decisions.md)
 §3, D3: *fail, in the request task, with a default of 64 MiB. A new cap beside `maxResponseBodySize`
@@ -62,13 +64,18 @@ cited source; **INFERRED** means it follows from verified facts and was not obse
 | **Falls (a): the sink took bytes** | `offerToSink( )` (`:969-1012`), per block, once `onData( )` has returned | what it returned, clamped to what was offered (`:979-982`); **and the allowance when the block is popped** - a partly taken block keeps its allowance until it is | the drain, deferred phase | nothing held; takes `m_mailboxLock` for the decrement |
 | **Falls (b): the buffered path appended** | `applyData( )`, after the append (`:943-946`) | payload plus allowance | the drain, apply phase | the task lock (`applyEvents( )`, `:464`); takes `m_mailboxLock` |
 | **Falls (c): the buffered cap refused the block** | `applyData( )`'s cap branch (`:915-941`), whose block is dropped - **the release first in that branch and unconditional** (the review's P4) | payload plus allowance | the same | the same |
-| **Falls (d): the request had already failed** | a new guard at the TOP of `applyData( )`, before `armIdleTimer( )` - the maintainer's third decision | payload plus allowance; the block is dropped, and nothing is offered, appended or credited | the same | the same |
+| **Falls (d): the request had already failed** | a new guard at the TOP of `applyData( )`, before `armIdleTimer( )` - the maintainer's third decision | payload plus allowance, released only when the event carries a block (arm 1 charged none); the block is dropped, and nothing is offered, appended or credited | the same | the same |
 
 - **(d) is the fourth site and the only new behaviour besides the cap.** Its test is "the
   completion is already decided" - `m_isCompleted || m_isCompletionPending` - and **while `Data` can
   still arrive, a decided completion can only be a failure.** The one pending SUCCESS is
   `answerOnClosed( )`'s (`:1386`), set on a clean `Closed`, and `Closed` is always the last event
-  (`ClientConnection.h:140-143`); so no `Data` is ever applied behind a pending success, and every
+  (`ClientConnection.h:140-143`) — and, for `Data` in particular, structurally on both drivers:
+  HTTP/1.1 retires the sink and the handle under `m_stateLock` before `onClosed( )`
+  (`Http1ConnectionTask.h:1753-1764`) and delivers body only through `tryGetActiveStream( )`
+  (`:1517-1530`); HTTP/2 erases the stream before `onClosed( )` (`Http2ConnectionTask.h:1155-1200`)
+  and `onDataEvent( )` returns without a sink (`:1400-1407`). VERIFIED — so no `Data` is ever
+  applied behind a pending success, and every
   block (d) drops belongs to a request whose caller already holds its failure. That is a timeout or
   a cancel from `applyStopped( )`, which today still offers such blocks to the caller's sink (the
   review's §7 item 2), a sink which threw, a failed upload read, or the buffered cap. The overflow
@@ -218,7 +225,9 @@ on HTTP/1.1.
 (`Http1ConnectionTask.h:2453-2461`). On HTTP/2 the dropped bytes are never credited, which is right
 for a stream being reset — the buffered cap's own reason (`:917-921`) — and the connection window
 does not leak: when the reset stream is reaped, `emitStreamClosed( )` credits whatever it still has
-outstanding to the connection window (`Session.h:3550-3562`). VERIFIED.
+outstanding to the connection window (`Session.h:3550-3562`). VERIFIED. The same holds for what the
+guard (d) drops: every failure it can follow has already reset the stream (§3), so those bytes are
+squared up at the same reap.
 
 ## 5. Over HTTP/2
 
@@ -268,7 +277,9 @@ this task could charge. That is CS-3's file: the maintainer decided the same day
 `blockOf( )` asking for the payload's own size. This note does not claim it.
 
 **Decided: each queued block is charged a fixed allowance on top of its payload**, a named constant
-derived from the types, with the derivation in its comment:
+derived from the types, with the derivation in its comment — a public static of the task, since
+`Event` is the task's own protected type and §8's cases compute their caps from it;
+`HttpClientRequestConfig`'s comment names it:
 
 - `sizeof( Event ) + sizeof( data::DataBlock )` - the mailbox entry and the block object. Measured
   with a compile-only probe at a64 clang debug: **104 + 64**. `data::DataBlock` is already the
@@ -380,7 +391,8 @@ first draft at the same commit.
 **Measured:** `sizeof( Event )` 104 and `sizeof( data::DataBlock )` 64, at a64 clang debug, with a
 compile-only probe of the header.
 
-**Inferred:** that each driver honours "closed is last" (the contract says so); the allocator
+**Inferred:** that each driver honours "closed is last" in full (the contract says so; that no `Data`
+follows a `Closed` is verified at both drivers); the allocator
 constant, 64, which is an estimate of two allocations' headers and rounding and not a measurement;
 and that a 64 MiB body cannot fit the socket buffers on every platform.
 
@@ -395,4 +407,4 @@ since the count's invariant depends on it.
 
 ## Agreement
 
-*(The dated agreement line goes here once the review is closed. D3 is not coded before it.)*
+**Agreement: 2026-09-27.** Fable's round 2 (`D3-design-r2.md`) re-checked this revision against round 1 and the maintainer's decisions and agrees; the orchestrator agrees. D3 is implemented to this note.
