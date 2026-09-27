@@ -27,6 +27,7 @@
 
 #include <baselib/data/DataBlock.h>
 
+#include <baselib/core/AsioSSL.h>
 #include <baselib/core/BaseIncludes.h>
 
 #include <cstddef>
@@ -485,24 +486,98 @@ namespace utest
             return result;
         }
 
+        enum : std::size_t
+        {
+            /**
+             * @brief The octets of a TLS record header - type, version, length
+             */
+
+            RECORD_HEADER_SIZE                  = 5U,
+        };
+
         /**
-         * @brief The five octets which leave the client's TLS engine wanting more
+         * @brief The peer's close_notify, sealed by its own TLS engine and handed back as octets
+         * rather than sent
          *
-         * A record header and no payload: application_data, the TLS 1.2 record version every
-         * TLS 1.3 record still carries, and a length of 32 octets which never arrive
+         * The window these cases need is opened by a PARTIAL record: the client's engine takes a
+         * record header, wants the rest and re-arms its transport read behind the case's hold. And
+         * the ending the gates are about has to be CLEAN, which over TLS means a close_notify - a
+         * truncation is refused by isCleanEndOfStream( ) on its own since D1, and would pass these
+         * cases with either gate removed. So the partial record is the head of the peer's own
+         * close_notify: the alert is sealed into a memory BIO swapped in for the session's write
+         * BIO, its octets are taken out, and the peer sends the record header now and the rest once
+         * our FIN has reached it.
+         *
+         * ONE SSL_shutdown( ) SENDS THE ALERT AND WAITS FOR NOTHING - ssl3_shutdown( ) returns 0
+         * from its first call without reading - and afterwards SSL_read( ) still hands over the
+         * client's application data (OpenSSL 3.5, ssl/record/rec_layer_s3.c: a record of the type
+         * asked for is returned before the SENT_SHUTDOWN branch), which the face 1 cases need to
+         * drain the upload. The write BIO is asio's half of its BIO pair: it is referenced before
+         * the swap, because SSL_set0_wbio( ) frees the BIO it replaces, and handed back after it,
+         * which frees the memory BIO
          */
 
-        inline auto partialRecordHeader() -> std::string
+        inline auto sealCloseNotify( SAA_inout sessiontlsh1::Http1TlsPeer::sslstream_t& stream )
+            -> std::string
         {
-            std::string header;
+            SSL* const ssl = stream.native_handle();
 
-            header.push_back( static_cast< char >( 0x17 ) );
-            header.push_back( static_cast< char >( 0x03 ) );
-            header.push_back( static_cast< char >( 0x03 ) );
-            header.push_back( static_cast< char >( 0x00 ) );
-            header.push_back( static_cast< char >( 0x20 ) );
+            BIO* const original = ::SSL_get_wbio( ssl );
 
-            return header;
+            BL_CHK(
+                false,
+                nullptr != original && 1 == ::BIO_up_ref( original ),
+                BL_MSG()
+                    << "The peer's TLS session has no write BIO to swap"
+                );
+
+            BIO* const sealed = ::BIO_new( ::BIO_s_mem() );
+
+            if( nullptr == sealed )
+            {
+                ::BIO_free( original );
+
+                BL_THROW(
+                    bl::UnexpectedException(),
+                    BL_MSG()
+                        << "A memory BIO could not be allocated"
+                    );
+            }
+
+            ::SSL_set0_wbio( ssl, sealed );
+
+            const int rc = ::SSL_shutdown( ssl );
+
+            std::string record;
+
+            char buffer[ 256 ];
+
+            for( ;; )
+            {
+                const int size = ::BIO_read( sealed, buffer, static_cast< int >( sizeof( buffer ) ) );
+
+                if( size <= 0 )
+                {
+                    break;
+                }
+
+                record.append( buffer, static_cast< std::size_t >( size ) );
+            }
+
+            ::SSL_set0_wbio( ssl, original );
+
+            BL_CHK(
+                false,
+                0 == rc && record.size() > static_cast< std::size_t >( RECORD_HEADER_SIZE ),
+                BL_MSG()
+                    << "The peer's close_notify was not sealed: SSL_shutdown( ) returned "
+                    << rc
+                    << " with "
+                    << record.size()
+                    << " octets"
+                );
+
+            return record;
         }
 
         /**
@@ -615,24 +690,31 @@ namespace utest
                     self.waitForRelease();
 
                     /*
-                     * ON THE TRANSPORT AND NOT THROUGH THE ENGINE, because what this has to be is
-                     * an INCOMPLETE record - see the header comment. It is written after the case
-                     * has taken the strand, so the client's armed read takes it in the reactor and
-                     * its intermediate handler waits
+                     * THE HEADER OF THE PEER'S OWN close_notify, ON THE TRANSPORT AND NOT THROUGH
+                     * THE ENGINE, because what this has to be is an INCOMPLETE record - see
+                     * sealCloseNotify( ). It is written after the case has taken the strand, so the
+                     * client's armed read takes it in the reactor and its intermediate handler waits
                      */
+
+                    const auto closeNotify = sealCloseNotify( stream );
+
+                    self.record(
+                        "close-notify:" + bl::utils::lexical_cast< std::string >( closeNotify.size() )
+                        );
 
                     {
                         eh::error_code ec;
 
-                        const auto header = partialRecordHeader();
-
                         ( void ) asio::write(
                             stream.next_layer(),
-                            asio::buffer( header ),
+                            asio::buffer(
+                                closeNotify.data(),
+                                static_cast< std::size_t >( RECORD_HEADER_SIZE )
+                                ),
                             ec
                             );
 
-                        self.record( ec ? "partial:failed" : "partial:sent" );
+                        self.record( ec ? "close-notify-head:failed" : "close-notify-head:sent" );
                     }
 
                     peerPartialSent.set();
@@ -661,6 +743,27 @@ namespace utest
                     self.observeStreamEnd( stream );
 
                     self.record( "peer-end:" + Http1TlsPeer::describe( self.streamEndCode() ) );
+
+                    /*
+                     * AND IT ANSWERS OUR FIN WITH THE REST OF ITS close_notify, so the ending the
+                     * client's read observes is a CLEAN one - eof - which nothing but the gates
+                     * stops from completing the message
+                     */
+
+                    {
+                        eh::error_code ec;
+
+                        ( void ) asio::write(
+                            stream.next_layer(),
+                            asio::buffer(
+                                closeNotify.data() + static_cast< std::size_t >( RECORD_HEADER_SIZE ),
+                                closeNotify.size() - static_cast< std::size_t >( RECORD_HEADER_SIZE )
+                                ),
+                            ec
+                            );
+
+                        self.record( ec ? "close-notify-rest:failed" : "close-notify-rest:sent" );
+                    }
 
                     {
                         eh::error_code ec;
