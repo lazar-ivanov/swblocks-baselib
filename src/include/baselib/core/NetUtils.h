@@ -408,12 +408,12 @@ namespace bl
          * no way to tell.
          *
          * WHAT THIS DOES NOT COVER is a truncated TLS stream, exactly as the two predicates above
-         * do not: that is spelled by the stream policy and not by the transport. A caller which
-         * means "the stream ended in a way this message may be completed on" asks
-         * STREAM::isStreamTruncationError() alongside this, because a server which closes a TLS
-         * connection without close_notify is the ordinary shape of a close-delimited HTTPS
-         * response (RFC 2818 section 2.2.2) and refusing it would fail responses which succeed
-         * today.
+         * do not: that is spelled by the stream policy and not by the transport - and it must NOT
+         * be admitted beside this where a message is declared complete. RFC 9112 section 9.8: "A
+         * response that has neither chunked transfer coding nor Content-Length is complete only
+         * if a valid closure alert has been received." A TLS stream which ended with no
+         * close_notify is therefore an unclean end for a message framed by the close, exactly as
+         * a reset is (astra's second review, decision D1).
          *
          * See notes/plans/issues/windows-peer-close-error-codes-record.md
          */
