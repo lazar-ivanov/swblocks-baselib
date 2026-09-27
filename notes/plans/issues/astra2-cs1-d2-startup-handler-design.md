@@ -1,7 +1,13 @@
 # CS-1 / D2 — the HTTP/1.1 driver starts in one accounted strand handler: design note
 
-**Date:** 2026-09-27. **Status:** written by lane 1 for review, **not agreed, not coded.** D2 is
-coded only once this note carries a dated agreement line (§12).
+**Date:** 2026-09-27. **Status:** revision 2, written by lane 1 after review round 1, **not agreed,
+not coded.** D2 is coded only once this note carries a dated agreement line (§12).
+
+**Revisions.** r1 `e7c74a5`. **r2 (this)** carries fable's round-1 review (`D2-design-r1.md`, in the
+run's state directory) and every change its §F requires; the orchestrator's answers to it
+(`D2-orchestrator-r2.md`), which accept every finding and proposal; and the orchestrator's decisions on
+the lane's first report (`CS-1-lane-report-1-decisions.md`), which move D2's cases to new modules and
+lift the TLS peer. Where r2 changes a claim of r1, the section says so.
 
 **What it implements.** Decision D2 of
 [`astra-second-review-decisions.md`](astra-second-review-decisions.md) §3, as taken: *"Astra's startup
@@ -10,10 +16,12 @@ write, and the cancel that lands before the driver starts and is erased by the r
 does not reopen the shape; it settles, at the source, the mechanism the decision leaves to the
 implementation, and the tests.
 
-**Provenance.** Read on `astra2-cs1` @ `7d21df3`, whose `src/` is `lazari2`'s. Line numbers are that
-tree's. Boost is the devenv7 dist's 1.90.0. **Nothing was built or run for this note**; every
-mechanism below is a static derivation. Each claim is labelled **VERIFIED** (read at the source cited),
-**INFERRED** (follows from verified facts, not checked) or **NOT VERIFIED**.
+**Provenance.** Read on `astra2-cs1` @ `7d21df3`, whose `src/` is `lazari2`'s. `Http1ConnectionTask.h`'s
+line numbers are that tree's; D1's changes at `130e021` and `8a0cdd4` replace lines in place, so every
+number cited here still holds. Boost is the devenv7 dist's 1.90.0 and OpenSSL its 3.5.4. **Nothing
+was built or run for this note except the one measurement §9.1 names**; every mechanism below is a
+static derivation. Each claim is labelled **VERIFIED** (read at the source cited), **INFERRED**
+(follows from verified facts, not checked) or **NOT VERIFIED**.
 
 ---
 
@@ -31,7 +39,7 @@ scheduleTask( eq )                                   // task lock held (TaskBase
 
 onStartConnection()                                  // on the strand
     BL_TASKS_HANDLER_BEGIN()                         // takes the task lock
-    BL_TASKS_HANDLER_CHK_CANCEL_IMPL()               // §2.2 - a detail the decision leaves open
+    BL_TASKS_HANDLER_CHK_CANCEL_IMPL()               // §2.2 - settled in review (P1)
     if( Ready != m_state [under m_stateLock] )       // §3
         closeConnection(); break;                    // re-asserted close, no read
     scheduleRead();                                  // the first read, with the accounting's guard
@@ -42,12 +50,16 @@ onStartConnection()                                  // on the strand
 
 `armRead( )` stays, as `scheduleRead( )`'s body; nothing calls it bare any more. `onStartRequest( )`,
 `chkArmIdleTimer( )`, `submit( )`, `cancel( )`, `onCancelStream( )` and `initiateClose( )` are not
-changed in logic. The name `onStartConnection( )` mirrors `onStartRequest( )`; it is a proposal.
+changed in logic. The name `onStartConnection( )` mirrors `onStartRequest( )` - settled in review (P2).
+`scheduleTask( )`'s `beginOperation( )` is the fifth place this driver begins an operation, beside the
+read (`:978`), the write (`:737`), the idle timer (`:2031`) and the deferred verdict (`:1821`).
 
 From the first operation on, the only code that touches the stream runs on the strand: the first
 read's start moves into a strand handler, and `submit( )` can post `onStartRequest( )` only once
 `m_started` is set, which now happens on the strand after that start has returned. **VERIFIED** that
-`m_started` has exactly one writer (`:2183`) and one reader (`submit( )`, `:2380`).
+`m_started` has exactly one writer (`:2183`) and one reader (`submit( )`, `:2380`). The one socket call
+left off the strand is `onTaskStoppedNothrow( )`'s `shutdownSocket( )` on §4's route, where a post threw
+and no handler of ours was ever enqueued.
 
 ---
 
@@ -66,16 +78,20 @@ read's start moves into a strand handler, and `submit( )` can post `onStartReque
   the epilog with no error - the idiom `onStreamEndDeferred( )` already uses (`:1888-1891`). The
   not-Ready branch uses it. **VERIFIED.**
 
-### 2.2 `CHK_CANCEL_IMPL( )` at the top — proposed; the decision says "under the handler macros" and no more
+### 2.2 `CHK_CANCEL_IMPL( )` at the top — settled in review (P1), inside "under the handler macros"
 
 A **task** cancel (`requestCancel( )`) can land between `scheduleTask( )`'s post and the handler:
 `requestCancelInternal( )` sets `m_cancelRequested` and, the task being `Running`, calls the driver's
 `cancelTask( )` (`TaskBase.h:1026-1059`), which posts `shutdownOnStreamExecutor( )` **behind** the
-startup handler (`:2239-2254`). Without the check the handler arms the read and **starts a pending
-request's write** before that shutdown runs, so the request is then "may have been sent" and its
-`onClosed( )` from `onTaskStoppedNothrow( )` carries `isRetryable = false` (`:2321`). With it, the
-handler ends the run with `operation_aborted` (expected, `TaskBase.h:149-155`) before anything is
-armed, and a pending request is answered retryable. The task outcome is the same either way - a
+startup handler (`:2239-2254`). That order is not a race: `requestCancel( )` takes the task lock
+(`TaskBase.h:1237-1246`), which `scheduleNothrow( )` holds from before `scheduleTask( )` until after its
+post (`:1167`, `:1208`), so the cancel's post cannot precede the handler's. **VERIFIED.**
+
+Without the check the handler arms the read and **starts a pending request's write** before that
+shutdown runs, so the request is then "may have been sent" and its `onClosed( )` from
+`onTaskStoppedNothrow( )` carries `isRetryable = false` (`:2321`). With it, the handler ends the run
+with `operation_aborted` (expected, `TaskBase.h:149-155`) before anything is armed, and a pending
+request is answered retryable. The task outcome is the same either way - a
 cancelled task fails with `operation_aborted`, and `TcpSocketCommonBase::onTaskStoppedNothrow( )`
 (`TcpBaseTasks.h:111-146`) re-states that for a forcefully shut socket. **VERIFIED** for the paths;
 **INFERRED** that no existing case cancels a driver task between its push and its first strand turn.
@@ -104,13 +120,20 @@ The not-Ready branch leaves the startup operation as the only one of the run. Tr
      stranded policy and `TaskBase` overrides it (grep of `tasks/` and `httpclient/`); **VERIFIED**;
    - TLS: `TcpSslBaseTasks.h:470-517`. No forced shutdown, not yet scheduled for shutdown,
      `m_isCloseStreamOnTaskFinish` set by the driver's constructor (`Http1ConnectionTask.h:310`), and
-     `isShutdownNeeded( )` true
-     for a stream the establisher handshook (`:666-674`) - so the close_notify exchange runs as the
+     `isShutdownNeeded( )` true for a stream the establisher handshook (`:666-674`) - so the
+     close_notify exchange runs as the
      finish continuation, bounded by the 60 s protocol timer (`:109-134`), and the task completes
      from `onShutdownCompleted( )` (`:592-647`), where a peer's `eof` or truncation is not an error.
      **VERIFIED** for the code path; the peer's answer is the test's to arrange (§9.2).
    Then `onTaskStoppedNothrow( )` publishes `Closed` and finds no sink - the cancel's own
    `publishStreamEnd( )` took it (`:1753-1761`) - so the sink is told exactly once. **VERIFIED.**
+
+   Two details the implementation review will ask about, both **VERIFIED**: `notifyReadyImpl( )`
+   re-takes the task lock itself (`TaskBase.h:564`) and runs the finish continuation and
+   `onTaskStoppedNothrow( )` under it, so on the TLS route `beginProtocolShutdown( )` is initiated on
+   the strand under the task lock - which is what today's idle close already does; and the first
+   `notifyReadyImpl( )` returns at `:572` once the continuation is scheduled, so `onTaskStoppedNothrow( )`
+   runs exactly once, from `onShutdownCompleted( )`'s `BL_TASKS_HANDLER_END( )` (`TcpSslBaseTasks.h:646`).
 
 **The task completes successfully**: `beginClose( )` records no error, and nothing else ran. The
 decision record's "the task takes its terminal path at once" holds, with the TLS close_notify
@@ -162,10 +185,18 @@ allocated handle (`:2365-2371`), and nothing else sets `m_startPending`. **VERIF
 
 ## 4. A post that throws in `scheduleTask( )` — A4's route, count left at one
 
-`asio::post( )` can throw only on allocating its operation, and then nothing is enqueued. **INFERRED**
-from asio's contract (the tree does not document it). The throw leaves `postToStreamExecutor( )` and
-`scheduleTask( )` unchanged and reaches `TaskBase::scheduleNothrow( )`'s catch (`TaskBase.h:1210-1232`),
-which posts `notifyReadyImpl( false /* allowFinishContinuations */, eptr, false )` to the thread pool.
+A post onto the strand never runs inline - `asio::post( )` requires `blocking.never`
+(`detail/initiate_post.hpp:52`, `:114`) and `do_execute( )` then skips its inline branch
+(`detail/impl/strand_executor_service.hpp:226-235`) - and it allocates and constructs its operation
+before it enqueues it (`:238-246`), so a throw there enqueues nothing. The one call after the enqueue,
+scheduling the strand's invoker on the io_context (`:250`), can fail on the same allocation, and then
+leaves the handler enqueued on a strand nothing will ever run. Either way no handler of ours runs, and
+the route below is the same. **VERIFIED** in the dist's Boost 1.90 headers. *(r1 said "can throw only
+on allocating its operation, and then nothing is enqueued", which is narrower than the source - F4.)*
+
+The throw leaves `postToStreamExecutor( )` and `scheduleTask( )` unchanged and reaches
+`TaskBase::scheduleNothrow( )`'s catch (`TaskBase.h:1210-1232`), which posts
+`notifyReadyImpl( false /* allowFinishContinuations */, eptr, false )` to the thread pool.
 **VERIFIED.** From there:
 
 - the task completes with that exception, from a pool thread with no lock held - which is what that
@@ -199,8 +230,10 @@ expect to run on the strand" (decision record). Neither needs a post of its own 
   - an initiator throw completes the write's operation with the error (`:752-768`). The count cannot
     reach zero there: the startup operation is still pending.
   Calling it under the task lock is what `onReadCompleted( )` already does when it finishes a stream:
-  `finishStream( )` delivers to the sink, and the request task's sink methods only append to its
-  mailbox (`HttpClientRequestTask.h:1928-1943`). **VERIFIED.**
+  `finishStream( )` delivers to the sink, and the request task's sink methods append to its mailbox
+  under the mailbox's own lock and at most post a drain to the thread pool's io_service
+  (`HttpClientRequestTask.h:374-411`, `:1928-1943`) - no task lock and no call into an execution queue.
+  **VERIFIED.** *(r1 said the sink methods "only append", which left out the drain post - F5.)*
 - **No pending start**: `chkArmIdleTimer( )` (`:2005-2054`) arms the timer only when enabled, not
   closing, the channel open and **no handle allocated**. A `submit( )` which lands after the handler's
   critical section allocates the handle first, so either the timer is not armed or `onStartRequest( )`
@@ -218,9 +251,31 @@ cannot reach zero and no terminal is due - `notifyReady( )` cannot be reached un
 **VERIFIED.** What it does reach, as the first error, is `initiateClose( )` (`MultiOperationTask.h:442-447`),
 under the task lock. `initiateClose( )` takes no task lock (`:2103-2166`), so this is safe; but
 `MultiOperationTask.h:349-354` says initiateClose( ) is called "never while the task lock is held".
-**That discrepancy is pre-existing, not introduced here**: every re-arm from `onReadCompleted( )`
-(`:1491-1494`) and the write initiator's catch in `onStartRequest( )` (`:752-768`), when reached from
-the handler, already do the same. Recorded, not changed. **VERIFIED.**
+
+**That discrepancy is pre-existing at three sites and extended by one here.** Each initiator catch in
+this file completes its operation with `onOperationCompleted( eptr )`, and a first error there runs
+`initiateClose( )` inline. Three of them are already reached inside a handler body, under the task lock:
+
+- the re-arm's (`:1009-1012`), from `scheduleRead( )` in `onReadCompleted( )` (`:1493`);
+- `chkArmIdleTimer( )`'s (`:2043-2051`), from `publishStreamEnd( )` (`:1787`), which a keep-alive response
+  reaches from `onReadCompleted( )` through `onBytesRead( )` and `finishStream( )` (`:1182`, `:1716`), and
+  the deferred verdict from `onStreamEndDeferred( )` (`:1952`);
+- `deferStreamEnd( )`'s (`:1835-1840`), from `finishStream( )` (`:1712`) inside `onReadCompleted( )`.
+
+The fourth is new with D2: the write initiator's catch in `onStartRequest( )` (`:752-768`) runs today
+only from a plain post with no task lock (`:565-573`, posted from `:2202-2207` and `:2385-2390`), and
+after D2 it also runs inside the accounted handler. `chkArmIdleTimer( )` gains the handler as a caller
+too, but it is a site already. All are safe for the same reason - `initiateClose( )` takes no task lock
+and begins nothing (`:2103-2166`). Recorded, not changed; the comments in this file that state the
+invariant are corrected in §10. **VERIFIED.** *(r1 called the re-arm and the write's catch
+pre-existing; the write's is new with D2 - F3. F3 counted one pre-existing site; the idle timer's and
+the deferred verdict's catches make it three, which changes the count and not the conclusion.)*
+
+**Written once, here, for the core comment no lane owns** (P6). After D2, `initiateClose( )` is reached
+under the task lock from four initiator catches inside handler bodies. `MultiOperationTask.h:349-354`
+should eventually say "never while the task lock is held, except from an initiator's catch inside a
+handler body, where the terminal cannot be due". The orchestrator's owed list carries a one-line
+pointer to this paragraph; the core comment is not changed by CS-1.
 
 The handler then goes on to set `m_started` and start or idle as in §5 - with `isClosing( )` true
 after a failed arm, so a pending request is answered retryable and the timer is not armed - and its
@@ -240,7 +295,10 @@ terminal, and the task completes **failed, with "The read initiator was made to 
 from the verified pieces above; to be shown by running it.
 
 - Its three assertions - ended, failed, our message - **still hold**, by the handler's route rather
-  than `scheduleNothrow( )`'s catch, exactly as the decision record says.
+  than `scheduleNothrow( )`'s catch, exactly as the decision record says. The assertion set is
+  unchanged: the case does not assert `pendingOperations( )` (`TestHttp1DriverScheduleThrow.h:225-228`),
+  and the propagating route's "count left at one" (§4) is still the convention `armRead( )`'s comment
+  states (`:969-972`).
 - **What its red becomes.** Against a handler which called `armRead( )` bare instead of
   `scheduleRead( )`, the throw would reach the handler's own catch, the epilog would complete only the
   startup operation, and the count would stay at one with `m_closing` set - the task would never end.
@@ -248,10 +306,9 @@ from the verified pieces above; to be shown by running it.
   the bounded `waitForTaskEnd( )` rather than a deadlock inside `push_back( )`. **INFERRED.**
 - **What only the post can still throw** - the scheduleTask route of §4 - has no case, as A4's own
   scheduleTask route had no other; an allocation cannot be arranged from outside. Recorded.
-- **Text that goes stale, in files this change-set does not own** (orchestrator's decision, §11): the
-  file header and the case's comment in `TestHttp1DriverScheduleThrow.h`, and the A4 recipe in
-  `utf_baselib_httpclient7/notes.txt`, which describe the self-deadlock in `scheduleTask( )` as this
-  case's red.
+- **Text that goes stale**: the file header and the case's comment in `TestHttp1DriverScheduleThrow.h`,
+  and the A4 recipe in `utf_baselib_httpclient7/notes.txt`, which describe the self-deadlock in
+  `scheduleTask( )` as this case's red. CS-1 owns their comment lines for this purpose (§11).
 
 ---
 
@@ -269,10 +326,12 @@ not reverse the decision:**
   `submitAndProbe( )` and `m_started` is set when `submit( )` reads it - the probe's
   `[ onStartRequest, peerClosedProbe ]` ordering is unchanged. It depends on **strand FIFO** for two
   posts from one thread, which the H01 seam cases already rely on, not on the read starting inline.
-  **INFERRED**; its comment goes stale (not owned - §11).
+  One detail: the startup handler, dequeued first, **blocks on the task lock** until
+  `scheduleNothrow( )` returns, which is after the probe's own post - an ordinary wait, not a deadlock,
+  because the scheduling thread waits on nothing. **INFERRED**; its comment goes stale (§11).
 - `TestClientSessionTlsHttp1.h:113` and `:861` say `chkArmIdleTimer( )` "is posted from scheduleTask( )";
   after D2 it is called from the handler scheduleTask( ) posts - the same one strand hop. The close_notify
-  control's timing does not move. **INFERRED.** Comment only, not owned.
+  control's timing does not move. **INFERRED.** Comment only (§11).
 - No invariant in `MultiOperationTask.h` or `TaskBase.h` asks for an operation to be begun **and
   started** inside `scheduleTask( )`: the class note asks only that the count not fall to zero while
   the task is running and not closing (`MultiOperationTask.h:58-60`), and the startup operation keeps
@@ -285,76 +344,155 @@ not reverse the decision:**
 Every red and green below is deterministic, and each is shown red once and green once
 (decision record §2).
 
-### 9.1 Where they live — `utf_baselib_httpclient8`, new, and why
+### 9.1 Where they live, and what they share
 
-- The barrier case needs a **read-start hook**, which only a test stream policy can give (the driver's
-  handlers are non-virtual and bound by `cpp::bind`, which is why the H01 and A4 seams are stream
-  policies too). A new policy is a new driver instantiation. `utf_baselib_httpclient7` is the module
-  with the strand seams, measured by the orchestrator at 44.6 MB a64 gcc debug, about 38 on x86 - near
-  the target - and its seam header is not this change-set's to extend.
-- The TLS cases need a TLS HTTP/1.1 peer, which exists only in `utf_baselib_httpclient5` (over
-  target, and not to be added to). A test header is never included across modules, and lifting that
-  peer into `src/utests/include/` would edit a file this change-set does not own. So `httpclient8`
-  carries its own, self-contained - the precedent `TestClientSessionTlsHttp1.h:86-90` states.
-- `httpclient8` is created per `src/utests/AGENTS.md`'s checklist and also holds D1's cases, which need
-  the same TLS peer. Its object size is measured when it is built and recorded in the lane journal
-  and the report; if it lands over the target, that is put to the orchestrator rather than split
-  unasked.
+**Modules - decided by the orchestrator on the lane's first report.** D2's four cases go to a new
+module, **`utf_baselib_httpclient11`**, reserved for CS-1, and not to `httpclient8`: `httpclient8`
+measures 36.8 MB a64 clang debug with D1's four cases alone, and `httpclient7` measures 34.1 MB there
+and about 38 MB on x86, which puts `httpclient8` at about the 40 MB x86 target already. All four are
+built in `httpclient11` and measured; **if it lands over 36 MB a64 clang debug, the TLS pair moves to
+`utf_baselib_httpclient12`**, also reserved for CS-1. Each is created per `src/utests/AGENTS.md`'s
+checklist, with a `notes.txt` recipe for every case. The hook of this section is written in its own
+header in `httpclient11`, and is lifted into `src/utests/include/` only if the split happens - a
+helper two modules need.
 
-**The seams.** One hook policy per transport, each hiding `getStream( )` exactly as
-`HeldWritePolicyT` does (`TestHttp1DriverStrandSeam.h:465-492`), over `TcpSocketAsyncStrandedBase`
-and `TcpSslSocketAsyncStrandedBase`. The hook stream forwards `async_read_some( )` and
-`async_write_some( )` to the real stream - taking the handler by forwarding reference, the defect
-`AsioSslStreamWrapper.h:526-547` records - and adds, armed one-shot:
+A new module at all, for r1's reason: the barrier case needs a read-start hook, which only a test
+stream policy can give - the driver's handlers are non-virtual and bound by `cpp::bind`, which is why
+the H01 and A4 seams are stream policies too - and a new policy is a new driver instantiation, while
+`httpclient7`'s seam header is not CS-1's to extend.
 
-- on the **first** `async_read_some( )`: record `read-start:begin`, call the real initiator, then
-  record whether the current thread is running the socket's strand
-  (`get_executor( ).target< asio::strand_t >( ) -> running_in_this_thread( )` - Boost 1.90
-  `execution/any_executor.hpp:693-706`, `strand.hpp:343-346`; **VERIFIED** in the headers, not yet
-  compiled), signal "entered", **hold** until released, record `read-start:end`, return;
-- on every `async_write_some( )`: record `write-start` before calling the real one.
+**A measured correction to the review's size accounting.** Round 1 (§D) said that including
+`Http1DriverTestUtils.h` instantiates `Http1DriverProbe`, a cleartext driver, in the including TU, and
+asked for it to be counted. It is not in the object: `httpclient8` includes that header, and its a64
+clang debug object at `3996848` carries **no** symbol naming `Http1ConnectionTaskT< TcpSocketAsyncStrandedBaseT< void > >`,
+`Http1DriverProbe` or `TcpSocketAsyncStrandedBaseT< void >` - 0, 0 and 0 lines of llvm-nm, against 901
+naming the TLS driver the module does use (`logs/astra2/cs1/hc8-object-driver-symbols-3996848.log`).
+**MEASURED**, clang debug only: an inline function nothing calls emits nothing, whatever it names. So
+`httpclient11`'s size is its own two hook drivers, two establishers and two peers.
 
-Holding **after** the real initiator is deliberate: on the unfixed tree the read's own engine step has
-finished before the hold, so the red run observes the ordering violation without itself driving two
-TLS engine steps at once. The TLS shutdown of the finish continuation calls the base policy's own
-`getStream( )` (`TcpSslBaseTasks.h:548-567`), so it never goes through the hook. **VERIFIED.**
+**The TLS peer - lifted, by the orchestrator's decision.** Two CS-1 modules now need a TLS HTTP/1.1
+peer, so the brief's rule applies: `httpclient8`'s peer moves into one new shared header,
+**`src/utests/include/utests/baselib/Http1DriverTlsTestUtils.h`** - a file only CS-1 touches, distinct
+from CS-2's `HttpClientSessionTestUtils.h` - in a commit of its own before D2's cases, with
+`httpclient8` re-run green after it. The TLS establishment helpers (the key, the request, and the
+establisher over a given driver type) follow it into that header when D2's TLS cases, their second
+user, are written. `httpclient5`'s peer is not touched; one peer for the tree stays owed. *(r1 carried
+a self-contained copy; the orchestrator first accepted that and then amended the answer,
+`CS-1-lane-report-1-decisions.md` item 1a.)*
+
+**The hook, specified to the point of being buildable (F7).**
+
+- **The stream.** One template, `ReadStartHookStream< INNER >`, over the stream the policy hands out -
+  `tcp::socket` for cleartext, `AsioSslStreamWrapper` for TLS. It holds a reference to that stream and
+  forwards `async_read_some( )` and `async_write_some( )`, taking the handler by forwarding reference
+  (the defect `AsioSslStreamWrapper.h:526-547` records). It declares `executor_type` and
+  `get_executor( )`, which `asio::async_write( )` needs (`HeldWriteStream` has both,
+  `TestHttp1DriverStrandSeam.h:251-262`): the socket's own executor - `inner.get_executor( )` for
+  cleartext, `inner.getSocket( ).get_executor( )` for TLS - which is the strand, and which is also what
+  the case posts its handler and its probe to.
+- **The policies.** `ReadStartHookPolicyT< BASE >`, over `TcpSocketAsyncStrandedBase` and
+  `TcpSslSocketAsyncStrandedBase`, each hiding `getStream( )` exactly as `HeldWritePolicyT` does
+  (`TestHttp1DriverStrandSeam.h:465-492`) and building the hook stream lazily over
+  `base_type::getStream( )`. `stream_t` and `stream_ref` are inherited, so the establisher hands over
+  the real stream unchanged. The TLS finish continuation's shutdown calls the base policy's own
+  `getStream( )` (`TcpSslBaseTasks.h:548-567`), which a hiding definition cannot reach, so it never
+  goes through the hook. **VERIFIED.**
+- **The control block and the record.** Process global, like `SeamControl`
+  (`TestHttp1DriverStrandSeam.h:93-164`) and for its reason - the driver is built by a factory, so no
+  per-connection control can reach it, and the module runs one connection at a time. One mutex and one
+  condition variable guard `armed` (one shot: the next `async_read_some( )` holds, and only that one),
+  `entered`, `onStrand`, `released`, and the record - an ordered list of `read-start:begin`,
+  `read-start:end`, `write-start`, `hold-timeout` and `no-strand`. Each case re-arms it, which resets
+  all of it.
+- **The hold.** On the armed `async_read_some( )`: record `read-start:begin`; call the real initiator;
+  take the socket's executor and its `target< asio::strand_t >( )` - if that is null, record
+  `no-strand`, signal `entered` and do not hold, so the case fails with a name instead of mis-branching;
+  otherwise store `running_in_this_thread( )` as `onStrand` and signal `entered`; wait for `released`,
+  **bounded at 30 s**, recording `hold-timeout` if the bound expires; record `read-start:end`; return.
+  Every later `async_read_some( )` forwards and records nothing; every `async_write_some( )` records
+  `write-start` and forwards. Holding **after** the real initiator is deliberate: on the unfixed tree
+  the read's own engine step has finished before the hold (`ssl/detail/io.hpp:151-154`, `:343-349`), so
+  the red run observes the ordering violation without itself driving two TLS engine steps at once.
+- **Why the type test cannot miss** (F9). `make_strand( io_context& )` yields
+  `strand< io_context::executor_type >` (`TcpStrandedStreams.h:143`, `TcpSslStrandedStreams.h:144`),
+  which is exactly `strand_t` (`OSBoostImports.h:78`), and the socket built on it carries that type
+  inside its `any_io_executor` (`execution/any_executor.hpp:692-706`; `running_in_this_thread( )`,
+  `strand.hpp:343-346`). A `target<>( )` of the wrong type returns null **silently** and would send
+  every run down the off-strand branch - which on the fixed tree waits for a probe the held strand
+  cannot run, and which the hold's bound would turn into a false red. `no-strand` names that failure.
+  **VERIFIED** in the headers; not yet compiled.
 
 ### 9.2 The cases
 
-**D2-a, the barrier — `Http1Driver_…` and `Http1DriverTls_…`.** A helper thread pushes the driver (on
-the unfixed tree that call itself enters the hook, under the queue's lock and the task lock). The case
-thread waits for "entered", calls `submit( )`, then decides when the hold may end:
+**D2-a, the barrier - `Http1Driver_NoWriteStartsBeforeTheFirstReadStartReturnsTests` and its
+`Http1DriverTls_` twin.** The peer answers one request with a 200 and a length, and then waits to be
+released. The case arms the hook and has a helper thread push the driver - on the unfixed tree that
+call itself enters the hook, under the queue's lock and the task lock (`ExecutionQueueImpl.h:644-694`,
+`TaskBase.h:1167`). It waits for `entered`, bounded, and **reads `onStrand` before it submits anything,
+then decides how to submit and when the hold may end**:
 
-- the hook reported **on the strand** (the fixed shape): nothing can run on the strand while it is
-  held, and `submit( )` only posts, so no write can start during the hold - release at once;
-- **off the strand** (the unfixed shape, or any fix that keeps the start off-strand): post a probe to
-  the strand and wait for it. Posts from one thread run in order, so when the probe has run, anything
-  `submit( )` posted has run, and a write it started has recorded `write-start` - then release.
+- **on the strand** (the fixed shape): `submit( )` from the case thread, then release at once. Nothing
+  can run on the strand while the hook holds it, and `submit( )` only posts, so no write can start
+  during the hold;
+- **off the strand** (the unfixed shape, or any fix that keeps the start off-strand): post **one**
+  handler to the strand which calls `submit( )` and then posts the probe - the
+  `Http1DriverProbe::submitAndProbe( )` shape (`Http1DriverTestUtils.h:823-835` says why nothing weaker
+  is deterministic) - and wait for the probe, bounded; then release. While that handler holds the
+  strand its two posts are queued in order behind it, `[ onStartRequest, probe ]`, and the write's
+  completion cannot be enqueued before `onStartRequest( )` has run, so it lands behind the probe.
+  `submit( )` from the case thread with a probe posted afterwards is NOT this: the write's completion
+  can reach the strand between the two posts, its prolog takes the task lock the held `push_back( )`
+  holds (`:859`), the strand blocks, and the case hangs inside `push_back( )` with the queue lock -
+  A4's unreportable hang, as a race. *(r1 posted the probe from the case thread - F1.)*
 
-Then the exchange completes (the peer answers 200 with a length) and the case asserts **no
-`write-start` between `read-start:begin` and `read-start:end`**, plus the response. Red today: the
-submit sees `m_started`, `onStartRequest( )` runs on a free strand, the probe runs after it, and the
-record is `begin, write-start, end`. Green after: `begin, end, write-start`. Neither branch waits on a
-timer, and a reorder fix would also pass, which is right - the case pins the property, not the shape.
+Then the response completes, the case joins the helper, and it asserts: no `hold-timeout` and no
+`no-strand`; **no `write-start` between `read-start:begin` and `read-start:end`**; and the response - one
+final 200, closed successfully. Red today: `m_started` is set before the read's start, the handler's
+`submit( )` posts `onStartRequest( )`, the probe runs after it, and the record is
+`begin, write-start, end` on every run. Green after: `begin, end, write-start`, because the start
+handler's own critical section starts the request after `scheduleRead( )` has returned. Neither branch
+waits on a timer - the bounds only turn a broken arrangement into a reported failure - and a reorder
+fix would also pass, which is right: the case pins the property, not the shape.
 
-**D2-b, cancel before start — `Http1Driver_…` and `Http1DriverTls_…`.** The peer accepts (and
-handshakes), then reads until its stream ends, records how it ended, answers a close_notify with its
-own, and closes; it never ends the connection on its own. The case: `submit( )`, `cancel( )`, **wait for
-the sink's `onClosed( )`** (so the cancel has run before the schedule - the erased-by-reset ordering the
-decision describes), then push the driver, with a finite idle lifetime longer than the bound. It
-asserts that the task **ended within a bound, successfully**; that the sink was told `operation_aborted`
-exactly once; and that the peer saw **our** orderly close (cleartext `eof`, TLS `eof` = close_notify).
+**How D2-a's driver ends** (F7.5). The response is keep-alive and the idle timer is disabled, so after
+its assertions the case ends the connection **from the peer**, and waits for the task, bounded: the
+cleartext peer closes; the TLS peer sends a close_notify and waits for ours (`stream.shutdown( ec )`),
+so the driver's idle read ends `eof` and its own shutdown meets a peer which answers. The case asserts
+the task ended clean. The TLS peer ends with a close_notify and not a truncation because after a
+truncation the driver's TLS shutdown waits the full 60 s protocol timer - measured in D1's module
+(the lane journal's finding F-f), pre-existing and not D2's.
 
-Red today: the reset erases `m_closing`, the read is armed and nothing will ever end the task - the
-peer does not close and the idle lifetime is past the bound - so the bounded wait expires, and the case
+**D2-b, cancel before start - `Http1Driver_CancelBeforeStartEndsTheConnectionTests` and its
+`Http1DriverTls_` twin.** The peer accepts (and handshakes), reads until its stream ends and records
+how it ended; the TLS peer then answers our close_notify with its own - `stream.shutdown( ec )` after
+the read returned `eof`, which sends the alert at once because ours was already received - and the
+script ends. It never ends the connection on its own (F7.6). The case: `submit( )`, `cancel( )`, **wait
+for the sink's `onClosed( )`** (so the cancel has run before the schedule - the erased-by-reset
+ordering the decision describes), then push the driver, built with an idle lifetime of 120 s, longer
+than the bound. It asserts that the task **ended within the bound, successfully**; that the sink was
+told `operation_aborted` exactly once; and that the peer saw **our** orderly close - cleartext `eof`,
+TLS `eof`, which is our close_notify.
+
+Red today: the reset erases `m_closing`, the read is armed and nothing will end the task - the peer
+does not close and the idle lifetime is past the bound - so the bounded wait expires, and the case
 then cancels the task to tear down. Green after: the handler takes the terminal on its first strand
 turn. **The bound decides nothing about ordering**: on the unfixed tree the event it waits for cannot
 happen at all, and on the fixed one it is due at once, so the only way to misjudge is a stall longer
-than the bound - which can only turn a red green, never a green red. That is the same instrument A4's
-case uses (`TASK_END_TIMEOUT_IN_MILLISECONDS`), stated here so that it is argued and not assumed.
+than the bound on the **fixed** tree - which can only make a passing case fail, never make the unfixed
+tree pass. A false red is investigated; a false green is not, and this instrument cannot produce one.
+*(r1 said the opposite - F2.)* The bound is A4's 30 s (`TASK_END_TIMEOUT_IN_MILLISECONDS`); a test header
+is never included across modules, so the value is repeated, with a pointer to A4's.
 
-**A4** - run unchanged, green (§7). The whole of `httpclient3`, `httpclient5` and `httpclient7` is run
-as well, for the probe of §8 and every case that starts a driver.
+**A4** - run unchanged, green (§7). The whole of `httpclient3`, `httpclient5`, `httpclient7` and
+`httpclient8` is run as well, for the probe of §8 and every case that starts a driver.
+
+### 9.3 The evidence the implementation owes
+
+Each file in `logs/astra2/cs1/`, naming the commit it was taken at: D2-a and D2-b, cleartext and TLS,
+**red on the tree before the logic commit and green after** - four reds, four greens; A4 green after;
+`httpclient3`, `5`, `7`, `8` and the new module or modules whole-module green; the D2-b TLS run showing
+the peer recorded `eof`; each new module's measured object size; and the tier 1 report, with every
+line explained in the lane journal.
 
 ---
 
@@ -366,7 +504,13 @@ comment-only commit, per AGENTS.md:
 
 - the class note, "THE OPERATIONS IN FLIGHT. At most four" (`:88-98`) - the startup operation, for one
   strand hop;
+- the class note, "onStartRequest() runs from a plain post holding no task lock" (`:72-81`) - still true
+  of the posted route, and it is now also called from inside the accounted handler; the paragraph's
+  conclusion, that the class is correct over the stranded policies only, is unchanged (F8);
 - `m_readBuffer`'s note, "or armRead( ) threw and nothing ever was" (`:188-191`);
+- `m_idleTimer`'s note, "cancelled from initiateClose( ), which the accounting calls exactly once and
+  never while the task lock is held" (`:198-201`) - already untrue of the three sites of §6, and after
+  D2 of a fourth (F8);
 - `armRead( )`'s note, whose first bullet is the `scheduleTask( )` call site (`:947-972`);
 - `chkArmIdleTimer( )`'s "It is also why scheduleTask( ) POSTS this" (`:1998-2003`);
 - `onTaskStoppedNothrow( )`'s "or the schedule-path arm threw and none ever was" (`:2278-2280`);
@@ -377,12 +521,13 @@ comment-only commit, per AGENTS.md:
 
 ---
 
-## 11. For the orchestrator — outside this change-set's files
+## 11. Outside `Http1ConnectionTask.h`
 
-- **Stale text D2 leaves in files CS-1 does not own**: `TestHttp1DriverScheduleThrow.h` (header and
-  case comment), `utf_baselib_httpclient7/notes.txt` (A4 recipe), `Http1DriverTestUtils.h:887-890`,
-  `TestClientSessionTlsHttp1.h:113`, `:861`. Either CS-1's ownership is widened to their comment lines,
-  or they are recorded as owed.
+- **Stale text D2 leaves in other files - decided** (`D2-orchestrator-r2.md`): CS-1's ownership is
+  widened to the **comment lines only** of `TestHttp1DriverScheduleThrow.h` (the header and the A4
+  case's comment), `utf_baselib_httpclient7/notes.txt` (the A4 recipe), `Http1DriverTestUtils.h:887-890`
+  and `TestClientSessionTlsHttp1.h:113` and `:861`. They are corrected in a comment-only commit after
+  D2's logic commit, together with or beside §10's.
 - **Not D2, recorded so it is not attributed to it**: a `cancel( )` whose `onCancelStream( )` runs
   after the start still wakes nothing by itself (`s6r2-design.md`, "onCancelStream( ) does not wake
   anything by itself"); it is closed by the next completion or by the pool's `requestCancel( )`. D2
@@ -390,11 +535,17 @@ comment-only commit, per AGENTS.md:
 
 ---
 
-## 12. Open for review, and agreement
+## 12. Review, and agreement
 
-1. `CHK_CANCEL_IMPL( )` at the top of the handler (§2.2) - an addition inside "under the handler
-   macros"; the reviewer may prefer the decision's list read literally.
-2. The handler's name.
-3. Whether §9.2's bounded wait is acceptable as the red of D2-b, as argued there.
+**Round 1 (2026-09-27)**, fable, `D2-design-r1.md`: *agree with changes*. The three questions r1 left
+open are settled - `CHK_CANCEL_IMPL( )` at the top of the handler (P1, §2.2), the name
+`onStartConnection( )` (P2, §1), and the bounded wait as D2-b's red with its direction corrected (P3,
+§9.2). The orchestrator accepted every finding and proposal (`D2-orchestrator-r2.md`). §F's changes are
+in this revision: F1 and F7 in §9.1-9.2, F2 in §9.2, F3 and P6 in §6, F4 in §4, F5 in §5, F8 in §10, F9
+in §9.1; F6/P4 is superseded by the orchestrator's decision to lift the TLS peer (§9.1).
 
-**Agreement:** *(pending - to be dated by the orchestrator when the review agrees)*
+**Two claims of round 1 revised in place, at the source**: §6 counts three pre-existing under-lock
+initiator catches where F3 counted one - the conclusion is unchanged; and §9.1 measures that
+`Http1DriverTestUtils.h` puts no cleartext driver in the object, where §D asked for one to be counted.
+
+**Agreement:** *(pending - dated by the orchestrator once fable has re-checked this revision against §F)*
