@@ -28,13 +28,20 @@
  * the only TLS HTTP/1.1 peer in the suite lived in utf_baselib_httpclient5 - over the 40MB target
  * src/utests/AGENTS.md sets, and closed to new cases for that reason. utf_baselib_httpclient7, which
  * carries the cleartext driver seams, is near the target itself. So the cases come here, with a TLS
- * peer CS-1 wrote - now in utests/baselib/Http1DriverTlsTestUtils.h, shared with CS-1's D2 module
+ * peer CS-1 wrote - now in utests/baselib/Http1DriverTlsTestUtils.h, shared with the TLS pair of
+ * CS-1's D2 cases in utf_baselib_httpclient12
  *
  * WHAT THIS MODULE PAYS FOR. The HTTP/1.1 driver over the TLS stranded policy, the TLS establisher,
  * the server-role TLS engine of its peer, and the request task that runs over them. What it does
  * NOT pay for is the session, the pool and the HTTP/2 driver - the request task is given its one
  * connection by a test pool, which is the whole of what makes a request's result observable here
  * without instantiating both drivers the way utf_baselib_httpclient5 has to
+ *
+ * SIZE, MEASURED AND AT THE TARGET, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 36.8MB
+ * clang debug (a64) at 05b976a, which by utf_baselib_httpclient7's ratio is about 41MB on x86 -
+ * inferred, not measured here; the Windows handoff confirms it. The reason is the one TLS driver, its
+ * request task and its peer, which the four cases share: the cases themselves cost almost nothing
+ * beside them. At the target, this module takes no further cases
  *
  * The module is devenv7+ only: the devenv7_only marker next to this file is what keeps it out of
  * the build on devenv2-6 (projects/make/common.mk). Headers never test BL_DEVENV_VERSION; they
