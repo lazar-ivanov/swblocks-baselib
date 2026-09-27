@@ -3068,8 +3068,8 @@ namespace bl
                     if( name == "te" )
                     {
                         /*
-                         * The value is a token, and RFC 9110 makes a token case-insensitive, so
-                         * "te: Trailers" is the same permitted value as "te: trailers"
+                         * 'trailers' is a quoted ABNF literal (RFC 9110 10.1.4), which RFC 5234 2.3
+                         * makes case-insensitive, so "te: Trailers" is the same permitted value
                          */
 
                         if( ! equalsAsciiToken( value, "trailers" ) )
