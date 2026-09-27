@@ -32,10 +32,12 @@
  * its factory registers for the fallback - and its peers bring the server side. The cases
  * themselves cost almost nothing next to those instantiations.
  *
- * SIZE, MEASURED AND OVER TARGET, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 42.8 MB
- * clang debug (a64) with the E3 case alone, against a 40 MB target and a 75 MB debug ceiling which
- * only win-x86-*-debug enforces. That is the TLS session and nothing else - 21.8 MB over the empty
- * module floor - so no split of the cases could bring it under the target.
+ * SIZE, MEASURED AND OVER TARGET, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 46.6 MB
+ * clang debug (a64) with E3 and E1, against a 40 MB target and a 75 MB debug ceiling which only
+ * win-x86-*-debug enforces. It was 42.8 MB with E3 alone, which is the TLS session and nothing else
+ * - 21.8 MB over the empty module floor - so no split of the cases could bring it under the target;
+ * the 3.8 MB since is E1's peer, the HTTP/2 test server over the TLS policy, which brings the
+ * server-role engine. utf_baselib_httpclient5 carries the same instantiations at 46.9 MB.
  *
  * Sockets: loopback, ephemeral ports, so these cases do not take the machine global test lock
  *
@@ -64,3 +66,4 @@
  */
 
 #include "TestClientSessionTlsSinkFallback.h"
+#include "TestClientSessionTlsNarrowing.h"
