@@ -2175,6 +2175,91 @@ namespace bl
 
                 base_type::ensureChannelIsOpen();
 
+                /*
+                 * NOTHING BUT ONE ACCOUNTED POST - the connection is started by onStartConnection( ),
+                 * on the stream's executor, and nothing here touches the stream. The first read used
+                 * to be armed right here, on the scheduling thread and after m_started was
+                 * published, and an ssl::stream runs its first engine step on the thread which
+                 * starts a read: a submit( ) in that window could start the request's write on the
+                 * strand at the same moment, two threads in one TLS engine (astra's second review,
+                 * decision D2)
+                 *
+                 * THE OPERATION IS BEGUN BEFORE THE POST, as for every accounted operation here. A
+                 * post which throws leaves this function to TaskBase::scheduleNothrow( )'s catch,
+                 * which completes the task from the thread pool with no lock held - the route
+                 * armRead( ) used to take - and the count is left at one, which nothing reads once
+                 * the task has completed and the next run zeroes
+                 */
+
+                base_type::beginOperation();
+
+                postToStreamExecutor(
+                    cpp::bind(
+                        &this_type::onStartConnection,
+                        selfRef()
+                        )
+                    );
+            }
+
+            /**
+             * @brief Starts the connection, on the stream's executor - the first read, the switch which
+             * lets a request start be posted, and a cancel which came first, in one accounted handler
+             *
+             * FROM HERE ON EVERY TOUCH OF THE STREAM IS ON THE STRAND. The first read is armed inside
+             * this handler, and m_started - which is what lets submit( ) post onStartRequest( ) - is
+             * published only after that read's start has returned, so no write can start while it
+             * runs. That does not depend on which posts may precede this one: whatever is posted
+             * queues behind a handler which holds the strand.
+             *
+             * A CONNECTION WHICH IS NO LONGER Ready HAD A CANCEL FIRST. Before this handler the only
+             * code that can move m_state off Ready is a stream cancel's onCancelStream( ), and the
+             * close it asked for was erased by the run's reset of the accounting - which is why the
+             * state and not isClosing( ) is asked, under the lock which guards it. The close is then
+             * re-asserted and nothing is armed: this handler's own operation is the only one of the
+             * run, so its epilog is the first completion after beginClose( ) and takes the terminal
+             * path at once - over TLS through the close_notify exchange of the finish continuation.
+             *
+             * THE READ IS ARMED THROUGH scheduleRead( ), WITH ITS CATCH. This handler's own operation
+             * keeps the count above zero until its epilog, so a failed arm completes the phantom
+             * operation here without a terminal falling due under the task lock - which is how every
+             * re-arm in this driver already works, and why it cannot be armRead( ) bare, whose throw
+             * would leave that operation pending for good.
+             *
+             * THE START IS EXACTLY ONCE AGAINST submit( ): m_started is set and m_startPending read in
+             * one critical section, as submit( ) sets the one and reads the other, so whichever of the
+             * two runs second starts the request - this handler by calling onStartRequest( ) itself,
+             * or submit( ) by posting it. With nothing pending the connection is idle from birth - the
+             * narrow case the retry budget can produce, L6 finding 4 - and its idle lifetime starts
+             * here.
+             *
+             * A TASK CANCEL WHICH CAME FIRST ends the run before anything is armed, so a request
+             * pending on the connection is answered retryable rather than written. The design is
+             * notes/plans/issues/astra2-cs1-d2-startup-handler-design.md
+             */
+
+            void onStartConnection() NOEXCEPT
+            {
+                BL_TASKS_HANDLER_BEGIN()
+
+                BL_TASKS_HANDLER_CHK_CANCEL_IMPL()
+
+                bool isReady = false;
+
+                {
+                    BL_MUTEX_GUARD( m_stateLock );
+
+                    isReady = httpclient::ConnectionState::Ready == m_state;
+                }
+
+                if( ! isReady )
+                {
+                    closeConnection();
+
+                    break;
+                }
+
+                scheduleRead();
+
                 bool hasPending = false;
 
                 {
@@ -2184,46 +2269,16 @@ namespace bl
                     hasPending = m_startPending;
                 }
 
-                /*
-                 * The read is armed FIRST and unconditionally - it is the operation which is in
-                 * flight for the whole life of this connection, and the response of a request
-                 * started below arrives on it
-                 *
-                 * ARMED AND NOT SCHEDULED, which is the one difference: this function is called
-                 * by TaskBase::scheduleNothrow( ) with the task lock HELD, so an initiator which
-                 * throws has to be let out to that function's catch rather than completed here.
-                 * armRead( ) says what completing it here would cost
-                 */
-
-                armRead();
-
                 if( hasPending )
                 {
-                    postToStreamExecutor(
-                        cpp::bind(
-                            &this_type::onStartRequest,
-                            selfRef()
-                            )
-                        );
+                    onStartRequest();
                 }
                 else
                 {
-                    /*
-                     * A driver the ALPN fallback built and the pool then had no request for is
-                     * idle from birth, which is the narrow case the retry budget can produce
-                     * (L6 finding 4), so its lifetime starts here rather than at the first
-                     * response. POSTED, because everything else which touches the timer runs on
-                     * the stream's executor and the read armed above may already be completing
-                     * there
-                     */
-
-                    postToStreamExecutor(
-                        cpp::bind(
-                            &this_type::chkArmIdleTimer,
-                            selfRef()
-                            )
-                        );
+                    chkArmIdleTimer();
                 }
+
+                BL_TASKS_HANDLER_END_MULTIOP()
             }
 
             /**
