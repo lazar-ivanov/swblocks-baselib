@@ -3278,9 +3278,11 @@ namespace bl
                  * and then Connection itself, and 8.2.2 has one translating to HTTP/2 do the same.
                  * EVERY Connection field is read, and all of them BEFORE anything is removed: the
                  * fixed-name loop below removes 'connection', and the tokens used to go with it
-                 * unread. 'te' is the one name exempt - 9110 10.1.4 has a sender of TE also send a
-                 * TE connection option, so 'Connection: TE' is what a CORRECT caller writes - and
-                 * te is governed by a rule of its own, (2)
+                 * unread. Two names are exempt, because an arm of their own decides each: 'te' -
+                 * 9110 10.1.4 has a sender of TE also send a TE connection option, so
+                 * 'Connection: TE' is what a CORRECT caller writes - goes by (2); and 'host' goes
+                 * by (4), which refuses one that disagrees with the URL rather than dropping it
+                 * unread because a token said so
                  */
 
                 {
@@ -3288,7 +3290,10 @@ namespace bl
 
                     for( std::size_t i = 0U; i < tokens.size(); ++i )
                     {
-                        if( ! http::HeaderList::equalsIgnoreCase( tokens[ i ], "te" ) )
+                        if(
+                            ! http::HeaderList::equalsIgnoreCase( tokens[ i ], "te" ) &&
+                            ! http::HeaderList::equalsIgnoreCase( tokens[ i ], "host" )
+                            )
                         {
                             ( void ) result.headers.removeAll( tokens[ i ] );
                         }
