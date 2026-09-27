@@ -33,3 +33,9 @@
 # H04a - the driver pointer is read only after the store which orders it
 --log_level=test_suite --run_test=H2Pool_ADriverIsAdoptedOnlyOnceTheTaskPublishesClosedTests
 --log_level=test_suite --run_test=H2Pool_ADriverBesideABareTaskIsAdoptedTests
+
+# CS-2 of astra's second review - a retired entry whose task has ended is charged by the arm which
+# retired it and by nothing else, however long a rider holds it; the second case is the control
+--log_level=test_suite --run_test=H2Pool_ARetiredEntryIsChargedOnceWhileItsRiderIsOutTests
+--log_level=test_suite --run_test=H2Pool_WithRoomAWaiterGetsItsRetryWhileTheRiderIsOutTests
+--log_level=test_suite --run_test=H2Pool_AnEntryWhichServedARequestIsNotChargedWhenItsTaskEndsTests

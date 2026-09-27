@@ -77,3 +77,4 @@
  */
 
 #include "TestConnectionPool.h"
+#include "TestConnectionPoolRetiredEntry.h"
