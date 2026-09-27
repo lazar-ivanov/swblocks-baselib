@@ -1,0 +1,5 @@
+# each slice appends the recipes for the cases it lands here
+
+# E3 - the TLS ALPN fallback with a counting sink: the control for chkPrepareRetry( )'s sink
+# refusal, landed green before D4 changed that refusal and kept green across it
+--log_level=message --run_test=ClientSessionTls_SinkIsToldCompleteOnceAcrossTheFallbackRetryTests
