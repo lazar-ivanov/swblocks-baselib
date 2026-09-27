@@ -1,7 +1,7 @@
 # CS-1 / D2 — the HTTP/1.1 driver starts in one accounted strand handler: design note
 
-**Date:** 2026-09-27. **Status:** revision 2, written by lane 1 after review round 1, **not agreed,
-not coded.** D2 is coded only once this note carries a dated agreement line (§12).
+**Date:** 2026-09-27. **Status:** revision 2, written by lane 1 after review round 1, **agreed
+2026-09-27** (§12). D2 is implemented to this note.
 
 **Revisions.** r1 `e7c74a5`. **r2 (this)** carries fable's round-1 review (`D2-design-r1.md`, in the
 run's state directory) and every change its §F requires; the orchestrator's answers to it
@@ -548,4 +548,4 @@ in §9.1; F6/P4 is superseded by the orchestrator's decision to lift the TLS pee
 initiator catches where F3 counted one - the conclusion is unchanged; and §9.1 measures that
 `Http1DriverTestUtils.h` puts no cleartext driver in the object, where §D asked for one to be counted.
 
-**Agreement:** *(pending - dated by the orchestrator once fable has re-checked this revision against §F)*
+**Agreement: 2026-09-27.** Fable's round 2 (`D2-design-r2.md`) re-checked this revision against §F and the orchestrator's decisions and agrees; the orchestrator agrees. D2 is implemented to this note.
