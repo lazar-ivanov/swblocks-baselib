@@ -223,8 +223,8 @@ decode. Neither can produce a wrong answer while that holds.
 decoder"*, which is true of the library and not of an application: `ClientSession::decoders( )` and
 `registerDecoder( )` are public, `utf_baselib_httpclient4` registers through them, and an application
 doing the same meets P2 and P3 today. **So the reversal condition below is already met for any such
-application.** Whether to close P2 and P3 now or restrict registration until the programme lands is
-in the decision round of 2026-09-27.
+application.** Whether to close P2 and P3 now or restrict registration until the programme lands was
+decided the same day — see "revisited", below.
 
 **What reverses it — one condition, and it is the same for both.** The moment **any** content codec
 is registered, both stop being latent, and they become **the first two items of that work** rather
@@ -238,6 +238,29 @@ include tree versus the devenv dist) and astra's **C01** (the design specifies `
 which is C++17, while baselib compiles `-std=c++11`). So there are three gates between here and a
 codec **the library ships**, and P2/P3 sit behind all of them — while a codec an application
 registers passes none of them (R08, above).
+
+## The decision on P2 and P3, revisited 2026-09-27
+
+**Reversed in part: P2 and P3 are fixed now, in their minimal form**, because the reversal condition
+above was already met — by the public registry, not by a codec. Decided by the maintainer as D5 of
+[`astra-second-review-decisions.md`](astra-second-review-decisions.md), in its change-set CS-2, and not
+yet implemented:
+
+- **P2:** the Content-Encoding list is read across every field, and a response is decoded only when it
+  carries exactly one coding in total. Anything else is handed back with its body and all its headers
+  untouched — the behaviour this record already documents for a coding the client cannot decode.
+  **Peeling several layers in reverse order is still the programme's**, as item 0 of the sequencing
+  below says.
+- **P3:** decoding happens only when the hop succeeded and the response can carry content — not a
+  response to HEAD, and not a 204 or a 304.
+- **P1 stays deferred as decided.** Its fix is structural, a core-path change-set of its own; what
+  changes is only that its reach includes an application that registers a decoder, which the records
+  now say.
+
+**Why not restrict registration instead**, the review's alternative: it changes a public API and breaks
+the test that registers, to protect a path whose two defects are small guards. That reverses if the
+decoder API is to be frozen until the programme lands; then registration is restricted, and the
+restriction is stated at `registerDecoder( )`.
 
 ---
 

@@ -1,0 +1,423 @@
+# Astra's second review — the decisions of 2026-09-27, as put and as taken
+
+**Status:** decision document, 2026-09-27. **Nothing implemented; nothing under `src/` was touched
+and nothing was built.** Eight decisions were put to the maintainer in AGENTS.md's shape and taken:
+*"Yes, I accept D2 as revised, D4 widened to Astra's version, and the rest as recommended."*
+Implementation waits for the maintainer's go-ahead.
+
+**Scope:** R01–R08 of [astra's second review](../http2-l0-l6-remediation-review-2026-09-26.md), which
+reviewed `db97372`. R09, the stale records, was done at `425802c`. Each finding was re-verified at the
+source before it was put; the ledger rows are in [`astra-remediation-owed-work.md`](astra-remediation-owed-work.md),
+under "Found by astra's second review".
+
+**Provenance.** Everything below was read at the source on `lazari2` at `425802c`, whose `src/` is
+`db97372`'s. The RFC passages were fetched rather than recalled, after one had been paraphrased wrongly
+(§6). Nothing was built or run: every mechanism here is a static derivation, as the review's were.
+
+---
+
+## 1. The decisions at a glance
+
+| # | Finding | Decided | Change-set |
+|---|---|---|---|
+| **D1** | R01 — a TLS truncation completes a close-delimited HTTP/1.1 body | **Strict**: a truncation never completes a message; no leniency setting | CS-1 |
+| **D2** | R03 — the first TLS read and a request's first write can start concurrently; and a cancel before the driver starts is erased | **Astra's startup handler**: the first read, the switch that lets request starts be posted, and cancellation, in one accounted strand handler | CS-1 |
+| **D3** | R02 — HTTP/1.1 body bytes a sink has not taken are unbounded | **Fail on overflow** of a **64 MiB** cap on bytes received and not yet taken, kept by the request task | CS-2 |
+| **D4** | R04 — H08's delivered count is lost when a later sink callback throws | **Astra's version**: record each block before the next callback; once a sink throws, no further delivery to it and no replay onto it | CS-2 |
+| **D5** | R08 — H24 and H25 are reachable through public decoder registration | **Fix now, minimally**: decode only a single coding, and only a successful response that can carry content | CS-2 |
+| **D6** | R05 — TE and the fields `Connection` names, across repeated fields | **Normalize**: canonicalize every TE; remove the fields every `Connection` names, except `te` | CS-3 |
+| **D7** | R06 — the Host agreement check | **Parse with `net::Uri`**: default a missing port from the scheme; refuse a malformed Host and more than one | CS-3 |
+| **D8** | R07 — a case variant of HEAD is classified as HEAD | **Exact `"HEAD"`** | CS-3 |
+
+---
+
+## 2. The change-sets, their order and their validation
+
+**Grouped by the files a lane touches**, per AGENTS.md: several findings in one file are one
+change-set. The three touch disjoint files, so they can run as parallel lanes.
+
+| CS | Decisions | Files |
+|---|---|---|
+| **CS-1** | D1, D2 | `httpclient/Http1ConnectionTask.h`; comments in `core/NetUtils.h` and `TestHttp1DriverTlsCancelClose.h`; new cases |
+| **CS-2** | D3, D4, D5 | `httpclient/HttpClientRequestTask.h`, `httpclient/ClientSession.h`; new cases |
+| **CS-3** | D6, D7, D8 | `http2/Http2ConnectionTask.h`, `http2/Session.h`; new cases |
+
+**Order, and why.** CS-1 first: D1 closes a live defect that hands a caller a wrong answer — a
+truncated body reported complete — the class AGENTS.md schedules on sight, and D2 closes undefined
+behaviour in the TLS engine; both are small and in one file. CS-2 second: it holds the one decision
+with a number in it (D3) and a wrong answer behind an opt-in setting (D4). CS-3 last: every item in it
+needs unusual caller input.
+
+**Validation, per AGENTS.md.**
+
+- Lanes: clang debug, the focused modules each slice affects, one module at a time.
+- The orchestrator, after each merge: clang release and gcc debug.
+- **CS-1 owes a Windows matrix run.** It changes how a TLS ending is classified — AGENTS.md's
+  networking rule — and the order of the first I/O on every HTTP/1.1 connection.
+- **Every red/green here is deterministic** — a barrier, a rendezvous or a pure boundary input — so
+  each is shown red once and green once, with no 50- or 600-run budget.
+- `core/NetUtils.h` is touched by comment only and kept line for line, so no object changes: baselib's
+  macros bake `__LINE__` in.
+- Test placement follows `src/utests/AGENTS.md`: a module comfortably under the 40 MB target, or a
+  numbered sibling.
+- **X1 stays deferred.** Nothing here replaces the x86-64 Linux matrix.
+
+---
+
+## 3. The decisions, as put and as taken
+
+### D1 — R01: a TLS truncation must not complete a close-delimited body (CS-1)
+
+*What it is.* `isCleanEndOfStream( )` (`Http1ConnectionTask.h`) admits `net::isCleanEndOfStreamErrorCode( )`
+— eof — **or** `STREAM::isStreamTruncationError( )`, a TLS stream that ended without close_notify.
+`onPeerClosed( )` then runs `parseEof( )`, which completes a body framed only by the close, and the
+stream finishes successfully. Pre-existing: the driver's first version (`9ed2745`) classified the
+ending the same way. The justification is written in three places — `NetUtils.h` above
+`isCleanEndOfStreamErrorCode( )`, `isCleanEndOfStream( )`'s own comment, and face 2 of
+`TestHttp1DriverTlsCancelClose.h` — as *"the ordinary shape of a close-delimited HTTPS response (RFC
+2818 section 2.2.2)"*. §2.2.2 is server behaviour, and says servers MUST attempt to initiate the
+exchange of closure alerts. RFC 9112 §9.8 is explicit: *"A response that has neither chunked transfer
+coding nor Content-Length is complete only if a valid closure alert has been received."*
+
+*If not done.* A caller can receive a truncated body reported as a complete 200, with no way to tell —
+from a faulty peer, or from anyone able to end the transport.
+
+*Risk, complexity, blast radius.* One predicate with one caller, `onPeerClosed( )`, plus the three
+comment corrections. It reaches every HTTP/1.1-over-TLS response framed by the close. Length- and
+chunk-framed responses are unaffected: a complete one finishes before the ending arrives, and an
+incomplete one already fails — its code changes from the parser's partial-message to the TLS
+truncation code. Third-party servers that send close-delimited responses **and** skip close_notify will
+start failing. baselib's own server always sets Content-Length and refuses a custom one
+(`httpserver/Response.h`), so nothing in-house changes.
+
+*Undecided was:* strict; strict plus an opt-in leniency setting per session; or completing the
+response and flagging it. The third needs a new field on a `ClientTypes.h` type — a frozen, published
+interface — and was ruled out.
+
+**Decided: strict, with no setting.** A truncation takes `onPeerClosed( )`'s unclean branch exactly as
+a reset does: what parsed is delivered, the message is not completed, and the stream finishes with the
+truncation's own code. **Reverses if** a real deployment meets a server that sends close-delimited
+responses without close_notify; then an opt-in per session, defaulting to strict.
+
+*Tests, all deterministic.* A peer-initiated missing close_notify on a close-delimited response, with
+no local cancel: the request fails and the sink is not told complete — red today, green after. A
+close_notify control that succeeds. Content-Length and chunked controls, ended by a truncation after a
+complete message, that succeed. Each asserts the request's result and the sink's completion, not only
+the driver task's terminal state.
+
+*Rides with it.* The HTTP/1.1 driver's `consumed( )` comment — *"What backpressure there is over
+HTTP/1.1 is TCP's own"* — is false while the read re-arms after every chunk, and is corrected here
+because this is the change-set that owns that file. It is corrected without reference to D3's cap,
+which lands in CS-2.
+
+### D2 — R03: start the connection in one strand handler (CS-1)
+
+*What it is.* Two defects in the driver's start.
+
+1. **The race Astra found.** `scheduleTask( )` sets `m_started` under `m_stateLock`, releases it, and
+   then calls `armRead( )` on the queue thread — and `ssl::stream::async_read_some( )` runs its first
+   engine step on the thread that calls it. A `submit( )` in that window reads `m_started`, posts
+   `onStartRequest( )`, and that handler, which takes no task lock, starts `async_write( )` on the same
+   stream from the strand. It is reachable through the pool: a driver is born `Ready`, and
+   `findDispatchable( )` asks only for `Ready` and free slots, never whether the driver is scheduled,
+   so another thread's examine can hand it out before `runActions( )` pushes its schedule.
+   Pre-existing: `c8e9be8` had the same shape, and A4 changed only how a throw leaves.
+2. **Cancellation during startup — found while verifying D2's first form.** A request can be submitted
+   before the driver starts. `cancel( handle )` posts `onCancelStream( )` without asking `m_started`,
+   and that reaches `finishStream( )` → `closeConnection( )` → `beginClose( )`, which only sets
+   `m_closing`. `MultiOperationTaskT::scheduleNothrow( )` zeroes `m_closing`, with the rest of the
+   accounting, at the start of every run. So a cancel that lands before the run is erased: the driver
+   starts as a `Draining` connection with a read armed and the idle timer running, and stays open until
+   the idle timeout — 300 seconds by default — or until the peer closes. A cancel that lands during
+   `scheduleTask( )` survives the reset, but `initiateClose( )` runs only on the first error or the
+   first operation to complete after `beginClose( )`, so nothing wakes the read and the connection
+   again waits on the peer. The cancelled request itself is answered correctly; it is the connection
+   that lingers.
+
+*If not done.* Rarely — a window of microseconds on a new connection, against a concurrent submit —
+two threads drive one OpenSSL connection at once: undefined behaviour, anywhere from corrupt I/O to a
+crash. And a request cancelled before its connection started holds that connection open for up to the
+idle timeout.
+
+*Risk, complexity, blast radius.* Small to moderate, all in `Http1ConnectionTask.h`. It reaches every
+HTTP/1.1 connection's start, and adds one strand hop before the first read.
+
+*Undecided was, first, the shape.* **As first put, the recommendation was a reorder** — arm the read,
+then publish `m_started` — **and it was withdrawn during the round**, for two reasons.
+
+- **The reorder is complete for the race and not for the item.** After it, the first read's start is
+  the only place the driver touches the TLS stream off the strand, and nothing that touches the stream
+  can run on the strand before that start returns: `onStartRequest( )` is posted only once `m_started`
+  is set; `cancelTask( )` already posts its shutdown to the strand (`shutdownOnStreamExecutor( )`);
+  `onCancelStream( )` touches no socket; and the read's own continuation can only follow its start.
+  But it does nothing for defect 2, which Astra's shape covers by construction — *"with operation
+  accounting and cancellation handled there"*. And it holds only while every future post that can
+  precede the start stays gated by `m_started`.
+- **The reason given for preferring it was wrong.** It was put that a read started from a posted
+  handler *"can't reach `scheduleNothrow( )`'s catch"*, as a conflict with A4. It is none. A4's defect
+  was a failed start completed *inline* while `scheduleNothrow( )` holds the task lock, which took the
+  terminal path into a lock its own caller held. Inside an accounted strand handler, the handler's own
+  operation keeps the count above zero until its epilog runs, so `scheduleRead( )` with its catch is
+  safe there — which is how every re-arm in this driver already works. The true reason was size, and
+  it did not survive the comparison.
+
+**Decided: Astra's startup handler, closing both defects.** The shape, in idioms this file already
+has:
+
+- **`scheduleTask( )`** begins an operation and posts the startup handler to the stream's executor,
+  and does nothing else. A post that throws propagates to `scheduleNothrow( )`'s catch with the count
+  left at one — A4's route exactly, which `armRead( )`'s own comment already describes.
+- **The startup handler** runs on the strand, under the handler macros:
+  - if the connection is no longer `Ready` — a cancel arrived first — it re-asserts
+    `closeConnection( )`, because the run's reset erased the first one, and starts no read;
+  - otherwise it arms the read through `scheduleRead( )`, then sets `m_started` and takes
+    `m_startPending` under `m_stateLock`, then starts the pending request or arms the idle timer — both
+    of which already expect to run on the strand.
+- **Its epilog** completes the startup operation. After a re-asserted close, that completion is the
+  first after `beginClose( )`, so `initiateClose( )` runs and the task takes its terminal path at once.
+- From the first operation on, every touch of the TLS stream is on the strand, without depending on
+  which posts can precede the start.
+
+*Undecided left:* none. **Reverses if** implementing it turns up a test or invariant that depends on the
+read starting inside `scheduleTask( )` itself; then the reorder closes the race, and the cancel gap is
+recorded as an item of its own.
+
+*Tests, all deterministic.* Astra's barrier case: hold the first read's start at a barrier — a test
+hook — while a request is submitted from another thread, and assert that no write starts before the
+read's start has returned; red today, green after. Cancel-before-start: submit, cancel, then schedule,
+and assert that the task ends without waiting for the idle timeout or the peer; red today, green after.
+Both under the TLS and the cleartext policies. A4's case, `Http1Driver_ScheduleReadInitiatorThrowEndsTheTaskTests`,
+then exercises the handler's route rather than `scheduleTask( )`'s, where only the post can still
+throw.
+
+### D3 — R02: cap the HTTP/1.1 body bytes a sink has not taken (CS-2)
+
+*What it is.* Over HTTP/1.1 nothing limits how many body bytes wait for the sink. The driver's
+`consumed( )` is a no-op and its read re-arms after every chunk; the request task queues every block in
+its mailbox and then in `m_pendingDownload`, and neither is capped. N1 (`9895df2`) removed the 64 MB
+transfer cap on purpose, and with it the only bound on this. It had been written down twice without a
+decision — S6R.2 §9, and S6R.3 §1.6, the second time on the premise that *"any number silently
+truncates a body"*, which does not hold for a bound on *outstanding* bytes.
+
+*If not done.* A streaming download whose sink falls behind — or returns 0, which the BodySink
+contract allows — grows memory at network speed until memory or the 30-minute total timeout runs out.
+`streamIdleTimeout` is off by default, and would not fire while data flows anyway.
+
+*Risk, complexity, blast radius.* Low to moderate. The request task serves both protocols and the
+session, so every response's data path passes the counter. Over HTTP/2 the stream window bounds the
+same case first, unless a profile advertises a window above the cap.
+
+*Undecided was, two choices.*
+
+- **Fail or pause.** Pausing HTTP/1.1 reads would rework the driver's rule that a read is always in
+  flight — its task ends when nothing is pending — and, with no sink readiness signal, a sink that
+  returns 0 is never offered data again, so it stalls until the 30-minute total timeout, as HTTP/2 does
+  today.
+- **Where.** In the request task, counted as each event is posted — the layer that sees the buffering,
+  which is N1's own principle, and one that covers the mailbox too — or in the HTTP/1.1 driver through
+  `consumed( )`.
+
+**Decided: fail, in the request task, with a default of 64 MiB.** A new cap beside
+`maxResponseBodySize` in `HttpClientRequestConfig`, on body bytes received and not yet taken: counted as
+each data event is posted, and released as the sink takes bytes or the buffered path appends them.
+Past it the stream is cancelled and the request fails with `BufferTooSmallException`, as the buffered
+cap already does, and nothing further is queued for that request. 64 MiB is the ceiling N1 removed,
+now on the right quantity, so no download size is capped. **Reverses if** a consumer needs a slow sink
+to stall without failing; then pause — but only together with a sink readiness signal, the deferred
+`ClientTypes.h` work, since pause alone turns this failure into a 30-minute stall.
+
+*Tests, all deterministic.* A real HTTP/1.1 driver and a sink returning 0 under a small configured cap:
+the request fails with the overflow, with no large allocation. A mailbox case: the sink's callback held
+at a rendezvous while data arrives, failing at the cap. A control: a consuming sink and a body larger
+than the cap, which succeeds — proving that the cap is on outstanding bytes and not on the total.
+
+### D4 — R04: a sink's count survives a later throw, and a sink that threw is left alone (CS-2)
+
+*What it is.* `offerToSink( )` adds up the accepted bytes in a local and records them in
+`m_sinkDelivered` only after its loop. When a later callback in the same offer throws, the record is
+skipped: `runDeferred( )` catches the throw, `failWith( )` keeps an earlier network failure first
+(H07), and `chkPrepareRetry( )` sees zero. Residual of H08 (`0f8d9bd`).
+
+*If not done.* With `retryIdempotentOnConnectionLoss` on — it defaults off — and a connection lost in
+the same batch, a replay hands the sink the bytes it has already taken a second time, whether or not
+the replay then succeeds. And the same batch offers a sink that has just thrown its block again.
+
+*Risk, complexity, blast radius.* Trivial; it reaches the accounting of every streaming download.
+
+*Undecided was:* whether a sink that threw — even having taken nothing — also stops the request's
+further deliveries. **As first put, only replay was blocked.**
+
+**Decided: Astra's version, wider than first put.** Each block's accepted bytes are recorded before the
+next callback runs; and once a sink throws, **no further delivery reaches it and no replay is made
+onto it** for that logical request. **Reverses if** sinks gain `reset( )` — B4, deferred in
+`body-sink-terminal-callback-and-reset-deferral.md` — when a sink that can reset could be replayed.
+
+*Tests, all deterministic.* A same-offer multi-block case — the first block taken, the second throwing
+— followed by a connection loss in the same batch with `retryIdempotentOnConnectionLoss` on: one
+network attempt, no duplicated prefix, and the sink not called after it threw. H07's first-failure
+precedence and the release of the pool slot are both preserved. `BatchThrowingSinkT` does not cover
+this: its first block commits in an earlier batch.
+
+### D5 — R08: fix H24 and H25 now that applications can reach them (CS-2)
+
+*What it is.* `ClientSession::decoders( )` and `registerDecoder( )` are public, and
+`utf_baselib_httpclient4` registers through them. For an application that does the same, two defects
+the decoder deferral had called latent are live:
+
+- **H24:** `decodeBody( )` decodes only the first Content-Encoding field, and then removes all of them.
+- **H25:** `continuationTask( )` runs `absorbResponse( )` — and so `decodeBody( )` — before it checks
+  the hop's exception, so failed responses and responses with no body are decoded.
+
+*If not done.* Such an application can receive a body decoded in the wrong order and labelled as
+uncoded, or a decoder's error in place of the network failure that actually happened.
+
+*Risk, complexity, blast radius.* Small, in `decodeBody( )` and `absorbResponse( )`, and reached only
+when a registered decoder matches a response's coding; the default path is untouched.
+
+*Undecided was:* fix now; restrict registration until the decoder programme lands — a public API
+change, which breaks the test that registers; or document only.
+
+**Decided: fix now, in the minimal form.**
+
+- **H24:** the Content-Encoding list is read across every field, and a response is decoded only when it
+  carries exactly one coding in total. Anything else is handed back with its body and all its headers
+  untouched — already the documented behaviour for a coding the client cannot decode. Decoding several
+  layers stays with the decoder programme.
+- **H25:** decoding happens only when the hop succeeded and the response can carry content — not a
+  response to HEAD, and not a 204 or a 304.
+- **P1 — the decode under the queue lock, astra H09 — stays deferred as decided**, and the records now
+  say that it too is reachable by an application that registers a decoder. Codec supply stays parked.
+
+**Reverses if** the decoder API is to be frozen until the programme instead; then registration is
+restricted, with the restriction stated at `registerDecoder( )`.
+
+*Tests, all deterministic, with the existing test transform.* Two Content-Encoding fields, and one
+field listing two codings: both handed back untouched. A response to HEAD and a 304 carrying
+Content-Encoding: not decoded. A failed coded partial response: the caller sees the network error and
+not a decoder's.
+
+### D6 — R05: TE and the fields `Connection` names, across repeated fields (CS-3)
+
+*What it is.* `normalizeHeaders( )` (`Http2ConnectionTask.h`) checks only the first TE field —
+`tryGet( )` returns the first — and removes `Connection` in its fixed-name loop without reading the
+fields its tokens name. Residual of H16 (`38c6f3d`).
+
+*If not done.* `TE: trailers` followed by `TE: gzip` sends a request an HTTP/2 server must treat as
+malformed (RFC 9113 §8.2.2). A field the caller marked hop-by-hop travels beyond the first hop.
+
+*Risk, complexity, blast radius.* Small, in `normalizeHeaders( )`; only requests carrying these unusual
+fields change.
+
+*Undecided was:* for TE, canonicalize or be strict. And a trap in the obvious fix, which the review did
+not name: stripping every field `Connection` names would remove `TE: trailers` from the form RFC 9110
+§10.1.4 requires — a sender of TE also sends a `TE` connection option — and `trailers` is the one TE
+value HTTP/2 permits.
+
+**Decided: normalize.** Tokens are collected from every `Connection` field before anything is removed;
+the fields they name are removed **except `te`**, which its own rule governs; then `Connection` and the
+fixed connection-specific names go. TE is canonicalized across every occurrence: if any lists
+`trailers` among its codings, exactly one `te: trailers` is sent, and otherwise none. `HeaderList` keeps
+repeated fields, as its contract says. **Reverses if** a stricter request API is wanted, one that
+rejects these inputs before they reach the driver.
+
+*Tests, pure boundary inputs.* Repeated TE; `TE: gzip, trailers`; TE without `trailers`; several
+`Connection` fields with token lists, keeping the end-to-end fields they do not name; and
+`Connection: TE` with `TE: trailers`. Each asserts the emitted HPACK fields, not the request object.
+
+### D7 — R06: the Host agreement check (CS-3)
+
+*What it is.* `isSameAuthority( )` defaults a Host with no port from `url.effectivePort( )`, which
+returns the URL's *explicit* port when it has one — although its comment says the scheme's. Its port
+parser returns 0 for a missing port, a non-digit port and `:0` alike, and accumulates unchecked, so a
+large port wraps. And only the first Host is checked before every Host is removed. New in the H16 fix
+(`38c6f3d`).
+
+*If not done.* Some disagreeing or malformed Host values are silently dropped instead of refused —
+`https://example.com:8443/` with `Host: example.com` among them. Nothing is misrouted: the URL stays the
+connection target, as the review says.
+
+*Risk, complexity, blast radius.* Small. `net::Uri`'s own parser — `tryParse( )` of `"//"` followed by
+the field — already validates the host, rejects a non-digit port and one above 65535, and treats an
+empty port as none.
+
+*Undecided was:* for several Host fields, refuse them, or accept them if they all agree. RFC 9112 §3.2
+has a server answer 400 to more than one, so there is no legitimate use.
+
+**Decided: parse with `net::Uri`.** A Host that does not parse, or that carries anything beyond a host
+and an optional port — userinfo, a path — is malformed and refused. A missing port is defaulted from
+the scheme, never from the URL's port. More than one Host field is refused. The accepted equivalence of
+`https://example.com/` and `Host: EXAMPLE.com:443` is kept. **Reverses if** a real caller sends
+duplicates that agree.
+
+*Tests, pure boundary inputs.* The inverse of the existing case — `https://example.com:8443/` with
+`Host: example.com`; `:garbage`, `:0`, `:99999` and `:4294967739`; two Host fields; and controls for the
+accepted equivalence, an empty port, and an IPv6 literal.
+
+### D8 — R07: HEAD, matched exactly (CS-3)
+
+*What it is.* The HTTP/2 engine's `isHeadMethod( )` (`Session.h`) folds case, so a request whose method
+is `head` sets `expectsNoContent`, and H17 (`9e5cb11`) now rejects a non-empty DATA frame on its
+response. The helper dates from `8e2a787`; H17 made it bite. RFC 9110 §9.1: *"The method token is
+case-sensitive."* The HTTP/1.1 driver and the pool already match `"HEAD"` exactly.
+
+*If not done.* A request with a case-variant method cannot receive a response body — a 501's
+explanation, say.
+
+*Risk, complexity, blast radius.* One line, consistent with the rest of the library. *Undecided was:*
+nothing.
+
+**Decided: exact `"HEAD"`.** No reversal condition was found.
+
+*Tests.* HEAD with DATA still rejected; `head` with a 501's body delivered; a mixed-case control.
+
+---
+
+## 4. Astra's recommendations and the decisions
+
+| | Astra recommended | Decided | Difference |
+|---|---|---|---|
+| R01 | Do not pass a TLS truncation into the close-delimited success path; leniency is reasonable only for a message that delimits itself | Strict, no setting | Same |
+| R02 | Bound outstanding bytes, not the total, at ingress; fail on overflow **or** pause HTTP/1.1 reads, left open; the driver's `consumed( )` seam is available | Fail, in the request task, 64 MiB | Same direction; the choices she left open were made |
+| R03 | One serialized strand bootstrap — the first read and the transition allowing posted request starts — with operation accounting and cancellation handled there | Her bootstrap | Same, after the first recommendation was withdrawn |
+| R04 | Record each callback's count before another can throw; a sink exception stops further automatic delivery and replay | Her version | Same, after the first recommendation was widened |
+| R05 | Normalize: collect `Connection` tokens from every occurrence first, remove the named fields, canonicalize every TE; do not make HeaderList drop repeats | The same | Same, plus the `te` exemption |
+| R06 | Reuse the URI authority idiom; absent is not invalid; the scheme's default for an omitted port; validate every Host **or** reject duplicates | Refuse duplicates | Same; one of her two options |
+| R07 | Exact HEAD only, as on HTTP/1.1; do not uppercase outgoing methods | Exact `"HEAD"` | Same |
+| R08 | Fix H24/H25's integration now, independent of codec supply; reverses only on an explicit restriction of registration | The minimal fix, now | Same; the minimal form, leaving multi-layer decoding to the programme |
+
+Her batches were grouped by theme — R01–R04, R05–R07, R08, R09 — and these by the files a lane touches;
+the priorities agree.
+
+---
+
+## 5. What stays deferred or carried
+
+- **P1, astra H09** — the decode, and other caller code, under the queue lock — stays deferred as
+  decided (`http-content-decoders-deferral.md`); its reach now includes an application that registers a
+  decoder.
+- **The sink readiness signal and `onComplete( outcome )`** stay deferred with the other `ClientTypes.h`
+  changes; D3's reversal condition depends on the first.
+- **B4**, `reset( )` on `BodySink`, stays deferred; D4's reversal condition depends on it.
+- **Astra's carried risks** — what a caller can still meet as the consequence of decisions already
+  recorded, listed in her review's *"Carried risks that are not new remediation requests"* — are
+  pointed to from the design's security summary, `http2-design.md` §7. None is owed work: each is closed
+  against the decision that produced it and recorded where that decision lives.
+- **X1**, the x86-64 Linux matrix, stays deferred by the maintainer.
+
+---
+
+## 6. Corrections made during the round
+
+Recorded because this project's recurring failure is a conclusion resting on a wrong premise, and each
+of these was stated to the maintainer before it was caught.
+
+- **H24 and H25 were reported as unreachable** because "no codec ships" — the decoder deferral's
+  premise. `registerDecoder( )` is public. Astra's R08; the records were corrected at `425802c`.
+- **"21 of the 29 fixed"** counted H08, H16 and H17 as closed; R04 to R07 are their residuals.
+- **RFC 2818 §2.2.1 was paraphrased as calling this case "a truncation attack".** It does not use the
+  words: it says a client MUST treat a premature close as an error and the data received as potentially
+  truncated, and that for a response without Content-Length a premature close from the server *"cannot
+  be distinguished from a spurious close generated by an attacker"*. RFC 9112 §9.8, quoted in D1, is the
+  text D1 rests on.
+- **D2's first recommendation rested on a false conflict with A4, and missed the cancel gap** — both set
+  out in D2.
