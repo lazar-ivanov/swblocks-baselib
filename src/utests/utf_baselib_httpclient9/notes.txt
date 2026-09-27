@@ -8,3 +8,7 @@
 --log_level=message --run_test=ClientSession_ANotModifiedResponseIsNotDecodedTests
 --log_level=message --run_test=ClientSession_ANoContentResponseIsNotDecodedTests
 --log_level=message --run_test=ClientSession_AFailedCodedResponseReportsTheNetworkErrorTests
+
+# E2 - the establishment failure through a real pool and session, against an origin whose full
+# accept queue drops the SYN: the connection's cause chained, two establishments, both let go
+--log_level=message --run_test=ClientSession_AnOriginWhichNeverAcceptsFailsWithTheConnectionsCauseTests

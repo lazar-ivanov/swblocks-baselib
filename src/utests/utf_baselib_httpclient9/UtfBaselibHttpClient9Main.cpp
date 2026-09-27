@@ -32,8 +32,9 @@
  * response cut short - and that peer writes them byte for byte. What the module pays for is the
  * cleartext session, which instantiates both drivers over the cleartext stranded policy.
  *
- * SIZE, MEASURED: 39.5 MB clang debug (a64) with D5's seven cases, against a 40 MB target - which is
- * the session's instantiations and very little else ( 18.5 MB over the empty module floor ). It is
+ * SIZE, MEASURED: 39.6 MB clang debug (a64) with D5's seven cases and E2's one, against a 40 MB
+ * target - which is the session's instantiations and very little else ( 18.6 MB over the empty
+ * module floor; E2 added 0.1 MB, since it brings no type the module did not already have ). It is
  * AT the target, so a slice which adds here measures first, as src/utests/AGENTS.md asks.
  *
  * Sockets: loopback, ephemeral ports, so these cases do not take the machine global test lock
@@ -63,3 +64,4 @@
  */
 
 #include "TestClientSessionDecoding.h"
+#include "TestClientSessionEstablishmentFailure.h"
