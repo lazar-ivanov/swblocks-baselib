@@ -264,7 +264,7 @@ UTF_AUTO_TEST_CASE( H2Driver_TeIsCanonicalizedAcrossRepeatedFieldsTests )
 
         /*
          * Red before the fix: one field listing several codings was compared whole. The second
-         * carries OWS and a coding in another case, both of which RFC 9110 5.6.1 and 10.1.4 allow
+         * carries OWS (RFC 9110 5.6.1) and 'Trailers', which RFC 5234 2.3 makes the same literal
          */
 
         { "gzip, trailers",         nullptr,            "te: trailers\nx-kept: yes\n"   },
