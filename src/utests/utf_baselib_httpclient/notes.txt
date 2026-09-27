@@ -85,3 +85,8 @@
 
 # S6R.3 H06 - the close drains the sink, and a sink which will not drain fails the request
 --log_level=message --run_test=HttpClientRequestTask_StreamingSinkWhichWillNotDrainFailsTheRequestTests
+
+# D4 of astra's second review - a sink's count survives a later throw, and a sink which threw is
+# offered nothing more and is not replayed onto
+--log_level=message --run_test=HttpClientRequestTask_SinkWhichThrowsKeepsItsCountAndIsOfferedNothingMoreTests
+--log_level=message --run_test=ClientSession_SinkWhichThrewIsNotReplayedOntoTests
