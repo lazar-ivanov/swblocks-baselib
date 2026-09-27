@@ -455,15 +455,15 @@ namespace bl
         /**
          * @brief The retry rule of design 5.4 and D6, as one predicate
          *
-         * It is a free function rather than a member because BOTH halves of the retry need it and
-         * they do not sit in the same place. The pool owns the half it can see end to end - a
-         * request still queued in the pool when the connection it was queued behind failed never
-         * left the pool, so the pool counts its attempts itself. A request which was already
-         * dispatched comes back through releaseStream( ) and a fresh acquire( ), and the frozen
-         * S2.6 contract gives the pool no identity to count those against: acquire( ) takes a
-         * ClientRequest by reference and releaseStream( ) names a handle the pool never issued.
-         * So the count for that half belongs to the request task, which has per-request state by
-         * construction, and the RULE stays here so that there is one rule and not two
+         * It is a free function rather than a member because the half of the retry which calls it
+         * is not the pool's. The pool owns the half it can see end to end: a request still queued
+         * when the connection it was queued behind failed never left the pool and was never sent,
+         * so only the BUDGET clause below can apply to it, and examineKey( ) applies that clause
+         * inline to the attempts the pool counts itself. A request which was already dispatched
+         * comes back through releaseStream( ) and a fresh acquire( ), and the frozen S2.6 contract
+         * gives the pool no identity to count those against - acquire( ) takes a ClientRequest by
+         * reference and releaseStream( ) names a handle the pool never issued - so that half is
+         * the request task's, which has per-request state by construction and applies the rule whole
          *
          * Both limbs must hold ( design 5.4 ): the failure must prove the request was unprocessed,
          * and the request must be replayable. A request whose body source cannot rewind is not,

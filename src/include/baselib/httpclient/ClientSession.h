@@ -187,10 +187,24 @@ namespace bl
 
             virtual ContentDecoderRegistry& decoders() NOEXCEPT = 0;
 
+            /**
+             * @brief The redirect policy the requests made from now on follow - design 5.6
+             *
+             * CONFIGURED BEFORE REQUESTS ARE MADE, OR BETWEEN THEM - never while another thread is
+             * inside createRequestTask( ). Each request copies the policy into its own snapshot
+             * there, with no lock, so a request already made is unaffected by a change and one
+             * being made at the same moment races it. There is deliberately no lock, as there is
+             * none on the decoder registry: this reference is how the policy is edited, and no
+             * lock taken here could cover what a caller then does through it
+             */
+
             virtual RedirectPolicy& redirectPolicy() NOEXCEPT = 0;
 
             /**
              * @brief The active header profile - design 6.5
+             *
+             * Set under the same contract as redirectPolicy( ): before requests are made or between
+             * them, never concurrently with createRequestTask( ), which snapshots it unlocked
              */
 
             virtual const HeaderProfile& profile() const NOEXCEPT = 0;
@@ -229,10 +243,11 @@ namespace bl
          * @brief Everything a request task needs from the session it came from, as ONE value
          *
          * Snapshotted at createRequestTask( ) so that a session reconfigured while a request is in
-         * flight does not change what that request is doing halfway through. The two things which
-         * are deliberately NOT snapshotted are the cookie jar and the decoder registry: the jar is
-         * per session, thread safe and meant to accumulate across requests, and the registry is
-         * populated once at set-up
+         * flight does not change what that request is doing halfway through. The snapshot itself is
+         * taken with no lock, so a reconfiguration must not RACE it - the contract is stated at
+         * ClientSession::redirectPolicy( ). The two things which are deliberately NOT snapshotted
+         * are the cookie jar and the decoder registry: the jar is per session, thread safe and
+         * meant to accumulate across requests, and the registry is populated once at set-up
          */
 
         struct SessionRequestPlan
@@ -250,8 +265,9 @@ namespace bl
              * The pool replays a request which was still queued behind a failed connection; a
              * request which had already been dispatched comes back through releaseStream( ) and a
              * fresh acquire( ), and the frozen S2.6 contract gives the pool no identity to count
-             * those against. That half is this task's - see chkPrepareRetry( ) - and
-             * chkRequestMayBeReplayed( ) is the one rule both halves apply
+             * those against. That half is this task's - see chkPrepareRetry( ), which applies
+             * chkRequestMayBeReplayed( ) whole. The pool's queued half applies only its budget
+             * clause, inline: a request which never left the queue was never sent
              */
 
             ConnectionPoolPolicy                                                policy;
@@ -311,6 +327,9 @@ namespace bl
             /**
              * @brief The marker this session puts in ConnectionKey::http2ProfileId for a request
              * which must not be carried over HTTP/1.1 - see the BodySource rule at ClientSessionT
+             *
+             * It is APPENDED to the session's own HTTP/2 profile id, so a session which has none
+             * produces a key whose id is the marker alone, "#h2-only"
              */
 
             static const std::string& h2OnlyKeyMarker() NOEXCEPT
@@ -1172,7 +1191,8 @@ namespace bl
              * replayed what had already been DISPATCHED, because acquire( ) takes a ClientRequest
              * by reference and releaseStream( ) names a handle the pool never issued, so the pool
              * has no identity to count attempts against. This task has one by construction, and
-             * chkRequestMayBeReplayed( ) is the rule both halves share
+             * applies chkRequestMayBeReplayed( ) whole; the pool's queued half applies only its
+             * budget clause, inline
              *
              * IT IS NOT AN OPTIMIZATION, AND THE ALPN FALLBACK IS WHY. The pool dispatches the
              * first request of a key onto the Connecting placeholder so that its HEADERS ride the
@@ -1187,12 +1207,11 @@ namespace bl
             {
                 /*
                  * A HOP WHICH REACHED THE CALLER'S SINK HAS SPENT IT, and that is refused here
-                 * rather than inside chkRequestMayBeReplayed( ). That predicate is deliberately
-                 * ONE rule for both halves of the retry ( ConnectionPool.h ), and the pool's half
-                 * never has a sink - it does not know sinks exist - so a field on RetryContext
-                 * would be one its other caller must always leave false, which reads as a bug to
-                 * the next reader. The shared rule is about the REQUEST; "response bytes escaped"
-                 * is about the HOP, and only this task sees hops
+                 * rather than inside chkRequestMayBeReplayed( ). That predicate is about the
+                 * REQUEST - its budget, whether it can be replayed, whether its method is
+                 * idempotent - and the pool's queued half, which applies only the budget clause
+                 * inline, never meets a sink at all: a queued request was never sent. "Response
+                 * bytes escaped" is about the HOP, and only this task sees hops
                  *
                  * IT IS ABOVE THE REPLAY RULE because it is also above the rewind( ): a retry
                  * refused here must not have moved the caller's body source first
@@ -1850,8 +1869,10 @@ namespace bl
              *
              * Both fields are set although only one of them is consulted for a given policy: a
              * cleartext connection reads cleartextProtocol and never the ALPN offer, and a TLS
-             * connection the other way round, so setting both is what makes one function serve
-             * both policies without a compile-time branch
+             * connection the other way round. ONLY THE TLS HALF IS EVER REACHED TODAY: a cleartext
+             * session speaks exactly one protocol, so it never negotiates and keyFor( ) never marks
+             * one of its keys. The cleartextProtocol line is kept so that the function stays right
+             * if a cleartext session ever could negotiate
              */
 
             static void narrowToHttp2( SAA_inout tasks::ClientConnectionConfig& config )

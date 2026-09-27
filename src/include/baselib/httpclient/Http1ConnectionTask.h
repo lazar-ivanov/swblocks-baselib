@@ -2445,7 +2445,9 @@ namespace bl
              *
              * The call is part of the protocol-agnostic contract and a request task makes it
              * whatever the connection speaks, so it is accepted and does nothing rather than being
-             * an error. What backpressure there is over HTTP/1.1 is TCP's own
+             * an error. AND THERE IS NO BACKPRESSURE OVER HTTP/1.1 AT ALL: TCP's would need this
+             * driver to stop reading, and the read re-arms after every chunk, so bytes a sink has
+             * not taken queue in the request task - astra's second review, R02
              */
 
             virtual void consumed(
