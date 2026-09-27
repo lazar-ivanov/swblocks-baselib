@@ -1639,6 +1639,11 @@ The three touch disjoint files and can run as parallel lanes. Lanes validate wit
 orchestrator with clang release and gcc debug, and CS-1 also owes a Windows matrix run, because it
 changes how a TLS ending is classified.
 
+**Before them, the bucket C round — DONE 2026-09-27** (`d186d2a`, `7330dd5`, `d6d1d82`, `badf642`):
+comment corrections, one dead-code deletion and one test's wording that earlier reviews had recorded
+and never scheduled, decided and taken as a round of their own — §7 of the same record. **After
+them**, one ThreadSanitizer pass over the client modules (B6 on `issues/astra-remediation-owed-work.md`).
+
 **Acceptance.** Each slice: focused modules under clang debug in the lane, then clang and gcc release
 plus the whole-suite gate by the orchestrator. S6R.1 and S6R.2 additionally owe the cheap
 demonstrations listed in §7 of the verification record — nothing in either the review or the

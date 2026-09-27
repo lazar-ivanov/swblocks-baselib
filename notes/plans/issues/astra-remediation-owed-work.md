@@ -76,6 +76,21 @@ handler is how every re-arm in the driver already works — and the reorder leav
 row now names. R04's fix was first put as blocking replay only; Astra's version, taken, also stops
 further delivery to a sink that threw.
 
+**Bucket C, the fallout round — decided and DONE 2026-09-27, before any of the change-sets.** Items
+recorded earlier and never decided — L6 review finding 11 and nits 13(b), (c), (e) and (i), the
+write-barrier comment pass further down this file, and row 6 — were put as three decisions and taken
+by the maintainer as recommended, with a fourth on the round itself: its own round, ahead of CS-1,
+and not built or run where no code is touched. Done as `d186d2a` (comments only), `7330dd5` (C1, the
+one code change: an uncalled helper deleted), `d6d1d82` with its tier-1 refresh `badf642` (test
+text), and this record. The account, and how each commit was checked instead of built, is §7 of
+[`astra-second-review-decisions.md`](astra-second-review-decisions.md).
+
+| # | Item | Status |
+|---|---|---|
+| B6 | **ThreadSanitizer over the client modules.** The last run was 2026-09-20, before every change of the remediation that reworked teardown, the pool's driver pointer, the reuse verdict and both drivers' arms; the L6 review would not deploy to a64 without one | **DECIDED 2026-09-27 — one pass after CS-1 to CS-3 have landed**, so that it covers D2's startup handler as well, with a positive control as `src/utests/AGENTS.md` requires. **Owed** |
+| E1 | **The narrowing discrimination** (L6 review, second pass). `ClientSessionTls_StreamingUploadTakesAnHttp2OnlyConnectionTests` pins the key split, not the narrowing: its peer prefers `[ "h2", "http/1.1" ]`, so deleting `narrowToHttp2( )` leaves it green. The discriminating case is one streaming `PUT` against a peer preferring `[ "http/1.1", "h2" ]` | **OPEN — found by the bucket C sweep 2026-09-27**, recorded twice in the L6 record as owed and never scheduled; to be put as a decision. A test, not a comment, so not bucket C's |
+| E2 | **The establishment-failure path through the pool and the session** (L6 review, second pass): run at the driver (the dead-port case) and in the pool against stub connections, never with a real connection task through both — the pool's retirement of a real cancelled connection task, L5 §9's obligation, is pinned by reading only | **OPEN — found by the bucket C sweep 2026-09-27**, on the same terms as E1 |
+
 ## Owed to the x86-64 Linux matrix — deferred by the maintainer, 2026-09-25
 
 | # | Item | What settles it |
@@ -308,7 +323,7 @@ slot nobody created), *decided* (the reason survives re-reading), and *not a def
 
 | # | Item | Status | Where |
 |---|---|---|---|
-| 6 | **H01's spurious reuse refusal** — `httpclient3` fails ~10% of full-module runs (2/20 with the teardown fix, 3/20 without, so **pre-existing**), and the `tls-h1-control` lane independently measured **~1 in 8** on TLS | **folded into this batch 2026-09-23**, because it degrades the gate every other change-set is judged against. Redesigned in [`h01-reuse-verdict-design.md`](h01-reuse-verdict-design.md) after the recorded shape failed re-derivation; lands **after A2** (§5.3). Its evidence standard is a **scoped exception**, below | teardown design §16.6 |
+| 6 | **H01's spurious reuse refusal** — `httpclient3` fails ~10% of full-module runs (2/20 with the teardown fix, 3/20 without, so **pre-existing**), and the `tls-h1-control` lane independently measured **~1 in 8** on TLS | **FIXED and merged** at `ef26bed`, on `h01-fix` as `h01-reuse-verdict-design.md` §12 accepted it. *Status corrected 2026-09-27 by the ledger sweep, which found this row still reading as scheduled.* It was **folded into this batch 2026-09-23**, because it degrades the gate every other change-set is judged against. Redesigned in [`h01-reuse-verdict-design.md`](h01-reuse-verdict-design.md) after the recorded shape failed re-derivation; lands **after A2** (§5.3). Its evidence standard is a **scoped exception**, below | teardown design §16.6 |
 | 7 | **h1's write path has no peer-close arm** — h2 has one; which handler notices the peer first still decides whether the task fails | **FIXED and merged** as **A2** (`04bcb6f`), shape (ii): the write declines to fail the task and the still-armed read classifies the ending | teardown design §4.4, §13 |
 | 8 | **A composed TLS read can slip a cancel** the same way a composed write does — pre-existing, neither created nor closed by the teardown fix | **FIXED and merged** as **A1-tls** faces 1 and 2 (`db30f53`, `5941a50`). Face 1's gate has a red of its own, which a review had concluded nothing in this tree could give it | teardown design §13 |
 | 9 | **The third HPACK hazard** — `encode( )` commits its dynamic-table transaction at queue time, so a dropped block leaves our encoder holding entries the peer never saw | **decided** — the fix is shape **(D)**, which §3.3 rejected for that slice; unreachable today by four properties re-verified at the source on this tip | `s6r3-design.md` §3.3, §3.7; `s6r3-h10-record.md` §5 |
@@ -576,10 +591,12 @@ consolidated list that silently loses entries is worse than the eight scattered 
 and because this is the second time this feature has lost something by summarising it.
 
 **Owed comment corrections, from §16.9.** `httpclient7/notes.txt`'s stale "known red" block is
-**done** — rewritten rather than deleted, per §16.8.1. `TestHttp2DriverWriteBarrier.h` still
-contradicts itself on §8.3's wrong lever in four places (`:59-60`, `:82-84`, `:639-641`, and the two
-failure messages at `:655` and `:708`) while `BIG_WRITE_THRESHOLD`'s own comment is correct — a
-comment pass, still **owed**, and it matters because those are the words a failing run prints.
+**done** — rewritten rather than deleted, per §16.8.1. `TestHttp2DriverWriteBarrier.h` contradicted
+itself on §8.3's wrong lever in four places (`:59-60`, `:82-84`, `:639-641`, and the two failure
+messages at `:655` and `:708`) while `BIG_WRITE_THRESHOLD`'s own comment was correct — a comment
+pass, **DONE 2026-09-27** in the bucket C round at `d6d1d82`, with its tier-1 refresh `badf642`: the
+comments and both failure messages now say one DATA frame per write. It mattered because those are
+the words a failing run prints.
 
 ### Item 6, re-derived 2026-09-23 — the recorded shape is wrong
 

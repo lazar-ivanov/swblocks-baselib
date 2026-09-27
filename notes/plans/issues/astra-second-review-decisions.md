@@ -105,10 +105,11 @@ close_notify control that succeeds. Content-Length and chunked controls, ended b
 complete message, that succeed. Each asserts the request's result and the sink's completion, not only
 the driver task's terminal state.
 
-*Rides with it.* The HTTP/1.1 driver's `consumed( )` comment — *"What backpressure there is over
-HTTP/1.1 is TCP's own"* — is false while the read re-arms after every chunk, and is corrected here
-because this is the change-set that owns that file. It is corrected without reference to D3's cap,
-which lands in CS-2.
+*Rode with it until the fallout round.* The HTTP/1.1 driver's `consumed( )` comment — *"What
+backpressure there is over HTTP/1.1 is TCP's own"* — is false while the read re-arms after every
+chunk. It was to be corrected here because this change-set owns that file; it is a fact correction
+that depends on no decision, so it moved to the bucket C round (§7) and was corrected at `d186d2a`,
+without reference to D3's cap.
 
 ### D2 — R03: start the connection in one strand handler (CS-1)
 
@@ -421,3 +422,40 @@ of these was stated to the maintainer before it was caught.
   text D1 rests on.
 - **D2's first recommendation rested on a false conflict with A4, and missed the cancel gap** — both set
   out in D2.
+
+---
+
+## 7. Bucket C, the fallout round — decided and done 2026-09-27, before the change-sets
+
+**What bucket C was.** Items recorded before this review and never decided or scheduled: L6 review
+finding 11 and nits 13(b), (c), (e) and (i) (`http2-l6-review-record.md`, whose second pass says
+*"the rest stand"*), the comment pass on `TestHttp2DriverWriteBarrier.h` owed since
+`initiate-close-teardown-design.md` §16.9, and an owed-list row still reading as scheduled after its
+fix merged. Recorded twice without a decision is the signal AGENTS.md names, so they were put as
+decisions.
+
+**Taken by the maintainer:** *"I accept all five as recommended. I also accept the plan change to do
+bucket C in its own round before the astra work starts. Since bucket C is only comments and docs
+changing I don't think it needs the validation you propose. You can skip the build and testing part
+[if] there is no real code touched."*
+
+| # | Decision | Taken |
+|---|---|---|
+| **C1** | Nit 13(b): `SessionHeadersT::applyHttp1Casing( )` has no caller anywhere in `src/` and duplicates the codec's casing lookup. Delete it now, or keep it for L7's S7.3 | **Delete.** S7.3 can route through `Http1Codec`'s lookup when it comes; keeping it is a second unwired copy for whoever wires casing. Reverses if S7.3 were about to start and wanted it |
+| **C2** | Nit 13(c): `profile( )` writes, and `redirectPolicy( )` hands out a mutable reference to, what `createRequestTask( )` snapshots with no lock. Document the contract, or add a lock | **Document**, as the decoder registry already does: configured before requests are made or between them, never concurrently with `createRequestTask( )`. A lock could not cover what a caller does through `redirectPolicy( )`'s reference without replacing it by a value setter, an interface change. Reverses if a caller needs to reconfigure a live session from another thread |
+| **C3** | Finding 11 and nit 13(e): the text says both halves of the retry call `chkRequestMayBeReplayed( )`, and that `narrowToHttp2( )` serves both policies. Correct the text, or change the code | **The text.** The pool's queued half applies only the budget clause, inline in `examineKey( )`, because a request which never left the queue was never sent — calling the predicate there would add a replayability refusal to requests never sent. `narrowToHttp2( )`'s cleartext line is unreachable, since a cleartext session never negotiates, and harmless. Reverses if the pool ever replays what it has already dispatched |
+| **B6** | ThreadSanitizer over the client modules: now and again after the change-sets, or once after | **Once, after CS-1 to CS-3 land**, so that it covers D2's startup handler too — owed, on the ledger |
+| **R** | Implement bucket C in the change-sets, or as its own round before them | **Its own round, before CS-1** — the change-sets stay about astra's findings and start from corrected comments. CS-1's own comment corrections stay in CS-1: they explain D1's behaviour change and cannot precede it |
+
+**Done:**
+
+| Commit | What | Checked by |
+|---|---|---|
+| `d186d2a` | Comments only: C2 at the interface and the snapshot; C3's corrections in `ClientSession.h` (three) and `ConnectionPool.h` (line for line) and at `narrowToHttp2( )`; nit (i), the `#h2-only` marker appended to an empty profile id; the HTTP/1.1 driver's `consumed( )` comment, moved here from CS-1 | Mechanically: every changed line a comment line or blank, no added line carrying a `*/` that could end a comment early, and `createRequestTask( )` read to confirm it takes no lock |
+| `7330dd5` | C1: `applyHttp1Casing( )` deleted, 34 lines; `toLowerAsciiCopy( )` kept, which has three other callers | The one code change, so not left to reading: `ClientSession.h` parsed with the project's clang2010 debug flags and `-Werror`, `-fsyntax-only` — clean — with a positive control using a surviving member and a negative control calling the deleted one, which fails as it must. Probes and log in `http2-l0-state/logs/bucketc-syntax/` |
+| `d6d1d82` | The write-barrier case: three comments and its two failure messages say one DATA frame per write, not a window's worth | Tier 1: PASS on the tree before; after it, exactly C2 BODY CHANGED on `H2Driver_PeerHalfClosesWithAWriteInFlightTests` and C6 on the edited enum member; PASS again after the refresh. Logs in `http2-l0-state/logs/bucketc-tier1/` |
+| `badf642` | The companion tier-1 manifest refresh | Its diff is three entries, all in that file: the case, the member and the namespace block holding it |
+
+**Nothing was built or run**, by the maintainer's decision. The one piece of real code, C1, was
+parsed rather than built. Nothing in the round can change behaviour: comments, an uncalled function,
+and test text whose assertions did not move.

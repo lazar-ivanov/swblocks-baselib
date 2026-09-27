@@ -1002,7 +1002,10 @@ Bounded by the retry limit (4.6). A request the server may have processed is **n
 automatically; retrying idempotent methods after connection loss is a separate knob, default off.
 
 **Which half of the retry the pool counts, settled in S5.2.** The *rule* is one predicate,
-`chkRequestMayBeReplayed` in `httpclient/ConnectionPool.h`, and both halves use it. The *counter*
+`chkRequestMayBeReplayed` in `httpclient/ConnectionPool.h`, which the session's dispatched half
+applies whole; the pool's queued half applies only its budget clause, inline, because a request
+which never left the queue was never sent. *Corrected 2026-09-27, L6 finding 11: this said "both
+halves use it".* The *counter*
 cannot be in one place, because the S2.6 contract gives the pool no request identity: `acquire`
 takes a `ClientRequest` by reference and `releaseStream` names a handle the pool never issued. So a
 request still queued in the pool when the connection it was queued behind failed is replayed and

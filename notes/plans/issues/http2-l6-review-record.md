@@ -986,3 +986,29 @@ list, in the order I would take it: finding 16; the concurrent-request case; a T
 of `httpclient4`; 4a with its sentence at the knob; the narrowing case; findings 6, 9, 12; 5(c) at
 the driver; OpenSSL 1.1.1w. Every session-level test module costs about 39 MB before its first
 case, and the size gate that matters has never seen one.
+
+---
+
+## Where this record's open items stand, 2026-09-27
+
+Added by the sweep that closed bucket C of the decisions on astra's second review
+(`astra-second-review-decisions.md` §7), so that a reader of this record finds its items neither open
+when they are closed nor closed when they are not. Each was checked at the source on `lazari2`.
+
+| Item | Now |
+|---|---|
+| **16** — publish before answering, on two routes | **FIXED** at `419c44f`: `onPingDeadline( )` and `onTaskStoppedNothrow( )` both publish `Closed` before they answer a sink |
+| **The concurrent-request case** | **CLOSED** 2026-09-20, `h2client5-concurrent-case-is-load-sensitive-record.md`: the driver published its free-slot count after telling a closed stream's sink, and publishes first now |
+| **4a** | **Narrowed** at `f23b205` — above |
+| **5(c) at the driver** | **DONE** — `http2-peer-limit-sentinel-record.md` |
+| **6** | The documented minimum landed in S6R.3; the structural fix stays deferred, as P1 of `http-content-decoders-deferral.md` |
+| **9** | **FIXED** — astra H22, `03680cb` |
+| **11** | **Text corrected** at `d186d2a` and in the design: the session applies the predicate whole, the pool only its budget clause, inline |
+| **12** | **Decided** 2026-09-27 as D5 of `astra-second-review-decisions.md`, to be fixed in its minimal form in CS-2; not yet implemented |
+| **13(b)** | **Deleted** at `7330dd5` |
+| **13(c)** | **Documented** at `d186d2a`: configure before or between requests, never concurrently with `createRequestTask( )` |
+| **13(e)**, **13(i)** | **Comments corrected** at `d186d2a` |
+| **ThreadSanitizer** | Ran over the session modules at L6's close and found the h2 timer race, since fixed; **not run since the remediation**. Decided 2026-09-27 as one pass after the second review's change-sets land — B6 on `astra-remediation-owed-work.md` |
+| **OpenSSL 1.1.1w** | Deferred — `openssl-1x-flavor-deferral.md` |
+| **The narrowing discrimination** | **OWED, and not written.** `ClientSessionTls_StreamingUploadTakesAnHttp2OnlyConnectionTests` still runs against a peer preferring `[ "h2", "http/1.1" ]`, so deleting `narrowToHttp2( )` would leave it green. E1 on `astra-remediation-owed-work.md` |
+| **The establishment-failure path through the pool and the session** | **OWED, and not written.** It runs at the driver (the dead-port case) and in the pool against stub connections (`H2Pool_ANeverUsableConnectionIsChargedAndBoundedTests`), never with a real connection task through both. E2 on the same list |
