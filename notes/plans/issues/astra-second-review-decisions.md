@@ -531,6 +531,13 @@ shape AGENTS.md sets, and all three were taken as recommended.
 | 2 | **D3's counted quantity** — payload alone does not bound memory against a peer trickling single bytes | **Payload plus an allowance derived from the types** (§3, D3) |
 | 3 | **After a timeout or a cancel, the sink still received body bytes** — `applyData( )` had no completion guard | **Folded into CS-2 with D3** (§3, D3) |
 
+**A second decision, the same day, on item 1's premise.** CS-3's third review round found that the
+decision's "a pooled block too small for the payload is replaced" did not hold. The replacement,
+`DataBlock::createInstance( size )`, is born full, so the write that follows throws, and the frame
+is never delivered. The defect is older than this run, and only an application configuring a
+small-block pool meets it. **Decided: fixed now, in CS-3**, as recommended: the replacement is asked
+for through `DataBlock::get( )`, which empties it. The pool half of item 1 gets its first test.
+
 **Scheduled on sight — a live defect that hands a caller a wrong answer** (AGENTS.md: such defects
 are not batched). E2's case found it, the CS-2 lane demonstrated it deterministically with the real
 pool, and the fix went into CS-2.
@@ -558,5 +565,45 @@ reported to the maintainer rather than asked:
 - **D6** exempts `host` as well as `te` (§3, D6). A premise in `Session.h` and `TestSession.h` that
   cited RFC 9110 §5.6.2 for case-insensitive `trailers` is corrected to RFC 5234 §2.3, comment only.
 
-**Found and not decided** — recorded as rows I1 to I9 of the owed list, in
+**Found and not decided** — recorded as rows I1 to I11 of the owed list, in
 [`astra-remediation-owed-work.md`](astra-remediation-owed-work.md).
+
+## 10. The change-sets, as they landed
+
+### CS-3 — D6, D7, D8, and the DATA block sized to its payload — ready 2026-09-27
+
+**Merged at `f48acd2`** from `astra2-cs3`. Tier 1 was re-captured once from the integrated tree
+(`130fd87`), with the nine lines it reported read against the manifest diff.
+
+**The commits, and what each red was:**
+- **D6** — `d515497`, then the fix `e0cc4a4`. Red: 7 failures.
+- **D7** — `07133fb`, then the fix `e3e431d`. Red: 12 failures.
+- **D8** — `54df8d7`, then the fix `164a195`. Red: 2 failures.
+- **Comment-only commits** — `f4a41cc` and `f8b62d4`.
+- **Review round 1** — `host`'s exemption (`fe1a1af` red, then `fced53a`), the h2client8 note
+  (`5a79bc3`), and the RFC 5234 premise in `Session.h` and `TestSession.h` (`50c9cd1`, objects
+  identical).
+- **Decision round 1, item 1** — the DATA block sized to its payload (`c892ae5` red, then `411f8d0`).
+- **The pooled-block replacement** — `5025adb` red, then `6cbefba`. The test puts a read-sized block
+  into the pool last, because the driver's read block draws first from the same LIFO pool.
+
+**Every red was deterministic**, a pure boundary input or a scripted peer, and was shown red once and
+green once.
+
+**Reviewed in four rounds by fable, all agreed**, and closed with no open finding:
+- Round 1 found `Connection: host`, which the orchestrator's own review also found.
+- Round 3 found the pooled-block replacement.
+- Round 4 accepted the test's pool adaptation, which corrected a premise of its own round-3 proposal.
+
+**The gate:** clang release and gcc debug over the twelve affected modules — every module whose
+`.d` names `Http2ConnectionTask.h` or `Session.h`, and the new `utf_baselib_h2client8`.
+**Green, 24 of 24**, on `f48acd2`:
+- `h2client` to `h2client8`, `h2core`, and `httpclient4` to `httpclient6`;
+- each recompiled on the merged tree;
+- each entered and left every case, printed "No errors detected", and printed no failure and no
+  `leaked` line. That was read from each log, not from the gate's own summary.
+
+The logs are kept with the run's evidence, in `logs/astra2/gate/cs3/`.
+
+**New module:** `utf_baselib_h2client8`, 35.4 MB at a64 clang debug, with its reason in its `Main.cpp`.
+Its x86 size is owed to the Windows handoff.
