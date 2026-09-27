@@ -134,6 +134,8 @@ and orchestrator**, never repeated in both:
   cell nobody covers**, which is the price of the split and is deliberate.
 - These limits are what keep the machine viable. With every lane confined to one focused module at a
   time, no more than about two test modules are ever compiling at once across all worktrees.
+- **The whole procedure** — roles, lane briefs, the review loop, the gate, restarts, and the agent
+  definitions it needs — is `notes/plans/parallel-implementation-workflow.md`. Follow it.
 
 **Repetition, not breadth, is what makes a batch slow. Default to 50 runs.**
 
@@ -393,10 +395,11 @@ For detailed build system documentation, see `scripts/devenv7/AGENTS.md`:
 
 ---
 
-**Document Version:** 2.13
-**Last Updated:** 2026-09-24
+**Document Version:** 2.14
+**Last Updated:** 2026-09-27
 
 **Changelog:**
+- v2.14 (2026-09-27): Parallel work across worktrees points to the full procedure in notes/plans/parallel-implementation-workflow.md
 - v2.13 (2026-09-24): 50 runs is the default and 600 only where the rate itself is the acceptance criterion; and batch what the work finds into one decision round instead of a lane per finding
 - v2.12 (2026-09-24): Sweep the owed list every change-set — an item observed twice is a decision waiting, not a note to write again; and evidence goes to the log directory before it is cited
 - v2.11 (2026-09-24): Added when to fold work in without asking, when a decision must be presented instead, and the shape to present it in
