@@ -459,3 +459,37 @@ changing I don't think it needs the validation you propose. You can skip the bui
 **Nothing was built or run**, by the maintainer's decision. The one piece of real code, C1, was
 parsed rather than built. Nothing in the round can change behaviour: comments, an uncalled function,
 and test text whose assertions did not move.
+
+---
+
+## 8. The implementation run, as set up 2026-09-27
+
+**The maintainer's instruction:** *"For the implementation of CS-1, CS-2 and CS-3 I want to use the
+parallel setup with the 3 worktrees as before and do all the work as much in parallel as possible.
+Each CS should be a checkpoint and should run fable agent review with effort max back and forth
+until you both agree and then implement the feedback and continue the same loop if necessary. Then
+run the gate before you declare the CS ready. The gate should be clang release + gcc debug for all
+affected modules."* The procedure is [`../parallel-implementation-workflow.md`](../parallel-implementation-workflow.md)
+(`dee7ef0`), written at the same request.
+
+**Taken at set-up, all as recommended:**
+
+- **E1 and E2 fold into CS-2**, and so do the L6 review third pass's two open decisions, rescued the
+  same day (`138311e`): **E3**, the TLS fallback exchange with a counting sink — the only control for
+  the sink refusal D4 changes — and **E4**, renaming the sink case whose fallback retry is gone.
+- **D2 and D3 get a design note each, reviewed until agreed, before they are coded**; every
+  change-set also gets its checkpoint review.
+- **CS-1 is ready after its Linux gate**, with the Windows matrix handed to the Windows agent and
+  recorded when it reports.
+- **B6**, one ThreadSanitizer pass over the client modules, runs after all three are ready.
+- **The session is restarted before kickoff**, so that the lanes (`opus-lane`) and the reviews
+  (`fable-reviewer`) run at maximum effort: both definitions live in `~/.claude/agents/`, created
+  mid-session, and a session loads definitions only from directories which existed when it started.
+
+| Lane | Branch, from `138311e` | Change-set | Reserved new test modules |
+|---|---|---|---|
+| `swblocks-baselib-lane1` | `astra2-cs1` | CS-1: D1, D2 | `utf_baselib_httpclient8` |
+| `swblocks-baselib-lane2` | `astra2-cs2` | CS-2: D3, D4, D5, E1, E2, E3, E4 | `utf_baselib_httpclient9` (cleartext session), `…10` (TLS session) |
+| `swblocks-baselib-lane3` | `astra2-cs3` | CS-3: D6, D7, D8 | `utf_baselib_h2client8` |
+
+Each change-set's section here gains its commits, review rounds and gate result when it is ready.
