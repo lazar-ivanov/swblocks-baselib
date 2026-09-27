@@ -302,7 +302,9 @@ Semaphore: <command>. Logs: <dir>. Journal: <path>.
 <Dn> — <one line>, decided <date>: <decision record, section>. Design note first: yes / no.
 
 ## Files
-Owned: <paths>. Not to be touched: <paths owned by other lanes>.
+Owned: <paths>; new test files in the modules below, one `#include` line each in their `…Main.cpp`,
+and one `notes.txt` recipe line per case added — C9 requires it in a module whose index declares
+itself complete. Not to be touched: <paths owned by other lanes>.
 
 ## Tests
 Modules: <existing, if the measured headroom allows> or <reserved new names>. Headroom rule:

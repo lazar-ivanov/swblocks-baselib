@@ -22,10 +22,10 @@ under "Found by astra's second review".
 |---|---|---|---|
 | **D1** | R01 — a TLS truncation completes a close-delimited HTTP/1.1 body | **Strict**: a truncation never completes a message; no leniency setting | CS-1 |
 | **D2** | R03 — the first TLS read and a request's first write can start concurrently; and a cancel before the driver starts is erased | **Astra's startup handler**: the first read, the switch that lets request starts be posted, and cancellation, in one accounted strand handler | CS-1 |
-| **D3** | R02 — HTTP/1.1 body bytes a sink has not taken are unbounded | **Fail on overflow** of a **64 MiB** cap on bytes received and not yet taken, kept by the request task | CS-2 |
+| **D3** | R02 — HTTP/1.1 body bytes a sink has not taken are unbounded | **Fail on overflow** of a **64 MiB** cap on bytes received and not yet taken, kept by the request task. *Refined in §9: each block is also charged an allowance, and nothing is delivered after a failure* | CS-2 |
 | **D4** | R04 — H08's delivered count is lost when a later sink callback throws | **Astra's version**: record each block before the next callback; once a sink throws, no further delivery to it and no replay onto it | CS-2 |
 | **D5** | R08 — H24 and H25 are reachable through public decoder registration | **Fix now, minimally**: decode only a single coding, and only a successful response that can carry content | CS-2 |
-| **D6** | R05 — TE and the fields `Connection` names, across repeated fields | **Normalize**: canonicalize every TE; remove the fields every `Connection` names, except `te` | CS-3 |
+| **D6** | R05 — TE and the fields `Connection` names, across repeated fields | **Normalize**: canonicalize every TE; remove the fields every `Connection` names, except `te` — *and `host`, refined in §3* | CS-3 |
 | **D7** | R06 — the Host agreement check | **Parse with `net::Uri`**: default a missing port from the scheme; refuse a malformed Host and more than one | CS-3 |
 | **D8** | R07 — a case variant of HEAD is classified as HEAD | **Exact `"HEAD"`** | CS-3 |
 
@@ -39,8 +39,8 @@ change-set. The three touch disjoint files, so they can run as parallel lanes.
 | CS | Decisions | Files |
 |---|---|---|
 | **CS-1** | D1, D2 | `httpclient/Http1ConnectionTask.h`; comments in `core/NetUtils.h` and `TestHttp1DriverTlsCancelClose.h`; new cases |
-| **CS-2** | D3, D4, D5 | `httpclient/HttpClientRequestTask.h`, `httpclient/ClientSession.h`; new cases |
-| **CS-3** | D6, D7, D8 | `http2/Http2ConnectionTask.h`, `http2/Session.h`; new cases |
+| **CS-2** | D3, D4, D5 | `httpclient/HttpClientRequestTask.h`, `httpclient/ClientSession.h`; new cases. *And, from §9, `httpclient/ConnectionPool.h` for the pool fix scheduled on sight* |
+| **CS-3** | D6, D7, D8 | `http2/Http2ConnectionTask.h`, `http2/Session.h`; new cases. *And, from §9, the HTTP/2 DATA block sized to its payload* |
 
 **Order, and why.** CS-1 first: D1 closes a live defect that hands a caller a wrong answer — a
 truncated body reported complete — the class AGENTS.md schedules on sight, and D2 closes undefined
@@ -227,6 +227,17 @@ now on the right quantity, so no download size is capped. **Reverses if** a cons
 to stall without failing; then pause — but only together with a sink readiness signal, the deferred
 `ClientTypes.h` work, since pause alone turns this failure into a 30-minute stall.
 
+**Refined 2026-09-27, in the run's first decision round (§9), both as recommended:**
+- **The count is payload plus a fixed per-block allowance.** Over HTTP/1.1 one read is one block, so a
+  peer trickling single bytes at a stalled sink would reach over 10 GiB of blocks before a cap on
+  payload alone fired. The allowance is derived from the types — `sizeof( Event ) + sizeof( DataBlock )`
+  plus an allocator constant — and the knob keeps its name and its unit, bytes.
+- **`applyData( )` delivers nothing once the request has failed.** A timeout or a cancel still
+  offered late blocks to the caller's sink; the block is now dropped and its charge released.
+
+The mechanism is [`astra2-cs2-d3-unread-bytes-cap-design.md`](astra2-cs2-d3-unread-bytes-cap-design.md),
+agreed after two review rounds.
+
 *Tests, all deterministic.* A real HTTP/1.1 driver and a sink returning 0 under a small configured cap:
 the request fails with the overflow, with no large allocation. A mailbox case: the sink's callback held
 at a rendezvous while data arrives, failing at the cap. A control: a consuming sink and a body larger
@@ -320,6 +331,13 @@ fixed connection-specific names go. TE is canonicalized across every occurrence:
 `trailers` among its codings, exactly one `te: trailers` is sent, and otherwise none. `HeaderList` keeps
 repeated fields, as its contract says. **Reverses if** a stricter request API is wanted, one that
 rejects these inputs before they reach the driver.
+
+**Refined 2026-09-27, at CS-3's checkpoint review: `host` is exempt too.** Both the review and the
+lane found the same gap. Removing a field a `Connection` token names ran before D7's check, so
+`Connection: host` with a disagreeing Host dropped the Host unread where D7 refuses it. It was a
+silent change of the request's origin, and it made the two protocols diverge. The exemption holds
+because D7's own check decides `host`, as TE's own rule decides `te`. **Reverses if** the maintainer
+rules that `Connection: host` asks for RFC 9110 §7.6.1's drop; then only the comments change.
 
 *Tests, pure boundary inputs.* Repeated TE; `TE: gzip, trailers`; TE without `trailers`; several
 `Connection` fields with token lists, keeping the end-to-end fields they do not name; and
@@ -486,10 +504,59 @@ affected modules."* The procedure is [`../parallel-implementation-workflow.md`](
   (`fable-reviewer`) run at maximum effort: both definitions live in `~/.claude/agents/`, created
   mid-session, and a session loads definitions only from directories which existed when it started.
 
-| Lane | Branch, from `138311e` | Change-set | Reserved new test modules |
+| Lane | Branch, from `7d21df3` | Change-set | Reserved new test modules |
 |---|---|---|---|
 | `swblocks-baselib-lane1` | `astra2-cs1` | CS-1: D1, D2 | `utf_baselib_httpclient8` |
 | `swblocks-baselib-lane2` | `astra2-cs2` | CS-2: D3, D4, D5, E1, E2, E3, E4 | `utf_baselib_httpclient9` (cleartext session), `…10` (TLS session) |
 | `swblocks-baselib-lane3` | `astra2-cs3` | CS-3: D6, D7, D8 | `utf_baselib_h2client8` |
 
 Each change-set's section here gains its commits, review rounds and gate result when it is ready.
+
+*Corrected 2026-09-27: the table said the branches start at `138311e`. They start at `7d21df3`, the
+tip after the fast-forward. Lane 3 caught it, and CS-3's review recorded it.*
+
+## 9. Decisions taken during the implementation run, 2026-09-27
+
+**The design notes.** Both were reviewed until agreed, before any of their code:
+- D2's, in two rounds: [`astra2-cs1-d2-startup-handler-design.md`](astra2-cs1-d2-startup-handler-design.md).
+- D3's, in two rounds, after the maintainer decided its open point:
+  [`astra2-cs2-d3-unread-bytes-cap-design.md`](astra2-cs2-d3-unread-bytes-cap-design.md).
+
+**The first decision round.** The reviews found three things. They were put to the maintainer in the
+shape AGENTS.md sets, and all three were taken as recommended.
+
+| # | What | Decided |
+|---|---|---|
+| 1 | **HTTP/2 reserves at least 1 MiB for every DATA frame.** `blockOf( )` asks `DataBlock::get( pool, max( payload, defaultCapacity( ) ) )`. No in-tree code sets a pool and nothing returns a block to one, so 65,535 one-byte frames at a stalled sink allocate 64 GiB — the stream window bounds payload, not allocation | **Fixed now, in CS-3**: the block is sized to the payload, and a configured pool is still used |
+| 2 | **D3's counted quantity** — payload alone does not bound memory against a peer trickling single bytes | **Payload plus an allowance derived from the types** (§3, D3) |
+| 3 | **After a timeout or a cancel, the sink still received body bytes** — `applyData( )` had no completion guard | **Folded into CS-2 with D3** (§3, D3) |
+
+**Scheduled on sight — a live defect that hands a caller a wrong answer** (AGENTS.md: such defects
+are not batched). E2's case found it, the CS-2 lane demonstrated it deterministically with the real
+pool, and the fix went into CS-2.
+- `refreshEntry( )` reported a retired entry's failure again on every examine while a rider still held
+  its slot.
+- At `maxTotalConnections` no replacement can start, so one failed establishment was charged twice.
+  A queued request then failed without the retry it was owed, and was told "cancelled" in place of
+  the establishment timeout.
+- **The fix: a failed attempt is reported once per entry, by the check that retires it.** That also
+  closes a second hole: a connection that served a request and then closed was charged as a failure,
+  the case the pool's own comment forbids.
+- The owed list's row I7 carries the evidence.
+
+**Folded in as consequences of decisions already taken** — closed against those decisions, and
+reported to the maintainer rather than asked:
+- **D1** unpinned the two A1-tls gates. The three cases' peer ended on a truncation, which D1 now
+  refuses by itself. The peer now answers our FIN with a close_notify, so the ending is clean, and
+  removing each gate turns its own case red again. D1 also made four more comments false, and they
+  are corrected.
+- **D2's** cases go to a new module, `utf_baselib_httpclient11`, split into `…12` if it grows past
+  its size bound. `…8` was already at the target with D1's four cases. The TLS HTTP/1.1 peer both
+  modules need is lifted into `Http1DriverTlsTestUtils.h`.
+- **D4** stopped a delivery that an existing case counted — a third offer to a sink which had thrown.
+  The case now reads two, and still pins H07's property.
+- **D6** exempts `host` as well as `te` (§3, D6). A premise in `Session.h` and `TestSession.h` that
+  cited RFC 9110 §5.6.2 for case-insensitive `trailers` is corrected to RFC 5234 §2.3, comment only.
+
+**Found and not decided** — recorded as rows I1 to I9 of the owed list, in
+[`astra-remediation-owed-work.md`](astra-remediation-owed-work.md).
