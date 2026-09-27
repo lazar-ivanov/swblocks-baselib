@@ -99,8 +99,8 @@ namespace utest
             /**
              * @brief How long the task is given to reach its terminal path
              *
-             * A bound on a post and not on any I/O: scheduleNothrow( )'s catch completes the task
-             * from the thread pool. WHAT IT BUYS IS THE VERDICT BEING SAID - the eq -> wait( )
+             * A bound on a post and not on any I/O: the start handler's epilog completes the task,
+             * on the stream's executor. WHAT IT BUYS IS THE VERDICT BEING SAID - the eq -> wait( )
              * below it is unbounded, so a regression which loses the completion rather than
              * deadlocking on it still hangs the module, just after naming itself first
              */
@@ -112,7 +112,7 @@ namespace utest
          * @brief Arms the seam so the NEXT read the driver arms fails in its initiator
          *
          * Armed after the connection is established and before the driver task is pushed, which
-         * is what makes it the SCHEDULING read: scheduleTask( ) arms the first one, and every
+         * is what makes it the FIRST read: onStartConnection( ) arms that one, and every
          * later one is a re-arm from a handler
          */
 
@@ -177,9 +177,9 @@ namespace utest
 
                     /*
                      * AND THIS IS THE CALL THE CASE IS ABOUT. push_back( ) schedules on the
-                     * calling thread, under the queue's lock, and scheduleNothrow( ) takes the
-                     * task lock and calls scheduleTask( ) under both - so the driver arms its
-                     * first read, the seam refuses it, and where that throw goes is the fix
+                     * calling thread, under the queue's lock and the task lock, and scheduleTask( )
+                     * posts the start handler: it arms the first read, the seam refuses it, and
+                     * where that throw goes is what the case pins
                      */
 
                     eq -> push_back( driverTask );
