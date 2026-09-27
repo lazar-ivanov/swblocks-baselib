@@ -25,10 +25,10 @@
  *
  * WHY THIS MODULE EXISTS. Astra's second review, change-set CS-1
  * (notes/plans/issues/astra-second-review-decisions.md), adds HTTP/1.1 driver cases OVER TLS, and
- * the only TLS HTTP/1.1 peer in the suite lives in utf_baselib_httpclient5 - over the 40MB target
+ * the only TLS HTTP/1.1 peer in the suite lived in utf_baselib_httpclient5 - over the 40MB target
  * src/utests/AGENTS.md sets, and closed to new cases for that reason. utf_baselib_httpclient7, which
  * carries the cleartext driver seams, is near the target itself. So the cases come here, with a TLS
- * peer of their own: a test header may never be included across module directories
+ * peer CS-1 wrote - now in utests/baselib/Http1DriverTlsTestUtils.h, shared with CS-1's D2 module
  *
  * WHAT THIS MODULE PAYS FOR. The HTTP/1.1 driver over the TLS stranded policy, the TLS establisher,
  * the server-role TLS engine of its peer, and the request task that runs over them. What it does
