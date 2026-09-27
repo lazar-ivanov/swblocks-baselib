@@ -1,0 +1,19 @@
+# each slice appends the recipes for the cases it lands here
+
+# D2 of astra's second review over TLS - the HTTP/1.1 driver starts in one accounted strand handler
+# (notes/plans/issues/astra2-cs1-d2-startup-handler-design.md). The cleartext pair is in
+# utf_baselib_httpclient11; each case is RED on a driver which arms its first read inside
+# scheduleTask( ) and GREEN on the start handler:
+#
+#   the barrier case - a request submitted while a hook holds the first read's start; the record
+#   must read begin, end, write-start. Red deterministically: begin, write-start, end on every run.
+#   The hold comes after the read's own engine step, so even the red run never drives two TLS engine
+#   steps at once.
+#
+#   the cancel-before-start case - submit, cancel, then push; the task must end within 30 s, and the
+#   peer must see our close_notify. Its red spends the whole bound - the unfixed task cannot end on
+#   its own - and then cancels to tear down, so a red run takes about half a minute longer than a
+#   green one.
+
+--log_level=message --run_test=Http1DriverTls_NoWriteStartsBeforeTheFirstReadStartReturnsTests
+--log_level=message --run_test=Http1DriverTls_CancelBeforeStartEndsTheConnectionTests

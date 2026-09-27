@@ -568,10 +568,10 @@ UTF_AUTO_TEST_CASE( PeerCloseErrorCodes_CleanEndOfStreamSetTests )
 
     /*
      * (5) And the TLS truncation, which is spelled by the stream policy and not by the transport,
-     * is not one either - a caller which means "the stream ended in a way this message may be
-     * completed on" asks STREAM::isStreamTruncationError( ) alongside this, exactly as the two
-     * predicates above require. Pinned here because a lane which folded the truncation into this
-     * predicate would make the call sites' second half look redundant
+     * is not one either - and where a message is declared complete it must NOT be admitted beside
+     * this: RFC 9112 section 9.8 makes a message framed by the close complete only on a valid
+     * closure alert (astra's second review, decision D1). Pinned here because a lane which folded
+     * the truncation into this predicate would complete a truncated response as a success again
      */
 
     UTF_REQUIRE(

@@ -36,20 +36,25 @@
 /************************************************************************
  * A4 - THE READ INITIATOR THROWS WHILE THE TASK LOCK IS HELD
  *
- * WHAT THE DEFECT IS. TaskBase::scheduleNothrow( ) takes the task lock and calls scheduleTask( )
- * under it. This driver's scheduleTask( ) arms its read DIRECTLY - "the read is armed FIRST and
- * unconditionally" - with nothing else outstanding. An initiator which throws there used to be
+ * WHAT THE DEFECT WAS. TaskBase::scheduleNothrow( ) takes the task lock and calls scheduleTask( )
+ * under it, and this driver's scheduleTask( ) used to arm its read DIRECTLY - "the read is armed
+ * FIRST and unconditionally" - with nothing else outstanding. An initiator which threw there was
  * caught inside scheduleRead( ) and handed to MultiOperationTaskT::onOperationCompleted( )
  * INLINE: the count went back to zero, the single terminal path was taken, and notifyReady( )
  * was reached while scheduleNothrow( ) still held the task lock that notifyReadyImpl( )
- * re-acquires. os::mutex is std::mutex and is not recursive, so that is a SELF-DEADLOCK
+ * re-acquires. os::mutex is std::mutex and is not recursive, so that was a SELF-DEADLOCK
  * on the scheduling thread - and, since ExecutionQueueImpl calls scheduleNothrow( ) under its own
  * lock, on the execution queue with it.
  *
- * WHAT THE FIX IS. armRead( ) lets the throw out to scheduleNothrow( )'s own catch, which
- * completes the task from the thread pool with no lock held. scheduleRead( ) - armRead( ) with
- * the accounting's guard - stays exactly as it was for the re-arm from onReadCompleted( ), where
- * the completing read is still outstanding, the count cannot reach zero and no terminal is due.
+ * WHAT THE FIX WAS, AND WHERE THE FIRST READ IS ARMED NOW. A4 let the throw out of armRead( ) to
+ * scheduleNothrow( )'s own catch, which completes the task from the thread pool with no lock held.
+ * Astra's second review then took the first read out of scheduleTask( ) altogether (decision D2):
+ * scheduleTask( ) begins one operation and posts onStartConnection( ), and that handler arms the
+ * first read through scheduleRead( ) - with the accounting's guard, as every re-arm from
+ * onReadCompleted( ) is - while its own operation keeps the count above zero. A throw there
+ * completes the read's operation inline with no terminal due, and the handler's epilog, which runs
+ * once the task lock is released, takes the count to zero and the terminal path. Whatever
+ * scheduleTask( ) itself can still throw takes A4's route to scheduleNothrow( )'s catch.
  *
  * WHY A STREAM POLICY. Asio reports I/O failure through the handler and never by throwing, so
  * what can throw out of a real initiator is the allocation the initiating call makes, which no
@@ -59,20 +64,28 @@
  * driver a wrapper - one more one-shot arm on it costs nothing, where a stream of its own would
  * cost this module a second Http1ConnectionTaskImpl instantiation in one translation unit.
  *
- * WHAT ITS RED LOOKS LIKE, AND WHY IT IS NOT AN ASSERTION. Against the unfixed driver this case
- * does not fail - IT HANGS, inside eq -> push_back( ), on the test thread, holding the execution
- * queue's lock. Nothing in the process can report that: the thread which would have failed the
- * case is the deadlocked one, and every other thread that touches the queue joins it. A bounded
- * wait moved onto a helper thread would buy a printed verdict and still hang in teardown, because
- * the queue's lock is held for good. So the red is the module not finishing, and it was taken
- * with a backtrace showing notifyReadyImpl( ) blocked on the mutex scheduleNothrow( ) holds six
- * frames below it on the SAME thread - see the lane record.
+ * WHAT ITS RED LOOKED LIKE, AND WHY IT WAS NOT AN ASSERTION. Against the driver A4 fixed, this case
+ * did not fail - IT HUNG, inside eq -> push_back( ), on the test thread, holding the execution
+ * queue's lock. Nothing in the process could report that: the thread which would have failed the
+ * case was the deadlocked one, and every other thread that touched the queue joined it. So the red
+ * was the module not finishing, and it was taken with a backtrace showing notifyReadyImpl( )
+ * blocked on the mutex scheduleNothrow( ) holds six frames below it on the SAME thread - see the
+ * lane record.
  *
- * A REGRESSION HERE THEREFORE HANGS THIS MODULE RATHER THAN FAILING IT. That is a property of the
- * defect and not a choice of this case, and it is written down so a future timeout on
- * utf_baselib_httpclient7 is read as what it is.
+ * WHAT ITS RED LOOKS LIKE SINCE D2. Nothing in scheduleTask( ) completes an operation now, and
+ * that is what keeps the deadlock out: a completion put back there with nothing else outstanding
+ * would bring it back. What the case pins now is that the start handler arms THROUGH THE GUARD:
+ * against one which called armRead( ) bare, the throw reaches the handler macro's own catch, the
+ * epilog completes only the handler's operation, and the read's - begun, never started - stays
+ * pending for good. Measured 2026-09-27: the case prints "the driver task never reached its
+ * terminal path" when its bound expires, and the module then does not finish.
  *
- * See notes/plans/issues/driver-read-write-arms-design.md sections 4, 4.1 and 10.2, and
+ * A REGRESSION HERE THEREFORE STILL HANGS THIS MODULE, NOW AFTER NAMING ITSELF. That is a property
+ * of a task whose count can no longer reach zero and not a choice of this case, and it is written
+ * down so that a timeout on utf_baselib_httpclient7 which follows that line is read as what it is.
+ *
+ * See notes/plans/issues/driver-read-write-arms-design.md sections 4, 4.1 and 10.2,
+ * notes/plans/issues/astra2-cs1-d2-startup-handler-design.md section 7, and
  * notes/plans/issues/taskbase-schedule-lock-scope-deferral.md for the core question this does
  * NOT answer.
  */
@@ -86,8 +99,8 @@ namespace utest
             /**
              * @brief How long the task is given to reach its terminal path
              *
-             * A bound on a post and not on any I/O: scheduleNothrow( )'s catch completes the task
-             * from the thread pool. WHAT IT BUYS IS THE VERDICT BEING SAID - the eq -> wait( )
+             * A bound on a post and not on any I/O: the start handler's epilog completes the task,
+             * on the stream's executor. WHAT IT BUYS IS THE VERDICT BEING SAID - the eq -> wait( )
              * below it is unbounded, so a regression which loses the completion rather than
              * deadlocking on it still hangs the module, just after naming itself first
              */
@@ -99,7 +112,7 @@ namespace utest
          * @brief Arms the seam so the NEXT read the driver arms fails in its initiator
          *
          * Armed after the connection is established and before the driver task is pushed, which
-         * is what makes it the SCHEDULING read: scheduleTask( ) arms the first one, and every
+         * is what makes it the FIRST read: onStartConnection( ) arms that one, and every
          * later one is a re-arm from a handler
          */
 
@@ -164,9 +177,9 @@ namespace utest
 
                     /*
                      * AND THIS IS THE CALL THE CASE IS ABOUT. push_back( ) schedules on the
-                     * calling thread, under the queue's lock, and scheduleNothrow( ) takes the
-                     * task lock and calls scheduleTask( ) under both - so the driver arms its
-                     * first read, the seam refuses it, and where that throw goes is the fix
+                     * calling thread, under the queue's lock and the task lock, and scheduleTask( )
+                     * posts the start handler: it arms the first read, the seam refuses it, and
+                     * where that throw goes is what the case pins
                      */
 
                     eq -> push_back( driverTask );
@@ -214,17 +227,20 @@ namespace utest
  *
  * The three assertions are one statement each, and the first of them is the whole defect:
  *
- *   - the case REACHED them. Against the unfixed driver the thread which would evaluate them is
- *     deadlocked on the task lock inside eq -> push_back( ), so arriving here at all is the
- *     negative control - see this file's header for why it cannot be spelled as a failure
- *   - the task ended, and ended FAILED. The throw is a genuine error and not an expected one:
- *     scheduleNothrow( )'s catch completes the task with it, from the thread pool
+ *   - the task ENDED, which runScheduleThrow( ) has already required inside its bound. Against a
+ *     start handler which arms the first read bare it never does, and the case says so there;
+ *     against the driver A4 fixed the case never got that far, its thread deadlocked on the task
+ *     lock inside eq -> push_back( ) - see this file's header for both, and for why each hangs
+ *   - it ended FAILED. The throw is a genuine error and not an expected one: scheduleRead( )'s
+ *     catch makes it the task's first error, and the start handler's epilog completes the task
+ *     with it
  *   - and it ended with OUR throw. The message discriminates the injected initiator failure from
  *     any other way this task could have failed - a connect, a cancel, a peer doing something
  *
- * What it deliberately does not assert is pendingOperations( ), which the propagating route
- * leaves at one. Reading it would pin an implementation detail this design explicitly leaves
- * free, and MultiOperationTaskT::scheduleNothrow( ) zeroes the accounting before every run.
+ * What it deliberately does not assert is pendingOperations( ). Reading it would pin an
+ * implementation detail this design explicitly leaves free - a post which throws in
+ * scheduleTask( ) leaves it at one - and MultiOperationTaskT::scheduleNothrow( ) zeroes the
+ * accounting before every run.
  */
 
 UTF_AUTO_TEST_CASE( Http1Driver_ScheduleReadInitiatorThrowEndsTheTaskTests )

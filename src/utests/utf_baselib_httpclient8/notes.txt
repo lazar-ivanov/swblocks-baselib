@@ -1,0 +1,12 @@
+# each slice appends the recipes for the cases it lands here
+
+# D1 of astra's second review - a TLS truncation must not complete a close-delimited body. The first
+# case is the RED: on a driver whose isCleanEndOfStream( ) admits the truncation, the request task
+# reports a 200 and tells its sink the body is complete. The other three are controls, green on both
+# sides of the fix: a close_notify completes the same response, and a truncation AFTER a message its
+# own length or last chunk already completed changes nothing.
+
+--log_level=message --run_test=Http1DriverTls_TruncatedCloseDelimitedResponseFailsTheRequestTests
+--log_level=message --run_test=Http1DriverTls_CloseNotifyCompletesACloseDelimitedResponseTests
+--log_level=message --run_test=Http1DriverTls_TruncationAfterAContentLengthResponseSucceedsTests
+--log_level=message --run_test=Http1DriverTls_TruncationAfterAChunkedResponseSucceedsTests

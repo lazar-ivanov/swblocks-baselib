@@ -71,10 +71,11 @@ namespace bl
          * STREAM IS ONE OF THE STRANDED POLICIES OF DESIGN 3.1, AND THE CLAIM IS NARROWED TO THEM
          * DELIBERATELY. getSocket().get_executor() is the strand under a stranded policy and the
          * I/O service under a plain one, and a post to an I/O service is not a serialization:
-         * onStartRequest() runs from a plain post holding no task lock and touches m_parser,
-         * m_requestHead, m_requestBody and m_bodyChunk, which onReadCompleted() - holding the task
-         * lock, on whatever I/O thread the read completed on - touches too. Under a plain policy
-         * those two can run at once. Design 5.1 prescribes a strand for exactly this class, the
+         * onStartRequest() runs from submit( )'s plain post holding no task lock - the start
+         * handler also calls it, holding the lock - and touches m_parser, m_requestHead,
+         * m_requestBody and m_bodyChunk, which onReadCompleted() - holding the task lock, on
+         * whatever I/O thread the read completed on - touches too. Under a plain policy the posted
+         * one and the read can run at once. Design 5.1 prescribes a strand for exactly this class, the
          * cases below run it over the cleartext stranded policy and the explicit instantiation
          * compiles it over the TLS stranded one, so 'correct over the stranded policies' is what is
          * written here and what is true. Making it correct over a plain policy is not a comment
@@ -87,7 +88,9 @@ namespace bl
          *
          * THE OPERATIONS IN FLIGHT. At most four: a read, armed for the whole life of the
          * connection, a write, while a request is going out, the idle timer, while no request is,
-         * and the deferred reuse verdict, for one strand hop - see finishStream( ). That is why
+         * and the deferred reuse verdict, for one strand hop - see finishStream( ). Before any of
+         * them, the start handler's own, for the one strand hop which arms the read - see
+         * onStartConnection( ). That is why
          * MultiOperationTaskT is mixed in - with one terminal path taken only once all of them
          * have completed or been cancelled - and why the read is armed even
          * when the connection is IDLE. The idle read is not ceremony: it is what notices a pooled
@@ -187,7 +190,8 @@ namespace bl
             /*
              * Touched only on the stream's executor - the strand under a stranded policy - and in
              * onTaskStoppedNothrow, where the strand is quiescent: either the accounting has
-             * established that nothing is in flight, or armRead( ) threw and nothing ever was
+             * established that nothing is in flight, or scheduleTask( )'s post of the start handler
+             * threw and nothing ever was
              */
 
             std::vector< char >                                                 m_readBuffer;
@@ -197,7 +201,9 @@ namespace bl
 
             /*
              * Armed and re-armed on the stream's executor, and cancelled from initiateClose( ),
-             * which the accounting calls exactly once and never while the task lock is held
+             * which the accounting calls exactly once - from a handler's epilog outside the task
+             * lock, or from an initiator's catch inside a handler body, under it, where no terminal
+             * can be due (the design note of D2, section 6, counts those catches)
              */
 
             cpp::SafeUniquePtr< asio::deadline_timer >                          m_idleTimer;
@@ -563,13 +569,16 @@ namespace bl
              * @brief Starts the request a submit( ... ) handed over - on the stream's executor
              *
              * NOT one of the task handler macros, and that is the point of the shape below. This
-             * runs from a plain post rather than from the completion of an accounted operation, so
-             * the epilogs are both wrong for it: BL_TASKS_HANDLER_END_MULTIOP would account for an
-             * operation which was never begun, and an epilog which completes the task would take a
-             * terminal path with the read still in flight. Instead the two failures are separated -
-             * a request this driver cannot render fails the REQUEST and leaves the connection up,
-             * which is right because not one byte of it reached the wire, while a failure to start
-             * the write is accounted for as the operation it had already begun
+             * runs from submit( )'s plain post rather than from the completion of an accounted
+             * operation, so the epilogs are both wrong for it: BL_TASKS_HANDLER_END_MULTIOP would
+             * account for an operation which was never begun, and an epilog which completes the
+             * task would take a terminal path with the read still in flight. Instead the two
+             * failures are separated - a request this driver cannot render fails the REQUEST and
+             * leaves the connection up, which is right because not one byte of it reached the wire,
+             * while a failure to start the write is accounted for as the operation it had already
+             * begun. The start handler also calls it, from inside its own accounted handler, where
+             * the same shape is right: its operation is still pending, so neither exit can make a
+             * terminal due
              */
 
             void onStartRequest() NOEXCEPT
@@ -821,7 +830,7 @@ namespace bl
                  * the better evidence wherever it applies, so it applies first
                  *
                  * AND THE WRITE SIDE CLASSIFIES NOTHING - no onPeerClosed( ) of its own, no
-                 * closeConnection( ). The read has been armed since the task was scheduled and the
+                 * closeConnection( ). The read has been armed since the connection started and the
                  * same ending reaches it with a READ-side code; the read side is the one holding
                  * the parser and the bytes, so ending the stream from here would reset that parser
                  * under a response which may still be arriving, and would put the verdict back on
@@ -933,8 +942,8 @@ namespace bl
                 BL_TASKS_HANDLER_CHK_CANCEL_IMPL()
 
                 /*
-                 * Nothing further to do - the read loop has been armed since the task was
-                 * scheduled and the response will arrive on it
+                 * Nothing further to do - the read loop has been armed since the connection
+                 * started, before any write, and the response will arrive on it
                  */
 
                 BL_TASKS_HANDLER_END_MULTIOP()
@@ -948,27 +957,28 @@ namespace bl
              * @brief Arms the read which is in flight for the whole life of this connection, and
              * lets an initiator which throws out to its caller
              *
-             * scheduleRead( ) below is this call with the accounting's guard around it, and which
-             * of the two a call site wants turns on one question only - whether the pending count
-             * can reach ZERO if the arm fails:
+             * scheduleRead( ) below is this call with the accounting's guard around it, and every
+             * call site is now that one. Which of the two a call site wants turns on one question
+             * only - whether the pending count can reach ZERO if the arm fails:
              *
-             *   - from scheduleTask( ) it can. Nothing else is outstanding while the very first
-             *     read is being armed, so completing the operation there finds the count back at
-             *     zero, takes the single terminal path and reaches notifyReady( ) - while
-             *     TaskBase::scheduleNothrow( ), which called scheduleTask( ), still holds the task
-             *     lock that notifyReadyImpl( ) re-acquires. os::mutex is std::mutex, and it
-             *     is not recursive, so that is a self-deadlock on the scheduling thread and not
-             *     merely a breach of the rule at MultiOperationTask.h. The throw is let out
-             *     instead, to scheduleNothrow( )'s own catch, which completes the task from the
-             *     thread pool with no lock held - which is what that catch exists for
-             *   - from onReadCompleted( ) it cannot. The completing read is still outstanding
-             *     until BL_TASKS_HANDLER_END_MULTIOP( ) runs, so the count cannot reach zero and
-             *     no terminal is due there; what the guard buys is the phantom operation being
-             *     given back, without which the count never reaches zero AGAIN and the task hangs
+             *   - from a handler body it cannot: the start handler's first read, and every re-arm
+             *     from onReadCompleted( ). The handler's own operation is still outstanding until
+             *     BL_TASKS_HANDLER_END_MULTIOP( ) runs, so the count cannot reach zero and no
+             *     terminal is due there; what the guard buys is the phantom operation being given
+             *     back, without which the count never reaches zero AGAIN and the task hangs
+             *   - from scheduleTask( ) it could, which is one reason the first read is no longer
+             *     armed there (D2). Nothing else was outstanding while it was armed, so completing
+             *     the operation there found the count back at zero, took the single terminal path
+             *     and reached notifyReady( ) - while TaskBase::scheduleNothrow( ), which called
+             *     scheduleTask( ), still held the task lock that notifyReadyImpl( ) re-acquires.
+             *     os::mutex is std::mutex, and it is not recursive, so that was a self-deadlock on
+             *     the scheduling thread; this call therefore let its throw out to scheduleNothrow( )'s
+             *     own catch, which completes the task from the thread pool with no lock held
              *
-             * On the propagating route the count is left AT ONE, deliberately: no one reads it
-             * once the task has completed, and MultiOperationTaskT::scheduleNothrow( ) zeroes the
-             * whole accounting at the start of every run
+             * scheduleTask( ) now begins the start handler's operation and posts it, and a post
+             * which throws takes that same route with the count left AT ONE, deliberately: no one
+             * reads it once the task has completed, and MultiOperationTaskT::scheduleNothrow( )
+             * zeroes the whole accounting at the start of every run
              */
 
             void armRead()
@@ -1220,18 +1230,18 @@ namespace bl
              * how a close-delimited message is framed at all. The other half of the question is
              * what the WRITE ended with, and onPeerClosed( ) asks that before it trusts this
              *
-             * TWO PARTS, AND THE SECOND IS NOT OPTIONAL. net::isCleanEndOfStreamErrorCode( ) is
-             * eof on every platform and deliberately refuses the Windows reset spellings, which
-             * discard whatever was still unread. isStreamTruncationError( ) is the TLS stream
-             * ending without close_notify, which the peer-close record files under "orderly close
-             * of a TLS stream" and which is the ordinary shape of a close-delimited HTTPS
-             * response (RFC 2818 2.2.2) - a predicate admitting eof alone would fail every one of
-             * those, which succeed today
+             * eof ALONE - A TRUNCATED TLS STREAM IS REFUSED. net::isCleanEndOfStreamErrorCode( )
+             * is eof on every platform and deliberately refuses the Windows reset spellings, which
+             * discard whatever was still unread. isStreamTruncationError( ), a TLS stream which
+             * ended with no close_notify, was admitted beside it until astra's second review (D1),
+             * and completed a close-delimited body anyone able to end the transport had cut short.
+             * RFC 9112 section 9.8: "A response that has neither chunked transfer coding nor
+             * Content-Length is complete only if a valid closure alert has been received."
              */
 
             bool isCleanEndOfStream( SAA_in const eh::error_code& ec ) NOEXCEPT
             {
-                return net::isCleanEndOfStreamErrorCode( ec ) || base_type::isStreamTruncationError( ec );
+                return net::isCleanEndOfStreamErrorCode( ec );
             }
 
             /**
@@ -1991,15 +2001,16 @@ namespace bl
              *
              * IDLE IS A STATE AND NOT AN ELAPSED TIME, the same way it is in the HTTP/2 driver:
              * the timer is armed when a keep-alive response completes and when a connection the
-             * pool has not yet given a request is scheduled, and cancelled when a request starts,
+             * pool has not yet given a request is started, and cancelled when a request starts,
              * so what it measures is exactly the span design 5.4 calls the idle lifetime. The
              * value is the pool's and the timer is this driver's - see the class note
              *
              * IT RUNS ON THE STREAM'S EXECUTOR AND IS ARMED FROM THERE, so it does not need the
              * state lock for the timer itself; the handle it reads to decide whether the
              * connection is idle does, because submit( ) writes it from any thread. It is also
-             * why scheduleTask( ) POSTS this rather than calling it: that one call would otherwise
-             * be the only one racing the read handler it has just armed
+             * why it is armed from the start handler, on the strand, and never from scheduleTask( )
+             * itself: that one call would otherwise be the only one racing the read handler the
+             * start has just armed
              */
 
             void chkArmIdleTimer() NOEXCEPT
@@ -2175,6 +2186,91 @@ namespace bl
 
                 base_type::ensureChannelIsOpen();
 
+                /*
+                 * NOTHING BUT ONE ACCOUNTED POST - the connection is started by onStartConnection( ),
+                 * on the stream's executor, and nothing here touches the stream. The first read used
+                 * to be armed right here, on the scheduling thread and after m_started was
+                 * published, and an ssl::stream runs its first engine step on the thread which
+                 * starts a read: a submit( ) in that window could start the request's write on the
+                 * strand at the same moment, two threads in one TLS engine (astra's second review,
+                 * decision D2)
+                 *
+                 * THE OPERATION IS BEGUN BEFORE THE POST, as for every accounted operation here. A
+                 * post which throws leaves this function to TaskBase::scheduleNothrow( )'s catch,
+                 * which completes the task from the thread pool with no lock held - the route
+                 * armRead( ) used to take - and the count is left at one, which nothing reads once
+                 * the task has completed and the next run zeroes
+                 */
+
+                base_type::beginOperation();
+
+                postToStreamExecutor(
+                    cpp::bind(
+                        &this_type::onStartConnection,
+                        selfRef()
+                        )
+                    );
+            }
+
+            /**
+             * @brief Starts the connection, on the stream's executor - the first read, the switch which
+             * lets a request start be posted, and a cancel which came first, in one accounted handler
+             *
+             * FROM HERE ON EVERY TOUCH OF THE STREAM IS ON THE STRAND. The first read is armed inside
+             * this handler, and m_started - which is what lets submit( ) post onStartRequest( ) - is
+             * published only after that read's start has returned, so no write can start while it
+             * runs. That does not depend on which posts may precede this one: whatever is posted
+             * queues behind a handler which holds the strand.
+             *
+             * A CONNECTION WHICH IS NO LONGER Ready HAD A CANCEL FIRST. Before this handler the only
+             * code that can move m_state off Ready is a stream cancel's onCancelStream( ), and the
+             * close it asked for was erased by the run's reset of the accounting - which is why the
+             * state and not isClosing( ) is asked, under the lock which guards it. The close is then
+             * re-asserted and nothing is armed: this handler's own operation is the only one of the
+             * run, so its epilog is the first completion after beginClose( ) and takes the terminal
+             * path at once - over TLS through the close_notify exchange of the finish continuation.
+             *
+             * THE READ IS ARMED THROUGH scheduleRead( ), WITH ITS CATCH. This handler's own operation
+             * keeps the count above zero until its epilog, so a failed arm completes the phantom
+             * operation here without a terminal falling due under the task lock - which is how every
+             * re-arm in this driver already works, and why it cannot be armRead( ) bare, whose throw
+             * would leave that operation pending for good.
+             *
+             * THE START IS EXACTLY ONCE AGAINST submit( ): m_started is set and m_startPending read in
+             * one critical section, as submit( ) sets the one and reads the other, so whichever of the
+             * two runs second starts the request - this handler by calling onStartRequest( ) itself,
+             * or submit( ) by posting it. With nothing pending the connection is idle from birth - the
+             * narrow case the retry budget can produce, L6 finding 4 - and its idle lifetime starts
+             * here.
+             *
+             * A TASK CANCEL WHICH CAME FIRST ends the run before anything is armed, so a request
+             * pending on the connection is answered retryable rather than written. The design is
+             * notes/plans/issues/astra2-cs1-d2-startup-handler-design.md
+             */
+
+            void onStartConnection() NOEXCEPT
+            {
+                BL_TASKS_HANDLER_BEGIN()
+
+                BL_TASKS_HANDLER_CHK_CANCEL_IMPL()
+
+                bool isReady = false;
+
+                {
+                    BL_MUTEX_GUARD( m_stateLock );
+
+                    isReady = httpclient::ConnectionState::Ready == m_state;
+                }
+
+                if( ! isReady )
+                {
+                    closeConnection();
+
+                    break;
+                }
+
+                scheduleRead();
+
                 bool hasPending = false;
 
                 {
@@ -2184,46 +2280,16 @@ namespace bl
                     hasPending = m_startPending;
                 }
 
-                /*
-                 * The read is armed FIRST and unconditionally - it is the operation which is in
-                 * flight for the whole life of this connection, and the response of a request
-                 * started below arrives on it
-                 *
-                 * ARMED AND NOT SCHEDULED, which is the one difference: this function is called
-                 * by TaskBase::scheduleNothrow( ) with the task lock HELD, so an initiator which
-                 * throws has to be let out to that function's catch rather than completed here.
-                 * armRead( ) says what completing it here would cost
-                 */
-
-                armRead();
-
                 if( hasPending )
                 {
-                    postToStreamExecutor(
-                        cpp::bind(
-                            &this_type::onStartRequest,
-                            selfRef()
-                            )
-                        );
+                    onStartRequest();
                 }
                 else
                 {
-                    /*
-                     * A driver the ALPN fallback built and the pool then had no request for is
-                     * idle from birth, which is the narrow case the retry budget can produce
-                     * (L6 finding 4), so its lifetime starts here rather than at the first
-                     * response. POSTED, because everything else which touches the timer runs on
-                     * the stream's executor and the read armed above may already be completing
-                     * there
-                     */
-
-                    postToStreamExecutor(
-                        cpp::bind(
-                            &this_type::chkArmIdleTimer,
-                            selfRef()
-                            )
-                        );
+                    chkArmIdleTimer();
                 }
+
+                BL_TASKS_HANDLER_END_MULTIOP()
             }
 
             /**
@@ -2275,9 +2341,9 @@ namespace bl
              * always the last event (S2.6). A write which failed, or a cancel, completes the task
              * through the handler macros and never through finishStream( ... ), so without this a
              * request task would wait for an event which is never coming. It does not race the
-             * strand: either the accounting has established that no operation is in flight, or the
-             * schedule-path arm threw and none ever was. It is idempotent because delivering the
-             * event is what releases the sink
+             * strand: either the accounting has established that no operation is in flight, or
+             * scheduleTask( )'s post of the start handler threw and none ever was. It is idempotent
+             * because delivering the event is what releases the sink
              */
 
             virtual auto onTaskStoppedNothrow(

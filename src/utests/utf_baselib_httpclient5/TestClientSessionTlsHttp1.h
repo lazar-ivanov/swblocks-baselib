@@ -110,7 +110,7 @@ namespace utest
             /**
              * @brief The driver's idle lifetime in the close_notify control - the close under test
              *
-             * chkArmIdleTimer( ) is posted from scheduleTask( ) for a connection which has been
+             * chkArmIdleTimer( ) is called by onStartConnection( ) for a connection which has been
              * given no request, which is the shape the control case uses and is how the pool's own
              * connections begin. A quarter second is far more than an establishment costs on
              * loopback, and the case pays it once
@@ -858,7 +858,7 @@ UTF_AUTO_TEST_CASE( ClientSessionTls_Http11FallbackExchangeTests )
  * exchange can avoid because the race is in the strand's enqueue order and not in the peer's
  * timing. A control for the UNGATED path therefore has to be a close with no write ever issued,
  * and the idle timer arms on a connection which has been given no request - chkArmIdleTimer( ) is
- * posted from scheduleTask( ) for exactly that, which is how the pool's own connections begin.
+ * called by onStartConnection( ) for exactly that, which is how the pool's own connections begin.
  *
  * WHAT IT ESTABLISHES: an HTTP/1.1 driver over TLS which closes itself with no write outstanding
  * sends the TLS close_notify, and its task ends clean. Its green is the ending asio reports to the

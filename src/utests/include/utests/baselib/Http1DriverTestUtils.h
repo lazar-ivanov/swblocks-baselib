@@ -885,8 +885,8 @@ namespace utest
                 ) OVERRIDE
             {
                 /*
-                 * The base arms the read and publishes m_started - both synchronously - so by the
-                 * time the handler below runs, submit( ) will post rather than defer
+                 * The base posts a start handler which arms the read and publishes m_started, and
+                 * the strand runs it ahead of the post below, so there submit( ) posts, not defers
                  */
 
                 base_type::scheduleTask( eq );

@@ -27,6 +27,7 @@
 
 #include <baselib/data/DataBlock.h>
 
+#include <baselib/core/AsioSSL.h>
 #include <baselib/core/BaseIncludes.h>
 
 #include <cstddef>
@@ -40,7 +41,8 @@
  * A1-tls, FACES 1 AND 2 - an ending we caused, read as the peer's, over TLS
  *
  * THE SYMPTOM IS ONE AND THE ENDINGS ARE THREE (driver-read-write-arms-design.md section 12.5): a
- * close-delimited message completed on an ending that was NOT the peer's orderly close. Face 3 -
+ * close-delimited message completed on an ending the peer did not choose - provoked by our own
+ * teardown, and since the re-pin dressed as the peer's orderly close_notify. Face 3 -
  * the reset the write consumed - landed with A1-cleartext. The two here are:
  *
  *   FACE 1, our own teardown: the armed read observes an ending while this task is already
@@ -77,10 +79,18 @@
  * WHY THE ENDING IS OURS AND NOT THE PEER'S, WHICH IS THE WHOLE POINT. cancelTask( ) posts
  * shutdownOnStreamExecutor( ), which is shutdownSocket( force ) = linger + shutdown_send + cancel.
  * The peer below declares no length and sends one chunk; it then reads to the end of its stream and
- * closes only because OUR FIN arrived. So a message completed on that close is a message completed
- * on our own teardown, and the body the caller is handed is short by the rest of a response the
- * peer never finished. What the cases assert of that is the peer's OWN ending code: no close_notify
- * went out, which is cancelTask( )'s forceful shutdown and never a close this client chose.
+ * ends it only because OUR FIN arrived - with the rest of a close_notify, and then its own FIN. So a
+ * message completed on that close is a message completed on our own teardown, and the body the
+ * caller is handed is short by the rest of a response the peer never finished. What the cases
+ * assert of that is the peer's OWN ending code: no close_notify came from us, which is
+ * cancelTask( )'s forceful shutdown and never a close this client chose.
+ *
+ * WHY THE PEER'S ANSWER IS A close_notify AND NOT A BARE FIN. A bare FIN ends the client's TLS
+ * stream as a truncation, and since D1 isCleanEndOfStream( ) refuses a truncation by itself - so
+ * with that answer these cases passed with either gate removed, measured once D1 had landed. A
+ * close_notify is an ending the arm admits as clean, eof, so only the gates stop the message from
+ * completing: measured 2026-09-27, each gate removed turns its own case red, and both removed turn
+ * all three.
  *
  * HOW THE READ SURVIVES THE CANCEL, MADE CERTAIN RATHER THAN HOPED FOR. Section 3.1's window is
  * real and is asio's: ssl::stream::async_read_some is composed (boost/asio/ssl/detail/io.hpp,
@@ -92,19 +102,20 @@
  * inside a handler which holds TaskBase::m_lock, and requestCancel( ) takes that same lock - so a
  * cancel issued against a held sink blocks until the read has already re-armed.
  *
- * WHAT OPENS THE WINDOW IS FIVE OCTETS. The peer writes a bare TLS record header - type, version,
- * length - on the transport and nothing else. That is exactly what a TCP segment boundary in the
- * middle of a record looks like to the client: the engine takes the five octets, wants the rest,
- * and re-arms. It cannot be a full record and it cannot be application data, because a data
- * completion after a cancel is caught by the read handler's own CHK_CANCEL_IMPL( ) and the task
- * ends correctly - which is the tree behaving, not the defect.
+ * WHAT OPENS THE WINDOW IS FIVE OCTETS - the record header of the peer's own close_notify, sealed by
+ * its engine and sent on the transport without the rest (sealCloseNotify( )). That is exactly what a
+ * TCP segment boundary in the middle of a record looks like to the client: the engine takes the
+ * five octets, wants the rest, and re-arms. It cannot be a full record and it cannot be application
+ * data, because a data completion after a cancel is caught by the read handler's own
+ * CHK_CANCEL_IMPL( ) and the task ends correctly - which is the tree behaving, not the defect. The
+ * rest of the record follows our FIN, and completes the alert the header began.
  *
  * THE BOUNDS, AND WHAT GOES WRONG IF ONE IS TOO SHORT. Every step is behind a rendezvous except
  * two settles, each of which bounds one reactor hop that nothing outside the reactor can be asked
  * about: the transport read taking octets the peer has already put on the wire, and the client's
- * read completing on a FIN the peer has already sent. Too short, and the read is still registered
- * when the cancel runs, or the ending has not been observed yet - in both the run goes GREEN
- * against the unfixed tree. Neither can produce a false red.
+ * read completing on the rest of the close_notify the peer has already sent. Too short, and the read
+ * is still registered when the cancel runs, or the ending has not been observed yet - in both the
+ * run goes GREEN against the unfixed tree. Neither can produce a false red.
  */
 
 namespace utest
@@ -485,24 +496,98 @@ namespace utest
             return result;
         }
 
+        enum : std::size_t
+        {
+            /**
+             * @brief The octets of a TLS record header - type, version, length
+             */
+
+            RECORD_HEADER_SIZE                  = 5U,
+        };
+
         /**
-         * @brief The five octets which leave the client's TLS engine wanting more
+         * @brief The peer's close_notify, sealed by its own TLS engine and handed back as octets
+         * rather than sent
          *
-         * A record header and no payload: application_data, the TLS 1.2 record version every
-         * TLS 1.3 record still carries, and a length of 32 octets which never arrive
+         * The window these cases need is opened by a PARTIAL record: the client's engine takes a
+         * record header, wants the rest and re-arms its transport read behind the case's hold. And
+         * the ending the gates are about has to be CLEAN, which over TLS means a close_notify - a
+         * truncation is refused by isCleanEndOfStream( ) on its own since D1, and would pass these
+         * cases with either gate removed. So the partial record is the head of the peer's own
+         * close_notify: the alert is sealed into a memory BIO swapped in for the session's write
+         * BIO, its octets are taken out, and the peer sends the record header now and the rest once
+         * our FIN has reached it.
+         *
+         * ONE SSL_shutdown( ) SENDS THE ALERT AND WAITS FOR NOTHING - ssl3_shutdown( ) returns 0
+         * from its first call without reading - and afterwards SSL_read( ) still hands over the
+         * client's application data (OpenSSL 3.5, ssl/record/rec_layer_s3.c: a record of the type
+         * asked for is returned before the SENT_SHUTDOWN branch), which the face 1 cases need to
+         * drain the upload. The write BIO is asio's half of its BIO pair: it is referenced before
+         * the swap, because SSL_set0_wbio( ) frees the BIO it replaces, and handed back after it,
+         * which frees the memory BIO
          */
 
-        inline auto partialRecordHeader() -> std::string
+        inline auto sealCloseNotify( SAA_inout sessiontlsh1::Http1TlsPeer::sslstream_t& stream )
+            -> std::string
         {
-            std::string header;
+            SSL* const ssl = stream.native_handle();
 
-            header.push_back( static_cast< char >( 0x17 ) );
-            header.push_back( static_cast< char >( 0x03 ) );
-            header.push_back( static_cast< char >( 0x03 ) );
-            header.push_back( static_cast< char >( 0x00 ) );
-            header.push_back( static_cast< char >( 0x20 ) );
+            BIO* const original = ::SSL_get_wbio( ssl );
 
-            return header;
+            BL_CHK(
+                false,
+                nullptr != original && 1 == ::BIO_up_ref( original ),
+                BL_MSG()
+                    << "The peer's TLS session has no write BIO to swap"
+                );
+
+            BIO* const sealed = ::BIO_new( ::BIO_s_mem() );
+
+            if( nullptr == sealed )
+            {
+                ::BIO_free( original );
+
+                BL_THROW(
+                    bl::UnexpectedException(),
+                    BL_MSG()
+                        << "A memory BIO could not be allocated"
+                    );
+            }
+
+            ::SSL_set0_wbio( ssl, sealed );
+
+            const int rc = ::SSL_shutdown( ssl );
+
+            std::string record;
+
+            char buffer[ 256 ];
+
+            for( ;; )
+            {
+                const int size = ::BIO_read( sealed, buffer, static_cast< int >( sizeof( buffer ) ) );
+
+                if( size <= 0 )
+                {
+                    break;
+                }
+
+                record.append( buffer, static_cast< std::size_t >( size ) );
+            }
+
+            ::SSL_set0_wbio( ssl, original );
+
+            BL_CHK(
+                false,
+                0 == rc && record.size() > static_cast< std::size_t >( RECORD_HEADER_SIZE ),
+                BL_MSG()
+                    << "The peer's close_notify was not sealed: SSL_shutdown( ) returned "
+                    << rc
+                    << " with "
+                    << record.size()
+                    << " octets"
+                );
+
+            return record;
         }
 
         /**
@@ -518,17 +603,18 @@ namespace utest
          *   3. the probe takes the strand. While it is held the teardown is issued - either
          *      requestCancel( ) from the case, which posts shutdownOnStreamExecutor( ) BEHIND the
          *      probe, or the first hold's own closeConnection( ) plus initiateClose( ) - and the
-         *      peer is released, which puts five octets of a record header on the wire. The armed
-         *      read takes them in the reactor and its intermediate handler queues behind the probe,
-         *      so when the teardown's shutdown_send and cancel( ) finally run there is no read op
-         *      registered at all
+         *      peer is released, which puts the five-octet header of its own close_notify on the
+         *      wire. The armed read takes them in the reactor and its intermediate handler queues
+         *      behind the probe, so when the teardown's shutdown_send and cancel( ) finally run
+         *      there is no read op registered at all
          *   4. the probe takes the strand a SECOND time, so that the ending our own FIN provokes is
          *      observed while the write handler the teardown reaped is still queued. Without a body
          *      in flight nothing was reaped and the second hold changes nothing; with one, it is
          *      what puts the write's completion - and, on the cancel's door, the m_closing that
          *      completion sets - ahead of the read's ending, which is face 1
-         *   5. the peer reads its stream to the end and only THEN closes, so the ending is the one
-         *      our teardown provoked and not a close the peer chose
+         *   5. the peer reads its stream to the end and only THEN sends the rest of its
+         *      close_notify and closes, so the ending is the one our teardown provoked and not a
+         *      close the peer chose - and it is a CLEAN one, which nothing but the gates refuses
          */
 
         /**
@@ -615,24 +701,31 @@ namespace utest
                     self.waitForRelease();
 
                     /*
-                     * ON THE TRANSPORT AND NOT THROUGH THE ENGINE, because what this has to be is
-                     * an INCOMPLETE record - see the header comment. It is written after the case
-                     * has taken the strand, so the client's armed read takes it in the reactor and
-                     * its intermediate handler waits
+                     * THE HEADER OF THE PEER'S OWN close_notify, ON THE TRANSPORT AND NOT THROUGH
+                     * THE ENGINE, because what this has to be is an INCOMPLETE record - see
+                     * sealCloseNotify( ). It is written after the case has taken the strand, so the
+                     * client's armed read takes it in the reactor and its intermediate handler waits
                      */
+
+                    const auto closeNotify = sealCloseNotify( stream );
+
+                    self.record(
+                        "close-notify:" + bl::utils::lexical_cast< std::string >( closeNotify.size() )
+                        );
 
                     {
                         eh::error_code ec;
 
-                        const auto header = partialRecordHeader();
-
                         ( void ) asio::write(
                             stream.next_layer(),
-                            asio::buffer( header ),
+                            asio::buffer(
+                                closeNotify.data(),
+                                static_cast< std::size_t >( RECORD_HEADER_SIZE )
+                                ),
                             ec
                             );
 
-                        self.record( ec ? "partial:failed" : "partial:sent" );
+                        self.record( ec ? "close-notify-head:failed" : "close-notify-head:sent" );
                     }
 
                     peerPartialSent.set();
@@ -661,6 +754,27 @@ namespace utest
                     self.observeStreamEnd( stream );
 
                     self.record( "peer-end:" + Http1TlsPeer::describe( self.streamEndCode() ) );
+
+                    /*
+                     * AND IT ANSWERS OUR FIN WITH THE REST OF ITS close_notify, so the ending the
+                     * client's read observes is a CLEAN one - eof - which nothing but the gates
+                     * stops from completing the message
+                     */
+
+                    {
+                        eh::error_code ec;
+
+                        ( void ) asio::write(
+                            stream.next_layer(),
+                            asio::buffer(
+                                closeNotify.data() + static_cast< std::size_t >( RECORD_HEADER_SIZE ),
+                                closeNotify.size() - static_cast< std::size_t >( RECORD_HEADER_SIZE )
+                                ),
+                            ec
+                            );
+
+                        self.record( ec ? "close-notify-rest:failed" : "close-notify-rest:sent" );
+                    }
 
                     {
                         eh::error_code ec;
@@ -932,11 +1046,11 @@ namespace utest
  * @brief FACE 2 - an external cancel, and an ending which is ours
  *
  * WHAT IT ESTABLISHES. cancelTask( ) shuts our send side down and cancels the socket; the peer
- * answers our FIN by closing; the composed TLS read re-arms past that cancel and is handed
- * stream_truncated - which isCleanEndOfStream( ) admits ON PURPOSE, because a truncated TLS stream
- * is the ordinary shape of a close-delimited HTTPS response (RFC 2818 section 2.2.2). The read
- * handler's end-of-stream arm sits AHEAD of its CHK_CANCEL_IMPL( ), so nothing asks whether the
- * caller has cancelled, and parseEof( ) completes a body the peer had not finished.
+ * answers our FIN with the rest of its close_notify; the composed TLS read re-arms past that cancel
+ * and is handed eof - an orderly close, which isCleanEndOfStream( ) admits (RFC 9112 section 9.8).
+ * The read handler's end-of-stream arm sits AHEAD of its CHK_CANCEL_IMPL( ), so only the cancel
+ * check asked in that arm stops parseEof( ) from completing a body the peer had not finished -
+ * remove it and this case fails (measured 2026-09-27, CS-1).
  *
  * THE DISCRIMINATOR IS THE VERDICT AND NOT THE CODE. What is wrong here is that the caller is told
  * the message is complete; which error a correct tree reports instead is a separate question, and
@@ -999,9 +1113,10 @@ UTF_AUTO_TEST_CASE( Http1DriverTls_ClosingReadCompletesACutShortBodyTests )
  * cannot see it and only the ! isClosing( ) gate can, which is what makes this face 1's OWN red.
  *
  * AND THE ENDING IS STILL OURS. initiateClose( ) shuts the send side down because a write is in
- * flight; the peer answers that FIN by reading to the end of its stream and closing, holding the
- * rest of a response it never finished. Without the write there would be no shutdown_send, no FIN
- * and no ending at all - which is why this case cannot be the GET the sibling case is.
+ * flight; the peer answers that FIN by reading to the end of its stream and sending the rest of its
+ * close_notify, holding the rest of a response it never finished. Without the write there would be
+ * no shutdown_send, no FIN and no ending at all - which is why this case cannot be the GET the
+ * sibling case is.
  *
  * WHAT IT DOES NOT CLAIM, and the claim would be false. It is not evidence that anything on
  * today's tree PRODUCES this state: the probe reaches it by calling what an epilog calls rather
