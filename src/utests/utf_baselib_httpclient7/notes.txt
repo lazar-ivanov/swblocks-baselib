@@ -105,20 +105,26 @@
 # not reached.
 
 --log_level=message --run_test=Http1Driver_StrandSeamCancelInTheWindowWinsTests
-# A4 - the read initiator which throws on the SCHEDULING path. It borrows the seam above and arms
-# it one more way: the next read the driver arms fails in its initiator, and the next one is the
-# one scheduleTask( ) arms.
+# A4 - the read initiator which throws on the FIRST read. It borrows the seam above and arms it
+# one more way: the next read the driver arms fails in its initiator, and the next one is the one
+# the start handler arms - onStartConnection( ), which scheduleTask( ) posts since astra's second
+# review took the first read out of scheduleTask( ) (decision D2).
 #
-# ITS RED IS A HANG AND NOT A FAILURE, which is the defect and not a choice - against a tree whose
-# scheduleTask( ) calls scheduleRead( ) rather than armRead( ), the catch inside scheduleRead( )
-# reaches notifyReady( ) while TaskBase::scheduleNothrow( ) still holds the task lock, and the
-# scheduling thread deadlocks on a mutex it holds itself. Measured a64 clang debug: the run does
-# not finish (rc=124 under timeout), and the stacks taken 25s in show, on ONE thread,
+# ITS RED WAS A HANG AND NOT A FAILURE while scheduleTask( ) armed that read - against a tree whose
+# scheduleTask( ) called scheduleRead( ) rather than armRead( ), the catch inside scheduleRead( )
+# reached notifyReady( ) while TaskBase::scheduleNothrow( ) still held the task lock, and the
+# scheduling thread deadlocked on a mutex it held itself. Measured a64 clang debug: the run did
+# not finish (rc=124 under timeout), and the stacks taken 25s in showed, on ONE thread,
 # notifyReadyImpl( ) blocked at TaskBase.h:564 under applyDecision -> onOperationCompleted ->
 # scheduleRead -> scheduleTask -> scheduleNothrow -> padExecutingQueueNothrow -> push_back. With
-# armRead( ) the case passes in 23ms.
+# armRead( ) the case passed in 23ms.
 #
-# SO RUN IT WITH A BOUND. A timeout on this module is this case regressing, and there will be no
-# assertion to read - the thread which would have printed one is the deadlocked one.
+# SINCE D2 ITS RED NAMES ITSELF FIRST, AND STILL HANGS. The case now pins that the start handler
+# arms through scheduleRead( )'s guard. Measured a64 clang debug, 2026-09-27, against a handler
+# which armed bare: "the driver task never reached its terminal path" when the case's 30s bound
+# expires, and then the run does not finish (rc=124 under a 120s timeout) - the read's operation
+# was begun and never started, so nothing can complete it and the task can never end.
+#
+# SO RUN IT WITH A BOUND. A timeout on this module which follows that line is this case regressing.
 
 --log_level=message --run_test=Http1Driver_ScheduleReadInitiatorThrowEndsTheTaskTests
