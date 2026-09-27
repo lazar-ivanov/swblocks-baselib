@@ -3185,6 +3185,75 @@ namespace bl
                         ( 0U == urlPort ? effective : urlPort );
             }
 
+            static bool isOws( SAA_in const char ch ) NOEXCEPT
+            {
+                return ' ' == ch || '\t' == ch;
+            }
+
+            /**
+             * @brief Every element of every field with this name, trimmed, in field order - D6
+             *
+             * A list-based field may be sent as several field lines, which RFC 9110 5.3 makes
+             * equivalent to one line joining them with commas, so a rule about the field has to
+             * read every line and not only the first - HeaderList::tryGet( ) returns the first.
+             * Each line is a comma separated list (9110 5.6.1): an element may carry OWS around it,
+             * and an empty element is skipped, as 5.6.1.2 has a recipient parse and ignore one. The
+             * walk is the one the HTTP/1.1 driver's hasConnectionToken( ) does, which is private to
+             * that driver
+             */
+
+            static std::vector< std::string > listElementsOf(
+                SAA_in          const http::HeaderList&                         headers,
+                SAA_in          const std::string&                              name
+                )
+            {
+                std::vector< std::string > elements;
+
+                for( auto it = headers.begin(); it != headers.end(); ++it )
+                {
+                    if( ! http::HeaderList::equalsIgnoreCase( it -> name(), name ) )
+                    {
+                        continue;
+                    }
+
+                    const auto& value = it -> value();
+
+                    std::size_t begin = 0U;
+
+                    while( begin <= value.size() )
+                    {
+                        auto end = value.find( ',', begin );
+
+                        if( end == std::string::npos )
+                        {
+                            end = value.size();
+                        }
+
+                        auto first = begin;
+                        auto last = end;
+
+                        while( first < last && isOws( value[ first ] ) )
+                        {
+                            ++first;
+                        }
+
+                        while( last > first && isOws( value[ last - 1U ] ) )
+                        {
+                            --last;
+                        }
+
+                        if( first < last )
+                        {
+                            elements.push_back( value.substr( first, last - first ) );
+                        }
+
+                        begin = end + 1U;
+                    }
+                }
+
+                return elements;
+            }
+
             /**
              * @brief Makes a caller's protocol-neutral header list into a legal HTTP/2 one - H16
              *
@@ -3220,8 +3289,29 @@ namespace bl
                 )
             {
                 /*
-                 * (1) The connection-specific fields of RFC 9113 8.2.2
+                 * (1) The connection-specific fields of RFC 9113 8.2.2, and every field the
+                 * caller's Connection fields name - D6
+                 *
+                 * RFC 9110 7.6.1 has an intermediary remove each field a connection option names
+                 * and then Connection itself, and 8.2.2 has one translating to HTTP/2 do the same.
+                 * EVERY Connection field is read, and all of them BEFORE anything is removed: the
+                 * fixed-name loop below removes 'connection', and the tokens used to go with it
+                 * unread. 'te' is the one name exempt - 9110 10.1.4 has a sender of TE also send a
+                 * TE connection option, so 'Connection: TE' is what a CORRECT caller writes - and
+                 * te is governed by a rule of its own, (2)
                  */
+
+                {
+                    const auto tokens = listElementsOf( result.headers, "connection" );
+
+                    for( std::size_t i = 0U; i < tokens.size(); ++i )
+                    {
+                        if( ! http::HeaderList::equalsIgnoreCase( tokens[ i ], "te" ) )
+                        {
+                            ( void ) result.headers.removeAll( tokens[ i ] );
+                        }
+                    }
+                }
 
                 static const char* g_connectionSpecific[] =
                 {
@@ -3238,13 +3328,36 @@ namespace bl
                 }
 
                 /*
-                 * (2) 'te', which 8.2.2 permits only with the exact value 'trailers'
+                 * (2) 'te', which 8.2.2 permits only with the exact value 'trailers' - D6
+                 *
+                 * Canonicalized across EVERY TE field: if any of them lists trailers among its
+                 * codings, exactly one 'te: trailers' is sent, and otherwise none. It goes where
+                 * the first TE field was - HeaderList::set( ) keeps that position - so the
+                 * caller's order, which a profile's fingerprint is made of, is kept, and it is
+                 * spelled exactly as 8.2.2 names it. 'trailers' is matched without regard to case:
+                 * it is a quoted literal in RFC 9110 10.1.4's grammar, and RFC 5234 2.3 makes those
+                 * case-insensitive. The list itself keeps repeated fields, as its contract says:
+                 * this is the HTTP/2 boundary's rule, not the list's
                  */
 
                 {
-                    const auto* te = result.headers.tryGet( "te" );
+                    const auto codings = listElementsOf( result.headers, "te" );
 
-                    if( nullptr != te && ! http::HeaderList::equalsIgnoreCase( *te, "trailers" ) )
+                    bool trailers = false;
+
+                    for( std::size_t i = 0U; i < codings.size(); ++i )
+                    {
+                        if( http::HeaderList::equalsIgnoreCase( codings[ i ], "trailers" ) )
+                        {
+                            trailers = true;
+                        }
+                    }
+
+                    if( trailers )
+                    {
+                        result.headers.set( "te", "trailers" );
+                    }
+                    else
                     {
                         ( void ) result.headers.removeAll( "te" );
                     }
