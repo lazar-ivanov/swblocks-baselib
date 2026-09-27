@@ -38,6 +38,13 @@
  * the peer in utests/baselib/Http1DriverTlsTestUtils.h. Not the request task, the session, the pool
  * or the HTTP/2 driver: the cases speak to the driver directly
  *
+ * SIZE, MEASURED AND AT THE TARGET, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 35.6MB
+ * clang debug (a64) at a83e65e, which by utf_baselib_httpclient7's ratio is about 39.7MB on x86 -
+ * inferred, not measured here; the Windows handoff confirms it. The reason is the one TLS driver
+ * over the hook policy, its establisher and its peer, which the two cases share, on top of what
+ * every module over httpclient/PreCompiled.h pays: the cleartext pair in utf_baselib_httpclient11,
+ * with no TLS at all, measures 32.4MB. Right at the target, this module takes no further cases
+ *
  * The module is devenv7+ only: the devenv7_only marker next to this file is what keeps it out of
  * the build on devenv2-6 (projects/make/common.mk). Headers never test BL_DEVENV_VERSION; they
  * guard on the capability they need - BOOST_VERSION, OPENSSL_VERSION_NUMBER - with a clear #error
