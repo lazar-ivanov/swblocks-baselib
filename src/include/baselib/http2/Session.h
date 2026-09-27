@@ -2891,20 +2891,24 @@ namespace bl
                 return false;
             }
 
+            /**
+             * @brief Whether a request is HEAD - D8
+             *
+             * EXACTLY "HEAD": RFC 9110 9.1 makes the method token case-sensitive, so 'head' is
+             * another method, whose response may carry content like any other. The HTTP/1.1 driver
+             * and the connection pool compare the same way
+             */
+
             static bool isHeadMethod( SAA_in const std::string& method ) NOEXCEPT
             {
-                return method.size() == 4U &&
-                    ( method[ 0 ] == 'H' || method[ 0 ] == 'h' ) &&
-                    ( method[ 1 ] == 'E' || method[ 1 ] == 'e' ) &&
-                    ( method[ 2 ] == 'A' || method[ 2 ] == 'a' ) &&
-                    ( method[ 3 ] == 'D' || method[ 3 ] == 'd' );
+                return method == "HEAD";
             }
 
             /**
              * @brief An ASCII case-insensitive comparison against a lowercase literal
              *
-             * Hand-rolled and local, like isHeadMethod( ) above: the shared str::ascii fold this
-             * wants lives in core and is a change-set of its own
+             * Hand-rolled and local: the shared str::ascii fold this wants lives in core and is a
+             * change-set of its own
              */
 
             static bool equalsAsciiToken(
@@ -3064,8 +3068,8 @@ namespace bl
                     if( name == "te" )
                     {
                         /*
-                         * The value is a token, and RFC 9110 makes a token case-insensitive, so
-                         * "te: Trailers" is the same permitted value as "te: trailers"
+                         * 'trailers' is a quoted ABNF literal (RFC 9110 10.1.4), which RFC 5234 2.3
+                         * makes case-insensitive, so "te: Trailers" is the same permitted value
                          */
 
                         if( ! equalsAsciiToken( value, "trailers" ) )

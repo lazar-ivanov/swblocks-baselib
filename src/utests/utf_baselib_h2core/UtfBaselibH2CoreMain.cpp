@@ -56,3 +56,4 @@
 #include "TestSession.h"
 #include "TestHttp2TestPeer.h"
 #include "TestDrainingReserve.h"
+#include "TestSessionHeadMethod.h"

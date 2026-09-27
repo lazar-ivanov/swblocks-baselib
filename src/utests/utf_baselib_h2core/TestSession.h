@@ -2068,8 +2068,8 @@ UTF_AUTO_TEST_CASE( Session_MessageValidationTests )
     }
 
     /*
-     * And its value is a TOKEN, which RFC 9110 5.6.2 makes case-insensitive, so "Trailers" is the
-     * same permitted value. A case-sensitive compare would make a legal message malformed
+     * And 'trailers' is a quoted ABNF literal (RFC 9110 10.1.4), case-insensitive by RFC 5234 2.3,
+     * so "Trailers" is the same permitted value - a case-sensitive compare would refuse a legal one
      */
 
     {
