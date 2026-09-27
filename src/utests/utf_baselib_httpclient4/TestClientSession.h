@@ -2139,7 +2139,7 @@ UTF_AUTO_TEST_CASE( ClientSession_FallbackRiderNeedsTheDispatchedRetryTests )
  * promised coverage the case no longer had ( the L6 review's third pass, decision 3 ). A bounced
  * rider with a sink is reachable only over TLS ALPN fallback, and
  * ClientSessionTls_SinkIsToldCompleteOnceAcrossTheFallbackRetryTests ( utf_baselib_httpclient10 )
- * runs it there, under the name this case used to carry
+ * runs it there, under the name this case used to carry with a Tls prefix
  */
 
 UTF_AUTO_TEST_CASE( ClientSession_StreamedHopTellsTheSinkCompleteOnceTests )
