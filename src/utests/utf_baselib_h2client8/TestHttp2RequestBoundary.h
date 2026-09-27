@@ -219,6 +219,27 @@ namespace utest
             return result;
         }
 
+        /**
+         * @brief The value of one pseudo-header in an emitted block, or an empty string when the
+         * block carries none
+         */
+
+        inline std::string pseudoHeaderOf(
+            SAA_in          const bl::http2::HpackFieldList&                    fields,
+            SAA_in          const std::string&                                  name
+            )
+        {
+            for( std::size_t i = 0U; i < fields.size(); ++i )
+            {
+                if( fields[ i ].name() == name )
+                {
+                    return fields[ i ].value();
+                }
+            }
+
+            return std::string();
+        }
+
     } // h2boundary
 
 } // utest
@@ -383,6 +404,164 @@ UTF_AUTO_TEST_CASE( H2Driver_ConnectionTokensRemoveTheFieldsTheyNameTests )
             regularFieldsOf( emittedFields( dropped ) ),
             std::string( "x-kept: yes\n" )
             );
+    }
+}
+
+/**
+ * @brief D7 (R06) - a Host field is parsed as the authority it claims to be, by net::Uri's parser
+ *
+ * THE DEFECT. isSameAuthority( ) split a Host at its last colon by hand. A port it could not read -
+ * none, ':garbage', ':0' - came back as zero, and zero meant "default it"; the digits accumulated
+ * unchecked, so ':4294967739' wrapped to 443. The default it then took was url.effectivePort( ),
+ * which is the URL's EXPLICIT port when it has one, so 'Host: example.com' agreed with
+ * https://example.com:8443/. And only the first Host field was checked before every one of them
+ * was removed.
+ *
+ * THE RULE, decided 2026-09-27: the field is parsed by net::Uri's own parser, as "//" followed by
+ * the field. One that does not parse, or that carries anything beyond a host and an optional port
+ * - a userinfo, a path, a query, a fragment - is malformed and refused. A port it leaves out is the
+ * SCHEME's, never the URL's. More than one Host field is refused. And 'Host: EXAMPLE.com:443'
+ * against https://example.com/ is still the same authority.
+ *
+ * EACH REFUSAL IS ASSERTED WITH ITS REASON, so that the inputs the unfixed code refused too - as a
+ * different authority, like ':99999' - show the fix as well: they are refused now for what is
+ * wrong with them. Nothing was misrouted either way, since :authority is the URL's; what the
+ * defect cost was a request whose Host and :authority disagreed, sent without a word.
+ */
+
+UTF_AUTO_TEST_CASE( H2Driver_HostFieldIsParsedAsAnAuthorityTests )
+{
+    using namespace bl;
+    using namespace utest::h2boundary;
+
+    struct Refused
+    {
+        const char*     url;
+        const char*     host;
+        const char*     reason;
+    };
+
+    static const Refused refused[] =
+    {
+        /*
+         * The inverse of H16's accepted 'example.com:8443' against https://example.com:8443/: a
+         * Host which leaves its port out names the scheme's port, and 443 is not 8443
+         */
+
+        { "https://example.com:8443/p",     "example.com",              "names a different authority"   },
+        { "https://[::1]:8443/p",           "[::1]",                    "names a different authority"   },
+
+        /*
+         * Ports: not digits, zero, above 65535, and 2^32 + 443, which a 32-bit accumulator wraps
+         * to 443. Zero is grammatically a port (RFC 3986 3.2.3), so it disagrees rather than
+         * being malformed
+         */
+
+        { "https://example.com/p",          "example.com:garbage",      "is not a valid host"           },
+        { "https://example.com/p",          "example.com:0",            "names a different authority"   },
+        { "https://example.com/p",          "example.com:99999",        "is not a valid host"           },
+        { "https://example.com/p",          "example.com:4294967739",   "is not a valid host"           },
+
+        /*
+         * Anything beyond a host and an optional port, all of which "//" followed by the field
+         * would parse as parts of a URI
+         */
+
+        { "https://example.com/p",          "user@example.com",         "is not a valid host"           },
+        { "https://example.com/p",          "example.com/p",            "is not a valid host"           },
+        { "https://example.com/p",          "example.com?q",            "is not a valid host"           },
+        { "https://example.com/p",          "example.com#f",            "is not a valid host"           },
+    };
+
+    for( std::size_t i = 0U; i < sizeof( refused ) / sizeof( refused[ 0 ] ); ++i )
+    {
+        const auto& script = refused[ i ];
+
+        UTF_MESSAGE(
+            std::string( "Host: '" ) + script.host + "' against " + script.url +
+            " - refused, " + script.reason
+            );
+
+        auto request = makeRequest( script.url );
+
+        request.headers().append( "Host", script.host );
+
+        UTF_CHECK_THROW_MESSAGE(
+            ( void ) driver_t::toSessionRequest( request ),
+            ArgumentException,
+            script.reason
+            );
+    }
+
+    /*
+     * More than one Host field is refused, whatever they say: RFC 9112 3.2 has a server answer
+     * 400 to it, so no caller can mean it. The unfixed code checked the first and removed them
+     * all, so both of these went out - the second with its disagreeing Host dropped unread
+     */
+
+    {
+        auto agreeing = makeRequest( "https://example.com/p" );
+
+        agreeing.headers().append( "Host", "example.com" );
+        agreeing.headers().append( "Host", "example.com" );
+
+        UTF_CHECK_THROW_MESSAGE(
+            ( void ) driver_t::toSessionRequest( agreeing ),
+            ArgumentException,
+            "more than one Host field"
+            );
+
+        auto disagreeing = makeRequest( "https://example.com/p" );
+
+        disagreeing.headers().append( "Host", "example.com" );
+        disagreeing.headers().append( "host", "attacker.example" );
+
+        UTF_CHECK_THROW_MESSAGE(
+            ( void ) driver_t::toSessionRequest( disagreeing ),
+            ArgumentException,
+            "more than one Host field"
+            );
+    }
+
+    /*
+     * Controls, green on both sides: each is the same authority as its URL, so its Host is
+     * dropped and :authority - the URL's own - is what goes on the wire. An empty port is no port
+     * (RFC 3986 6.2.3), and an IPv6 literal compares without its brackets on both sides
+     */
+
+    struct Accepted
+    {
+        const char*     url;
+        const char*     host;
+        const char*     authority;
+    };
+
+    static const Accepted accepted[] =
+    {
+        { "https://example.com/p",          "EXAMPLE.com:443",          "example.com"                   },
+        { "https://example.com/p",          "example.com:",             "example.com"                   },
+        { "https://example.com:443/p",      "example.com",              "example.com:443"               },
+        { "http://example.com/p",           "example.com:80",           "example.com"                   },
+        { "https://[::1]:8443/p",           "[::1]:8443",               "[::1]:8443"                    },
+        { "https://[::1]/p",                "[::1]:443",                "[::1]"                         },
+    };
+
+    for( std::size_t i = 0U; i < sizeof( accepted ) / sizeof( accepted[ 0 ] ); ++i )
+    {
+        const auto& script = accepted[ i ];
+
+        UTF_MESSAGE(
+            std::string( "Host: '" ) + script.host + "' against " + script.url + " - accepted"
+            );
+
+        auto request = makeRequest( script.url );
+
+        request.headers().append( "Host", script.host );
+
+        const auto fields = emittedFields( request );
+
+        UTF_CHECK_EQUAL( regularFieldsOf( fields ), std::string() );
+        UTF_CHECK_EQUAL( pseudoHeaderOf( fields, ":authority" ), std::string( script.authority ) );
     }
 }
 

@@ -3,3 +3,6 @@
 # Astra's second review D6 - TE and the fields Connection names, read from the emitted header block
 --log_level=test_suite --run_test=H2Driver_TeIsCanonicalizedAcrossRepeatedFieldsTests
 --log_level=test_suite --run_test=H2Driver_ConnectionTokensRemoveTheFieldsTheyNameTests
+
+# Astra's second review D7 - the Host agreement check, parsed as an authority by net::Uri
+--log_level=test_suite --run_test=H2Driver_HostFieldIsParsedAsAnAuthorityTests
