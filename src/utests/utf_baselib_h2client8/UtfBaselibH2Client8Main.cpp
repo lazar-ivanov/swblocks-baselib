@@ -24,7 +24,7 @@
  *
  * WHY THERE IS AN EIGHTH MODULE, and it is the size policy rather than a preference. The first case
  * at this boundary, H2Driver_RequestHeadersAreNormalizedTests, lives in utf_baselib_h2client2,
- * which is over the 40 MB target and must not grow. The cases here need no peer and no socket:
+ * at or over the 40 MB target, and must not grow. The cases here need no peer and no socket:
  * toSessionRequest( ) is static and pure, and the header block a client session produces for its
  * result is decoded in memory - so this module carries one http2::Session instantiation and no
  * driver instance at all. A numbered sibling needs no makefile change; src/utests/AGENTS.md has
