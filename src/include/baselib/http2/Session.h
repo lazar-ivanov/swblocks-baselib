@@ -2891,13 +2891,17 @@ namespace bl
                 return false;
             }
 
+            /**
+             * @brief Whether a request is HEAD - D8
+             *
+             * EXACTLY "HEAD": RFC 9110 9.1 makes the method token case-sensitive, so 'head' is
+             * another method, whose response may carry content like any other. The HTTP/1.1 driver
+             * and the connection pool compare the same way
+             */
+
             static bool isHeadMethod( SAA_in const std::string& method ) NOEXCEPT
             {
-                return method.size() == 4U &&
-                    ( method[ 0 ] == 'H' || method[ 0 ] == 'h' ) &&
-                    ( method[ 1 ] == 'E' || method[ 1 ] == 'e' ) &&
-                    ( method[ 2 ] == 'A' || method[ 2 ] == 'a' ) &&
-                    ( method[ 3 ] == 'D' || method[ 3 ] == 'd' );
+                return method == "HEAD";
             }
 
             /**
