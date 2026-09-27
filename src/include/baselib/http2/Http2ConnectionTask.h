@@ -1065,20 +1065,27 @@ namespace bl
             }
 
             /**
-             * @brief One DATA payload in a pooled block - the copy design 5.1 budgets for
+             * @brief One DATA payload in its own block - the copy design 5.1 budgets for
              *
              * The engine's own SessionEvent carries the payload as a std::string and frontEvent( )
              * hands it out by const reference, so it cannot be moved from; that copy is S3.1's
              * shape and moving it would be a change to landed core. What this driver owns is
              * exactly one copy, and it is this one
+             *
+             * THE BLOCK IS ASKED FOR AT THE PAYLOAD'S SIZE. It used to be asked for at
+             * max( payload, defaultCapacity( ) ) - 1 MiB for any frame smaller than that - and with
+             * no pool configured every frame, a one-byte frame included, was a fresh allocation of
+             * that size: the stream window bounds the octets a stalled sink holds, not the
+             * allocations made for them. A configured pool is still asked first, and a pooled
+             * block too small for the payload is replaced below. The sink reads the same bytes
+             * either way; only the capacity behind them changes. An empty payload never gets here
+             * - onDataEvent( ) returns first - which matters, because DataBlock makes a zero
+             * capacity its 1 MiB default
              */
 
             auto blockOf( SAA_in const std::string& payload ) -> om::ObjPtr< data::DataBlock >
             {
-                auto block = data::DataBlock::get(
-                    m_h2config.dataBlocksPool,
-                    std::max< std::size_t >( payload.size(), data::DataBlock::defaultCapacity() )
-                    );
+                auto block = data::DataBlock::get( m_h2config.dataBlocksPool, payload.size() );
 
                 if( block -> capacity() < payload.size() )
                 {
