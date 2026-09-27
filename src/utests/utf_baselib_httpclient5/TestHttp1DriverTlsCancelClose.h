@@ -41,7 +41,8 @@
  * A1-tls, FACES 1 AND 2 - an ending we caused, read as the peer's, over TLS
  *
  * THE SYMPTOM IS ONE AND THE ENDINGS ARE THREE (driver-read-write-arms-design.md section 12.5): a
- * close-delimited message completed on an ending that was NOT the peer's orderly close. Face 3 -
+ * close-delimited message completed on an ending the peer did not choose - provoked by our own
+ * teardown, and since the re-pin dressed as the peer's orderly close_notify. Face 3 -
  * the reset the write consumed - landed with A1-cleartext. The two here are:
  *
  *   FACE 1, our own teardown: the armed read observes an ending while this task is already
