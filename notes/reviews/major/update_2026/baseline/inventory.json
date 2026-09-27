@@ -5627,13 +5627,13 @@
    "namespaces": []
   },
   {
-   "body_sha": "fe9256fc586555e8aa9967ea2bf66934",
+   "body_sha": "533ce864dcb501c24b2c30c2dca0e4e1",
    "doc_sha": "0b259830959dd422958f4cf56e0e0fc5",
    "file": "utf_baselib_h2client6/TestHttp2DriverWriteBarrier.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 598,
+   "line": 600,
    "module": "utf_baselib_h2client6",
    "name": "H2Driver_PeerHalfClosesWithAWriteInFlightTests",
    "namespaces": []
@@ -17699,10 +17699,10 @@
    "file": "utf_baselib_h2client6/TestHttp2DriverWriteBarrier.h",
    "guards": [],
    "label": "namespace h2driver",
-   "line": 75,
+   "line": 76,
    "module": "utf_baselib_h2client6",
    "ns": "utest",
-   "sha": "851e238fbf0a54f048fecdb28371df78"
+   "sha": "ffbeb267f50e19a4d26d1b12a53d48b0"
   },
   {
    "conditional_only": false,
@@ -25403,10 +25403,10 @@
   },
   {
    "file": "utf_baselib_h2client6/TestHttp2DriverWriteBarrier.h",
-   "line": 73,
+   "line": 74,
    "module": "utf_baselib_h2client6",
    "name": "utest",
-   "sha": "912b3a4a953b65724c7883e798255e2a"
+   "sha": "eedc5c4e290cc68366932c6bc70eea02"
   },
   {
    "file": "utf_baselib_h2client6/TestHttp2DriverWritePeerClose.h",
