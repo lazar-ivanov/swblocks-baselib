@@ -6,3 +6,6 @@
 
 # Astra's second review D7 - the Host agreement check, parsed as an authority by net::Uri
 --log_level=test_suite --run_test=H2Driver_HostFieldIsParsedAsAnAuthorityTests
+
+# DATA frames are delivered in blocks sized to their payload - decided 2026-09-27
+--log_level=test_suite --run_test=H2Driver_DataBlockIsSizedToItsPayloadTests

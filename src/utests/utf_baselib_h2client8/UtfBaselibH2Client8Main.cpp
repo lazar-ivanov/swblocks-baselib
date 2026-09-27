@@ -20,15 +20,28 @@
 /*
  * The HTTP/2 REQUEST BOUNDARY, read from the wire - what one ClientRequest becomes once the
  * driver has normalized it and a real http2::Session has encoded it. Astra's second review, D6 and
- * D7 (notes/plans/issues/astra-second-review-decisions.md section 3)
+ * D7 (notes/plans/issues/astra-second-review-decisions.md section 3). And one case from the other
+ * direction: the block a DATA frame is delivered in
  *
  * WHY THERE IS AN EIGHTH MODULE, and it is the size policy rather than a preference. The first case
  * at this boundary, H2Driver_RequestHeadersAreNormalizedTests, lives in utf_baselib_h2client2,
- * at or over the 40 MB target, and must not grow. The cases here need no peer and no socket:
- * toSessionRequest( ) is static and pure, and the header block a client session produces for its
- * result is decoded in memory - so this module carries one http2::Session instantiation and no
- * driver instance at all. A numbered sibling needs no makefile change; src/utests/AGENTS.md has
- * the checklist
+ * at or over the 40 MB target, and must not grow. The request cases here need no peer and no
+ * socket: toSessionRequest( ) is static and pure, and the header block a client session produces
+ * for its result is decoded in memory. A numbered sibling needs no makefile change;
+ * src/utests/AGENTS.md has the checklist
+ *
+ * ONE CASE HERE RUNS A DRIVER, AND IT IS MOST OF WHAT THIS MODULE WEIGHS.
+ * H2Driver_DataBlockIsSizedToItsPayloadTests is about the block the driver makes on its strand and
+ * hands to a sink, so it needs a real cleartext driver and a RawFrameScriptPeer to put DATA frames
+ * on the wire. Every module which already carried that driver was at or near the target:
+ * utf_baselib_h2client2, where the case would naturally go, and utf_baselib_h2client6, its teardown
+ * sibling, at 35.07 MB a64 clang debug with its room kept for the owed teardown cases. This module
+ * was comfortably under, at 23.05 MB, and the case cost it 12.24 MB: it measures 35.3 MB a64 clang
+ * debug with it, which puts it near the target too, so a further driver case goes to a numbered
+ * sibling
+ *
+ * Sockets: that one case uses loopback and an ephemeral port, so it does not take the machine
+ * global test lock
  *
  * The module is devenv7+ only: the devenv7_only marker next to this file is what keeps it out of
  * the build on devenv2-6 (projects/make/common.mk). Headers never test BL_DEVENV_VERSION; they
@@ -55,3 +68,4 @@
  */
 
 #include "TestHttp2RequestBoundary.h"
+#include "TestHttp2DataBlockCapacity.h"
