@@ -22,6 +22,7 @@
 #include <baselib/tasks/TcpStrandedStreams.h>
 
 #include <utests/baselib/Http2DriverTestUtils.h>
+#include <utests/baselib/HttpClientSessionTestUtils.h>
 #include <utests/baselib/HttpServerHelpers.h>
 #include <utests/baselib/Utf.h>
 
@@ -449,80 +450,6 @@ namespace utest
 
             return profile;
         }
-
-        /**
-         * @brief A caller's BodySink at the SESSION level, which counts its terminal callbacks
-         *
-         * NOTHING IN THIS SUITE INSTALLED ONE UNTIL S6R.3, which is why H08 was invisible: a sink
-         * handed to createRequestTask( ) is carried to EVERY hop of the chain ( startHop( ) ), so
-         * what a hop tells it is what the CALLER sees, and a chain of two hops used to tell it the
-         * body was complete twice. The count is therefore the assertion, exactly as the request
-         * task's own case counts credit
-         *
-         * It takes everything it is offered - the backpressure question is the request task's and
-         * has its own cases there; what is under test here is which hop says what to it
-         */
-
-        template
-        <
-            typename E = void
-        >
-        class CountingBodySinkT : public bl::httpclient::BodySink
-        {
-            BL_DECLARE_OBJECT_IMPL_ONEIFACE( CountingBodySinkT, bl::httpclient::BodySink )
-
-        protected:
-
-            mutable bl::os::mutex                                               m_lock;
-
-            std::string                                                         m_received;
-            std::size_t                                                         m_completions;
-
-            CountingBodySinkT() NOEXCEPT
-                :
-                m_completions( 0U )
-            {
-            }
-
-        public:
-
-            virtual std::size_t onData( SAA_in const bl::om::ObjPtr< bl::data::DataBlock >& data ) OVERRIDE
-            {
-                const auto offered = data -> size() - data -> offset1();
-
-                BL_MUTEX_GUARD( m_lock );
-
-                m_received.append(
-                    reinterpret_cast< const char* >( data -> pv() ) + data -> offset1(),
-                    offered
-                    );
-
-                return offered;
-            }
-
-            virtual void onComplete() OVERRIDE
-            {
-                BL_MUTEX_GUARD( m_lock );
-
-                ++m_completions;
-            }
-
-            auto received() const -> std::string
-            {
-                BL_MUTEX_GUARD( m_lock );
-
-                return m_received;
-            }
-
-            std::size_t completions() const
-            {
-                BL_MUTEX_GUARD( m_lock );
-
-                return m_completions;
-            }
-        };
-
-        typedef bl::om::ObjectImpl< CountingBodySinkT<> >                       CountingBodySink;
 
     } // session
 
