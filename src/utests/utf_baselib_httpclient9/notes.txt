@@ -1,0 +1,19 @@
+# each slice appends the recipes for the cases it lands here
+
+# D5 - what the session decodes, and what it hands back untouched (H24, H25)
+--log_level=message --run_test=ClientSession_ASingleCodingIsDecodedTests
+--log_level=message --run_test=ClientSession_TwoContentEncodingFieldsAreHandedBackUntouchedTests
+--log_level=message --run_test=ClientSession_OneFieldListingTwoCodingsIsHandedBackUntouchedTests
+--log_level=message --run_test=ClientSession_AResponseToHeadIsNotDecodedTests
+--log_level=message --run_test=ClientSession_ANotModifiedResponseIsNotDecodedTests
+--log_level=message --run_test=ClientSession_ANoContentResponseIsNotDecodedTests
+--log_level=message --run_test=ClientSession_AFailedCodedResponseReportsTheNetworkErrorTests
+
+# E2 - the establishment failure through a real pool and session, against an origin whose full
+# accept queue drops the SYN: the connection's cause chained, two establishments, both let go
+--log_level=message --run_test=ClientSession_AnOriginWhichNeverAcceptsFailsWithTheConnectionsCauseTests
+
+# D3 - the outstanding cap over a real HTTP/1.1 driver: a sink which takes nothing is failed at the
+# cap and the peer cannot write the body; a sink which keeps up passes a body many times the cap
+--log_level=message --run_test=ClientSession_AStalledSinkIsFailedAtTheOutstandingCapTests
+--log_level=message --run_test=ClientSession_ASinkWhichKeepsUpIsNotCappedTests

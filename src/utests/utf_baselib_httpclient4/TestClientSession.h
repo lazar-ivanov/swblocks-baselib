@@ -22,6 +22,7 @@
 #include <baselib/tasks/TcpStrandedStreams.h>
 
 #include <utests/baselib/Http2DriverTestUtils.h>
+#include <utests/baselib/HttpClientSessionTestUtils.h>
 #include <utests/baselib/HttpServerHelpers.h>
 #include <utests/baselib/Utf.h>
 
@@ -331,75 +332,6 @@ namespace utest
         }
 
         /**
-         * @brief A content decoder for the test-only coding "x-utest", which turns '~' into a space
-         *
-         * NOT A REAL COMPRESSOR, and it does not pretend to be one: no decoder ships with this
-         * library (D9) and these cases are about the SEAM - that the REGISTERED codings decide
-         * what accept-encoding says, and that a body in a registered coding is decoded before the
-         * caller sees it
-         */
-
-        template
-        <
-            typename E = void
-        >
-        class UtestDecoderT : public bl::httpclient::ContentDecoder
-        {
-            BL_DECLARE_OBJECT_IMPL_ONEIFACE( UtestDecoderT, bl::httpclient::ContentDecoder )
-            BL_CTR_DEFAULT( UtestDecoderT, protected )
-
-        public:
-
-            static const std::string& coding() NOEXCEPT
-            {
-                return g_coding;
-            }
-
-            virtual const std::string& contentCoding() const NOEXCEPT OVERRIDE
-            {
-                return g_coding;
-            }
-
-            virtual void write(
-                SAA_in          const bl::om::ObjPtr< bl::data::DataBlock >&     input,
-                SAA_in          const bl::httpclient::decoder_output_callback_t& output
-                )
-                OVERRIDE
-            {
-                std::string decoded(
-                    input -> begin() + input -> offset1(),
-                    input -> begin() + input -> size()
-                    );
-
-                for( std::size_t i = 0U; i < decoded.size(); ++i )
-                {
-                    if( '~' == decoded[ i ] )
-                    {
-                        decoded[ i ] = ' ';
-                    }
-                }
-
-                output( h2driver::blockOf( decoded ) );
-            }
-
-            virtual void finish(
-                SAA_in          const bl::httpclient::decoder_output_callback_t& output
-                )
-                OVERRIDE
-            {
-                BL_UNUSED( output );
-            }
-
-        private:
-
-            static const std::string                                            g_coding;
-        };
-
-        BL_DEFINE_STATIC_CONST_STRING( UtestDecoderT, g_coding ) = "x-utest";
-
-        typedef bl::om::ObjectImpl< UtestDecoderT<> >                           UtestDecoder;
-
-        /**
          * @brief A header profile with a different default set per request kind
          */
 
@@ -449,80 +381,6 @@ namespace utest
 
             return profile;
         }
-
-        /**
-         * @brief A caller's BodySink at the SESSION level, which counts its terminal callbacks
-         *
-         * NOTHING IN THIS SUITE INSTALLED ONE UNTIL S6R.3, which is why H08 was invisible: a sink
-         * handed to createRequestTask( ) is carried to EVERY hop of the chain ( startHop( ) ), so
-         * what a hop tells it is what the CALLER sees, and a chain of two hops used to tell it the
-         * body was complete twice. The count is therefore the assertion, exactly as the request
-         * task's own case counts credit
-         *
-         * It takes everything it is offered - the backpressure question is the request task's and
-         * has its own cases there; what is under test here is which hop says what to it
-         */
-
-        template
-        <
-            typename E = void
-        >
-        class CountingBodySinkT : public bl::httpclient::BodySink
-        {
-            BL_DECLARE_OBJECT_IMPL_ONEIFACE( CountingBodySinkT, bl::httpclient::BodySink )
-
-        protected:
-
-            mutable bl::os::mutex                                               m_lock;
-
-            std::string                                                         m_received;
-            std::size_t                                                         m_completions;
-
-            CountingBodySinkT() NOEXCEPT
-                :
-                m_completions( 0U )
-            {
-            }
-
-        public:
-
-            virtual std::size_t onData( SAA_in const bl::om::ObjPtr< bl::data::DataBlock >& data ) OVERRIDE
-            {
-                const auto offered = data -> size() - data -> offset1();
-
-                BL_MUTEX_GUARD( m_lock );
-
-                m_received.append(
-                    reinterpret_cast< const char* >( data -> pv() ) + data -> offset1(),
-                    offered
-                    );
-
-                return offered;
-            }
-
-            virtual void onComplete() OVERRIDE
-            {
-                BL_MUTEX_GUARD( m_lock );
-
-                ++m_completions;
-            }
-
-            auto received() const -> std::string
-            {
-                BL_MUTEX_GUARD( m_lock );
-
-                return m_received;
-            }
-
-            std::size_t completions() const
-            {
-                BL_MUTEX_GUARD( m_lock );
-
-                return m_completions;
-            }
-        };
-
-        typedef bl::om::ObjectImpl< CountingBodySinkT<> >                       CountingBodySink;
 
     } // session
 
@@ -2263,33 +2121,28 @@ UTF_AUTO_TEST_CASE( ClientSession_FallbackRiderNeedsTheDispatchedRetryTests )
 }
 
 /**
- * @brief S6R.3 H08 - a streamed response says "the body is complete" ONCE
+ * @brief A streamed response says "the body is complete" ONCE, from the one hop which carried it
  *
- * WHAT IT ESTABLISHED WHEN IT WAS WRITTEN, and the name keeps: this was the case above with a sink
- * installed, the one thing no case in this suite did until then. The pool dispatched the first
- * request of a key onto the Connecting placeholder; over a connection which turns out to speak
- * HTTP/1.1 the HTTP/2 task bounced that rider with connection_aborted, and applyClosed( ) used to
- * queue the caller's onComplete( ) on ANY close whatever its outcome. So the caller's sink was
- * told the body was complete, with nothing in it, and was then handed the whole body by the
- * retried hop - twice wrong on every first request to an origin which does not speak h2
- *
- * WHAT IT ESTABLISHES NOW, AND THE HALF IT LOST. L6 finding 4a stopped the rider being dispatched
- * where the protocol is already decided, so this chain is ONE hop and there is no bounce on it any
- * more: what survives is the streamed form itself - the body reaches the sink and not the response,
- * and the single hop which carried it says "complete" exactly once. The discrimination that made
- * the count worth its green - a first hop which must say nothing at all - no longer runs HERE, and
- * saying so is the point: it is not that the defect was re-checked and found gone, it is that this
- * path no longer reaches it. The combination of a BOUNCED rider and an installed sink is now only
- * reachable over TLS ALPN fallback, where ClientSessionTls_Http11FallbackExchangeTests
- * ( utf_baselib_httpclient5 ) runs the bounce with no sink; that case with a sink is OWED and is
- * recorded as such against finding 4a
- *
- * AND IT IS STILL THE CONTROL FOR H08's OTHER HALF, which did not depend on the bounce:
+ * WHAT IT PINS: one terminal callback per streamed hop. The body reaches the sink and not the
+ * response - design 5.3's streamed form - and the single hop which carried it says "complete"
+ * exactly once. And it is the control for S6R.3 H08's other half, which never depended on a bounce:
  * chkPrepareRetry( ) refuses a retry once the sink has seen bytes, and a plain streamed response
  * must not trip that refusal
+ *
+ * RENAMED, AND THE OLD NAME WENT WHERE IT IS STILL TRUE. This was
+ * ClientSession_SinkIsToldCompleteOnceAcrossTheFallbackRetryTests, written for H08 when the pool
+ * dispatched the first request of a key onto the Connecting placeholder: over a connection which
+ * turned out to speak HTTP/1.1 that rider was bounced with connection_aborted, and applyClosed( )
+ * used to tell the caller's sink the body was complete, empty, before the retried hop handed it the
+ * whole body. L6 finding 4a stopped the rider riding where the protocol is already decided, so this
+ * chain has been ONE hop since, with no bounce and no fallback retry in it, under a name which
+ * promised coverage the case no longer had ( the L6 review's third pass, decision 3 ). A bounced
+ * rider with a sink is reachable only over TLS ALPN fallback, and
+ * ClientSessionTls_SinkIsToldCompleteOnceAcrossTheFallbackRetryTests ( utf_baselib_httpclient10 )
+ * runs it there, under the name this case used to carry with a Tls prefix
  */
 
-UTF_AUTO_TEST_CASE( ClientSession_SinkIsToldCompleteOnceAcrossTheFallbackRetryTests )
+UTF_AUTO_TEST_CASE( ClientSession_StreamedHopTellsTheSinkCompleteOnceTests )
 {
     using namespace bl;
     using namespace bl::tasks;
@@ -2314,7 +2167,7 @@ UTF_AUTO_TEST_CASE( ClientSession_SinkIsToldCompleteOnceAcrossTheFallbackRetryTe
                 {
                     session -> dispose();
                 },
-                "utest::session::ClientSession_SinkIsToldCompleteOnceAcrossTheFallbackRetryTests"
+                "utest::session::ClientSession_StreamedHopTellsTheSinkCompleteOnceTests"
                 );
 
             httpclient::ClientRequest request;

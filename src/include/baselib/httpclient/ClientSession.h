@@ -1188,9 +1188,16 @@ namespace bl
                  * did. What this refuses is a retry after a genuine mid-body loss, where the
                  * alternative is appending a second copy of the body to the prefix the caller's
                  * sink already holds
+                 *
+                 * A SINK WHICH THREW HAS SPENT IT TOO, whether or not it took a byte first - D4 of
+                 * astra's second review: no delivery and no replay reaches a sink once it has
+                 * thrown. hasSinkThrown( ) is false on the bounce for the reason sinkDelivered( )
+                 * is zero there - nothing was offered - and
+                 * ClientSessionTls_SinkIsToldCompleteOnceAcrossTheFallbackRetryTests
+                 * ( utf_baselib_httpclient10 ) is the control for both
                  */
 
-                if( 0U != m_hop -> sinkDelivered() )
+                if( 0U != m_hop -> sinkDelivered() || m_hop -> hasSinkThrown() )
                 {
                     return false;
                 }
@@ -1253,11 +1260,103 @@ namespace bl
             }
 
             /**
+             * @brief Whether a response to this method, with this status, can carry content at all
+             *
+             * RFC 9110: a response to HEAD has none ( 9.3.2 ), and neither has a 204 ( 15.3.5 ) nor a
+             * 304 ( 15.4.5 ). The method is matched EXACTLY, as the HTTP/1.1 driver and the pool
+             * match it - the method token is case sensitive ( 9.1 )
+             */
+
+            static bool canCarryContent(
+                SAA_in          const std::string&                              method,
+                SAA_in          const unsigned                                  status
+                ) NOEXCEPT
+            {
+                return "HEAD" != method && 204U != status && 304U != status;
+            }
+
+            /**
+             * @brief The one content coding a response carries - false when it carries none, or more
+             * than one, counted across EVERY Content-Encoding field
+             *
+             * H24 ( D5 of astra's second review ): this used to read the FIRST field alone, and
+             * decodeBody( ) then removed them all. The field is a list ( RFC 9110 8.4 ): codings
+             * separated by commas, with optional whitespace around them, and empty elements neither
+             * counted nor an error ( 5.6.1 ); and several fields of one name are one list, in field
+             * order ( 5.3 ). So "x-utest" in one field and "gzip" in the next are two codings, exactly
+             * as "x-utest, gzip" in one field is
+             */
+
+            static bool tryGetTheOnlyCoding(
+                SAA_in          const http::HeaderList&                         headers,
+                SAA_inout       std::string&                                    coding
+                )
+            {
+                const auto values = headers.getAll( g_headerContentEncoding );
+
+                std::size_t count = 0U;
+
+                for( std::size_t i = 0U; i < values.size(); ++i )
+                {
+                    const auto& value = values[ i ];
+
+                    std::size_t pos = 0U;
+
+                    while( pos <= value.size() )
+                    {
+                        auto end = value.find( ',', pos );
+
+                        if( std::string::npos == end )
+                        {
+                            end = value.size();
+                        }
+
+                        auto first = pos;
+                        auto last = end;
+
+                        while( first < last && ( ' ' == value[ first ] || '\t' == value[ first ] ) )
+                        {
+                            ++first;
+                        }
+
+                        while( last > first && ( ' ' == value[ last - 1U ] || '\t' == value[ last - 1U ] ) )
+                        {
+                            --last;
+                        }
+
+                        if( first < last )
+                        {
+                            ++count;
+
+                            coding.assign( value, first, last - first );
+                        }
+
+                        pos = end + 1U;
+                    }
+                }
+
+                return 1U == count;
+            }
+
+            /**
              * @brief Decodes the buffered body when a decoder is registered for its coding
              *
              * NOT DONE IN STRICT MODE and not done for a streamed body. Strict mode exists to hand
              * the caller the exact bytes with their content-encoding (design 6.5), and a streamed
              * body has already reached the caller's sink by the time this runs
+             *
+             * NOR FOR A HOP WHICH FAILED, OR A RESPONSE WHICH CANNOT CARRY CONTENT - H25, D5 of
+             * astra's second review. A failed hop's body is whatever arrived before the failure, and
+             * a decoder refusing it - as every real one refuses a truncated input - threw out of
+             * continuationTask( ), which the execution queue turns into the task's failure IN PLACE
+             * of the failure which really happened. And a response to HEAD, a 204 and a 304 have no
+             * content to decode: their Content-Encoding and Content-Length describe a representation
+             * the caller did not receive, and removing them lost that part of the answer
+             *
+             * AND ONLY FOR EXACTLY ONE CODING - H24, see tryGetTheOnlyCoding( ). Undoing several is
+             * the decoder programme's ( notes/plans/issues/http-content-decoders-deferral.md ); until
+             * then anything else is handed back with its body and every header as it arrived, which is
+             * what already happens to a coding this client cannot decode
              */
 
             void decodeBody()
@@ -1267,14 +1366,19 @@ namespace bl
                     return;
                 }
 
-                const auto* const coding = m_response.headers().tryGet( g_headerContentEncoding );
-
-                if( ! coding || coding -> empty() )
+                if( m_hop -> exception() || ! canCarryContent( m_request.method(), m_response.status() ) )
                 {
                     return;
                 }
 
-                if( ! m_plan.state -> decoders.hasDecoder( *coding ) )
+                std::string coding;
+
+                if( ! tryGetTheOnlyCoding( m_response.headers(), coding ) )
+                {
+                    return;
+                }
+
+                if( ! m_plan.state -> decoders.hasDecoder( coding ) )
                 {
                     /*
                      * A coding this client never advertised. It is NOT decoded and it is NOT
@@ -1290,7 +1394,7 @@ namespace bl
                 std::string decoded;
 
                 auto stream = m_plan.state -> decoders.createStream(
-                    *coding,
+                    coding,
                     [ &decoded ]( SAA_in const om::ObjPtr< data::DataBlock >& output ) -> void
                     {
                         decoded.append(

@@ -1550,6 +1550,20 @@ namespace bl
                      * back to HTTP/1.1 ends this way too and is NOT a failure - but it produced a
                      * driver, which the refresh above would have picked up, so reaching here means
                      * it did not
+                     *
+                     * IT REPORTS A FAILED ATTEMPT ONLY WHEN IT IS THE ARM WHICH RETIRES THE ENTRY,
+                     * as the Closed arm and the bound above always have. An entry already retired
+                     * was settled by whichever arm retired it: the bound charged it, the Closed arm
+                     * charged it or decided a response had made it usable, and a release which
+                     * found it unusable retired it for a request which fails with its own error.
+                     * And a retired entry is examined again on every pass for as long as a rider
+                     * holds its slot, so reporting here each time charged every queued waiter once
+                     * per pass - one establishment, several charges, a request failed before its
+                     * retry and with the cancelled task's exception in place of the bound's; and a
+                     * connection which had served a request, which the Closed arm retires without
+                     * a charge, charged anyway. A pool at maxTotalConnections is where that bit,
+                     * since a held retired entry counts against the total and so no live
+                     * replacement can start
                      */
 
                     if( ! entry -> isRetired )
@@ -1557,22 +1571,22 @@ namespace bl
                         entry -> isRetired = true;
 
                         ++m_stats.connectionsRetired.lvalue();
+
+                        hasFailed = true;
+
+                        auto eptr = entry -> attempt.task -> exception();
+
+                        failure = eptr ? eptr : makeException< UnexpectedException >(
+                            resolveMessage(
+                                BL_MSG()
+                                    << "A connection to '"
+                                    << entry -> key.host
+                                    << ":"
+                                    << entry -> key.port.value()
+                                    << "' ended before it could carry a request"
+                                )
+                            );
                     }
-
-                    hasFailed = true;
-
-                    auto eptr = entry -> attempt.task -> exception();
-
-                    failure = eptr ? eptr : makeException< UnexpectedException >(
-                        resolveMessage(
-                            BL_MSG()
-                                << "A connection to '"
-                                << entry -> key.host
-                                << ":"
-                                << entry -> key.port.value()
-                                << "' ended before it could carry a request"
-                            )
-                        );
                 }
 
                 return hasFailed;

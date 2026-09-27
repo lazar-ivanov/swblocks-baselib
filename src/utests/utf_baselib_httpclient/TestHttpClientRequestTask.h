@@ -3144,19 +3144,20 @@ UTF_AUTO_TEST_CASE( HttpClientRequestTask_SinkWhichThrowsInTheCloseBatchFailsThe
         );
 
     /*
-     * THE BATCH REALLY DID CARRY BOTH, and the count is THREE rather than two since S6R.3's H06:
-     * the close's own action is a DRAIN, so the block the second offer threw on is still queued
-     * and is offered once more before the drain gives up. A close arriving in a LATER batch would
-     * find m_isCompletionPending already set by the failure and would queue no drain at all - so
-     * this number discriminates the two arrangements, which is what the case is about, where
-     * "onComplete( ) ran" no longer can: it is not called on a body which did not arrive
+     * TWO OFFERS, AND THE COUNT IS NO LONGER THE PROOF OF THE ARRANGEMENT. The batch [ "second",
+     * close ] is forced by the rendezvous above, by construction: both are posted while the drain
+     * is held inside the first offer, so its next turn takes them together. Until D4 of astra's
+     * second review the count was THREE and was read as that proof - the close's own drain offered
+     * the refused block once more, where a close in a later batch queues no drain at all. D4 stops
+     * every delivery to a sink which has thrown, the close's drain included, so there is no third
+     * offer in either arrangement: "first", and "second", which the sink refused
      *
-     * That runDeferred( ) guards each action on its own rather than stopping at the first failure
-     * is what the third offer shows, and is the property this assertion used to read off
-     * onComplete( )
+     * WHAT THE CASE PINS is H07's property in this shape: a throw arriving with a success already
+     * pending fails the request with the SINK'S OWN message, above; onComplete( ) is never called,
+     * below; and the slot goes back once, marked completed, because the stream itself ended cleanly
      */
 
-    UTF_REQUIRE_EQUAL( sink -> offers(), 3U );
+    UTF_REQUIRE_EQUAL( sink -> offers(), 2U );
 
     requireTrue(
         ! sink -> completeCalled(),
