@@ -282,8 +282,10 @@ namespace bl
              *
              * One struct for every kind rather than a variant, which is what the driver's Command
              * does and for the same reason: a deque of one type needs no allocation discipline of
-             * its own, and the unused members of an entry cost a few words on a queue which is
-             * bounded by the stream window
+             * its own, and the unused members of an entry cost a few words on a queue whose body
+             * blocks are bounded - by the stream window over HTTP/2, and over both protocols by
+             * maxOutstandingResponseBodySize, which charges each block its Event as part of
+             * OUTSTANDING_BLOCK_ALLOWANCE ( D3 )
              */
 
             struct Event
@@ -1198,7 +1200,9 @@ namespace bl
              * stall to be worked around. Over h1 there is no such chain: consumed( ) is a
              * documented no-op ( Http1ConnectionTask.h - "HTTP/1.1 has no flow control window" )
              * and the read is re-armed unconditionally, so the blocks accumulate in
-             * m_pendingDownload and the remainder is re-offered on every new chunk instead
+             * m_pendingDownload and the remainder is re-offered on every new chunk instead - until
+             * what is held reaches maxOutstandingResponseBodySize, where D3 fails the request
+             * rather than hold more
              */
 
             std::size_t offerToSink()
@@ -1313,16 +1317,19 @@ namespace bl
              * on the queue being empty, which is what makes ClientTypes.h's "the body is complete"
              * true of every call rather than of some of them
              *
-             * NOTHING HAS A DEADLINE OVER THIS PHASE, AND IT IS RECORDED RATHER THAN BOUNDED.
-             * applyClosed( ) calls cancelAllTimers( ) before the deferred phase, so the drain runs
-             * with the idle timer and the total timer already dead; and a streamed body is capped
-             * by nothing this library sets - N1 took the h1 cap off Http1ResponseLimits precisely
-             * because a codec cannot see whether a sink was installed, and h2 never had one. So a
-             * sink taking one byte a call makes one onData( ) call per byte of whatever arrived,
-             * in one uncancellable, undeadlined phase. It is NOT new work - it is the work the
-             * contract already implied, compressed into one phase with no deadline over it - and a
-             * bound is deliberately not taken, because any number would silently truncate a body
-             * which was about to be accepted, which is the defect this exists to close
+             * NOTHING HAS A DEADLINE OVER THIS PHASE, AND WHAT IT HAS TO DO IS BOUNDED BY D3 RATHER
+             * THAN BY TIME. applyClosed( ) calls cancelAllTimers( ) before the deferred phase, so
+             * the drain runs with the idle timer and the total timer already dead. The BODY is
+             * still capped by nothing this library sets - N1 took the h1 cap off
+             * Http1ResponseLimits precisely because a codec cannot see whether a sink was
+             * installed, and h2 never had one - and a cap on the body is still deliberately not
+             * taken, because any number would silently truncate a body which was about to be
+             * accepted, which is the defect this exists to close. What is bounded is what this
+             * drain can find waiting: maxOutstandingResponseBodySize caps what is held and not
+             * taken while the body arrives, and past it the request fails rather than truncates -
+             * so a sink taking one byte a call makes at most that many onData( ) calls here, in
+             * one uncancellable, undeadlined phase. It is NOT new work - it is the work the
+             * contract already implied, compressed into one phase with no deadline over it
              */
 
             void drainToSink()
