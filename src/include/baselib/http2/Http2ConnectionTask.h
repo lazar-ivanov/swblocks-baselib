@@ -1091,10 +1091,12 @@ namespace bl
                 {
                     /*
                      * A block which came out of the pool is whatever size it was made, and a peer
-                     * may advertise a frame size larger than that
+                     * may advertise a frame size larger than that. Through get( ), not the
+                     * constructor: a block the constructor makes has size( ) == capacity( ), and
+                     * write( ) below appends at size( ) - get( ) resets both, as it did above
                      */
 
-                    block = data::DataBlock::createInstance( payload.size() );
+                    block = data::DataBlock::get( nullptr /* dataBlocksPool */, payload.size() );
                 }
 
                 if( ! payload.empty() )
