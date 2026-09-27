@@ -1220,13 +1220,13 @@ namespace bl
              * how a close-delimited message is framed at all. The other half of the question is
              * what the WRITE ended with, and onPeerClosed( ) asks that before it trusts this
              *
-             * TWO PARTS, AND THE SECOND IS NOT OPTIONAL. net::isCleanEndOfStreamErrorCode( ) is
-             * eof on every platform and deliberately refuses the Windows reset spellings, which
-             * discard whatever was still unread. isStreamTruncationError( ) is the TLS stream
-             * ending without close_notify, which the peer-close record files under "orderly close
-             * of a TLS stream" and which is the ordinary shape of a close-delimited HTTPS
-             * response (RFC 2818 2.2.2) - a predicate admitting eof alone would fail every one of
-             * those, which succeed today
+             * eof ALONE - A TRUNCATED TLS STREAM IS REFUSED. net::isCleanEndOfStreamErrorCode( )
+             * is eof on every platform and deliberately refuses the Windows reset spellings, which
+             * discard whatever was still unread. isStreamTruncationError( ), a TLS stream which
+             * ended with no close_notify, was admitted beside it until astra's second review (D1),
+             * and completed a close-delimited body anyone able to end the transport had cut short.
+             * RFC 9112 section 9.8: "A response that has neither chunked transfer coding nor
+             * Content-Length is complete only if a valid closure alert has been received."
              */
 
             bool isCleanEndOfStream( SAA_in const eh::error_code& ec ) NOEXCEPT
