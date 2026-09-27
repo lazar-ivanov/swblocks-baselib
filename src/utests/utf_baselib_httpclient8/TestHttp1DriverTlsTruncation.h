@@ -546,6 +546,35 @@ namespace utest
                 1U == result.completions,
                 which + ": the sink was not told the body is complete exactly once. " + result.describe()
                 );
+
+            chkOrFail(
+                "acquire|release:" +
+                    bl::utils::lexical_cast< std::string >(
+                        static_cast< unsigned >( bl::httpclient::RequestOutcome::Completed )
+                        ) == result.poolEvents,
+                which + ": the pool was not told the request completed. " + result.describe()
+                );
+        }
+
+        /**
+         * @brief What every case ended by a TRUNCATION asserts of the peer's own record: the
+         * driver answered the ending with a close_notify of its own, so it took its close path
+         * and reached its TLS finish continuation. The runner already depends on this - the
+         * peer's script ends only once that alert has been read - and here it is said
+         */
+
+        inline void chkDriverAnsweredWithCloseNotify(
+            SAA_in          const TlsRequestResult&                             result,
+            SAA_in          const std::string&                                  which
+            )
+        {
+            using utest::http1driver::chkOrFail;
+
+            chkOrFail(
+                std::string::npos != result.peerRecords.find( "client-ended:asio.misc:2" ),
+                which + ": the driver did not answer the truncation with a close_notify. " +
+                    result.describe()
+                );
         }
 
     } // h1tlstrunc
@@ -570,6 +599,10 @@ namespace utest
  *   - and it is not retryable: the request went out, so a replay would be a second request
  *   - the sink holds 'part-one' - what arrived is still delivered - and was told onComplete( ) NOT
  *     AT ALL, which is the caller's whole view of "this body is complete"
+ *   - the pool was told the connection is UNUSABLE: the unclean branch finishes the stream with the
+ *     connection not usable, and publishes Draining before onClosed( ), which is the state the
+ *     request task reads when it hands the slot back
+ *   - and the driver answered the ending with a close_notify of its own - its close path ran
  *
  * RED ON THE UNFIXED DRIVER, where isCleanEndOfStream( ) admits the truncation, parseEof( ) completes
  * the body and the request task reports a 200 with a complete body.
@@ -617,6 +650,16 @@ UTF_AUTO_TEST_CASE( Http1DriverTls_TruncatedCloseDelimitedResponseFailsTheReques
         0U == result.completions,
         which + ": the sink was told the body is COMPLETE. " + result.describe()
         );
+
+    chkOrFail(
+        "acquire|release:" +
+            utils::lexical_cast< std::string >(
+                static_cast< unsigned >( httpclient::RequestOutcome::ConnectionUnusable )
+                ) == result.poolEvents,
+        which + ": the pool was not told the connection is unusable. " + result.describe()
+        );
+
+    chkDriverAnsweredWithCloseNotify( result, which );
 }
 
 /**
@@ -669,7 +712,11 @@ UTF_AUTO_TEST_CASE( Http1DriverTls_TruncationAfterAContentLengthResponseSucceeds
         "/content-length-then-truncated"
         );
 
-    chkSucceeded( result, "a Content-Length response followed by a truncation" );
+    const std::string which( "a Content-Length response followed by a truncation" );
+
+    chkSucceeded( result, which );
+
+    chkDriverAnsweredWithCloseNotify( result, which );
 }
 
 /**
@@ -697,7 +744,11 @@ UTF_AUTO_TEST_CASE( Http1DriverTls_TruncationAfterAChunkedResponseSucceedsTests 
         "/chunked-then-truncated"
         );
 
-    chkSucceeded( result, "a chunked response followed by a truncation" );
+    const std::string which( "a chunked response followed by a truncation" );
+
+    chkSucceeded( result, which );
+
+    chkDriverAnsweredWithCloseNotify( result, which );
 }
 
 #endif /* __UTEST_TESTHTTP1DRIVERTLSTRUNCATION_H_ */
