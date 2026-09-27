@@ -88,3 +88,6 @@
 --log_level=message --run_test=Session_StaleHeaderBlockPrecedesTheSettingsAckTests
 --log_level=message --run_test=Session_StaleFragmentSizePrecedesTheSettingsAckTests
 --log_level=message --run_test=Session_SettingsAckPrecedesABlockEncodedAfterItTests
+
+# Astra's second review D8 - HEAD is matched exactly, so a case variant's body is delivered
+--log_level=message --run_test=Session_HeadIsMatchedExactlyTests
