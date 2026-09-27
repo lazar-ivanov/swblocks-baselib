@@ -57,7 +57,8 @@
  *   - the driver's own send buffer is shrunk, from the one seam that runs on the strand just
  *     before each async_write - so the pipe between the two is a few kilobytes end to end;
  *   - the request carries a body far larger than the initial HTTP/2 flow-control window, so the
- *     driver's second write is the whole window's worth of DATA and cannot be absorbed.
+ *     driver always has DATA to write - one frame of about 16KB per write, see
+ *     BIG_WRITE_THRESHOLD - and the first such write cannot be absorbed.
  *
  * The opening write - preface, SETTINGS, WINDOW_UPDATE and HEADERS - is a few hundred bytes and
  * goes out through that narrow pipe unaided, which is what lets the driver reach the DATA write
@@ -80,9 +81,10 @@ namespace utest
              * @brief The request body, far above the initial flow-control window
              *
              * A peer that sends no SETTINGS leaves the window at its RFC 9113 default of 65535,
-             * so one produce( ) can emit at most that much DATA however large the body is. The
-             * body is bigger than the window on purpose: what it has to guarantee is that the
-             * window is FULL, not that the body fits
+             * so no more DATA than that can be sent however large the body is - and produce( )
+             * sends it one frame per write, not in one write ( BIG_WRITE_THRESHOLD ). The body is
+             * bigger than the window on purpose: what it has to guarantee is that the window is
+             * FULL, not that the body fits
              */
 
             BLOCKED_BODY_SIZE                   = 1U * 1024U * 1024U,
@@ -651,8 +653,8 @@ UTF_AUTO_TEST_CASE( H2Driver_PeerHalfClosesWithAWriteInFlightTests )
 
             /*
              * THE RENDEZVOUS, and the whole reason this case is not timing. The driver has handed
-             * a window's worth of DATA to async_write( ) and the peer will not take it, so from
-             * here the write can only be freed by the driver's own teardown
+             * a DATA frame - one frame, about 16KB - to async_write( ) and the peer will not take
+             * it, so from here the write can only be freed by the driver's own teardown
              */
 
             const auto unaidedBound = static_cast< std::size_t >( UNAIDED_END_IN_MILLISECONDS );
@@ -666,7 +668,7 @@ UTF_AUTO_TEST_CASE( H2Driver_PeerHalfClosesWithAWriteInFlightTests )
             if( ! sawBigWrite )
             {
                 UTF_FAIL(
-                    "the driver never handed a window's worth of DATA to async_write( ) - "
+                    "the driver never handed a DATA frame to async_write( ) - "
                     "writes so far: " + writeSizes
                     );
             }
@@ -712,14 +714,14 @@ UTF_AUTO_TEST_CASE( H2Driver_PeerHalfClosesWithAWriteInFlightTests )
 
     /*
      * The precondition the two assertions rest on, asserted rather than assumed: the write the
-     * driver was blocked on really was a window's worth of DATA and not a handful of control
-     * frames. If the flow-control defaults or the framing ever change under this case, THIS is
-     * what fails, and it fails saying so
+     * driver was blocked on really carried a DATA frame and not a handful of control frames. If
+     * the flow-control defaults or the framing ever change under this case, THIS is what fails,
+     * and it fails saying so
      */
 
     if( biggestWrite < static_cast< std::size_t >( BIG_WRITE_THRESHOLD ) )
     {
-        UTF_FAIL( "the blocked write was not a window's worth of DATA - writes: " + writeSizes );
+        UTF_FAIL( "the blocked write did not carry a DATA frame - writes: " + writeSizes );
     }
 
     if( ! taskEndedUnaided )
