@@ -106,129 +106,18 @@ namespace utest
             WAIT_IN_MILLISECONDS                = 30000U,
         };
 
-        typedef bl::tasks::TcpSslSocketAsyncStrandedBase                        tls_stream_t;
-
-        typedef bl::om::ObjectImpl
-        <
-            bl::tasks::ClientConnectionTaskBaseT< tls_stream_t >
-        >
-        TlsEstablisherImpl;
-
-        typedef bl::tasks::Http1ConnectionTaskImpl< tls_stream_t >              TlsDriverImpl;
-
         /*
-         * The TLS peer lives in utests/baselib/Http1DriverTlsTestUtils.h, which two CS-1 modules share
+         * The TLS peer and the TLS establishment helpers live in
+         * utests/baselib/Http1DriverTlsTestUtils.h, which two CS-1 modules share
          */
 
         using http1drivertls::TlsPeer;
+        using http1drivertls::tls_stream_t;
+        using http1drivertls::makeTlsKey;
+        using http1drivertls::makeTlsRequest;
+        using http1drivertls::establishTlsDriver;
 
-        /*************************************************************************
-         * Establishing the driver the way the session's fallback does
-         */
-
-        inline auto makeTlsKey( SAA_in const bl::os::port_t port ) -> bl::httpclient::ConnectionKey
-        {
-            bl::httpclient::ConnectionKey key;
-
-            key.scheme = "https";
-            key.host = "localhost";
-            key.port = port;
-
-            return key;
-        }
-
-        inline auto makeTlsRequest(
-            SAA_in          const bl::os::port_t                                port,
-            SAA_in          const std::string&                                  target
-            )
-            -> bl::httpclient::ClientRequest
-        {
-            bl::httpclient::ClientRequest request;
-
-            request.method( std::string( "GET" ) );
-
-            request.url(
-                bl::net::Uri::parse(
-                    "https://localhost:" +
-                    bl::utils::lexical_cast< std::string >( port ) +
-                    target
-                    )
-                );
-
-            return request;
-        }
-
-        inline auto makeTlsFactory(
-            SAA_in          const std::shared_ptr< bl::om::ObjPtr< bl::httpclient::ClientConnection > >& slot
-            )
-            -> std::shared_ptr< bl::httpclient::ClientDriverFactoryT< tls_stream_t > >
-        {
-            typedef bl::httpclient::ClientDriverFactoryT< tls_stream_t >        factory_t;
-
-            auto factory = std::make_shared< factory_t >();
-
-            /*
-             * HTTP/1.1 ALONE, so that a peer which somehow selected "h2" fails loudly in
-             * createDriver( ) rather than quietly running a case which is not the one it claims
-             */
-
-            factory -> registerDriver(
-                bl::httpclient::HttpProtocol::Http11,
-                [ slot ](
-                    SAA_in      const bl::httpclient::NegotiatedProtocol&       negotiated,
-                    SAA_inout   tls_stream_t::stream_ref&&                      connectedStream,
-                    SAA_in      const bl::httpclient::ConnectionKey&            key
-                    )
-                    -> bl::om::ObjPtr< bl::httpclient::ClientConnection >
-                {
-                    auto driver = TlsDriverImpl::createInstance(
-                        bl::cpp::copy( negotiated ),
-                        BL_PARAM_FWD( connectedStream ),
-                        bl::cpp::copy( key )
-                        );
-
-                    auto result = bl::om::qi< bl::httpclient::ClientConnection >( driver );
-
-                    *slot = bl::om::copy( result );
-
-                    return result;
-                }
-                );
-
-            return factory;
-        }
-
-        inline auto establishTlsDriver(
-            SAA_in          const bl::om::ObjPtr< bl::tasks::ExecutionQueue >&  eq,
-            SAA_in          const bl::os::port_t                                port
-            )
-            -> bl::om::ObjPtr< bl::httpclient::ClientConnection >
-        {
-            using namespace bl;
-            using namespace bl::tasks;
-
-            const auto slot =
-                std::make_shared< om::ObjPtr< httpclient::ClientConnection > >();
-
-            const auto establisher = TlsEstablisherImpl::createInstance(
-                makeTlsKey( port ),
-                makeTlsFactory( slot ),
-                ProxyConfig::none(),
-                ClientConnectionConfig(),
-                false /* logExceptions */
-                );
-
-            const auto establisherTask = om::qi< Task >( establisher );
-
-            eq -> push_back( establisherTask );
-            eq -> wait( establisherTask );
-
-            utest::http1driver::chkTaskSucceeded( establisherTask );
-
-            UTF_REQUIRE( nullptr != slot -> get() );
-
-            return om::copy( *slot );
-        }
+        typedef bl::tasks::Http1ConnectionTaskImpl< tls_stream_t >              TlsDriverImpl;
 
         /**
          * @brief A pool of exactly one connection - the driver the case established
@@ -475,7 +364,7 @@ namespace utest
                 {
                     eq -> setOptions( ExecutionQueue::OptionKeepAll );
 
-                    const auto driver = establishTlsDriver( eq, peer.port() );
+                    const auto driver = establishTlsDriver< TlsDriverImpl >( eq, peer.port() );
                     const auto driverTask = om::qi< Task >( driver );
 
                     eq -> push_back( driverTask );
