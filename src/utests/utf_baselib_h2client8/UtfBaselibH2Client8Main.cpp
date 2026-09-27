@@ -30,17 +30,17 @@
  * for its result is decoded in memory. A numbered sibling needs no makefile change;
  * src/utests/AGENTS.md has the checklist
  *
- * ONE CASE HERE RUNS A DRIVER, AND IT IS MOST OF WHAT THIS MODULE WEIGHS.
- * H2Driver_DataBlockIsSizedToItsPayloadTests is about the block the driver makes on its strand and
- * hands to a sink, so it needs a real cleartext driver and a RawFrameScriptPeer to put DATA frames
- * on the wire. Every module which already carried that driver was at or near the target:
- * utf_baselib_h2client2, where the case would naturally go, and utf_baselib_h2client6, its teardown
- * sibling, at 35.07 MB a64 clang debug with its room kept for the owed teardown cases. This module
- * was comfortably under, at 23.05 MB, and the case cost it 12.24 MB: it measures 35.3 MB a64 clang
- * debug with it, which puts it near the target too, so a further driver case goes to a numbered
- * sibling
+ * TWO CASES HERE RUN A DRIVER, AND THEY ARE MOST OF WHAT THIS MODULE WEIGHS. The block the driver
+ * makes on its strand and hands to a sink is what H2Driver_DataBlockIsSizedToItsPayloadTests and
+ * H2Driver_PooledDataBlockIsUsedOrReplacedTests are about, so they need a real cleartext driver
+ * and a RawFrameScriptPeer to put DATA frames on the wire. Every module which already carried that
+ * driver was at or near the target: utf_baselib_h2client2, where the cases would naturally go, and
+ * utf_baselib_h2client6, its teardown sibling, at 35.07 MB a64 clang debug with its room kept for
+ * the owed teardown cases. This module was comfortably under, at 23.05 MB. The first case cost it
+ * 12.24 MB and the second, which shares its driver, 0.16 MB: it measures 35.45 MB a64 clang debug
+ * with both, which puts it near the target too, so a further case goes to a numbered sibling
  *
- * Sockets: that one case uses loopback and an ephemeral port, so it does not take the machine
+ * Sockets: those two cases use loopback and ephemeral ports, so they do not take the machine
  * global test lock
  *
  * The module is devenv7+ only: the devenv7_only marker next to this file is what keeps it out of

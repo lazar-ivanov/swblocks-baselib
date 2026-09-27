@@ -9,3 +9,4 @@
 
 # DATA frames are delivered in blocks sized to their payload - decided 2026-09-27
 --log_level=test_suite --run_test=H2Driver_DataBlockIsSizedToItsPayloadTests
+--log_level=test_suite --run_test=H2Driver_PooledDataBlockIsUsedOrReplacedTests
