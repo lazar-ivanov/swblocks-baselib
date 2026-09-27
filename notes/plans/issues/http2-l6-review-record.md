@@ -730,9 +730,10 @@ sets `poolPolicy.maxRetriesPerRequest = 0`, sends one GET over cleartext to the 
 `released == 1`. It exists to pin the very defect 4a removes, so 4a's landing is exactly when it
 stops meaning what it says.
 
-**What happens to it depends on 4a's shape, and both shapes are live.** Read at the source: it
-builds a **default** `ClientSessionConfig`, so `connectionConfig.cleartextProtocol` is `Http11`
-while `alpnOffer` still names `h2`.
+**What happens to it depends on 4a's shape, and both shapes are live.** *(Corrected 2026-09-24 in
+the per session bullet below: it does not depend on the shape - both invert it.)* Read at the
+source: it builds a **default** `ClientSessionConfig`, so `connectionConfig.cleartextProtocol` is
+`Http11` while `alpnOffer` still names `h2`.
 
 - **Per key or per connection** - astra's own wording for H21, *"avoid dispatching a rider when the
   selected protocol is already known to be h1"*. A cleartext key under `cleartextProtocol = Http11`
@@ -744,7 +745,20 @@ while `alpnOffer` still names `h2`.
   produce HTTP/2 at all"*. A default session still can, over TLS. The flag stays on, the rider
   still rides the cleartext placeholder, and the case **keeps passing untouched** - which is the
   trap, because a green control then reads as evidence that 4a bites on this path when 4a has not
-  touched it.
+  touched it. **Corrected 2026-09-24, verified at the source when the landing was reviewed: the
+  three sentences before this one are false.** A session is one transport - `ClientSessionT` is
+  templated on `STREAM` - and `mayProduceHttp2()` (`ClientSession.h:2051`) branches on
+  `STREAM::isProtocolHandshakeNeeded`: on the cleartext instantiation it returns
+  `Http2 == cleartextProtocol` and never reads `alpnOffer`. The control's session is
+  `ClientSessionImplT< TcpSocketAsyncStrandedBase >` (`TestClientSession.h:50`), for which
+  `isProtocolHandshakeNeeded` is false (`TcpBaseTasks.h:470`), so a per session flag goes off for
+  it exactly as a per key one would, the rider does not ride, and the case **fails loudly on
+  `isFailed()` under this shape too**. "Still can, over TLS" mistook the configuration, which could
+  have built a TLS session, for the session it was actually given, which cannot. The case therefore
+  discriminates nothing between the shapes and the choice rests on the argument alone - which is
+  what the landing below recorded and the third pass confirms. Measured, not argued: on the per
+  session shape the un-inverted assertion is red at `TestClientSession.h(2242)` before the fix
+  (`red-control.log`).
 
 Either way the case has to be revisited deliberately. Pick the shape first, then say in the same
 change-set what this case asserts afterwards, and if the answer is "nothing changed" say why. (The
@@ -987,6 +1001,193 @@ of `httpclient4`; 4a with its sentence at the knob; the narrowing case; findings
 the driver; OpenSSL 1.1.1w. Every session-level test module costs about 39 MB before its first
 case, and the size gate that matters has never seen one.
 
+## Third pass: the 4a / H21 landing, `h21-fallback-rider` `f23b205..18016eb` off `6b4fa34` (2026-09-24)
+
+Reviewed from the sources, the three commits and the raw logs under
+`http2-l0-state/logs/lane1-h21/`; nothing built, nothing under `src/` touched. **Verdict: accept**,
+with the companion edits and the three decisions at the end.
+
+### The addendum's claim, checked first - it was false, and it is corrected in place above
+
+`ClientSessionT` is templated on `STREAM` (`ClientSession.h:1691`); `mayProduceHttp2()`
+(`:2051-2058`) returns `Http2 == cleartextProtocol` when `! STREAM::isProtocolHandshakeNeeded` and
+`offers( "h2" )` otherwise, and reads `alpnOffer` only on the second branch. The control's session
+is `ClientSessionImplT< TcpSocketAsyncStrandedBase >` (`TestClientSession.h:48-50`), whose stream
+declares `isProtocolHandshakeNeeded = false` (`TcpBaseTasks.h:470`). So on the per session shape the
+flag goes off for that session and the case inverts, exactly as under per key; the addendum's
+"still can, over TLS" confused the configuration with the session it built. The lane's finding
+holds in full. The same claim, in its most explicit form, stood in
+`astra-review-verification-record.md` section 3; both are corrected in place, dated, with the
+original left legible. No decision was taken on the false branch - the lane chose per session on
+the argument and found the error - so the cost was confined to the documents.
+
+### The implementation, walked
+
+- **Order and ownership are right.** `m_config` is initialised in the initialiser list, the
+  narrowing runs first in the body (`:1752-1755`), and the pool is created from
+  `m_config.poolPolicy` after it (`:1757-1767`); `ConnectionPoolImpl` holds the policy by value and
+  const (`ConnectionPool.h:820`, `:889`), `m_config` is never reassigned, and the request plan
+  copies the narrowed policy (`:1981`). Exactly two code readers of the flag exist:
+  `ClientSession.h:1754` and `ConnectionPool.h:1647`.
+- **Narrowing only is the safe direction, and for a reason worth naming.** `mayProduceHttp2()` is
+  exact for both instantiations - over TLS h2 can be selected iff it was offered, and an empty
+  selection is HTTP/1.1 (`ClientConnectionTaskBase.h:220-247`); in cleartext what is spoken is
+  what was configured (`:275-282`). Were it ever wrongly false the cost is one lost round trip on
+  the first request; wrongly true is the old defect. The asymmetry is why "the session only ever
+  turns it off" is the right rule and not merely a cautious one.
+- **The queued path carries the request.** With the gate false `findDispatchable()` returns null
+  (`:1647-1652`), `examineKey()` starts the placeholder and the waiter stays queued behind it in
+  FIFO order (`:1844-1858`), and it is dispatched on `Ready`. One dispatch and one release per
+  request, measured (`green-control.log`, `green-module-final.log`).
+- **The knob comment is updated.** "L6 finding 4a is the real fix and is owed" is gone;
+  `ConnectionPool.h:219-238` now says what zero does and does not do, and the `ridePreface` note
+  (`:268-292`) and the gate's comment (`:1640-1645`) agree with the code. One wording nit at
+  `:288`: a caller's `true` where it cannot be won "gets it refused" - it is overridden silently,
+  visible only by reading `config()` back; nothing throws.
+
+### Per session versus per key - agree, with one correction to the argument
+
+`ConnectionKey` is `scheme, host, port, proxyId, tlsProfileId, http2ProfileId, verificationFlags`
+(`ClientConnection.h:390`) and carries no protocol; a session speaks one scheme; so for cleartext a
+static per key rule would be the session's `cleartextProtocol` stamped onto every key, and for TLS
+the same offer goes to every key. A static per key rule has no information a per session one
+lacks. **Per session is right.** The correction: the lane's "cannot help the FIRST connection to a
+key, which is the whole defect" is too strong. Astra's H21 includes the repeated case - *"on
+close-after-each-response h1 peers, this happens repeatedly"* - and over ALPN-negotiated TLS to an
+HTTP/1.1-only origin **every** connection still rides, bounces and spends an attempt, not only the
+first. A *learned* per key rule is exactly the optimisation for that remainder; the lane is right
+that it is complementary and hangs off this flag, wrong only that the remainder is nothing. The
+complete closure is astra's other remedy, transfer the untransmitted request to the selected driver
+(`astra-review-verification-record.md` section 3), which is a core-path change and was rightly not
+taken here. The residual bites only a caller who both offers `h2` and sets zero, and that caller has
+an escape which makes zero safe over TLS: `ClientConnectionConfig::forcedHttp11()`
+(`ClientConnectionTaskBase.h:147-155`), under which `mayProduceHttp2()` is false and no rider
+rides. **Unmeasured through a session:** `forcedHttp11()` is used only at the connection-task level
+(`utf_baselib_h2client/TestClientConnectionTaskBase.h:936`); the "TLS one which does not offer h2"
+branch the knob comment claims is read from the code, not from a case.
+
+### The control case and its name
+
+The inversion reasoning holds: with zero budget the old run dispatched the rider, released it on
+the bounce and refused the replay; the new run dispatches the request itself. `connectionsCreated`,
+`dispatched` and `released` are one on both sides, so only the outcome discriminates, and the case
+now asserts it three ways (`! isFailed()`, `200`, `Http11`). The red run fails at the first of
+those (`red-control.log`, `TestClientSession.h(2242)`), so the count identity is by construction
+rather than measured - fine. Keeping the name is acceptable and is what astra's own validation note
+suggested (*"retain it as a historical explanation ... but invert its expected behavior"*). **The
+stated premise for keeping it is false, though.** The case's header (`:2179-2181`) and the commit
+message say `ConnectionPool.h`, L6 finding 4a and astra H21 "cite it by name"; grepped,
+`ConnectionPool.h` describes the mechanism and never names the case, and astra H21 links a line
+(`#L2041`) without naming it. It is named in this record's addendum, in
+`astra-review-verification-record.md:99`, in `notes.txt:17` and in the manifest. Right conclusion,
+wrong premise - the failure this feature keeps hitting - and the header should say the true reason.
+Comment-only, under `src/`, not done here; keep the line count when fixing it.
+
+### `SinkIsToldCompleteOnceAcrossTheFallbackRetry` - discrimination lost, not vacuous
+
+Read whole (`:2292-2360`): it still asserts a 200, no body in the response, the whole body in the
+sink, `completions() == 1`, and now one dispatch. That green still pins one terminal callback per
+streamed hop, which is not nothing; what it lost is the half it was written for - a bounced first
+hop which must say nothing to the sink. "Loses its discrimination" is the exact phrase and the
+header says it; "vacuous" overstates. **What the loss means for the suite is larger than the
+record says.** No case now puts a sink across any bounce: `httpclient5`'s session cases carry no
+`BodySink` (grepped; the TLS fallback case runs `runRequest()` without one), and `httpclient6`'s
+only mention is a comment. So the property "the bounce delivers nothing, and `chkPrepareRetry()`'s
+sink refusal cannot fire on it" (`ClientSession.h:1190-1205`) is now held by construction and
+controlled by nothing. That is the owed case, and it is the only control for that property, not
+merely H08's cleartext one restored. `body-sink-terminal-callback-and-reset-deferral.md:48` still
+says this case "is the control for that and would fail outright ... if the refusal reached the
+bounce" - false on landing.
+
+### The must-not-move control
+
+`ClientSessionTls_Http11FallbackExchangeTests` asserting `dispatched == 2` is the right control and
+was missing. Note it cannot have been red before - the rider rode there before the fix too - so
+the landing section's "all measured red before and green after" is true of the three `httpclient4`
+cases and not of this one; the paragraph's scope says so, barely.
+
+### Evidence, read from the logs
+
+`red-module.log`: three failures, at `2164` (`dispatched == 2`), `2242` (`! isFailed()`) and
+`2356` (`dispatched == 1`), on the new tests against the old headers. `green-module-final.log`: 20
+cases entered, none skipped, no errors. Repeats: `httpclient4` 5/5, `httpclient5` 3/3,
+`httpclient6` 5/5 clean; `httpclient`, `h2client4`, `h2client5` once each, clean. That is the right
+set: the modules which construct a session are exactly `httpclient4`, `httpclient5` and
+`httpclient6` (grepped for `ClientSessionImplT` and `makeSession(`), and the pool-direct modules
+(`utf_baselib_httpclient` at `TestHttpClientRequestTask.h:2407`, `:2515`; `h2client4`, `h2client5`)
+see the default `true`. Windows and the other toolchain and variant are the orchestrator's, as the
+split says.
+
+### Sizes - real, corroborated, not byte-exact
+
+The four builds each compiled (`Compiling UtfBaselibHttpClient4Main.cpp...` in every log, about
+25 s apiece, 08:17:35 to 08:22:35). The journal's baselines, 51,359,304 and 49,733,360, are within
+56 and 296 bytes of `lane3`'s independent clang-debug objects of the same tree plus a 60-line
+uncommitted `Http1ConnectionTask.h` diff (51,359,360 and 49,733,064), and the after figures match
+the objects on disk. The phantom the lane sidestepped is real: the objects `h2-write-peer-close`
+left behind read 48.8 and 46.9 MB, which would have shown as roughly +190 KB. How the branch point
+was restored for the baseline build is in no artifact - no checkout in the reflog, no stash left,
+tree clean - so it is inferred from the compile logs. I did not build.
+
+### Tier 3 - no snapshot exists, and that is the fifth time this gap has been written down
+
+The runtime baseline lists 17 modules and no `httpclient*` or `h2client*`. **There is no fresh
+snapshot:** nothing captured today anywhere in the state directory or the lane's tree, and the
+lane's scripts run `--log_level=test_suite` alone, without the `--report_level=detailed` that
+`utf_runlog.py` needs for per-case counts (`:104-106`), so its logs could not serve as one. The
+journal and `3c57955` claim only that tier 3 cannot speak, which is accurate. What substituted -
+whole-module runs with repeats on the three session modules, plus the written reasoning in the two
+headers - is adequate for this change, because its per-case effect is fully enumerated and measured
+and the one silent loss (the sink case) is semantic, not a count drop tier 3 would have seen. The
+gap itself is structural and already stated at `http2-l4-review-record.md:591-596` and `:669`,
+`http2-l5-review-record.md:781`, `http2-implementation-plan.md:383` and
+`multioperation-deliberate-close-fails-task-record.md:179`, each time as an observation. Decision
+below.
+
+### Companion edits the landing owes, at merge
+
+`astra-remediation-owed-work.md:352` row 16 ("already deferred, properly");
+`http2-implementation-plan.md:1612` ("H21 and H22 are not staged here"); the body-sink deferral
+sentence above; the control case's citation premise (`src`, comment-only); the `:288` wording if
+wanted. The `h23` deferral already says H21 is fixed, not deferred, and is consistent.
+
+### Three decisions, in the order to take them
+
+1. **The TLS ALPN fallback case with a sink.** One case in `httpclient5`: the existing fallback
+   exchange with a counting sink, asserting `completions() == 1` and `dispatched == 2`. Not done,
+   the bounce-with-sink property has no control anywhere and the next change to `applyClosed()` or
+   `chkPrepareRetry()` can break it with every module green. Low risk, test-only blast radius, small
+   - the sink helper lives in `httpclient4`'s namespace and may need lifting. Undecided: the module,
+   given that session-level modules cost about 39 MB before their first case on the platform that
+   enforces. Recommend: next lane slice, in `httpclient5` unless its x86 debug headroom says
+   otherwise. Reverses if the transfer remedy lands first, since it removes the bounce.
+2. **A runtime baseline that contains the client modules.** `utf_runlog.py --run --capture` over the
+   14 client modules at a settled tip, committed beside `inventory.json` with a second pass for
+   `nondeterministic.json`. Not done, tier 3 stays blind to every HTTP client change. Low risk,
+   gating-only blast radius, one quiet run of the 14 modules. Undecided: the tip (after the
+   outstanding lanes merge, not before) and which debug tree captures it. Recommend: do it at the
+   first tip with no lane open, from whichever debug tree the orchestrator has built there.
+   Reverses if the client modules keep changing every round through L7, when the baseline would
+   go stale faster than it pays.
+3. **Rename the sink case.** It no longer has a fallback retry in it, so its name promises coverage
+   it does not have - the vacuous-green hazard `src/utests/AGENTS.md` warns of - where the control
+   case's name still describes the mechanism whose absence it now pins. Nil risk; blast radius the
+   manifest, one `notes.txt` recipe, and a dated citation in the body-sink deferral which can stay
+   as history. Undecided: whether the "names are history, headers are truth" rule the first case
+   follows applies to a case with nothing of its name left. Recommend: rename this one, keep the
+   first. Reverses if the maintainer's rule is that inverted or narrowed cases keep their names
+   without exception.
+
+### Verified versus inferred
+
+Verified at the source: the addendum's error; the predicate on both instantiations; constructor
+order; policy by value; the two flag readers; the key's members; the queued path; the citation
+premise; the sink coverage; the module set. Verified from artifacts: the red and green runs, the
+repeats, the four compiles, the on-disk sizes, the absence of a snapshot. Inferred: the baseline
+sizes (corroborated, not rebuilt); how the working tree was restored; the `forcedHttp11()` branch
+through a session; that the count identity holds on the old red, which the red run's first
+assertion pre-empts. Not checked: Windows, gcc, release.
+
 ---
 
 ## Where this record's open items stand, 2026-09-27
@@ -1012,3 +1213,8 @@ when they are closed nor closed when they are not. Each was checked at the sourc
 | **OpenSSL 1.1.1w** | Deferred — `openssl-1x-flavor-deferral.md` |
 | **The narrowing discrimination** | **OWED, and not written.** `ClientSessionTls_StreamingUploadTakesAnHttp2OnlyConnectionTests` still runs against a peer preferring `[ "h2", "http/1.1" ]`, so deleting `narrowToHttp2( )` would leave it green. E1 on `astra-remediation-owed-work.md` |
 | **The establishment-failure path through the pool and the session** | **OWED, and not written.** It runs at the driver (the dead-port case) and in the pool against stub connections (`H2Pool_ANeverUsableConnectionIsChargedAndBoundedTests`), never with a real connection task through both. E2 on the same list |
+| **The third pass** | **Rescued 2026-09-27.** Written 2026-09-24 and left uncommitted in `swblocks-baselib-lane1`, with its two corrections in place above and in `astra-review-verification-record.md`; committed verbatim from that worktree |
+| **Third pass, decision 1** — the TLS fallback exchange with a counting sink | **OWED, and not written** — E3 on `astra-remediation-owed-work.md` |
+| **Third pass, decision 2** — a runtime baseline containing the client modules | **CLOSED** — measured and refused, `tier3-client-modules-not-baselineable-record.md` |
+| **Third pass, decision 3** — rename the sink case | **OWED** — E4 on the same list |
+| **Third pass, companion edits** | The `src` halves at `263e2e5` (the control case's citation premise; `ridePreface`'s *"overridden, not rejected"*); the owed-list row and the plan line at `425802c`; the body-sink deferral's sentence 2026-09-27 |

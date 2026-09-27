@@ -107,7 +107,14 @@ treating it as wrong.
   per-session flag, which is what 4a's own wording and a pool-wide `ConnectionPoolPolicy` imply,
   leaves a default session still able to produce h2 over TLS, so the rider still rides and the case
   **passes unchanged** — reading as evidence for a fix that never touched this path. Either way it
-  must be revisited deliberately; the trap is real and its shape is conditional.
+  must be revisited deliberately; the trap is real and its shape is conditional. **Corrected
+  2026-09-24, at the source, when 4a's landing was reviewed: the per-session half of that
+  narrowing is wrong.** `ClientSessionT` is templated on the transport, and on a cleartext
+  instantiation `mayProduceHttp2()` reads `cleartextProtocol` alone and never the ALPN offer; the
+  case's session is the plain one, so a per-session flag goes off for it too and the case fails
+  loudly under **both** shapes. The trap is real only in the sense first stated here — the case
+  must be inverted deliberately — and not in the sense that one shape passes it silently. The L6
+  record's addendum carries the same correction, and its third pass the review.
 - **H09's deadline point.** The completed hop has already cancelled its timers and the chain budget
   is a timestamp checked synchronously, so decoding between hops is **both uncancellable and
   undeadlined**. L6 f6 did not say this.
