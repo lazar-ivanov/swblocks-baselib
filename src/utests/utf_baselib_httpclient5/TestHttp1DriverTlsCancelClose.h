@@ -933,10 +933,10 @@ namespace utest
  *
  * WHAT IT ESTABLISHES. cancelTask( ) shuts our send side down and cancels the socket; the peer
  * answers our FIN by closing; the composed TLS read re-arms past that cancel and is handed
- * stream_truncated - which isCleanEndOfStream( ) admits ON PURPOSE, because a truncated TLS stream
- * is the ordinary shape of a close-delimited HTTPS response (RFC 2818 section 2.2.2). The read
- * handler's end-of-stream arm sits AHEAD of its CHK_CANCEL_IMPL( ), so nothing asks whether the
- * caller has cancelled, and parseEof( ) completes a body the peer had not finished.
+ * stream_truncated. The read handler's end-of-stream arm sits AHEAD of its CHK_CANCEL_IMPL( ), so
+ * nothing asked whether the caller had cancelled, and while isCleanEndOfStream( ) admitted a
+ * truncation parseEof( ) completed a body the peer had not finished. Since D1 it does not - RFC
+ * 9112 section 9.8 - so this case stays green without the cancel check (measured 2026-09-27, CS-1).
  *
  * THE DISCRIMINATOR IS THE VERDICT AND NOT THE CODE. What is wrong here is that the caller is told
  * the message is complete; which error a correct tree reports instead is a separate question, and
