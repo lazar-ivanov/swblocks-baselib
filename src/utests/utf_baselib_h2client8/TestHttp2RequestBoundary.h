@@ -337,12 +337,12 @@ UTF_AUTO_TEST_CASE( H2Driver_TeIsCanonicalizedAcrossRepeatedFieldsTests )
  * connection-specific names of RFC 9113 8.2.2 go. A field no token names stays, repeats and order
  * included.
  *
- * EXCEPT 'te', which is what the second block is for. RFC 9110 10.1.4 has a sender of TE also send
- * a TE connection option, so 'Connection: TE' beside 'TE: trailers' is what a CORRECT caller writes
- * - and trailers is the one TE value HTTP/2 permits. A fix which removed everything Connection
- * names would strip it; te is governed by its own rule instead. That first request is green before
- * the fix, because the unfixed code read no token at all: it is the control against the obvious
- * fix, not against the defect.
+ * EXCEPT 'te' and 'host', which the second and third blocks are for. RFC 9110 10.1.4 has a sender
+ * of TE also send a TE connection option, so 'Connection: TE' beside 'TE: trailers' is what a
+ * CORRECT caller writes - and trailers is the one TE value HTTP/2 permits. A fix which removed
+ * everything Connection names would strip it; te is governed by its own rule instead. That first
+ * request is green before the fix, because the unfixed code read no token at all: it is the control
+ * against the obvious fix, not against the defect.
  */
 
 UTF_AUTO_TEST_CASE( H2Driver_ConnectionTokensRemoveTheFieldsTheyNameTests )
@@ -403,6 +403,36 @@ UTF_AUTO_TEST_CASE( H2Driver_ConnectionTokensRemoveTheFieldsTheyNameTests )
         UTF_CHECK_EQUAL(
             regularFieldsOf( emittedFields( dropped ) ),
             std::string( "x-kept: yes\n" )
+            );
+    }
+
+    /*
+     * (3) host survives being named too: its own arm decides it, so one that agrees is dropped
+     * and one that disagrees is refused. Red before the fix for the second: Host went with the
+     * token, unread, and the request went out claiming the URL's origin
+     */
+
+    {
+        auto agreeing = makeRequest( "https://example.com/p" );
+
+        agreeing.headers().append( "Connection", "host" );
+        agreeing.headers().append( "Host", "example.com" );
+        agreeing.headers().append( "X-Kept", "yes" );
+
+        UTF_CHECK_EQUAL(
+            regularFieldsOf( emittedFields( agreeing ) ),
+            std::string( "x-kept: yes\n" )
+            );
+
+        auto disagreeing = makeRequest( "https://example.com/p" );
+
+        disagreeing.headers().append( "Connection", "host" );
+        disagreeing.headers().append( "Host", "attacker.example" );
+
+        UTF_CHECK_THROW_MESSAGE(
+            ( void ) driver_t::toSessionRequest( disagreeing ),
+            bl::ArgumentException,
+            "names a different authority"
             );
     }
 }
