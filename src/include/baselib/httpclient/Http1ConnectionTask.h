@@ -1231,7 +1231,7 @@ namespace bl
 
             bool isCleanEndOfStream( SAA_in const eh::error_code& ec ) NOEXCEPT
             {
-                return net::isCleanEndOfStreamErrorCode( ec ) || base_type::isStreamTruncationError( ec );
+                return net::isCleanEndOfStreamErrorCode( ec );
             }
 
             /**
