@@ -1,0 +1,5 @@
+# each slice appends the recipes for the cases it lands here
+
+# Astra's second review D6 - TE and the fields Connection names, read from the emitted header block
+--log_level=test_suite --run_test=H2Driver_TeIsCanonicalizedAcrossRepeatedFieldsTests
+--log_level=test_suite --run_test=H2Driver_ConnectionTokensRemoveTheFieldsTheyNameTests
