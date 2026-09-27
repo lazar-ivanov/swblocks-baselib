@@ -3103,86 +3103,68 @@ namespace bl
             }
 
             /**
-             * @brief Whether an authority the caller wrote as Host names the same origin as the
-             * URL's - H16
+             * @brief Parses a Host field as the authority it claims to be - D7
+             *
+             * RFC 9110 7.2 gives the field the grammar uri-host [ ":" port ], which is an RFC 3986
+             * authority without its userinfo, so net::Uri's own parser is the one to read it with:
+             * "//" followed by the field is a network-path reference, and parseImpl( ) takes what
+             * follows a leading "//" as its authority. That parser validates the host, an IP
+             * literal included, folds it to lower ASCII, refuses a port which is not all digits or
+             * is above 65535, and reads an empty port as none (RFC 3986 6.2.3) - where the
+             * hand-rolled split this replaced read ':garbage' and ':0' as no port at all and
+             * wrapped ':4294967739' to 443. What it ALSO accepts, and a Host may not carry, is
+             * anything beyond the authority: a userinfo, a path, a query or a fragment
+             *
+             * Returns false for a field which is not a host and an optional port
+             */
+
+            static bool tryParseHostField(
+                SAA_in          const std::string&                              hostField,
+                SAA_out         net::Uri&                                       authority
+                )
+            {
+                if( ! net::Uri::tryParse( "//" + hostField, authority ) )
+                {
+                    return false;
+                }
+
+                return
+                    ! authority.hasUserInfo() &&
+                    authority.path().empty() &&
+                    ! authority.hasQuery() &&
+                    ! authority.hasFragment();
+            }
+
+            /**
+             * @brief Whether a Host field, once parsed, names the same origin as the URL's - H16
+             * and D7
              *
              * IT IS A COMPARISON OF AUTHORITIES AND NOT OF STRINGS, which is what stops this from
              * rejecting a request that is perfectly ordinary. ':authority' is
              * request.url( ).authority( ), which carries ':port' only when the URL SPELLS one, so
              * a caller who writes 'Host: example.com:443' against 'https://example.com/' names
-             * exactly the same origin. RFC 9110 7.2 gives the field the grammar
-             * uri-host [ ":" port ], so the two are parsed into that pair, the host is folded to
-             * lower ASCII and a missing port is defaulted from the scheme on BOTH sides
+             * exactly the same origin. Both sides come out of net::Uri's parser, so each host is
+             * already folded to lower ASCII and an IP literal carries no brackets on either side;
+             * isIpLiteral( ) is compared as well, because '[v1.x]' and 'v1.x' have the same host( )
+             * and are not the same host
+             *
+             * A PORT THE FIELD LEAVES OUT IS THE SCHEME'S, NEVER THE URL'S: 'Host: example.com'
+             * names port 443, and so disagrees with 'https://example.com:8443/'. The URL's side is
+             * its effective port - the one it spells, or its scheme's
              */
 
             static bool isSameAuthority(
-                SAA_in          const std::string&                              hostField,
+                SAA_in          const net::Uri&                                 hostAuthority,
                 SAA_in          const net::Uri&                                 url
                 )
             {
-                const auto split =
-                    []( SAA_in const std::string& value, SAA_out std::string& host ) -> unsigned
-                    {
-                        const auto colon = value.rfind( ':' );
-
-                        /*
-                         * An IPv6 literal is bracketed, and every colon inside the brackets
-                         * belongs to the address - only a colon AFTER the closing bracket is a
-                         * port separator
-                         */
-
-                        const auto bracket = value.rfind( ']' );
-
-                        const bool hasPort =
-                            colon != std::string::npos &&
-                            ( bracket == std::string::npos || colon > bracket );
-
-                        host = hasPort ? value.substr( 0U, colon ) : value;
-
-                        for( std::size_t i = 0U; i < host.size(); ++i )
-                        {
-                            const auto ch = host[ i ];
-
-                            if( ch >= 'A' && ch <= 'Z' )
-                            {
-                                host[ i ] = static_cast< char >( ch - 'A' + 'a' );
-                            }
-                        }
-
-                        if( ! hasPort )
-                        {
-                            return 0U;
-                        }
-
-                        unsigned port = 0U;
-
-                        for( auto i = colon + 1U; i < value.size(); ++i )
-                        {
-                            const auto ch = value[ i ];
-
-                            if( ch < '0' || ch > '9' )
-                            {
-                                return 0U;
-                            }
-
-                            port = ( port * 10U ) + static_cast< unsigned >( ch - '0' );
-                        }
-
-                        return port;
-                    };
-
-                std::string fieldHost;
-                std::string urlHost;
-
-                const auto fieldPort = split( hostField, fieldHost );
-                const auto urlPort = split( url.authority(), urlHost );
-
-                const auto effective = static_cast< unsigned >( url.effectivePort() );
+                const auto hostPort = hostAuthority.hasPort() ?
+                    hostAuthority.port() : net::Uri::defaultPort( url.scheme() );
 
                 return
-                    fieldHost == urlHost &&
-                    ( 0U == fieldPort ? effective : fieldPort ) ==
-                        ( 0U == urlPort ? effective : urlPort );
+                    hostAuthority.isIpLiteral() == url.isIpLiteral() &&
+                    hostAuthority.host() == url.host() &&
+                    hostPort == url.effectivePort();
             }
 
             static bool isOws( SAA_in const char ch ) NOEXCEPT
@@ -3391,16 +3373,41 @@ namespace bl
                  * that h2 expresses through :authority, and failing them loudly beats sending a
                  * request whose two authorities disagree. This is the only arm which can fail a
                  * request that works today
+                 *
+                 * D7: the field is parsed as an authority before it is compared, and refused if it
+                 * is not one; and MORE THAN ONE Host field is refused, whatever they say - RFC 9112
+                 * 3.2 has a server answer 400 to that, so no caller can mean it, and checking only
+                 * the first used to drop the rest unread. Each refusal gives its own reason, and
+                 * none echoes the field, which can carry a userinfo and its credentials
                  */
 
                 {
+                    BL_CHK_T(
+                        true,
+                        result.headers.count( "host" ) > 1U,
+                        ArgumentException(),
+                        BL_MSG()
+                            << "An HTTP/2 request carries more than one Host field"
+                        );
+
                     const auto* host = result.headers.tryGet( "host" );
 
                     if( nullptr != host )
                     {
+                        net::Uri hostAuthority;
+
                         BL_CHK_T(
                             false,
-                            isSameAuthority( *host, request.url() ),
+                            tryParseHostField( *host, hostAuthority ),
+                            ArgumentException(),
+                            BL_MSG()
+                                << "An HTTP/2 request carries a Host field which is not a valid "
+                                << "host with an optional port"
+                            );
+
+                        BL_CHK_T(
+                            false,
+                            isSameAuthority( hostAuthority, request.url() ),
                             ArgumentException(),
                             BL_MSG()
                                 << "An HTTP/2 request carries a Host field which names a "
