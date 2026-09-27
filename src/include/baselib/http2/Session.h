@@ -2907,8 +2907,8 @@ namespace bl
             /**
              * @brief An ASCII case-insensitive comparison against a lowercase literal
              *
-             * Hand-rolled and local, like isHeadMethod( ) above: the shared str::ascii fold this
-             * wants lives in core and is a change-set of its own
+             * Hand-rolled and local: the shared str::ascii fold this wants lives in core and is a
+             * change-set of its own
              */
 
             static bool equalsAsciiToken(
