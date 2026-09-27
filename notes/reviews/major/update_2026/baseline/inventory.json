@@ -5529,6 +5529,30 @@
    "namespaces": []
   },
   {
+   "body_sha": "41cebc77ccdaafa4f8b70e2e96176f57",
+   "doc_sha": "a6581b3cc9965b7840168e5f77b819f2",
+   "file": "utf_baselib_h2client8/TestHttp2RequestBoundary.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 348,
+   "module": "utf_baselib_h2client8",
+   "name": "H2Driver_ConnectionTokensRemoveTheFieldsTheyNameTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "59a01e8bd8ca742dfa57cb4d42053908",
+   "doc_sha": "c9d2ec7cc64720bd3fa93ef4070c2dfb",
+   "file": "utf_baselib_h2client8/TestHttp2DataBlockCapacity.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 325,
+   "module": "utf_baselib_h2client8",
+   "name": "H2Driver_DataBlockIsSizedToItsPayloadTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "f5a0527768926c0b90f8f1067009e46f",
    "doc_sha": "9c7e33872dd16a7acf797f1beab798d9",
    "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
@@ -5574,6 +5598,18 @@
    "line": 1285,
    "module": "utf_baselib_h2client2",
    "name": "H2Driver_GoAwayDrainsAndClosesCleanlyTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "29478d8c1cb8bd86bd46650ca0297d56",
+   "doc_sha": "43e6aef0040bc698660dc5516864035a",
+   "file": "utf_baselib_h2client8/TestHttp2RequestBoundary.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 462,
+   "module": "utf_baselib_h2client8",
+   "name": "H2Driver_HostFieldIsParsedAsAnAuthorityTests",
    "namespaces": []
   },
   {
@@ -5639,6 +5675,18 @@
    "namespaces": []
   },
   {
+   "body_sha": "3efeae1984b54663247e0631de448c35",
+   "doc_sha": "b05ce470c2de2a8f1c0285b5d452e15d",
+   "file": "utf_baselib_h2client8/TestHttp2DataBlockCapacity.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 353,
+   "module": "utf_baselib_h2client8",
+   "name": "H2Driver_PooledDataBlockIsUsedOrReplacedTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "77d9021f826e0e42f4467b69b5e065a6",
    "doc_sha": "0c242d1f6dc56b34906b262e9056d2d3",
    "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
@@ -5684,6 +5732,18 @@
    "line": 1011,
    "module": "utf_baselib_h2client2",
    "name": "H2Driver_SettingsAcknowledgementTimeoutTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "e49545321c2724f7116a52fe6908e0ea",
+   "doc_sha": "5d44b4659cc345bbc82a4c46bc52fe73",
+   "file": "utf_baselib_h2client8/TestHttp2RequestBoundary.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 265,
+   "module": "utf_baselib_h2client8",
+   "name": "H2Driver_TeIsCanonicalizedAcrossRepeatedFieldsTests",
    "namespaces": []
   },
   {
@@ -9793,6 +9853,18 @@
    "namespaces": []
   },
   {
+   "body_sha": "42e400364894eeac5b2550f58071821a",
+   "doc_sha": "9e0fb507efbaefa25b8eb53ef866bc3b",
+   "file": "utf_baselib_h2core/TestSessionHeadMethod.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 53,
+   "module": "utf_baselib_h2core",
+   "name": "Session_HeadIsMatchedExactlyTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "185a97e7a4f0d4eb5c54b3647e4a1a6b",
    "doc_sha": null,
    "file": "utf_baselib_h2core/TestSession.h",
@@ -9853,7 +9925,7 @@
    "namespaces": []
   },
   {
-   "body_sha": "1796f8d81a3b543d33aa28604bb5b6be",
+   "body_sha": "3d279a9a8b134cfd32d2c846855c6f5b",
    "doc_sha": null,
    "file": "utf_baselib_h2core/TestSession.h",
    "fixture": null,
@@ -17728,6 +17800,26 @@
   },
   {
    "conditional_only": false,
+   "file": "utf_baselib_h2client8/TestHttp2DataBlockCapacity.h",
+   "guards": [],
+   "label": "namespace h2blocks",
+   "line": 49,
+   "module": "utf_baselib_h2client8",
+   "ns": "utest",
+   "sha": "b8f779607367c2998f8bb1546924d4e4"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_h2client8/TestHttp2RequestBoundary.h",
+   "guards": [],
+   "label": "namespace h2boundary",
+   "line": 57,
+   "module": "utf_baselib_h2client8",
+   "ns": "utest",
+   "sha": "1ef6f54f5e3d11dd27f4974268abf9cd"
+  },
+  {
+   "conditional_only": false,
    "file": "utf_baselib_h2core/TestFlowControl.h",
    "guards": [],
    "label": "namespace flowcontrol",
@@ -22347,6 +22439,74 @@
    ],
    "notes_index": true
   },
+  "utf_baselib_h2client8": {
+   "data_files": {},
+   "data_literals": [
+    "127.0.0.1",
+    "attacker.example",
+    "example.com"
+   ],
+   "data_refs": [],
+   "files": [
+    {
+     "includes": [
+      "<baselib/http2/Globals.h>",
+      "<baselib/tasks/TcpStrandedStreams.h>",
+      "<baselib/data/DataBlock.h>",
+      "<baselib/core/ObjModel.h>",
+      "<baselib/core/TimeUtils.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<cstdint>",
+      "<initializer_list>",
+      "<memory>",
+      "<string>",
+      "<utests/baselib/Http2DriverTestUtils.h>",
+      "<utests/baselib/RawFrameScriptPeer.h>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_h2client8/TestHttp2DataBlockCapacity.h"
+    },
+    {
+     "includes": [
+      "<baselib/http2/Http2ConnectionTask.h>",
+      "<baselib/http2/HpackDecoder.h>",
+      "<baselib/http2/HpackDynamicTable.h>",
+      "<baselib/http2/Session.h>",
+      "<baselib/http2/Globals.h>",
+      "<baselib/httpclient/ClientTypes.h>",
+      "<baselib/tasks/TcpStrandedStreams.h>",
+      "<baselib/core/Uri.h>",
+      "<baselib/core/TimeUtils.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<cstdint>",
+      "<limits>",
+      "<string>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_h2client8/TestHttp2RequestBoundary.h"
+    },
+    {
+     "includes": [
+      "<utests/baselib/UtfMain.h>",
+      "<baselib/http2/PreCompiled.h>",
+      "<baselib/httpclient/PreCompiled.h>",
+      "\"TestHttp2RequestBoundary.h\"",
+      "\"TestHttp2DataBlockCapacity.h\""
+     ],
+     "path": "utf_baselib_h2client8/UtfBaselibH2Client8Main.cpp"
+    }
+   ],
+   "notes_cases": [
+    "H2Driver_ConnectionTokensRemoveTheFieldsTheyNameTests",
+    "H2Driver_DataBlockIsSizedToItsPayloadTests",
+    "H2Driver_HostFieldIsParsedAsAnAuthorityTests",
+    "H2Driver_PooledDataBlockIsUsedOrReplacedTests",
+    "H2Driver_TeIsCanonicalizedAcrossRepeatedFieldsTests"
+   ],
+   "notes_index": true
+  },
   "utf_baselib_h2core": {
    "data_files": {},
    "data_literals": [
@@ -22466,6 +22626,18 @@
     },
     {
      "includes": [
+      "<baselib/http2/Session.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<string>",
+      "<vector>",
+      "<utests/baselib/Utf.h>",
+      "\"TestSession.h\""
+     ],
+     "path": "utf_baselib_h2core/TestSessionHeadMethod.h"
+    },
+    {
+     "includes": [
       "<baselib/http2/StreamStateMachine.h>",
       "<baselib/http2/FlowControlWindow.h>",
       "<baselib/http2/Globals.h>",
@@ -22490,7 +22662,8 @@
       "\"TestHpack.h\"",
       "\"TestSession.h\"",
       "\"TestHttp2TestPeer.h\"",
-      "\"TestDrainingReserve.h\""
+      "\"TestDrainingReserve.h\"",
+      "\"TestSessionHeadMethod.h\""
      ],
      "path": "utf_baselib_h2core/UtfBaselibH2CoreMain.cpp"
     }
@@ -22545,6 +22718,7 @@
     "Session_FlowControlTests",
     "Session_GoAwayAndRetryTests",
     "Session_GoAwayDropsQueuedHeaderBlockTests",
+    "Session_HeadIsMatchedExactlyTests",
     "Session_HeaderBlockGranularityTests",
     "Session_HpackDecoderCeilingTests",
     "Session_InterimResponsesAreBoundedTests",
@@ -25421,6 +25595,20 @@
    "module": "utf_baselib_h2client7",
    "name": "utest",
    "sha": "1eeb7150df5ce331a540eb6a1521e73e"
+  },
+  {
+   "file": "utf_baselib_h2client8/TestHttp2DataBlockCapacity.h",
+   "line": 47,
+   "module": "utf_baselib_h2client8",
+   "name": "utest",
+   "sha": "0b9faf6c5e806eb1f792196e7e54e377"
+  },
+  {
+   "file": "utf_baselib_h2client8/TestHttp2RequestBoundary.h",
+   "line": 55,
+   "module": "utf_baselib_h2client8",
+   "name": "utest",
+   "sha": "8a292733513b4b0bc81008f8c4071713"
   },
   {
    "file": "utf_baselib_h2core/TestFlowControl.h",
