@@ -141,6 +141,15 @@ depending on the platform, the I/O model and what the connection was doing at th
 | Peer closed during a full-duplex transfer | `eof` | **`connection_aborted`** (WSAECONNABORTED, 10053) |
 | Orderly close of a TLS stream | `asio.ssl.stream:1` or `SSL_R_SHORT_READ` | same |
 
+*Corrected 2026-09-27 — the last row's label is wrong.*
+- `asio.ssl.stream:1` (`stream_truncated`) and `SSL_R_SHORT_READ` spell a TLS stream whose transport
+  ended with no `close_notify`. Asio's engine turns the `eof` into the truncation exactly when no
+  closure alert was received. That is a truncation, not an orderly close; an orderly TLS close
+  reads as `eof`.
+- Astra's second review (R01) found this label cited as the reason for completing a close-delimited
+  body on a truncation, and D1 refuses that since CS-1 (`130e021`, merged at `a04f29c`).
+- What the row measured — the same spelling on both platforms — stands.
+
 The left column is what was MEASURED in each case, not a claim about every close. The two
 Windows-only rows are two observables and may well be **one mechanism seen twice** - see below.
 

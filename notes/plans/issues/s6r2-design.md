@@ -883,6 +883,16 @@ of message HTTP/1.1 cannot frame any other way.
     where the truncation spellings sit in the row "Orderly close of a TLS stream". The strict
     alternative is recorded as not taken, not as wrong.
 
+    *Corrected 2026-09-27 — the strict alternative is the one taken.* Astra's second review (R01)
+    found this paragraph's premise wrong. RFC 2818 §2.2.2 is server behaviour: it says servers MUST
+    attempt the closure-alert exchange, and it blesses no truncation. RFC 9112 §9.8 is explicit: *"A
+    response that has neither chunked transfer coding nor Content-Length is complete only if a valid
+    closure alert has been received."* The truncation spellings in the record's table are a
+    truncation, not an orderly close; that row is corrected as well. D1 decided strict, with no
+    setting (`astra-second-review-decisions.md` §3). Since CS-1 (`130e021`, merged at `a04f29c`),
+    the completion predicate is `eof` alone, and a truncation takes `onPeerClosed( )`'s unclean
+    branch, as a reset does.
+
     **The error code for an unclean end.** This section said the answer is *"`protocol_error`, the
     same answer a truncated Content-Length body already gets"*. It is not: Beast's
     `partial_message` passes through `parseEof( )` unchanged — `classifyBackendError( )` records

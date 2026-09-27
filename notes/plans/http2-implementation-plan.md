@@ -1631,7 +1631,7 @@ decision's shape, reason, reversal condition and tests are in `issues/astra-seco
 
 | Change-set | Decisions | Files | Landed |
 |---|---|---|---|
-| **CS-1** — first, because R01 hands a caller a wrong answer | D1 (R01: a TLS truncation never completes a message) and D2 (R03: the connection starts in one strand handler) | `Http1ConnectionTask.h`; comments in `NetUtils.h` | not yet |
+| **CS-1** — first, because R01 hands a caller a wrong answer | D1 (R01: a TLS truncation never completes a message) and D2 (R03: the connection starts in one strand handler) | `Http1ConnectionTask.h`; comments in `NetUtils.h` | merged at `a04f29c`, gated; the Windows matrix is handed off |
 | **CS-2** | D3 (R02: a 64 MiB cap on body bytes not yet taken), D4 (R04: a sink that threw is left alone) and D5 (R08: H24 and H25, minimally) | `HttpClientRequestTask.h`, `ClientSession.h` | not yet |
 | **CS-3** | D6 (R05: TE and `Connection` normalization), D7 (R06: the Host check) and D8 (R07: exact HEAD) | `Http2ConnectionTask.h`, `Session.h` | merged at `f48acd2`, gated — with the DATA block sized to its payload, decided during the run |
 

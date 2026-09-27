@@ -587,6 +587,13 @@ suite, not a rider on anything. It sequences after S6R.2, which it reads `m_isWr
    naming RFC 2818 §2.2.2 — and RFC 8446 §6.1 permits closing without waiting for the peer's
    `close_notify`. On every path where no write is outstanding, §2.2's gate means the continuation
    runs exactly as it does today.
+   *Corrected 2026-09-27 — D1 of astra's second review: not every predicate.*
+   - `isStreamTruncationError( )` still routes a truncation as an ending.
+   - Since CS-1 (`130e021`, merged at `a04f29c`), the HTTP/1.1 driver refuses to complete a
+     close-delimited message on one.
+   - `NetUtils.h`'s comment now quotes RFC 9112 §9.8 in place of RFC 2818 §2.2.2, which never
+     blessed a truncation.
+   The item's conclusion rests on RFC 8446 §6.1, and that still holds.
 2. **On the gated path the pending read's wake code does not change.** The `cancel( )` still runs,
    unconditionally and after the shutdown, and `SHUT_WR` does not make a socket readable. This is the
    whole point of §2.1 and it is what keeps `onPeerClosed( )` out of the teardown.

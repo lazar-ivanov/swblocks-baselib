@@ -304,3 +304,61 @@ reader is told to look for what is left.
 
 **If a run reds something not on this list**, that is more valuable than anything on it. Everything
 here is a known unknown.
+
+---
+
+## Astra's second review, 2026-09-27 — what CS-1 to CS-3 owe Windows
+
+**Added 2026-09-27.** The decisions and the change-sets are in `astra-second-review-decisions.md`:
+§3 for each decision, §9 for those taken during the run, and §10 for how each change-set landed.
+**Run only from a tip the maintainer has pushed** that contains the merge commits named here, and
+record the tip in the result.
+
+**What Linux established:**
+- **CS-3**, merged at `f48acd2`: gated green, 24 of 24, clang release and gcc debug.
+- **CS-1**, merged at `a04f29c`: gated green, 18 of 18, on the same two combinations.
+- Every red was deterministic, and tier 1 passes after each re-capture.
+
+**What Linux cannot settle:**
+
+- **A1. D1 — how a TLS ending is classified.** Run `utf_baselib_httpclient8`, four cases. The red
+  case's peer ends its transport with no close_notify, and the case asserts that the request fails.
+  - The control asserts that a close_notify completes the body.
+  - Three cases also assert the ending the peer's script records, `client-ended:asio.misc:2`: it saw
+    our end of stream.
+  - AGENTS.md's networking rule applies. On Windows a peer's close can arrive as `connection_reset` or
+    `connection_aborted`. So if the recorded ending is spelled differently while the request's verdict
+    holds, that is a spelling to record, not a D1 regression.
+  - If the verdict itself differs — a truncated body reported complete — that is D1 failing on
+    Windows. Report it at once.
+- **A2. The A1-tls gates, re-pinned** (`TestHttp1DriverTlsCancelClose.h` in `…5`). The three cases'
+  peer now seals a close_notify and answers our FIN with it, so the ending is clean and only the
+  gates stop a cut-short body completing.
+  - Run `…5` whole.
+  - A red here is the peer-close divergence meeting the re-pin's exchange. Read the peer's recorded
+    ending before concluding anything.
+- **A3. D2 — the first I/O on every HTTP/1.1 connection.**
+  - The first read now starts inside `onStartConnection( )`, an accounted strand handler, and a
+    request's first write can no longer overlap it.
+  - A cancel before the start now ends the connection with our own orderly close — over TLS, a
+    close_notify exchange.
+  - Run `utf_baselib_httpclient11` and `…12`, D2's cases, then `…7` (A4's route) and `…3`, which
+    start drivers throughout. **Each case is deterministic on Linux.** A Windows red is therefore a
+    platform difference in the start's ordering or in the close exchange, and worth reporting as found.
+- **A4. x86 debug sizes of the new modules.** The 75 MB ceiling is enforced on `win-x86-*-debug`.
+  Record each size; a module over the 40 MB target carries its reason in its `Main.cpp` already.
+  Estimates, from a64 clang debug and `…7`'s ratio:
+
+  | Module | a64 clang debug | x86 estimate |
+  |---|---|---|
+  | `utf_baselib_httpclient8` | 36.8 MB | about 41 MB |
+  | `utf_baselib_httpclient11` | 32.4 MB | not estimated |
+  | `utf_baselib_httpclient12` | 35.6 MB | about 39.7 MB |
+  | `utf_baselib_h2client8` | 35.4 MB | about 39 MB |
+
+  `…5` grew 9,088 bytes with the re-pin, and was already over the target.
+- **A5. CS-3's `utf_baselib_h2client8`.** Run it whole, five cases. Nothing in it is expected to
+  differ on Windows: D6 and D7 are boundary inputs, and the two DATA-block cases run a driver against
+  a scripted peer. Run it because it is new.
+
+CS-2's items are added here when CS-2 lands.

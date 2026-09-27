@@ -1476,6 +1476,11 @@ close. *The three endings that produce it:*
   `parseEof( )` (`:1165`) completes whatever arrived. Cleartext and TLS alike: the TLS engine reports
   the transport's `eof` as `stream_truncated`, which `isCleanEndOfStream( )` admits on purpose (RFC
   2818 §2.2.2). Measured on the lane's probe, 7 of 8 before A2 and 8 of 8 after.
+  *Corrected 2026-09-27 — D1 of astra's second review.* RFC 2818 §2.2.2 never said a truncation
+  should complete a message; RFC 9112 §9.8 says it must not. Since CS-1 (`130e021`, merged at
+  `a04f29c`), `isCleanEndOfStream( )` admits `eof` alone. The TLS half of this face — the
+  truncation — now takes the unclean branch by itself. The cleartext half, a plain `eof` behind a
+  reset the write consumed, is still decided by face 3's fix.
 
 *The rule, from §12.3:* **a write that completed `connection_reset` is proof the ending was a reset;
 a write that completed `broken_pipe` is not evidence against the read's own code.**

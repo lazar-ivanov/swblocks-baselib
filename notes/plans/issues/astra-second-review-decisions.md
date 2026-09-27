@@ -607,3 +607,73 @@ The logs are kept with the run's evidence, in `logs/astra2/gate/cs3/`.
 
 **New module:** `utf_baselib_h2client8`, 35.4 MB at a64 clang debug, with its reason in its `Main.cpp`.
 Its x86 size is owed to the Windows handoff.
+
+### CS-1 — D1 and D2 — ready 2026-09-27, with the Windows matrix owed
+
+**Merged at `a04f29c`** from `astra2-cs1`. Tier 1 was re-captured once from the integrated tree
+(`f59782b`), with the 25 lines it reported read against the manifest diff.
+
+**D1: a TLS truncation no longer completes a close-delimited body.**
+- `b972b4c` adds the red, then the one-line fix `130e021`.
+- Red: the request was reported as a SUCCESS, status 200, body `'part-one'`.
+- The three controls are RFC 9112 §9.8's own endings: close_notify on a close-delimited body, and a
+  truncation after a complete Content-Length or chunked message.
+- The cases do not assert the driver task's own ending. After a truncation, the driver's TLS shutdown
+  waits the full 60 s protocol timer (owed row I2), so they wait for the peer's script to end and
+  then cancel the driver. *(fable, part 1, P3)*
+
+**D2: the driver starts in one accounted strand handler.** It is coded (`ea47826`) to its design
+note, which was agreed after two rounds (`e7c74a5` → `74978a9` → `c31693a`, with a dated correction
+`944fc91`). The cases, `4780ba2`, are in `utf_baselib_httpclient11` (cleartext) and `…12` (TLS);
+all four in one module measured 39.9 MB at a64 clang debug.
+- **Barrier red:** `read-start:begin|write-start|read-start:end`.
+- **Cancel-before-start red:** the task never ended within the bound.
+- Both are certain on the unfixed tree.
+- A4's route is the handler's epilog now, and its red was measured: a bare `armRead( )` never reaches
+  the terminal path.
+
+**Consequences, closed against the two decisions:**
+- **The A1-tls re-pin** (`3be3e51`). The peer answers our FIN with a close_notify, and removing each
+  gate turns its own case red.
+- **The TLS HTTP/1.1 peer and its establishment helpers**, lifted into `Http1DriverTlsTestUtils.h`
+  (`4d2b8a9`, `1ae115e`).
+- **The part-1 review's assertions** (`05b976a`).
+- **Comment-only corrections:** `73fed6c`, `8a0cdd4`, `3996848`, `043ee39`, `cb9ab66`, `a01d004`,
+  `e11f573`, `fd7d671`, `a83e65e`, `90c6354` and `4a05d80`. Where a header reaches many modules the
+  edit was kept line for line: `NetUtils.h` preprocesses identically, and `utf_baselib_http2`'s object
+  was byte-identical at clang debug. Whether gcc embeds a per-file checksum is INFERRED not to matter,
+  and was not measured. *(fable, part 1, P4)*
+- **Four design records that stated the withdrawn RFC 2818 premise**, corrected at the claim:
+  `s6r2-design.md`, `driver-read-write-arms-design.md`, `initiate-close-teardown-design.md` and
+  `windows-peer-close-error-codes-record.md`.
+
+**Reviewed by fable** — the design note in two rounds, and the checkpoint in two parts:
+- Part 1 (D1): READY WITH CHANGES, all Low, agreed.
+- Part 2 (D2 and the consequences): READY, with one optional comment taken. It closed with no open
+  finding.
+
+**The gate:** clang release and gcc debug over the nine affected modules:
+- `utf_baselib_http2` and `httpclient3` to `…7`, each of whose `.d` names `Http1ConnectionTask.h`,
+  `Http1DriverTestUtils.h` or `TestPeerCloseErrorCodes.h`;
+- the new `…8`, `…11` and `…12`.
+
+`NetUtils.h` is excluded, because its edit is line for line and preprocesses identically.
+**Green, 18 of 18**, on `f59782b`:
+- each recompiled on the merged tree;
+- each entered and left every case, printed "No errors detected", and printed no failure and no
+  `leaked` line. That was read from each log.
+
+The logs are in `logs/astra2/gate/cs1/`.
+
+**New modules, at a64 clang debug, each with its reason in its `Main.cpp`:**
+- `utf_baselib_httpclient8`, 36.8 MB — one TLS driver, its request task and its peer, shared by the
+  four cases;
+- `…11`, 32.4 MB;
+- `…12`, 35.6 MB.
+
+The re-pin grew `…5` by 9,088 bytes. The x86 sizes are owed to the Windows handoff: `…8` and `…12` are
+estimated at about 41 and 39.7 MB there, from `…7`'s ratio.
+
+**Owed: the Windows matrix**, because D1 changes how a TLS ending is classified and D2 changes the
+order of the first I/O on every HTTP/1.1 connection. It is handed off in `windows-matrix-handoff.md`,
+"astra's second review", and CS-1 is ready without waiting for it, as decided at set-up.
