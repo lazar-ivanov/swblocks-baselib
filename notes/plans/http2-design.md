@@ -1616,16 +1616,26 @@ asserts exactly that on that flavor.
 - **Nothing below the floor carries data** (D4). The check precedes the first HTTP byte.
 - **Profiles are untrusted input** (6.2), and a cipher string is a policy-injection vector (3.3).
 - **All peer-controlled sizes are bounded** (4.6): header lists, header blocks, `CONTINUATION` runs,
-  control-frame queues, bodies. **Except one, found 2026-09-22 and not yet fixed:** nothing bounds
-  the *aggregate* of informational (1xx) responses. Each block is within the per-block cap, none
-  completes the message, and each is retained - in the engine, in the request mailbox, and for h1 in
-  the codec, which also resets its per-message limits before each one. Memory is unbounded on both
-  protocols; what bounds *elapsed* time differs - on h2 each interim re-arms the idle timer, so a
-  drip runs to the total timeout (thirty minutes by default), while on h1 the interims are held in
-  the codec until the final block, so the response-headers timeout applies instead.
-  See `issues/astra-review-verification-record.md`, H05.
-- **Decoders, when they arrive, are a decompression-bomb surface.** The caps are part of the seam now
-  (5.6), so they cannot be forgotten later.
+  control-frame queues, buffered bodies, and the *aggregate* of informational (1xx) responses -
+  eight of them and 64 KiB of their fields per message, on both protocols, since S6R.2 (`826ca59`,
+  astra H05; the unbounded state it replaced is in `issues/astra-review-verification-record.md`).
+  **Except one, found 2026-09-26 and open:** over HTTP/1.1, the body octets a streaming sink has not
+  taken yet. N1 removed the 64 MB transfer cap on purpose, and with it the only bound on them - the
+  driver's `consumed( )` is a no-op and its read re-arms after every chunk, so a sink that falls
+  behind the peer accumulates in the request task until memory or the total timeout runs out.
+  HTTP/2's stream window bounds the same case. See `issues/astra-remediation-owed-work.md`, R02.
+  *Corrected 2026-09-27: this bullet still called the 1xx aggregate "not yet fixed" after S6R.2
+  fixed it, and counted streamed bodies among the bounded sizes.*
+- **Decoders are a decompression-bomb surface.** None ships, but an application can register one
+  today through the public registry (`ClientSession::decoders( )`). The caps are part of the seam
+  (5.6), so they cannot be forgotten - and for such an application the three prerequisites recorded
+  in `issues/http-content-decoders-deferral.md` are live now: the decode under the queue lock (P1,
+  astra H09) and two message-integration defects (P2 and P3, astra H24 and H25). *Corrected
+  2026-09-27 by astra's second review, R08: this bullet said "when they arrive".*
+- **Open, from astra's second review (2026-09-26):** a TLS stream truncated without close_notify
+  completes a close-delimited HTTP/1.1 body as a success (R01), and the first TLS read and a
+  request's first write can be initiated concurrently on a new HTTP/1.1 connection (R03). Both are in
+  the decision round of 2026-09-27; see `issues/astra-remediation-owed-work.md`.
 - **Redirects** drop credentials across origins and refuse downgrades by default (5.6).
 - **Cookies** without a public suffix list carry a documented residual risk (5.6).
 - **Proxy credentials** and `Authorization` values are redacted in secure mode like everything else.

@@ -180,7 +180,9 @@ change that makes it pass.
 which is live today: `rewind( )` is **caller code** running in that place with a contract that said
 nothing about it. The decode half is latent, and measurably so: `decodeBody( )` returns at once
 unless a decoder is registered for the response's coding, and every `registerDecoder( )` call in the
-tree is under `src/utests/`.*
+tree is under `src/utests/`.* *Corrected 2026-09-27 by astra's second review, R08: that makes it
+latent for this tree and not for an application. `ClientSession::decoders( )` is public, and an
+application that registers a decoder runs its decode in exactly this place today.*
 
 ### P2. `Content-Encoding` is read as one token, not as a list — astra H24
 
@@ -212,10 +214,17 @@ sweep of everything astra's review left open, were considered on their own merit
 disposition is unchanged: **P2 (astra H24) and P3 (astra H25) are prerequisites of the decoder
 programme, not of the HTTP client layers.**
 
-**Why deferring costs nothing today.** Both are **latent by the same property**: this client
-registers no decoder, so `decodeBody( )` matches nothing, the body is handed back intact with its
-header, and that is the documented behaviour for a coding we cannot decode. Neither can produce a
-wrong answer while that holds.
+**Why deferring was thought to cost nothing.** Both are latent by the same property: **while the
+registry holds no decoder for a response's coding**, `decodeBody( )` matches nothing, the body is
+handed back intact with its header, and that is the documented behaviour for a coding we cannot
+decode. Neither can produce a wrong answer while that holds.
+
+*Corrected 2026-09-27 by astra's second review, R08.* This paragraph said *"this client registers no
+decoder"*, which is true of the library and not of an application: `ClientSession::decoders( )` and
+`registerDecoder( )` are public, `utf_baselib_httpclient4` registers through them, and an application
+doing the same meets P2 and P3 today. **So the reversal condition below is already met for any such
+application.** Whether to close P2 and P3 now or restrict registration until the programme lands is
+in the decision round of 2026-09-27.
 
 **What reverses it — one condition, and it is the same for both.** The moment **any** content codec
 is registered, both stop being latent, and they become **the first two items of that work** rather
@@ -227,7 +236,8 @@ them on day one.
 committed and parked on two unmade decisions of their own — **E5** (generated headers in the repo
 include tree versus the devenv dist) and astra's **C01** (the design specifies `inline constexpr`,
 which is C++17, while baselib compiles `-std=c++11`). So there are three gates between here and a
-registered codec, and P2/P3 sit behind all of them.
+codec **the library ships**, and P2/P3 sit behind all of them — while a codec an application
+registers passes none of them (R08, above).
 
 ---
 

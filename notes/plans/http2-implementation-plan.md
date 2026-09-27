@@ -1607,14 +1607,22 @@ question arose.
 
 All four are ancestors of `lazari2`, verified. **S6R.4 also absorbed H11**, which the row above does
 not list. Astra's 29 findings are therefore all dispositioned: fixed, closed by the maintainer, or
-deferred with reasoning — see `issues/astra-remediation-owed-work.md`.
+deferred with reasoning — see `issues/astra-remediation-owed-work.md`. *2026-09-27: "fixed" is
+narrower than it reads for three of them. Astra's second review
+(`http2-l0-l6-remediation-review-2026-09-26.md`) found residuals in H08 and H16 and a regression
+that H17's fix activated — R04 to R07 — and five findings more; all nine are on the owed list, put
+as one decision round that day.*
 
-**H21 and H22 are not staged here** — both sit on L6's owed list (4a and finding 9) and belong to
-whichever change-set takes those up. *2026-09-24: H21 is closed against L6 finding 4a, whose
-handover condition is met; H22 has a design at `issues/h22-redirect-cancellation-design.md`.*
+**H21 and H22 were not staged here** — both sat on L6's owed list (4a and finding 9). **Both have
+since landed:** H21 is **narrowed** at `f23b205` (merged `25a1612`) — the rider no longer rides
+where the session cannot produce HTTP/2, and over TLS, where ALPN decides, it still does by
+design — and H22 is **fixed** at `03680cb`. *Corrected 2026-09-27; this paragraph said H21 was
+"closed against L6 finding 4a" and that H22 "has a design".*
 
-**H24 and H25 are not in this layer.** Both are latent until a content codec ships and are
-prerequisites of that work, not of L7.
+**H24 and H25 are not in this layer.** Both are deferred to the decoder programme and are
+prerequisites of it, not of L7 — but they are **not latent**: an application that registers a
+decoder through the public registry reaches both today. *Corrected 2026-09-27 by astra's second
+review, R08; this said "latent until a content codec ships".*
 
 **Acceptance.** Each slice: focused modules under clang debug in the lane, then clang and gcc release
 plus the whole-suite gate by the orchestrator. S6R.1 and S6R.2 additionally owe the cheap
