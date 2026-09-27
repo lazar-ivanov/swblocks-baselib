@@ -661,40 +661,6 @@ namespace bl
                 return merged;
             }
 
-            /**
-             * @brief The HTTP/1.1 casing of a header list, from the profile's case map
-             *
-             * Under HTTP/2 every name is lower case (RFC 9113 8.2.1), so this is the HTTP/1.1 path
-             * only - which is also the only path on which casing is observable at all
-             */
-
-            static http::HeaderList applyHttp1Casing(
-                SAA_in          const http::HeaderList&                         headers,
-                SAA_in          const std::map< std::string, std::string >&     caseMap
-                )
-            {
-                if( caseMap.empty() )
-                {
-                    return headers;
-                }
-
-                http::HeaderList result;
-
-                for( std::size_t i = 0U; i < headers.size(); ++i )
-                {
-                    const auto& header = headers.at( i );
-
-                    const auto pos = caseMap.find( toLowerAsciiCopy( header.name() ) );
-
-                    result.append(
-                        pos == caseMap.end() ? cpp::copy( header.name() ) : cpp::copy( pos -> second ),
-                        cpp::copy( header.value() )
-                        );
-                }
-
-                return result;
-            }
-
         private:
 
             static char toLowerAsciiChar( SAA_in const char ch ) NOEXCEPT
