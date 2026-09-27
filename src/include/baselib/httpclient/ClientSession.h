@@ -1188,9 +1188,16 @@ namespace bl
                  * did. What this refuses is a retry after a genuine mid-body loss, where the
                  * alternative is appending a second copy of the body to the prefix the caller's
                  * sink already holds
+                 *
+                 * A SINK WHICH THREW HAS SPENT IT TOO, whether or not it took a byte first - D4 of
+                 * astra's second review: no delivery and no replay reaches a sink once it has
+                 * thrown. hasSinkThrown( ) is false on the bounce for the reason sinkDelivered( )
+                 * is zero there - nothing was offered - and ClientSessionTls_SinkIsToldComplete
+                 * OnceAcrossTheFallbackRetryTests ( utf_baselib_httpclient10 ) is the control for
+                 * both
                  */
 
-                if( 0U != m_hop -> sinkDelivered() )
+                if( 0U != m_hop -> sinkDelivered() || m_hop -> hasSinkThrown() )
                 {
                     return false;
                 }

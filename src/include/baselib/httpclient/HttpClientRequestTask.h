@@ -325,6 +325,15 @@ namespace bl
 
             cpp::ScalarTypeIniter< std::size_t >                                m_sinkDelivered;
 
+            /*
+             * WHETHER THE CALLER'S SINK HAS THROWN - D4 of astra's second review. Once it has, it is
+             * offered nothing more by this hop, and the session makes no replay onto it; see
+             * hasSinkThrown( ). Written in the deferred phase by offerToSink( ), like the count above
+             * and for the same reason, and never cleared
+             */
+
+            cpp::ScalarTypeIniter< bool >                                       m_hasSinkThrown;
+
             cpp::ScalarTypeIniter< bool >                                       m_isFinalHeadersSeen;
             cpp::ScalarTypeIniter< bool >                                       m_isStreamClosed;
             cpp::ScalarTypeIniter< bool >                                       m_isRetryable;
@@ -970,16 +979,55 @@ namespace bl
             {
                 std::size_t consumed = 0U;
 
+                if( m_hasSinkThrown )
+                {
+                    /*
+                     * A SINK WHICH THREW IS OFFERED NOTHING MORE - D4. The block it threw on is still
+                     * at the front of the queue, and this is how the same batch used to hand it that
+                     * block again: the next data event's own offer
+                     */
+
+                    return consumed;
+                }
+
                 while( ! m_pendingDownload.empty() )
                 {
                     const auto block = m_pendingDownload.front();
 
                     const auto offered = block -> size() - block -> offset1();
 
-                    const auto taken = std::min< std::size_t >(
-                        offered,
-                        m_bodySink -> onData( block )
-                        );
+                    std::size_t taken = 0U;
+
+                    try
+                    {
+                        taken = std::min< std::size_t >(
+                            offered,
+                            m_bodySink -> onData( block )
+                            );
+                    }
+                    catch( std::exception& )
+                    {
+                        /*
+                         * Latched before the throw leaves, and the throw is not swallowed:
+                         * runDeferred( ) is what turns it into this request's failure. The credit
+                         * for what earlier blocks of this offer took is not sent - the stream is
+                         * reset for the throw ( applyEvents( ) ), and a reset stream's unconsumed
+                         * bytes are credited to the connection when the session reaps it
+                         */
+
+                        m_hasSinkThrown = true;
+
+                        throw;
+                    }
+
+                    /*
+                     * RECORDED BEFORE THE NEXT CALLBACK, which is the other half of D4. A later
+                     * block of this same offer may throw, and a count kept only in the local went
+                     * with it: the session then read zero from sinkDelivered( ) and could replay the
+                     * request onto a sink which already held a prefix
+                     */
+
+                    m_sinkDelivered = m_sinkDelivered.value() + taken;
 
                     consumed += taken;
 
@@ -1000,8 +1048,6 @@ namespace bl
                  * touches is still drain-owned: the deferred phase is part of the same drain, and
                  * the drain is serialized by the mailbox flag, so no second drain can be in here
                  */
-
-                m_sinkDelivered = m_sinkDelivered.value() + consumed;
 
                 if( 0U != consumed && m_connection && ! m_isStreamClosed )
                 {
@@ -1044,6 +1090,18 @@ namespace bl
 
             void drainToSink()
             {
+                if( m_hasSinkThrown )
+                {
+                    /*
+                     * A sink which threw is told nothing more - neither the bytes it threw on nor
+                     * that the body is complete ( D4 ). Its exception is already the one the
+                     * request fails with, because runDeferred( ) keeps the first failure of the
+                     * phase and the throw ran ahead of this drain, so there is no verdict to add
+                     */
+
+                    return;
+                }
+
                 while( ! m_pendingDownload.empty() )
                 {
                     if( 0U == offerToSink() )
@@ -2011,6 +2069,23 @@ namespace bl
             std::size_t sinkDelivered() const NOEXCEPT
             {
                 return m_sinkDelivered;
+            }
+
+            /**
+             * @brief Whether this hop's sink threw - after which it was offered nothing more
+             *
+             * THE OTHER READING THE SESSION TAKES BEFORE IT REPLAYS - D4 of astra's second review.
+             * A sink which threw is spent whatever sinkDelivered( ) says, since it may have thrown on
+             * the very first byte, and replaying onto it would hand the body again to a sink which
+             * has already refused it. So chkPrepareRetry( ) refuses on this too
+             *
+             * Safe to read where sinkDelivered( ) is, and for its reason: the write is in the
+             * deferred phase, before applyEvents( ) notifies ready
+             */
+
+            bool hasSinkThrown() const NOEXCEPT
+            {
+                return m_hasSinkThrown;
             }
         };
 
