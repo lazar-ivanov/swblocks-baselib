@@ -6515,15 +6515,39 @@
    "namespaces": []
   },
   {
+   "body_sha": "a73689a61138eb76259e38b2b0fc1004",
+   "doc_sha": "264c30faedaff69334c6f599a06e106a",
+   "file": "utf_baselib_httpclient12/TestHttp1DriverStartupTls.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 116,
+   "module": "utf_baselib_httpclient12",
+   "name": "Http1DriverTls_CancelBeforeStartEndsTheConnectionTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "71f795c88ef0c9e692329cafe1433015",
-   "doc_sha": "7fe7d5be3bd40c9918ce3edf27e92d8b",
+   "doc_sha": "67e814c34acee9c6b462f922d07fdf2d",
    "file": "utf_baselib_httpclient5/TestHttp1DriverTlsCancelClose.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 951,
+   "line": 1065,
    "module": "utf_baselib_httpclient5",
    "name": "Http1DriverTls_CancelledReadCompletesACutShortBodyTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "8e6608f8902d814b22ea63d4d79d8962",
+   "doc_sha": "bc2a1a2ebf9e9cef8f67bf54c557f829",
+   "file": "utf_baselib_httpclient8/TestHttp1DriverTlsTruncation.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 673,
+   "module": "utf_baselib_httpclient8",
+   "name": "Http1DriverTls_CloseNotifyCompletesACloseDelimitedResponseTests",
    "namespaces": []
   },
   {
@@ -6533,26 +6557,26 @@
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 979,
+   "line": 1093,
    "module": "utf_baselib_httpclient5",
    "name": "Http1DriverTls_ClosingReadCompletesACutShortBodyTests",
    "namespaces": []
   },
   {
    "body_sha": "4a106a2fb551eb58413383a68256342a",
-   "doc_sha": "3b94fdc025c780e7a0b439d36eedc72f",
+   "doc_sha": "b9d90e06e46d41783ae6fb73aba8d81c",
    "file": "utf_baselib_httpclient5/TestHttp1DriverTlsCancelClose.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 1014,
+   "line": 1129,
    "module": "utf_baselib_httpclient5",
    "name": "Http1DriverTls_ClosingWithoutACancelCompletesACutShortBodyTests",
    "namespaces": []
   },
   {
    "body_sha": "bfbc09758623c7b5286decc70d5d0464",
-   "doc_sha": "2634f3937cda379b4a020511692342ba",
+   "doc_sha": "edea701e7832fce2f4bf344789206939",
    "file": "utf_baselib_httpclient5/TestClientSessionTlsHttp1.h",
    "fixture": null,
    "guards": [],
@@ -6560,6 +6584,54 @@
    "line": 878,
    "module": "utf_baselib_httpclient5",
    "name": "Http1DriverTls_IdleCloseSendsCloseNotifyTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "1c3eca51c6b3ce3ccc093cabaaec60db",
+   "doc_sha": "f8339eb0df9be524ad29d6b176a92fce",
+   "file": "utf_baselib_httpclient12/TestHttp1DriverStartupTls.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 53,
+   "module": "utf_baselib_httpclient12",
+   "name": "Http1DriverTls_NoWriteStartsBeforeTheFirstReadStartReturnsTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "03525ff0bb3307082b415b0215330957",
+   "doc_sha": "4b65634e91fbb31a749d01d2c0437831",
+   "file": "utf_baselib_httpclient8/TestHttp1DriverTlsTruncation.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 611,
+   "module": "utf_baselib_httpclient8",
+   "name": "Http1DriverTls_TruncatedCloseDelimitedResponseFailsTheRequestTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "4d9bad86015f311a916ac782556a771e",
+   "doc_sha": "b72e84504799bea6ab8466fb8c38b51e",
+   "file": "utf_baselib_httpclient8/TestHttp1DriverTlsTruncation.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 728,
+   "module": "utf_baselib_httpclient8",
+   "name": "Http1DriverTls_TruncationAfterAChunkedResponseSucceedsTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "41a909eb9c6f2550e7821f60d6179891",
+   "doc_sha": "1b4d2bcce170ce5cd8db905cb086add1",
+   "file": "utf_baselib_httpclient8/TestHttp1DriverTlsTruncation.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 699,
+   "module": "utf_baselib_httpclient8",
+   "name": "Http1DriverTls_TruncationAfterAContentLengthResponseSucceedsTests",
    "namespaces": []
   },
   {
@@ -6587,6 +6659,18 @@
    "namespaces": []
   },
   {
+   "body_sha": "ce4947dd5363db9b5597cac81ed27cc0",
+   "doc_sha": "b6f5a4d48ce7d81364de87f719f19cbd",
+   "file": "utf_baselib_httpclient11/TestHttp1DriverStartup.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 116,
+   "module": "utf_baselib_httpclient11",
+   "name": "Http1Driver_CancelBeforeStartEndsTheConnectionTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "9286d025b7e707f4f97f7330a72119c2",
    "doc_sha": null,
    "file": "utf_baselib_httpclient3/TestHttp1ConnectionTask.h",
@@ -6608,6 +6692,18 @@
    "line": 434,
    "module": "utf_baselib_httpclient3",
    "name": "Http1Driver_InterimResponsesPrecedeTheFinalBlockTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "a6542ce1d58ddd883cf59daa73f56ad7",
+   "doc_sha": "8b1d784e0d5a80032db91066683abed5",
+   "file": "utf_baselib_httpclient11/TestHttp1DriverStartup.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 53,
+   "module": "utf_baselib_httpclient11",
+   "name": "Http1Driver_NoWriteStartsBeforeTheFirstReadStartReturnsTests",
    "namespaces": []
   },
   {
@@ -6744,12 +6840,12 @@
   },
   {
    "body_sha": "cdebbee9be2cae1dc168eb2ce5d8278b",
-   "doc_sha": "a3bb07e1c80bdd85833392f9beccd6cb",
+   "doc_sha": "6f3b437b1bbd1952d4d98140ee1ddaa3",
    "file": "utf_baselib_httpclient7/TestHttp1DriverScheduleThrow.h",
    "fixture": null,
    "guards": [],
    "kind": "UTF_AUTO_TEST_CASE",
-   "line": 230,
+   "line": 246,
    "module": "utf_baselib_httpclient7",
    "name": "Http1Driver_ScheduleReadInitiatorThrowEndsTheTaskTests",
    "namespaces": []
@@ -9215,7 +9311,7 @@
    "namespaces": []
   },
   {
-   "body_sha": "876077d6a6034887659c14581e5bc81b",
+   "body_sha": "3e010d394eb37b531a79a530209a5567",
    "doc_sha": "c81f2f35c01f226d83ffd1cd29a4c55a",
    "file": "utf_baselib_http2/TestPeerCloseErrorCodes.h",
    "fixture": null,
@@ -13846,13 +13942,33 @@
   },
   {
    "conditional_only": false,
+   "file": "include/utests/baselib/Http1DriverStartupHook.h",
+   "guards": [],
+   "label": "namespace http1startup",
+   "line": 86,
+   "module": "<shared>",
+   "ns": "utest",
+   "sha": "2ef57f31a5d4ebdcf9924433a01eef1d"
+  },
+  {
+   "conditional_only": false,
    "file": "include/utests/baselib/Http1DriverTestUtils.h",
    "guards": [],
    "label": "namespace http1driver",
    "line": 68,
    "module": "<shared>",
    "ns": "utest",
-   "sha": "485ffd3dfc8a04ab3d5518fd4f75501f"
+   "sha": "254d2e88d0a25651e4212acf38be6b11"
+  },
+  {
+   "conditional_only": false,
+   "file": "include/utests/baselib/Http1DriverTlsTestUtils.h",
+   "guards": [],
+   "label": "namespace http1drivertls",
+   "line": 59,
+   "module": "<shared>",
+   "ns": "utest",
+   "sha": "4437023952f1feb2d8143ae318f2d7e4"
   },
   {
    "conditional_only": false,
@@ -18318,7 +18434,7 @@
    "line": 100,
    "module": "utf_baselib_httpclient5",
    "ns": "utest",
-   "sha": "6110121b6e121c772bbf078b1ee15505"
+   "sha": "afb051e398faa18ad28889dff7501c25"
   },
   {
    "conditional_only": false,
@@ -18475,10 +18591,10 @@
    "file": "utf_baselib_httpclient5/TestHttp1DriverTlsCancelClose.h",
    "guards": [],
    "label": "namespace tlsh1cancel",
-   "line": 112,
+   "line": 123,
    "module": "utf_baselib_httpclient5",
    "ns": "utest",
-   "sha": "0abef02d0845caa9ddc81ecf36d569e1"
+   "sha": "b8221834bcb649d560433dff88710464"
   },
   {
    "conditional_only": false,
@@ -18515,10 +18631,10 @@
    "file": "utf_baselib_httpclient7/TestHttp1DriverScheduleThrow.h",
    "guards": [],
    "label": "namespace http1schedulethrow",
-   "line": 82,
+   "line": 95,
    "module": "utf_baselib_httpclient7",
    "ns": "utest",
-   "sha": "301f2fbb0b9397b286ac208922cda196"
+   "sha": "426a201da90e73d13e32fe656cb6f6a1"
   },
   {
    "conditional_only": false,
@@ -18549,6 +18665,16 @@
    "module": "utf_baselib_httpclient7",
    "ns": "utest",
    "sha": "7d6b73c79f6d29364a842e00da8a69cb"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_httpclient8/TestHttp1DriverTlsTruncation.h",
+   "guards": [],
+   "label": "namespace h1tlstrunc",
+   "line": 98,
+   "module": "utf_baselib_httpclient8",
+   "ns": "utest",
+   "sha": "7016928598f5cc7d43a6eca8262e505d"
   },
   {
    "conditional_only": false,
@@ -23256,6 +23382,67 @@
    ],
    "notes_index": true
   },
+  "utf_baselib_httpclient11": {
+   "data_files": {},
+   "data_literals": [],
+   "data_refs": [],
+   "files": [
+    {
+     "includes": [
+      "<baselib/core/BaseIncludes.h>",
+      "<string>",
+      "<utests/baselib/Http1DriverStartupHook.h>",
+      "<utests/baselib/Http1DriverTestUtils.h>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_httpclient11/TestHttp1DriverStartup.h"
+    },
+    {
+     "includes": [
+      "<utests/baselib/UtfMain.h>",
+      "<baselib/httpclient/PreCompiled.h>",
+      "\"TestHttp1DriverStartup.h\""
+     ],
+     "path": "utf_baselib_httpclient11/UtfBaselibHttpClient11Main.cpp"
+    }
+   ],
+   "notes_cases": [
+    "Http1Driver_CancelBeforeStartEndsTheConnectionTests",
+    "Http1Driver_NoWriteStartsBeforeTheFirstReadStartReturnsTests"
+   ],
+   "notes_index": true
+  },
+  "utf_baselib_httpclient12": {
+   "data_files": {},
+   "data_literals": [],
+   "data_refs": [],
+   "files": [
+    {
+     "includes": [
+      "<baselib/core/BaseIncludes.h>",
+      "<string>",
+      "<utests/baselib/Http1DriverStartupHook.h>",
+      "<utests/baselib/Http1DriverTestUtils.h>",
+      "<utests/baselib/Http1DriverTlsTestUtils.h>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_httpclient12/TestHttp1DriverStartupTls.h"
+    },
+    {
+     "includes": [
+      "<utests/baselib/UtfMain.h>",
+      "<baselib/httpclient/PreCompiled.h>",
+      "\"TestHttp1DriverStartupTls.h\""
+     ],
+     "path": "utf_baselib_httpclient12/UtfBaselibHttpClient12Main.cpp"
+    }
+   ],
+   "notes_cases": [
+    "Http1DriverTls_CancelBeforeStartEndsTheConnectionTests",
+    "Http1DriverTls_NoWriteStartsBeforeTheFirstReadStartReturnsTests"
+   ],
+   "notes_index": true
+  },
   "utf_baselib_httpclient2": {
    "data_files": {},
    "data_literals": [
@@ -23464,6 +23651,7 @@
       "<baselib/tasks/ExecutionQueue.h>",
       "<baselib/tasks/Task.h>",
       "<baselib/data/DataBlock.h>",
+      "<baselib/core/AsioSSL.h>",
       "<baselib/core/BaseIncludes.h>",
       "<cstddef>",
       "<cstring>",
@@ -23633,6 +23821,54 @@
     "Http1Driver_StrandSeamRefusesReuseAfterAResetWriteTests",
     "Http1Driver_WriteInFlightRefusesASecondRequestTests",
     "Http1Driver_WriteInFlightRefusesReuseTests"
+   ],
+   "notes_index": true
+  },
+  "utf_baselib_httpclient8": {
+   "data_files": {},
+   "data_literals": [],
+   "data_refs": [],
+   "files": [
+    {
+     "includes": [
+      "<baselib/httpclient/HttpClientRequestTask.h>",
+      "<baselib/httpclient/Http1ConnectionTask.h>",
+      "<baselib/httpclient/ClientConnectionTaskBase.h>",
+      "<baselib/httpclient/ClientConnection.h>",
+      "<baselib/httpclient/ClientTypes.h>",
+      "<baselib/tasks/TcpSslStrandedStreams.h>",
+      "<baselib/tasks/Algorithms.h>",
+      "<baselib/tasks/ExecutionQueue.h>",
+      "<baselib/tasks/Task.h>",
+      "<baselib/crypto/CryptoBase.h>",
+      "<baselib/data/DataBlock.h>",
+      "<baselib/core/AsioSSL.h>",
+      "<baselib/core/OS.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<string>",
+      "<vector>",
+      "<utests/baselib/Http1DriverTestUtils.h>",
+      "<utests/baselib/Http1DriverTlsTestUtils.h>",
+      "<utests/baselib/UtfCrypto.h>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_httpclient8/TestHttp1DriverTlsTruncation.h"
+    },
+    {
+     "includes": [
+      "<utests/baselib/UtfMain.h>",
+      "<baselib/httpclient/PreCompiled.h>",
+      "\"TestHttp1DriverTlsTruncation.h\""
+     ],
+     "path": "utf_baselib_httpclient8/UtfBaselibHttpClient8Main.cpp"
+    }
+   ],
+   "notes_cases": [
+    "Http1DriverTls_CloseNotifyCompletesACloseDelimitedResponseTests",
+    "Http1DriverTls_TruncatedCloseDelimitedResponseFailsTheRequestTests",
+    "Http1DriverTls_TruncationAfterAChunkedResponseSucceedsTests",
+    "Http1DriverTls_TruncationAfterAContentLengthResponseSucceedsTests"
    ],
    "notes_index": true
   },
@@ -24960,11 +25196,25 @@
    "sha": "62304521db73d651bb7abae9a13f179f"
   },
   {
+   "file": "include/utests/baselib/Http1DriverStartupHook.h",
+   "line": 84,
+   "module": "<shared>",
+   "name": "utest",
+   "sha": "b0f2d17ff57a191d2c96055c6df21aec"
+  },
+  {
    "file": "include/utests/baselib/Http1DriverTestUtils.h",
    "line": 66,
    "module": "<shared>",
    "name": "utest",
-   "sha": "b84edd64f56f692f4911deb8a3bb28bf"
+   "sha": "09786de51559bd8a4bf2252a42b5083d"
+  },
+  {
+   "file": "include/utests/baselib/Http1DriverTlsTestUtils.h",
+   "line": 57,
+   "module": "<shared>",
+   "name": "utest",
+   "sha": "6099d696070b5df99078835461393185"
   },
   {
    "file": "include/utests/baselib/Http2DriverTestUtils.h",
@@ -25825,14 +26075,14 @@
    "line": 98,
    "module": "utf_baselib_httpclient5",
    "name": "utest",
-   "sha": "d68829ae7172c2ec8eca0f2564fe16ce"
+   "sha": "41a46dbd79d4d54cca4f428f003aa855"
   },
   {
    "file": "utf_baselib_httpclient5/TestHttp1DriverTlsCancelClose.h",
-   "line": 110,
+   "line": 121,
    "module": "utf_baselib_httpclient5",
    "name": "utest",
-   "sha": "0399134104b45c6bd813f641223cc836"
+   "sha": "25a0a3e57108076a62f3953a9430170e"
   },
   {
    "file": "utf_baselib_httpclient6/TestClientSessionCancel.h",
@@ -25857,10 +26107,10 @@
   },
   {
    "file": "utf_baselib_httpclient7/TestHttp1DriverScheduleThrow.h",
-   "line": 80,
+   "line": 93,
    "module": "utf_baselib_httpclient7",
    "name": "utest",
-   "sha": "cd87036a290154d608439cc741131890"
+   "sha": "60d0d103cebc276f665638ba807c7e2e"
   },
   {
    "file": "utf_baselib_httpclient7/TestHttp1DriverStrandSeam.h",
@@ -25882,6 +26132,13 @@
    "module": "utf_baselib_httpclient7",
    "name": "utest",
    "sha": "17aec8d509049943fd877b85d653f9ec"
+  },
+  {
+   "file": "utf_baselib_httpclient8/TestHttp1DriverTlsTruncation.h",
+   "line": 96,
+   "module": "utf_baselib_httpclient8",
+   "name": "utest",
+   "sha": "0259c18c578d613827a56637eec9dc7b"
   },
   {
    "file": "utf_baselib_io/TestIO.h",
@@ -26320,6 +26577,31 @@
      "<baselib/tasks/TcpSslStrandedStreams.h>",
      "<baselib/tasks/Algorithms.h>",
      "<baselib/tasks/ExecutionQueue.h>",
+     "<baselib/tasks/Task.h>",
+     "<baselib/core/OS.h>",
+     "<baselib/core/BaseIncludes.h>",
+     "<atomic>",
+     "<cstddef>",
+     "<memory>",
+     "<string>",
+     "<utility>",
+     "<vector>",
+     "<utests/baselib/Http1DriverTestUtils.h>",
+     "<utests/baselib/Http1DriverTlsTestUtils.h>",
+     "<utests/baselib/Utf.h>"
+    ],
+    "path": "include/utests/baselib/Http1DriverStartupHook.h"
+   },
+   {
+    "includes": [
+     "<baselib/httpclient/Http1ConnectionTask.h>",
+     "<baselib/httpclient/ClientConnectionTaskBase.h>",
+     "<baselib/httpclient/ClientConnection.h>",
+     "<baselib/httpclient/ClientTypes.h>",
+     "<baselib/tasks/TcpStrandedStreams.h>",
+     "<baselib/tasks/TcpSslStrandedStreams.h>",
+     "<baselib/tasks/Algorithms.h>",
+     "<baselib/tasks/ExecutionQueue.h>",
      "<baselib/tasks/ExecutionQueueImpl.h>",
      "<baselib/tasks/Task.h>",
      "<baselib/http/HeaderList.h>",
@@ -26335,6 +26617,29 @@
      "<utests/baselib/Utf.h>"
     ],
     "path": "include/utests/baselib/Http1DriverTestUtils.h"
+   },
+   {
+    "includes": [
+     "<baselib/httpclient/Http1ConnectionTask.h>",
+     "<baselib/httpclient/ClientConnectionTaskBase.h>",
+     "<baselib/httpclient/ClientConnection.h>",
+     "<baselib/httpclient/ClientTypes.h>",
+     "<baselib/tasks/TcpSslStrandedStreams.h>",
+     "<baselib/tasks/ExecutionQueue.h>",
+     "<baselib/tasks/Task.h>",
+     "<baselib/crypto/CryptoBase.h>",
+     "<baselib/core/AsioSSL.h>",
+     "<baselib/core/OS.h>",
+     "<baselib/core/BaseIncludes.h>",
+     "<cstddef>",
+     "<memory>",
+     "<string>",
+     "<vector>",
+     "<utests/baselib/Http1DriverTestUtils.h>",
+     "<utests/baselib/UtfCrypto.h>",
+     "<utests/baselib/Utf.h>"
+    ],
+    "path": "include/utests/baselib/Http1DriverTlsTestUtils.h"
    },
    {
     "includes": [
