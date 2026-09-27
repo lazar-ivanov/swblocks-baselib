@@ -2121,33 +2121,28 @@ UTF_AUTO_TEST_CASE( ClientSession_FallbackRiderNeedsTheDispatchedRetryTests )
 }
 
 /**
- * @brief S6R.3 H08 - a streamed response says "the body is complete" ONCE
+ * @brief A streamed response says "the body is complete" ONCE, from the one hop which carried it
  *
- * WHAT IT ESTABLISHED WHEN IT WAS WRITTEN, and the name keeps: this was the case above with a sink
- * installed, the one thing no case in this suite did until then. The pool dispatched the first
- * request of a key onto the Connecting placeholder; over a connection which turns out to speak
- * HTTP/1.1 the HTTP/2 task bounced that rider with connection_aborted, and applyClosed( ) used to
- * queue the caller's onComplete( ) on ANY close whatever its outcome. So the caller's sink was
- * told the body was complete, with nothing in it, and was then handed the whole body by the
- * retried hop - twice wrong on every first request to an origin which does not speak h2
- *
- * WHAT IT ESTABLISHES NOW, AND THE HALF IT LOST. L6 finding 4a stopped the rider being dispatched
- * where the protocol is already decided, so this chain is ONE hop and there is no bounce on it any
- * more: what survives is the streamed form itself - the body reaches the sink and not the response,
- * and the single hop which carried it says "complete" exactly once. The discrimination that made
- * the count worth its green - a first hop which must say nothing at all - no longer runs HERE, and
- * saying so is the point: it is not that the defect was re-checked and found gone, it is that this
- * path no longer reaches it. The combination of a BOUNCED rider and an installed sink is now only
- * reachable over TLS ALPN fallback, where ClientSessionTls_Http11FallbackExchangeTests
- * ( utf_baselib_httpclient5 ) runs the bounce with no sink; that case with a sink is OWED and is
- * recorded as such against finding 4a
- *
- * AND IT IS STILL THE CONTROL FOR H08's OTHER HALF, which did not depend on the bounce:
+ * WHAT IT PINS: one terminal callback per streamed hop. The body reaches the sink and not the
+ * response - design 5.3's streamed form - and the single hop which carried it says "complete"
+ * exactly once. And it is the control for S6R.3 H08's other half, which never depended on a bounce:
  * chkPrepareRetry( ) refuses a retry once the sink has seen bytes, and a plain streamed response
  * must not trip that refusal
+ *
+ * RENAMED, AND THE OLD NAME WENT WHERE IT IS STILL TRUE. This was
+ * ClientSession_SinkIsToldCompleteOnceAcrossTheFallbackRetryTests, written for H08 when the pool
+ * dispatched the first request of a key onto the Connecting placeholder: over a connection which
+ * turned out to speak HTTP/1.1 that rider was bounced with connection_aborted, and applyClosed( )
+ * used to tell the caller's sink the body was complete, empty, before the retried hop handed it the
+ * whole body. L6 finding 4a stopped the rider riding where the protocol is already decided, so this
+ * chain has been ONE hop since, with no bounce and no fallback retry in it, under a name which
+ * promised coverage the case no longer had ( the L6 review's third pass, decision 3 ). A bounced
+ * rider with a sink is reachable only over TLS ALPN fallback, and
+ * ClientSessionTls_SinkIsToldCompleteOnceAcrossTheFallbackRetryTests ( utf_baselib_httpclient10 )
+ * runs it there, under the name this case used to carry
  */
 
-UTF_AUTO_TEST_CASE( ClientSession_SinkIsToldCompleteOnceAcrossTheFallbackRetryTests )
+UTF_AUTO_TEST_CASE( ClientSession_StreamedHopTellsTheSinkCompleteOnceTests )
 {
     using namespace bl;
     using namespace bl::tasks;
@@ -2172,7 +2167,7 @@ UTF_AUTO_TEST_CASE( ClientSession_SinkIsToldCompleteOnceAcrossTheFallbackRetryTe
                 {
                     session -> dispose();
                 },
-                "utest::session::ClientSession_SinkIsToldCompleteOnceAcrossTheFallbackRetryTests"
+                "utest::session::ClientSession_StreamedHopTellsTheSinkCompleteOnceTests"
                 );
 
             httpclient::ClientRequest request;
