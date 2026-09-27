@@ -514,9 +514,9 @@ namespace bl
          * stands unchanged.
          *
          * WHAT THIS DOES NOT COVER is a truncated TLS stream: that is the stream policy's
-         * spelling and, unlike the predicates above, asking it here would be WRONG - a truncation
-         * is what an orderly close-delimited HTTPS response looks like, so it is not evidence of
-         * a reset and must not be added beside this one.
+         * spelling and, as beside isCleanEndOfStreamErrorCode(), asking it here would be WRONG - a
+         * truncation says the transport ended with no close_notify and nothing about a reset, so
+         * it is not evidence of one and must not be added beside this one.
          *
          * See notes/plans/issues/windows-peer-close-error-codes-record.md
          */
