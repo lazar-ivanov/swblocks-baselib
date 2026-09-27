@@ -17,6 +17,7 @@
 #ifndef __UTEST_HTTPCLIENTSESSIONTESTUTILS_H_
 #define __UTEST_HTTPCLIENTSESSIONTESTUTILS_H_
 
+#include <baselib/httpclient/ContentDecoder.h>
 #include <baselib/httpclient/ClientTypes.h>
 
 #include <baselib/data/DataBlock.h>
@@ -28,25 +29,99 @@
 #include <cstddef>
 #include <string>
 
+#include <utests/baselib/Http2DriverTestUtils.h>
+
 /************************************************************************
  * What more than one CLIENT SESSION module needs - hoisted here by CS-2 of astra's second review
  *
- * CountingBodySinkT was utf_baselib_httpclient4's own and moved here VERBATIM when
- * utf_baselib_httpclient10 needed it for the TLS fallback exchange with a sink (E3 on
- * notes/plans/issues/astra-remediation-owed-work.md): a test header may never be included across
- * module directories - that silently duplicates its cases into two binaries - and a copy in each
- * would be worse (src/utests/AGENTS.md). Its own comment below is the one it had there, so "this
- * suite" in it is utf_baselib_httpclient4's.
+ * Both helpers below were utf_baselib_httpclient4's own and moved here VERBATIM, each when a second
+ * module needed it: CountingBodySinkT for utf_baselib_httpclient10's TLS fallback exchange with a
+ * sink (E3 on notes/plans/issues/astra-remediation-owed-work.md), and UtestDecoderT - "the existing
+ * test transform" - for utf_baselib_httpclient9's decoder cases (D5 of astra's second review). A
+ * test header may never be included across module directories - that silently duplicates its cases
+ * into two binaries - and a copy in each would be worse (src/utests/AGENTS.md). Their own comments
+ * below are the ones they had there, so "this suite" and "these cases" in them are
+ * utf_baselib_httpclient4's.
  *
- * IT KEEPS ITS NAMESPACE, utest::session, so the module it came from names it exactly as before
- * and nothing there had to change but the include. A module which uses it from here names it
- * utest::session::CountingBodySink.
+ * THEY KEEP THEIR NAMESPACE, utest::session, so the module they came from names them exactly as
+ * before and nothing there had to change but the include. A module which uses them from here names
+ * them utest::session::CountingBodySink and utest::session::UtestDecoder. Http2DriverTestUtils.h is
+ * included for UtestDecoderT's h2driver::blockOf( ), which it has always used.
  */
 
 namespace utest
 {
     namespace session
     {
+        /**
+         * @brief A content decoder for the test-only coding "x-utest", which turns '~' into a space
+         *
+         * NOT A REAL COMPRESSOR, and it does not pretend to be one: no decoder ships with this
+         * library (D9) and these cases are about the SEAM - that the REGISTERED codings decide
+         * what accept-encoding says, and that a body in a registered coding is decoded before the
+         * caller sees it
+         */
+
+        template
+        <
+            typename E = void
+        >
+        class UtestDecoderT : public bl::httpclient::ContentDecoder
+        {
+            BL_DECLARE_OBJECT_IMPL_ONEIFACE( UtestDecoderT, bl::httpclient::ContentDecoder )
+            BL_CTR_DEFAULT( UtestDecoderT, protected )
+
+        public:
+
+            static const std::string& coding() NOEXCEPT
+            {
+                return g_coding;
+            }
+
+            virtual const std::string& contentCoding() const NOEXCEPT OVERRIDE
+            {
+                return g_coding;
+            }
+
+            virtual void write(
+                SAA_in          const bl::om::ObjPtr< bl::data::DataBlock >&     input,
+                SAA_in          const bl::httpclient::decoder_output_callback_t& output
+                )
+                OVERRIDE
+            {
+                std::string decoded(
+                    input -> begin() + input -> offset1(),
+                    input -> begin() + input -> size()
+                    );
+
+                for( std::size_t i = 0U; i < decoded.size(); ++i )
+                {
+                    if( '~' == decoded[ i ] )
+                    {
+                        decoded[ i ] = ' ';
+                    }
+                }
+
+                output( h2driver::blockOf( decoded ) );
+            }
+
+            virtual void finish(
+                SAA_in          const bl::httpclient::decoder_output_callback_t& output
+                )
+                OVERRIDE
+            {
+                BL_UNUSED( output );
+            }
+
+        private:
+
+            static const std::string                                            g_coding;
+        };
+
+        BL_DEFINE_STATIC_CONST_STRING( UtestDecoderT, g_coding ) = "x-utest";
+
+        typedef bl::om::ObjectImpl< UtestDecoderT<> >                           UtestDecoder;
+
         /**
          * @brief A caller's BodySink at the SESSION level, which counts its terminal callbacks
          *
