@@ -195,4 +195,87 @@ UTF_AUTO_TEST_CASE( HttpClientRequestTask_HeadersAndTrailersAfterTheFailureChang
     requireLateBlocksChangeNothing( FailBy::HeadersTimeout );
 }
 
+/**
+ * @brief An upload pull which arrives after a cancel is not answered - the caller's BodySource is
+ * not read again
+ *
+ * The third sibling of applyData( )'s guard, found while folding in I8. applyBodyWanted( ) asked
+ * only whether the stream had closed, so a pull the connection sent before it saw the cancel read
+ * the caller's source and handed the bytes to a stream this task had already reset - after the
+ * caller's task had completed. Every failure which leaves the stream open resets it first, so no
+ * answer is owed to the connection once the completion is decided.
+ *
+ * StubBodySource is TestClientContracts.h's, which this module's Main.cpp includes ahead of this
+ * file. RED BEFORE: the late pull read four bytes from the source and provided them. GREEN AFTER:
+ * nothing read and nothing provided
+ */
+
+UTF_AUTO_TEST_CASE( HttpClientRequestTask_AnUploadPullAfterTheFailureIsNotAnsweredTests )
+{
+    using namespace bl;
+    using namespace bl::httpclient;
+    using namespace utest::requesttask;
+
+    const auto connection = ProbeConnection::createInstance(
+        NegotiatedProtocol::fromAlpn( "h2" ),
+        false /* isSubmitRefused */
+        );
+
+    const auto pool = ProbePool::createInstance(
+        om::qi< ClientConnection >( connection ),
+        true /* isAnswered */
+        );
+
+    const auto source = utest::clientcontracts::StubBodySource::createInstance(
+        std::string( "12345678" ),
+        true /* canRewind */,
+        4U /* chunkSize */
+        );
+
+    auto request = makeRequest( "POST" );
+
+    request.bodySource(
+        om::ObjPtrCopyable< BodySource >( om::qi< BodySource >( source ) )
+        );
+
+    const auto taskImpl = HttpClientRequestTaskImpl::createInstance(
+        std::move( request ),
+        makeKey(),
+        om::qi< ConnectionPool >( pool )
+        );
+
+    const auto task = om::qi< tasks::Task >( taskImpl );
+
+    runTask(
+        task,
+        [ & ]() -> void
+        {
+            connection -> waitFor( "submit" );
+
+            task -> requestCancel();
+
+            connection -> waitFor( "cancel:42" );
+        }
+        );
+
+    requireTrue( task -> isFailed(), "the request should have failed before the late pull" );
+
+    connection -> deliverBodyWanted( 4096U );
+
+    connection -> deliverClosed(
+        eh::errc::make_error_code( eh::errc::operation_canceled ),
+        false /* isRetryable */
+        );
+
+    /*
+     * The close's release is applied behind the pull, and a pull's answer is a deferred action of
+     * the batch which applied it - so once the release is in, an answer would have been made
+     */
+
+    requireTrue( pool -> waitForRelease(), "the stream slot never came back" );
+
+    UTF_CHECK_EQUAL( connection -> uploaded(), std::string() );
+    UTF_CHECK( ! connection -> has( "body:4:more" ) );
+}
+
 #endif /* __UTEST_TESTHTTPCLIENTREQUESTTASKAFTERTHEFAILURE_H_ */

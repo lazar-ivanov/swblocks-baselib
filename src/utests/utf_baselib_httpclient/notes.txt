@@ -98,5 +98,6 @@
 --log_level=message --run_test=HttpClientRequestTask_ABlockAfterTheFailureIsNotOfferedTests
 
 # CS-4 (owed-list row I8) - D3's guard at applyData( )'s siblings: header blocks and trailers which
-# arrive after a cancel or a timeout change nothing
+# arrive after a cancel or a timeout change nothing, and an upload pull after one is not answered
 --log_level=message --run_test=HttpClientRequestTask_HeadersAndTrailersAfterTheFailureChangeNothingTests
+--log_level=message --run_test=HttpClientRequestTask_AnUploadPullAfterTheFailureIsNotAnsweredTests
