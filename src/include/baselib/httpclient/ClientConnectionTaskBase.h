@@ -374,8 +374,9 @@ namespace bl
             cpp::SafeUniquePtr< asio::deadline_timer >                          m_connectTimer;
 
             /*
-             * The pool's reason for a cancel it is about to make, when it gives one - see
-             * cancelReason( ). Under the task lock: written by cancelReason( ), read by
+             * The reason for a cancel which is about to be made - the pool's, when it gives one
+             * ( cancelReason( ) ), or the connect deadline's ( onConnectDeadline( ) ); the first one
+             * given is kept. Under the task lock: written by those two, read by
              * onTaskStoppedNothrow( ), which TaskBase runs holding that lock
              */
 
@@ -671,7 +672,8 @@ namespace bl
             }
 
             /**
-             * @brief Chains the pool's reason onto the failure a cancel produced - owed-list row I6
+             * @brief Chains a cancel's reason - the pool's bound or the connect deadline - onto the
+             * failure the cancel produced, owed-list row I6
              *
              * ONLY FOR A CANCELLED TASK WHICH FAILED AND WAS GIVEN A REASON. The failure is the
              * connector's own - the operation_aborted of the cancel, naming the endpoint - and it is
@@ -770,7 +772,9 @@ namespace bl
              *
              * The pool gives one when it abandons the connection for its establishment bound, and
              * onTaskStoppedNothrow( ) chains it onto the cancel's failure. Additive: a cancel with no
-             * reason, and a task which ends before the cancel arrives, are what they were
+             * reason, and a task which ends before the cancel arrives, are what they were. The first
+             * reason given is kept - the pool's bound, or the connect deadline, whichever cancelled
+             * first
              */
 
             void cancelReason( SAA_in const std::exception_ptr& reason ) NOEXCEPT
