@@ -46,7 +46,6 @@
 #include <baselib/transfer/RecursiveDirectoryScanner.h>
 #include <baselib/transfer/SendRecvContext.h>
 
-#include <baselib/data/FilesystemMetadata.h>
 #include <baselib/data/FilesystemMetadataInMemoryImpl.h>
 
 #include <baselib/core/Utils.h>

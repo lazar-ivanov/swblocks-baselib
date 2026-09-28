@@ -39,3 +39,8 @@
 --log_level=test_suite --run_test=H2Pool_ARetiredEntryIsChargedOnceWhileItsRiderIsOutTests
 --log_level=test_suite --run_test=H2Pool_WithRoomAWaiterGetsItsRetryWhileTheRiderIsOutTests
 --log_level=test_suite --run_test=H2Pool_AnEntryWhichServedARequestIsNotChargedWhenItsTaskEndsTests
+
+# CS-4 (owed-list row I10) - a never-usable entry which a ConnectionUnusable release retires is a
+# failed attempt, charged once by that arm; the second case is the control, an entry which served one
+--log_level=test_suite --run_test=H2Pool_ANeverUsableEntryRetiredByAnUnusableReleaseIsChargedTests
+--log_level=test_suite --run_test=H2Pool_AnEntryWhichServedARequestIsNotChargedByAnUnusableReleaseTests

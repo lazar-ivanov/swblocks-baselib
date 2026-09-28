@@ -1532,8 +1532,8 @@ namespace bl
              * case: it CAN begin at zero, and its own catch says what that costs
              *
              * h1 IS NOT THE COUNTER-EXAMPLE IT LOOKS LIKE. Its scheduleRead( ) reached from
-             * scheduleTask( ) runs with the count at zero as well, which is the defect design 4
-             * records as A4 rather than a property to copy
+             * scheduleTask( ) with the count at zero was the defect design 4 records as A4; it now
+             * runs only inside handlers, whose own operation keeps the count above zero
              *
              * Giving it back decides nothing beyond a terminal which is ALREADY DUE
              * (MultiOperationTask.h), so it is safe at every site, and the throw then takes

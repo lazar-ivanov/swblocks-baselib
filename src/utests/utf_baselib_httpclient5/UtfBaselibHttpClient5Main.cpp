@@ -39,10 +39,10 @@
  *
  * Sockets: loopback, ephemeral ports, so these cases do not take the machine global test lock
  *
- * SIZE, MEASURED AND OVER TARGET, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 46.9 MB
- * clang debug (a64), against a 40 MB target and a 75 MB debug ceiling which only win-x86-*-debug
- * enforces; 93.6 MB gcc release (a64) was measured before the h1-over-TLS cases and has not been
- * re-measured since. The session instantiates BOTH drivers over the TLS policy - the HTTP/2 one it
+ * SIZE, MEASURED AND OVER TARGET, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 47.5 MB
+ * clang2010 debug (a64) at 8c45b09 on 2026-09-27, against a 40 MB target and a 75 MB debug ceiling
+ * which only win-x86-*-debug enforces; 93.6 MB gcc release (a64), not re-measured, predates the
+ * h1-over-TLS cases. The session instantiates BOTH drivers over the TLS policy - the HTTP/2 one it
  * builds and the HTTP/1.1 one its factory registers for the fallback - so the client-role protocol
  * engine is here, and the TLS peer puts the server-role engine here as well. The cases cost almost
  * nothing - the three h1-over-TLS ones added 1.3%, because the types they name were already

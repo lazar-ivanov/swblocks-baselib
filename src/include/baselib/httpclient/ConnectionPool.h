@@ -320,6 +320,11 @@ namespace bl
              * processed: the response may have been lost on the way back, and replaying a POST
              * then performs it twice. Turning it on limits the replay to the idempotent methods
              * of RFC 9110 9.2.2 even so
+             *
+             * AND IT REACHES ONLY A FAILURE WHICH IS THE CONNECTION'S. A request which failed on a
+             * verdict of its own - a timeout, a body cap, a sink or source which threw - is not
+             * replayed on it, however the connection ended behind that failure: see the session's
+             * chkPrepareRetry( ), and owed-list row I5
              */
 
             cpp::ScalarTypeIniter< bool >                                       retryIdempotentOnConnectionLoss;
@@ -403,6 +408,16 @@ namespace bl
              */
 
             cpp::function< om::ObjPtr< ClientConnection > () >                  driver;
+
+            /**
+             * Hands the task the pool's REASON for a cancel which is about to follow, for the
+             * failure that cancel produces to carry - owed-list row I6. The pool gives one when the
+             * establishment bound expires, so the request riding the connection is told the bound
+             * expired and not only "Operation canceled". May be empty: a task which takes no reason
+             * is cancelled exactly as before
+             */
+
+            cpp::function< void ( SAA_in const std::exception_ptr& reason ) >    cancelReason;
         };
 
         /**
@@ -772,6 +787,14 @@ namespace bl
                 cpp::ScalarTypeIniter< bool >                                   isScheduled;
 
                 /**
+                 * A failed attempt the ConnectionUnusable arm of releaseStream( ) retired this entry
+                 * for and left to the next refreshEntry( ) to report - which reports it once and
+                 * clears it
+                 */
+
+                cpp::ScalarTypeIniter< bool >                                   hasUnreportedFailure;
+
+                /**
                  * Whether the pool has already asked this entry's tasks to stop - see
                  * forgetConnection( ), which is where an entry the pool lets go of is stopped
                  */
@@ -832,9 +855,21 @@ namespace bl
                 std::exception_ptr                                              exception;
             };
 
+            /**
+             * @brief A reason handed to a connection task ahead of its cancel - ConnectionAttempt::
+             * cancelReason, and what it is given
+             */
+
+            struct CancelReason
+            {
+                cpp::function< void ( SAA_in const std::exception_ptr& reason ) > cancelReason;
+                std::exception_ptr                                              reason;
+            };
+
             struct Actions
             {
                 std::vector< Answer >                                           answers;
+                std::vector< CancelReason >                                     reasons;
                 std::vector< om::ObjPtrCopyable< tasks::Task > >                cancels;
                 std::vector< om::ObjPtrCopyable< tasks::Task > >                schedules;
                 std::vector< entry_ptr_t >                                      starts;
@@ -844,7 +879,7 @@ namespace bl
                 bool empty() const NOEXCEPT
                 {
                     return
-                        answers.empty() && cancels.empty() && schedules.empty() &&
+                        answers.empty() && reasons.empty() && cancels.empty() && schedules.empty() &&
                         starts.empty() && ! armMaintenance;
                 }
             };
@@ -999,6 +1034,28 @@ namespace bl
                             << ":"
                             << key.port.value()
                             << "' timed out"
+                        )
+                    );
+            }
+
+            /**
+             * @brief The reason a connection is abandoned for its establishment bound - the words
+             * the pool logs, as the TimeoutException the connection chains onto its failure
+             */
+
+            auto makeEstablishmentTimeoutException( SAA_in const ConnectionKey& key ) const NOEXCEPT
+                -> std::exception_ptr
+            {
+                return makeException< TimeoutException >(
+                    resolveMessage(
+                        BL_MSG()
+                            << "A connection to '"
+                            << key.host
+                            << ":"
+                            << key.port.value()
+                            << "' did not become usable within "
+                            << m_policy.establishmentTimeout
+                            << " and was abandoned by the pool"
                         )
                     );
             }
@@ -1327,6 +1384,32 @@ namespace bl
             {
                 bool hasFailed = false;
 
+                if( entry -> hasUnreportedFailure )
+                {
+                    /*
+                     * The failed attempt releaseStream( )'s ConnectionUnusable arm retired this entry
+                     * for, reported here and once - the arms below all find it retired
+                     */
+
+                    entry -> hasUnreportedFailure = false;
+
+                    hasFailed = true;
+
+                    const auto eptr = entry -> attempt.task ?
+                        entry -> attempt.task -> exception() : std::exception_ptr();
+
+                    failure = eptr ? eptr : makeException< UnexpectedException >(
+                        resolveMessage(
+                            BL_MSG()
+                                << "A connection to '"
+                                << entry -> key.host
+                                << ":"
+                                << entry -> key.port.value()
+                                << "' became unusable before a request completed on it"
+                            )
+                        );
+                }
+
                 /*
                  * ONE READING OF THE TASK CONNECTION'S STATE PER EXAMINE, and BOTH decisions which
                  * depend on it - whether the driver may be polled, and whether the entry is
@@ -1521,7 +1604,22 @@ namespace bl
                      * expired while the request which rode the preface is still out is retired
                      * now and forgotten only when that request comes back - and the bound's whole
                      * promise is that the connection stops when it expires
+                     *
+                     * AND WITH ITS REASON, handed over ahead of the cancel - owed-list row I6. The
+                     * cancel's own failure is operation_aborted, which says nothing about the
+                     * bound, and the request riding the connection is told the connection's
+                     * failure; so the connection chains this onto it
                      */
+
+                    if( ! entry -> isCancelRequested && entry -> attempt.cancelReason )
+                    {
+                        CancelReason reason;
+
+                        reason.cancelReason = entry -> attempt.cancelReason;
+                        reason.reason = makeEstablishmentTimeoutException( entry -> key );
+
+                        actions.reasons.push_back( std::move( reason ) );
+                    }
 
                     chkCancelEntry( entry, actions );
 
@@ -2005,6 +2103,16 @@ namespace bl
                 for( auto& answer : actions.answers )
                 {
                     post( std::move( answer ) );
+                }
+
+                /*
+                 * A REASON GOES AHEAD OF ITS CANCEL, so that the task holds it by the time the
+                 * cancel ends it
+                 */
+
+                for( const auto& reason : actions.reasons )
+                {
+                    reason.cancelReason( reason.reason );
                 }
 
                 for( const auto& task : actions.cancels )
@@ -2552,6 +2660,23 @@ namespace bl
                                 entry -> isRetired = true;
 
                                 ++m_stats.connectionsRetired.lvalue();
+
+                                /*
+                                 * A NEVER-USABLE ENTRY RETIRED HERE IS A FAILED ATTEMPT, and this is
+                                 * the arm which retires it, so it is this arm's to report - once
+                                 * per entry, by the arm which retires it, the rule refreshEntry( )'s
+                                 * arms follow. Each of them finds the entry retired from here on and
+                                 * reports nothing, so the waiters queued behind it were never charged
+                                 * ( owed-list row I10 ). "Never usable" is the Closed arm's rule and
+                                 * its two witnesses: an entry which was seen Ready, or on which a
+                                 * response completed, was no failed attempt. The report is made by
+                                 * the examine below, which is where waiters are charged
+                                 */
+
+                                if( ! entry -> isReady && ! entry -> isPeerLimitKnown )
+                                {
+                                    entry -> hasUnreportedFailure = true;
+                                }
                             }
                         }
 

@@ -96,3 +96,18 @@
 --log_level=message --run_test=HttpClientRequestTask_OutstandingCapFailsAtTheMailboxTests
 --log_level=message --run_test=HttpClientRequestTask_OutstandingCapChargesEachBlockItsAllowanceTests
 --log_level=message --run_test=HttpClientRequestTask_ABlockAfterTheFailureIsNotOfferedTests
+
+# CS-4 (owed-list row I8) - D3's guard at applyData( )'s siblings: header blocks and trailers which
+# arrive after a cancel or a timeout change nothing, and an upload pull after one is not answered
+--log_level=message --run_test=HttpClientRequestTask_HeadersAndTrailersAfterTheFailureChangeNothingTests
+--log_level=message --run_test=HttpClientRequestTask_AnUploadPullAfterTheFailureIsNotAnsweredTests
+
+# CS-4 (owed-list row I5) - a request which failed on either body cap is not replayed by the session,
+# whatever connection loss lands in the same batch; and by the general rule the maintainer decided,
+# nor is one which timed out
+--log_level=message --run_test=ClientSession_AnOverflowedRequestIsNotReplayedTests
+--log_level=message --run_test=ClientSession_ATimedOutRequestIsNotReplayedTests
+
+# CS-4 checkpoint review (P3) - the rule's control: a failure which is the connection's is still
+# replayed under retryIdempotentOnConnectionLoss, and not without it
+--log_level=message --run_test=ClientSession_AConnectionLossIsReplayedUnderTheKnobTests

@@ -22,7 +22,7 @@
  * CS-2 of astra's second review ( notes/plans/issues/astra-second-review-decisions.md )
  *
  * WHY THIS MODULE EXISTS. utf_baselib_httpclient5 is the TLS session's module and is over the 40 MB
- * target src/utests/AGENTS.md sets ( its own Main.cpp records 46.9 MB, a64 clang debug ), so the TLS
+ * target src/utests/AGENTS.md sets ( its own Main.cpp records 47.5 MB, a64 clang debug ), so the TLS
  * session cases CS-2 owes come here instead: the ALPN fallback exchange with a sink ( E3 ) and the
  * narrowing of a streaming upload's ALPN offer, shown to discriminate ( E1 ). The cleartext session's
  * CS-2 cases are utf_baselib_httpclient9's.
@@ -32,12 +32,12 @@
  * its factory registers for the fallback - and its peers bring the server side. The cases
  * themselves cost almost nothing next to those instantiations.
  *
- * SIZE, MEASURED AND OVER TARGET, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 46.6 MB
- * clang debug (a64) with E3 and E1, against a 40 MB target and a 75 MB debug ceiling which only
- * win-x86-*-debug enforces. It was 42.8 MB with E3 alone, which is the TLS session and nothing else
- * - 21.8 MB over the empty module floor - so no split of the cases could bring it under the target;
- * the 3.8 MB since is E1's peer, the HTTP/2 test server over the TLS policy, which brings the
- * server-role engine. utf_baselib_httpclient5 carries the same instantiations at 46.9 MB.
+ * SIZE, MEASURED AND OVER TARGET, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 46.7 MB
+ * clang2010 debug (a64) at 8c45b09 on 2026-09-27, against a 40 MB target and a 75 MB debug ceiling
+ * which only win-x86-*-debug enforces. It was 42.8 MB with E3 alone, which is the TLS session and
+ * nothing else - 21.8 MB over the empty module floor - so no split of the cases could bring it
+ * under the target; the 3.8 MB E1 added is its peer's server-role engine - the HTTP/2 test server
+ * over the TLS policy. utf_baselib_httpclient5 carries the same instantiations at 47.5 MB.
  *
  * Sockets: loopback, ephemeral ports, so these cases do not take the machine global test lock
  *

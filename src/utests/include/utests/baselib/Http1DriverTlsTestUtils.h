@@ -42,16 +42,16 @@
 #include <utests/baselib/Utf.h>
 
 /************************************************************************
- * The TLS side of the HTTP/1.1 DRIVER suites - lifted here by CS-1 of astra's second review
+ * The TLS side of the HTTP/1.1 suites - lifted here by CS-1 of astra's second review from
+ * utf_baselib_httpclient8/TestHttp1DriverTlsTruncation.h, where its peer was written
  *
- * It lives here and not in a module directory because two CS-1 modules need it:
- * utf_baselib_httpclient8 carries D1's cases, and D2's go to utf_baselib_httpclient11 - and to
- * utf_baselib_httpclient12 as well if the first measures over its budget - while a test header may
- * never be included across module directories (src/utests/AGENTS.md). The peer below moved here from
- * utf_baselib_httpclient8/TestHttp1DriverTlsTruncation.h, where it was written.
+ * It lives here and not in a module directory because several modules need it, and a test header
+ * may never be included across module directories (src/utests/AGENTS.md): utf_baselib_httpclient8
+ * carries D1's cases and utf_baselib_httpclient12 D2's TLS pair, and utf_baselib_httpclient5 and
+ * utf_baselib_httpclient10 run the peer in their session and driver cases over TLS.
  *
- * It is NOT utf_baselib_httpclient5's peer, which stays where it is: one TLS HTTP/1.1 peer for the
- * whole tree is owed, and is a tidy of its own
+ * The peer is the tree's ONE TLS HTTP/1.1 peer: CS-5 (owed-list row I3) made it the union of the
+ * three copies parallel lanes had written - this one, utf_baselib_httpclient5's and 10's
  */
 
 namespace utest
@@ -71,13 +71,13 @@ namespace utest
          * @brief class TlsPeer - a loopback HTTP/1.1 peer over TLS which runs a canned script on
          * one connection and records HOW its stream ended
          *
-         * SELF CONTAINED, for the reason utf_baselib_httpclient5's TestClientSessionTlsHttp1.h
-         * gives for its own: a test header which includes a sibling module's header silently
-         * duplicates its cases into two binaries (src/utests/AGENTS.md). Its shape is that peer's -
-         * ephemeral IPv4 loopback port, the script on a worker thread, the client connecting to
-         * "localhost" so that the test server certificate's name verifies, and "http/1.1" alone as
-         * the ALPN preference. What it adds is the two ways a SERVER ends a TLS stream, which is the
-         * whole axis of these cases
+         * The shape every copy had - ephemeral IPv4 loopback port, the script on a worker thread,
+         * the client connecting to "localhost" so that the test server certificate's name
+         * verifies, and "http/1.1" alone as the ALPN preference - and the UNION of what their cases
+         * use: the two ways a SERVER ends a TLS stream and the script-end rendezvous (httpclient8's
+         * and 12's), the recorded ending and the octet count (httpclient5's). observeStreamEnd( )
+         * therefore records the ending AND returns it, and readRequestHead( ) counts what it reads:
+         * each case reads only the half it needs
          */
 
         class TlsPeer
@@ -109,7 +109,9 @@ namespace utest
                 m_port( 0U ),
                 m_script( BL_PARAM_FWD( script ) ),
                 m_released( false ),
-                m_hasScriptEnded( false )
+                m_hasScriptEnded( false ),
+                m_hasStreamEnded( false ),
+                m_octetsRead( 0U )
             {
                 std::vector< std::string > preference;
 
@@ -239,6 +241,42 @@ namespace utest
                     );
             }
 
+            /**
+             * @brief Blocks until observeStreamEnd( ) has settled how this stream ended
+             */
+
+            bool waitForStreamEnd() const
+            {
+                bl::os::mutex_unique_lock guard( m_lock );
+
+                return m_cv.wait_for(
+                    guard,
+                    bl::os::chrono::milliseconds( static_cast< std::size_t >( WAIT_IN_MILLISECONDS ) ),
+                    [ this ]() -> bool
+                    {
+                        return m_hasStreamEnded;
+                    }
+                    );
+            }
+
+            auto streamEndCode() const -> bl::eh::error_code
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                return m_streamEndCode;
+            }
+
+            /**
+             * @brief Every octet this peer took off the TLS stream after the handshake
+             */
+
+            std::size_t octetsRead() const NOEXCEPT
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                return m_octetsRead;
+            }
+
             /*
              * The script vocabulary - all synchronous, all on the worker thread
              */
@@ -247,7 +285,7 @@ namespace utest
              * @brief Reads to the end of the request head and stops there
              */
 
-            static auto readRequestHead( SAA_inout sslstream_t& stream ) -> std::string
+            auto readRequestHead( SAA_inout sslstream_t& stream ) -> std::string
             {
                 std::string data;
 
@@ -259,6 +297,8 @@ namespace utest
 
                     const auto transferred =
                         stream.read_some( bl::asio::buffer( buffer, sizeof( buffer ) ), ec );
+
+                    countOctets( transferred );
 
                     if( ec || 0U == transferred )
                     {
@@ -317,14 +357,14 @@ namespace utest
             }
 
             /**
-             * @brief Reads until the stream ends and returns the code it ended with
+             * @brief Reads until the stream ends, records the code it ended with and returns it
              *
              * asio::error::eof means the client sent a close_notify and this peer processed it;
              * asio.ssl.stream:1 means the client's transport ended without one - the same mapping
              * the endings above rely on, from this side
              */
 
-            static auto observeStreamEnd( SAA_inout sslstream_t& stream ) -> bl::eh::error_code
+            auto observeStreamEnd( SAA_inout sslstream_t& stream ) -> bl::eh::error_code
             {
                 char buffer[ 16U * 1024U ];
 
@@ -332,13 +372,32 @@ namespace utest
                 {
                     bl::eh::error_code ec;
 
-                    ( void ) stream.read_some( bl::asio::buffer( buffer, sizeof( buffer ) ), ec );
+                    const auto transferred =
+                        stream.read_some( bl::asio::buffer( buffer, sizeof( buffer ) ), ec );
+
+                    countOctets( transferred );
 
                     if( ec )
                     {
+                        BL_MUTEX_GUARD( m_lock );
+
+                        m_streamEndCode = ec;
+                        m_hasStreamEnded = true;
+
+                        m_cv.notify_all();
+
                         return ec;
                     }
                 }
+            }
+
+            /**
+             * @brief Whether the peer received a TLS close_notify before the stream ended
+             */
+
+            static bool isCloseNotify( SAA_in const bl::eh::error_code& ec ) NOEXCEPT
+            {
+                return ec == bl::asio::error::eof;
             }
 
             /**
@@ -375,6 +434,13 @@ namespace utest
             }
 
         private:
+
+            void countOctets( SAA_in const std::size_t transferred )
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                m_octetsRead += transferred;
+            }
 
             void run()
             {
@@ -439,6 +505,9 @@ namespace utest
             std::string                                                         m_failure;
             bool                                                                m_released;
             bool                                                                m_hasScriptEnded;
+            bool                                                                m_hasStreamEnded;
+            bl::eh::error_code                                                  m_streamEndCode;
+            std::size_t                                                         m_octetsRead;
 
             bl::cpp::SafeUniquePtr< bl::os::thread >                            m_thread;
         };

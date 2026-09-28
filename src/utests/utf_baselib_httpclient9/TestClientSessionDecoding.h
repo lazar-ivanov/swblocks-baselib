@@ -53,8 +53,8 @@
  *
  * Decided: the Content-Encoding list is read across every field, and a response is decoded only
  * when it carries exactly one coding in total; and only when the hop succeeded and the response can
- * carry content - not a response to HEAD, and not a 204 or a 304. Everything else is handed back
- * with its body and all its headers untouched.
+ * carry content - not a response to HEAD, and not a 204 or a 304, and by the same rule not a 205
+ * ( owed-list row I4 ). Everything else is handed back with its body and all its headers untouched.
  *
  * WHY OVER HTTP/1.1, AND WHY THIS PEER. Every case here is a statement about header fields the peer
  * writes - two fields of one name, a list in one field, a HEAD answered with a length, a response
@@ -608,10 +608,16 @@ UTF_AUTO_TEST_CASE( ClientSession_ANotModifiedResponseIsNotDecodedTests )
 }
 
 /**
- * @brief H25 - a 204 carries no content, so it is not decoded
+ * @brief H25 - a 204 carries no content, so it is not decoded - and neither is a 205
  *
  * The third of the three the decision names. RED BEFORE D5: its Content-Encoding was removed.
  * GREEN AFTER: as it came
+ *
+ * A 205 IS THE SAME ANSWER FOR ANOTHER REASON ( owed-list row I4 ). HTTP/1.1 does not end it at its
+ * header section as it ends a 204 ( RFC 9112 6.3 ), so it comes framed - here by Content-Length: 0 -
+ * but a server MUST NOT generate content in one ( RFC 9110 15.3.6 ), so there is nothing to decode.
+ * RED BEFORE I4: its empty body was "decoded" and both fields were removed. GREEN AFTER: both as
+ * they came
  */
 
 UTF_AUTO_TEST_CASE( ClientSession_ANoContentResponseIsNotDecodedTests )
@@ -635,6 +641,25 @@ UTF_AUTO_TEST_CASE( ClientSession_ANoContentResponseIsNotDecodedTests )
 
     UTF_CHECK_EQUAL( fieldsNamed( response, "content-encoding" ), std::string( "[x-utest]" ) );
     UTF_CHECK_EQUAL( bodyOf( response ), std::string() );
+
+    const auto resetContent = fetch(
+        answerWith(
+            "HTTP/1.1 205 Reset Content\r\n"
+            "Content-Encoding: x-utest\r\n"
+            "Content-Length: 0\r\n"
+            "\r\n"
+            )
+        );
+
+    requireTaskSucceeded( resetContent.task );
+
+    const auto& reset = resetContent.requestTask -> response();
+
+    UTF_REQUIRE_EQUAL( reset.status(), 205U );
+
+    UTF_CHECK_EQUAL( fieldsNamed( reset, "content-encoding" ), std::string( "[x-utest]" ) );
+    UTF_CHECK_EQUAL( fieldsNamed( reset, "content-length" ), std::string( "[0]" ) );
+    UTF_CHECK_EQUAL( bodyOf( reset ), std::string() );
 }
 
 /**

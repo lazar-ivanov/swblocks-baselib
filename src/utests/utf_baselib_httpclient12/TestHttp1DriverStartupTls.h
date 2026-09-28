@@ -36,7 +36,7 @@
  * the read's start AFTER its engine step has finished, so even its red run does not drive the two at
  * once - it only shows that the ordering which would forbid it is not there.
  *
- * THE PEER IS utests/baselib/Http1DriverTlsTestUtils.h's, shared with utf_baselib_httpclient8. It ends
+ * THE PEER IS utests/baselib/Http1DriverTlsTestUtils.h's, the tree's one TLS HTTP/1.1 peer. It ends
  * a connection with a close_notify and waits for ours, and never with a bare FIN: a truncation is not
  * what these cases are about, and until CS-6 (I2) the driver's own TLS shutdown then waited the full
  * 60 second protocol timer (measured in D1's module).
@@ -59,7 +59,7 @@ UTF_AUTO_TEST_CASE( Http1DriverTls_NoWriteStartsBeforeTheFirstReadStartReturnsTe
     TlsPeer peer(
         []( SAA_inout TlsPeer& self, SAA_inout TlsPeer::sslstream_t& stream ) -> void
         {
-            const auto head = TlsPeer::readRequestHead( stream );
+            const auto head = self.readRequestHead( stream );
 
             self.record( "head:" + TlsPeer::requestLineOf( head ) );
 
@@ -122,7 +122,7 @@ UTF_AUTO_TEST_CASE( Http1DriverTls_CancelBeforeStartEndsTheConnectionTests )
     TlsPeer peer(
         []( SAA_inout TlsPeer& self, SAA_inout TlsPeer::sslstream_t& stream ) -> void
         {
-            const auto ec = TlsPeer::observeStreamEnd( stream );
+            const auto ec = self.observeStreamEnd( stream );
 
             self.record(
                 asio::error::eof == ec ?

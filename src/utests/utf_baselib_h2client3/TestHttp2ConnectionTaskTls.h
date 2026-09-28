@@ -22,6 +22,7 @@
 #include <baselib/crypto/CryptoBase.h>
 
 #include <utests/baselib/Http2DriverTestUtils.h>
+#include <utests/baselib/Http2TlsTestServer.h>
 #include <utests/baselib/UtfCrypto.h>
 #include <utests/baselib/Utf.h>
 
@@ -56,72 +57,11 @@ namespace utest
             TlsDriverImpl;
 
         /**
-         * @brief class TlsHttp2TestServerT - the peer of design 8.2 over TLS
-         *
-         * S4.4 could not build this: choosing "h2" is the SERVER half of ALPN and no entry point
-         * for it existed in src/include until S4.2 added
-         * crypto::CryptoBase::setAlpnServerPreference. Everything else is the cleartext peer -
-         * which is the point, since TcpServerBase is what performs the server side handshake and
-         * Http2TestConnectionT is already written against a stream policy
-         *
-         * It is also the first instantiation of Http2TestConnectionT over a TLS policy. A template
-         * nothing instantiates is not compiled, and this project has now been bitten by that twice
+         * @brief The TLS peer of design 8.2 with an ALPN preference -
+         * utests/baselib/Http2TlsTestServer.h's, the one peer of this kind in the tree
          */
 
-        template
-        <
-            typename E = void
-        >
-        class TlsHttp2TestServerT :
-            public h2peer::Http2TestServerT< bl::tasks::TcpSslSocketAsyncBase >
-        {
-            BL_DECLARE_OBJECT_IMPL( TlsHttp2TestServerT )
-
-        public:
-
-            typedef h2peer::Http2TestServerT< bl::tasks::TcpSslSocketAsyncBase > base_type;
-
-        protected:
-
-            TlsHttp2TestServerT(
-                SAA_in          const bl::om::ObjPtr< bl::tasks::TaskControlTokenRW >& controlToken,
-                SAA_in          const std::vector< std::string >&                preference
-                )
-                :
-                base_type(
-                    controlToken,
-                    "localhost",
-                    0U /* ephemeral */,
-                    test::UtfCrypto::getDefaultServerKey(),
-                    test::UtfCrypto::getDefaultServerCertificate()
-                    )
-            {
-                /*
-                 * The base constructor has built the server context by now - initServerContext( )
-                 * runs from TcpServerBase's own constructor when the policy needs a handshake
-                 */
-
-                UTF_REQUIRE( nullptr != base_type::m_serverContext.get() );
-
-                bl::crypto::CryptoBase::setAlpnServerPreference(
-                    *base_type::m_serverContext,
-                    preference
-                    );
-            }
-        };
-
-        typedef bl::om::ObjectImpl< TlsHttp2TestServerT<> > TlsHttp2TestServer;
-
-        inline auto makeTlsPeer( SAA_in const std::vector< std::string >& preference )
-            -> bl::om::ObjPtr< TlsHttp2TestServer >
-        {
-            using namespace bl::tasks;
-
-            const auto controlToken =
-                SimpleTaskControlTokenImpl::createInstance< TaskControlTokenRW >();
-
-            return TlsHttp2TestServer::createInstance<>( controlToken, preference );
-        }
+        using h2peer::makeTlsPeer;
 
     } // h2driver
 

@@ -34,6 +34,7 @@
 #include <cstring>
 #include <string>
 
+#include <utests/baselib/Http1DriverTestUtils.h>
 #include <utests/baselib/Http2DriverTestUtils.h>
 #include <utests/baselib/Utf.h>
 
@@ -380,7 +381,7 @@ namespace utest
         typedef bl::om::ObjectImpl< Http1TlsStrandProbe >                       Http1TlsStrandProbeImpl;
 
         /**
-         * @brief makeHttp1TlsFactory( )'s sibling, building the probe above instead of the driver
+         * @brief http1drivertls::makeTlsFactory( )'s sibling, building the probe above instead
          */
 
         inline auto makeProbeTlsFactory(
@@ -479,22 +480,7 @@ namespace utest
             }
         };
 
-        inline auto joinRecords( SAA_in const std::vector< std::string >& records ) -> std::string
-        {
-            std::string result;
-
-            for( std::size_t i = 0U; i < records.size(); ++i )
-            {
-                if( ! result.empty() )
-                {
-                    result += "|";
-                }
-
-                result += records[ i ];
-            }
-
-            return result;
-        }
+        using http1driver::joinEvents;
 
         enum : std::size_t
         {
@@ -840,7 +826,7 @@ namespace utest
                         latched -> waitForFirstChunk(),
                         "the first body chunk never reached the sink, so the driver never held a "
                             "live parser on a response it had begun; the sink recorded: " +
-                            joinRecords( sink -> records() )
+                            joinEvents( sink -> records() )
                         );
 
                     if( isWriteInFlight )
@@ -969,8 +955,8 @@ namespace utest
             result.errorCode = sink -> errorCode();
             result.status = sink -> status();
             result.body = sink -> body();
-            result.events = joinRecords( sink -> records() );
-            result.peerRecords = joinRecords( peer.records() );
+            result.events = joinEvents( sink -> records() );
+            result.peerRecords = joinEvents( peer.records() );
             result.peerEndCode = peer.streamEndCode();
 
             return result;

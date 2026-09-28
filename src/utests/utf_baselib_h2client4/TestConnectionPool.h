@@ -226,9 +226,23 @@ namespace utest
             {
                 BL_NOEXCEPT_BEGIN()
 
-                BL_MUTEX_GUARD( lock );
+                /*
+                 * THE CALLBACK IS DESTROYED ONCE THE LOCK IS RELEASED, NOT UNDER IT. It can hold
+                 * the last reference to the task, and the task the last reference to the execution
+                 * queue it ran on, whose destructor takes that queue's lock. The pool's dispose( )
+                 * takes the queue's lock and then this one - forceFlushNoThrow( ) cancels the task,
+                 * and onCancelRequested( ) locks here - so dropping the callback under this lock
+                 * took the two in the opposite order: the lock-order inversion ThreadSanitizer
+                 * reported in H2Pool_ADriverBesideABareTaskIsAdoptedTests (owed-list row I12)
+                 */
 
-                onReady = bl::tasks::CompletionCallback();
+                bl::tasks::CompletionCallback released;
+
+                {
+                    BL_MUTEX_GUARD( lock );
+
+                    released.swap( onReady );
+                }
 
                 BL_NOEXCEPT_END()
             }
