@@ -31,8 +31,8 @@
  * and TLS, each with and without a strand - and loopback listeners, some with a full accept queue.
  * No TLS peer: nothing here reaches a handshake
  *
- * SIZE, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 31.7 MB clang debug (a64) at
- * d13859c, which by the ratio win-x86 debug has shown over a64 clang debug (1.11 to 1.17,
+ * SIZE, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 31.9 MB clang debug (a64) at
+ * 751c34e, which by the ratio win-x86 debug has shown over a64 clang debug (1.11 to 1.17,
  * notes/plans/issues/windows-matrix-handoff.md and row 5c of astra-remediation-owed-work.md) is
  * about 35 to 37 MB on x86, under the target - inferred, not measured; the Windows handoff measures
  * it. The weight is the connection establisher over the four stream policies; there is no TLS peer
