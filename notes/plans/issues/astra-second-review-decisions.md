@@ -14,10 +14,12 @@ third review, T02.)*
 
 **Scope:** R01–R08 of [astra's second review](../http2-l0-l6-remediation-review-2026-09-26.md), which
 reviewed `db97372`. R09, the stale records, was done at `425802c`. Summaries written that day, true
-when written, went stale again as CS-1 to CS-6 landed; astra's third review found them as T02, and
-CS-8 reconciled them ([`astra-third-review-decisions.md`](astra-third-review-decisions.md)). Each finding was re-verified at the
-source before it was put; the ledger rows are in [`astra-remediation-owed-work.md`](astra-remediation-owed-work.md),
-under "Found by astra's second review".
+when written, went stale again as CS-1 to CS-6 and B6 landed; astra's third review found them as T02
+on 2026-09-28, and CS-8 reconciled them
+([`astra-third-review-decisions.md`](astra-third-review-decisions.md)). Each finding was re-verified
+at the source before it was put; the ledger rows are in
+[`astra-remediation-owed-work.md`](astra-remediation-owed-work.md), under "Found by astra's second
+review".
 
 **Provenance.** Everything below was read at the source on `lazari2` at `425802c`, whose `src/` is
 `db97372`'s. The RFC passages were fetched rather than recalled, after one had been paraphrased wrongly
