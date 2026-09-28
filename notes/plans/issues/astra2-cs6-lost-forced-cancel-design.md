@@ -448,6 +448,33 @@ handshake.
   and the task ends with the same TimeoutException. **A caller sees this only as the deadline holding
   during a retry's resolve**, which is what "one deadline through the response" means; it is named here so
   the orchestrator can take it as a decision if it reads it otherwise.
+
+  *(Added 2026-09-28, on the orchestrator's question: is there any other window with the task Running,
+  the timer armed and the channel closed — a teardown which closes the socket before the timer is
+  cancelled, in particular? None, read at the source:*
+  - *the task's socket is closed only by `resetStreamState( )` (`TcpBaseTasks.h:497-500`,
+    `TcpSslBaseTasks.h:176-181`), whose one caller is the connector's retry (`TcpBaseTasks.h:1486`), and by
+    `createSocket( )` replacing it (`:544`, `TcpSslBaseTasks.h:218`), which finds nothing to replace on a
+    first attempt and a socket the retry already reset on any other; inside a connect, asio's ranged
+    connect also closes and re-opens it between two endpoints (`impl/connect.hpp:473-476`);*
+  - *no teardown closes it: SimpleHttpTask's stop hook cancels the timer first (`SimpleHttpTask.h:238`),
+    and the policies' stop hooks only shut the socket down (`TcpSslBaseTasks.h:540`, `TcpBaseTasks.h:638`)
+    — `shutdownSocket( )` is `shutdown_send` then `cancel( )`, and never closes (`TcpBaseTasks.h:357`,
+    `:363`);*
+  - *`onTimer( )` takes the task lock (`SimpleHttpTask.h:334`), and `notifyReadyImpl( )` runs the stop
+    hooks under that lock and leaves Running before it releases it (`TaskBase.h:564`, `:604`, `:726`), so a
+    timer handler which runs after them finds the task no longer Running and does nothing.*
+
+  *So, with the timer armed and the task Running, the channel is closed only during a handshake retry's
+  resolve and the start of its connect, and — until §9's fix moves the switch under the task lock, which
+  `onTimer( )` also takes — inside asio's switch between two endpoints of that retry's connect. Today the
+  timer is armed only after the handshake (`SimpleHttpTask.h:293-323`), after which no retry can start
+  (the retry needs `! hasHandshakeCompletedSuccessfully( )`, `TcpBaseTasks.h:1469-1494`), so today the
+  condition never matters. **VERIFIED.**)*
+- **Once per task, which is once per run.** "When no timer exists yet" cannot mean less: a connection
+  establisher runs once — a second run is refused (`TcpBaseTasks.h:846-850`, "can be executed only once"),
+  and only the retry, which resets the resolver first (`:1487`), passes that check. **VERIFIED.**
+  *(Added 2026-09-28.)*
 - **The cleartext SimpleHttpTask is unchanged in effect.** Its policy has no handshake, and
   `beginProtocolHandshake( )` calls the continuation at once (`TcpBaseTasks.h:562-569`), so the timer is
   armed in the same connect handler, just before `continueAfterConnected( )`, where it was armed before.
@@ -511,6 +538,14 @@ stage's proxy connect (`TcpTunnelStage.h:1610`) — through one protected helper
   task lock, and for a stranded policy on the strand — and it does the close, the re-open and the next
   connect there. The switch is then ordered with every `cancelTask( )`, which also runs under the lock, and
   with the stranded policies' posted shutdown, which runs on the same strand.
+  *(Added 2026-09-28:)* That handler begins with `BL_TASKS_HANDLER_BEGIN( )`, not the CHK_EC variant — one
+  failed attempt is not the task's failure — and ends with `BL_TASKS_HANDLER_END( )` as the connect handler
+  it replaces does (`TcpBaseTasks.h:1395-1436`), not the multi-operation variant: a connection task's
+  accounting is not entered before the handshake, because a retry restarts establishment in place
+  (`ClientConnectionTaskBase.h:309-319`). When an attempt succeeds, or the last one fails, the task
+  continues exactly as `onConnectionEstablished( )` does today — through its body, not by calling that
+  handler from inside this one, since the task lock is not recursive (`os::mutex` is `std::mutex`,
+  `core/detail/OSBoostImports.h:95`).
 - **The cancel is checked between endpoints, under the lock:** an attempt which failed on a cancelled task
   ends the loop with `operation_aborted` instead of starting the next attempt. Today the loop starts the
   next attempt and the cancel waits for it (§2, the ranged connect's delay).
