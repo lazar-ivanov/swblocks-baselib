@@ -34,6 +34,7 @@
 #include <string>
 #include <vector>
 
+#include <utests/baselib/HeldIoThreads.h>
 #include <utests/baselib/Utf.h>
 
 #include "TcpTeardownTestUtils.h"
@@ -102,6 +103,7 @@ namespace utest
         using tcpteardown::joinRecords;
         using tcpteardown::TlsEndingPeer;
         using forcedcancel::SilentListener;
+        using heldiothreads::HeldIoThreads;
 
         enum : std::size_t
         {
@@ -112,122 +114,6 @@ namespace utest
              */
 
             LOST_CANCEL_BOUND_IN_MILLISECONDS   = 5000U,
-        };
-
-        /**
-         * @brief Holds all but one thread of the I/O thread pool, so that the one left runs every
-         * handler of the case in the order they were queued
-         *
-         * Each held thread runs a handler which blocks until the destructor releases it. The
-         * destructor also waits for each to return, because each refers to this object
-         */
-
-        class HeldIoThreads
-        {
-            BL_NO_COPY_OR_MOVE( HeldIoThreads )
-
-        public:
-
-            HeldIoThreads()
-                :
-                m_toHold( 0U ),
-                m_holding( 0U ),
-                m_returned( 0U ),
-                m_isReleased( false ),
-                m_isHeld( false )
-            {
-                const auto pool = bl::ThreadPoolDefault::getDefault( bl::ThreadPoolId::NonBlocking );
-
-                BL_CHK(
-                    false,
-                    nullptr != pool && pool -> size() >= 1U,
-                    BL_MSG()
-                        << "The I/O thread pool is not available"
-                    );
-
-                m_toHold = pool -> size() - 1U;
-
-                for( std::size_t i = 0U; i < m_toHold; ++i )
-                {
-                    pool -> aioService().post(
-                        [ this ]() -> void
-                        {
-                            hold();
-                        }
-                        );
-                }
-
-                bl::os::mutex_unique_lock guard( m_lock );
-
-                m_isHeld = m_cv.wait_for(
-                    guard,
-                    bl::os::chrono::milliseconds( static_cast< std::size_t >( WAIT_IN_MILLISECONDS ) ),
-                    [ this ]() -> bool
-                    {
-                        return m_holding == m_toHold;
-                    }
-                    );
-            }
-
-            ~HeldIoThreads() NOEXCEPT
-            {
-                BL_NOEXCEPT_BEGIN()
-
-                bl::os::mutex_unique_lock guard( m_lock );
-
-                m_isReleased = true;
-
-                m_cv.notify_all();
-
-                ( void ) m_cv.wait_for(
-                    guard,
-                    bl::os::chrono::milliseconds( static_cast< std::size_t >( WAIT_IN_MILLISECONDS ) ),
-                    [ this ]() -> bool
-                    {
-                        return m_returned == m_holding;
-                    }
-                    );
-
-                BL_NOEXCEPT_END()
-            }
-
-            bool isHeld() const
-            {
-                BL_MUTEX_GUARD( m_lock );
-
-                return m_isHeld;
-            }
-
-        private:
-
-            void hold()
-            {
-                bl::os::mutex_unique_lock guard( m_lock );
-
-                ++m_holding;
-
-                m_cv.notify_all();
-
-                m_cv.wait(
-                    guard,
-                    [ this ]() -> bool
-                    {
-                        return m_isReleased;
-                    }
-                    );
-
-                ++m_returned;
-
-                m_cv.notify_all();
-            }
-
-            mutable bl::os::mutex                                               m_lock;
-            bl::os::condition_variable                                          m_cv;
-            std::size_t                                                         m_toHold;
-            std::size_t                                                         m_holding;
-            std::size_t                                                         m_returned;
-            bool                                                                m_isReleased;
-            bool                                                                m_isHeld;
         };
 
         /**
