@@ -897,6 +897,169 @@ namespace utest
                 );
         }
 
+        /**
+         * @brief Times one request out on its response-headers timer with its stream's close in the
+         * SAME batch, behind the Expired, and checks that the close still sets isRetryable( ) and
+         * outcome( ) - the other half of D1 (b')
+         *
+         * THE FREEZE IS AT COMPLETION AND NOT AT THE FAILURE, and that is decided: a close drained in
+         * the batch which fails the request writes the pair, because the task completes only in that
+         * batch's last phase. applyClosed( ) guards on m_isCompleted alone for exactly that, where
+         * every guard beside it also asks m_isCompletionPending - so a guard "harmonized" to its
+         * siblings would pass every other case and still stop this close writing the pair. This
+         * case is what goes red then. isOwnFailure( ) says the failure was the timeout's
+         *
+         * THE STEPS, each a rendezvous on this thread, as requireATimeoutIsNotReplayed( ) takes them
+         * on a session: run until the probe has seen the submit, which is the batch that arms the
+         * one millisecond headers timer; run ONE handler, which can only be that timer's, since
+         * nothing else is pending on the pool - it posts the Expired and schedules the drain; deliver
+         * the close, which queues behind it; run one handler more - the drain, applying
+         * [ Expired, Closed ], whose completion is on this thread too
+         */
+
+        inline void requireACloseInTheFailuresBatchSetsTheStatus( SAA_in const LateClose lateClose )
+        {
+            using namespace bl;
+            using namespace bl::httpclient;
+            using namespace utest::requesttask;
+
+            const bool isConnectionLoss = LateClose::ConnectionLoss == lateClose;
+
+            const auto connection = ProbeConnection::createInstance(
+                NegotiatedProtocol::fromAlpn( "h2" ),
+                false /* isSubmitRefused */
+                );
+
+            const auto pool = ProbePool::createInstance(
+                om::qi< ClientConnection >( connection ),
+                true /* isAnswered */
+                );
+
+            HttpClientRequestConfig config;
+
+            config.responseHeadersTimeout = time::milliseconds( 1 );
+
+            const auto taskImpl = HttpClientRequestTaskImpl::createInstance(
+                makeRequest(),
+                makeKey(),
+                om::qi< ConnectionPool >( pool ),
+                config
+                );
+
+            const auto task = om::qi< tasks::Task >( taskImpl );
+
+            const auto threadPool = ManualThreadPool::createInstance();
+
+            auto& io = threadPool -> aioService();
+
+            std::unique_ptr< asio::io_service::work > work( new asio::io_service::work( io ) );
+
+            {
+                const auto eq = om::lockDisposable(
+                    tasks::ExecutionQueueImpl::createInstance< tasks::ExecutionQueue >(
+                        tasks::ExecutionQueue::OptionKeepAll
+                        )
+                    );
+
+                eq -> setLocalThreadPool( threadPool.get() );
+
+                eq -> push_back( task );
+
+                requireTrue(
+                    runHandlersUntil( io, [ & ]() -> bool { return connection -> has( "submit" ); } ),
+                    "the request never reached the connection"
+                    );
+
+                /*
+                 * THE HEADERS TIMER, AND ONLY IT - nothing else is pending on this pool
+                 */
+
+                ( void ) io.run_one();
+
+                requireTrue(
+                    ! connection -> has( "cancel:42" ) && tasks::Task::Completed != task -> getState(),
+                    "the timer's Expired should have been posted and not yet applied"
+                    );
+
+                if( isConnectionLoss )
+                {
+                    connection -> publishState( ConnectionState::Draining );
+
+                    connection -> deliverClosed(
+                        eh::errc::make_error_code( eh::errc::connection_reset ),
+                        false /* isRetryable */
+                        );
+                }
+                else
+                {
+                    connection -> deliverClosed(
+                        eh::errc::make_error_code( eh::errc::connection_aborted ),
+                        true /* isRetryable */
+                        );
+                }
+
+                /*
+                 * THE DRAIN - [ Expired, Closed ] in one batch, and the task's completion behind it,
+                 * on this thread
+                 */
+
+                ( void ) io.run_one();
+
+                requireTrue( connection -> has( "cancel:42" ), "the timeout was never applied" );
+
+                requireTrue(
+                    tasks::Task::Completed == task -> getState(),
+                    "the batch which applied the timeout should have completed the request"
+                    );
+
+                requireTrue( task -> isFailed(), "a request which timed out should have failed" );
+
+                requireTrue(
+                    std::string::npos != messageOf( task ).find( "has timed out" ),
+                    "the request should have failed with the timeout, and it reports: " +
+                        messageOf( task )
+                    );
+
+                UTF_CHECK( taskImpl -> isOwnFailure() );
+
+                /*
+                 * THE ANSWER: the close behind the timeout wrote what the connection did
+                 */
+
+                UTF_CHECK_EQUAL(
+                    statusOf( taskImpl ),
+                    std::string(
+                        isConnectionLoss ?
+                            "retryable=false outcome=unusable" :
+                            "retryable=true outcome=failed"
+                        )
+                    );
+
+                /*
+                 * AND THE POOL WAS TOLD THE SAME, once - its release is a deferred action of the
+                 * batch which has just been run
+                 */
+
+                UTF_REQUIRE_EQUAL( pool -> releases().size(), 1U );
+
+                UTF_REQUIRE_EQUAL(
+                    pool -> releases()[ 0 ],
+                    std::string( isConnectionLoss ? "42:unusable" : "42:failed" )
+                    );
+            }
+
+            /*
+             * THE QUEUE FIRST, THEN THE POOL IT POINTS AT - and every handler still pending is
+             * run, so that nothing holds a task when the case ends
+             */
+
+            work.reset();
+
+            io.restart();
+
+            ( void ) io.run();
+        }
+
     } // afterthefailure
 
 } // utest
@@ -1091,6 +1254,29 @@ UTF_AUTO_TEST_CASE( HttpClientRequestTask_ACloseAfterTheFailureChangesNoStatusTe
     requireALateCloseChangesNoStatus( FailBy::Cancel, LateClose::Retryable );
     requireALateCloseChangesNoStatus( FailBy::HeadersTimeout, LateClose::ConnectionLoss );
     requireALateCloseChangesNoStatus( FailBy::HeadersTimeout, LateClose::Retryable );
+}
+
+/**
+ * @brief A close drained in the SAME batch as a timeout still sets isRetryable( ) and outcome( ) -
+ * the freeze is at completion, not at the failure
+ *
+ * The other half of D1 (b'), and the half no other case can tell apart: every case which reads the
+ * pair reads it where the close or a refusal IS the answer, and the session reads it only after its
+ * isOwnFailure( ) refusal. Run twice, against a connection loss published as Draining and a close
+ * marked retryable, each drained in one batch behind the timer's Expired.
+ *
+ * GREEN BEFORE AND AFTER the freeze, which keeps this half. ITS CONTROL is the guard harmonized to
+ * its siblings' - ! m_isCompleted && ! m_isCompletionPending - under which the close writes nothing:
+ * the status then reads the failure's, retryable=false outcome=failed, where the connection said
+ * unusable or retryable, while the pool's record is unchanged
+ */
+
+UTF_AUTO_TEST_CASE( HttpClientRequestTask_ACloseInTheFailuresBatchStillSetsTheStatusTests )
+{
+    using namespace utest::afterthefailure;
+
+    requireACloseInTheFailuresBatchSetsTheStatus( LateClose::ConnectionLoss );
+    requireACloseInTheFailuresBatchSetsTheStatus( LateClose::Retryable );
 }
 
 #endif /* __UTEST_TESTHTTPCLIENTREQUESTTASKAFTERTHEFAILURE_H_ */
