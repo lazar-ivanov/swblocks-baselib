@@ -38,6 +38,7 @@
 #include <vector>
 
 #include <utests/baselib/Http2DriverTestUtils.h>
+#include <utests/baselib/Http2TlsTestServer.h>
 #include <utests/baselib/UtfCrypto.h>
 #include <utests/baselib/Utf.h>
 
@@ -67,64 +68,11 @@ namespace utest
     namespace tlssession
     {
         /**
-         * @brief class PreferringTlsPeerT - the HTTP/2 peer of design 8.2 over TLS, choosing from an
-         * ALPN preference the case gives it
-         *
-         * utf_baselib_httpclient5 has a peer of this shape, which is not shared, because a test
-         * header may never be included across module directories ( src/utests/AGENTS.md ). The
-         * preference is applied to the server context the base has already built: initServerContext( )
-         * runs from TcpServerBase's own constructor when the policy needs a handshake
+         * @brief The TLS peer of design 8.2 with an ALPN preference -
+         * utests/baselib/Http2TlsTestServer.h's, the one peer of this kind in the tree
          */
 
-        template
-        <
-            typename E = void
-        >
-        class PreferringTlsPeerT :
-            public h2peer::Http2TestServerT< bl::tasks::TcpSslSocketAsyncBase >
-        {
-            BL_DECLARE_OBJECT_IMPL( PreferringTlsPeerT )
-
-        public:
-
-            typedef h2peer::Http2TestServerT< bl::tasks::TcpSslSocketAsyncBase > base_type;
-
-        protected:
-
-            PreferringTlsPeerT(
-                SAA_in          const bl::om::ObjPtr< bl::tasks::TaskControlTokenRW >& controlToken,
-                SAA_in          const std::vector< std::string >&                preference
-                )
-                :
-                base_type(
-                    controlToken,
-                    "localhost",
-                    0U /* ephemeral */,
-                    test::UtfCrypto::getDefaultServerKey(),
-                    test::UtfCrypto::getDefaultServerCertificate()
-                    )
-            {
-                UTF_REQUIRE( nullptr != base_type::m_serverContext.get() );
-
-                bl::crypto::CryptoBase::setAlpnServerPreference(
-                    *base_type::m_serverContext,
-                    preference
-                    );
-            }
-        };
-
-        typedef bl::om::ObjectImpl< PreferringTlsPeerT<> >                      PreferringTlsPeer;
-
-        inline auto makePreferringTlsPeer( SAA_in const std::vector< std::string >& preference )
-            -> bl::om::ObjPtr< PreferringTlsPeer >
-        {
-            using namespace bl::tasks;
-
-            const auto controlToken =
-                SimpleTaskControlTokenImpl::createInstance< TaskControlTokenRW >();
-
-            return PreferringTlsPeer::createInstance<>( controlToken, preference );
-        }
+        using h2peer::makeTlsPeer;
 
         /**
          * @brief class UploadSourceT - a streaming upload which produces real bytes and can rewind
@@ -222,7 +170,7 @@ UTF_AUTO_TEST_CASE( ClientSessionTls_StreamingUploadAloneIsOfferedHttp2OnlyTests
     preference.push_back( "http/1.1" );
     preference.push_back( "h2" );
 
-    const auto peer = makePreferringTlsPeer( preference );
+    const auto peer = makeTlsPeer( preference );
 
     peer -> setResponder(
         []( SAA_in const h2peer::Http2TestRequest& request ) -> h2peer::Http2ResponseScript
