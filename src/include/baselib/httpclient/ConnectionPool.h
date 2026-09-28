@@ -772,6 +772,14 @@ namespace bl
                 cpp::ScalarTypeIniter< bool >                                   isScheduled;
 
                 /**
+                 * A failed attempt the ConnectionUnusable arm of releaseStream( ) retired this entry
+                 * for and left to the next refreshEntry( ) to report - which reports it once and
+                 * clears it
+                 */
+
+                cpp::ScalarTypeIniter< bool >                                   hasUnreportedFailure;
+
+                /**
                  * Whether the pool has already asked this entry's tasks to stop - see
                  * forgetConnection( ), which is where an entry the pool lets go of is stopped
                  */
@@ -1326,6 +1334,32 @@ namespace bl
                 )
             {
                 bool hasFailed = false;
+
+                if( entry -> hasUnreportedFailure )
+                {
+                    /*
+                     * The failed attempt releaseStream( )'s ConnectionUnusable arm retired this entry
+                     * for, reported here and once - the arms below all find it retired
+                     */
+
+                    entry -> hasUnreportedFailure = false;
+
+                    hasFailed = true;
+
+                    const auto eptr = entry -> attempt.task ?
+                        entry -> attempt.task -> exception() : std::exception_ptr();
+
+                    failure = eptr ? eptr : makeException< UnexpectedException >(
+                        resolveMessage(
+                            BL_MSG()
+                                << "A connection to '"
+                                << entry -> key.host
+                                << ":"
+                                << entry -> key.port.value()
+                                << "' became unusable before a request completed on it"
+                            )
+                        );
+                }
 
                 /*
                  * ONE READING OF THE TASK CONNECTION'S STATE PER EXAMINE, and BOTH decisions which
@@ -2552,6 +2586,23 @@ namespace bl
                                 entry -> isRetired = true;
 
                                 ++m_stats.connectionsRetired.lvalue();
+
+                                /*
+                                 * A NEVER-USABLE ENTRY RETIRED HERE IS A FAILED ATTEMPT, and this is
+                                 * the arm which retires it, so it is this arm's to report - once
+                                 * per entry, by the arm which retires it, the rule refreshEntry( )'s
+                                 * arms follow. Each of them finds the entry retired from here on and
+                                 * reports nothing, so the waiters queued behind it were never charged
+                                 * ( owed-list row I10 ). "Never usable" is the Closed arm's rule and
+                                 * its two witnesses: an entry which was seen Ready, or on which a
+                                 * response completed, was no failed attempt. The report is made by
+                                 * the examine below, which is where waiters are charged
+                                 */
+
+                                if( ! entry -> isReady && ! entry -> isPeerLimitKnown )
+                                {
+                                    entry -> hasUnreportedFailure = true;
+                                }
                             }
                         }
 
