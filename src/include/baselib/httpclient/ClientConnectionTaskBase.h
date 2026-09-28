@@ -502,7 +502,44 @@ namespace bl
                             << m_config.connectTimeout
                         );
 
+                    /*
+                     * WHETHER THIS DEADLINE IS WHAT CANCELS, read before the cancel is requested and
+                     * under the task lock, which a requestCancel( ) takes too. A deadline which fires
+                     * on a task someone else has already cancelled does not claim that cancel: it
+                     * gives no reason below, and requestCancelInternal( ), which is idempotent, adds
+                     * nothing to it. That is a cancel which was requested and then lost - CS-6's
+                     * D-L3-1 - and the re-issue CS-6 adds to this function builds on this branch
+                     */
+
+                    const bool isDeadlineCancel = ! TaskBase::isCanceled();
+
                     TaskBase::requestCancelInternal();
+
+                    /*
+                     * AND ITS REASON, as the pool's establishment bound gives one ( cancelReason( ) ):
+                     * the cancel's own failure is operation_aborted, which says nothing about this
+                     * deadline, and onTaskStoppedNothrow( ) chains the reason onto it. Set after the
+                     * cancel is requested, which is safe - the cancel is posted to the strand, and
+                     * the terminal needs this lock. A reason the pool gave first is kept
+                     */
+
+                    if( isDeadlineCancel && ! m_cancelReason )
+                    {
+                        m_cancelReason = std::make_exception_ptr(
+                            BL_EXCEPTION(
+                                TimeoutException(),
+                                resolveMessage(
+                                    BL_MSG()
+                                        << "A connection to '"
+                                        << m_key.host
+                                        << ":"
+                                        << m_key.port.value()
+                                        << "' did not establish within "
+                                        << m_config.connectTimeout
+                                    )
+                                )
+                            );
+                    }
                 }
 
                 BL_NOEXCEPT_END()
@@ -742,7 +779,10 @@ namespace bl
 
                 BL_MUTEX_GUARD( base_type::m_lock );
 
-                m_cancelReason = reason;
+                if( ! m_cancelReason )
+                {
+                    m_cancelReason = reason;
+                }
 
                 BL_NOEXCEPT_END()
             }
