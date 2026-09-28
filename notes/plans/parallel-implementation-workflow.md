@@ -9,8 +9,9 @@ its rules.
 **What it is for.** Implementing several **already decided** change-sets at once, each in its own
 git worktree, each reviewed until an independent reviewer and the orchestrator agree, each gated
 before it is called ready. It is not a way to take decisions: a change-set enters this workflow with
-its shape decided by the maintainer and recorded. What the work finds on the way is batched and put
-back to the maintainer as decisions, per the root `AGENTS.md`.
+its shape decided by the maintainer and recorded. What the work finds on the way is folded into the
+open change-set, and anything that needs a decision is put to the maintainer as soon as it is clear,
+per the root `AGENTS.md`.
 
 **Binding alongside it:** the root [`AGENTS.md`](../../AGENTS.md) — "Parallel work across worktrees",
 the build and repetition rules, "Monitoring A Long Build Or Test Run" — and
@@ -33,7 +34,7 @@ Both agent types run at **maximum reasoning effort**. Their definitions are in A
 ## 2. Setting up
 
 1. **The change-sets.** Group decided work by the files a lane would touch, per `AGENTS.md`'s
-   batching rule: several findings in one file are one change-set. **Change-sets which touch
+   folding rule: several items in one file are one change-set. **Change-sets which touch
    disjoint files run in parallel; overlapping ones are sequenced.** Order them by what should land
    first, and say why.
 2. **Agent definitions.** `~/.claude/agents/opus-lane.md` and `~/.claude/agents/fable-reviewer.md`,
@@ -119,9 +120,12 @@ When the lane reports its change-set implemented:
    so it keeps its context. Neither side's word settles a point; the source does. A disagreement
    that the source cannot settle is a decision, and goes to the maintainer.
 4. **The lane implements the agreed findings**, with evidence, and reports again.
-5. **Repeat until the review has no open finding.** Record the rounds and what each changed; a
-   review loop that keeps finding things is working, not failing — but what it finds that is outside
-   the change-set is batched for the maintainer, not added to the lane.
+5. **Repeat until the review has no open finding.** Record the rounds and what each changed. A review
+   loop that keeps finding things is working, not failing. What it finds beyond the change-set's
+   original scope is folded into the change-set, with the lane's ownership widened. Anything that
+   needs a decision is put to the maintainer as soon as the decision is clear, before the lane
+   reaches it, never held for the end. A decision the implementation later undermines is put again
+   (`AGENTS.md`, "Fold what the implementation finds").
 
 ### 4.4 Integration
 
@@ -171,8 +175,10 @@ Owed platform runs are recorded against it, not silently waited on.
 
 - **One decision record per round**, with each decision as put and as taken; each change-set's
   section gains its commits, review rounds and gate result when it is ready.
-- **The consolidated owed list is swept at the end of every change-set**, in both directions: work
-  that landed is marked, and anything the work found goes on as OPEN, to be put as a decision.
+- **The consolidated owed list is swept at the end of every change-set**, in both directions, and
+  work that landed is marked. What the work found is never added to it: that was folded or decided
+  during the run. The list holds only the three kinds `AGENTS.md` allows — what the maintainer
+  deferred, what needs another host, and gated core work — each with its reason.
 - **Corrections are dated and made at the claim**, with the original left legible.
 
 ## 7. Restarting

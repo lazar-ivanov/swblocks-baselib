@@ -50,20 +50,29 @@ three separate failures of that list, and only the first is obvious:
 Reporting a category is not reporting its contents: *dispositioned*, *deferred with reasoning* and
 *done* are three different states, and only the last one means nobody can still hit it.
 
-**Batch what the work finds. Do not schedule a lane per finding.**
+**Fold what the implementation finds into the implementation. Never hand back a list of new owed
+work.**
 
-Good work finds things, and a review loop that keeps finding them is working rather than failing —
-but scheduling each one the moment it appears is what turns a bounded batch into an open-ended one.
-Closing a single blind spot in the test-inventory tool became **five** change-sets that way, each
-with its own design, implementation, review round and merge.
+Implementation turns things up — in a lane, a review, a gate or a sanitizer run. Each one is dealt
+with while the work is still open. Finishing a change-set and then presenting a list of "owed" items
+it found defeats the point of finishing it.
 
-- Collect what a round turns up and bring it as **one decision round**, ordered by what to do first.
-- Group by what a lane would actually touch: several findings in one file or one tool are one
-  change-set, not several.
-- A finding recorded and deferred is not lost — that is what the owed list and the deferral records
-  are for, and the sweep above is what stops it being forgotten.
-- **The exception is a live defect that hands a caller a wrong answer.** Those are scheduled on
-  sight; everything else waits for the batch.
+- **Fold it into the change-set that is open on those files**, or the nearest open one, and widen
+  that lane's ownership to cover it. Several items in one file are one change-set. Never schedule a
+  new lane per finding: closing one blind spot in the test-inventory tool once became **five**
+  change-sets that way.
+- **If it needs a decision, ask as soon as the decision is clear** — in the shape above, before the
+  work reaches it, so that nothing later waits on it. Never collect decisions to the end. Keep the
+  rest of the work moving while the maintainer answers.
+- **If the implementation later shows that a decision must be reversed or refined, ask again**, as
+  soon as that is known, and say what changed.
+- **A consequence of a decision already taken, or a text correction, needs no decision**: fold it.
+- **Only three things may stay owed**, each with its reason recorded:
+  - what the maintainer explicitly defers;
+  - what needs a host this one is not, such as the Windows matrix;
+  - core-code work the maintainer requires to land as its own gated change-set — and even then, the
+    decision about that work is asked during the run.
+- **A live defect that hands a caller a wrong answer is fixed on sight.**
 
 **Always use the project's Python virtual environment.**
 
@@ -395,10 +404,11 @@ For detailed build system documentation, see `scripts/devenv7/AGENTS.md`:
 
 ---
 
-**Document Version:** 2.14
+**Document Version:** 2.15
 **Last Updated:** 2026-09-27
 
 **Changelog:**
+- v2.15 (2026-09-27): Fold what the implementation finds into the implementation. Ask each decision as soon as it is clear, so no later work waits on it, and ask again if the implementation undermines it. Replaces "batch what the work finds", which had let findings pile up as owed work
 - v2.14 (2026-09-27): Parallel work across worktrees points to the full procedure in notes/plans/parallel-implementation-workflow.md
 - v2.13 (2026-09-24): 50 runs is the default and 600 only where the rate itself is the acceptance criterion; and batch what the work finds into one decision round instead of a lane per finding
 - v2.12 (2026-09-24): Sweep the owed list every change-set — an item observed twice is a decision waiting, not a note to write again; and evidence goes to the log directory before it is cited
