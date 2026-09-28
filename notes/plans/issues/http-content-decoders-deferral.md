@@ -158,9 +158,9 @@ recorded **here** rather than in a ledger because `ContentDecoder.h`'s file note
 author to this document by name, and because none of them is the codec's own work. **They are a gate,
 not a deferral:** shipping a codec without P1 puts unbounded CPU under a queue-wide mutex.
 
-*2026-09-28: two of the three are closed in their minimal form — P2 and P3, by D5 in CS-2 and a 205
-in CS-4; each section below says where, and "revisited" further down says what was decided. P1 is live
-for an application that registers a decoder, and is still the gate.*
+*2026-09-28: two of the three are closed — P3, and P2 in its minimal form — by D5 in CS-2, with a 205
+added in CS-4; each section below says where, and "revisited" further down says what was decided. P1
+is live for an application that registers a decoder, and is still the gate.*
 
 ### P1. The decode runs under the execution queue's scheduling lock, uncancellable and undeadlined
 
