@@ -350,11 +350,11 @@ namespace bl
              * @brief Cancels the operations which are still in flight - the sockets and the timers
              *
              * It is called exactly once per run, on the first error or on the first completed
-             * operation after beginClose(), and never while the task lock is held. It must not
-             * acquire the task lock, and it must not begin new operations
-             *
-             * An exception thrown out of it is logged and discarded, because the task is already
-             * on its way to completing with an error which matters more
+             * operation after beginClose(), and never while the task lock is held, except from an
+             * initiator's catch inside a handler body, where the terminal cannot be due. It must
+             * not acquire the task lock, and it must not begin new operations. An exception thrown
+             * out of it is logged and discarded, because the task is already on its way to
+             * completing with an error which matters more
              */
 
             virtual void initiateClose()
