@@ -1422,15 +1422,24 @@ namespace bl
 
                 if( end == endpoints )
                 {
-                    asio::post(
-                        base_type::getSocket().get_executor(),
-                        cpp::bind(
-                            &this_type::onConnectionEstablished,
-                            om::ObjPtrCopyable< this_type >::acquireRef( this ),
-                            asio::error::make_error_code( asio::error::not_found ),
-                            end
-                            )
+                    /*
+                     * Posted, as asio's loop posts it - through the socket's executor where Boost has
+                     * executors, and through its io_service before that (devenv2-3 are Boost 1.58 and
+                     * 1.63, which have neither asio::post( ) nor get_executor( ))
+                     */
+
+                    auto handler = cpp::bind(
+                        &this_type::onConnectionEstablished,
+                        om::ObjPtrCopyable< this_type >::acquireRef( this ),
+                        asio::error::make_error_code( asio::error::not_found ),
+                        end
                         );
+
+                    #if ( ( BOOST_VERSION / 100 ) >= 1072 )
+                    asio::post( base_type::getSocket().get_executor(), std::move( handler ) );
+                    #else
+                    base_type::getSocket().get_io_service().post( std::move( handler ) );
+                    #endif
 
                     return;
                 }
