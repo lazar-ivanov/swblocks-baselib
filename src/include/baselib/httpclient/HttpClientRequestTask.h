@@ -894,7 +894,7 @@ namespace bl
                      * and by the pairing rule at releaseConnectionSlot( ) none is needed
                      */
 
-                    releaseConnectionSlot( event.connection, deferred );
+                    releaseConnectionSlot( event.connection, m_outcome.value(), deferred );
 
                     return;
                 }
@@ -955,7 +955,7 @@ namespace bl
 
                     failWith( std::current_exception(), false /* isExpected */ );
 
-                    releaseConnectionSlot( event.connection, deferred );
+                    releaseConnectionSlot( event.connection, m_outcome.value(), deferred );
 
                     releaseConnection( event.connection, deferred );
 
@@ -1023,7 +1023,7 @@ namespace bl
                             );
                     }
 
-                    releaseConnectionSlot( event.connection, deferred );
+                    releaseConnectionSlot( event.connection, m_outcome.value(), deferred );
 
                     /*
                      * No stream was opened, so no onClosed( ) will ever arrive to let go of the
@@ -1561,13 +1561,18 @@ namespace bl
                 }
 
                 m_isStreamClosed = true;
-                m_isRetryable = event.isRetryable;
 
                 cancelAllTimers();
 
                 const om::ObjPtrCopyable< ClientConnection > connection( m_connection );
 
-                m_outcome = outcomeOnClosed( event );
+                const auto outcome = outcomeOnClosed( event );
+
+                if( ! m_isCompleted )
+                {
+                    m_isRetryable = event.isRetryable;
+                    m_outcome = outcome;
+                }
 
                 /*
                  * THE SINK IS TOLD SOMETHING ONLY WHEN THIS CLOSE IS THE ANSWER, and both halves
@@ -1590,7 +1595,7 @@ namespace bl
 
                 if(
                     m_bodySink &&
-                    RequestOutcome::Completed == m_outcome &&
+                    RequestOutcome::Completed == outcome &&
                     ! m_isCompletionPending &&
                     ! m_isCompleted
                     )
@@ -1605,7 +1610,7 @@ namespace bl
                         );
                 }
 
-                releaseConnectionSlot( connection, deferred );
+                releaseConnectionSlot( connection, outcome, deferred );
 
                 answerOnClosed( event );
 
@@ -2136,6 +2141,7 @@ namespace bl
 
             void releaseConnectionSlot(
                 SAA_in          const om::ObjPtrCopyable< ClientConnection >&   connection,
+                SAA_in          const RequestOutcome                            outcome,
                 SAA_inout       std::vector< cpp::void_callback_t >&            deferred
                 )
             {
@@ -2146,7 +2152,6 @@ namespace bl
 
                 const om::ObjPtrCopyable< ConnectionPool > pool( m_pool );
                 const auto handle = m_handle.value();
-                const auto outcome = m_outcome.value();
 
                 const auto held = connection;
 
