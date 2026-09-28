@@ -508,8 +508,10 @@ namespace bl
                      * under the task lock, which a requestCancel( ) takes too. A deadline which fires
                      * on a task someone else has already cancelled does not claim that cancel: it
                      * gives no reason below, and requestCancelInternal( ), which is idempotent, adds
-                     * nothing to it. That is a cancel which was requested and then lost - CS-6's
-                     * D-L3-1 - and the re-issue CS-6 adds to this function builds on this branch
+                     * nothing to it. That is another cancel still on its way - this deadline came
+                     * due first, and cancelConnectDeadline( ) cannot recall a handler already due -
+                     * or one which was requested and then lost, CS-6's D-L3-1, whose re-issue
+                     * builds on this branch
                      */
 
                     const bool isDeadlineCancel = ! TaskBase::isCanceled();
@@ -682,6 +684,12 @@ namespace bl
              * it is answered, is told both. A failure which already carries a nested cause keeps
              * that one; a task which ended by itself before the cancel came was never cancelled
              *
+             * WITH ONE EXCEPTION: a task which failed by itself after its TLS handshake, and
+             * before its preface was away, still shuts its TLS session down with the connect
+             * deadline armed. A deadline which fires during that shutdown cancels it and gives its
+             * reason, and the reason then goes onto the task's own failure, where it reads as
+             * context and not as the cause
+             *
              * IN PLACE IS WHAT REACHES THE RECORDED EXCEPTION, on every platform: where
              * std::rethrow_exception( ) hands the catch a copy ( MSVC ), the copy shares
              * boost::exception's error-info container with the original by reference count, so the
@@ -773,8 +781,8 @@ namespace bl
              * The pool gives one when it abandons the connection for its establishment bound, and
              * onTaskStoppedNothrow( ) chains it onto the cancel's failure. Additive: a cancel with no
              * reason, and a task which ends before the cancel arrives, are what they were. The first
-             * reason given is kept - the pool's bound, or the connect deadline, whichever cancelled
-             * first
+             * reason given is kept - the pool's bound's or the connect deadline's, whichever gives
+             * one first
              */
 
             void cancelReason( SAA_in const std::exception_ptr& reason ) NOEXCEPT
