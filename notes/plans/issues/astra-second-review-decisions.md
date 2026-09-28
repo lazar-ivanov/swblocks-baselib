@@ -602,7 +602,7 @@ rule is now in `AGENTS.md` v2.15, "Fold what the implementation finds" (`ea7e414
 
 | Question | Decided |
 |---|---|
-| **A timed-out request can be replayed.** CS-4's lane found it while implementing I5: a request's own timeout and a connection close in one drain batch, and the close's outcome marks the hop retryable, on a new full total deadline | **(B), the general rule.** A hop whose failure the request task decided itself — a timeout, a body cap, a sink or body source which threw — is never replayed. Only a failure which is the connection's may be. It is one flag, and I5 is its first instance |
+| **A timed-out request can be replayed.** CS-4's lane found it while implementing I5: a request's own timeout and a connection close in one drain batch, and the close's outcome marks the hop retryable, on a new full total deadline. *(Corrected 2026-09-28 by the lane: not on a new full total deadline. The chain's total timeout is budgeted across hops, so a hop which hit it could not start a replay anyway; only the headers and idle timeouts restart per hop. The decision is unaffected.)* | **(B), the general rule.** A hop whose failure the request task decided itself — a timeout, a body cap, a sink or body source which threw — is never replayed. Only a failure which is the connection's may be. It is one flag, and I5 is its first instance |
 | **The gates for CS-4 and CS-5** | **One gate.** CS-4 and CS-5 merge when their reviews close, without separate gates. CS-6's whole-suite gate, which rebuilds and runs every module they touch, gates all three at once. A failure there is attributed by the module and its dependencies |
 | **A forced cancel can be lost between two steps of a TLS handshake (D-L3-1).** CS-6's lane found it while characterizing I13. `cancel( )` reaps only the operations registered at that instant. If a cancel lands between the ClientHello's write and the ServerHello's read, the next step arms a read on a socket whose receive side is open. Every later cancel is then a no-op, because `requestCancelInternal( )` is idempotent — and the protocol timer and the connect deadline cancel through it. Against a silent peer the task never ends. It is pre-existing, and reproduced deterministically: 3 of 3 on the stranded TLS policy | **Folded into CS-6 now**, the core change-set already open on the forced-cancel path, sharing its whole-suite gate. A design note comes first. Its shape — the lane's candidates are re-issuing the socket cancel from deadlines, a handshake bound, a receive-side shutdown during the handshake, or a close on the strand — is put to the maintainer with evidence before any code |
 
@@ -621,13 +621,37 @@ before choosing.
   - **Excluded:** three handlers the design note had included — the HTTP/2 ping and drain deadlines,
     and `SimpleHttpTask`'s request timer. Their own `cancelTask( )` cancels their timer, so they cannot
     fire after a cancel.
-  - **The gap left, recorded as a known limit of the shape:** an HTTP/2 connection or a
-    `SimpleHttpTask` whose peer stops mid-record and stays open is still not bounded after a lost
-    cancel. Only a re-cancel watchdog, (e), would close it, and it was not chosen.
+  - **The gap left, recorded as a known limit of the shape.** *Refined 2026-09-28, by D1 below. As
+    first recorded, it named only the HTTP/2 driver and `SimpleHttpTask`, mid-record.*
+    - After a cancel lost in the gap of a TLS read, or of a cleartext `async_read_until( )`, the task
+      ends only when the peer sends or closes. A peer which then sends nothing, and does not close in
+      answer to our FIN, holds it.
+    - That holds on:
+      - the HTTP/2 driver;
+      - the HTTP/1.1 driver while it reads a response;
+      - `SimpleHttpTask` over TLS, and, for its status line and headers, over cleartext;
+      - the block transfer client and server over TLS.
+    - The gap opens mid-record, and also after a non-application record such as a TLS 1.3
+      NewSessionTicket.
+    - A deliberate close in either HTTP driver meets the same gap with no FIN sent at all, since it
+      shuts the send side only while a write is in flight.
+    - A re-cancel watchdog, (e), would close all of it. Per-operation cancellation, (f), would close
+      the stranded consumers' part. Neither was chosen.
 - **The retry guard:** the connector does not retry a handshake which failed because it was
   cancelled.
 
 It is core code, in CS-6 under its whole-suite gate.
+
+**Asked and decided during the reviews of CS-4 and of D-L3-1's design note, 2026-09-28, all as
+recommended:**
+
+| Question | Decided |
+|---|---|
+| **I6 carried only the pool's bound** (CS-4's review, F1). The connection's own connect deadline is 60 s by default, against the pool's 120 s, and is armed once the TCP connect completes. It is what ends a stalled proxy tunnel or TLS handshake, and its cancel still read "Operation canceled" | **Fold into CS-4, as I6's sibling.** The connect deadline gives its reason through I6's mechanism, and only when it is the one requesting the cancel. The first reason given is kept |
+| **Rule (B) and a body source** (CS-4's review, F4). The connection's failure wins a batch, and the caller's source then throws in the same batch. Is the hop replayed? | **The rule reads by which failure won.** The connection's failure won, so the hop may be replayed. A source is rewound for a replay, and one which cannot rewind is already refused. A sink has no rewind, which is why one that threw is refused either way (D4). Written into the code's comments |
+| **D1 — the known limit of D-L3-1's shape was understated** (the note's review, F2) | **Accepted in full**, and recorded in the shape's entry above |
+| **D2 — `SimpleHttpSslTask`'s handshake has no deadline at all** (the note's review, F11). Its request timer is armed only after the handshake, so a server which accepts TCP and never answers holds it. No cancel is involved. Pre-existing | **Fold into CS-6.** `SimpleHttpTask` arms its own request timer before the handshake, so the request timeout covers it. `SimpleHttpTask.h` joins CS-6 |
+| **D3 — on the plain policies, a forced cancel races asio's ranged connect** (the note's review, F10). The connect closes and re-opens the same socket on an I/O thread, under no lock of ours. Pre-existing, I13's class; not measured | **Characterize it in CS-6**, under ThreadSanitizer. The fix's shape comes back to the maintainer on the report |
 
 ## 10. The change-sets, as they landed
 
