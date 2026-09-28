@@ -107,3 +107,7 @@
 # nor is one which timed out
 --log_level=message --run_test=ClientSession_AnOverflowedRequestIsNotReplayedTests
 --log_level=message --run_test=ClientSession_ATimedOutRequestIsNotReplayedTests
+
+# CS-4 checkpoint review (P3) - the rule's control: a failure which is the connection's is still
+# replayed under retryIdempotentOnConnectionLoss, and not without it
+--log_level=message --run_test=ClientSession_AConnectionLossIsReplayedUnderTheKnobTests

@@ -308,6 +308,118 @@ namespace utest
         }
 
         /**
+         * @brief The overflow case's batch with no cap crossed - so the failure which wins is the
+         * CONNECTION's - with retryIdempotentOnConnectionLoss on or off
+         *
+         * [ headers, the ten bytes, a connection loss published as Draining ] in one batch, held by
+         * the gated probe as before, and the default caps take the ten bytes. The close fails the
+         * hop with the connection's own error and reads ConnectionUnusable, which is what the knob
+         * feeds on. With the knob on, the session replays the GET, and the gated probe answers the
+         * replay on its own - the same ten bytes and a clean close - so the chain succeeds on its
+         * second attempt. With the knob off, one attempt and the connection's failure
+         */
+
+        inline void requireAConnectionLossIsReplayedOnlyUnderTheKnob( SAA_in const bool isKnobOn )
+        {
+            using namespace bl;
+            using namespace bl::httpclient;
+            using namespace utest::requesttask;
+            using namespace utest::sinkaccounting;
+
+            const auto connection = GatedProbeConnection::createInstance(
+                NegotiatedProtocol::fromAlpn( "h2" ),
+                std::string( "0123456789" )
+                );
+
+            const auto pool = ProbePool::createInstance(
+                om::qi< ClientConnection >( connection ),
+                true /* isAnswered */
+                );
+
+            SessionRequestPlan plan;
+
+            plan.pool = om::ObjPtrCopyable< ConnectionPool >( om::qi< ConnectionPool >( pool ) );
+            plan.state = om::ObjPtrCopyable< SessionState >(
+                SessionStateImpl::createInstance< SessionState >()
+                );
+            plan.transportScheme = "https";
+
+            plan.policy.retryIdempotentOnConnectionLoss = isKnobOn;
+
+            const auto chain = om::qi< tasks::Task >(
+                SessionRequestTaskImpl::createInstance(
+                    std::move( plan ),
+                    makeRequest(),
+                    om::ObjPtrCopyable< BodySink >()
+                    )
+                );
+
+            runTask(
+                chain,
+                [ & ]() -> void
+                {
+                    connection -> waitFor( "submit" );
+
+                    connection -> deliverHeaders( 200U, http::HeaderList(), false /* isInterim */ );
+
+                    connection -> deliverData( "0123456789" );
+
+                    connection -> publishState( ConnectionState::Draining );
+
+                    connection -> deliverClosed(
+                        eh::errc::make_error_code( eh::errc::connection_reset ),
+                        false /* isRetryable */
+                        );
+
+                    connection -> openTheGate();
+                }
+                );
+
+            /*
+             * THE NUMBER OF ATTEMPTS IS THE ANSWER, checked and not required so that a red run shows
+             * it. A replay's submit( ) precedes its hop's end, which the chain waits for, and each
+             * hop hands its slot back in the deferred phase of its closing batch, before it completes
+             */
+
+            UTF_CHECK_EQUAL( connection -> submits(), isKnobOn ? 2U : 1U );
+            UTF_CHECK_EQUAL( pool -> releases().size(), isKnobOn ? 2U : 1U );
+
+            if( ! isKnobOn )
+            {
+                requireTrue( chain -> isFailed(), "a connection loss with the knob off should have failed" );
+
+                requireTrue(
+                    std::string::npos != messageOf( chain ).find( "The HTTP request failed" ),
+                    "the chain should have failed with the connection loss, and it reports: " +
+                        messageOf( chain )
+                    );
+
+                return;
+            }
+
+            requireTrue(
+                ! chain -> isFailed(),
+                "the knob should have replayed a GET whose connection was lost, and the chain reports: " +
+                    messageOf( chain )
+                );
+
+            const auto requestTask = om::qi< ClientRequestTask >( chain );
+
+            const auto& response = requestTask -> response();
+
+            UTF_REQUIRE_EQUAL( response.status(), 200U );
+            UTF_REQUIRE( response.body() );
+
+            UTF_REQUIRE_EQUAL(
+                std::string(
+                    response.body() -> begin() + response.body() -> offset1(),
+                    response.body() -> begin() + response.body() -> size()
+                    ),
+                std::string( "0123456789" )
+                );
+        }
+
+        /**
          * @brief A thread pool which no thread runs - the case runs its handlers, one at a time
          *
          * WHAT IT IS FOR. A request task's drain and its timers run on its execution queue's local
@@ -728,6 +840,26 @@ UTF_AUTO_TEST_CASE( ClientSession_AnOverflowedRequestIsNotReplayedTests )
 
     requireAnOverflowIsNotReplayed( Cap::Buffered );
     requireAnOverflowIsNotReplayed( Cap::Outstanding );
+}
+
+/**
+ * @brief The control for I5's rule: a failure which is the CONNECTION's is still replayed under
+ * retryIdempotentOnConnectionLoss
+ *
+ * The overflow case's batch with nothing crossing a cap - headers, the ten bytes, and a connection
+ * loss published as Draining - so the failure which wins is the close's, and the knob replays the
+ * GET: two submits, and the replay, answered on a clean close, is the chain's answer. With the knob
+ * off, one submit and the connection's failure. It is what goes red if isOwnFailure( ) were set on a
+ * failure the connection decided, which no other session case would notice - the fallback cases
+ * replay on isRetryable( ), not on the knob
+ */
+
+UTF_AUTO_TEST_CASE( ClientSession_AConnectionLossIsReplayedUnderTheKnobTests )
+{
+    using namespace utest::afterthefailure;
+
+    requireAConnectionLossIsReplayedOnlyUnderTheKnob( true /* isKnobOn */ );
+    requireAConnectionLossIsReplayedOnlyUnderTheKnob( false /* isKnobOn */ );
 }
 
 /**
