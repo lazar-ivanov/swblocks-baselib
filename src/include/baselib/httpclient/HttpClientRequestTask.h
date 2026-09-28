@@ -1418,6 +1418,19 @@ namespace bl
                     return;
                 }
 
+                if( m_isCompleted || m_isCompletionPending )
+                {
+                    /*
+                     * A PULL FOR A REQUEST WHICH HAS ALREADY FAILED IS NOT ANSWERED, and the
+                     * caller's source is not read again - applyHeaders( )'s guard, for the other
+                     * direction. No answer is owed: a completion decided while the stream is still
+                     * open can only be a failure ( applyData( ) says why ), and every such failure
+                     * has reset the stream
+                     */
+
+                    return;
+                }
+
                 /*
                  * EXACTLY ONE ANSWER PER PULL, which is the half of the contract this side owes -
                  * the driver will not ask again until this returns, so returning nothing at all
