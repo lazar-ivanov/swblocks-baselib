@@ -7,6 +7,10 @@ before agreement.** **Corrected again 2026-09-23 after `bb53bdd` landed on `laza
 dated blocks in §2.1, §2.2, §5, §11 and the addendum to §14. The design stands; §2.1 is moot.
 `TcpBaseTasks.h` citations below at or after `:322` are `+32` at `bb53bdd`.**
 
+**Implemented 2026-09-23 at `849e767`, merged at `6a6e10c`.** §15 records it, and says that "nothing
+implemented" above is the status at design time, left as written in the house pattern of
+`s6r1-design.md`. *(Pointer marked here 2026-09-28, astra's third review, T02.)*
+
 **Scope:** one defect with two halves, in two drivers.
 `Http1ConnectionTaskT::initiateClose( )` and `Http2ConnectionTaskT::initiateClose( )` both cancel
 the socket and nothing else, and `cancel( )` cannot reap a composed `asio::async_write` that is

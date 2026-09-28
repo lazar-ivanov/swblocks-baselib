@@ -40,7 +40,9 @@ measured of each, and the shape the maintainer decided.
 
 Boost is the devenv7 dist's 1.90.0 and OpenSSL its 3.5.4. The measurements
 were made on a64 clang debug with a scratch test case and scratch prototypes, **none of them committed**.
-Every run, the case and both prototype diffs are in the run's state directory under
+Every run, the case and both prototype diffs are in the run's state directory — `http2-l0-state/`,
+a sibling of the checkout, kept outside the repository on purpose
+(`astra-second-review-decisions.md` §10) — under
 `logs/astra2/cs6/lostcancel/`, indexed in `INDEX.txt`. Each claim is labelled **VERIFIED** (read at the
 source cited, or measured where it says so), **INFERRED** (follows from verified facts, not checked) or
 **NOT VERIFIED**.

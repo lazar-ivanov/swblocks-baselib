@@ -2,6 +2,12 @@
 
 **Date:** 2026-09-09
 **Status:** **Proposed** — approved in outline, not yet implemented.
+**Implemented:** 2026-09-09, in `27e337f`, the commit that added this plan — Change 1
+(`chk2AddPrefix` calls `make_preferred( )` first, `OSImplPlatformCommon.h`) with its release note
+(§15 of `devenv7-breaking-changes-release-notes.md`), Change 2 (the atomic flag, `TestTasks7.h`) and
+Change 4 (`TestAsyncCB.h`). Change 3 was superseded the same day, as its own section says. The status
+above is the plan's at writing, left as written in the house pattern of `s6r1-design.md`. *(Marked
+2026-09-28, astra's third review, T02.)*
 **Reviewed:** 2026-09-09 by Fable 5.1 — findings and evidence in
 `windows-path-normalization-and-flaky-tests-plan-fable51-review.md`. This document is amended per
 that review: Change 1 gained a placement precision, two existing assertions to update and a Boost

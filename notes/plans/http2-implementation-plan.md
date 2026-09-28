@@ -1642,7 +1642,10 @@ changes how a TLS ending is classified.
 **Before them, the bucket C round — DONE 2026-09-27** (`d186d2a`, `7330dd5`, `d6d1d82`, `badf642`):
 comment corrections, one dead-code deletion and one test's wording that earlier reviews had recorded
 and never scheduled, decided and taken as a round of their own — §7 of the same record. **After
-them**, one ThreadSanitizer pass over the client modules (B6 on `issues/astra-remediation-owed-work.md`).
+them, one ThreadSanitizer pass over the client modules — DONE 2026-09-27** (B6 on
+`issues/astra-remediation-owed-work.md`): on `2b47b57`, recorded at `14e3538`, over 22 modules. Its
+two pre-existing reports became I12 and I13, fixed in CS-4 and CS-6 below. *Corrected 2026-09-28:
+this line still read as a pass to come.*
 
 **Then the fold-in change-sets, 2026-09-27 and 28.** They hold what the run itself found, folded
 under `AGENTS.md` v2.15, with the decisions in §11 of the same record. All three are gated together
@@ -1698,6 +1701,7 @@ orchestrator before planning. The decisions they need are put, and recorded, in
     nowhere.
   - **The decision is the maintainer's** (D1 of the decision record): (b′) freeze at completion,
     (a) live and synchronized, (b) a full completion snapshot, or (c) a continuation-only contract.
+    **Decided by the maintainer 2026-09-28:** (b′), recorded at `080bd41`.
   - **The recommendation: (b′), freeze at completion. It is I8's principle applied to the last two
     fields: after completion, a late event changes nothing the caller reads.**
     - `applyClosed( )` writes the pair only `if( ! m_isCompleted )`.
@@ -1757,7 +1761,8 @@ orchestrator before planning. The decisions they need are put, and recorded, in
     by the bucket C sweep on 2026-09-27, was stale the same day. So under `AGENTS.md` ("an item
     recorded twice is a decision waiting") it goes to the maintainer as D2, with T01: a mechanical
     reconciliation of every current-status summary that names a change-set's items, as part of that
-    change-set's sweep.
+    change-set's sweep. **Decided by the maintainer 2026-09-28:** the clause on `AGENTS.md`'s
+    sweep bullet, v2.17 (`ba575e6`), recorded at `080bd41`.
 
 | Change-set | Finding | Files | Lane |
 |---|---|---|---|

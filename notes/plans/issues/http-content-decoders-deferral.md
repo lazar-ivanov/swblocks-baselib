@@ -158,6 +158,10 @@ recorded **here** rather than in a ledger because `ContentDecoder.h`'s file note
 author to this document by name, and because none of them is the codec's own work. **They are a gate,
 not a deferral:** shipping a codec without P1 puts unbounded CPU under a queue-wide mutex.
 
+*2026-09-28: two of the three are closed — P3, and P2 in its minimal form — by D5 in CS-2, with a 205
+added in CS-4; each section below says where, and "revisited" further down says what was decided. P1
+is live for an application that registers a decoder, and is still the gate.*
+
 ### P1. The decode runs under the execution queue's scheduling lock, uncancellable and undeadlined
 
 `ExecutionQueueImpl::onReady( )` holds the queue's `m_lock` across `task -> continuationTask( )`, and
@@ -194,6 +198,12 @@ value have to be recognised and peeled in reverse order, and today a single succ
 both `content-encoding` and `content-length` wholesale. The full entry, including the verification
 record's own correction that H24 is *not* silent, is in `astra-review-verification-record.md`.
 
+**Fixed in its minimal form in CS-2** (D5, `0f3b0ba`, merged at `bc431f2`): `decodeBody( )` reads the
+coding list across every `Content-Encoding` field, through `tryGetTheOnlyCoding( )`, and decodes a
+response only when it carries exactly one coding; any other is handed back with its body and every
+header untouched. Peeling several layers in reverse order is still the programme's — item 0 of the
+sequencing below. *Added 2026-09-28; the paragraph above describes the code before D5.*
+
 ### P3. Decoding runs on failed and on bodyless responses — astra H25
 
 `absorbResponse( )` returns early only on `status( ) == 0`, and `continuationTask( )` calls it
@@ -204,6 +214,12 @@ happened. The bodyless half is its sibling: a 204, a 304 or a response to HEAD w
 `content-encoding` reaches `createStream( )` and `finish( )` with nothing to decode, which the
 `ContentDecoder` contract makes a truncation throw. The failed half is L6 finding 12; the full entry
 is in `astra-review-verification-record.md`.
+
+**Fixed in CS-2** (D5, `0f3b0ba`, merged at `bc431f2`): `decodeBody( )` returns at once for a hop which
+failed, and for a response which cannot carry content — a response to HEAD, matched exactly, a 204 or
+a 304, and since CS-4 a 205 (`c02f7b4`, merged at `988544a`). `absorbResponse( )` still runs before
+the exception check, but its decode no longer does. *Added 2026-09-28; the paragraph above describes
+the code before D5.*
 
 ---
 
@@ -243,8 +259,10 @@ registers passes none of them (R08, above).
 
 **Reversed in part: P2 and P3 are fixed now, in their minimal form**, because the reversal condition
 above was already met — by the public registry, not by a codec. Decided by the maintainer as D5 of
-[`astra-second-review-decisions.md`](astra-second-review-decisions.md), in its change-set CS-2, and not
-yet implemented:
+[`astra-second-review-decisions.md`](astra-second-review-decisions.md), in its change-set CS-2, and
+**implemented there** (`0f3b0ba`, merged at `bc431f2`). A 205 joined the responses never decoded in
+CS-4, by D5's own principle (`c02f7b4`, merged at `988544a`; the owed list's I4). *Corrected
+2026-09-28: this said "and not yet implemented".* As decided:
 
 - **P2:** the Content-Encoding list is read across every field, and a response is decoded only when it
   carries exactly one coding in total. Anything else is handed back with its body and all its headers
@@ -268,7 +286,9 @@ restriction is stated at `registerDecoder( )`.
 
 0. Close **P1** above, and P2 and P3 for any coding being registered. P1 is a change to the
    continuation protocol `RetryableWrapperTaskT` shares, so it is a core-path change-set of its own
-   and gates on the whole suite; it does not ride with a codec.
+   and gates on the whole suite; it does not ride with a codec. *2026-09-28: P3 is closed, and P2 in
+   its minimal form (D5, `0f3b0ba`); what this item still holds is P1, and peeling several codings in
+   reverse order for any coding registered.*
 1. Choose between A, B and C **per coding** - they need not share an answer. Inflate in-house with
    Brotli and Zstandard external is a coherent outcome.
 2. For any external library: the build scripts, the makefile module and the supply-chain record, on

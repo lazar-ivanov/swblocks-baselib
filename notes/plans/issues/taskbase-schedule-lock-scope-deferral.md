@@ -22,7 +22,7 @@ function names are the anchors.
 | # | Link | Where | Verified by |
 |---|---|---|---|
 | 1 | `TaskBase::scheduleNothrow( )` takes `BL_MUTEX_GUARD( m_lock )` (`:1167`) and calls `scheduleTask( eq )` (`:1208`) **under it** | `tasks/TaskBase.h:1160-1208` | author, at source |
-| 2 | h1's `scheduleTask( )` override calls `scheduleRead( )` **directly** — not posted, and with no operation begun before it | `httpclient/Http1ConnectionTask.h:1584`, `:1605` | author, at source |
+| 2 | h1's `scheduleTask( )` override calls `scheduleRead( )` **directly** — not posted, and with no operation begun before it. *2026-09-28: link 2 is D2's since CS-1 (`ea47826`, merged at `a04f29c`): `scheduleTask( )` posts `onStartConnection( )`. See the owed list's row 12.* | `httpclient/Http1ConnectionTask.h:1584`, `:1605` | author, at source |
 | 3 | `scheduleRead( )`'s `catch` calls `base_type::onOperationCompleted( std::current_exception(), false )` **inline** | `Http1ConnectionTask.h:869-871` | author, at source |
 | 4 | `onOperationCompleted( )` is where the terminal `notifyReady( )` is reached, which `MultiOperationTask.h:62-67` says must run **outside** the task lock | `tasks/MultiOperationTask.h:62-67` | author, at source |
 

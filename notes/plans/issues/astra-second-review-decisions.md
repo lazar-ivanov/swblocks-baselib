@@ -5,10 +5,21 @@ and nothing was built.** Eight decisions were put to the maintainer in AGENTS.md
 *"Yes, I accept D2 as revised, D4 widened to Astra's version, and the rest as recommended."*
 Implementation waits for the maintainer's go-ahead.
 
+**Implemented 2026-09-27 and 28.** All eight decisions landed — CS-1 at `a04f29c`, CS-2 at
+`bc431f2`, CS-3 at `f48acd2` — and what the run found landed in CS-4 (`988544a`), CS-5 (`31e6365`)
+and CS-6 (`f2baa2f`); §10 says what each carried, with its commits and its gate. "Nothing
+implemented", "implementation waits" and, in the provenance below, "nothing was built or run" are the
+state when the decisions were taken (§1 to §6), and are left as written. *(Marked 2026-09-28, astra's
+third review, T02.)*
+
 **Scope:** R01–R08 of [astra's second review](../http2-l0-l6-remediation-review-2026-09-26.md), which
-reviewed `db97372`. R09, the stale records, was done at `425802c`. Each finding was re-verified at the
-source before it was put; the ledger rows are in [`astra-remediation-owed-work.md`](astra-remediation-owed-work.md),
-under "Found by astra's second review".
+reviewed `db97372`. R09, the stale records, was done at `425802c`. Summaries written that day, true
+when written, went stale again as CS-1 to CS-6 and B6 landed; astra's third review found them as T02
+on 2026-09-28, and CS-8 reconciled them
+([`astra-third-review-decisions.md`](astra-third-review-decisions.md)). Each finding was re-verified
+at the source before it was put; the ledger rows are in
+[`astra-remediation-owed-work.md`](astra-remediation-owed-work.md), under "Found by astra's second
+review".
 
 **Provenance.** Everything below was read at the source on `lazari2` at `425802c`, whose `src/` is
 `db97372`'s. The RFC passages were fetched rather than recalled, after one had been paraphrased wrongly
@@ -693,6 +704,13 @@ green once.
 
 The logs are kept with the run's evidence, in `logs/astra2/gate/cs3/`.
 
+**Where the run's evidence lives.** Every `logs/…` path in this record — §11's above and the rest
+of §10's too — is under the run's state directory, `http2-l0-state/`, a sibling of the checkout. It
+is kept outside the repository on purpose, as session machinery, so this one is
+`http2-l0-state/logs/astra2/gate/cs3/`. The run's scripts are there as well: B6's `tsan-b6.sh` is
+`http2-l0-state/astra2/tsan-b6.sh`. *(Added 2026-09-28: astra's third review could not find
+`logs/astra2/` from the checkout.)*
+
 **New module:** `utf_baselib_h2client8`, 35.4 MB at a64 clang debug, with its reason in its `Main.cpp`.
 Its x86 size is owed to the Windows handoff.
 
@@ -985,5 +1003,6 @@ machine's build slot, 13:12 to 15:30. `TaskBase.h` changed, so every module was 
       devenv below 6;
     - `jni`'s run prints no case lines.
 
-The logs are in `logs/astra2/gate/cs456/`, with the summary `cs456-gate-summary.log` and the two
-independent checks `cs456-independent-check.log` and `cs456-cases-vs-manifest.log`.
+The logs are in `logs/astra2/gate/cs456/`. The summary `cs456-gate-summary.log` and the two
+independent checks `cs456-independent-check.log` and `cs456-cases-vs-manifest.log` are beside that
+directory, in `logs/astra2/gate/`. *(Location corrected 2026-09-28.)*

@@ -4,10 +4,12 @@
 2026-09-27** (§12). D2 is implemented to this note.
 
 **Revisions.** r1 `e7c74a5`. **r2 (this)** carries fable's round-1 review (`D2-design-r1.md`, in the
-run's state directory) and every change its §F requires; the orchestrator's answers to it
-(`D2-orchestrator-r2.md`), which accept every finding and proposal; and the orchestrator's decisions on
-the lane's first report (`CS-1-lane-report-1-decisions.md`), which move D2's cases to new modules and
-lift the TLS peer. Where r2 changes a claim of r1, the section says so.
+run's state directory, `http2-l0-state/`, a sibling of the checkout, kept outside the repository on
+purpose, as are the `logs/…` paths below) and every change its §F requires; the orchestrator's
+answers to it (`D2-orchestrator-r2.md`), which accept every finding and proposal; and the
+orchestrator's decisions on the lane's first report (`CS-1-lane-report-1-decisions.md`), which
+move D2's cases to new modules and lift the TLS peer. Where r2 changes a claim of r1, the section
+says so.
 
 **What it implements.** Decision D2 of
 [`astra-second-review-decisions.md`](astra-second-review-decisions.md) §3, as taken: *"Astra's startup

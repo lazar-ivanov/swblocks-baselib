@@ -8,6 +8,10 @@ review recorded for this slice undischarged, left one arm of N2 undecided, and p
 cases into a module already over the size target. The corrections are written in place below, each
 dated, and §17 says which are findings and which are proposals.**
 
+**Implemented, and merged at `c2af9d2` on 2026-09-23**, which reached `lazari2` with the teardown fix
+at `6a6e10c`. "Nothing implemented" above is the status at design time and is left as written, in
+the house pattern of `s6r1-design.md`. *(Marked 2026-09-28, astra's third review, T02.)*
+
 **Scope:** the ten findings grouped as R2 in `astra-review-verification-record.md` — H01, H07, H05,
 H12, H15, H16, H18, H03b, N1, N2 — plus the settling of **N3**, the open question §5a of that record
 leaves for this slice.

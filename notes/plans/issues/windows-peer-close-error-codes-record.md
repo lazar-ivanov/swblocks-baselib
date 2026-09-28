@@ -35,7 +35,8 @@ measurement of that call.
   `SD_RECEIVE`. *(Corrected 2026-09-28, by measurement: once our FIN is out as well, Linux resets
   on a later arrival too. `SHUT_RD` then `SHUT_WR` - the state `shutdown_both` leaves - drew a
   reset on Linux 6.8, where `SHUT_WR` alone and `SHUT_RD` alone did not;
-  `logs/astra2/records/reset-after-shut-rd-probe.txt`.)*
+  `http2-l0-state/logs/astra2/records/reset-after-shut-rd-probe.txt`, where `http2-l0-state/` is a
+  sibling of the checkout, kept outside the repository on purpose.)*
 - *"The control is a hypothesis test ... its Windows arm requires the code to be one of the two AND
   not `eof`"*. Inverted by `bb53bdd`: `PeerCloseErrorCodes_PeerShutsDownWithUnreadDataTests` and
   `..._ReaderSendsAfterPeerShutdownTests` now assert `eof`, the orderly predicate and every byte on
