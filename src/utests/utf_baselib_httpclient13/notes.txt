@@ -3,8 +3,10 @@
 # CS-6 of astra's second review - I2 on the real consumers
 # (notes/plans/issues/astra2-cs6-tls-shutdown-after-truncation-design.md). A peer truncates a TLS stream
 # and keeps its socket open and silent; each consumer's protocol timer is shortened to 3 s. Red before
-# the fix - the timer cancels the teardown - and green after it. The SimpleHttpTask case also needs the
-# note's SimpleHttpTask.h line, and its red is probable rather than certain (see its header).
+# the fix - the timer cancels the teardown - and green after it. The SimpleHttpTask cases also need the
+# note's SimpleHttpTask.h line: the first's red is probable rather than certain, and the second, added
+# after the core fix, is that line's certain red (see the header).
 
 --log_level=message --run_test=Http1DriverTls_ATruncatedIdleConnectionEndsWithoutWaitingTests
 --log_level=message --run_test=SimpleHttpTls_ACompleteResponseEndedByATruncationSucceedsTests
+--log_level=message --run_test=SimpleHttpTls_ATruncationIsRecordedBeforeTheShutdownTests

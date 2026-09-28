@@ -72,6 +72,10 @@
  *     the peer truncates straight after its response, and on today's code the case ended at once in
  *     one run of the first twenty-one - the late event above. Its green is certain: with the line
  *     in, the shutdown reads nothing at all.
+ *   - SimpleHttpTls_ATruncationIsRecordedBeforeTheShutdownTests - the certain red for that line,
+ *     committed after the core fix: the same exchange, asserting that the stream has recorded the
+ *     truncation when the shutdown begins. The core fix alone leaves it red, and the line makes it
+ *     green, whatever the reactor does.
  *
  * WHY THE HTTP/1.1 DRIVER IS HANDED ITS STREAM BY A PLAIN CONNECTOR. The connection is established
  * by TcpConnectionEstablisherConnector over the stranded TLS policy - resolve, connect, handshake -
@@ -195,7 +199,9 @@ namespace utest
         typedef bl::om::ObjectImpl< Http1DriverProbe >                          Http1DriverProbeImpl;
 
         /**
-         * @brief SimpleHttpTask's GET over TLS, with its stop signalled
+         * @brief SimpleHttpTask's GET over TLS, with its stop signalled - and whether its stream had
+         * recorded a truncation when its finish continuation, which begins the TLS shutdown, was
+         * first entered
          */
 
         class SimpleHttpsGetProbe : public bl::tasks::SimpleHttpSslGetTaskT<>
@@ -210,13 +216,41 @@ namespace utest
 
             OneShotSignal                                                       m_stop;
 
+            mutable bl::os::mutex                                               m_sampleLock;
+            bool                                                                m_isContinuationEntered;
+            bool                                                                m_wasTruncationRecorded;
+
             SimpleHttpsGetProbe(
                 SAA_in          std::string&&                                   host,
                 SAA_in          const unsigned short                            port
                 )
                 :
-                base_type( BL_PARAM_FWD( host ), port, std::string( "/truncated" ), std::string() /* content */ )
+                base_type( BL_PARAM_FWD( host ), port, std::string( "/truncated" ), std::string() /* content */ ),
+                m_isContinuationEntered( false ),
+                m_wasTruncationRecorded( false )
             {
+            }
+
+            /**
+             * @brief Entered under the task lock once the response is complete, before the TLS
+             * shutdown begins; entered again once it has ended, which is not sampled
+             */
+
+            virtual bool scheduleTaskFinishContinuation( SAA_in_opt const std::exception_ptr& eptrIn = nullptr ) OVERRIDE
+            {
+                {
+                    BL_MUTEX_GUARD( m_sampleLock );
+
+                    if( ! m_isContinuationEntered )
+                    {
+                        m_isContinuationEntered = true;
+
+                        m_wasTruncationRecorded =
+                            base_type::m_sslStream && base_type::m_sslStream -> hasSeenTruncation();
+                    }
+                }
+
+                return base_type::scheduleTaskFinishContinuation( eptrIn );
             }
 
             virtual auto onTaskStoppedNothrow(
@@ -242,9 +276,53 @@ namespace utest
             {
                 return m_stop.waitFor( timeoutInMilliseconds );
             }
+
+            bool isContinuationEntered() const
+            {
+                BL_MUTEX_GUARD( m_sampleLock );
+
+                return m_isContinuationEntered;
+            }
+
+            bool wasTruncationRecordedAtShutdown() const
+            {
+                BL_MUTEX_GUARD( m_sampleLock );
+
+                return m_wasTruncationRecorded;
+            }
         };
 
         typedef bl::om::ObjectImpl< SimpleHttpsGetProbe >                       SimpleHttpsGetProbeImpl;
+
+        /**
+         * @brief A peer which answers one GET with a complete Content-Length response and then
+         * truncates - SimpleHttpTask's one success path after a truncation
+         */
+
+        inline auto makeTruncatedResponseScript() -> TlsEndingPeer::Script
+        {
+            TlsEndingPeer::Script script( TlsEndingPeer::Ending::Truncate );
+
+            script.response = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello";
+
+            return script;
+        }
+
+        inline void chkCompleteResponse(
+            SAA_in          const bl::om::ObjPtr< SimpleHttpsGetProbeImpl >&    task,
+            SAA_in          const std::string&                                  readings
+            )
+        {
+            chkOrFail(
+                200U == task -> getHttpStatus() && "hello" == task -> getResponse(),
+                "SimpleHttpTask did not deliver the complete response: status " +
+                    bl::utils::lexical_cast< std::string >( task -> getHttpStatus() ) +
+                    ", body '" +
+                    task -> getResponse() +
+                    "'; " +
+                    readings
+                );
+        }
 
         /**
          * @brief Connects and handshakes over the stranded TLS policy with the plain connection
@@ -337,11 +415,7 @@ UTF_AUTO_TEST_CASE( SimpleHttpTls_ACompleteResponseEndedByATruncationSucceedsTes
     using namespace bl;
     using namespace utest::truncteardown;
 
-    TlsEndingPeer::Script script( TlsEndingPeer::Ending::Truncate );
-
-    script.response = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello";
-
-    TlsEndingPeer peer( script );
+    TlsEndingPeer peer( makeTruncatedResponseScript() );
 
     const auto task = SimpleHttpsGetProbeImpl::createInstance( std::string( "localhost" ), peer.port() );
 
@@ -351,13 +425,42 @@ UTF_AUTO_TEST_CASE( SimpleHttpTls_ACompleteResponseEndedByATruncationSucceedsTes
 
     chkEndedWithoutWaiting( result, "SimpleHttpTask" );
 
+    chkCompleteResponse( task, result.describe() );
+}
+
+/**
+ * @brief I2'S CERTAIN RED FOR THE SimpleHttpTask.h LINE - when SimpleHttpTask's shutdown begins after
+ * a complete response ended by a truncation, its stream has recorded the truncation
+ *
+ * Committed after the core fix and before the line. With the core fix alone it is red: the success
+ * path asks the static isExpectedProtocolException( ), which records nothing, and nothing else on that
+ * path classifies the ending - so the shutdown still waits for the peer's close_notify. With the line
+ * it is green: the success path asks the policy's own predicate, which records. Unlike the case
+ * above it does not depend on the reactor: it reads the record when the finish continuation is
+ * entered, which is before the shutdown reads anything
+ */
+
+UTF_AUTO_TEST_CASE( SimpleHttpTls_ATruncationIsRecordedBeforeTheShutdownTests )
+{
+    using namespace bl;
+    using namespace utest::truncteardown;
+
+    TlsEndingPeer peer( makeTruncatedResponseScript() );
+
+    const auto task = SimpleHttpsGetProbeImpl::createInstance( std::string( "localhost" ), peer.port() );
+
+    task -> setProtocolTimeout( shortProtocolTimeout() );
+
+    const auto result = runToTheEnd( task, peer );
+
+    chkCompleteResponse( task, result.describe() );
+
     chkOrFail(
-        200U == task -> getHttpStatus() && "hello" == task -> getResponse(),
-        "SimpleHttpTask did not deliver the complete response: status " +
-            utils::lexical_cast< std::string >( task -> getHttpStatus() ) +
-            ", body '" +
-            task -> getResponse() +
-            "'; " +
+        task -> isContinuationEntered() && task -> wasTruncationRecordedAtShutdown(),
+        std::string( "SimpleHttpTask's stream had not recorded the truncation when its shutdown began" ) +
+            " (finish continuation entered " +
+            ( task -> isContinuationEntered() ? "yes" : "no" ) +
+            "); " +
             result.describe()
         );
 }
