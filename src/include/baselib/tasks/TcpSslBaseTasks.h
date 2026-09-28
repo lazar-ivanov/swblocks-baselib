@@ -159,7 +159,12 @@ namespace bl
                             << m_protocolTimeout
                         );
 
-                    base_type::requestCancelInternal();
+                    /*
+                     * Or, on a task cancelled already, the cancel again: one which landed between
+                     * two steps of the handshake or of the shutdown reaped nothing
+                     */
+
+                    base_type::requestCancelOrReissueInternal();
                 }
 
                 BL_NOEXCEPT_END()

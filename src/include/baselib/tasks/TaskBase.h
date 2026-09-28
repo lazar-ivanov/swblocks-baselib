@@ -1059,6 +1059,53 @@ namespace bl
             }
 
             /**
+             * @brief For a deadline which its own cancel leaves armed: requests the cancel as
+             * requestCancelInternal( ) does, and on a task which was cancelled already and is
+             * still running calls cancelTask( ) again
+             *
+             * requestCancelInternal( ) calls cancelTask( ) at most once per run. A forced cancel
+             * which lands between two steps of an asynchronous operation reaps nothing, though -
+             * nothing of the operation is registered at that instant - and the step which follows
+             * then waits for the peer, so a deadline which fires on a task still running after its
+             * cancel is what is left to end it. Only such a deadline uses this: a second
+             * requestCancel( ) is no evidence of a lost cancel. The cancelTask( ) of the tasks
+             * whose deadlines call it shuts its socket down and cancels again, which is harmless
+             * after a cancel which worked and whose aborted completions have not run yet
+             * (notes/plans/issues/astra2-cs6-lost-forced-cancel-design.md)
+             *
+             * Called with the task lock held, as requestCancelInternal( ) is
+             */
+
+            void requestCancelOrReissueInternal() NOEXCEPT
+            {
+                if( ! m_cancelRequested )
+                {
+                    requestCancelInternal();
+
+                    return;
+                }
+
+                /*
+                 * cancelTask() should only be called for running tasks
+                 */
+
+                if( Task::Running != m_state )
+                {
+                    return;
+                }
+
+                utils::tryCatchLog(
+                    "TaskBase::requestCancelOrReissueInternal threw an exception",
+                    [ & ]() -> void
+                    {
+                        cancelTask();
+                    },
+                    cpp::void_callback_t(),
+                    utils::LogFlags::DEBUG_ONLY
+                    );
+            }
+
+            /**
              * @brief It will schedule the actual cancellation
              * calls on open sockets, resolvers, acceptors or other
              * asio objects which are used to implement the task or

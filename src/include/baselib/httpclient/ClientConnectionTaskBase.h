@@ -516,7 +516,7 @@ namespace bl
 
                     const bool isDeadlineCancel = ! TaskBase::isCanceled();
 
-                    TaskBase::requestCancelInternal();
+                    TaskBase::requestCancelOrReissueInternal();
 
                     /*
                      * AND ITS REASON, as the pool's establishment bound gives one ( cancelReason( ) ):
