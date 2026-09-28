@@ -10,3 +10,10 @@
 --log_level=message --run_test=TcpConnectLoop_NoEndpointAcceptingFailsTheTaskTests
 --log_level=message --run_test=TcpConnectLoop_ACancelDuringTheConnectEndsItPromptlyTests
 --log_level=message --run_test=TcpConnectLoop_ACancelAfterTheSwitchIsOrderedWithItTests
+
+# D-A: an endpoint whose socket cannot be opened fails like any attempt - the next endpoint is tried, and
+# after the last the open's own error is reported, where asio's loop ended with operation_aborted. The
+# process's descriptors are exhausted for the first attempt only; POSIX only, and last in the module.
+
+--log_level=message --run_test=TcpConnectOpenFailure_TheNextEndpointIsTriedTests
+--log_level=message --run_test=TcpConnectOpenFailure_TheOpensOwnErrorIsReportedTests

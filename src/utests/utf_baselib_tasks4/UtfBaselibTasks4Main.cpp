@@ -55,3 +55,11 @@
  */
 
 #include "TestTcpConnectLoop.h"
+
+/*
+ * KEPT LAST - a change-set appending here puts its header above this one: its cases exhaust the
+ * process's descriptors for a moment, and although they put everything back on every path, nothing of
+ * another case's should run after them
+ */
+
+#include "TestTcpConnectOpenFailure.h"
