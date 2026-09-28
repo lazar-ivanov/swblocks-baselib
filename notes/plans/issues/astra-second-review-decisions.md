@@ -704,9 +704,9 @@ green once.
 
 The logs are kept with the run's evidence, in `logs/astra2/gate/cs3/`.
 
-**Where the run's evidence lives.** Every `logs/…` path in this record — §9's and the rest of §10's
-too — is under the run's state directory, `http2-l0-state/`, a sibling of the checkout. It is kept
-outside the repository on purpose, as session machinery, so this one is
+**Where the run's evidence lives.** Every `logs/…` path in this record — §11's above and the rest
+of §10's too — is under the run's state directory, `http2-l0-state/`, a sibling of the checkout. It
+is kept outside the repository on purpose, as session machinery, so this one is
 `http2-l0-state/logs/astra2/gate/cs3/`. The run's scripts are there as well: B6's `tsan-b6.sh` is
 `http2-l0-state/astra2/tsan-b6.sh`. *(Added 2026-09-28: astra's third review could not find
 `logs/astra2/` from the checkout.)*
@@ -1003,5 +1003,6 @@ machine's build slot, 13:12 to 15:30. `TaskBase.h` changed, so every module was 
       devenv below 6;
     - `jni`'s run prints no case lines.
 
-The logs are in `logs/astra2/gate/cs456/`, with the summary `cs456-gate-summary.log` and the two
-independent checks `cs456-independent-check.log` and `cs456-cases-vs-manifest.log`.
+The logs are in `logs/astra2/gate/cs456/`. The summary `cs456-gate-summary.log` and the two
+independent checks `cs456-independent-check.log` and `cs456-cases-vs-manifest.log` are beside that
+directory, in `logs/astra2/gate/`. *(Location corrected 2026-09-28.)*
