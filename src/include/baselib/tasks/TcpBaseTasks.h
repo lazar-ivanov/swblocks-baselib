@@ -305,6 +305,20 @@ namespace bl
                  * and cancel() will stop existing such requests
                  */
 
+                /*
+                 * FORCE DOES NOT WRITE THE LINGER OPTION, AND MUST NOT. It used to set
+                 * linger( false, 0 ) here. asio records a linger the application sets in the
+                 * socket's own state byte, which every operation reads as it is built, so on the
+                 * plain policies - which cancel from whichever thread asks - the write raced an
+                 * operation an I/O thread was starting on the same socket: ThreadSanitizer caught a
+                 * TLS handshake's next read doing exactly that (row I13 of
+                 * notes/plans/issues/astra-remediation-owed-work.md). It bought nothing: linger is
+                 * off by default, the acceptor below sets it off explicitly, and asio consults the
+                 * option it recorded only when a socket is destroyed. What is left touches no socket
+                 * state - shutdown( ) and cancel( ) read the descriptor - and a linger the socket's
+                 * owner set is left as it was
+                 */
+
                 BL_UNUSED( force );
 
                 {
