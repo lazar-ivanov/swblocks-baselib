@@ -702,6 +702,13 @@ green once.
 
 The logs are kept with the run's evidence, in `logs/astra2/gate/cs3/`.
 
+**Where the run's evidence lives.** Every `logs/…` path in this record — §9's and the rest of §10's
+too — is under the run's state directory, `http2-l0-state/`, a sibling of the checkout. It is kept
+outside the repository on purpose, as session machinery, so this one is
+`http2-l0-state/logs/astra2/gate/cs3/`. The run's scripts are there as well: B6's `tsan-b6.sh` is
+`http2-l0-state/astra2/tsan-b6.sh`. *(Added 2026-09-28: astra's third review could not find
+`logs/astra2/` from the checkout.)*
+
 **New module:** `utf_baselib_h2client8`, 35.4 MB at a64 clang debug, with its reason in its `Main.cpp`.
 Its x86 size is owed to the Windows handoff.
 
