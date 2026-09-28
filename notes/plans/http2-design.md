@@ -1293,9 +1293,10 @@ host whose addresses drop SYNs therefore holds the task for minutes per address,
 is armed at all, and `DEFAULT_HANDSHAKE_RETRY_COUNT` of 1 then buys a second attempt which re-arms a
 fresh 60 s on a new socket. So the establishment bound is `resolve + connect + 60 s`, twice, and not
 60 s. *Corrected 2026-09-28, the mechanism only: this paragraph named asio's ranged `async_connect`
-as the walker. CS-6 replaced it with the connector's own per-endpoint loop (D3, `5057b94`, merged at
-`f2baa2f`), which keeps the order, checks for a cancel between addresses and has no per-address
-deadline. So each dead address still costs its SYN timeout, and L4 finding 1 below stays open.*
+as the walker. CS-6 replaced it with the connector's own per-endpoint loop (CS-6's D3, owed-list
+row I16: `5057b94`, merged at `f2baa2f`), which keeps the order, checks for a cancel between
+addresses and has no per-address deadline. So each dead address still costs its SYN timeout, and L4
+finding 1 below stays open.*
 
 Arming at schedule time instead - one deadline across the retry, on `aioService()`, the way the TLS
 protocol timer of `TcpSslBaseTasks.h:120` already is - would let the row keep its original wording.
@@ -1836,7 +1837,8 @@ proxy Basic and SOCKS5 username/password; HSTS and Alt-Svc caches; a DNS cache o
 beyond the existing sequential connect; a multipart form builder; WebSockets and extended
 `CONNECT`; HTTP/3. *Corrected 2026-09-28, the mechanism only: this said "the existing sequential
 `async_connect`", asio's ranged connect, which CS-6 replaced with the connector's own per-endpoint
-loop (D3, `5057b94`). The loop is still sequential, and the non-goal is unchanged.*
+loop (CS-6's D3, owed-list row I16: `5057b94`). The loop is still sequential, and the non-goal
+is unchanged.*
 
 ---
 
