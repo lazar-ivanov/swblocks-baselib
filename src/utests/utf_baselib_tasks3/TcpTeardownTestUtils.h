@@ -1,0 +1,409 @@
+/*
+ * This file is part of the swblocks-baselib library.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#ifndef __UTEST_TCPTEARDOWNTESTUTILS_H_
+#define __UTEST_TCPTEARDOWNTESTUTILS_H_
+
+#include <baselib/crypto/CryptoBase.h>
+
+#include <baselib/core/AsioSSL.h>
+#include <baselib/core/OS.h>
+#include <baselib/core/BaseIncludes.h>
+
+#include <cstddef>
+#include <string>
+#include <vector>
+
+#include <utests/baselib/UtfCrypto.h>
+#include <utests/baselib/Utf.h>
+
+/*
+ * The helpers this module's teardown cases share, and the TLS peer they end their streams against -
+ * kept in one place, because a helper copied into two headers of one module is what
+ * src/utests/AGENTS.md forbids
+ */
+
+namespace utest
+{
+    namespace tcpteardown
+    {
+        enum : std::size_t
+        {
+            /**
+             * @brief How long anything here waits for something that IS coming
+             */
+
+            WAIT_IN_MILLISECONDS                = 30000U,
+        };
+
+        /**
+         * @brief Fails with a diagnosis, and otherwise counts the assertion - so that a passing case
+         * says how many it checked, which is what tier 3 compares
+         */
+
+        inline void chkOrFail(
+            SAA_in          const bool                                          condition,
+            SAA_in          const std::string&                                  message
+            )
+        {
+            if( ! condition )
+            {
+                UTF_FAIL( message );
+            }
+
+            UTF_REQUIRE( condition );
+        }
+
+        inline auto describeCode( SAA_in const bl::eh::error_code& ec ) -> std::string
+        {
+            if( ! ec )
+            {
+                return "success";
+            }
+
+            return std::string( ec.category().name() ) +
+                ":" +
+                bl::utils::lexical_cast< std::string >( ec.value() ) +
+                " (" +
+                ec.message() +
+                ")";
+        }
+
+        inline auto joinRecords( SAA_in const std::vector< std::string >& records ) -> std::string
+        {
+            std::string result;
+
+            for( const auto& record : records )
+            {
+                if( ! result.empty() )
+                {
+                    result += " | ";
+                }
+
+                result += record;
+            }
+
+            return result;
+        }
+
+        /**
+         * @brief class TlsEndingPeer - a loopback TLS server which ends one connection's stream in a
+         * chosen way and records what the client answered
+         *
+         * Everything runs synchronously on a worker thread with an io_service of its own. The
+         * socket stays open until release( ) - or the destructor - so a case decides when the
+         * peer's side of the connection goes away, and nothing the peer does after its ending can
+         * wake the client
+         */
+
+        class TlsEndingPeer
+        {
+            BL_NO_COPY_OR_MOVE( TlsEndingPeer )
+
+        public:
+
+            typedef bl::asio::ssl::stream< bl::asio::ip::tcp::socket >          sslstream_t;
+
+            enum class Ending
+            {
+                /**
+                 * @brief Sends its close_notify after the handshake, then reads until the client's
+                 * answer - asio's synchronous shutdown( ) is exactly that
+                 */
+
+                CloseNotify,
+
+                /**
+                 * @brief Reads until the client ends the stream, then answers with its own
+                 * close_notify - at once, or only once released if the answer is held
+                 */
+
+                AwaitTheClient,
+            };
+
+            TlsEndingPeer(
+                SAA_in          const Ending                                    ending,
+                SAA_in_opt      const bool                                      isAnswerHeld = false
+                )
+                :
+                m_serverContext(
+                    bl::crypto::CryptoBase::createAsioSslServerContext(
+                        test::UtfCrypto::getDefaultServerKey(),
+                        test::UtfCrypto::getDefaultServerCertificate()
+                        )
+                    ),
+                m_acceptor( m_ioService ),
+                m_port( 0U ),
+                m_ending( ending ),
+                m_isAnswerHeld( isAnswerHeld ),
+                m_isReleased( false )
+            {
+#if OPENSSL_VERSION_NUMBER >= 0x10101000L
+                /*
+                 * NO SESSION TICKETS. A TLS 1.3 server sends them after the handshake, and a client
+                 * read which meets one completes a step inside asio and starts the next: between the
+                 * two nothing is registered with the reactor, so a forced cancel which lands there
+                 * reaps nothing and the read that follows waits for the peer. With none sent, the
+                 * stream is silent after the handshake, and a read the client arms stays registered
+                 * until something the case controls ends it
+                 */
+
+                ( void ) ::SSL_CTX_set_num_tickets( m_serverContext -> native_handle(), 0U );
+#endif
+
+                const bl::asio::ip::tcp::endpoint endpoint(
+                    bl::asio::ip::address_v4::loopback(),
+                    0 /* ephemeral */
+                    );
+
+                m_acceptor.open( endpoint.protocol() );
+                m_acceptor.bind( endpoint );
+                m_acceptor.listen();
+
+                m_port = m_acceptor.local_endpoint().port();
+
+                m_thread.reset( new bl::os::thread( bl::cpp::bind( &TlsEndingPeer::run, this ) ) );
+            }
+
+            ~TlsEndingPeer() NOEXCEPT
+            {
+                BL_NOEXCEPT_BEGIN()
+
+                release();
+
+                {
+                    /*
+                     * Closing the acceptor does not reliably wake a worker already blocked in
+                     * accept( ), so one throwaway connection does it - harmless when the connection
+                     * under test has already been accepted
+                     */
+
+                    bl::eh::error_code ec;
+
+                    bl::asio::io_service ioService;
+                    bl::asio::ip::tcp::socket socket( ioService );
+
+                    socket.connect(
+                        bl::asio::ip::tcp::endpoint( bl::asio::ip::address_v4::loopback(), m_port ),
+                        ec
+                        );
+
+                    socket.close( ec );
+                }
+
+                bl::os::safeThreadJoin( *m_thread );
+
+                BL_NOEXCEPT_END()
+            }
+
+            bl::os::port_t port() const NOEXCEPT
+            {
+                return m_port;
+            }
+
+            auto records() const -> std::vector< std::string >
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                return m_records;
+            }
+
+            /**
+             * @brief Lets the peer answer a held close_notify, and then close its socket
+             */
+
+            void release()
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                m_isReleased = true;
+
+                m_cv.notify_all();
+            }
+
+            /**
+             * @brief Blocks until a record which starts with 'prefix' has been made, or the bound
+             * expires - signalled inside the record lock, so a case has a happens-before with it
+             */
+
+            bool waitForRecord( SAA_in const std::string& prefix ) const
+            {
+                bl::os::mutex_unique_lock guard( m_lock );
+
+                return m_cv.wait_for(
+                    guard,
+                    bl::os::chrono::milliseconds( static_cast< std::size_t >( WAIT_IN_MILLISECONDS ) ),
+                    [ this, &prefix ]() -> bool
+                    {
+                        for( const auto& record : m_records )
+                        {
+                            if( 0U == record.compare( 0U, prefix.size(), prefix ) )
+                            {
+                                return true;
+                            }
+                        }
+
+                        return false;
+                    }
+                    );
+            }
+
+        private:
+
+            void record( SAA_in std::string&& what )
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                m_records.push_back( BL_PARAM_FWD( what ) );
+
+                m_cv.notify_all();
+            }
+
+            void waitForRelease()
+            {
+                bl::os::mutex_unique_lock guard( m_lock );
+
+                ( void ) m_cv.wait_for(
+                    guard,
+                    bl::os::chrono::milliseconds( static_cast< std::size_t >( WAIT_IN_MILLISECONDS ) ),
+                    [ this ]() -> bool
+                    {
+                        return m_isReleased;
+                    }
+                    );
+            }
+
+            /**
+             * @brief Reads until the stream ends and returns the code it ended with: eof is the
+             * client's close_notify, asio.ssl.stream:1 the client's transport ending without one
+             */
+
+            static auto readUntilTheEnd( SAA_inout sslstream_t& stream ) -> bl::eh::error_code
+            {
+                char buffer[ 4096 ];
+
+                for( ;; )
+                {
+                    bl::eh::error_code ec;
+
+                    ( void ) stream.read_some( bl::asio::buffer( buffer, sizeof( buffer ) ), ec );
+
+                    if( ec )
+                    {
+                        return ec;
+                    }
+                }
+            }
+
+            void runEnding( SAA_inout sslstream_t& stream )
+            {
+                bl::eh::error_code ec;
+
+                switch( m_ending )
+                {
+                    case Ending::CloseNotify:
+                        {
+                            stream.shutdown( ec );
+
+                            record( "ended-with-close-notify:" + describeCode( ec ) );
+                        }
+                        break;
+
+                    case Ending::AwaitTheClient:
+                        {
+                            ec = readUntilTheEnd( stream );
+
+                            record( "client-ended:" + describeCode( ec ) );
+
+                            if( m_isAnswerHeld )
+                            {
+                                waitForRelease();
+                            }
+
+                            stream.shutdown( ec );
+
+                            record( "answered:" + describeCode( ec ) );
+                        }
+                        break;
+                }
+            }
+
+            void run()
+            {
+                sslstream_t stream( m_ioService, *m_serverContext );
+
+                try
+                {
+                    bl::eh::error_code ec;
+
+                    m_acceptor.accept( stream.next_layer(), ec );
+
+                    if( ec )
+                    {
+                        record( "accept-failed:" + describeCode( ec ) );
+
+                        return;
+                    }
+
+                    stream.handshake( bl::asio::ssl::stream_base::server, ec );
+
+                    record( "handshake:" + describeCode( ec ) );
+
+                    if( ! ec )
+                    {
+                        runEnding( stream );
+                    }
+                }
+                catch( std::exception& e )
+                {
+                    record( std::string( "failure:" ) + e.what() );
+                }
+
+                record( "script-ended" );
+
+                /*
+                 * THE SOCKET IS KEPT OPEN UNTIL THE CASE RELEASES IT, so that the peer's side going
+                 * away can never be what ends the client's task
+                 */
+
+                waitForRelease();
+
+                bl::eh::error_code ec;
+
+                stream.next_layer().close( ec );
+            }
+
+            bl::cpp::SafeUniquePtr< bl::asio::ssl::context >                    m_serverContext;
+
+            bl::asio::io_service                                                m_ioService;
+            bl::asio::ip::tcp::acceptor                                         m_acceptor;
+            bl::os::port_t                                                      m_port;
+            const Ending                                                        m_ending;
+            const bool                                                          m_isAnswerHeld;
+
+            mutable bl::os::mutex                                               m_lock;
+            mutable bl::os::condition_variable                                  m_cv;
+            std::vector< std::string >                                          m_records;
+            bool                                                                m_isReleased;
+
+            bl::cpp::SafeUniquePtr< bl::os::thread >                            m_thread;
+        };
+
+    } // tcpteardown
+
+} // utest
+
+#endif /* __UTEST_TCPTEARDOWNTESTUTILS_H_ */

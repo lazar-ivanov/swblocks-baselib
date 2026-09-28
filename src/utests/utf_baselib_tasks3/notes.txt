@@ -1,0 +1,16 @@
+# each slice appends the recipes for the cases it lands here
+
+# CS-6 of astra's second review - the TCP and TLS stream policies' teardown (owed-list rows I13 and I2).
+#
+# I13 - a forced cancel shuts the socket down and must not write its linger option, which raced an
+# operation starting on the socket. The characterization case is green on both sides of the fix.
+#
+# I2 - a TLS task's shutdown after the peer's truncation
+# (notes/plans/issues/astra2-cs6-tls-shutdown-after-truncation-design.md). The characterization
+# cases are the endings the fix must NOT change, and are green on both sides of it: the peer's
+# close_notify, and our own close_notify answered at once or only once the peer releases it.
+
+--log_level=message --run_test=Tcp_ForcedCancelLeavesTheLingerOptionOffTests
+--log_level=message --run_test=TlsShutdown_ThePeersCloseNotifyEndsTheTaskPromptlyTests
+--log_level=message --run_test=TlsShutdown_OurCloseNotifyIsAnsweredPromptlyTests
+--log_level=message --run_test=TlsShutdown_OurCloseNotifyWaitsForTheAnswerTests
