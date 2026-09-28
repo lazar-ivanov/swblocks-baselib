@@ -48,3 +48,4 @@
  */
 
 #include "TestHttpServerLostCancel.h"
+#include "TestSimpleHttpHandshakeDeadline.h"

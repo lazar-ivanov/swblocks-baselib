@@ -7,3 +7,15 @@
 
 --log_level=message --run_test=HttpServerTimers_TheIdleTimerIssuesALostCancelAgainTests
 --log_level=message --run_test=HttpServerTimers_TheResponseTimerIssuesALostCancelAgainTests
+
+# CS-6 - D2: SimpleHttpTask's one deadline, armed before its own TLS handshake
+# (notes/plans/issues/astra2-cs6-lost-forced-cancel-design.md, section 8). The first two cases are
+# controls, green on both sides. The handshake case and the retry case are red until the timer moves
+# before the handshake; the resolve case is red until onTimer( ) stops ignoring an expiry with no
+# channel, in the commit after.
+
+--log_level=message --run_test=SimpleHttp_ACleartextRequestStillTimesOutTests
+--log_level=message --run_test=SimpleHttpTls_ARequestWithinItsTimeoutSucceedsTests
+--log_level=message --run_test=SimpleHttpTls_AHandshakeWhichNeverCompletesTimesOutTests
+--log_level=message --run_test=SimpleHttpTls_OneDeadlineHoldsAcrossAHandshakeRetryTests
+--log_level=message --run_test=SimpleHttpTls_TheDeadlineHoldsDuringARetrysResolveTests
