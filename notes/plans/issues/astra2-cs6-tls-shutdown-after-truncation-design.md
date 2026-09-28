@@ -3,7 +3,7 @@
 **Date:** 2026-09-27. **Status:** revision 3, written by lane 3 — not coded until this note carries a
 dated agreement line (§10).
 
-**Revisions.** r1 `a8542d6` (with `700da22` and `bb36363`). **r2 (this)** carries review round 1
+**Revisions.** r1 `a8542d6` (with `700da22` and `bb36363`). **r2** `f913dbc` carries review round 1
 (`CS6-I2-design-r1.md`, agree with changes) and the orchestrator's answers (`CS6-I2-orchestrator-r2.md`),
 which accept everything: the null-stream guard (F1, §4.2 and §9), §7's ordering argument replaced (F2),
 the clean path's assignment kept literally (§9), four text corrections (F3-F6), the sharper red (P8,
@@ -62,9 +62,9 @@ directory); the one behavioural measurement it relies on is CS-1's, recorded in
    `operation_aborted`. `TcpSocketCommonBase::onTaskStoppedNothrow( )` then gives a cancelled task whose
    socket was shut down forcefully `operation_aborted` as its ending (`TcpBaseTasks.h:123-143`), which
    `notifyReadyImpl( )` stores when there is no original exception (`TaskBase.h:719-722`). That ending
-   does not come from `onShutdownCompleted( )`'s own check (`:613-641`): every consumer here counts the
+   does not come from `onShutdownCompleted( )`'s own check (`TcpSslBaseTasks.h:613-641`): every consumer here counts the
    cancel as expected. The HTTP/1.1 driver does so because it never ran a handshake
-   (`! m_isHandshakeCompleted`, `:449-460`), and the connector's tasks through `TcpBaseTasks.h:1510-1520`.
+   (`! m_isHandshakeCompleted`, `TcpSslBaseTasks.h:449-460`), and the connector's tasks through `TcpBaseTasks.h:1510-1520`.
    **VERIFIED** (mechanism); **measured by CS-1** on the HTTP/1.1 driver. A peer which has *fully*
    closed answers our close_notify with a reset, which does wake the read, so the hang needs a peer whose
    socket stays open. **INFERRED.**
@@ -262,7 +262,7 @@ cancel, `TcpBaseTasks.h:1510-1520`), and `SimpleHttpTaskT`'s truncated but compl
 those fail at once with the reset, reported as unexpected. After the fix the shutdown reads nothing,
 completes with no error, and they end clean. Three kinds are unchanged:
 - the HTTP/1.1 driver and the HTTP server's send task, which never handshake and so admit a reset
-  through `! m_isHandshakeCompleted` (`:449-460`);
+  through `! m_isHandshakeCompleted` (`TcpSslBaseTasks.h:449-460`);
 - the block transfer tasks, which admit one through `isExpectedSocketException( )`
   (`TcpBlockTransferCommon.h:413-421`);
 - every task which already failed, which re-throws its original.
@@ -370,7 +370,7 @@ the consumers of §5 do: one asks the predicate and ends clean (the drivers), on
   The probe that failed with the code keeps its truncation, re-thrown and stored first
   (`TcpSslBaseTasks.h:494-497`, `TaskBase.h:599-600`; §5). `hasShutdownCompletedSuccessfully( )` is
   false for both. On the connector the timer bounds the shutdown alone: it is armed only by the finish
-  continuation (`:512`) and by a directly scheduled handshake or shutdown (`:359`, `:377`), and the
+  continuation (`TcpSslBaseTasks.h:512`) and by a directly scheduled handshake or shutdown (`:359`, `:377`), and the
   connector's handshake is neither. After the fix the same case ends before the timer, with
   `isCanceled( )` false — clean for the probe that swallows the ending, and with the truncation itself
   for the one that fails with it. The peer has read our close_notify, and
