@@ -187,7 +187,7 @@ own `scheduleTask( )` (`:465-468`) and the block transfer client's shutdown-only
 | `HttpServerSendResponseTask` (`:311`) | writes only | — | none |
 | `TcpBlockTransferServer` (`:184`) | reads fail through `BL_TASKS_HANDLER_BEGIN_CHK_EC( )` (`:552`, `:1182`, …) | yes | the teardown no longer holds the connection for 60 s; the task still fails with the original truncation, as today |
 | `TcpBlockTransferClientConnectionT` | reads fail through `BEGIN_CHK_EC( )` (`:482`, `:522`, `:744`); the owner re-runs it for the shutdown alone (`:1664-1670`) | yes, and the record survives the re-run (§4.1) | the same |
-| `SimpleHttpTaskT` (`:155`) | failures go through CHK_EC (`:661`, `:679`, `:726`, `:872`); **a complete Content-Length body ended by a truncation is a success**, classified by the *static* `isExpectedProtocolException( )` (`:832-834`) | failures yes; **that success, no** | failures prompt; that success still waits 60 s and then fails as a cancel (**INFERRED**, by the same path as the drivers', not measured) — unless `SimpleHttpTask.h:833` asks the member predicate (§9) |
+| `SimpleHttpTaskT` (`:155`) | failures go through CHK_EC (`:661`, `:679`, `:726`, `:872`); **a complete Content-Length body ended by a truncation is a success**, classified by the *static* `isExpectedProtocolException( )` (`:832-834`) | failures yes; **that success, no** — until `SimpleHttpTask.h:833` asks the member predicate, which is part of this change (§9) | failures prompt; that success too, with the one line. Without it the success waits 60 s and then fails as a cancel (**INFERRED**, by the same path as the drivers', not measured) |
 | The establishers | `isProtocolHandshakeRetryableError( )` asks it (`TcpSslBaseTasks.h:329`) | yes, inertly (§4.2) | none |
 | Any task over the cleartext policy | its `isStreamTruncationError( )` answers false (`TcpBaseTasks.h:577-582`) | — | none |
 
@@ -266,12 +266,15 @@ do: one asks the predicate and ends clean (the drivers), one fails with the code
   `onShutdownInternal( )` keeping a skipped wait from reading as a completed closure. **Owned by the
   brief "if the note puts the record there"**, which it does.
 - `src/include/baselib/tasks/TcpSslBaseTasks.h` — the two predicates record. Owned.
-- **Proposed, outside the brief's ownership — the orchestrator's call:** `SimpleHttpTask.h:833`, asking
+- `src/include/baselib/http/SimpleHttpTask.h:833` — **accepted by the orchestrator on 2026-09-27 as shape
+  (A) applied to the legacy client's path, with the lane's ownership widened to that line.** It asks
   `base_type::isStreamTruncationError( ec )` where it asks the static `isExpectedProtocolException( nullptr,
   std::exception(), &ec )`. The two answer the same for both policies — the cleartext pair are both
   false, and the TLS pair are both `isExpectedSslErrorCode( ec )` (`TcpSslBaseTasks.h:341-344`,
-  `:760-779`). It is one line, and without it the legacy client keeps I2 on its one path that ends in
-  success. Its red would be a `SimpleHttpSslGetTask` against the same peer.
+  `:760-779`) — so the line changes what is recorded and nothing it decides. Without it the legacy client
+  keeps I2 on its one path that ends in success. Its test is a `SimpleHttpSslGetTask` against the same
+  peer, answering with a complete Content-Length body and then truncating: red on today's tree, green
+  after.
 
 ## 10. Reversing conditions, and agreement
 
