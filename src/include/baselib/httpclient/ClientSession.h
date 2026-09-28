@@ -2032,6 +2032,11 @@ namespace bl
                         return om::copy( held -> connection() );
                     };
 
+                    attempt.cancelReason = [ held ]( SAA_in const std::exception_ptr& reason ) -> void
+                    {
+                        held -> cancelReason( reason );
+                    };
+
                     return attempt;
                 };
             }

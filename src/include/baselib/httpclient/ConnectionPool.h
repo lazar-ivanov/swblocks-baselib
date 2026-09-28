@@ -403,6 +403,16 @@ namespace bl
              */
 
             cpp::function< om::ObjPtr< ClientConnection > () >                  driver;
+
+            /**
+             * Hands the task the pool's REASON for a cancel which is about to follow, for the
+             * failure that cancel produces to carry - owed-list row I6. The pool gives one when the
+             * establishment bound expires, so the request riding the connection is told the bound
+             * expired and not only "Operation canceled". May be empty: a task which takes no reason
+             * is cancelled exactly as before
+             */
+
+            cpp::function< void ( SAA_in const std::exception_ptr& reason ) >    cancelReason;
         };
 
         /**
@@ -840,9 +850,21 @@ namespace bl
                 std::exception_ptr                                              exception;
             };
 
+            /**
+             * @brief A reason handed to a connection task ahead of its cancel - ConnectionAttempt::
+             * cancelReason, and what it is given
+             */
+
+            struct CancelReason
+            {
+                cpp::function< void ( SAA_in const std::exception_ptr& reason ) > cancelReason;
+                std::exception_ptr                                              reason;
+            };
+
             struct Actions
             {
                 std::vector< Answer >                                           answers;
+                std::vector< CancelReason >                                     reasons;
                 std::vector< om::ObjPtrCopyable< tasks::Task > >                cancels;
                 std::vector< om::ObjPtrCopyable< tasks::Task > >                schedules;
                 std::vector< entry_ptr_t >                                      starts;
@@ -852,7 +874,7 @@ namespace bl
                 bool empty() const NOEXCEPT
                 {
                     return
-                        answers.empty() && cancels.empty() && schedules.empty() &&
+                        answers.empty() && reasons.empty() && cancels.empty() && schedules.empty() &&
                         starts.empty() && ! armMaintenance;
                 }
             };
@@ -1007,6 +1029,28 @@ namespace bl
                             << ":"
                             << key.port.value()
                             << "' timed out"
+                        )
+                    );
+            }
+
+            /**
+             * @brief The reason a connection is abandoned for its establishment bound - the words
+             * the pool logs, as the TimeoutException the connection chains onto its failure
+             */
+
+            auto makeEstablishmentTimeoutException( SAA_in const ConnectionKey& key ) const NOEXCEPT
+                -> std::exception_ptr
+            {
+                return makeException< TimeoutException >(
+                    resolveMessage(
+                        BL_MSG()
+                            << "A connection to '"
+                            << key.host
+                            << ":"
+                            << key.port.value()
+                            << "' did not become usable within "
+                            << m_policy.establishmentTimeout
+                            << " and was abandoned by the pool"
                         )
                     );
             }
@@ -1555,7 +1599,22 @@ namespace bl
                      * expired while the request which rode the preface is still out is retired
                      * now and forgotten only when that request comes back - and the bound's whole
                      * promise is that the connection stops when it expires
+                     *
+                     * AND WITH ITS REASON, handed over ahead of the cancel - owed-list row I6. The
+                     * cancel's own failure is operation_aborted, which says nothing about the
+                     * bound, and the request riding the connection is told the connection's
+                     * failure; so the connection chains this onto it
                      */
+
+                    if( ! entry -> isCancelRequested && entry -> attempt.cancelReason )
+                    {
+                        CancelReason reason;
+
+                        reason.cancelReason = entry -> attempt.cancelReason;
+                        reason.reason = makeEstablishmentTimeoutException( entry -> key );
+
+                        actions.reasons.push_back( std::move( reason ) );
+                    }
 
                     chkCancelEntry( entry, actions );
 
@@ -2039,6 +2098,16 @@ namespace bl
                 for( auto& answer : actions.answers )
                 {
                     post( std::move( answer ) );
+                }
+
+                /*
+                 * A REASON GOES AHEAD OF ITS CANCEL, so that the task holds it by the time the
+                 * cancel ends it
+                 */
+
+                for( const auto& reason : actions.reasons )
+                {
+                    reason.cancelReason( reason.reason );
                 }
 
                 for( const auto& task : actions.cancels )

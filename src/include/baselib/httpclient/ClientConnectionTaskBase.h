@@ -373,6 +373,14 @@ namespace bl
 
             cpp::SafeUniquePtr< asio::deadline_timer >                          m_connectTimer;
 
+            /*
+             * The pool's reason for a cancel it is about to make, when it gives one - see
+             * cancelReason( ). Under the task lock: written by cancelReason( ), read by
+             * onTaskStoppedNothrow( ), which TaskBase runs holding that lock
+             */
+
+            std::exception_ptr                                                  m_cancelReason;
+
             ClientConnectionTaskBaseT(
                 SAA_in              httpclient::ConnectionKey                   key,
                 SAA_in              factory_ptr_t                               driverFactory,
@@ -625,6 +633,40 @@ namespace bl
                 return onProtocolNegotiated();
             }
 
+            /**
+             * @brief Chains the pool's reason onto the failure a cancel produced - owed-list row I6
+             *
+             * ONLY FOR A CANCELLED TASK WHICH FAILED AND WAS GIVEN A REASON. The failure is the
+             * connector's own - the operation_aborted of the cancel, naming the endpoint - and it is
+             * kept: the reason goes on it as its nested cause, in place, before TaskBase records it.
+             * So the request which rode the connection, which reads this task's exception( ) when
+             * it is answered, is told both. A failure which already carries a nested cause keeps
+             * that one; a task which ended by itself before the cancel came was never cancelled
+             */
+
+            void chainCancelReason( SAA_in_opt const std::exception_ptr& eptr ) NOEXCEPT
+            {
+                if( ! eptr || ! m_cancelReason || ! base_type::isCanceled() )
+                {
+                    return;
+                }
+
+                try
+                {
+                    std::rethrow_exception( eptr );
+                }
+                catch( eh::exception& e )
+                {
+                    if( ! eh::get_error_info< eh::errinfo_nested_exception_ptr >( e ) )
+                    {
+                        e << eh::errinfo_nested_exception_ptr( m_cancelReason );
+                    }
+                }
+                catch( std::exception& )
+                {
+                }
+            }
+
             virtual auto onTaskStoppedNothrow(
                 SAA_in_opt          const std::exception_ptr&                   eptrIn = nullptr,
                 SAA_inout_opt       bool*                                       isExpectedException = nullptr
@@ -642,6 +684,8 @@ namespace bl
                  */
 
                 cancelConnectDeadline();
+
+                chainCancelReason( eptrIn );
 
                 BL_NOEXCEPT_END()
 
@@ -674,6 +718,26 @@ namespace bl
             auto key() const NOEXCEPT -> const httpclient::ConnectionKey&
             {
                 return m_key;
+            }
+
+            /**
+             * @brief The reason for a cancel which is about to follow, for the failure it produces
+             * to carry - httpclient::ConnectionAttempt::cancelReason, owed-list row I6
+             *
+             * The pool gives one when it abandons the connection for its establishment bound, and
+             * onTaskStoppedNothrow( ) chains it onto the cancel's failure. Additive: a cancel with no
+             * reason, and a task which ends before the cancel arrives, are what they were
+             */
+
+            void cancelReason( SAA_in const std::exception_ptr& reason ) NOEXCEPT
+            {
+                BL_NOEXCEPT_BEGIN()
+
+                BL_MUTEX_GUARD( base_type::m_lock );
+
+                m_cancelReason = reason;
+
+                BL_NOEXCEPT_END()
             }
         };
 
