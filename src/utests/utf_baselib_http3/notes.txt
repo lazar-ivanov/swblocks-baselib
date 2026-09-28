@@ -1,0 +1,9 @@
+# each slice appends the recipes for the cases it lands here
+
+# CS-6 of astra's second review - D-L3-1 on the HTTP server's two timers
+# (notes/plans/issues/astra2-cs6-lost-forced-cancel-design.md). Both cases are reds: the probe swallows
+# the cancel it requests as its task starts, and today the 1 s timer does nothing about it - after the
+# deadlines' re-issue (a2) the task ends at the timer, as a cancel.
+
+--log_level=message --run_test=HttpServerTimers_TheIdleTimerIssuesALostCancelAgainTests
+--log_level=message --run_test=HttpServerTimers_TheResponseTimerIssuesALostCancelAgainTests
