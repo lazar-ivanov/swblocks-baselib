@@ -447,6 +447,14 @@ namespace utest
             bl::eh::error_code                                                  taskCode;
             std::string                                                         connectedTo;
 
+            /*
+             * The task, kept for as long as its result is: a case which runs several policies keeps
+             * every probe alive until it ends, so that no two share an address - ThreadSanitizer
+             * reports one race per address, and one policy's report could otherwise hide the next's
+             */
+
+            bl::om::ObjPtrCopyable< bl::tasks::Task >                           keepAlive;
+
             ConnectResult()
                 :
                 isConnectStarted( false ),
@@ -608,6 +616,8 @@ namespace utest
 
             result.connectedTo = probe -> connectedTo();
 
+            result.keepAlive = om::ObjPtrCopyable< Task >( task );
+
             return result;
         }
 
@@ -677,7 +687,7 @@ namespace utest
         }
 
         /**
-         * @brief The first endpoint refused at once, the second a full accept queue; the cancel is
+         * @brief The first endpoint refused at once, the second a full accept queue, and a cancel
          * requested once the second attempt's socket is in SYN_SENT
          */
 
@@ -685,7 +695,7 @@ namespace utest
         <
             typename STREAM
         >
-        inline void chkACancelAfterTheSwitch( SAA_in const std::string& which )
+        inline auto runACancelAfterTheSwitch() -> ConnectResult
         {
             Listener listener( true /* isQueueFull */ );
 
@@ -696,7 +706,7 @@ namespace utest
 
             const auto awaited = listener.endpoint();
 
-            const auto result = runConnect< STREAM >(
+            return runConnect< STREAM >(
                 std::move( endpoints ),
                 CancelPoint::AfterTheSwitch,
                 [ &listener ]() -> void
@@ -705,8 +715,6 @@ namespace utest
                 },
                 &awaited
                 );
-
-            chkCancelEndedItPromptly( result, which );
         }
 
         /**
@@ -887,10 +895,37 @@ UTF_AUTO_TEST_CASE( TcpConnectLoop_ACancelAfterTheSwitchIsOrderedWithItTests )
         return;
     }
 
-    chkACancelAfterTheSwitch< TcpSocketAsyncBase >( "cleartext" );
-    chkACancelAfterTheSwitch< TcpSocketAsyncStrandedBase >( "cleartext, stranded" );
-    chkACancelAfterTheSwitch< TcpSslSocketAsyncBase >( "TLS" );
-    chkACancelAfterTheSwitch< TcpSslSocketAsyncStrandedBase >( "TLS, stranded" );
+    /*
+     * All four are run before any is asserted, and each keeps its task alive until then
+     */
+
+    const ConnectResult results[] =
+    {
+        runACancelAfterTheSwitch< TcpSocketAsyncBase >(),
+        runACancelAfterTheSwitch< TcpSocketAsyncStrandedBase >(),
+        runACancelAfterTheSwitch< TcpSslSocketAsyncBase >(),
+        runACancelAfterTheSwitch< TcpSslSocketAsyncStrandedBase >(),
+    };
+
+    const char* const names[] =
+    {
+        "cleartext",
+        "cleartext, stranded",
+        "TLS",
+        "TLS, stranded",
+    };
+
+    std::string readings;
+
+    for( std::size_t i = 0U; i < BL_ARRAY_SIZE( results ); ++i )
+    {
+        readings += std::string( names[ i ] ) + ": " + results[ i ].describe() + "; ";
+    }
+
+    for( std::size_t i = 0U; i < BL_ARRAY_SIZE( results ); ++i )
+    {
+        chkCancelEndedItPromptly( results[ i ], std::string( names[ i ] ) + " (of " + readings + ")" );
+    }
 }
 
 #endif /* __UTEST_TESTTCPCONNECTLOOP_H_ */
