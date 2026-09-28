@@ -23,3 +23,17 @@
 --log_level=message --run_test=TlsShutdown_ATruncationDoesNotWaitForTheCloseNotifyTests
 --log_level=message --run_test=TlsShutdown_ATruncationThenACloseEndsCleanTests
 --log_level=message --run_test=TlsShutdown_TheTruncationRecordBelongsToOneHandshakeTests
+
+# D-L3-1 - a forced cancel lost between two steps of a TLS operation
+# (notes/plans/issues/astra2-cs6-lost-forced-cancel-design.md). The first two cases are the
+# characterization, green on both sides of the fixes. The other four are the reds, each made certain
+# by a posting order or by holding the I/O pool's other threads: the two W1 cases turn green with the
+# receive shutdown (c), the TLS shutdown case with the protocol timer's re-issue (a2), and the last
+# with the connector's retry guard.
+
+--log_level=message --run_test=TlsLostCancel_ACancelWithTheHandshakeReadRegisteredEndsPromptlyTests
+--log_level=message --run_test=TlsLostCancel_APeerSeesAnOrderlyEndAfterAForcedCancelTests
+--log_level=message --run_test=TlsLostCancel_ACancelBeforeTheHandshakeIsNotLostTests
+--log_level=message --run_test=TlsLostCancel_ACancelAfterTheHandshakeStartsIsNotLostTests
+--log_level=message --run_test=TlsLostCancel_ACancelInsideTheTlsShutdownIsReissuedTests
+--log_level=message --run_test=TlsLostCancel_ACancelledHandshakeIsNotRetriedTests

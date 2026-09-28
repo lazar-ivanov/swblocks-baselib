@@ -49,3 +49,4 @@
 
 #include "TestTcpForcedCancelLinger.h"
 #include "TestTlsShutdownEndings.h"
+#include "TestTlsLostCancel.h"
