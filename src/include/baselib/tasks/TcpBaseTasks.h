@@ -1414,6 +1414,12 @@ namespace bl
              * with the LAST attempt's error and the end iterator; and an empty list ends with
              * not_found and the end iterator, posted rather than inline
              * (notes/plans/issues/astra2-cs6-lost-forced-cancel-design.md, section 9)
+             *
+             * One branch of asio's loop is not kept, deliberately: when an attempt leaves the socket
+             * closed - its open for that endpoint's protocol failed, and async_connect( ) posted the
+             * open's error - asio ended the whole connect with operation_aborted, which a task nobody
+             * had cancelled then reported as a cancel. Here that attempt fails like any other: the
+             * loop moves to the next endpoint, and after the last it ends with the open's own error
              */
 
             void beginConnect( SAA_in typename tcp_resolver_type::iterator endpoints )
