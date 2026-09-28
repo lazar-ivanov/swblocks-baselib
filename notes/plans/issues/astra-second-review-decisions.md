@@ -609,6 +609,26 @@ rule is now in `AGENTS.md` v2.15, "Fold what the implementation finds" (`ea7e414
 **CS-6 owes the Windows matrix.** I13, I2 and D-L3-1 all change transport teardown — `AGENTS.md`'s
 networking rule — and it is handed off with the rest of this review's Windows items.
 
+**D-L3-1's shape, decided by the maintainer 2026-09-28: (c) + (a2) limited to four deadlines + the
+retry guard.** The maintainer asked for the regression analysis of (a2) and for the decision in full
+before choosing.
+- **(c):** while a TLS task's own handshake is incomplete, a forced cancel also shuts the receive side,
+  so the next step's read ends at once. Measured on Linux: 1–2 ms, where today it hangs. It never
+  applies to a connection attached after its handshake. Its Windows premise is owed to the matrix.
+- **(a2), on four deadlines:** the TLS protocol timer, the HTTP connect deadline, and the HTTP server's
+  idle and response timers. Through one additive `TaskBase` helper, each re-issues the socket cancel
+  when it fires on a task that is running and already cancelled — a state which does nothing today.
+  - **Excluded:** three handlers the design note had included — the HTTP/2 ping and drain deadlines,
+    and `SimpleHttpTask`'s request timer. Their own `cancelTask( )` cancels their timer, so they cannot
+    fire after a cancel.
+  - **The gap left, recorded as a known limit of the shape:** an HTTP/2 connection or a
+    `SimpleHttpTask` whose peer stops mid-record and stays open is still not bounded after a lost
+    cancel. Only a re-cancel watchdog, (e), would close it, and it was not chosen.
+- **The retry guard:** the connector does not retry a handshake which failed because it was
+  cancelled.
+
+It is core code, in CS-6 under its whole-suite gate.
+
 ## 10. The change-sets, as they landed
 
 ### CS-3 — D6, D7, D8, and the DATA block sized to its payload — ready 2026-09-27
