@@ -460,3 +460,12 @@ record the tip in the result.
 
   **If any module measures above about 45 MB,** the maintainer's D-B reverses for the splittable
   ones: `tasks3`, `httpclient13` and `http3`. Report it.
+
+---
+
+## Astra's third review, 2026-09-28 — what CS-7 owes Windows
+
+- **C1. T01, the status pair frozen at completion:** run `utf_baselib_httpclient`'s
+  `HttpClientRequestTask_ACloseAfterTheFailureChangesNoStatusTests` once, from a pushed tip that
+  contains CS-7's merge. It is deterministic, and it is all of CS-7 that Windows can run: its
+  ThreadSanitizer pair is Linux-only. CS-7 changes no transport error handling.
