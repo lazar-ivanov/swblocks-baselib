@@ -108,7 +108,7 @@ namespace utest
 
         /*
          * The TLS peer and the TLS establishment helpers live in
-         * utests/baselib/Http1DriverTlsTestUtils.h, which two CS-1 modules share
+         * utests/baselib/Http1DriverTlsTestUtils.h, which every module with such a case shares
          */
 
         using http1drivertls::TlsPeer;

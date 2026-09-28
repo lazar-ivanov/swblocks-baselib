@@ -60,8 +60,8 @@
  * selects http/1.1, and the HTTP/1.1 driver refuses the source. Its discrimination was shown with a
  * local probe which made narrowToHttp2( ) do nothing - red with the probe, green without.
  *
- * The session helpers are utest::tlssession's, which is this module's other header and is included
- * before this one ( the append convention in the module's Main.cpp ).
+ * The session helpers are utests/baselib/HttpClientSessionTlsTestUtils.h's, which utest::tlssession
+ * names in this module's other header, included before this one ( the module's Main.cpp ).
  */
 
 namespace utest

@@ -64,10 +64,10 @@
  *
  * WHY NOT IN utf_baselib_httpclient5, where the same exchange without a sink lives: that module is
  * over the 40 MB target ( its Main.cpp records 46.9 MB ), and src/utests/AGENTS.md says not to add
- * to one there. Its peer is not shared either, because a test header may never be included across
- * module directories; the peer below is this module's own, a smaller one written for the one
- * script these cases run. The counting sink IS shared - it was utf_baselib_httpclient4's, and moved
- * to utests/baselib/HttpClientSessionTestUtils.h for this case.
+ * to one there. What the case needs is shared rather than copied, since a test header may never be
+ * included across module directories: the peer is utests/baselib/Http1DriverTlsTestUtils.h's, the
+ * session helpers utests/baselib/HttpClientSessionTlsTestUtils.h's, and the counting sink - once
+ * utf_baselib_httpclient4's - utests/baselib/HttpClientSessionTestUtils.h's.
  *
  * The host is "localhost" because the client verifies the peer name: UtfMain registers the dev root
  * CA for every test binary and the test server certificate is issued for that name.

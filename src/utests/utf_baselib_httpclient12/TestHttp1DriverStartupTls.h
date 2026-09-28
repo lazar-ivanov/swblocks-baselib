@@ -36,7 +36,7 @@
  * the read's start AFTER its engine step has finished, so even its red run does not drive the two at
  * once - it only shows that the ordering which would forbid it is not there.
  *
- * THE PEER IS utests/baselib/Http1DriverTlsTestUtils.h's, shared with utf_baselib_httpclient8. It ends
+ * THE PEER IS utests/baselib/Http1DriverTlsTestUtils.h's, the tree's one TLS HTTP/1.1 peer. It ends
  * a connection with a close_notify and waits for ours, and never with a bare FIN: after a truncation
  * the driver's own TLS shutdown waits the full 60 second protocol timer (measured in D1's module),
  * which is pre-existing and not what these cases are about.

@@ -380,7 +380,7 @@ namespace utest
         typedef bl::om::ObjectImpl< Http1TlsStrandProbe >                       Http1TlsStrandProbeImpl;
 
         /**
-         * @brief makeHttp1TlsFactory( )'s sibling, building the probe above instead of the driver
+         * @brief http1drivertls::makeTlsFactory( )'s sibling, building the probe above instead
          */
 
         inline auto makeProbeTlsFactory(

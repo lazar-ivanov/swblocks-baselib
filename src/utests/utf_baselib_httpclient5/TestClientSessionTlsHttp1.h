@@ -84,16 +84,16 @@
  * but H01's spurious reuse refusal, and the close_notify control has to be a close with no write
  * ever issued. Each case below says which of the three properties it carries.
  *
- * THE PEER IS SELF CONTAINED rather than reaching into another module's TLS peer, for the reason
- * TestClientSessionTls.h gives for its own: a test header which includes a sibling module's
- * header silently duplicates its cases into two binaries (src/utests/AGENTS.md). It is also not
- * the h2peer::Http2TestServerT that file uses - that server speaks HTTP/2 framing and nothing
- * else, so an ALPN preference of "http/1.1" on it would negotiate a protocol it cannot answer.
+ * THE PEER IS THE TREE'S ONE TLS HTTP/1.1 PEER - utests/baselib/Http1DriverTlsTestUtils.h's, named
+ * Http1TlsPeer here, as these cases were written. It records how its stream ended and counts the
+ * octets it reads, which is what these cases assert on. It is not the h2peer test server that
+ * TestClientSessionTls.h uses - that server speaks HTTP/2 framing and nothing else, so an ALPN
+ * preference of "http/1.1" on it would negotiate a protocol it cannot answer.
  *
- * THE SESSION HELPERS COME FROM utest::sessiontls, which is this module's other header and is
- * included before this one (the append convention in the module's Main.cpp). They are used and
- * not copied: a helper copied into two headers of the same module is what invariant C6 exists to
- * catch.
+ * THE HELPERS ARE SHARED TOO: the session's from utests/baselib/HttpClientSessionTlsTestUtils.h,
+ * the driver's from utests/baselib/Http1DriverTestUtils.h and Http1DriverTlsTestUtils.h. They are
+ * used and not copied: a helper copied into two headers of the same module is what invariant C6
+ * exists to catch.
  */
 
 namespace utest
@@ -173,10 +173,10 @@ namespace utest
         /*************************************************************************
          * Establishing an HTTP/1.1 driver over TLS the way the session will
          *
-         * The two types below are what the session's own factory already builds for the ALPN
-         * fallback - Http1ConnectionTaskImpl over the TLS stranded policy, handed a stream that
-         * ClientConnectionTaskBaseT connected and handshook - so the two close cases run the same
-         * driver on the same policy as the session case, with the pool taken out of the way
+         * The two types below are what the session's factory builds for the ALPN fallback, so the
+         * close cases run the same driver on the same policy as the session case, the pool aside.
+         * establishTlsDriver( ) is not http1drivertls's: its h2driver::chkTaskSucceeded( ) also
+         * asserts that an establisher which did not fail carries no exception, and that one does not
          */
 
         using http1drivertls::TlsEstablisherImpl;
