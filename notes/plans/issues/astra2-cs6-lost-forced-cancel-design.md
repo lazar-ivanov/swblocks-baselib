@@ -624,6 +624,12 @@ stage's proxy connect (`TcpTunnelStage.h:1610`) — through one protected helper
     with `operation_aborted` (`:495-499`), which cannot happen here — nothing closes the socket during an
     attempt and the forced path never closes — and per-operation cancellation (`:504-508`) needs a bound
     slot, which the library never binds. *(r3, from review round 2's table.)*
+    *(Corrected 2026-09-28, checkpoint review r1: the first branch is reachable. asio's
+    `! socket_.is_open( )` test also fires when the attempt's own open failed - `async_connect( )` opens
+    inline and, on failure, posts the open's error with the socket still closed (`basic_socket.hpp:974-979`,
+    `:1872-1893`) - so today a socket which cannot be opened ends the connect with `operation_aborted`.
+    The loop reports the open's error and tries the next endpoint; the maintainer's ruling is in the
+    decision record.)*
 - **The socket is re-opened through our own path:** each attempt's completion is a task handler — under the
   task lock, and for a stranded policy on the strand — and it does the close, the re-open and the next
   connect there. The switch is then ordered with every `cancelTask( )`, which also runs under the lock, and
@@ -750,6 +756,14 @@ corrects or completes a claim of §7, §4(c) or §9 with what was measured at th
   error with the end iterator, or no error at the endpoint — it does exactly what it did; called by the loop
   with one attempt's result and that attempt's endpoint, it moves to the next endpoint on an error unless
   the task was cancelled. `beginConnect( )` starts the loop; the connector and the tunnel stage call it.
+- **One branch of asio's loop is not kept: an attempt whose socket cannot be opened** (§9 called it
+  unreachable; checkpoint review r1, F2). When the attempt's own open fails - the process is out of
+  descriptors, or the host cannot open the endpoint's address family - `async_connect( )` posts the open's
+  error with the socket still closed, and asio's loop ended the whole connect with `operation_aborted`: a
+  cancel reported by a task nobody had cancelled, with no later endpoint tried. The loop treats that attempt
+  like any other which fails: it tries the next endpoint, and after the last it reports the open's own
+  error. The maintainer decided on 2026-09-28 to keep that, record it and test it (D-A, decision record
+  §11).
 - **The modules**, each the next free number in its family: `utf_baselib_tasks4` (D3), `utf_baselib_http3`
   (the HTTP server's timers and D2), `utf_baselib_h2client10` (the HTTP/2 characterization and the connect
   deadline). At the tip, a64 clang debug: 31.7, 36.1 and 37.6 MB; `utf_baselib_tasks3` is 36.9 MB
