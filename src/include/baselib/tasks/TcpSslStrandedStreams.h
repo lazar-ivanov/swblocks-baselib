@@ -76,8 +76,8 @@ namespace bl
          *
          *  - the protocol deadline (m_protocolTimer) stays on the thread pool's io_service and
          *    needs no change. Its handler touches no stream state: it takes the task lock and
-         *    calls requestCancelInternal(), which reaches the cancelTask() below and therefore
-         *    posts. That is what keeps this policy purely additive
+         *    calls requestCancelOrReissueInternal(), which reaches the cancelTask() below - again
+         *    on a task cancelled already - and so posts. That keeps this policy purely additive
          *
          * Everything the cleartext policy says about attachStream(), about the strand belonging to
          * the stream createSocket built, and about a retry creating a new one applies here

@@ -507,11 +507,11 @@ namespace bl
                      * WHETHER THIS DEADLINE IS WHAT CANCELS, read before the cancel is requested and
                      * under the task lock, which a requestCancel( ) takes too. A deadline which fires
                      * on a task someone else has already cancelled does not claim that cancel: it
-                     * gives no reason below, and requestCancelInternal( ), which is idempotent, adds
-                     * nothing to it. That is another cancel still on its way - this deadline came
-                     * due first, and cancelConnectDeadline( ) cannot recall a handler already due -
-                     * or one which was requested and then lost, CS-6's D-L3-1, whose re-issue
-                     * builds on this branch
+                     * gives no reason below, and only issues it again - cancelTask( ) once more.
+                     * That is another cancel still on its way - this deadline came due first, and
+                     * cancelConnectDeadline( ) cannot recall a handler already due - where a second
+                     * cancelTask( ) is harmless; or one which was requested and then lost between two
+                     * steps of the handshake, CS-6's D-L3-1, which only the second one ends
                      */
 
                     const bool isDeadlineCancel = ! TaskBase::isCanceled();
