@@ -39,6 +39,7 @@
 
 #include <utests/baselib/Http2DriverTestUtils.h>
 #include <utests/baselib/Http2TlsTestServer.h>
+#include <utests/baselib/HttpClientSessionTlsTestUtils.h>
 #include <utests/baselib/UtfCrypto.h>
 #include <utests/baselib/Utf.h>
 
@@ -75,69 +76,11 @@ namespace utest
         using h2peer::makeTlsPeer;
 
         /**
-         * @brief class UploadSourceT - a streaming upload which produces real bytes and can rewind
-         *
-         * Rewindable so that nothing but the protocol refusal can fail the upload: a request whose
-         * source could not rewind would be refused a replay for that reason instead
+         * @brief The rewindable streaming upload - utests/baselib/HttpClientSessionTlsTestUtils.h's
+         * StringBodySource, under the name this case was written against
          */
 
-        template
-        <
-            typename E = void
-        >
-        class UploadSourceT : public bl::httpclient::BodySource
-        {
-            BL_DECLARE_OBJECT_IMPL_ONEIFACE( UploadSourceT, bl::httpclient::BodySource )
-
-        protected:
-
-            const std::string                                                   m_payload;
-            bl::cpp::ScalarTypeIniter< std::size_t >                            m_offset;
-
-            UploadSourceT( SAA_in std::string payload )
-                :
-                m_payload( BL_PARAM_FWD( payload ) )
-            {
-            }
-
-        public:
-
-            virtual auto read( SAA_inout bl::data::DataBlock& target )
-                -> bl::httpclient::BodyReadResult OVERRIDE
-            {
-                bl::httpclient::BodyReadResult result;
-
-                const auto room = target.capacity() - target.size();
-                const auto left = m_payload.size() - m_offset;
-                const auto count = std::min< std::size_t >( room, left );
-
-                if( count )
-                {
-                    std::memcpy( target.begin() + target.size(), m_payload.c_str() + m_offset, count );
-
-                    target.setSize( target.size() + count );
-
-                    m_offset = m_offset.value() + count;
-                }
-
-                result.size = count;
-                result.isEndOfStream = ( m_offset == m_payload.size() );
-
-                return result;
-            }
-
-            virtual bool canRewind() const NOEXCEPT OVERRIDE
-            {
-                return true;
-            }
-
-            virtual void rewind() OVERRIDE
-            {
-                m_offset = 0U;
-            }
-        };
-
-        typedef bl::om::ObjectImpl< UploadSourceT<> >                           UploadSource;
+        typedef sessiontls::StringBodySource                                    UploadSource;
 
     } // tlssession
 

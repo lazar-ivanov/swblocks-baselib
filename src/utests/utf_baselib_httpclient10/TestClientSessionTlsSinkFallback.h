@@ -38,6 +38,7 @@
 
 #include <utests/baselib/Http1DriverTlsTestUtils.h>
 #include <utests/baselib/HttpClientSessionTestUtils.h>
+#include <utests/baselib/HttpClientSessionTlsTestUtils.h>
 #include <utests/baselib/UtfCrypto.h>
 #include <utests/baselib/Utf.h>
 
@@ -76,102 +77,17 @@ namespace utest
 {
     namespace tlssession
     {
-        typedef bl::tasks::TcpSslSocketAsyncStrandedBase                        tls_stream_t;
-
-        typedef bl::httpclient::ClientSessionImplT< tls_stream_t >              TlsSessionImpl;
-
-        inline auto makeSession(
-            SAA_in_opt      bl::httpclient::ClientSessionConfig                 config =
-                                bl::httpclient::ClientSessionConfig()
-            )
-            -> bl::om::ObjPtr< TlsSessionImpl >
-        {
-            return TlsSessionImpl::createInstance( BL_PARAM_FWD( config ) );
-        }
-
-        inline auto makeRequest(
-            SAA_in          const bl::os::port_t                                port,
-            SAA_in_opt      const std::string&                                  target = "/",
-            SAA_in_opt      const std::string&                                  method = "GET"
-            )
-            -> bl::httpclient::ClientRequest
-        {
-            bl::httpclient::ClientRequest request;
-
-            request.method( bl::cpp::copy( method ) );
-
-            request.url(
-                bl::net::Uri::parse(
-                    "https://localhost:" +
-                    bl::utils::lexical_cast< std::string >( port ) +
-                    target
-                    )
-                );
-
-            return request;
-        }
-
         /**
-         * @brief Runs one session task to completion; the queue keeps it, so a case can look at how
-         * it ended
+         * @brief The TLS session's helpers - utests/baselib/HttpClientSessionTlsTestUtils.h's, which
+         * this module carried a copy of
          */
 
-        inline void runSessionTask( SAA_in const bl::om::ObjPtr< bl::tasks::Task >& task )
-        {
-            using namespace bl;
-            using namespace bl::tasks;
-
-            scheduleAndExecuteInParallel(
-                [ & ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
-                {
-                    eq -> setOptions( ExecutionQueue::OptionKeepAll );
-
-                    eq -> push_back( task );
-
-                    eq -> wait( task );
-                }
-                );
-        }
-
-        /**
-         * @brief Fails with the reason the task failed - a function and not a UTF macro argument,
-         * because UTF_FAIL( msg ) takes the globals lock before it evaluates msg and bl::os::mutex
-         * is not recursive ( Utf.h )
-         */
-
-        inline void requireTaskSucceeded( SAA_in const bl::om::ObjPtr< bl::tasks::Task >& task )
-        {
-            if( ! task -> isFailed() )
-            {
-                return;
-            }
-
-            UTF_FAIL(
-                "the session request task failed: " +
-                bl::eh::diagnostic_information( task -> exception() )
-                );
-        }
-
-        inline auto bodyOf( SAA_in const bl::httpclient::ClientResponse& response ) -> std::string
-        {
-            const auto& block = response.body();
-
-            if( ! block )
-            {
-                return std::string();
-            }
-
-            return std::string(
-                block -> begin() + block -> offset1(),
-                block -> begin() + block -> size()
-                );
-        }
-
-        inline auto statsOf( SAA_in const bl::om::ObjPtr< TlsSessionImpl >& session )
-            -> bl::httpclient::ConnectionPoolImpl::Stats
-        {
-            return bl::om::qi< bl::httpclient::ConnectionPoolImpl >( session -> pool() ) -> stats();
-        }
+        using sessiontls::makeSession;
+        using sessiontls::makeRequest;
+        using sessiontls::runSessionTask;
+        using sessiontls::requireTaskSucceeded;
+        using sessiontls::bodyOf;
+        using sessiontls::statsOf;
 
         /**
          * @brief The TLS HTTP/1.1 peer - utests/baselib/Http1DriverTlsTestUtils.h's, the one peer of
