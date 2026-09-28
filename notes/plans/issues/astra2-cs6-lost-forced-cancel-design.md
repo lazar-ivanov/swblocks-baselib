@@ -1,9 +1,12 @@
 # CS-6 / D-L3-1 — a forced cancel lost between two steps of a TLS operation: design note
 
-**Date:** 2026-09-28. **Status:** revision 2, written by lane 3, **for review round 2**. Nothing is coded
-before its agreement line.
+**Date:** 2026-09-28. **Status:** revision 3, written by lane 3, **for the reviewer's check of round 2's
+proposals**. Nothing is coded before its agreement line.
 
-**Revisions.** r1 `8cdb529`. **r2 (this)** carries:
+**Revisions.** r1 `8cdb529`. r2 `73f703e`, with two dated additions in `0bcc08d`. **r3 (this)** carries
+review round 2 (`CS6-lostcancel-design-r2.md`, agree with changes): its required P1 to P9, P10 taken, and
+the optional P11, each checked at the source first, plus the orchestrator's F13 line in §9. Where r3's text
+departs from a proposal's wording, the place says why. r2 carried:
 - the maintainer's shape (decision record §11, `1b0aac3`): (c), plus (a2) on the four deadlines which
   survive a cancel, plus the retry guard;
 - review round 1 (`CS6-lostcancel-design-r1.md`, agree with changes): F1 and F3 to F14, each checked at
@@ -26,9 +29,16 @@ and no later cancel, deadline or timer can then end the task: it ends only when 
 gives the mechanism at the source, the deterministic reproductions, the candidate shapes with what was
 measured of each, and the shape the maintainer decided.
 
-**Provenance.** Source line numbers are `ea7e414`'s; at the branch tip `TcpBaseTasks.h` is one line longer
-from `:305` on (I13's fix), and lazari2 — CS-4 and CS-5 — was merged in at `18b8fcd`, so CS-4's
-`onConnectDeadline( )` is cited as merged. Boost is the devenv7 dist's 1.90.0 and OpenSSL its 3.5.4. The measurements
+**Provenance.** Source line numbers are `ea7e414`'s unless marked "tip". At the branch tip, after `18b8fcd`
+(measured, r3):
+- `TcpBaseTasks.h` is one line longer from `:305` (I13);
+- `TcpSslBaseTasks.h` is 12 lines longer from `:343` and 21 from `:446` (I2) — `cancelTask( )` `:391` is tip
+  `:403`, `onHandshakeCompleted( )` `:569` is tip `:590`, the protocol timer's cancel `:535` is tip `:556`;
+- `AsioSslStreamWrapper.h` is 8 lines longer from `:84`, and more further down (I2) — `:312` is tip `:320`;
+- `ClientConnectionTaskBase.h` moved by +9 to +98 (CS-4) — `onConnectDeadline( )` `:478` is tip `:487`,
+  `beginPreHandshakeStage( )` `:532` is tip `:580` — and CS-4's `onConnectDeadline( )` is cited as merged.
+
+Boost is the devenv7 dist's 1.90.0 and OpenSSL its 3.5.4. The measurements
 were made on a64 clang debug with a scratch test case and scratch prototypes, **none of them committed**.
 Every run, the case and both prototype diffs are in the run's state directory under
 `logs/astra2/cs6/lostcancel/`, indexed in `INDEX.txt`. Each claim is labelled **VERIFIED** (read at the
@@ -80,7 +90,8 @@ source cited, or measured where it says so), **INFERRED** (follows from verified
    `cancelTimers( )` (`Http2ConnectionTask.h:2910-2923`), which cancels both (`:2366-2398`), and both
    handlers act only on `! ec && ! isClosing( )` (`:2185`, `:2477`). Nothing re-arms them. The other four
    are disarmed only in their task's `onTaskStoppedNothrow( )` or on a re-arm (`TcpSslBaseTasks.h:535`;
-   `ClientConnectionTaskBase.h:644`; `HttpServer.h:148-151`, `:374-377`). **VERIFIED.**
+   `ClientConnectionTaskBase.h:644`; `HttpServer.h:148-151`, `:374-377`) — and the connect deadline once an
+   HTTP/2 connection's preface is away (`Http2ConnectionTask.h:1915`), which is not a cancel. **VERIFIED.**
 
 ## 2. Where a cancel can be lost
 
@@ -179,10 +190,10 @@ the deadline, 60 s by default, rather than ended promptly. It needs no platform-
 merged into this branch at `18b8fcd`). That function reads `isDeadlineCancel = ! isCanceled( )` under the
 task lock before it requests the cancel, and gives its TimeoutException reason only when it is the one
 cancelling. (a2)'s re-issue goes in the `! isDeadlineCancel` branch and **gives no reason there**: the cancel
-it re-issues is someone else's. CS-4's review round 2 (R2-F4) found a second route into that branch: a
-deadline already due while another cancel is still on its way to the strand, which
-`cancelConnectDeadline( )` cannot recall. There the re-issue is a second `cancelTask( )` on a cancel which is
-about to work, and harmless for the reasons above.
+it re-issues is someone else's. CS-4's review round 2 found a second route into that branch (its §2,
+worded into the code by R2-F3; R2-F4 placed the red here): a deadline already due while another cancel is
+still on its way to the strand, which `cancelConnectDeadline( )` cannot recall. There the re-issue is a
+second `cancelTask( )` on a cancel which is about to work, and harmless for the reasons above.
 
 **Measured**, as (a1) on top of (c): W2 ended at **2003 ms**, the timer's fire, in **3 of 3**. It was 0 of 3
 before. (`prototype-c-plus-a.diff`, `protoCA-plain-shutdown-t1.summary`.)
@@ -259,7 +270,10 @@ only reads the descriptor (`detail/impl/socket_ops.ipp:519-530`).
   which counts a truncation as retryable and finds the channel open (`TcpBaseTasks.h:1469-1494`,
   `TcpSslBaseTasks.h:329`). The path restarts establishment, and the restart ends only at `onResolved( )`'s
   cancel check (`TcpBaseTasks.h:813-816`), after a new resolve. The retry condition needs
-  `! base_type::isCanceled( )`, read under the task lock (`TaskBase.h:564-570`); a cancel which arrives
+  `! base_type::isCanceled( )`, tested first, before `isProtocolHandshakeRetryableError( )`, which since I2
+  records a truncation on the stream (tip `TcpSslBaseTasks.h:341-356`) — harmless in either order, since no
+  TLS shutdown follows a forced cancel (`isShutdownNeeded( )`, `:666-674`), but a cancelled establishment
+  then is not classified at all. It is read under the task lock (`TaskBase.h:564-570`); a cancel which arrives
   after the retry decision is caught by the restart's own checks (the resolver cancel, `TcpBaseTasks.h:772-775`;
   `onResolved( )`, `:813-816`; `onConnectionEstablished( )`, `:1404`). **VERIFIED** by the prototype's trace
   with (c); **INFERRED** for today's code.
@@ -369,6 +383,8 @@ This is the Windows matrix owed for CS-6.
    platform-independent.
 6. **D3's fix** (§9). ThreadSanitizer does not run on the Windows toolchains, so Windows runs the non-TSan
    red — a cancel during a multi-address connect ending promptly — and the connect loop's ordinary cases.
+   Before that, measure whether a full accept queue drops a SYN on Windows, or answers it with a reset
+   (**NOT VERIFIED**). If it resets, the red is Linux-only there.
 
 ## 7. Tests, and files
 
@@ -398,17 +414,29 @@ This is the Windows matrix owed for CS-6.
   - the retry guard, using the stranded W1 order against a peer which reads the ClientHello whole and then
     shuts its send side: today the connector restarts the cancelled establishment; after, it does not.
 - **D2's red and controls** are §8's; **D3's reds** are §9's.
-- **Where the tests go:** the policy-level cases in `utf_baselib_tasks3` (34.7 MB at a64 clang debug; the
-  scratch reproductions added about 0.3 MB, `logs/astra2/cs6/sizes.txt`). The HTTP ones — the connect
-  deadline, the HTTP server's timers, the HTTP/2 characterization, D2's — in a CS-6 module with room
-  (`utf_baselib_httpclient13` 36.8 MB, `utf_baselib_h2client9` 37.7 MB) or a new numbered sibling, each
-  measured before it is committed.
+- **Where the tests go:** the policy-level cases in `utf_baselib_tasks3` (34.7 MB at a64 clang debug at the
+  tip; the scratch reproductions added about 0.3 MB; `logs/astra2/cs6/sizes.txt`). The HTTP ones — the
+  connect deadline, the HTTP server's timers, the HTTP/2 characterization, D2's — go in a new numbered
+  sibling, which the orchestrator reserves for CS-6: `utf_baselib_httpclient13` (36.8 MB) and
+  `utf_baselib_h2client9` (37.7 MB) are near the 40 MB target, where `src/utests/AGENTS.md` says not to add
+  (both measured at the tip, `sizes.txt`). The sibling takes the next free number in its family, and it —
+  like `utf_baselib_tasks3` when it grows — is measured before each case is committed and kept comfortably
+  under 40 MB, with its figures in `sizes.txt` first; if one sibling would not stay under, the cases split
+  across two.
+- **The order of the commits.** First D-L3-1's reds, then its fixes; then D3's reds and its loop; then D2's
+  red, its timer move, and the condition's removal in a commit of its own (§8). D3's loop must land
+  **before** D2's timer move: with asio's switch still in place, the timer armed through a retry would read
+  the socket during the switch — D3's race, with one more reader (§8). Each comment-only commit follows the
+  logic that makes its comment false.
 - **Files the fix touches:**
   - owned: `TcpSslBaseTasks.h` and `TcpBaseTasks.h`;
   - widened by the orchestrator on 2026-09-28: `TcpSslStrandedStreams.h`, for (c); `TaskBase.h`, the
     additive helper only, with `requestCancelInternal( )` unchanged; `ClientConnectionTaskBase.h`,
     `onConnectDeadline( )` only, on top of CS-4's version; `HttpServer.h`, the two `onTimer( )` handlers;
     `SimpleHttpTask.h`, for D2 (§8); `TcpTunnelStage.h`, for D3's fix (§9).
+  - In `ClientConnectionTaskBase.h`, the merged comment at tip `:507-514` says `requestCancelInternal( )`
+    "adds nothing" in the `! isDeadlineCancel` branch. The re-issue makes that false, so it changes in a
+    comment-only commit beside the re-issue.
   - Not in scope: the HTTP/2 driver's timer handlers and SimpleHttpTask's timer handler for (a2).
 
 ## 8. D2 — SimpleHttpTask's handshake has no deadline at all (folded into CS-6)
@@ -428,7 +456,10 @@ handshake, in `beginPreHandshakeStage( )`, the way `ClientConnectionTaskBase` ar
 handshake.
 
 **The shape** (the orchestrator's recommendation, checked at the source):
-- **One deadline, from the first attempt's TCP connect through the response.** `SimpleHttpTaskT` overrides
+- **One deadline, from the first attempt's established TCP connection until the task stops** — through the
+  handshake, any retry, the request, the response, and the TLS shutdown which follows it. So the first
+  attempt's resolve and TCP connect stay outside it, as today, and a retry's resolve and connect are inside
+  it. `SimpleHttpTaskT` overrides
   `beginPreHandshakeStage( )`: when no timer exists yet, it creates one on the resolver's executor, exactly
   as `continueAfterConnected( )` does today, and arms it (`scheduleTimer( )`); then it calls the base, whose
   continuation starts the handshake. The stage is entered from the connect handler, under the task lock
@@ -446,8 +477,9 @@ handshake.
   stated reason. **Proposed:** drop the condition, so that such an expiry cancels the task too — the cancel
   reaches the resolver through `TcpConnectionEstablisherBase::cancelTask( )` (`TcpBaseTasks.h:770-778`),
   and the task ends with the same TimeoutException. **A caller sees this only as the deadline holding
-  during a retry's resolve**, which is what "one deadline through the response" means; it is named here so
-  the orchestrator can take it as a decision if it reads it otherwise.
+  during a retry's resolve**, which is what "one deadline until the task stops" means. *(Ruled on
+  2026-09-28, after review round 2 verified the addendum below: a consequence of D2, not a decision for the
+  maintainer.)*
 
   *(Added 2026-09-28, on the orchestrator's question: is there any other window with the task Running,
   the timer armed and the channel closed — a teardown which closes the socket before the timer is
@@ -456,7 +488,9 @@ handshake.
     `TcpSslBaseTasks.h:176-181`), whose one caller is the connector's retry (`TcpBaseTasks.h:1486`), and by
     `createSocket( )` replacing it (`:544`, `TcpSslBaseTasks.h:218`), which finds nothing to replace on a
     first attempt and a socket the retry already reset on any other; inside a connect, asio's ranged
-    connect also closes and re-opens it between two endpoints (`impl/connect.hpp:473-476`);*
+    connect also closes and re-opens it between two endpoints (`impl/connect.hpp:473-476`). No
+    `attachStream( )` or `detachStream( )` reaches a SimpleHttpTask: every caller in the library is another
+    class (r3, checked by grep of `src/include`);*
   - *no teardown closes it: SimpleHttpTask's stop hook cancels the timer first (`SimpleHttpTask.h:238`),
     and the policies' stop hooks only shut the socket down (`TcpSslBaseTasks.h:540`, `TcpBaseTasks.h:638`)
     — `shutdownSocket( )` is `shutdown_send` then `cancel( )`, and never closes (`TcpBaseTasks.h:357`,
@@ -466,8 +500,11 @@ handshake.
     timer handler which runs after them finds the task no longer Running and does nothing.*
 
   *So, with the timer armed and the task Running, the channel is closed only during a handshake retry's
-  resolve and the start of its connect, and — until §9's fix moves the switch under the task lock, which
-  `onTimer( )` also takes — inside asio's switch between two endpoints of that retry's connect. Today the
+  resolve, and — until §9's fix moves the switch under the task lock, which `onTimer( )` also takes —
+  inside asio's switch between two endpoints of that retry's connect. (r2 also named "the start of its
+  connect"; review round 2 showed `onTimer( )` cannot observe it: `createSocket( )`, the open and the first
+  attempt all run inside `onResolved( )`, a locked handler, and `basic_socket.hpp:974-979` opens inline.)
+  Today the
   timer is armed only after the handshake (`SimpleHttpTask.h:293-323`), after which no retry can start
   (the retry needs `! hasHandshakeCompletedSuccessfully( )`, `TcpBaseTasks.h:1469-1494`), so today the
   condition never matters. **VERIFIED.**)*
@@ -476,15 +513,32 @@ handshake.
   and only the retry, which resets the resolver first (`:1487`), passes that check. **VERIFIED.**
   *(Added 2026-09-28.)*
 - **The cleartext SimpleHttpTask is unchanged in effect.** Its policy has no handshake, and
-  `beginProtocolHandshake( )` calls the continuation at once (`TcpBaseTasks.h:562-569`), so the timer is
+  `beginProtocolHandshake( )` calls the continuation at once (`TcpBaseTasks.h:561-568`), so the timer is
   armed in the same connect handler, just before `continueAfterConnected( )`, where it was armed before.
 - **What the task ends with at the deadline** is today's: `onTimer( )` sets `m_timedOut` and requests the
   cancel, and `onTaskStoppedNothrow( )` turns a cancelled, timed-out task into a TimeoutException
   (`SimpleHttpTask.h:240-259`). During the handshake that cancel is a forced cancel of the handshake —
   D-L3-1's (c) and retry guard make it prompt and final; without them a cancel landing in the handshake's
   gap would be lost (§1).
+- **As today, the deadline spans the finish continuation's TLS shutdown.** A SimpleHttpTask closes its
+  stream when it finishes (`SimpleHttpTask.h:155`), the TLS policy's finish continuation begins the
+  shutdown and returns with the task still Running (`TcpSslBaseTasks.h:470-517`, `TaskBase.h:570-572`), and
+  the timer is cancelled only by `cancelTask( )` (`SimpleHttpTask.h:266-271`) and the stop hook (`:238`).
+  *(r3, checked at the source, where it departs from review round 2's proposed wording:)* a **completed**
+  exchange cannot wait there on this branch. SimpleHttpTask completes a response only on the peer's end of
+  the stream (`SimpleHttpTask.h:832-835`) — a close_notify, which OpenSSL records itself, or a truncation,
+  which I2 now records (`9a8c81b`) — so its shutdown sends our close_notify and reads nothing (the I2 note,
+  §2 and §6). A request which **failed** before the peer ended the stream — a malformed status line or
+  headers, or a body over the size limit (`chkHttpResponse( )` at `:686`, `:694`, `:702`, `:775`;
+  `chkResponseSize( )` at `:798`, `:877`) — closes first, and its shutdown waits for
+  the peer's close_notify, a wait the I2 note keeps (its §6); a deadline expiring there ends it as a
+  TimeoutException with the original failure nested (`:240-259`). The condition's removal changes neither:
+  the channel is open throughout that shutdown.
+- **§9's loop lands before this change's timer move.** With asio's switch still in place, the timer armed
+  through a retry would read the socket during the switch — D3's race, with one more reader.
 
-**Tests**, in `utf_baselib_httpclient13` if its measured size allows:
+**Tests**, in the new numbered sibling of §7; each task's timeout is set per task with `setTimeout( )`
+(`SimpleHttpTask.h:532-535`), so no case touches the global parameter:
 - **The red, certain:** a `SimpleHttpSslTask` with a short timeout against a listener which accepts TCP and
   never answers the ClientHello. Today it outlives its timeout and ends only when the case closes the
   listener; after, it ends at the timeout with the TimeoutException `m_timedOut` gives. Certain, because
@@ -494,6 +548,31 @@ handshake.
   - the cleartext SimpleHttpTask's timeout is unchanged: a GET with a short timeout against a listener which
     accepts and never answers ends at the timeout with the TimeoutException, before and after;
   - a normal HTTPS request under a generous timeout still succeeds, before and after.
+- **One deadline across a retry, certain** (review round 2's P7, made a pure input in r3 — the proposed
+  construction timed the first peer's hold and read the end time within a margin):
+  - **Setup:** one listener, whose first connection reads the ClientHello whole and closes in an orderly
+    way — a truncation, which the connector retries — and whose second connection is silent. A probe
+    overrides `beginPreHandshakeStage( )`: it calls the base and then, under the task lock the connect
+    handler already holds, reads the timer's expiry (`m_timer`, protected, `SimpleHttpTask.h:115`;
+    `expires_at( )`).
+  - **The assertions:** the stage was entered twice, so a retry happened; a timer existed after the first
+    entry; the expiry read after the second entry is the one read after the first, so the retry did not
+    restart the deadline; and the task ends with the TimeoutException, the second peer being silent.
+  - **Red today:** no timer exists at the stage — it is armed after the handshake. **Green after** the timer
+    move. Nothing is timed but the deadline itself.
+- **The condition's removal, in its own commit after the timer move, certain:**
+  - **Setup:** the same two connections. The probe also overrides `continueAfterResolved( )`: on the retry's
+    resolve it holds — it returns true without calling the base, so there is no channel — and it overrides
+    `cancelTask( )` to release the hold, posting a task handler of its own which applies the cancel check and
+    otherwise calls the base's `continueAfterResolved( )`. So only a cancel ends the hold, and the deadline
+    expires inside it.
+  - **Red — the condition kept:** the expiry is ignored, and the task is still running at the case's bound, a
+    few timeouts on; the case's own cancel then releases it, and it ends as a plain cancel, not a
+    TimeoutException.
+  - **Green — the condition removed:** the expiry cancels the task, the hold is released, and the task ends
+    with the TimeoutException at the deadline.
+  - This departs from P7's proposed "holds the retry's resolve past the deadline": a hold released by the
+    task's own cancel needs no time bound to be certain.
 - **Files:** `SimpleHttpTask.h` only; `SimpleHttpSslTask.h` needs nothing.
 
 ## 9. D3 — a plain policy's forced cancel races asio's ranged connect (folded into CS-6)
@@ -520,7 +599,7 @@ a cancel which reads the socket closed between the two returns without setting t
 so that cancel is lost as well.
 
 **The fix, decided by the maintainer on 2026-09-28: our own per-endpoint loop**, replacing
-`asio::async_connect( )` in both places it is used — the connector (`TcpBaseTasks.h:1456`) and the tunnel
+`asio::async_connect( )` in both places it is used — the connector (`TcpBaseTasks.h:1455`) and the tunnel
 stage's proxy connect (`TcpTunnelStage.h:1610`) — through one protected helper of
 `TcpConnectionEstablisherConnector`, which the tunnel stage already derives from and whose
 `onConnectionEstablished( )` it already names.
@@ -533,7 +612,13 @@ stage's proxy connect (`TcpTunnelStage.h:1610`) — through one protected helper
     and the end iterator — which is what `onConnectionEstablished( )` is given today, and all it reads is
     whether the iterator is the end (`TcpBaseTasks.h:1400-1404`);
   - an empty list ends at once with `not_found` and the end iterator, posted rather than inline, as asio
-    does (`:480-487`).
+    does (`:480-487`) — unreachable from the connector, since the resolver fails rather than succeeding
+    empty and `onResolved( )` asserts a non-empty range (`TcpBaseTasks.h:780-786`, **INFERRED** for the
+    resolver);
+  - two branches of asio's have no counterpart, and need none: a socket closed during an attempt ends it
+    with `operation_aborted` (`:495-499`), which cannot happen here — nothing closes the socket during an
+    attempt and the forced path never closes — and per-operation cancellation (`:504-508`) needs a bound
+    slot, which the library never binds. *(r3, from review round 2's table.)*
 - **The socket is re-opened through our own path:** each attempt's completion is a task handler — under the
   task lock, and for a stranded policy on the strand — and it does the close, the re-open and the next
   connect there. The switch is then ordered with every `cancelTask( )`, which also runs under the lock, and
@@ -542,30 +627,64 @@ stage's proxy connect (`TcpTunnelStage.h:1610`) — through one protected helper
   failed attempt is not the task's failure — and ends with `BL_TASKS_HANDLER_END( )` as the connect handler
   it replaces does (`TcpBaseTasks.h:1395-1436`), not the multi-operation variant: a connection task's
   accounting is not entered before the handshake, because a retry restarts establishment in place
-  (`ClientConnectionTaskBase.h:309-319`). When an attempt succeeds, or the last one fails, the task
-  continues exactly as `onConnectionEstablished( )` does today — through its body, not by calling that
-  handler from inside this one, since the task lock is not recursive (`os::mutex` is `std::mutex`,
-  `core/detail/OSBoostImports.h:95`).
+  (`ClientConnectionTaskBase.h:309-319`). When the last attempt fails, it applies
+  `BL_TASKS_HANDLER_CHK_EC( ec )`. When an attempt succeeds, it applies `BL_TASKS_HANDLER_CHK_CANCEL_IMPL( )`
+  and then `onConnectionEstablished( )`'s body. Those are the two checks the prolog of
+  `BL_TASKS_HANDLER_BEGIN_CHK_EC( )` applies today (`TaskBase.h:165-168`), so a success on a cancelled task
+  ends as `operation_aborted` there, and not through the stop hook's conversion. It continues through that
+  body, not by calling the handler from inside this one, since the task lock is not recursive (`os::mutex`
+  is `std::mutex`, `core/detail/OSBoostImports.h:95`).
 - **The cancel is checked between endpoints, under the lock:** an attempt which failed on a cancelled task
   ends the loop with `operation_aborted` instead of starting the next attempt. Today the loop starts the
   next attempt and the cancel waits for it (§2, the ranged connect's delay).
 - **What a caller sees differently:** a cancel during a multi-address connect ends the task promptly,
   where today it waits for the next attempt to finish or time out. Nothing else is meant to change — the
   order, the last error and the end iterator are asio's — and anything the implementation finds it cannot
-  keep comes back to the orchestrator as a decision before code.
+  keep comes back to the orchestrator as a decision before code. Two consequences of the prompt cancel
+  itself, **INFERRED** (review round 2), neither a new decision:
+  - **fewer connection attempts after a cancel.** Today the loop goes on to the next address, and may even
+    complete a TCP connection there, which it then shuts down;
+  - **a different nested cause.** The top-level failure is `operation_aborted` either way — the stop hook
+    converts a cancelled task's failure (`TcpBaseTasks.h:123-143`) — but its nested cause becomes the loop's
+    own `operation_aborted`, where today it can be the error of an attempt made after the cancel. Nothing in
+    the library decides anything on that cause's content: its only reader, `chainCancelReason( )`, asks only
+    whether the failure already carries one (tip `ClientConnectionTaskBase.h:714`), and CS-4's reason is
+    chained either way. **It goes to the maintainer only if a caller that decides on that cause is found.**
 - **Not touched:** D-L3-1's (c), which lives in the policies' `cancelTask( )`, and `cancelTask( )` itself.
 
 **Tests:**
 - **The red and green pair is ThreadSanitizer's:** the scratch probe becomes a committed case, run
-  instrumented, over the plain **and** the stranded policies — reports today, none after. Its cancel is
-  landed after the switch by a 100 ms wait inside the second attempt's first SYN-retry interval (1 s),
-  which is timing, not a rendezvous: no deterministic signal is available from outside the connect, since
-  the switch runs inside asio. Its certainty is labelled as such — TSan's analysis needs no exact timing,
-  and whether the cancel landed after the switch is read back from the task's ending — unless the
-  implementation's own loop offers a hook that makes it a rendezvous, which the committed case would then
-  use.
-- **A second red, not a TSan one:** a cancel during a multi-address connect whose next attempt cannot
-  complete ends promptly after the fix; today it waits for that attempt.
+  instrumented, over the plain **and** the stranded policies — reports today, none after.
+  - **Its cancel is landed after the switch by a rendezvous, not by timing** (review round 2's P1; r2's "no
+    deterministic signal is available" was wrong). The case polls `/proc/net/tcp` until the second
+    endpoint's socket appears in SYN_SENT, then requests the cancel.
+  - **Why that proves the switch has happened.** The switch's writes all come before the `connect( )`
+    syscall which puts the socket in SYN_SENT: the open, the reactor registration and the internal
+    non-blocking flag (`basic_socket.hpp:974-979`, `reactive_socket_service_base.ipp:301-313`). The second
+    attempt cannot complete, because its SYN is dropped at a full accept queue. **Measured** on this host:
+    a connect to such a listener shows state `02` in `/proc/net/tcp` at once after `connect( )` returns
+    `EINPROGRESS`, and stays there (`logs/astra2/cs6/d3-rangedconnect/syn-sent-probe.txt`).
+  - **It holds on both sides of the fix**, which a read-back from the task's ending does not: after the fix,
+    a cancel landing before the switch ends at once too, so an ending cannot show the switch was exercised.
+  - **It adds no happens-before edge** between the two threads — a file read is not a synchronization TSan
+    models — so TSan still sees today's accesses as unordered.
+  - Linux only, as TSan is, and `/proc/net/tcp` exists wherever the gate runs it. The stranded half is
+    **INFERRED** until its first red run.
+- **A second red, not a TSan one, and certain** (review round 2's P3; checked at the source):
+  - **Setup:** two endpoints, each behind a listener whose accept queue is full, so both attempts' SYNs are
+    dropped. The cancel is requested once the probe signals that the first attempt has started — its signal
+    is set after the base's `continueAfterResolved( )` returns, by which time `onResolved( )`'s locked
+    handler has issued the first `connect( )` inline.
+  - **Today:** the cancel reaps the first attempt — its connect completes `operation_aborted`, or
+    `connection_reset` if the reactor performs it first: the forced `shutdown( SHUT_WR )` of a SYN_SENT
+    socket disconnects it, raises `EPOLLOUT|EPOLLERR|EPOLLHUP` and leaves `SO_ERROR` at `ECONNRESET` with the
+    descriptor still open (**measured**, `logs/astra2/cs6/d3-rangedconnect/shutdown-syn-sent-probe.txt`) —
+    and asio, finding the socket still open, starts the second, so the task is still running at the bound;
+    it ends only when the case closes the listeners.
+  - **After:** it ends at once, with `operation_aborted`.
+  - **Nothing is timed**, because neither attempt can complete.
+  - **The TSan case's arrangement would not do:** its first attempt is refused at once, so its cancel reaps
+    the last attempt, and today's code ends at once too.
 - **Files:** `TcpBaseTasks.h` (owned) and `TcpTunnelStage.h`, whose ownership the orchestrator widened on
   2026-09-28.
 
