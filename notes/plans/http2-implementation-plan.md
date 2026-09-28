@@ -1701,6 +1701,7 @@ orchestrator before planning. The decisions they need are put, and recorded, in
     nowhere.
   - **The decision is the maintainer's** (D1 of the decision record): (b′) freeze at completion,
     (a) live and synchronized, (b) a full completion snapshot, or (c) a continuation-only contract.
+    **Decided by the maintainer 2026-09-28:** (b′), recorded at `080bd41`.
   - **The recommendation: (b′), freeze at completion. It is I8's principle applied to the last two
     fields: after completion, a late event changes nothing the caller reads.**
     - `applyClosed( )` writes the pair only `if( ! m_isCompleted )`.
@@ -1760,7 +1761,8 @@ orchestrator before planning. The decisions they need are put, and recorded, in
     by the bucket C sweep on 2026-09-27, was stale the same day. So under `AGENTS.md` ("an item
     recorded twice is a decision waiting") it goes to the maintainer as D2, with T01: a mechanical
     reconciliation of every current-status summary that names a change-set's items, as part of that
-    change-set's sweep.
+    change-set's sweep. **Decided by the maintainer 2026-09-28:** the clause on `AGENTS.md`'s
+    sweep bullet, v2.17 (`ba575e6`), recorded at `080bd41`.
 
 | Change-set | Finding | Files | Lane |
 |---|---|---|---|
