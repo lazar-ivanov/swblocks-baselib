@@ -875,4 +875,44 @@ UTF_AUTO_TEST_CASE( TlsShutdown_ATruncationThenACloseEndsCleanTests )
     }
 }
 
+/**
+ * @brief The truncation record I2 added to the stream wrapper - clear on a fresh stream, set by
+ * recordTruncation( ), and cleared again by a new handshake
+ *
+ * The record is the wrapper's, so it travels with the stream and dies with it; a stream which begins
+ * a handshake starts clean, as its handshake and shutdown state do (utf_baselib_http2's
+ * AsioSslStreamWrapper_FreshStateTests). The handshake is begun on a socket which was never opened,
+ * over an io_service which is never run: nothing is read, and all the case observes is the reset
+ * beginProtocolHandshake( ) makes before it starts
+ */
+
+UTF_AUTO_TEST_CASE( TlsShutdown_TheTruncationRecordBelongsToOneHandshakeTests )
+{
+    using namespace bl;
+
+    asio::io_service ioService;
+
+    tasks::AsioSslStreamWrapper wrapper(
+        ioService,
+        std::string( "localhost" ),
+        std::string( "443" ),
+        nullptr /* sslServerContextPtr - the client role */
+        );
+
+    UTF_REQUIRE( ! wrapper.hasSeenTruncation() );
+
+    wrapper.recordTruncation();
+
+    UTF_REQUIRE( wrapper.hasSeenTruncation() );
+
+    wrapper.beginProtocolHandshake(
+        []( SAA_in const eh::error_code& ec ) -> void
+        {
+            BL_UNUSED( ec );
+        }
+        );
+
+    UTF_REQUIRE( ! wrapper.hasSeenTruncation() );
+}
+
 #endif /* __UTEST_TESTTLSSHUTDOWNENDINGS_H_ */

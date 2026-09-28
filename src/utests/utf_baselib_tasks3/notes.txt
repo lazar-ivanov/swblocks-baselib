@@ -12,6 +12,8 @@
 # close_notify, and our own close_notify answered at once or only once the peer releases it.
 # TlsShutdown_ATruncationDoesNotWaitForTheCloseNotifyTests is I2's red: red before the fix, green after.
 # TlsShutdown_ATruncationThenACloseEndsCleanTests is green before and after on Linux (see its header).
+# TlsShutdown_TheTruncationRecordBelongsToOneHandshakeTests pins the fix's new record: clear on a fresh
+# stream, set once recorded, and cleared by a new handshake.
 
 --log_level=message --run_test=Tcp_ForcedCancelLeavesTheLingerOptionOffTests
 --log_level=message --run_test=Tcp_ForcedCancelDoesNotWriteTheLingerOptionTests
@@ -20,3 +22,4 @@
 --log_level=message --run_test=TlsShutdown_OurCloseNotifyWaitsForTheAnswerTests
 --log_level=message --run_test=TlsShutdown_ATruncationDoesNotWaitForTheCloseNotifyTests
 --log_level=message --run_test=TlsShutdown_ATruncationThenACloseEndsCleanTests
+--log_level=message --run_test=TlsShutdown_TheTruncationRecordBelongsToOneHandshakeTests
