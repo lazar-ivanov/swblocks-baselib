@@ -174,8 +174,11 @@ on 2026-09-22 by `2b4c61b` and the peer-close record - Linux `close( )` with unr
 sends RST (RFC 2525 section 2.17) - but the withdrawal never reached this record. What actually
 produces the reset, measured by `bb53bdd` on `lazari2` (2026-09-23) through `PeerCloseErrorCodes_*`
 on win-x64 and win-x86: shutting down the RECEIVE side. Windows resets the connection when data is
-queued at `SD_RECEIVE` or arrives after it, where Linux does not; `shutdown_both` asked for that,
-and `TcpSocketCommonBase::shutdownSocket( )` now shuts down the send side only.
+queued at `SD_RECEIVE` or arrives after it, where Linux does not while our FIN is not out;
+`shutdown_both` asked for that, and `TcpSocketCommonBase::shutdownSocket( )` now shuts down the
+send side only. *(Corrected 2026-09-28, by measurement: `shutdown_both` puts our FIN out, and then
+Linux resets on a later arrival too - `SHUT_RD` then `SHUT_WR` drew a reset on Linux 6.8, where
+`SHUT_WR` alone did not; `logs/astra2/records/reset-after-shut-rd-probe.txt`.)*
 
 **This test's peer is not that function, and `bb53bdd` does not change it.** `acceptAndShutdown( )`
 (`TestTcpPreHandshakeStageTls.h:133-148`) does one `async_read_some( )` of at most 1024 bytes and

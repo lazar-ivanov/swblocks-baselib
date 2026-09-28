@@ -30,8 +30,12 @@ measurement of that call.
 - *"the divergence is permanent - it is in the operating system, not in this library"* (the status
   line above). The divergence the control measured was manufactured here. What the operating
   system contributes is narrower: on Windows `SD_RECEIVE` resets on a later arrival where Linux
-  does not, and a reset discards the unread receive buffer where Linux hands it over - both real,
-  neither reachable by an orderly close once nothing here asks for `SD_RECEIVE`.
+  does not while our FIN is not out, and a reset discards the unread receive buffer where Linux
+  hands it over - both real, neither reachable by an orderly close once nothing here asks for
+  `SD_RECEIVE`. *(Corrected 2026-09-28, by measurement: once our FIN is out as well, Linux resets
+  on a later arrival too. `SHUT_RD` then `SHUT_WR` - the state `shutdown_both` leaves - drew a
+  reset on Linux 6.8, where `SHUT_WR` alone and `SHUT_RD` alone did not;
+  `logs/astra2/records/reset-after-shut-rd-probe.txt`.)*
 - *"The control is a hypothesis test ... its Windows arm requires the code to be one of the two AND
   not `eof`"*. Inverted by `bb53bdd`: `PeerCloseErrorCodes_PeerShutsDownWithUnreadDataTests` and
   `..._ReaderSendsAfterPeerShutdownTests` now assert `eof`, the orderly predicate and every byte on
