@@ -565,7 +565,7 @@ reported to the maintainer rather than asked:
 - **D6** exempts `host` as well as `te` (§3, D6). A premise in `Session.h` and `TestSession.h` that
   cited RFC 9110 §5.6.2 for case-insensitive `trailers` is corrected to RFC 5234 §2.3, comment only.
 
-**Found and not decided** — recorded as rows I1 to I11 of the owed list, in
+**Found and not decided** — recorded as rows I1 to I13 of the owed list, in
 [`astra-remediation-owed-work.md`](astra-remediation-owed-work.md).
 
 ## 10. The change-sets, as they landed
@@ -725,3 +725,27 @@ The logs are in `logs/astra2/gate/cs2/`.
 - `utf_baselib_httpclient` grew to 34.5 MB.
 
 Their x86 sizes are owed to the Windows handoff, and so is E2's platform premise.
+
+### B6 — one ThreadSanitizer pass over the client modules — done 2026-09-27
+
+**How it ran.** On `2b47b57`, after all three change-sets had landed, as decided. The build was
+clang2010 debug with `BL_CLANG_ENABLE_RA_TSAN=1`, in the main worktree's clang debug tree, which
+held no other build. `TSAN_OPTIONS` was set explicitly. Every log was read for the sanitizer's own
+`WARNING` line, not judged by exit code.
+
+**The positive control fired as expected.** `utf_baselib_basictask` reported exactly its one known
+race, `TestBaselibBasicTask.h:127`. Nothing appeared in the thread pool's resize.
+
+**The results:**
+- **22 modules**: `httpclient` to `…12`, `h2client` to `…8`, `h2core` and `http2`. Every case of every
+  module passed.
+- **20 are clean**, D2's own `httpclient11` and `…12` among them.
+- **Two modules reported one warning each.** Both are pre-existing, since nothing on either path
+  changed in this run:
+  - `h2client4`: a lock-order inversion that a test stub closes. It is test-only, owed-list row I12.
+  - `h2client3`: a data race in core code. The non-stranded TLS socket task's `cancelTask( )` sets
+    `SO_LINGER` from the thread which cancels, while a handshake on another thread starts a receive
+    on the same socket. It is owed-list row I13, for the maintainer's next decision round, because
+    a fix is a core change-set of its own.
+
+The logs are in `logs/astra2/b6/`, and the script is the run's `tsan-b6.sh`.
