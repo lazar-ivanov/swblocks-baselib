@@ -103,5 +103,7 @@
 --log_level=message --run_test=HttpClientRequestTask_AnUploadPullAfterTheFailureIsNotAnsweredTests
 
 # CS-4 (owed-list row I5) - a request which failed on either body cap is not replayed by the session,
-# whatever connection loss lands in the same batch
+# whatever connection loss lands in the same batch; and by the general rule the maintainer decided,
+# nor is one which timed out
 --log_level=message --run_test=ClientSession_AnOverflowedRequestIsNotReplayedTests
+--log_level=message --run_test=ClientSession_ATimedOutRequestIsNotReplayedTests

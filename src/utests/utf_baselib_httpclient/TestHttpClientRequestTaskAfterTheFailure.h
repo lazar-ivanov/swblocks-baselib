@@ -24,10 +24,19 @@
 
 #include <baselib/http/HeaderList.h>
 
+#include <baselib/tasks/ExecutionQueue.h>
+#include <baselib/tasks/ExecutionQueueImpl.h>
+#include <baselib/tasks/Task.h>
+
+#include <baselib/core/ThreadPool.h>
 #include <baselib/core/ObjModel.h>
 #include <baselib/core/BaseIncludes.h>
 
+#include <chrono>
+#include <cstddef>
+#include <memory>
 #include <string>
+#include <vector>
 
 #include <utests/baselib/Utf.h>
 
@@ -50,6 +59,10 @@
  * AND WHAT THE SESSION DOES WITH A REQUEST WHICH FAILED ON A BODY CAP ( owed-list row I5 ): it does
  * not replay it, whatever connection loss lands in the same batch - the refusal D4 made for a sink
  * which threw. The batch is arranged the way D4's session case arranges it, with its gated probe.
+ * The maintainer widened I5 into the general rule: a hop whose failure the request task decided
+ * itself - a timeout, a body cap, a sink or source which threw - is never replayed, and only a
+ * failure which is the connection's may be. So the same is asked of a TIMEOUT, whose Expired event
+ * no probe can post: that case runs every drain and timer handler itself, on a ManualThreadPool.
  *
  * The probes are TestHttpClientRequestTask.h's, the gated connection
  * TestHttpClientRequestTaskSinkAccounting.h's and the counting sink
@@ -294,6 +307,300 @@ namespace utest
                 );
         }
 
+        /**
+         * @brief A thread pool which no thread runs - the case runs its handlers, one at a time
+         *
+         * WHAT IT IS FOR. A request task's drain and its timers run on its execution queue's local
+         * pool ( TaskBase::getThreadPool( eq ) ), and a timer's Expired event is posted from the
+         * timer's own handler, which no probe can reach or see. With nothing running this pool, a
+         * handler runs only inside the case's run_one( ), so the case knows exactly when the timer
+         * posted and can put the connection's close BEHIND it in the same batch - a rendezvous
+         * rather than a sleep. Everything else still arrives from where it always does: the probe
+         * pool answers from ThreadPoolId::GeneralPurpose, and its post lands here
+         */
+
+        template
+        <
+            typename E = void
+        >
+        class ManualThreadPoolT : public bl::ThreadPool
+        {
+            BL_DECLARE_OBJECT_IMPL_ONEIFACE_DISPOSABLE( ManualThreadPoolT, bl::ThreadPool )
+
+        protected:
+
+            bl::asio::io_service                                                m_io;
+
+            ManualThreadPoolT()
+            {
+            }
+
+        public:
+
+            virtual std::size_t size() const NOEXCEPT OVERRIDE
+            {
+                return 0U;
+            }
+
+            virtual std::size_t resize( SAA_in const std::size_t threadCount ) OVERRIDE
+            {
+                BL_UNUSED( threadCount );
+
+                BL_THROW(
+                    bl::NotSupportedException(),
+                    BL_MSG()
+                        << "A manual thread pool has no threads to resize"
+                    );
+            }
+
+            virtual bl::asio::io_service& aioService() OVERRIDE
+            {
+                return m_io;
+            }
+
+            virtual std::exception_ptr lastException() const OVERRIDE
+            {
+                return nullptr;
+            }
+
+            virtual void dispose() OVERRIDE
+            {
+            }
+        };
+
+        typedef bl::om::ObjectImpl< ManualThreadPoolT<> > ManualThreadPool;
+
+        /**
+         * @brief Runs the manual pool's handlers, one at a time, until the predicate holds - false
+         * when it does not within the case's bound
+         */
+
+        template
+        <
+            typename PREDICATE
+        >
+        inline bool runHandlersUntil(
+            SAA_inout       bl::asio::io_service&                               io,
+            SAA_in          const PREDICATE&                                    predicate
+            )
+        {
+            const auto deadline =
+                std::chrono::steady_clock::now() +
+                std::chrono::milliseconds(
+                    static_cast< std::size_t >( utest::requesttask::DEFAULT_WAIT_IN_MILLISECONDS )
+                    );
+
+            while( ! predicate() )
+            {
+                if( std::chrono::steady_clock::now() >= deadline )
+                {
+                    return false;
+                }
+
+                ( void ) io.run_one_for( std::chrono::milliseconds( 100 ) );
+            }
+
+            return true;
+        }
+
+        /**
+         * @brief How many times the probe connection was asked to open a stream
+         */
+
+        inline std::size_t submitsOf(
+            SAA_in          const bl::om::ObjPtr< utest::requesttask::ProbeConnection >& connection
+            )
+        {
+            const auto trace = connection -> trace();
+
+            std::size_t count = 0U;
+
+            for( std::size_t i = 0U; i < trace.size(); ++i )
+            {
+                if( "submit" == trace[ i ] )
+                {
+                    ++count;
+                }
+            }
+
+            return count;
+        }
+
+        /**
+         * @brief Runs one GET through a session whose request task times out waiting for response
+         * headers, with the connection's close drained in the SAME batch as the timer's Expired
+         * and behind it
+         *
+         * THE CLOSE IS ONE A REPLAY WOULD BE MADE ON: either retryable, which replays a replayable
+         * request whatever the knob says, or a connection loss published as Draining with
+         * retryIdempotentOnConnectionLoss on. The timeout is the request's verdict - it is applied
+         * first - and the close behind it only reports what the connection did.
+         *
+         * THE STEPS, each a rendezvous on this thread: run until the probe has seen the submit,
+         * which is the batch that arms the one millisecond headers timer; run ONE handler, which
+         * can only be that timer's, since nothing else is pending on the pool - it posts the
+         * Expired and schedules the drain; deliver the close, which queues behind it; run one
+         * handler more - the drain, applying [ Expired, Closed ], whose completion runs the
+         * session's continuation on this thread. A chain which completes there made no replay
+         */
+
+        inline void requireATimeoutIsNotReplayed( SAA_in const bool isRetryableClose )
+        {
+            using namespace bl;
+            using namespace bl::httpclient;
+            using namespace utest::requesttask;
+
+            const auto connection = ProbeConnection::createInstance(
+                NegotiatedProtocol::fromAlpn( "h2" ),
+                false /* isSubmitRefused */
+                );
+
+            const auto pool = ProbePool::createInstance(
+                om::qi< ClientConnection >( connection ),
+                true /* isAnswered */
+                );
+
+            SessionRequestPlan plan;
+
+            plan.pool = om::ObjPtrCopyable< ConnectionPool >( om::qi< ConnectionPool >( pool ) );
+            plan.state = om::ObjPtrCopyable< SessionState >(
+                SessionStateImpl::createInstance< SessionState >()
+                );
+            plan.transportScheme = "https";
+
+            plan.policy.retryIdempotentOnConnectionLoss = ! isRetryableClose;
+
+            plan.requestConfig.responseHeadersTimeout = time::milliseconds( 1 );
+
+            const auto chain = om::qi< tasks::Task >(
+                SessionRequestTaskImpl::createInstance(
+                    std::move( plan ),
+                    makeRequest(),
+                    om::ObjPtrCopyable< BodySink >()
+                    )
+                );
+
+            const auto threadPool = ManualThreadPool::createInstance();
+
+            auto& io = threadPool -> aioService();
+
+            std::unique_ptr< asio::io_service::work > work( new asio::io_service::work( io ) );
+
+            {
+                const auto eq = om::lockDisposable(
+                    tasks::ExecutionQueueImpl::createInstance< tasks::ExecutionQueue >(
+                        tasks::ExecutionQueue::OptionKeepAll
+                        )
+                    );
+
+                eq -> setLocalThreadPool( threadPool.get() );
+
+                eq -> push_back( chain );
+
+                requireTrue(
+                    runHandlersUntil( io, [ & ]() -> bool { return connection -> has( "submit" ); } ),
+                    "the request never reached the connection"
+                    );
+
+                /*
+                 * THE HEADERS TIMER, AND ONLY IT - nothing else is pending on this pool
+                 */
+
+                ( void ) io.run_one();
+
+                requireTrue(
+                    ! connection -> has( "cancel:42" ) && tasks::Task::Completed != chain -> getState(),
+                    "the timer's Expired should have been posted and not yet applied"
+                    );
+
+                if( isRetryableClose )
+                {
+                    connection -> deliverClosed(
+                        eh::errc::make_error_code( eh::errc::connection_aborted ),
+                        true /* isRetryable */
+                        );
+                }
+                else
+                {
+                    connection -> publishState( ConnectionState::Draining );
+
+                    connection -> deliverClosed(
+                        eh::errc::make_error_code( eh::errc::connection_reset ),
+                        false /* isRetryable */
+                        );
+                }
+
+                /*
+                 * THE DRAIN - [ Expired, Closed ] in one batch, and the session's continuation
+                 * behind its completion, all on this thread
+                 */
+
+                ( void ) io.run_one();
+
+                requireTrue( connection -> has( "cancel:42" ), "the timeout was never applied" );
+
+                /*
+                 * THE ANSWER: a chain which made no replay has completed here. Checked and not
+                 * required, so that a red run also shows the replay's own submit below
+                 */
+
+                UTF_CHECK( tasks::Task::Completed == chain -> getState() );
+
+                /*
+                 * A replay, where there is one, times out on its own headers timer, with no close
+                 * in its batch - so the chain always completes, and the probe then holds the
+                 * replay's stream until it is closed
+                 */
+
+                requireTrue(
+                    runHandlersUntil(
+                        io,
+                        [ & ]() -> bool { return tasks::Task::Completed == chain -> getState(); }
+                        ),
+                    "the chain never completed"
+                    );
+
+                const auto submits = submitsOf( connection );
+
+                UTF_CHECK_EQUAL( submits, 1U );
+
+                if( submits > 1U )
+                {
+                    connection -> deliverClosed(
+                        eh::errc::make_error_code( eh::errc::operation_canceled ),
+                        false /* isRetryable */
+                        );
+                }
+
+                requireTrue( chain -> isFailed(), "a request which timed out should have failed" );
+
+                requireTrue(
+                    std::string::npos != messageOf( chain ).find( "has timed out" ),
+                    "the chain should have failed with the timeout, and it reports: " +
+                        messageOf( chain )
+                    );
+
+                requireTrue(
+                    runHandlersUntil(
+                        io,
+                        [ & ]() -> bool { return pool -> releases().size() == submits; }
+                        ),
+                    "a stream slot never came back"
+                    );
+            }
+
+            /*
+             * THE QUEUE FIRST, THEN THE POOL IT POINTS AT - and every handler still pending is
+             * run, so that nothing holds a task when the case ends
+             */
+
+            work.reset();
+
+            io.restart();
+
+            ( void ) io.run();
+        }
+
     } // afterthefailure
 
 } // utest
@@ -421,6 +728,28 @@ UTF_AUTO_TEST_CASE( ClientSession_AnOverflowedRequestIsNotReplayedTests )
 
     requireAnOverflowIsNotReplayed( Cap::Buffered );
     requireAnOverflowIsNotReplayed( Cap::Outstanding );
+}
+
+/**
+ * @brief I5's general rule - a request which TIMED OUT is not replayed, whatever close lands in the
+ * same batch behind the timeout
+ *
+ * Run twice: a close marked retryable, which replays a replayable request whatever the knob says;
+ * and a connection loss published as Draining, with retryIdempotentOnConnectionLoss on. The
+ * response-headers timeout is the one used because it is per hop - the chain's total timeout is
+ * budgeted by the session, which refuses a hop once its budget is spent.
+ *
+ * RED BEFORE: the session read the close off the hop and replayed the timed-out GET - the chain had
+ * not completed after the batch, and a second submit followed, which timed out in turn. GREEN
+ * AFTER: the chain completed in that batch, failed with the timeout, after one submit
+ */
+
+UTF_AUTO_TEST_CASE( ClientSession_ATimedOutRequestIsNotReplayedTests )
+{
+    using namespace utest::afterthefailure;
+
+    requireATimeoutIsNotReplayed( true /* isRetryableClose */ );
+    requireATimeoutIsNotReplayed( false /* isRetryableClose */ );
 }
 
 #endif /* __UTEST_TESTHTTPCLIENTREQUESTTASKAFTERTHEFAILURE_H_ */
