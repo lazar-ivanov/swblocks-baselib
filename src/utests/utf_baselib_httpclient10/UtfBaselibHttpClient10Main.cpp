@@ -32,12 +32,12 @@
  * its factory registers for the fallback - and its peers bring the server side. The cases
  * themselves cost almost nothing next to those instantiations.
  *
- * SIZE, MEASURED AND OVER TARGET, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 46.6 MB
- * clang debug (a64) with E3 and E1, against a 40 MB target and a 75 MB debug ceiling which only
- * win-x86-*-debug enforces. It was 42.8 MB with E3 alone, which is the TLS session and nothing else
- * - 21.8 MB over the empty module floor - so no split of the cases could bring it under the target;
- * the 3.8 MB since is E1's peer, the HTTP/2 test server over the TLS policy, which brings the
- * server-role engine. utf_baselib_httpclient5 carries the same instantiations at 46.9 MB.
+ * SIZE, MEASURED AND OVER TARGET, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 46.7 MB
+ * clang2010 debug (a64) at 8c45b09 on 2026-09-27, against a 40 MB target and a 75 MB debug ceiling
+ * which only win-x86-*-debug enforces. It was 42.8 MB with E3 alone, which is the TLS session and
+ * nothing else - 21.8 MB over the empty module floor - so no split of the cases could bring it
+ * under the target; the 3.8 MB E1 added is its peer's server-role engine - the HTTP/2 test server
+ * over the TLS policy. utf_baselib_httpclient5 carries the same instantiations at 47.5 MB.
  *
  * Sockets: loopback, ephemeral ports, so these cases do not take the machine global test lock
  *
