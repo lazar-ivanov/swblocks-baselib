@@ -716,13 +716,13 @@ namespace utest
     namespace tlsending
     {
         /**
-         * @brief Whether a code is the truncated TLS stream - spelled the way TcpSslBaseTasks.h's
-         * isExpectedSslErrorCode( ) spells it, so the assertion reads as the library's own predicate
+         * @brief Whether a code is the truncated TLS stream - asked of the stream policy's own predicate,
+         * as AGENTS.md's networking rule asks, and not spelled here
          */
 
         inline bool isTruncationCode( SAA_in const bl::eh::error_code& ec ) NOEXCEPT
         {
-            return std::string( "asio.ssl.stream" ) == ec.category().name() && 1 == ec.value();
+            return bl::tasks::TcpSslSocketAsyncBase::isExpectedSslErrorCode( ec );
         }
 
         /**
