@@ -107,6 +107,14 @@ namespace bl
 
             /**
              * @brief The forced shutdown of cancelTask(), executed on the strand
+             *
+             * IT CAN RUN AFTER THE TASK HAS COMPLETED: a cancel which posted it while the task was
+             * running is not recalled when the task ends. It takes no task lock and it reads the
+             * stream, so an owner must detach a stream this policy built ON THE STRAND - and, while
+             * the task runs, under the task lock as well, because cancelTask() reads the stream on
+             * the cancelling thread before it posts - as onProtocolNegotiated( ) does in
+             * httpclient/ClientConnectionTaskBase.h, from a strand handler under that lock. Never off
+             * the strand: the task lock alone does not order a detach with this handler
              */
 
             void shutdownSocketOnStrand() NOEXCEPT
