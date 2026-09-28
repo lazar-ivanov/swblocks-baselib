@@ -49,9 +49,11 @@ before. `ClientSession_SinkIsToldCompleteOnceAcrossTheFallbackRetryTests` is the
 would fail outright, not merely lose a callback, if the refusal reached the bounce. *Corrected
 2026-09-27, from the L6 review's third pass, which found it false on H21's landing (`f23b205`):* that
 case's session is cleartext, where the rider no longer rides, so no bounce reaches its sink - and no
-case in the tree now puts a sink across a bounce at all. The property is held by construction and
-controlled by nothing; the owed control is the TLS fallback exchange with a counting sink, E3 on
-`astra-remediation-owed-work.md`.
+case in the tree now puts a sink across a bounce at all. The property was then held by construction
+and controlled by nothing. **Its control has since landed:** E3, the TLS fallback exchange with a
+counting sink, `ClientSessionTls_SinkIsToldCompleteOnceAcrossTheFallbackRetryTests` in
+`utf_baselib_httpclient10` (`02006d4`, CS-2, merged at `bc431f2`). *Corrected 2026-09-28 (CS-8): this
+said the control was owed.*
 
 **What would close it** is option B4 of `s6r3-decisions.md` §2: `canReset( )` / `reset( )` on
 `BodySink`, so a sink which can discard what it has taken may be replayed onto. It buys nothing
