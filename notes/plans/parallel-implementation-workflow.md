@@ -171,10 +171,20 @@ Owed platform runs are recorded against it, not silently waited on.
 
 ## 5. Running it
 
-- **Monitor progress, not liveness** (`AGENTS.md`). A lane is advancing when its branch gains
-  commits, its journal grows, or its build tree gains objects; a running process proves nothing.
-  Prefer a watcher that fires on a stall. On this host `find` is `bfs`: use `-mmin`, not a relative
-  `-newermt`.
+- **Monitor the progress, not the liveness, of every agent you launched** (`AGENTS.md`). A running
+  process proves nothing.
+  - **What progress looks like:**
+    - A lane is advancing when its branch gains commits, its journal grows, or its build tree gains
+      objects.
+    - A reviewer writes its review only at the end, so it is advancing when its transcript grows.
+      The transcript is the agent's task output file, a symlink: read it with `stat -L`.
+  - **The watch, from the moment an agent starts:**
+    - it fires on a stall, 15 minutes without progress;
+    - it wakes the orchestrator every 30 minutes for a status line per agent, which goes in the ledger.
+  - **On a stall:** look at the agent's artifacts first, then ask it for its status. A stall it does
+    not answer goes to the maintainer.
+  - **An agent idle by design** comes off the watch until it is given work again.
+  - On this host `find` is `bfs`: use `-mmin`, not a relative `-newermt`.
 - **Parallelism is bounded by the machine, not the lane count.** Keep every lane doing something
   that does not need a build slot — a design note, a review answer, a journal — while another holds
   one.

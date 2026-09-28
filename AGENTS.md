@@ -220,6 +220,17 @@ Prefer a watcher that reports on a stall — alive but not advancing — over on
 completion. A job that hangs sends no completion notification, which is exactly when a watcher is
 needed and exactly when a completion-only watcher is silent.
 
+**Every agent you assign work to is yours to monitor, from launch until its result is in.** Whoever
+starts an agent is the only one placed to watch it. A completion notice is not a watch, since an
+agent that hangs never sends one.
+
+- **Watch each one for stalls from the moment it starts.** Watch a signal that moves while it works:
+  its transcript, its commits or its journal. This applies to lanes and reviewers alike.
+- **Check each one's status on a fixed cadence as well**, every 30 minutes by default, not only when
+  something happens. Record what moved.
+- **Take an agent that is idle by design off the watch**, for example one waiting on a review or a
+  decision, rather than leave it raising false stalls. Put it back the moment it is given work.
+
 **Evidence goes to the log directory before it is cited, not after it is challenged.** A measurement
 quoted from a session scratchpad cannot be checked by the next reader, and a reviewer is right to
 disbelieve one. Write the artifact where it will outlive the session, then cite it. A disagreement
@@ -404,10 +415,11 @@ For detailed build system documentation, see `scripts/devenv7/AGENTS.md`:
 
 ---
 
-**Document Version:** 2.15
-**Last Updated:** 2026-09-27
+**Document Version:** 2.16
+**Last Updated:** 2026-09-28
 
 **Changelog:**
+- v2.16 (2026-09-28): Every agent you assign work to is yours to monitor, with a stall watch from launch and a status check on a fixed cadence; a completion notice is not a watch
 - v2.15 (2026-09-27): Fold what the implementation finds into the implementation. Ask each decision as soon as it is clear, so no later work waits on it, and ask again if the implementation undermines it. Replaces "batch what the work finds", which had let findings pile up as owed work
 - v2.14 (2026-09-27): Parallel work across worktrees points to the full procedure in notes/plans/parallel-implementation-workflow.md
 - v2.13 (2026-09-24): 50 runs is the default and 600 only where the rate itself is the acceptance criterion; and batch what the work finds into one decision round instead of a lane per finding
