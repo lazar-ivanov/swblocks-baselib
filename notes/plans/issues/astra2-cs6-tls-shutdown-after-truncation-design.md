@@ -1,7 +1,7 @@
 # CS-6 / I2 — a TLS task's shutdown after the peer truncated: design note
 
-**Date:** 2026-09-27. **Status:** revision 3, written by lane 3 — not coded until this note carries a
-dated agreement line (§10).
+**Date:** 2026-09-27. **Status:** revision 3, written by lane 3 — **agreed 2026-09-28** (§10). I2 is
+implemented to this note.
 
 **Revisions.** r1 `a8542d6` (with `700da22` and `bb36363`). **r2** `f913dbc` carries review round 1
 (`CS6-I2-design-r1.md`, agree with changes) and the orchestrator's answers (`CS6-I2-orchestrator-r2.md`),
@@ -438,4 +438,8 @@ the consumers of §5 do: one asks the predicate and ends clean (the drivers), on
   and the D1 cases would have to change with it. Nothing found so far says so: after our alert the
   policy's teardown sends a FIN, exactly as it does 60 s later today.
 
-**Agreement:** pending.
+**Agreement: 2026-09-28.** Round 1 by fable (`CS6-I2-design-r1.md`), round 2 and its round-3 check by an
+Opus reviewer (`CS6-I2-design-r2.md`); the reviewer agrees with revision 3 (`0ddfc51`) and the edits K-1
+and K-2 which follow it; the orchestrator agrees. I2 is implemented to this note. *Recorded by the
+orchestrator on the maintainer's explicit authorization: the lane's own commit of this line was refused
+by the session's permission check.*
