@@ -470,11 +470,13 @@ version into a scratch directory instead — the NuGet packages are the same CPy
 complete `Lib/`, and are plain zips needing no installer.
 
 1. Pick the package for the **host** architecture: `pythonarm64`, `python` (x64), or `pythonx86`.
-2. Download and extract (interpreter lands at `tools/python.exe`):
+2. Download and extract (interpreter lands at `tools/python.exe`). `-DD` stamps every file with the
+   time of extraction: with the archive's own dates, months old, a `%TEMP%` cleaner deleted most of
+   the standard library mid-session on 2026-09-27, and the venv died with it:
 
 ```bash
 curl -sSL -o py.zip "https://www.nuget.org/api/v2/package/pythonarm64/3.14.2"
-unzip -q py.zip -d "$SCRATCH/python-full"
+unzip -q -DD py.zip -d "$SCRATCH/python-full"
 ```
 
 3. Create the venv, overriding the dist interpreter via the `PYTHON` make variable:
@@ -497,7 +499,11 @@ treat one as a real regression.
 The `.venv` created by this procedure is only valid while its base interpreter exists: `pyvenv.cfg`
 records `home = <scratch>/python-full/tools`, and Windows venvs do not copy the standard library, so
 deleting that scratch directory breaks the venv (`Fatal Python error: Failed to import encodings`).
-Re-run the steps above when that happens; nothing in the repository needs to change.
+When that happens, repeat steps 1 and 2, then re-point the existing venv at the new interpreter with
+`"$SCRATCH/python-full/tools/python.exe" -m venv .venv`, which rewrites `pyvenv.cfg` and keeps every
+installed package. Repeating step 3 does not work: `make pytest-install` keeps an existing `.venv`
+and runs that venv's own `pip`, which needs the interpreter that is gone. Nothing in the repository
+needs to change.
 
 `test_cl_functional.py` used to fail here because its mock compiler is written as `cl.bat` and
 Windows `CreateProcess` appends only `.exe` (never `.bat`) when resolving a bare name. That is fixed
@@ -766,6 +772,7 @@ Before committing changes to batch scripts:
 
 ## Version History
 
+- **2026-09-28**: Python Test Suite on Windows extracts the full CPython with `unzip -DD`, so that a `%TEMP%` cleaner cannot take its standard library mid-session, and re-points a venv whose interpreter is gone with `python -m venv`, which `make pytest-install` cannot do
 - **2026-09-11**: Added ARM64 SVE capability reporting guidance (hypervisors advertising SVE2 without SVE)
 - **2026-09-11**: Added Rosetta container testing constraints (PID 1 reaping, descriptor baseline, build memory ceiling)
 - **2026-02-16**: Added cross-platform OpenSSL build verification documentation (Linux, macOS, Windows)
