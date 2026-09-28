@@ -4505,6 +4505,30 @@
    "namespaces": []
   },
   {
+   "body_sha": "0df0165a73d3fbfbcac36275b2559b29",
+   "doc_sha": "f03751fbf2308c6b97d9847fcd3a95d5",
+   "file": "utf_baselib_h2client10/TestHttpClientLostCancel.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 523,
+   "module": "utf_baselib_h2client10",
+   "name": "ConnectDeadline_ALostCancelIsIssuedAgainWithoutAReasonTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "f436a5053fe2d5c523f2f1917fd4e5b6",
+   "doc_sha": "d9b79a5d283d46d01dc61819dd7e62bc",
+   "file": "utf_baselib_h2client10/TestHttpClientLostCancel.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 535,
+   "module": "utf_baselib_h2client10",
+   "name": "ConnectDeadline_ALostCancelKeepsThePoolsReasonTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "3ac07eda35b86f95d5f5a019dfa19310",
    "doc_sha": null,
    "file": "utf_baselib_httpclient/TestContentDecoder.h",
@@ -6767,6 +6791,18 @@
    "namespaces": []
   },
   {
+   "body_sha": "0274ce3a45c10b022ef86d33715a232a",
+   "doc_sha": "9a5590e5a15cb9ab691a662e61ecc698",
+   "file": "utf_baselib_httpclient13/TestTlsTruncationTeardown.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 381,
+   "module": "utf_baselib_httpclient13",
+   "name": "Http1DriverTls_ATruncatedIdleConnectionEndsWithoutWaitingTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "57be890361345089e72479ae201c288b",
    "doc_sha": "264c30faedaff69334c6f599a06e106a",
    "file": "utf_baselib_httpclient12/TestHttp1DriverStartupTls.h",
@@ -7172,6 +7208,30 @@
    "line": 355,
    "module": "utf_baselib_httpclient7",
    "name": "Http1Driver_WriteInFlightRefusesReuseTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "3e6438e3a4810251e14e7201ae2a8a9f",
+   "doc_sha": "9bff22912f70e8361fa1c6c217d1013e",
+   "file": "utf_baselib_h2client9/TestHttp2TlsTruncationTeardown.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 99,
+   "module": "utf_baselib_h2client9",
+   "name": "Http2DriverTls_ATruncatedIdleConnectionEndsWithoutWaitingTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "fff728768227fd812a64c072345b6aaa",
+   "doc_sha": "d5fc8eb7b00c55921bf776346fb3fa46",
+   "file": "utf_baselib_h2client10/TestHttpClientLostCancel.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 428,
+   "module": "utf_baselib_h2client10",
+   "name": "Http2DriverTls_AnExternalCancelInTheApplicationPhaseEndsAsACancelTests",
    "namespaces": []
   },
   {
@@ -7652,6 +7712,30 @@
    "line": 1901,
    "module": "utf_baselib_httpclient",
    "name": "HttpClientRequestTask_UploadIsAnsweredOncePerPullTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "88f866f9bc38f8a4468090e5cefd1e88",
+   "doc_sha": "016d9def03e5af740411c3329707a312",
+   "file": "utf_baselib_http3/TestHttpServerLostCancel.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 411,
+   "module": "utf_baselib_http3",
+   "name": "HttpServerTimers_TheIdleTimerIssuesALostCancelAgainTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "c7c6d3d379353154f002b13d40a398c0",
+   "doc_sha": "b3ca6997f183cfd783a2b9e00187820d",
+   "file": "utf_baselib_http3/TestHttpServerLostCancel.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 426,
+   "module": "utf_baselib_http3",
+   "name": "HttpServerTimers_TheResponseTimerIssuesALostCancelAgainTests",
    "namespaces": []
   },
   {
@@ -10501,6 +10585,90 @@
    "namespaces": []
   },
   {
+   "body_sha": "1aa3fd7d0af42c0342885991ee196a43",
+   "doc_sha": "c1fc6d73dee26060ab9727ddb19d59b3",
+   "file": "utf_baselib_httpclient13/TestTlsTruncationTeardown.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 413,
+   "module": "utf_baselib_httpclient13",
+   "name": "SimpleHttpTls_ACompleteResponseEndedByATruncationSucceedsTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "4ea0756f7aaa735c2b3b2e7847edf422",
+   "doc_sha": "2c071dc65f095680072dc6ce7d60d39e",
+   "file": "utf_baselib_http3/TestSimpleHttpHandshakeDeadline.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 765,
+   "module": "utf_baselib_http3",
+   "name": "SimpleHttpTls_AHandshakeWhichNeverCompletesTimesOutTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "6ec5a5fc4c47d13abeebd0db303f3736",
+   "doc_sha": "fdc8805e78653ad8795ff4d0778bd16d",
+   "file": "utf_baselib_http3/TestSimpleHttpHandshakeDeadline.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 729,
+   "module": "utf_baselib_http3",
+   "name": "SimpleHttpTls_ARequestWithinItsTimeoutSucceedsTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "d8a42718b71768785184b44ab90ec283",
+   "doc_sha": "d8694c115b5053e7333e3d80fdf5ee8c",
+   "file": "utf_baselib_httpclient13/TestTlsTruncationTeardown.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 443,
+   "module": "utf_baselib_httpclient13",
+   "name": "SimpleHttpTls_ATruncationIsRecordedBeforeTheShutdownTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "dfeaca623e4d8582159b6dcf7d6ffa56",
+   "doc_sha": "c9f923ef4e26c07dace1a3fdaebe467f",
+   "file": "utf_baselib_http3/TestSimpleHttpHandshakeDeadline.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 792,
+   "module": "utf_baselib_http3",
+   "name": "SimpleHttpTls_OneDeadlineHoldsAcrossAHandshakeRetryTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "d985fa4b287ce1d371c7779f8c40407b",
+   "doc_sha": "7cb0a983843949759ab97de0866f4133",
+   "file": "utf_baselib_http3/TestSimpleHttpHandshakeDeadline.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 841,
+   "module": "utf_baselib_http3",
+   "name": "SimpleHttpTls_TheDeadlineHoldsDuringARetrysResolveTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "da054cefdfda1dd763d4e8cf8753bf3c",
+   "doc_sha": "dd23c040c909fa83f563f97bf1a0d5fe",
+   "file": "utf_baselib_http3/TestSimpleHttpHandshakeDeadline.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 703,
+   "module": "utf_baselib_http3",
+   "name": "SimpleHttp_ACleartextRequestStillTimesOutTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "2ee337d17b50d5d8e92d9dd881824e07",
    "doc_sha": null,
    "file": "utf_baselib_h2core/TestStreamStates.h",
@@ -12013,6 +12181,78 @@
    "namespaces": []
   },
   {
+   "body_sha": "48db17a4804b61257b9b1fa5f8ac75a2",
+   "doc_sha": "729ba3b5640d4d3b9d83a86365b22382",
+   "file": "utf_baselib_tasks4/TestTcpConnectLoop.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 886,
+   "module": "utf_baselib_tasks4",
+   "name": "TcpConnectLoop_ACancelAfterTheSwitchIsOrderedWithItTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "78ffc59479a25a7e89e2fabb9ba96d36",
+   "doc_sha": "13b82f4ab12dde63c4055cc9822d804c",
+   "file": "utf_baselib_tasks4/TestTcpConnectLoop.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 843,
+   "module": "utf_baselib_tasks4",
+   "name": "TcpConnectLoop_ACancelDuringTheConnectEndsItPromptlyTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "f50ad06266a47dcbc72abfe122b89e87",
+   "doc_sha": "6f1e9a21da42ccbc2b33237a90a58387",
+   "file": "utf_baselib_tasks4/TestTcpConnectLoop.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 829,
+   "module": "utf_baselib_tasks4",
+   "name": "TcpConnectLoop_NoEndpointAcceptingFailsTheTaskTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "00d4523b6ab8a7733a541819cb4f62e1",
+   "doc_sha": "3027fc068ffccf83f21d03fbfcb5ec2c",
+   "file": "utf_baselib_tasks4/TestTcpConnectLoop.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 815,
+   "module": "utf_baselib_tasks4",
+   "name": "TcpConnectLoop_TheFirstEndpointWhichAcceptsIsTheOneConnectedTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "d2938bd35edc9c9156f049fb4b5d5f9c",
+   "doc_sha": "bb30d9f3b0c434edc5400944ae8be0b9",
+   "file": "utf_baselib_tasks4/TestTcpConnectOpenFailure.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 577,
+   "module": "utf_baselib_tasks4",
+   "name": "TcpConnectOpenFailure_TheNextEndpointIsTriedTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "5a171b357e305a73402ce31ee90d46fc",
+   "doc_sha": "9b5866973135e5131fb625de5a3567c8",
+   "file": "utf_baselib_tasks4/TestTcpConnectOpenFailure.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 612,
+   "module": "utf_baselib_tasks4",
+   "name": "TcpConnectOpenFailure_TheOpensOwnErrorIsReportedTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "4c42d7e6c98bbe859108203921838bd2",
    "doc_sha": null,
    "file": "utf_baselib_http2/TestTcpPreHandshakeStageTls.h",
@@ -12310,6 +12550,30 @@
    "line": 1684,
    "module": "utf_baselib_httpclient2",
    "name": "TcpTunnelStage_TunnelRefusedTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "2a5007683b9fc1aded939b2031721042",
+   "doc_sha": "218d827f7253221103945a7460b165a3",
+   "file": "utf_baselib_tasks3/TestTcpForcedCancelLinger.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 530,
+   "module": "utf_baselib_tasks3",
+   "name": "Tcp_ForcedCancelDoesNotWriteTheLingerOptionTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "9b71bb6fdebbeae804c273c9d0ae0a58",
+   "doc_sha": "5651946f5e1d0829d46fdeeefeb5d20f",
+   "file": "utf_baselib_tasks3/TestTcpForcedCancelLinger.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 501,
+   "module": "utf_baselib_tasks3",
+   "name": "Tcp_ForcedCancelLeavesTheLingerOptionOffTests",
    "namespaces": []
   },
   {
@@ -13215,6 +13479,90 @@
    "namespaces": []
   },
   {
+   "body_sha": "2f66021ff1d0cffdadadc2459a226903",
+   "doc_sha": "b7e14d7ff27527245b58027624e9fa64",
+   "file": "utf_baselib_tasks3/TestTlsLostCancel.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1137,
+   "module": "utf_baselib_tasks3",
+   "name": "TlsLostCancel_ACancelAfterTheHandshakeStartsIsNotLostTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "cbec18947b40e428666587e0bcd11fbd",
+   "doc_sha": "668d02f14bef5eb8cf8e2aca551d79ab",
+   "file": "utf_baselib_tasks3/TestTlsLostCancel.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1110,
+   "module": "utf_baselib_tasks3",
+   "name": "TlsLostCancel_ACancelBeforeTheHandshakeIsNotLostTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "0fc89dd53c4d03ec040f3969b2b6bd88",
+   "doc_sha": "09d78a775858b53051040769091d2aa7",
+   "file": "utf_baselib_tasks3/TestTlsLostCancel.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1175,
+   "module": "utf_baselib_tasks3",
+   "name": "TlsLostCancel_ACancelInsideTheTlsShutdownIsReissuedTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "5981decdf02d2a73818d118998a33437",
+   "doc_sha": "c156c1af1fbade602d7be6ddfe55ba3c",
+   "file": "utf_baselib_tasks3/TestTlsLostCancel.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1004,
+   "module": "utf_baselib_tasks3",
+   "name": "TlsLostCancel_ACancelWithTheHandshakeReadRegisteredEndsPromptlyTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "57ad17aef587cd8041f456f548f2f3c0",
+   "doc_sha": "ff17823d9b8422b503d67bfd0d918b1a",
+   "file": "utf_baselib_tasks3/TestTlsLostCancel.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1226,
+   "module": "utf_baselib_tasks3",
+   "name": "TlsLostCancel_ACancelledHandshakeIsNotRetriedTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "6751500d459befdd1220bdd1e1591a4c",
+   "doc_sha": "88d71662f6237858a906e7ac1af60f42",
+   "file": "utf_baselib_tasks3/TestTlsLostCancel.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1049,
+   "module": "utf_baselib_tasks3",
+   "name": "TlsLostCancel_APeerSeesAnOrderlyEndAfterAForcedCancelTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "cab21c8afbeb13e394237ba54490eab6",
+   "doc_sha": "4d2100254664ea715a781ed2c6ac4654",
+   "file": "utf_baselib_tasks3/TestTlsLostCancel.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 1270,
+   "module": "utf_baselib_tasks3",
+   "name": "TlsLostCancel_TheHandshakeFlagBelongsToTheOwnHandshakeTests",
+   "namespaces": []
+  },
+  {
    "body_sha": "6f75233aa4540a3eb7518857cd8f0a7d",
    "doc_sha": null,
    "file": "utf_baselib_http2/TestTlsPeerVerification.h",
@@ -13436,6 +13784,78 @@
    "line": 640,
    "module": "utf_baselib_http2",
    "name": "TlsProtocolPolicy_TrustAnchorsAreTheRegisteredRoots",
+   "namespaces": []
+  },
+  {
+   "body_sha": "02bb5387eb8d0d2b4bf64594b21f65b9",
+   "doc_sha": "3e9294818f2be2f2aacb046856239c44",
+   "file": "utf_baselib_tasks3/TestTlsShutdownEndings.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 840,
+   "module": "utf_baselib_tasks3",
+   "name": "TlsShutdown_ATruncationDoesNotWaitForTheCloseNotifyTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "6990d7f4941c84a92fadd69997a44b1e",
+   "doc_sha": "1361f42ea981d3c12de028073ae61c39",
+   "file": "utf_baselib_tasks3/TestTlsShutdownEndings.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 866,
+   "module": "utf_baselib_tasks3",
+   "name": "TlsShutdown_ATruncationThenACloseEndsCleanTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "5c867129fae07a6bd309c8b00b4b61dc",
+   "doc_sha": "2bd0f34208645af63ce425b80d1a472f",
+   "file": "utf_baselib_tasks3/TestTlsShutdownEndings.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 634,
+   "module": "utf_baselib_tasks3",
+   "name": "TlsShutdown_OurCloseNotifyIsAnsweredPromptlyTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "7fde8dbf91837252bd64dfc96cbf5782",
+   "doc_sha": "b52ab8592c4a6b769bc4b8d37fc64370",
+   "file": "utf_baselib_tasks3/TestTlsShutdownEndings.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 675,
+   "module": "utf_baselib_tasks3",
+   "name": "TlsShutdown_OurCloseNotifyWaitsForTheAnswerTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "9e41be0ef826e9e2a3601eb0a54d7424",
+   "doc_sha": "102029b1f1a77628de2843575136c6ed",
+   "file": "utf_baselib_tasks3/TestTlsShutdownEndings.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 593,
+   "module": "utf_baselib_tasks3",
+   "name": "TlsShutdown_ThePeersCloseNotifyEndsTheTaskPromptlyTests",
+   "namespaces": []
+  },
+  {
+   "body_sha": "987dd1e1f02a050949121fc2a8889c5a",
+   "doc_sha": "c677e2dd3025b37c256b844f515bb5b5",
+   "file": "utf_baselib_tasks3/TestTlsShutdownEndings.h",
+   "fixture": null,
+   "guards": [],
+   "kind": "UTF_AUTO_TEST_CASE",
+   "line": 889,
+   "module": "utf_baselib_tasks3",
+   "name": "TlsShutdown_TheTruncationRecordBelongsToOneHandshakeTests",
    "namespaces": []
   },
   {
@@ -14266,6 +14686,16 @@
   },
   {
    "conditional_only": false,
+   "file": "include/utests/baselib/HeldIoThreads.h",
+   "guards": [],
+   "label": "namespace heldiothreads",
+   "line": 35,
+   "module": "<shared>",
+   "ns": "utest",
+   "sha": "683538c0f726c1f274698e06c49a217c"
+  },
+  {
+   "conditional_only": false,
    "file": "include/utests/baselib/Http1DriverStartupHook.h",
    "guards": [],
    "label": "namespace http1startup",
@@ -14303,6 +14733,16 @@
    "module": "<shared>",
    "ns": "utest",
    "sha": "3d1120076bfd030d6771271aa54f6744"
+  },
+  {
+   "conditional_only": false,
+   "file": "include/utests/baselib/Http2DriverTlsProbe.h",
+   "guards": [],
+   "label": "namespace h2driverprobe",
+   "line": 45,
+   "module": "<shared>",
+   "ns": "utest",
+   "sha": "323d91b16c237103872f193d85578e48"
   },
   {
    "conditional_only": false,
@@ -15203,6 +15643,26 @@
    "module": "<shared>",
    "ns": "utest",
    "sha": "a85dc0f6aa4aff4bb0591882b557a28b"
+  },
+  {
+   "conditional_only": false,
+   "file": "include/utests/baselib/TlsEndingPeer.h",
+   "guards": [],
+   "label": "namespace tlsendingpeer",
+   "line": 41,
+   "module": "<shared>",
+   "ns": "utest",
+   "sha": "9b06929aed15623ab95c35bc12e5b1af"
+  },
+  {
+   "conditional_only": false,
+   "file": "include/utests/baselib/TlsTeardownTestUtils.h",
+   "guards": [],
+   "label": "namespace tlsteardown",
+   "line": 49,
+   "module": "<shared>",
+   "ns": "utest",
+   "sha": "ceda6a24f7b0c4b335575210de60d220"
   },
   {
    "conditional_only": false,
@@ -18198,6 +18658,16 @@
   },
   {
    "conditional_only": false,
+   "file": "utf_baselib_h2client10/TestHttpClientLostCancel.h",
+   "guards": [],
+   "label": "namespace httpclientlostcancel",
+   "line": 76,
+   "module": "utf_baselib_h2client10",
+   "ns": "utest",
+   "sha": "d326e8b2be4f159cc53a6199226d3542"
+  },
+  {
+   "conditional_only": false,
    "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
    "guards": [],
    "label": "namespace h2driver",
@@ -18297,6 +18767,16 @@
    "module": "utf_baselib_h2client8",
    "ns": "utest",
    "sha": "1ef6f54f5e3d11dd27f4974268abf9cd"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_h2client9/TestHttp2TlsTruncationTeardown.h",
+   "guards": [],
+   "label": "namespace h2truncteardown",
+   "line": 76,
+   "module": "utf_baselib_h2client9",
+   "ns": "utest",
+   "sha": "2def5d5be3944129d6245c234808c1c1"
   },
   {
    "conditional_only": false,
@@ -18702,6 +19182,26 @@
   },
   {
    "conditional_only": false,
+   "file": "utf_baselib_http3/TestHttpServerLostCancel.h",
+   "guards": [],
+   "label": "namespace httpserverlostcancel",
+   "line": 68,
+   "module": "utf_baselib_http3",
+   "ns": "utest",
+   "sha": "a08eab78730264645fa75ec0b01c868c"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_http3/TestSimpleHttpHandshakeDeadline.h",
+   "guards": [],
+   "label": "namespace simplehttpdeadline",
+   "line": 84,
+   "module": "utf_baselib_http3",
+   "ns": "utest",
+   "sha": "c1c867e2e6c4b6d8c698c2dd2c857930"
+  },
+  {
+   "conditional_only": false,
    "file": "utf_baselib_httpclient/TestClientContracts.h",
    "guards": [],
    "label": "namespace clientcontracts",
@@ -18809,6 +19309,16 @@
    "module": "utf_baselib_httpclient10",
    "ns": "utest",
    "sha": "3a17faf5410d839cf71aa76be310cf01"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_httpclient13/TestTlsTruncationTeardown.h",
+   "guards": [],
+   "label": "namespace truncteardown",
+   "line": 101,
+   "module": "utf_baselib_httpclient13",
+   "ns": "utest",
+   "sha": "2b20bf59f706ebcd955b2fd440f3f29a"
   },
   {
    "conditional_only": false,
@@ -21579,6 +22089,78 @@
    "module": "utf_baselib_tasks2",
    "ns": "utest",
    "sha": "c4ffc2cfdfb3a677b82b85a2df0b4848"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_tasks3/TcpTeardownTestUtils.h",
+   "guards": [],
+   "label": "namespace tcpteardown",
+   "line": 37,
+   "module": "utf_baselib_tasks3",
+   "ns": "utest",
+   "sha": "f41489c7a0d24311d7a61c01aefc7036"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_tasks3/TestTcpForcedCancelLinger.h",
+   "guards": [],
+   "label": "namespace forcedcancel",
+   "line": 83,
+   "module": "utf_baselib_tasks3",
+   "ns": "utest",
+   "sha": "a4ce8d8f55ea009e03f1e6687bb71a97"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_tasks3/TestTlsLostCancel.h",
+   "guards": [],
+   "label": "namespace lostcancel",
+   "line": 98,
+   "module": "utf_baselib_tasks3",
+   "ns": "utest",
+   "sha": "d1925ab3ce371d2cff67cb607fb3a274"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_tasks3/TestTlsShutdownEndings.h",
+   "guards": [],
+   "label": "namespace tlsending",
+   "line": 107,
+   "module": "utf_baselib_tasks3",
+   "ns": "utest",
+   "sha": "0ac5f0c11ce5d3e72f8075604d80d8b8"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_tasks3/TestTlsShutdownEndings.h",
+   "guards": [],
+   "label": "namespace tlsending",
+   "line": 716,
+   "module": "utf_baselib_tasks3",
+   "ns": "utest",
+   "sha": "e99e454d0cc11b501e0b4e890cb58c04"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_tasks4/TestTcpConnectLoop.h",
+   "guards": [],
+   "label": "namespace connectloop",
+   "line": 97,
+   "module": "utf_baselib_tasks4",
+   "ns": "utest",
+   "sha": "5d3459dfe4637461354c1ddee6f44267"
+  },
+  {
+   "conditional_only": false,
+   "file": "utf_baselib_tasks4/TestTcpConnectOpenFailure.h",
+   "guards": [
+    "if ! defined( _WIN32 )"
+   ],
+   "label": "namespace connectopenfailure",
+   "line": 89,
+   "module": "utf_baselib_tasks4",
+   "ns": "utest",
+   "sha": "60fc87c0da4523bc771f8d04e2f790b6"
   }
  ],
  "modules": {
@@ -22713,6 +23295,50 @@
    ],
    "notes_index": true
   },
+  "utf_baselib_h2client10": {
+   "data_files": {},
+   "data_literals": [
+    "127.0.0.1"
+   ],
+   "data_refs": [],
+   "files": [
+    {
+     "includes": [
+      "<baselib/httpclient/ClientConnectionTaskBase.h>",
+      "<baselib/httpclient/ClientConnection.h>",
+      "<baselib/tasks/TcpSslStrandedStreams.h>",
+      "<baselib/tasks/Algorithms.h>",
+      "<baselib/tasks/ExecutionQueue.h>",
+      "<baselib/tasks/Task.h>",
+      "<baselib/core/ObjModel.h>",
+      "<baselib/core/OS.h>",
+      "<baselib/core/TimeUtils.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<memory>",
+      "<string>",
+      "<utests/baselib/Http2DriverTlsProbe.h>",
+      "<utests/baselib/TlsEndingPeer.h>",
+      "<utests/baselib/TlsTeardownTestUtils.h>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_h2client10/TestHttpClientLostCancel.h"
+    },
+    {
+     "includes": [
+      "<utests/baselib/UtfMain.h>",
+      "\"TestHttpClientLostCancel.h\""
+     ],
+     "path": "utf_baselib_h2client10/UtfBaselibH2Client10Main.cpp"
+    }
+   ],
+   "notes_cases": [
+    "ConnectDeadline_ALostCancelIsIssuedAgainWithoutAReasonTests",
+    "ConnectDeadline_ALostCancelKeepsThePoolsReasonTests",
+    "Http2DriverTls_AnExternalCancelInTheApplicationPhaseEndsAsACancelTests"
+   ],
+   "notes_index": true
+  },
   "utf_baselib_h2client2": {
    "data_files": {},
    "data_literals": [
@@ -23066,6 +23692,44 @@
     "H2Driver_HostFieldIsParsedAsAnAuthorityTests",
     "H2Driver_PooledDataBlockIsUsedOrReplacedTests",
     "H2Driver_TeIsCanonicalizedAcrossRepeatedFieldsTests"
+   ],
+   "notes_index": true
+  },
+  "utf_baselib_h2client9": {
+   "data_files": {},
+   "data_literals": [],
+   "data_refs": [],
+   "files": [
+    {
+     "includes": [
+      "<baselib/http2/Http2ConnectionTask.h>",
+      "<baselib/http2/Session.h>",
+      "<baselib/httpclient/ClientConnectionTaskBase.h>",
+      "<baselib/httpclient/ClientConnection.h>",
+      "<baselib/tasks/TcpSslStrandedStreams.h>",
+      "<baselib/tasks/TcpTunnelStage.h>",
+      "<baselib/core/ObjModel.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<memory>",
+      "<string>",
+      "<utests/baselib/Http2DriverTlsProbe.h>",
+      "<utests/baselib/TlsEndingPeer.h>",
+      "<utests/baselib/TlsTeardownTestUtils.h>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_h2client9/TestHttp2TlsTruncationTeardown.h"
+    },
+    {
+     "includes": [
+      "<utests/baselib/UtfMain.h>",
+      "\"TestHttp2TlsTruncationTeardown.h\""
+     ],
+     "path": "utf_baselib_h2client9/UtfBaselibH2Client9Main.cpp"
+    }
+   ],
+   "notes_cases": [
+    "Http2DriverTls_ATruncatedIdleConnectionEndsWithoutWaitingTests"
    ],
    "notes_index": true
   },
@@ -23605,6 +24269,78 @@
    ],
    "notes_index": false
   },
+  "utf_baselib_http3": {
+   "data_files": {},
+   "data_literals": [
+    "127.0.0.1"
+   ],
+   "data_refs": [],
+   "files": [
+    {
+     "includes": [
+      "<baselib/httpserver/HttpServer.h>",
+      "<baselib/httpserver/Response.h>",
+      "<baselib/http/Globals.h>",
+      "<baselib/tasks/TcpBaseTasks.h>",
+      "<baselib/tasks/Algorithms.h>",
+      "<baselib/tasks/ExecutionQueue.h>",
+      "<baselib/tasks/Task.h>",
+      "<baselib/core/ThreadPool.h>",
+      "<baselib/core/ObjModel.h>",
+      "<baselib/core/OS.h>",
+      "<baselib/core/TimeUtils.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<string>",
+      "<utility>",
+      "<utests/baselib/TlsTeardownTestUtils.h>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_http3/TestHttpServerLostCancel.h"
+    },
+    {
+     "includes": [
+      "<baselib/http/SimpleHttpSslTask.h>",
+      "<baselib/http/SimpleHttpTask.h>",
+      "<baselib/tasks/TcpSslBaseTasks.h>",
+      "<baselib/tasks/TcpBaseTasks.h>",
+      "<baselib/tasks/Algorithms.h>",
+      "<baselib/tasks/ExecutionQueue.h>",
+      "<baselib/tasks/Task.h>",
+      "<baselib/core/ThreadPool.h>",
+      "<baselib/core/ObjModel.h>",
+      "<baselib/core/OS.h>",
+      "<baselib/core/TimeUtils.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<string>",
+      "<vector>",
+      "<utests/baselib/TlsEndingPeer.h>",
+      "<utests/baselib/TlsTeardownTestUtils.h>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_http3/TestSimpleHttpHandshakeDeadline.h"
+    },
+    {
+     "includes": [
+      "<utests/baselib/UtfMain.h>",
+      "\"TestHttpServerLostCancel.h\"",
+      "\"TestSimpleHttpHandshakeDeadline.h\""
+     ],
+     "path": "utf_baselib_http3/UtfBaselibHttp3Main.cpp"
+    }
+   ],
+   "notes_cases": [
+    "HttpServerTimers_TheIdleTimerIssuesALostCancelAgainTests",
+    "HttpServerTimers_TheResponseTimerIssuesALostCancelAgainTests",
+    "SimpleHttpTls_AHandshakeWhichNeverCompletesTimesOutTests",
+    "SimpleHttpTls_ARequestWithinItsTimeoutSucceedsTests",
+    "SimpleHttpTls_OneDeadlineHoldsAcrossAHandshakeRetryTests",
+    "SimpleHttpTls_TheDeadlineHoldsDuringARetrysResolveTests",
+    "SimpleHttp_ACleartextRequestStillTimesOutTests"
+   ],
+   "notes_index": true
+  },
   "utf_baselib_httpclient": {
    "data_files": {},
    "data_literals": [
@@ -24008,6 +24744,48 @@
    "notes_cases": [
     "Http1DriverTls_CancelBeforeStartEndsTheConnectionTests",
     "Http1DriverTls_NoWriteStartsBeforeTheFirstReadStartReturnsTests"
+   ],
+   "notes_index": true
+  },
+  "utf_baselib_httpclient13": {
+   "data_files": {},
+   "data_literals": [],
+   "data_refs": [],
+   "files": [
+    {
+     "includes": [
+      "<baselib/http/SimpleHttpSslTask.h>",
+      "<baselib/httpclient/Http1ConnectionTask.h>",
+      "<baselib/httpclient/ClientConnection.h>",
+      "<baselib/httpclient/ClientTypes.h>",
+      "<baselib/tasks/TcpSslStrandedStreams.h>",
+      "<baselib/tasks/TcpBaseTasks.h>",
+      "<baselib/tasks/Algorithms.h>",
+      "<baselib/tasks/ExecutionQueue.h>",
+      "<baselib/tasks/Task.h>",
+      "<baselib/core/ObjModel.h>",
+      "<baselib/core/OS.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<string>",
+      "<utests/baselib/TlsEndingPeer.h>",
+      "<utests/baselib/TlsTeardownTestUtils.h>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_httpclient13/TestTlsTruncationTeardown.h"
+    },
+    {
+     "includes": [
+      "<utests/baselib/UtfMain.h>",
+      "\"TestTlsTruncationTeardown.h\""
+     ],
+     "path": "utf_baselib_httpclient13/UtfBaselibHttpClient13Main.cpp"
+    }
+   ],
+   "notes_cases": [
+    "Http1DriverTls_ATruncatedIdleConnectionEndsWithoutWaitingTests",
+    "SimpleHttpTls_ACompleteResponseEndedByATruncationSucceedsTests",
+    "SimpleHttpTls_ATruncationIsRecordedBeforeTheShutdownTests"
    ],
    "notes_index": true
   },
@@ -25818,6 +26596,195 @@
    ],
    "notes_index": false
   },
+  "utf_baselib_tasks3": {
+   "data_files": {},
+   "data_literals": [
+    "127.0.0.1"
+   ],
+   "data_refs": [],
+   "files": [
+    {
+     "includes": [
+      "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<string>",
+      "<vector>",
+      "<utests/baselib/TlsEndingPeer.h>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_tasks3/TcpTeardownTestUtils.h"
+    },
+    {
+     "includes": [
+      "<baselib/tasks/TcpSslStrandedStreams.h>",
+      "<baselib/tasks/TcpStrandedStreams.h>",
+      "<baselib/tasks/TcpSslBaseTasks.h>",
+      "<baselib/tasks/TcpBaseTasks.h>",
+      "<baselib/tasks/Algorithms.h>",
+      "<baselib/tasks/ExecutionQueue.h>",
+      "<baselib/tasks/Task.h>",
+      "<baselib/core/ObjModel.h>",
+      "<baselib/core/OS.h>",
+      "<baselib/core/TimeUtils.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<string>",
+      "<utests/baselib/Utf.h>",
+      "\"TcpTeardownTestUtils.h\""
+     ],
+     "path": "utf_baselib_tasks3/TestTcpForcedCancelLinger.h"
+    },
+    {
+     "includes": [
+      "<baselib/tasks/TcpSslStrandedStreams.h>",
+      "<baselib/tasks/TcpSslBaseTasks.h>",
+      "<baselib/tasks/TcpBaseTasks.h>",
+      "<baselib/tasks/Algorithms.h>",
+      "<baselib/tasks/ExecutionQueue.h>",
+      "<baselib/tasks/Task.h>",
+      "<baselib/core/ThreadPool.h>",
+      "<baselib/core/ObjModel.h>",
+      "<baselib/core/OS.h>",
+      "<baselib/core/TimeUtils.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<string>",
+      "<vector>",
+      "<utests/baselib/HeldIoThreads.h>",
+      "<utests/baselib/Utf.h>",
+      "\"TcpTeardownTestUtils.h\"",
+      "\"TestTcpForcedCancelLinger.h\""
+     ],
+     "path": "utf_baselib_tasks3/TestTlsLostCancel.h"
+    },
+    {
+     "includes": [
+      "<baselib/tasks/TcpSslStrandedStreams.h>",
+      "<baselib/tasks/TcpSslBaseTasks.h>",
+      "<baselib/tasks/TcpBaseTasks.h>",
+      "<baselib/tasks/Algorithms.h>",
+      "<baselib/tasks/ExecutionQueue.h>",
+      "<baselib/tasks/Task.h>",
+      "<baselib/crypto/CryptoBase.h>",
+      "<baselib/core/AsioSSL.h>",
+      "<baselib/core/ObjModel.h>",
+      "<baselib/core/OS.h>",
+      "<baselib/core/TimeUtils.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<string>",
+      "<vector>",
+      "<utests/baselib/UtfCrypto.h>",
+      "<utests/baselib/Utf.h>",
+      "\"TcpTeardownTestUtils.h\""
+     ],
+     "path": "utf_baselib_tasks3/TestTlsShutdownEndings.h"
+    },
+    {
+     "includes": [
+      "<utests/baselib/UtfMain.h>",
+      "\"TestTcpForcedCancelLinger.h\"",
+      "\"TestTlsShutdownEndings.h\"",
+      "\"TestTlsLostCancel.h\""
+     ],
+     "path": "utf_baselib_tasks3/UtfBaselibTasks3Main.cpp"
+    }
+   ],
+   "notes_cases": [
+    "Tcp_ForcedCancelDoesNotWriteTheLingerOptionTests",
+    "Tcp_ForcedCancelLeavesTheLingerOptionOffTests",
+    "TlsLostCancel_ACancelAfterTheHandshakeStartsIsNotLostTests",
+    "TlsLostCancel_ACancelBeforeTheHandshakeIsNotLostTests",
+    "TlsLostCancel_ACancelInsideTheTlsShutdownIsReissuedTests",
+    "TlsLostCancel_ACancelWithTheHandshakeReadRegisteredEndsPromptlyTests",
+    "TlsLostCancel_ACancelledHandshakeIsNotRetriedTests",
+    "TlsLostCancel_APeerSeesAnOrderlyEndAfterAForcedCancelTests",
+    "TlsLostCancel_TheHandshakeFlagBelongsToTheOwnHandshakeTests",
+    "TlsShutdown_ATruncationDoesNotWaitForTheCloseNotifyTests",
+    "TlsShutdown_ATruncationThenACloseEndsCleanTests",
+    "TlsShutdown_OurCloseNotifyIsAnsweredPromptlyTests",
+    "TlsShutdown_OurCloseNotifyWaitsForTheAnswerTests",
+    "TlsShutdown_ThePeersCloseNotifyEndsTheTaskPromptlyTests",
+    "TlsShutdown_TheTruncationRecordBelongsToOneHandshakeTests"
+   ],
+   "notes_index": true
+  },
+  "utf_baselib_tasks4": {
+   "data_files": {},
+   "data_literals": [
+    "127.0.0.1",
+    "127.0.0.2"
+   ],
+   "data_refs": [],
+   "files": [
+    {
+     "includes": [
+      "<baselib/tasks/TcpSslStrandedStreams.h>",
+      "<baselib/tasks/TcpStrandedStreams.h>",
+      "<baselib/tasks/TcpSslBaseTasks.h>",
+      "<baselib/tasks/TcpBaseTasks.h>",
+      "<baselib/tasks/Algorithms.h>",
+      "<baselib/tasks/ExecutionQueue.h>",
+      "<baselib/tasks/Task.h>",
+      "<baselib/core/NetUtils.h>",
+      "<baselib/core/ObjModel.h>",
+      "<baselib/core/OS.h>",
+      "<baselib/core/TimeUtils.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<cstddef>",
+      "<cstdio>",
+      "<fstream>",
+      "<sstream>",
+      "<string>",
+      "<vector>",
+      "<utests/baselib/HeldIoThreads.h>",
+      "<utests/baselib/Utf.h>"
+     ],
+     "path": "utf_baselib_tasks4/TestTcpConnectLoop.h"
+    },
+    {
+     "includes": [
+      "<baselib/tasks/TcpBaseTasks.h>",
+      "<baselib/tasks/Algorithms.h>",
+      "<baselib/tasks/ExecutionQueue.h>",
+      "<baselib/tasks/Task.h>",
+      "<baselib/core/NetUtils.h>",
+      "<baselib/core/ThreadPool.h>",
+      "<baselib/core/ObjModel.h>",
+      "<baselib/core/OS.h>",
+      "<baselib/core/BaseIncludes.h>",
+      "<cerrno>",
+      "<cstddef>",
+      "<string>",
+      "<vector>",
+      "<fcntl.h>",
+      "<sys/resource.h>",
+      "<unistd.h>",
+      "<utests/baselib/HeldIoThreads.h>",
+      "<utests/baselib/Utf.h>",
+      "\"TestTcpConnectLoop.h\""
+     ],
+     "path": "utf_baselib_tasks4/TestTcpConnectOpenFailure.h"
+    },
+    {
+     "includes": [
+      "<utests/baselib/UtfMain.h>",
+      "\"TestTcpConnectLoop.h\"",
+      "\"TestTcpConnectOpenFailure.h\""
+     ],
+     "path": "utf_baselib_tasks4/UtfBaselibTasks4Main.cpp"
+    }
+   ],
+   "notes_cases": [
+    "TcpConnectLoop_ACancelAfterTheSwitchIsOrderedWithItTests",
+    "TcpConnectLoop_ACancelDuringTheConnectEndsItPromptlyTests",
+    "TcpConnectLoop_NoEndpointAcceptingFailsTheTaskTests",
+    "TcpConnectLoop_TheFirstEndpointWhichAcceptsIsTheOneConnectedTests",
+    "TcpConnectOpenFailure_TheNextEndpointIsTriedTests",
+    "TcpConnectOpenFailure_TheOpensOwnErrorIsReportedTests"
+   ],
+   "notes_index": true
+  },
   "utf_baselib_utils": {
    "data_files": {},
    "data_literals": [],
@@ -25853,6 +26820,13 @@
    "sha": "62304521db73d651bb7abae9a13f179f"
   },
   {
+   "file": "include/utests/baselib/HeldIoThreads.h",
+   "line": 33,
+   "module": "<shared>",
+   "name": "utest",
+   "sha": "b683e7eb94bc04ae8581d64fab62e8cd"
+  },
+  {
    "file": "include/utests/baselib/Http1DriverStartupHook.h",
    "line": 84,
    "module": "<shared>",
@@ -25879,6 +26853,13 @@
    "module": "<shared>",
    "name": "utest",
    "sha": "c8dfc41e162af4e4be72d87c0c2b3ecd"
+  },
+  {
+   "file": "include/utests/baselib/Http2DriverTlsProbe.h",
+   "line": 43,
+   "module": "<shared>",
+   "name": "utest",
+   "sha": "ec6741fe60ca134886d9919753265d15"
   },
   {
    "file": "include/utests/baselib/Http2TestServer.h",
@@ -26005,6 +26986,20 @@
    "module": "<shared>",
    "name": "utest",
    "sha": "0a66764a5b36ee0924b820df8f1894fc"
+  },
+  {
+   "file": "include/utests/baselib/TlsEndingPeer.h",
+   "line": 39,
+   "module": "<shared>",
+   "name": "utest",
+   "sha": "a8f4fb7417f1be562b9dbf6e3641f1fa"
+  },
+  {
+   "file": "include/utests/baselib/TlsTeardownTestUtils.h",
+   "line": 47,
+   "module": "<shared>",
+   "name": "utest",
+   "sha": "4eac32990bf9afdc0df080b34da4a1e4"
   },
   {
    "file": "include/utests/baselib/Utf.h",
@@ -26476,6 +27471,13 @@
    "sha": "567600a6c6ae4d86eb8b4ec4f686fd31"
   },
   {
+   "file": "utf_baselib_h2client10/TestHttpClientLostCancel.h",
+   "line": 74,
+   "module": "utf_baselib_h2client10",
+   "name": "utest",
+   "sha": "abc5f19d985dde7c91c53c2221d7396f"
+  },
+  {
    "file": "utf_baselib_h2client2/TestHttp2ConnectionTask.h",
    "line": 43,
    "module": "utf_baselib_h2client2",
@@ -26544,6 +27546,13 @@
    "module": "utf_baselib_h2client8",
    "name": "utest",
    "sha": "8a292733513b4b0bc81008f8c4071713"
+  },
+  {
+   "file": "utf_baselib_h2client9/TestHttp2TlsTruncationTeardown.h",
+   "line": 74,
+   "module": "utf_baselib_h2client9",
+   "name": "utest",
+   "sha": "b5f410aa597c0243abe61c539bb2f915"
   },
   {
    "file": "utf_baselib_h2core/TestFlowControl.h",
@@ -26693,6 +27702,20 @@
    "sha": "7f001ad4f3c6a836912b11f87a97d7f8"
   },
   {
+   "file": "utf_baselib_http3/TestHttpServerLostCancel.h",
+   "line": 66,
+   "module": "utf_baselib_http3",
+   "name": "utest",
+   "sha": "803056112896dc4a542d509a1d5511f8"
+  },
+  {
+   "file": "utf_baselib_http3/TestSimpleHttpHandshakeDeadline.h",
+   "line": 82,
+   "module": "utf_baselib_http3",
+   "name": "utest",
+   "sha": "af132801268067cf7ce46df3a7eb5eca"
+  },
+  {
    "file": "utf_baselib_httpclient/TestClientContracts.h",
    "line": 51,
    "module": "utf_baselib_httpclient",
@@ -26768,6 +27791,13 @@
    "module": "utf_baselib_httpclient10",
    "name": "utest",
    "sha": "b5812083f988834c4d8453c115967e9f"
+  },
+  {
+   "file": "utf_baselib_httpclient13/TestTlsTruncationTeardown.h",
+   "line": 99,
+   "module": "utf_baselib_httpclient13",
+   "name": "utest",
+   "sha": "98b05d87499ea48ea784b2af2762b835"
   },
   {
    "file": "utf_baselib_httpclient2/TestTcpTunnelStage.h",
@@ -27293,6 +28323,55 @@
    "module": "utf_baselib_tasks2",
    "name": "utest",
    "sha": "6c4225d7c86ea33737efb316d10f932f"
+  },
+  {
+   "file": "utf_baselib_tasks3/TcpTeardownTestUtils.h",
+   "line": 35,
+   "module": "utf_baselib_tasks3",
+   "name": "utest",
+   "sha": "7fc8454b3a1b4bf4c0e86c4027913016"
+  },
+  {
+   "file": "utf_baselib_tasks3/TestTcpForcedCancelLinger.h",
+   "line": 81,
+   "module": "utf_baselib_tasks3",
+   "name": "utest",
+   "sha": "ab3c35041cec4e4814e8338fce08ff13"
+  },
+  {
+   "file": "utf_baselib_tasks3/TestTlsLostCancel.h",
+   "line": 96,
+   "module": "utf_baselib_tasks3",
+   "name": "utest",
+   "sha": "d1240d2333823b14fb5215df2967a0aa"
+  },
+  {
+   "file": "utf_baselib_tasks3/TestTlsShutdownEndings.h",
+   "line": 105,
+   "module": "utf_baselib_tasks3",
+   "name": "utest",
+   "sha": "e5f8d2c2e55f3cb8a7c6c03d2216a5f3"
+  },
+  {
+   "file": "utf_baselib_tasks3/TestTlsShutdownEndings.h",
+   "line": 714,
+   "module": "utf_baselib_tasks3",
+   "name": "utest",
+   "sha": "cff496a968864c76b6e2d6d1ffb6fbcf"
+  },
+  {
+   "file": "utf_baselib_tasks4/TestTcpConnectLoop.h",
+   "line": 95,
+   "module": "utf_baselib_tasks4",
+   "name": "utest",
+   "sha": "b012eaf5fc62784698a3e70d0dc1a14b"
+  },
+  {
+   "file": "utf_baselib_tasks4/TestTcpConnectOpenFailure.h",
+   "line": 87,
+   "module": "utf_baselib_tasks4",
+   "name": "utest",
+   "sha": "342ae93f6be0be45e932f0cdc44c1ca6"
   }
  ],
  "shared": {
@@ -27307,6 +28386,15 @@
      "<utests/baselib/UtfArgsParser.h>"
     ],
     "path": "include/utests/baselib/DataModelTestUtils.h"
+   },
+   {
+    "includes": [
+     "<baselib/core/ThreadPool.h>",
+     "<baselib/core/OS.h>",
+     "<baselib/core/BaseIncludes.h>",
+     "<cstddef>"
+    ],
+    "path": "include/utests/baselib/HeldIoThreads.h"
    },
    {
     "includes": [
@@ -27410,6 +28498,21 @@
      "<utests/baselib/Utf.h>"
     ],
     "path": "include/utests/baselib/Http2DriverTestUtils.h"
+   },
+   {
+    "includes": [
+     "<baselib/http2/Http2ConnectionTask.h>",
+     "<baselib/http2/Session.h>",
+     "<baselib/httpclient/ClientConnectionTaskBase.h>",
+     "<baselib/httpclient/ClientConnection.h>",
+     "<baselib/tasks/TcpSslStrandedStreams.h>",
+     "<baselib/tasks/TcpTunnelStage.h>",
+     "<baselib/core/ObjModel.h>",
+     "<baselib/core/BaseIncludes.h>",
+     "<cstddef>",
+     "<utests/baselib/TlsTeardownTestUtils.h>"
+    ],
+    "path": "include/utests/baselib/Http2DriverTlsProbe.h"
    },
    {
     "includes": [
@@ -27772,6 +28875,37 @@
      "<baselib/security/JsonSecuritySerialization.h>"
     ],
     "path": "include/utests/baselib/TestUtils.h"
+   },
+   {
+    "includes": [
+     "<baselib/crypto/CryptoBase.h>",
+     "<baselib/core/AsioSSL.h>",
+     "<baselib/core/OS.h>",
+     "<baselib/core/BaseIncludes.h>",
+     "<cstddef>",
+     "<string>",
+     "<vector>",
+     "<utests/baselib/UtfCrypto.h>"
+    ],
+    "path": "include/utests/baselib/TlsEndingPeer.h"
+   },
+   {
+    "includes": [
+     "<baselib/httpclient/ClientConnection.h>",
+     "<baselib/tasks/Algorithms.h>",
+     "<baselib/tasks/ExecutionQueue.h>",
+     "<baselib/tasks/Task.h>",
+     "<baselib/core/ObjModel.h>",
+     "<baselib/core/OS.h>",
+     "<baselib/core/TimeUtils.h>",
+     "<baselib/core/BaseIncludes.h>",
+     "<cstddef>",
+     "<string>",
+     "<vector>",
+     "<utests/baselib/TlsEndingPeer.h>",
+     "<utests/baselib/Utf.h>"
+    ],
+    "path": "include/utests/baselib/TlsTeardownTestUtils.h"
    },
    {
     "includes": [
