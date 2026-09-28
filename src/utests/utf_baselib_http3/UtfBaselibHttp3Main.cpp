@@ -19,7 +19,8 @@
 
 /*
  * A numbered sibling of utf_baselib_http - see src/utests/AGENTS.md for the numbering scheme.
- * Created by change-set CS-6 of astra's second review, for D-L3-1's cases on the HTTP server's tasks
+ * Created by change-set CS-6 of astra's second review, for D-L3-1's cases on the HTTP server's tasks,
+ * and for D2's cases on SimpleHttpTask's deadline over its own TLS handshake
  *
  * Sockets: loopback only, on ephemeral ports, so no machine global test lock is needed - unlike
  * utf_baselib_http, whose cases stand up a server on the fixed test port
@@ -31,8 +32,10 @@
  * timer and the send task's response timer
  *
  * WHAT THIS MODULE PAYS FOR. The HTTP server's receive and send tasks over the cleartext stream
- * policy, driven directly over a connected loopback pair. Not a server, an acceptor task or a
- * backend - HttpServerHelpers.h is what costs utf_baselib_http about 30 MB, and it is not used here
+ * policy, driven directly over a connected loopback pair - 25.7 MB a64 clang debug with those alone -
+ * and SimpleHttpTask over the cleartext and TLS policies against utests/baselib/TlsEndingPeer.h, which
+ * D2's cases added. Not a server, an acceptor task or a backend - HttpServerHelpers.h is what costs
+ * utf_baselib_http about 30 MB, and it is not used here
  *
  * The module is devenv7+ only - the devenv7_only marker next to this file keeps it out of the build
  * on devenv2-6 (projects/make/common.mk) - because it was written and verified against devenv7 alone,

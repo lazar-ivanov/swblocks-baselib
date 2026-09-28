@@ -37,10 +37,11 @@
 
 /*
  * Running a TLS consumer - an HTTP driver, SimpleHttpTask - against utests/baselib/TlsEndingPeer.h to
- * the end of its teardown, and asserting how that teardown ended. The I2 cases of CS-6 on the real
- * consumers share it (notes/plans/issues/astra2-cs6-tls-shutdown-after-truncation-design.md, 8): each
- * consumer's protocol timer is shortened, so that a teardown which waits for the peer's close_notify
- * is told apart by being cancelled rather than by a bound expiring
+ * the end of its teardown, and asserting how that teardown ended. The CS-6 cases on the real consumers
+ * share it - I2's (utf_baselib_httpclient13, h2client9), and D-L3-1's and D2's (h2client10, http3). In
+ * I2's (notes/plans/issues/astra2-cs6-tls-shutdown-after-truncation-design.md, 8) each consumer's
+ * protocol timer is shortened, so that a teardown which waits for the peer's close_notify is told
+ * apart by being cancelled rather than by a bound expiring
  */
 
 namespace utest
