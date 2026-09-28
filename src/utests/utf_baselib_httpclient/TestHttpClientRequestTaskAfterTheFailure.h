@@ -17,7 +17,9 @@
 #ifndef __UTEST_TESTHTTPCLIENTREQUESTTASKAFTERTHEFAILURE_H_
 #define __UTEST_TESTHTTPCLIENTREQUESTTASKAFTERTHEFAILURE_H_
 
+#include <baselib/httpclient/ClientSession.h>
 #include <baselib/httpclient/HttpClientRequestTask.h>
+#include <baselib/httpclient/ConnectionPool.h>
 #include <baselib/httpclient/ClientTypes.h>
 
 #include <baselib/http/HeaderList.h>
@@ -45,8 +47,14 @@
  * runTask( ) returns only once the task has completed. The close delivered last is the second
  * rendezvous - its release is applied behind everything delivered ahead of it.
  *
- * The probes are TestHttpClientRequestTask.h's, which this module's Main.cpp includes ahead of this
- * file.
+ * AND WHAT THE SESSION DOES WITH A REQUEST WHICH FAILED ON A BODY CAP ( owed-list row I5 ): it does
+ * not replay it, whatever connection loss lands in the same batch - the refusal D4 made for a sink
+ * which threw. The batch is arranged the way D4's session case arranges it, with its gated probe.
+ *
+ * The probes are TestHttpClientRequestTask.h's, the gated connection
+ * TestHttpClientRequestTaskSinkAccounting.h's and the counting sink
+ * TestHttpClientRequestTaskOutstandingCap.h's - all of which this module's Main.cpp includes ahead
+ * of this file.
  */
 
 namespace utest
@@ -170,6 +178,122 @@ namespace utest
             UTF_REQUIRE_EQUAL( pool -> releases()[ 0 ], std::string( "42:failed" ) );
         }
 
+        /**
+         * @brief Which of the two body caps a request is made to overflow
+         */
+
+        enum class Cap
+        {
+            Buffered,
+            Outstanding,
+        };
+
+        /**
+         * @brief Runs one GET through a session with retryIdempotentOnConnectionLoss on, and has its
+         * first stream overflow a body cap and lose its connection in ONE batch
+         *
+         * The batch is [ headers, a ten byte block, a connection loss published as Draining ], all
+         * delivered while the gated probe holds the drain inside its first submit( ): the block
+         * overflows the cap, and the close behind it reads ConnectionUnusable - which is what feeds
+         * the knob. Nothing else about the request forbids a replay: a GET, no body, and a sink
+         * which is offered nothing, since the block which crosses a cap is never offered.
+         *
+         * A REPLAY WOULD BE ANSWERED ON ITS OWN - the gated probe answers a second submit( ) from a
+         * pool thread with the same ten bytes, which overflow the cap again on a clean close - so
+         * the chain completes either way, and the number of submits is the answer
+         */
+
+        inline void requireAnOverflowIsNotReplayed( SAA_in const Cap cap )
+        {
+            using namespace bl;
+            using namespace bl::httpclient;
+            using namespace utest::requesttask;
+            using namespace utest::sinkaccounting;
+
+            const auto connection = GatedProbeConnection::createInstance(
+                NegotiatedProtocol::fromAlpn( "h2" ),
+                std::string( "0123456789" )
+                );
+
+            const auto pool = ProbePool::createInstance(
+                om::qi< ClientConnection >( connection ),
+                true /* isAnswered */
+                );
+
+            SessionRequestPlan plan;
+
+            plan.pool = om::ObjPtrCopyable< ConnectionPool >( om::qi< ConnectionPool >( pool ) );
+            plan.state = om::ObjPtrCopyable< SessionState >(
+                SessionStateImpl::createInstance< SessionState >()
+                );
+            plan.transportScheme = "https";
+
+            plan.policy.retryIdempotentOnConnectionLoss = true;
+
+            om::ObjPtrCopyable< BodySink > sink;
+
+            if( Cap::Buffered == cap )
+            {
+                plan.requestConfig.maxResponseBodySize = 4U;
+            }
+            else
+            {
+                /*
+                 * One byte: a block of any size, with its allowance, is over it at post( )
+                 */
+
+                plan.requestConfig.maxOutstandingResponseBodySize = 1U;
+
+                sink = om::ObjPtrCopyable< BodySink >(
+                    om::qi< BodySink >(
+                        utest::outstandingcap::ParkingSink::createInstance( false /* isParking */ )
+                        )
+                    );
+            }
+
+            const auto chain = om::qi< tasks::Task >(
+                SessionRequestTaskImpl::createInstance( std::move( plan ), makeRequest(), sink )
+                );
+
+            runTask(
+                chain,
+                [ & ]() -> void
+                {
+                    connection -> waitFor( "submit" );
+
+                    connection -> deliverHeaders( 200U, http::HeaderList(), false /* isInterim */ );
+
+                    connection -> deliverData( "0123456789" );
+
+                    connection -> publishState( ConnectionState::Draining );
+
+                    connection -> deliverClosed(
+                        eh::errc::make_error_code( eh::errc::connection_reset ),
+                        false /* isRetryable */
+                        );
+
+                    connection -> openTheGate();
+                }
+                );
+
+            /*
+             * ONE NETWORK ATTEMPT, and one slot given back - checked and not required. The submit
+             * count is the discriminator: a replay's submit( ) precedes its hop's end, which the
+             * chain waits for. The slot count is exact only without a replay, since a replay's
+             * close may be applied after its hop has already failed on the cap
+             */
+
+            UTF_CHECK_EQUAL( connection -> submits(), 1U );
+            UTF_CHECK_EQUAL( pool -> releases().size(), 1U );
+
+            requireTrue( chain -> isFailed(), "a request which overflowed a body cap should have failed" );
+
+            requireTrue(
+                std::string::npos != messageOf( chain ).find( "exceeded the maximum of" ),
+                "the chain should have failed on the body cap, and it reports: " + messageOf( chain )
+                );
+        }
+
     } // afterthefailure
 
 } // utest
@@ -276,6 +400,27 @@ UTF_AUTO_TEST_CASE( HttpClientRequestTask_AnUploadPullAfterTheFailureIsNotAnswer
 
     UTF_CHECK_EQUAL( connection -> uploaded(), std::string() );
     UTF_CHECK( ! connection -> has( "body:4:more" ) );
+}
+
+/**
+ * @brief I5 - a request which failed on a body cap is not replayed, whatever connection loss lands
+ * in the same batch
+ *
+ * Run once for each cap: the buffered maxResponseBodySize, and D3's maxOutstandingResponseBodySize,
+ * whose overflow marker is made at post( ). Each time the overflow is the request's verdict - it is
+ * applied first - and the close behind it only reports the connection gone.
+ *
+ * RED BEFORE: the session read ConnectionUnusable off the hop and, with the knob on and a GET, made
+ * a second attempt, which overflowed again - two submits and two slots. GREEN AFTER: one of each, and
+ * the chain failed on the cap
+ */
+
+UTF_AUTO_TEST_CASE( ClientSession_AnOverflowedRequestIsNotReplayedTests )
+{
+    using namespace utest::afterthefailure;
+
+    requireAnOverflowIsNotReplayed( Cap::Buffered );
+    requireAnOverflowIsNotReplayed( Cap::Outstanding );
 }
 
 #endif /* __UTEST_TESTHTTPCLIENTREQUESTTASKAFTERTHEFAILURE_H_ */
