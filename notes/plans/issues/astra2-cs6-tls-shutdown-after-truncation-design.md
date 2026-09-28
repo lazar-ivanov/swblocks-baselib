@@ -32,7 +32,8 @@ affected, and why a clean ending is untouched.
 **Provenance.** Read on `astra2-cs6` @ `ea7e414`; every line number is that tree's. Boost is the devenv7
 dist's 1.90.0 and OpenSSL its 3.5.4. Nothing was built or run for this note beyond the lane's
 characterization build, whose object size §8 cites from `logs/astra2/cs6/sizes.txt` (in the run's state
-directory); the one behavioural measurement it relies on is CS-1's, recorded in
+directory, `http2-l0-state/`, a sibling of the checkout, kept outside the repository on purpose);
+the one behavioural measurement it relies on is CS-1's, recorded in
 `TestHttp1DriverTlsTruncation.h:66-81`. Each claim is labelled
 **VERIFIED** (read at the source cited), **INFERRED** (follows from verified facts, not checked) or
 **NOT VERIFIED**.

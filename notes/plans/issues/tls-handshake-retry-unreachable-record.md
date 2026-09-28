@@ -178,7 +178,8 @@ queued at `SD_RECEIVE` or arrives after it, where Linux does not while our FIN i
 `shutdown_both` asked for that, and `TcpSocketCommonBase::shutdownSocket( )` now shuts down the
 send side only. *(Corrected 2026-09-28, by measurement: `shutdown_both` puts our FIN out, and then
 Linux resets on a later arrival too - `SHUT_RD` then `SHUT_WR` drew a reset on Linux 6.8, where
-`SHUT_WR` alone did not; `logs/astra2/records/reset-after-shut-rd-probe.txt`.)*
+`SHUT_WR` alone did not; `http2-l0-state/logs/astra2/records/reset-after-shut-rd-probe.txt`, where
+`http2-l0-state/` is a sibling of the checkout, kept outside the repository on purpose.)*
 
 **This test's peer is not that function, and `bb53bdd` does not change it.** `acceptAndShutdown( )`
 (`TestTcpPreHandshakeStageTls.h:133-148`) does one `async_read_some( )` of at most 1024 bytes and
