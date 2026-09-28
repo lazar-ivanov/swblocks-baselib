@@ -84,6 +84,16 @@ namespace bl
             cpp::ScalarTypeIniter< bool >                                               m_isHandshakeCompleted;
 
             /*
+             * Set while this task's own TLS handshake is running on the stream it holds - from
+             * beginProtocolHandshake( ) until onHandshakeCompleted( ) - and read by the forced
+             * shutdown of a cancel, shutdownSocketOnCancel( ). Written only under the task lock,
+             * and for a stranded policy which built its own stream on its strand too, which is
+             * where that policy reads it; cleared as well wherever the stream is replaced
+             */
+
+            cpp::ScalarTypeIniter< bool >                                               m_isOwnHandshakeRunning;
+
+            /*
              * The deadline for the TLS handshake and for the TLS shutdown; a peer which
              * never sends its ClientHello (or never answers with close_notify) would
              * otherwise hold the connection task forever
@@ -178,6 +188,7 @@ namespace bl
                 m_sslStream.reset();
                 m_originalException = std::exception_ptr();
                 m_scheduledForShutdown = false;
+                m_isOwnHandshakeRunning = false;
             }
 
             bool isChannelOpen() const NOEXCEPT
@@ -272,6 +283,8 @@ namespace bl
 
             bool beginProtocolHandshake( SAA_in const cpp::bool_callback_t& continueCallback )
             {
+                m_isOwnHandshakeRunning = true;
+
                 getStream().beginProtocolHandshake(
                     cpp::bind(
                         &this_type::onHandshakeCompleted,
@@ -400,11 +413,50 @@ namespace bl
                     );
             }
 
+            /**
+             * @brief The forced shutdown of a cancel: TcpSocketCommonBase::shutdownSocket( ) with
+             * force - the send side, then a cancel of what is registered - and, while this task's
+             * own handshake is running, the receive side too, after the cancel
+             *
+             * A TLS handshake is a chain of socket operations inside asio, and between one step's
+             * completion and the next step's start nothing of it is registered with the reactor: a
+             * cancel which lands there reaps nothing, and the next step's read waits for the peer.
+             * Once the receive side is shut down that read cannot wait - on Linux the shutdown
+             * raises a read event of its own, and a read started after it returns end of stream -
+             * so the handshake fails at once and the cancel is not lost. Shut after the cancel, so
+             * that a read which is registered is reaped as operation_aborted, as it always was
+             *
+             * Only during this task's own handshake. Before any application data has passed a
+             * receive shutdown loses nothing of value: a peer which sends after it is reset, and
+             * what is lost to that is the records of a handshake being abandoned. Past it the
+             * receive side stays open, because a consumer's own read would report end of stream,
+             * which it takes for the peer's orderly close. See
+             * notes/plans/issues/astra2-cs6-lost-forced-cancel-design.md
+             *
+             * Best effort, as the rest of the forced path: the receive shutdown's error is ignored
+             */
+
+            void shutdownSocketOnCancel() NOEXCEPT
+            {
+                BL_NOEXCEPT_BEGIN()
+
+                TcpSocketCommonBase::shutdownSocket( getSocket(), true /* force */ );
+
+                if( m_isOwnHandshakeRunning )
+                {
+                    eh::error_code ec;
+
+                    getSocket().shutdown( asio::socket_base::shutdown_receive, ec );
+                }
+
+                BL_NOEXCEPT_END()
+            }
+
             virtual void cancelTask() OVERRIDE
             {
                 if( isChannelOpen() )
                 {
-                    TcpSocketCommonBase::shutdownSocket( getSocket(), true /* force */ );
+                    shutdownSocketOnCancel();
 
                     base_type::m_wasSocketShutdownForcefully = true;
                 }
@@ -596,6 +648,13 @@ namespace bl
 
                 m_isHandshakeCompleted = true;
 
+                /*
+                 * Cleared BEFORE the continuation, which starts the application phase - a cancel
+                 * from there on must leave the receive side open (shutdownSocketOnCancel( ))
+                 */
+
+                m_isOwnHandshakeRunning = false;
+
                 getStream().notifyOnSuccessfulHandshakeOrShutdown( true /* isHandshake */ );
 
                 if( continueCallback() )
@@ -734,6 +793,8 @@ namespace bl
                 onStreamChanging( stream );
 
                 m_sslStream = BL_PARAM_FWD( stream );
+
+                m_isOwnHandshakeRunning = false;
             }
 
             stream_ref detachStream() NOEXCEPT
@@ -741,6 +802,8 @@ namespace bl
                 onStreamChanging( nullptr );
 
                 auto stream = std::move( m_sslStream );
+
+                m_isOwnHandshakeRunning = false;
 
                 return stream;
             }

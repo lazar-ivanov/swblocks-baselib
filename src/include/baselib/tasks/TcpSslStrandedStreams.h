@@ -119,7 +119,7 @@ namespace bl
 
                 if( base_type::isChannelOpen() )
                 {
-                    TcpSocketCommonBase::shutdownSocket( base_type::getSocket(), true /* force */ );
+                    base_type::shutdownSocketOnCancel();
                 }
 
                 BL_NOEXCEPT_END()
