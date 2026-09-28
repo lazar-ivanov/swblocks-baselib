@@ -22,7 +22,7 @@
  * CS-2 of astra's second review ( notes/plans/issues/astra-second-review-decisions.md )
  *
  * WHY THIS MODULE EXISTS. utf_baselib_httpclient5 is the TLS session's module and is over the 40 MB
- * target src/utests/AGENTS.md sets ( its own Main.cpp records 46.9 MB, a64 clang debug ), so the TLS
+ * target src/utests/AGENTS.md sets ( its own Main.cpp records 47.5 MB, a64 clang debug ), so the TLS
  * session cases CS-2 owes come here instead: the ALPN fallback exchange with a sink ( E3 ) and the
  * narrowing of a streaming upload's ALPN offer, shown to discriminate ( E1 ). The cleartext session's
  * CS-2 cases are utf_baselib_httpclient9's.

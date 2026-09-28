@@ -63,7 +63,7 @@
  * this case landed, green, before D4's change, and has to stay green across it.
  *
  * WHY NOT IN utf_baselib_httpclient5, where the same exchange without a sink lives: that module is
- * over the 40 MB target ( its Main.cpp records 46.9 MB ), and src/utests/AGENTS.md says not to add
+ * over the 40 MB target ( its Main.cpp records 47.5 MB ), and src/utests/AGENTS.md says not to add
  * to one there. What the case needs is shared rather than copied, since a test header may never be
  * included across module directories: the peer is utests/baselib/Http1DriverTlsTestUtils.h's, the
  * session helpers utests/baselib/HttpClientSessionTlsTestUtils.h's, and the counting sink - once
