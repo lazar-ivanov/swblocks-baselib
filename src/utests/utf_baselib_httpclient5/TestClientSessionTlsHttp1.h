@@ -157,20 +157,11 @@ namespace utest
         };
 
         /**
-         * @brief UTF has no REQUIRE with a message of its own, and "the stream ended wrong" says
-         * nothing about WHICH ending it got
+         * @brief utests/baselib/Http1DriverTestUtils.h's helpers, which this file carried copies of
          */
 
-        inline void chkOrFail(
-            SAA_in          const bool                                          condition,
-            SAA_in          const std::string&                                  message
-            )
-        {
-            if( ! condition )
-            {
-                UTF_FAIL( message );
-            }
-        }
+        using http1driver::chkOrFail;
+        using http1driver::waitForTaskEnd;
 
         /**
          * @brief The TLS HTTP/1.1 peer - utests/baselib/Http1DriverTlsTestUtils.h's, the one peer of
@@ -188,56 +179,9 @@ namespace utest
          * driver on the same policy as the session case, with the pool taken out of the way
          */
 
-        typedef bl::om::ObjectImpl
-        <
-            bl::tasks::ClientConnectionTaskBaseT< sessiontls::tls_stream_t >
-        >
-        TlsEstablisherImpl;
+        using http1drivertls::TlsEstablisherImpl;
 
         typedef bl::tasks::Http1ConnectionTaskImpl< sessiontls::tls_stream_t >  TlsDriverImpl;
-
-        inline auto makeHttp1TlsFactory(
-            SAA_in          const std::shared_ptr< bl::om::ObjPtr< bl::httpclient::ClientConnection > >& slot,
-            SAA_in          const bl::time::time_duration&                      idleTimeout
-            )
-            -> std::shared_ptr< bl::httpclient::ClientDriverFactoryT< sessiontls::tls_stream_t > >
-        {
-            typedef bl::httpclient::ClientDriverFactoryT< sessiontls::tls_stream_t > factory_t;
-
-            auto factory = std::make_shared< factory_t >();
-
-            /*
-             * HTTP/1.1 ALONE, so that a peer which somehow selected "h2" fails this loudly in
-             * createDriver( ) rather than quietly running a case which is not the one it claims
-             */
-
-            factory -> registerDriver(
-                bl::httpclient::HttpProtocol::Http11,
-                [ slot, idleTimeout ](
-                    SAA_in      const bl::httpclient::NegotiatedProtocol&       negotiated,
-                    SAA_inout   sessiontls::tls_stream_t::stream_ref&&          connectedStream,
-                    SAA_in      const bl::httpclient::ConnectionKey&            key
-                    )
-                    -> bl::om::ObjPtr< bl::httpclient::ClientConnection >
-                {
-                    auto driver = TlsDriverImpl::createInstance(
-                        bl::cpp::copy( negotiated ),
-                        BL_PARAM_FWD( connectedStream ),
-                        bl::cpp::copy( key ),
-                        bl::httpclient::Http1ResponseLimits(),
-                        bl::cpp::copy( idleTimeout )
-                        );
-
-                    auto result = bl::om::qi< bl::httpclient::ClientConnection >( driver );
-
-                    *slot = bl::om::copy( result );
-
-                    return result;
-                }
-                );
-
-            return factory;
-        }
 
         inline auto establishTlsDriver(
             SAA_in          const bl::om::ObjPtr< bl::tasks::ExecutionQueue >&  eq,
@@ -261,7 +205,7 @@ namespace utest
 
             const auto establisher = TlsEstablisherImpl::createInstance(
                 std::move( key ),
-                makeHttp1TlsFactory( slot, idleTimeout ),
+                http1drivertls::makeTlsFactory< TlsDriverImpl >( slot, idleTimeout ),
                 ProxyConfig::none(),
                 ClientConnectionConfig(),
                 false /* logExceptions */
@@ -278,67 +222,6 @@ namespace utest
 
             return om::copy( *slot );
         }
-
-        /**
-         * @brief Whether a task ended within the bound, WITHOUT the case doing anything to end it
-         *
-         * It polls, and that is not the flake src/utests/AGENTS.md names: what it measures is the
-         * ABSENCE of an event within a bound, which no rendezvous can deliver - the same helper
-         * and the same reason as utests/baselib/Http1DriverTestUtils.h's waitForTaskEnd( ), which
-         * is not included here because its header also defines a probe over the CLEARTEXT policy
-         * and this module has no use for that instantiation
-         */
-
-        inline bool waitForTaskEndWithin(
-            SAA_in          const bl::om::ObjPtr< bl::tasks::Task >&            task,
-            SAA_in          const std::size_t                                   timeoutInMilliseconds
-            )
-        {
-            enum : std::size_t
-            {
-                POLL_INTERVAL_IN_MILLISECONDS = 20U,
-            };
-
-            /*
-             * ELAPSED TIME, AGAINST A STEADY CLOCK, AND AN ANSWER COUNTS ONLY IF IT WAS SEEN INSIDE
-             * THE WINDOW. This used to add the poll interval to a counter - the time the loop asked
-             * to sleep rather than the time it slept - so under load every sleep overran and the
-             * window grew with it, and a window meant to end BEFORE an event could outlive it.
-             * Measured on Windows: the 125 ms window of Http1DriverTls_IdleCloseSendsCloseNotifyTests
-             * outgrew the 250 ms idle close it guards and called that close an early one, in up to
-             * 8 runs of 50 under load. The state is read before the clock, so a completion counts
-             * only when the clock read after it still says inside - which makes "ended within the
-             * bound" exact for the one caller asking whether a task SURVIVED, and at most one poll
-             * stricter for the callers asking whether it ENDED, whose bounds are an order of
-             * magnitude above what they wait on
-             */
-
-            const auto deadline =
-                bl::os::chrono::steady_clock::now() +
-                bl::os::chrono::milliseconds( timeoutInMilliseconds );
-
-            for( ;; )
-            {
-                const bool isCompleted = bl::tasks::Task::Completed == task -> getState();
-
-                if( bl::os::chrono::steady_clock::now() >= deadline )
-                {
-                    return false;
-                }
-
-                if( isCompleted )
-                {
-                    return true;
-                }
-
-                bl::os::sleep(
-                    bl::time::milliseconds(
-                        static_cast< long >( POLL_INTERVAL_IN_MILLISECONDS )
-                        )
-                    );
-            }
-        }
-
     } // sessiontlsh1
 
 } // utest
@@ -537,7 +420,7 @@ UTF_AUTO_TEST_CASE( Http1DriverTls_IdleCloseSendsCloseNotifyTests )
              */
 
             survivedHalfTheLifetime =
-                ! waitForTaskEndWithin( driverTask, IDLE_CLOSE_IN_MILLISECONDS / 2U );
+                ! waitForTaskEnd( driverTask, IDLE_CLOSE_IN_MILLISECONDS / 2U );
 
             /*
              * THE IDLE LIFETIME IS THE ONLY THING WHICH CAN END THIS TASK - the peer is holding
@@ -545,7 +428,7 @@ UTF_AUTO_TEST_CASE( Http1DriverTls_IdleCloseSendsCloseNotifyTests )
              * of magnitude above the lifetime being waited on
              */
 
-            taskEnded = waitForTaskEndWithin( driverTask, UNAIDED_END_IN_MILLISECONDS );
+            taskEnded = waitForTaskEnd( driverTask, UNAIDED_END_IN_MILLISECONDS );
 
             eq -> wait( driverTask );
 
@@ -740,7 +623,7 @@ UTF_AUTO_TEST_CASE( Http1DriverTls_WriteInFlightCloseSkipsCloseNotifyTests )
              * to wake it
              */
 
-            taskEndedUnaided = waitForTaskEndWithin( driverTask, UNAIDED_END_IN_MILLISECONDS );
+            taskEndedUnaided = waitForTaskEnd( driverTask, UNAIDED_END_IN_MILLISECONDS );
 
             /*
              * RELEASED ONLY NOW, and only so that the peer can reach the end of its stream: its
