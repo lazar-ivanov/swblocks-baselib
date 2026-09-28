@@ -290,24 +290,46 @@ namespace bl
                     );
             }
 
+            /**
+             * @brief Arms the request timer before the protocol handshake: the task's one deadline,
+             * from its first attempt's established connection until it stops
+             *
+             * A TLS handshake runs between this stage and continueAfterConnected( ), and nothing
+             * else bounds a connector's handshake, so a server which accepts the connection and never
+             * answers the ClientHello would otherwise hold the task. The timer is created and armed
+             * once per task: a handshake retry enters this stage again and leaves it running. It is
+             * built on the resolver's executor - the I/O pool's - which outlives the retry's reset of
+             * the resolver. Over cleartext there is no handshake, and the timer is armed in the same
+             * connect handler as before, just ahead of continueAfterConnected( )
+             * (notes/plans/issues/astra2-cs6-lost-forced-cancel-design.md, section 8)
+             */
+
+            virtual bool beginPreHandshakeStage( SAA_in const cpp::bool_callback_t& continueCallback ) OVERRIDE
+            {
+                if( ! m_timer )
+                {
+                    m_timer.reset(
+                        new asio::deadline_timer(
+                            #if ( ( BOOST_VERSION / 100 ) >= 1072 )
+                            base_type::m_resolver -> get_executor(),
+                            #else
+                            base_type::m_resolver -> get_io_service(),
+                            #endif
+                            time::milliseconds( 0 )
+                            )
+                        );
+
+                    scheduleTimer();
+                }
+
+                return base_type::beginPreHandshakeStage( continueCallback );
+            }
+
             virtual bool continueAfterConnected() OVERRIDE
             {
                 base_type::ensureChannelIsOpen();
 
                 m_remoteEndpointId = net::safeRemoteEndpointId( base_type::getSocket() );
-
-                m_timer.reset(
-                    new asio::deadline_timer(
-                        #if ( ( BOOST_VERSION / 100 ) >= 1072 )
-                        base_type::m_resolver -> get_executor(),
-                        #else
-                        base_type::m_resolver -> get_io_service(),
-                        #endif
-                        time::milliseconds( 0 )
-                        )
-                    );
-
-                scheduleTimer();
 
                 asio::async_write(
                     base_type::getStream(),
