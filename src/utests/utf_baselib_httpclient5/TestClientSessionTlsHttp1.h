@@ -91,9 +91,9 @@
  * preference of "http/1.1" on it would negotiate a protocol it cannot answer.
  *
  * THE HELPERS ARE SHARED TOO: the session's from utests/baselib/HttpClientSessionTlsTestUtils.h,
- * the driver's from utests/baselib/Http1DriverTestUtils.h and Http1DriverTlsTestUtils.h. They are
- * used and not copied: a helper copied into two headers of the same module is what invariant C6
- * exists to catch.
+ * which TestClientSessionTls.h includes ahead of this file (the module's Main.cpp), and the
+ * driver's from utests/baselib/Http1DriverTestUtils.h and Http1DriverTlsTestUtils.h. Used, not
+ * copied: a helper copied into two headers of the same module is what invariant C6 exists to catch.
  */
 
 namespace utest

@@ -357,7 +357,7 @@ namespace utest
             }
 
             /**
-             * @brief Reads until the stream ends and returns the code it ended with
+             * @brief Reads until the stream ends, records the code it ended with and returns it
              *
              * asio::error::eof means the client sent a close_notify and this peer processed it;
              * asio.ssl.stream:1 means the client's transport ended without one - the same mapping
