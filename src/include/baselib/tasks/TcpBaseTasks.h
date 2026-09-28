@@ -1393,14 +1393,115 @@ namespace bl
                 return continueCallback();
             }
 
+            /**
+             * @brief Connects the socket to the resolved endpoints one at a time, in the resolver's
+             * order - the loop asio::async_connect( ) runs over a range, with each attempt
+             * completing in onConnectionEstablished( ) below
+             *
+             * NOT asio::async_connect( ). Between two attempts its iterator_connect_op closes the
+             * socket and opens it again for the next endpoint - on an I/O thread, in its own
+             * intermediate handler, under no lock of ours - while a cancel reads that socket under
+             * the task lock: ThreadSanitizer reports the race on all four stream policies
+             * (utf_baselib_tasks4). And a cancel which ends one attempt does not stop that loop,
+             * which goes on to the next. Here the switch to the next endpoint is made in a task
+             * handler - under the task lock and, for a stranded policy, on the strand - so it is
+             * ordered with every cancelTask( ), which runs under that lock, and with a stranded
+             * policy's posted shutdown, which runs on that strand; and the cancel is checked before it
+             *
+             * What asio's loop does is kept: the endpoints in order; the socket closed before each
+             * attempt, and opened by async_connect( ) for that endpoint's protocol; an attempt which
+             * connects ends the loop with no error at that endpoint; when none is left the loop ends
+             * with the LAST attempt's error and the end iterator; and an empty list ends with
+             * not_found and the end iterator, posted rather than inline
+             * (notes/plans/issues/astra2-cs6-lost-forced-cancel-design.md, section 9)
+             */
+
+            void beginConnect( SAA_in typename tcp_resolver_type::iterator endpoints )
+            {
+                const decltype( endpoints ) end;
+
+                if( end == endpoints )
+                {
+                    asio::post(
+                        base_type::getSocket().get_executor(),
+                        cpp::bind(
+                            &this_type::onConnectionEstablished,
+                            om::ObjPtrCopyable< this_type >::acquireRef( this ),
+                            asio::error::make_error_code( asio::error::not_found ),
+                            end
+                            )
+                        );
+
+                    return;
+                }
+
+                beginConnectAttempt( endpoints );
+            }
+
+            /**
+             * @brief One attempt of beginConnect( )'s loop, to the endpoint the iterator is at
+             */
+
+            void beginConnectAttempt( SAA_in typename tcp_resolver_type::iterator endpoint )
+            {
+                eh::error_code ec;
+
+                base_type::getSocket().close( ec );
+
+                base_type::getSocket().async_connect(
+                    endpoint -> endpoint(),
+                    cpp::bind(
+                        &this_type::onConnectionEstablished,
+                        om::ObjPtrCopyable< this_type >::acquireRef( this ),
+                        asio::placeholders::error,
+                        endpoint
+                        )
+                    );
+            }
+
+            /**
+             * @brief The completion of one attempt of beginConnect( )'s loop, with the endpoint it
+             * was made to - or of the whole connect, as asio::async_connect( ) completes it: with no
+             * error at the endpoint connected to, or with an error and the end iterator
+             *
+             * BL_TASKS_HANDLER_BEGIN( ), not the CHK_EC variant: one attempt which fails is not the
+             * task's failure, and the next endpoint is tried - unless the task was cancelled. When
+             * none is left, the last attempt's error is the task's. When one connects, the cancel is
+             * checked as the CHK_EC prolog checks it, and the task goes on inside this handler,
+             * since the task lock is not recursive
+             */
+
             void onConnectionEstablished(
                 SAA_in                              const eh::error_code&               ec,
                 SAA_in                              typename tcp_resolver_type::iterator endpoints
                 ) NOEXCEPT
             {
-                BL_TASKS_HANDLER_BEGIN_CHK_EC()
+                BL_TASKS_HANDLER_BEGIN()
 
                 const decltype( endpoints ) end;
+
+                if( ec )
+                {
+                    auto next = endpoints;
+
+                    if( end != next )
+                    {
+                        ++next;
+                    }
+
+                    if( end != next )
+                    {
+                        BL_TASKS_HANDLER_CHK_CANCEL_IMPL()
+
+                        beginConnectAttempt( next );
+
+                        return;
+                    }
+
+                    BL_TASKS_HANDLER_CHK_EC( ec )
+                }
+
+                BL_TASKS_HANDLER_CHK_CANCEL_IMPL()
 
                 if( endpoints != end && false == TaskBase::isCanceled() )
                 {
@@ -1453,16 +1554,7 @@ namespace bl
                     base_type::m_query.service_name()
                     );
 
-                asio::async_connect(
-                    base_type::getSocket(),
-                    endpoints,
-                    cpp::bind(
-                        &this_type::onConnectionEstablished,
-                        om::ObjPtrCopyable< this_type >::acquireRef( this ),
-                        asio::placeholders::error,
-                        asio::placeholders::iterator
-                        )
-                    );
+                beginConnect( endpoints );
 
                 return true;
             }

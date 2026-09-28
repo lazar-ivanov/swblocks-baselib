@@ -1607,22 +1607,7 @@ namespace bl
 
                 base_type::createSocket( threadPool -> aioService(), m_originHost, m_originService );
 
-                asio::async_connect(
-                    base_type::getSocket(),
-                    endpoints,
-                    cpp::bind(
-                        /*
-                         * Named through this_type and not through base_type: the member is
-                         * protected, and [class.protected] allows a derived class to form a
-                         * pointer to it only when the naming class is the derived one
-                         */
-
-                        &this_type::onConnectionEstablished,
-                        om::ObjPtrCopyable< this_type >::acquireRef( this ),
-                        asio::placeholders::error,
-                        asio::placeholders::iterator
-                        )
-                    );
+                base_type::beginConnect( endpoints );
 
                 return true;
             }
