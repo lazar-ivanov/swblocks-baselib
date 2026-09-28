@@ -763,8 +763,10 @@ corrects or completes a claim of §7, §4(c) or §9 with what was measured at th
   cancel reported by a task nobody had cancelled, with no later endpoint tried. The loop treats that attempt
   like any other which fails: it tries the next endpoint, and after the last it reports the open's own
   error. The maintainer decided on 2026-09-28 to keep that, record it and test it (D-A, decision record
-  §11).
+  §11). It is tested in `utf_baselib_tasks4`, `TestTcpConnectOpenFailure.h` (`751c34e`): a lowered soft
+  `RLIMIT_NOFILE` makes the first attempt's open fail inside the resolve handler - POSIX only.
 - **The modules**, each the next free number in its family: `utf_baselib_tasks4` (D3), `utf_baselib_http3`
   (the HTTP server's timers and D2), `utf_baselib_h2client10` (the HTTP/2 characterization and the connect
   deadline). At the tip, a64 clang debug: 31.7, 36.1 and 37.6 MB; `utf_baselib_tasks3` is 36.9 MB
-  (`logs/astra2/cs6/sizes.txt`, `tip-d13859c/summary.log`).
+  (`logs/astra2/cs6/sizes.txt`, `tip-d13859c/summary.log`). *(Updated 2026-09-28: `utf_baselib_tasks4`
+  also carries D-A's test, and is 31.9 MB with it, `751c34e`.)*

@@ -39,15 +39,18 @@
  *
  * Sockets: loopback only, on ephemeral ports, so no machine global test lock is needed. Some cases
  * address 127.0.0.2, where nothing listens, which Linux routes over loopback; one case reads
- * /proc/net/tcp, and runs only where that file exists
+ * /proc/net/tcp, and runs only where that file exists; and two cases lower the process's soft
+ * RLIMIT_NOFILE and exhaust its descriptors for a moment - POSIX only - which is why their header is
+ * kept last
  *
  * The module is devenv7+ only: the stranded policies #error on a Boost older than 1.72, and the
  * devenv7_only marker next to this file is what keeps it out of the build on devenv2-6
  * (projects/make/common.mk)
  *
- * APPEND CONVENTION - a change-set adds its own Test<Feature>.h files in THIS directory and appends
- * their #include lines at the END of the include block below, never reordering or editing another
- * change-set's; and it appends a notes.txt recipe per case it adds
+ * APPEND CONVENTION - a change-set adds its own Test<Feature>.h files in THIS directory and adds their
+ * #include lines at the END of the include block below - above the one header kept last there, which
+ * says why - never reordering or editing another change-set's; and it appends a notes.txt recipe per
+ * case it adds
  */
 
 /*
