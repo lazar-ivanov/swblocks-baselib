@@ -5,8 +5,17 @@ and nothing was built.** Eight decisions were put to the maintainer in AGENTS.md
 *"Yes, I accept D2 as revised, D4 widened to Astra's version, and the rest as recommended."*
 Implementation waits for the maintainer's go-ahead.
 
+**Implemented 2026-09-27 and 28.** All eight decisions landed — CS-1 at `a04f29c`, CS-2 at
+`bc431f2`, CS-3 at `f48acd2` — and what the run found landed in CS-4 (`988544a`), CS-5 (`31e6365`)
+and CS-6 (`f2baa2f`); §10 says what each carried, with its commits and its gate. "Nothing
+implemented", "implementation waits" and, in the provenance below, "nothing was built or run" are the
+state when the decisions were taken, §1 to §7, and are left as written. *(Marked 2026-09-28, astra's
+third review, T02.)*
+
 **Scope:** R01–R08 of [astra's second review](../http2-l0-l6-remediation-review-2026-09-26.md), which
-reviewed `db97372`. R09, the stale records, was done at `425802c`. Each finding was re-verified at the
+reviewed `db97372`. R09, the stale records, was done at `425802c`; that sweep missed several
+current-status summaries, which astra's third review found as T02 and CS-8 reconciled
+([`astra-third-review-decisions.md`](astra-third-review-decisions.md)). Each finding was re-verified at the
 source before it was put; the ledger rows are in [`astra-remediation-owed-work.md`](astra-remediation-owed-work.md),
 under "Found by astra's second review".
 
