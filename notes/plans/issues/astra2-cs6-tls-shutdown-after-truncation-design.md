@@ -143,8 +143,14 @@ component consumers ask what a TLS ending means, and they ask it about their own
 - `isExpectedException( eptr, exception, ec )` (`TcpSslBaseTasks.h:438-463`) — virtual, non-static — is
   what every handler failure reaches: `BL_TASKS_HANDLER_CHK_EC( ec )` asks it (`TaskBase.h:139-157`), and
   so does every catch of the handler epilogs that carries a code (`:195-257`). When the code is a
-  truncation, it records it on the stream too. No TLS task in the library overrides it again — the only
-  other override is `tasks/utils/Pinger.h:74`'s, which is not a stream task. **VERIFIED**, by grep.
+  truncation, it records it on the stream too. Every override above the policy reaches it for a
+  truncation code: the connector's (`TcpBaseTasks.h:1504`) answers early only for a cancel, the block
+  transfer connection's (`TcpBlockTransferCommon.h:407`) only for a cancel, an eof or a transport code
+  (`isExpectedSocketException( )`, `TcpBaseTasks.h:151-230`), SimpleHttpTask's
+  (`SimpleHttpTask.h:439`) only for an expected HTTP status, and the block transfer client's
+  (`TcpBlockTransferClient.h:753`) asks its base first; `Pinger.h:74`'s is not a stream task.
+  **VERIFIED**, by grep and reading each. *(Corrected 2026-09-27, before review: the first commit said no
+  other stream task overrides it — the grep that said so had been cut short.)*
 
 *For:* a small radius — it runs only when a code already is a truncation, and every clean path is
 untouched by construction. *Against:* a question now leaves a record behind. That is deliberate and
