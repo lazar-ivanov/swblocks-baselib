@@ -758,13 +758,20 @@ namespace utest
          * the connection did; what it must not do is write the two fields a caller which has waited
          * for the task may be reading
          *
-         * THREE READINGS, AND THE MIDDLE ONE IS THE RACE. The first is made before the close is
-         * posted, and the mailbox lock orders it before anything the close writes. The second is
-         * made as soon as deliverClosed( ) returns, which does not wait for the drain, so nothing
-         * orders it against the drain applying the close: it is the reading a ThreadSanitizer build
-         * is asked about, and an ordinary build could see either value there. The third is made
-         * after the release - a deferred action of the batch which applies the close - so it is
-         * ordered after that batch's writes, and a close which wrote the pair is certain to show
+         * THREE READINGS, AND THE MIDDLE ONE IS WHERE THE RACE WAS. The first is made before the
+         * close is posted, and the mailbox lock orders it before anything the close writes. The
+         * second is made as soon as deliverClosed( ) returns, which does not wait for the drain, so
+         * nothing orders it against the drain applying the close: a write of the pair raced it,
+         * and an ordinary build could see either value there. The third is made after the release
+         * - a deferred action of the batch which applies the close - so it is ordered after that
+         * batch's writes, and a close which wrote the pair is certain to show
+         *
+         * FOUR REQUESTS, AND ThreadSanitizer IS ONE REASON. The pair shares one 8-byte shadow word
+         * with six flags the drain reads and writes as it goes; ThreadSanitizer keeps four cells per
+         * word and evicts one when they are full, and one report retires the word's reads - so a
+         * racing reading is not reported on every request, and the pair's two races report as
+         * one. Before the fix about one request in seven went unreported, and every run of the four
+         * reported: 50 of 50, never fewer than two
          *
          * TWO CLOSES, ONE FOR EACH FIELD. A connection loss published as Draining reads
          * ConnectionUnusable, which is what outcome( ) would take; a close marked retryable is what
