@@ -32,11 +32,15 @@
  * response cut short - and that peer writes them byte for byte. What the module pays for is the
  * cleartext session, which instantiates both drivers over the cleartext stranded policy.
  *
- * SIZE, MEASURED: 39.8 MB clang debug (a64) with D5's seven cases, E2's one and D3's two, against a
- * 40 MB target - which is the session's instantiations and very little else ( 18.8 MB over the empty
- * module floor; E2 and D3 added 0.1 MB each, since neither brings a type the module did not already
- * have ). It is AT the target, so a slice which adds here measures first, as src/utests/AGENTS.md
- * asks.
+ * SIZE, MEASURED AND OVER TARGET, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 40.1 MB
+ * clang debug (a64) at CS-4 - 19.1 MB over the empty module floor - against a 40 MB target. It was
+ * 39.8 MB with D5's seven cases, E2's one and D3's two - the session's instantiations and very
+ * little else ( 18.8 MB over the floor; E2 and D3 added 0.1 MB each ). CS-4 crossed the target
+ * without adding a case: the library it changed is instantiated here as in every session module,
+ * and I4's 205 and I6's chain check extend two cases already here. Moving E2's case, or D3's pair,
+ * out would save about the 0.1 MB the module is over, at the price of a new module paying for the
+ * session again - so the reason is recorded instead, and a new case goes to a numbered sibling, not
+ * here.
  *
  * Sockets: loopback, ephemeral ports, so these cases do not take the machine global test lock
  *

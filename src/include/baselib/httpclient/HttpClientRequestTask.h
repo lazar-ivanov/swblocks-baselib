@@ -424,6 +424,15 @@ namespace bl
             cpp::ScalarTypeIniter< bool >                                       m_isCompletionExpected;
             std::exception_ptr                                                  m_completionException;
 
+            /*
+             * WHETHER THE FAILURE m_completionException HOLDS WAS DECIDED BY THIS TASK - a timeout, a
+             * cancel, a body cap, a sink or source which threw - rather than by the connection; see
+             * isOwnFailure( ). Written by failWith( ) together with the exception, so it always
+             * describes the failure which won
+             */
+
+            cpp::ScalarTypeIniter< bool >                                       m_isOwnFailure;
+
             cpp::SafeUniquePtr< asio::deadline_timer >                          m_totalTimer;
             cpp::SafeUniquePtr< asio::deadline_timer >                          m_headersTimer;
             cpp::SafeUniquePtr< asio::deadline_timer >                          m_idleTimer;
@@ -693,7 +702,7 @@ namespace bl
 
                         cancelStream( reset );
 
-                        failWith( deferredException, false /* isExpected */ );
+                        failWith( deferredException, false /* isExpected */, true /* isOwnFailure */ );
                     }
 
                     if( m_isCompletionPending && ! m_isCompleted )
@@ -771,8 +780,7 @@ namespace bl
                         break;
 
                     case EventKind::Trailers:
-                        m_response.trailers( std::move( event.headers ) );
-                        armIdleTimer();
+                        applyTrailers( event );
                         break;
 
                     case EventKind::BodyWanted:
@@ -1046,6 +1054,19 @@ namespace bl
             {
                 BL_UNUSED( deferred );
 
+                if( m_isCompleted || m_isCompletionPending )
+                {
+                    /*
+                     * A HEADER BLOCK FOR A REQUEST WHICH HAS ALREADY FAILED IS DROPPED, as a late
+                     * Data block is ( applyData( ), which says why a decided completion can only be
+                     * a failure while one can still arrive ): the response the caller holds is not
+                     * written - its task has completed, and the caller may be reading it - and no
+                     * timer is armed. D3's guard at its siblings, owed-list row I8
+                     */
+
+                    return;
+                }
+
                 if( event.isInterim )
                 {
                     InterimResponse interim;
@@ -1073,6 +1094,23 @@ namespace bl
                 m_isFinalHeadersSeen = true;
 
                 cancelTimer( m_headersTimer );
+
+                armIdleTimer();
+            }
+
+            void applyTrailers( SAA_inout Event& event )
+            {
+                if( m_isCompleted || m_isCompletionPending )
+                {
+                    /*
+                     * Dropped for applyHeaders( )'s reason: not written into the response the caller
+                     * holds, and no timer armed
+                     */
+
+                    return;
+                }
+
+                m_response.trailers( std::move( event.headers ) );
 
                 armIdleTimer();
             }
@@ -1164,7 +1202,8 @@ namespace bl
                                     )
                                 )
                             ),
-                        false /* isExpected */
+                        false /* isExpected */,
+                        true /* isOwnFailure */
                         );
 
                     return;
@@ -1386,6 +1425,19 @@ namespace bl
 
                 if( ! source || ! m_connection || m_isStreamClosed )
                 {
+                    return;
+                }
+
+                if( m_isCompleted || m_isCompletionPending )
+                {
+                    /*
+                     * A PULL FOR A REQUEST WHICH HAS ALREADY FAILED IS NOT ANSWERED, and the
+                     * caller's source is not read again - applyHeaders( )'s guard, for the other
+                     * direction. No answer is owed: a completion decided while the stream is still
+                     * open can only be a failure ( applyData( ) says why ), and every such failure
+                     * has reset the stream
+                     */
+
                     return;
                 }
 
@@ -1742,7 +1794,8 @@ namespace bl
                                 "The HTTP request was cancelled"
                                 )
                             ),
-                        true /* isExpected */
+                        true /* isExpected */,
+                        true /* isOwnFailure */
                         );
 
                     return;
@@ -1755,7 +1808,8 @@ namespace bl
                             createTimeoutMessage( event.timeoutKind )
                             )
                         ),
-                    true /* isExpected */
+                    true /* isExpected */,
+                    true /* isOwnFailure */
                     );
             }
 
@@ -1800,7 +1854,8 @@ namespace bl
                                 )
                             )
                         ),
-                    false /* isExpected */
+                    false /* isExpected */,
+                    true /* isOwnFailure */
                     );
             }
 
@@ -1848,9 +1903,22 @@ namespace bl
                 }
             }
 
+            /**
+             * @brief Records a failure, when it is the first - isOwnFailure says this task decided it
+             *
+             * isOwnFailure is TRUE WHERE THE TASK DECIDES THE FAILURE ITSELF - a timeout or a cancel
+             * ( applyStopped( ) ), a body cap ( applyData( ), applyOverflow( ) ), a deferred action
+             * which threw ( applyEvents( ) ) - the caller's sink or source, or anything else the
+             * deferred phase calls - and false elsewhere: the connection's failures, the pool's
+             * answer, and a submit( ) which threw, which the replay rule already refuses as not
+             * retryable. It is recorded with the exception, so it describes the failure which won;
+             * see isOwnFailure( )
+             */
+
             void failWith(
                 SAA_in          const std::exception_ptr&                       eptr,
-                SAA_in          const bool                                      isExpected
+                SAA_in          const bool                                      isExpected,
+                SAA_in_opt      const bool                                      isOwnFailure = false
                 )
             {
                 /*
@@ -1899,6 +1967,8 @@ namespace bl
                 m_completionException = eptr;
                 m_isCompletionExpected = isExpected;
                 m_isCompletionPending = true;
+
+                m_isOwnFailure = isOwnFailure;
             }
 
             /**
@@ -2325,6 +2395,9 @@ namespace bl
              * The connection's half of the retry rule of design 5.4; the other half is
              * ClientRequest::isReplayable( ), and a replay needs both. False for a request which
              * succeeded, which is not a statement about it
+             *
+             * Read it with isOwnFailure( ): a close applied behind a failure of this task's own still
+             * sets it, and says what the connection did afterwards
              */
 
             bool isRetryable() const NOEXCEPT
@@ -2375,6 +2448,39 @@ namespace bl
             bool hasSinkThrown() const NOEXCEPT
             {
                 return m_hasSinkThrown;
+            }
+
+            /**
+             * @brief Whether this hop's failure was decided by the task itself - a timeout, a
+             * cancel, a body cap, a sink or source which threw - rather than by the connection
+             *
+             * THE THIRD READING THE SESSION TAKES BEFORE IT REPLAYS - the general rule the maintainer
+             * decided with owed-list row I5: such a hop is never replayed, and only a failure which
+             * is the connection's - a close with an error code, a refused submit - may be. A close
+             * drained in the same batch behind a failure of the task's own still writes what
+             * isRetryable( ) and outcome( ) report, but it says what the connection did afterwards
+             * and not why the request failed. False for a request which succeeded
+             *
+             * NOT THE SAME READING AS hasSinkThrown( ), which refuses a replay even when the failure
+             * which won was the connection's: a sink which threw is spent either way
+             *
+             * AND A SOURCE WHICH THREW BEHIND THE CONNECTION'S FAILURE IS NOT A REFUSAL. When a close
+             * decides a batch and a pull applied ahead of it then has the caller's source throw in
+             * the deferred phase, the failure which won is the connection's, and the session may
+             * replay: unlike a sink, a source is rewound for a replay ( BodySource::rewind( ) ), and
+             * one which cannot rewind is already refused by chkRequestMayBeReplayed( ). Any deferred
+             * action which threw is otherwise this task's own failure, whatever threw - the caller's
+             * sink or source, drainToSink( )'s verdict on bytes the sink never took, or a call out
+             * to the connection or the pool
+             *
+             * Safe to read where sinkDelivered( ) is: failWith( ) writes it in the apply phase, or in
+             * the locked section after the deferred one, and either is before applyEvents( ) notifies
+             * ready
+             */
+
+            bool isOwnFailure() const NOEXCEPT
+            {
+                return m_isOwnFailure;
             }
         };
 

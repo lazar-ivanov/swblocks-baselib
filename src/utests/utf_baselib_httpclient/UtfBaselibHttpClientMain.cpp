@@ -57,3 +57,4 @@
 #include "TestHttpClientRequestTask.h"
 #include "TestHttpClientRequestTaskSinkAccounting.h"
 #include "TestHttpClientRequestTaskOutstandingCap.h"
+#include "TestHttpClientRequestTaskAfterTheFailure.h"

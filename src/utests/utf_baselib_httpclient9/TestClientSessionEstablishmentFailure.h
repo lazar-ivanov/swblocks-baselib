@@ -196,6 +196,40 @@ namespace utest
             return false;
         }
 
+        /**
+         * @brief Whether any exception down a chain of nested causes is a TimeoutException which
+         * says the establishment bound expired - the pool's reason for its cancel ( owed-list row I6 )
+         *
+         * Walked, and bounded, as chainNamesThePort( ) is
+         */
+
+        inline bool chainNamesTheEstablishmentTimeout( SAA_in const std::exception_ptr& eptr )
+        {
+            auto current = eptr;
+
+            for( std::size_t depth = 0U; current && depth < 16U; ++depth )
+            {
+                try
+                {
+                    std::rethrow_exception( current );
+                }
+                catch( bl::TimeoutException& e )
+                {
+                    if( std::string::npos != std::string( e.what() ).find( "did not become usable within" ) )
+                    {
+                        return true;
+                    }
+                }
+                catch( std::exception& )
+                {
+                }
+
+                current = nestedCauseOf( current );
+            }
+
+            return false;
+        }
+
     } // plainsession
 
 } // utest
@@ -303,6 +337,16 @@ UTF_AUTO_TEST_CASE( ClientSession_AnOriginWhichNeverAcceptsFailsWithTheConnectio
      */
 
     UTF_REQUIRE_EQUAL( stats.establishmentTimeouts.value(), 2U );
+
+    /*
+     * AND THE CHAIN SAYS SO - owed-list row I6. The connector's own failure is the operation_aborted
+     * of the pool's cancel, which names the endpoint and not why it was cancelled; the pool gives the
+     * connection its reason with the cancel, and the connection chains it onto that failure. RED
+     * BEFORE I6: "Operation canceled" and nothing about the bound. Checked and not required, so that
+     * the assertions below still run
+     */
+
+    UTF_CHECK( chainNamesTheEstablishmentTimeout( task -> exception() ) );
 
 #endif
 

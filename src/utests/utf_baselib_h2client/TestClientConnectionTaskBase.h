@@ -769,6 +769,53 @@ namespace utest
             UTF_REQUIRE_EQUAL( events[ 2 ], std::string( "driver" ) );
         }
 
+        /**
+         * @brief Whether any exception down a chain of nested causes is a TimeoutException which
+         * says the connect deadline expired - the reason the deadline gives with its cancel
+         * ( owed-list row I6 )
+         *
+         * Walked link by link, and bounded, so that a cycle cannot hang it
+         */
+
+        inline bool chainNamesTheConnectDeadline( SAA_in const std::exception_ptr& eptr )
+        {
+            auto current = eptr;
+
+            for( std::size_t depth = 0U; current && depth < 16U; ++depth )
+            {
+                std::exception_ptr nested;
+
+                try
+                {
+                    std::rethrow_exception( current );
+                }
+                catch( bl::TimeoutException& e )
+                {
+                    if( std::string::npos != std::string( e.what() ).find( "did not establish within" ) )
+                    {
+                        return true;
+                    }
+
+                    const auto* const cause = bl::eh::get_error_info< bl::eh::errinfo_nested_exception_ptr >( e );
+
+                    nested = cause ? *cause : std::exception_ptr();
+                }
+                catch( bl::eh::exception& e )
+                {
+                    const auto* const cause = bl::eh::get_error_info< bl::eh::errinfo_nested_exception_ptr >( e );
+
+                    nested = cause ? *cause : std::exception_ptr();
+                }
+                catch( std::exception& )
+                {
+                }
+
+                current = nested;
+            }
+
+            return false;
+        }
+
         typedef bl::om::ObjectImpl< ConnectProbeT< bl::tasks::TcpSocketAsyncStrandedBase > >
             PlainConnectProbeImpl;
 
@@ -1232,6 +1279,15 @@ UTF_AUTO_TEST_CASE( H2Connect_SilentProxyHitsTheConnectDeadlineTests )
     const auto task = om::qi< Task >( probe );
 
     UTF_REQUIRE( task -> isFailed() );
+
+    /*
+     * AND THE FAILURE SAYS THE DEADLINE EXPIRED - its reason, chained onto the cancel's
+     * operation_aborted as the pool's establishment bound chains its own ( owed-list row I6 ). RED
+     * BEFORE: nothing in the chain names the deadline. Checked and not required, so that the
+     * assertions below still run
+     */
+
+    UTF_CHECK( chainNamesTheConnectDeadline( task -> exception() ) );
 
     /*
      * The tunnel really was entered, in cleartext, and it asked for the origin this task was
