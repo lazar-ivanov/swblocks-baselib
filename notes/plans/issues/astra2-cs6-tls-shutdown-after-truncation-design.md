@@ -387,6 +387,16 @@ the consumers of §5 do: one asks the predicate and ends clean (the drivers), on
   after, and within the teardown bound both times. The red is certain, not probable: with the peer
   silent, no event can wake the shutdown's read (§1.2). The teardown bound stays as the safety net that
   fails a case instead of hanging it.
+  *(Corrected 2026-09-28, by measurement: certain only once the client's read is registered before the
+  peer's FIN arrives. A FIN whose epoll event is processed after the client's speculative read has
+  already consumed the end of stream sets `try_speculative_` back to true (`epoll_reactor.ipp:796`), and
+  the shutdown's read then completes at once — INFERRED as the mechanism of the one SimpleHttpTask run
+  in the first twenty-one which ended at once on today's code (`logs/astra2/cs6/size-h1simple-httpclient13-run.log`),
+  whose peer truncates straight after its response. So the peer now holds its ending until the client's
+  read is registered: the tasks3 probes signal once their read is armed (`3bfdd21`), the HTTP/1.1
+  driver's case waits for a marker posted behind its start handler, and the HTTP/2 driver's case for its
+  strand to show no write in flight (`14cfb07`). SimpleHttpTask offers nothing to wait for; see §9's
+  correction.)*
 - **A peer which truncates and then closes its socket entirely**, committed with the red. The teardown
   is prompt before the fix and after. On today's code the probe that swallows the ending fails with the
   reset its close_notify drew — asked of `net::isPeerClosedErrorCode( )`, never compared by hand — and
@@ -401,6 +411,12 @@ the consumers of §5 do: one asks the predicate and ends clean (the drivers), on
   does not allow them: it is 34.5 MB at a64 clang debug with the characterization alone
   (`logs/astra2/cs6/sizes.txt`). The existing D1 cases in `…httpclient8` run through the fixed path
   unchanged and stay in the focused set.
+  *(Recorded 2026-09-28: they went to two siblings, because the three consumer cases in one module
+  measured 45.0 MB — the HTTP/1.1 driver and SimpleHttpTask to `utf_baselib_httpclient13` (36.8 MB), the
+  HTTP/2 driver to `utf_baselib_h2client9` (37.6 MB), reserved by the orchestrator. The HTTP/2 driver
+  writes its preface as soon as the handshake is done, and an ending which met that write in flight
+  would take the driver's forced `initiateClose( )`, which runs no TLS shutdown at all
+  (`Http2ConnectionTask.h:2873-2880`) — which is why its case waits for the write to be over.)*
 - **ThreadSanitizer** over the new module at the tip, with `utf_baselib_basictask` as the positive
   control, and over `utf_baselib_httpclient8`, whose D1 truncation cases exercise the HTTP/1.1 driver's
   pre-prolog write (`Http1ConnectionTask.h:1384-1385`) and the fixed shutdown on the real driver, in the
@@ -428,6 +444,13 @@ the consumers of §5 do: one asks the predicate and ends clean (the drivers), on
   2026-09-28: on Linux it ends clean today, see §5*). Its test is a
   `SimpleHttpSslTask` (`http/SimpleHttpSslTask.h:94`, a GET) against the same peer, answering with a
   complete Content-Length body and then truncating: red on today's tree, green after.
+  *(Corrected 2026-09-28, agreed by the orchestrator: that red is probable, not certain. SimpleHttpTask
+  offers nothing to wait for once it has armed its content read, so the peer cannot hold its ending as
+  §8's correction describes, and the case ended at once in one run of the first twenty-one on today's
+  code. Its green is certain: with the record set before the shutdown, the shutdown reads nothing. The
+  certain red for this line is a second case, committed after the core fix and before the line: at the
+  moment its shutdown begins, the stream has recorded the truncation — false with the core fix alone,
+  since the static predicate records nothing, and true with the line.)*
 - `src/utests/utf_baselib_httpclient8/TestHttp1DriverTlsTruncation.h:69-79` — **folded into CS-6 by the
   orchestrator on 2026-09-27, the lane's ownership widened to these comment lines only.** The paragraph
   records the 60 s ending as a measured property of the tree, and this change makes that false. It is
