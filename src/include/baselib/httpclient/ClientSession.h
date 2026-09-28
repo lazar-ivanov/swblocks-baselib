@@ -1272,7 +1272,7 @@ namespace bl
                 SAA_in          const unsigned                                  status
                 ) NOEXCEPT
             {
-                return "HEAD" != method && 204U != status && 304U != status;
+                return "HEAD" != method && 204U != status && 205U != status && 304U != status;
             }
 
             /**
