@@ -1907,11 +1907,12 @@ namespace bl
              * @brief Records a failure, when it is the first - isOwnFailure says this task decided it
              *
              * isOwnFailure is TRUE WHERE THE TASK DECIDES THE FAILURE ITSELF - a timeout or a cancel
-             * ( applyStopped( ) ), a body cap ( applyData( ), applyOverflow( ) ), a sink or source
-             * which threw ( applyEvents( ) ) - and false elsewhere: the connection's failures, the
-             * pool's answer, and a submit( ) which threw, which the replay rule already refuses as
-             * not retryable. It is recorded with the exception, so it describes the failure which
-             * won; see isOwnFailure( )
+             * ( applyStopped( ) ), a body cap ( applyData( ), applyOverflow( ) ), a deferred action
+             * which threw ( applyEvents( ) ) - the caller's sink or source, or anything else the
+             * deferred phase calls - and false elsewhere: the connection's failures, the pool's
+             * answer, and a submit( ) which threw, which the replay rule already refuses as not
+             * retryable. It is recorded with the exception, so it describes the failure which won;
+             * see isOwnFailure( )
              */
 
             void failWith(
@@ -2394,6 +2395,9 @@ namespace bl
              * The connection's half of the retry rule of design 5.4; the other half is
              * ClientRequest::isReplayable( ), and a replay needs both. False for a request which
              * succeeded, which is not a statement about it
+             *
+             * Read it with isOwnFailure( ): a close applied behind a failure of this task's own still
+             * sets it, and says what the connection did afterwards
              */
 
             bool isRetryable() const NOEXCEPT
@@ -2459,6 +2463,15 @@ namespace bl
              *
              * NOT THE SAME READING AS hasSinkThrown( ), which refuses a replay even when the failure
              * which won was the connection's: a sink which threw is spent either way
+             *
+             * AND A SOURCE WHICH THREW BEHIND THE CONNECTION'S FAILURE IS NOT A REFUSAL. When a close
+             * decides a batch and a pull applied ahead of it then has the caller's source throw in
+             * the deferred phase, the failure which won is the connection's, and the session may
+             * replay: unlike a sink, a source is rewound for a replay ( BodySource::rewind( ) ), and
+             * one which cannot rewind is already refused by chkRequestMayBeReplayed( ). Any deferred
+             * action which threw is otherwise this task's own failure, whatever threw - the caller's
+             * sink or source, drainToSink( )'s verdict on bytes the sink never took, or a call out
+             * to the connection or the pool
              *
              * Safe to read where sinkDelivered( ) is: failWith( ) writes it in the apply phase, or in
              * the locked section after the deferred one, and either is before applyEvents( ) notifies
