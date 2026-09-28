@@ -1,0 +1,9 @@
+# each slice appends the recipes for the cases it lands here
+
+# CS-6 of astra's second review - I2 on the HTTP/2 driver
+# (notes/plans/issues/astra2-cs6-tls-shutdown-after-truncation-design.md). The peer selects h2, waits
+# until the driver's opening write is over, then truncates the TLS stream and keeps its socket open
+# and silent; the driver's protocol timer is shortened to 3 s. Red before the fix - the timer cancels
+# the teardown - and green after it.
+
+--log_level=message --run_test=Http2DriverTls_ATruncatedIdleConnectionEndsWithoutWaitingTests
