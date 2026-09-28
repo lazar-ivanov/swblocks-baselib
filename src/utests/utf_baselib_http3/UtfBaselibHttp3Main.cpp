@@ -37,6 +37,13 @@
  * D2's cases added. Not a server, an acceptor task or a backend - HttpServerHelpers.h is what costs
  * utf_baselib_http about 30 MB, and it is not used here
  *
+ * SIZE, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 36.1 MB clang debug (a64) at
+ * d13859c, which by the ratio win-x86 debug has shown over a64 clang debug (1.11 to 1.17,
+ * notes/plans/issues/windows-matrix-handoff.md and row 5c of astra-remediation-owed-work.md) is
+ * about 40 to 42 MB on x86 - inferred, not measured; the Windows handoff measures it. The weight is
+ * the server tasks (25.7 MB alone), plus SimpleHttpTask over both policies and the TLS peer. This
+ * module takes no further cases
+ *
  * The module is devenv7+ only - the devenv7_only marker next to this file keeps it out of the build
  * on devenv2-6 (projects/make/common.mk) - because it was written and verified against devenv7 alone,
  * as every module change-set CS-6 created was

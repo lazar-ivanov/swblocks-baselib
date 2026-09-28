@@ -32,10 +32,17 @@
  * at or near the 40MB target, or belong to other change-sets
  *
  * WHAT THIS MODULE PAYS FOR. The HTTP/1.1 driver over the stranded TLS policy, the plain connection
- * establisher over the same policy, and SimpleHttpSslTask: 36.7 MB a64 clang debug. Not the HTTP/2
+ * establisher over the same policy, and SimpleHttpSslTask: 36.9 MB a64 clang debug. Not the HTTP/2
  * driver, the request task, the session or the pool. The TLS peer is utests/baselib/TlsEndingPeer.h,
  * shared with utf_baselib_tasks3 and utf_baselib_h2client9, and so is the run of a consumer to the
  * end of its teardown, utests/baselib/TlsTeardownTestUtils.h
+ *
+ * SIZE, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 36.9 MB clang debug (a64) at
+ * d13859c, which by the ratio win-x86 debug has shown over a64 clang debug (1.11 to 1.17,
+ * notes/plans/issues/windows-matrix-handoff.md and row 5c of astra-remediation-owed-work.md) is
+ * about 41 to 43 MB on x86 - inferred, not measured; the Windows handoff measures it. The weight is
+ * the HTTP/1.1 driver, the plain connection establisher and SimpleHttpSslTask. This module takes no
+ * further cases
  *
  * The module is devenv7+ only: the stranded policies #error on a Boost older than 1.72, and the
  * devenv7_only marker next to this file is what keeps it out of the build on devenv2-6

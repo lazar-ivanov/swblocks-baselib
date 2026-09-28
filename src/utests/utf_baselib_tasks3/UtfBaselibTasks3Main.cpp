@@ -32,6 +32,13 @@
  * peer - utests/baselib/TlsEndingPeer.h, a raw asio::ssl::stream server which ends the stream in a
  * chosen way. Not an HTTP driver, a request task, a session or a pool
  *
+ * SIZE, WITH THE REASON RECORDED, as src/utests/AGENTS.md asks: 36.9 MB clang debug (a64) at
+ * d13859c, which by the ratio win-x86 debug has shown over a64 clang debug (1.11 to 1.17,
+ * notes/plans/issues/windows-matrix-handoff.md and row 5c of astra-remediation-owed-work.md) is
+ * about 41 to 43 MB on x86 - inferred, not measured; the Windows handoff measures it. The weight is
+ * the connection establisher over the four stream policies, and the TLS peer. This module takes no
+ * further cases
+ *
  * Sockets: loopback only, on ephemeral ports, so no machine global test lock is needed
  *
  * The module is devenv7+ only: the stranded policies #error on a Boost older than 1.72, and the
