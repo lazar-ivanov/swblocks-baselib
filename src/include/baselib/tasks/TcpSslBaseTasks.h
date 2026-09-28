@@ -86,9 +86,14 @@ namespace bl
             /*
              * Set while this task's own TLS handshake is running on the stream it holds - from
              * beginProtocolHandshake( ) until onHandshakeCompleted( ) - and read by the forced
-             * shutdown of a cancel, shutdownSocketOnCancel( ). Written only under the task lock,
-             * and for a stranded policy which built its own stream on its strand too, which is
-             * where that policy reads it; cleared as well wherever the stream is replaced
+             * shutdown of a cancel, shutdownSocketOnCancel( ). While the task runs it is written
+             * only under the task lock, and for a stranded policy which built its own stream on its
+             * strand too, which is where that policy reads it. It is cleared wherever the stream is
+             * replaced: resetStreamState( ) under the lock; attachStream( ) and detachStream( )
+             * wherever their caller calls them - under the lock while the task runs, and otherwise
+             * before it runs or after it stops, when only a stranded policy's posted shutdown can
+             * still read it, which is why such a stream is detached on its strand
+             * (TcpSslStrandedStreams.h)
              */
 
             cpp::ScalarTypeIniter< bool >                                               m_isOwnHandshakeRunning;
