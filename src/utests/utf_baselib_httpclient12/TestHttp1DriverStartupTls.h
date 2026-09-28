@@ -37,9 +37,9 @@
  * once - it only shows that the ordering which would forbid it is not there.
  *
  * THE PEER IS utests/baselib/Http1DriverTlsTestUtils.h's, shared with utf_baselib_httpclient8. It ends
- * a connection with a close_notify and waits for ours, and never with a bare FIN: after a truncation
- * the driver's own TLS shutdown waits the full 60 second protocol timer (measured in D1's module),
- * which is pre-existing and not what these cases are about.
+ * a connection with a close_notify and waits for ours, and never with a bare FIN: a truncation is not
+ * what these cases are about, and until CS-6 (I2) the driver's own TLS shutdown then waited the full
+ * 60 second protocol timer (measured in D1's module).
  */
 
 /**

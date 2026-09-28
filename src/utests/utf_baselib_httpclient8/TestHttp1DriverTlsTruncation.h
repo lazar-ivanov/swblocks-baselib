@@ -66,17 +66,17 @@
  * things a caller sees. The driver's stream event alone would not do: the request task is what
  * turns that event into onComplete( ) or a failure.
  *
- * WHAT THEY DELIBERATELY DO NOT ASSERT IS THE DRIVER TASK'S OWN ENDING, and that is a measured
- * property of the tree rather than a gap in the cases. After a peer's truncation the driver closes
- * the connection and its TLS finish continuation sends a close_notify and waits for the peer's - and
- * that wait is parked on a socket whose end of stream the truncating read has already consumed:
- * asio reports a zero-octet recv as done_and_exhausted and stops trying that descriptor's reads
- * speculatively (Boost 1.90, detail/reactive_socket_recv_op.hpp and detail/impl/epoll_reactor.ipp),
- * so the edge-triggered reactor waits for an event which never comes, and only the 60 second
- * protocol timer ends the task - failed, as a cancel. That is the same on both sides of D1 and is
- * not D1's to change. The cases therefore wait for the peer's script to finish - which it does only
- * once the driver has observed the ending and sent its close_notify - and then cancel the driver
- * themselves, so the module does not spend a minute per case on it
+ * WHAT THEY DELIBERATELY DO NOT ASSERT IS THE DRIVER TASK'S OWN ENDING. After a peer's truncation
+ * the driver closes the connection, and its TLS finish continuation sends our close_notify; since
+ * CS-6 (I2) it no longer waits for the peer's, which is never coming - the truncating read records
+ * the truncation on the stream, and the shutdown completes without reading
+ * (notes/plans/issues/astra2-cs6-tls-shutdown-after-truncation-design.md). The cases still wait for
+ * the peer's script to finish - which it does only once the driver has observed the ending and sent
+ * its close_notify - and then cancel the driver. That cancel usually finds the task already ended,
+ * but it can still land between the driver's close_notify leaving and its shutdown handler running,
+ * and the driver then ends as a cancel (Http1ConnectionTask.h, cancelTask( ); TcpBaseTasks.h,
+ * TcpSocketCommonBase::onTaskStoppedNothrow( )) - which is why the cases still do not assert the
+ * driver's own ending
  *
  * THE FOUR ENDINGS. The red case is the one D1 changes: a close-delimited response ended by the
  * peer's transport with no close_notify, and no local cancel anywhere near it. The three controls

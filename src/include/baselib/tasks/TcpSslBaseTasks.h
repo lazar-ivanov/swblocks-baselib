@@ -169,7 +169,7 @@ namespace bl
              * getStream() NOEXCEPT
              * beginProtocolHandshake( ... )
              * isProtocolHandshakeRetryableError( const std::exception_ptr& ) NOEXCEPT
-             * isStreamTruncationError( const eh::error_code& errorCode )
+             * isStreamTruncationError( const eh::error_code& ) NOEXCEPT - records a truncation on the stream
              * scheduleProtocolOperations( const std::shared_ptr< ExecutionQueue >& )
              */
 
