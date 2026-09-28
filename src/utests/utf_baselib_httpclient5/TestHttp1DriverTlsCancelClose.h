@@ -77,7 +77,7 @@
  * the third case stands in for; it is not a claim that the state never happens.
  *
  * WHY THE ENDING IS OURS AND NOT THE PEER'S, WHICH IS THE WHOLE POINT. cancelTask( ) posts
- * shutdownOnStreamExecutor( ), which is shutdownSocket( force ) = linger + shutdown_send + cancel.
+ * shutdownOnStreamExecutor( ), which is shutdownSocket( force ) = shutdown_send + cancel.
  * The peer below declares no length and sends one chunk; it then reads to the end of its stream and
  * ends it only because OUR FIN arrived - with the rest of a close_notify, and then its own FIN. So a
  * message completed on that close is a message completed on our own teardown, and the body the
