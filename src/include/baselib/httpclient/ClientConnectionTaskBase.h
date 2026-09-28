@@ -642,6 +642,13 @@ namespace bl
              * So the request which rode the connection, which reads this task's exception( ) when
              * it is answered, is told both. A failure which already carries a nested cause keeps
              * that one; a task which ended by itself before the cancel came was never cancelled
+             *
+             * IN PLACE IS WHAT REACHES THE RECORDED EXCEPTION, on every platform: where
+             * std::rethrow_exception( ) hands the catch a copy ( MSVC ), the copy shares
+             * boost::exception's error-info container with the original by reference count, so the
+             * cause added here is what the recorded failure carries - the property
+             * InputConnector.h's copyForTarget( ) relies on. It needs a container to share, and a
+             * failure which reaches here already carries error info
              */
 
             void chainCancelReason( SAA_in_opt const std::exception_ptr& eptr ) NOEXCEPT
