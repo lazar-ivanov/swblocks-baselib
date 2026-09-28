@@ -338,8 +338,8 @@ namespace bl
                      * notes/plans/issues/windows-peer-close-error-codes-record.md
                      *
                      * The cost is bounded and unchanged in kind: this runs only while a handshake
-                     * is incomplete and only while m_retries < m_maxRetryCount
-                     * (TcpBaseTasks.h:1437), so a peer which ends every attempt this way costs
+                     * is incomplete and only while m_retries < m_maxRetryCount (the connector's
+                     * retry, TcpBaseTasks.h), so a peer which ends every attempt this way costs
                      * maxRetryCount + 1 attempts and no more - the same bound already accepted for
                      * a peer which truncates every time
                      */
