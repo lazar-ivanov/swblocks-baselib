@@ -32,7 +32,7 @@
 /*
  * A TLS peer which ENDS a stream in a chosen way - the role the teardown cases of CS-6 need (owed-list
  * rows I2 and D-L3-1). It is not an HTTP peer and not an HTTP/2 ALPN peer, the two roles CS-5 unified
- * elsewhere in this directory; it is shared by utf_baselib_tasks3 and utf_baselib_httpclient13
+ * elsewhere in this directory; the utf_baselib_ modules tasks3, httpclient13 and h2client9 share it
  */
 
 namespace utest

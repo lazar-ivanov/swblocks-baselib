@@ -29,7 +29,7 @@
 /*
  * The helpers this module's teardown cases share - kept in one place, because a helper copied into
  * two headers of one module is what src/utests/AGENTS.md forbids. The TLS peer they end their
- * streams against is utests/baselib/TlsEndingPeer.h, shared with utf_baselib_httpclient13
+ * streams against is utests/baselib/TlsEndingPeer.h, shared with the other CS-6 teardown modules
  */
 
 namespace utest
