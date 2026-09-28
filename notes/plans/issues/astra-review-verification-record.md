@@ -6,7 +6,10 @@ order they should be taken in.
 
 **Remediation landed 2026-09-22 to 24**, as the plan's layer L6R: S6R.1 merged at `3bcf21e`, S6R.4 at
 `38ed037`, S6R.2 at `c2af9d2`, and S6R.3 in parts — H06 and H08 at `0f8d9bd`, H10 at `144dd79`, H09's
-documented minimum at `8fcb950` and H04a at `4d70076`. Every finding is dispositioned on
+documented minimum at `8fcb950` and H04a at `4d70076`. H24 and H25, which §6 stages as latent until
+a codec ships, were found reachable by astra's second review (R08) and fixed in their minimal form
+in CS-2 (D5, `0f3b0ba`, merged at `bc431f2`). All 29 findings are dispositioned, as the plan's §8a
+says: fixed, closed by the maintainer, or deferred with reasoning — see
 `astra-remediation-owed-work.md`. "No remediation implemented" above is the status when this record
 was written, and is left as written, in the house pattern of `s6r1-design.md`. *(Marked 2026-09-28,
 astra's third review, T02.)*
