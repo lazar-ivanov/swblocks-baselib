@@ -598,6 +598,13 @@ rule is now in `AGENTS.md` v2.15, "Fold what the implementation finds" (`ea7e414
 - I7 and I9 were already done.
 - Nothing from the run stays owed except the Windows matrix run, which needs another host.
 
+**Asked and decided during the fold-in, 2026-09-27, as the rule now requires:**
+
+| Question | Decided |
+|---|---|
+| **A timed-out request can be replayed.** CS-4's lane found it while implementing I5: a request's own timeout and a connection close in one drain batch, and the close's outcome marks the hop retryable, on a new full total deadline | **(B), the general rule.** A hop whose failure the request task decided itself — a timeout, a body cap, a sink or body source which threw — is never replayed. Only a failure which is the connection's may be. It is one flag, and I5 is its first instance |
+| **The gates for CS-4 and CS-5** | **One gate.** CS-4 and CS-5 merge when their reviews close, without separate gates. CS-6's whole-suite gate, which rebuilds and runs every module they touch, gates all three at once. A failure there is attributed by the module and its dependencies |
+
 ## 10. The change-sets, as they landed
 
 ### CS-3 — D6, D7, D8, and the DATA block sized to its payload — ready 2026-09-27
