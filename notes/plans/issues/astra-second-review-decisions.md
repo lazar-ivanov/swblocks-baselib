@@ -604,6 +604,10 @@ rule is now in `AGENTS.md` v2.15, "Fold what the implementation finds" (`ea7e414
 |---|---|
 | **A timed-out request can be replayed.** CS-4's lane found it while implementing I5: a request's own timeout and a connection close in one drain batch, and the close's outcome marks the hop retryable, on a new full total deadline | **(B), the general rule.** A hop whose failure the request task decided itself — a timeout, a body cap, a sink or body source which threw — is never replayed. Only a failure which is the connection's may be. It is one flag, and I5 is its first instance |
 | **The gates for CS-4 and CS-5** | **One gate.** CS-4 and CS-5 merge when their reviews close, without separate gates. CS-6's whole-suite gate, which rebuilds and runs every module they touch, gates all three at once. A failure there is attributed by the module and its dependencies |
+| **A forced cancel can be lost between two steps of a TLS handshake (D-L3-1).** CS-6's lane found it while characterizing I13. `cancel( )` reaps only the operations registered at that instant. If a cancel lands between the ClientHello's write and the ServerHello's read, the next step arms a read on a socket whose receive side is open. Every later cancel is then a no-op, because `requestCancelInternal( )` is idempotent — and the protocol timer and the connect deadline cancel through it. Against a silent peer the task never ends. It is pre-existing, and reproduced deterministically: 3 of 3 on the stranded TLS policy | **Folded into CS-6 now**, the core change-set already open on the forced-cancel path, sharing its whole-suite gate. A design note comes first. Its shape — the lane's candidates are re-issuing the socket cancel from deadlines, a handshake bound, a receive-side shutdown during the handshake, or a close on the strand — is put to the maintainer with evidence before any code |
+
+**CS-6 owes the Windows matrix.** I13, I2 and D-L3-1 all change transport teardown — `AGENTS.md`'s
+networking rule — and it is handed off with the rest of this review's Windows items.
 
 ## 10. The change-sets, as they landed
 
