@@ -61,9 +61,9 @@
  *
  * THE CANCEL IS AIMED AT THAT READ, AND NEVER AT A HANDSHAKE. A TLS handshake is a chain of steps
  * inside asio, and between two of them nothing is registered with the reactor: a cancel landing there
- * reaps nothing, and the step that follows starts a read on a socket whose receive side the forced
- * path leaves open. The read here is registered before the case is told it is in flight, so the cancel
- * always has something to wake.
+ * reaps nothing, and only the receive shutdown the forced path adds during the task's own handshake
+ * ends the step that follows (TestTlsLostCancel.h). The read here is registered before the case is
+ * told it is in flight, so the cancel always has something to wake.
  *
  *   - Tcp_ForcedCancelLeavesTheLingerOptionOffTests - CHARACTERIZATION. After a forced cancel the
  *     option reads off (l_onoff = 0). It did before the fix because the forced path wrote it, and it
