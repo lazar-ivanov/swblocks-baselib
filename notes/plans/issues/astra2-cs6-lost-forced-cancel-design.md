@@ -701,3 +701,51 @@ stage's proxy connect (`TcpTunnelStage.h:1610`) — through one protected helper
 *Recorded by the orchestrator on the maintainer's explicit authorization, given in advance for this
 note. The round-3 review was saved from the reviewer's report by the orchestrator, also on the
 maintainer's authorization, because a safety-check outage refused the reviewer's own writes.*
+
+## 10. What the implementation found — 2026-09-28, lane 3
+
+*Added after the agreement, for CS-6's checkpoint review. Nothing here changes a decided shape; each item
+corrects or completes a claim of §7, §4(c) or §9 with what was measured at the source. Evidence:
+`logs/astra2/cs6/EVIDENCE-INDEX.txt`.*
+
+- **W2's red is certain only with the I/O pool's other threads held** (§7 said "made certain by the
+  stranded posting order"). The close_notify write completes speculatively and its completion goes to the
+  scheduler's queue; another I/O thread can dispatch it onto the strand while the finish continuation is
+  still running there, ahead of the forced shutdown the cancel posts next. With the other threads held the
+  order is fixed. `TlsLostCancel_ACancelInsideTheTlsShutdownIsReissuedTests` holds them; W1 stranded needs
+  nothing, because its cancel is posted before the handshake's first write.
+- **(c)'s receive shutdown comes after the cancel** (§4(c) left the order open; the prototype shut the
+  receive side first). `shutdownSocketOnCancel( )` is `shutdownSocket( force )` and then `shutdown( receive )`,
+  so a read registered at the cancel is still reaped as `operation_aborted`, whatever the reactor does in
+  between; only a read which registers after the cancel meets the receive shutdown.
+- **The HTTP/2 characterization cannot see (c)'s flag** (§7: "the flag's clear is what keeps (c) off it").
+  The cancel reaps the registered read before any receive shutdown, so the ending is the same whether the
+  flag was cleared or not. The flag's life is asserted directly instead —
+  `TlsLostCancel_TheHandshakeFlagBelongsToTheOwnHandshakeTests` in `utf_baselib_tasks3`, clear before a
+  handshake, set once it starts, clear when it completes, and cleared by a retry's new stream, a detached
+  stream and an attached one — and each of the five writes was deleted in turn and caught.
+- **A force-cancelled task keeps reporting `operation_aborted`** — "ends as a cancel" in §4(c). The
+  handshake's own failure after (c) is a truncation, and `TcpSocketCommonBase::onTaskStoppedNothrow( )`
+  nests it under `operation_aborted` for every task whose socket was shut down forcefully.
+- **D3's red is certain on the plain policies only with the I/O pool's other threads held and the cancel
+  requested in the resolve handler** (§9 said "nothing is timed, because neither attempt can complete").
+  A plain policy's cancel runs on the requesting thread: its `shutdown( SHUT_WR )` ends the first attempt at
+  once, and another I/O thread can complete it and open the second attempt before the same cancel reaches
+  `cancel( )` — which then reaps the second attempt. Measured once, for the cleartext plain policy, in the
+  first draft (`d3/first-draft-no-held-threads-tasks4-run.log`): D3's race itself, ending a run early. The
+  stranded policies were certain as written.
+- **D3's stranded half is MEASURED** (§9: INFERRED until its first red run). ThreadSanitizer reported five
+  races over the four policies, the stranded ones on the `isChannelOpen( )` their `cancelTask( )` reads
+  before it posts (`d3/tsan-red/REPORT.txt`), and none after the loop (`tsan-final-d13859c/`). The first
+  red run showed only the plain policies: ThreadSanitizer reports one race per address by default, and a
+  stranded probe allocated where a plain one had been was folded into its report. The committed case keeps
+  every probe alive to its end.
+- **`onConnectionEstablished( )` is the loop's per-attempt handler, and keeps its calling convention**
+  (§9 described a separate handler continuing through its body). Called with asio's final result — an
+  error with the end iterator, or no error at the endpoint — it does exactly what it did; called by the loop
+  with one attempt's result and that attempt's endpoint, it moves to the next endpoint on an error unless
+  the task was cancelled. `beginConnect( )` starts the loop; the connector and the tunnel stage call it.
+- **The modules**, each the next free number in its family: `utf_baselib_tasks4` (D3), `utf_baselib_http3`
+  (the HTTP server's timers and D2), `utf_baselib_h2client10` (the HTTP/2 characterization and the connect
+  deadline). At the tip, a64 clang debug: 31.7, 36.1 and 37.6 MB; `utf_baselib_tasks3` is 36.9 MB
+  (`logs/astra2/cs6/sizes.txt`, `tip-d13859c/summary.log`).
