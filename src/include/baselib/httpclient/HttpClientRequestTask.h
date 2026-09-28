@@ -424,6 +424,15 @@ namespace bl
             cpp::ScalarTypeIniter< bool >                                       m_isCompletionExpected;
             std::exception_ptr                                                  m_completionException;
 
+            /*
+             * WHETHER THE FAILURE m_completionException HOLDS WAS DECIDED BY THIS TASK - a timeout, a
+             * cancel, a body cap, a sink or source which threw - rather than by the connection; see
+             * isOwnFailure( ). Written by failWith( ) together with the exception, so it always
+             * describes the failure which won
+             */
+
+            cpp::ScalarTypeIniter< bool >                                       m_isOwnFailure;
+
             cpp::SafeUniquePtr< asio::deadline_timer >                          m_totalTimer;
             cpp::SafeUniquePtr< asio::deadline_timer >                          m_headersTimer;
             cpp::SafeUniquePtr< asio::deadline_timer >                          m_idleTimer;
@@ -693,7 +702,7 @@ namespace bl
 
                         cancelStream( reset );
 
-                        failWith( deferredException, false /* isExpected */ );
+                        failWith( deferredException, false /* isExpected */, true /* isOwnFailure */ );
                     }
 
                     if( m_isCompletionPending && ! m_isCompleted )
@@ -1193,7 +1202,8 @@ namespace bl
                                     )
                                 )
                             ),
-                        false /* isExpected */
+                        false /* isExpected */,
+                        true /* isOwnFailure */
                         );
 
                     return;
@@ -1784,7 +1794,8 @@ namespace bl
                                 "The HTTP request was cancelled"
                                 )
                             ),
-                        true /* isExpected */
+                        true /* isExpected */,
+                        true /* isOwnFailure */
                         );
 
                     return;
@@ -1797,7 +1808,8 @@ namespace bl
                             createTimeoutMessage( event.timeoutKind )
                             )
                         ),
-                    true /* isExpected */
+                    true /* isExpected */,
+                    true /* isOwnFailure */
                     );
             }
 
@@ -1842,7 +1854,8 @@ namespace bl
                                 )
                             )
                         ),
-                    false /* isExpected */
+                    false /* isExpected */,
+                    true /* isOwnFailure */
                     );
             }
 
@@ -1890,9 +1903,21 @@ namespace bl
                 }
             }
 
+            /**
+             * @brief Records a failure, when it is the first - isOwnFailure says this task decided it
+             *
+             * isOwnFailure is TRUE WHERE THE TASK DECIDES THE FAILURE ITSELF - a timeout or a cancel
+             * ( applyStopped( ) ), a body cap ( applyData( ), applyOverflow( ) ), a sink or source
+             * which threw ( applyEvents( ) ) - and false elsewhere: the connection's failures, the
+             * pool's answer, and a submit( ) which threw, which the replay rule already refuses as
+             * not retryable. It is recorded with the exception, so it describes the failure which
+             * won; see isOwnFailure( )
+             */
+
             void failWith(
                 SAA_in          const std::exception_ptr&                       eptr,
-                SAA_in          const bool                                      isExpected
+                SAA_in          const bool                                      isExpected,
+                SAA_in_opt      const bool                                      isOwnFailure = false
                 )
             {
                 /*
@@ -1941,6 +1966,8 @@ namespace bl
                 m_completionException = eptr;
                 m_isCompletionExpected = isExpected;
                 m_isCompletionPending = true;
+
+                m_isOwnFailure = isOwnFailure;
             }
 
             /**
@@ -2417,6 +2444,30 @@ namespace bl
             bool hasSinkThrown() const NOEXCEPT
             {
                 return m_hasSinkThrown;
+            }
+
+            /**
+             * @brief Whether this hop's failure was decided by the task itself - a timeout, a
+             * cancel, a body cap, a sink or source which threw - rather than by the connection
+             *
+             * THE THIRD READING THE SESSION TAKES BEFORE IT REPLAYS - the general rule the maintainer
+             * decided with owed-list row I5: such a hop is never replayed, and only a failure which
+             * is the connection's - a close with an error code, a refused submit - may be. A close
+             * drained in the same batch behind a failure of the task's own still writes what
+             * isRetryable( ) and outcome( ) report, but it says what the connection did afterwards
+             * and not why the request failed. False for a request which succeeded
+             *
+             * NOT THE SAME READING AS hasSinkThrown( ), which refuses a replay even when the failure
+             * which won was the connection's: a sink which threw is spent either way
+             *
+             * Safe to read where sinkDelivered( ) is: failWith( ) writes it in the apply phase, or in
+             * the locked section after the deferred one, and either is before applyEvents( ) notifies
+             * ready
+             */
+
+            bool isOwnFailure() const NOEXCEPT
+            {
+                return m_isOwnFailure;
             }
         };
 

@@ -1202,6 +1202,22 @@ namespace bl
                     return false;
                 }
 
+                /*
+                 * A HOP WHICH FAILED ON A VERDICT OF ITS OWN IS NOT REPLAYED - the general rule the
+                 * maintainer decided with owed-list row I5. A timeout, a cancel, a body cap, a sink
+                 * or source which threw: the request task decided the failure, and a close drained in
+                 * the same batch behind it - which is what isRetryable( ) and outcome( ) below would
+                 * read - reports what the connection did afterwards, not why the request failed. So
+                 * an overflow is not retried into a second overflow, and a caller's timeout ends the
+                 * request instead of starting a fresh hop. Only a failure which is the connection's
+                 * - a close with an error code, a refused submit - reaches the replay rule
+                 */
+
+                if( m_hop -> isOwnFailure() )
+                {
+                    return false;
+                }
+
                 RetryContext context;
 
                 context.isRetryable = m_hop -> isRetryable();
