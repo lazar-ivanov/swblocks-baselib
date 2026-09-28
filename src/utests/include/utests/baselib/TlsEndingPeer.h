@@ -141,10 +141,18 @@ namespace utest
 
                 std::string                                                     response;
 
+                /**
+                 * @brief The ending waits until releaseEnding( ) - so that a case can choose the
+                 * moment the peer ends the stream, once the client has settled
+                 */
+
+                bool                                                            isEndingHeld;
+
                 explicit Script( SAA_in const Ending endingIn )
                     :
                     ending( endingIn ),
-                    isAnswerHeld( false )
+                    isAnswerHeld( false ),
+                    isEndingHeld( false )
                 {
                 }
             };
@@ -182,7 +190,8 @@ namespace utest
                 m_acceptor( m_ioService ),
                 m_port( 0U ),
                 m_script( script ),
-                m_isReleased( false )
+                m_isReleased( false ),
+                m_isEndingReleased( false )
             {
 #if OPENSSL_VERSION_NUMBER >= 0x10101000L
                 /*
@@ -220,6 +229,7 @@ namespace utest
             {
                 BL_NOEXCEPT_BEGIN()
 
+                releaseEnding();
                 release();
 
                 {
@@ -273,6 +283,19 @@ namespace utest
             }
 
             /**
+             * @brief Lets a held ending go ahead - a no-op for a script whose ending is not held
+             */
+
+            void releaseEnding()
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                m_isEndingReleased = true;
+
+                m_cv.notify_all();
+            }
+
+            /**
              * @brief Blocks until a record which starts with 'prefix' has been made, or the bound
              * expires - signalled inside the record lock, so a case has a happens-before with it
              */
@@ -320,6 +343,20 @@ namespace utest
                     [ this ]() -> bool
                     {
                         return m_isReleased;
+                    }
+                    );
+            }
+
+            void waitForEndingRelease()
+            {
+                bl::os::mutex_unique_lock guard( m_lock );
+
+                ( void ) m_cv.wait_for(
+                    guard,
+                    bl::os::chrono::milliseconds( static_cast< std::size_t >( WAIT_IN_MILLISECONDS ) ),
+                    [ this ]() -> bool
+                    {
+                        return m_isEndingReleased;
                     }
                     );
             }
@@ -474,6 +511,11 @@ namespace utest
                             runExchange( stream );
                         }
 
+                        if( m_script.isEndingHeld )
+                        {
+                            waitForEndingRelease();
+                        }
+
                         runEnding( stream );
                     }
                 }
@@ -507,6 +549,7 @@ namespace utest
             mutable bl::os::condition_variable                                  m_cv;
             std::vector< std::string >                                          m_records;
             bool                                                                m_isReleased;
+            bool                                                                m_isEndingReleased;
 
             bl::cpp::SafeUniquePtr< bl::os::thread >                            m_thread;
         };

@@ -84,6 +84,13 @@
  *     fails with it, and the fix, which reads nothing, makes it clean. The probe that fails with the
  *     code keeps its truncation everywhere.
  *
+ * IN BOTH TRUNCATED ENDINGS THE PEER ENDS THE STREAM ONLY ONCE THE PROBE'S READ IS ARMED - registered
+ * with the reactor, since nothing else arrives. The FIN's own event then completes that read, and no
+ * event is left to wake the shutdown's. A FIN which arrived first could have its event processed after
+ * the probe's read had already consumed the end of stream, and asio's epoll reactor would then let the
+ * shutdown's read complete at once (INFERRED, epoll_reactor.ipp, perform_io( )) - the red would be
+ * probable rather than certain.
+ *
  * Each runs over both TLS policies, with and without a strand. The task is the library's connection
  * establisher, which connects and handshakes over the policy exactly as every TLS client in the
  * library does, and then does what a consumer does: reads until the stream ends and asks the policy
@@ -169,6 +176,7 @@ namespace utest
             mutable bl::os::condition_variable                                  m_probeCv;
 
             bool                                                                m_hasStopped;
+            bool                                                                m_isReadArmed;
             bl::eh::error_code                                                  m_readEnding;
 
             char                                                                m_buffer[ 4096 ];
@@ -181,7 +189,8 @@ namespace utest
                 :
                 base_type( BL_PARAM_FWD( host ), port, false /* logExceptions */ ),
                 m_mode( mode ),
-                m_hasStopped( false )
+                m_hasStopped( false ),
+                m_isReadArmed( false )
             {
                 base_type::isCloseStreamOnTaskFinish( true );
             }
@@ -207,6 +216,19 @@ namespace utest
                 }
 
                 armRead();
+
+                /*
+                 * The read is initiated inline, and with nothing to read it is left registered
+                 * with the reactor by the time armRead( ) returns
+                 */
+
+                {
+                    BL_MUTEX_GUARD( m_probeLock );
+
+                    m_isReadArmed = true;
+
+                    m_probeCv.notify_all();
+                }
 
                 return true;
             }
@@ -302,6 +324,24 @@ namespace utest
                 return m_hasStopped;
             }
 
+            /**
+             * @brief Blocks until the probe has armed its first read or the bound expires
+             */
+
+            bool waitForReadArmed( SAA_in const std::size_t timeoutInMilliseconds ) const
+            {
+                bl::os::mutex_unique_lock guard( m_probeLock );
+
+                return m_probeCv.wait_for(
+                    guard,
+                    bl::os::chrono::milliseconds( timeoutInMilliseconds ),
+                    [ this ]() -> bool
+                    {
+                        return m_isReadArmed;
+                    }
+                    );
+            }
+
             auto readEnding() const -> bl::eh::error_code
             {
                 BL_MUTEX_GUARD( m_probeLock );
@@ -323,6 +363,7 @@ namespace utest
         struct EndingResult
         {
             bool                                                                wasHeldWhileRunning;
+            bool                                                                wasReadArmedBeforeTheEnding;
             bool                                                                hasStoppedWithinBound;
             bool                                                                isCanceled;
             bool                                                                hasStopped;
@@ -336,6 +377,7 @@ namespace utest
             EndingResult()
                 :
                 wasHeldWhileRunning( false ),
+                wasReadArmedBeforeTheEnding( true ),
                 hasStoppedWithinBound( false ),
                 isCanceled( false ),
                 hasStopped( false ),
@@ -361,7 +403,9 @@ namespace utest
             auto describe() const -> std::string
             {
                 return
-                    std::string( "stopped within the bound " ) +
+                    std::string( "read armed before the ending " ) +
+                    ( wasReadArmedBeforeTheEnding ? "yes" : "no" ) +
+                    ", stopped within the bound " +
                     ( hasStoppedWithinBound ? "yes" : "no" ) +
                     ", cancelled when it stopped " +
                     ( isCanceled ? "yes" : "no" ) +
@@ -406,7 +450,15 @@ namespace utest
 
             EndingResult result;
 
-            TlsEndingPeer peer( ending, isAnswerHeld );
+            const bool isEndingHeld =
+                TlsEndingPeer::Ending::Truncate == ending ||
+                TlsEndingPeer::Ending::TruncateAndClose == ending;
+
+            auto script = TlsEndingPeer::makeScript( ending, isAnswerHeld );
+
+            script.isEndingHeld = isEndingHeld;
+
+            TlsEndingPeer peer( script );
 
             const auto probe = TlsEndingProbeImpl< STREAM >::createInstance(
                 std::string( "localhost" ),
@@ -427,6 +479,19 @@ namespace utest
                     eq -> setOptions( ExecutionQueue::OptionKeepAll );
 
                     eq -> push_back( task );
+
+                    if( isEndingHeld )
+                    {
+                        /*
+                         * THE PEER ENDS THE STREAM ONLY ONCE THE PROBE'S READ IS ARMED - see the
+                         * header's comment for why that is what makes the red certain
+                         */
+
+                        result.wasReadArmedBeforeTheEnding =
+                            probe -> waitForReadArmed( static_cast< std::size_t >( WAIT_IN_MILLISECONDS ) );
+
+                        peer.releaseEnding();
+                    }
 
                     if( isAnswerHeld )
                     {
@@ -724,6 +789,11 @@ namespace utest
             SAA_in          const std::string&                                  readings
             )
         {
+            chkOrFail(
+                result.wasReadArmedBeforeTheEnding,
+                which + ": the probe did not arm its read before the peer's ending; all four: " + readings
+                );
+
             chkOrFail(
                 result.hasStoppedWithinBound,
                 which + ": the teardown did not end within the bound; all four: " + readings
