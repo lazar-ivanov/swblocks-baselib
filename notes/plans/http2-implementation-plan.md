@@ -1642,7 +1642,10 @@ changes how a TLS ending is classified.
 **Before them, the bucket C round — DONE 2026-09-27** (`d186d2a`, `7330dd5`, `d6d1d82`, `badf642`):
 comment corrections, one dead-code deletion and one test's wording that earlier reviews had recorded
 and never scheduled, decided and taken as a round of their own — §7 of the same record. **After
-them**, one ThreadSanitizer pass over the client modules (B6 on `issues/astra-remediation-owed-work.md`).
+them, one ThreadSanitizer pass over the client modules — DONE 2026-09-27** (B6 on
+`issues/astra-remediation-owed-work.md`): on `2b47b57`, recorded at `14e3538`, over 22 modules. Its
+two pre-existing reports became I12 and I13, fixed in CS-4 and CS-6 below. *Corrected 2026-09-28:
+this line still read as a pass to come.*
 
 **Then the fold-in change-sets, 2026-09-27 and 28.** They hold what the run itself found, folded
 under `AGENTS.md` v2.15, with the decisions in §11 of the same record. All three are gated together
