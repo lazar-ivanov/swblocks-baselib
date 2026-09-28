@@ -1659,7 +1659,8 @@ asserts exactly that on that flavor.
   connection (R03, decided as one strand handler for the connection's start). Since `130e021` a
   truncation no longer completes a close-delimited body: the request fails, and the sink is not told
   the body is complete. Since `ea47826` the connection starts in one accounted strand handler, which
-  also honours a cancel that lands before the start. *Corrected 2026-09-28: this bullet said both
+  also honours a cancel that lands before the start. What remains is Windows: both are owed a run
+  there (`issues/windows-matrix-handoff.md`, A1 and A3). *Corrected 2026-09-28: this bullet said both
   were "not yet implemented" and held "until CS-1 lands".*
 - **Carried risks.** Astra's second review lists, under *"Carried risks that are not new remediation
   requests"* (`http2-l0-l6-remediation-review-2026-09-26.md`), what a caller can still meet as the
