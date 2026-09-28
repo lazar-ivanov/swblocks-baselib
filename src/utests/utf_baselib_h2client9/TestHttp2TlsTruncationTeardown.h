@@ -33,6 +33,7 @@
 #include <memory>
 #include <string>
 
+#include <utests/baselib/Http2DriverTlsProbe.h>
 #include <utests/baselib/TlsEndingPeer.h>
 #include <utests/baselib/TlsTeardownTestUtils.h>
 #include <utests/baselib/Utf.h>
@@ -75,136 +76,14 @@ namespace utest
     namespace h2truncteardown
     {
         using tlsteardown::WAIT_IN_MILLISECONDS;
-        using tlsteardown::OneShotSignal;
         using tlsteardown::TlsEndingPeer;
         using tlsteardown::chkEndedWithoutWaiting;
         using tlsteardown::makeTlsKey;
         using tlsteardown::runToTheEnd;
         using tlsteardown::shortProtocolTimeout;
 
-        typedef bl::tasks::TcpSslSocketAsyncStrandedBase                        tls_stream_t;
-
-        /**
-         * @brief The HTTP/2 driver over the stranded TLS policy, which establishes its own
-         * connection, with its stop signalled - and its quiet, once its opening write is over
-         */
-
-        class Http2DriverProbe : public bl::tasks::Http2ConnectionTaskT< tls_stream_t >
-        {
-            BL_DECLARE_OBJECT_IMPL( Http2DriverProbe )
-
-        public:
-
-            typedef bl::tasks::Http2ConnectionTaskT< tls_stream_t >             base_type;
-
-        protected:
-
-            OneShotSignal                                                       m_stop;
-            OneShotSignal                                                       m_quiet;
-
-            /*
-             * Touched only on the strand
-             */
-
-            bool                                                                m_isQuietCheckPosted;
-
-            Http2DriverProbe(
-                SAA_in          bl::httpclient::ConnectionKey                   key,
-                SAA_in          base_type::factory_ptr_t                        driverFactory
-                )
-                :
-                base_type(
-                    BL_PARAM_FWD( key ),
-                    BL_PARAM_FWD( driverFactory ),
-                    bl::tasks::Http2ConnectionConfig(),
-                    bl::tasks::ProxyConfig::none(),
-                    bl::tasks::ClientConnectionConfig(),
-                    false /* logExceptions */
-                    ),
-                m_isQuietCheckPosted( false )
-            {
-            }
-
-            /**
-             * @brief The first write - the preface - starts the watch for the quiet
-             *
-             * Called on the strand immediately before the write is issued, in the same strand turn
-             * which sets m_isWriteInFlight, so a check posted from here never runs before it is set
-             */
-
-            virtual void onWriteScheduled( SAA_in const bl::http2::Session::wire_buffer_t& buffer ) OVERRIDE
-            {
-                base_type::onWriteScheduled( buffer );
-
-                if( ! m_isQuietCheckPosted )
-                {
-                    m_isQuietCheckPosted = true;
-
-                    postQuietCheck();
-                }
-            }
-
-            /**
-             * @brief Signals the quiet once no write is in flight, and otherwise looks again
-             *
-             * Each look is its own strand turn, so the write's own handler - the one place which
-             * clears m_isWriteInFlight - runs between two of them
-             */
-
-            void postQuietCheck()
-            {
-                const auto ref = base_type::self_ref_t::acquireRef( this );
-
-                base_type::postToStrand(
-                    [ this, ref ]() -> void
-                    {
-                        BL_NOEXCEPT_BEGIN()
-
-                        if( base_type::m_isWriteInFlight )
-                        {
-                            postQuietCheck();
-
-                            return;
-                        }
-
-                        m_quiet.signal();
-
-                        BL_NOEXCEPT_END()
-                    }
-                    );
-            }
-
-            virtual auto onTaskStoppedNothrow(
-                SAA_in_opt          const std::exception_ptr&                   eptrIn = nullptr,
-                SAA_inout_opt       bool*                                       isExpectedException = nullptr
-                ) NOEXCEPT
-                -> std::exception_ptr OVERRIDE
-            {
-                auto result = base_type::onTaskStoppedNothrow( eptrIn, isExpectedException );
-
-                BL_NOEXCEPT_BEGIN()
-
-                m_stop.signal();
-
-                BL_NOEXCEPT_END()
-
-                return result;
-            }
-
-        public:
-
-            bool waitForStop( SAA_in const std::size_t timeoutInMilliseconds ) const
-            {
-                return m_stop.waitFor( timeoutInMilliseconds );
-            }
-
-            bool waitForQuiet( SAA_in const std::size_t timeoutInMilliseconds ) const
-            {
-                return m_quiet.waitFor( timeoutInMilliseconds );
-            }
-        };
-
-        typedef bl::om::ObjectImpl< Http2DriverProbe >                          Http2DriverProbeImpl;
+        using h2driverprobe::tls_stream_t;
+        using h2driverprobe::Http2DriverProbeImpl;
 
     } // h2truncteardown
 
