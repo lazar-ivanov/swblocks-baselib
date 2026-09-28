@@ -1,7 +1,7 @@
 # CS-6 / D-L3-1 — a forced cancel lost between two steps of a TLS operation: design note
 
-**Date:** 2026-09-28. **Status:** revision 3, written by lane 3, **for the reviewer's check of round 2's
-proposals**. Nothing is coded before its agreement line.
+**Date:** 2026-09-28. **Status:** revision 3, written by lane 3 — **agreed 2026-09-28** (see the
+agreement line at the end). D-L3-1's shape, D2 and D3's fix are implemented to this note.
 
 **Revisions.** r1 `8cdb529`. r2 `73f703e`, with two dated additions in `0bcc08d`. **r3 (this)** carries
 review round 2 (`CS6-lostcancel-design-r2.md`, agree with changes): its required P1 to P9, P10 taken, and
@@ -692,4 +692,12 @@ stage's proxy connect (`TcpTunnelStage.h:1610`) — through one protected helper
 - **Files:** `TcpBaseTasks.h` (owned) and `TcpTunnelStage.h`, whose ownership the orchestrator widened on
   2026-09-28.
 
-**Agreement:** pending.
+**Agreement: 2026-09-28.**
+- **Reviewed:** three rounds by an Opus reviewer (`CS6-lostcancel-design-r1.md`, `-r2.md`, `-r3.md`).
+- **Agreed:** the reviewer agrees with revision 3 (`bc55f09`) and its required edit C1, taken with the
+  optional C2 in `e7e342f`; the orchestrator agrees.
+- **Implemented:** D-L3-1's shape, D2 and D3's fix are implemented to this note.
+
+*Recorded by the orchestrator on the maintainer's explicit authorization, given in advance for this
+note. The round-3 review was saved from the reviewer's report by the orchestrator, also on the
+maintainer's authorization, because a safety-check outage refused the reviewer's own writes.*
