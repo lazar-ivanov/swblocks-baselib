@@ -830,7 +830,7 @@ namespace bl
                  */
 
                 if( asio::error::eof == ec ||
-                    ( base_type::isExpectedProtocolException( nullptr, std::exception(), &ec ) &&
+                    ( base_type::isStreamTruncationError( ec ) &&
                       m_responseLength == m_contentReceived )
                   )
                 {
