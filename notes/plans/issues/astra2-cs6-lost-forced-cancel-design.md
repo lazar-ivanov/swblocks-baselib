@@ -477,9 +477,9 @@ handshake.
   stated reason. **Proposed:** drop the condition, so that such an expiry cancels the task too — the cancel
   reaches the resolver through `TcpConnectionEstablisherBase::cancelTask( )` (`TcpBaseTasks.h:770-778`),
   and the task ends with the same TimeoutException. **A caller sees this only as the deadline holding
-  during a retry's resolve**, which is what "one deadline until the task stops" means. *(Ruled on
-  2026-09-28, after review round 2 verified the addendum below: a consequence of D2, not a decision for the
-  maintainer.)*
+  during a retry's resolve**, which is what "one deadline until the task stops" means. *(Ruled by the
+  orchestrator on 2026-09-28, after review round 2 verified the addendum below: a consequence of D2, not a
+  decision for the maintainer.)*
 
   *(Added 2026-09-28, on the orchestrator's question: is there any other window with the task Running,
   the timer armed and the channel closed — a teardown which closes the socket before the timer is
@@ -666,8 +666,12 @@ stage's proxy connect (`TcpTunnelStage.h:1610`) — through one protected helper
     `EINPROGRESS`, and stays there (`logs/astra2/cs6/d3-rangedconnect/syn-sent-probe.txt`).
   - **It holds on both sides of the fix**, which a read-back from the task's ending does not: after the fix,
     a cancel landing before the switch ends at once too, so an ending cannot show the switch was exercised.
-  - **It adds no happens-before edge** between the two threads — a file read is not a synchronization TSan
-    models — so TSan still sees today's accesses as unordered.
+  - **It adds no happens-before edge that covers the switch.** TSan does model file I/O — a write to a file
+    happens before a later read of one, through one sync object shared by every regular file (its
+    `io_sync=1` default) — so the read could only carry an edge from a thread which wrote a file after the
+    switch. None does here: the switch's thread goes on to `connect( )`, whose release only `accept( )`
+    acquires, and nothing in the case accepts. The red run checks this — if it reports today's races, the
+    rendezvous did not hide them.
   - Linux only, as TSan is, and `/proc/net/tcp` exists wherever the gate runs it. The stranded half is
     **INFERRED** until its first red run.
 - **A second red, not a TSan one, and certain** (review round 2's P3; checked at the source):
