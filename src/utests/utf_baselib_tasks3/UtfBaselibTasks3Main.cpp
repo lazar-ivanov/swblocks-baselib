@@ -29,8 +29,8 @@
  * sibling pays for today
  *
  * WHAT THIS MODULE PAYS FOR. The connection establisher over each of the four policies, and a TLS
- * peer of its own - a raw asio::ssl::stream server which ends the stream in a chosen way. Not an HTTP
- * driver, a request task, a session or a pool
+ * peer - utests/baselib/TlsEndingPeer.h, a raw asio::ssl::stream server which ends the stream in a
+ * chosen way. Not an HTTP driver, a request task, a session or a pool
  *
  * Sockets: loopback only, on ephemeral ports, so no machine global test lock is needed
  *

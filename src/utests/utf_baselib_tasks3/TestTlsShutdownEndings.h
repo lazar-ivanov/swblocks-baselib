@@ -96,10 +96,10 @@
  * library does, and then does what a consumer does: reads until the stream ends and asks the policy
  * what the ending was, or closes straight away.
  *
- * THE PEER is a raw asio::ssl::stream server of this module's own, on an ephemeral loopback port -
- * not an HTTP peer. The client connects to "localhost", the name the test server certificate
- * carries. The peer keeps its socket open until the case releases it, so that nothing but the
- * ending chosen can reach the task.
+ * THE PEER is a raw asio::ssl::stream server - utests/baselib/TlsEndingPeer.h, shared - on an
+ * ephemeral loopback port, not an HTTP peer. The client connects to "localhost", the name the test
+ * server certificate carries. The peer keeps its socket open until the case releases it, so that
+ * nothing but the ending chosen can reach the task.
  */
 
 namespace utest
