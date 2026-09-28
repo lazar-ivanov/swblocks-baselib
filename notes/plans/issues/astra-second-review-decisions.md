@@ -837,3 +837,153 @@ race, `TestBaselibBasicTask.h:127`. Nothing appeared in the thread pool's resize
     a fix is a core change-set of its own.
 
 The logs are in `logs/astra2/b6/`, and the script is the run's `tsan-b6.sh`.
+
+### CS-5 — I3, one TLS test peer per role — merged 2026-09-28, gated with CS-4 and CS-6
+
+**Merged at `31e6365`** from `astra2-cs5`. It has no gate of its own, as the maintainer ruled: the
+one whole-suite gate below covers it. Tier 1 was re-captured once from the integrated tree
+(`5449398`), with its 47 lines read against the manifest diff.
+
+**The commits:**
+- **Role A** — one TLS HTTP/1.1 test peer for the tree, `http1drivertls::TlsPeer` (`fd0e463`).
+- **Role B** — one TLS HTTP/2 test peer with an ALPN preference, `h2peer::TlsHttp2TestServerT`, in
+  the new `Http2TlsTestServer.h` (`a6965b3`).
+- **The TLS session helpers**, in the new `HttpClientSessionTlsTestUtils.h` (`cdd21ea`):
+  - `httpclient5` on the shared helpers it had copied (`952b5a5`);
+  - the A1-tls cases on the shared `joinEvents( )` (`8c45b09`).
+- **Comment-only and style commits** — `d670743`, `a0826aa`, `4536be2`, `fd9b7b4`, `fa0b0cd` and
+  `ecd5af8`.
+
+**Every case keeps its assertions.** The review extracted and compared all 24 case bodies. Sizes
+were measured per module; the largest change is `httpclient10`'s +20.6 KB.
+
+**Reviewed by an Opus reviewer.** Round 1 was READY WITH CHANGES, all folded, and the review closed
+with no open finding.
+
+**Owed:** the x86 debug sizes of `httpclient5` and `httpclient10`, in the Windows handoff.
+
+### CS-4 — I1, I4, I5, I6, I8, I10, I11 and I12 — merged 2026-09-28, gated with CS-5 and CS-6
+
+**Merged at `988544a`** from `astra2-cs4`, with no gate of its own. Tier 1 was re-captured once from
+the integrated tree (`f0c2a73`). Its 20 lines were identical to the lane's report.
+
+**The commits, and what each red was:**
+- **I5, and rule (B)** — reds `7bc70f5` (a body cap) and `a2480d4` (a timeout), then the fix
+  `535d830`. The knob's positive control is `cdba4fa`: red under a probe, green without it. Comments
+  `cf1d5c0` and `aab8c05`.
+- **I6** — `e295996` red, then `9751b05`: the pool's establishment bound chains its reason.
+  - The connect deadline's sibling was decided during the review (above): `8710356` red, then
+    `4ef25a7`.
+  - Comments `d7790c1`, `b6913af` and `ead7600`.
+- **I8** — `b8b5ce2` red, then `8b164d0`. Its sibling, the upload pull: `06cbe22` red, then
+  `643fddc`.
+- **I10** — `59cbf5a` red, then `e0c6c64`.
+- **I4** — `8a4dadf` red, then `c02f7b4`; comments `27783b4`.
+- **I1** — `c451de8`, line for line. **I11** — `e53bb63`. **I12** — `31b2b9b`, with a ThreadSanitizer
+  pair as its evidence.
+- **Folded as found:**
+  - `031cb1c`, a duplicate include in `TestBlobTransferUtils.h`;
+  - `a829375`, a stale note in the h1 driver;
+  - `1721e41`, `MultiOperationTask`'s class note;
+  - `1e48f2b` and `4471a14`, the D3 note's premise and its quote of the decision;
+  - `1ad5528`, `httpclient9`'s size record.
+
+**Every red was deterministic except I12's**, which is reproduced but not certain; its green is
+certain by construction.
+
+**Reviewed by an Opus reviewer in two rounds.**
+- Round 1 put two questions to the maintainer, decided above: I6's reach, and rule (B) with a body
+  source.
+- Round 2 closed on three comment corrections.
+
+It records:
+- **A cancel is marked as the task's own failure too.** No caller can see it: the session's cancel
+  latch refuses a cancelled chain before rule (B) is asked.
+- **The connect deadline's refinement has no red in CS-4.** Its branch is reached only by a cancel
+  still on its way or a lost one, and CS-6's re-issue red covers it.
+- **Where I6 is shown:** on Linux at the TCP-connect stage (E2, `httpclient9`), and on every
+  platform at the tunnel stage (`H2Connect_SilentProxyHitsTheConnectDeadlineTests`, `h2client`).
+- **A known edge, documented and not guarded:** a task which failed by itself after its TLS
+  handshake can be given the deadline's reason as context, in `chainCancelReason( )`. A guard would
+  first need the failure codes measured at each stage.
+
+**The lane's validation:** the 19 modules which include `ClientConnectionTaskBase.h`, clang debug,
+each green once at `aab8c05`.
+
+### CS-6 — I13, I2, D-L3-1, D2 and D3, the core change-set — merged 2026-09-28
+
+**Merged at `f2baa2f`** from `astra2-cs6`. The branch had merged `lazari2` at `18b8fcd`, so D-L3-1
+was written on CS-4's `onConnectDeadline( )`. Tier 1 was re-captured once (`0f6f05d`). Its 51 lines
+were all additions, identical to the lane's report.
+
+**The commits:**
+- **I13** — the characterization `b99e918`, red `0524250`, then the fix `1c828b2`: the forced path no
+  longer writes `SO_LINGER`. Comments `d2b9c99` and `ab0a4c6`.
+- **I2** — its design note was agreed at `4ef43b9`, with dated corrections `8447991` and `4b8dc23`.
+  - Reds: `323a538`, made certain at `3bfdd21`, and the consumers' `14cfb07`.
+  - The fix: `a5d9d9a`. `038da1a` adds a further test.
+  - `SimpleHttpTask.h`'s line: its certain red `469d8da`, then the line `9a8c81b`.
+  - Comments `c7ee744`.
+- **D-L3-1** — its design note was agreed at `c847bb0` after three review rounds.
+  - Reds: `7615eb6` (tasks3), `9eaf955` (h2client10) and `1148c25` (http3).
+  - Fixes: `83721c3`, (c); `fff158c`, the retry guard; `a2ad828`, (a2).
+  - `fcb79f3` tests the handshake flag's life. Deleting each of its five writes in turn was caught.
+  - Comments `1ffec7a`, `6a1a306` and `a734b59`.
+- **D3** — a shared header `8a53aa8`; the characterization, red and ThreadSanitizer case `b5f6e30`
+  and `088ef7f`; then the loop `5057b94`.
+- **D2** — reds and controls `fa1ead8`; the timer move `e1cd9d4`; then the channel condition's
+  removal `d13859c`.
+- **What the implementation found** — the note's §10 (`92cab51`), and the detach note `e7a4cf4`.
+- **The checkpoint review's folds:**
+  - `7ae4abb`, the Boost-version guard;
+  - `c794350`, `b36dd7f`, `7154fc3` and `1b7af73`;
+  - D-B's size records `5214276`;
+  - D-A's record, `cc59907` and `2a7902e`, and its test, `751c34e` and `8866065`;
+  - round 2's `91642db`.
+
+**Every red was deterministic, or its certainty is labelled.** The means were held I/O threads, a
+SYN_SENT rendezvous and a swallowed first cancel. D-A's red came from swapping in the whole pre-loop
+connector file.
+
+**ThreadSanitizer**, in a tree with no other build and with its positive control, is clean at the tip
+over `tasks3`, `tasks4`, `http3`, `h2client10` and `h2client3`. I2's round was clean over
+`httpclient8`, `httpclient13` and `h2client9`. D3's case reported five races over the four policies
+before the loop, and none after it.
+
+**Reviews:**
+- **I2's note:** fable in round 1, then an Opus reviewer in rounds 2 and 3.
+- **D-L3-1's note:** an Opus reviewer in three rounds. The orchestrator saved round 3 from the
+  reviewer's report, on the maintainer's authorization, because a safety-check outage refused the
+  reviewer's own writes.
+- **The checkpoint:** an Opus reviewer in two rounds, closed on text.
+
+**New modules**, at a64 clang debug, each recording its size and reason (D-B): `tasks3` 36.9 MB,
+`tasks4` 31.9, `http3` 36.1, `httpclient13` 36.9, `h2client9` 37.5 and `h2client10` 37.6.
+
+**Owed:**
+- the Windows matrix, in the handoff;
+- a compile of the Boost guard's pre-1.72 branch on a devenv2 or devenv3 host, the only devenvs below
+  1.72.
+
+### The one gate — CS-4, CS-5 and CS-6 — 2026-09-28
+
+**Green, on `0f6f05d`**: clang2010 release and gcc1520 debug over all 58 modules, `-j1` through the
+machine's build slot, 13:12 to 15:30. `TaskBase.h` changed, so every module was rebuilt.
+- **All 112 runs of the 56 test executables passed.** Each entered and left every case, printed
+  "No errors detected", and printed no failure and no `leaked` line.
+- **`utf_baselib_jni`, in both variants, exited 200 after all 11 cases passed.** That is this host's
+  pre-existing teardown error, "Test setup error:" with an empty message, and it matches the module's
+  earlier runs. A detailed report confirms 11 of 11 passed in each variant.
+- **`utf_baselib_plugin` is a shared library which `utf_baselib_loader` loads, not a test
+  executable.** It built in both variants, and the loader passed 20 of 20 in each. The gate script's
+  "binary missing" for it comes from assuming every module is an executable.
+- **Checked independently of the gate's own summary**, by script over all 116 logs:
+  - cases entered equal cases left everywhere;
+  - every module's count of cases entered matches the tier-1 manifest, with two explained
+    exceptions:
+    - `utf_baselib`'s ten cases are compiled out on Linux by their own guards: nine `_WIN32`, one
+      devenv below 6;
+    - `jni`'s run prints no case lines.
+
+The logs are in `logs/astra2/gate/cs456/`, with the summary `cs456-gate-summary.log` and the two
+independent checks `cs456-independent-check.log` and `cs456-cases-vs-manifest.log`.

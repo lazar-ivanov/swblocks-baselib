@@ -1644,6 +1644,18 @@ comment corrections, one dead-code deletion and one test's wording that earlier 
 and never scheduled, decided and taken as a round of their own — §7 of the same record. **After
 them**, one ThreadSanitizer pass over the client modules (B6 on `issues/astra-remediation-owed-work.md`).
 
+**Then the fold-in change-sets, 2026-09-27 and 28.** They hold what the run itself found, folded
+under `AGENTS.md` v2.15, with the decisions in §11 of the same record. All three are gated together
+by one whole-suite gate.
+
+| Change-set | What | Landed |
+|---|---|---|
+| **CS-5** | I3: one TLS test peer per role | merged at `31e6365`, gated |
+| **CS-4** | I1, I4, I5 (rule (B)), I6 (with the connect deadline), I8, I10, I11 and I12 | merged at `988544a`, gated |
+| **CS-6**, core | I13, I2, D-L3-1 (the lost forced cancel), D2 (SimpleHttpTask's handshake timer) and D3 (our own connect loop) | merged at `f2baa2f`, gated; the Windows matrix is handed off |
+
+All three were gated at once, green on `0f6f05d`, over all 58 modules.
+
 **Acceptance.** Each slice: focused modules under clang debug in the lane, then clang and gcc release
 plus the whole-suite gate by the orchestrator. S6R.1 and S6R.2 additionally owe the cheap
 demonstrations listed in §7 of the verification record — nothing in either the review or the

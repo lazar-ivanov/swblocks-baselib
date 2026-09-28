@@ -375,3 +375,88 @@ record the tip in the result.
   - **Run `…10` whole.**
   - **Record both modules' x86 debug sizes:** 39.8 and 46.6 MB at a64 clang debug. Both carry their
     reason already. `…10`'s x86 size is the one most likely to be large.
+
+---
+
+## Astra's second review, continued, 2026-09-28 — what CS-4 to CS-6 owe Windows
+
+**Added 2026-09-28.** The decisions are in `astra-second-review-decisions.md` §11, and how each
+change-set landed is in §10. CS-6's two design notes say what Windows must measure:
+`astra2-cs6-tls-shutdown-after-truncation-design.md` and `astra2-cs6-lost-forced-cancel-design.md`,
+whose §6 has the list. **Run only from a tip the maintainer has pushed** that contains `f2baa2f`, and
+record the tip in the result.
+
+**What Linux established:**
+- **CS-5** is merged at `31e6365`, **CS-4** at `988544a` and **CS-6** at `f2baa2f`.
+- **One whole-suite gate covers all three: green on `0f6f05d`.** It ran all 58 modules in clang
+  release and gcc debug. The two exceptions are explained in the decision record §10:
+  - `utf_baselib_jni`'s pre-existing teardown exit, after all 11 of its cases passed;
+  - `utf_baselib_plugin`, which is a library, not an executable.
+- **CS-6 changed transport teardown**, so `AGENTS.md`'s networking rule applies to every item below.
+
+**What Linux cannot settle:**
+
+- **B1. I13, the forced cancel's `SO_LINGER` write, now deleted.** Run `utf_baselib_tasks3`'s
+  `Tcp_ForcedCancel*` cases. Windows has no ThreadSanitizer, so these cases stand in for I13's TSan
+  evidence.
+- **B2. I2 on IOCP: a truncated TLS stream's shutdown does not wait for the close_notify.**
+  - **The cases:**
+    - `tasks3`'s `TlsShutdown_ATruncationDoesNotWaitForTheCloseNotifyTests`;
+    - `utf_baselib_httpclient13`'s `Http1DriverTls_*` and both `SimpleHttpTls_*`;
+    - `utf_baselib_h2client9`'s `Http2DriverTls_*`.
+  - **The hang is epoll-specific (INFERRED)**, so on IOCP a case may already be green before the fix
+    (`a5d9d9a`). After it, every one must be green.
+- **B3. `WSARecv` after the peer's FIN and then a reset: does the read get the reset?** On Linux it
+  gets end of stream, and the error is left pending. If it gets the reset,
+  `TlsShutdown_ATruncationThenACloseEndsCleanTests` is the red on Windows.
+- **B4. D-L3-1's gap on IOCP.** `CancelIoEx` reaps only outstanding I/O (INFERRED). Measure `tasks3`'s
+  reds — W1 stranded, W1 plain, W2 stranded — before and after the fix.
+- **B5. (c)'s premise: `shutdown( SD_RECEIVE )`.**
+  - Does a `WSARecv` started after it complete at once, and with which code? `WSAESHUTDOWN` is the
+    documented one, NOT VERIFIED.
+  - Does one already outstanding complete?
+- **B6. (c)'s effect on the peer.**
+  - A peer which sends after our receive shutdown is reset. On Linux that holds once our FIN is out,
+    and Windows is expected to reset it always.
+  - Record which code the cancelled handshake fails with: end of stream, `WSAESHUTDOWN` or
+    `WSAECONNRESET`. Only end of stream reaches the retry path, so the retry guard's red there must
+    come from the orderly-close peer.
+- **B7. The four (a2) reds and the HTTP/2 application-phase characterization,** in `tasks3`,
+  `utf_baselib_h2client10` and `utf_baselib_http3`.
+  - Their logic is platform-independent, and their transport codes are not.
+  - Check that `http3`'s response-timer case's 1 MB write stays blocked on Windows, as it does on
+    Linux.
+- **B8. D2, the SimpleHttpTask handshake timer:** `http3`'s red and its two controls. Expected
+  platform-independent.
+- **B9. D3, the per-endpoint connect loop, on IOCP (`ConnectEx`).**
+  - Run the non-TSan red in `utf_baselib_tasks4`: a cancel during a multi-address connect ends at
+    once.
+  - Run the loop's ordinary cases: endpoints tried in order, the last error when none connects, and
+    the proxy tunnel's connect through the same helper.
+  - The socket closed and re-opened for each endpoint must re-associate with the IOCP. asio's open
+    does that; verify it.
+- **B10. Does a full accept queue drop a SYN on Windows, or reset it?** D3's prompt-cancel red
+  depends on it. If Windows resets, that red is Linux-only, and the case should say so.
+- **B11. D-A's `TcpConnectOpenFailure_*` cases in `tasks4` skip on Windows.** Nothing can make the
+  open fail there without a seam. Record the skip, and nothing more.
+- **B12. I6 off Linux.** `utf_baselib_h2client`'s `H2Connect_SilentProxyHitsTheConnectDeadlineTests`
+  is the first MSVC check of CS-4's premise: editing the exception in place reaches the recorded
+  failure, because a rethrown copy shares boost::exception's error-info container.
+- **B13. Run the six new modules whole:** `tasks3`, `tasks4`, `http3`, `httpclient13`, `h2client9` and
+  `h2client10`.
+- **B14. x86 debug sizes.** The 75 MB ceiling is enforced on `win-x86-*-debug`. Every new module
+  records its size and reason in its `Main.cpp` (D-B).
+
+  | Module | a64 clang debug | x86 estimate |
+  |---|---|---|
+  | `utf_baselib_tasks3` | 36.9 MB | about 41–43 MB |
+  | `utf_baselib_tasks4` | 31.9 MB | about 35–37 MB |
+  | `utf_baselib_http3` | 36.1 MB | about 40–42 MB |
+  | `utf_baselib_httpclient13` | 36.9 MB | about 41–43 MB |
+  | `utf_baselib_h2client9` | 37.5 MB | about 42–44 MB |
+  | `utf_baselib_h2client10` | 37.6 MB | about 42–44 MB |
+  | `utf_baselib_httpclient9` | 40.1 MB, over the target since CS-4 | not estimated |
+  | `utf_baselib_httpclient5`, `…10` | as CS-5 left them | not estimated |
+
+  **If any module measures above about 45 MB,** the maintainer's D-B reverses for the splittable
+  ones: `tasks3`, `httpclient13` and `http3`. Report it.
