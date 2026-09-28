@@ -13,9 +13,9 @@ state when the decisions were taken, §1 to §7, and are left as written. *(Mark
 third review, T02.)*
 
 **Scope:** R01–R08 of [astra's second review](../http2-l0-l6-remediation-review-2026-09-26.md), which
-reviewed `db97372`. R09, the stale records, was done at `425802c`; that sweep missed several
-current-status summaries, which astra's third review found as T02 and CS-8 reconciled
-([`astra-third-review-decisions.md`](astra-third-review-decisions.md)). Each finding was re-verified at the
+reviewed `db97372`. R09, the stale records, was done at `425802c`. Summaries written that day, true
+when written, went stale again as CS-1 to CS-6 landed; astra's third review found them as T02, and
+CS-8 reconciled them ([`astra-third-review-decisions.md`](astra-third-review-decisions.md)). Each finding was re-verified at the
 source before it was put; the ledger rows are in [`astra-remediation-owed-work.md`](astra-remediation-owed-work.md),
 under "Found by astra's second review".
 
