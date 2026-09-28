@@ -1,8 +1,11 @@
 # Astra's third review — the decisions, and how their change-sets land
 
 **Date:** 2026-09-28. **Status:** planned, and reviewed once by fable (`plan-fable-r1.md`, agree with
-changes, all taken). The two decisions below are put to the maintainer. CS-7 is not coded before D1
-is taken. CS-8 needs no decision.
+changes, all taken). **Both decisions were taken by the maintainer on 2026-09-28, as recommended:**
+- **D1 (b′):** freeze at completion;
+- **D2:** a mechanical reconciliation clause on `AGENTS.md`'s sweep bullet.
+
+CS-8 needed no decision.
 
 **Where the evidence lives.** The records of these runs cite `logs/astra2/…` and `logs/astra3/…`.
 That is the orchestrator's evidence directory, `http2-l0-state/logs/`, a sibling of the checkout.
@@ -84,6 +87,7 @@ review": change-sets CS-7 (T01) and CS-8 (T02).
   - **Reverses to (a)** if the maintainer wants a direct caller to learn, after its own failure won,
     what the connection did afterwards. **To (c)** if direct use of these getters is to be
     withdrawn.
+- **Decided by the maintainer, 2026-09-28: (b′), freeze at completion.** It lands in CS-7.
 
 ### D2 — the recurring status drift: reconcile the current-status summaries as part of every change-set's records
 
@@ -110,6 +114,8 @@ review": change-sets CS-7 (T01) and CS-8 (T02).
   - The workflow's §6 and §4.6 then refer to it.
   - **Reverses to §6 alone** if `AGENTS.md` is to stay untouched, accepting that a session outside
     the parallel workflow can reintroduce the drift.
+- **Decided by the maintainer, 2026-09-28: the clause on `AGENTS.md`'s sweep bullet.** It is
+  `AGENTS.md` v2.17. The workflow's §4.6 and §6 refer to it.
 
 ### T02 itself needs no decision
 
