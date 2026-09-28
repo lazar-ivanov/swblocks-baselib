@@ -9,7 +9,7 @@ Implementation waits for the maintainer's go-ahead.
 `bc431f2`, CS-3 at `f48acd2` — and what the run found landed in CS-4 (`988544a`), CS-5 (`31e6365`)
 and CS-6 (`f2baa2f`); §10 says what each carried, with its commits and its gate. "Nothing
 implemented", "implementation waits" and, in the provenance below, "nothing was built or run" are the
-state when the decisions were taken, §1 to §7, and are left as written. *(Marked 2026-09-28, astra's
+state when the decisions were taken (§1 to §6), and are left as written. *(Marked 2026-09-28, astra's
 third review, T02.)*
 
 **Scope:** R01–R08 of [astra's second review](../http2-l0-l6-remediation-review-2026-09-26.md), which
