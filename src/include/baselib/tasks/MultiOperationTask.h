@@ -60,9 +60,9 @@ namespace bl
          * stopped doing anything, and nothing is left to complete it
          *
          * Note that initiateClose() is invoked ONLY from onOperationCompleted(), and the terminal
-         * notifyReady() from it and from abandonOperation() - both outside the scope of the task
-         * lock, the first because BL_TASKS_HANDLER_END_MULTIOP() places it there and the second
-         * because a terminal cannot be DUE while that lock is held. beginOperation() and
+         * notifyReady() from it and from abandonOperation(). onOperationCompleted() runs outside
+         * the task lock from BL_TASKS_HANDLER_END_MULTIOP() and under it from an initiator's catch
+         * in a handler body; a terminal cannot be DUE while that lock is held. beginOperation() and
          * beginClose() only touch the accounting, so they are safe from a handler body, where the
          * lock IS held: notifyReady() must never be called under it (see TaskBase.h's invariants)
          *
