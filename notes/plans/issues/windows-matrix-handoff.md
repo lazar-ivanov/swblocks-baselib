@@ -317,6 +317,7 @@ record the tip in the result.
 **What Linux established:**
 - **CS-3**, merged at `f48acd2`: gated green, 24 of 24, clang release and gcc debug.
 - **CS-1**, merged at `a04f29c`: gated green, 18 of 18, on the same two combinations.
+- **CS-2**, merged at `bc431f2`: gated green, 18 of 18, on the same two combinations.
 - Every red was deterministic, and tier 1 passes after each re-capture.
 
 **What Linux cannot settle:**
@@ -361,4 +362,16 @@ record the tip in the result.
   differ on Windows: D6 and D7 are boundary inputs, and the two DATA-block cases run a driver against
   a scripted peer. Run it because it is new.
 
-CS-2's items are added here when CS-2 lands.
+- **A6. CS-2, merged at `bc431f2`.**
+  - **Run `utf_baselib_httpclient9` whole.**
+    - E2 asserts `establishmentTimeouts == 2` on Linux only. Its other assertions on Windows are
+      derived, not run. On Linux the full-queue drop it relies on assumes `tcp_abort_on_overflow = 0`,
+      and Winsock resets a full queue instead, which is why the count is Linux-only. On Windows the
+      case must still fail with the establishment's chained cause.
+    - D3's stalled-sink case rests on two premises: socket buffers far smaller than 64 MiB, and the
+      client's socket closing with unread data, so the peer's blocked write is released by a RST. On
+      Linux the peer wrote 84 of its 1,024 chunks. Record what Windows does. A green with a different
+      count is a result; a hang in the peer's write is a finding.
+  - **Run `…10` whole.**
+  - **Record both modules' x86 debug sizes:** 39.8 and 46.6 MB at a64 clang debug. Both carry their
+    reason already. `…10`'s x86 size is the one most likely to be large.

@@ -677,3 +677,51 @@ estimated at about 41 and 39.7 MB there, from `…7`'s ratio.
 **Owed: the Windows matrix**, because D1 changes how a TLS ending is classified and D2 changes the
 order of the first I/O on every HTTP/1.1 connection. It is handed off in `windows-matrix-handoff.md`,
 "astra's second review", and CS-1 is ready without waiting for it, as decided at set-up.
+
+### CS-2 — D3, D4, D5, E1–E4, and the pool's double charge — ready 2026-09-27
+
+**Merged at `bc431f2`** from `astra2-cs2`. Tier 1 was re-captured once from the integrated tree
+(`ea30d68`), with the 35 lines it reported read against the manifest diff.
+
+- **D3** (`9028bff`, comments `810f73c`) is coded to its design note, which was agreed after two
+  rounds (`1703275` → `2ef6c9d` → `2e5f124`).
+  - The knob is `maxOutstandingResponseBodySize`, 64 MiB.
+  - Each held block is charged its payload plus `OUTSTANDING_BLOCK_ALLOWANCE`, derived from the
+    types: 232 bytes at a64 clang debug.
+  - There are four release sites. The fourth is the guard that delivers nothing once the request has
+    failed.
+  - **The red was shown on the unenforced knob**, the declarations alone, since the knob is new API.
+    The review judged it a real red: every block delivered, 64 MiB held, and a late block offered.
+- **D4** (`b1adabf`): each block's accepted bytes are recorded before the next callback, and a sink
+  that threw gets nothing more and no replay. Red: the count read 0 instead of 5, and a replay handed
+  the sink its prefix twice. It changed an existing case's count, updated in `6cddd37`.
+- **D5** (`0f3b0ba`): seven cases in the new `utf_baselib_httpclient9`, on `ScriptedPeer`.
+- **E1** (`1196218`) and **E3** (`02006d4`) are in the new `…10`. **E2** (`724f82e`) is in `…9`,
+  and **E4** (`651ff0f`) renames a case in `…4`. E1, E2 and E3 each turned red under a probe.
+- **The pool fix, scheduled on sight** (`0408adc` red, `ebcaff4`), in `h2client4`.
+- **Shared test helpers**, hoisted into `HttpClientSessionTestUtils.h` (`a25b79c`, `9f3a9f1`).
+
+**Reviewed by fable:** the design note in two rounds, and the checkpoint in one round and a
+confirmation. Round 1 was READY WITH CHANGES, all Low; its two comment proposals landed in `2749692`,
+and it closed with no open finding. The review also verified the pool fix's reversal condition: the
+one arm that retires a never-usable entry without a charge is owed-list row I10, and nothing
+depended on the charge the fix removed.
+
+**The gate:** clang release and gcc debug over the nine affected modules:
+- `h2client4`, `h2client5`, `httpclient`, `…4`, `…5`, `…6` and `…8`, each of whose `.d` names
+  `HttpClientRequestTask.h`, `ClientSession.h`, `ConnectionPool.h` or `HttpClientSessionTestUtils.h`;
+- the new `…9` and `…10`.
+
+**Green, 18 of 18**, on `ea30d68`:
+- each recompiled on the merged tree;
+- each entered and left every case, printed "No errors detected", and printed no failure and no
+  `leaked` line, read from each log.
+
+The logs are in `logs/astra2/gate/cs2/`.
+
+**Module sizes, at a64 clang debug, each with its reason in its `Main.cpp`:**
+- `utf_baselib_httpclient9`, 39.8 MB, and `…10`, 46.6 MB. They are at and over the target from their
+  first case, because the session instantiation is the cost.
+- `utf_baselib_httpclient` grew to 34.5 MB.
+
+Their x86 sizes are owed to the Windows handoff, and so is E2's platform premise.
