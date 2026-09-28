@@ -38,6 +38,8 @@
 #include <vector>
 
 #include <utests/baselib/Http2DriverTestUtils.h>
+#include <utests/baselib/Http2TlsTestServer.h>
+#include <utests/baselib/HttpClientSessionTlsTestUtils.h>
 #include <utests/baselib/UtfCrypto.h>
 #include <utests/baselib/Utf.h>
 
@@ -58,8 +60,8 @@
  * selects http/1.1, and the HTTP/1.1 driver refuses the source. Its discrimination was shown with a
  * local probe which made narrowToHttp2( ) do nothing - red with the probe, green without.
  *
- * The session helpers are utest::tlssession's, which is this module's other header and is included
- * before this one ( the append convention in the module's Main.cpp ).
+ * The session helpers are utests/baselib/HttpClientSessionTlsTestUtils.h's, which utest::tlssession
+ * names in this module's other header, included before this one ( the module's Main.cpp ).
  */
 
 namespace utest
@@ -67,129 +69,18 @@ namespace utest
     namespace tlssession
     {
         /**
-         * @brief class PreferringTlsPeerT - the HTTP/2 peer of design 8.2 over TLS, choosing from an
-         * ALPN preference the case gives it
-         *
-         * utf_baselib_httpclient5 has a peer of this shape, which is not shared, because a test
-         * header may never be included across module directories ( src/utests/AGENTS.md ). The
-         * preference is applied to the server context the base has already built: initServerContext( )
-         * runs from TcpServerBase's own constructor when the policy needs a handshake
+         * @brief The TLS peer of design 8.2 with an ALPN preference -
+         * utests/baselib/Http2TlsTestServer.h's, the one peer of this kind in the tree
          */
 
-        template
-        <
-            typename E = void
-        >
-        class PreferringTlsPeerT :
-            public h2peer::Http2TestServerT< bl::tasks::TcpSslSocketAsyncBase >
-        {
-            BL_DECLARE_OBJECT_IMPL( PreferringTlsPeerT )
-
-        public:
-
-            typedef h2peer::Http2TestServerT< bl::tasks::TcpSslSocketAsyncBase > base_type;
-
-        protected:
-
-            PreferringTlsPeerT(
-                SAA_in          const bl::om::ObjPtr< bl::tasks::TaskControlTokenRW >& controlToken,
-                SAA_in          const std::vector< std::string >&                preference
-                )
-                :
-                base_type(
-                    controlToken,
-                    "localhost",
-                    0U /* ephemeral */,
-                    test::UtfCrypto::getDefaultServerKey(),
-                    test::UtfCrypto::getDefaultServerCertificate()
-                    )
-            {
-                UTF_REQUIRE( nullptr != base_type::m_serverContext.get() );
-
-                bl::crypto::CryptoBase::setAlpnServerPreference(
-                    *base_type::m_serverContext,
-                    preference
-                    );
-            }
-        };
-
-        typedef bl::om::ObjectImpl< PreferringTlsPeerT<> >                      PreferringTlsPeer;
-
-        inline auto makePreferringTlsPeer( SAA_in const std::vector< std::string >& preference )
-            -> bl::om::ObjPtr< PreferringTlsPeer >
-        {
-            using namespace bl::tasks;
-
-            const auto controlToken =
-                SimpleTaskControlTokenImpl::createInstance< TaskControlTokenRW >();
-
-            return PreferringTlsPeer::createInstance<>( controlToken, preference );
-        }
+        using h2peer::makeTlsPeer;
 
         /**
-         * @brief class UploadSourceT - a streaming upload which produces real bytes and can rewind
-         *
-         * Rewindable so that nothing but the protocol refusal can fail the upload: a request whose
-         * source could not rewind would be refused a replay for that reason instead
+         * @brief The rewindable streaming upload - utests/baselib/HttpClientSessionTlsTestUtils.h's
+         * StringBodySource, under the name this case was written against
          */
 
-        template
-        <
-            typename E = void
-        >
-        class UploadSourceT : public bl::httpclient::BodySource
-        {
-            BL_DECLARE_OBJECT_IMPL_ONEIFACE( UploadSourceT, bl::httpclient::BodySource )
-
-        protected:
-
-            const std::string                                                   m_payload;
-            bl::cpp::ScalarTypeIniter< std::size_t >                            m_offset;
-
-            UploadSourceT( SAA_in std::string payload )
-                :
-                m_payload( BL_PARAM_FWD( payload ) )
-            {
-            }
-
-        public:
-
-            virtual auto read( SAA_inout bl::data::DataBlock& target )
-                -> bl::httpclient::BodyReadResult OVERRIDE
-            {
-                bl::httpclient::BodyReadResult result;
-
-                const auto room = target.capacity() - target.size();
-                const auto left = m_payload.size() - m_offset;
-                const auto count = std::min< std::size_t >( room, left );
-
-                if( count )
-                {
-                    std::memcpy( target.begin() + target.size(), m_payload.c_str() + m_offset, count );
-
-                    target.setSize( target.size() + count );
-
-                    m_offset = m_offset.value() + count;
-                }
-
-                result.size = count;
-                result.isEndOfStream = ( m_offset == m_payload.size() );
-
-                return result;
-            }
-
-            virtual bool canRewind() const NOEXCEPT OVERRIDE
-            {
-                return true;
-            }
-
-            virtual void rewind() OVERRIDE
-            {
-                m_offset = 0U;
-            }
-        };
-
-        typedef bl::om::ObjectImpl< UploadSourceT<> >                           UploadSource;
+        typedef sessiontls::StringBodySource                                    UploadSource;
 
     } // tlssession
 
@@ -222,7 +113,7 @@ UTF_AUTO_TEST_CASE( ClientSessionTls_StreamingUploadAloneIsOfferedHttp2OnlyTests
     preference.push_back( "http/1.1" );
     preference.push_back( "h2" );
 
-    const auto peer = makePreferringTlsPeer( preference );
+    const auto peer = makeTlsPeer( preference );
 
     peer -> setResponder(
         []( SAA_in const h2peer::Http2TestRequest& request ) -> h2peer::Http2ResponseScript

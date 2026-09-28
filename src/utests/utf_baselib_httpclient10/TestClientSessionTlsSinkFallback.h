@@ -36,7 +36,9 @@
 #include <string>
 #include <vector>
 
+#include <utests/baselib/Http1DriverTlsTestUtils.h>
 #include <utests/baselib/HttpClientSessionTestUtils.h>
+#include <utests/baselib/HttpClientSessionTlsTestUtils.h>
 #include <utests/baselib/UtfCrypto.h>
 #include <utests/baselib/Utf.h>
 
@@ -61,11 +63,11 @@
  * this case landed, green, before D4's change, and has to stay green across it.
  *
  * WHY NOT IN utf_baselib_httpclient5, where the same exchange without a sink lives: that module is
- * over the 40 MB target ( its Main.cpp records 46.9 MB ), and src/utests/AGENTS.md says not to add
- * to one there. Its peer is not shared either, because a test header may never be included across
- * module directories; the peer below is this module's own, a smaller one written for the one
- * script these cases run. The counting sink IS shared - it was utf_baselib_httpclient4's, and moved
- * to utests/baselib/HttpClientSessionTestUtils.h for this case.
+ * over the 40 MB target ( its Main.cpp records 47.5 MB ), and src/utests/AGENTS.md says not to add
+ * to one there. What the case needs is shared rather than copied, since a test header may never be
+ * included across module directories: the peer is utests/baselib/Http1DriverTlsTestUtils.h's, the
+ * session helpers utests/baselib/HttpClientSessionTlsTestUtils.h's, and the counting sink - once
+ * utf_baselib_httpclient4's - utests/baselib/HttpClientSessionTestUtils.h's.
  *
  * The host is "localhost" because the client verifies the peer name: UtfMain registers the dev root
  * CA for every test binary and the test server certificate is issued for that name.
@@ -75,356 +77,24 @@ namespace utest
 {
     namespace tlssession
     {
-        typedef bl::tasks::TcpSslSocketAsyncStrandedBase                        tls_stream_t;
-
-        typedef bl::httpclient::ClientSessionImplT< tls_stream_t >              TlsSessionImpl;
-
-        inline auto makeSession(
-            SAA_in_opt      bl::httpclient::ClientSessionConfig                 config =
-                                bl::httpclient::ClientSessionConfig()
-            )
-            -> bl::om::ObjPtr< TlsSessionImpl >
-        {
-            return TlsSessionImpl::createInstance( BL_PARAM_FWD( config ) );
-        }
-
-        inline auto makeRequest(
-            SAA_in          const bl::os::port_t                                port,
-            SAA_in_opt      const std::string&                                  target = "/",
-            SAA_in_opt      const std::string&                                  method = "GET"
-            )
-            -> bl::httpclient::ClientRequest
-        {
-            bl::httpclient::ClientRequest request;
-
-            request.method( bl::cpp::copy( method ) );
-
-            request.url(
-                bl::net::Uri::parse(
-                    "https://localhost:" +
-                    bl::utils::lexical_cast< std::string >( port ) +
-                    target
-                    )
-                );
-
-            return request;
-        }
-
         /**
-         * @brief Runs one session task to completion; the queue keeps it, so a case can look at how
-         * it ended
+         * @brief The TLS session's helpers - utests/baselib/HttpClientSessionTlsTestUtils.h's, which
+         * this module carried a copy of
          */
 
-        inline void runSessionTask( SAA_in const bl::om::ObjPtr< bl::tasks::Task >& task )
-        {
-            using namespace bl;
-            using namespace bl::tasks;
-
-            scheduleAndExecuteInParallel(
-                [ & ]( SAA_in const om::ObjPtr< ExecutionQueue >& eq ) -> void
-                {
-                    eq -> setOptions( ExecutionQueue::OptionKeepAll );
-
-                    eq -> push_back( task );
-
-                    eq -> wait( task );
-                }
-                );
-        }
+        using sessiontls::makeSession;
+        using sessiontls::makeRequest;
+        using sessiontls::runSessionTask;
+        using sessiontls::requireTaskSucceeded;
+        using sessiontls::bodyOf;
+        using sessiontls::statsOf;
 
         /**
-         * @brief Fails with the reason the task failed - a function and not a UTF macro argument,
-         * because UTF_FAIL( msg ) takes the globals lock before it evaluates msg and bl::os::mutex
-         * is not recursive ( Utf.h )
+         * @brief The TLS HTTP/1.1 peer - utests/baselib/Http1DriverTlsTestUtils.h's, the one peer of
+         * this kind in the tree, under the name this case was written against
          */
 
-        inline void requireTaskSucceeded( SAA_in const bl::om::ObjPtr< bl::tasks::Task >& task )
-        {
-            if( ! task -> isFailed() )
-            {
-                return;
-            }
-
-            UTF_FAIL(
-                "the session request task failed: " +
-                bl::eh::diagnostic_information( task -> exception() )
-                );
-        }
-
-        inline auto bodyOf( SAA_in const bl::httpclient::ClientResponse& response ) -> std::string
-        {
-            const auto& block = response.body();
-
-            if( ! block )
-            {
-                return std::string();
-            }
-
-            return std::string(
-                block -> begin() + block -> offset1(),
-                block -> begin() + block -> size()
-                );
-        }
-
-        inline auto statsOf( SAA_in const bl::om::ObjPtr< TlsSessionImpl >& session )
-            -> bl::httpclient::ConnectionPoolImpl::Stats
-        {
-            return bl::om::qi< bl::httpclient::ConnectionPoolImpl >( session -> pool() ) -> stats();
-        }
-
-        /**
-         * @brief class Http1TlsPeer - a loopback HTTP/1.1 peer over TLS which selects "http/1.1"
-         * and runs one canned script on one connection
-         *
-         * THE STEERING IS THE ALPN PREFERENCE AND NOTHING ELSE. The client offers { "h2", "http/1.1" }
-         * by default, a peer may select only from what it was offered ( RFC 7301 3.1 ), and this
-         * context prefers "http/1.1" alone - so the connection the pool dispatched the rider onto
-         * turns out to speak HTTP/1.1, which is the fallback.
-         *
-         * Port zero, so no machine global test lock is needed, and the script runs on a worker
-         * thread so that the test thread is free to run the session. The address is IPv4 loopback
-         * while the client connects to "localhost"; asio::async_connect( ) walks every resolved
-         * endpoint, the arrangement utf_baselib_httpclient5's peer of the same name runs green.
-         * It is that peer's shape with everything its close_notify cases needed taken out.
-         */
-
-        class Http1TlsPeer
-        {
-            BL_NO_COPY_OR_MOVE( Http1TlsPeer )
-
-        public:
-
-            typedef bl::asio::ssl::stream< bl::asio::ip::tcp::socket >          sslstream_t;
-
-            typedef bl::cpp::function
-            <
-                void (
-                    SAA_inout       Http1TlsPeer&                               peer,
-                    SAA_inout       sslstream_t&                                stream
-                    )
-            >
-            script_t;
-
-            Http1TlsPeer( SAA_in script_t&& script )
-                :
-                m_serverContext(
-                    bl::crypto::CryptoBase::createAsioSslServerContext(
-                        test::UtfCrypto::getDefaultServerKey(),
-                        test::UtfCrypto::getDefaultServerCertificate()
-                        )
-                    ),
-                m_acceptor( m_ioService ),
-                m_port( 0U ),
-                m_script( BL_PARAM_FWD( script ) )
-            {
-                std::vector< std::string > preference;
-
-                preference.push_back( "http/1.1" );
-
-                bl::crypto::CryptoBase::setAlpnServerPreference( *m_serverContext, preference );
-
-                const bl::asio::ip::tcp::endpoint endpoint(
-                    bl::asio::ip::address_v4::loopback(),
-                    0 /* ephemeral */
-                    );
-
-                m_acceptor.open( endpoint.protocol() );
-                m_acceptor.bind( endpoint );
-                m_acceptor.listen();
-
-                m_port = m_acceptor.local_endpoint().port();
-
-                m_thread.reset( new bl::os::thread( bl::cpp::bind( &Http1TlsPeer::run, this ) ) );
-            }
-
-            ~Http1TlsPeer() NOEXCEPT
-            {
-                BL_NOEXCEPT_BEGIN()
-
-                {
-                    /*
-                     * Closing the acceptor does not reliably wake a worker already blocked in
-                     * accept( ), so one throwaway connection does it - harmless when the script
-                     * has already run
-                     */
-
-                    bl::eh::error_code ec;
-
-                    bl::asio::io_service ioService;
-                    bl::asio::ip::tcp::socket socket( ioService );
-
-                    socket.connect(
-                        bl::asio::ip::tcp::endpoint(
-                            bl::asio::ip::address_v4::loopback(),
-                            m_port
-                            ),
-                        ec
-                        );
-
-                    socket.close( ec );
-                }
-
-                bl::os::safeThreadJoin( *m_thread );
-
-                BL_NOEXCEPT_END()
-            }
-
-            bl::os::port_t port() const NOEXCEPT
-            {
-                return m_port;
-            }
-
-            void record( SAA_in std::string&& what )
-            {
-                BL_MUTEX_GUARD( m_lock );
-
-                m_records.push_back( BL_PARAM_FWD( what ) );
-            }
-
-            auto records() const -> std::vector< std::string >
-            {
-                BL_MUTEX_GUARD( m_lock );
-
-                return m_records;
-            }
-
-            auto failure() const -> std::string
-            {
-                BL_MUTEX_GUARD( m_lock );
-
-                return m_failure;
-            }
-
-            /*
-             * The script vocabulary - all synchronous, all on the worker thread
-             */
-
-            /**
-             * @brief Reads to the end of the request head and stops there
-             */
-
-            static auto readRequestHead( SAA_inout sslstream_t& stream ) -> std::string
-            {
-                std::string data;
-
-                char buffer[ 1024 ];
-
-                while( std::string::npos == data.find( "\r\n\r\n" ) )
-                {
-                    bl::eh::error_code ec;
-
-                    const auto transferred =
-                        stream.read_some( bl::asio::buffer( buffer, sizeof( buffer ) ), ec );
-
-                    if( ec || 0U == transferred )
-                    {
-                        break;
-                    }
-
-                    data.append( buffer, transferred );
-                }
-
-                return data;
-            }
-
-            static void send(
-                SAA_inout       sslstream_t&                                    stream,
-                SAA_in          const std::string&                              data
-                )
-            {
-                bl::eh::error_code ec;
-
-                ( void ) bl::asio::write( stream, bl::asio::buffer( data ), ec );
-            }
-
-            /**
-             * @brief Reads until the client lets the connection go, which is what lets this
-             * worker finish when the session is disposed. Nothing asserts on how it ended
-             */
-
-            static void readUntilTheEnd( SAA_inout sslstream_t& stream )
-            {
-                char buffer[ 16U * 1024U ];
-
-                for( ;; )
-                {
-                    bl::eh::error_code ec;
-
-                    ( void ) stream.read_some( bl::asio::buffer( buffer, sizeof( buffer ) ), ec );
-
-                    if( ec )
-                    {
-                        return;
-                    }
-                }
-            }
-
-            /**
-             * @brief The request line of a recorded request, for a readable assertion
-             */
-
-            static auto requestLineOf( SAA_in const std::string& request ) -> std::string
-            {
-                const auto pos = request.find( "\r\n" );
-
-                return std::string::npos == pos ? request : request.substr( 0U, pos );
-            }
-
-        private:
-
-            void run()
-            {
-                sslstream_t stream( m_ioService, *m_serverContext );
-
-                try
-                {
-                    bl::eh::error_code ec;
-
-                    m_acceptor.accept( stream.next_layer(), ec );
-
-                    if( ec )
-                    {
-                        record( "accept-failed" );
-
-                        return;
-                    }
-
-                    stream.handshake( bl::asio::ssl::stream_base::server, ec );
-
-                    if( ec )
-                    {
-                        record( "handshake-failed:" + ec.message() );
-
-                        return;
-                    }
-
-                    m_script( *this, stream );
-                }
-                catch( std::exception& e )
-                {
-                    BL_MUTEX_GUARD( m_lock );
-
-                    m_failure = e.what();
-                }
-
-                bl::eh::error_code ec;
-
-                stream.next_layer().close( ec );
-            }
-
-            bl::cpp::SafeUniquePtr< bl::asio::ssl::context >                    m_serverContext;
-
-            bl::asio::io_service                                                m_ioService;
-            bl::asio::ip::tcp::acceptor                                         m_acceptor;
-            bl::os::port_t                                                      m_port;
-            const script_t                                                      m_script;
-
-            mutable bl::os::mutex                                               m_lock;
-            std::vector< std::string >                                          m_records;
-            std::string                                                         m_failure;
-
-            bl::cpp::SafeUniquePtr< bl::os::thread >                            m_thread;
-        };
+        typedef http1drivertls::TlsPeer                                         Http1TlsPeer;
 
     } // tlssession
 
@@ -458,7 +128,7 @@ UTF_AUTO_TEST_CASE( ClientSessionTls_SinkIsToldCompleteOnceAcrossTheFallbackRetr
     Http1TlsPeer peer(
         []( SAA_inout Http1TlsPeer& self, SAA_inout Http1TlsPeer::sslstream_t& stream ) -> void
         {
-            const auto head = Http1TlsPeer::readRequestHead( stream );
+            const auto head = self.readRequestHead( stream );
 
             self.record( "head:" + Http1TlsPeer::requestLineOf( head ) );
 
@@ -470,7 +140,7 @@ UTF_AUTO_TEST_CASE( ClientSessionTls_SinkIsToldCompleteOnceAcrossTheFallbackRetr
                 "secure"
                 );
 
-            Http1TlsPeer::readUntilTheEnd( stream );
+            self.observeStreamEnd( stream );
         }
         );
 

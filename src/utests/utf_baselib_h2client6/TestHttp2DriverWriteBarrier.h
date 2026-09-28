@@ -145,8 +145,8 @@ namespace utest
 
             /*
              * ELAPSED TIME, AGAINST A STEADY CLOCK, AND AN ANSWER COUNTS ONLY IF IT WAS SEEN INSIDE
-             * THE WINDOW - the same rule, and the same reason, as the HTTP/1.1 copies of this helper
-             * in utests/baselib/Http1DriverTestUtils.h and utf_baselib_httpclient5. Counting the
+             * THE WINDOW - the same rule, and the same reason, as the HTTP/1.1 twin of this helper,
+             * utests/baselib/Http1DriverTestUtils.h's waitForTaskEnd( ). Counting the
              * interval the loop asked to sleep let the window grow under load, which a caller asking
              * whether a task SURVIVED a bound pays for with a false red; the state is read before
              * the clock, so a completion counts only when the clock read after it still says inside
