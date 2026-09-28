@@ -1,7 +1,17 @@
 # CS-6 / I2 — a TLS task's shutdown after the peer truncated: design note
 
-**Date:** 2026-09-27. **Status:** revision 1, written by lane 3, **for review** — not coded until this
+**Date:** 2026-09-27. **Status:** revision 2, written by lane 3, **for re-check** — not coded until this
 note carries a dated agreement line (§10).
+
+**Revisions.** r1 `a8542d6` (with `700da22` and `bb36363`). **r2 (this)** carries review round 1
+(`CS6-I2-design-r1.md`, agree with changes) and the orchestrator's answers (`CS6-I2-orchestrator-r2.md`),
+which accept everything: the null-stream guard (F1, §4.2 and §9), §7's ordering argument replaced (F2),
+the clean path's assignment kept literally (§9), four text corrections (F3-F6), the sharper red (P8,
+§8), ThreadSanitizer over `utf_baselib_httpclient8` too (P9), the module's `devenv7_only` marker (P10),
+the readers of `hasShutdownCompletedSuccessfully( )` (P11, §5), and the stale CS-1 comment folded in
+(F7, §9). Two of the review's own premises are corrected where they are used: the Boost guards around
+asio are cited as they exist (a 1.81 guard does exist, in `UuidBoostImports.h:54`, but it is not about
+asio), and 22 other modules carry the marker, not 23.
 
 **What it implements.** Owed-list row I2 of
 [`astra-remediation-owed-work.md`](astra-remediation-owed-work.md), decided by the maintainer on
@@ -62,8 +72,11 @@ relies on is CS-1's, recorded in `TestHttp1DriverTlsTruncation.h:66-81`. Each cl
   pending and a positive result and answers `want_output` (`engine.ipp:324-328`); asio writes the alert
   and completes the handler with no error. **No read is started.** **VERIFIED.**
 - **OpenSSL's own precedent.** With `SSL_OP_IGNORE_UNEXPECTED_EOF`, OpenSSL answers an unexpected EOF
-  with exactly `SSL_set_shutdown( ssl, SSL_RECEIVED_SHUTDOWN )` (`ssl/record/rec_layer_s3.c:512`). That
-  path never runs for us, because the BIO pair never reports an EOF (§1.1). **VERIFIED.**
+  by setting `SSL_RECEIVED_SHUTDOWN` — `SSL_set_shutdown( ssl, SSL_RECEIVED_SHUTDOWN )` — and, because it
+  is making the ending look clean, by faking `warn_alert = SSL_AD_CLOSE_NOTIFY` beside it
+  (`ssl/record/rec_layer_s3.c:511-513`). The flag is the precedent; the faked alert is what the next
+  paragraph rejects. That path never runs for us, because the BIO pair never reports an EOF (§1.1).
+  **VERIFIED.**
 
 **Why it is set when the shutdown begins, and not when the truncation is seen.** Once the flag is set,
 `SSL_read( )` returns 0 at once (`ssl/ssl_lib.c:2348-2351`), and `SSL_get_error( )` calls that
@@ -127,9 +140,10 @@ handler in one which notes a truncation before forwarding the result.
 - *Against:* a new handler type on **every TLS read in the library and in every application**, so every
   TLS module's object changes. The wrapper must forward the handler's associated executor, allocator and
   cancellation slot, and its continuation hint, across the Boost versions the library still compiles
-  against — guards for versions below 1.74 and 1.81 remain in `src/include` — which means the generic
-  associator where the Boost in use has one, the individual traits where it does not, and the legacy
-  `asio_handler_*` hooks on the oldest. A composed `asio::async_read( )` hands this function its own
+  against — the guards around asio in `src/include` are at 1.72, 1.74 and 1.89
+  (`OSBoostImports.h:77`, `OSImplPlatformCommon.h:1175`, `BoostAsioCompat.h:41`) — which means the
+  generic associator where the Boost in use has one, the individual traits where it does not, and the
+  legacy `asio_handler_*` hooks on the oldest. A composed `asio::async_read( )` hands this function its own
   `read_op` (the file's comment at `:526-547` records the data-loss defect that forwarding this very
   handler once caused). And a handler which can outlive the wrapper must not write into it. This is a
   universal path; its blast radius is the whole TLS stack.
@@ -140,13 +154,21 @@ component consumers ask what a TLS ending means, and they ask it about their own
   HTTP drivers ask of every read and write that ends (`Http1ConnectionTask.h:1384-1385`, `:852-853`;
   `Http2ConnectionTask.h:1604`, `:1629-1630`), and what the HTTP server's receive task asks
   (`HttpServer.h:178`). When the answer is yes, it records it on the stream.
+
+  Both predicates record **only when `m_sslStream` is non-null**. They are `NOEXCEPT` members of the
+  policy, and a task holds no stream before `createSocket( )` (a resolve failure reaches CHK_EC with
+  none, `TcpBaseTasks.h:1449`), after `resetStreamState( )` (`TcpSslBaseTasks.h:178`) and after
+  `detachStream( )` (`:718-725`); `getStream( )` asserts on null (`:266-271`). No path pairs a
+  truncation code with a null stream today — truncations come only from operations on a stream, and
+  `isProtocolHandshakeRetryableError( )` is behind `isChannelOpen( )` (`TcpBaseTasks.h:1474`) — but a
+  universal-path predicate must not depend on that. **VERIFIED.**
 - `isExpectedException( eptr, exception, ec )` (`TcpSslBaseTasks.h:438-463`) — virtual, non-static — is
   what every handler failure reaches: `BL_TASKS_HANDLER_CHK_EC( ec )` asks it (`TaskBase.h:139-157`), and
   so does every catch of the handler epilogs that carries a code (`:195-257`). When the code is a
   truncation, it records it on the stream too. Every override above the policy reaches it for a
   truncation code: the connector's (`TcpBaseTasks.h:1504`) answers early only for a cancel, the block
   transfer connection's (`TcpBlockTransferCommon.h:407`) only for a cancel, an eof or a transport code
-  (`isExpectedSocketException( )`, `TcpBaseTasks.h:151-230`), SimpleHttpTask's
+  (`isExpectedSocketException( )`, `TcpBaseTasks.h:152-235`), SimpleHttpTask's
   (`SimpleHttpTask.h:439`) only for an expected HTTP status, and the block transfer client's
   (`TcpBlockTransferClient.h:753`) asks its base first; `Pinger.h:74`'s is not a stream task.
   **VERIFIED**, by grep and reading each. *(Corrected 2026-09-27, before review: the first commit said no
@@ -190,7 +212,7 @@ own `scheduleTask( )` (`:465-468`) and the block transfer client's shutdown-only
 | `Http1ConnectionTaskT` (`:316`) | read and write ask the predicate and swallow the ending | yes | teardown prompt; the task ends clean instead of failing as a cancel 60 s later |
 | `Http2ConnectionTaskT` (`:440`) | `isPeerClosed( )` / `isPeerClosedOnWrite( )` ask it and swallow | yes | the same — the hang is **INFERRED** for this driver and will be measured by §8's red |
 | `HttpServerReceiveRequestTask` | asks it (`HttpServer.h:178`), then fails the task through CHK_EC; the connection then ends with no send task (`:598`) | yes | none: that path runs no TLS shutdown, and the record dies with the stream |
-| `HttpServerSendResponseTask` (`:311`) | writes only | — | none |
+| `HttpServerSendResponseTask` (`:311`) | writes only; a write that ends with a truncation fails through CHK_EC | yes, through `isExpectedException( )` | teardown prompt on that failure; nothing else changes |
 | `TcpBlockTransferServer` (`:184`) | reads fail through `BL_TASKS_HANDLER_BEGIN_CHK_EC( )` (`:552`, `:1182`, …) | yes | the teardown no longer holds the connection for 60 s; the task still fails with the original truncation, as today |
 | `TcpBlockTransferClientConnectionT` | reads fail through `BEGIN_CHK_EC( )` (`:482`, `:522`, `:744`); the owner re-runs it for the shutdown alone (`:1664-1670`) | yes, and the record survives the re-run (§4.1) | the same |
 | `SimpleHttpTaskT` (`:155`) | failures go through CHK_EC (`:661`, `:679`, `:726`, `:872`); **a complete Content-Length body ended by a truncation is a success**, classified by the *static* `isExpectedProtocolException( )` (`:832-834`) | failures yes; **that success, no** — until `SimpleHttpTask.h:833` asks the member predicate, which is part of this change (§9) | failures prompt; that success too, with the one line. Without it the success waits 60 s and then fails as a cancel (**INFERRED**, by the same path as the drivers', not measured) |
@@ -209,7 +231,11 @@ bidirectional closure completed: `onShutdownInternal( )` sets it from the shutdo
 already in. After a truncation the peer's never came, so the fix keeps it false. This matters:
 `utf_baselib_io`'s `TestIO.h:3194-3205` asserts it is false on a server whose peer was cancelled with a
 FIN and no close_notify — a truncation on the server's side, recorded through CHK_EC (INFERRED; that
-case is in the gate either way). `wasShutdownInvoked( )` and `isShutdownNeeded( )` are unchanged.
+case is in the gate either way). Its only readers before this change are test assertions: three in
+`TestIO.h` (`:561`, `:2470`, `:3204`), and one on a freshly built wrapper in
+`utf_baselib_http2/TestAsioSslStreamWrapper.h:209`, which no shutdown has touched; no library code
+decides on it. **VERIFIED**, by grep.
+`wasShutdownInvoked( )` and `isShutdownNeeded( )` are unchanged.
 
 ## 6. Why a clean ending is untouched
 
@@ -228,59 +254,105 @@ case is in the gate either way). `wasShutdownInvoked( )` and `isShutdownNeeded( 
 
 ## 7. Thread safety of the record
 
-A plain flag, as the wrapper's other state is:
-- **Every write** happens inside a handler of the task which owns the stream, before that handler
-  releases the task lock: CHK_EC and the epilog catches run under it (`TaskBase.h:107-117`); the
-  HTTP/2 driver asks inside its prolog (`Http2ConnectionTask.h:1795`, `:1879`); the HTTP/1.1 driver
-  asks just before its prolog in the same strand handler (`Http1ConnectionTask.h:1384-1387`,
-  `:852-868`).
-- **Every read** happens under the task lock — `scheduleTaskFinishContinuation( )` from
-  `notifyReadyImpl( )` (`TaskBase.h:564-570`), `scheduleProtocolOperations( )` from `scheduleTask( )`.
-- A lock release after the write and the acquire before the read order the two. **INFERRED**; §8 runs
-  the new module under ThreadSanitizer with its positive control.
+A plain flag, with the discipline the wrapper's other state already has:
+`m_hasHandshakeCompletedSuccessfully` is written by `onHandshakeInternal( )`
+(`AsioSslStreamWrapper.h:312`) before the transfer callback takes the task lock
+(`TcpSslBaseTasks.h:574`) and read under it later.
+
+- **Written under the task lock** by every CHK_EC and epilog catch (`TaskBase.h:107-120`, `:139-157`,
+  `:195-254`), by the HTTP/2 driver inside its prolog (`Http2ConnectionTask.h:1642` in `:1638`,
+  `:1879` in `:1795`), and by `onShutdownCompleted( )` (`TcpSslBaseTasks.h:622` in `:594`).
+- **Written before the prolog, outside the lock,** by the HTTP/1.1 driver on the stream's strand
+  (`Http1ConnectionTask.h:1384-1385` before `:1387`; `:852-853` before `:868`), by the HTTP server's
+  receive task on a pool thread (`HttpServer.h:178-181` before `:183`), and by `SimpleHttpTask.h:832-835`
+  after §9's switch (before `:837` or `:872`).
+- **Read** only by the wrapper's `beginProtocolShutdown( )`, reached from
+  `scheduleTaskFinishContinuation( )` under the lock in `notifyReadyImpl( )` (`TaskBase.h:564-570`) or
+  from `scheduleProtocolOperations( )` under the lock in `scheduleNothrow( )` (`:1167`).
+
+What orders a pre-prolog write with the read: the read is reached from the writer's own epilog
+(`TaskBase.h:267`, program order) or, on a driver, from a later strand handler. The only other thread
+that can reach `scheduleTaskFinishContinuation( )` while a handler is between its write and its prolog
+is a cancel, and every cancel path sets `m_wasSocketShutdownForcefully` under the task lock before
+anything else (`requestCancel( )`, `TaskBase.h:1237-1243`; `TcpSslStrandedStreams.h:226`;
+`Http1ConnectionTask.h:2312`; `TcpSslBaseTasks.h:395-397`; the protocol timer, `:140`), so
+`scheduleTaskFinishContinuation( )` returns at `:474-501` and the wrapper is never asked. The HTTP
+server's receive task runs no TLS shutdown at all (§5). **VERIFIED** for these paths; **INFERRED** that
+no other reacher exists.
+
+**I13's class is not reintroduced.** I13 is asio socket state written from a cancelling thread while
+an operation starts on a pool thread (`TcpBaseTasks.h:319`). Nothing here touches socket state; the
+one new touch of shared OpenSSL state, `SSL_set_shutdown( )`, is on the thread and at the point where
+`async_shutdown( )` already runs `SSL_shutdown( )` inline (§2). **VERIFIED.** §8 runs the new module
+under ThreadSanitizer with its positive control.
+
+*(Revised 2026-09-27 after review round 1, F2: the first revision said every write happens before its
+handler releases the task lock, and that a release and an acquire order the two. Three sites write
+before their prolog, outside the lock, and the ordering is the one above.)*
 
 ## 8. Tests — `utf_baselib_tasks3`, a new numbered sibling
 
 A new module, because `utf_baselib_tasks` is 67.7 MB at win-x86 debug (`UtfBaselibTasks2Main.cpp`
-says so) and `…2` instantiates no TLS policy; no other lane has reserved the name. I13's cases go
-there too. Its TLS peer is a raw `asio::ssl::stream` server of its own,
-which ends the stream in a chosen way — it is not an HTTP peer, so it is not one of the roles CS-5 is
-unifying. Every bound is well under the 60 s timer, every rendezvous is the peer's own record, and no
-case sleeps. Probe tasks derive from the TLS policy, stranded and not, and end the way the consumers of §5
-do: one asks the predicate and ends clean (the drivers), one fails with the code (the messaging tasks).
+says so) and `…2` instantiates no TLS policy; no other lane has reserved the name. It carries the
+`devenv7_only` marker, as 22 other modules do, because the stranded policies `#error` below Boost 1.72
+(`TcpSslStrandedStreams.h:34-36`). I13's cases go there too. Its TLS peer is a raw `asio::ssl::stream`
+server of its own, which ends the stream in a chosen way — it is not an HTTP peer, so it is not one of
+the roles CS-5 is unifying. Every bound is well under the 60 s timer, every rendezvous is the peer's own
+record, and no case sleeps. Probe tasks derive from the TLS policy, stranded and not, and end the way
+the consumers of §5 do: one asks the predicate and ends clean (the drivers), one fails with the code
+(the messaging tasks).
 
 - **Characterization, committed before the fix and green on today's code:** a clean close_notify ending
   tears the task down within the bound, `hasShutdownCompletedSuccessfully( )` true; we close first and
   the peer answers — prompt; we close first and the peer **withholds** its close_notify — the task is
   still running when the peer is asked, and ends only once it answers.
-- **The red, committed before the fix:** a peer which truncates (a half-close, its socket kept open and
-  silent until the case ends) — the teardown does not end within the bound on today's code. It is
-  certain, not probable: with the peer silent, no event can wake the shutdown's read (§1.2).
-- **Green after the fix:** the same cases end within the bound; the peer read our close_notify;
-  `hasShutdownCompletedSuccessfully( )` false; the task that swallowed the ending ends clean, the one
-  that failed keeps its truncation.
-- **The drivers themselves:** an idle connection of each HTTP driver truncated by the same peer, if the
-  module's measured size allows, otherwise in a sibling; the existing D1 cases in `…httpclient8` run
-  through the fixed path unchanged and stay in the focused set.
+- **The red, committed before the fix:** a peer which truncates — a half-close, its socket kept open
+  and silent until the case ends. The probe's protocol timeout is shortened with `setProtocolTimeout( )`
+  (`TcpSslBaseTasks.h:682-685`) to a few seconds, so that on today's code the case observes the symptom
+  I2 names rather than a bound expiring: the task ends **as a cancel** (`operation_aborted`, through
+  `onProtocolTimer( )` `:136-156` and `onShutdownCompleted( )` `:613-641`) and
+  `hasShutdownCompletedSuccessfully( )` is false. On the connector the timer bounds the shutdown alone:
+  it is armed only by the finish continuation (`:512`) and by a directly scheduled handshake or
+  shutdown (`:359`, `:377`), and the connector's handshake is neither. After the fix the same case ends
+  before the timer — clean for the probe that swallows the ending, and with the truncation itself for
+  the one that fails with it — the peer has read our close_notify, and
+  `hasShutdownCompletedSuccessfully( )` is still false (§5). The red is certain, not
+  probable: with the peer silent, no event can wake the shutdown's read (§1.2). The teardown bound stays
+  as the safety net that fails a case instead of hanging it.
+- **The drivers themselves:** an idle connection of each HTTP driver truncated by the same peer, in a
+  sibling module if this one's measured size does not allow it (it is 34.5 MB at a64 clang debug with
+  the characterization alone); the existing D1 cases in `…httpclient8` run through the fixed path
+  unchanged and stay in the focused set.
 - **ThreadSanitizer** over the new module at the tip, with `utf_baselib_basictask` as the positive
-  control.
+  control, and over `utf_baselib_httpclient8`, whose D1 truncation cases exercise the HTTP/1.1 driver's
+  pre-prolog write (`Http1ConnectionTask.h:1384-1385`) and the fixed shutdown on the real driver, in the
+  same instrumented tree as I13's evidence.
 
 ## 9. Files
 
 - `src/include/baselib/tasks/AsioSslStreamWrapper.h` — the flag, its setter and getter, its reset in
   `beginProtocolHandshake( )`, `SSL_RECEIVED_SHUTDOWN` in `beginProtocolShutdown( )`, and
-  `onShutdownInternal( )` keeping a skipped wait from reading as a completed closure. **Owned by the
-  brief "if the note puts the record there"**, which it does.
-- `src/include/baselib/tasks/TcpSslBaseTasks.h` — the two predicates record. Owned.
+  `onShutdownInternal( )` keeping a skipped wait from reading as a completed closure — written so that
+  the assignment at `:331` is literally unchanged and the flag only ever clears what it set. **Owned by
+  the brief "if the note puts the record there"**, which it does.
+- `src/include/baselib/tasks/TcpSslBaseTasks.h` — the two predicates record, each guarded on
+  `m_sslStream` (§4.2). Owned.
 - `src/include/baselib/http/SimpleHttpTask.h:833` — **accepted by the orchestrator on 2026-09-27 as shape
   (A) applied to the legacy client's path, with the lane's ownership widened to that line.** It asks
   `base_type::isStreamTruncationError( ec )` where it asks the static `isExpectedProtocolException( nullptr,
   std::exception(), &ec )`. The two answer the same for both policies — the cleartext pair are both
   false, and the TLS pair are both `isExpectedSslErrorCode( ec )` (`TcpSslBaseTasks.h:341-344`,
   `:760-779`) — so the line changes what is recorded and nothing it decides. Without it the legacy client
-  keeps I2 on its one path that ends in success. Its test is a `SimpleHttpSslGetTask` against the same
-  peer, answering with a complete Content-Length body and then truncating: red on today's tree, green
-  after.
+  keeps I2 on its one path that ends in success. Its test is a `SimpleHttpSslTask`
+  (`http/SimpleHttpSslTask.h:94`, a GET) against the same peer, answering with a complete Content-Length
+  body and then truncating: red on today's tree, green after.
+- `src/utests/utf_baselib_httpclient8/TestHttp1DriverTlsTruncation.h:69-79` — **folded into CS-6 by the
+  orchestrator on 2026-09-27, the lane's ownership widened to these comment lines only.** The paragraph
+  records the 60 s ending as a measured property of the tree, and this change makes that false. It is
+  rewritten to say the driver's teardown is now prompt after a truncation (CS-6, I2), that the cases
+  still wait for the peer's script and cancel the driver, and that the cancel now meets a task which has
+  already ended. Comment-only, in its own commit after I2's logic. CS-5 edits other lines of the file
+  (its peer), so the two merge as separate hunks.
 
 ## 10. Reversing conditions, and agreement
 
