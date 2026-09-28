@@ -713,6 +713,183 @@ namespace utest
             ( void ) io.run();
         }
 
+        /**
+         * @brief The close a connection sends up after its request has already failed
+         */
+
+        enum class LateClose
+        {
+            ConnectionLoss,
+            Retryable,
+        };
+
+        /**
+         * @brief What the caller reads of a request's status, as one string a failed check prints
+         */
+
+        inline auto statusOf(
+            SAA_in          const bl::om::ObjPtr< bl::httpclient::HttpClientRequestTaskImpl >& taskImpl
+            )
+            -> std::string
+        {
+            using bl::httpclient::RequestOutcome;
+
+            const bool isRetryable = taskImpl -> isRetryable();
+            const auto outcome = taskImpl -> outcome();
+
+            return
+                std::string( "retryable=" ) +
+                ( isRetryable ? "true" : "false" ) +
+                " outcome=" +
+                (
+                    RequestOutcome::Completed == outcome ? "completed" :
+                        ( RequestOutcome::Failed == outcome ? "failed" : "unusable" )
+                );
+        }
+
+        /**
+         * @brief Fails one request, then delivers its stream's close LATE - in a batch of its own,
+         * after the caller's task has completed - and checks that isRetryable( ) and outcome( ) read
+         * as the failure left them, while the pool still gets the close's own verdict
+         *
+         * D1 (b') OF ASTRA'S THIRD REVIEW, T01: the pair is frozen at completion. A close which the
+         * request's own failure has beaten - a cancel or a timeout, applied in an earlier batch -
+         * still hands its slot back and lets go of the connection, and the pool is still told what
+         * the connection did; what it must not do is write the two fields a caller which has waited
+         * for the task may be reading
+         *
+         * THREE READINGS, AND THE MIDDLE ONE IS THE RACE. The first is made before the close is
+         * posted, and the mailbox lock orders it before anything the close writes. The second is
+         * made as soon as deliverClosed( ) returns, which does not wait for the drain, so nothing
+         * orders it against the drain applying the close: it is the reading a ThreadSanitizer build
+         * is asked about, and an ordinary build could see either value there. The third is made
+         * after the release - a deferred action of the batch which applies the close - so it is
+         * ordered after that batch's writes, and a close which wrote the pair is certain to show
+         *
+         * TWO CLOSES, ONE FOR EACH FIELD. A connection loss published as Draining reads
+         * ConnectionUnusable, which is what outcome( ) would take; a close marked retryable is what
+         * isRetryable( ) would take. Each is also the verdict the pool is handed
+         */
+
+        inline void requireALateCloseChangesNoStatus(
+            SAA_in          const FailBy                                        failBy,
+            SAA_in          const LateClose                                     lateClose
+            )
+        {
+            using namespace bl;
+            using namespace bl::httpclient;
+            using namespace utest::requesttask;
+
+            const bool isTimeout = FailBy::HeadersTimeout == failBy;
+            const bool isConnectionLoss = LateClose::ConnectionLoss == lateClose;
+
+            const auto connection = ProbeConnection::createInstance(
+                NegotiatedProtocol::fromAlpn( "h2" ),
+                false /* isSubmitRefused */
+                );
+
+            const auto pool = ProbePool::createInstance(
+                om::qi< ClientConnection >( connection ),
+                true /* isAnswered */
+                );
+
+            HttpClientRequestConfig config;
+
+            if( isTimeout )
+            {
+                config.responseHeadersTimeout = time::milliseconds( 250 );
+            }
+
+            const auto taskImpl = HttpClientRequestTaskImpl::createInstance(
+                makeRequest(),
+                makeKey(),
+                om::qi< ConnectionPool >( pool ),
+                config
+                );
+
+            const auto task = om::qi< tasks::Task >( taskImpl );
+
+            runTask(
+                task,
+                [ & ]() -> void
+                {
+                    connection -> waitFor( "submit" );
+
+                    if( ! isTimeout )
+                    {
+                        task -> requestCancel();
+                    }
+
+                    connection -> waitFor( "cancel:42" );
+                }
+                );
+
+            requireTrue( task -> isFailed(), "the request should have failed before the late close" );
+
+            const std::string expected = isTimeout ? "has timed out" : "was cancelled";
+
+            requireTrue(
+                std::string::npos != messageOf( task ).find( expected ),
+                "the request should have failed with '" + expected + "', and it reports: " +
+                    messageOf( task )
+                );
+
+            /*
+             * AT COMPLETION: a timeout or a cancel sets neither field, so they read as the task was
+             * made
+             */
+
+            const auto atCompletion = statusOf( taskImpl );
+
+            UTF_REQUIRE_EQUAL( atCompletion, std::string( "retryable=false outcome=failed" ) );
+
+            if( isConnectionLoss )
+            {
+                connection -> publishState( ConnectionState::Draining );
+
+                connection -> deliverClosed(
+                    eh::errc::make_error_code( eh::errc::connection_reset ),
+                    false /* isRetryable */
+                    );
+            }
+            else
+            {
+                connection -> deliverClosed(
+                    eh::errc::make_error_code( eh::errc::connection_aborted ),
+                    true /* isRetryable */
+                    );
+            }
+
+            /*
+             * WHILE THE CLOSE IS APPLIED - see the comment above
+             */
+
+            const auto whileClosing = statusOf( taskImpl );
+
+            requireTrue( pool -> waitForRelease(), "the stream slot never came back" );
+
+            /*
+             * AFTER THE RELEASE
+             */
+
+            const auto afterRelease = statusOf( taskImpl );
+
+            UTF_CHECK_EQUAL( whileClosing, atCompletion );
+            UTF_CHECK_EQUAL( afterRelease, atCompletion );
+
+            /*
+             * THE POOL STILL GETS THE CLOSE'S VERDICT, and one slot back: a second Closed would be
+             * dropped by applyClosed( )'s first line, and the probe drops its sink on the first
+             */
+
+            UTF_REQUIRE_EQUAL( pool -> releases().size(), 1U );
+
+            UTF_REQUIRE_EQUAL(
+                pool -> releases()[ 0 ],
+                std::string( isConnectionLoss ? "42:unusable" : "42:failed" )
+                );
+        }
+
     } // afterthefailure
 
 } // utest
@@ -882,6 +1059,31 @@ UTF_AUTO_TEST_CASE( ClientSession_ATimedOutRequestIsNotReplayedTests )
 
     requireATimeoutIsNotReplayed( true /* isRetryableClose */ );
     requireATimeoutIsNotReplayed( false /* isRetryableClose */ );
+}
+
+/**
+ * @brief A close which arrives after a cancel or a timeout changes neither isRetryable( ) nor
+ * outcome( ), and the pool still gets its verdict
+ *
+ * T01 of astra's third review, decided as D1 (b'): the two fields are frozen when the task completes,
+ * as I8 froze the response. Run four times - each way a request fails with its stream still open, a
+ * cancel and a response-headers timeout, against each close which would write a field, a connection
+ * loss published as Draining and a close marked retryable.
+ *
+ * RED BEFORE: after the release, outcome( ) read unusable behind the connection loss and
+ * isRetryable( ) read true behind the retryable close - both written after the caller's task had
+ * completed - and the reading made while the close was applied raced that write. GREEN AFTER: all
+ * three readings are the failure's, and the pool's record still carries the close's verdict, once
+ */
+
+UTF_AUTO_TEST_CASE( HttpClientRequestTask_ACloseAfterTheFailureChangesNoStatusTests )
+{
+    using namespace utest::afterthefailure;
+
+    requireALateCloseChangesNoStatus( FailBy::Cancel, LateClose::ConnectionLoss );
+    requireALateCloseChangesNoStatus( FailBy::Cancel, LateClose::Retryable );
+    requireALateCloseChangesNoStatus( FailBy::HeadersTimeout, LateClose::ConnectionLoss );
+    requireALateCloseChangesNoStatus( FailBy::HeadersTimeout, LateClose::Retryable );
 }
 
 #endif /* __UTEST_TESTHTTPCLIENTREQUESTTASKAFTERTHEFAILURE_H_ */

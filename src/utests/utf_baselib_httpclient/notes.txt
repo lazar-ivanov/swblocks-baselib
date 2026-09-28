@@ -111,3 +111,7 @@
 # CS-4 checkpoint review (P3) - the rule's control: a failure which is the connection's is still
 # replayed under retryIdempotentOnConnectionLoss, and not without it
 --log_level=message --run_test=ClientSession_AConnectionLossIsReplayedUnderTheKnobTests
+
+# CS-7 (astra's third review, T01, decided as D1 (b')) - a close which arrives after a cancel or a
+# timeout changes neither isRetryable( ) nor outcome( ), and the pool still gets its verdict
+--log_level=message --run_test=HttpClientRequestTask_ACloseAfterTheFailureChangesNoStatusTests
