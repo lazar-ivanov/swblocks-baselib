@@ -305,20 +305,7 @@ namespace bl
                  * and cancel() will stop existing such requests
                  */
 
-                if( force )
-                {
-                    /*
-                     * If the socket is being forcefully shutdown (e.g. as part of
-                     * canceling an I/O task) the linger option is set to disabled
-                     * (l_onoff = 0), which is the default graceful close: close() does not
-                     * block and the stack finishes the shutdown in the background. This is
-                     * not the abortive linger( true, 0 ) close, which would reset the peer
-                     */
-
-                    eh::error_code ec;
-                    socket.set_option( asio::socket_base::linger( false, 0 ), ec );
-                    checkSocketError( ec );
-                }
+                BL_UNUSED( force );
 
                 {
                     /*
