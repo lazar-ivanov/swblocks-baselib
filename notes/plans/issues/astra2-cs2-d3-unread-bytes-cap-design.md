@@ -189,9 +189,11 @@ is recorded as one Low item on the owed list, not changed here.
 **Corrected after implementation, 2026-09-28.** The exception above no longer holds: an overflowed
 request is **not** replayed, whatever close lands behind the marker, and "the knob's contract covers
 it" is superseded. That Low item is the owed list's I5. The maintainer decided it on 2026-09-27 and,
-with its timeout sibling, widened it into a general rule: a hop whose failure the request task
-decided itself - a timeout, a cancel, a body cap, a sink or a source which threw - is never replayed,
-and only a failure which is the connection's may be. The request task records which it was with the
+with its timeout sibling, widened it into a general rule - in the decision record's words (§11), "A
+hop whose failure the request task decided itself — a timeout, a body cap, a sink or body source which
+threw — is never replayed. Only a failure which is the connection's may be." The implementation
+marks a cancel the same way, which no caller can see: the session's own cancel latch refuses a
+cancelled chain before the rule is asked. The request task records which it was with the
 failure (`failWith( )`, read as `isOwnFailure( )`) and `chkPrepareRetry( )` refuses on it - CS-4,
 `535d830`, for both caps. The cases are `ClientSession_AnOverflowedRequestIsNotReplayedTests` and
 `ClientSession_ATimedOutRequestIsNotReplayedTests` in `utf_baselib_httpclient` (`7bc70f5`, `a2480d4`),
