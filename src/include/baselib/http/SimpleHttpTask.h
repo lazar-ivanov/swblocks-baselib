@@ -369,7 +369,13 @@ namespace bl
                         << base_type::isChannelOpen()
                     );
 
-                if( ! ec && TaskBase::Running == TaskBase::m_state && base_type::isChannelOpen() )
+                /*
+                 * WHETHER OR NOT THERE IS A CHANNEL: a task still running has none only while a
+                 * handshake retry resolves, and the deadline holds there too - the cancel reaches the
+                 * resolver - so that it stays one deadline until the task stops
+                 */
+
+                if( ! ec && TaskBase::Running == TaskBase::m_state )
                 {
                     m_timedOut = true;
 
