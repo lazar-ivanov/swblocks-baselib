@@ -320,6 +320,11 @@ namespace bl
              * processed: the response may have been lost on the way back, and replaying a POST
              * then performs it twice. Turning it on limits the replay to the idempotent methods
              * of RFC 9110 9.2.2 even so
+             *
+             * AND IT REACHES ONLY A FAILURE WHICH IS THE CONNECTION'S. A request which failed on a
+             * verdict of its own - a timeout, a body cap, a sink or source which threw - is not
+             * replayed on it, however the connection ended behind that failure: see the session's
+             * chkPrepareRetry( ), and owed-list row I5
              */
 
             cpp::ScalarTypeIniter< bool >                                       retryIdempotentOnConnectionLoss;
