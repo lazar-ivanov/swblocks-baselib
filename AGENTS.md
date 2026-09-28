@@ -50,6 +50,12 @@ three separate failures of that list, and only the first is obvious:
 Reporting a category is not reporting its contents: *dispositioned*, *deferred with reasoning* and
 *done* are three different states, and only the last one means nobody can still hit it.
 
+**The same sweep reconciles every current-status statement about the change-set's items.** Find
+them by searching `notes/plans/` for the items' identifiers — never from memory. Each hit either says
+what landed and where, or is dated history and says so. The owed list is not the only place a reader
+takes as the current state: design security summaries, deferral notes and review records are too,
+and two reviews in a row found them describing landed fixes as pending.
+
 **Fold what the implementation finds into the implementation. Never hand back a list of new owed
 work.**
 
@@ -415,10 +421,11 @@ For detailed build system documentation, see `scripts/devenv7/AGENTS.md`:
 
 ---
 
-**Document Version:** 2.16
+**Document Version:** 2.17
 **Last Updated:** 2026-09-28
 
 **Changelog:**
+- v2.17 (2026-09-28): The end-of-change-set sweep also reconciles every current-status statement about its items, found by searching notes/plans/ for their identifiers, never from memory
 - v2.16 (2026-09-28): Every agent you assign work to is yours to monitor, with a stall watch from launch and a status check on a fixed cadence; a completion notice is not a watch
 - v2.15 (2026-09-27): Fold what the implementation finds into the implementation. Ask each decision as soon as it is clear, so no later work waits on it, and ask again if the implementation undermines it. Replaces "batch what the work finds", which had let findings pile up as owed work
 - v2.14 (2026-09-27): Parallel work across worktrees points to the full procedure in notes/plans/parallel-implementation-workflow.md
