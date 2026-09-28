@@ -1622,29 +1622,40 @@ asserts exactly that on that flavor.
   control-frame queues, buffered bodies, and the *aggregate* of informational (1xx) responses -
   eight of them and 64 KiB of their fields per message, on both protocols, since S6R.2 (`826ca59`,
   astra H05; the unbounded state it replaced is in `issues/astra-review-verification-record.md`).
-  **Except one, found 2026-09-26 and decided, not yet fixed:** over HTTP/1.1, the body octets a
+  **One exception, found 2026-09-26, is bounded since CS-2:** over HTTP/1.1, the body octets a
   streaming sink has not taken yet. N1 removed the 64 MB transfer cap on purpose, and with it the only
   bound on them - the driver's `consumed( )` is a no-op and its read re-arms after every chunk, so a
-  sink that falls behind the peer accumulates in the request task until memory or the total timeout
-  runs out. HTTP/2's stream window bounds the same case. See `issues/astra-remediation-owed-work.md`,
+  sink that fell behind the peer accumulated in the request task until memory or the total timeout
+  ran out. HTTP/2's stream window bounds the same case. See `issues/astra-remediation-owed-work.md`,
   R02. **Decided 2026-09-27** (D3 of `issues/astra-second-review-decisions.md`): a 64 MiB cap on body
   bytes received and not yet taken, kept by the request task, which fails the request past it.
+  **Landed in CS-2** (`9028bff`, merged at `bc431f2`) as `maxOutstandingResponseBodySize`, which
+  charges each held block its payload plus a per-block allowance. It bounds what is outstanding, not
+  the total a download may carry.
   *Corrected 2026-09-27: this bullet still called the 1xx aggregate "not yet fixed" after S6R.2
-  fixed it, and counted streamed bodies among the bounded sizes.*
+  fixed it, and counted streamed bodies among the bounded sizes.* *Corrected 2026-09-28: it still
+  called this exception "decided, not yet fixed" after CS-2 fixed it.*
 - **Decoders are a decompression-bomb surface.** None ships, but an application can register one
   today through the public registry (`ClientSession::decoders( )`). The caps are part of the seam
   (5.6), so they cannot be forgotten - and for such an application the three prerequisites recorded
-  in `issues/http-content-decoders-deferral.md` are live now: the decode under the queue lock (P1,
-  astra H09) and two message-integration defects (P2 and P3, astra H24 and H25). *Corrected
-  2026-09-27 by astra's second review, R08: this bullet said "when they arrive".* **Decided
+  in `issues/http-content-decoders-deferral.md` were live: the decode under the queue lock (P1,
+  astra H09) and two message-integration defects (P2 and P3, astra H24 and H25). **P1 still is.**
+  *Corrected 2026-09-27 by astra's second review, R08: this bullet said "when they arrive".* **Decided
   2026-09-27** (D5 of `issues/astra-second-review-decisions.md`): P2 and P3 are fixed now in their
   minimal form - a response is decoded only when it carries a single coding, and only when it
-  succeeded and can carry content - and P1 stays deferred.
-- **Found by astra's second review (2026-09-26), decided 2026-09-27 and not yet implemented** (CS-1
-  of `issues/astra-second-review-decisions.md`): a TLS stream truncated without close_notify completes
-  a close-delimited HTTP/1.1 body as a success (R01, decided strict), and the first TLS read and a
-  request's first write can be initiated concurrently on a new HTTP/1.1 connection (R03, decided as
-  one strand handler for the connection's start). Both hold until CS-1 lands.
+  succeeded and can carry content - and P1 stays deferred. **P2 and P3 landed in CS-2** (`0f3b0ba`,
+  merged at `bc431f2`), and a 205 joined the responses never decoded in CS-4 (`c02f7b4`, merged at
+  `988544a`). Peeling several codings in reverse order stays with the decoder programme.
+  *Corrected 2026-09-28: it still said all three "are live now" after CS-2 fixed P2 and P3.*
+- **Found by astra's second review (2026-09-26), decided 2026-09-27 and fixed in CS-1** (merged at
+  `a04f29c`; CS-1 of `issues/astra-second-review-decisions.md`): a TLS stream truncated without
+  close_notify completed a close-delimited HTTP/1.1 body as a success (R01, decided strict), and the
+  first TLS read and a request's first write could be initiated concurrently on a new HTTP/1.1
+  connection (R03, decided as one strand handler for the connection's start). Since `130e021` a
+  truncation no longer completes a close-delimited body: the request fails, and the sink is not told
+  the body is complete. Since `ea47826` the connection starts in one accounted strand handler, which
+  also honours a cancel that lands before the start. *Corrected 2026-09-28: this bullet said both
+  were "not yet implemented" and held "until CS-1 lands".*
 - **Carried risks.** Astra's second review lists, under *"Carried risks that are not new remediation
   requests"* (`http2-l0-l6-remediation-review-2026-09-26.md`), what a caller can still meet as the
   consequence of decisions already taken: H09's continuation lock scope; the BodySource and BodySink
