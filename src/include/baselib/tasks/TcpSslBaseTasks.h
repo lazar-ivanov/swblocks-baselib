@@ -340,7 +340,19 @@ namespace bl
 
             bool isStreamTruncationError( const eh::error_code& errorCode ) NOEXCEPT
             {
-                return isExpectedSslErrorCode( errorCode );
+                const bool isTruncation = isExpectedSslErrorCode( errorCode );
+
+                if( isTruncation && m_sslStream )
+                {
+                    /*
+                     * Recorded on the stream, so that its shutdown does not wait for a close_notify
+                     * which is never coming - see AsioSslStreamWrapper::beginProtocolShutdown( )
+                     */
+
+                    m_sslStream -> recordTruncation();
+                }
+
+                return isTruncation;
             }
 
             void scheduleProtocolOperations( SAA_in const std::shared_ptr< ExecutionQueue >& eq )
@@ -443,6 +455,15 @@ namespace bl
             {
                 if( isExpectedSslException( eptr, exception, ec ) )
                 {
+                    if( m_sslStream )
+                    {
+                        /*
+                         * The code is a truncation, recorded as isStreamTruncationError( ) records it
+                         */
+
+                        m_sslStream -> recordTruncation();
+                    }
+
                     return true;
                 }
 
