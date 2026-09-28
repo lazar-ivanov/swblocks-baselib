@@ -1285,13 +1285,17 @@ synchronous chain and covered nothing at all. It is now disarmed when the openin
 which is the first moment the preface really is away, so "through preface" is true as written.
 
 The front end is this row's. The deadline is armed inside the TCP connect completion handler, so
-the resolve and the `async_connect` are outside it and the row may not claim them. What bounds them
-is the operating system, which is neither 60 s nor one number: the resolver query is `all_matching`,
-so `async_connect` walks every address returned and each black-holed one costs a full SYN timeout -
-**measured at 134 s** on a Linux host with the default `tcp_syn_retries` of 6. A host whose
-addresses drop SYNs therefore holds the task for minutes per address, before the deadline is armed
-at all, and `DEFAULT_HANDSHAKE_RETRY_COUNT` of 1 then buys a second attempt which re-arms a fresh
-60 s on a new socket. So the establishment bound is `resolve + connect + 60 s`, twice, and not 60 s.
+the resolve and the connector's connect loop are outside it and the row may not claim them. What
+bounds them is the operating system, which is neither 60 s nor one number: the resolver query is
+`all_matching`, so the loop walks every address returned, in order, and each black-holed one costs a
+full SYN timeout - **measured at 134 s** on a Linux host with the default `tcp_syn_retries` of 6. A
+host whose addresses drop SYNs therefore holds the task for minutes per address, before the deadline
+is armed at all, and `DEFAULT_HANDSHAKE_RETRY_COUNT` of 1 then buys a second attempt which re-arms a
+fresh 60 s on a new socket. So the establishment bound is `resolve + connect + 60 s`, twice, and not
+60 s. *Corrected 2026-09-28, the mechanism only: this paragraph named asio's ranged `async_connect`
+as the walker. CS-6 replaced it with the connector's own per-endpoint loop (D3, `5057b94`, merged at
+`f2baa2f`), which keeps the order, checks for a cancel between addresses and has no per-address
+deadline. So each dead address still costs its SYN timeout, and L4 finding 1 below stays open.*
 
 Arming at schedule time instead - one deadline across the retry, on `aioService()`, the way the TLS
 protocol timer of `TcpSslBaseTasks.h:120` already is - would let the row keep its original wording.
@@ -1829,8 +1833,10 @@ needs commit 3, the connection task of P2 needs commit 1, P5 needs commit 2 and 
 
 **Non-goals, confirmed by the author (D25):** authentication schemes beyond caller-supplied headers,
 proxy Basic and SOCKS5 username/password; HSTS and Alt-Svc caches; a DNS cache or Happy Eyeballs
-beyond the existing sequential `async_connect`; a multipart form builder; WebSockets and extended
-`CONNECT`; HTTP/3.
+beyond the existing sequential connect; a multipart form builder; WebSockets and extended
+`CONNECT`; HTTP/3. *Corrected 2026-09-28, the mechanism only: this said "the existing sequential
+`async_connect`", asio's ranged connect, which CS-6 replaced with the connector's own per-endpoint
+loop (D3, `5057b94`). The loop is still sequential, and the non-goal is unchanged.*
 
 ---
 
