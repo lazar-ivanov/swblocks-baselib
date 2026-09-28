@@ -269,6 +269,14 @@ completes with no error, and they end clean. Three kinds are unchanged:
 
 **VERIFIED** (the paths); **INFERRED** (the outcome, until §8 measures it).
 
+*(Corrected 2026-09-28, by measurement: **on Linux this ending does not change**. Once the peer's FIN
+has been received, a read reports end of stream even after a reset has arrived; the error is only
+left pending, as `SO_ERROR` EPIPE (`logs/astra2/cs6/c2-reset-after-fin-probe.txt`, kernel 6.8). So
+today's shutdown read reports a truncation, which `isExpectedSslErrorCode( )` admits, and these tasks
+end clean today as well. `TlsShutdown_ATruncationThenACloseEndsCleanTests` pins it (`323a538`),
+green before the fix. The paragraph above holds only where a platform hands the read the reset
+itself — INFERRED possible on Windows, not measured; the Windows matrix measures it.)*
+
 **`hasShutdownCompletedSuccessfully( )` stays false after a skipped wait.** Today it means the
 bidirectional closure completed: `onShutdownInternal( )` sets it from the shutdown's own code
 (`AsioSslStreamWrapper.h:331`), which is clean only once the peer's close_notify has been read or was
@@ -383,6 +391,8 @@ the consumers of §5 do: one asks the predicate and ends clean (the drivers), on
   is prompt before the fix and after. On today's code the probe that swallows the ending fails with the
   reset its close_notify drew — asked of `net::isPeerClosedErrorCode( )`, never compared by hand — and
   after the fix it ends clean. The probe that fails with the code keeps its truncation both times.
+  *(Corrected 2026-09-28: measured green on today's code on Linux — see §5's correction. It is committed
+  as a characterization there, and it is the red on a platform which hands the read the reset.)*
 - **The drivers themselves**, committed with the red and red on today's tree. This is where the HTTP/2
   driver's hang, which §5 calls INFERRED, is first measured. An idle connection of each HTTP driver is
   truncated by the same peer. The HTTP/2 driver takes its own read loop only when HTTP/2 was negotiated
@@ -414,7 +424,8 @@ the consumers of §5 do: one asks the predicate and ends clean (the drivers), on
   false, and the TLS pair are both `isExpectedSslErrorCode( ec )` (`TcpSslBaseTasks.h:341-344`,
   `:760-779`) — so the line changes what is recorded and nothing it decides. Without it the legacy client
   keeps I2 on its one path that ends in success — and against a server which closes its socket entirely,
-  that complete response fails at once with the reset our close_notify draws (§5). Its test is a
+  that complete response fails at once with the reset our close_notify draws (§5; *corrected
+  2026-09-28: on Linux it ends clean today, see §5*). Its test is a
   `SimpleHttpSslTask` (`http/SimpleHttpSslTask.h:94`, a GET) against the same peer, answering with a
   complete Content-Length body and then truncating: red on today's tree, green after.
 - `src/utests/utf_baselib_httpclient8/TestHttp1DriverTlsTruncation.h:69-79` — **folded into CS-6 by the
