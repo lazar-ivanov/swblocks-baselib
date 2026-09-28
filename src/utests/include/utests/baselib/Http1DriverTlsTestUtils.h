@@ -109,7 +109,9 @@ namespace utest
                 m_port( 0U ),
                 m_script( BL_PARAM_FWD( script ) ),
                 m_released( false ),
-                m_hasScriptEnded( false )
+                m_hasScriptEnded( false ),
+                m_hasStreamEnded( false ),
+                m_octetsRead( 0U )
             {
                 std::vector< std::string > preference;
 
@@ -239,6 +241,42 @@ namespace utest
                     );
             }
 
+            /**
+             * @brief Blocks until observeStreamEnd( ) has settled how this stream ended
+             */
+
+            bool waitForStreamEnd() const
+            {
+                bl::os::mutex_unique_lock guard( m_lock );
+
+                return m_cv.wait_for(
+                    guard,
+                    bl::os::chrono::milliseconds( static_cast< std::size_t >( WAIT_IN_MILLISECONDS ) ),
+                    [ this ]() -> bool
+                    {
+                        return m_hasStreamEnded;
+                    }
+                    );
+            }
+
+            auto streamEndCode() const -> bl::eh::error_code
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                return m_streamEndCode;
+            }
+
+            /**
+             * @brief Every octet this peer took off the TLS stream after the handshake
+             */
+
+            std::size_t octetsRead() const NOEXCEPT
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                return m_octetsRead;
+            }
+
             /*
              * The script vocabulary - all synchronous, all on the worker thread
              */
@@ -247,7 +285,7 @@ namespace utest
              * @brief Reads to the end of the request head and stops there
              */
 
-            static auto readRequestHead( SAA_inout sslstream_t& stream ) -> std::string
+            auto readRequestHead( SAA_inout sslstream_t& stream ) -> std::string
             {
                 std::string data;
 
@@ -259,6 +297,8 @@ namespace utest
 
                     const auto transferred =
                         stream.read_some( bl::asio::buffer( buffer, sizeof( buffer ) ), ec );
+
+                    countOctets( transferred );
 
                     if( ec || 0U == transferred )
                     {
@@ -324,7 +364,7 @@ namespace utest
              * the endings above rely on, from this side
              */
 
-            static auto observeStreamEnd( SAA_inout sslstream_t& stream ) -> bl::eh::error_code
+            auto observeStreamEnd( SAA_inout sslstream_t& stream ) -> bl::eh::error_code
             {
                 char buffer[ 16U * 1024U ];
 
@@ -332,13 +372,32 @@ namespace utest
                 {
                     bl::eh::error_code ec;
 
-                    ( void ) stream.read_some( bl::asio::buffer( buffer, sizeof( buffer ) ), ec );
+                    const auto transferred =
+                        stream.read_some( bl::asio::buffer( buffer, sizeof( buffer ) ), ec );
+
+                    countOctets( transferred );
 
                     if( ec )
                     {
+                        BL_MUTEX_GUARD( m_lock );
+
+                        m_streamEndCode = ec;
+                        m_hasStreamEnded = true;
+
+                        m_cv.notify_all();
+
                         return ec;
                     }
                 }
+            }
+
+            /**
+             * @brief Whether the peer received a TLS close_notify before the stream ended
+             */
+
+            static bool isCloseNotify( SAA_in const bl::eh::error_code& ec ) NOEXCEPT
+            {
+                return ec == bl::asio::error::eof;
             }
 
             /**
@@ -375,6 +434,13 @@ namespace utest
             }
 
         private:
+
+            void countOctets( SAA_in const std::size_t transferred )
+            {
+                BL_MUTEX_GUARD( m_lock );
+
+                m_octetsRead += transferred;
+            }
 
             void run()
             {
@@ -439,6 +505,9 @@ namespace utest
             std::string                                                         m_failure;
             bool                                                                m_released;
             bool                                                                m_hasScriptEnded;
+            bool                                                                m_hasStreamEnded;
+            bl::eh::error_code                                                  m_streamEndCode;
+            std::size_t                                                         m_octetsRead;
 
             bl::cpp::SafeUniquePtr< bl::os::thread >                            m_thread;
         };

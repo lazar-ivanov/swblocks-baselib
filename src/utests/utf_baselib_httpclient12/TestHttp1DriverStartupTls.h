@@ -59,7 +59,7 @@ UTF_AUTO_TEST_CASE( Http1DriverTls_NoWriteStartsBeforeTheFirstReadStartReturnsTe
     TlsPeer peer(
         []( SAA_inout TlsPeer& self, SAA_inout TlsPeer::sslstream_t& stream ) -> void
         {
-            const auto head = TlsPeer::readRequestHead( stream );
+            const auto head = self.readRequestHead( stream );
 
             self.record( "head:" + TlsPeer::requestLineOf( head ) );
 
@@ -122,7 +122,7 @@ UTF_AUTO_TEST_CASE( Http1DriverTls_CancelBeforeStartEndsTheConnectionTests )
     TlsPeer peer(
         []( SAA_inout TlsPeer& self, SAA_inout TlsPeer::sslstream_t& stream ) -> void
         {
-            const auto ec = TlsPeer::observeStreamEnd( stream );
+            const auto ec = self.observeStreamEnd( stream );
 
             self.record(
                 asio::error::eof == ec ?

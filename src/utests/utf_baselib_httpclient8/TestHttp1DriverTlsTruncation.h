@@ -485,7 +485,7 @@ namespace utest
                 SAA_inout   TlsPeer::sslstream_t&                               stream
                 ) -> void
             {
-                const auto head = TlsPeer::readRequestHead( stream );
+                const auto head = self.readRequestHead( stream );
 
                 self.record( "head:" + TlsPeer::requestLineOf( head ) );
 
@@ -516,7 +516,7 @@ namespace utest
                  * and puts no reset on the wire. eof here means the client closed in an orderly way
                  */
 
-                const auto ec = TlsPeer::observeStreamEnd( stream );
+                const auto ec = self.observeStreamEnd( stream );
 
                 self.record( "client-ended:" + TlsPeer::describe( ec ) );
             };
