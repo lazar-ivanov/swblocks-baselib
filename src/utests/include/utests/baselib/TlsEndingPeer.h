@@ -96,12 +96,82 @@ namespace utest
                  */
 
                 AwaitTheClient,
+
+                /**
+                 * @brief Ends the stream WITHOUT a close_notify - the transport's send side is shut
+                 * down under the TLS session, which is the truncation - and then reads until the
+                 * client ends the stream, with its socket kept open and silent until released
+                 */
+
+                Truncate,
+
+                /**
+                 * @brief Ends the stream without a close_notify and closes its socket at once, so
+                 * that anything the client sends after it draws a reset
+                 */
+
+                TruncateAndClose,
             };
+
+            /**
+             * @brief What the peer does: an optional exchange, then its ending
+             */
+
+            struct Script
+            {
+                Ending                                                          ending;
+
+                /**
+                 * @brief AwaitTheClient only: answer only once released
+                 */
+
+                bool                                                            isAnswerHeld;
+
+                /**
+                 * @brief The protocols the peer selects by ALPN, most preferred first; empty
+                 * selects none
+                 */
+
+                std::vector< std::string >                                      alpnPreference;
+
+                /**
+                 * @brief When not empty, the peer reads one request head, sends this, and only then
+                 * ends
+                 */
+
+                std::string                                                     response;
+
+                explicit Script( SAA_in const Ending endingIn )
+                    :
+                    ending( endingIn ),
+                    isAnswerHeld( false )
+                {
+                }
+            };
+
+            static auto makeScript(
+                SAA_in          const Ending                                    ending,
+                SAA_in          const bool                                      isAnswerHeld
+                )
+                -> Script
+            {
+                Script script( ending );
+
+                script.isAnswerHeld = isAnswerHeld;
+
+                return script;
+            }
 
             TlsEndingPeer(
                 SAA_in          const Ending                                    ending,
                 SAA_in_opt      const bool                                      isAnswerHeld = false
                 )
+                :
+                TlsEndingPeer( makeScript( ending, isAnswerHeld ) )
+            {
+            }
+
+            explicit TlsEndingPeer( SAA_in const Script& script )
                 :
                 m_serverContext(
                     bl::crypto::CryptoBase::createAsioSslServerContext(
@@ -111,8 +181,7 @@ namespace utest
                     ),
                 m_acceptor( m_ioService ),
                 m_port( 0U ),
-                m_ending( ending ),
-                m_isAnswerHeld( isAnswerHeld ),
+                m_script( script ),
                 m_isReleased( false )
             {
 #if OPENSSL_VERSION_NUMBER >= 0x10101000L
@@ -127,6 +196,11 @@ namespace utest
 
                 ( void ) ::SSL_CTX_set_num_tickets( m_serverContext -> native_handle(), 0U );
 #endif
+
+                if( ! m_script.alpnPreference.empty() )
+                {
+                    bl::crypto::CryptoBase::setAlpnServerPreference( *m_serverContext, m_script.alpnPreference );
+                }
 
                 const bl::asio::ip::tcp::endpoint endpoint(
                     bl::asio::ip::address_v4::loopback(),
@@ -272,11 +346,54 @@ namespace utest
                 }
             }
 
+            /**
+             * @brief Reads to the end of one request head and stops there
+             */
+
+            static auto readRequestHead( SAA_inout sslstream_t& stream ) -> std::string
+            {
+                std::string data;
+
+                char buffer[ 1024 ];
+
+                while( std::string::npos == data.find( "\r\n\r\n" ) )
+                {
+                    bl::eh::error_code ec;
+
+                    const auto transferred =
+                        stream.read_some( bl::asio::buffer( buffer, sizeof( buffer ) ), ec );
+
+                    if( ec || 0U == transferred )
+                    {
+                        break;
+                    }
+
+                    data.append( buffer, transferred );
+                }
+
+                return data;
+            }
+
+            void runExchange( SAA_inout sslstream_t& stream )
+            {
+                const auto head = readRequestHead( stream );
+
+                const auto pos = head.find( "\r\n" );
+
+                record( "request:" + ( std::string::npos == pos ? head : head.substr( 0U, pos ) ) );
+
+                bl::eh::error_code ec;
+
+                ( void ) bl::asio::write( stream, bl::asio::buffer( m_script.response ), ec );
+
+                record( "responded:" + describeCode( ec ) );
+            }
+
             void runEnding( SAA_inout sslstream_t& stream )
             {
                 bl::eh::error_code ec;
 
-                switch( m_ending )
+                switch( m_script.ending )
                 {
                     case Ending::CloseNotify:
                         {
@@ -292,7 +409,7 @@ namespace utest
 
                             record( "client-ended:" + describeCode( ec ) );
 
-                            if( m_isAnswerHeld )
+                            if( m_script.isAnswerHeld )
                             {
                                 waitForRelease();
                             }
@@ -300,6 +417,30 @@ namespace utest
                             stream.shutdown( ec );
 
                             record( "answered:" + describeCode( ec ) );
+                        }
+                        break;
+
+                    case Ending::Truncate:
+                        {
+                            stream.next_layer().shutdown( bl::asio::ip::tcp::socket::shutdown_send, ec );
+
+                            record( "truncated:" + describeCode( ec ) );
+
+                            ec = readUntilTheEnd( stream );
+
+                            record( "client-ended:" + describeCode( ec ) );
+                        }
+                        break;
+
+                    case Ending::TruncateAndClose:
+                        {
+                            stream.next_layer().shutdown( bl::asio::ip::tcp::socket::shutdown_send, ec );
+
+                            bl::eh::error_code closeEc;
+
+                            stream.next_layer().close( closeEc );
+
+                            record( "truncated-and-closed:" + describeCode( ec ) );
                         }
                         break;
                 }
@@ -328,6 +469,11 @@ namespace utest
 
                     if( ! ec )
                     {
+                        if( ! m_script.response.empty() )
+                        {
+                            runExchange( stream );
+                        }
+
                         runEnding( stream );
                     }
                 }
@@ -355,8 +501,7 @@ namespace utest
             bl::asio::io_service                                                m_ioService;
             bl::asio::ip::tcp::acceptor                                         m_acceptor;
             bl::os::port_t                                                      m_port;
-            const Ending                                                        m_ending;
-            const bool                                                          m_isAnswerHeld;
+            const Script                                                        m_script;
 
             mutable bl::os::mutex                                               m_lock;
             mutable bl::os::condition_variable                                  m_cv;

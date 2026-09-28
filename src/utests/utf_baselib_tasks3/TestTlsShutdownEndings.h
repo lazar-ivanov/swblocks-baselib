@@ -64,6 +64,26 @@
  *     answer: the task is still running while it is held - the wait for the peer's close_notify is
  *     kept whenever no truncation was seen - and ends once the answer is sent.
  *
+ * AND I2'S RED, committed before its fix, beside one more truncated ending:
+ *
+ *   - TlsShutdown_ATruncationDoesNotWaitForTheCloseNotifyTests - the peer truncates: it shuts its
+ *     transport's send side down with no close_notify, and then keeps its socket open and silent.
+ *     Each probe's protocol timer is shortened to 3 s, so today the case sees the symptom I2 names:
+ *     the timer cancels the task, and isCanceled( ) is true. After the fix the teardown sends our
+ *     close_notify, does not wait for the peer's, and ends before the timer with isCanceled( )
+ *     false. The probe that swallows the ending then ends clean, and the one that fails with the
+ *     code keeps its truncation - both before and after, which is why isCanceled( ) is the assertion
+ *     that makes both red.
+ *   - TlsShutdown_ATruncationThenACloseEndsCleanTests - the peer truncates and closes its socket
+ *     at once, so our close_notify draws a reset. On Linux this is a CHARACTERIZATION, green before
+ *     and after the fix: once the peer's FIN has been received, a read reports end of stream even
+ *     after a reset arrives - the error is only left pending (measured, logs/astra2/cs6/
+ *     c2-reset-after-fin-probe.txt in the run's state directory) - so today's shutdown reads a
+ *     truncation, which the policy counts as expected, and ends clean. Where the reset does reach
+ *     the read - INFERRED possible on Windows, not measured - today's probe that swallows the ending
+ *     fails with it, and the fix, which reads nothing, makes it clean. The probe that fails with the
+ *     code keeps its truncation everywhere.
+ *
  * Each runs over both TLS policies, with and without a strand. The task is the library's connection
  * establisher, which connects and handshakes over the policy exactly as every TLS client in the
  * library does, and then does what a consumer does: reads until the stream ends and asks the policy
@@ -130,6 +150,15 @@ namespace utest
                  */
 
                 CloseFirst,
+
+                /**
+                 * @brief Reads until the stream ends and fails the task with whatever code ended
+                 * it, through the handler macros - what the block transfer tasks do. It does not
+                 * ask the policy what the ending was: the macros tell the policy through
+                 * isExpectedException( )
+                 */
+
+                FailOnTheEnding,
             };
 
         protected:
@@ -192,10 +221,12 @@ namespace utest
                 /*
                  * THE ENDING IS ASKED OF THE POLICY, as the HTTP/1.1 driver asks it of every read
                  * that ends (Http1ConnectionTask.h, onReadCompleted( )) - before the prolog, and
-                 * whatever the ending turns out to be
+                 * whatever the ending turns out to be. The probe which fails with the code does not
+                 * ask: it reaches the policy only through the handler macros
                  */
 
-                const bool isTruncation = base_type::isStreamTruncationError( ec );
+                const bool isTruncation =
+                    Mode::FailOnTheEnding != m_mode && base_type::isStreamTruncationError( ec );
 
                 BL_TASKS_HANDLER_BEGIN()
 
@@ -212,7 +243,7 @@ namespace utest
                     m_readEnding = ec;
                 }
 
-                if( bl::asio::error::eof != ec && ! isTruncation )
+                if( Mode::FailOnTheEnding == m_mode || ( bl::asio::error::eof != ec && ! isTruncation ) )
                 {
                     BL_TASKS_HANDLER_CHK_EC( ec );
                 }
@@ -293,6 +324,7 @@ namespace utest
         {
             bool                                                                wasHeldWhileRunning;
             bool                                                                hasStoppedWithinBound;
+            bool                                                                isCanceled;
             bool                                                                hasStopped;
             bool                                                                isFailed;
             bl::eh::error_code                                                  taskCode;
@@ -305,6 +337,7 @@ namespace utest
                 :
                 wasHeldWhileRunning( false ),
                 hasStoppedWithinBound( false ),
+                isCanceled( false ),
                 hasStopped( false ),
                 isFailed( false ),
                 hasShutdownCompletedSuccessfully( false ),
@@ -330,6 +363,8 @@ namespace utest
                 return
                     std::string( "stopped within the bound " ) +
                     ( hasStoppedWithinBound ? "yes" : "no" ) +
+                    ", cancelled when it stopped " +
+                    ( isCanceled ? "yes" : "no" ) +
                     ", stopped " +
                     ( hasStopped ? "yes" : "no" ) +
                     ", task " +
@@ -360,7 +395,9 @@ namespace utest
         inline auto runEnding(
             SAA_in          const TlsEndingPeer::Ending                         ending,
             SAA_in          const typename TlsEndingProbeT< STREAM >::Mode      mode,
-            SAA_in_opt      const bool                                          isAnswerHeld = false
+            SAA_in_opt      const bool                                          isAnswerHeld = false,
+            SAA_in_opt      const bl::time::time_duration&                      protocolTimeout =
+                                bl::time::neg_infin
             )
             -> EndingResult
         {
@@ -376,6 +413,11 @@ namespace utest
                 peer.port(),
                 mode
                 );
+
+            if( ! protocolTimeout.is_special() )
+            {
+                probe -> setProtocolTimeout( protocolTimeout );
+            }
 
             const auto task = om::qi< Task >( probe );
 
@@ -404,6 +446,13 @@ namespace utest
 
                     result.hasStoppedWithinBound =
                         probe -> waitForStop( static_cast< std::size_t >( TEARDOWN_BOUND_IN_MILLISECONDS ) );
+
+                    /*
+                     * READ BEFORE THE CASE'S OWN SAFETY CANCEL BELOW, so that a cancel it reports is
+                     * one the task met on its own - the protocol timer's
+                     */
+
+                    result.isCanceled = probe -> isCanceled();
 
                     if( ! result.hasStoppedWithinBound )
                     {
@@ -595,6 +644,165 @@ UTF_AUTO_TEST_CASE( TlsShutdown_OurCloseNotifyWaitsForTheAnswerTests )
             ),
         "TLS, stranded"
         );
+}
+
+namespace utest
+{
+    namespace tlsending
+    {
+        /**
+         * @brief Whether a code is the truncated TLS stream - spelled the way TcpSslBaseTasks.h's
+         * isExpectedSslErrorCode( ) spells it, so the assertion reads as the library's own predicate
+         */
+
+        inline bool isTruncationCode( SAA_in const bl::eh::error_code& ec ) NOEXCEPT
+        {
+            return std::string( "asio.ssl.stream" ) == ec.category().name() && 1 == ec.value();
+        }
+
+        /**
+         * @brief One ending over both TLS policies and both kinds of consumer - every run is made
+         * before any is asserted, so a failure message carries all four readings
+         */
+
+        struct FourEndings
+        {
+            EndingResult                                                        results[ 4 ];
+            std::string                                                         names[ 4 ];
+            std::string                                                         readings;
+        };
+
+        inline auto runFourEndings(
+            SAA_in          const TlsEndingPeer::Ending                         ending,
+            SAA_in          const bl::time::time_duration&                      protocolTimeout
+            )
+            -> FourEndings
+        {
+            using namespace bl::tasks;
+
+            typedef TlsEndingProbeT< TcpSslSocketAsyncBase >                    plain_t;
+            typedef TlsEndingProbeT< TcpSslSocketAsyncStrandedBase >            stranded_t;
+
+            FourEndings four;
+
+            four.results[ 0 ] = runEnding< TcpSslSocketAsyncBase >(
+                ending, plain_t::Mode::ReadUntilTheEnding, false, protocolTimeout );
+            four.names[ 0 ] = "TLS, the ending swallowed";
+
+            four.results[ 1 ] = runEnding< TcpSslSocketAsyncBase >(
+                ending, plain_t::Mode::FailOnTheEnding, false, protocolTimeout );
+            four.names[ 1 ] = "TLS, failed with the ending";
+
+            four.results[ 2 ] = runEnding< TcpSslSocketAsyncStrandedBase >(
+                ending, stranded_t::Mode::ReadUntilTheEnding, false, protocolTimeout );
+            four.names[ 2 ] = "TLS stranded, the ending swallowed";
+
+            four.results[ 3 ] = runEnding< TcpSslSocketAsyncStrandedBase >(
+                ending, stranded_t::Mode::FailOnTheEnding, false, protocolTimeout );
+            four.names[ 3 ] = "TLS stranded, failed with the ending";
+
+            for( std::size_t i = 0U; i < 4U; ++i )
+            {
+                four.readings += four.names[ i ] + ": " + four.results[ i ].describe() + "; ";
+            }
+
+            return four;
+        }
+
+        /**
+         * @brief What every truncated ending asserts, before the fix and after: the teardown ended
+         * inside the bound; the probe that swallowed the ending did not fail, and the one that
+         * failed with it kept the truncation - both only once the fix is in, for the first - and
+         * the TLS shutdown ran but did not complete as a closure, because the peer's close_notify
+         * never came
+         */
+
+        inline void chkTruncatedEnding(
+            SAA_in          const EndingResult&                                 result,
+            SAA_in          const std::string&                                  which,
+            SAA_in          const bool                                          isFailedWithTheCode,
+            SAA_in          const std::string&                                  readings
+            )
+        {
+            chkOrFail(
+                result.hasStoppedWithinBound,
+                which + ": the teardown did not end within the bound; all four: " + readings
+                );
+
+            chkOrFail(
+                ! result.isCanceled,
+                which + ": the teardown ended only because it was cancelled; all four: " + readings
+                );
+
+            if( isFailedWithTheCode )
+            {
+                chkOrFail(
+                    result.isFailed && isTruncationCode( result.taskCode ),
+                    which + ": the task did not keep its truncation; all four: " + readings
+                    );
+            }
+            else
+            {
+                chkOrFail(
+                    ! result.isFailed,
+                    which + ": the task failed; all four: " + readings
+                    );
+            }
+
+            chkOrFail(
+                result.wasShutdownInvoked && ! result.hasShutdownCompletedSuccessfully,
+                which + ": the TLS shutdown did not run, or read as a completed closure; all four: " + readings
+                );
+        }
+
+    } // tlsending
+
+} // utest
+
+/**
+ * @brief I2'S RED - a truncation does not make the teardown wait for the peer's close_notify
+ *
+ * The peer truncates and then keeps its socket open and silent. With the protocol timer shortened to
+ * 3 s, today's code waits for the peer's close_notify until the timer cancels the task; after the
+ * fix it sends ours and ends at once. The peer reads our close_notify both times
+ */
+
+UTF_AUTO_TEST_CASE( TlsShutdown_ATruncationDoesNotWaitForTheCloseNotifyTests )
+{
+    using namespace utest::tlsending;
+
+    const auto four = runFourEndings( TlsEndingPeer::Ending::Truncate, bl::time::seconds( 3 ) );
+
+    for( std::size_t i = 0U; i < 4U; ++i )
+    {
+        chkTruncatedEnding( four.results[ i ], four.names[ i ], 1U == i % 2U, four.readings );
+
+        chkOrFail(
+            four.results[ i ].hasPeerRecord( "client-ended:" + describeCode( bl::asio::error::eof ) ),
+            four.names[ i ] + ": the peer did not read our close_notify; all four: " + four.readings
+            );
+    }
+}
+
+/**
+ * @brief A truncation followed by the peer's close ends the teardown clean, before the fix and after
+ *
+ * The peer truncates and closes its socket at once, and our close_notify draws a reset. On Linux the
+ * shutdown's read reports the end of stream the FIN left behind rather than the reset, so today's
+ * teardown ends clean as well; after the fix it reads nothing. Where a platform hands the read the
+ * reset instead, this case is the red that platform shows today
+ */
+
+UTF_AUTO_TEST_CASE( TlsShutdown_ATruncationThenACloseEndsCleanTests )
+{
+    using namespace utest::tlsending;
+
+    const auto four = runFourEndings( TlsEndingPeer::Ending::TruncateAndClose, bl::time::neg_infin );
+
+    for( std::size_t i = 0U; i < 4U; ++i )
+    {
+        chkTruncatedEnding( four.results[ i ], four.names[ i ], 1U == i % 2U, four.readings );
+    }
 }
 
 #endif /* __UTEST_TESTTLSSHUTDOWNENDINGS_H_ */

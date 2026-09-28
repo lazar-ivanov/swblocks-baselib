@@ -10,9 +10,13 @@
 # (notes/plans/issues/astra2-cs6-tls-shutdown-after-truncation-design.md). The characterization
 # cases are the endings the fix must NOT change, and are green on both sides of it: the peer's
 # close_notify, and our own close_notify answered at once or only once the peer releases it.
+# TlsShutdown_ATruncationDoesNotWaitForTheCloseNotifyTests is I2's red: red before the fix, green after.
+# TlsShutdown_ATruncationThenACloseEndsCleanTests is green before and after on Linux (see its header).
 
 --log_level=message --run_test=Tcp_ForcedCancelLeavesTheLingerOptionOffTests
 --log_level=message --run_test=Tcp_ForcedCancelDoesNotWriteTheLingerOptionTests
 --log_level=message --run_test=TlsShutdown_ThePeersCloseNotifyEndsTheTaskPromptlyTests
 --log_level=message --run_test=TlsShutdown_OurCloseNotifyIsAnsweredPromptlyTests
 --log_level=message --run_test=TlsShutdown_OurCloseNotifyWaitsForTheAnswerTests
+--log_level=message --run_test=TlsShutdown_ATruncationDoesNotWaitForTheCloseNotifyTests
+--log_level=message --run_test=TlsShutdown_ATruncationThenACloseEndsCleanTests
