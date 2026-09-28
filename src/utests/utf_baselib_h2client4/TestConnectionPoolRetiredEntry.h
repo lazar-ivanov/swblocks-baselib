@@ -394,4 +394,167 @@ UTF_AUTO_TEST_CASE( H2Pool_AnEntryWhichServedARequestIsNotChargedWhenItsTaskEnds
     pool -> dispose();
 }
 
+/**
+ * @brief A NEVER-USABLE entry retired by a ConnectionUnusable release is a failed attempt, charged
+ * once - owed-list row I10, the same principle as the fix above
+ *
+ * releaseStream( )'s ConnectionUnusable arm retires the entry it is handed, and every later arm of
+ * refreshEntry( ) then finds it retired and reports nothing - so an entry which never showed itself
+ * usable, retired by that arm, was the one failed attempt nobody reported. "Never usable" has the
+ * Closed arm's two witnesses: no examine read Ready, and no response completed on it.
+ *
+ * One connection in the whole pool. A rides its preface; B cannot ride - it is unreplayable - so it
+ * is queued, with a budget of one retry. A comes back ConnectionUnusable, and the release's own
+ * examine settles it before releaseStream( ) returns. Then the second connection closes before it
+ * could carry a request, which the Closed arm charges.
+ *
+ * RED BEFORE: the first failure charged nothing, so after the second B had spent only one attempt
+ * and was still queued behind a third connection. GREEN AFTER: one charge per failed entry - B is
+ * still queued after the first, and fails at its budget after the second, with the second's error
+ */
+
+UTF_AUTO_TEST_CASE( H2Pool_ANeverUsableEntryRetiredByAnUnusableReleaseIsChargedTests )
+{
+    using namespace bl;
+    using namespace utest::connpool;
+    using namespace utest::connpoolretired;
+
+    const auto factory = std::make_shared< StubFactory >();
+    const auto answers = std::make_shared< Answers >();
+
+    httpclient::ConnectionPoolPolicy policy;
+
+    policy.maxRetriesPerRequest = 1U;
+    policy.maxTotalConnections = 1U;
+
+    const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
+
+    const PoolGuard guard( pool );
+
+    const auto key = makeKey();
+
+    acquireInto( pool, key, makeRequest( true /* isReplayable */ ), answers, 0U );
+
+    UTF_REQUIRE( answers -> waitFor( 1U ) );
+
+    const auto firstConnection = om::qi< httpclient::ClientConnection >( factory -> taskAt( 0U ) );
+
+    UTF_REQUIRE( answers -> records()[ 0 ].connection.get() == firstConnection.get() );
+
+    acquireInto( pool, key, makeRequest( false /* isReplayable */ ), answers, 1U );
+
+    UTF_REQUIRE_EQUAL( pool -> waiterCount(), 1U );
+
+    /*
+     * A's stream ends with its connection unusable, before anything showed the connection usable
+     */
+
+    pool -> releaseStream( firstConnection, 1U, httpclient::RequestOutcome::ConnectionUnusable );
+
+    UTF_CHECK_EQUAL( pool -> stats().establishmentRetries.value(), 1U );
+    UTF_REQUIRE_EQUAL( pool -> waiterCount(), 1U );
+    UTF_REQUIRE_EQUAL( factory -> calls(), 2U );
+
+    /*
+     * The second connection closes before it could carry a request - the Closed arm's failure
+     */
+
+    factory -> taskAt( 1U ) -> setState( httpclient::ConnectionState::Draining );
+
+    examineNow( pool );
+
+    UTF_CHECK_EQUAL( pool -> waiterCount(), 0U );
+    UTF_CHECK_EQUAL( pool -> stats().establishmentRetries.value(), 2U );
+    UTF_CHECK_EQUAL( factory -> calls(), 2U );
+
+    UTF_REQUIRE( answers -> waitFor( 2U ) );
+
+    const auto records = answers -> records();
+
+    UTF_REQUIRE_EQUAL( records.size(), 2U );
+    UTF_REQUIRE_EQUAL( records[ 1 ].index, 1U );
+    UTF_REQUIRE( nullptr == records[ 1 ].connection );
+    UTF_REQUIRE( nullptr != records[ 1 ].exception );
+
+    const auto message = [ & ]() -> std::string
+    {
+        try
+        {
+            std::rethrow_exception( records[ 1 ].exception );
+        }
+        catch( std::exception& e )
+        {
+            return e.what();
+        }
+
+        return std::string();
+    }();
+
+    UTF_CHECK( std::string::npos != message.find( "was closed before it could carry a request" ) );
+
+    pool -> dispose();
+}
+
+/**
+ * @brief The control: an entry which SERVED a request is not charged when a release retires it as
+ * unusable
+ *
+ * The fix above charges only a never-usable entry, as the Closed arm does. Here A completes on the
+ * one connection - the second witness, a completed response - and C rides it next and comes back
+ * ConnectionUnusable: the connection is gone, but it was no failed attempt. Green before the fix and
+ * after it; it is what would go red if the fix charged every entry that arm retires
+ */
+
+UTF_AUTO_TEST_CASE( H2Pool_AnEntryWhichServedARequestIsNotChargedByAnUnusableReleaseTests )
+{
+    using namespace bl;
+    using namespace utest::connpool;
+    using namespace utest::connpoolretired;
+
+    const auto factory = std::make_shared< StubFactory >();
+    const auto answers = std::make_shared< Answers >();
+
+    httpclient::ConnectionPoolPolicy policy;
+
+    policy.maxRetriesPerRequest = 0U;
+    policy.maxTotalConnections = 1U;
+
+    const auto pool = pool_impl_t::createInstance( factoryOf( factory ), policy );
+
+    const PoolGuard guard( pool );
+
+    const auto key = makeKey();
+
+    acquireInto( pool, key, makeRequest( true /* isReplayable */ ), answers, 0U );
+
+    UTF_REQUIRE( answers -> waitFor( 1U ) );
+
+    const auto firstConnection = om::qi< httpclient::ClientConnection >( factory -> taskAt( 0U ) );
+
+    pool -> releaseStream( firstConnection, 1U, httpclient::RequestOutcome::Completed );
+
+    acquireInto( pool, key, makeRequest( true /* isReplayable */ ), answers, 1U );
+
+    UTF_REQUIRE( answers -> waitFor( 2U ) );
+
+    UTF_REQUIRE( answers -> records()[ 1 ].connection.get() == firstConnection.get() );
+
+    acquireInto( pool, key, makeRequest( false /* isReplayable */ ), answers, 2U );
+
+    UTF_REQUIRE_EQUAL( pool -> waiterCount(), 1U );
+
+    pool -> releaseStream( firstConnection, 2U, httpclient::RequestOutcome::ConnectionUnusable );
+
+    /*
+     * With a budget of zero a single charge would have failed B already
+     */
+
+    UTF_CHECK_EQUAL( pool -> waiterCount(), 1U );
+    UTF_CHECK_EQUAL( pool -> stats().establishmentRetries.value(), 0U );
+    UTF_CHECK_EQUAL( pool -> stats().failures.value(), 0U );
+    UTF_CHECK_EQUAL( factory -> calls(), 2U );
+
+    pool -> dispose();
+}
+
 #endif /* __UTEST_TESTCONNECTIONPOOLRETIREDENTRY_H_ */
