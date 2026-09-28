@@ -76,8 +76,8 @@ namespace bl
          *
          *  - the protocol deadline (m_protocolTimer) stays on the thread pool's io_service and
          *    needs no change. Its handler touches no stream state: it takes the task lock and
-         *    calls requestCancelInternal(), which reaches the cancelTask() below and therefore
-         *    posts. That is what keeps this policy purely additive
+         *    calls requestCancelOrReissueInternal(), which reaches the cancelTask() below - again
+         *    on a task cancelled already - and so posts. That keeps this policy purely additive
          *
          * Everything the cleartext policy says about attachStream(), about the strand belonging to
          * the stream createSocket built, and about a retry creating a new one applies here
@@ -111,6 +111,14 @@ namespace bl
 
             /**
              * @brief The forced shutdown of cancelTask(), executed on the strand
+             *
+             * IT CAN RUN AFTER THE TASK HAS COMPLETED: a cancel which posted it while the task was
+             * running is not recalled when the task ends. It takes no task lock and it reads the
+             * stream, so an owner must detach or replace a stream this policy built ON THE STRAND -
+             * and, while the task runs, under the task lock as well, because cancelTask() reads the
+             * stream on the cancelling thread before it posts - as onProtocolNegotiated( ) does in
+             * httpclient/ClientConnectionTaskBase.h, from a strand handler under that lock. Never off
+             * the strand: the task lock alone does not order a detach with this handler
              */
 
             void shutdownSocketOnStrand() NOEXCEPT
@@ -119,7 +127,7 @@ namespace bl
 
                 if( base_type::isChannelOpen() )
                 {
-                    TcpSocketCommonBase::shutdownSocket( base_type::getSocket(), true /* force */ );
+                    base_type::shutdownSocketOnCancel();
                 }
 
                 BL_NOEXCEPT_END()

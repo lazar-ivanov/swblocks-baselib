@@ -131,7 +131,12 @@ namespace bl
                             << m_timeout
                         );
 
-                    tasks::TaskBase::requestCancelInternal();
+                    /*
+                     * Or, on a task cancelled already, the cancel again: one which landed between
+                     * two steps of an operation reaped nothing
+                     */
+
+                    tasks::TaskBase::requestCancelOrReissueInternal();
                 }
 
                 BL_NOEXCEPT_END()
@@ -357,7 +362,12 @@ namespace bl
                             << m_timeout
                         );
 
-                    tasks::TaskBase::requestCancelInternal();
+                    /*
+                     * Or, on a task cancelled already, the cancel again: one which landed between
+                     * two steps of an operation reaped nothing
+                     */
+
+                    tasks::TaskBase::requestCancelOrReissueInternal();
                 }
 
                 BL_NOEXCEPT_END()

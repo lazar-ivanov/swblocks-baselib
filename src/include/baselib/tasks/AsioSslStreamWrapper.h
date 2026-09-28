@@ -82,6 +82,14 @@ namespace bl
             cpp::ScalarTypeIniter< bool >                                           m_hasShutdownCompletedSuccessfully;
             cpp::ScalarTypeIniter< bool >                                           m_wasShutdownInvoked;
 
+            /*
+             * Whether a read on this stream has seen the peer's transport end with no close_notify.
+             * The TLS stream policy records it (TcpSslBaseTasks.h, isStreamTruncationError( ) and
+             * isExpectedException( )), and the shutdown reads it - see beginProtocolShutdown( )
+             */
+
+            cpp::ScalarTypeIniter< bool >                                           m_hasSeenTruncation;
+
             cpp::ScalarTypeIniter< bool >                                           m_verifyFailed;
             cpp::ScalarTypeIniter< int >                                            m_lastVerifyError;
             std::string                                                             m_lastVerifyErrorString;
@@ -329,6 +337,16 @@ namespace bl
                  */
 
                 m_hasShutdownCompletedSuccessfully = asio::error::eof == ec ? true : ! ec;
+
+                if( m_hasSeenTruncation )
+                {
+                    /*
+                     * The wait for the peer's close_notify was skipped (beginProtocolShutdown( )), so
+                     * whatever the code the closure did not complete - the peer's was never read
+                     */
+
+                    m_hasShutdownCompletedSuccessfully = false;
+                }
 
                 m_wasShutdownInvoked = true;
 
@@ -621,6 +639,21 @@ namespace bl
                 return m_wasShutdownInvoked;
             }
 
+            /**
+             * @brief Records that a read on this stream has seen it truncated - the peer's transport
+             * ended with no close_notify - so that its shutdown does not wait for the peer's
+             */
+
+            void recordTruncation() NOEXCEPT
+            {
+                m_hasSeenTruncation = true;
+            }
+
+            bool hasSeenTruncation() const NOEXCEPT
+            {
+                return m_hasSeenTruncation;
+            }
+
             void enhanceException( SAA_in eh::exception& exception ) const
             {
                 /*
@@ -673,6 +706,7 @@ namespace bl
                 m_hasHandshakeCompletedSuccessfully = false;
                 m_hasShutdownCompletedSuccessfully = false;
                 m_wasShutdownInvoked = false;
+                m_hasSeenTruncation = false;
 
                 m_verifyFailed = false;
                 m_lastVerifyError = 0;
@@ -752,6 +786,26 @@ namespace bl
                     BL_MSG()
                         << "Protocol shutdown should not be called more than once"
                     );
+
+                if( m_hasSeenTruncation )
+                {
+                    /*
+                     * A READ HAS SEEN THE PEER'S TRANSPORT END WITH NO close_notify, so the peer's
+                     * close_notify is never coming - and the read which saw that consumed the socket's
+                     * end of stream, so on Linux nothing but the protocol timer would wake a wait for
+                     * it (notes/plans/issues/astra2-cs6-tls-shutdown-after-truncation-design.md).
+                     * With SSL_RECEIVED_SHUTDOWN set, SSL_shutdown( ) sends our close_notify and
+                     * completes without reading, which RFC 5246 7.2.1 permits
+                     *
+                     * It is set here and not when the truncation was seen: once it is set, SSL_read( )
+                     * returns 0 at once, so a read issued after it would fail with a code no predicate
+                     * recognizes. Nothing reads a stream once its shutdown has begun
+                     */
+
+                    auto* const ssl = getStream().native_handle();
+
+                    ::SSL_set_shutdown( ssl, ::SSL_get_shutdown( ssl ) | SSL_RECEIVED_SHUTDOWN );
+                }
 
                 getStream().async_shutdown(
                     cpp::bind(

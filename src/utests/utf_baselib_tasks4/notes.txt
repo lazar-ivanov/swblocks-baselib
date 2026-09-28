@@ -1,0 +1,19 @@
+# each slice appends the recipes for the cases it lands here
+
+# CS-6 of astra's second review - D3: the connection establisher's connect over several endpoints
+# (notes/plans/issues/astra2-cs6-lost-forced-cancel-design.md, section 9). The first two cases are the
+# characterization of what the connect loop keeps of asio's, green on both sides of the fix. The third
+# is D3's red: a cancel during the connect ends it at once only with the fix. The fourth is the case
+# ThreadSanitizer reports today and not after the fix; in any other build it is green on both sides.
+
+--log_level=message --run_test=TcpConnectLoop_TheFirstEndpointWhichAcceptsIsTheOneConnectedTests
+--log_level=message --run_test=TcpConnectLoop_NoEndpointAcceptingFailsTheTaskTests
+--log_level=message --run_test=TcpConnectLoop_ACancelDuringTheConnectEndsItPromptlyTests
+--log_level=message --run_test=TcpConnectLoop_ACancelAfterTheSwitchIsOrderedWithItTests
+
+# D-A: an endpoint whose socket cannot be opened fails like any attempt - the next endpoint is tried, and
+# after the last the open's own error is reported, where asio's loop ended with operation_aborted. The
+# process's descriptors are exhausted for the first attempt only; POSIX only, and last in the module.
+
+--log_level=message --run_test=TcpConnectOpenFailure_TheNextEndpointIsTriedTests
+--log_level=message --run_test=TcpConnectOpenFailure_TheOpensOwnErrorIsReportedTests

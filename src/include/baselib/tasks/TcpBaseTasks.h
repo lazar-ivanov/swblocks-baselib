@@ -305,20 +305,21 @@ namespace bl
                  * and cancel() will stop existing such requests
                  */
 
-                if( force )
-                {
-                    /*
-                     * If the socket is being forcefully shutdown (e.g. as part of
-                     * canceling an I/O task) the linger option is set to disabled
-                     * (l_onoff = 0), which is the default graceful close: close() does not
-                     * block and the stack finishes the shutdown in the background. This is
-                     * not the abortive linger( true, 0 ) close, which would reset the peer
-                     */
+                /*
+                 * FORCE DOES NOT WRITE THE LINGER OPTION, AND MUST NOT. It used to set
+                 * linger( false, 0 ) here. asio records a linger the application sets in the
+                 * socket's own state byte, which every operation reads as it is built, so on the
+                 * plain policies - which cancel from whichever thread asks - the write raced an
+                 * operation an I/O thread was starting on the same socket: ThreadSanitizer caught a
+                 * TLS handshake's next read doing exactly that (row I13 of
+                 * notes/plans/issues/astra-remediation-owed-work.md). It bought nothing: linger is
+                 * off by default, the acceptor below sets it off explicitly, and asio consults the
+                 * option it recorded only when a socket is destroyed. What is left touches no socket
+                 * state - shutdown( ) and cancel( ) read the descriptor - and a linger the socket's
+                 * owner set is left as it was
+                 */
 
-                    eh::error_code ec;
-                    socket.set_option( asio::socket_base::linger( false, 0 ), ec );
-                    checkSocketError( ec );
-                }
+                BL_UNUSED( force );
 
                 {
                     /*
@@ -1392,14 +1393,130 @@ namespace bl
                 return continueCallback();
             }
 
+            /**
+             * @brief Connects the socket to the resolved endpoints one at a time, in the resolver's
+             * order - the loop asio::async_connect( ) runs over a range, with each attempt
+             * completing in onConnectionEstablished( ) below
+             *
+             * NOT asio::async_connect( ). Between two attempts its iterator_connect_op closes the
+             * socket and opens it again for the next endpoint - on an I/O thread, in its own
+             * intermediate handler, under no lock of ours - while a cancel reads that socket under
+             * the task lock: ThreadSanitizer reports the race on all four stream policies
+             * (utf_baselib_tasks4). And a cancel which ends one attempt does not stop that loop,
+             * which goes on to the next. Here the switch to the next endpoint is made in a task
+             * handler - under the task lock and, for a stranded policy, on the strand - so it is
+             * ordered with every cancelTask( ), which runs under that lock, and with a stranded
+             * policy's posted shutdown, which runs on that strand; and the cancel is checked before it
+             *
+             * What asio's loop does is kept: the endpoints in order; the socket closed before each
+             * attempt, and opened by async_connect( ) for that endpoint's protocol; an attempt which
+             * connects ends the loop with no error at that endpoint; when none is left the loop ends
+             * with the LAST attempt's error and the end iterator; and an empty list ends with
+             * not_found and the end iterator, posted rather than inline
+             * (notes/plans/issues/astra2-cs6-lost-forced-cancel-design.md, section 9)
+             *
+             * One branch of asio's loop is not kept, deliberately: when an attempt leaves the socket
+             * closed - its open for that endpoint's protocol failed, and async_connect( ) posted the
+             * open's error - asio ended the whole connect with operation_aborted, which a task nobody
+             * had cancelled then reported as a cancel. Here that attempt fails like any other: the
+             * loop moves to the next endpoint, and after the last it ends with the open's own error
+             */
+
+            void beginConnect( SAA_in typename tcp_resolver_type::iterator endpoints )
+            {
+                const decltype( endpoints ) end;
+
+                if( end == endpoints )
+                {
+                    /*
+                     * Posted, as asio's loop posts it - through the socket's executor where Boost has
+                     * executors, and through its io_service before that (devenv2-3 are Boost 1.58 and
+                     * 1.63, which have neither asio::post( ) nor get_executor( ))
+                     */
+
+                    auto handler = cpp::bind(
+                        &this_type::onConnectionEstablished,
+                        om::ObjPtrCopyable< this_type >::acquireRef( this ),
+                        asio::error::make_error_code( asio::error::not_found ),
+                        end
+                        );
+
+                    #if ( ( BOOST_VERSION / 100 ) >= 1072 )
+                    asio::post( base_type::getSocket().get_executor(), std::move( handler ) );
+                    #else
+                    base_type::getSocket().get_io_service().post( std::move( handler ) );
+                    #endif
+
+                    return;
+                }
+
+                beginConnectAttempt( endpoints );
+            }
+
+            /**
+             * @brief One attempt of beginConnect( )'s loop, to the endpoint the iterator is at
+             */
+
+            void beginConnectAttempt( SAA_in typename tcp_resolver_type::iterator endpoint )
+            {
+                eh::error_code ec;
+
+                base_type::getSocket().close( ec );
+
+                base_type::getSocket().async_connect(
+                    endpoint -> endpoint(),
+                    cpp::bind(
+                        &this_type::onConnectionEstablished,
+                        om::ObjPtrCopyable< this_type >::acquireRef( this ),
+                        asio::placeholders::error,
+                        endpoint
+                        )
+                    );
+            }
+
+            /**
+             * @brief The completion of one attempt of beginConnect( )'s loop, with the endpoint it
+             * was made to - or of the whole connect, as asio::async_connect( ) completes it: with no
+             * error at the endpoint connected to, or with an error and the end iterator
+             *
+             * BL_TASKS_HANDLER_BEGIN( ), not the CHK_EC variant: one attempt which fails is not the
+             * task's failure, and the next endpoint is tried - unless the task was cancelled. When
+             * none is left, the last attempt's error is the task's. When one connects, the cancel is
+             * checked as the CHK_EC prolog checks it, and the task goes on inside this handler,
+             * since the task lock is not recursive
+             */
+
             void onConnectionEstablished(
                 SAA_in                              const eh::error_code&               ec,
                 SAA_in                              typename tcp_resolver_type::iterator endpoints
                 ) NOEXCEPT
             {
-                BL_TASKS_HANDLER_BEGIN_CHK_EC()
+                BL_TASKS_HANDLER_BEGIN()
 
                 const decltype( endpoints ) end;
+
+                if( ec )
+                {
+                    auto next = endpoints;
+
+                    if( end != next )
+                    {
+                        ++next;
+                    }
+
+                    if( end != next )
+                    {
+                        BL_TASKS_HANDLER_CHK_CANCEL_IMPL()
+
+                        beginConnectAttempt( next );
+
+                        return;
+                    }
+
+                    BL_TASKS_HANDLER_CHK_EC( ec )
+                }
+
+                BL_TASKS_HANDLER_CHK_CANCEL_IMPL()
 
                 if( endpoints != end && false == TaskBase::isCanceled() )
                 {
@@ -1452,24 +1569,27 @@ namespace bl
                     base_type::m_query.service_name()
                     );
 
-                asio::async_connect(
-                    base_type::getSocket(),
-                    endpoints,
-                    cpp::bind(
-                        &this_type::onConnectionEstablished,
-                        om::ObjPtrCopyable< this_type >::acquireRef( this ),
-                        asio::placeholders::error,
-                        asio::placeholders::iterator
-                        )
-                    );
+                beginConnect( endpoints );
 
                 return true;
             }
 
             virtual bool scheduleTaskFinishContinuation( SAA_in_opt const std::exception_ptr& eptrIn = nullptr ) OVERRIDE
             {
+                /*
+                 * A CANCELLED ESTABLISHMENT IS NOT RETRIED. A cancel can fail the handshake with a
+                 * truncation, which is retryable - through the receive shutdown of a forced cancel
+                 * during the handshake (TcpSslSocketAsyncBase::shutdownSocketOnCancel( )), or through
+                 * a lost cancel followed by the peer's orderly close - and the task would then start
+                 * over, to be stopped only by the restart's own cancel checks. Tested before
+                 * isProtocolHandshakeRetryableError( ), which records a truncation on the stream, so
+                 * that a cancelled establishment is not classified at all
+                 * (notes/plans/issues/astra2-cs6-lost-forced-cancel-design.md)
+                 */
+
                 if(
                     eptrIn &&
+                    ! base_type::isCanceled() &&
                     m_retries < m_maxRetryCount &&
                     base_type::isChannelOpen() &&
                     base_type::isProtocolHandshakeNeeded &&

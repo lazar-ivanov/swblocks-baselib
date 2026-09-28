@@ -1,0 +1,44 @@
+# each slice appends the recipes for the cases it lands here
+
+# CS-6 of astra's second review - the TCP and TLS stream policies' teardown (owed-list rows I13 and I2).
+#
+# I13 - a forced cancel shuts the socket down and must not write its linger option, which raced an
+# operation starting on the socket. The characterization case is green on both sides of the fix; the
+# red one (the owner's own linger survives the cancel) is red before it and green after.
+#
+# I2 - a TLS task's shutdown after the peer's truncation
+# (notes/plans/issues/astra2-cs6-tls-shutdown-after-truncation-design.md). The characterization
+# cases are the endings the fix must NOT change, and are green on both sides of it: the peer's
+# close_notify, and our own close_notify answered at once or only once the peer releases it.
+# TlsShutdown_ATruncationDoesNotWaitForTheCloseNotifyTests is I2's red: red before the fix, green after.
+# TlsShutdown_ATruncationThenACloseEndsCleanTests is green before and after on Linux (see its header).
+# TlsShutdown_TheTruncationRecordBelongsToOneHandshakeTests pins the fix's new record: clear on a fresh
+# stream, set once recorded, and cleared by a new handshake.
+
+--log_level=message --run_test=Tcp_ForcedCancelLeavesTheLingerOptionOffTests
+--log_level=message --run_test=Tcp_ForcedCancelDoesNotWriteTheLingerOptionTests
+--log_level=message --run_test=TlsShutdown_ThePeersCloseNotifyEndsTheTaskPromptlyTests
+--log_level=message --run_test=TlsShutdown_OurCloseNotifyIsAnsweredPromptlyTests
+--log_level=message --run_test=TlsShutdown_OurCloseNotifyWaitsForTheAnswerTests
+--log_level=message --run_test=TlsShutdown_ATruncationDoesNotWaitForTheCloseNotifyTests
+--log_level=message --run_test=TlsShutdown_ATruncationThenACloseEndsCleanTests
+--log_level=message --run_test=TlsShutdown_TheTruncationRecordBelongsToOneHandshakeTests
+
+# D-L3-1 - a forced cancel lost between two steps of a TLS operation
+# (notes/plans/issues/astra2-cs6-lost-forced-cancel-design.md). The first two cases are the
+# characterization, green on both sides of the fixes. The other four are the reds, each made certain
+# by a posting order or by holding the I/O pool's other threads: the two W1 cases turn green with the
+# receive shutdown (c), the TLS shutdown case with the protocol timer's re-issue (a2), and the last
+# with the connector's retry guard.
+
+--log_level=message --run_test=TlsLostCancel_ACancelWithTheHandshakeReadRegisteredEndsPromptlyTests
+--log_level=message --run_test=TlsLostCancel_APeerSeesAnOrderlyEndAfterAForcedCancelTests
+--log_level=message --run_test=TlsLostCancel_ACancelBeforeTheHandshakeIsNotLostTests
+--log_level=message --run_test=TlsLostCancel_ACancelAfterTheHandshakeStartsIsNotLostTests
+--log_level=message --run_test=TlsLostCancel_ACancelInsideTheTlsShutdownIsReissuedTests
+--log_level=message --run_test=TlsLostCancel_ACancelledHandshakeIsNotRetriedTests
+
+# (c)'s record: when the TLS policy counts a handshake as the task's own, which is what keeps the receive
+# shutdown off every application phase. Committed with the fix, since the record is the fix's own.
+
+--log_level=message --run_test=TlsLostCancel_TheHandshakeFlagBelongsToTheOwnHandshakeTests

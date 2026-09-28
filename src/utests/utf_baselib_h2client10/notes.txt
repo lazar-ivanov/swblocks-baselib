@@ -1,0 +1,12 @@
+# each slice appends the recipes for the cases it lands here
+
+# CS-6 of astra's second review - D-L3-1 on the HTTP client
+# (notes/plans/issues/astra2-cs6-lost-forced-cancel-design.md). The HTTP/2 driver's case is the
+# characterization, green on both sides of the fixes. The two connect deadline cases are reds: the
+# probe swallows its first cancel, and today the 1 s deadline does nothing about it - after the
+# deadlines' re-issue (a2) the task ends at the deadline, and the reason it carries is the pool's or
+# none.
+
+--log_level=message --run_test=Http2DriverTls_AnExternalCancelInTheApplicationPhaseEndsAsACancelTests
+--log_level=message --run_test=ConnectDeadline_ALostCancelIsIssuedAgainWithoutAReasonTests
+--log_level=message --run_test=ConnectDeadline_ALostCancelKeepsThePoolsReasonTests
