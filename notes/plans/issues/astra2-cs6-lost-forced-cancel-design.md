@@ -256,6 +256,11 @@ only reads the descriptor (`detail/impl/socket_ops.ipp:519-530`).
     that "this task's own handshake, on the stream it now holds" stays literal. A clear placed later — in
     `onTaskStoppedNothrow( )`, say — would shut an HTTP/2 connection's receive side on every external cancel.
 
+  *(Corrected 2026-09-28, checkpoint review r1: not at `attachStream( )` and `detachStream( )`, whose callers
+  include constructors and owners detaching after the task stopped. The flag's readers - `cancelTask( )`, only
+  on a running task under the lock, and a stranded policy's posted shutdown - make that safe, the second
+  because such a stream is detached on its strand, `e7a4cf4`.)*
+
   A handshake which fails, or is cancelled, leaves the flag set — harmlessly, because the handler macros
   break out before the body (`TaskBase.h:165-168`) and that stream never carries application data.
 
