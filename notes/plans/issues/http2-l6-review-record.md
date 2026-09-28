@@ -1195,6 +1195,8 @@ assertion pre-empts. Not checked: Windows, gcc, release.
 Added by the sweep that closed bucket C of the decisions on astra's second review
 (`astra-second-review-decisions.md` §7), so that a reader of this record finds its items neither open
 when they are closed nor closed when they are not. Each was checked at the source on `lazari2`.
+*Reconciled 2026-09-28 (astra's third review, T02): six rows still read as open after their work
+landed the same day — 12, ThreadSanitizer, and the four test rows. Each is corrected at its row.*
 
 | Item | Now |
 |---|---|
@@ -1205,16 +1207,16 @@ when they are closed nor closed when they are not. Each was checked at the sourc
 | **6** | The documented minimum landed in S6R.3; the structural fix stays deferred, as P1 of `http-content-decoders-deferral.md` |
 | **9** | **FIXED** — astra H22, `03680cb` |
 | **11** | **Text corrected** at `d186d2a` and in the design: the session applies the predicate whole, the pool only its budget clause, inline |
-| **12** | **Decided** 2026-09-27 as D5 of `astra-second-review-decisions.md`, to be fixed in its minimal form in CS-2; not yet implemented |
+| **12** | **FIXED** in CS-2 at `0f3b0ba`, merged at `bc431f2`: `decodeBody( )` returns at once for a hop which failed, so a decoder can no longer replace the hop's exception with its own. Decided 2026-09-27 as D5 of `astra-second-review-decisions.md`, in its minimal form. *Corrected 2026-09-28: this said "to be fixed in its minimal form in CS-2; not yet implemented".* |
 | **13(b)** | **Deleted** at `7330dd5` |
 | **13(c)** | **Documented** at `d186d2a`: configure before or between requests, never concurrently with `createRequestTask( )` |
 | **13(e)**, **13(i)** | **Comments corrected** at `d186d2a` |
-| **ThreadSanitizer** | Ran over the session modules at L6's close and found the h2 timer race, since fixed; **not run since the remediation**. Decided 2026-09-27 as one pass after the second review's change-sets land — B6 on `astra-remediation-owed-work.md` |
+| **ThreadSanitizer** | Ran over the session modules at L6's close and found the h2 timer race, since fixed. **Run again as B6**, decided 2026-09-27 as one pass after the second review's change-sets: on `2b47b57`, with its positive control, over 22 client modules. 20 were clean, and two reported one pre-existing warning each, both fixed since — I12, a lock-order inversion a test stub closes, in CS-4 (`31b2b9b`), and I13, a data race in core code, in CS-6 (`1c828b2`). Recorded at `14e3538`; B6 on `astra-remediation-owed-work.md`. *Corrected 2026-09-28: this said "not run since the remediation".* |
 | **OpenSSL 1.1.1w** | Deferred — `openssl-1x-flavor-deferral.md` |
-| **The narrowing discrimination** | **OWED, and not written.** `ClientSessionTls_StreamingUploadTakesAnHttp2OnlyConnectionTests` still runs against a peer preferring `[ "h2", "http/1.1" ]`, so deleting `narrowToHttp2( )` would leave it green. E1 on `astra-remediation-owed-work.md` |
-| **The establishment-failure path through the pool and the session** | **OWED, and not written.** It runs at the driver (the dead-port case) and in the pool against stub connections (`H2Pool_ANeverUsableConnectionIsChargedAndBoundedTests`), never with a real connection task through both. E2 on the same list |
+| **The narrowing discrimination** | **WRITTEN** in CS-2 as E1 (`1196218`, merged at `bc431f2`): `ClientSessionTls_StreamingUploadAloneIsOfferedHttp2OnlyTests` in `utf_baselib_httpclient10`, one streaming upload against a peer preferring `[ "http/1.1", "h2" ]`, which a probe that disabled `narrowToHttp2( )` turned red. `ClientSessionTls_StreamingUploadTakesAnHttp2OnlyConnectionTests`, whose peer prefers `[ "h2", "http/1.1" ]`, still pins the key split alone. E1 on `astra-remediation-owed-work.md`. *Corrected 2026-09-28: this said "OWED, and not written".* |
+| **The establishment-failure path through the pool and the session** | **WRITTEN** in CS-2 as E2 (`724f82e`, merged at `bc431f2`): `ClientSession_AnOriginWhichNeverAcceptsFailsWithTheConnectionsCauseTests` in `utf_baselib_httpclient9` runs a real connection task through the real pool and session, and a probe that dropped the chaining turned it red. Its work found I6 and demonstrated I7. E2 on the same list. *Corrected 2026-09-28: this said "OWED, and not written", and that the path ran only at the driver and in the pool against stub connections.* |
 | **The third pass** | **Rescued 2026-09-27.** Written 2026-09-24 and left uncommitted in `swblocks-baselib-lane1`, with its two corrections in place above and in `astra-review-verification-record.md`; committed verbatim from that worktree |
-| **Third pass, decision 1** — the TLS fallback exchange with a counting sink | **OWED, and not written** — E3 on `astra-remediation-owed-work.md` |
+| **Third pass, decision 1** — the TLS fallback exchange with a counting sink | **WRITTEN** in CS-2 as E3 (`02006d4`, merged at `bc431f2`): `ClientSessionTls_SinkIsToldCompleteOnceAcrossTheFallbackRetryTests` in `utf_baselib_httpclient10`, green before D4's change and after it. E3 on `astra-remediation-owed-work.md`. *Corrected 2026-09-28: this said "OWED, and not written".* |
 | **Third pass, decision 2** — a runtime baseline containing the client modules | **CLOSED** — measured and refused, `tier3-client-modules-not-baselineable-record.md` |
-| **Third pass, decision 3** — rename the sink case | **OWED** — E4 on the same list |
+| **Third pass, decision 3** — rename the sink case | **RENAMED** in CS-2 as E4 (`651ff0f`, merged at `bc431f2`): now `ClientSession_StreamedHopTellsTheSinkCompleteOnceTests`, in `utf_baselib_httpclient4`. E4 on the same list. *Corrected 2026-09-28: this said "OWED".* |
 | **Third pass, companion edits** | The `src` halves at `263e2e5` (the control case's citation premise; `ridePreface`'s *"overridden, not rejected"*); the owed-list row and the plan line at `425802c`; the body-sink deferral's sentence 2026-09-27 |
