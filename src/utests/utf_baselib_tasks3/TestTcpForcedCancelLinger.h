@@ -70,6 +70,11 @@
  *     does after because nothing ever turned it on; the case is green on both sides and is what
  *     says the graceful close a cancel makes did not change.
  *
+ *   - Tcp_ForcedCancelDoesNotWriteTheLingerOptionTests - I13's RED. The socket's owner sets
+ *     linger( on, 0 ) before the cancel, and the forced cancel must leave it as it found it. Before
+ *     the fix it reads off - the forced path wrote it, which is the very write that raced - and after
+ *     it reads on. It is certain rather than probable: a pure input, with no timing in it.
+ *
  * See notes/plans/issues/astra-remediation-owed-work.md, row I13.
  */
 
@@ -145,17 +150,22 @@ namespace utest
             mutable bl::os::mutex                                               m_probeLock;
             mutable bl::os::condition_variable                                  m_probeCv;
 
+            const bool                                                          m_isLingerSetFirst;
+
             bool                                                                m_isInFlight;
             bool                                                                m_hasStopped;
+            bl::eh::error_code                                                  m_setOptionCode;
 
             char                                                                m_buffer[ 64 ];
 
             ForcedCancelProbeT(
                 SAA_in                  std::string&&                           host,
-                SAA_in                  const unsigned short                    port
+                SAA_in                  const unsigned short                    port,
+                SAA_in                  const bool                              isLingerSetFirst
                 )
                 :
                 base_type( BL_PARAM_FWD( host ), port, false /* logExceptions */ ),
+                m_isLingerSetFirst( isLingerSetFirst ),
                 m_isInFlight( false ),
                 m_hasStopped( false )
             {
@@ -169,6 +179,23 @@ namespace utest
                  * async_read_some( ) returns - over TLS its first engine step runs inline and starts
                  * the socket read - so a case told it is in flight cancels an operation which exists
                  */
+
+                if( m_isLingerSetFirst )
+                {
+                    /*
+                     * THE OWNER OF THE SOCKET SETS A LINGER OF ITS OWN, here on the thread which is
+                     * about to start the read and before the case is told of it - so nothing else
+                     * touches the socket while it is written
+                     */
+
+                    bl::eh::error_code ec;
+
+                    base_type::getSocket().set_option( bl::asio::socket_base::linger( true, 0 ), ec );
+
+                    BL_MUTEX_GUARD( m_probeLock );
+
+                    m_setOptionCode = ec;
+                }
 
                 base_type::getStream().async_read_some(
                     bl::asio::buffer( m_buffer, sizeof( m_buffer ) ),
@@ -266,6 +293,13 @@ namespace utest
              * lives as long as this object - so the option can be read after the task has ended
              */
 
+            auto setOptionCode() const -> bl::eh::error_code
+            {
+                BL_MUTEX_GUARD( m_probeLock );
+
+                return m_setOptionCode;
+            }
+
             auto readLinger( SAA_inout bl::eh::error_code& ec ) const -> bl::asio::socket_base::linger
             {
                 bl::asio::socket_base::linger option;
@@ -292,6 +326,7 @@ namespace utest
             bool                                                                hasStopped;
             bool                                                                isFailed;
             bl::eh::error_code                                                  taskCode;
+            bl::eh::error_code                                                  setOptionCode;
             bl::eh::error_code                                                  getOptionCode;
             bool                                                                isLingerEnabled;
             int                                                                 lingerTimeout;
@@ -315,6 +350,8 @@ namespace utest
                     ( hasStopped ? "yes" : "no" ) +
                     ", task " +
                     ( isFailed ? "failed " + describeCode( taskCode ) : std::string( "succeeded" ) ) +
+                    ", the owner's linger( on, 0 ) " +
+                    describeCode( setOptionCode ) +
                     ", SO_LINGER " +
                     (
                         getOptionCode ?
@@ -340,7 +377,8 @@ namespace utest
         >
         inline auto runForcedCancelAgainst(
             SAA_in          std::string&&                                       host,
-            SAA_in          const unsigned short                                port
+            SAA_in          const unsigned short                                port,
+            SAA_in          const bool                                          isLingerSetFirst
             )
             -> ForcedCancelResult
         {
@@ -349,7 +387,11 @@ namespace utest
 
             ForcedCancelResult result;
 
-            const auto probe = ForcedCancelProbeImpl< STREAM >::createInstance( BL_PARAM_FWD( host ), port );
+            const auto probe = ForcedCancelProbeImpl< STREAM >::createInstance(
+                BL_PARAM_FWD( host ),
+                port,
+                isLingerSetFirst
+                );
 
             const auto task = om::qi< Task >( probe );
 
@@ -379,6 +421,8 @@ namespace utest
                 result.taskCode = eh::errorCodeFromExceptionPtr( exception );
             }
 
+            result.setOptionCode = probe -> setOptionCode();
+
             const auto option = probe -> readLinger( result.getOptionCode );
 
             result.isLingerEnabled = option.enabled();
@@ -397,18 +441,18 @@ namespace utest
         <
             typename STREAM
         >
-        inline auto runForcedCancel() -> ForcedCancelResult
+        inline auto runForcedCancel( SAA_in_opt const bool isLingerSetFirst = false ) -> ForcedCancelResult
         {
             if( STREAM::isProtocolHandshakeNeeded )
             {
                 TlsEndingPeer peer( TlsEndingPeer::Ending::AwaitTheClient );
 
-                return runForcedCancelAgainst< STREAM >( std::string( "localhost" ), peer.port() );
+                return runForcedCancelAgainst< STREAM >( std::string( "localhost" ), peer.port(), isLingerSetFirst );
             }
 
             SilentListener listener;
 
-            return runForcedCancelAgainst< STREAM >( std::string( "127.0.0.1" ), listener.port() );
+            return runForcedCancelAgainst< STREAM >( std::string( "127.0.0.1" ), listener.port(), isLingerSetFirst );
         }
 
         /**
@@ -473,6 +517,60 @@ UTF_AUTO_TEST_CASE( Tcp_ForcedCancelLeavesTheLingerOptionOffTests )
     chkLingerOff( runForcedCancel< TcpSocketAsyncStrandedBase >(), "cleartext, stranded" );
     chkLingerOff( runForcedCancel< TcpSslSocketAsyncBase >(), "TLS" );
     chkLingerOff( runForcedCancel< TcpSslSocketAsyncStrandedBase >(), "TLS, stranded" );
+}
+
+/**
+ * @brief I13 - a forced cancel does not write the socket's linger option
+ *
+ * The owner of the socket sets linger( on, 0 ) before the cancel, and after a forced cancel the
+ * option still reads on, for all four stream policies. All four are run before any is asserted, so a
+ * failure message carries every reading
+ */
+
+UTF_AUTO_TEST_CASE( Tcp_ForcedCancelDoesNotWriteTheLingerOptionTests )
+{
+    using namespace bl::tasks;
+    using namespace utest::forcedcancel;
+
+    const ForcedCancelResult results[] =
+    {
+        runForcedCancel< TcpSocketAsyncBase >( true /* isLingerSetFirst */ ),
+        runForcedCancel< TcpSocketAsyncStrandedBase >( true /* isLingerSetFirst */ ),
+        runForcedCancel< TcpSslSocketAsyncBase >( true /* isLingerSetFirst */ ),
+        runForcedCancel< TcpSslSocketAsyncStrandedBase >( true /* isLingerSetFirst */ ),
+    };
+
+    const char* const names[] =
+    {
+        "cleartext",
+        "cleartext, stranded",
+        "TLS",
+        "TLS, stranded",
+    };
+
+    std::string readings;
+
+    for( std::size_t i = 0U; i < BL_ARRAY_SIZE( results ); ++i )
+    {
+        readings += std::string( names[ i ] ) + ": " + results[ i ].describe() + "; ";
+    }
+
+    for( std::size_t i = 0U; i < BL_ARRAY_SIZE( results ); ++i )
+    {
+        const std::string which( names[ i ] );
+
+        chkEndedByTheForcedCancel( results[ i ], which );
+
+        chkOrFail(
+            ! results[ i ].setOptionCode,
+            which + ": the owner could not set its linger; all four: " + readings
+            );
+
+        chkOrFail(
+            results[ i ].isLingerEnabled,
+            which + ": the forced cancel wrote the socket's linger option; all four: " + readings
+            );
+    }
 }
 
 #endif /* __UTEST_TESTTCPFORCEDCANCELLINGER_H_ */
