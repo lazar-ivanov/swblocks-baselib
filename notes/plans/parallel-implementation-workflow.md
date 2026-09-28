@@ -165,8 +165,9 @@ refreshing to silence a report you cannot explain makes the gate worthless.
 ### 4.6 Ready
 
 A change-set is **ready** when its reviews have no open finding, its gate is green, and its records
-say so: the decision record marks it done with its commits, and the owed list is swept (`AGENTS.md`:
-at the end of every change-set, in both directions). **Nothing is pushed** — the maintainer pushes.
+say so: the decision record marks it done with its commits, the owed list is swept (`AGENTS.md`:
+at the end of every change-set, in both directions), and every current-status statement about its
+items is reconciled (`AGENTS.md`, the same sweep). **Nothing is pushed** — the maintainer pushes.
 Owed platform runs are recorded against it, not silently waited on.
 
 ## 5. Running it
@@ -201,6 +202,10 @@ Owed platform runs are recorded against it, not silently waited on.
   work that landed is marked. What the work found is never added to it: that was folded or decided
   during the run. The list holds only the three kinds `AGENTS.md` allows — what the maintainer
   deferred, what needs another host, and gated core work — each with its reason.
+- **The current-status statements are reconciled in the same records commit**, as `AGENTS.md`'s
+  sweep requires. Search `notes/plans/` for the items' identifiers, and never work from memory: the
+  design's security considerations, the deferral notes and the review records all speak for the
+  current state.
 - **Corrections are dated and made at the claim**, with the original left legible.
 
 ## 7. Restarting
